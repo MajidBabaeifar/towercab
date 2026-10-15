@@ -71,6 +71,20 @@ makes it wait (with the reset time), and when a task is merged.
 
 A failed send (offline, bad token) is logged once and ignored; the loop never stops for it.
 
+### Commands from your phone
+
+While `towercab run --watch` (or `towercab up`) is running, message the bot from the configured chat:
+
+| Command | Does |
+|---|---|
+| `status` | running task, tasks waiting on you, next task, limit cooldowns |
+| `next` | same as `towercab next` |
+| `approve <id>` | `[!]` → `[ ]` (clears `note`, keeps `pr:`), pushed |
+| `run <id>` | start that task now, even if `[!]`; refused while another is in flight |
+
+`<id>` is the full ID or a unique suffix. Messages from other chats are ignored. Commands are polled once
+per loop pass, so during a long stage they are answered when that step ends.
+
 ## Missions by hand (the original MVP)
 
 Imported from my earlier `local agent` prototype. It predates the specs above.

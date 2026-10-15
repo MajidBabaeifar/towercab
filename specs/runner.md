@@ -30,6 +30,13 @@ wait out limits, publish the result, take the next one.
 | RUN-17 | `./install.sh` symlinks `bin/towercab` into `${XDG_BIN_HOME:-~/.local/bin}`; `towercab` then works from any folder (launcher resolves its symlink, no dependencies). | test_launcher_from_other_cwd |
 | RUN-18 | `towercab up [--max-tasks N] [--task ID]` execs `systemd-inhibit --what=sleep:idle:handle-lid-switch --who=Towercab --mode=block` around `python -m towercab --home H [--config C] run --watch …`. Inhibit lasts until it exits. | test_up_argv, test_up_argv_passes_options, test_up_execs_inhibit |
 | RUN-19 | `up` without `systemd-inhibit` exits 1 with an error and starts nothing. `doctor` lists `systemd-inhibit`. | test_up_without_systemd_inhibit, test_up_cli_missing_binary_exits_1 |
+| RUN-20 | With `[telegram]`, each loop iteration calls `getUpdates` (`offset` = last `update_id`+1, `timeout` 0). Every update is consumed once, ignored or not. | test_offset_advances_no_replay, test_loop_runs_approve |
+| RUN-21 | Messages whose `chat.id` isn't the configured `chat_id` (compared as strings) are ignored: no reply, no change. A failed poll returns nothing, logs once without the token, never raises. | test_other_chat_ignored, test_updates_failure_is_quiet |
+| RUN-22 | `status` replies: running task, tasks waiting on me (`[!]` + note or PR), next runnable task, limit cooldowns. | test_status |
+| RUN-23 | `next` replies with the same text as `towercab next`. | test_next |
+| RUN-24 | `approve <id>` turns a `[!]` task into `[ ]` (clears `note`, keeps `pr:`), committed and pushed; replies `approved`. Unknown/ambiguous ID or non-`[!]` task: error reply, no change. | test_approve, test_approve_errors |
+| RUN-25 | `run <id>` starts that task as `run --task` does (RUN-11), forcing `[!]`; replies with the mission ID. Refused while a task is in flight. The loop keeps going. | test_run, test_run_refused_while_busy |
+| RUN-26 | Leading `/` and `@bot` suffix accepted. Unknown command or missing ID: one-line help. | test_parse, test_help |
 
 ## Out of scope
 
@@ -39,6 +46,7 @@ wait out limits, publish the result, take the next one.
 
 - Every task currently behaves as a3 (PR waits for me); gates come later.
 - Notifications are fire-and-forget: one message per event, no queue. `[telegram].api_base` (default `https://api.telegram.org`) exists for tests.
+- Commands are polled once per loop iteration (`timeout=0`), no thread: a command waits for the running stage step to finish. Fake API in tests: `tests/fake_telegram.py` also serves `getUpdates`.
 - PR state is read with `gh pr view` at most once a minute.
 - Install is a symlink launcher, not pip/pipx: no packaging, Ubuntu PEP 668 safe, edits stay live.
 - Lid inhibit depends on logind/polkit policy; the argv is tested, the effect is not.

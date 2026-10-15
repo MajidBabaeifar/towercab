@@ -40,6 +40,7 @@ class Runner:
         self.factory = Factory(store, config.timeout, self.notify)
         self.pr_interval = pr_interval
         self._last_pr_check = 0.0
+        self.offset = None   # next Telegram update_id to fetch
 
     # --- choosing ----------------------------------------------------------
     def next(self):
@@ -198,6 +199,18 @@ class Runner:
                 self.tasks.mutate(lambda doc, files: find(doc, ref) and find(doc, ref).set("note", "PR closed without merge"),
                                   f"Towercab: {t.id} PR closed")
 
+    # --- commands from my phone (RUN-20..26) ---------------------------------
+    def poll_telegram(self):
+        """Fetch new messages once, answer commands from my chat, ignore everything else."""
+        if not self.notify.enabled:
+            return
+        from .commands import Commands
+        for update_id, chat_id, text in self.notify.updates(self.offset):
+            self.offset = update_id + 1    # consumed, ignored or not
+            if chat_id != str(self.notify.chat_id):
+                continue
+            self.notify.send(Commands(self).handle(text))
+
     # --- the loop -----------------------------------------------------------
     def active(self):
         return [m for m in self.s.rows() if m["task"] and m["status"] in ("queued", "running")]
@@ -229,6 +242,7 @@ class Runner:
                 while True:
                     self.settle()
                     self.check_prs()
+                    self.poll_telegram()
                     if not self.active() and (max_tasks is None or started < max_tasks):
                         task, why = self.next()
                         if task and task.label != refused:

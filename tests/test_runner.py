@@ -209,7 +209,7 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("PR ready", self.tg.texts[0])
         self.assertIn("Ship it", self.tg.texts[0])              # title, not just the ID
         self.assertIn("https://github.com/o/proj/pull/1", self.tg.texts[0])
-        self.assertEqual(self.tg.calls[0][1]["chat_id"], "42")
+        self.assertEqual([b for p, b in self.tg.calls if p.endswith("/sendMessage")][0]["chat_id"], "42")
 
     def test_notify_stuck(self):
         self.write_tasks("- [ ] proj: LEAK the keys\n")
@@ -270,6 +270,110 @@ class RunnerTests(unittest.TestCase):
         self.runner.check_prs(force=True)
         self.assertNotIn("One", self.todo())
         self.tg = FakeTelegram()                                  # for tearDown
+
+    # --- Telegram commands (RUN-20..26) ---------------------------------------
+    WAITING = "- [!] 261015-1000 proj: Talk first\n  note: review PR\n  pr: https://github.com/o/proj/pull/1\n"
+
+    def test_approve(self):
+        self.write_tasks(self.WAITING)
+        self.tg.push_update(42, "approve 1000")
+        self.runner.poll_telegram()
+        self.assertEqual(self.tg.texts, ["approved 261015-1000 proj: Talk first"])
+        todo = self.todo()
+        self.assertIn("- [ ] 261015-1000 proj: Talk first\n  pr: https://github.com/o/proj/pull/1", todo)
+        self.assertNotIn("note:", todo)
+
+    def test_approve_errors(self):
+        self.write_tasks(self.WAITING + "- [ ] 261015-1001 proj: Open\n- [!] 261016-1000 proj: Other\n")
+        for text in ("approve 9999", "approve 1000", "approve 1001"):
+            self.tg.push_update(42, text)
+        before = self.todo()
+        self.runner.poll_telegram()
+        self.assertEqual(len(self.tg.texts), 3)
+        self.assertIn("No single task", self.tg.texts[0])
+        self.assertIn("No single task", self.tg.texts[1])        # 1000 matches two ids
+        self.assertIn("isn't waiting", self.tg.texts[2])
+        self.assertEqual(self.todo(), before)
+
+    def test_other_chat_ignored(self):
+        self.write_tasks(self.WAITING)
+        self.tg.push_update(999, "approve 1000")
+        self.runner.poll_telegram()
+        self.assertEqual(self.tg.texts, [])
+        self.assertIn("- [!] 261015-1000", self.todo())
+        self.assertEqual(self.runner.offset, 101)                # consumed all the same
+
+    def test_offset_advances_no_replay(self):
+        self.write_tasks("- [ ] 261015-1000 proj: Open\n")
+        self.tg.push_update(42, "next")
+        self.runner.poll_telegram()
+        self.runner.poll_telegram()
+        self.assertEqual(len(self.tg.texts), 1)
+        polls = [b for p, b in self.tg.calls if p.endswith("/getUpdates")]
+        self.assertNotIn("offset", polls[0])
+        self.assertEqual(polls[1]["offset"], 101)
+        self.assertEqual(polls[1]["timeout"], 0)
+
+    def test_status(self):
+        self.write_tasks(self.WAITING + "- [ ] 261015-1001 proj: Open\n")
+        self.tg.push_update(42, "/status@towercab_bot")
+        self.runner.poll_telegram()
+        text = self.tg.texts[0]
+        self.assertIn("Running: nothing", text)
+        self.assertIn("Waiting on you:\n- 261015-1000 proj: Talk first (review PR)", text)
+        self.assertIn("Next: 261015-1001 proj: Open", text)
+
+    def test_next(self):
+        self.write_tasks("- [ ] 261015-1001 proj: Open\n")
+        task, why = self.runner.next()
+        self.tg.push_update(42, "next")
+        self.runner.poll_telegram()
+        self.assertEqual(self.tg.texts, [f"{task.label}\n  {why}"])
+
+    def test_run(self):
+        self.write_tasks(self.WAITING)
+        self.tg.push_update(42, "run 1000")
+        self.runner.poll_telegram()
+        self.assertRegex(self.tg.texts[0], r"^261015-1000 proj: Talk first → mission ")
+        self.assertEqual(len(self.store.rows()), 1)
+        self.assertIn("- [~] 261015-1000", self.todo())
+
+    def test_run_refused_while_busy(self):
+        self.write_tasks(self.WAITING + "- [ ] 261015-1001 proj: Open\n")
+        self.tg.push_update(42, "run 1000")
+        self.tg.push_update(42, "run 1001")
+        self.runner.poll_telegram()
+        self.assertIn("already in flight", self.tg.texts[1])
+        self.assertEqual(len(self.store.rows()), 1)
+
+    def test_help(self):
+        for text in ("dance", "approve", "run", ""):
+            self.tg.push_update(42, text)
+        self.runner.poll_telegram()
+        self.assertEqual(len(self.tg.texts), 4)
+        self.assertTrue(all(t.startswith("Commands:") for t in self.tg.texts))
+
+    def test_updates_failure_is_quiet(self):
+        logged = []
+        self.tg.stop()
+        notify = Notifier("tok", "42", self.tg.url, out=logged.append)
+        self.assertEqual(notify.updates(), [])
+        self.assertEqual(notify.updates(), [])
+        self.assertEqual(len(logged), 1)
+        self.assertNotIn("tok/", logged[0])
+        self.tg = FakeTelegram()                                  # for tearDown
+
+    def test_loop_runs_approve(self):
+        self.write_tasks(self.WAITING)
+        self.tg.push_update(42, "approve 1000")
+        self.assertEqual(self.runner.run(max_tasks=0), 0)        # one pass: poll, nothing to start
+        self.assertIn("- [ ] 261015-1000", self.todo())
+        self.assertEqual(len(self.tg.texts), 1)
+
+    def test_no_polling_without_telegram(self):
+        self.runner.notify = Notifier(out=lambda *a: None)
+        self.runner.poll_telegram()
+        self.assertEqual(self.tg.calls, [])
 
     def test_slug(self):
         self.assertEqual(slug("Rename `factory` module → towercab!"), "rename-factory-module-towercab")
