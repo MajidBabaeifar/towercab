@@ -7,7 +7,7 @@ The application will be built when you start the scheduler.
 ## 1. Prepare (safe to repeat)
 
 ```bash
-cd ~/Repositories/baton
+cd ~/Repositories/towercab
 python3 -m factory doctor
 python3 examples/pocket-notes/queue.py
 python3 -m factory --home .factory-pocket-notes status
@@ -20,7 +20,7 @@ both implementation and review; Claude isn't required for this first product.
 ## 2. Run in terminal A
 
 ```bash
-cd ~/Repositories/baton
+cd ~/Repositories/towercab
 python3 -m factory --home .factory-pocket-notes run --watch --timeout 1200
 ```
 
@@ -34,7 +34,7 @@ local execution. No automatic merge, deployment, or paid API fallback is used.
 Replace MISSION_ID with the ID printed by setup:
 
 ```bash
-cd ~/Repositories/baton
+cd ~/Repositories/towercab
 python3 -m factory --home .factory-pocket-notes logs MISSION_ID --follow
 ```
 
@@ -65,7 +65,7 @@ does not reset the repair budget. Review findings and logs before retrying.
 ## 4. Try the generated application when ready
 
 ```bash
-cd ~/Repositories/baton/.factory-pocket-notes/missions/MISSION_ID/workspace
+cd ~/Repositories/towercab/.factory-pocket-notes/missions/MISSION_ID/workspace
 python3 notes.py --help
 python3 notes.py add 'First factory product' --body 'Built by my local factory' --tag projects
 python3 notes.py list
