@@ -1,4 +1,4 @@
-# baton
+# Baton
 
 Personal software factory. One central task list ([gradient-tasks](https://github.com/MajidBabaeifar/gradient-tasks)); agents pick tasks by
 priority, validate, push, and report how they did.
@@ -8,7 +8,7 @@ priority, validate, push, and report how they did.
 ## Target workflow
 
 - Tasks live in `gradient-tasks`, each scored urgency, importance, autonomy (1–5).
-- baton picks the top runnable task, claims it, runs an agent in its own worktree.
+- Baton picks the top runnable task, claims it, runs an agent in its own worktree.
 - Validation always runs in full; autonomy decides where the task waits for me.
 - `baton inbox` · `baton watch <id>` · `baton review` · `baton report`
 

@@ -16,7 +16,7 @@ Order tasks by what matters, with arithmetic I can predict.
 | PRI-4 | Order: priority desc, then ID asc (= oldest first). Computed by code, never by a model. | test_order |
 | PRI-5 | `priority < cutoff` (config `priority.cutoff`, default 7) → parked: never picked automatically. | test_cutoff |
 | PRI-6 | `baton sort` rewrites `TODO.md` in this order and fills in missing IDs and scores; runs on `baton add`, never mid-edit. | test_sort |
-| PRI-7 | `baton review` walks parked tasks and tasks not reviewed for ≥ 30 days (`last_reviewed` in baton's SQLite): keep, rescore, drop. | test_review |
+| PRI-7 | `baton review` walks parked tasks and tasks not reviewed for ≥ 30 days (`last_reviewed` in Baton's SQLite): keep, rescore, drop. | test_review |
 | PRI-8 | A review is prompted monthly, and when no open task is at or above the cutoff. | test_review_trigger |
 | PRI-9 | Dropping moves the task to `DONE.md` marked `dropped`; tasks are never deleted. | test_drop |
 

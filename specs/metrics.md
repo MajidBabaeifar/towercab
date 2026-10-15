@@ -16,7 +16,7 @@ Know how each agent run went: time, cost, quality, my effort. Feeds reports and 
 | MET-4 | Usage: input, output, cache-read, cache-write tokens; `turns`; `tool_calls`; `cost_usd` (API-equivalent, from the agent's JSON result); `rate_limit_waits`, `rate_limit_wait_ms`. | test_run_usage |
 | MET-5 | Outcome: `result` (passed, failed, blocked, timeout, error), `checks_failed`, `repair_rounds`, `reviewer_verdict`, `reviewer_findings`, `autonomy_lowered` + reason. | test_run_outcome |
 | MET-6 | Change: `files_changed`, `lines_added`, `lines_removed`, `tests_added`, `spec_ids`. | test_run_change |
-| MET-7 | After merge: `pr_url`, `merged_by` (me, baton), `changes_requested`, `ci_after_push`, `reverted_within_7d`. | test_run_after_merge |
+| MET-7 | After merge: `pr_url`, `merged_by` (me, Baton), `changes_requested`, `ci_after_push`, `reverted_within_7d`. | test_run_after_merge |
 | MET-8 | `baton report [--since 7d] [--repo R] [--by model\|repo\|autonomy]`: throughput, lead and cycle time (median, p90), cost per task, first-pass validation rate, revert rate, human wait, top failing checks. | test_report |
 | MET-9 | The report suggests raising or lowering `a` per repo from first-pass and revert rates; never applies it. | test_trust_suggestion |
 | MET-10 | The task's `DONE.md` line shows totals: cost, agent time, attempts ([TSK-6](tasks.md)). | test_done_line |
