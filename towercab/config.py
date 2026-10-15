@@ -29,8 +29,8 @@ verify = ["python3", "-m", "unittest", "discover", "-s", "tests"]
 bash = ["python3 -m unittest *", "python3 -m towercab *", "git status*", "git diff*", "git log*", "ls*", "rg *"]
 
 # [telegram]            # notifications; see README
-# bot_token = "8458125515:AAExnfEvb0oDVvSWOHv87N_9wrV70LYYbcw"
-# chat_id = "8458125515"
+# bot_token = "123456:ABC..."
+# chat_id = "123456789"
 """
 
 TELEGRAM_API = "https://api.telegram.org"
