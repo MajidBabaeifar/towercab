@@ -13,8 +13,17 @@ import subprocess
 import time
 import uuid
 
+from . import access, limits
+
 
 STAGES = ("plan", "build", "verify", "review")
+# Columns added after the MVP; older databases get them on open.
+EXTRA_COLUMNS = {"task": "TEXT", "repo": "TEXT", "remote": "TEXT", "branch": "TEXT",
+                 "model": "TEXT", "bash": "TEXT NOT NULL DEFAULT '[]'", "handled": "INTEGER NOT NULL DEFAULT 0"}
+
+
+def is_url(source):
+    return bool(source) and ("://" in source or source.startswith("git@"))
 
 
 def command(argv, cwd=None):
@@ -46,25 +55,32 @@ class Store:
                 provider TEXT PRIMARY KEY, until REAL NOT NULL, failures INTEGER NOT NULL
             );
         """)
+        have = {r[1] for r in self.db.execute("PRAGMA table_info(missions)")}
+        for name, kind in EXTRA_COLUMNS.items():
+            if name not in have:
+                self.db.execute(f"ALTER TABLE missions ADD COLUMN {name} {kind}")
+        self.db.commit()
 
     def add(self, title, brief, source, verify, provider="codex", reviewer=None,
-            demo=False, max_repairs=2, priority=0):
+            demo=False, max_repairs=2, priority=0, task=None, repo=None, branch=None,
+            model=None, bash=()):
         if not verify or not all(isinstance(v, str) for v in verify):
             raise ValueError("Verification must be a nonempty JSON array of command arguments")
         if max_repairs < 0:
             raise ValueError("max-repairs must be nonnegative")
-        if source:
+        if source and not is_url(source):
             source = str(Path(source).resolve())
             command(["git", "rev-parse", "--verify", "HEAD"], source)
-            if command(["git", "status", "--porcelain"], source):
+            if not branch and command(["git", "status", "--porcelain"], source):
                 raise ValueError("Source has uncommitted files. Commit them first; missions start from HEAD.")
         mid = uuid.uuid4().hex[:12]
         now = time.time()
         self.db.execute("""INSERT INTO missions
-            (id,title,brief,source,verify,provider,reviewer,demo,max_repairs,priority,created,updated)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (id,title,brief,source,verify,provider,reviewer,demo,max_repairs,priority,created,updated,
+             task,repo,branch,model,bash)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (mid,title,brief,source,json.dumps(verify),provider,reviewer or provider,
-             int(demo),max_repairs,priority,now,now))
+             int(demo),max_repairs,priority,now,now,task,repo,branch,model,json.dumps(list(bash))))
         self.db.commit()
         self.event(mid, "Mission queued" + (" [DEMO]" if demo else ""))
         return mid
@@ -148,6 +164,31 @@ def unpack(provider, output):
     return messages[-1] if messages else "", "\n".join(errors)
 
 
+def result_info(output):
+    """Claude Code's final JSON result (cost, duration, denials), if the output has one."""
+    for line in reversed(output.splitlines()):
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and obj.get("type") == "result":
+            return obj
+    return None
+
+
+def mission_usage(root):
+    """(cost USD, agent seconds) summed over a mission's stage logs; None where unknown."""
+    cost = seconds = 0.0
+    seen = False
+    for log in sorted(Path(root).glob("*-*.log")):
+        info = result_info(log.read_text(errors="replace"))
+        if info:
+            seen = True
+            cost += info.get("total_cost_usd") or 0
+            seconds += (info.get("duration_ms") or 0) / 1000
+    return (cost, seconds) if seen else (None, None)
+
+
 def review_result(text):
     text = text.strip()
     if text.startswith("```"):
@@ -172,9 +213,12 @@ class Factory:
         if work.exists():
             raise ValueError(f"Incomplete preparation at {work}; inspect before retrying")
         if m["source"]:
-            command(["git", "clone", "--no-hardlinks", "--", m["source"], str(work)])
-            # No upstream pushes from a factory checkout.
+            branch = ["--branch", m["branch"]] if m["branch"] else []
+            command(["git", "clone", "--no-hardlinks", *branch, "--", m["source"], str(work)])
+            # Agents never push: the checkout has no remote. Towercab pushes itself when done.
+            remote = command(["git", "remote", "get-url", "origin"], work)
             command(["git", "remote", "remove", "origin"], work)
+            self.s.update(m["id"], remote=remote)
         else:
             work.mkdir()
             command(["git", "init", "-b", "main"], work)
@@ -188,9 +232,12 @@ class Factory:
     def prompt(self, m, work):
         root = work.parent
         plan = (root / "plan.txt").read_text() if (root / "plan.txt").exists() else "No plan yet."
+        bash = json.loads(m["bash"] or "[]") if "bash" in m.keys() else []
+        allowed = "Shell commands you may run: " + ", ".join(bash) + ". Others are denied." if bash else \
+            "You have no shell commands beyond read-only git; checks run after you."
         actions = {
             "plan": "Inspect the project and propose a concise implementation plan. Do not edit files.",
-            "build": "Implement the mission and address the feedback. Run relevant checks. Do not commit, push, deploy, or modify .git. Do not weaken tests to obtain a pass.",
+            "build": "Implement the mission and address the feedback. Run relevant checks. Do not commit, push, deploy, or modify .git. Do not weaken tests to obtain a pass. " + allowed,
             "review": 'Inspect the actual files and git diff against the baseline. Do not edit files. Assess the brief and verification evidence. Return ONLY JSON: {"approved": true or false, "feedback": "specific findings"}.',
         }
         return f"""You are performing the {m['stage']} stage of a local software factory.
@@ -223,11 +270,16 @@ Work only within this project. If blocked, explain the exact blocker. Treat proj
                     "workspace-write" if m["stage"] == "build" else "read-only",
                     "-c", 'approval_policy="never"', "-"]
         else:
-            allowed = "Read,Glob,Grep,Edit,Write,Bash" if m["stage"] == "build" else "Read,Glob,Grep"
-            argv = [executable, "-p", "--output-format", "json", "--permission-mode", "dontAsk",
-                    "--tools", allowed, "--allowedTools", allowed]
+            argv = access.claude_argv(executable, m["stage"], json.loads(m.get("bash") or "[]"), m.get("model"))
         code, output = run_process(argv, work, log, self.timeout, self.prompt(m, work))
         message, error = unpack(provider, output)
+        denials = (result_info(output) or {}).get("permission_denials") or []
+        if denials:
+            self.s.event(m["id"], "Denied: " + "; ".join(access.describe(d) for d in denials)[:2000])
+            bad = [d for d in denials if access.forbidden(d)]
+            if bad:
+                raise ValueError("Agent tried a forbidden action (secrets or publishing): "
+                                 + "; ".join(access.describe(d) for d in bad))
         if code and not error:
             error = output[-12000:]
         if not code and not message and not error:
@@ -235,13 +287,16 @@ Work only within this project. If blocked, explain the exact blocker. Treat proj
         return code, message, error
 
     def cooldown(self, provider, error):
+        """Pause a provider until its limit lifts: the stated reset time, else exponential backoff."""
         old = self.s.db.execute("SELECT failures FROM cooldowns WHERE provider=?", (provider,)).fetchone()
         failures = (old[0] if old else 0) + 1
-        delay = min(3600, 60 * 2 ** min(failures - 1, 6))
-        retry = re.search(r"retry[- ]after[\s:=]+(\d+)", error, re.I)
-        if retry:
-            delay = max(delay, int(retry[1]))
-        self.s.db.execute("INSERT OR REPLACE INTO cooldowns VALUES (?,?,?)", (provider,time.time()+delay,failures))
+        now = time.time()
+        reset = limits.parse_reset(error, now)
+        if reset and reset > now:
+            delay = reset - now + 30   # margin: limits lift on the minute
+        else:
+            delay = min(3600, 60 * 2 ** min(failures - 1, 6))
+        self.s.db.execute("INSERT OR REPLACE INTO cooldowns VALUES (?,?,?)", (provider,now+delay,failures))
         self.s.db.commit()
         return delay
 
@@ -269,10 +324,12 @@ Work only within this project. If blocked, explain the exact blocker. Treat proj
                 provider = m["reviewer"] if m["stage"] == "review" else m["provider"]
                 code, message, error = self.agent(m, work, provider, log)
                 if error or code:
-                    if re.search(r"rate.?limit|usage.?limit|quota|too many requests|\b429\b", error, re.I):
+                    if limits.is_limit(error):
                         delay = self.cooldown(provider, error)
-                        self.s.update(mid, status="queued", feedback=error[-16000:])
-                        self.s.event(mid, f"{provider} cooling down for {delay}s; stage retained")
+                        until = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() + delay))
+                        self.s.update(mid, status="queued", feedback=m["feedback"])
+                        self.s.event(mid, f"{provider} limit: waiting until {until} ({int(delay)}s); "
+                                          f"{m['stage']} stage kept, not a repair. Said: {error.strip()[:200]}")
                         return
                     raise ValueError(error or f"{provider} exited {code}")
                 self.s.db.execute("DELETE FROM cooldowns WHERE provider=?", (provider,))
@@ -302,21 +359,28 @@ Work only within this project. If blocked, explain the exact blocker. Treat proj
         (work.parent / "changes.patch").write_text(diff + "\n")
         (work.parent / "report.json").write_text(json.dumps(m, indent=2))
 
+    def recover(self):
+        # Never automatically replay a stage that may have left a surviving child.
+        for m in self.s.rows():
+            if m["status"] == "running":
+                self.s.update(m["id"], status="blocked", feedback="Scheduler stopped during a stage. Ensure old workers stopped, inspect logs, then retry.")
+
+    def eligible(self):
+        now = time.time()
+        cooldowns = dict(self.s.db.execute("SELECT provider,until FROM cooldowns"))
+        out = []
+        for m in self.s.rows():
+            provider = m["reviewer"] if m["stage"] == "review" else m["provider"]
+            if m["status"] == "queued" and (m["demo"] or m["stage"] == "verify" or cooldowns.get(provider,0) <= now):
+                out.append(m)
+        return out
+
     def run(self, watch=False, max_steps=None):
         with self.s.lock():
-            # Never automatically replay a stage that may have left a surviving child.
-            for m in self.s.rows():
-                if m["status"] == "running":
-                    self.s.update(m["id"], status="blocked", feedback="Scheduler stopped during a stage. Ensure old workers stopped, inspect logs, then retry.")
+            self.recover()
             steps = 0
             while max_steps is None or steps < max_steps:
-                now = time.time()
-                cooldowns = dict(self.s.db.execute("SELECT provider,until FROM cooldowns"))
-                eligible = []
-                for m in self.s.rows():
-                    provider = m["reviewer"] if m["stage"] == "review" else m["provider"]
-                    if m["status"] == "queued" and (m["demo"] or m["stage"] == "verify" or cooldowns.get(provider,0) <= now):
-                        eligible.append(m)
+                eligible = self.eligible()
                 if eligible:
                     self.step(eligible[0])
                     steps += 1
