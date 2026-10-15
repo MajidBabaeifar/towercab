@@ -19,8 +19,8 @@ Know how each agent run went: time, cost, quality, my effort. Feeds reports and 
 | MET-7 | After merge: `pr_url`, `merged_by` (me, baton), `changes_requested`, `ci_after_push`, `reverted_within_7d`. | test_run_after_merge |
 | MET-8 | `baton report [--since 7d] [--repo R] [--by model\|repo\|autonomy]`: throughput, lead and cycle time (median, p90), cost per task, first-pass validation rate, revert rate, human wait, top failing checks. | test_report |
 | MET-9 | The report suggests raising or lowering `a` per repo from first-pass and revert rates; never applies it. | test_trust_suggestion |
-| MET-10 | The task row in the store shows totals: cost, agent time, attempts. | manual |
-| MET-11 | Monthly: the report is saved as a page next to the Gradient list, opening the monthly review. | manual |
+| MET-10 | The task's `DONE.md` line shows totals: cost, agent time, attempts ([TSK-6](tasks.md)). | test_done_line |
+| MET-11 | Monthly: the report is saved as `reports/YYYY-MM.md` in `gradient-tasks`, opening the monthly review. | manual |
 
 ## Out of scope
 
