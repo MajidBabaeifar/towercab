@@ -25,7 +25,7 @@ class Store:
     def __init__(self, home):
         self.home = Path(home).resolve()
         self.home.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(self.home / "factory.sqlite3")
+        self.db = sqlite3.connect(self.home / "towercab.sqlite3")
         self.db.row_factory = sqlite3.Row
         self.db.executescript("""
             PRAGMA journal_mode=WAL;
@@ -95,7 +95,7 @@ class Store:
             try:
                 fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
-                raise ValueError("Another scheduler owns this factory") from None
+                raise ValueError("Another scheduler owns this Towercab home") from None
             try:
                 yield
             finally:
@@ -181,7 +181,7 @@ class Factory:
             command(["git", "-c", "user.name=Local Factory", "-c", "user.email=factory@localhost",
                      "commit", "--allow-empty", "-m", "Factory baseline"], work)
         base = command(["git", "rev-parse", "HEAD"], work)
-        command(["git", "checkout", "-b", f"factory/{m['id']}"], work)
+        command(["git", "checkout", "-b", f"towercab/{m['id']}"], work)
         self.s.update(m["id"], workspace=str(work), base=base)
         return work
 
