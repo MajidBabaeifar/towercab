@@ -21,7 +21,7 @@ both implementation and review; Claude isn't required for this first product.
 
 ```bash
 cd ~/Repositories/towercab
-python3 -m towercab --home .towercab-pocket-notes run --watch --timeout 1200
+python3 -m towercab --home .towercab-pocket-notes run --missions-only --watch --timeout 1200
 ```
 
 Keep this terminal open. Each stage has a 20-minute timeout and the mission has

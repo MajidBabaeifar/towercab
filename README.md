@@ -3,7 +3,7 @@
 Personal software factory. One central task list ([gradient-tasks](https://github.com/MajidBabaeifar/gradient-tasks)); agents pick tasks by
 priority, validate, push, and report how they did.
 
-**Status:** MVP runs (below); the target design lives in [specs/](specs/README.md).
+**Status:** reads the task list, delegates, waits out limits, opens PRs, loops. The rest of the design: [specs/](specs/README.md).
 
 ## Target workflow
 
@@ -12,7 +12,35 @@ priority, validate, push, and report how they did.
 - Validation always runs in full; autonomy decides where the task waits for me.
 - `towercab inbox` · `towercab watch <id>` · `towercab review` · `towercab report`
 
-## What runs today: the MVP
+## Run the task list
+
+1. `~/.config/towercab/config.toml` (example: `towercab doctor` prints it if missing):
+
+   ```toml
+   [tasks]
+   remote = "https://github.com/MajidBabaeifar/gradient-tasks.git"
+
+   [repos.towercab]
+   path = "~/Repositories/towercab"
+   verify = ["python3", "-m", "unittest", "discover", "-s", "tests"]
+   bash = ["python3 -m unittest *", "python3 -m towercab *", "git status*", "git diff*", "ls*", "rg *"]
+   ```
+
+2. Then:
+
+   ```bash
+   python3 -m towercab doctor          # git, gh, claude, sandbox (bwrap, socat), config
+   python3 -m towercab next            # what it would run, and why
+   python3 -m towercab run --watch     # work down the list; Ctrl-C stops cleanly
+   ```
+
+Each task: marked `[~]`, planned, built, verified and reviewed in its own checkout, then
+pushed as `towercab/<id>-<slug>` with a PR; the task becomes `[!]` with `pr:` until you merge,
+then moves to `DONE.md` with cost, time and attempts. Blocked or unknown-repo tasks become
+`[!]` with a question in `tasks/<id>.md`; set them back to `[ ]` to retry. Agent access and
+limit handling: [specs/runner.md](specs/runner.md).
+
+## Missions by hand (the original MVP)
 
 Imported from my earlier `local agent` prototype. It predates the specs above.
 
@@ -46,7 +74,7 @@ python3 -m towercab add 'First product' \
   --brief examples/hello.md \
   --provider codex \
   --verify '["python3","-c","from hello import greet; assert greet(\"Factory\") == \"Hello, Factory!\""]'
-python3 -m towercab run
+python3 -m towercab run --missions-only
 python3 -m towercab status
 ```
 
@@ -64,7 +92,7 @@ passing a check is evidence, not proof that all requirements are met.
 ### Operating the queue
 
 ```bash
-python3 -m towercab run --watch --timeout 900
+python3 -m towercab run --missions-only --watch --timeout 900
 python3 -m towercab show MISSION_ID
 python3 -m towercab logs MISSION_ID --follow
 python3 -m towercab retry MISSION_ID
@@ -82,7 +110,7 @@ messages are not parsed yet. Auth, permission, missing executable, and other
 errors block a mission for inspection instead of retrying forever. A retry keeps
 the repair counter; it does not secretly replenish the budget.
 
-State and evidence live under `.towercab/` (or global `--home PATH`):
+State and evidence live under `~/.local/share/towercab` (`--home PATH`, `TOWERCAB_HOME`):
 
 - `towercab.sqlite3`: missions, events and provider cooldowns.
 - `missions/ID/workspace/`: isolated Git checkout and all resulting files.

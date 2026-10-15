@@ -1,15 +1,27 @@
 import argparse
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
 
+from . import config as configmod
 from .core import Factory, Store
+from .runner import Runner
+from .taskrepo import TaskRepo
+
+DEFAULT_HOME = os.environ.get("TOWERCAB_HOME", "~/.local/share/towercab")
+
+
+def runner(args, store):
+    c = configmod.load(args.config)
+    return Runner(store, c, TaskRepo(c.tasks_path, c.tasks_remote))
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Local software factory: plan → build → verify → review")
-    parser.add_argument("--home", default=".towercab", help="Persistent Towercab directory")
+    parser = argparse.ArgumentParser(description="Towercab: work down the Gradient Tasks list with coding agents")
+    parser.add_argument("--home", default=DEFAULT_HOME, help="State directory (missions, logs, database)")
+    parser.add_argument("--config", help=f"Config file (default {configmod.default_path()})")
     sub = parser.add_subparsers(dest="action", required=True)
     sub.add_parser("doctor", help="Check local prerequisites")
     add = sub.add_parser("add", help="Queue a new product or an existing repository mission")
@@ -21,10 +33,13 @@ def main():
     add.add_argument("--reviewer", choices=["codex", "claude"])
     add.add_argument("--max-repairs", type=int, default=2)
     add.add_argument("--priority", type=int, default=0)
-    run = sub.add_parser("run", help="Process runnable stages, then exit; --watch keeps waiting")
+    sub.add_parser("next", help="Show the task Towercab would run next, and why")
+    run = sub.add_parser("run", help="Work down the task list, then exit; --watch keeps going")
     run.add_argument("--watch", action="store_true")
-    run.add_argument("--max-steps", type=int)
-    run.add_argument("--timeout", type=int, default=900, help="Seconds per agent/check invocation")
+    run.add_argument("--max-tasks", type=int, help="Start at most this many tasks")
+    run.add_argument("--missions-only", action="store_true", help="Old mode: only process missions queued with add")
+    run.add_argument("--max-steps", type=int, help="With --missions-only: stop after this many stages")
+    run.add_argument("--timeout", type=int, default=900, help="With --missions-only: seconds per stage")
     sub.add_parser("status")
     show = sub.add_parser("show")
     show.add_argument("id")
@@ -38,17 +53,28 @@ def main():
     try:
         if args.action == "doctor":
             print(f"Python: {sys.version.split()[0]}")
-            for exe in ("git", "codex", "claude"):
+            for exe in ("git", "gh", "claude", "codex", "bwrap", "socat"):
                 print(f"{exe}: {shutil.which(exe) or 'NOT FOUND'}")
+            try:
+                c = configmod.load(args.config)
+                print(f"config: {c.source} ({len(c.repos)} repos: {', '.join(c.repos) or 'none'})")
+            except configmod.ConfigError as exc:
+                print(f"config: {str(exc).splitlines()[0]}")
             print("Authentication is checked by an actual run. Existing CLI login/config is reused.")
             return
-        s = Store(args.home)
+        s = Store(Path(args.home).expanduser())
         if args.action == "add":
             verify = json.loads(args.verify)
             if not isinstance(verify, list):
                 raise ValueError("--verify must be a JSON array")
             s.add(args.title, args.brief.read_text(), args.repo, verify, args.provider,
                   args.reviewer, max_repairs=args.max_repairs, priority=args.priority)
+        elif args.action == "next":
+            task, why = runner(args, s).next()
+            print(f"{task.label}\n  {why}" if task else why)
+        elif args.action == "run" and not args.missions_only:
+            started = runner(args, s).run(args.watch, args.max_tasks)
+            print(f"Started {started} task(s).")
         elif args.action == "run":
             if args.timeout <= 0 or (args.max_steps is not None and args.max_steps <= 0):
                 raise ValueError("Timeout and max-steps must be positive")
