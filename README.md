@@ -30,6 +30,7 @@ priority, validate, push, and report how they did.
 
    ```bash
    python3 -m towercab doctor          # git, gh, claude, sandbox (bwrap, socat), config
+   python3 -m towercab --version       # print version
    python3 -m towercab next            # what it would run, and why
    python3 -m towercab run --watch     # work down the list; Ctrl-C stops cleanly
    ```
