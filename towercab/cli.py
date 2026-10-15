@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import sys
 
+from . import __version__
 from . import config as configmod
 from .core import Factory, Store
 from .runner import Runner
@@ -22,6 +23,7 @@ def main():
     parser = argparse.ArgumentParser(description="Towercab: work down the Gradient Tasks list with coding agents")
     parser.add_argument("--home", default=DEFAULT_HOME, help="State directory (missions, logs, database)")
     parser.add_argument("--config", help=f"Config file (default {configmod.default_path()})")
+    parser.add_argument("--version", action="version", version=f"towercab {__version__}")
     sub = parser.add_subparsers(dest="action", required=True)
     sub.add_parser("doctor", help="Check local prerequisites")
     add = sub.add_parser("add", help="Queue a new product or an existing repository mission")

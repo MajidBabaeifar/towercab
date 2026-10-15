@@ -20,6 +20,7 @@ wait out limits, publish the result, take the next one.
 | RUN-7 | Usage limits: reset time parsed from the message (clock time with zone, date, epoch, retry-after, "in N min"), else backoff 1→60 min; wait until reset + 30 s, resume the same stage, no repair counted, event logged with the time. | test_limits, test_rate_limit_waits_for_reset_and_resumes |
 | RUN-8 | Ready → Towercab commits in the checkout, pushes `towercab/<id>-<slug>`, opens a PR (body: task, mission, repairs, cost, time, review), task `[!]` with `pr:` and `note: review PR`. Merged → line to DONE.md with PR, cost, time, attempts. Closed → `note: PR closed without merge`. | test_three_tasks_back_to_back_then_merged |
 | RUN-9 | `towercab run` takes the next task whenever none is in flight, one at a time, skips `[!]`; `--watch` keeps polling; `--max-tasks N`; Ctrl-C leaves the task `[!]`, never half-running. | test_three_tasks_back_to_back_then_merged, test_ctrl_c_leaves_task_waiting |
+| RUN-10 | `towercab --version` prints `towercab <__version__>` and exits 0. | test_version_flag |
 | RUN-11 | `towercab run --task <id or suffix>` runs only that task, even if `[!]`, then stops; refuses if another task is in flight. For testing. | test_run_only_one_task |
 
 ## Out of scope
