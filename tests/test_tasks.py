@@ -81,6 +81,17 @@ class DocumentTests(unittest.TestCase):
         self.assertEqual(added.id, unscored.id + "-2")
         self.assertIn(f"- [ ] {added.id} u3 i3 a2 towercab: Next thing", doc.render())
 
+    def test_ids_never_reused(self):
+        now = 1760000000
+        doc = Document("- [ ] r: a\n- [ ] r: b\n")
+        doc.taken = {new_id(set(), now)}                 # already in DONE.md
+        first, second = doc.list()
+        doc.normalize(first, now=now)
+        doc.remove(first)                                # moved to DONE.md in the same change
+        doc.normalize(second, now=now)
+        self.assertEqual(first.id, new_id(set(), now) + "-2")
+        self.assertEqual(second.id, new_id(set(), now) + "-3")
+
     def test_get_by_suffix_must_be_unique(self):
         doc = Document("- [ ] 261015-1446 r: a\n- [ ] 261015-1546 r: b\n")
         with self.assertRaises(KeyError):
