@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 
-from .tasks import Document
+from .tasks import Document, done_ids
 
 IDENTITY = ["-c", "user.name=Towercab", "-c", "user.email=towercab@localhost"]
 
@@ -53,7 +53,9 @@ class TaskRepo:
         """Fresh (Document, DONE.md text)."""
         self.pull()
         todo, done = self.files()
-        return Document(todo), done
+        doc = Document(todo)
+        doc.taken = done_ids(done)
+        return doc, done
 
     def task_note(self, task_id):
         f = self.path / "tasks" / f"{task_id}.md"

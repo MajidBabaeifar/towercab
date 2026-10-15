@@ -119,6 +119,7 @@ class Document:
     def __init__(self, text=""):
         self.entries = []  # str (raw line) or Task
         self.errors = []   # (line number, message)
+        self.taken = set()  # IDs used elsewhere (DONE.md, removed tasks): never handed out again
         self.trailing_newline = text.endswith("\n")
         lines = text.split("\n")
         if self.trailing_newline:
@@ -170,6 +171,8 @@ class Document:
         return task
 
     def remove(self, task):
+        if task.id:
+            self.taken.add(task.id)
         self.entries.remove(task)
 
     def update(self, task):
@@ -178,7 +181,7 @@ class Document:
     def normalize(self, task, ids_in_use=(), now=None):
         """Give a task its ID (creation time) and explicit default scores."""
         if not task.id:
-            task.id = new_id({t.id for t in self.list() if t.id} | set(ids_in_use), now)
+            task.id = new_id({t.id for t in self.list() if t.id} | self.taken | set(ids_in_use), now)
         for k, v in DEFAULTS.items():
             task.scores.setdefault(k, v)
         task.raw = None

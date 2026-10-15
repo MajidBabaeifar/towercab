@@ -12,7 +12,7 @@ What a task is, and where tasks live.
 |---|---|---|
 | TSK-1 | Store: private repo `gradient-tasks`. `TODO.md` = open tasks, `DONE.md` = finished/dropped, `tasks/<id>.md` = plan, questions, notes (only when needed). | manual |
 | TSK-2 | Line: `- [m] [<id>] [u<n> i<n> a<n>] <repo>: <title> [after:<id>,…] [@model]`, then optional `  <key>: <value>` lines (`done when`, `pr`, `note`). Marker `[ ]` open, `[~]` running, `[!]` waiting on me. A line that doesn't parse is kept verbatim and reported. | test_every_part, test_errors |
-| TSK-3 | ID = creation time `YYMMDD-HHMM` (local); same-minute clash → `-2`, `-3`. Creation time is read from the ID; no separate field. A task without ID or scores gets them (defaults u3 i3 a2) the first time Towercab touches it. | test_normalize_and_add_assign_ids |
+| TSK-3 | ID = creation time `YYMMDD-HHMM` (local); same-minute clash (incl. IDs in DONE.md) → `-2`, `-3`. Creation time is read from the ID; no separate field. A task without ID or scores gets them (defaults u3 i3 a2) the first time Towercab touches it. | test_normalize_and_add_assign_ids, test_ids_never_reused |
 | TSK-4 | Commands accept any unique ID suffix (`towercab approve 1446`). | test_get_by_suffix_must_be_unique |
 | TSK-5 | Towercab pulls before reading and commits + pushes each write straight to `main`; on conflict it rebases and retries, never overwrites my edits. | test_concurrent_edits_both_kept |
 | TSK-6 | Done: line moves to `DONE.md` as `<date> <id> <repo>: <title> · PR · cost · agent time · attempts`. | test_done_line |
