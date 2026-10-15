@@ -207,6 +207,7 @@ class RunnerTests(unittest.TestCase):
         self.runner.run()
         self.assertEqual(len(self.tg.texts), 1)
         self.assertIn("PR ready", self.tg.texts[0])
+        self.assertIn("Ship it", self.tg.texts[0])              # title, not just the ID
         self.assertIn("https://github.com/o/proj/pull/1", self.tg.texts[0])
         self.assertEqual(self.tg.calls[0][1]["chat_id"], "42")
 
@@ -255,6 +256,7 @@ class RunnerTests(unittest.TestCase):
         self.runner.check_prs(force=True)
         self.assertEqual(len(self.tg.texts), 1)
         self.assertIn("merged", self.tg.texts[0])
+        self.assertIn("Merge me", self.tg.texts[0])
         self.assertIn("proj#1", self.tg.texts[0])
 
     def test_dead_telegram_does_not_stop_loop(self):
