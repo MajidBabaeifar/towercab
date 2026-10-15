@@ -27,6 +27,9 @@ wait out limits, publish the result, take the next one.
 | RUN-14 | Events: PR ready (task, PR URL); task stuck (blocked at stage, reason); task asking (unknown repo, publish failure). | test_notify_pr_ready, test_notify_stuck, test_notify_asking |
 | RUN-15 | Waiting out a limit: message names provider and reset time (local, with zone); sent on the first hit only, not on retries. | test_notify_limit_once |
 | RUN-16 | Task merged (moved to DONE.md): message with task and PR. | test_notify_merged |
+| RUN-17 | `./install.sh` symlinks `bin/towercab` into `${XDG_BIN_HOME:-~/.local/bin}`; `towercab` then works from any folder (launcher resolves its symlink, no dependencies). | test_launcher_from_other_cwd |
+| RUN-18 | `towercab up [--max-tasks N] [--task ID]` execs `systemd-inhibit --what=sleep:idle:handle-lid-switch --who=Towercab --mode=block` around `python -m towercab --home H [--config C] run --watch …`. Inhibit lasts until it exits. | test_up_argv, test_up_argv_passes_options, test_up_execs_inhibit |
+| RUN-19 | `up` without `systemd-inhibit` exits 1 with an error and starts nothing. `doctor` lists `systemd-inhibit`. | test_up_without_systemd_inhibit, test_up_cli_missing_binary_exits_1 |
 
 ## Out of scope
 
@@ -37,4 +40,6 @@ wait out limits, publish the result, take the next one.
 - Every task currently behaves as a3 (PR waits for me); gates come later.
 - Notifications are fire-and-forget: one message per event, no queue. `[telegram].api_base` (default `https://api.telegram.org`) exists for tests.
 - PR state is read with `gh pr view` at most once a minute.
+- Install is a symlink launcher, not pip/pipx: no packaging, Ubuntu PEP 668 safe, edits stay live.
+- Lid inhibit depends on logind/polkit policy; the argv is tested, the effect is not.
 - The checkout clones the pushed `base`, not my working copy, so uncommitted local work never leaks in.
