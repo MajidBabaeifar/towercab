@@ -54,6 +54,23 @@ then moves to `DONE.md` with cost, time and attempts. Blocked or unknown-repo ta
 `[!]` with a question in `tasks/<id>.md`; set them back to `[ ]` to retry. Agent access and
 limit handling: [specs/runner.md](specs/runner.md).
 
+## Telegram notifications
+
+Optional. Towercab messages you when a PR is ready, a task is stuck or asking, a usage limit
+makes it wait (with the reset time), and when a task is merged.
+
+1. In Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`, follow the prompts, copy the token.
+2. Send your new bot any message, then open `https://api.telegram.org/bot<token>/getUpdates` and copy `chat` → `id`.
+3. Add to `config.toml`:
+
+   ```toml
+   [telegram]
+   bot_token = "123456:ABC..."
+   chat_id = "123456789"
+   ```
+
+A failed send (offline, bad token) is logged once and ignored; the loop never stops for it.
+
 ## Missions by hand (the original MVP)
 
 Imported from my earlier `local agent` prototype. It predates the specs above.

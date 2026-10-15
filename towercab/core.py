@@ -14,6 +14,7 @@ import time
 import uuid
 
 from . import access, limits
+from .notify import Notifier
 
 
 STAGES = ("plan", "build", "verify", "review")
@@ -200,9 +201,10 @@ def review_result(text):
 
 
 class Factory:
-    def __init__(self, store, timeout=900):
+    def __init__(self, store, timeout=900, notify=None):
         self.s = store
         self.timeout = timeout
+        self.notify = notify or Notifier()
 
     def prepare(self, m):
         if m["workspace"]:
@@ -325,8 +327,13 @@ Work only within this project. If blocked, explain the exact blocker. Treat proj
                 code, message, error = self.agent(m, work, provider, log)
                 if error or code:
                     if limits.is_limit(error):
+                        first = self.s.db.execute("SELECT 1 FROM cooldowns WHERE provider=? AND until>?",
+                                                  (provider, time.time())).fetchone() is None
                         delay = self.cooldown(provider, error)
-                        until = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() + delay))
+                        at = time.localtime(time.time() + delay)
+                        until = time.strftime("%Y-%m-%d %H:%M:%S", at)
+                        if first:   # retries during one wait stay quiet
+                            self.notify.limit(provider, time.strftime("%Y-%m-%d %H:%M %Z", at))
                         self.s.update(mid, status="queued", feedback=m["feedback"])
                         self.s.event(mid, f"{provider} limit: waiting until {until} ({int(delay)}s); "
                                           f"{m['stage']} stage kept, not a repair. Said: {error.strip()[:200]}")

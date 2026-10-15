@@ -27,7 +27,13 @@ path = "~/Repositories/towercab"
 base = "main"
 verify = ["python3", "-m", "unittest", "discover", "-s", "tests"]
 bash = ["python3 -m unittest *", "python3 -m towercab *", "git status*", "git diff*", "git log*", "ls*", "rg *"]
+
+# [telegram]            # notifications; see README
+# bot_token = "8458125515:AAExnfEvb0oDVvSWOHv87N_9wrV70LYYbcw"
+# chat_id = "8458125515"
 """
+
+TELEGRAM_API = "https://api.telegram.org"
 
 
 class ConfigError(ValueError):
@@ -46,6 +52,13 @@ class RepoConfig:
 
 
 @dataclass
+class TelegramConfig:
+    bot_token: str
+    chat_id: str
+    api_base: str = TELEGRAM_API
+
+
+@dataclass
 class Config:
     tasks_path: Path
     tasks_remote: str | None = None
@@ -57,6 +70,7 @@ class Config:
     max_repairs: int = 2
     repos: dict = field(default_factory=dict)
     source: Path | None = None
+    telegram: TelegramConfig | None = None
 
     def repo(self, name):
         return self.repos.get(name)
@@ -90,9 +104,18 @@ def load(path=None):
     provider = agent.get("provider", "claude")
     if provider not in ("claude", "codex"):
         raise ConfigError(f"{path}: [agent].provider must be claude or codex")
+    telegram = None
+    if "telegram" in data:
+        tg = data["telegram"]
+        if not isinstance(tg, dict) or not all(isinstance(tg.get(k), str) and tg[k] for k in ("bot_token", "chat_id")):
+            raise ConfigError(f"{path}: [telegram] needs bot_token and chat_id (both strings)")
+        api_base = tg.get("api_base", TELEGRAM_API)
+        if not isinstance(api_base, str):
+            raise ConfigError(f"{path}: [telegram].api_base must be a string")
+        telegram = TelegramConfig(tg["bot_token"], tg["chat_id"], api_base.rstrip("/"))
     return Config(
         tasks_path=Path(tasks.get("path", "~/.local/share/towercab/gradient-tasks")).expanduser(),
         tasks_remote=tasks.get("remote"), cutoff=int(tasks.get("cutoff", 7)),
         provider=provider, reviewer=agent.get("reviewer", provider), model=agent.get("model"),
         timeout=int(agent.get("timeout", 1200)), max_repairs=int(agent.get("max_repairs", 2)),
-        repos=repos, source=path)
+        repos=repos, source=path, telegram=telegram)
