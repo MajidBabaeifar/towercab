@@ -1,4 +1,5 @@
-"""Telegram notifications: one plain-text message per event, never fatal (RUN-12..16)."""
+"""Telegram notifications: one plain-text message per event, never fatal (RUN-12..16).
+Also polls incoming messages for commands (RUN-20, RUN-21)."""
 from __future__ import annotations
 
 import json
@@ -21,26 +22,49 @@ class Notifier:
     def enabled(self):
         return bool(self.token and self.chat_id)
 
-    def send(self, text):
-        if not self.enabled:
-            return False
-        body = json.dumps({"chat_id": self.chat_id, "text": text[:4000]}).encode()
-        req = urllib.request.Request(f"{self.api_base}/bot{self.token}/sendMessage", data=body,
+    def _call(self, method, payload):
+        """POST to the Bot API. Returns the decoded JSON, or None on any failure (logged once per outage)."""
+        req = urllib.request.Request(f"{self.api_base}/bot{self.token}/{method}", data=json.dumps(payload).encode(),
                                      headers={"Content-Type": "application/json"}, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                resp.read()
+                raw = resp.read()
         except Exception as exc:
             if not self._failing:   # one line per outage, not per message
                 reason = str(getattr(exc, "reason", None) or exc).replace(self.token, "<token>")
                 try:
-                    self.out(f"telegram: send failed ({type(exc).__name__}: {reason})")
+                    self.out(f"telegram: {'send' if method == 'sendMessage' else method} failed ({type(exc).__name__}: {reason})")
                 except Exception:
                     pass
             self._failing = True
-            return False
+            return None
         self._failing = False
-        return True
+        try:
+            return json.loads(raw or b"{}")
+        except ValueError:
+            return {}
+
+    def send(self, text):
+        if not self.enabled:
+            return False
+        return self._call("sendMessage", {"chat_id": self.chat_id, "text": text[:4000]}) is not None
+
+    def updates(self, offset=None):
+        """Incoming messages as [(update_id, chat_id, text)]; [] when disabled or on any failure (RUN-20)."""
+        if not self.enabled:
+            return []
+        payload = {"timeout": 0, "allowed_updates": ["message"]}
+        if offset is not None:
+            payload["offset"] = offset
+        data = self._call("getUpdates", payload)
+        found = []
+        try:
+            for u in (data or {}).get("result", []):
+                msg = u.get("message") or {}
+                found.append((int(u["update_id"]), str((msg.get("chat") or {}).get("id", "")), msg.get("text") or ""))
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return found
+        return found
 
     # --- one formatter per event ------------------------------------------
     def pr_ready(self, task, url):
