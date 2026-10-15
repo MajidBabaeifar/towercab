@@ -8,6 +8,7 @@ import subprocess
 import time
 
 from .core import Factory, command, mission_usage
+from .format import file_bullets, pr_body
 from .notify import Notifier
 from .tasks import done_line, pick_next
 
@@ -114,11 +115,9 @@ class Runner:
         command(["git", *ident, "commit", "-q", "-m", f"{title}\n\nTask {m['task']}, Towercab mission {m['id']}."], work)
         command(["git", "push", "-q", m["remote"], f"HEAD:refs/heads/{branch}"], work)
         cost, seconds = mission_usage(work.parent)
-        review = (work.parent / "review.txt").read_text() if (work.parent / "review.txt").exists() else ""
-        usage = f"${cost:.2f} API-equivalent · {seconds / 60:.1f} min agent time" if cost is not None else "usage unknown"
-        body = (f"Task `{m['task']}` · mission `{m['id']}` · {m['repairs']} repairs · {usage}\n\n"
-                f"Review: {review.strip()[:1500]}\n\nTest:\n- [x] verify: `{' '.join(json.loads(m['verify']))}`\n"
-                f"- [x] reviewer agent approved\n\n🤖 Built by Towercab")
+        diff = subprocess.run(["git", "diff", "--name-status", "HEAD~1", "HEAD"], cwd=work, capture_output=True, text=True).stdout
+        body = pr_body(title, file_bullets(diff), " ".join(json.loads(m["verify"])), True, True, m["feedback"],
+                       m["task"], m["id"], cost, seconds, m["repairs"])
         argv = [self.gh, "pr", "create", "--base", m["branch"] or "main", "--head", branch, "--title", title, "--body", body]
         gh_repo = GITHUB_RE.search(m["remote"] or "")
         if gh_repo:

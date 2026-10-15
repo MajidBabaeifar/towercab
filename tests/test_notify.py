@@ -33,12 +33,13 @@ class NotifyTests(unittest.TestCase):
         n.asking("T-1", "which repo?")
         n.limit("claude", "2026-10-15 15:00 CEST")
         n.merged("T-1", "proj#1")
-        t = self.api.texts
-        self.assertIn("T-1", t[0]); self.assertIn("https://x/pull/1", t[0])
-        self.assertIn("build", t[1]); self.assertIn("tests fail", t[1])
-        self.assertIn("which repo?", t[2])
-        self.assertIn("claude", t[3]); self.assertIn("2026-10-15 15:00 CEST", t[3])
-        self.assertIn("proj#1", t[4])
+        self.assertEqual(self.api.texts, [
+            "✅ T-1: PR ready\nReview: https://x/pull/1",
+            "⛔ T-1: stuck at build\nAnswer in its tasks/ note, then set [ ]\ntests fail",
+            "❓ T-1: needs you\nwhich repo?",
+            "⏳ claude: limit hit\nResumes 2026-10-15 15:00 CEST",
+            "🎉 T-1: merged\nproj#1",
+        ])
 
     def test_failures_never_raise(self):
         self.api.status = 500

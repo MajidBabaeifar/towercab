@@ -49,6 +49,7 @@ with (d / "gh.log").open("a") as f:
 if args[:2] == ["pr", "create"]:
     n = len(list(d.glob("pr-*"))) + 1
     (d / f"pr-{n}").write_text(args[args.index("--head") + 1])
+    (d / f"body-{n}").write_text(args[args.index("--body") + 1])
     print(f"https://github.com/o/proj/pull/{n}")
 elif args[:2] == ["pr", "view"]:
     print((d / "state").read_text().strip() if (d / "state").exists() else "OPEN")
@@ -210,6 +211,22 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("Ship it", self.tg.texts[0])              # title, not just the ID
         self.assertIn("https://github.com/o/proj/pull/1", self.tg.texts[0])
         self.assertEqual([b for p, b in self.tg.calls if p.endswith("/sendMessage")][0]["chat_id"], "42")
+
+    def test_pr_body_has_layout(self):
+        self.write_tasks("- [ ] proj: Ship it\n")
+        self.runner.run()
+        gh_log = (self.fake / "gh.log").read_text()
+        self.assertIn("pr create", gh_log)
+        body = (self.fake / "body-1").read_text()
+        lines = body.splitlines()
+        self.assertEqual(lines[0], "Ship it")
+        self.assertEqual(lines[2], "## What changed")
+        self.assertIn("- added `done-", body)
+        self.assertIn("## Checks\n- Verify: passed — `", body)
+        self.assertIn("- Review: approved — looks right", body)
+        self.assertRegex(body, r"<sub>Task `\d{6}-\d{4}(-\d+)?` · mission `\w+` · \$0\.03 · 0\.1 min</sub>")
+        self.assertNotIn('"approved"', body)
+        self.assertNotIn("{", body)
 
     def test_notify_stuck(self):
         self.write_tasks("- [ ] proj: LEAK the keys\n")
