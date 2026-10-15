@@ -11,7 +11,7 @@ How far an agent may take a task before it waits for me.
 | ID | Requirement | Verified by |
 |---|---|---|
 | AUT-1 | a1: marked `[!]`; no code until I write the plan in `tasks/<id>.md` and set `[ ]`; PR waits for my merge. | test_gate_a1 |
-| AUT-2 | a2: agent writes a plan (spec rows + 3–7 steps) to `tasks/<id>.md` and marks `[!]`; codes after I set `[ ]` or run `baton approve <id>`; PR waits. | test_gate_a2 |
+| AUT-2 | a2: agent writes a plan (spec rows + 3–7 steps) to `tasks/<id>.md` and marks `[!]`; codes after I set `[ ]` or run `towercab approve <id>`; PR waits. | test_gate_a2 |
 | AUT-3 | a3: codes right away; PR waits for my merge. | test_gate_a3 |
 | AUT-4 | a4: merges itself once validation passes; notifies me. | test_gate_a4 |
 | AUT-5 | a5: as a4, then deploys (repo config), watches post-deploy checks, reverts on failure. | test_gate_a5 |

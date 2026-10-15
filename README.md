@@ -1,4 +1,4 @@
-# baton
+# Towercab
 
 Personal software factory. One central task list ([gradient-tasks](https://github.com/MajidBabaeifar/gradient-tasks)); agents pick tasks by
 priority, validate, push, and report how they did.
@@ -8,14 +8,14 @@ priority, validate, push, and report how they did.
 ## Target workflow
 
 - Tasks live in `gradient-tasks`, each scored urgency, importance, autonomy (1–5).
-- baton picks the top runnable task, claims it, runs an agent in its own worktree.
+- Towercab picks the top runnable task, claims it, runs an agent in its own worktree.
 - Validation always runs in full; autonomy decides where the task waits for me.
-- `baton inbox` · `baton watch <id>` · `baton review` · `baton report`
+- `towercab inbox` · `towercab watch <id>` · `towercab review` · `towercab report`
 
 ## What runs today: the MVP
 
 Imported from my earlier `local agent` prototype. Still named `factory` inside;
-renaming it to `baton` is the first task. It predates the specs above.
+renaming it to `towercab` is the first task. It predates the specs above.
 
 For a first useful product, follow [Pocket Notes setup and monitoring](examples/pocket-notes/RUN.md).
 
