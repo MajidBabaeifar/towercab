@@ -8,6 +8,7 @@ import subprocess
 import time
 
 from .core import Factory, command, mission_usage
+from .notify import Notifier
 from .tasks import done_line, pick_next
 
 GITHUB_RE = re.compile(r"github\.com[:/](?P<repo>[^/]+/[^/]+?)(?:\.git)?/?$")
@@ -33,9 +34,10 @@ def find(doc, ref):
 
 
 class Runner:
-    def __init__(self, store, config, tasks, gh="gh", out=print, pr_interval=60):
+    def __init__(self, store, config, tasks, gh="gh", out=print, pr_interval=60, notify=None):
         self.s, self.c, self.tasks, self.gh, self.out = store, config, tasks, gh, out
-        self.factory = Factory(store, config.timeout)
+        self.notify = notify or Notifier.from_config(config, out)
+        self.factory = Factory(store, config.timeout, self.notify)
         self.pr_interval = pr_interval
         self._last_pr_check = 0.0
 
@@ -71,6 +73,7 @@ class Runner:
             self.ask(ref, f"Repo `{task.repo}` isn't in {self.c.source}. Add a `[repos.{task.repo}]` "
                           "section (path, verify, bash), then set this task back to `[ ]`.", note="unknown repo")
             self.out(f"{task.label}: unknown repo, asked you")
+            self.notify.asking(task.label, f"Unknown repo `{task.repo}`: add it to {self.c.source}.")
             return None
 
         def claim(doc, files):
@@ -135,6 +138,7 @@ class Runner:
                     err = getattr(exc, "stderr", "") or str(exc)
                     self.ask(ref, f"Mission {m['id']} passed review but publishing failed:\n\n{err.strip()[:1500]}\n\n"
                                   f"Workspace: {m['workspace']}")
+                    self.notify.asking(m["task"], f"Publishing failed:\n{err.strip()[-300:]}")
                 else:
                     def mark(doc, files):
                         t = find(doc, ref)
@@ -145,11 +149,13 @@ class Runner:
                     self.tasks.mutate(mark, f"Towercab: {m['task']} ready, {short_pr(url)}")
                     self.s.event(m["id"], f"PR opened: {url}")
                     self.out(f"{m['task']} → {url}")
+                    self.notify.pr_ready(m["task"], url)
             else:
                 self.ask(ref, f"Mission {m['id']} stopped at the {m['stage']} stage:\n\n{m['feedback'].strip()[-1500:]}\n\n"
                               "Answer here if it helps, then set the task back to `[ ]` to run it again.",
                          note=f"blocked at {m['stage']}")
                 self.out(f"{m['task']} blocked at {m['stage']}; asked you")
+                self.notify.stuck(m["task"], m["stage"], m["feedback"])
             self.s.update(m["id"], handled=1)
 
     def check_prs(self, force=False):
@@ -186,6 +192,7 @@ class Runner:
                     files["DONE.md"] = files["DONE.md"].rstrip("\n") + "\n" + line + "\n"
                 self.tasks.mutate(done, f"Towercab: {t.id} merged")
                 self.out(f"{t.id} merged → DONE.md")
+                self.notify.merged(t.id, short_pr(url))
             elif state == "CLOSED" and t.get("note") != "PR closed without merge":
                 ref = {"id": t.id}
                 self.tasks.mutate(lambda doc, files: find(doc, ref) and find(doc, ref).set("note", "PR closed without merge"),

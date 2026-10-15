@@ -11,7 +11,7 @@ wait out limits, publish the result, take the next one.
 
 | ID | Requirement | Verified by |
 |---|---|---|
-| RUN-1 | Config `~/.config/towercab/config.toml` (or `--config`, `TOWERCAB_CONFIG`): `[tasks]` remote/path/cutoff, `[agent]` provider/reviewer/model/timeout/max_repairs, `[repos.<name>]` path, verify argv, bash allowlist, base. | test_example_loads, test_bad_repo |
+| RUN-1 | Config `~/.config/towercab/config.toml` (or `--config`, `TOWERCAB_CONFIG`): `[tasks]` remote/path/cutoff, `[agent]` provider/reviewer/model/timeout/max_repairs, `[repos.<name>]` path, verify argv, bash allowlist, base; optional `[telegram]` bot_token + chat_id (both strings, or `ConfigError`). | test_example_loads, test_bad_repo, test_telegram_config |
 | RUN-2 | Towercab works in its own clone of the task repo (default `~/.local/share/towercab/gradient-tasks`); state in `~/.local/share/towercab` (`--home`, `TOWERCAB_HOME`). | test_clones_and_reads |
 | RUN-3 | A task whose repo isn't configured is marked `[!]`, `note: unknown repo`, question in `tasks/<id>.md`; the loop moves on. | test_unknown_repo_asks_instead_of_crashing |
 | RUN-4 | `towercab next` prints the task it would run and why (priority, order, what was skipped). | test_next_explains, test_order_and_reason |
@@ -22,6 +22,11 @@ wait out limits, publish the result, take the next one.
 | RUN-9 | `towercab run` takes the next task whenever none is in flight, one at a time, skips `[!]`; `--watch` keeps polling; `--max-tasks N`; Ctrl-C leaves the task `[!]`, never half-running. | test_three_tasks_back_to_back_then_merged, test_ctrl_c_leaves_task_waiting |
 | RUN-10 | `towercab --version` prints `towercab <__version__>` and exits 0. | test_version_flag |
 | RUN-11 | `towercab run --task <id or suffix>` runs only that task, even if `[!]`, then stops; refuses if another task is in flight. For testing. | test_run_only_one_task |
+| RUN-12 | With `[telegram]`, Towercab sends plain-text messages via the Bot API `sendMessage` (stdlib `urllib`, 10 s timeout, no retries). Without it, nothing is sent. | test_send_request, test_disabled_without_config |
+| RUN-13 | A failed send (HTTP error, refused, timeout) returns False, logs once without the token, never raises; the loop continues. | test_failures_never_raise, test_dead_telegram_does_not_stop_loop |
+| RUN-14 | Events: PR ready (task, PR URL); task stuck (blocked at stage, reason); task asking (unknown repo, publish failure). | test_notify_pr_ready, test_notify_stuck, test_notify_asking |
+| RUN-15 | Waiting out a limit: message names provider and reset time (local, with zone); sent on the first hit only, not on retries. | test_notify_limit_once |
+| RUN-16 | Task merged (moved to DONE.md): message with task and PR. | test_notify_merged |
 
 ## Out of scope
 
@@ -30,5 +35,6 @@ wait out limits, publish the result, take the next one.
 ## Decisions
 
 - Every task currently behaves as a3 (PR waits for me); gates come later.
+- Notifications are fire-and-forget: one message per event, no queue. `[telegram].api_base` (default `https://api.telegram.org`) exists for tests.
 - PR state is read with `gh pr view` at most once a minute.
 - The checkout clones the pushed `base`, not my working copy, so uncommitted local work never leaks in.
