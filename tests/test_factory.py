@@ -7,7 +7,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from factory.core import Factory, Store, command, review_result, run_process, unpack
+from towercab.core import Factory, Store, command, review_result, run_process, unpack
 
 
 class FactoryTests(unittest.TestCase):

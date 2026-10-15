@@ -5,8 +5,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from factory.core import Store
-from factory.monitor import logs, readable
+from towercab.core import Store
+from towercab.monitor import logs, readable
 
 
 class MonitorTests(unittest.TestCase):

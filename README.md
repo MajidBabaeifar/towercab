@@ -14,8 +14,7 @@ priority, validate, push, and report how they did.
 
 ## What runs today: the MVP
 
-Imported from my earlier `local agent` prototype. Still named `factory` inside;
-renaming it to `towercab` is the first task. It predates the specs above.
+Imported from my earlier `local agent` prototype. It predates the specs above.
 
 For a first useful product, follow [Pocket Notes setup and monitoring](examples/pocket-notes/RUN.md).
 
@@ -28,9 +27,9 @@ review**, feeding failed checks/review findings back into a bounded repair loop.
 From this directory:
 
 ```bash
-python3 -m factory doctor
-python3 -m factory --home /tmp/factory-demo demo
-python3 -m factory --home /tmp/factory-demo status
+python3 -m towercab doctor
+python3 -m towercab --home /tmp/towercab-demo demo
+python3 -m towercab --home /tmp/towercab-demo status
 python3 -m unittest discover -s tests -v
 ```
 
@@ -43,12 +42,12 @@ Install/login to Codex and/or Claude Code first; the factory reuses their CLI
 authentication. `doctor` reports executable availability, not login validity.
 
 ```bash
-python3 -m factory add 'First product' \
+python3 -m towercab add 'First product' \
   --brief examples/hello.md \
   --provider codex \
   --verify '["python3","-c","from hello import greet; assert greet(\"Factory\") == \"Hello, Factory!\""]'
-python3 -m factory run
-python3 -m factory status
+python3 -m towercab run
+python3 -m towercab status
 ```
 
 Add `--reviewer claude` for cross-provider review. For an existing project, add
@@ -65,10 +64,10 @@ passing a check is evidence, not proof that all requirements are met.
 ### Operating the queue
 
 ```bash
-python3 -m factory run --watch --timeout 900
-python3 -m factory show MISSION_ID
-python3 -m factory logs MISSION_ID --follow
-python3 -m factory retry MISSION_ID
+python3 -m towercab run --watch --timeout 900
+python3 -m towercab show MISSION_ID
+python3 -m towercab logs MISSION_ID --follow
+python3 -m towercab retry MISSION_ID
 ```
 
 `run` drains currently eligible work and exits. `--watch` keeps waiting for new
@@ -83,9 +82,9 @@ messages are not parsed yet. Auth, permission, missing executable, and other
 errors block a mission for inspection instead of retrying forever. A retry keeps
 the repair counter; it does not secretly replenish the budget.
 
-State and evidence live under `.factory/` (or global `--home PATH`):
+State and evidence live under `.towercab/` (or global `--home PATH`):
 
-- `factory.sqlite3`: missions, events and provider cooldowns.
+- `towercab.sqlite3`: missions, events and provider cooldowns.
 - `missions/ID/workspace/`: isolated Git checkout and all resulting files.
 - `missions/ID/*-STAGE.log`: full process output.
 - `missions/ID/plan.txt`, `review.txt`, `changes.patch`, `report.json`: evidence.

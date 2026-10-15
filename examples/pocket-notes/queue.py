@@ -4,12 +4,12 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from factory.core import Store
+from towercab.core import Store
 
 
 if __name__ == "__main__":
     example = Path(__file__).resolve().parent
-    store = Store(ROOT / ".factory-pocket-notes")
+    store = Store(ROOT / ".towercab-pocket-notes")
     # Dedicated queue: rerunning setup must not duplicate the mission.
     missions = store.rows()
     if missions:

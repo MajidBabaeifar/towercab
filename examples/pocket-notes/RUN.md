@@ -8,9 +8,9 @@ The application will be built when you start the scheduler.
 
 ```bash
 cd ~/Repositories/towercab
-python3 -m factory doctor
+python3 -m towercab doctor
 python3 examples/pocket-notes/queue.py
-python3 -m factory --home .factory-pocket-notes status
+python3 -m towercab --home .towercab-pocket-notes status
 ```
 
 Copy the printed mission ID for the monitoring commands below. The dedicated
@@ -21,7 +21,7 @@ both implementation and review; Claude isn't required for this first product.
 
 ```bash
 cd ~/Repositories/towercab
-python3 -m factory --home .factory-pocket-notes run --watch --timeout 1200
+python3 -m towercab --home .towercab-pocket-notes run --watch --timeout 1200
 ```
 
 Keep this terminal open. Each stage has a 20-minute timeout and the mission has
@@ -35,7 +35,7 @@ Replace MISSION_ID with the ID printed by setup:
 
 ```bash
 cd ~/Repositories/towercab
-python3 -m factory --home .factory-pocket-notes logs MISSION_ID --follow
+python3 -m towercab --home .towercab-pocket-notes logs MISSION_ID --follow
 ```
 
 This prints Codex messages, executed commands, their output, stage changes, and
@@ -45,13 +45,13 @@ here stops only monitoring. Full unfiltered logs remain on disk.
 For a compact view of stages and provider cooldowns, use another terminal:
 
 ```bash
-watch -n 2 'python3 -m factory --home .factory-pocket-notes status'
+watch -n 2 'python3 -m towercab --home .towercab-pocket-notes status'
 ```
 
 For detailed state and event history:
 
 ```bash
-python3 -m factory --home .factory-pocket-notes show MISSION_ID
+python3 -m towercab --home .towercab-pocket-notes show MISSION_ID
 ```
 
 `queued` means waiting to run (or cooling down), `running` identifies the active
@@ -65,7 +65,7 @@ does not reset the repair budget. Review findings and logs before retrying.
 ## 4. Try the generated application when ready
 
 ```bash
-cd ~/Repositories/towercab/.factory-pocket-notes/missions/MISSION_ID/workspace
+cd ~/Repositories/towercab/.towercab-pocket-notes/missions/MISSION_ID/workspace
 python3 notes.py --help
 python3 notes.py add 'First factory product' --body 'Built by my local factory' --tag projects
 python3 notes.py list

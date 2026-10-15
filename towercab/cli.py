@@ -9,7 +9,7 @@ from .core import Factory, Store
 
 def main():
     parser = argparse.ArgumentParser(description="Local software factory: plan → build → verify → review")
-    parser.add_argument("--home", default=".factory", help="Persistent factory directory")
+    parser.add_argument("--home", default=".towercab", help="Persistent Towercab directory")
     sub = parser.add_subparsers(dest="action", required=True)
     sub.add_parser("doctor", help="Check local prerequisites")
     add = sub.add_parser("add", help="Queue a new product or an existing repository mission")

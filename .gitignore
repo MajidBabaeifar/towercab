@@ -1,4 +1,4 @@
-.factory/
-.factory-*/
+.towercab/
+.towercab-*/
 __pycache__/
 *.pyc
