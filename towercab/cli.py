@@ -19,6 +19,32 @@ def runner(args, store):
     return Runner(store, c, TaskRepo(c.tasks_path, c.tasks_remote))
 
 
+INHIBIT = ["systemd-inhibit", "--what=sleep:idle:handle-lid-switch", "--who=Towercab",
+           "--why=Working down the task list", "--mode=block"]
+
+
+def up_argv(args, python=None):
+    """argv for `run --watch` under systemd-inhibit; global options pass through."""
+    argv = INHIBIT + [python or sys.executable, "-m", "towercab", "--home", args.home]
+    if args.config:
+        argv += ["--config", args.config]
+    argv += ["run", "--watch"]
+    if args.max_tasks is not None:
+        argv += ["--max-tasks", str(args.max_tasks)]
+    if args.task:
+        argv += ["--task", args.task]
+    return argv
+
+
+def up(args):
+    if not shutil.which("systemd-inhibit"):
+        raise RuntimeError("systemd-inhibit not found; `towercab up` needs systemd. Use `towercab run --watch` instead.")
+    root = str(Path(__file__).resolve().parent.parent)
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(filter(None, [root, os.environ.get("PYTHONPATH")])))
+    argv = up_argv(args)
+    os.execvpe(argv[0], argv, env)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Towercab: work down the Gradient Tasks list with coding agents")
     parser.add_argument("--home", default=DEFAULT_HOME, help="State directory (missions, logs, database)")
@@ -43,6 +69,9 @@ def main():
     run.add_argument("--missions-only", action="store_true", help="Old mode: only process missions queued with add")
     run.add_argument("--max-steps", type=int, help="With --missions-only: stop after this many stages")
     run.add_argument("--timeout", type=int, default=900, help="With --missions-only: seconds per stage")
+    upp = sub.add_parser("up", help="run --watch, keeping the laptop awake (sleep, idle, lid) while it runs")
+    upp.add_argument("--max-tasks", type=int, help="Start at most this many tasks")
+    upp.add_argument("--task", metavar="ID", help="Run only this task (see run --task)")
     sub.add_parser("status")
     show = sub.add_parser("show")
     show.add_argument("id")
@@ -56,7 +85,7 @@ def main():
     try:
         if args.action == "doctor":
             print(f"Python: {sys.version.split()[0]}")
-            for exe in ("git", "gh", "claude", "codex", "bwrap", "socat"):
+            for exe in ("git", "gh", "claude", "codex", "bwrap", "socat", "systemd-inhibit"):
                 print(f"{exe}: {shutil.which(exe) or 'NOT FOUND'}")
             try:
                 c = configmod.load(args.config)
@@ -64,6 +93,9 @@ def main():
             except configmod.ConfigError as exc:
                 print(f"config: {str(exc).splitlines()[0]}")
             print("Authentication is checked by an actual run. Existing CLI login/config is reused.")
+            return
+        if args.action == "up":
+            up(args)
             return
         s = Store(Path(args.home).expanduser())
         if args.action == "add":

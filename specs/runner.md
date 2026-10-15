@@ -22,6 +22,9 @@ wait out limits, publish the result, take the next one.
 | RUN-9 | `towercab run` takes the next task whenever none is in flight, one at a time, skips `[!]`; `--watch` keeps polling; `--max-tasks N`; Ctrl-C leaves the task `[!]`, never half-running. | test_three_tasks_back_to_back_then_merged, test_ctrl_c_leaves_task_waiting |
 | RUN-10 | `towercab --version` prints `towercab <__version__>` and exits 0. | test_version_flag |
 | RUN-11 | `towercab run --task <id or suffix>` runs only that task, even if `[!]`, then stops; refuses if another task is in flight. For testing. | test_run_only_one_task |
+| RUN-12 | `./install.sh` symlinks `bin/towercab` into `${XDG_BIN_HOME:-~/.local/bin}`; `towercab` then works from any folder (launcher resolves its symlink, no dependencies). | test_launcher_from_other_cwd |
+| RUN-13 | `towercab up [--max-tasks N] [--task ID]` execs `systemd-inhibit --what=sleep:idle:handle-lid-switch --who=Towercab --mode=block` around `python -m towercab --home H [--config C] run --watch …`. Inhibit lasts until it exits. | test_up_argv, test_up_argv_passes_options, test_up_execs_inhibit |
+| RUN-14 | `up` without `systemd-inhibit` exits 1 with an error and starts nothing. `doctor` lists `systemd-inhibit`. | test_up_without_systemd_inhibit, test_up_cli_missing_binary_exits_1 |
 
 ## Out of scope
 
@@ -31,4 +34,6 @@ wait out limits, publish the result, take the next one.
 
 - Every task currently behaves as a3 (PR waits for me); gates come later.
 - PR state is read with `gh pr view` at most once a minute.
+- Install is a symlink launcher, not pip/pipx: no packaging, Ubuntu PEP 668 safe, edits stay live.
+- Lid inhibit depends on logind/polkit policy; the argv is tested, the effect is not.
 - The checkout clones the pushed `base`, not my working copy, so uncommitted local work never leaks in.

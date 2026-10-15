@@ -26,15 +26,27 @@ priority, validate, push, and report how they did.
    bash = ["python3 -m unittest *", "python3 -m towercab *", "git status*", "git diff*", "ls*", "rg *"]
    ```
 
-2. Then:
+2. Install once (links `towercab` into `~/.local/bin`; make sure that is on `PATH`):
 
    ```bash
-   python3 -m towercab doctor          # git, gh, claude, sandbox (bwrap, socat), config
-   python3 -m towercab --version       # print version
-   python3 -m towercab next            # what it would run, and why
-   python3 -m towercab run --watch     # work down the list; Ctrl-C stops cleanly
-   python3 -m towercab run --task 1715 # just this one task (ID or unique suffix), even if [!]
+   ./install.sh
    ```
+
+3. Then, from any folder:
+
+   ```bash
+   towercab doctor          # git, gh, claude, sandbox (bwrap, socat), systemd-inhibit, config
+   towercab --version       # print version
+   towercab next            # what it would run, and why
+   towercab run --watch     # work down the list; Ctrl-C stops cleanly
+   towercab run --task 1715 # just this one task (ID or unique suffix), even if [!]
+   towercab up              # run --watch, laptop kept awake
+   ```
+
+`towercab up [--max-tasks N] [--task ID]` runs the same loop under
+`systemd-inhibit --what=sleep:idle:handle-lid-switch --mode=block`. Sleep, idle and
+lid-close are blocked only while it runs; Ctrl-C stops the loop and releases them.
+Lid inhibit depends on your logind/polkit policy. Needs systemd; otherwise use `run --watch`.
 
 Each task: marked `[~]`, planned, built, verified and reviewed in its own checkout, then
 pushed as `towercab/<id>-<slug>` with a PR; the task becomes `[!]` with `pr:` until you merge,
@@ -135,8 +147,8 @@ Inspect the workspace diff before copying/integrating changes into your project.
   approvals disabled (requests requiring approval fail). Claude uses explicit tool
   allowlists and dontAsk. Claude Bash and verification are **not OS sandboxes**;
   use trusted projects. Full permission bypass flags are never used.
-- The host must stay awake and connected for real agent work. This MVP does not
-  install a background service or change laptop power settings.
+- The host must stay awake and connected for real agent work. `towercab up` blocks
+  sleep only while it runs. No background service; power settings are not changed.
 - Planning and review are text-based. Browser interaction, product memory and
   long-running product discovery are not implemented in this first slice.
 
