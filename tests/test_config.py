@@ -41,6 +41,16 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(ConfigError, msg=bad):
                 self.write(bad)
 
+    def test_telegram_config(self):
+        base = '[tasks]\npath="x"\n'
+        self.assertIsNone(self.write(base).telegram)
+        tg = self.write(base + '[telegram]\nbot_token="1:a"\nchat_id="42"\n').telegram
+        self.assertEqual((tg.bot_token, tg.chat_id, tg.api_base), ("1:a", "42", "https://api.telegram.org"))
+        for bad in ['[telegram]\nbot_token="1:a"\n', '[telegram]\nchat_id="42"\n',
+                    '[telegram]\nbot_token="1:a"\nchat_id=42\n', '[telegram]\nbot_token=""\nchat_id="42"\n']:
+            with self.assertRaises(ConfigError, msg=bad):
+                self.write(base + bad)
+
 
 if __name__ == "__main__":
     unittest.main()

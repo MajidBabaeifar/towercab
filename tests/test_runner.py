@@ -12,8 +12,10 @@ from unittest.mock import patch
 
 from towercab.config import Config, RepoConfig
 from towercab.core import Factory, Store
+from towercab.notify import Notifier
 from towercab.runner import Runner, slug
 from towercab.taskrepo import TaskRepo
+from fake_telegram import FakeTelegram
 
 GIT_ID = ["-c", "user.name=T", "-c", "user.email=t@localhost"]
 
@@ -87,10 +89,13 @@ class RunnerTests(unittest.TestCase):
                              repos={"proj": RepoConfig("proj", self.proj_clone, verify, ["python3 *"])},
                              source=root / "config.toml")
         self.store = Store(root / "state")
+        self.tg = FakeTelegram()
         self.runner = Runner(self.store, self.config, TaskRepo(self.config.tasks_path, self.config.tasks_remote),
-                             gh=str(self.gh), out=lambda *a: None)
+                             gh=str(self.gh), out=lambda *a: None,
+                             notify=Notifier("tok", "42", self.tg.url, out=lambda *a: None))
 
     def tearDown(self):
+        self.tg.stop()
         self.store.db.close()
         self.env.stop()
         self.tmp.cleanup()
@@ -196,6 +201,75 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("- [ ] proj: Normal one", todo)              # not touched
         with self.assertRaises(ValueError):
             self.runner.run(only="9999")
+
+    def test_notify_pr_ready(self):
+        self.write_tasks("- [ ] proj: Ship it\n")
+        self.runner.run()
+        self.assertEqual(len(self.tg.texts), 1)
+        self.assertIn("PR ready", self.tg.texts[0])
+        self.assertIn("Ship it", self.tg.texts[0])              # title, not just the ID
+        self.assertIn("https://github.com/o/proj/pull/1", self.tg.texts[0])
+        self.assertEqual(self.tg.calls[0][1]["chat_id"], "42")
+
+    def test_notify_stuck(self):
+        self.write_tasks("- [ ] proj: LEAK the keys\n")
+        self.runner.run()
+        self.assertEqual(len(self.tg.texts), 1)
+        self.assertIn("stuck at build", self.tg.texts[0])
+        self.assertIn("forbidden action", self.tg.texts[0])
+
+    def test_notify_asking(self):
+        self.write_tasks("- [ ] nowhere: Do a thing\n")
+        self.runner.run()
+        self.assertEqual(len(self.tg.texts), 1)
+        self.assertIn("needs you", self.tg.texts[0])
+        self.assertIn("nowhere", self.tg.texts[0])
+        # publishing fails: gh missing
+        self.tg.calls.clear()
+        self.write_tasks("- [ ] proj: Cannot publish\n")
+        self.runner.gh = str(self.root / "no-such-gh")
+        self.runner.run()
+        self.assertEqual(len(self.tg.texts), 1)
+        self.assertIn("needs you", self.tg.texts[0])
+        self.assertIn("Publishing failed", self.tg.texts[0])
+
+    def test_notify_limit_once(self):
+        (self.fake / "limit").write_text("1")
+        self.write_tasks("- [ ] proj: Patient work\n")
+        self.runner.run()
+        limits = [t for t in self.tg.texts if "limit" in t]
+        self.assertEqual(len(limits), 1)
+        until = self.store.db.execute("SELECT until FROM cooldowns WHERE provider='claude'").fetchone()[0]
+        stamps = {time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(until + d)) for d in range(-3, 4)}
+        self.assertIn("claude", limits[0])
+        self.assertTrue(any(s in limits[0] for s in stamps), limits[0])
+        # hitting the limit again inside the same wait stays quiet
+        (self.fake / "limit").write_text("1")
+        self.runner.factory.step(self.store.rows()[0])
+        self.assertEqual(len([t for t in self.tg.texts if "limit" in t]), 1)
+
+    def test_notify_merged(self):
+        self.write_tasks("- [ ] proj: Merge me\n")
+        self.runner.run()
+        self.tg.calls.clear()
+        (self.fake / "state").write_text("MERGED")
+        self.runner.check_prs(force=True)
+        self.assertEqual(len(self.tg.texts), 1)
+        self.assertIn("merged", self.tg.texts[0])
+        self.assertIn("Merge me", self.tg.texts[0])
+        self.assertIn("proj#1", self.tg.texts[0])
+
+    def test_dead_telegram_does_not_stop_loop(self):
+        self.tg.stop()
+        self.write_tasks("- [ ] proj: One\n- [ ] proj: Two\n- [ ] nowhere: Three\n")
+        self.assertEqual(self.runner.run(), 2)
+        todo = self.todo()
+        self.assertIn("pull/1", todo)
+        self.assertIn("pull/2", todo)
+        (self.fake / "state").write_text("MERGED")
+        self.runner.check_prs(force=True)
+        self.assertNotIn("One", self.todo())
+        self.tg = FakeTelegram()                                  # for tearDown
 
     def test_slug(self):
         self.assertEqual(slug("Rename `factory` module → towercab!"), "rename-factory-module-towercab")
