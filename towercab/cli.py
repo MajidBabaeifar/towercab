@@ -39,6 +39,7 @@ def main():
     run = sub.add_parser("run", help="Work down the task list, then exit; --watch keeps going")
     run.add_argument("--watch", action="store_true")
     run.add_argument("--max-tasks", type=int, help="Start at most this many tasks")
+    run.add_argument("--task", metavar="ID", help="Run only this task (ID or unique suffix), even if it waits on you; for testing")
     run.add_argument("--missions-only", action="store_true", help="Old mode: only process missions queued with add")
     run.add_argument("--max-steps", type=int, help="With --missions-only: stop after this many stages")
     run.add_argument("--timeout", type=int, default=900, help="With --missions-only: seconds per stage")
@@ -75,7 +76,7 @@ def main():
             task, why = runner(args, s).next()
             print(f"{task.label}\n  {why}" if task else why)
         elif args.action == "run" and not args.missions_only:
-            started = runner(args, s).run(args.watch, args.max_tasks)
+            started = runner(args, s).run(args.watch, args.max_tasks, only=args.task)
             print(f"Started {started} task(s).")
         elif args.action == "run":
             if args.timeout <= 0 or (args.max_steps is not None and args.max_steps <= 0):

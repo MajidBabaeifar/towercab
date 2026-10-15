@@ -188,6 +188,15 @@ class RunnerTests(unittest.TestCase):
                 self.runner.run()
         self.assertIn("note: blocked at plan", self.todo())
 
+    def test_run_only_one_task(self):
+        self.write_tasks("- [!] 261015-1000 proj: Talk first\n  note: talk first\n- [ ] proj: Normal one\n")
+        self.assertEqual(self.runner.run(only="1000"), 1)
+        todo = self.todo()
+        self.assertIn("- [!] 261015-1000 u3 i3 a2 proj: Talk first\n  pr: https://github.com/o/proj/pull/1", todo)
+        self.assertIn("- [ ] proj: Normal one", todo)              # not touched
+        with self.assertRaises(ValueError):
+            self.runner.run(only="9999")
+
     def test_slug(self):
         self.assertEqual(slug("Rename `factory` module → towercab!"), "rename-factory-module-towercab")
 

@@ -62,8 +62,9 @@ class Runner:
             return t.id
         return self.tasks.mutate(change, f"Towercab: question on {ref.get('id') or ref['title']}")
 
-    def start(self, task):
-        """Hand a task to an agent as a mission (RUN-5). Returns the mission id, or None if it had to ask."""
+    def start(self, task, force=False):
+        """Hand a task to an agent as a mission (RUN-5). Returns the mission id, or None if it had to ask.
+        force: operator override, also starts a task that waits on me (RUN-11)."""
         ref = {"id": task.id, "repo": task.repo, "title": task.title}
         repo = self.c.repo(task.repo)
         if repo is None:
@@ -74,7 +75,7 @@ class Runner:
 
         def claim(doc, files):
             t = find(doc, ref)
-            if not t or t.state != "open":
+            if not t or (t.state != "open" and not (force and t.state == "waiting")):
                 return None
             doc.normalize(t)
             t.mark("~")
@@ -194,11 +195,29 @@ class Runner:
     def active(self):
         return [m for m in self.s.rows() if m["task"] and m["status"] in ("queued", "running")]
 
-    def run(self, watch=False, max_tasks=None, poll=5):
-        """Take the next task whenever nothing is in flight; stop cleanly on Ctrl-C (RUN-9)."""
+    def run_one(self, ref):
+        """Operator command: run exactly this task now, whatever its priority or marker (RUN-11)."""
+        doc, _ = self.tasks.read()
+        try:
+            task = doc.get(ref)
+        except KeyError:
+            raise ValueError(f"No single task matches {ref!r}") from None
+        if task.state == "running" or self.active():
+            raise ValueError("A task is already in flight; let it finish or stop it first")
+        return task
+
+    def run(self, watch=False, max_tasks=None, poll=5, only=None):
+        """Take the next task whenever nothing is in flight; stop cleanly on Ctrl-C (RUN-9).
+        only: run just this task (ID or unique suffix), then stop (RUN-11)."""
         started, refused = 0, None
         with self.s.lock():
             self.factory.recover()
+            if only:
+                task = self.run_one(only)
+                self.out(f"only: {task.label}")
+                if not self.start(task, force=True):
+                    return 0
+                started, max_tasks, watch = 1, 1, False
             try:
                 while True:
                     self.settle()
