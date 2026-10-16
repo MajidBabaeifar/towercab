@@ -5,6 +5,8 @@ priority, validate, push, and report how they did.
 
 **Status:** reads the task list, delegates, waits out limits, opens PRs, loops. The rest of the design: [specs/](specs/README.md).
 
+**CI:** GitHub Actions (`.github/workflows/ci.yml`) runs `python3 -m unittest discover -s tests` on Python 3.12 for every PR and push to `main`; a failing test turns the check red. See [PIP-12](specs/pipeline.md).
+
 ## Target workflow
 
 - Tasks live in `gradient-tasks`, each scored urgency, importance, autonomy (1–5).
