@@ -22,3 +22,5 @@ Short but technical: interfaces, fields, formulas, limits. ~30 lines per spec.
 | [metrics.md](metrics.md) | MET | Run records and reports |
 | [runner.md](runner.md) | RUN | Config, delegation, agent access, limits, PRs, the loop |
 | [pipeline.md](pipeline.md) | PIP | Build, CI, review, risk gate, go live, watch |
+| [loop.md](loop.md) | LOOP | Claude Code version: one session, state machine, worker, risk, e2e, revert |
+| [repo.md](repo.md) | REPO | `TOWERCAB.md` per repo: checks, live + e2e, red lines |
