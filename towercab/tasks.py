@@ -15,6 +15,8 @@ SCORE_RE = re.compile(r"^([uia])([1-5])$")
 REPO_RE = re.compile(r"^([a-z0-9][a-z0-9._-]*):$")
 AFTER_RE = re.compile(r"^after:(\S+)$")
 MODEL_RE = re.compile(r"^@([\w.-]+)$")
+REVIEW_RE = re.compile(r"^review:([\w.-]+)$")
+REVIEW_STEP = {"haiku": "sonnet", "sonnet": "opus", "opus": "opus", "fable": "fable"}
 
 
 class ParseError(ValueError):
@@ -30,6 +32,7 @@ class Task:
     scores: dict = field(default_factory=dict)  # only scores written in the file
     after: list = field(default_factory=list)
     model: str | None = None
+    review: str | None = None
     fields: list = field(default_factory=list)  # [(key, value)] continuation lines, in order
     raw: list | None = None  # original lines; None once changed
     position: int = 0
@@ -77,6 +80,8 @@ class Task:
         head += [f"after:{a}" for a in self.after]
         if self.model:
             head.append(f"@{self.model}")
+        if self.review:
+            head.append(f"review:{self.review}")
         return [" ".join(head)] + [f"  {k}: {v}" for k, v in self.fields]
 
 
@@ -96,12 +101,14 @@ def parse_task_line(line):
     if not tokens or not REPO_RE.match(tokens[0]):
         raise ParseError(f"expected '<repo>:' after marker, id and scores: {line!r}")
     repo = REPO_RE.match(tokens.pop(0))[1]
-    after, model = [], None
+    after, model, review = [], None, None
     while tokens:
         if AFTER_RE.match(tokens[-1]):
             after = [a for a in AFTER_RE.match(tokens.pop())[1].split(",") if a] + after
         elif MODEL_RE.match(tokens[-1]) and model is None:
             model = MODEL_RE.match(tokens.pop())[1]
+        elif REVIEW_RE.match(tokens[-1]) and review is None:
+            review = REVIEW_RE.match(tokens.pop())[1]
         else:
             break
     title = " ".join(tokens).strip()
@@ -110,7 +117,17 @@ def parse_task_line(line):
     bad = [a for a in after if not ID_RE.match(a)]
     if bad:
         raise ParseError(f"after: needs task IDs, got {bad}: {line!r}")
-    return Task(m["m"], repo, title, task_id, scores, after, model)
+    return Task(m["m"], repo, title, task_id, scores, after, model, review)
+
+
+def reviewer_model(builder, override=None):
+    """PIP-4: the task's `review:` model, else one step stronger than the builder."""
+    if override:
+        return override
+    for family, stronger in REVIEW_STEP.items():
+        if family in builder.lower():
+            return stronger
+    return builder
 
 
 class Document:
