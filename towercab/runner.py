@@ -12,11 +12,18 @@ import time
 from .core import MAX_CI_REPAIRS, Factory, command, mission_usage
 from .notify import Notifier
 from .tasks import done_line, pick_next
-from .writer import write_body
+from .writer import head_and_tail, write_body
 
 GITHUB_RE = re.compile(r"github\.com[:/](?P<repo>[^/]+/[^/]+?)(?:\.git)?/?$")
 PR_REPO_RE = re.compile(r"github\.com/(?P<repo>[^/]+/[^/]+)/pull/\d+")
 PR_RE = re.compile(r"github\.com/[^/]+/(?P<name>[^/]+)/pull/(?P<n>\d+)")
+
+
+def has_workflows(m):
+    """The repo has GitHub Actions workflows: then 'no checks' never means 'no CI'."""
+    work = m.get("workspace")
+    flows = Path(work) / ".github" / "workflows" if work else None
+    return bool(flows and flows.is_dir() and any(flows.glob("*.y*ml")))
 
 
 def slug(title, limit=40):
@@ -106,11 +113,20 @@ class Runner:
         task_id, title, done_when, model, task_pr = claimed
         remote = repo.remote or command(["git", "remote", "get-url", "origin"], repo.path)
         state, pr, head = self.open_pr(task_pr, remote)
+        if state == "gone" and not task_pr:
+            # the task lost its pr: line (crash right after `gh pr create`, or edited by hand)
+            branch = f"towercab/{task_id}-{slug(title)}"
+            found = self.open_pr_for({"remote": remote}, branch)
+            if found == "unknown":
+                state, head = "unknown", f"gh couldn't list PRs for {branch}"
+            elif found:
+                state, pr, head = "open", found, branch
         if state == "unknown":
             self.ask({"id": task_id}, f"Couldn't check whether {task_pr} is still open ({head}). A retry would either "
                                       "continue on it or start over, so I didn't guess. Set the task back to `[ ]` to try again.",
                      note="PR state unknown", pr=task_pr)
             self.out(f"{task_id}: PR state unknown; asked you")
+            self.notify.asking(f"{task_id} {title}", f"Couldn't check its PR ({head}); set it back to [ ] to retry.")
             return None
         note = self.tasks.task_note(task_id)
         brief = (f"Task {task_id} in repo {repo.name}: {title}\n"
@@ -136,13 +152,18 @@ class Runner:
         if mine and theirs and mine["repo"].lower() != theirs["repo"].lower():
             return "gone", None, None      # the task moved to another repo; that PR isn't its branch
         try:
-            r = subprocess.run([self.gh, "pr", "view", url, "--json", "state,headRefName"],
+            r = subprocess.run([self.gh, "pr", "view", url, "--json", "state,headRefName,isCrossRepository"],
                                capture_output=True, text=True)
             if r.returncode:
-                return "unknown", None, (r.stderr or r.stdout).strip()[:300] or f"gh exited {r.returncode}"
+                err = (r.stderr or r.stdout).strip()
+                if "Could not resolve to a PullRequest" in err:
+                    return "gone", None, None          # no such PR (typo, deleted repo)
+                return "unknown", None, err[:300] or f"gh exited {r.returncode}"
             info = json.loads(r.stdout)
         except (OSError, ValueError) as exc:
             return "unknown", None, str(exc)[:300]
+        if info.get("isCrossRepository"):
+            return "gone", None, None                  # a fork's PR: its branch isn't in the task's repo
         if info.get("state") == "OPEN" and info.get("headRefName"):
             return "open", url, info["headRefName"]
         return "gone", None, None
@@ -187,7 +208,11 @@ class Runner:
         force = []
         if not m["pr"] and not m.get("head") and not m.get("published"):
             # only over a branch no open PR uses: never over a PR the task lost track of
-            force = ["--force"] if self.open_pr_for(m, branch) is None else []
+            found = self.open_pr_for(m, branch)
+            if found and found != "unknown":
+                self.s.update(m["id"], pr=found)      # recorded on the task, so the next retry continues on it
+                raise ValueError(f"An open PR already uses {branch}: {found}. Set the task back to [ ] to continue on it.")
+            force = ["--force"] if found is None else []
         command(["git", "push", "-q", *force, m["remote"], f"HEAD:refs/heads/{branch}"], work)
         if m["pr"]:
             if not m.get("published"):     # a retry on its open PR: the old text no longer describes it
@@ -222,13 +247,14 @@ class Runner:
         try:
             # every attempt of this task that went into the PR: earlier ones first
             attempts = [x for x in self.s.rows() if x["task"] == m["task"] and x["workspace"]
-                        and (x["id"] == m["id"] or x["pr"] == m["pr"])]
+                        and (x["id"] == m["id"] or (x["pr"] == m["pr"] and x["published"]))]
             attempts.sort(key=lambda x: x["created"])
             build, cost, seconds, known, repairs = [], 0.0, 0.0, False, 0
             for x in attempts:
                 root = Path(x["workspace"]).parent
                 if (root / "build.txt").exists():
-                    build.append((root / "build.txt").read_text().strip())
+                    share = 6000 // max(1, len(attempts))   # every attempt keeps its own summary
+                    build.append(head_and_tail((root / "build.txt").read_text().strip(), share * 7 // 12, share * 5 // 12))
                 c, sec = mission_usage(root)
                 if c is not None:
                     known, cost, seconds = True, cost + c, seconds + sec
@@ -272,8 +298,12 @@ class Runner:
             if not found:
                 return "pending", ""
         if not found:
-            if m.get("ci") == "green" and time.time() - published < 1800:
-                return "pending", ""       # this repo has CI: its run just hasn't shown up yet
+            if has_workflows(m):
+                # the repo has CI, so missing checks mean "not started" (backlog, conflict, path filter)
+                if time.time() - published < self.c.ci_wait:
+                    return "pending", ""
+                return "missing", (f"No CI checks appeared {self.c.ci_wait // 60} min after the push, although the repo "
+                                   "has .github/workflows (merge conflict, path filters or Actions disabled?).")
             return "pass", "No CI checks on this PR."
         buckets = {c.get("bucket") for c in found}
         summary = "\n".join(f"{c.get('bucket')}: {c.get('name')} {c.get('link') or ''}".rstrip() for c in found)
@@ -333,12 +363,13 @@ class Runner:
                 self.notify.ci_gave_up(m["title"], m["pr"], m["ci_repairs"], m["feedback"])
                 self.stopped(m, f"CI still red after {m['ci_repairs']} repairs")
             else:
-                self.ask(ref, f"Mission {m['id']} stopped at the {m['stage']} stage:\n\n{m['feedback'].strip()[-1500:]}\n\n"
+                why = m.get("reason") or f"stopped at the {m['stage']} stage"
+                self.ask(ref, f"Mission {m['id']}: {why}.\n\n{m['feedback'].strip()[-1500:]}\n\n"
                               "Answer here if it helps, then set the task back to `[ ]` to run it again.",
-                         note=f"blocked at {m['stage']}", pr=m["pr"])
-                self.out(f"{m['task']} blocked at {m['stage']}; asked you")
-                self.notify.stuck(m["title"], m["stage"], m["feedback"])
-                self.stopped(m, "review rounds used up" if m["stage"] == "review" else f"stopped at the {m['stage']} stage")
+                         note=m.get("reason") or f"blocked at {m['stage']}", pr=m["pr"])
+                self.out(f"{m['task']} {why}; asked you")
+                self.notify.stuck(m["title"], m["stage"], m["feedback"], what=m.get("reason"))
+                self.stopped(m, why)
             self.s.update(m["id"], handled=1)
 
     def check_prs(self, force=False):

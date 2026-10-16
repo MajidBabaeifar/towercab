@@ -22,6 +22,7 @@ timeout = 1200          # seconds per stage
 max_repairs = 2
 # ci_poll = 30          # seconds between PR check polls
 # ci_grace = 120        # no checks this long after a push = repo without CI
+# ci_wait = 1800        # repo has workflows but no checks this long after a push = ask
 
 [repos.towercab]
 path = "~/Repositories/towercab"
@@ -72,6 +73,7 @@ class Config:
     max_repairs: int = 2
     ci_poll: int = 30       # seconds between `gh pr checks` polls (PIP-3)
     ci_grace: int = 120     # no checks this long after a push = repo without CI
+    ci_wait: int = 1800     # repo has .github/workflows but no checks this long = blocked, asks (PIP-3)
     repos: dict = field(default_factory=dict)
     source: Path | None = None
     telegram: TelegramConfig | None = None
@@ -123,4 +125,5 @@ def load(path=None):
         provider=provider, reviewer=agent.get("reviewer", provider), model=agent.get("model"),
         timeout=int(agent.get("timeout", 1200)), max_repairs=int(agent.get("max_repairs", 2)),
         ci_poll=int(agent.get("ci_poll", 30)), ci_grace=int(agent.get("ci_grace", 120)),
+        ci_wait=int(agent.get("ci_wait", 1800)),
         repos=repos, source=path, telegram=telegram)

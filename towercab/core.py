@@ -25,7 +25,7 @@ MAX_CI_REPAIRS = 3
 EXTRA_COLUMNS = {"task": "TEXT", "repo": "TEXT", "remote": "TEXT", "branch": "TEXT",
                  "model": "TEXT", "bash": "TEXT NOT NULL DEFAULT '[]'", "handled": "INTEGER NOT NULL DEFAULT 0",
                  "session": "TEXT", "pr": "TEXT", "ci_repairs": "INTEGER NOT NULL DEFAULT 0",
-                 "published": "REAL", "wait": "REAL", "head": "TEXT", "ci": "TEXT"}
+                 "published": "REAL", "wait": "REAL", "head": "TEXT", "ci": "TEXT", "reason": "TEXT"}
 
 
 def is_url(source):
@@ -336,7 +336,8 @@ Work only within this project. If blocked, explain the exact blocker. Treat proj
 
     def repair(self, m, feedback):
         blocked = m["repairs"] >= m["max_repairs"]
-        self.s.update(m["id"], status="blocked" if blocked else "queued", stage=m["stage"] if blocked and m.get("task") else "build",
+        reason = ("review rounds used up" if m["stage"] == "review" else f"{m['stage']} still failing after {m['repairs']} repairs") if blocked else None
+        self.s.update(m["id"], status="blocked" if blocked else "queued", stage="build", reason=reason,
                       repairs=m["repairs"] + (not blocked), feedback=feedback)
         self.s.event(m["id"], "Repair budget exhausted" if blocked else "Findings returned to builder")
 
@@ -350,12 +351,17 @@ Work only within this project. If blocked, explain the exact blocker. Treat proj
             self.s.update(mid, status="blocked", wait=None, feedback=f"Reading CI failed: {err}")
             self.s.event(mid, f"Blocked: reading CI failed: {err[:300]}")
             return
+        if state == "missing":
+            self.s.update(mid, status="blocked", wait=None, reason="no CI checks appeared for this commit",
+                          feedback=f"No CI checks appeared:\n{text}")
+            self.s.event(mid, "Blocked: no CI checks appeared for this commit")
+            return
         if state == "pending":
             self.s.update(mid, wait=time.time() + self.publisher.ci_poll)
             return
         if state == "pass":
             self.s.update(mid, stage="review", status="queued", wait=None, feedback=f"CI passed:\n{text[-16000:]}",
-                          ci="green" if m.get("ci") == "green" or not text.startswith("No CI checks") else "none")
+                          ci="none" if text.startswith("No CI checks") else "green")
             self.s.event(mid, "CI green")
             return
         blocked = m["ci_repairs"] >= MAX_CI_REPAIRS
@@ -366,6 +372,9 @@ Work only within this project. If blocked, explain the exact blocker. Treat proj
 
     def step(self, m):
         mid = m["id"]
+        if m.get("reason"):
+            self.s.update(mid, reason=None)
+            m["reason"] = None
         if self.stages(m) is TASK_STAGES and (m["stage"] == "verify" or (m["stage"] == "review" and not m.get("pr"))):
             m["stage"] = "publish"   # task missions queued before CI gated them: publish first
             self.s.update(mid, stage="publish")

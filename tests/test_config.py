@@ -43,9 +43,9 @@ class ConfigTests(unittest.TestCase):
 
     def test_ci_settings(self):
         c = self.write('[tasks]\npath="x"\n')
-        self.assertEqual((c.ci_poll, c.ci_grace), (30, 120))
-        c = self.write('[tasks]\npath="x"\n[agent]\nci_poll=5\nci_grace=60\n')
-        self.assertEqual((c.ci_poll, c.ci_grace), (5, 60))
+        self.assertEqual((c.ci_poll, c.ci_grace, c.ci_wait), (30, 120, 1800))
+        c = self.write('[tasks]\npath="x"\n[agent]\nci_poll=5\nci_grace=60\nci_wait=600\n')
+        self.assertEqual((c.ci_poll, c.ci_grace, c.ci_wait), (5, 60, 600))
 
     def test_telegram_config(self):
         base = '[tasks]\npath="x"\n'

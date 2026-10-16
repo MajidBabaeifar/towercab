@@ -85,8 +85,8 @@ class Notifier:
     def pr_ready(self, task, url):
         return self.send(tg_message("✅", task, "PR ready", f"Review: {url}"))
 
-    def stuck(self, task, stage, reason):
-        return self.send(tg_message("⛔", task, f"stuck at {stage}",
+    def stuck(self, task, stage, reason, what=None):
+        return self.send(tg_message("⛔", task, what or f"stuck at {stage}",
                                     "Answer in its tasks/ note, then set [ ]\n" + " ".join(reason.split())[-200:]))
 
     def ci_gave_up(self, task, pr, repairs, logs):
