@@ -58,6 +58,21 @@ then moves to `DONE.md` with cost, time and attempts. Blocked or unknown-repo ta
 `[!]` with a question in `tasks/<id>.md`; set them back to `[ ]` to retry. Agent access and
 limit handling: [specs/runner.md](specs/runner.md).
 
+## Metrics (Grafana)
+
+One local container (Grafana + Prometheus + Loki + OTLP collector) and one overall dashboard.
+Needs Docker.
+
+```bash
+docker compose -f ops/docker-compose.yml up -d   # Grafana on http://localhost:3000
+ops/telemetry on                                 # Claude Code sessions export to it (new sessions)
+```
+
+The **Claude Code usage** half fills as soon as a session with telemetry runs; **Tasks** fills
+once the loop emits `towercab.*` metrics ([MET-12..19](specs/metrics.md)). Pick the refresh rate
+top right. `ops/telemetry off` stops the export; `docker compose -f ops/docker-compose.yml down`
+stops the stack (data stays in the `lgtm-data` volume).
+
 ## Telegram notifications
 
 Optional. Towercab messages you when a PR is ready, a task is stuck or asking, CI stays red, a usage limit

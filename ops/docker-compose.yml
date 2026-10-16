@@ -1,0 +1,22 @@
+# Local metrics: OTLP in (4317 gRPC, 4318 HTTP), Grafana on http://localhost:3000.
+# docker compose -f ops/docker-compose.yml up -d
+services:
+  lgtm:
+    image: grafana/otel-lgtm:0.35.0
+    container_name: towercab-lgtm
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+    environment:
+      # Claude Code exports delta counters; store them as-is and sum with sum_over_time().
+      PROMETHEUS_EXTRA_ARGS: "--enable-feature=otlp-native-delta-ingestion --storage.tsdb.retention.time=400d"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /otel-lgtm/grafana/conf/provisioning/dashboards/towercab/towercab.json
+    volumes:
+      - lgtm-data:/data
+      - ./grafana/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/towercab.yaml:ro
+      - ./grafana/dashboards:/otel-lgtm/grafana/conf/provisioning/dashboards/towercab:ro
+
+volumes:
+  lgtm-data:
