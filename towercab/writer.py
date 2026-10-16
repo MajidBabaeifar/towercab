@@ -1,4 +1,4 @@
-"""PR description: Haiku writes it from the builder's notes and review verdict; a plain template if it can't (PIP-11..13)."""
+"""PR description: Haiku writes it from the builder's notes and review verdict; a plain template if it can't (PIP-11, PIP-16..16)."""
 from __future__ import annotations
 
 import subprocess
@@ -42,7 +42,7 @@ def assemble(m, summary, changes, verify, usage):
 
 
 def plain_body(m, title, review, verify, usage):
-    """Deterministic fallback: title as summary, review feedback as bullets (PIP-13)."""
+    """Deterministic fallback: title as summary, review feedback as bullets (PIP-15)."""
     return assemble(m, title, bullets(review), verify, usage)
 
 

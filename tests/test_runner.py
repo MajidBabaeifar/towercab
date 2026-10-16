@@ -22,7 +22,7 @@ GIT_ID = ["-c", "user.name=T", "-c", "user.email=t@localhost"]
 FAKE_CLAUDE = r'''#!PYTHON
 import json, os, pathlib, re, sys
 prompt = sys.stdin.read()
-if "performing the" not in prompt:   # PR writer (PIP-12)
+if "performing the" not in prompt:   # PR writer (PIP-14)
     with open(os.path.join(os.environ["FAKE_DIR"], "writer.argv"), "w") as f:
         f.write(" ".join(sys.argv[1:]))
     print("Fake summary\n\n## What changed\n- Fake behaviour")
@@ -42,7 +42,7 @@ if stage == "build":
 if stage == "review":
     result = '{"approved": true, "feedback": "looks right"}'
 print(json.dumps({"type": "result", "is_error": False, "result": result, "total_cost_usd": 0.01,
-                  "duration_ms": 2000, "permission_denials": denials}))
+                  "duration_ms": 2000, "permission_denials": denials, "session_id": f"sess-{stage}"}))
 '''
 
 FAKE_GH = r'''#!PYTHON
@@ -147,7 +147,7 @@ class RunnerTests(unittest.TestCase):
         git(self.me, "pull", "-q")
         done = (self.me / "DONE.md").read_text()
         self.assertEqual(done.count(" · proj#"), 3)
-        self.assertRegex(done, r"proj: First thing · proj#1 · \$0\.03 · 0m06s · 1")
+        self.assertRegex(done, r"proj: First thing · proj#1 · \$0\.02 · 0m04s · 1")    # build + review
         self.assertNotIn("First thing", self.todo())
         self.assertIn("Waits for me", self.todo())
 
@@ -180,7 +180,7 @@ class RunnerTests(unittest.TestCase):
         self.write_tasks("- [ ] proj: Patient work\n")
         self.runner.run()
         m = self.store.rows()[0]
-        self.assertEqual((m["status"], m["stage"], m["repairs"]), ("queued", "plan", 0))
+        self.assertEqual((m["status"], m["stage"], m["repairs"]), ("queued", "build", 0))
         until = self.store.db.execute("SELECT until FROM cooldowns WHERE provider='claude'").fetchone()[0]
         self.assertGreater(until, time.time())
         events = [r[0] for r in self.store.db.execute("SELECT message FROM events WHERE mission=?", (m["id"],))]
@@ -196,7 +196,7 @@ class RunnerTests(unittest.TestCase):
         with patch.object(Factory, "agent", side_effect=KeyboardInterrupt):
             with self.assertRaises(KeyboardInterrupt):
                 self.runner.run()
-        self.assertIn("note: blocked at plan", self.todo())
+        self.assertIn("note: blocked at build", self.todo())
 
     def test_run_only_one_task(self):
         self.write_tasks("- [!] 261015-1000 proj: Talk first\n  note: talk first\n- [ ] proj: Normal one\n")

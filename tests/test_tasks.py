@@ -1,7 +1,8 @@
 from pathlib import Path
 import unittest
 
-from towercab.tasks import Document, ParseError, done_ids, done_line, new_id, parse_task_line, pick_next
+from towercab.tasks import (Document, ParseError, done_ids, done_line, new_id, parse_task_line, pick_next,
+                            reviewer_model)
 
 SAMPLE = """# TODO
 
@@ -24,6 +25,34 @@ class ParseTests(unittest.TestCase):
                          ("!", "261015-1500-2", {"u": 1, "i": 5, "a": 4}, "blog", "Fix the sitemap",
                           ["261015-1446", "261015-1447"], "sonnet"))
         self.assertEqual(t.state, "waiting")
+
+    def test_review_attr(self):
+        t = parse_task_line("- [ ] r: Thing @sonnet review:opus")
+        self.assertEqual((t.title, t.model, t.review), ("Thing", "sonnet", "opus"))
+        t = parse_task_line("- [ ] r: Thing review:opus @sonnet")
+        self.assertEqual((t.title, t.model, t.review), ("Thing", "sonnet", "opus"))
+        t = parse_task_line("- [ ] r: Thing review:opus")
+        self.assertEqual((t.model, t.review), (None, "opus"))
+        t = parse_task_line("- [ ] r: Thing after:261015-1446 review:opus")
+        self.assertEqual((t.after, t.review), (["261015-1446"], "opus"))
+        # given once: a second token stays in the title
+        t = parse_task_line("- [ ] r: Thing review:haiku review:opus")
+        self.assertEqual((t.title, t.review), ("Thing review:haiku", "opus"))
+        # canonical write, and untouched lines survive byte for byte
+        t = parse_task_line("- [ ] r: Thing review:opus @sonnet")
+        t.raw = None
+        self.assertEqual(t.render(), ["- [ ] r: Thing @sonnet review:opus"])
+        text = "- [ ] 261015-1446 r: A review:opus @haiku\n- [ ] 261015-1447 r: B @sonnet review:opus\n"
+        self.assertEqual(Document(text).render(), text)
+
+    def test_reviewer_model(self):
+        for builder, expected in [("haiku", "sonnet"), ("sonnet", "opus"), ("opus", "opus"), ("fable", "fable"),
+                                  ("claude-haiku-5-5", "sonnet"), ("Claude-Sonnet-5-5", "opus"),
+                                  ("claude-opus-5-5", "opus"), ("claude-fable-5-1", "fable"),
+                                  ("mystery", "mystery")]:
+            self.assertEqual(reviewer_model(builder), expected, builder)
+        self.assertEqual(reviewer_model("haiku", "fable"), "fable")
+        self.assertEqual(reviewer_model("opus", override="haiku"), "haiku")
 
     def test_minimal_line_gets_defaults(self):
         t = parse_task_line("- [ ] towercab: Do it")
