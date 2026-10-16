@@ -4,12 +4,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import time
 
 from .core import Factory, command, mission_usage
 from .notify import Notifier
 from .tasks import done_line, pick_next
+from .writer import write_body
 
 GITHUB_RE = re.compile(r"github\.com[:/](?P<repo>[^/]+/[^/]+?)(?:\.git)?/?$")
 PR_RE = re.compile(r"github\.com/[^/]+/(?P<name>[^/]+)/pull/(?P<n>\d+)")
@@ -34,8 +36,9 @@ def find(doc, ref):
 
 
 class Runner:
-    def __init__(self, store, config, tasks, gh="gh", out=print, pr_interval=60, notify=None):
+    def __init__(self, store, config, tasks, gh="gh", out=print, pr_interval=60, notify=None, writer=write_body):
         self.s, self.c, self.tasks, self.gh, self.out = store, config, tasks, gh, out
+        self.writer = writer
         self.notify = notify or Notifier.from_config(config, out)
         self.factory = Factory(store, config.timeout, self.notify)
         self.pr_interval = pr_interval
@@ -114,11 +117,10 @@ class Runner:
         command(["git", *ident, "commit", "-q", "-m", f"{title}\n\nTask {m['task']}, Towercab mission {m['id']}."], work)
         command(["git", "push", "-q", m["remote"], f"HEAD:refs/heads/{branch}"], work)
         cost, seconds = mission_usage(work.parent)
-        review = (work.parent / "review.txt").read_text() if (work.parent / "review.txt").exists() else ""
+        notes = {n: (work.parent / f"{n}.txt").read_text() if (work.parent / f"{n}.txt").exists() else "" for n in ("build", "review")}
         usage = f"${cost:.2f} API-equivalent · {seconds / 60:.1f} min agent time" if cost is not None else "usage unknown"
-        body = (f"Task `{m['task']}` · mission `{m['id']}` · {m['repairs']} repairs · {usage}\n\n"
-                f"Review: {review.strip()[:1500]}\n\nTest:\n- [x] verify: `{' '.join(json.loads(m['verify']))}`\n"
-                f"- [x] reviewer agent approved\n\n🤖 Built by Towercab")
+        body = self.writer(shutil.which("claude") or "claude", m, title, notes["build"], notes["review"],
+                           " ".join(json.loads(m["verify"])), usage)
         argv = [self.gh, "pr", "create", "--base", m["branch"] or "main", "--head", branch, "--title", title, "--body", body]
         gh_repo = GITHUB_RE.search(m["remote"] or "")
         if gh_repo:

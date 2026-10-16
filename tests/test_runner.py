@@ -22,6 +22,11 @@ GIT_ID = ["-c", "user.name=T", "-c", "user.email=t@localhost"]
 FAKE_CLAUDE = r'''#!PYTHON
 import json, os, pathlib, re, sys
 prompt = sys.stdin.read()
+if "performing the" not in prompt:   # PR writer (PIP-12)
+    with open(os.path.join(os.environ["FAKE_DIR"], "writer.argv"), "w") as f:
+        f.write(" ".join(sys.argv[1:]))
+    print("Fake summary\n\n## What changed\n- Fake behaviour")
+    sys.exit(0)
 stage = re.search(r"performing the (\w+) stage", prompt)[1]
 limit = pathlib.Path(os.environ["FAKE_DIR"]) / "limit"
 if limit.exists():
@@ -201,6 +206,15 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("- [ ] proj: Normal one", todo)              # not touched
         with self.assertRaises(ValueError):
             self.runner.run(only="9999")
+
+    def test_pr_writer(self):
+        self.write_tasks("- [ ] proj: Ship it\n")
+        self.runner.run()
+        argv = (self.fake / "writer.argv").read_text().split()
+        self.assertEqual(argv[:5], ["-p", "--model", "haiku", "--tools", "--output-format"])   # "" drops out of split
+        log = (self.fake / "gh.log").read_text()
+        self.assertIn("Fake summary\n\n## What changed\n- Fake behaviour\n\n## Checks", log)
+        self.assertIn("🤖 Built by Towercab", log)
 
     def test_notify_pr_ready(self):
         self.write_tasks("- [ ] proj: Ship it\n")
