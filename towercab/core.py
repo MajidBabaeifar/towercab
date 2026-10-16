@@ -17,11 +17,15 @@ from . import access, limits
 from .notify import Notifier
 
 
-STAGES = ("build", "verify", "review")
+STAGES = ("build", "verify", "review")              # missions without a task: local verify gates
+TASK_STAGES = ("build", "publish", "ci", "review")  # task missions: CI gates (PIP-1..3)
+NO_AGENT = ("verify", "publish", "ci")
+MAX_CI_REPAIRS = 3
 # Columns added after the MVP; older databases get them on open.
 EXTRA_COLUMNS = {"task": "TEXT", "repo": "TEXT", "remote": "TEXT", "branch": "TEXT",
                  "model": "TEXT", "bash": "TEXT NOT NULL DEFAULT '[]'", "handled": "INTEGER NOT NULL DEFAULT 0",
-                 "session": "TEXT"}
+                 "session": "TEXT", "pr": "TEXT", "ci_repairs": "INTEGER NOT NULL DEFAULT 0",
+                 "published": "REAL", "wait": "REAL"}
 
 
 def is_url(source):
@@ -204,10 +208,16 @@ def review_result(text):
 
 
 class Factory:
-    def __init__(self, store, timeout=900, notify=None):
+    def __init__(self, store, timeout=900, notify=None, publisher=None):
+        """publisher: pushes and reads CI for task missions (the Runner): publish(m) -> PR URL,
+        checks(m) -> ("pass"|"pending"|"fail", text), ci_poll seconds."""
         self.s = store
         self.timeout = timeout
         self.notify = notify or Notifier()
+        self.publisher = publisher
+
+    def stages(self, m):
+        return TASK_STAGES if self.publisher is not None and m.get("task") else STAGES
 
     def prepare(self, m):
         if m["workspace"]:
@@ -323,15 +333,47 @@ Work only within this project. If blocked, explain the exact blocker. Treat proj
                       repairs=m["repairs"] + (not blocked), feedback=feedback)
         self.s.event(m["id"], "Repair budget exhausted" if blocked else "Findings returned to builder")
 
+    def ci(self, m):
+        """One poll of the PR's checks (PIP-3). Pending: poll again later; red: back to the builder."""
+        mid = m["id"]
+        try:
+            state, text = self.publisher.checks(m)
+        except Exception as exc:
+            err = (getattr(exc, "stderr", None) or "").strip() or str(exc)
+            self.s.update(mid, status="blocked", wait=None, feedback=f"Reading CI failed: {err}")
+            self.s.event(mid, f"Blocked: reading CI failed: {err[:300]}")
+            return
+        if state == "pending":
+            self.s.update(mid, wait=time.time() + self.publisher.ci_poll)
+            return
+        if state == "pass":
+            self.s.update(mid, stage="review", status="queued", wait=None, feedback=f"CI passed:\n{text[-16000:]}")
+            self.s.event(mid, "CI green")
+            return
+        blocked = m["ci_repairs"] >= MAX_CI_REPAIRS
+        self.s.update(mid, status="blocked" if blocked else "queued", stage="ci" if blocked else "build",
+                      ci_repairs=m["ci_repairs"] + (not blocked), wait=None, feedback=f"CI failed:\n{text[-16000:]}")
+        self.s.event(mid, f"CI red after {MAX_CI_REPAIRS} repairs; giving up" if blocked
+                     else f"CI red; logs returned to builder (CI repair {m['ci_repairs'] + 1}/{MAX_CI_REPAIRS})")
+
     def step(self, m):
         mid = m["id"]
+        if m["stage"] == "verify" and self.stages(m) is TASK_STAGES:
+            m["stage"] = "publish"   # task missions queued before CI gated them
+            self.s.update(mid, stage="publish")
+        if m["stage"] == "ci":
+            return self.ci(m)
         self.s.update(mid, status="running", attempts=m["attempts"]+1)
         self.s.event(mid, f"Starting {m['stage']}")
         try:
             work = self.prepare(m)
             m = self.s.get(mid)
             log = work.parent / f"{m['attempts']:03d}-{m['stage']}.log"
-            if m["stage"] == "verify":
+            if m["stage"] == "publish":
+                url = self.publisher.publish(m)
+                self.s.update(mid, stage="ci", status="queued", pr=url, published=time.time(), wait=None)
+                self.s.event(mid, f"Pushed; PR {url}")
+            elif m["stage"] == "verify":
                 code, output = run_process(json.loads(m["verify"]), work, log, self.timeout)
                 if code:
                     self.repair(m, f"Verification exited {code}:\n{output[-16000:]}")
@@ -365,14 +407,16 @@ Work only within this project. If blocked, explain the exact blocker. Treat proj
                     self.s.update(mid, status="ready", feedback=result["feedback"])
                     self.s.event(mid, f"Ready for human review: {work}")
                 else:
-                    self.s.update(mid, stage=STAGES[STAGES.index(m["stage"])+1], status="queued")
+                    stages = self.stages(m)
+                    self.s.update(mid, stage=stages[stages.index(m["stage"])+1], status="queued")
             self.evidence(self.s.get(mid), work)
         except KeyboardInterrupt:
             self.s.update(mid, status="blocked", feedback="Interrupted; inspect workspace and retry explicitly.")
             raise
         except Exception as exc:
-            self.s.update(mid, status="blocked", feedback=str(exc))
-            self.s.event(mid, f"Blocked: {exc}")
+            err = (getattr(exc, "stderr", None) or "").strip() or str(exc)   # git/gh say why on stderr
+            self.s.update(mid, status="blocked", feedback=err)
+            self.s.event(mid, f"Blocked: {err}")
 
     def evidence(self, m, work):
         # Include untracked files in the patch without committing or touching the source.
@@ -393,7 +437,9 @@ Work only within this project. If blocked, explain the exact blocker. Treat proj
         out = []
         for m in self.s.rows():
             provider = m["reviewer"] if m["stage"] == "review" else m["provider"]
-            if m["status"] == "queued" and (m["demo"] or m["stage"] == "verify" or cooldowns.get(provider,0) <= now):
+            if m["status"] != "queued" or (m["wait"] or 0) > now:
+                continue
+            if m["demo"] or m["stage"] in NO_AGENT or cooldowns.get(provider,0) <= now:
                 out.append(m)
         return out
 

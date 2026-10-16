@@ -1,13 +1,14 @@
 """Work down the Gradient Tasks list: pick, delegate, watch, finish, repeat (RUN-1..9)."""
 from __future__ import annotations
 
+from datetime import datetime
 import json
 from pathlib import Path
 import re
 import subprocess
 import time
 
-from .core import Factory, command, mission_usage
+from .core import MAX_CI_REPAIRS, Factory, command, mission_usage
 from .notify import Notifier
 from .tasks import done_line, pick_next
 
@@ -25,6 +26,14 @@ def short_pr(url):
     return f"{m['name']}#{m['n']}" if m else (url or "")
 
 
+def started(check):
+    """A check's start as epoch seconds; None if unknown."""
+    try:
+        return datetime.fromisoformat(check["startedAt"].replace("Z", "+00:00")).timestamp()
+    except (KeyError, AttributeError, TypeError, ValueError):
+        return None
+
+
 def find(doc, ref):
     """Locate a task again after a fresh read: by ID, else by repo + title."""
     for t in doc.list():
@@ -37,7 +46,7 @@ class Runner:
     def __init__(self, store, config, tasks, gh="gh", out=print, pr_interval=60, notify=None):
         self.s, self.c, self.tasks, self.gh, self.out = store, config, tasks, gh, out
         self.notify = notify or Notifier.from_config(config, out)
-        self.factory = Factory(store, config.timeout, self.notify)
+        self.factory = Factory(store, config.timeout, self.notify, publisher=self)
         self.pr_interval = pr_interval
         self._last_pr_check = 0.0
         self.offset = None   # next Telegram update_id to fetch
@@ -47,7 +56,7 @@ class Runner:
         doc, done = self.tasks.read()
         return pick_next(doc, done, self.c.cutoff)
 
-    def ask(self, ref, question, note=None):
+    def ask(self, ref, question, note=None, pr=None):
         """Mark a task waiting on me and put the question in tasks/<id>.md (RUN-3, RUN-5)."""
         stamp = time.strftime("%Y-%m-%d %H:%M")
 
@@ -57,6 +66,8 @@ class Runner:
                 return None
             doc.normalize(t)
             t.mark("!")
+            if pr:
+                t.set("pr", pr)
             if note:
                 t.set("note", note)
             path = f"tasks/{t.id}.md"
@@ -101,60 +112,112 @@ class Runner:
         self.out(f"{task_id} → mission {mid}")
         return mid
 
-    # --- finishing -----------------------------------------------------------
-    def finish(self, m):
-        """Commit the mission's work, push a branch and open a PR (RUN-8). Returns the PR URL."""
+    # --- publishing and CI (PIP-2, PIP-3) --------------------------------------
+    @property
+    def ci_poll(self):
+        return self.c.ci_poll
+
+    def gh_repo(self, m):
+        found = GITHUB_RE.search(m["remote"] or "")
+        return ["--repo", found["repo"]] if found else []
+
+    def publish(self, m):
+        """Commit the build, push `towercab/<id>-<slug>`, open the PR the first time (PIP-2, RUN-8).
+        Returns the PR URL."""
         work = Path(m["workspace"])
         branch = f"towercab/{m['task']}-{slug(m['title'].split(' ', 1)[-1])}"
-        command(["git", "add", "-A"], work)
-        ident = []
-        if not subprocess.run(["git", "config", "user.email"], cwd=work, capture_output=True, text=True).stdout.strip():
-            ident = ["-c", "user.name=Towercab", "-c", "user.email=towercab@localhost"]
         title = m["title"].split(" ", 1)[-1]
-        command(["git", *ident, "commit", "-q", "-m", f"{title}\n\nTask {m['task']}, Towercab mission {m['id']}."], work)
+        command(["git", "add", "-A"], work)
+        if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=work).returncode:
+            ident = []
+            if not subprocess.run(["git", "config", "user.email"], cwd=work, capture_output=True, text=True).stdout.strip():
+                ident = ["-c", "user.name=Towercab", "-c", "user.email=towercab@localhost"]
+            subject = title if not m["pr"] else f"{title}: repair {m['repairs'] + m['ci_repairs']}"
+            command(["git", *ident, "commit", "-q", "-m", f"{subject}\n\nTask {m['task']}, Towercab mission {m['id']}."], work)
         command(["git", "push", "-q", m["remote"], f"HEAD:refs/heads/{branch}"], work)
+        if m["pr"]:
+            return m["pr"]
         cost, seconds = mission_usage(work.parent)
-        review = (work.parent / "review.txt").read_text() if (work.parent / "review.txt").exists() else ""
-        usage = f"${cost:.2f} API-equivalent · {seconds / 60:.1f} min agent time" if cost is not None else "usage unknown"
-        body = (f"Task `{m['task']}` · mission `{m['id']}` · {m['repairs']} repairs · {usage}\n\n"
-                f"Review: {review.strip()[:1500]}\n\nTest:\n- [x] verify: `{' '.join(json.loads(m['verify']))}`\n"
-                f"- [x] reviewer agent approved\n\n🤖 Built by Towercab")
-        argv = [self.gh, "pr", "create", "--base", m["branch"] or "main", "--head", branch, "--title", title, "--body", body]
-        gh_repo = GITHUB_RE.search(m["remote"] or "")
-        if gh_repo:
-            argv += ["--repo", gh_repo["repo"]]
-        url = subprocess.run(argv, cwd=work, capture_output=True, text=True, check=True).stdout.strip().splitlines()[-1]
-        return url
+        usage = f"${cost:.2f} API-equivalent · {seconds / 60:.1f} min agent time so far" if cost is not None else "usage unknown"
+        body = (f"Task `{m['task']}` · mission `{m['id']}` · {usage}\n\n"
+                f"Test:\n- [ ] CI (`gh pr checks`)\n- [ ] reviewer agent\n\n🤖 Built by Towercab")
+        argv = [self.gh, "pr", "create", "--base", m["branch"] or "main", "--head", branch, "--title", title,
+                "--body", body, *self.gh_repo(m)]
+        return subprocess.run(argv, cwd=work, capture_output=True, text=True, check=True).stdout.strip().splitlines()[-1]
 
+    def checks(self, m):
+        """The PR's CI: ("pending" | "pass" | "fail", text); text is failing logs on fail (PIP-3)."""
+        r = subprocess.run([self.gh, "pr", "checks", m["pr"], "--json", "name,bucket,link,startedAt", *self.gh_repo(m)],
+                           capture_output=True, text=True)
+        try:
+            found = json.loads(r.stdout or "null")
+        except ValueError:
+            found = None
+        if not isinstance(found, list):
+            if "no checks" not in (r.stderr + r.stdout).lower():
+                raise ValueError(f"gh pr checks exited {r.returncode}: {(r.stderr or r.stdout).strip()[:500]}")
+            found = []
+        published = m["published"] or 0
+        if time.time() - published < self.c.ci_grace:
+            # Right after a push the PR may still show the previous commit's checks, or none yet.
+            found = [c for c in found if started(c) is None or started(c) >= published - 5]
+            if not found:
+                return "pending", ""
+        if not found:
+            return "pass", "No CI checks on this PR."
+        buckets = {c.get("bucket") for c in found}
+        summary = "\n".join(f"{c.get('bucket')}: {c.get('name')} {c.get('link') or ''}".rstrip() for c in found)
+        if "pending" in buckets:
+            return "pending", summary
+        failed = [c for c in found if c.get("bucket") in ("fail", "cancel")]
+        if not failed:
+            return "pass", summary
+        logs, runs = [], []
+        for c in failed:
+            run = re.search(r"/actions/runs/(\d+)", c.get("link") or "")
+            if run and run[1] not in runs:
+                runs.append(run[1])
+                out = subprocess.run([self.gh, "run", "view", run[1], "--log-failed", *self.gh_repo(m)],
+                                     capture_output=True, text=True)
+                logs.append(out.stdout.strip() or out.stderr.strip())
+        return "fail", (summary + "\n\n" + "\n\n".join(logs))[-16000:]
+
+    # --- finishing -----------------------------------------------------------
     def settle(self):
-        """React to missions that ended: PR + review marker, or a question (RUN-5, RUN-8)."""
+        """React to missions that ended: review marker, or a question (RUN-5, RUN-8, PIP-3)."""
         for m in self.s.rows():
             if not m["task"] or m["handled"] or m["status"] not in ("ready", "blocked"):
                 continue
             ref = {"id": m["task"]}
             if m["status"] == "ready":
-                try:
-                    url = self.finish(m)
-                except (subprocess.CalledProcessError, OSError) as exc:
-                    err = getattr(exc, "stderr", "") or str(exc)
-                    self.ask(ref, f"Mission {m['id']} passed review but publishing failed:\n\n{err.strip()[:1500]}\n\n"
-                                  f"Workspace: {m['workspace']}")
-                    self.notify.asking(m["title"], f"Publishing failed:\n{err.strip()[-300:]}")
-                else:
-                    def mark(doc, files):
-                        t = find(doc, ref)
-                        if t:
-                            t.mark("!")
-                            t.set("pr", url)
-                            t.set("note", "review PR")
-                    self.tasks.mutate(mark, f"Towercab: {m['task']} ready, {short_pr(url)}")
-                    self.s.event(m["id"], f"PR opened: {url}")
-                    self.out(f"{m['task']} → {url}")
-                    self.notify.pr_ready(m["title"], url)
+                url = m["pr"]
+
+                def mark(doc, files):
+                    t = find(doc, ref)
+                    if t:
+                        t.mark("!")
+                        t.set("pr", url)
+                        t.set("note", "review PR")
+                self.tasks.mutate(mark, f"Towercab: {m['task']} ready, {short_pr(url)}")
+                self.s.event(m["id"], f"Ready for review: {url}")
+                self.out(f"{m['task']} → {url}")
+                self.notify.pr_ready(m["title"], url)
+            elif m["stage"] == "publish":
+                err = m["feedback"].strip()
+                self.ask(ref, f"Mission {m['id']} was built but publishing failed:\n\n{err[:1500]}\n\n"
+                              f"Workspace: {m['workspace']}", note="publish failed", pr=m["pr"])
+                self.notify.asking(m["title"], f"Publishing failed:\n{err[-300:]}")
+            elif m["stage"] == "ci" and m["ci_repairs"] >= MAX_CI_REPAIRS:
+                self.ask(ref, f"CI is still red on {m['pr']} after {m['ci_repairs']} repairs (mission {m['id']}). "
+                              f"Last failing output:\n\n```\n{m['feedback'].strip()[-1500:]}\n```\n\n"
+                              "What's wrong? Fix it on the branch or answer here, then set the task back to `[ ]`.",
+                         note="CI red", pr=m["pr"])
+                self.out(f"{m['task']} CI red after {m['ci_repairs']} repairs; asked you")
+                self.notify.ci_gave_up(m["title"], m["pr"], m["ci_repairs"], m["feedback"])
             else:
                 self.ask(ref, f"Mission {m['id']} stopped at the {m['stage']} stage:\n\n{m['feedback'].strip()[-1500:]}\n\n"
                               "Answer here if it helps, then set the task back to `[ ]` to run it again.",
-                         note=f"blocked at {m['stage']}")
+                         note=f"blocked at {m['stage']}", pr=m["pr"])
                 self.out(f"{m['task']} blocked at {m['stage']}; asked you")
                 self.notify.stuck(m["title"], m["stage"], m["feedback"])
             self.s.update(m["id"], handled=1)
@@ -256,8 +319,9 @@ class Runner:
                     if eligible:
                         self.factory.step(eligible[0])
                         continue
-                    if watch:
-                        time.sleep(poll)
+                    waits = [m["wait"] for m in self.active() if m["status"] == "queued" and m["wait"]]
+                    if watch or waits:   # a pending CI is part of the task: wait for it (PIP-3)
+                        time.sleep(poll if not waits else max(0.0, min(poll, min(waits) - time.time())))
                         continue
                     break
             except KeyboardInterrupt:

@@ -73,6 +73,9 @@ class Notifier:
     def stuck(self, task, stage, reason):
         return self.send(f"⛔ {task}: stuck at {stage}\n{reason.strip()[-500:]}")
 
+    def ci_gave_up(self, task, pr, repairs, logs):
+        return self.send(f"🔴 {task}: CI still red after {repairs} repairs; needs you\n{pr}\n{logs.strip()[-500:]}")
+
     def asking(self, task, question):
         return self.send(f"❓ {task}: needs you\n{question.strip()[:500]}")
 

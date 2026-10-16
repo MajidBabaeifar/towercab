@@ -28,10 +28,14 @@ if limit.exists():
     limit.unlink()
     print(json.dumps({"type": "result", "is_error": True, "result": "You've hit your limit · resets 3pm (Europe/Berlin)"}))
     sys.exit(1)
+with (pathlib.Path(os.environ["FAKE_DIR"]) / "claude.log").open("a") as f:
+    f.write(json.dumps({"argv": sys.argv[1:], "stage": stage, "prompt": prompt}) + "\n")
 denials, result = [], "ok"
 if stage == "build":
-    task = re.search(r"Task (\S+) in repo", prompt)[1]
-    pathlib.Path(f"done-{task}.txt").write_text("done\n")
+    done = sorted(pathlib.Path(".").glob("done-*.txt"))
+    task = re.search(r"Task (\S+) in repo", prompt)[1] if not done else done[0].stem[5:]
+    out = pathlib.Path(f"done-{task}.txt")
+    out.write_text((out.read_text() if out.exists() else "") + "done\n")   # each build changes something
     if "LEAK" in prompt:
         denials = [{"tool_name": "Read", "tool_input": {"file_path": os.path.expanduser("~/.ssh/id_ed25519")}}]
 if stage == "review":
@@ -41,7 +45,7 @@ print(json.dumps({"type": "result", "is_error": False, "result": result, "total_
 '''
 
 FAKE_GH = r'''#!PYTHON
-import os, pathlib, sys
+import json, os, pathlib, sys
 d = pathlib.Path(os.environ["FAKE_DIR"])
 args = sys.argv[1:]
 with (d / "gh.log").open("a") as f:
@@ -52,6 +56,22 @@ if args[:2] == ["pr", "create"]:
     print(f"https://github.com/o/proj/pull/{n}")
 elif args[:2] == ["pr", "view"]:
     print((d / "state").read_text().strip() if (d / "state").exists() else "OPEN")
+elif args[:2] == ["pr", "checks"]:
+    # one result per call from the `checks` queue file: pass, fail, pending, none or stale
+    # (a red check from before the push); default pass
+    queue = (d / "checks").read_text().split() if (d / "checks").exists() else []
+    state = queue.pop(0) if queue else "pass"
+    (d / "checks").write_text("\n".join(queue))
+    if state == "none":
+        print("no checks reported on the 'towercab/x' branch", file=sys.stderr)
+        sys.exit(1)
+    check = {"name": "tests", "bucket": state, "link": "https://github.com/o/proj/actions/runs/77/job/1"}
+    if state == "stale":
+        check.update(bucket="fail", startedAt="2000-01-01T00:00:00Z")
+    print(json.dumps([check]))
+    sys.exit({"pass": 0, "fail": 1, "pending": 8}.get(state, 1))
+elif args[:2] == ["run", "view"]:
+    print("FAILLOG: test_widget failed (run " + args[2] + ")")
 '''
 
 
@@ -86,7 +106,7 @@ class RunnerTests(unittest.TestCase):
         subprocess.run(["git", "clone", "-q", str(self.tasks_remote), str(self.me)], check=True)
         verify = [sys.executable, "-c", "import pathlib,sys; sys.exit(0 if list(pathlib.Path('.').glob('done-*.txt')) else 1)"]
         self.config = Config(tasks_path=root / "tc-tasks", tasks_remote=str(self.tasks_remote), timeout=30,
-                             repos={"proj": RepoConfig("proj", self.proj_clone, verify, ["python3 *"])},
+                             ci_poll=0, ci_grace=0, repos={"proj": RepoConfig("proj", self.proj_clone, verify, ["python3 *"])},
                              source=root / "config.toml")
         self.store = Store(root / "state")
         self.tg = FakeTelegram()
@@ -270,6 +290,99 @@ class RunnerTests(unittest.TestCase):
         self.runner.check_prs(force=True)
         self.assertNotIn("One", self.todo())
         self.tg = FakeTelegram()                                  # for tearDown
+
+    # --- publish + CI (PIP-2, PIP-3) -------------------------------------------
+    def events(self, mid):
+        return [r[0] for r in self.store.db.execute("SELECT message FROM events WHERE mission=? ORDER BY seq", (mid,))]
+
+    def gh_calls(self, prefix):
+        log = self.fake / "gh.log"
+        return [l for l in (log.read_text().splitlines() if log.exists() else []) if l.startswith(prefix)]
+
+    def builds(self):
+        lines = (self.fake / "claude.log").read_text().splitlines()
+        return [c for c in map(json.loads, lines) if c["stage"] == "build"]
+
+    def test_publish_before_review(self):
+        # local verify always fails: it no longer gates task missions
+        self.config.repos["proj"].verify = [sys.executable, "-c", "raise SystemExit(1)"]
+        self.write_tasks("- [ ] proj: Publish early\n")
+        self.runner.run()
+        m = self.store.rows()[0]
+        self.assertEqual(m["status"], "ready")
+        started = [e for e in self.events(m["id"]) if e.startswith("Starting ")]
+        self.assertEqual(started, ["Starting build", "Starting publish", "Starting review"])
+        events = self.events(m["id"])
+        self.assertLess(events.index("Pushed; PR https://github.com/o/proj/pull/1"), events.index("Starting review"))
+        self.assertIn("pr: https://github.com/o/proj/pull/1\n  note: review PR", self.todo())
+
+    def test_ci_green(self):
+        (self.fake / "checks").write_text("pass\n")
+        self.write_tasks("- [ ] proj: Green first time\n")
+        self.runner.run()
+        m = self.store.rows()[0]
+        self.assertEqual((m["status"], m["ci_repairs"], m["pr"]), ("ready", 0, "https://github.com/o/proj/pull/1"))
+        self.assertIn("CI green", self.events(m["id"]))
+        self.assertEqual(len(self.gh_calls("pr checks https://github.com/o/proj/pull/1")), 1)
+        review = [c for c in map(json.loads, (self.fake / "claude.log").read_text().splitlines()) if c["stage"] == "review"]
+        self.assertIn("CI passed", review[0]["prompt"])
+        self.assertEqual(len(self.builds()), 1)
+
+    def test_ci_pending_polls(self):
+        (self.fake / "checks").write_text("pending\npending\npass\n")
+        self.write_tasks("- [ ] proj: Slow CI\n")
+        self.runner.run()                                        # no --watch: still waits out the pending CI
+        m = self.store.rows()[0]
+        self.assertEqual(m["status"], "ready")
+        self.assertEqual(len(self.gh_calls("pr checks")), 3)
+        self.assertEqual(m["attempts"], 3)                       # build, publish, review: polls aren't stages
+
+    def test_no_checks_grace(self):
+        m = {"pr": "https://github.com/o/proj/pull/1", "remote": "", "published": time.time()}
+        self.config.ci_grace = 3600
+        (self.fake / "checks").write_text("none\nstale\nnone\n")
+        self.assertEqual(self.runner.checks(m)[0], "pending")    # checks not registered yet
+        self.assertEqual(self.runner.checks(m)[0], "pending")    # previous commit's red doesn't count
+        m["published"] = time.time() - 7200
+        self.assertEqual(self.runner.checks(m), ("pass", "No CI checks on this PR."))   # repo without CI
+
+    def test_ci_repair_loop(self):
+        (self.fake / "checks").write_text("fail\npass\n")
+        self.write_tasks("- [ ] proj: Red then green\n")
+        self.runner.run()
+        m = self.store.rows()[0]
+        self.assertEqual((m["status"], m["ci_repairs"]), ("ready", 1))
+        builds = self.builds()
+        self.assertEqual(len(builds), 2)
+        self.assertNotIn("--resume", builds[0]["argv"])
+        self.assertEqual(builds[1]["argv"][builds[1]["argv"].index("--resume") + 1], "sess-build")   # same session
+        self.assertIn("FAILLOG: test_widget failed (run 77)", builds[1]["prompt"])
+        self.assertEqual(len(self.gh_calls("pr create")), 1)        # one PR, pushed twice
+        branch = (self.fake / "pr-1").read_text()
+        self.assertEqual(git(self.proj, "rev-list", "--count", f"main..{branch}").strip(), "2")
+        self.assertIn("pr: https://github.com/o/proj/pull/1\n  note: review PR", self.todo())
+
+    def test_ci_cap(self):
+        (self.fake / "checks").write_text("fail\n" * 5)
+        self.write_tasks("- [ ] proj: Never green\n")
+        self.runner.run()
+        m = self.store.rows()[0]
+        self.assertEqual((m["status"], m["stage"], m["ci_repairs"]), ("blocked", "ci", 3))
+        self.assertEqual(len(self.builds()), 4)                  # first build + 3 CI repairs
+        self.assertEqual(len(self.gh_calls("pr create")), 1)
+        self.assertEqual(len(self.gh_calls("pr checks")), 4)
+        todo = self.todo()
+        self.assertRegex(todo, r"- \[!\] \S+ u3 i3 a2 proj: Never green\n  pr: https://github.com/o/proj/pull/1\n"
+                               r"  note: CI red")
+        task_id = todo.split("- [!] ")[1].split()[0]
+        question = (self.me / "tasks" / f"{task_id}.md").read_text()
+        self.assertIn("Towercab asks", question)
+        self.assertIn("CI is still red", question)
+        self.assertIn("FAILLOG", question)
+        self.assertEqual(len(self.tg.texts), 1)
+        self.assertIn("CI still red after 3 repairs", self.tg.texts[0])
+        self.assertIn("Never green", self.tg.texts[0])
+        self.assertIn("https://github.com/o/proj/pull/1", self.tg.texts[0])
 
     # --- Telegram commands (RUN-20..26) ---------------------------------------
     WAITING = "- [!] 261015-1000 proj: Talk first\n  note: review PR\n  pr: https://github.com/o/proj/pull/1\n"

@@ -50,16 +50,17 @@ priority, validate, push, and report how they did.
 lid-close are blocked only while it runs; Ctrl-C stops the loop and releases them.
 Lid inhibit depends on your logind/polkit policy. Needs systemd; otherwise use `run --watch`.
 
-Each task: marked `[~]`, built (one session plans, implements, writes tests and docs), verified
-and reviewed in its own checkout (repairs resume the build session), then
-pushed as `towercab/<id>-<slug>` with a PR; the task becomes `[!]` with `pr:` until you merge,
+Each task: marked `[~]`, built in its own checkout (one session plans, implements, writes tests
+and docs), pushed as `towercab/<id>-<slug>` with a PR right away, then CI (`gh pr checks`) is the
+gate: red sends the failing logs back to the same build session and pushes again (max 3, then
+`[!]` + question + Telegram). Green → reviewer agent; the task becomes `[!]` with `pr:` until you merge,
 then moves to `DONE.md` with cost, time and attempts. Blocked or unknown-repo tasks become
 `[!]` with a question in `tasks/<id>.md`; set them back to `[ ]` to retry. Agent access and
 limit handling: [specs/runner.md](specs/runner.md).
 
 ## Telegram notifications
 
-Optional. Towercab messages you when a PR is ready, a task is stuck or asking, a usage limit
+Optional. Towercab messages you when a PR is ready, a task is stuck or asking, CI stays red, a usage limit
 makes it wait (with the reset time), and when a task is merged.
 
 1. In Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`, follow the prompts, copy the token.
