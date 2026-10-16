@@ -18,6 +18,7 @@ How far an agent may take a task before it waits for me.
 | AUT-6 | Validation runs in full at every level: repo checks, spec `Verified by` checks, reviewer agent on a fresh context. | test_validation_always |
 | AUT-7 | An agent may lower a task's `a` (reason in `tasks/<id>.md`), never raise it. | test_lower_only |
 | AUT-8 | Effective `a = min(task a, repos.<name>.max_autonomy)`; default max 5. | test_repo_cap |
+| AUT-9 | Loop version: no `a` on the task → a risk agent decides after green CI: low (two-way door, no red line touched) merges, high waits for me ([LOOP-8, 9](loop.md)). Repo `max_autonomy` ≤ 3 still means I merge. | test_gate |
 
 ## Out of scope
 
