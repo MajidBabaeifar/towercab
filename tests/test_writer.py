@@ -12,9 +12,7 @@ from fake_telegram import FakeTelegram
 M = {"task": "261016-0403-7", "id": "m1", "repairs": 1}
 ARGS = (M, "Add thing", "built it", "Reviewer: looks right\n- second", "make test", "$0.10 API-equivalent · 1.0 min agent time")
 
-PLAIN = """Task `261016-0403-7` · mission `m1` · $0.10 API-equivalent · 1.0 min agent time
-
-Add thing
+PLAIN = """Add thing
 
 ## What changed
 - Reviewer: looks right
@@ -24,7 +22,7 @@ Add thing
 - verify: `make test` passed (1 repairs)
 - reviewer agent approved
 
-🤖 Built by Towercab"""
+<sub>🤖 Built by Towercab · task `261016-0403-7` · mission `m1` · $0.10 API-equivalent · 1.0 min agent time</sub>"""
 
 
 class WriterTests(unittest.TestCase):
@@ -45,9 +43,9 @@ class WriterTests(unittest.TestCase):
                            "print('Does a thing\\n\\n## What changed\\n" + "\\n".join(f"- b{i}" for i in range(8)).replace("\n", "\\n") + "')")
         body = write_body(claude, *ARGS)
         self.assertEqual(eval(argv_out.read_text()), ["-p", "--model", "haiku", "--tools", "", "--output-format", "text"])
-        self.assertIn("\n\nDoes a thing\n\n## What changed\n- b0\n- b1\n- b2\n- b3\n- b4\n\n## Checks\n", body)
+        self.assertTrue(body.startswith("Does a thing\n\n## What changed\n- b0\n- b1\n- b2\n- b3\n- b4\n\n## Checks\n"))
         self.assertNotIn("b5", body)
-        self.assertTrue(body.endswith("🤖 Built by Towercab"))
+        self.assertTrue(body.endswith("min agent time</sub>"))      # bookkeeping last, small
 
     def test_writer_fallback(self):
         for name, claude in {
@@ -75,12 +73,20 @@ class TelegramTemplateTests(unittest.TestCase):
         n.limit("claude", "3pm")
         n.merged("Ship it", "p#1")
         self.assertEqual(tg.texts, [
-            "✅ Ship it: PR ready\nhttps://github.com/o/p/pull/1",
-            "⛔ Ship it: stuck at build\nboom",
+            "✅ Ship it: PR ready\nReview: https://github.com/o/p/pull/1",
+            "⛔ Ship it: stuck at build\nAnswer in its tasks/ note, then set [ ]\nboom",
             "❓ Ship it: needs you\nwhy?",
-            "⏳ claude limit hit; waiting until 3pm",
-            "🎉 Ship it: merged (p#1)",
+            "⏳ claude: limit hit\nResumes 3pm",
+            "🎉 Ship it: merged\np#1",
         ])
+
+
+class FourLineTests(unittest.TestCase):
+    def test_tg_max_four_lines(self):
+        from towercab.notify import tg_message
+        text = tg_message("⛔", "T", "stuck at build", "a\nb\nc\nd\ne\n" + "z" * 500)
+        self.assertEqual(len(text.splitlines()), 4)
+        self.assertTrue(all(len(line) <= 200 for line in text.splitlines()))
 
 
 if __name__ == "__main__":

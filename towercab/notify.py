@@ -5,6 +5,21 @@ from __future__ import annotations
 import json
 import urllib.request
 
+LINE_WIDTH = 200
+MAX_LINES = 4
+
+
+def one_line(text, width=LINE_WIDTH):
+    line = " ".join((text or "").split())
+    return line if len(line) <= width else line[:width - 1].rstrip() + "…"
+
+
+def tg_message(emoji, title, what, action=None):
+    """Line 1: emoji + title + what happened. Then the one thing to do. At most 4 lines (PIP-11)."""
+    head = one_line(f"{emoji} {title}: {what}" if title else f"{emoji} {what}")
+    lines = [ln.strip() for ln in str(action or "").strip().splitlines() if ln.strip()]
+    return "\n".join([head] + [one_line(ln) for ln in lines[:MAX_LINES - 1]])
+
 
 class Notifier:
     """Sends to a Telegram chat; without a token it does nothing. send() never raises."""
@@ -68,16 +83,17 @@ class Notifier:
 
     # --- one formatter per event ------------------------------------------
     def pr_ready(self, task, url):
-        return self.send(f"✅ {task}: PR ready\n{url}")
+        return self.send(tg_message("✅", task, "PR ready", f"Review: {url}"))
 
     def stuck(self, task, stage, reason):
-        return self.send(f"⛔ {task}: stuck at {stage}\n{reason.strip()[-500:]}")
+        return self.send(tg_message("⛔", task, f"stuck at {stage}",
+                                    "Answer in its tasks/ note, then set [ ]\n" + " ".join(reason.split())[-200:]))
 
     def asking(self, task, question):
-        return self.send(f"❓ {task}: needs you\n{question.strip()[:500]}")
+        return self.send(tg_message("❓", task, "needs you", question))
 
     def limit(self, provider, until):
-        return self.send(f"⏳ {provider} limit hit; waiting until {until}")
+        return self.send(tg_message("⏳", provider, "limit hit", f"Resumes {until}"))
 
     def merged(self, task, pr):
-        return self.send(f"🎉 {task}: merged ({pr})")
+        return self.send(tg_message("🎉", task, "merged", pr))

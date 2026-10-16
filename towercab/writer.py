@@ -36,8 +36,9 @@ def checks(verify, repairs):
 
 
 def assemble(m, summary, changes, verify, usage):
-    head = f"Task `{m['task']}` · mission `{m['id']}` · {usage}"
-    return f"{head}\n\n{summary}\n\n## What changed\n{changes}\n\n{checks(verify, m['repairs'])}\n\n{FOOTER}"
+    """What matters first: summary, changes, checks. Bookkeeping goes in a small footer."""
+    footer = f"<sub>{FOOTER} · task `{m['task']}` · mission `{m['id']}` · {usage}</sub>"
+    return f"{summary}\n\n## What changed\n{changes}\n\n{checks(verify, m['repairs'])}\n\n{footer}"
 
 
 def plain_body(m, title, review, verify, usage):
