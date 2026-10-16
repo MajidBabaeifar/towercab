@@ -9,6 +9,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 TELEMETRY = ROOT / "ops" / "telemetry"
 DASHBOARD = ROOT / "ops" / "grafana" / "dashboards" / "towercab.json"
+# OTel names the loop emits (specs/metrics.md MET-13..20); Prometheus turns dots into underscores.
+METRICS = ["towercab.stage.duration", "towercab.task.duration", "towercab.cost.usd", "towercab.tokens",
+           "towercab.ci.repairs", "towercab.ci.result", "towercab.reverts", "towercab.usage_limit.waits",
+           "towercab.usage_limit.wait.duration", "towercab.human.wait.duration", "towercab.backlog",
+           "towercab.loop.state"]
 
 
 def telemetry(config_dir, *args):
@@ -70,6 +75,15 @@ class DashboardTest(unittest.TestCase):
             for t in p.get("targets", []):
                 self.assertIn(t["datasource"]["uid"], ("prometheus", "loki"), p["title"])
                 self.assertEqual(t["expr"].count("("), t["expr"].count(")"), p["title"])
+
+    def test_dashboard_names(self):
+        import re
+        bases = sorted((m.replace(".", "_") for m in METRICS), key=len, reverse=True)
+        for p in self.panels:
+            for t in p.get("targets", []):
+                for name in re.findall(r"towercab_[a-z_]+", t["expr"]):
+                    self.assertTrue(any(name == b or name.startswith(b + "_") for b in bases), (p["title"], name))
+                self.assertNotIn("gen_ai_", t["expr"], p["title"])
 
     def test_delta_counters_summed_not_increased(self):
         for p in self.panels:
