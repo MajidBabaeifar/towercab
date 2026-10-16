@@ -43,6 +43,7 @@ CI as the test runner, a stronger reviewer, a risk gate, then watching it live.
 - Cap 3 for CI repairs and for review rounds: after that it costs more than asking me.
 - Plan stage removed now (old `plan` missions move to `build` on open); a plan stage for `a` ≤ 2 returns later with AUT-1, 2.
 - CI replaced local verify as the gate for task missions (RUN-8); `verify` stays the gate for missions without a task.
-- A blocked mission goes back to `build` with a stored `reason` (review rounds used up, no CI checks appeared, …): `towercab retry` re-runs a build, messages name the real cause.
+- A blocked mission keeps a stored `reason` that names the real cause in every message. Review rounds used up → back to `build`, so `towercab retry` re-runs a build; no CI checks appeared → stays at `ci`, retrying it re-polls.
+- Any `.github/workflows/*.y(a)ml` counts as PR CI, even one that never runs on PRs: missing checks then ask me after `ci_wait` rather than skip CI unseen.
 - CI polls aren't stage runs: no `Starting` event, no attempt counted. `towercab run` without `--watch` sleeps through a pending CI instead of exiting.
 - Plan stage (RUN-5) and inline PR body (RUN-8) are replaced by PIP-1 and PIP-11, PIP-14, PIP-15.

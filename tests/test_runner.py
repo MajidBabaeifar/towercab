@@ -646,6 +646,30 @@ class RunnerTests(unittest.TestCase):
         (self.fake / "view_fail").write_text("1")
         self.assertEqual(self.runner.open_pr("https://github.com/o/proj/pull/1", remote)[0], "unknown")
 
+    def test_pr_text_only_from_attempts_that_pushed(self):
+        seen = {}
+        self.runner.writer = lambda claude, m, title, build, review, verify, usage, ci=None: seen.setdefault("build", build) or "body"
+        self.write_tasks("- [!] 261016-0000 proj: T\n  pr: https://github.com/o/proj/pull/1\n")
+        ids = []
+        for name, published in (("A", 1.0), ("B", None), ("C", 2.0)):
+            mid = self.store.add(f"261016-0000 T", "b", str(self.proj), ["true"], "claude", task="261016-0000",
+                                 repo="proj", branch="main", pr="https://github.com/o/proj/pull/1")
+            work = self.root / f"ws-{name}" / "workspace"
+            work.mkdir(parents=True)
+            (work.parent / "build.txt").write_text(f"notes {name}")
+            self.store.update(mid, workspace=str(work), published=published)
+            ids.append(mid)
+        self.runner.describe(self.store.get(ids[2]))
+        self.assertIn("notes A", seen["build"])
+        self.assertIn("notes C", seen["build"])
+        self.assertNotIn("notes B", seen["build"])                              # B never pushed into the PR
+
+    def test_new_task_needs_no_pr_lookup(self):
+        (self.fake / "list_fail").write_text("1")                              # gh can't list PRs…
+        self.write_tasks("- [ ] proj: Brand new\n")
+        self.assertEqual(self.runner.run(), 1)                                  # …but a new task has none to lose
+        self.assertIn("note: review PR", self.todo())
+
     def test_failed_pr_list_never_forces(self):
         (self.fake / "checks").write_text("fail\n" * 4)
         self.write_tasks("- [ ] proj: Never green\n")

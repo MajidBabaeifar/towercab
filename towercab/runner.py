@@ -113,7 +113,8 @@ class Runner:
         task_id, title, done_when, model, task_pr = claimed
         remote = repo.remote or command(["git", "remote", "get-url", "origin"], repo.path)
         state, pr, head = self.open_pr(task_pr, remote)
-        if state == "gone" and not task_pr:
+        tried = any(x["task"] == task_id for x in self.s.rows())
+        if state == "gone" and not task_pr and tried:
             # the task lost its pr: line (crash right after `gh pr create`, or edited by hand)
             branch = f"towercab/{task_id}-{slug(title)}"
             found = self.open_pr_for({"remote": remote}, branch)
@@ -122,7 +123,8 @@ class Runner:
             elif found:
                 state, pr, head = "open", found, branch
         if state == "unknown":
-            self.ask({"id": task_id}, f"Couldn't check whether {task_pr} is still open ({head}). A retry would either "
+            what = task_pr or f"an open PR on towercab/{task_id}-{slug(title)}"
+            self.ask({"id": task_id}, f"Couldn't check {what} ({head}). A retry would either "
                                       "continue on it or start over, so I didn't guess. Set the task back to `[ ]` to try again.",
                      note="PR state unknown", pr=task_pr)
             self.out(f"{task_id}: PR state unknown; asked you")
@@ -354,7 +356,7 @@ class Runner:
                               f"Workspace: {m['workspace']}", note="publish failed", pr=m["pr"])
                 self.notify.asking(m["title"], f"Publishing failed:\n{err[-300:]}")
                 self.stopped(m, "publishing a repair failed")
-            elif m["stage"] == "ci" and m["ci_repairs"] >= MAX_CI_REPAIRS:
+            elif m["stage"] == "ci" and m["ci_repairs"] >= MAX_CI_REPAIRS and not m.get("reason"):
                 self.ask(ref, f"CI is still red on {m['pr']} after {m['ci_repairs']} repairs (mission {m['id']}). "
                               f"Last failing output:\n\n```\n{m['feedback'].strip()[-1500:]}\n```\n\n"
                               "What's wrong? Fix it on the branch or answer here, then set the task back to `[ ]`.",
