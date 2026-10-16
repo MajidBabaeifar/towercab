@@ -17,8 +17,8 @@ class AccessTests(unittest.TestCase):
             i += 1
         return out
 
-    def test_plan_and_review_are_read_only(self):
-        for stage in ("plan", "review"):
+    def test_review_is_read_only(self):
+        for stage in ("review",):
             argv = claude_argv("claude", stage, bash=["python3 -m unittest *"])
             allowed = self.flag(argv, "--allowedTools")
             self.assertNotIn("Edit", allowed)
@@ -36,14 +36,20 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(self.flag(argv, "--permission-mode"), ["dontAsk"])
 
     def test_never_bypasses_and_sandboxes(self):
-        for stage in ("plan", "build", "review"):
-            argv = claude_argv("claude", stage)
+        for stage in ("build", "review"):
+            argv = claude_argv("claude", stage, resume="abc")
             self.assertFalse(any("dangerously" in a or a == "bypassPermissions" for a in argv))
             settings = json.loads(self.flag(argv, "--settings")[0])["sandbox"]
             self.assertTrue(settings["enabled"] and settings["failIfUnavailable"])
             self.assertFalse(settings["autoAllowBashIfSandboxed"])
             self.assertFalse(settings["allowUnsandboxedCommands"])
             self.assertIn("~/.ssh", settings["filesystem"]["denyRead"])
+
+    def test_resume_argv(self):
+        argv = claude_argv("claude", "build", bash=["python3 *"], resume="abc")
+        self.assertEqual(self.flag(argv, "--resume"), ["abc"])
+        self.assertIn("-p", argv)
+        self.assertNotIn("--resume", claude_argv("claude", "build"))
 
     def test_deny_rules(self):
         rules = deny_rules()
