@@ -21,9 +21,12 @@ CI as the test runner, a stronger reviewer, a risk gate, then watching it live.
 | PIP-8 | **Go live:** after merge, Towercab waits for the repo's deploy (`[repos.<r>.live]`: GitHub deployment status or URL check, timeout) and runs its `e2e` command once against it. Repo without `live` → merged means done. | test_go_live |
 | PIP-9 | Live check fails after a merge Towercab did itself → it reverts (revert PR, merged), tells me on Telegram, adds a task with the failure. After my own merge → it only tells me and adds the task. | test_auto_revert |
 | PIP-10 | **Watch:** each repo's `e2e` runs every `[repos.<r>.live].every` (default 30 min) as a plain script, no agent. Failure → an agent investigates (read-only) and writes a task with its findings to `gradient-tasks`, Telegram. Same failure doesn't open a second task. | test_watch_failure_task |
-| PIP-11 | **Writing:** PR description and reports by Haiku from the builder's notes and the review verdicts: one-line summary, what changed (≤5 bullets, behaviour not files), checks (CI, review, one line each). Telegram messages are code templates, no model. | test_pr_writer |
+| PIP-11 | **Writing:** PR description and reports by Haiku from the builder's notes and the review verdicts: one-line summary, what changed (≤5 bullets, behaviour not files), checks (CI, review, one line each). | test_pr_writer |
 | PIP-12 | **Own CI:** `.github/workflows/ci.yml` runs `python3 -m unittest discover -s tests` on Python 3.12 for every PR and push to `main`; a failing test turns the check red. | manual (open a PR, check the Actions run) |
 | PIP-13 | Until CI (PIP-3) is built: local verify failures and review changes go back to the build session. Towercab stores `session_id` from the build's result JSON on the mission (`missions.session`) and runs `claude -p --resume <session_id>` with a short repair prompt (findings only). Review stays a fresh session. | test_resume_argv, test_repair_resumes_session |
+| PIP-14 | The writer (`towercab/writer.py`) runs `claude -p --model haiku --tools ""` with the prompt on stdin, no tools, 60 s timeout. Order: summary, what changed, checks; then a small `<sub>` footer (🤖 Built by Towercab · task · mission · cost · time), all code except summary and bullets; bullets trimmed to 5. | test_pr_writer |
+| PIP-15 | Writer failure (non-zero exit, timeout, empty output, missing executable) → plain template from the same inputs (review feedback as bullets). Publishing never fails because of the writer. | test_writer_fallback, test_writer_template |
+| PIP-16 | Telegram messages are code templates, no model; tests pin each text. | test_telegram_templates |
 
 ## Out of scope
 
@@ -39,3 +42,4 @@ CI as the test runner, a stronger reviewer, a risk gate, then watching it live.
 - Cap 3 for CI repairs and for review rounds: after that it costs more than asking me.
 - Plan stage removed now (old `plan` missions move to `build` on open); a plan stage for `a` ≤ 2 returns later with AUT-1, 2.
 - Replaces when built: local verify as the gate (RUN-5, RUN-8), PR body (RUN-27).
+- Replaces when built: plan stage (RUN-5), local verify as the gate (RUN-5, RUN-8), inline PR body (RUN-8) → PIP-11..13.
