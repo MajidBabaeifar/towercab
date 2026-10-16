@@ -22,7 +22,8 @@ CI as the test runner, a stronger reviewer, a risk gate, then watching it live.
 | PIP-9 | Live check fails after a merge Towercab did itself → it reverts (revert PR, merged), tells me on Telegram, adds a task with the failure. After my own merge → it only tells me and adds the task. | test_auto_revert |
 | PIP-10 | **Watch:** each repo's `e2e` runs every `[repos.<r>.live].every` (default 30 min) as a plain script, no agent. Failure → an agent investigates (read-only) and writes a task with its findings to `gradient-tasks`, Telegram. Same failure doesn't open a second task. | test_watch_failure_task |
 | PIP-11 | **Writing:** PR description and reports by Haiku from the builder's notes and the review verdicts: one-line summary, what changed (≤5 bullets, behaviour not files), checks (CI, review, one line each). Telegram messages are code templates, no model. | test_pr_writer |
-| PIP-12 | Until CI (PIP-3) is built: local verify failures and review changes go back to the build session. Towercab stores `session_id` from the build's result JSON on the mission (`missions.session`) and runs `claude -p --resume <session_id>` with a short repair prompt (findings only). Review stays a fresh session. | test_resume_argv, test_repair_resumes_session |
+| PIP-12 | **Own CI:** `.github/workflows/ci.yml` runs `python3 -m unittest discover -s tests` on Python 3.12 for every PR and push to `main`; a failing test turns the check red. | manual (open a PR, check the Actions run) |
+| PIP-13 | Until CI (PIP-3) is built: local verify failures and review changes go back to the build session. Towercab stores `session_id` from the build's result JSON on the mission (`missions.session`) and runs `claude -p --resume <session_id>` with a short repair prompt (findings only). Review stays a fresh session. | test_resume_argv, test_repair_resumes_session |
 
 ## Out of scope
 

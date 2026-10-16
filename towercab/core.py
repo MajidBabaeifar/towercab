@@ -236,7 +236,7 @@ class Factory:
 
     def prompt(self, m, work, resume=False):
         if resume:
-            # Same builder session (PIP-1, PIP-12): it already has the mission and its plan.
+            # Same builder session (PIP-1, PIP-13): it already has the mission and its plan.
             return f"""You are performing the build stage of a local software factory, repairing your own work.
 Your change did not pass. Fix it, keep the tests proving each `done when` item, then re-run the checks.
 Same rules as before: do not commit, push, deploy, or modify .git; do not weaken tests to obtain a pass.

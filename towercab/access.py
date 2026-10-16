@@ -34,7 +34,7 @@ def sandbox_settings():
 
 def claude_argv(executable, stage, bash=(), model=None, resume=None):
     """argv for one non-interactive Claude Code stage. Never bypasses permissions.
-    `resume`: the builder's session ID; repairs continue it (PIP-12)."""
+    `resume`: the builder's session ID; repairs continue it (PIP-13)."""
     if stage == "build":
         tools = READ_ONLY + ["Edit", "Write", "Bash"]
         allowed = READ_ONLY + ["Edit", "Write"] + [f"Bash({c})" for c in [*GIT_READ, *bash]]
