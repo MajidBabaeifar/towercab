@@ -32,12 +32,13 @@ def sandbox_settings():
                         "filesystem": {"denyRead": SECRET_PATHS}}}
 
 
-def claude_argv(executable, stage, bash=(), model=None):
-    """argv for one non-interactive Claude Code stage. Never bypasses permissions."""
+def claude_argv(executable, stage, bash=(), model=None, resume=None):
+    """argv for one non-interactive Claude Code stage. Never bypasses permissions.
+    `resume`: the builder's session ID; repairs continue it (PIP-13)."""
     if stage == "build":
         tools = READ_ONLY + ["Edit", "Write", "Bash"]
         allowed = READ_ONLY + ["Edit", "Write"] + [f"Bash({c})" for c in [*GIT_READ, *bash]]
-    else:  # plan, review: look, don't touch
+    else:  # review: look, don't touch
         tools = READ_ONLY + ["Bash"]
         allowed = READ_ONLY + [f"Bash({c})" for c in GIT_READ]
     argv = [executable, "-p", "--output-format", "json", "--permission-mode", "dontAsk",
@@ -45,6 +46,8 @@ def claude_argv(executable, stage, bash=(), model=None):
             "--disallowedTools", *deny_rules(), "--settings", json.dumps(sandbox_settings())]
     if model:
         argv += ["--model", model]
+    if resume:
+        argv += ["--resume", resume]
     return argv
 
 

@@ -50,7 +50,8 @@ priority, validate, push, and report how they did.
 lid-close are blocked only while it runs; Ctrl-C stops the loop and releases them.
 Lid inhibit depends on your logind/polkit policy. Needs systemd; otherwise use `run --watch`.
 
-Each task: marked `[~]`, planned, built, verified and reviewed in its own checkout, then
+Each task: marked `[~]`, built (one session plans, implements, writes tests and docs), verified
+and reviewed in its own checkout (repairs resume the build session), then
 pushed as `towercab/<id>-<slug>` with a PR; the task becomes `[!]` with `pr:` until you merge,
 then moves to `DONE.md` with cost, time and attempts. Blocked or unknown-repo tasks become
 `[!]` with a question in `tasks/<id>.md`; set them back to `[ ]` to retry. Agent access and
@@ -94,8 +95,9 @@ Imported from my earlier `local agent` prototype. It predates the specs above.
 For a first useful product, follow [Pocket Notes setup and monitoring](examples/pocket-notes/RUN.md).
 
 A dependency-free Python MVP for Linux/macOS. Queue a new product or a change to
-an existing Git repository. A persistent scheduler runs **plan → build → verify →
-review**, feeding failed checks/review findings back into a bounded repair loop.
+an existing Git repository. A persistent scheduler runs **build → verify → review**,
+feeding failed checks/review findings back into a bounded repair loop. Claude repairs
+resume the build session (`claude --resume <session_id>`); Codex repairs start fresh.
 
 ### Try it without an account
 
@@ -162,7 +164,7 @@ State and evidence live under `~/.local/share/towercab` (`--home PATH`, `TOWERCA
 - `towercab.sqlite3`: missions, events and provider cooldowns.
 - `missions/ID/workspace/`: isolated Git checkout and all resulting files.
 - `missions/ID/*-STAGE.log`: full process output.
-- `missions/ID/plan.txt`, `review.txt`, `changes.patch`, `report.json`: evidence.
+- `missions/ID/build.txt`, `review.txt`, `changes.patch`, `report.json`: evidence.
 
 Ready means verification passed and the agent reviewer approved. Changes remain
 local for human review. There is no automatic merge, push, publishing or deploy.
@@ -176,13 +178,13 @@ Inspect the workspace diff before copying/integrating changes into your project.
 - Process timeouts and repair caps are implemented; token/dollar budgets are not.
 - Ordinary restarts preserve queued work/cooldowns. An uncleanly interrupted running
   stage is blocked: ensure orphaned workers have stopped, inspect logs, then retry.
-- Codex uses workspace-write for building and read-only for planning/review, with
+- Codex uses workspace-write for building and read-only for review, with
   approvals disabled (requests requiring approval fail). Claude uses explicit tool
   allowlists and dontAsk. Claude Bash and verification are **not OS sandboxes**;
   use trusted projects. Full permission bypass flags are never used.
 - The host must stay awake and connected for real agent work. `towercab up` blocks
   sleep only while it runs. No background service; power settings are not changed.
-- Planning and review are text-based. Browser interaction, product memory and
+- Review is text-based. Browser interaction, product memory and
   long-running product discovery are not implemented in this first slice.
 
 CLI references: [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode)
