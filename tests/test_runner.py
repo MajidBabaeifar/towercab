@@ -107,9 +107,16 @@ elif args[:2] == ["pr", "checks"]:
     sys.exit({"pass": 0, "fail": 1, "pending": 8}.get(state, 1))
 elif args[:2] == ["run", "view"]:
     print("FAILLOG: test_widget failed (run " + args[2] + ")")
-elif args[:2] == ["pr", "edit"] and (d / "edit_fail").exists():
-    print("GraphQL: could not update", file=sys.stderr)
-    sys.exit(1)
+elif args[:1] == ["api"] and "PATCH" in args:
+    body = json.loads(sys.stdin.read())["body"]
+    with (d / "gh.log").open("a") as f:
+        f.write("BODY " + body + "\n")
+    if (d / "edit_fail").exists():
+        print("HTTP 422: Validation Failed", file=sys.stderr)
+        sys.exit(1)
+elif args[:2] == ["pr", "edit"]:
+    print("GraphQL: Projects (classic) is being deprecated (repository.pullRequest.projectCards)", file=sys.stderr)
+    sys.exit(1)   # like gh 2.46: Towercab must not use it
 '''
 
 
@@ -269,7 +276,9 @@ class RunnerTests(unittest.TestCase):
         create = log[log.index("pr create"):log.index("pr checks")]
         self.assertIn("CI and review are running", create)          # placeholder claims nothing
         self.assertNotIn("Fake summary", create)
-        edit = log[log.index("pr edit https://github.com/o/proj/pull/1"):]
+        self.assertEqual(self.gh_calls("api -X PATCH repos/o/proj/pulls/1 --input -"), ["api -X PATCH repos/o/proj/pulls/1 --input -"])
+        self.assertEqual(self.gh_calls("pr edit"), [])                # broken on gh 2.46
+        edit = self.gh_edit_body()
         self.assertIn("Fake summary\n\n## What changed\n- Fake behaviour\n\n## Checks", edit)   # final text once ready
         self.assertIn("🤖 Built by Towercab", edit)
 
@@ -279,7 +288,7 @@ class RunnerTests(unittest.TestCase):
         self.runner.run()
         self.assertIn("note: review PR", self.todo())                 # still ready for me
         events = [r[0] for r in self.store.db.execute("SELECT message FROM events")]
-        self.assertTrue(any(e.startswith("PR text not updated: GraphQL") for e in events))
+        self.assertTrue(any(e.startswith("PR text not updated: HTTP 422") for e in events))
 
     def test_notify_pr_ready(self):
         self.write_tasks("- [ ] proj: Ship it\n")
@@ -359,15 +368,14 @@ class RunnerTests(unittest.TestCase):
         return [l for l in (log.read_text().splitlines() if log.exists() else []) if l.startswith(prefix)]
 
     def gh_edits(self):
-        """Every `gh pr edit` call, with its full multi-line body."""
+        """Every PR text update (REST PATCH), with its full multi-line body."""
         log = (self.fake / "gh.log").read_text()
-        parts = re.split(r"(?m)^(?=pr |run )", log)
-        return [p for p in parts if p.startswith("pr edit ")]
+        parts = re.split(r"(?m)^(?=pr |run |api |BODY )", log)
+        return [p for p in parts if p.startswith("BODY ")]
 
     def gh_edit_body(self):
-        """Full text of the last `gh pr edit --body` call (bodies span lines in gh.log)."""
-        log = (self.fake / "gh.log").read_text()
-        return log[log.rindex("pr edit "):]
+        """Full text of the last PR text update."""
+        return self.gh_edits()[-1]
 
     def builds(self):
         lines = (self.fake / "claude.log").read_text().splitlines()
@@ -499,9 +507,9 @@ class RunnerTests(unittest.TestCase):
         (self.fake / "checks").write_text("fail\n" * 4)
         self.write_tasks("- [ ] proj: Never green\n")
         self.runner.run()
-        edit = self.gh_calls("pr edit https://github.com/o/proj/pull/1")
-        self.assertEqual(len(edit), 1)
-        self.assertIn("⛔ Not ready: CI still red after 3 repairs", edit[0])
+        edits = self.gh_edits()
+        self.assertEqual(len(edits), 1)
+        self.assertIn("⛔ Not ready: CI still red after 3 repairs", edits[0])
 
     def test_ready_without_pr_does_not_crash(self):
         self.write_tasks("- [ ] 261016-0000 proj: Old mission\n")
@@ -510,7 +518,7 @@ class RunnerTests(unittest.TestCase):
         self.store.update(mid, status="ready")
         self.runner.settle()                                                   # no TypeError, no crash loop
         self.assertEqual(self.store.get(mid)["handled"], 1)
-        self.assertEqual(self.gh_calls("pr edit"), [])
+        self.assertEqual(self.gh_calls("api"), [])
         self.assertIn("note: never published", self.todo())                    # not 'review PR'
         self.assertNotIn("Review: None", " ".join(self.tg.texts))
 
@@ -536,7 +544,7 @@ class RunnerTests(unittest.TestCase):
         self.write_tasks("- [ ] proj: Ship it\n")
         self.runner.run()
         edit = self.gh_edit_body()
-        self.assertIn("--body Ship it\n\n## What changed", edit)             # plain template, title as summary
+        self.assertTrue(edit.startswith("BODY Ship it\n\n## What changed"))   # plain template, title as summary
         self.assertIn("note: review PR", self.todo())
 
     def push_my_fix(self, branch):

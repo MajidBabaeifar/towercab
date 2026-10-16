@@ -15,6 +15,7 @@ from .tasks import done_line, pick_next
 from .writer import head_and_tail, write_body
 
 GITHUB_RE = re.compile(r"github\.com[:/](?P<repo>[^/]+/[^/]+?)(?:\.git)?/?$")
+PR_NUMBER_RE = re.compile(r"github\.com/(?P<repo>[^/]+/[^/]+)/pull/(?P<n>\d+)")
 PR_REPO_RE = re.compile(r"github\.com/(?P<repo>[^/]+/[^/]+)/pull/\d+")
 PR_RE = re.compile(r"github\.com/[^/]+/(?P<name>[^/]+)/pull/(?P<n>\d+)")
 
@@ -231,10 +232,15 @@ class Runner:
                 f"<sub>🤖 Built by Towercab · task `{m['task']}` · mission `{m['id']}`</sub>")
 
     def set_body(self, m, body):
-        """Replace the PR text; a failure is logged, never raised (PIP-14)."""
+        """Replace the PR text via the REST API (`gh pr edit` fails on gh 2.46 with a GraphQL
+        'Projects (classic)' error). A failure is logged, never raised (PIP-14)."""
+        found = PR_NUMBER_RE.search(m.get("pr") or "")
+        if not found:
+            self.s.event(m["id"], f"PR text not updated: not a GitHub PR URL: {m.get('pr')}")
+            return
         try:
-            r = subprocess.run([self.gh, "pr", "edit", m["pr"], "--body", body, *self.gh_repo(m)],
-                               capture_output=True, text=True)
+            r = subprocess.run([self.gh, "api", "-X", "PATCH", f"repos/{found['repo']}/pulls/{found['n']}", "--input", "-"],
+                               input=json.dumps({"body": body}), capture_output=True, text=True)
             err = (r.stderr or r.stdout).strip() if r.returncode else ""
         except OSError as exc:
             err = str(exc)
