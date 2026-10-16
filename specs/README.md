@@ -21,3 +21,4 @@ Short but technical: interfaces, fields, formulas, limits. ~30 lines per spec.
 | [tasks.md](tasks.md) | TSK | Task format, IDs, `gradient-tasks` repo |
 | [metrics.md](metrics.md) | MET | Run records and reports |
 | [runner.md](runner.md) | RUN | Config, delegation, agent access, limits, PRs, the loop |
+| [pipeline.md](pipeline.md) | PIP | Build, CI, review, risk gate, go live, watch |
