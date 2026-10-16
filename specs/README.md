@@ -17,10 +17,10 @@ Short but technical: interfaces, fields, formulas, limits. ~30 lines per spec.
 |---|---|---|
 | [priority.md](priority.md) | PRI | Scores, order, cutoff, review |
 | [autonomy.md](autonomy.md) | AUT | Where a task waits for me |
-| [scheduler.md](scheduler.md) | SCH | Picking, claiming, inbox |
+| [scheduler.md](scheduler.md) | SCH | Removed: superseded by loop.md |
 | [tasks.md](tasks.md) | TSK | Task format, IDs, `gradient-tasks` repo |
-| [metrics.md](metrics.md) | MET | Run records and reports |
-| [runner.md](runner.md) | RUN | Config, delegation, agent access, limits, PRs, the loop |
-| [pipeline.md](pipeline.md) | PIP | Build, CI, review, risk gate, go live, watch |
-| [loop.md](loop.md) | LOOP | Claude Code version: one session, state machine, worker, risk, e2e, revert |
-| [repo.md](repo.md) | REPO | `TOWERCAB.md` per repo: checks, live + e2e, red lines |
+| [metrics.md](metrics.md) | MET | OTLP metrics and events, Claude Code telemetry, Grafana dashboard |
+| [runner.md](runner.md) | RUN | Removed: superseded by loop.md |
+| [pipeline.md](pipeline.md) | PIP | Build, verify, publish, CI, gate, review, human, merge, deploy, e2e, revert |
+| [loop.md](loop.md) | LOOP | Rust runner: service, state machine, crash recovery, limits, status, Telegram, commands |
+| [repo.md](repo.md) | REPO | `TOWERCAB.md` per repo: setup, checks, live + e2e, red lines; `protect` |
