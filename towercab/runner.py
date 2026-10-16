@@ -5,12 +5,14 @@ from datetime import datetime
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import time
 
 from .core import MAX_CI_REPAIRS, Factory, command, mission_usage
 from .notify import Notifier
 from .tasks import done_line, pick_next
+from .writer import write_body
 
 GITHUB_RE = re.compile(r"github\.com[:/](?P<repo>[^/]+/[^/]+?)(?:\.git)?/?$")
 PR_RE = re.compile(r"github\.com/[^/]+/(?P<name>[^/]+)/pull/(?P<n>\d+)")
@@ -43,8 +45,9 @@ def find(doc, ref):
 
 
 class Runner:
-    def __init__(self, store, config, tasks, gh="gh", out=print, pr_interval=60, notify=None):
+    def __init__(self, store, config, tasks, gh="gh", out=print, pr_interval=60, notify=None, writer=write_body):
         self.s, self.c, self.tasks, self.gh, self.out = store, config, tasks, gh, out
+        self.writer = writer
         self.notify = notify or Notifier.from_config(config, out)
         self.factory = Factory(store, config.timeout, self.notify, publisher=self)
         self.pr_interval = pr_interval
@@ -95,22 +98,40 @@ class Runner:
             doc.normalize(t)
             t.mark("~")
             t.set("note", None)
-            return t.id, t.title, t.get("done when"), t.model
+            return t.id, t.title, t.get("done when"), t.model, t.get("pr")
         claimed = self.tasks.mutate(claim, f"Towercab: start {task.id or task.title}")
         if not claimed:
             return None
-        task_id, title, done_when, model = claimed
+        task_id, title, done_when, model, task_pr = claimed
+        pr, head = self.open_pr(task_pr)
         note = self.tasks.task_note(task_id)
         brief = (f"Task {task_id} in repo {repo.name}: {title}\n"
                  f"Done when: {done_when or 'the title is fully true and checks pass'}\n")
+        if head:
+            brief += (f"\nThis is a retry: you start on the branch of its open PR ({pr}), with the earlier "
+                      "attempt's commits and any fixes pushed there. Continue from them.\n")
         if note:
             brief += f"\nNotes, plans and answers (tasks/{task_id}.md):\n{note}\n"
         remote = repo.remote or command(["git", "remote", "get-url", "origin"], repo.path)
         mid = self.s.add(f"{task_id} {title}", brief, remote, repo.verify, self.c.provider, self.c.reviewer,
                          max_repairs=self.c.max_repairs, task=task_id, repo=repo.name, branch=repo.base,
-                         model=model or self.c.model, bash=repo.bash)
-        self.out(f"{task_id} → mission {mid}")
+                         model=model or self.c.model, bash=repo.bash, pr=pr, head=head)
+        self.out(f"{task_id} → mission {mid}" + (f" (continues {short_pr(pr)})" if pr else ""))
         return mid
+
+    def open_pr(self, url):
+        """(url, head branch) if the task's PR is still open, else (None, None): a retry continues there."""
+        if not url:
+            return None, None
+        try:
+            r = subprocess.run([self.gh, "pr", "view", url, "--json", "state,headRefName"],
+                               capture_output=True, text=True)
+            info = json.loads(r.stdout) if r.returncode == 0 else {}
+        except (OSError, ValueError):
+            info = {}
+        if info.get("state") == "OPEN" and info.get("headRefName"):
+            return url, info["headRefName"]
+        return None, None
 
     # --- publishing and CI (PIP-2, PIP-3) --------------------------------------
     @property
@@ -125,7 +146,7 @@ class Runner:
         """Commit the build, push `towercab/<id>-<slug>`, open the PR the first time (PIP-2, RUN-8).
         Returns the PR URL."""
         work = Path(m["workspace"])
-        branch = f"towercab/{m['task']}-{slug(m['title'].split(' ', 1)[-1])}"
+        branch = m.get("head") or f"towercab/{m['task']}-{slug(m['title'].split(' ', 1)[-1])}"
         title = m["title"].split(" ", 1)[-1]
         command(["git", "add", "-A"], work)
         if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=work).returncode:
@@ -134,16 +155,56 @@ class Runner:
                 ident = ["-c", "user.name=Towercab", "-c", "user.email=towercab@localhost"]
             subject = title if not m["pr"] else f"{title}: repair {m['repairs'] + m['ci_repairs']}"
             command(["git", *ident, "commit", "-q", "-m", f"{subject}\n\nTask {m['task']}, Towercab mission {m['id']}."], work)
-        command(["git", "push", "-q", m["remote"], f"HEAD:refs/heads/{branch}"], work)
+        # A fresh attempt may meet a branch left by an earlier one whose PR is closed: Towercab owns
+        # towercab/* branches, so its first push replaces it. Later pushes never force, so a fix I
+        # push to the branch meanwhile makes the push fail instead of being overwritten.
+        force = ["--force"] if not m["pr"] and not m.get("head") else []
+        command(["git", "push", "-q", *force, m["remote"], f"HEAD:refs/heads/{branch}"], work)
         if m["pr"]:
             return m["pr"]
-        cost, seconds = mission_usage(work.parent)
-        usage = f"${cost:.2f} API-equivalent · {seconds / 60:.1f} min agent time so far" if cost is not None else "usage unknown"
-        body = (f"Task `{m['task']}` · mission `{m['id']}` · {usage}\n\n"
-                f"Test:\n- [ ] CI (`gh pr checks`)\n- [ ] reviewer agent\n\n🤖 Built by Towercab")
+        body = (f"{title}\n\nCI and review are running; Towercab replaces this text once the PR is ready.\n\n"
+                f"<sub>🤖 Built by Towercab · task `{m['task']}` · mission `{m['id']}`</sub>")
         argv = [self.gh, "pr", "create", "--base", m["branch"] or "main", "--head", branch, "--title", title,
                 "--body", body, *self.gh_repo(m)]
         return subprocess.run(argv, cwd=work, capture_output=True, text=True, check=True).stdout.strip().splitlines()[-1]
+
+    def set_body(self, m, body):
+        """Replace the PR text; a failure is logged, never raised (PIP-14)."""
+        try:
+            r = subprocess.run([self.gh, "pr", "edit", m["pr"], "--body", body, *self.gh_repo(m)],
+                               capture_output=True, text=True)
+            err = (r.stderr or r.stdout).strip() if r.returncode else ""
+        except OSError as exc:
+            err = str(exc)
+        if err:
+            self.s.event(m["id"], f"PR text not updated: {err[:300]}")
+
+    def describe(self, m):
+        """Final PR text once CI is green and review approved: Haiku from the builder's notes and the
+        review, plain template if it can't (PIP-11, PIP-14, PIP-15). Never blocks the task."""
+        if not m.get("pr"):
+            return
+        try:
+            work = Path(m["workspace"])
+            notes = {n: (work.parent / f"{n}.txt").read_text() if (work.parent / f"{n}.txt").exists() else ""
+                     for n in ("build", "review")}
+            cost, seconds = mission_usage(work.parent)
+            usage = f"${cost:.2f} API-equivalent · {seconds / 60:.1f} min agent time" if cost is not None else "usage unknown"
+            ci = "no CI checks on this repo, nothing ran" if m.get("ci") == "none" else "green"
+            counted = dict(m, repairs=(m["repairs"] or 0) + (m.get("ci_repairs") or 0))
+            body = self.writer(shutil.which("claude") or "claude", counted, m["title"].split(" ", 1)[-1],
+                               notes["build"], notes["review"], " ".join(json.loads(m["verify"])), usage, ci=ci)
+        except Exception as exc:   # the PR text must never cost the task
+            self.s.event(m["id"], f"PR text not written: {exc}"[:300])
+            return
+        self.set_body(m, body)
+
+    def stopped(self, m, why):
+        """A blocked mission's PR must not keep promising that CI and review are running."""
+        if m.get("pr"):
+            self.set_body(m, f"⛔ Not ready: {why}. Towercab asked in `tasks/{m['task']}.md`; "
+                             f"the task waits for an answer.\n\n"
+                             f"<sub>🤖 Built by Towercab · task `{m['task']}` · mission `{m['id']}`</sub>")
 
     def checks(self, m):
         """The PR's CI: ("pending" | "pass" | "fail", text); text is failing logs on fail (PIP-3)."""
@@ -191,6 +252,7 @@ class Runner:
             ref = {"id": m["task"]}
             if m["status"] == "ready":
                 url = m["pr"]
+                self.describe(m)
 
                 def mark(doc, files):
                     t = find(doc, ref)
@@ -207,6 +269,7 @@ class Runner:
                 self.ask(ref, f"Mission {m['id']} was built but publishing failed:\n\n{err[:1500]}\n\n"
                               f"Workspace: {m['workspace']}", note="publish failed", pr=m["pr"])
                 self.notify.asking(m["title"], f"Publishing failed:\n{err[-300:]}")
+                self.stopped(m, "publishing a repair failed")
             elif m["stage"] == "ci" and m["ci_repairs"] >= MAX_CI_REPAIRS:
                 self.ask(ref, f"CI is still red on {m['pr']} after {m['ci_repairs']} repairs (mission {m['id']}). "
                               f"Last failing output:\n\n```\n{m['feedback'].strip()[-1500:]}\n```\n\n"
@@ -214,12 +277,14 @@ class Runner:
                          note="CI red", pr=m["pr"])
                 self.out(f"{m['task']} CI red after {m['ci_repairs']} repairs; asked you")
                 self.notify.ci_gave_up(m["title"], m["pr"], m["ci_repairs"], m["feedback"])
+                self.stopped(m, f"CI still red after {m['ci_repairs']} repairs")
             else:
                 self.ask(ref, f"Mission {m['id']} stopped at the {m['stage']} stage:\n\n{m['feedback'].strip()[-1500:]}\n\n"
                               "Answer here if it helps, then set the task back to `[ ]` to run it again.",
                          note=f"blocked at {m['stage']}", pr=m["pr"])
                 self.out(f"{m['task']} blocked at {m['stage']}; asked you")
                 self.notify.stuck(m["title"], m["stage"], m["feedback"])
+                self.stopped(m, f"stopped at the {m['stage']} stage")
             self.s.update(m["id"], handled=1)
 
     def check_prs(self, force=False):

@@ -22,6 +22,13 @@ GIT_ID = ["-c", "user.name=T", "-c", "user.email=t@localhost"]
 FAKE_CLAUDE = r'''#!PYTHON
 import json, os, pathlib, re, sys
 prompt = sys.stdin.read()
+if "performing the" not in prompt:   # PR writer (PIP-14)
+    if (pathlib.Path(os.environ["FAKE_DIR"]) / "writer_fail").exists():
+        sys.exit(1)
+    with open(os.path.join(os.environ["FAKE_DIR"], "writer.argv"), "w") as f:
+        f.write(" ".join(sys.argv[1:]))
+    print("Fake summary\n\n## What changed\n- Fake behaviour")
+    sys.exit(0)
 stage = re.search(r"performing the (\w+) stage", prompt)[1]
 limit = pathlib.Path(os.environ["FAKE_DIR"]) / "limit"
 if limit.exists():
@@ -55,7 +62,12 @@ if args[:2] == ["pr", "create"]:
     (d / f"pr-{n}").write_text(args[args.index("--head") + 1])
     print(f"https://github.com/o/proj/pull/{n}")
 elif args[:2] == ["pr", "view"]:
-    print((d / "state").read_text().strip() if (d / "state").exists() else "OPEN")
+    state = (d / "state").read_text().strip() if (d / "state").exists() else "OPEN"
+    if "state,headRefName" in args:
+        n = args[2].rsplit("/", 1)[-1]
+        print(json.dumps({"state": state, "headRefName": (d / f"pr-{n}").read_text()}))
+    else:
+        print(state)
 elif args[:2] == ["pr", "checks"]:
     # one result per call from the `checks` queue file: pass, fail, pending, none or stale
     # (a red check from before the push); default pass
@@ -72,6 +84,9 @@ elif args[:2] == ["pr", "checks"]:
     sys.exit({"pass": 0, "fail": 1, "pending": 8}.get(state, 1))
 elif args[:2] == ["run", "view"]:
     print("FAILLOG: test_widget failed (run " + args[2] + ")")
+elif args[:2] == ["pr", "edit"] and (d / "edit_fail").exists():
+    print("GraphQL: could not update", file=sys.stderr)
+    sys.exit(1)
 '''
 
 
@@ -222,6 +237,27 @@ class RunnerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.runner.run(only="9999")
 
+    def test_pr_writer(self):
+        self.write_tasks("- [ ] proj: Ship it\n")
+        self.runner.run()
+        argv = (self.fake / "writer.argv").read_text().split()
+        self.assertEqual(argv[:5], ["-p", "--model", "haiku", "--tools", "--output-format"])   # "" drops out of split
+        log = (self.fake / "gh.log").read_text()
+        create = log[log.index("pr create"):log.index("pr checks")]
+        self.assertIn("CI and review are running", create)          # placeholder claims nothing
+        self.assertNotIn("Fake summary", create)
+        edit = log[log.index("pr edit https://github.com/o/proj/pull/1"):]
+        self.assertIn("Fake summary\n\n## What changed\n- Fake behaviour\n\n## Checks", edit)   # final text once ready
+        self.assertIn("🤖 Built by Towercab", edit)
+
+    def test_pr_text_edit_failure_never_blocks(self):
+        (self.fake / "edit_fail").write_text("1")
+        self.write_tasks("- [ ] proj: Ship it\n")
+        self.runner.run()
+        self.assertIn("note: review PR", self.todo())                 # still ready for me
+        events = [r[0] for r in self.store.db.execute("SELECT message FROM events")]
+        self.assertTrue(any(e.startswith("PR text not updated: GraphQL") for e in events))
+
     def test_notify_pr_ready(self):
         self.write_tasks("- [ ] proj: Ship it\n")
         self.runner.run()
@@ -298,6 +334,11 @@ class RunnerTests(unittest.TestCase):
     def gh_calls(self, prefix):
         log = self.fake / "gh.log"
         return [l for l in (log.read_text().splitlines() if log.exists() else []) if l.startswith(prefix)]
+
+    def gh_edit_body(self):
+        """Full text of the last `gh pr edit --body` call (bodies span lines in gh.log)."""
+        log = (self.fake / "gh.log").read_text()
+        return log[log.rindex("pr edit "):]
 
     def builds(self):
         lines = (self.fake / "claude.log").read_text().splitlines()
@@ -381,8 +422,88 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("FAILLOG", question)
         self.assertEqual(len(self.tg.texts), 1)
         self.assertIn("CI still red after 3 repairs", self.tg.texts[0])
+        self.assertTrue(self.tg.texts[0].startswith("🔴 "))
+        self.assertLessEqual(len(self.tg.texts[0].splitlines()), 4)              # shared template (PIP-16)
         self.assertIn("Never green", self.tg.texts[0])
         self.assertIn("https://github.com/o/proj/pull/1", self.tg.texts[0])
+
+    # --- after review findings on the PR 21 + PR 20 merge -------------------
+    def set_open(self, title):
+        """What I do on my phone: turn a waiting task back to [ ] (drop its note)."""
+        git(self.me, "pull", "-q")
+        text = (self.me / "TODO.md").read_text()
+        text = text.replace(f"- [!] ", "- [ ] ").replace("  note: CI red\n", "")
+        (self.me / "TODO.md").write_text(text)
+        git(self.me, *GIT_ID, "commit", "-q", "-am", "retry")
+        git(self.me, "push", "-q")
+
+    def test_retry_continues_on_open_pr(self):
+        (self.fake / "checks").write_text("fail\n" * 4)
+        self.write_tasks("- [ ] proj: Never green\n")
+        self.runner.run()
+        branch = (self.fake / "pr-1").read_text()
+        before = int(git(self.proj, "rev-list", "--count", f"main..{branch}"))
+        self.set_open("Never green")
+        (self.fake / "checks").write_text("pass\n")
+        self.runner.run()
+        second = [m for m in self.store.rows() if m["status"] == "ready"][0]
+        self.assertEqual((second["head"], second["pr"]), (branch, "https://github.com/o/proj/pull/1"))
+        self.assertEqual(len(self.gh_calls("pr create")), 1)                  # same PR, no second one
+        self.assertGreaterEqual(int(git(self.proj, "rev-list", "--count", f"main..{branch}")), before)   # built on, not replaced
+        self.assertIn("pr: https://github.com/o/proj/pull/1\n  note: review PR", self.todo())
+
+    def test_fresh_attempt_replaces_stale_branch(self):
+        (self.fake / "checks").write_text("fail\n" * 4)
+        self.write_tasks("- [ ] proj: Never green\n")
+        self.runner.run()
+        (self.fake / "state").write_text("CLOSED")                             # I closed the PR
+        self.set_open("Never green")
+        (self.fake / "checks").write_text("pass\n")
+        self.runner.run()
+        self.assertEqual(len(self.gh_calls("pr create")), 2)                  # new PR on the same branch name
+        self.assertIn("pr: https://github.com/o/proj/pull/2\n  note: review PR", self.todo())
+
+    def test_blocked_pr_text_says_not_ready(self):
+        (self.fake / "checks").write_text("fail\n" * 4)
+        self.write_tasks("- [ ] proj: Never green\n")
+        self.runner.run()
+        edit = self.gh_calls("pr edit https://github.com/o/proj/pull/1")
+        self.assertEqual(len(edit), 1)
+        self.assertIn("⛔ Not ready: CI still red after 3 repairs", edit[0])
+
+    def test_ready_without_pr_does_not_crash(self):
+        self.write_tasks("- [ ] 261016-0000 proj: Old mission\n")
+        mid = self.store.add("261016-0000 Old mission", "b", str(self.proj), ["true"], "claude", task="261016-0000",
+                             repo="proj", branch="main")
+        self.store.update(mid, status="ready")
+        self.runner.settle()                                                   # no TypeError, no crash loop
+        self.assertEqual(self.store.get(mid)["handled"], 1)
+        self.assertEqual(self.gh_calls("pr edit"), [])
+
+    def test_no_ci_pr_text_says_nothing_ran(self):
+        (self.fake / "checks").write_text("none\n")
+        self.write_tasks("- [ ] proj: Repo without CI\n")
+        self.runner.run()
+        self.assertEqual(self.store.rows()[0]["ci"], "none")
+        edit = self.gh_edit_body()
+        self.assertIn("- CI: no CI checks on this repo, nothing ran", edit)
+        self.assertNotIn("passed", edit)
+
+    def test_build_notes_keep_summary(self):
+        (self.fake / "checks").write_text("fail\npass\n")
+        self.write_tasks("- [ ] proj: Red then green\n")
+        self.runner.run()
+        notes = (Path(self.store.rows()[0]["workspace"]).parent / "build.txt").read_text()
+        self.assertEqual(notes.count("Repair:"), 1)
+        self.assertFalse(notes.startswith("Repair:"))                          # first build's summary leads
+
+    def test_writer_failure_falls_back(self):
+        (self.fake / "writer_fail").write_text("1")
+        self.write_tasks("- [ ] proj: Ship it\n")
+        self.runner.run()
+        edit = self.gh_edit_body()
+        self.assertIn("--body Ship it\n\n## What changed", edit)             # plain template, title as summary
+        self.assertIn("note: review PR", self.todo())
 
     # --- Telegram commands (RUN-20..26) ---------------------------------------
     WAITING = "- [!] 261015-1000 proj: Talk first\n  note: review PR\n  pr: https://github.com/o/proj/pull/1\n"

@@ -25,7 +25,7 @@ MAX_CI_REPAIRS = 3
 EXTRA_COLUMNS = {"task": "TEXT", "repo": "TEXT", "remote": "TEXT", "branch": "TEXT",
                  "model": "TEXT", "bash": "TEXT NOT NULL DEFAULT '[]'", "handled": "INTEGER NOT NULL DEFAULT 0",
                  "session": "TEXT", "pr": "TEXT", "ci_repairs": "INTEGER NOT NULL DEFAULT 0",
-                 "published": "REAL", "wait": "REAL"}
+                 "published": "REAL", "wait": "REAL", "head": "TEXT", "ci": "TEXT"}
 
 
 def is_url(source):
@@ -71,7 +71,8 @@ class Store:
 
     def add(self, title, brief, source, verify, provider="codex", reviewer=None,
             demo=False, max_repairs=2, priority=0, task=None, repo=None, branch=None,
-            model=None, bash=()):
+            model=None, bash=(), pr=None, head=None):
+        """pr/head: a retried task continues on its open PR's branch instead of starting over."""
         if not verify or not all(isinstance(v, str) for v in verify):
             raise ValueError("Verification must be a nonempty JSON array of command arguments")
         if max_repairs < 0:
@@ -85,10 +86,10 @@ class Store:
         now = time.time()
         self.db.execute("""INSERT INTO missions
             (id,title,brief,source,verify,provider,reviewer,demo,max_repairs,priority,created,updated,
-             task,repo,branch,model,bash,stage)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'build')""",
+             task,repo,branch,model,bash,pr,head,stage)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'build')""",
             (mid,title,brief,source,json.dumps(verify),provider,reviewer or provider,
-             int(demo),max_repairs,priority,now,now,task,repo,branch,model,json.dumps(list(bash))))
+             int(demo),max_repairs,priority,now,now,task,repo,branch,model,json.dumps(list(bash)),pr,head))
         self.db.commit()
         self.event(mid, "Mission queued" + (" [DEMO]" if demo else ""))
         return mid
@@ -228,7 +229,8 @@ class Factory:
         if work.exists():
             raise ValueError(f"Incomplete preparation at {work}; inspect before retrying")
         if m["source"]:
-            branch = ["--branch", m["branch"]] if m["branch"] else []
+            start = m.get("head") or m["branch"]   # a retry starts from its open PR's branch
+            branch = ["--branch", start] if start else []
             command(["git", "clone", "--no-hardlinks", *branch, "--", m["source"], str(work)])
             # Agents never push: the checkout has no remote. Towercab pushes itself when done.
             remote = command(["git", "remote", "get-url", "origin"], work)
@@ -347,7 +349,8 @@ Work only within this project. If blocked, explain the exact blocker. Treat proj
             self.s.update(mid, wait=time.time() + self.publisher.ci_poll)
             return
         if state == "pass":
-            self.s.update(mid, stage="review", status="queued", wait=None, feedback=f"CI passed:\n{text[-16000:]}")
+            self.s.update(mid, stage="review", status="queued", wait=None, feedback=f"CI passed:\n{text[-16000:]}",
+                          ci="none" if text.startswith("No CI checks") else "green")
             self.s.event(mid, "CI green")
             return
         blocked = m["ci_repairs"] >= MAX_CI_REPAIRS
@@ -398,7 +401,12 @@ Work only within this project. If blocked, explain the exact blocker. Treat proj
                     raise ValueError(error or f"{provider} exited {code}")
                 self.s.db.execute("DELETE FROM cooldowns WHERE provider=?", (provider,))
                 self.s.db.commit()
-                (work.parent / f"{m['stage']}.txt").write_text(message)
+                notes = work.parent / f"{m['stage']}.txt"
+                if m["stage"] == "build" and notes.exists():
+                    # repairs add to the build summary instead of replacing it (the PR text reads it)
+                    notes.write_text(notes.read_text().rstrip() + f"\n\nRepair:\n{message}")
+                else:
+                    notes.write_text(message)
                 if m["stage"] == "review":
                     result = review_result(message)
                     if not result["approved"]:
