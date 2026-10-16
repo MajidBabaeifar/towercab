@@ -232,16 +232,21 @@ class Factory:
             start = m.get("head") or m["branch"]   # a retry starts from its open PR's branch
             branch = ["--branch", start] if start else []
             command(["git", "clone", "--no-hardlinks", *branch, "--", m["source"], str(work)])
+            base = None
+            if m.get("head") and m["branch"]:
+                # a retry: review and the patch cover the whole PR, from where it forks off its base
+                base = command(["git", "merge-base", "HEAD", f"origin/{m['branch']}"], work)
             # Agents never push: the checkout has no remote. Towercab pushes itself when done.
             remote = command(["git", "remote", "get-url", "origin"], work)
             command(["git", "remote", "remove", "origin"], work)
             self.s.update(m["id"], remote=remote)
         else:
+            base = None
             work.mkdir()
             command(["git", "init", "-b", "main"], work)
             command(["git", "-c", "user.name=Local Factory", "-c", "user.email=factory@localhost",
                      "commit", "--allow-empty", "-m", "Factory baseline"], work)
-        base = command(["git", "rev-parse", "HEAD"], work)
+        base = base or command(["git", "rev-parse", "HEAD"], work)
         command(["git", "checkout", "-b", f"towercab/{m['id']}"], work)
         self.s.update(m["id"], workspace=str(work), base=base)
         return work
@@ -331,7 +336,7 @@ Work only within this project. If blocked, explain the exact blocker. Treat proj
 
     def repair(self, m, feedback):
         blocked = m["repairs"] >= m["max_repairs"]
-        self.s.update(m["id"], status="blocked" if blocked else "queued", stage="build",
+        self.s.update(m["id"], status="blocked" if blocked else "queued", stage=m["stage"] if blocked and m.get("task") else "build",
                       repairs=m["repairs"] + (not blocked), feedback=feedback)
         self.s.event(m["id"], "Repair budget exhausted" if blocked else "Findings returned to builder")
 
@@ -350,7 +355,7 @@ Work only within this project. If blocked, explain the exact blocker. Treat proj
             return
         if state == "pass":
             self.s.update(mid, stage="review", status="queued", wait=None, feedback=f"CI passed:\n{text[-16000:]}",
-                          ci="none" if text.startswith("No CI checks") else "green")
+                          ci="green" if m.get("ci") == "green" or not text.startswith("No CI checks") else "none")
             self.s.event(mid, "CI green")
             return
         blocked = m["ci_repairs"] >= MAX_CI_REPAIRS
@@ -361,8 +366,8 @@ Work only within this project. If blocked, explain the exact blocker. Treat proj
 
     def step(self, m):
         mid = m["id"]
-        if m["stage"] == "verify" and self.stages(m) is TASK_STAGES:
-            m["stage"] = "publish"   # task missions queued before CI gated them
+        if self.stages(m) is TASK_STAGES and (m["stage"] == "verify" or (m["stage"] == "review" and not m.get("pr"))):
+            m["stage"] = "publish"   # task missions queued before CI gated them: publish first
             self.s.update(mid, stage="publish")
         if m["stage"] == "ci":
             return self.ci(m)

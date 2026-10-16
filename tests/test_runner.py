@@ -1,5 +1,6 @@
 """End to end: the real loop, git and scheduler, with fake `claude` and `gh` executables."""
 import json
+import re
 import os
 from pathlib import Path
 import subprocess
@@ -27,6 +28,8 @@ if "performing the" not in prompt:   # PR writer (PIP-14)
         sys.exit(1)
     with open(os.path.join(os.environ["FAKE_DIR"], "writer.argv"), "w") as f:
         f.write(" ".join(sys.argv[1:]))
+    with open(os.path.join(os.environ["FAKE_DIR"], "writer.prompt"), "w") as f:
+        f.write(prompt)
     print("Fake summary\n\n## What changed\n- Fake behaviour")
     sys.exit(0)
 stage = re.search(r"performing the (\w+) stage", prompt)[1]
@@ -47,6 +50,8 @@ if stage == "build":
         denials = [{"tool_name": "Read", "tool_input": {"file_path": os.path.expanduser("~/.ssh/id_ed25519")}}]
 if stage == "review":
     result = '{"approved": true, "feedback": "looks right"}'
+    if (pathlib.Path(os.environ["FAKE_DIR"]) / "review_reject").exists():
+        result = '{"approved": false, "feedback": "not good enough"}'
 print(json.dumps({"type": "result", "is_error": False, "result": result, "total_cost_usd": 0.01,
                   "duration_ms": 2000, "permission_denials": denials, "session_id": f"sess-{stage}"}))
 '''
@@ -61,11 +66,20 @@ if args[:2] == ["pr", "create"]:
     n = len(list(d.glob("pr-*"))) + 1
     (d / f"pr-{n}").write_text(args[args.index("--head") + 1])
     print(f"https://github.com/o/proj/pull/{n}")
+elif args[:2] == ["pr", "list"]:
+    state = (d / "state").read_text().strip() if (d / "state").exists() else "OPEN"
+    head = args[args.index("--head") + 1]
+    hits = [p for p in sorted(d.glob("pr-*")) if p.read_text() == head]
+    print(json.dumps([{"url": f"https://github.com/o/proj/pull/{p.name[3:]}"} for p in hits] if state == "OPEN" else []))
 elif args[:2] == ["pr", "view"]:
     state = (d / "state").read_text().strip() if (d / "state").exists() else "OPEN"
+    if "state,headRefName" in args and (d / "view_fail").exists():
+        print("error connecting to api.github.com", file=sys.stderr)
+        sys.exit(1)
     if "state,headRefName" in args:
-        n = args[2].rsplit("/", 1)[-1]
-        print(json.dumps({"state": state, "headRefName": (d / f"pr-{n}").read_text()}))
+        pr = d / f"pr-{args[2].rsplit('/', 1)[-1]}"
+        # a PR this fake never created (a hand-written pr: line) reads as closed
+        print(json.dumps({"state": state if pr.exists() else "CLOSED", "headRefName": pr.read_text() if pr.exists() else ""}))
     else:
         print(state)
 elif args[:2] == ["pr", "checks"]:
@@ -335,6 +349,12 @@ class RunnerTests(unittest.TestCase):
         log = self.fake / "gh.log"
         return [l for l in (log.read_text().splitlines() if log.exists() else []) if l.startswith(prefix)]
 
+    def gh_edits(self):
+        """Every `gh pr edit` call, with its full multi-line body."""
+        log = (self.fake / "gh.log").read_text()
+        parts = re.split(r"(?m)^(?=pr |run )", log)
+        return [p for p in parts if p.startswith("pr edit ")]
+
     def gh_edit_body(self):
         """Full text of the last `gh pr edit --body` call (bodies span lines in gh.log)."""
         log = (self.fake / "gh.log").read_text()
@@ -386,6 +406,9 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(self.runner.checks(m)[0], "pending")    # previous commit's red doesn't count
         m["published"] = time.time() - 7200
         self.assertEqual(self.runner.checks(m), ("pass", "No CI checks on this PR."))   # repo without CI
+        (self.fake / "checks").write_text("none\n")
+        m.update(ci="green", published=time.time() - 600)
+        self.assertEqual(self.runner.checks(m)[0], "pending")    # green earlier: its run hasn't shown up yet
 
     def test_ci_repair_loop(self):
         (self.fake / "checks").write_text("fail\npass\n")
@@ -432,7 +455,7 @@ class RunnerTests(unittest.TestCase):
         """What I do on my phone: turn a waiting task back to [ ] (drop its note)."""
         git(self.me, "pull", "-q")
         text = (self.me / "TODO.md").read_text()
-        text = text.replace(f"- [!] ", "- [ ] ").replace("  note: CI red\n", "")
+        text = re.sub(r"  note: [^\n]*\n", "", text.replace("- [!] ", "- [ ] "))
         (self.me / "TODO.md").write_text(text)
         git(self.me, *GIT_ID, "commit", "-q", "-am", "retry")
         git(self.me, "push", "-q")
@@ -479,6 +502,8 @@ class RunnerTests(unittest.TestCase):
         self.runner.settle()                                                   # no TypeError, no crash loop
         self.assertEqual(self.store.get(mid)["handled"], 1)
         self.assertEqual(self.gh_calls("pr edit"), [])
+        self.assertIn("note: never published", self.todo())                    # not 'review PR'
+        self.assertNotIn("Review: None", " ".join(self.tg.texts))
 
     def test_no_ci_pr_text_says_nothing_ran(self):
         (self.fake / "checks").write_text("none\n")
@@ -504,6 +529,85 @@ class RunnerTests(unittest.TestCase):
         edit = self.gh_edit_body()
         self.assertIn("--body Ship it\n\n## What changed", edit)             # plain template, title as summary
         self.assertIn("note: review PR", self.todo())
+
+    def push_my_fix(self, branch):
+        """What I do by hand: push a fix to the PR's branch."""
+        mine = self.root / "my-proj"
+        if not mine.exists():
+            subprocess.run(["git", "clone", "-q", str(self.proj), str(mine)], check=True)
+        git(mine, "fetch", "-q", "origin")
+        git(mine, "checkout", "-q", "-B", branch, f"origin/{branch}")
+        (mine / "MY_FIX.txt").write_text("fixed by hand\n")
+        git(mine, "add", ".")
+        git(mine, *GIT_ID, "commit", "-q", "-m", "MY FIX")
+        git(mine, "push", "-q", "origin", branch)
+        return git(mine, "rev-parse", "HEAD").strip()
+
+    def kept(self, branch, sha):
+        return subprocess.run(["git", "-C", str(self.proj), "merge-base", "--is-ancestor", sha, branch]).returncode == 0
+
+    def test_gh_failure_at_retry_asks_and_never_force_pushes(self):
+        (self.fake / "checks").write_text("fail\n" * 4)
+        self.write_tasks("- [ ] proj: Never green\n")
+        self.runner.run()
+        branch = (self.fake / "pr-1").read_text()
+        fix = self.push_my_fix(branch)
+        (self.fake / "view_fail").write_text("1")
+        self.set_open("Never green")
+        self.runner.run()
+        self.assertTrue(self.kept(branch, fix))                                 # my fix survives
+        self.assertEqual(len(self.gh_calls("pr create")), 1)
+        self.assertIn("note: PR state unknown", self.todo())
+        self.assertIn("pr: https://github.com/o/proj/pull/1", self.todo())
+
+    def test_lost_pr_line_never_force_pushes(self):
+        (self.fake / "checks").write_text("fail\n" * 4)
+        self.write_tasks("- [ ] proj: Never green\n")
+        self.runner.run()
+        branch = (self.fake / "pr-1").read_text()
+        fix = self.push_my_fix(branch)
+        git(self.me, "pull", "-q")                                              # I delete the pr: line by hand
+        (self.me / "TODO.md").write_text(re.sub(r"  (pr|note): [^\n]*\n", "", (self.me / "TODO.md").read_text()).replace("- [!] ", "- [ ] "))
+        git(self.me, *GIT_ID, "commit", "-q", "-am", "lost pr")
+        git(self.me, "push", "-q")
+        (self.fake / "checks").write_text("pass\n")
+        self.runner.run()
+        self.assertTrue(self.kept(branch, fix))                                 # an open PR's branch is never forced
+        self.assertIn("note: publish failed", self.todo())
+
+    def test_retry_reviews_and_describes_the_whole_pr(self):
+        (self.fake / "checks").write_text("fail\n" * 4)
+        self.write_tasks("- [ ] proj: Never green\n")
+        self.runner.run()
+        branch = (self.fake / "pr-1").read_text()
+        self.set_open("Never green")
+        (self.fake / "checks").write_text("pass\n")
+        self.runner.run()
+        first, second = sorted(self.store.rows(), key=lambda m: m["created"])
+        self.assertEqual(second["base"], git(self.proj, "merge-base", "main", branch).strip())   # whole PR, not the delta
+        prompt = (self.fake / "writer.prompt").read_text()
+        self.assertIn("Next attempt:", prompt)                                  # both attempts' notes
+        edits = self.gh_edits()
+        self.assertTrue(any("CI and review are running" in e for e in edits[1:-1]))   # stale text reset on the retry push
+        self.assertIn("2 attempts", edits[-1])
+        self.assertNotIn(": repair 0", git(self.proj, "log", "--format=%s", branch))
+
+    def test_review_cap_says_review(self):
+        (self.fake / "review_reject").write_text("1")
+        self.write_tasks("- [ ] proj: Never good\n")
+        self.runner.run()
+        self.assertIn("note: blocked at review", self.todo())
+        self.assertIn("⛔ Not ready: review rounds used up", self.gh_edits()[-1])
+
+    def test_old_review_mission_gets_published(self):
+        self.write_tasks("- [~] 261016-0000 proj: Queued at review before the upgrade\n")
+        mid = self.store.add("261016-0000 Queued at review before the upgrade", "b", str(self.proj), ["true"], "claude",
+                             task="261016-0000", repo="proj", branch="main")
+        self.runner.factory.prepare(self.store.get(mid))
+        self.store.update(mid, stage="review")
+        self.runner.run(max_tasks=0)
+        m = self.store.get(mid)
+        self.assertEqual((m["status"], m["pr"]), ("ready", "https://github.com/o/proj/pull/1"))
 
     # --- Telegram commands (RUN-20..26) ---------------------------------------
     WAITING = "- [!] 261015-1000 proj: Talk first\n  note: review PR\n  pr: https://github.com/o/proj/pull/1\n"

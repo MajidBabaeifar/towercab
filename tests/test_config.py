@@ -41,6 +41,12 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(ConfigError, msg=bad):
                 self.write(bad)
 
+    def test_ci_settings(self):
+        c = self.write('[tasks]\npath="x"\n')
+        self.assertEqual((c.ci_poll, c.ci_grace), (30, 120))
+        c = self.write('[tasks]\npath="x"\n[agent]\nci_poll=5\nci_grace=60\n')
+        self.assertEqual((c.ci_poll, c.ci_grace), (5, 60))
+
     def test_telegram_config(self):
         base = '[tasks]\npath="x"\n'
         self.assertIsNone(self.write(base).telegram)

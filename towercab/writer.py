@@ -60,11 +60,16 @@ def parse(text):
     return summary[:200], bullets("\n".join(items))
 
 
+def head_and_tail(text, head=3500, tail=2500):
+    """The first build's summary leads build notes and repairs follow: keep both ends."""
+    return text if len(text) <= head + tail else f"{text[:head].rstrip()}\n…\n{text[-tail:].lstrip()}"
+
+
 def write_body(claude, m, title, build, review, verify, usage, timeout=60, ci=None):
     """Haiku-written body; any failure falls back to plain_body."""
     fallback = plain_body(m, title, review, verify, usage, ci)
     argv = [claude, "-p", "--model", "haiku", "--tools", "", "--output-format", "text"]
-    prompt = PROMPT.format(title=title, build=build.strip()[-6000:] or "(none)", review=review.strip()[:3000] or "(none)")
+    prompt = PROMPT.format(title=title, build=head_and_tail(build.strip()) or "(none)", review=review.strip()[:3000] or "(none)")
     try:
         r = subprocess.run(argv, input=prompt, capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.SubprocessError):

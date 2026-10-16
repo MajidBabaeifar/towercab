@@ -15,7 +15,7 @@ def one_line(text, width=LINE_WIDTH):
 
 
 def tg_message(emoji, title, what, action=None):
-    """Line 1: emoji + title + what happened. Then the one thing to do. At most 4 lines (PIP-11)."""
+    """Line 1: emoji + title + what happened. Then the one thing to do. At most 4 lines (PIP-16)."""
     head = one_line(f"{emoji} {title}: {what}" if title else f"{emoji} {what}")
     lines = [ln.strip() for ln in str(action or "").strip().splitlines() if ln.strip()]
     return "\n".join([head] + [one_line(ln) for ln in lines[:MAX_LINES - 1]])
