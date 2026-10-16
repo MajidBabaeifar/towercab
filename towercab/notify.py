@@ -15,7 +15,7 @@ def one_line(text, width=LINE_WIDTH):
 
 
 def tg_message(emoji, title, what, action=None):
-    """Line 1: emoji + title + what happened. Then the one thing to do. At most 4 lines (PIP-11)."""
+    """Line 1: emoji + title + what happened. Then the one thing to do. At most 4 lines (PIP-16)."""
     head = one_line(f"{emoji} {title}: {what}" if title else f"{emoji} {what}")
     lines = [ln.strip() for ln in str(action or "").strip().splitlines() if ln.strip()]
     return "\n".join([head] + [one_line(ln) for ln in lines[:MAX_LINES - 1]])
@@ -85,9 +85,13 @@ class Notifier:
     def pr_ready(self, task, url):
         return self.send(tg_message("✅", task, "PR ready", f"Review: {url}"))
 
-    def stuck(self, task, stage, reason):
-        return self.send(tg_message("⛔", task, f"stuck at {stage}",
+    def stuck(self, task, stage, reason, what=None):
+        return self.send(tg_message("⛔", task, what or f"stuck at {stage}",
                                     "Answer in its tasks/ note, then set [ ]\n" + " ".join(reason.split())[-200:]))
+
+    def ci_gave_up(self, task, pr, repairs, logs):
+        return self.send(tg_message("🔴", task, f"CI still red after {repairs} repairs",
+                                    f"Fix on the branch or answer in its tasks/ note: {pr}\n" + " ".join(logs.split())[-200:]))
 
     def asking(self, task, question):
         return self.send(tg_message("❓", task, "needs you", question))

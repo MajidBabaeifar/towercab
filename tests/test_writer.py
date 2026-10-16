@@ -81,6 +81,28 @@ class TelegramTemplateTests(unittest.TestCase):
         ])
 
 
+class NotesTrimTests(unittest.TestCase):
+    def test_head_and_tail_keeps_the_summary(self):
+        from towercab.writer import head_and_tail
+        notes = "SUMMARY " + "a" * 5000 + "\n\nRepair:\n" + "b" * 5000 + " LAST"
+        kept = head_and_tail(notes)
+        self.assertTrue(kept.startswith("SUMMARY "))
+        self.assertTrue(kept.endswith(" LAST"))
+        self.assertLess(len(kept), 6100)
+        self.assertEqual(head_and_tail("short"), "short")
+
+
+class CiGaveUpTextTests(unittest.TestCase):
+    def test_ci_gave_up_text(self):
+        tg = FakeTelegram()
+        self.addCleanup(tg.stop)
+        Notifier("tok", "42", tg.url, out=lambda *a: None).ci_gave_up(
+            "Ship it", "https://github.com/o/p/pull/1", 3, "  FAILLOG:\n  test_x failed \n")
+        self.assertEqual(tg.texts, ["🔴 Ship it: CI still red after 3 repairs\n"
+                                    "Fix on the branch or answer in its tasks/ note: https://github.com/o/p/pull/1\n"
+                                    "FAILLOG: test_x failed"])
+
+
 class FourLineTests(unittest.TestCase):
     def test_tg_max_four_lines(self):
         from towercab.notify import tg_message

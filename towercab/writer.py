@@ -1,4 +1,4 @@
-"""PR description: Haiku writes it from the builder's notes and review verdict; a plain template if it can't (PIP-11, PIP-16..16)."""
+"""PR description: Haiku writes it from the builder's notes and review verdict; a plain template if it can't (PIP-11, PIP-14, PIP-15)."""
 from __future__ import annotations
 
 import subprocess
@@ -31,19 +31,21 @@ def bullets(text, limit=MAX_BULLETS):
     return "\n".join(f"- {l[:200]}" for l in [l for l in lines if l][:limit]) or "- see review"
 
 
-def checks(verify, repairs):
-    return f"## Checks\n- verify: `{verify}` passed ({repairs} repairs)\n- reviewer agent approved"
+def checks(verify, repairs, ci=None):
+    """ci: the PR's CI result ("green", or why nothing ran); None = the local verify gated."""
+    gate = f"- CI: {ci} ({repairs} repairs)" if ci else f"- verify: `{verify}` passed ({repairs} repairs)"
+    return f"## Checks\n{gate}\n- reviewer agent approved"
 
 
-def assemble(m, summary, changes, verify, usage):
+def assemble(m, summary, changes, verify, usage, ci=None):
     """What matters first: summary, changes, checks. Bookkeeping goes in a small footer."""
     footer = f"<sub>{FOOTER} · task `{m['task']}` · mission `{m['id']}` · {usage}</sub>"
-    return f"{summary}\n\n## What changed\n{changes}\n\n{checks(verify, m['repairs'])}\n\n{footer}"
+    return f"{summary}\n\n## What changed\n{changes}\n\n{checks(verify, m['repairs'], ci)}\n\n{footer}"
 
 
-def plain_body(m, title, review, verify, usage):
+def plain_body(m, title, review, verify, usage, ci=None):
     """Deterministic fallback: title as summary, review feedback as bullets (PIP-15)."""
-    return assemble(m, title, bullets(review), verify, usage)
+    return assemble(m, title, bullets(review), verify, usage, ci)
 
 
 def parse(text):
@@ -58,11 +60,16 @@ def parse(text):
     return summary[:200], bullets("\n".join(items))
 
 
-def write_body(claude, m, title, build, review, verify, usage, timeout=60):
+def head_and_tail(text, head=3500, tail=2500):
+    """The first build's summary leads build notes and repairs follow: keep both ends."""
+    return text if len(text) <= head + tail else f"{text[:head].rstrip()}\n…\n{text[-tail:].lstrip()}"
+
+
+def write_body(claude, m, title, build, review, verify, usage, timeout=60, ci=None):
     """Haiku-written body; any failure falls back to plain_body."""
-    fallback = plain_body(m, title, review, verify, usage)
+    fallback = plain_body(m, title, review, verify, usage, ci)
     argv = [claude, "-p", "--model", "haiku", "--tools", "", "--output-format", "text"]
-    prompt = PROMPT.format(title=title, build=build.strip()[-6000:] or "(none)", review=review.strip()[:3000] or "(none)")
+    prompt = PROMPT.format(title=title, build=head_and_tail(build.strip()) or "(none)", review=review.strip()[:3000] or "(none)")
     try:
         r = subprocess.run(argv, input=prompt, capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.SubprocessError):
@@ -70,4 +77,4 @@ def write_body(claude, m, title, build, review, verify, usage, timeout=60):
     parsed = parse(r.stdout) if r.returncode == 0 else None
     if not parsed:
         return fallback
-    return assemble(m, parsed[0], parsed[1], verify, usage)
+    return assemble(m, parsed[0], parsed[1], verify, usage, ci)

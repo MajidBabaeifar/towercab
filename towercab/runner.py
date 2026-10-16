@@ -1,6 +1,7 @@
 """Work down the Gradient Tasks list: pick, delegate, watch, finish, repeat (RUN-1..9)."""
 from __future__ import annotations
 
+from datetime import datetime
 import json
 from pathlib import Path
 import re
@@ -8,13 +9,22 @@ import shutil
 import subprocess
 import time
 
-from .core import Factory, command, mission_usage
+from .core import MAX_CI_REPAIRS, Factory, command, mission_usage
 from .notify import Notifier
 from .tasks import done_line, pick_next
-from .writer import write_body
+from .writer import head_and_tail, write_body
 
 GITHUB_RE = re.compile(r"github\.com[:/](?P<repo>[^/]+/[^/]+?)(?:\.git)?/?$")
+PR_NUMBER_RE = re.compile(r"github\.com/(?P<repo>[^/]+/[^/]+)/pull/(?P<n>\d+)")
+PR_REPO_RE = re.compile(r"github\.com/(?P<repo>[^/]+/[^/]+)/pull/\d+")
 PR_RE = re.compile(r"github\.com/[^/]+/(?P<name>[^/]+)/pull/(?P<n>\d+)")
+
+
+def has_workflows(m):
+    """The repo has GitHub Actions workflows: then 'no checks' never means 'no CI'."""
+    work = m.get("workspace")
+    flows = Path(work) / ".github" / "workflows" if work else None
+    return bool(flows and flows.is_dir() and any(flows.glob("*.y*ml")))
 
 
 def slug(title, limit=40):
@@ -25,6 +35,14 @@ def slug(title, limit=40):
 def short_pr(url):
     m = PR_RE.search(url or "")
     return f"{m['name']}#{m['n']}" if m else (url or "")
+
+
+def started(check):
+    """A check's start as epoch seconds; None if unknown."""
+    try:
+        return datetime.fromisoformat(check["startedAt"].replace("Z", "+00:00")).timestamp()
+    except (KeyError, AttributeError, TypeError, ValueError):
+        return None
 
 
 def find(doc, ref):
@@ -40,7 +58,7 @@ class Runner:
         self.s, self.c, self.tasks, self.gh, self.out = store, config, tasks, gh, out
         self.writer = writer
         self.notify = notify or Notifier.from_config(config, out)
-        self.factory = Factory(store, config.timeout, self.notify)
+        self.factory = Factory(store, config.timeout, self.notify, publisher=self)
         self.pr_interval = pr_interval
         self._last_pr_check = 0.0
         self.offset = None   # next Telegram update_id to fetch
@@ -50,7 +68,7 @@ class Runner:
         doc, done = self.tasks.read()
         return pick_next(doc, done, self.c.cutoff)
 
-    def ask(self, ref, question, note=None):
+    def ask(self, ref, question, note=None, pr=None):
         """Mark a task waiting on me and put the question in tasks/<id>.md (RUN-3, RUN-5)."""
         stamp = time.strftime("%Y-%m-%d %H:%M")
 
@@ -60,6 +78,8 @@ class Runner:
                 return None
             doc.normalize(t)
             t.mark("!")
+            if pr:
+                t.set("pr", pr)
             if note:
                 t.set("note", note)
             path = f"tasks/{t.id}.md"
@@ -87,78 +107,277 @@ class Runner:
             doc.normalize(t)
             t.mark("~")
             t.set("note", None)
-            return t.id, t.title, t.get("done when"), t.model
+            return t.id, t.title, t.get("done when"), t.model, t.get("pr")
         claimed = self.tasks.mutate(claim, f"Towercab: start {task.id or task.title}")
         if not claimed:
             return None
-        task_id, title, done_when, model = claimed
+        task_id, title, done_when, model, task_pr = claimed
+        remote = repo.remote or command(["git", "remote", "get-url", "origin"], repo.path)
+        state, pr, head = self.open_pr(task_pr, remote)
+        tried = any(x["task"] == task_id for x in self.s.rows())
+        if state == "gone" and not task_pr and tried:
+            # the task lost its pr: line (crash right after `gh pr create`, or edited by hand)
+            branch = f"towercab/{task_id}-{slug(title)}"
+            found = self.open_pr_for({"remote": remote}, branch)
+            if found == "unknown":
+                state, head = "unknown", f"gh couldn't list PRs for {branch}"
+            elif found:
+                state, pr, head = "open", found, branch
+        if state == "unknown":
+            what = task_pr or f"an open PR on towercab/{task_id}-{slug(title)}"
+            self.ask({"id": task_id}, f"Couldn't check {what} ({head}). A retry would either "
+                                      "continue on it or start over, so I didn't guess. Set the task back to `[ ]` to try again.",
+                     note="PR state unknown", pr=task_pr)
+            self.out(f"{task_id}: PR state unknown; asked you")
+            self.notify.asking(f"{task_id} {title}", f"Couldn't check its PR ({head}); set it back to [ ] to retry.")
+            return None
         note = self.tasks.task_note(task_id)
         brief = (f"Task {task_id} in repo {repo.name}: {title}\n"
                  f"Done when: {done_when or 'the title is fully true and checks pass'}\n")
+        if head:
+            brief += (f"\nThis is a retry: you start on the branch of its open PR ({pr}), with the earlier "
+                      "attempt's commits and any fixes pushed there. Continue from them.\n")
         if note:
             brief += f"\nNotes, plans and answers (tasks/{task_id}.md):\n{note}\n"
-        remote = repo.remote or command(["git", "remote", "get-url", "origin"], repo.path)
         mid = self.s.add(f"{task_id} {title}", brief, remote, repo.verify, self.c.provider, self.c.reviewer,
                          max_repairs=self.c.max_repairs, task=task_id, repo=repo.name, branch=repo.base,
-                         model=model or self.c.model, bash=repo.bash)
-        self.out(f"{task_id} → mission {mid}")
+                         model=model or self.c.model, bash=repo.bash, pr=pr, head=head)
+        self.out(f"{task_id} → mission {mid}" + (f" (continues {short_pr(pr)})" if pr else ""))
         return mid
 
-    # --- finishing -----------------------------------------------------------
-    def finish(self, m):
-        """Commit the mission's work, push a branch and open a PR (RUN-8). Returns the PR URL."""
-        work = Path(m["workspace"])
-        branch = f"towercab/{m['task']}-{slug(m['title'].split(' ', 1)[-1])}"
-        command(["git", "add", "-A"], work)
-        ident = []
-        if not subprocess.run(["git", "config", "user.email"], cwd=work, capture_output=True, text=True).stdout.strip():
-            ident = ["-c", "user.name=Towercab", "-c", "user.email=towercab@localhost"]
-        title = m["title"].split(" ", 1)[-1]
-        command(["git", *ident, "commit", "-q", "-m", f"{title}\n\nTask {m['task']}, Towercab mission {m['id']}."], work)
-        command(["git", "push", "-q", m["remote"], f"HEAD:refs/heads/{branch}"], work)
-        cost, seconds = mission_usage(work.parent)
-        notes = {n: (work.parent / f"{n}.txt").read_text() if (work.parent / f"{n}.txt").exists() else "" for n in ("build", "review")}
-        usage = f"${cost:.2f} API-equivalent · {seconds / 60:.1f} min agent time" if cost is not None else "usage unknown"
-        body = self.writer(shutil.which("claude") or "claude", m, title, notes["build"], notes["review"],
-                           " ".join(json.loads(m["verify"])), usage)
-        argv = [self.gh, "pr", "create", "--base", m["branch"] or "main", "--head", branch, "--title", title, "--body", body]
-        gh_repo = GITHUB_RE.search(m["remote"] or "")
-        if gh_repo:
-            argv += ["--repo", gh_repo["repo"]]
-        url = subprocess.run(argv, cwd=work, capture_output=True, text=True, check=True).stdout.strip().splitlines()[-1]
-        return url
+    def open_pr(self, url, remote):
+        """("open", url, head) to continue on the task's PR; ("gone", None, None) to start over;
+        ("unknown", None, error) when gh can't tell: then nothing is guessed (PIP-17)."""
+        if not url:
+            return "gone", None, None
+        mine = GITHUB_RE.search(remote or "")
+        theirs = PR_REPO_RE.search(url)
+        if mine and theirs and mine["repo"].lower() != theirs["repo"].lower():
+            return "gone", None, None      # the task moved to another repo; that PR isn't its branch
+        try:
+            r = subprocess.run([self.gh, "pr", "view", url, "--json", "state,headRefName,isCrossRepository"],
+                               capture_output=True, text=True)
+            if r.returncode:
+                err = (r.stderr or r.stdout).strip()
+                if "Could not resolve to a PullRequest" in err:
+                    return "gone", None, None          # no such PR (typo, deleted repo)
+                return "unknown", None, err[:300] or f"gh exited {r.returncode}"
+            info = json.loads(r.stdout)
+        except (OSError, ValueError) as exc:
+            return "unknown", None, str(exc)[:300]
+        if info.get("isCrossRepository"):
+            return "gone", None, None                  # a fork's PR: its branch isn't in the task's repo
+        if info.get("state") == "OPEN" and info.get("headRefName"):
+            return "open", url, info["headRefName"]
+        return "gone", None, None
 
+    def open_pr_for(self, m, branch):
+        """None if no open PR uses `branch`; its URL if one does; "unknown" if gh can't tell."""
+        try:
+            r = subprocess.run([self.gh, "pr", "list", "--head", branch, "--state", "open", "--json", "url",
+                                *self.gh_repo(m)], capture_output=True, text=True)
+            found = json.loads(r.stdout) if r.returncode == 0 else None
+        except (OSError, ValueError):
+            found = None
+        if not isinstance(found, list):
+            return "unknown"
+        return found[0].get("url") if found else None
+
+    # --- publishing and CI (PIP-2, PIP-3) --------------------------------------
+    @property
+    def ci_poll(self):
+        return self.c.ci_poll
+
+    def gh_repo(self, m):
+        found = GITHUB_RE.search(m["remote"] or "")
+        return ["--repo", found["repo"]] if found else []
+
+    def publish(self, m):
+        """Commit the build, push `towercab/<id>-<slug>`, open the PR the first time (PIP-2, RUN-8).
+        Returns the PR URL."""
+        work = Path(m["workspace"])
+        branch = m.get("head") or f"towercab/{m['task']}-{slug(m['title'].split(' ', 1)[-1])}"
+        title = m["title"].split(" ", 1)[-1]
+        command(["git", "add", "-A"], work)
+        if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=work).returncode:
+            ident = []
+            if not subprocess.run(["git", "config", "user.email"], cwd=work, capture_output=True, text=True).stdout.strip():
+                ident = ["-c", "user.name=Towercab", "-c", "user.email=towercab@localhost"]
+            subject = title if not m.get("published") else f"{title}: repair {m['repairs'] + m['ci_repairs']}"
+            command(["git", *ident, "commit", "-q", "-m", f"{subject}\n\nTask {m['task']}, Towercab mission {m['id']}."], work)
+        # A fresh attempt may meet a branch left by an earlier one whose PR is closed: Towercab owns
+        # towercab/* branches, so its first push replaces it. Later pushes never force, so a fix I
+        # push to the branch meanwhile makes the push fail instead of being overwritten.
+        force = []
+        if not m["pr"] and not m.get("head") and not m.get("published"):
+            # only over a branch no open PR uses: never over a PR the task lost track of
+            found = self.open_pr_for(m, branch)
+            if found and found != "unknown":
+                self.s.update(m["id"], pr=found)      # recorded on the task, so the next retry continues on it
+                raise ValueError(f"An open PR already uses {branch}: {found}. Set the task back to [ ] to continue on it.")
+            force = ["--force"] if found is None else []
+        command(["git", "push", "-q", *force, m["remote"], f"HEAD:refs/heads/{branch}"], work)
+        if m["pr"]:
+            if not m.get("published"):     # a retry on its open PR: the old text no longer describes it
+                self.set_body(m, self.placeholder(m, title))
+            return m["pr"]
+        body = self.placeholder(m, title)
+        argv = [self.gh, "pr", "create", "--base", m["branch"] or "main", "--head", branch, "--title", title,
+                "--body", body, *self.gh_repo(m)]
+        return subprocess.run(argv, cwd=work, capture_output=True, text=True, check=True).stdout.strip().splitlines()[-1]
+
+    @staticmethod
+    def placeholder(m, title):
+        return (f"{title}\n\nCI and review are running; Towercab replaces this text once the PR is ready.\n\n"
+                f"<sub>🤖 Built by Towercab · task `{m['task']}` · mission `{m['id']}`</sub>")
+
+    def set_body(self, m, body):
+        """Replace the PR text via the REST API (`gh pr edit` fails on gh 2.46 with a GraphQL
+        'Projects (classic)' error). A failure is logged, never raised (PIP-14)."""
+        found = PR_NUMBER_RE.search(m.get("pr") or "")
+        if not found:
+            self.s.event(m["id"], f"PR text not updated: not a GitHub PR URL: {m.get('pr')}")
+            return
+        try:
+            r = subprocess.run([self.gh, "api", "-X", "PATCH", f"repos/{found['repo']}/pulls/{found['n']}", "--input", "-"],
+                               input=json.dumps({"body": body}), capture_output=True, text=True)
+            err = (r.stderr or r.stdout).strip() if r.returncode else ""
+        except OSError as exc:
+            err = str(exc)
+        if err:
+            self.s.event(m["id"], f"PR text not updated: {err[:300]}")
+
+    def describe(self, m):
+        """Final PR text once CI is green and review approved: Haiku from the builder's notes and the
+        review, plain template if it can't (PIP-11, PIP-14, PIP-15). Never blocks the task."""
+        if not m.get("pr"):
+            return
+        try:
+            # every attempt of this task that went into the PR: earlier ones first
+            attempts = [x for x in self.s.rows() if x["task"] == m["task"] and x["workspace"]
+                        and (x["id"] == m["id"] or (x["pr"] == m["pr"] and x["published"]))]
+            attempts.sort(key=lambda x: x["created"])
+            build, cost, seconds, known, repairs = [], 0.0, 0.0, False, 0
+            for x in attempts:
+                root = Path(x["workspace"]).parent
+                if (root / "build.txt").exists():
+                    share = 6000 // max(1, len(attempts))   # every attempt keeps its own summary
+                    build.append(head_and_tail((root / "build.txt").read_text().strip(), share * 7 // 12, share * 5 // 12))
+                c, sec = mission_usage(root)
+                if c is not None:
+                    known, cost, seconds = True, cost + c, seconds + sec
+                repairs += (x["repairs"] or 0) + (x.get("ci_repairs") or 0)
+            review_file = Path(m["workspace"]).parent / "review.txt"
+            review = review_file.read_text() if review_file.exists() else ""
+            usage = f"${cost:.2f} API-equivalent · {seconds / 60:.1f} min agent time" if known else "usage unknown"
+            if len(attempts) > 1:
+                usage += f" · {len(attempts)} attempts"
+            ci = "no CI checks on this repo, nothing ran" if m.get("ci") == "none" else "green"
+            body = self.writer(shutil.which("claude") or "claude", dict(m, repairs=repairs), m["title"].split(" ", 1)[-1],
+                               "\n\nNext attempt:\n".join(build), review, " ".join(json.loads(m["verify"])), usage, ci=ci)
+        except Exception as exc:   # the PR text must never cost the task
+            self.s.event(m["id"], f"PR text not written: {exc}"[:300])
+            return
+        self.set_body(m, body)
+
+    def stopped(self, m, why):
+        """A blocked mission's PR must not keep promising that CI and review are running."""
+        if m.get("pr"):
+            self.set_body(m, f"⛔ Not ready: {why}. Towercab asked in `tasks/{m['task']}.md`; "
+                             f"the task waits for an answer.\n\n"
+                             f"<sub>🤖 Built by Towercab · task `{m['task']}` · mission `{m['id']}`</sub>")
+
+    def checks(self, m):
+        """The PR's CI: ("pending" | "pass" | "fail", text); text is failing logs on fail (PIP-3)."""
+        r = subprocess.run([self.gh, "pr", "checks", m["pr"], "--json", "name,bucket,link,startedAt", *self.gh_repo(m)],
+                           capture_output=True, text=True)
+        try:
+            found = json.loads(r.stdout or "null")
+        except ValueError:
+            found = None
+        if not isinstance(found, list):
+            if "no checks" not in (r.stderr + r.stdout).lower():
+                raise ValueError(f"gh pr checks exited {r.returncode}: {(r.stderr or r.stdout).strip()[:500]}")
+            found = []
+        published = m["published"] or 0
+        if time.time() - published < self.c.ci_grace:
+            # Right after a push the PR may still show the previous commit's checks, or none yet.
+            found = [c for c in found if started(c) is None or started(c) >= published - 5]
+            if not found:
+                return "pending", ""
+        if not found:
+            if has_workflows(m):
+                # the repo has CI, so missing checks mean "not started" (backlog, conflict, path filter)
+                if time.time() - published < self.c.ci_wait:
+                    return "pending", ""
+                return "missing", (f"No CI checks appeared {self.c.ci_wait // 60} min after the push, although the repo "
+                                   "has .github/workflows (merge conflict, path filters or Actions disabled?).")
+            return "pass", "No CI checks on this PR."
+        buckets = {c.get("bucket") for c in found}
+        summary = "\n".join(f"{c.get('bucket')}: {c.get('name')} {c.get('link') or ''}".rstrip() for c in found)
+        if "pending" in buckets:
+            return "pending", summary
+        failed = [c for c in found if c.get("bucket") in ("fail", "cancel")]
+        if not failed:
+            return "pass", summary
+        logs, runs = [], []
+        for c in failed:
+            run = re.search(r"/actions/runs/(\d+)", c.get("link") or "")
+            if run and run[1] not in runs:
+                runs.append(run[1])
+                out = subprocess.run([self.gh, "run", "view", run[1], "--log-failed", *self.gh_repo(m)],
+                                     capture_output=True, text=True)
+                logs.append(out.stdout.strip() or out.stderr.strip())
+        return "fail", (summary + "\n\n" + "\n\n".join(logs))[-16000:]
+
+    # --- finishing -----------------------------------------------------------
     def settle(self):
-        """React to missions that ended: PR + review marker, or a question (RUN-5, RUN-8)."""
+        """React to missions that ended: review marker, or a question (RUN-5, RUN-8, PIP-3)."""
         for m in self.s.rows():
             if not m["task"] or m["handled"] or m["status"] not in ("ready", "blocked"):
                 continue
             ref = {"id": m["task"]}
-            if m["status"] == "ready":
-                try:
-                    url = self.finish(m)
-                except (subprocess.CalledProcessError, OSError) as exc:
-                    err = getattr(exc, "stderr", "") or str(exc)
-                    self.ask(ref, f"Mission {m['id']} passed review but publishing failed:\n\n{err.strip()[:1500]}\n\n"
-                                  f"Workspace: {m['workspace']}")
-                    self.notify.asking(m["title"], f"Publishing failed:\n{err.strip()[-300:]}")
-                else:
-                    def mark(doc, files):
-                        t = find(doc, ref)
-                        if t:
-                            t.mark("!")
-                            t.set("pr", url)
-                            t.set("note", "review PR")
-                    self.tasks.mutate(mark, f"Towercab: {m['task']} ready, {short_pr(url)}")
-                    self.s.event(m["id"], f"PR opened: {url}")
-                    self.out(f"{m['task']} → {url}")
-                    self.notify.pr_ready(m["title"], url)
+            if m["status"] == "ready" and not m.get("pr"):
+                self.ask(ref, f"Mission {m['id']} passed review but was never pushed (it ran without the CI loop). "
+                              f"Its work is in {m['workspace']}. Set the task back to `[ ]` to run it through publish and CI.",
+                         note="never published")
+                self.notify.asking(m["title"], "Passed review but never published; set it back to [ ] to rerun.")
+            elif m["status"] == "ready":
+                url = m["pr"]
+                self.describe(m)
+
+                def mark(doc, files):
+                    t = find(doc, ref)
+                    if t:
+                        t.mark("!")
+                        t.set("pr", url)
+                        t.set("note", "review PR")
+                self.tasks.mutate(mark, f"Towercab: {m['task']} ready, {short_pr(url)}")
+                self.s.event(m["id"], f"Ready for review: {url}")
+                self.out(f"{m['task']} → {url}")
+                self.notify.pr_ready(m["title"], url)
+            elif m["stage"] == "publish":
+                err = m["feedback"].strip()
+                self.ask(ref, f"Mission {m['id']} was built but publishing failed:\n\n{err[:1500]}\n\n"
+                              f"Workspace: {m['workspace']}", note="publish failed", pr=m["pr"])
+                self.notify.asking(m["title"], f"Publishing failed:\n{err[-300:]}")
+                self.stopped(m, "publishing a repair failed")
+            elif m["stage"] == "ci" and m["ci_repairs"] >= MAX_CI_REPAIRS and not m.get("reason"):
+                self.ask(ref, f"CI is still red on {m['pr']} after {m['ci_repairs']} repairs (mission {m['id']}). "
+                              f"Last failing output:\n\n```\n{m['feedback'].strip()[-1500:]}\n```\n\n"
+                              "What's wrong? Fix it on the branch or answer here, then set the task back to `[ ]`.",
+                         note="CI red", pr=m["pr"])
+                self.out(f"{m['task']} CI red after {m['ci_repairs']} repairs; asked you")
+                self.notify.ci_gave_up(m["title"], m["pr"], m["ci_repairs"], m["feedback"])
+                self.stopped(m, f"CI still red after {m['ci_repairs']} repairs")
             else:
-                self.ask(ref, f"Mission {m['id']} stopped at the {m['stage']} stage:\n\n{m['feedback'].strip()[-1500:]}\n\n"
+                why = m.get("reason") or f"stopped at the {m['stage']} stage"
+                self.ask(ref, f"Mission {m['id']}: {why}.\n\n{m['feedback'].strip()[-1500:]}\n\n"
                               "Answer here if it helps, then set the task back to `[ ]` to run it again.",
-                         note=f"blocked at {m['stage']}")
-                self.out(f"{m['task']} blocked at {m['stage']}; asked you")
-                self.notify.stuck(m["title"], m["stage"], m["feedback"])
+                         note=m.get("reason") or f"blocked at {m['stage']}", pr=m["pr"])
+                self.out(f"{m['task']} {why}; asked you")
+                self.notify.stuck(m["title"], m["stage"], m["feedback"], what=m.get("reason"))
+                self.stopped(m, why)
             self.s.update(m["id"], handled=1)
 
     def check_prs(self, force=False):
@@ -258,8 +477,9 @@ class Runner:
                     if eligible:
                         self.factory.step(eligible[0])
                         continue
-                    if watch:
-                        time.sleep(poll)
+                    waits = [m["wait"] for m in self.active() if m["status"] == "queued" and m["wait"]]
+                    if watch or waits:   # a pending CI is part of the task: wait for it (PIP-3)
+                        time.sleep(poll if not waits else max(0.0, min(poll, min(waits) - time.time())))
                         continue
                     break
             except KeyboardInterrupt:
