@@ -18,6 +18,7 @@ Short but technical: interfaces, fields, formulas, limits. ~30 lines per spec.
 | [priority.md](priority.md) | PRI | Scores, order, cutoff, review |
 | [autonomy.md](autonomy.md) | AUT | Where an intent waits for me |
 | [scheduler.md](scheduler.md) | SCH | Removed: superseded by loop.md |
+| [maintain.md](maintain.md) | MNT | Bands on Towercab's own metrics, tiers, diagnosis → intent, lessons |
 | [intents.md](intents.md) | INT | Intent files, routes in (me, issues, monitoring), acceptance, lifecycle |
 | [tasks.md](tasks.md) | TSK | Removed: superseded by intents.md |
 | [metrics.md](metrics.md) | MET | OTLP metrics and events, Claude Code telemetry, Grafana dashboard |
