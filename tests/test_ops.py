@@ -9,11 +9,49 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 TELEMETRY = ROOT / "ops" / "telemetry"
 DASHBOARD = ROOT / "ops" / "grafana" / "dashboards" / "towercab.json"
-# OTel names the loop emits (specs/metrics.md MET-13..20); Prometheus turns dots into underscores.
-METRICS = ["towercab.stage.duration", "towercab.task.duration", "towercab.cost.usd", "towercab.tokens",
-           "towercab.ci.repairs", "towercab.ci.result", "towercab.reverts", "towercab.usage_limit.waits",
-           "towercab.usage_limit.wait.duration", "towercab.human.wait.duration", "towercab.backlog",
-           "towercab.loop.state"]
+# OTel names the loop emits (specs/metrics.md MET-13..27); Prometheus turns dots into underscores.
+METRICS = [
+    "towercab.stage.duration",
+    "towercab.intent.duration",
+    "towercab.intent.cost",
+    "towercab.cost.usd",
+    "towercab.tokens",
+    "towercab.ci.repairs",
+    "towercab.ci.result",
+    "towercab.reverts",
+    "towercab.usage_limit.waits",
+    "towercab.usage_limit.wait.duration",
+    "towercab.backlog",
+    "towercab.loop.state",
+    "towercab.active",
+    "towercab.intent.drafts",
+    "towercab.intent.time_to_intent",
+    "towercab.intent.edits_after_spec",
+    "towercab.spec.lead.duration",
+    "towercab.spec.rework",
+    "towercab.first_pass",
+    "towercab.plan_to_merge.duration",
+    "towercab.rework.cycles",
+    "towercab.plan.result",
+    "towercab.findings.repeated",
+    "towercab.claude_md.updates",
+    "towercab.eval.pass_rate",
+    "towercab.eval.gate",
+    "towercab.incident_to_eval.duration",
+    "towercab.escapes",
+    "towercab.review.findings",
+    "towercab.review.first.duration",
+    "towercab.feedback.rounds",
+    "towercab.gate.wait.duration",
+    "towercab.guard.blocks",
+    "towercab.gate.violations",
+    "towercab.ci.triage",
+    "towercab.deploys",
+    "towercab.change.lead.duration",
+    "towercab.restore.duration",
+    "towercab.breaches",
+    "towercab.breach_to_intent.duration",
+]
 
 
 def telemetry(config_dir, *args):
@@ -85,11 +123,16 @@ class DashboardTest(unittest.TestCase):
                     self.assertTrue(any(name == b or name.startswith(b + "_") for b in bases), (p["title"], name))
                 self.assertNotIn("gen_ai_", t["expr"], p["title"])
 
+    def test_dashboard_is_generated(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "towercab.json"
+            subprocess.run([sys.executable, str(ROOT / "ops" / "grafana" / "build_dashboard.py"), str(out)], check=True, capture_output=True)
+            self.assertEqual(out.read_text(), DASHBOARD.read_text())
+
     def test_delta_counters_summed_not_increased(self):
         for p in self.panels:
             for t in p.get("targets", []):
-                self.assertNotIn("increase(", t["expr"], p["title"])
-                self.assertNotIn("rate(", t["expr"], p["title"])
+                self.assertNotRegex(t["expr"], r"(?<![\w])(increase|rate|irate)\(", p["title"])
 
 
 if __name__ == "__main__":
