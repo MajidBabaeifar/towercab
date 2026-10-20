@@ -1,9 +1,9 @@
 # Specs
 
-The **task list is the source**. A spec is written or changed when a task is picked up,
+The **intent home is the source**. A spec is written or changed when an intent is picked up,
 not ahead of it.
 
-1. Task arrives from `gradient-tasks` ([tasks.md](tasks.md)).
+1. An intent arrives in `intents` ([intents.md](intents.md)).
 2. Before code: add or change the requirement rows it touches in that area's spec.
    New area → copy `_template.md`.
 3. One requirement = one testable line. IDs never reused; dropped → `Removed`.
@@ -16,9 +16,10 @@ Short but technical: interfaces, fields, formulas, limits. ~30 lines per spec.
 | Spec | Prefix | Covers |
 |---|---|---|
 | [priority.md](priority.md) | PRI | Scores, order, cutoff, review |
-| [autonomy.md](autonomy.md) | AUT | Where a task waits for me |
+| [autonomy.md](autonomy.md) | AUT | Where an intent waits for me |
 | [scheduler.md](scheduler.md) | SCH | Removed: superseded by loop.md |
-| [tasks.md](tasks.md) | TSK | Task format, IDs, `gradient-tasks` repo |
+| [intents.md](intents.md) | INT | Intent files, routes in (me, issues, monitoring), acceptance, lifecycle |
+| [tasks.md](tasks.md) | TSK | Removed: superseded by intents.md |
 | [metrics.md](metrics.md) | MET | OTLP metrics and events, Claude Code telemetry, Grafana dashboard |
 | [runner.md](runner.md) | RUN | Removed: superseded by loop.md |
 | [pipeline.md](pipeline.md) | PIP | Build, verify, publish, CI, gate, review, human, merge, deploy, e2e, revert |

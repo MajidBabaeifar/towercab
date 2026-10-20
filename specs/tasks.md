@@ -1,6 +1,6 @@
 # Tasks
 
-**Status:** Draft (Rust rewrite; TSK-1–5, 8, 10 live in the Python version on branch `python`) · Draft: rest · **Prefix:** TSK
+**Status:** Removed: superseded by [intents.md](intents.md) · **Prefix:** TSK
 
 ## Purpose
 
@@ -10,17 +10,17 @@ What a task is, and where tasks live.
 
 | ID | Requirement | Verified by |
 |---|---|---|
-| TSK-1 | Store: private repo `gradient-tasks`. `TODO.md` = open tasks, `DONE.md` = finished/dropped, `tasks/<id>.md` = plan, questions, notes (only when needed). | manual |
-| TSK-2 | Line: `- [m] [<id>] [u<n> i<n> a<n>] <repo>: <title> [after:<id>,…] [@model] [review:<model>]`, then optional `  <key>: <value>` lines (`done when`, `pr`, `note`, `retry: fresh`). Marker `[ ]` open, `[~]` running, `[!]` waiting on me. A line that doesn't parse is kept verbatim and reported. | test_every_part, test_errors |
-| TSK-3 | ID = creation time `YYMMDD-HHMM` (local); same-minute clash (incl. IDs in DONE.md) → `-2`, `-3`. Creation time is read from the ID; no separate field. A task without ID or `u`/`i` gets them (defaults u3 i3) the first time Towercab touches it; `a` is never filled in ([AUT-9](autonomy.md)). | test_normalize_and_add_assign_ids, test_ids_never_reused |
-| TSK-4 | Commands accept any unique ID suffix (`towercab approve 1446`). | test_get_by_suffix_must_be_unique |
-| TSK-5 | Towercab pulls before reading and commits + pushes each write straight to `main`; on conflict it rebases and retries, never overwrites my edits. | test_concurrent_edits_both_kept |
-| TSK-6 | Done: line moves to `DONE.md` as `<date> <id> <repo>: <title> · PR · cost · agent time · attempts`. | test_done_line |
-| TSK-7 | Missions, model cooldowns, outbox, commands, repo caps and freezes, and `last_reviewed` live in Towercab's SQLite ([LOOP-1](loop.md)), not in the repo. | test_runtime_local |
-| TSK-8 | Towercab touches tasks only through a store interface: `list`, `get`, `add`, `update`. | test_continuations_and_errors |
-| TSK-9 | `towercab add "<repo>: <title>" [uN iN aN]` appends a task with ID and defaults, then sorts ([PRI-6](priority.md)). | test_add |
-| TSK-10 | Parse → write of an untouched file is byte-identical; a changed task is rewritten canonically, every other line kept. | test_round_trip_is_byte_identical |
-| TSK-11 | `review:<model>` is a trailing token (either order with `@model`), given once; written after `@model`. Sets the reviewer model ([PIP-4](pipeline.md)). | test_review_attr |
+| TSK-1 | Removed → INT-1. Was: Store: private repo `gradient-tasks`. `TODO.md` = open tasks, `DONE.md` = finished/dropped, `tasks/<id>.md` = plan, questions, notes (only when needed). | — |
+| TSK-2 | Removed → INT-2. Was: Line: `- [m] [<id>] [u<n> i<n> a<n>] <repo>: <title> [after:<id>,…] [@model] [review:<model>]`, then optional `  <key>: <value>` lines (`done when`, `pr`, `note`, `retry: fresh`). Marker `[ ]` open, `[~]` running, `[!]` waiting on me. A line that doesn't parse is kept verbatim and reported. | — |
+| TSK-3 | Removed → INT-3. Was: ID = creation time `YYMMDD-HHMM` (local); same-minute clash (incl. IDs in DONE.md) → `-2`, `-3`. Creation time is read from the ID; no separate field. A task without ID or `u`/`i` gets them (defaults u3 i3) the first time Towercab touches it; `a` is never filled in ([AUT-9](autonomy.md)). | — |
+| TSK-4 | Removed → INT-3. Was: Commands accept any unique ID suffix (`towercab approve 1446`). | — |
+| TSK-5 | Removed → INT-10. Was: Towercab pulls before reading and commits + pushes each write straight to `main`; on conflict it rebases and retries, never overwrites my edits. | — |
+| TSK-6 | Removed → INT-6. Was: Done: line moves to `DONE.md` as `<date> <id> <repo>: <title> · PR · cost · agent time · attempts`. | — |
+| TSK-7 | Removed → LOOP-1. Was: Missions, model cooldowns, outbox, commands, repo caps and freezes, and `last_reviewed` live in Towercab's SQLite ([LOOP-1](loop.md)), not in the repo. | — |
+| TSK-8 | Removed → INT-12. Was: Towercab touches tasks only through a store interface: `list`, `get`, `add`, `update`. | — |
+| TSK-9 | Removed → LOOP-15. Was: `towercab add "<repo>: <title>" [uN iN aN]` appends a task with ID and defaults, then sorts ([PRI-6](priority.md)). | — |
+| TSK-10 | Removed → INT-10. Was: Parse → write of an untouched file is byte-identical; a changed task is rewritten canonically, every other line kept. | — |
+| TSK-11 | Removed → INT-2. Was: `review:<model>` is a trailing token (either order with `@model`), given once; written after `@model`. Sets the reviewer model ([PIP-4](pipeline.md)). | — |
 
 ## Out of scope
 
