@@ -8,7 +8,7 @@ not ahead of it.
    in that area's spec, first commit of the PR. New area → copy `_template.md`.
 3. One requirement = one testable line. IDs never reused; dropped → `Removed`.
    `Verified by` = test name, command, or `manual` (say what to look at).
-4. Spec, code and tests in the same commit. PR body lists the IDs.
+4. Spec rows are the PR's first commit (step 2); code and tests follow in the same PR, squash-merged into one commit. PR body lists the IDs.
 
 Short but technical: interfaces, fields, formulas, limits. ~30 lines per spec.
 `Draft` = agreed, not built; `Verified by` then names the planned check.
@@ -21,8 +21,8 @@ Short but technical: interfaces, fields, formulas, limits. ~30 lines per spec.
 | [maintain.md](maintain.md) | MNT | Bands on Towercab's own metrics, tiers, diagnosis → intent, lessons |
 | [intents.md](intents.md) | INT | Intent files, routes in (me, issues, monitoring), acceptance, lifecycle |
 | [tasks.md](tasks.md) | TSK | Removed: superseded by intents.md |
-| [metrics.md](metrics.md) | MET | OTLP metrics and events, Claude Code telemetry, Grafana dashboard |
+| [metrics.md](metrics.md) | MET | Playbook indicators, OTLP metrics and events, Claude Code telemetry, Grafana dashboard |
 | [runner.md](runner.md) | RUN | Removed: superseded by loop.md |
-| [pipeline.md](pipeline.md) | PIP | Build, verify, publish, CI, gate, review, human, merge, deploy, e2e, revert |
+| [pipeline.md](pipeline.md) | PIP | Design, spec gate, plan, build, verify, red→green proof, publish, CI, verifier, PR review, gate, merge, deploy, e2e, release, revert, rehearsal, evals |
 | [loop.md](loop.md) | LOOP | Rust runner: service, state machine, crash recovery, limits, status, Telegram, commands |
-| [repo.md](repo.md) | REPO | `TOWERCAB.md` per repo: setup, checks, live + e2e, red lines; `protect` |
+| [repo.md](repo.md) | REPO | `CLAUDE.md` verifying block (setup, checks, run), `REVIEW.md` (passes, red lines), `TOWERCAB.md` (max_autonomy, protected, tests, live, release, rollback); protected paths; `protect` |
