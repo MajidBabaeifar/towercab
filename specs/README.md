@@ -4,8 +4,8 @@ The **intent home is the source**. A spec is written or changed when an intent i
 not ahead of it.
 
 1. An intent arrives in `intents` ([intents.md](intents.md)).
-2. Before code: add or change the requirement rows it touches in that area's spec.
-   New area → copy `_template.md`.
+2. Design (Towercab's `design` stage, [PIP-25](pipeline.md)): add or change the requirement rows it touches
+   in that area's spec, first commit of the PR. New area → copy `_template.md`.
 3. One requirement = one testable line. IDs never reused; dropped → `Removed`.
    `Verified by` = test name, command, or `manual` (say what to look at).
 4. Spec, code and tests in the same commit. PR body lists the IDs.

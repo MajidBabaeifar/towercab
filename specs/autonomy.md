@@ -20,6 +20,7 @@ How far an agent may take an intent before it waits for me.
 | AUT-8 | Repo cap = `min(max_autonomy` from the base branch's `TOWERCAB.md` ([REPO-1](repo.md)), default 5; 3 while capped after a revert (AUT-10)`)`. Effective `a = min(a at pick, a now, cap)`; no `a` stays none. | test_repo_cap, test_max_autonomy_from_base |
 | AUT-9 | No `a` on the intent: cap ≤ 3 → I merge, no review call; otherwise the review also judges risk: approved and risk low (two-way door, no red line touched) merges, else it waits for me ([PIP-5, 7](pipeline.md)). | test_gate_table, test_no_a_under_cap_goes_to_me |
 | AUT-10 | After any revert Towercab makes ([PIP-19, 20](pipeline.md)) the repo's autonomy cap is 3 until `towercab trust <repo>`; a frozen repo (failed revert) takes no picks or merges until then. Stored in SQLite, shown in `status`. | test_cap_after_revert, test_trust_clears |
+| AUT-11 | a1–a2: design stops for my approval of the spec ([PIP-26](pipeline.md)), then as a3. Any level: a design that flags a Concern stops too. | test_spec_gate |
 
 ## Out of scope
 
@@ -30,4 +31,4 @@ How far an agent may take an intent before it waits for me.
 - Urgency and importance set order; autonomy only moves gates. Validation never shrinks
   with trust.
 - rust-policies: `max_autonomy: 3` in its `TOWERCAB.md` (I always merge there).
-- a1–a3 collapse to "I merge" (my workflow): plan approval wasn't worth a separate gate.
+- a1–a3: I merge. a1–a2 also approve the spec (playbook: design is approved before build); a3+ only when the design flags a Concern.
