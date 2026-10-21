@@ -758,15 +758,14 @@ fn test_store_interface() {
         &local,
         &["commit", "--quiet", "--allow-empty", "-m", "start"],
     );
-    let config = Config {
-        file: home.tmp.path().join("config.toml"),
-        intents: IntentsConfig {
+    let config = Config::new(
+        home.tmp.path().join("config.toml"),
+        IntentsConfig {
             remote: None,
             path: local.clone(),
             cutoff: 7,
         },
-        repos: Default::default(),
-    };
+    );
     let store = Store::open(&config).unwrap();
     let got = store.add(new("Local only", None, None)).unwrap();
     assert_eq!(

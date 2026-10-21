@@ -247,30 +247,31 @@ fn test_protect_payload() {
 }
 
 fn config(remote: Option<&str>, repos: &[(&str, &str, &str)]) -> Config {
-    Config {
-        file: PathBuf::from("/c/config.toml"),
-        intents: IntentsConfig {
+    let mut c = Config::new(
+        PathBuf::from("/c/config.toml"),
+        IntentsConfig {
             remote: remote.map(str::to_string),
             path: PathBuf::from("/c/intents"),
             cutoff: 7,
         },
-        repos: repos
-            .iter()
-            .map(|(name, github, base)| {
-                (
-                    name.to_string(),
-                    Ok(RepoConfig {
-                        name: name.to_string(),
-                        github: github.to_string(),
-                        path: PathBuf::from("/c").join(name),
-                        base: base.to_string(),
-                        workers: 1,
-                        bash: vec![],
-                    }),
-                )
-            })
-            .collect::<BTreeMap<_, _>>(),
-    }
+    );
+    c.repos = repos
+        .iter()
+        .map(|(name, github, base)| {
+            (
+                name.to_string(),
+                Ok(RepoConfig {
+                    name: name.to_string(),
+                    github: github.to_string(),
+                    path: PathBuf::from("/c").join(name),
+                    base: base.to_string(),
+                    workers: 1,
+                    bash: vec![],
+                }),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    c
 }
 
 #[test]

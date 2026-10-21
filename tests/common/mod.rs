@@ -107,15 +107,14 @@ impl Home {
     }
 
     pub fn config(&self) -> Config {
-        Config {
-            file: self.tmp.path().join("config.toml"),
-            intents: IntentsConfig {
+        Config::new(
+            self.tmp.path().join("config.toml"),
+            IntentsConfig {
                 remote: Some(self.remote.to_str().unwrap().to_string()),
                 path: self.checkout.clone(),
                 cutoff: 7,
             },
-            repos: Default::default(),
-        }
+        )
     }
 
     pub fn store(&self) -> Store {
@@ -243,4 +242,67 @@ impl FakeGh {
     pub fn stdin(&self, n: usize) -> String {
         fs::read_to_string(self.dir.join(format!("stdin-{n}"))).unwrap()
     }
+}
+
+/// Writes an executable `#!/bin/sh` script at `path` (`$FAKE_PROBE` set → exit 0) and waits
+/// until it can run: another test's fork may hold the file open for writing (ETXTBSY).
+pub fn exe(path: &Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        format!("#!/bin/sh\n[ -n \"$FAKE_PROBE\" ] && exit 0\n{body}"),
+    )
+    .unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    for _ in 0..500 {
+        match Command::new(path).env("FAKE_PROBE", "1").status() {
+            Err(e) if e.raw_os_error() == Some(26) => {
+                std::thread::sleep(std::time::Duration::from_millis(10))
+            }
+            r => {
+                assert!(r.unwrap().success(), "{} runs", path.display());
+                return;
+            }
+        }
+    }
+    panic!("{} stays busy", path.display());
+}
+
+/// The built `towercab` with `HOME` = `home` and none of `TOWERCAB_CONFIG`, `TOWERCAB_HOME`,
+/// `XDG_CONFIG_HOME` from the test's environment.
+pub fn towercab(home: &Path, args: &[&str]) -> Command {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_towercab"));
+    c.args(args)
+        .env("HOME", home)
+        .env_remove("TOWERCAB_CONFIG")
+        .env_remove("TOWERCAB_HOME")
+        .env_remove("XDG_CONFIG_HOME")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    c
+}
+
+/// stdout, stderr and the exit code of a finished command.
+pub fn output(c: &mut Command) -> (String, String, Option<i32>) {
+    let out = c.output().expect("towercab runs");
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.code(),
+    )
+}
+
+/// A config the loop's commands accept (`[intents]` path in `dir`, `[github]` app 1 as `me`),
+/// then `extra`; written to `<dir>/config.toml`.
+pub fn loop_config(dir: &Path, extra: &str) -> PathBuf {
+    let file = dir.join("config.toml");
+    fs::write(
+        &file,
+        format!(
+            "[intents]\npath = \"{}\"\n\n[github]\napp_id = 1\nme = \"me\"\n\n{extra}",
+            dir.join("intents").display()
+        ),
+    )
+    .unwrap();
+    file
 }
