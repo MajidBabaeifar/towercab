@@ -34,7 +34,9 @@ fn test_add_command() {
     std::fs::write(
         &cfg,
         format!(
-            "[intents]\nremote = \"{}\"\npath = \"{}\"\n",
+            // The Python version's `[repos.<name>]` (no `github`): `add` doesn't read `[repos]`.
+            "[intents]\nremote = \"{}\"\npath = \"{}\"\n\n[repos.towercab]\npath = \"src/towercab\"\n\
+             base = \"main\"\nverify = [\"make\"]\nbash = [\"ls*\"]\n",
             home.remote.display(),
             home.checkout.display()
         ),

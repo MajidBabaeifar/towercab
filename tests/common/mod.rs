@@ -114,6 +114,7 @@ impl Home {
                 path: self.checkout.clone(),
                 cutoff: 7,
             },
+            repos: Default::default(),
         }
     }
 
@@ -164,5 +165,82 @@ impl Home {
         git(&self.checkout, &["status", "--porcelain"])
             .trim()
             .is_empty()
+    }
+}
+
+/// A fake `gh` on disk: `<dir>/bin/gh`, a shell script that records each call's argv
+/// (`argv-<n>`, one argument per line) and stdin (`stdin-<n>`), then answers with canned
+/// response `n` (stdout, stderr, exit code). A call without a response exits 99.
+pub struct FakeGh {
+    pub dir: PathBuf,
+    /// The executable; its directory can go first on `PATH`.
+    pub bin: PathBuf,
+}
+
+const FAKE_GH: &str = r#"#!/bin/sh
+d="$(dirname "$0")/.."
+[ "$1" = "__probe" ] && exit 0
+n=$(($(cat "$d/count" 2>/dev/null || echo 0) + 1))
+echo "$n" > "$d/count"
+: > "$d/argv-$n"
+for a in "$@"; do printf '%s\n' "$a" >> "$d/argv-$n"; done
+cat > "$d/stdin-$n"
+if [ ! -f "$d/code-$n" ]; then echo "fake gh: unexpected call $n" >&2; exit 99; fi
+cat "$d/out-$n"
+cat "$d/err-$n" >&2
+exit "$(cat "$d/code-$n")"
+"#;
+
+impl FakeGh {
+    /// `responses[i]` answers call `i + 1`: (stdout, stderr, exit code).
+    pub fn new(dir: &Path, responses: &[(&str, &str, i32)]) -> FakeGh {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = dir.join("bin").join("gh");
+        fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        for (i, (out, err, code)) in responses.iter().enumerate() {
+            let n = i + 1;
+            fs::write(dir.join(format!("out-{n}")), out).unwrap();
+            fs::write(dir.join(format!("err-{n}")), err).unwrap();
+            fs::write(dir.join(format!("code-{n}")), code.to_string()).unwrap();
+        }
+        fs::write(&bin, FAKE_GH).unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        // Another test's fork may still hold the file open for writing (ETXTBSY) for a moment.
+        for _ in 0..500 {
+            match Command::new(&bin).arg("__probe").status() {
+                Err(e) if e.raw_os_error() == Some(26) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10))
+                }
+                r => {
+                    assert!(r.unwrap().success(), "fake gh runs");
+                    break;
+                }
+            }
+        }
+        FakeGh {
+            dir: dir.to_path_buf(),
+            bin,
+        }
+    }
+
+    /// Each call's arguments, in order.
+    pub fn calls(&self) -> Vec<Vec<String>> {
+        let n: usize = fs::read_to_string(self.dir.join("count"))
+            .map(|s| s.trim().parse().unwrap())
+            .unwrap_or(0);
+        (1..=n)
+            .map(|i| {
+                fs::read_to_string(self.dir.join(format!("argv-{i}")))
+                    .unwrap()
+                    .lines()
+                    .map(str::to_string)
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// What call `n` (1-based) read on stdin.
+    pub fn stdin(&self, n: usize) -> String {
+        fs::read_to_string(self.dir.join(format!("stdin-{n}"))).unwrap()
     }
 }

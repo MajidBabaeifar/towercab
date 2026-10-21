@@ -34,6 +34,8 @@ Being rewritten in Rust (crate at the root). The Python package (`towercab/`, `b
 - `src/intents/`: the intent home. `intent.rs` (parse, typed fields, line-level `set`),
   `id.rs`, `store.rs` (`Store`: list/get/add/update, pull → write → commit → push, replay
   on rejection), `views.rs` (generated `TODO.md`/`DONE.md`), `git.rs`, `migrate.rs`.
+- `src/repo/`: a target repo's `CLAUDE.md`/`REVIEW.md`/`TOWERCAB.md` from `origin/<base>`
+  (`load`, pure `parse`), protected paths (`protected.rs`), `protect` (rulesets via my `gh`).
 - Coming (specs/loop.md): `src/machine.rs`, the one state machine. A red line.
 
 ## Things Claude gets wrong here

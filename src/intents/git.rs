@@ -50,8 +50,9 @@ static SSH_BATCH: LazyLock<bool> = LazyLock::new(|| {
         .is_ok_and(|o| o.status.success())
 });
 
-/// `git` with Towercab's identity and its own environment (module doc).
-fn git_command() -> Command {
+/// `git` with Towercab's identity and its own environment (module doc); also used by
+/// `repo::load` (REPO-1).
+pub fn git_command() -> Command {
     let mut c = Command::new("git");
     c.args(GIT_CONFIG);
     for v in REPO_ENV {

@@ -6,4 +6,5 @@ pub mod cli;
 pub mod config;
 pub mod intents;
 pub mod priority;
+pub mod repo;
 pub mod review;

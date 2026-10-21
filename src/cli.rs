@@ -1,6 +1,6 @@
-//! Command line (LOOP-15, so far `add`, `migrate`, `review` and `--version`).
+//! Command line (LOOP-15, so far `add`, `migrate`, `review`, `protect` and `--version`).
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
@@ -10,6 +10,7 @@ use crate::intents::intent::is_repo;
 use crate::intents::migrate::migrate;
 use crate::intents::store::now;
 use crate::intents::{NewIntent, Store};
+use crate::repo::protect::{Target, protect};
 
 #[derive(Parser, Debug)]
 #[command(name = "towercab", version, about = "Majid's software factory")]
@@ -34,6 +35,11 @@ enum Command {
     Migrate,
     /// Walk parked and stale intents: keep, rescore or drop each
     Review,
+    /// Create or update the `towercab` ruleset on a repo's base branch, with your gh login
+    Protect {
+        /// A [repos] name, or `intents` for the intent home
+        repo: String,
+    },
 }
 
 /// Exit code: 0 ok, 1 error, 2 bad arguments.
@@ -79,6 +85,11 @@ where
                 }
             }
         }
+        Command::Protect { repo } => report(
+            Config::load(args.config.as_deref())
+                .and_then(|c| Target::resolve(&c, &repo))
+                .and_then(|t| protect(&t, OsStr::new("gh"))),
+        ),
     }
 }
 
