@@ -2,6 +2,7 @@
 //!
 //! Every module is `pub` so its tests live in `tests/` (REPO-6).
 
+pub mod cli;
 pub mod config;
 pub mod intents;
 pub mod priority;
