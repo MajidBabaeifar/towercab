@@ -140,8 +140,35 @@ fn test_read_from_base() {
     }
     let empty = r._tmp.path().join("empty");
     fs::create_dir_all(&empty).unwrap();
-    assert!(
-        matches!(load(&empty, "main"), Err(RepoError::Git(e)) if e.starts_with(&format!("{}: ", empty.display())))
+    let git_err = |dir: &Path, base: &str| match load(dir, base) {
+        Err(RepoError::Git(e)) => {
+            assert!(e.starts_with(&format!("{}: ", dir.display())), "{e}");
+            e
+        }
+        other => panic!("{}: want Git, got {other:?}", dir.display()),
+    };
+    git_err(&empty, "main");
+    // Only the clone's root: never `sub/CLAUDE.md` as `CLAUDE.md`, never a repo above it.
+    git(&r.me, &["fetch", "--quiet", "origin"]);
+    git(&r.me, &["reset", "--quiet", "--hard", "origin/main"]);
+    write(
+        &r.me,
+        "sub/CLAUDE.md",
+        &CLAUDE.replace("make test", "make sub"),
+    );
+    r.push("main", "sub/CLAUDE.md");
+    r.fetch();
+    fs::create_dir_all(r.clone.join("sub")).unwrap();
+    git_err(&r.clone.join("sub"), "main");
+    let nested = r.me("nested/clone");
+    fs::create_dir_all(&nested).unwrap();
+    git_err(&nested, "main");
+    fs::remove_dir_all(r.me("nested")).unwrap();
+    assert_eq!(checks(&r.clone, "main"), ["make check"]);
+    // A base that isn't a branch name never reaches git (`main:sub` would list `sub/`).
+    assert_eq!(
+        git_err(&r.clone, "main:sub"),
+        format!("{shown}: bad base \"main:sub\"")
     );
 
     // Absent files: REVIEW.md and TOWERCAB.md default, CLAUDE.md is REPO-5.

@@ -16,6 +16,7 @@ pub use review::{Pass, Review};
 pub use towercab::{Deploy, Live, Release, Rollback, Towercab};
 pub use verifying::{Run, Verifying};
 
+use crate::config::is_branch;
 use crate::intents::git::git_command;
 
 /// The three files, in the order they are parsed.
@@ -85,14 +86,21 @@ fn assemble(files: [Result<Option<&str>, RepoError>; 3]) -> Result<RepoFiles, Re
     })
 }
 
-/// `git <args>` in `clone` → stdout bytes; failure → `<clone>: <stderr>`.
+/// `git <args>` in `clone` → stdout bytes; failure → `<clone>: <stderr>`. Repository discovery
+/// stops at `clone` (`GIT_CEILING_DIRECTORIES` = its parent): a directory inside a repo, or a
+/// subdirectory of one, is no clone.
 fn git(clone: &Path, args: &[&str]) -> Result<Vec<u8>, RepoError> {
     let failed = |e: String| RepoError::Git(format!("{}: {e}", clone.display()));
-    let out = git_command()
-        .args(args)
-        .current_dir(clone)
-        .output()
-        .map_err(|e| failed(format!("git: {e}")))?;
+    let mut cmd = git_command();
+    cmd.args(args).current_dir(clone);
+    if let Some(parent) = std::path::absolute(clone)
+        .ok()
+        .as_deref()
+        .and_then(Path::parent)
+    {
+        cmd.env("GIT_CEILING_DIRECTORIES", parent);
+    }
+    let out = cmd.output().map_err(|e| failed(format!("git: {e}")))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(failed(if err.is_empty() {
@@ -105,13 +113,30 @@ fn git(clone: &Path, args: &[&str]) -> Result<Vec<u8>, RepoError> {
 }
 
 /// The three files from `refs/remotes/origin/<base>` of the local `clone` (never the working
-/// tree or a PR; no fetch, the caller fetches), then [`parse`]. Only regular files are read: a
-/// symlink, directory or submodule in a file's place, or non-UTF-8 bytes → `Invalid`.
+/// tree or a PR; no fetch, the caller fetches), then [`parse`]. `clone` is the root of
+/// Towercab's own clone of the repo, never a mission checkout (the worker can write its refs).
+/// Only regular files are read: a symlink, directory or submodule in a file's place, or
+/// non-UTF-8 bytes → `Invalid`. A `base` [`is_branch`] refuses → `Git`.
 pub fn load(clone: &Path, base: &str) -> Result<RepoFiles, RepoError> {
+    if !is_branch(base) {
+        return Err(RepoError::Git(format!(
+            "{}: bad base {base:?}",
+            clone.display()
+        )));
+    }
     let tree = format!("refs/remotes/origin/{base}");
     let listing = git(
         clone,
-        &["ls-tree", "-z", &tree, "--", FILES[0], FILES[1], FILES[2]],
+        &[
+            "ls-tree",
+            "-z",
+            "--full-tree",
+            &tree,
+            "--",
+            FILES[0],
+            FILES[1],
+            FILES[2],
+        ],
     )?;
     let mut texts: [Result<Option<String>, RepoError>; 3] = [Ok(None), Ok(None), Ok(None)];
     for entry in listing.split(|b| *b == 0).filter(|e| !e.is_empty()) {
