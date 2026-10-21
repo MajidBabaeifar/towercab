@@ -192,6 +192,25 @@ fn test_towercab_front_matter() {
     ] {
         assert_eq!(t(text).unwrap(), defaults, "{text:?}");
     }
+    // The opener and closer may carry spaces; blank lines may come first.
+    for text in [
+        "--- \nmax_autonomy: 2\nprotected: [x]\n---  \n",
+        "\n  \n---\nmax_autonomy: 2\nprotected: [x]\n ---\n",
+        "\u{feff}\r\n---\t\r\nmax_autonomy: 2\r\nprotected: [x]\r\n---\r\n",
+    ] {
+        let got = t(text).unwrap();
+        assert_eq!(
+            (got.max_autonomy, got.protected),
+            (2, strings(&["x"])),
+            "{text:?}"
+        );
+    }
+    // Keys in fences or indented are prose.
+    assert_eq!(
+        t("# Notes\n\n```yaml\nmax_autonomy: 3\n```\n\n  protected: [x]\nmax_autonomy_note: y\n")
+            .unwrap(),
+        defaults
+    );
     // One glob string is a one-item list.
     let got = t("---\nprotected: migrations/**\ntests: \"spec/**\"\n---\n").unwrap();
     assert_eq!(
@@ -201,6 +220,24 @@ fn test_towercab_front_matter() {
 
     for (text, want) in [
         ("---\nmax_autonomy: 5\n", "front matter: no closing ---"),
+        ("\n--- \nmax_autonomy: 5\n", "front matter: no closing ---"),
+        // A misplaced front matter never defaults (max_autonomy 5, nothing protected).
+        (
+            "# Towercab\n\n---\nmax_autonomy: 1\nprotected: [secrets/**]\n---\n",
+            "line 4: max_autonomy outside front matter",
+        ),
+        (
+            "<!-- settings -->\n---\nprotected: [secrets/**]\n---\n",
+            "line 3: protected outside front matter",
+        ),
+        (
+            "---\nmax_autonomy: 2\n---\n\ntests : [spec/**]\n",
+            "line 5: tests outside front matter",
+        ),
+        (
+            "max_autonomy:1\n",
+            "line 1: max_autonomy outside front matter",
+        ),
         ("---\n- a\n- b\n---\n", "front matter: not a mapping"),
         (
             "---\nmax_autonomy: 5\nmodel: opus\n---\n",

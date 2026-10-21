@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use yaml_rust2::{Yaml, YamlLoader};
 
-use super::markdown::{Fence, fences, items, key_lines, lines};
+use super::markdown::{Fence, Item, fences, items, key_lines, lines};
 use super::protected::glob;
 
 /// PIP-30's test globs, when `tests` is absent or empty.
@@ -101,15 +101,31 @@ impl Towercab {
         let lines = lines(file);
         let mut t = Towercab::default();
         let mut rest = 0;
-        if lines.first() == Some(&"---") {
-            let close = lines[1..]
+        // Front matter: from the first non-blank line, if it trims to `---`, to the next one.
+        if let Some(open) = lines.iter().position(|l| !l.trim().is_empty())
+            && lines[open].trim() == "---"
+        {
+            let body = open + 1;
+            let close = lines[body..]
                 .iter()
-                .position(|l| *l == "---")
+                .position(|l| l.trim() == "---")
                 .ok_or("front matter: no closing ---")?;
-            front_matter(&lines[1..1 + close], &mut t).map_err(|e| format!("front matter: {e}"))?;
-            rest = close + 2;
+            front_matter(&lines[body..body + close], &mut t)
+                .map_err(|e| format!("front matter: {e}"))?;
+            rest = body + close + 1;
         }
         let items = items(&lines[rest..], rest + 1)?;
+        // A misplaced front matter is an error, never the defaults.
+        for item in &items {
+            if let Item::Line(n, line) = item
+                && let Some(key) = KEYS.iter().find(|k| {
+                    line.strip_prefix(**k)
+                        .is_some_and(|r| r.trim_start().starts_with(':'))
+                })
+            {
+                return Err(format!("line {n}: {key} outside front matter"));
+            }
+        }
         let [live, release, rollback] = fences(&items, &["live", "release", "rollback"])?[..]
         else {
             unreachable!("three names")
