@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-2 · Draft (Rust rewrite): rest · **Prefix:** LOOP
+**Status:** Live: LOOP-1, LOOP-2 · Draft (Rust rewrite): rest · **Prefix:** LOOP
 
 ## Purpose
 
@@ -302,8 +302,8 @@ WantedBy=graphical-session.target
 | 1 | `src/db.rs` | `Db`: `open(&Path)`, `MIGRATIONS`, `version()`, `tx(FnOnce(&Transaction) -> Result<T, String>)` (`BEGIN IMMEDIATE`), `meta`/`set_meta`/`del_meta` (also free fns `get_meta`/`set_meta`/`del_meta(&Connection, …)` for use inside `tx`); row types (`from_row`) `CommandRow`, `OutboxRow`, `Cooldown`, `RepoCap`, `FaultRow`, `DraftRow`. |
 | 1 | `src/exes.rs` | `Exes { git, gh, claude, cargo, bwrap, systemd_inhibit, systemctl, journalctl: OsString }` (`Default` = the names on `PATH`; tests point them at fakes). |
 | 1 | `src/service.rs` | `UNIT`, `unit_path() -> Result<PathBuf, String>`, `up(&Exes)`, `down(&Exes)` (`-> Result<String, String>`: the line printed), `logs(&Exes) -> Result<Infallible, String>` (exec). |
-| 1 | `src/runloop.rs` | `Tick { wall: DateTime<FixedOffset>, mono: Duration }`; `LoopOpts { watch, intent: Option<String>, pass: Duration (5 s) }`; `Loop::open(Config, Home, Handlers, Exes, LoopOpts) -> Result<Loop, String>` (lock, db, recovery, preflight); `pass(&mut self, Tick) -> Result<PassReport, String>`; `run(self) -> Result<(), String>` (passes, sleep, signals); `shutdown(&mut self)`. |
-| 1, 4 | `src/commands.rs` | `Cmd::{Approve(String), RetryFresh(String), Release(String), Pause, Resume, Trust(String)}`; `queue(&Db, &Cmd, source) -> i64`; `apply(&mut Loop, &CommandRow) -> String`; `wait_result(&Db, id, Duration) -> Option<String>`. |
+| 1 | `src/runloop.rs` | `Tick { wall: DateTime<FixedOffset>, mono: Duration }` (`now()`, `unix()`); `LoopOpts { watch, intent: Option<String>, pass: Duration (5 s) }`; `Loop::open(Config, Home, Handlers, Exes, LoopOpts) -> Result<Loop, String>` (lock, db, `meta.running` (a leftover one → `Loop.unclean`), recovery, preflight); `pass(&mut self, Tick) -> Result<PassReport { commands: Vec<(i64, String)>, idle, stop }, String>`; `run(self) -> Result<(), String>` (passes, sleep woken by a SIGTERM/SIGINT self-pipe, a second signal exits at once); `stop_flag()`; `shutdown(&mut self) -> Result<(), String>`. |
+| 1, 4 | `src/commands.rs` | `Cmd::{Approve(String), RetryFresh(String), Release(String), Pause, Resume, Trust(String)}` (`name`, `word`, `failed(reply)`: an error reply `<word>: …`); `queue(&Db, &Cmd, source) -> Result<i64, String>`; `CmdCx { config, db, tick }`; `apply(&CmdCx, &CommandRow) -> Result<String, String>` (effect, `applied_at`, `result` in one transaction; an applied row returns its result), `apply_pending`; `wait_result(&Db, id, Duration) -> Option<String>`; `submit(&Config, &Home, &Db, &Cmd, wait) -> Result<Option<String>, String>` (the CLI's way; `None` = queued). |
 | 2 | `src/machine.rs` | `Stage`, `Event` (`ALL`, `as_str`), `Next`, `next`, `ORDER`, `REVERT`, `REHEARSAL`, `Waiting` (`ALL` = one sample per variant), `continue_to`, `apply(&Db, &Mission, &Outcome, Tick) -> Result<Mission, String>`, `enter(&mut Ctx, &Mission)` (entry effects). |
 | 2 | `src/mission.rs` | `Mission` (a typed `missions` row), `Kind`; `get`, `unfinished(&Db)`, `for_intent`, `insert_pick(&Transaction, &Intent, &Config, Tick) -> Mission`. |
 | 2 | `src/handler.rs` | **Handlers**. |

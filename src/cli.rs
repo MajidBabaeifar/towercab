@@ -1,18 +1,24 @@
-//! Command line (LOOP-15, so far `add`, `migrate`, `review`, `protect`, `up`, `down`, `logs`
-//! and `--version`).
+//! Command line (LOOP-15, so far `add`, `migrate`, `review`, `protect`, `up`, `down`, `logs`,
+//! `run`, `approve`, `retry --fresh`, `release`, `pause`, `resume`, `trust` and `--version`).
 
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
+use crate::commands::{self, Cmd, QUEUED};
 use crate::config::Config;
+use crate::db::Db;
 use crate::exes::Exes;
+use crate::handler::Handlers;
+use crate::home::Home;
 use crate::intents::intent::is_repo;
 use crate::intents::migrate::migrate;
 use crate::intents::store::now;
 use crate::intents::{NewIntent, Store};
 use crate::repo::protect::{Target, protect};
+use crate::runloop::{Loop, LoopOpts};
 use crate::service;
 
 #[derive(Parser, Debug)]
@@ -21,6 +27,9 @@ struct Args {
     /// Config file (default: $TOWERCAB_CONFIG, else ~/.config/towercab/config.toml)
     #[arg(long, global = true, value_name = "FILE")]
     config: Option<PathBuf>,
+    /// The loop's home (default: $TOWERCAB_HOME, else ~/.local/share/towercab)
+    #[arg(long, global = true, value_name = "DIR")]
+    home: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -49,6 +58,31 @@ enum Command {
     Down,
     /// Follow the service's log
     Logs,
+    /// Run the loop: a pass every 5 s until nothing is runnable
+    Run {
+        /// Keep running until SIGTERM or SIGINT
+        #[arg(long)]
+        watch: bool,
+        /// Step only this intent's mission
+        #[arg(long, value_name = "ID")]
+        intent: Option<String>,
+    },
+    /// Go on with an intent waiting on you
+    Approve { id: String },
+    /// Start an intent over as a new attempt
+    Retry {
+        #[arg(long, required = true)]
+        fresh: bool,
+        id: String,
+    },
+    /// Authorize an intent's release
+    Release { id: String },
+    /// No picks; merges and reverts hold
+    Pause,
+    /// Undo pause
+    Resume,
+    /// Lift a repo's autonomy cap and freeze
+    Trust { repo: String },
 }
 
 /// Exit code: 0 ok, 1 error, 2 bad arguments.
@@ -109,6 +143,30 @@ where
             Config::load(args.config.as_deref())
                 .and_then(|_| service::logs(&Exes::default()).map(|never| match never {})),
         ),
+        Command::Run { watch, intent } => {
+            let run = loop_config(&args.config).and_then(|config| {
+                let home = Home::resolve(args.home.as_deref())?;
+                let opts = LoopOpts {
+                    watch,
+                    intent,
+                    ..LoopOpts::default()
+                };
+                Loop::open(config, home, Handlers::production(), Exes::default(), opts)?.run()
+            });
+            match run {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("towercab: {e}");
+                    1
+                }
+            }
+        }
+        Command::Approve { id } => command(&args.config, &args.home, Cmd::Approve(id)),
+        Command::Retry { fresh: _, id } => command(&args.config, &args.home, Cmd::RetryFresh(id)),
+        Command::Release { id } => command(&args.config, &args.home, Cmd::Release(id)),
+        Command::Pause => command(&args.config, &args.home, Cmd::Pause),
+        Command::Resume => command(&args.config, &args.home, Cmd::Resume),
+        Command::Trust { repo } => command(&args.config, &args.home, Cmd::Trust(repo)),
     }
 }
 
@@ -118,6 +176,30 @@ fn loop_config(config: &Option<PathBuf>) -> Result<Config, String> {
     let config = Config::load(config.as_deref())?;
     config.check_loop()?;
     Ok(config)
+}
+
+/// A `commands` row from the CLI (LOOP-15): applied here when no loop holds the home, else
+/// the loop's reply within 10 s, else `queued: …`. An error reply exits 1.
+fn command(config: &Option<PathBuf>, home: &Option<PathBuf>, cmd: Cmd) -> i32 {
+    let submitted = Config::load(config.as_deref()).and_then(|config| {
+        let home = Home::resolve(home.as_deref())?;
+        let db = Db::open(&home.db())?;
+        commands::submit(&config, &home, &db, &cmd, Duration::from_secs(10))
+    });
+    match submitted {
+        Ok(Some(reply)) if cmd.failed(&reply) => {
+            eprintln!("towercab: {reply}");
+            1
+        }
+        Ok(reply) => {
+            println!("{}", reply.as_deref().unwrap_or(QUEUED));
+            0
+        }
+        Err(e) => {
+            eprintln!("towercab: {e}");
+            1
+        }
+    }
 }
 
 fn store(config: &Option<PathBuf>) -> Result<Store, String> {

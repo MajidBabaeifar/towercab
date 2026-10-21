@@ -7,7 +7,7 @@ Being rewritten in Rust (crate at the root). The Python package (`towercab/`, `b
 ## Commands
 
 - `cargo test --locked`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo fmt`
-- `cargo run -- add "towercab: <title>" u3 i4` · `cargo run -- migrate` · `cargo run -- review` · `cargo run -- --version`
+- `cargo run -- add "towercab: <title>" u3 i4` · `migrate` · `review` · `--home /tmp/tc run [--watch]` · `--version`
 - `python3 -m unittest discover -s tests`: the Python version's tests
 - Machine with a zig `cc`: `export CRATE_CC_NO_DEFAULTS=1` before cargo
 
@@ -25,18 +25,17 @@ Being rewritten in Rust (crate at the root). The Python package (`towercab/`, `b
 
 ## Architecture
 
-- `src/cli.rs`: clap commands; errors → `towercab: <reason>`, exit 1; bad arguments exit 2.
-- `src/config.rs`: `~/.config/towercab/config.toml` (`[intents]`, falls back to `[tasks]`).
-- `src/priority.rs`: `2i + u`, order, parked, `pick_order` (for the loop's picker),
-  `review_queue`/`review_due` (PRI-7/8), `parse_scores` (also `add`'s).
-- `src/review.rs`: `towercab review` (injected `BufRead`/`Write`; keep/rescore/drop each one
-  `Store::update`; `shown` masks control characters for the terminal).
+- `src/cli.rs`: clap; errors → `towercab: <reason>`, exit 1; bad arguments 2. `config.rs`: **Config**.
+- The loop, file → interface in loop.md **Code**: `home.rs`, `db.rs` (**Schema**; `Db::tx` = one
+  `BEGIN IMMEDIATE`), `runloop.rs` (5 s pass; so far `commands`), `commands.rs`, `service.rs`,
+  `exes.rs`, `handler.rs` (picks off). Next: `machine.rs`, the one state machine (a red line).
+- `src/priority.rs`: `2i + u`, order, parked, `pick_order`, `review_due` (PRI-7/8), `parse_scores`.
+- `src/review.rs`: `towercab review` (injected IO; each answer one `Store::update`; `shown` masks).
 - `src/intents/`: the intent home. `intent.rs` (parse, typed fields, line-level `set`),
   `id.rs`, `store.rs` (`Store`: list/get/add/update, pull → write → commit → push, replay
   on rejection), `views.rs` (generated `TODO.md`/`DONE.md`), `git.rs`, `migrate.rs`.
 - `src/repo/`: a target repo's `CLAUDE.md`/`REVIEW.md`/`TOWERCAB.md` from `origin/<base>`
   (`load`, pure `parse`), protected paths (`protected.rs`), `protect` (rulesets via my `gh`).
-- Coming (specs/loop.md): `src/machine.rs`, the one state machine. A red line.
 
 ## Things Claude gets wrong here
 
@@ -44,6 +43,7 @@ Being rewritten in Rust (crate at the root). The Python package (`towercab/`, `b
 - Re-serialising front matter: write with `Intent::set`/`remove` so other lines stay byte-identical.
 - Adding a test name to a spec row without the `fn`, or marking a row Live before it is built.
 - `std::env::set_var` in a test binary that has other tests: give it its own `tests/*.rs`.
+- One change's writes outside one `Db::tx`; the binary in a test without `common::towercab` + `--home`.
 - Writing to the Python package or its tests for Rust work.
 
 ## Verifying your work
