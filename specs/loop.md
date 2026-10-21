@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Draft (Rust rewrite; the Python version lives on branch `python`) · **Prefix:** LOOP
+**Status:** Live: LOOP-2 · Draft (Rust rewrite): rest · **Prefix:** LOOP
 
 ## Purpose
 
@@ -301,7 +301,7 @@ WantedBy=graphical-session.target
 | 1 | `src/home.rs` | `Home { root }`: `resolve(Option<&Path>)`, `db()`, `lock_path()`, `lock() -> Result<LoopLock, String>` (`try_lock`), `holder() -> Option<u32>`, `work(id, attempt)`, `runs(dir)`. |
 | 1 | `src/db.rs` | `Db`: `open(&Path)`, `MIGRATIONS`, `version()`, `tx(FnOnce(&Transaction) -> Result<T, String>)` (`BEGIN IMMEDIATE`), `meta`/`set_meta`/`del_meta` (also free fns `get_meta`/`set_meta`/`del_meta(&Connection, …)` for use inside `tx`); row types (`from_row`) `CommandRow`, `OutboxRow`, `Cooldown`, `RepoCap`, `FaultRow`, `DraftRow`. |
 | 1 | `src/exes.rs` | `Exes { git, gh, claude, cargo, bwrap, systemd_inhibit, systemctl, journalctl: OsString }` (`Default` = the names on `PATH`; tests point them at fakes). |
-| 1 | `src/service.rs` | `UNIT`, `unit_path() -> Result<PathBuf, String>`, `up(&Exes)`, `down(&Exes)`, `logs(&Exes) -> Result<Infallible, String>` (exec). |
+| 1 | `src/service.rs` | `UNIT`, `unit_path() -> Result<PathBuf, String>`, `up(&Exes)`, `down(&Exes)` (`-> Result<String, String>`: the line printed), `logs(&Exes) -> Result<Infallible, String>` (exec). |
 | 1 | `src/runloop.rs` | `Tick { wall: DateTime<FixedOffset>, mono: Duration }`; `LoopOpts { watch, intent: Option<String>, pass: Duration (5 s) }`; `Loop::open(Config, Home, Handlers, Exes, LoopOpts) -> Result<Loop, String>` (lock, db, recovery, preflight); `pass(&mut self, Tick) -> Result<PassReport, String>`; `run(self) -> Result<(), String>` (passes, sleep, signals); `shutdown(&mut self)`. |
 | 1, 4 | `src/commands.rs` | `Cmd::{Approve(String), RetryFresh(String), Release(String), Pause, Resume, Trust(String)}`; `queue(&Db, &Cmd, source) -> i64`; `apply(&mut Loop, &CommandRow) -> String`; `wait_result(&Db, id, Duration) -> Option<String>`. |
 | 2 | `src/machine.rs` | `Stage`, `Event` (`ALL`, `as_str`), `Next`, `next`, `ORDER`, `REVERT`, `REHEARSAL`, `Waiting` (`ALL` = one sample per variant), `continue_to`, `apply(&Db, &Mission, &Outcome, Tick) -> Result<Mission, String>`, `enter(&mut Ctx, &Mission)` (entry effects). |

@@ -1,4 +1,5 @@
-//! Command line (LOOP-15, so far `add`, `migrate`, `review`, `protect` and `--version`).
+//! Command line (LOOP-15, so far `add`, `migrate`, `review`, `protect`, `up`, `down`, `logs`
+//! and `--version`).
 
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
@@ -6,11 +7,13 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 use crate::config::Config;
+use crate::exes::Exes;
 use crate::intents::intent::is_repo;
 use crate::intents::migrate::migrate;
 use crate::intents::store::now;
 use crate::intents::{NewIntent, Store};
 use crate::repo::protect::{Target, protect};
+use crate::service;
 
 #[derive(Parser, Debug)]
 #[command(name = "towercab", version, about = "Majid's software factory")]
@@ -40,6 +43,12 @@ enum Command {
         /// A [repos] name, or `intents` for the intent home
         repo: String,
     },
+    /// Install the systemd user service and start it
+    Up,
+    /// Stop and disable the service (missions stay)
+    Down,
+    /// Follow the service's log
+    Logs,
 }
 
 /// Exit code: 0 ok, 1 error, 2 bad arguments.
@@ -90,7 +99,25 @@ where
                 .and_then(|c| Target::resolve(&c, &repo))
                 .and_then(|t| protect(&t, OsStr::new("gh"))),
         ),
+        Command::Up => {
+            report(loop_config(&args.config).and_then(|_| service::up(&Exes::default())))
+        }
+        Command::Down => report(
+            Config::load(args.config.as_deref()).and_then(|_| service::down(&Exes::default())),
+        ),
+        Command::Logs => report(
+            Config::load(args.config.as_deref())
+                .and_then(|_| service::logs(&Exes::default()).map(|never| match never {})),
+        ),
     }
+}
+
+/// The config of a loop command (`run`, `step`, `up`, `doctor`): loaded and
+/// [`Config::check_loop`]ed.
+fn loop_config(config: &Option<PathBuf>) -> Result<Config, String> {
+    let config = Config::load(config.as_deref())?;
+    config.check_loop()?;
+    Ok(config)
 }
 
 fn store(config: &Option<PathBuf>) -> Result<Store, String> {

@@ -5,8 +5,10 @@
 pub mod cli;
 pub mod config;
 pub mod db;
+pub mod exes;
 pub mod home;
 pub mod intents;
 pub mod priority;
 pub mod repo;
 pub mod review;
+pub mod service;
