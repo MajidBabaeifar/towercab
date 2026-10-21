@@ -54,12 +54,12 @@ fn builder(g: &str) -> Result<GlobMatcher, String> {
 
 /// A protected, tests or unlock glob (**Globs**): `*`, `?`, `[…]` stay inside one path
 /// component, `**` spans them, `{a,b}` alternates, case-sensitive; `P/**` also matches `P`.
-/// Empty, a `..` component or a bad glob → `bad glob "<g>"[: <error>]` (the caller adds the
-/// key).
+/// Empty, an empty, `.` or `..` component (paths have none, so it would match nothing) or a
+/// bad glob → `bad glob "<g>"[: <error>]` (the caller adds the key).
 pub fn glob(g: &str) -> Result<GlobMatcher, String> {
-    let bad = || format!("bad glob {g:?}");
+    let bad = || format!("bad glob \"{g}\"");
     let norm = normalize(g);
-    if norm.is_empty() || norm.split('/').any(|c| c == "..") {
+    if norm.is_empty() || norm.split('/').any(|c| matches!(c, "" | "." | "..")) {
         return Err(bad());
     }
     let m = builder(norm).map_err(|e| format!("{}: {e}", bad()))?;

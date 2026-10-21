@@ -128,6 +128,13 @@ fn test_protected_paths() {
         ("./", "bad glob \"./\""),
         ("../x", "bad glob \"../x\""),
         ("a/../b", "bad glob \"a/../b\""),
+        // Paths have no empty or `.` components: such a glob would protect nothing.
+        ("a//b", "bad glob \"a//b\""),
+        ("src//secrets/**", "bad glob \"src//secrets/**\""),
+        ("a/./b", "bad glob \"a/./b\""),
+        (".", "bad glob \".\""),
+        // Shown as written, not escaped.
+        ("a\\", "bad glob \"a\\\": dangling '\\'"),
         (
             "a/[b",
             "bad glob \"a/[b\": unclosed character class; missing ']'",
