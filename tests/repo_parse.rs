@@ -333,6 +333,18 @@ fn test_checks_block() {
     // An empty block is no block, so another one is fine.
     let v = verifying("```checks\n\n# nothing\n```\n\n```checks\nmake\n```\n").unwrap();
     assert_eq!(v.checks, ["make"]);
+    // CommonMark fences: a longer fence holds shorter ones, tildes, inline code is no fence;
+    // closing `#`s on the heading.
+    let text = "## Verifying your work ##\n\nLike this:\n\n````markdown\n```checks\nnot this\n```\n````\n\n```inline``` code is prose.\n\n~~~checks\nmake\n```\nstill make\n~~~~\n";
+    assert_eq!(
+        Verifying::parse(text).unwrap().checks,
+        ["make", "```", "still make"]
+    );
+    let text = "## Verifying your work #\n\n`````checks\nmake\n`````\n";
+    assert_eq!(Verifying::parse(text).unwrap().checks, ["make"]);
+    // `#` without a space before it is the title's.
+    let text = "## Verifying your work#\n\n```checks\nmake\n```\n";
+    assert_eq!(Verifying::parse(text), Err(RepoError::NoVerifyingBlock));
 
     assert_eq!(
         invalid(verifying("```checks\na\n```\n```checks\nb\n```\n")),
@@ -679,6 +691,28 @@ fn test_review_md() {
     assert_eq!(r.do_not_report, ["Style.", "Docs on private items."]);
     assert_eq!(r.red_lines, ["`migrations/**`: schema", "auth"]);
 
+    // Every CommonMark list item counts: ordered, indented up to 3 spaces, a tab after the
+    // marker, nested (flattened); a `---` rule or `-x` is no item.
+    let r = Review::parse(
+        "## Passes\n\n1. Bugs: wrong results\n2) Security: secrets\n\n## Red lines\n\n1. migrations/**\n - auth\n-\tbilling\n   * public API\n10. data\n    deletion\n  - nested\n---\n-x\n",
+    )
+    .unwrap();
+    assert_eq!(
+        r.passes.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+        ["Bugs", "Security"]
+    );
+    assert_eq!(
+        r.red_lines,
+        [
+            "migrations/**",
+            "auth",
+            "billing",
+            "public API",
+            "data deletion",
+            "nested"
+        ]
+    );
+
     let err = |text: &str| Review::parse(text).unwrap_err();
     for (text, want) in [
         (
@@ -706,6 +740,11 @@ fn test_review_md() {
             "## Cap the nits: 99999999999 is too large",
         ),
         ("## Passes\n\n```\n- a: b\n", "line 3: unclosed ``` block"),
+        (
+            "## Passes\n\n````\n- a: b\n```\n",
+            "line 3: unclosed ``` block",
+        ),
+        ("~~~\n```\n", "line 1: unclosed ``` block"),
     ] {
         assert_eq!(err(text), format!("REVIEW.md: {want}"), "{text:?}");
     }

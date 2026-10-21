@@ -1,6 +1,15 @@
 //! The **Grammar** of the repo files (REPO-1): lines, fenced blocks, `##` sections, bullets and
 //! `key: value` lines. Errors are `<where>: <what>`; the file parsers add `<file>: `.
 
+use std::sync::LazyLock;
+
+use regex::Regex;
+
+/// A list item (CommonMark): up to 3 spaces, `-`, `*`, `+` or 1-9 digits and `.` or `)`, then a
+/// space or tab.
+static BULLET: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^ {0,3}(?:[-*+]|[0-9]{1,9}[.)])[ \t](.*)$").unwrap());
+
 /// UTF-8 text → lines: a leading BOM dropped, split on `\n`, a trailing `\r` dropped.
 pub fn lines(text: &str) -> Vec<&str> {
     text.strip_prefix('\u{feff}')
@@ -10,8 +19,9 @@ pub fn lines(text: &str) -> Vec<&str> {
         .collect()
 }
 
-/// A fenced block: opened by a line starting (after spaces) with ```` ``` ````, closed by the
-/// next line that trims to ```` ``` ````.
+/// A fenced block: opened by a line starting (after spaces) with 3 or more backticks or tildes
+/// (a backtick fence's name has no backtick), closed by the next line that trims to at least as
+/// many of the same character.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fence<'a> {
     /// 1-based line of the opening fence.
@@ -40,13 +50,16 @@ pub fn items<'a>(lines: &[&'a str], first: usize) -> Result<Vec<Item<'a>>, Strin
     while i < lines.len() {
         let n = first + i;
         let line = lines[i];
-        let Some(name) = line.trim_start_matches(' ').strip_prefix("```") else {
+        let Some((mark, count, name)) = fence_open(line) else {
             out.push(Item::Line(n, line));
             i += 1;
             continue;
         };
-        let name = name.trim();
-        let Some(len) = lines[i + 1..].iter().position(|l| l.trim() == "```") else {
+        let closes = |l: &&str| {
+            let t = l.trim();
+            t.len() >= count && t.chars().all(|c| c == mark)
+        };
+        let Some(len) = lines[i + 1..].iter().position(closes) else {
             return Err(format!("line {n}: unclosed ```{name} block"));
         };
         let inner = &lines[i + 1..i + 1 + len];
@@ -65,9 +78,24 @@ pub fn items<'a>(lines: &[&'a str], first: usize) -> Result<Vec<Item<'a>>, Strin
     Ok(out)
 }
 
-/// The title of a column-0 `## <title>` line, trimmed.
+/// An opening fence → its character, length and name (the rest of the line, trimmed).
+fn fence_open(line: &str) -> Option<(char, usize, &str)> {
+    let rest = line.trim_start_matches(' ');
+    let mark = rest.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let count = rest.len() - rest.trim_start_matches(mark).len();
+    let name = rest[count..].trim();
+    (count >= 3 && !(mark == '`' && name.contains('`'))).then_some((mark, count, name))
+}
+
+/// The title of a column-0 `## <title>` line, trimmed, closing `#`s (after a space) dropped.
 fn section_title(line: &str) -> Option<&str> {
-    line.strip_prefix("## ").map(str::trim)
+    let title = line.strip_prefix("## ")?.trim();
+    let open = title.trim_end_matches('#');
+    if open.len() < title.len() && (open.is_empty() || open.ends_with([' ', '\t'])) {
+        Some(open.trim())
+    } else {
+        Some(title)
+    }
 }
 
 /// Whether a line ends a section: a column-0 `# ` or `## ` line.
@@ -132,8 +160,9 @@ pub fn fences<'a, 'b>(
     Ok(found)
 }
 
-/// Bullets outside fences: a column-0 line starting `- `, `* ` or `+ `, continued by the
-/// indented non-blank lines after it; each line trimmed, joined with one space.
+/// Bullets outside fences: list items ([`BULLET`]; nesting flattened), continued by the
+/// indented non-blank lines after them that aren't items; each line trimmed, joined with one
+/// space.
 pub fn bullets(items: &[Item]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut open = false;
@@ -142,11 +171,13 @@ pub fn bullets(items: &[Item]) -> Vec<String> {
             open = false;
             continue;
         };
-        if let Some(rest) = ["- ", "* ", "+ "].iter().find_map(|m| line.strip_prefix(m)) {
-            out.push(rest.trim().to_string());
+        if let Some(c) = BULLET.captures(line) {
+            out.push(c[1].trim().to_string());
             open = true;
-        } else if open && line.starts_with([' ', '\t']) && !line.trim().is_empty() {
-            let last = out.last_mut().expect("open bullet");
+        } else if let Some(last) = out.last_mut().filter(|_| open)
+            && line.starts_with([' ', '\t'])
+            && !line.trim().is_empty()
+        {
             if !last.is_empty() {
                 last.push(' ');
             }
