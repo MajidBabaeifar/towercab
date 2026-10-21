@@ -1,0 +1,610 @@
+//! The store: layout, git sync, unreadable files, interface (INT-1, 2, 4, 5, 10, 11, 12).
+
+mod common;
+
+use std::cell::Cell;
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+
+use common::{Home, git, intent_md, t};
+use towercab::config::{Config, IntentsConfig};
+use towercab::intents::store::OLD_FORMAT;
+use towercab::intents::{NewIntent, Store, StoreError, Value};
+
+fn new(title: &str, u: Option<u8>, i: Option<u8>) -> NewIntent {
+    NewIntent {
+        repo: "towercab".into(),
+        title: title.into(),
+        u,
+        i,
+        a: None,
+        source: "me".into(),
+        created: t("2026-10-21T09:05:07+02:00"),
+    }
+}
+
+fn ids(list: &[towercab::intents::Intent]) -> Vec<&str> {
+    list.iter().map(|i| i.id.as_str()).collect()
+}
+
+#[test]
+fn test_layout() {
+    let home = Home::new(&[
+        (
+            "intents/261020-0721-rust-crate/intent.md",
+            &intent_md("towercab", "u: 4\ni: 5\n", "Rust crate"),
+        ),
+        (
+            "intents/261020-0721-2-priority/intent.md",
+            &intent_md("towercab", "stage: build\n", "Priority"),
+        ),
+        ("intents/261020-0721-2-priority/plan.md", "# Plan\n"),
+        (
+            "intents/261019-0800-shipped/intent.md",
+            &intent_md("towercab", "stage: done\n", "Shipped in place"),
+        ),
+        (
+            "done/261015-1446-rename/intent.md",
+            &intent_md("towercab", "stage: done\n", "Rename"),
+        ),
+        ("intents/notes.md", "plain files are ignored\n"),
+        ("intents/scratch/keep.txt", "x\n"),
+        ("intents/261020-0900-empty/.gitkeep", ""),
+        (
+            "done/legacy.md",
+            "2026-10-15 261015-1710 towercab: Old line · towercab#6\n",
+        ),
+    ]);
+    assert!(!home.checkout.exists());
+    let store = home.store();
+    assert!(
+        home.checkout.join(".git").exists(),
+        "cloned from [intents].remote when missing"
+    );
+    assert_eq!(store.path(), home.checkout);
+
+    let l = store.list().unwrap();
+    assert_eq!(ids(&l.open), ["261020-0721", "261020-0721-2"]);
+    assert_eq!(ids(&l.done), ["261019-0800", "261015-1446"]);
+    assert_eq!(l.open[0].dir, "intents/261020-0721-rust-crate");
+    assert_eq!(l.open[0].slug, "rust-crate");
+    assert_eq!(
+        l.done[0].dir, "intents/261019-0800-shipped",
+        "stage: done is finished wherever it is"
+    );
+    assert_eq!(l.done[1].dir, "done/261015-1446-rename");
+    let bad: Vec<(&str, &str)> = l
+        .unreadable
+        .iter()
+        .map(|u| (u.path.as_str(), u.reason.as_str()))
+        .collect();
+    assert_eq!(
+        bad,
+        [
+            ("intents/261020-0900-empty", "no intent.md"),
+            ("intents/scratch", "not an <id>-<slug> folder"),
+        ]
+    );
+    assert_eq!(
+        l.legacy,
+        "2026-10-15 261015-1710 towercab: Old line · towercab#6\n"
+    );
+
+    // A write regenerates both views at the root, ids linking to their folders.
+    let added = store.add(new("Layout check", None, None)).unwrap();
+    assert_eq!(added.dir, "intents/261021-0905-layout-check");
+    assert!(home.remote_has("intents/261021-0905-layout-check/intent.md"));
+    let todo = home.remote_file("TODO.md");
+    assert!(todo.contains("- [261020-0721](intents/261020-0721-rust-crate/intent.md) towercab: Rust crate · p14 u4 i5\n"));
+    assert!(todo.contains(
+        "- [261020-0721-2](intents/261020-0721-2-priority/intent.md) towercab: Priority · build\n"
+    ));
+    assert!(todo.contains("- intents/scratch: not an <id>-<slug> folder\n"));
+    let done = home.remote_file("DONE.md");
+    assert!(
+        done.contains("[261015-1446](done/261015-1446-rename/intent.md) towercab: Rename · no PR")
+    );
+    assert!(done.ends_with(
+        "## Before intents\n\n2026-10-15 261015-1710 towercab: Old line · towercab#6\n"
+    ));
+    assert_eq!(
+        home.remote_file("intents/261020-0721-2-priority/plan.md"),
+        "# Plan\n"
+    );
+
+    // An existing checkout is used as it is.
+    let again = Store::open(&home.config()).unwrap();
+    assert_eq!(ids(&again.list().unwrap().open).len(), 3);
+}
+
+#[test]
+fn test_thin_intent() {
+    let home = Home::new(&[]);
+    let store = home.store();
+    let got = store
+        .add(new("Rust crate and intent store", Some(4), Some(5)))
+        .unwrap();
+    assert_eq!(got.id, "261021-0905");
+    assert_eq!(got.dir, "intents/261021-0905-rust-crate-and-intent-store");
+    let text = home.remote_file("intents/261021-0905-rust-crate-and-intent-store/intent.md");
+    assert_eq!(
+        text,
+        "---\nrepo: towercab\nu: 4\ni: 5\nsource: me\nstarted: 2026-10-21T09:05:07+02:00\n---\n\n# Intent: Rust crate and intent store\n"
+    );
+    assert_eq!(home.log()[0], "towercab: add 261021-0905");
+    assert_eq!(
+        (got.a(), got.stage(), got.source()),
+        (None, None, Some("me"))
+    );
+    assert!(home.remote_file("TODO.md").contains(
+        "## Next\n\n- [261021-0905](intents/261021-0905-rust-crate-and-intent-store/intent.md) towercab: Rust crate and intent store · p14 u4 i5\n"
+    ));
+
+    // No scores given → none written; `a` only when given.
+    let mut bare = new("Bare", None, None);
+    bare.a = Some(2);
+    bare.created = t("2026-10-21T09:06:00+00:00");
+    store.add(bare).unwrap();
+    assert_eq!(
+        home.remote_file("intents/261021-0906-bare/intent.md"),
+        "---\nrepo: towercab\na: 2\nsource: me\nstarted: 2026-10-21T09:06:00+00:00\n---\n\n# Intent: Bare\n"
+    );
+    // A thin intent runs as written: it parses with only repo and title.
+    let got = store.get("0906").unwrap();
+    assert_eq!((got.title(), got.u(), got.i()), ("Bare", None, None));
+
+    for (title, u) in [("", None), ("two\nlines", None), ("ok", Some(6))] {
+        assert!(
+            matches!(store.add(new(title, u, None)), Err(StoreError::Refused(_))),
+            "{title:?}"
+        );
+    }
+}
+
+#[test]
+fn test_only_main_is_accepted() {
+    let home = Home::new(&[(
+        "intents/261020-0721-on-main/intent.md",
+        &intent_md("towercab", "", "On main"),
+    )]);
+    // A machine-written intent waits on its own branch (+ PR) until merged.
+    git(
+        &home.me,
+        &["checkout", "--quiet", "-b", "intent/261021-1000-machine"],
+    );
+    common::write(
+        &home.me,
+        "intents/261021-1000-machine/intent.md",
+        &intent_md("towercab", "", "Machine"),
+    );
+    git(&home.me, &["add", "-A"]);
+    git(&home.me, &["commit", "--quiet", "-m", "draft"]);
+    git(
+        &home.me,
+        &[
+            "push",
+            "--quiet",
+            "origin",
+            "HEAD:intent/261021-1000-machine",
+        ],
+    );
+    git(&home.me, &["checkout", "--quiet", "main"]);
+
+    let store = home.store();
+    assert_eq!(ids(&store.list().unwrap().open), ["261020-0721"]);
+    assert!(store.get("1000").is_err());
+
+    // Merged → on main → accepted.
+    git(
+        &home.me,
+        &[
+            "merge",
+            "--quiet",
+            "--ff-only",
+            "intent/261021-1000-machine",
+        ],
+    );
+    git(&home.me, &["push", "--quiet", "origin", "HEAD:main"]);
+    assert_eq!(
+        ids(&store.list().unwrap().open),
+        ["261020-0721", "261021-1000"]
+    );
+
+    // A checkout on another branch is refused.
+    git(&home.checkout, &["checkout", "--quiet", "-b", "feature"]);
+    let err = Store::open(&home.config()).err().unwrap();
+    assert_eq!(
+        err,
+        StoreError::Refused(format!(
+            "intents: {} is on feature, not main",
+            home.checkout.display()
+        ))
+    );
+}
+
+#[test]
+fn test_done_moves_folder() {
+    let home = Home::new(&[
+        (
+            "intents/261020-0721-ship/intent.md",
+            &intent_md("towercab", "u: 4\ni: 5\nstage: deploy\n", "Ship it"),
+        ),
+        ("intents/261020-0721-ship/plan.md", "# Plan\n"),
+        (
+            "intents/261020-0722-drop/intent.md",
+            &intent_md("towercab", "", "Drop it"),
+        ),
+        (
+            "intents/261020-0723-keep/intent.md",
+            &intent_md(
+                "towercab",
+                "finished: 2026-10-19T08:00:00+02:00\n",
+                "Keep finished",
+            ),
+        ),
+    ]);
+    let store = home.store();
+    let got = store
+        .update("0721", "done", |i| {
+            i.set("stage", Value::Str("done".into()))?;
+            i.set(
+                "pr",
+                Value::Str("https://github.com/o/towercab/pull/9".into()),
+            )?;
+            i.set("cost", Value::Float(1.5))?;
+            i.set("agent_time", Value::Int(90))?;
+            i.set("attempts", Value::Int(1))
+        })
+        .unwrap();
+    assert_eq!(got.dir, "done/261020-0721-ship");
+    assert!(
+        got.finished().is_some(),
+        "finished written with stage: done"
+    );
+    assert_eq!(home.log()[0], "towercab: done 261020-0721");
+    assert!(!home.remote_has("intents/261020-0721-ship"));
+    assert_eq!(
+        home.remote_file("done/261020-0721-ship/plan.md"),
+        "# Plan\n"
+    );
+    let moved = home.remote_file("done/261020-0721-ship/intent.md");
+    assert!(moved.contains("stage: done\n") && moved.contains("\nfinished: "));
+    let status = git(
+        &home.remote,
+        &["diff", "--name-status", "-M", "main~1", "main"],
+    );
+    assert!(
+        status.contains("intents/261020-0721-ship/plan.md\tdone/261020-0721-ship/plan.md"),
+        "moved with git mv: {status}"
+    );
+    let date = got.finished().unwrap().format("%Y-%m-%d").to_string();
+    assert!(home.remote_file("DONE.md").contains(&format!(
+        "- {date} [261020-0721](done/261020-0721-ship/intent.md) towercab: Ship it · [towercab#9](https://github.com/o/towercab/pull/9) · $1.50 · 1m30s · 1\n"
+    )));
+    assert!(!home.remote_file("TODO.md").contains("Ship it"));
+
+    store
+        .update("0722", "drop", |i| {
+            i.set("stage", Value::Str("dropped".into()))
+        })
+        .unwrap();
+    assert!(home.remote_has("done/261020-0722-drop/intent.md"));
+    assert!(
+        home.remote_file("DONE.md")
+            .contains("towercab: Drop it · dropped\n")
+    );
+    assert!(store.get("0722").is_err(), "done intents are not open");
+
+    // An existing `finished` is kept; other writes move nothing.
+    store
+        .update("0723", "done", |i| {
+            i.set("stage", Value::Str("done".into()))
+        })
+        .unwrap();
+    assert!(
+        home.remote_file("done/261020-0723-keep/intent.md")
+            .contains("finished: 2026-10-19T08:00:00+02:00\n")
+    );
+    let l = store.list().unwrap();
+    assert!(l.open.is_empty());
+    assert_eq!(ids(&l.done), ["261020-0723", "261020-0722", "261020-0721"]);
+}
+
+#[test]
+fn test_concurrent_edits_both_kept() {
+    let mine = intent_md("towercab", "u: 4\ni: 5\n", "Shared");
+    let home = Home::new(&[
+        ("intents/261020-0721-shared/intent.md", &mine),
+        (
+            "intents/261020-0722-other/intent.md",
+            &intent_md("towercab", "", "Other"),
+        ),
+    ]);
+    let store = home.store();
+    let calls = Cell::new(0);
+    // While Towercab writes, I push an edit to the same intent: its push is rejected,
+    // it replays its change on my commit, and both edits survive.
+    let got = store
+        .update("0721", "start", |i| {
+            calls.set(calls.get() + 1);
+            if calls.get() == 1 {
+                home.push_mine(
+                    &[(
+                        "intents/261020-0721-shared/intent.md",
+                        Some(&mine.replace("i: 5", "i: 2")),
+                    )],
+                    "my edit",
+                );
+            }
+            i.set("stage", Value::Str("design".into()))
+        })
+        .unwrap();
+    assert_eq!(calls.get(), 2, "replayed once after the rejected push");
+    assert_eq!(
+        (got.i(), got.stage().map(|s| s.as_str())),
+        (Some(2), Some("design"))
+    );
+    assert_eq!(
+        home.remote_file("intents/261020-0721-shared/intent.md"),
+        "---\nrepo: towercab\nu: 4\ni: 2\nstage: design\n---\n\n# Intent: Shared\n"
+    );
+    assert_eq!(&home.log()[..2], ["towercab: start 261020-0721", "my edit"]);
+    assert!(home.checkout_clean());
+
+    // My edits before Towercab's read are pulled first, never overwritten.
+    home.push_mine(
+        &[(
+            "intents/261020-0722-other/intent.md",
+            Some(&intent_md("towercab", "u: 5\n", "Other, renamed")),
+        )],
+        "rename",
+    );
+    store
+        .update("0721", "build", |i| {
+            i.set("stage", Value::Str("build".into()))
+        })
+        .unwrap();
+    assert!(
+        home.remote_file("intents/261020-0722-other/intent.md")
+            .contains("u: 5\n")
+    );
+    assert!(
+        home.remote_file("TODO.md")
+            .contains("towercab: Other, renamed · p11 u5 i3\n")
+    );
+}
+
+/// A `pre-receive` hook on the remote that rejects the first `n` pushes.
+fn reject_pushes(home: &Home, n: usize) {
+    let count = home.tmp.path().join("pushes");
+    let hook = home.remote.join("hooks/pre-receive");
+    fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\nn=$(cat '{c}' 2>/dev/null || echo 0)\nn=$((n+1))\necho $n > '{c}'\n\
+if [ $n -le {n} ]; then echo \"test: push $n rejected\" >&2; exit 1; fi\nexit 0\n",
+            c = count.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn test_push_retries() {
+    let home = Home::new(&[(
+        "intents/261020-0721-x/intent.md",
+        &intent_md("towercab", "", "X"),
+    )]);
+    let store = home.store();
+    reject_pushes(&home, 2);
+    let calls = Cell::new(0);
+    store
+        .update("0721", "start", |i| {
+            calls.set(calls.get() + 1);
+            i.set("stage", Value::Str("design".into()))
+        })
+        .unwrap();
+    assert_eq!(calls.get(), 3, "two rejected pushes, two replays");
+    assert_eq!(&home.log()[..2], ["towercab: start 261020-0721", "seed"]);
+
+    // Rejected every time: 1 push + 3 retries, then give up with nothing left behind.
+    let head = home.head();
+    reject_pushes(&home, 1000);
+    calls.set(0);
+    let err = store
+        .update("0721", "build", |i| {
+            calls.set(calls.get() + 1);
+            i.set("stage", Value::Str("build".into()))
+        })
+        .unwrap_err();
+    assert_eq!(calls.get(), 4);
+    match err {
+        StoreError::Sync(m) => {
+            assert!(m.starts_with("push failed 4 times: "), "{m}");
+            assert!(m.contains("test: push"), "{m}");
+        }
+        other => panic!("want Sync, got {other:?}"),
+    }
+    assert_eq!(home.head(), head);
+    assert_eq!(
+        git(&home.checkout, &["rev-parse", "HEAD"]).trim(),
+        git(&home.checkout, &["rev-parse", "origin/main"]).trim()
+    );
+    assert!(home.checkout_clean());
+    assert_eq!(
+        store.get("0721").unwrap().stage().unwrap().as_str(),
+        "design"
+    );
+}
+
+#[test]
+fn test_bad_file_reported() {
+    let bad = "---\nrepo: towercab\nu: 9\n---\n\n# Intent: Bad score\n";
+    let home = Home::new(&[
+        (
+            "intents/261020-0721-good/intent.md",
+            &intent_md("towercab", "", "Good"),
+        ),
+        ("intents/261020-0800-bad/intent.md", bad),
+        (
+            "intents/261020-0900-a/intent.md",
+            &intent_md("towercab", "", "Dup A"),
+        ),
+        (
+            "done/261020-0900-b/intent.md",
+            &intent_md("towercab", "stage: done\n", "Dup B"),
+        ),
+    ]);
+    let store = home.store();
+    let l = store.list().unwrap();
+    assert_eq!(ids(&l.open), ["261020-0721"]);
+    store.add(new("Trigger a write", None, None)).unwrap();
+    assert!(home.remote_file("TODO.md").ends_with(
+        "## Can't read\n\n\
+- done/261020-0900-b: duplicate id\n\
+- intents/261020-0800-bad/intent.md: u must be an integer 1-5\n\
+- intents/261020-0900-a: duplicate id\n"
+    ));
+    assert!(
+        !home.remote_file("DONE.md").contains("Dup B"),
+        "a duplicate is never picked or listed as done"
+    );
+    assert_eq!(
+        home.remote_file("intents/261020-0800-bad/intent.md"),
+        bad,
+        "never rewritten"
+    );
+
+    let reason =
+        StoreError::Refused("intents/261020-0800-bad/intent.md: u must be an integer 1-5".into());
+    assert_eq!(store.get("0800").unwrap_err(), reason);
+    let head = home.head();
+    assert_eq!(
+        store.update("0800", "touch", |_| Ok(())).unwrap_err(),
+        reason
+    );
+    assert_eq!(home.head(), head);
+    assert_eq!(
+        store.get("0900").unwrap_err(),
+        StoreError::Refused("intents/261020-0900-a: duplicate id".into())
+    );
+
+    // Fixed by me → readable again.
+    home.push_mine(
+        &[(
+            "intents/261020-0800-bad/intent.md",
+            Some(&bad.replace("u: 9", "u: 2")),
+        )],
+        "fix",
+    );
+    assert_eq!(store.get("0800").unwrap().u(), Some(2));
+}
+
+#[test]
+fn test_store_interface() {
+    let home = Home::new(&[(
+        "intents/261020-0721-x/intent.md",
+        &intent_md("towercab", "u: 2\n", "X"),
+    )]);
+    let store = home.store();
+    assert_eq!(ids(&store.list().unwrap().open), ["261020-0721"]);
+    assert_eq!(store.get("0721").unwrap().title(), "X");
+    let added = store.add(new("Y", None, None)).unwrap();
+    assert_eq!(home.log()[0], format!("towercab: add {}", added.id));
+    let up = store
+        .update(&added.id, "rescore", |i| i.set("u", Value::Int(5)))
+        .unwrap();
+    assert_eq!(up.u(), Some(5));
+    assert_eq!(home.log()[0], format!("towercab: rescore {}", added.id));
+
+    // `Err` from the closure → nothing written.
+    let head = home.head();
+    assert_eq!(
+        store
+            .update("0721", "nope", |_| Err("not now".into()))
+            .unwrap_err(),
+        StoreError::Refused("not now".into())
+    );
+    assert_eq!(home.head(), head);
+    assert!(home.checkout_clean());
+    // A closure that changes nothing commits nothing.
+    store.update("0721", "noop", |_| Ok(())).unwrap();
+    assert_eq!(home.head(), head);
+    assert_eq!(
+        store.get("zzz").unwrap_err(),
+        StoreError::Refused("no open intent matches zzz".into())
+    );
+    assert_eq!(StoreError::Sync("x".into()).to_string(), "x");
+
+    // Uncommitted changes in the checkout → refuse reads and writes.
+    common::write(&home.checkout, "stray.txt", "x");
+    let err = store.list().unwrap_err();
+    assert!(
+        matches!(&err, StoreError::Refused(m) if m.ends_with("has uncommitted changes")),
+        "{err:?}"
+    );
+    assert!(matches!(
+        store.add(new("Z", None, None)),
+        Err(StoreError::Refused(_))
+    ));
+    fs::remove_file(home.checkout.join("stray.txt")).unwrap();
+
+    // Old-format TODO.md → reads work, writes refuse until migrate.
+    home.push_mine(
+        &[("TODO.md", Some("# TODO\n\n- [ ] 261020-0721 towercab: X\n"))],
+        "old format",
+    );
+    assert_eq!(store.list().unwrap().open.len(), 2);
+    assert_eq!(
+        store.add(new("Z", None, None)).unwrap_err(),
+        StoreError::Refused(OLD_FORMAT.into())
+    );
+    assert_eq!(
+        OLD_FORMAT,
+        "TODO.md is in the old format: run towercab migrate"
+    );
+
+    // Pull failure is a Sync error.
+    fs::rename(&home.remote, home.tmp.path().join("gone.git")).unwrap();
+    assert!(matches!(store.list(), Err(StoreError::Sync(m)) if m.starts_with("pull failed: ")));
+
+    // Clone failure is a Sync error; no remote and no checkout is refused.
+    let mut config = home.config();
+    config.intents.path = home.tmp.path().join("fresh");
+    assert!(
+        matches!(Store::open(&config), Err(StoreError::Sync(m)) if m.starts_with("clone failed: "))
+    );
+    config.intents.remote = None;
+    assert!(
+        matches!(Store::open(&config), Err(StoreError::Refused(m)) if m.contains("does not exist"))
+    );
+    fs::create_dir_all(&config.intents.path).unwrap();
+    assert!(
+        matches!(Store::open(&config), Err(StoreError::Refused(m)) if m.ends_with("is not a git checkout"))
+    );
+
+    // No `origin` → commits locally only.
+    let local = home.tmp.path().join("local");
+    fs::create_dir_all(&local).unwrap();
+    git(&local, &["init", "--quiet", "-b", "main"]);
+    git(
+        &local,
+        &["commit", "--quiet", "--allow-empty", "-m", "start"],
+    );
+    let config = Config {
+        file: home.tmp.path().join("config.toml"),
+        intents: IntentsConfig {
+            remote: None,
+            path: local.clone(),
+            cutoff: 7,
+        },
+    };
+    let store = Store::open(&config).unwrap();
+    let got = store.add(new("Local only", None, None)).unwrap();
+    assert_eq!(
+        git(&local, &["log", "-1", "--format=%s"]).trim(),
+        format!("towercab: add {}", got.id)
+    );
+    assert!(local.join("TODO.md").exists() && local.join("DONE.md").exists());
+}
