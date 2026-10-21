@@ -35,6 +35,16 @@ pub fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// The repo root.
+pub fn root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// A file in the repo.
+pub fn read(rel: &str) -> String {
+    fs::read_to_string(root().join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"))
+}
+
 pub fn t(s: &str) -> DateTime<FixedOffset> {
     DateTime::parse_from_rfc3339(s).expect("RFC 3339")
 }
