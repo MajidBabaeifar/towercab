@@ -1,6 +1,6 @@
 # Runner
 
-**Status:** Live · **Prefix:** RUN
+**Status:** Removed: superseded by [loop.md](loop.md) (Rust rewrite); Python version on branch `python` · **Prefix:** RUN
 
 ## Purpose
 
@@ -11,32 +11,32 @@ wait out limits, publish the result, take the next one.
 
 | ID | Requirement | Verified by |
 |---|---|---|
-| RUN-1 | Config `~/.config/towercab/config.toml` (or `--config`, `TOWERCAB_CONFIG`): `[tasks]` remote/path/cutoff, `[agent]` provider/reviewer/model/timeout/max_repairs/ci_poll/ci_grace/ci_wait, `[repos.<name>]` path, verify argv, bash allowlist, base; optional `[telegram]` bot_token + chat_id (both strings, or `ConfigError`). | test_example_loads, test_bad_repo, test_telegram_config, test_ci_settings |
-| RUN-2 | Towercab works in its own clone of the task repo (default `~/.local/share/towercab/gradient-tasks`); state in `~/.local/share/towercab` (`--home`, `TOWERCAB_HOME`). | test_clones_and_reads |
-| RUN-3 | A task whose repo isn't configured is marked `[!]`, `note: unknown repo`, question in `tasks/<id>.md`; the loop moves on. | test_unknown_repo_asks_instead_of_crashing |
-| RUN-4 | `towercab next` prints the task it would run and why (priority, order, what was skipped). | test_next_explains, test_order_and_reason |
-| RUN-5 | Starting: task gets ID/scores, marker `[~]`; mission brief = title + `done when` + `tasks/<id>.md`; checkout cloned from the repo's remote at `base` (a retry: its open PR's branch, [PIP-17](pipeline.md)), with no remote left for the agent. Blocked → `[!]`, `note: <reason>` (or `blocked at <stage>`), the details as a question. | test_three_tasks_back_to_back_then_merged, test_forbidden_access_blocks_and_asks |
-| RUN-6 | Access: review = Read, Glob, Grep + read-only git; build adds Edit, Write and only the repo's bash patterns. `dontAsk`, never bypass. Bash sandboxed (workspace writes only, no network, `failIfUnavailable`). Secrets (`~/.ssh`, `~/.config/gh`, `~/.aws`, `~/.gnupg`, credential files, `.env*`) and `git commit/push/remote/config`, `gh`, `curl`, `wget`, `ssh`, `sudo` denied. A denied secret read or publish attempt fails the stage. | test_access, test_forbidden_access_blocks_and_asks |
-| RUN-7 | Usage limits: reset time parsed from the message (clock time with zone, date, epoch, retry-after, "in N min"), else backoff 1→60 min; wait until reset + 30 s, resume the same stage, no repair counted, event logged with the time. | test_limits, test_rate_limit_waits_for_reset_and_resumes |
-| RUN-8 | After each build Towercab commits in the checkout and pushes `towercab/<id>-<slug>`; the first push opens a PR with a placeholder text, replaced once ready ([PIP-2, PIP-14](pipeline.md)). Ready → task `[!]` with `pr:` and `note: review PR`. Publish failure → `[!]`, `note: publish failed`, question. Merged → line to DONE.md with PR, cost, time, attempts. Closed → `note: PR closed without merge`. | test_three_tasks_back_to_back_then_merged |
-| RUN-9 | `towercab run` takes the next task whenever none is in flight, one at a time, skips `[!]`; `--watch` keeps polling; `--max-tasks N`; Ctrl-C leaves the task `[!]`, never half-running. | test_three_tasks_back_to_back_then_merged, test_ctrl_c_leaves_task_waiting |
-| RUN-10 | `towercab --version` prints `towercab <__version__>` and exits 0. | test_version_flag |
-| RUN-11 | `towercab run --task <id or suffix>` runs only that task, even if `[!]`, then stops; refuses if another task is in flight. For testing. | test_run_only_one_task |
-| RUN-12 | With `[telegram]`, Towercab sends plain-text messages via the Bot API `sendMessage` (stdlib `urllib`, 10 s timeout, no retries). Without it, nothing is sent. | test_send_request, test_disabled_without_config |
-| RUN-13 | A failed send (HTTP error, refused, timeout) returns False, logs once without the token, never raises; the loop continues. | test_failures_never_raise, test_dead_telegram_does_not_stop_loop |
-| RUN-14 | Events: PR ready (task, PR URL); task stuck (its reason, or blocked at stage); task asking (unknown repo, publish failure, never published, PR state unknown); CI gave up (task, PR, repairs, last log lines). | test_notify_pr_ready, test_notify_stuck, test_notify_asking, test_ready_without_pr_does_not_crash, test_gh_failure_at_retry_asks_and_never_force_pushes, test_ci_cap |
-| RUN-15 | Waiting out a limit: message names provider and reset time (local, with zone); sent on the first hit only, not on retries. | test_notify_limit_once |
-| RUN-16 | Task merged (moved to DONE.md): message with task and PR. | test_notify_merged |
-| RUN-17 | `./install.sh` symlinks `bin/towercab` into `${XDG_BIN_HOME:-~/.local/bin}`; `towercab` then works from any folder (launcher resolves its symlink, no dependencies). | test_launcher_from_other_cwd |
-| RUN-18 | `towercab up [--max-tasks N] [--task ID]` execs `systemd-inhibit --what=sleep:idle:handle-lid-switch --who=Towercab --mode=block` around `python -m towercab --home H [--config C] run --watch …`. Inhibit lasts until it exits. | test_up_argv, test_up_argv_passes_options, test_up_execs_inhibit |
-| RUN-19 | `up` without `systemd-inhibit` exits 1 with an error and starts nothing. `doctor` lists `systemd-inhibit`. | test_up_without_systemd_inhibit, test_up_cli_missing_binary_exits_1 |
-| RUN-20 | With `[telegram]`, each loop iteration calls `getUpdates` (`offset` = last `update_id`+1, `timeout` 0). Every update is consumed once, ignored or not. | test_offset_advances_no_replay, test_loop_runs_approve |
-| RUN-21 | Messages whose `chat.id` isn't the configured `chat_id` (compared as strings) are ignored: no reply, no change. A failed poll returns nothing, logs once without the token, never raises. | test_other_chat_ignored, test_updates_failure_is_quiet |
-| RUN-22 | `status` replies: running task, tasks waiting on me (`[!]` + note or PR), next runnable task, limit cooldowns. | test_status |
-| RUN-23 | `next` replies with the same text as `towercab next`. | test_next |
-| RUN-24 | `approve <id>` turns a `[!]` task into `[ ]` (clears `note`, keeps `pr:`), committed and pushed; replies `approved`. Unknown/ambiguous ID or non-`[!]` task: error reply, no change. | test_approve, test_approve_errors |
-| RUN-25 | `run <id>` starts that task as `run --task` does (RUN-11), forcing `[!]`; replies with the mission ID. Refused while a task is in flight. The loop keeps going. | test_run, test_run_refused_while_busy |
-| RUN-26 | Leading `/` and `@bot` suffix accepted. Unknown command or missing ID: one-line help. | test_parse, test_help |
+| RUN-1 | Removed → LOOP-1. Was: Config `~/.config/towercab/config.toml` (or `--config`, `TOWERCAB_CONFIG`): `[tasks]` remote/path/cutoff, `[agent]` provider/reviewer/model/timeout/max_repairs/ci_poll/ci_grace/ci_wait, `[repos.<name>]` path, verify argv, bash allowlist, base; optional `[telegram]` bot_token + chat_id (both strings, or `ConfigError`). | — |
+| RUN-2 | Removed → LOOP-1. Was: Towercab works in its own clone of the task repo (default `~/.local/share/towercab/gradient-tasks`); state in `~/.local/share/towercab` (`--home`, `TOWERCAB_HOME`). | — |
+| RUN-3 | Removed → LOOP-5. Was: A task whose repo isn't configured is marked `[!]`, `note: unknown repo`, question in `tasks/<id>.md`; the loop moves on. | — |
+| RUN-4 | Removed → LOOP-15. Was: `towercab next` prints the task it would run and why (priority, order, what was skipped). | — |
+| RUN-5 | Removed → LOOP-5, PIP-1, PIP-17. Was: Starting: task gets ID/scores, marker `[~]`; mission brief = title + `done when` + `tasks/<id>.md`; checkout cloned from the repo's remote at `base` (a retry: its open PR's branch, [PIP-17](pipeline.md)), with no remote left for the agent. Blocked → `[!]`, `note: <reason>` (or `blocked at <stage>`), the details as a question. | — |
+| RUN-6 | Removed → PIP-24, PIP-23. Was: Access: review = Read, Glob, Grep + read-only git; build adds Edit, Write and only the repo's bash patterns. `dontAsk`, never bypass. Bash sandboxed (workspace writes only, no network, `failIfUnavailable`). Secrets (`~/.ssh`, `~/.config/gh`, `~/.aws`, `~/.gnupg`, credential files, `.env*`) and `git commit/push/remote/config`, `gh`, `curl`, `wget`, `ssh`, `sudo` denied. A denied secret read or publish attempt fails the stage. | — |
+| RUN-7 | Removed → LOOP-9. Was: Usage limits: reset time parsed from the message (clock time with zone, date, epoch, retry-after, "in N min"), else backoff 1→60 min; wait until reset + 30 s, resume the same stage, no repair counted, event logged with the time. | — |
+| RUN-8 | Removed → PIP-2, PIP-14, PIP-21. Was: After each build Towercab commits in the checkout and pushes `towercab/<id>-<slug>`; the first push opens a PR with a placeholder text, replaced once ready ([PIP-2, PIP-14](pipeline.md)). Ready → task `[!]` with `pr:` and `note: review PR`. Publish failure → `[!]`, `note: publish failed`, question. Merged → line to DONE.md with PR, cost, time, attempts. Closed → `note: PR closed without merge`. | — |
+| RUN-9 | Removed → LOOP-15, LOOP-17. Was: `towercab run` takes the next task whenever none is in flight, one at a time, skips `[!]`; `--watch` keeps polling; `--max-tasks N`; Ctrl-C leaves the task `[!]`, never half-running. | — |
+| RUN-10 | Removed → LOOP-15. Was: `towercab --version` prints `towercab <__version__>` and exits 0. | — |
+| RUN-11 | Removed → LOOP-15. Was: `towercab run --task <id or suffix>` runs only that task, even if `[!]`, then stops; refuses if another task is in flight. For testing. | — |
+| RUN-12 | Removed → LOOP-16. Was: With `[telegram]`, Towercab sends plain-text messages via the Bot API `sendMessage` (stdlib `urllib`, 10 s timeout, no retries). Without it, nothing is sent. | — |
+| RUN-13 | Removed → LOOP-16. Was: A failed send (HTTP error, refused, timeout) returns False, logs once without the token, never raises; the loop continues. | — |
+| RUN-14 | Removed → LOOP-14. Was: Events: PR ready (task, PR URL); task stuck (its reason, or blocked at stage); task asking (unknown repo, publish failure, never published, PR state unknown); CI gave up (task, PR, repairs, last log lines). | — |
+| RUN-15 | Removed → LOOP-14 (limits send nothing). Was: Waiting out a limit: message names provider and reset time (local, with zone); sent on the first hit only, not on retries. | — |
+| RUN-16 | Removed → LOOP-14 (merges send nothing). Was: Task merged (moved to DONE.md): message with task and PR. | — |
+| RUN-17 | Removed → LOOP-1, LOOP-2. Was: `./install.sh` symlinks `bin/towercab` into `${XDG_BIN_HOME:-~/.local/bin}`; `towercab` then works from any folder (launcher resolves its symlink, no dependencies). | — |
+| RUN-18 | Removed → LOOP-2, LOOP-11. Was: `towercab up [--max-tasks N] [--task ID]` execs `systemd-inhibit --what=sleep:idle:handle-lid-switch --who=Towercab --mode=block` around `python -m towercab --home H [--config C] run --watch …`. Inhibit lasts until it exits. | — |
+| RUN-19 | Removed → LOOP-10. Was: `up` without `systemd-inhibit` exits 1 with an error and starts nothing. `doctor` lists `systemd-inhibit`. | — |
+| RUN-20 | Removed → LOOP-16. Was: With `[telegram]`, each loop iteration calls `getUpdates` (`offset` = last `update_id`+1, `timeout` 0). Every update is consumed once, ignored or not. | — |
+| RUN-21 | Removed → LOOP-16. Was: Messages whose `chat.id` isn't the configured `chat_id` (compared as strings) are ignored: no reply, no change. A failed poll returns nothing, logs once without the token, never raises. | — |
+| RUN-22 | Removed → LOOP-13. Was: `status` replies: running task, tasks waiting on me (`[!]` + note or PR), next runnable task, limit cooldowns. | — |
+| RUN-23 | Removed → LOOP-15. Was: `next` replies with the same text as `towercab next`. | — |
+| RUN-24 | Removed → LOOP-15. Was: `approve <id>` turns a `[!]` task into `[ ]` (clears `note`, keeps `pr:`), committed and pushed; replies `approved`. Unknown/ambiguous ID or non-`[!]` task: error reply, no change. | — |
+| RUN-25 | Removed → LOOP-15. Was: `run <id>` starts that task as `run --task` does (RUN-11), forcing `[!]`; replies with the mission ID. Refused while a task is in flight. The loop keeps going. | — |
+| RUN-26 | Removed → LOOP-16. Was: Leading `/` and `@bot` suffix accepted. Unknown command or missing ID: one-line help. | — |
 
 ## Out of scope
 

@@ -1,6 +1,6 @@
 # Scheduler
 
-**Status:** Draft · **Prefix:** SCH
+**Status:** Removed: superseded by [loop.md](loop.md) (Rust rewrite); Python version on branch `python` · **Prefix:** SCH
 
 ## Purpose
 
@@ -10,13 +10,13 @@ Hand the most important runnable task to exactly one agent.
 
 | ID | Requirement | Verified by |
 |---|---|---|
-| SCH-1 | Picks the first task in [priority](priority.md) order that is open `[ ]`, not parked, has every `after` task done, and whose repo has a free slot (`repos.<name>.workers`, default 1). | test_pick |
-| SCH-2 | Tasks waiting on me `[!]` are skipped, not waited on. | test_skip_waiting |
-| SCH-3 | Claims are atomic in Towercab's SQLite (`UPDATE … WHERE status='open' RETURNING`); no task is ever held by two workers. | test_claim_race |
-| SCH-4 | A claim is a lease: heartbeat every 60 s; none for 10 min → task back to open. | test_lease_expiry |
-| SCH-5 | Each run uses its own git worktree and branch `towercab/<id>-<slug>`. | test_worktree |
-| SCH-6 | Towercab is the only writer of task markers, except me turning `[!]` back to `[ ]` to approve. | review |
-| SCH-7 | `towercab inbox` lists what waits on me: plans to write (a1), plans to approve (a2), PRs to review, questions. | test_inbox |
+| SCH-1 | Removed → LOOP-4, LOOP-5. Was: Picks the first task in [priority](priority.md) order that is open `[ ]`, not parked, has every `after` task done, and whose repo has a free slot (`repos.<name>.workers`, default 1). | — |
+| SCH-2 | Removed → LOOP-5. Was: Tasks waiting on me `[!]` are skipped, not waited on. | — |
+| SCH-3 | Removed → LOOP-4, LOOP-15 (one loop per home). Was: Claims are atomic in Towercab's SQLite (`UPDATE … WHERE status='open' RETURNING`); no task is ever held by two workers. | — |
+| SCH-4 | Removed → LOOP-6, LOOP-7. Was: A claim is a lease: heartbeat every 60 s; none for 10 min → task back to open. | — |
+| SCH-5 | Removed → LOOP-8, PIP-2. Was: Each run uses its own git worktree and branch `towercab/<id>-<slug>`. | — |
+| SCH-6 | Removed → TSK-5. Was: Towercab is the only writer of task markers, except me turning `[!]` back to `[ ]` to approve. | — |
+| SCH-7 | Removed → LOOP-13. Was: `towercab inbox` lists what waits on me: plans to write (a1), plans to approve (a2), PRs to review, questions. | — |
 
 ## Out of scope
 
