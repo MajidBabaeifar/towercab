@@ -37,19 +37,25 @@ pub fn agent_time(secs: u64) -> String {
     }
 }
 
+/// A value on one line: every run of whitespace (line breaks included) → one space, so a
+/// value can't start a heading or an entry of its own in a view.
+pub fn one_line(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn head(i: &Intent) -> String {
     format!(
         "- [{}]({}/intent.md) {}: {}",
         i.id,
         i.dir,
-        i.repo(),
-        i.title()
+        one_line(i.repo()),
+        one_line(i.title())
     )
 }
 
 fn with_pr(i: &Intent) -> String {
     i.pr()
-        .map(|p| format!(" · {}", pr_link(p)))
+        .map(|p| format!(" · {}", pr_link(&one_line(p))))
         .unwrap_or_default()
 }
 
@@ -71,7 +77,7 @@ pub fn todo(listing: &Listing, cutoff: u8) -> String {
     let (mut waiting, mut flight, mut next, mut later) = (vec![], vec![], vec![], vec![]);
     for i in open {
         if let Some(w) = i.waiting() {
-            waiting.push(format!("{} · **{w}**{}", head(i), with_pr(i)));
+            waiting.push(format!("{} · **{}**{}", head(i), one_line(w), with_pr(i)));
         } else if let Some(stage) = i.stage() {
             flight.push(format!("{} · {stage}{}", head(i), with_pr(i)));
         } else {
@@ -105,7 +111,7 @@ pub fn todo(listing: &Listing, cutoff: u8) -> String {
     bad.sort_by(|a, b| a.path.cmp(&b.path));
     let bad: Vec<String> = bad
         .iter()
-        .map(|u| format!("- {}: {}", u.path, u.reason))
+        .map(|u| format!("- {}: {}", one_line(&u.path), one_line(&u.reason)))
         .collect();
     let mut out =
         format!("# TODO\n\n{MARKER} from intents/*/intent.md: edit those, not this file -->\n");
@@ -157,7 +163,8 @@ pub fn done(listing: &Listing) -> String {
             let opt = |v: Option<String>| v.unwrap_or_else(|| "?".into());
             format!(
                 "{head} · {} · ${} · {} · {}",
-                i.pr().map_or_else(|| "no PR".into(), pr_link),
+                i.pr()
+                    .map_or_else(|| "no PR".into(), |p| pr_link(&one_line(p))),
                 opt(i.cost().map(|c| format!("{c:.2}"))),
                 opt(i.agent_time().map(agent_time)),
                 opt(i.attempts().map(|n| n.to_string())),
