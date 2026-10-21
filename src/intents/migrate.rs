@@ -247,7 +247,7 @@ fn line_of(error: &str) -> usize {
 /// written) when neither `TODO.md` nor `DONE.md` is in the old format, a line doesn't parse or
 /// an ID has a folder.
 pub fn migrate(store: &Store, now: DateTime<FixedOffset>) -> Result<String, StoreError> {
-    store.write(false, |listing| {
+    store.write(false, false, |listing| {
         let root = store.path();
         let refuse = |m: String| Err(StoreError::Refused(m));
         let read = |rel: &str| read_optional(root, rel).map_err(StoreError::Refused);

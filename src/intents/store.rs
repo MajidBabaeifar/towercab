@@ -187,13 +187,11 @@ impl Store {
                 path.display()
             )));
         };
-        let branch = checkout.branch();
-        if branch != "main" {
-            return Err(StoreError::Refused(format!(
-                "intents: {} is on {branch}, not main",
-                path.display()
-            )));
+        {
+            let _lock = checkout.lock().map_err(StoreError::Refused)?;
+            checkout.recover().map_err(StoreError::Refused)?;
         }
+        on_main(&checkout)?;
         Ok(Store {
             checkout,
             cutoff: config.intents.cutoff,
@@ -214,8 +212,14 @@ impl Store {
 
     /// Pulls, then reads every intent.
     pub fn list(&self) -> Result<Listing, StoreError> {
+        let _lock = self.lock()?;
         self.sync()?;
         Ok(self.scan())
+    }
+
+    /// One store operation at a time on this checkout (threads and processes).
+    fn lock(&self) -> Result<fs::File, StoreError> {
+        self.checkout.lock().map_err(StoreError::Refused)
     }
 
     /// An open intent by ID or unique ID suffix.
@@ -237,7 +241,7 @@ impl Store {
         }
         let text = new.render();
         Intent::parse(&text).map_err(StoreError::Refused)?;
-        self.write(true, |listing| {
+        self.write(true, true, |listing| {
             let id = new_id(new.created, &listing.taken());
             let slug = id::slug(&new.title);
             let dir = format!("intents/{id}-{slug}");
@@ -257,7 +261,7 @@ impl Store {
     {
         // Resolved once: a replay after a rejected push changes the same intent or none.
         let mut pinned: Option<String> = None;
-        self.write(true, |listing| {
+        self.write(true, false, |listing| {
             let original = match &pinned {
                 None => find_open(listing, id_or_suffix)?,
                 Some(id) => match find_open(listing, id) {
@@ -301,14 +305,17 @@ impl Store {
         scan(self.path())
     }
 
-    /// The write protocol (INT-10). `change` edits files for one attempt and returns the commit
-    /// message; it runs again on a fresh `main` after a rejected push. `guard` refuses before
-    /// `migrate` has run (INT-13).
+    /// The write protocol (INT-10), holding the checkout's lock throughout. `change` edits files
+    /// for one attempt and returns the commit message; it runs again on a fresh `main` after a
+    /// rejected push. `guard` refuses before `migrate` has run (INT-13); `must_commit` refuses
+    /// a change that leaves nothing to commit (`add`).
     pub(crate) fn write<T>(
         &self,
         guard: bool,
+        must_commit: bool,
         mut change: impl FnMut(&Listing) -> Result<(String, T), StoreError>,
     ) -> Result<T, StoreError> {
+        let _lock = self.lock()?;
         self.sync()?;
         let mut failed = 0;
         loop {
@@ -326,6 +333,10 @@ impl Store {
                 Ok((committed, out))
             });
             let (committed, out) = match attempt {
+                Ok((false, _)) if must_commit => {
+                    let _ = self.checkout.discard();
+                    return Err(StoreError::Refused("nothing to commit".into()));
+                }
                 Ok(x) => x,
                 Err(e) => {
                     let _ = self.checkout.discard();
@@ -351,8 +362,12 @@ impl Store {
         }
     }
 
-    /// Refuses on uncommitted changes, then pulls.
+    /// Aborts a rebase a killed run left, refuses a branch other than `main` (INT-4) and
+    /// uncommitted changes, then pulls. Commits left by a write that stopped before its push are
+    /// rebased by the pull and pushed here, with the views regenerated.
     fn sync(&self) -> Result<(), StoreError> {
+        self.checkout.recover().map_err(StoreError::Refused)?;
+        on_main(&self.checkout)?;
         match self.checkout.is_clean() {
             Ok(true) => {}
             Ok(false) => {
@@ -363,7 +378,30 @@ impl Store {
             }
             Err(e) => return Err(StoreError::Refused(e)),
         }
-        self.checkout.pull().map_err(StoreError::Sync)
+        self.checkout.pull().map_err(StoreError::Sync)?;
+        if self
+            .checkout
+            .local_commits()
+            .map_err(StoreError::Sync)?
+            .is_empty()
+        {
+            return Ok(());
+        }
+        let legacy_ok = !self.scan().unreadable.iter().any(|u| u.path == LEGACY);
+        if self.refuse_old_format().is_ok() && legacy_ok {
+            let views = self.write_views().and_then(|()| {
+                self.checkout
+                    .commit("towercab: views")
+                    .map_err(StoreError::Refused)
+            });
+            if let Err(e) = views {
+                let _ = self.checkout.discard();
+                return Err(e);
+            }
+        }
+        self.checkout
+            .push()
+            .map_err(|e| StoreError::Sync(format!("push failed: {e}")))
     }
 
     /// `TODO.md` or `DONE.md` present but not generated: regenerating would drop old lines.
@@ -393,6 +431,17 @@ impl Store {
             fs::create_dir_all(parent).map_err(|e| StoreError::Refused(format!("{rel}: {e}")))?;
         }
         fs::write(&path, text).map_err(|e| StoreError::Refused(format!("{rel}: {e}")))
+    }
+}
+
+/// Refuses a checkout on any branch but `main` (INT-4).
+fn on_main(checkout: &Checkout) -> Result<(), StoreError> {
+    match checkout.branch() {
+        b if b == "main" => Ok(()),
+        b => Err(StoreError::Refused(format!(
+            "intents: {} is on {b}, not main",
+            checkout.path.display()
+        ))),
     }
 }
 
