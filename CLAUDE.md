@@ -7,7 +7,7 @@ Being rewritten in Rust (crate at the root). The Python package (`towercab/`, `b
 ## Commands
 
 - `cargo test --locked`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo fmt`
-- `cargo run -- add "towercab: <title>" u3 i4` · `cargo run -- migrate` · `cargo run -- --version`
+- `cargo run -- add "towercab: <title>" u3 i4` · `cargo run -- migrate` · `cargo run -- review` · `cargo run -- --version`
 - `python3 -m unittest discover -s tests`: the Python version's tests
 - Machine with a zig `cc`: `export CRATE_CC_NO_DEFAULTS=1` before cargo
 
@@ -27,7 +27,10 @@ Being rewritten in Rust (crate at the root). The Python package (`towercab/`, `b
 
 - `src/cli.rs`: clap commands; errors → `towercab: <reason>`, exit 1; bad arguments exit 2.
 - `src/config.rs`: `~/.config/towercab/config.toml` (`[intents]`, falls back to `[tasks]`).
-- `src/priority.rs`: `2i + u`, order, parked.
+- `src/priority.rs`: `2i + u`, order, parked, `pick_order` (for the loop's picker),
+  `review_queue`/`review_due` (PRI-7/8), `parse_scores` (also `add`'s).
+- `src/review.rs`: `towercab review` (injected `BufRead`/`Write`; keep/rescore/drop each one
+  `Store::update`; `shown` masks control characters for the terminal).
 - `src/intents/`: the intent home. `intent.rs` (parse, typed fields, line-level `set`),
   `id.rs`, `store.rs` (`Store`: list/get/add/update, pull → write → commit → push, replay
   on rejection), `views.rs` (generated `TODO.md`/`DONE.md`), `git.rs`, `migrate.rs`.

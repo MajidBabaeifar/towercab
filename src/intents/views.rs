@@ -67,7 +67,7 @@ fn section(out: &mut String, title: &str, lines: &[String]) {
 
 /// `TODO.md`: Waiting on me, In flight, Next, Parked (`priority < cutoff`), Can't read.
 pub fn todo(listing: &Listing, cutoff: u8) -> String {
-    let finished = listing.finished_ids();
+    let done = listing.done_ids();
     let mut open: Vec<&Intent> = listing
         .open
         .iter()
@@ -91,14 +91,14 @@ pub fn todo(listing: &Listing, cutoff: u8) -> String {
             if let Some(a) = i.a() {
                 line.push_str(&format!(" a{a}"));
             }
-            let unfinished: Vec<&str> = i
+            let not_done: Vec<&str> = i
                 .after()
                 .iter()
-                .filter(|id| !finished.contains(*id))
+                .filter(|id| !done.contains(*id))
                 .map(String::as_str)
                 .collect();
-            if !unfinished.is_empty() {
-                line.push_str(&format!(" · after {}", unfinished.join(", ")));
+            if !not_done.is_empty() {
+                line.push_str(&format!(" · after {}", not_done.join(", ")));
             }
             if parked(p, cutoff) {
                 later.push(line);

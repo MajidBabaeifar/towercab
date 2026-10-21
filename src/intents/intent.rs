@@ -117,7 +117,7 @@ fn kind(key: &str) -> Option<Kind> {
         "model" | "review" | "source" | "waiting" | "pr" | "retry" => Kind::Str,
         "after" => Kind::After,
         "unlock" => Kind::List,
-        "started" | "finished" => Kind::Time,
+        "started" | "finished" | "reviewed" => Kind::Time,
         "stage" => Kind::Stage,
         "cost" => Kind::Float,
         "agent_time" => Kind::Seconds,
@@ -465,6 +465,10 @@ impl Intent {
     }
     pub fn finished(&self) -> Option<DateTime<FixedOffset>> {
         self.time("finished")
+    }
+    /// The last backlog review (PRI-7).
+    pub fn reviewed(&self) -> Option<DateTime<FixedOffset>> {
+        self.time("reviewed")
     }
 }
 

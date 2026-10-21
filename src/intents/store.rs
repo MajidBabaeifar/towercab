@@ -12,7 +12,7 @@ use chrono::{DateTime, FixedOffset, Local, SecondsFormat};
 
 use super::git::Checkout;
 use super::id::{self, is_id, new_id, resolve, split_dir};
-use super::intent::{Intent, Value, format_value};
+use super::intent::{Intent, Stage, Value, format_value};
 use super::views;
 use crate::config::Config;
 use crate::priority;
@@ -127,10 +127,16 @@ impl Listing {
         ids
     }
 
-    /// Finished: done or dropped, in `done/`, or in `done/legacy.md`.
-    pub fn finished_ids(&self) -> BTreeSet<String> {
+    /// Done, so an `after:` on it is met: in `done/legacy.md`, or in `done/` (or `stage: done`)
+    /// and not `stage: dropped`. A dropped intent never meets an `after:` (PRI-5).
+    pub fn done_ids(&self) -> BTreeSet<String> {
         let mut ids = self.legacy_ids();
-        ids.extend(self.done.iter().map(|i| i.id.clone()));
+        ids.extend(
+            self.done
+                .iter()
+                .filter(|i| i.stage() != Some(Stage::Dropped))
+                .map(|i| i.id.clone()),
+        );
         ids
     }
 }

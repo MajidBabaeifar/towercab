@@ -25,7 +25,7 @@ fn test_todo_view() {
             open("intents/261019-0800-older", "u: 4\ni: 5\n", "Older top"),
             open(
                 "intents/261020-0721-2-b",
-                "u: 3\ni: 4\nafter: [261020-0721, 261015-1446, 261014-0900]\n",
+                "u: 3\ni: 4\nafter: [261020-0721, 261015-1446, 261014-0900, 261014-1000]\n",
                 "Waits for others",
             ),
             open("intents/261019-1100-e", "u: 2\ni: 2\n", "Parked six"),
@@ -41,10 +41,16 @@ fn test_todo_view() {
                 "Testing",
             ),
         ],
-        done: vec![intent(
-            "done/261014-0900-old",
-            &intent_md("towercab", "stage: done\n", "Old"),
-        )],
+        done: vec![
+            intent(
+                "done/261014-0900-old",
+                &intent_md("towercab", "stage: done\n", "Old"),
+            ),
+            intent(
+                "done/261014-1000-gone",
+                &intent_md("towercab", "stage: dropped\n", "Gone"),
+            ),
+        ],
         unreadable: vec![
             Unreadable {
                 path: "intents/zzz".into(),
@@ -74,7 +80,7 @@ fn test_todo_view() {
 
 - [261019-0800](intents/261019-0800-older/intent.md) towercab: Older top · p14 u4 i5
 - [261020-0721](intents/261020-0721-a/intent.md) towercab: Top · p14 u4 i5 a5
-- [261020-0721-2](intents/261020-0721-2-b/intent.md) towercab: Waits for others · p11 u3 i4 · after 261020-0721
+- [261020-0721-2](intents/261020-0721-2-b/intent.md) towercab: Waits for others · p11 u3 i4 · after 261020-0721, 261014-1000
 - [261020-0722](intents/261020-0722-c/intent.md) towercab: No scores · p9 u3 i3
 
 ## Parked
