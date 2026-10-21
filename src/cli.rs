@@ -93,34 +93,14 @@ pub fn parse_add(intent: &str, scores: &[String]) -> Result<NewIntent, String> {
     if !is_repo(repo) || title.is_empty() || title.contains(['\n', '\r']) {
         return Err(usage());
     }
-    let mut new = NewIntent {
+    let scores = crate::priority::parse_scores(scores)?;
+    Ok(NewIntent {
         repo: repo.to_string(),
         title: title.to_string(),
-        u: None,
-        i: None,
-        a: None,
+        u: scores.u,
+        i: scores.i,
+        a: scores.a,
         source: "me".into(),
         created: now(),
-    };
-    for s in scores {
-        let bad = || format!("bad score {s:?}: want uN, iN or aN with N 1-5, each once");
-        let mut chars = s.chars();
-        let (Some(k), Some(n), None) = (chars.next(), chars.next(), chars.next()) else {
-            return Err(bad());
-        };
-        let n = n
-            .to_digit(10)
-            .filter(|n| (1..=5).contains(n))
-            .ok_or_else(bad)? as u8;
-        let slot = match k {
-            'u' => &mut new.u,
-            'i' => &mut new.i,
-            'a' => &mut new.a,
-            _ => return Err(bad()),
-        };
-        if slot.replace(n).is_some() {
-            return Err(bad());
-        }
-    }
-    Ok(new)
+    })
 }

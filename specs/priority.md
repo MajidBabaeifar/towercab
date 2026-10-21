@@ -1,6 +1,6 @@
 # Priority
 
-**Status:** Draft (Rust rewrite) · **Prefix:** PRI
+**Status:** Live: PRI-1..6, PRI-8 · Draft: rest · **Prefix:** PRI
 
 ## Purpose
 
