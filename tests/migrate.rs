@@ -23,6 +23,10 @@ const TODO: &str = "# TODO
   done when: it works
   done when: it is fast
   why: because
+
+<!-- a comment line -->
+- [ ] 261017-1500 towercab: Unblocked by hand
+  note: unknown repo
 ";
 
 const DONE: &str = "# DONE
@@ -65,9 +69,9 @@ fn test_migrate() {
     let summary = migrate(&store, t("2026-10-21T09:05:00+02:00")).unwrap();
     assert_eq!(
         summary,
-        "migrated 5 intents (1 done), 2 lines to done/legacy.md"
+        "migrated 6 intents (1 done), 2 lines to done/legacy.md"
     );
-    assert_eq!(home.log()[0], "towercab: migrate 5 intents");
+    assert_eq!(home.log()[0], "towercab: migrate 6 intents");
     assert_eq!(home.log()[1], "seed", "one commit");
     assert_eq!(git_parent(&home), head);
 
@@ -111,6 +115,11 @@ waiting: review PR
         "---\nrepo: towercab\nsource: me\n---\n\n# Intent: Has notes: a file\n\n\
 ## Proposed outcome\n\n- it works\n- it is fast\n\n## Notes\n\n- why: because\n\nPlan:\n- step one\n"
     );
+    // `[ ]` with a note: unblocked by hand, so the note is history, not waiting.
+    assert_eq!(
+        home.remote_file("intents/261017-1500-unblocked-by-hand/intent.md"),
+        "---\nrepo: towercab\nsource: me\n---\n\n# Intent: Unblocked by hand\n\n## Notes\n\n- note: unknown repo\n"
+    );
     assert!(
         !home.remote_has("tasks/261017-1400.md"),
         "tasks/<id>.md moves into the intent"
@@ -144,6 +153,23 @@ waiting: review PR
     // A generated DONE.md has no old lines to keep.
     assert!(legacy_lines(&done).is_empty());
     assert_eq!(legacy_lines(DONE).len(), 2);
+
+    // Only an old DONE.md: writes refuse, migrate moves its lines to done/legacy.md.
+    let home = Home::new(&[("DONE.md", DONE)]);
+    let store = home.store();
+    assert_eq!(
+        store.add(new_intent()).unwrap_err(),
+        StoreError::Refused("DONE.md is in the old format: run towercab migrate".into())
+    );
+    assert_eq!(
+        migrate(&store, t("2026-10-21T09:05:00+02:00")).unwrap(),
+        "migrated 0 intents (0 done), 2 lines to done/legacy.md"
+    );
+    assert!(
+        home.remote_file("DONE.md")
+            .ends_with("## Before intents\n\n2026-10-15 261015-1446 towercab: Rename · towercab#5 · $3.59 · 1m26s · 1\n2026-10-15 261015-1715 towercab: Dropped thing · dropped\n")
+    );
+    store.add(new_intent()).unwrap();
 
     // `[!]` without a note.
     let t = parse_line("- [!] 261016-0403 towercab: Blocked").unwrap();
@@ -183,6 +209,10 @@ fn test_migrate_refuses() {
 - [ ] 261017-1400 towercab: ok
   not a key line
 - [ ] 261017-1400 towercab: same id twice
+
+  pr: https://x
+stray text
+<!-- comments and # headings are fine -->
 ";
     let home = Home::new(&[
         ("TODO.md", todo),
@@ -205,7 +235,9 @@ TODO.md:5: no title
 TODO.md:6: after: needs intent IDs, got nope
 TODO.md:7: 261020-0721 already has a folder
 TODO.md:9: indented line is not `<key>: <value>`
-TODO.md:10: 261017-1400 is on two lines"
+TODO.md:10: 261017-1400 is on two lines
+TODO.md:12: indented line belongs to no task
+TODO.md:13: not a task line, `#` heading or `<!--` comment"
                 .into()
         )
     );
@@ -223,6 +255,19 @@ TODO.md:10: 261017-1400 is on two lines"
         migrate(&home.store(), now).unwrap_err(),
         StoreError::Refused("TODO.md is already generated: migrate has run".into())
     );
+    // A DONE.md that isn't UTF-8 is an error, not an empty file.
+    let home = Home::new(&[("TODO.md", "# TODO\n")]);
+    std::fs::write(home.me.join("DONE.md"), b"# DONE\n\xff\n").unwrap();
+    common::git(&home.me, &["add", "-A"]);
+    common::git(&home.me, &["commit", "--quiet", "-m", "binary"]);
+    common::git(&home.me, &["push", "--quiet", "origin", "HEAD:main"]);
+    let err = migrate(&home.store(), now).unwrap_err();
+    assert!(
+        matches!(&err, StoreError::Refused(m) if m.starts_with("DONE.md: ") && m.contains("UTF-8")),
+        "{err:?}"
+    );
+    assert_eq!(home.log()[0], "binary");
+
     // done/legacy.md already there.
     let home = Home::new(&[("TODO.md", "# TODO\n"), ("done/legacy.md", "x\n")]);
     assert_eq!(

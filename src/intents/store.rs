@@ -17,9 +17,26 @@ use super::views;
 use crate::config::Config;
 use crate::priority;
 
+/// Old `DONE.md` lines, kept by `migrate` (INT-13).
+pub const LEGACY: &str = "done/legacy.md";
+
 /// Retries after the first rejected push.
 pub const PUSH_RETRIES: usize = 3;
 pub const OLD_FORMAT: &str = "TODO.md is in the old format: run towercab migrate";
+
+/// `<file> is in the old format: run towercab migrate`.
+pub fn old_format(file: &str) -> String {
+    format!("{file} is in the old format: run towercab migrate")
+}
+
+/// `rel` under `root`; missing → `None`; any other error → `<rel>: <error>`.
+pub fn read_optional(root: &Path, rel: &str) -> Result<Option<String>, String> {
+    match fs::read_to_string(root.join(rel)) {
+        Ok(t) => Ok(Some(t)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{rel}: {e}")),
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoreError {
@@ -291,6 +308,10 @@ impl Store {
                 self.refuse_old_format()?;
             }
             let listing = self.scan();
+            if let Some(u) = listing.unreadable.iter().find(|u| u.path == LEGACY) {
+                // Its IDs and lines can't be kept: no write until it reads again.
+                return Err(StoreError::Refused(format!("{}: {}", u.path, u.reason)));
+            }
             let attempt = change(&listing).and_then(|(msg, out)| {
                 self.write_views()?;
                 let committed = self.checkout.commit(&msg).map_err(StoreError::Refused)?;
@@ -337,11 +358,18 @@ impl Store {
         self.checkout.pull().map_err(StoreError::Sync)
     }
 
+    /// `TODO.md` or `DONE.md` present but not generated: regenerating would drop old lines.
     fn refuse_old_format(&self) -> Result<(), StoreError> {
-        match fs::read_to_string(self.path().join("TODO.md")) {
-            Ok(text) if !views::is_generated(&text) => Err(StoreError::Refused(OLD_FORMAT.into())),
-            _ => Ok(()),
+        for file in ["TODO.md", "DONE.md"] {
+            match read_optional(self.path(), file) {
+                Ok(Some(text)) if !views::is_generated(&text) => {
+                    return Err(StoreError::Refused(old_format(file)));
+                }
+                Ok(_) => {}
+                Err(e) => return Err(StoreError::Refused(e)),
+            }
         }
+        Ok(())
     }
 
     fn write_views(&self) -> Result<(), StoreError> {
@@ -406,10 +434,14 @@ pub fn scan(root: &Path) -> Listing {
             *count.entry(id).or_default() += 1;
         }
     }
-    let mut listing = Listing {
-        legacy: fs::read_to_string(root.join("done/legacy.md")).unwrap_or_default(),
-        ..Listing::default()
-    };
+    let mut listing = Listing::default();
+    match read_optional(root, LEGACY) {
+        Ok(text) => listing.legacy = text.unwrap_or_default(),
+        Err(e) => listing.unreadable.push(Unreadable {
+            path: LEGACY.into(),
+            reason: e.trim_start_matches(&format!("{LEGACY}: ")).to_string(),
+        }),
+    }
     for (base, name) in folders {
         let dir = format!("{base}/{name}");
         let mut bad = |path: String, reason: &str| {

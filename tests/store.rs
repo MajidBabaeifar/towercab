@@ -499,6 +499,22 @@ fn test_bad_file_reported() {
         "fix",
     );
     assert_eq!(store.get("0800").unwrap().u(), Some(2));
+
+    // An unreadable done/legacy.md is listed, and no write runs (its IDs and lines would be lost).
+    fs::create_dir_all(home.me.join("done")).unwrap();
+    fs::write(home.me.join("done/legacy.md"), b"\xff old line\n").unwrap();
+    git(&home.me, &["add", "-A"]);
+    git(&home.me, &["commit", "--quiet", "-m", "binary legacy"]);
+    git(&home.me, &["push", "--quiet", "origin", "HEAD:main"]);
+    let l = store.list().unwrap();
+    let u = l.unreadable.iter().find(|u| u.path == "done/legacy.md");
+    assert!(u.is_some_and(|u| u.reason.contains("UTF-8")), "{l:?}");
+    let err = store.add(new("Blocked", None, None)).unwrap_err();
+    assert!(
+        matches!(&err, StoreError::Refused(m) if m.starts_with("done/legacy.md: ")),
+        "{err:?}"
+    );
+    assert_eq!(home.log()[0], "binary legacy");
 }
 
 #[test]

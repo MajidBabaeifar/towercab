@@ -9,7 +9,7 @@ use regex::Regex;
 
 use super::id::{self, is_id, new_id};
 use super::intent::{Intent, Value, format_value, is_repo};
-use super::store::{Store, StoreError, legacy_ids};
+use super::store::{Store, StoreError, legacy_ids, read_optional};
 use super::views::is_generated;
 
 static TASK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^- \[([ ~!xX])\] (.+)$").unwrap());
@@ -103,7 +103,10 @@ pub fn parse_line(line: &str) -> Result<OldTask, String> {
     Ok(task)
 }
 
-/// Every task in an old `TODO.md`; errors read `TODO.md:<line>: <reason>`.
+/// Every task in an old `TODO.md`; errors read `TODO.md:<line>: <reason>`. Besides task lines
+/// and the `  <key>: <value>` lines right under them, only blank, `#` heading and `<!--` comment
+/// lines may appear: anything else is reported, so nothing is dropped when `TODO.md` is
+/// regenerated. A blank line ends a task's fields.
 pub fn parse_todo(text: &str) -> (Vec<OldTask>, Vec<String>) {
     let (mut tasks, mut errors): (Vec<OldTask>, Vec<String>) = (Vec::new(), Vec::new());
     let mut current: Option<usize> = None;
@@ -116,14 +119,17 @@ pub fn parse_todo(text: &str) -> (Vec<OldTask>, Vec<String>) {
             }
             continue;
         }
-        if current.is_some() && line.starts_with("  ") && !line.trim().is_empty() {
+        let indented = line.starts_with([' ', '\t']);
+        if line.trim().is_empty() {
+            current = None;
+        } else if indented && current.is_some() {
             errors.push(format!(
                 "TODO.md:{n}: indented line is not `<key>: <value>`"
             ));
-            continue;
-        }
-        current = None;
-        if line.starts_with("- [") {
+        } else if indented {
+            errors.push(format!("TODO.md:{n}: indented line belongs to no task"));
+        } else if line.starts_with("- [") {
+            current = None;
             match parse_line(line) {
                 Ok(mut task) => {
                     task.line = n;
@@ -131,6 +137,13 @@ pub fn parse_todo(text: &str) -> (Vec<OldTask>, Vec<String>) {
                     current = Some(tasks.len() - 1);
                 }
                 Err(e) => errors.push(format!("TODO.md:{n}: {e}")),
+            }
+        } else {
+            current = None;
+            if !line.starts_with('#') && !line.starts_with("<!--") {
+                errors.push(format!(
+                    "TODO.md:{n}: not a task line, `#` heading or `<!--` comment"
+                ));
             }
         }
     }
@@ -166,7 +179,9 @@ pub fn render(task: &OldTask, notes: Option<&str>) -> String {
         match key.as_str() {
             "done when" => outcome.push(format!("- {value}")),
             "pr" | "retry" if first => fm.push(format!("{key}: {}", s(value))),
-            "note" if first => waiting = Some(value.clone()),
+            // `[ ]` with a note: I unblocked it by hand (the Python Towercab clears the note
+            // only on its next start), so the question is history, not something to wait on.
+            "note" if first && matches!(task.marker, '!' | '~') => waiting = Some(value.clone()),
             _ => other.push(format!("- {key}: {value}")),
         }
     }
@@ -229,23 +244,30 @@ fn line_of(error: &str) -> usize {
 }
 
 /// Converts the old format in one commit `towercab: migrate <n> intents`; refuses (nothing
-/// written) when `TODO.md` is missing or generated, a line doesn't parse or an ID has a folder.
+/// written) when neither `TODO.md` nor `DONE.md` is in the old format, a line doesn't parse or
+/// an ID has a folder.
 pub fn migrate(store: &Store, now: DateTime<FixedOffset>) -> Result<String, StoreError> {
     store.write(false, |listing| {
         let root = store.path();
         let refuse = |m: String| Err(StoreError::Refused(m));
-        let Ok(todo) = fs::read_to_string(root.join("TODO.md")) else {
-            return refuse("TODO.md is missing: nothing to migrate".into());
-        };
-        if is_generated(&todo) {
-            return refuse("TODO.md is already generated: migrate has run".into());
+        let read = |rel: &str| read_optional(root, rel).map_err(StoreError::Refused);
+        let (todo, done_md) = (read("TODO.md")?, read("DONE.md")?);
+        let old = |t: &Option<String>| t.as_deref().is_some_and(|t| !is_generated(t));
+        if !old(&todo) && !old(&done_md) {
+            return refuse(match todo {
+                Some(_) => "TODO.md is already generated: migrate has run".into(),
+                None => "TODO.md is missing: nothing to migrate".into(),
+            });
         }
         if root.join("done/legacy.md").exists() {
             return refuse("done/legacy.md already exists".into());
         }
-        let (tasks, mut errors) = parse_todo(&todo);
+        let (tasks, mut errors) = match &todo {
+            Some(t) if old(&todo) => parse_todo(t),
+            _ => (Vec::new(), Vec::new()),
+        };
         let folders = listing.folder_ids();
-        let legacy = legacy_lines(&fs::read_to_string(root.join("DONE.md")).unwrap_or_default());
+        let legacy = legacy_lines(done_md.as_deref().unwrap_or_default());
         let mut taken = listing.taken();
         taken.extend(legacy_ids(&legacy.join("\n")));
         let mut seen = BTreeSet::new();
@@ -269,7 +291,13 @@ pub fn migrate(store: &Store, now: DateTime<FixedOffset>) -> Result<String, Stor
                 }
             };
             let notes_file = format!("tasks/{id}.md");
-            let notes = fs::read_to_string(root.join(&notes_file)).ok();
+            let notes = match read_optional(root, &notes_file) {
+                Ok(n) => n,
+                Err(e) => {
+                    errors.push(format!("TODO.md:{}: {e}", t.line));
+                    continue;
+                }
+            };
             let text = render(t, notes.as_deref());
             if let Err(e) = Intent::parse(&text) {
                 errors.push(format!("TODO.md:{}: {e}", t.line));
