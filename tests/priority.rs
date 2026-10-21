@@ -504,6 +504,19 @@ fn test_review_queue() {
                 "intents/260101-0004-waiting",
                 "u: 1\ni: 1\nwaiting: answer the question\n",
             ),
+            // A `reviewed` or `started` after now (typo, wrong clock) counts as missing.
+            open(
+                "intents/261010-0900-parked-reviewed-future",
+                "u: 1\ni: 1\nreviewed: 2062-10-21T12:00:00+02:00\n",
+            ),
+            open(
+                "intents/260101-0006-reviewed-future",
+                "u: 4\ni: 4\nstarted: 2026-01-01T00:00:00+02:00\nreviewed: 2062-10-21T12:00:00+02:00\n",
+            ),
+            open(
+                "intents/260101-0007-started-future",
+                "u: 4\ni: 3\nstarted: 2062-01-01T00:00:00+02:00\n",
+            ),
         ],
         vec![open(
             "done/260101-0005-dropped",
@@ -515,9 +528,12 @@ fn test_review_queue() {
         ids(review_queue(&l, 7, now)),
         [
             "260101-0001",
+            "260101-0006",
             "260901-0900",
+            "260101-0007",
             "260921-1200",
             "260801-0900",
+            "261010-0900",
             "261020-0900"
         ],
         "PRI-4 order"
@@ -525,7 +541,14 @@ fn test_review_queue() {
     // Nothing parked at cutoff 1: only the stale ones.
     assert_eq!(
         ids(review_queue(&l, 1, now)),
-        ["260101-0001", "260901-0900", "260921-1200", "260801-0900"]
+        [
+            "260101-0001",
+            "260101-0006",
+            "260901-0900",
+            "260101-0007",
+            "260921-1200",
+            "260801-0900"
+        ]
     );
     // The same instant in another offset: the ID is read in that offset.
     let utc = t("2026-10-21T10:00:00+00:00");
@@ -564,7 +587,7 @@ fn test_review_trigger() {
 
     // Something to review, never reviewed → monthly, `last` none.
     let l = listing(vec![important(), parked_new()], vec![]);
-    assert_eq!(last_review(&l), None);
+    assert_eq!(last_review(&l, now), None);
     assert_eq!(
         review_due(&l, 7, now),
         Some(ReviewDue::Monthly { last: None })
@@ -575,7 +598,7 @@ fn test_review_trigger() {
         vec![important(), parked_new()],
         vec![done_reviewed("2026-10-11T12:00:00+02:00")],
     );
-    assert_eq!(last_review(&l), Some(t("2026-10-11T12:00:00+02:00")));
+    assert_eq!(last_review(&l, now), Some(t("2026-10-11T12:00:00+02:00")));
     assert_eq!(review_due(&l, 7, now), None);
     // An in-flight intent at the cutoff is open too.
     let busy = open("intents/261020-0700-busy", "u: 4\ni: 5\nstage: build\n");
@@ -612,6 +635,30 @@ fn test_review_trigger() {
     );
     assert_eq!(review_due(&l, 7, now), None, "a minute short of 30 days");
 
+    // A `reviewed` after now is ignored: it can't silence the monthly review.
+    let l = listing(
+        vec![important(), parked_new()],
+        vec![done_reviewed("2062-10-21T12:00:00+02:00")],
+    );
+    assert_eq!(last_review(&l, now), None);
+    assert_eq!(
+        review_due(&l, 7, now),
+        Some(ReviewDue::Monthly { last: None })
+    );
+    let l = listing(
+        vec![
+            important(),
+            parked_new(),
+            open(
+                "intents/261001-0800-x",
+                "reviewed: 2026-10-11T12:00:00+02:00\n",
+            ),
+        ],
+        vec![done_reviewed("2062-10-21T12:00:00+02:00")],
+    );
+    assert_eq!(last_review(&l, now), Some(t("2026-10-11T12:00:00+02:00")));
+    assert_eq!(review_due(&l, 7, now), None);
+
     // The newest `reviewed` over open and done, compared as instants.
     let l = listing(
         vec![open(
@@ -620,5 +667,5 @@ fn test_review_trigger() {
         )],
         vec![done_reviewed("2026-10-02T05:00:00+02:00")],
     );
-    assert_eq!(last_review(&l), Some(t("2026-10-01T23:00:00-05:00")));
+    assert_eq!(last_review(&l, now), Some(t("2026-10-01T23:00:00-05:00")));
 }

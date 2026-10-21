@@ -71,14 +71,15 @@ fn id_time(id: &str, offset: FixedOffset) -> Option<DateTime<FixedOffset>> {
 }
 
 /// PRI-7: in the review queue: queued, `reviewed` missing or stale, and parked or stale
-/// (`reviewed`, else `started`, else the ID's time in `now`'s offset).
+/// (`reviewed`, else `started`, else the ID's time in `now`'s offset). A `reviewed` or
+/// `started` after `now` (a typo, a wrong clock) counts as missing.
 fn to_review(i: &Intent, cutoff: u8, now: DateTime<FixedOffset>) -> bool {
-    let since = i
-        .reviewed()
-        .or_else(|| i.started())
+    let reviewed = i.reviewed().filter(|t| *t <= now);
+    let since = reviewed
+        .or_else(|| i.started().filter(|t| *t <= now))
         .or_else(|| id_time(&i.id, *now.offset()));
     queued(i)
-        && i.reviewed().is_none_or(|r| stale(r, now))
+        && reviewed.is_none_or(|r| stale(r, now))
         && (parked(p(i), cutoff) || since.is_some_and(|t| stale(t, now)))
 }
 
@@ -93,13 +94,15 @@ pub fn review_queue(listing: &Listing, cutoff: u8, now: DateTime<FixedOffset>) -
     queue
 }
 
-/// The last backlog review: the newest `reviewed` over open and done intents.
-pub fn last_review(listing: &Listing) -> Option<DateTime<FixedOffset>> {
+/// The last backlog review: the newest `reviewed` over open and done intents, ignoring any
+/// after `now` (one bad value would otherwise silence PRI-8 for good).
+pub fn last_review(listing: &Listing, now: DateTime<FixedOffset>) -> Option<DateTime<FixedOffset>> {
     listing
         .open
         .iter()
         .chain(&listing.done)
         .filter_map(Intent::reviewed)
+        .filter(|t| *t <= now)
         .max()
 }
 
@@ -118,15 +121,11 @@ pub fn review_due(listing: &Listing, cutoff: u8, now: DateTime<FixedOffset>) -> 
     if review_queue(listing, cutoff, now).is_empty() {
         return None;
     }
-    let last = last_review(listing);
+    let last = last_review(listing, now);
     if last.is_none_or(|t| stale(t, now)) {
         return Some(ReviewDue::Monthly { last });
     }
-    let important = listing
-        .open
-        .iter()
-        .filter(|i| !i.stage().is_some_and(|s| s.is_finished()))
-        .any(|i| !parked(p(i), cutoff));
+    let important = listing.open.iter().any(|i| !parked(p(i), cutoff));
     (!important).then_some(ReviewDue::NothingAtCutoff)
 }
 
