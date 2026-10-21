@@ -9,14 +9,19 @@ use std::path::{Path, PathBuf};
 
 use globset::{GlobBuilder, GlobMatcher};
 
-/// Files Towercab reads from the base branch, and what runs on every push.
-pub const CONTROL: [&str; 5] = [
+/// Files Towercab reads from the base branch, what runs on every push, and git's own directory
+/// (its config and hooks run in Towercab's git calls in the checkout; never unlocked).
+pub const CONTROL: [&str; 6] = [
     "CLAUDE.md",
     "REVIEW.md",
     "TOWERCAB.md",
     ".github/**",
     ".claude/**",
+    ".git/**",
 ];
+
+/// The checkout's git directory: no `unlock` reaches it.
+const GIT: &str = ".git";
 
 /// What makes a glob component not literal (`\` escapes the next character).
 const WILD: [char; 5] = ['*', '?', '[', '{', '\\'];
@@ -153,12 +158,13 @@ impl Protected {
     }
 
     /// The worker may not write repo-relative `rel`: a protected glob matches it or one of its
-    /// parent directories and no `unlock` glob does. An absolute path or a `..` → true.
+    /// parent directories and no `unlock` glob does. An absolute path, a `..` or `.git` → true.
     pub fn blocks(&self, rel: &str) -> bool {
         let Some(parts) = components(rel) else {
             return true;
         };
-        self.protected.iter().any(|r| r.covers(&parts)) && !self.unlocked(&parts)
+        parts.first() == Some(&GIT)
+            || self.protected.iter().any(|r| r.covers(&parts)) && !self.unlocked(&parts)
     }
 
     fn unlocked(&self, parts: &[&str]) -> bool {
@@ -168,10 +174,17 @@ impl Protected {
     /// Absolute paths for the sandbox's `denyWrite` (PIP-29): per protected glob its literal
     /// path without a wildcard, `P` for `P/**`, else what it matches under its literal prefix;
     /// existing paths only; unlocked entries dropped and directories an `unlock` glob may reach
-    /// into split into their children; sorted, none inside another, none containing `*`, `?`
-    /// or `[` (such names are left to the guard and publish).
-    pub fn deny_write(&self, checkout: &Path) -> Vec<PathBuf> {
+    /// into split into their children (never `.git`); sorted, none inside another, none whose
+    /// repo-relative part contains `*`, `?` or `[` (left to the guard and publish). A checkout
+    /// path containing one → `Err`: the run refuses rather than going unprotected.
+    pub fn deny_write(&self, checkout: &Path) -> Result<Vec<PathBuf>, String> {
         let checkout = std::path::absolute(checkout).unwrap_or_else(|_| checkout.to_path_buf());
+        if checkout.to_string_lossy().contains(SANDBOX_WILD) {
+            return Err(format!(
+                "checkout {} contains *, ? or [: denyWrite can't name it",
+                checkout.display()
+            ));
+        }
         let mut found = BTreeSet::new();
         for rule in &self.protected {
             let literal = match rule.glob.strip_suffix("/**") {
@@ -197,22 +210,27 @@ impl Protected {
             if kept.last().is_some_and(|k| p.starts_with(k)) {
                 continue;
             }
-            if p.to_string_lossy().contains(SANDBOX_WILD) {
+            let rel = p.strip_prefix(&checkout).unwrap_or(&p);
+            if rel.to_string_lossy().contains(SANDBOX_WILD) {
                 continue;
             }
             kept.push(p);
         }
-        kept
+        Ok(kept)
     }
 
     /// `rel` unless unlocked; a real directory an `unlock` glob may reach into → its children,
-    /// recursively.
+    /// recursively. `.git` and what is under it: always whole.
     fn carve(&self, checkout: &Path, rel: String, out: &mut BTreeSet<PathBuf>) {
+        let path = checkout.join(&rel);
         let parts: Vec<&str> = rel.split('/').collect();
+        if parts[0] == GIT {
+            out.insert(path);
+            return;
+        }
         if self.unlocked(&parts) {
             return;
         }
-        let path = checkout.join(&rel);
         let is_dir = fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir());
         if is_dir && self.unlock.iter().any(|u| u.may_reach_into(&rel)) {
             for name in children(&path) {

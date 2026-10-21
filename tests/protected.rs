@@ -27,7 +27,8 @@ fn test_protected_paths() {
             "REVIEW.md",
             "TOWERCAB.md",
             ".github/**",
-            ".claude/**"
+            ".claude/**",
+            ".git/**"
         ]
     );
     let p = protected(
@@ -50,6 +51,9 @@ fn test_protected_paths() {
         ".github",
         ".github/workflows/ci.yml",
         ".claude/settings.json",
+        ".git",
+        ".git/config",
+        ".git/hooks/pre-commit",
         "./CLAUDE.md",
         "src//machine.rs",
         // `protected` globs; a match on a directory covers what is under it.
@@ -82,6 +86,7 @@ fn test_protected_paths() {
         "v10.txt",
         "c.lock",
         ".githubx",
+        ".gitignore",
         "",
     ] {
         assert!(!p.blocks(rel), "{rel} not blocked");
@@ -102,6 +107,12 @@ fn test_protected_paths() {
         p.blocks("/abs/.github/workflows/ci.yml"),
         "absolute stays blocked"
     );
+    // No unlock reaches `.git`.
+    let p = protected(&[], &[".git/**", "**"]);
+    assert!(!p.blocks("CLAUDE.md") && !p.blocks(".github/workflows/ci.yml"));
+    for rel in [".git", ".git/config", "./.git/hooks/post-checkout"] {
+        assert!(p.blocks(rel), "{rel} blocked");
+    }
 
     // Globs: `*` stays in a component, `**` spans them, `P/**` also matches `P`.
     let m = glob("src/**").unwrap();
@@ -199,7 +210,7 @@ fn test_deny_write_paths() {
         "db/srclink/**",
     ];
 
-    let got = protected(&globs, &[]).deny_write(&root);
+    let got = protected(&globs, &[]).deny_write(&root).unwrap();
     assert_eq!(
         got,
         abs(
@@ -207,6 +218,7 @@ fn test_deny_write_paths() {
             &[
                 // Literal paths and `P` for `P/**`: only existing ones (no TOWERCAB.md, .claude,
                 // ops/bands.yaml).
+                ".git",
                 ".github",
                 "CLAUDE.md",
                 "Cargo.lock",
@@ -236,12 +248,14 @@ fn test_deny_write_paths() {
         &globs,
         &[".github/workflows/ci.yml", "migrations/**", "db/a.sql"],
     )
-    .deny_write(&root);
+    .deny_write(&root)
+    .unwrap();
     assert_eq!(
         got,
         abs(
             &root,
             &[
+                ".git",
                 ".github/CODEOWNERS",
                 ".github/ISSUE_TEMPLATE",
                 ".github/workflows/release.yml",
@@ -258,13 +272,16 @@ fn test_deny_write_paths() {
             ]
         )
     );
-    // An unlock glob with no literal prefix reaches into every protected directory.
-    let got = protected(&["db/**"], &["**/*.md"]).deny_write(&root);
+    // An unlock glob with no literal prefix reaches into every protected directory but `.git`.
+    let got = protected(&["db/**"], &["**/*.md", ".git/**"])
+        .deny_write(&root)
+        .unwrap();
     assert_eq!(
         got,
         abs(
             &root,
             &[
+                ".git",
                 ".github/CODEOWNERS",
                 ".github/workflows/ci.yml",
                 ".github/workflows/release.yml",
@@ -278,13 +295,30 @@ fn test_deny_write_paths() {
         )
     );
     // None inside another; duplicates once.
-    let got = protected(&["src/**", "src/machine.rs", "./src/"], &[]).deny_write(&root);
+    let got = protected(&["src/**", "src/machine.rs", "./src/"], &[])
+        .deny_write(&root)
+        .unwrap();
     assert_eq!(
         got,
-        abs(&root, &[".github", "CLAUDE.md", "REVIEW.md", "src"])
+        abs(&root, &[".git", ".github", "CLAUDE.md", "REVIEW.md", "src"])
     );
     // Nothing exists → nothing to deny.
     let empty = tmp.path().join("empty");
     fs::create_dir_all(&empty).unwrap();
-    assert!(protected(&globs, &[]).deny_write(&empty).is_empty());
+    assert!(
+        protected(&globs, &[])
+            .deny_write(&empty)
+            .unwrap()
+            .is_empty()
+    );
+    // A checkout whose path can't be a sandbox entry → refused, never an empty list.
+    let wild = tmp.path().join("work[1]");
+    write(&wild, "CLAUDE.md", "x\n");
+    assert_eq!(
+        protected(&globs, &[]).deny_write(&wild),
+        Err(format!(
+            "checkout {} contains *, ? or [: denyWrite can't name it",
+            wild.display()
+        ))
+    );
 }
