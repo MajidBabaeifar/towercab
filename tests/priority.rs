@@ -248,7 +248,8 @@ fn test_cutoff() {
         }
     }
 
-    // `pick_order`: queued intents whose `after` ids are all finished.
+    // `pick_order`: queued intents whose `after` ids are all done (legacy, or in `done/` or
+    // `stage: done` and not dropped).
     let l = Listing {
         open: vec![
             open("intents/261020-0700-top", "u: 5\ni: 5\n"),
@@ -275,14 +276,26 @@ fn test_cutoff() {
             ),
             open(
                 "intents/261020-0707-unblocked",
-                "u: 3\ni: 4\nafter: [261019-0900, 261015-1446, 261019-1000]\n",
+                "u: 3\ni: 4\nafter: [261019-0900, 261015-1446, 261019-1200, 261019-1300]\n",
             ),
             open("intents/261020-0708-parked", "u: 2\ni: 2\n"),
             open("intents/261020-0709-at-cutoff", "u: 1\ni: 3\n"),
+            // A dropped prerequisite never meets an `after`: the loop asks (`bad after:`).
+            open(
+                "intents/261020-0710-after-dropped-in-place",
+                "u: 5\ni: 5\nafter: [261019-0900, 261019-1000]\n",
+            ),
+            open(
+                "intents/261020-0711-after-dropped",
+                "u: 5\ni: 5\nafter: [261019-1100]\n",
+            ),
         ],
         done: vec![
             open("done/261019-0900-shipped", "stage: done\n"),
             open("intents/261019-1000-dropped-in-place", "stage: dropped\n"),
+            open("done/261019-1100-dropped", "stage: dropped\n"),
+            open("done/261019-1200-moved-by-hand", ""),
+            open("intents/261019-1300-done-in-place", "stage: done\n"),
         ],
         legacy: "2026-10-15 261015-1446 towercab: Rename · towercab#5\n".into(),
         ..Listing::default()
@@ -309,6 +322,10 @@ fn test_cutoff() {
         todo.contains("## Parked\n\n- [261020-0709]"),
         "p7 parked at 8"
     );
+    // … and TODO.md shows what a dropped prerequisite still blocks.
+    assert!(todo.contains("after-dropped-in-place · p15 u5 i5 · after 261019-1000\n"));
+    assert!(todo.contains("after-dropped · p15 u5 i5 · after 261019-1100\n"));
+    assert!(todo.contains("unblocked · p11 u3 i4\n"));
 }
 
 #[test]

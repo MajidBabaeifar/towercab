@@ -40,14 +40,15 @@ pub fn queued(i: &Intent) -> bool {
     !i.dir.starts_with("done/") && i.stage().is_none() && i.waiting().is_none()
 }
 
-/// PRI-5, for the picker: queued intents whose `after` ids are all finished, PRI-4 order,
-/// `p >= cutoff` first, then parked ones. Skipping (frozen, cooling, paused) is the loop's.
+/// PRI-5, for the picker: queued intents whose `after` ids are all done (not dropped:
+/// `Listing::done_ids`), PRI-4 order, `p >= cutoff` first, then parked ones. Skipping (frozen,
+/// cooling, paused) is the loop's.
 pub fn pick_order(listing: &Listing, cutoff: u8) -> Vec<&Intent> {
-    let finished = listing.finished_ids();
+    let done = listing.done_ids();
     let mut runnable: Vec<&Intent> = listing
         .open
         .iter()
-        .filter(|i| queued(i) && i.after().iter().all(|a| finished.contains(a)))
+        .filter(|i| queued(i) && i.after().iter().all(|a| done.contains(a)))
         .collect();
     runnable.sort_by(|a, b| cmp(a, b));
     let (mut order, later): (Vec<&Intent>, Vec<&Intent>) =
