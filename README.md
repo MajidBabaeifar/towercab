@@ -5,7 +5,7 @@ priority, validate, push, and report how they did.
 
 **Status:** reads the task list, delegates, waits out limits, opens PRs, loops. The rest of the design: [specs/](specs/README.md).
 
-**Rust rewrite:** the `towercab` crate at the root (`cargo install --path . --locked`) has the intent store so far: `towercab add "<repo>: <title>" [uN iN aN]`, `towercab migrate` (once, converts the old `TODO.md` lines; [INT-13](specs/intents.md)). The Python version below runs until the pipeline intent switches over. Working here: [CLAUDE.md](CLAUDE.md).
+**Rust rewrite:** the `towercab` crate at the root (`cargo install --path . --locked`) has the intent store so far: `towercab add "<repo>: <title>" [uN iN aN]`, `towercab migrate` (once, converts the old `TODO.md` lines; [INT-13](specs/intents.md)), and `towercab protect <repo>` (the `towercab` branch ruleset, with your `gh` login; needs `github = "<owner>/<name>"` under `[repos.<repo>]`; [REPO-7](specs/repo.md)). The Python version below runs until the pipeline intent switches over. Working here: [CLAUDE.md](CLAUDE.md).
 
 **CI:** GitHub Actions (`.github/workflows/ci.yml`) on every PR and push to `main`: job `rust` runs `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`; job `python` runs `python3 -m unittest discover -s tests` on Python 3.12. Any failure turns the check red. See [PIP-12](specs/pipeline.md).
 

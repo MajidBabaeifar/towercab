@@ -2,6 +2,7 @@
 //! always read from the base branch; protected paths; `towercab protect`.
 
 pub mod markdown;
+pub mod protect;
 pub mod protected;
 pub mod review;
 pub mod towercab;

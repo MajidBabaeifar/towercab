@@ -1,6 +1,6 @@
 # Repo contract
 
-**Status:** Live: REPO-1..6, REPO-8 · Draft: rest · **Prefix:** REPO
+**Status:** Live · **Prefix:** REPO
 
 ## Purpose
 
