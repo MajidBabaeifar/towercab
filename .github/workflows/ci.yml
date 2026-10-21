@@ -9,7 +9,20 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  # The Python version, until the pipeline intent switches over.
+  python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
