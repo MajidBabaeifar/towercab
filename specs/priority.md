@@ -1,6 +1,6 @@
 # Priority
 
-**Status:** Live: PRI-1..6, PRI-8 · Draft: rest · **Prefix:** PRI
+**Status:** Live: PRI-1..9 · **Prefix:** PRI
 
 ## Purpose
 
@@ -55,7 +55,7 @@ keep, rescore, drop or quit? [k/r/d/q]
   prints `dropped: done/<id>-<slug>`. `q` or EOF (at either prompt): stop, nothing written for it.
   Anything else: `want k, r, d or q`, asks again.
 - A refused update prints `not changed: <reason>` and goes on; `StoreError::Sync` stops (exit 1).
-- Empty queue → `nothing to review`. End: `kept <k>, rescored <r>, dropped <d>, left <l>` (left = unanswered or refused).
+- Empty queue → `nothing to review`. End, after a blank line: `kept <k>, rescored <r>, dropped <d>, left <l>` (left = unanswered or refused).
 
 ## Out of scope
 

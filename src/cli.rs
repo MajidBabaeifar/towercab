@@ -32,6 +32,8 @@ enum Command {
     },
     /// Convert the old TODO.md line format into intent folders (once)
     Migrate,
+    /// Walk parked and stale intents: keep, rescore or drop each
+    Review,
 }
 
 /// Exit code: 0 ok, 1 error, 2 bad arguments.
@@ -63,6 +65,19 @@ where
         }
         Command::Migrate => {
             report(store(&args.config).and_then(|s| migrate(&s, now()).map_err(|e| e.to_string())))
+        }
+        Command::Review => {
+            let walk = store(&args.config).and_then(|s| {
+                let (stdin, stdout) = (std::io::stdin(), std::io::stdout());
+                crate::review::run(&s, &mut stdin.lock(), &mut stdout.lock(), now())
+            });
+            match walk {
+                Ok(_) => 0,
+                Err(e) => {
+                    eprintln!("towercab: {e}");
+                    1
+                }
+            }
         }
     }
 }
