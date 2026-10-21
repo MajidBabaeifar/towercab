@@ -1,4 +1,4 @@
-//! Command line (LOOP-15, so far `add`, `migrate` and `--version`).
+//! Command line (LOOP-15, so far `add`, `migrate`, `review` and `--version`).
 
 use std::ffi::OsString;
 use std::path::PathBuf;

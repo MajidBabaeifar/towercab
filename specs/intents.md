@@ -109,4 +109,4 @@ Rows within a section: [PRI-4](priority.md) order (Can't read: by path), missing
 - `migrate` is verified on fixtures (`test_migrate`); the real run is mine after merge, at the switch-over (the intent's open question).
 - INT-5's "continues" and "`maintain` during a revert" are verified where they are built: [PIP-17](pipeline.md) `test_continue_by_waiting`, [PIP-19](pipeline.md) `test_revert_flow`. The store builds the fields.
 - Crates: `clap` (derive), `toml` (read as a table, so errors name the key; no `serde` derive needed), `yaml-rust2` (`serde_yaml` is archived; default features off), `chrono`, `regex`; dev `tempfile`. Git through the `git` CLI, not libgit2: no C build, my shell's auth ([LOOP-19](loop.md) swaps in the App token and identity later).
-- CLI now: `add`, `migrate`, `--version` (Cargo version `0.3.0`, after the Python `0.2.0`); the loop intent adds the rest of [LOOP-15](loop.md).
+- CLI now: `add`, `migrate`, `review` ([PRI-7](priority.md)), `--version` (Cargo version `0.3.0`, after the Python `0.2.0`); the loop intent adds the rest of [LOOP-15](loop.md).
