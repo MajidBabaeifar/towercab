@@ -455,10 +455,16 @@ fn test_bad_file_reported() {
             "done/261020-0900-b/intent.md",
             &intent_md("towercab", "stage: done\n", "Dup B"),
         ),
+        (
+            "intents/261019-1900-fine/intent.md",
+            &intent_md("towercab", "", "Fine"),
+        ),
     ]);
     let store = home.store();
     let l = store.list().unwrap();
-    assert_eq!(ids(&l.open), ["261020-0721"]);
+    assert_eq!(ids(&l.open), ["261019-1900", "261020-0721"]);
+    // A suffix resolves over open intents first: `900` is 261019-1900, not the bad 261020-0900.
+    assert_eq!(store.get("900").unwrap().title(), "Fine");
     store.add(new("Trigger a write", None, None)).unwrap();
     assert!(home.remote_file("TODO.md").ends_with(
         "## Can't read\n\n\
@@ -487,6 +493,10 @@ fn test_bad_file_reported() {
     assert_eq!(home.head(), head);
     assert_eq!(
         store.get("0900").unwrap_err(),
+        StoreError::Refused("intents/261020-0900-a: duplicate id".into())
+    );
+    assert_eq!(
+        store.get("261020-0900").unwrap_err(),
         StoreError::Refused("intents/261020-0900-a: duplicate id".into())
     );
 

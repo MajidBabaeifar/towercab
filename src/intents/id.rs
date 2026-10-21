@@ -9,6 +9,8 @@ use regex::Regex;
 static ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d{6})-(\d{4})(?:-(\d+))?$").unwrap());
 static DIR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\d{6}-\d{4}(?:-\d+)?)-([a-z][a-z0-9-]*)$").unwrap());
+static DIR_ID: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\d{6}-\d{4}(?:-\d+)?)(?:-|$)").unwrap());
 
 /// Longest slug before the `n` prefix.
 pub const SLUG_MAX: usize = 48;
@@ -79,6 +81,12 @@ pub fn slug(title: &str) -> String {
 pub fn split_dir(name: &str) -> Option<(String, String)> {
     DIR.captures(name)
         .map(|c| (c[1].to_string(), c[2].to_string()))
+}
+
+/// The ID a folder name starts with (followed by `-` or the end), whatever the rest: a folder
+/// that isn't `<id>-<slug>` still takes its ID (INT-3) and counts for duplicates (INT-11).
+pub fn dir_id(name: &str) -> Option<String> {
+    DIR_ID.captures(name).map(|c| c[1].to_string())
 }
 
 /// An exact ID, else the single ID ending with `s`.

@@ -5,7 +5,7 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::{Home, intent_md, t};
-use towercab::intents::id::{new_id, resolve, slug, sort_key, split_dir};
+use towercab::intents::id::{dir_id, new_id, resolve, slug, sort_key, split_dir};
 use towercab::intents::{NewIntent, StoreError, Value};
 
 fn new(title: &str, created: &str) -> NewIntent {
@@ -50,18 +50,35 @@ fn test_ids_never_reused() {
             "done/legacy.md",
             "2026-10-21 261021-0905-5 towercab: Old · towercab#1 · $? · ? · 1\n",
         ),
+        // Not `<id>-<slug>` (bad slug, no slug): can't read, but their IDs are taken.
+        (
+            "intents/261021-0905-6-Bad_Slug/intent.md",
+            &intent_md("towercab", "", "Bad slug"),
+        ),
+        (
+            "done/261021-0905-7/intent.md",
+            &intent_md("towercab", "", "No slug"),
+        ),
     ]);
     let store = home.store();
     let a = store
         .add(new("Same minute", "2026-10-21T09:05:30+02:00"))
         .unwrap();
-    assert_eq!(a.id, "261021-0905-6");
-    assert_eq!(a.dir, "intents/261021-0905-6-same-minute");
+    assert_eq!(a.id, "261021-0905-8");
+    assert_eq!(a.dir, "intents/261021-0905-8-same-minute");
     let b = store
         .add(new("Same minute", "2026-10-21T09:05:31+02:00"))
         .unwrap();
-    assert_eq!(b.id, "261021-0905-7");
-    assert_eq!(b.dir, "intents/261021-0905-7-same-minute");
+    assert_eq!(b.id, "261021-0905-9");
+    assert_eq!(b.dir, "intents/261021-0905-9-same-minute");
+    assert_eq!(
+        dir_id("261021-0905-Bad_Slug").as_deref(),
+        Some("261021-0905")
+    );
+    assert_eq!(dir_id("261021-0905-2").as_deref(), Some("261021-0905-2"));
+    assert_eq!(dir_id("261021-0905-2x").as_deref(), Some("261021-0905"));
+    assert_eq!(dir_id("261021-09050"), None);
+    assert_eq!(dir_id("notes"), None);
     assert_eq!(
         store
             .add(new("Next minute", "2026-10-21T09:06:00+02:00"))
@@ -137,6 +154,37 @@ fn test_suffix_unique() {
         .update("-2", "touch", |i| i.set("u", Value::Int(5)))
         .unwrap();
     assert_eq!((got.id.as_str(), got.u()), ("261020-0721-2", Some(5)));
+
+    // A replay after a rejected push keeps the ID the suffix first resolved to: here I finish
+    // that intent meanwhile and add another one ending with `-2`; the change lands on neither.
+    let calls = std::cell::Cell::new(0);
+    let other = intent_md("towercab", "", "Z");
+    let err = store
+        .update("-2", "rescore", |i| {
+            calls.set(calls.get() + 1);
+            if calls.get() == 1 {
+                home.push_mine(
+                    &[
+                        ("intents/261020-0721-2-b/intent.md", None),
+                        (
+                            "done/261020-0721-2-b/intent.md",
+                            Some(&intent_md("towercab", "stage: done\n", "B")),
+                        ),
+                        ("intents/261019-0800-2-z/intent.md", Some(&other)),
+                    ],
+                    "finish b, add z",
+                );
+            }
+            i.set("u", Value::Int(1))
+        })
+        .unwrap_err();
+    assert_eq!(
+        err,
+        StoreError::Refused("no open intent matches 261020-0721-2".into())
+    );
+    assert_eq!(calls.get(), 1);
+    assert_eq!(home.remote_file("intents/261019-0800-2-z/intent.md"), other);
+    assert_eq!(home.log()[0], "finish b, add z");
 }
 
 #[test]

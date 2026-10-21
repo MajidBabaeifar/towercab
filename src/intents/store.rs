@@ -65,13 +65,9 @@ pub struct Unreadable {
 }
 
 impl Unreadable {
-    /// The ID in the folder name, if it has one.
+    /// The ID the folder name starts with, if any (`id::dir_id`).
     pub fn id(&self) -> Option<String> {
-        self.path
-            .split('/')
-            .nth(1)
-            .and_then(split_dir)
-            .map(|(id, _)| id)
+        self.path.split('/').nth(1).and_then(id::dir_id)
     }
 }
 
@@ -259,8 +255,20 @@ impl Store {
     where
         F: FnMut(&mut Intent) -> Result<(), String>,
     {
+        // Resolved once: a replay after a rejected push changes the same intent or none.
+        let mut pinned: Option<String> = None;
         self.write(true, |listing| {
-            let original = find_open(listing, id_or_suffix)?;
+            let original = match &pinned {
+                None => find_open(listing, id_or_suffix)?,
+                Some(id) => match find_open(listing, id) {
+                    Ok(i) if i.id == *id => i,
+                    Ok(_) => {
+                        return Err(StoreError::Refused(format!("no open intent matches {id}")));
+                    }
+                    Err(e) => return Err(e),
+                },
+            };
+            pinned = Some(original.id.clone());
             let mut intent = original.clone();
             f(&mut intent).map_err(StoreError::Refused)?;
             (intent.id, intent.slug, intent.dir) = (
@@ -388,7 +396,9 @@ impl Store {
     }
 }
 
-/// An open intent by ID or suffix; an unreadable one fails with its reason (INT-11).
+/// An open intent by ID or suffix (INT-3: over open intents). An unreadable folder in
+/// `intents/` fails with its reason (INT-11) when `s` is its exact ID, or when no open ID
+/// matches and it is the one unreadable ID ending with `s`.
 fn find_open(listing: &Listing, s: &str) -> Result<Intent, StoreError> {
     let bad: Vec<(String, &Unreadable)> = listing
         .unreadable
@@ -396,21 +406,29 @@ fn find_open(listing: &Listing, s: &str) -> Result<Intent, StoreError> {
         .filter(|u| u.path.starts_with("intents/"))
         .filter_map(|u| u.id().map(|id| (id, u)))
         .collect();
-    let ids = listing
-        .open
-        .iter()
-        .map(|i| i.id.as_str())
-        .chain(bad.iter().map(|(id, _)| id.as_str()));
-    let id = resolve(s, ids).map_err(StoreError::Refused)?;
-    if let Some((_, u)) = bad.iter().find(|(b, _)| *b == id) {
-        return Err(StoreError::Refused(format!("{}: {}", u.path, u.reason)));
+    let refused = |u: &Unreadable| StoreError::Refused(format!("{}: {}", u.path, u.reason));
+    let open = |id: &str| listing.open.iter().find(|i| i.id == id).cloned();
+    if let Some(i) = open(s) {
+        return Ok(i);
     }
-    listing
-        .open
-        .iter()
-        .find(|i| i.id == id)
-        .cloned()
-        .ok_or_else(|| StoreError::Refused(format!("no open intent matches {s}")))
+    if let Some((_, u)) = bad.iter().find(|(id, _)| id == s) {
+        return Err(refused(u));
+    }
+    let open_ids = listing.open.iter().map(|i| i.id.as_str());
+    match resolve(s, open_ids) {
+        Ok(id) => {
+            return open(&id).ok_or(StoreError::Refused(format!("no open intent matches {s}")));
+        }
+        Err(e) if listing.open.iter().any(|i| i.id.ends_with(s)) => {
+            return Err(StoreError::Refused(e));
+        }
+        Err(_) => {}
+    }
+    let id = resolve(s, bad.iter().map(|(id, _)| id.as_str())).map_err(StoreError::Refused)?;
+    match bad.iter().find(|(b, _)| *b == id) {
+        Some((_, u)) => Err(refused(u)),
+        None => Err(StoreError::Refused(format!("no open intent matches {s}"))),
+    }
 }
 
 /// Reads `intents/` and `done/` under `root`.
@@ -430,7 +448,7 @@ pub fn scan(root: &Path) -> Listing {
     }
     let mut count: BTreeMap<String, usize> = BTreeMap::new();
     for (_, name) in &folders {
-        if let Some((id, _)) = split_dir(name) {
+        if let Some(id) = id::dir_id(name) {
             *count.entry(id).or_default() += 1;
         }
     }
