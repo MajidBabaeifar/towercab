@@ -765,6 +765,7 @@ fn test_store_interface() {
             path: local.clone(),
             cutoff: 7,
         },
+        repos: Default::default(),
     };
     let store = Store::open(&config).unwrap();
     let got = store.add(new("Local only", None, None)).unwrap();

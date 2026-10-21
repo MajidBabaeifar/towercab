@@ -114,6 +114,7 @@ impl Home {
                 path: self.checkout.clone(),
                 cutoff: 7,
             },
+            repos: Default::default(),
         }
     }
 
