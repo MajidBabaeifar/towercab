@@ -21,34 +21,44 @@ fn test_intent_skill() {
         "{description}"
     );
 
-    // The steps INT-9 names, and the template INT-2 defines.
+    // The steps INT-9 names, and the template INT-2 defines: phrases only these rules write.
     for must in [
-        "scope",
-        "success",
+        "**Scope**",
+        "**What success looks like**",
         "## Problem",
         "## Proposed outcome",
         "## Affected users and systems",
         "## Constraints",
         "## Open questions",
-        "# Intent: ",
-        "priority.md",
-        "source: me",
-        "started:",
-        "YYMMDD-HHMM",
-        "-2",
-        "48",
+        "# Intent: <title>",
+        "`priority.md`",
+        "| u | someday |",
+        "| i | nice to have |",
+        "source: me\n",
+        "conversation's start",
+        "`YYMMDD-HHMM`",
+        "add `-2`, then `-3`",
+        "drop `'` and `’`",
+        "cut to 48 characters and trim `-` again",
+        "starts with a digit → put `n` in front",
         "docs(intents): add <id> <title>",
-        "git pull --rebase",
-        "main",
-        "connector",
+        "git push origin HEAD:main",
+        "git pull --rebase origin main",
+        "GitHub connector",
         "intents/<id>-<slug>/intent.md",
     ] {
-        let lower = skill.to_lowercase();
-        assert!(
-            lower.contains(&must.to_lowercase()),
-            "SKILL.md lacks {must:?}"
-        );
+        assert!(skill.contains(must), "SKILL.md lacks {must:?}");
     }
+
+    // The title reaches git only as a quoted heredoc's body: backticks or `$(...)` never run.
+    assert!(skill.contains(
+        "git commit -q -F - <<'INTENT_MSG'\ndocs(intents): add <id> <title>\nINTENT_MSG\n"
+    ));
+    assert!(
+        !skill.contains("-m \""),
+        "no title inside a double-quoted -m"
+    );
+    assert!(skill.contains("never put it in double quotes, `$(...)` or backticks"));
     assert!(skill.contains("Leave `a` out"), "a only when I give it");
 
     // install.sh links it into ~/.claude/skills/intent (run here with a temp HOME).

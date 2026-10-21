@@ -81,12 +81,19 @@ remote=<[intents].remote, else [tasks].remote, in ~/.config/towercab/config.toml
 dir=$(mktemp -d) && git clone --quiet "$remote" "$dir" && cd "$dir"
 # check the ID against intents/, done/ and done/legacy.md in this fresh clone, then write the file
 git add intents/<id>-<slug>/intent.md
-git commit -m "docs(intents): add <id> <title>"
+git commit -q -F - <<'INTENT_MSG'
+docs(intents): add <id> <title>
+INTENT_MSG
 git push origin HEAD:main
 ```
 
+The title reaches git only as the body of that quoted heredoc (or `git commit -F <file>`):
+never put it in double quotes, `$(...)` or backticks on a command line. Titles hold backticks
+(e.g. ``Repo files, protected paths and `towercab protect` ``), and the shell would run them.
+The delimiter is `INTENT_MSG`, never `EOF`: a line `EOF` inside an outer heredoc would end it.
+
 A rejected push: `git pull --rebase origin main`, check the ID again (a clash → next suffix,
-rename the folder, amend), push again.
+`git mv` the folder, `git commit --amend -q -F -` with the same heredoc), push again.
 
 On claude.ai: use the GitHub connector to create `intents/<id>-<slug>/intent.md` on `main` of the
 `intents` repo with the commit message `docs(intents): add <id> <title>`; list `intents/`, `done/`
