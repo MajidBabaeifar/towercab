@@ -39,8 +39,9 @@ pub struct Target {
 }
 
 impl Target {
-    /// `repo` = a `[repos]` name (its `github`, `base`) or `intents` (the intent home: owner and
-    /// name from `[intents].remote`, base `main`); else `unknown repo <repo>`.
+    /// `repo` = a `[repos]` name (its `github`, `base`; [`Config::repo`]'s errors) or `intents`
+    /// (the intent home: owner and name from `[intents].remote`, base `main`, `[repos]` not
+    /// read); else `unknown repo <repo>`.
     pub fn resolve(config: &Config, repo: &str) -> Result<Target, String> {
         if repo == "intents" {
             // The URL may hold a token: never echoed.
@@ -56,10 +57,7 @@ impl Target {
                 intent_home: true,
             });
         }
-        let r = config
-            .repos
-            .get(repo)
-            .ok_or_else(|| format!("unknown repo {repo}"))?;
+        let r = config.repo(repo)?;
         Ok(Target {
             github: r.github.clone(),
             base: r.base.clone(),

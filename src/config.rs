@@ -1,5 +1,9 @@
 //! `~/.config/towercab/config.toml`: `[intents]` (INT-1) and `[repos.<name>]` (the slice of
 //! LOOP-1 that `repo::load` and `protect` need, REPO-7). The loop intent adds the rest.
+//!
+//! A bad `[repos.<name>]` fails only what uses that repo ([`Config::repo`]): the Python
+//! version's `[repos.<name>]` (no `github`) shares this file, and `add`, `migrate` and
+//! `protect intents` never look at `[repos]`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -39,8 +43,9 @@ pub struct Config {
     /// The file this was read from.
     pub file: PathBuf,
     pub intents: IntentsConfig,
-    /// `[repos.<name>]` by name.
-    pub repos: BTreeMap<String, RepoConfig>,
+    /// `[repos.<name>]` by name, or why the table is bad (`config: <file>: repos.<name>…`);
+    /// read through [`Config::repo`].
+    pub repos: BTreeMap<String, Result<RepoConfig, String>>,
 }
 
 pub const DEFAULT_INTENTS_PATH: &str = "~/.local/share/towercab/intents";
@@ -94,9 +99,8 @@ impl Config {
             None => BTreeMap::new(),
             Some(toml::Value::Table(t)) => t
                 .iter()
-                .map(|(name, v)| Ok((name.clone(), repo(name, v)?)))
-                .collect::<Result<_, String>>()
-                .map_err(|e| err(&e))?,
+                .map(|(name, v)| (name.clone(), repo(name, v).map_err(|e| err(&e))))
+                .collect(),
             Some(_) => return Err(err("repos must be a table")),
         };
         Ok(Config {
@@ -109,16 +113,26 @@ impl Config {
             repos,
         })
     }
+
+    /// `[repos.<name>]`: absent → `unknown repo <name>`; a bad table → its error.
+    pub fn repo(&self, name: &str) -> Result<&RepoConfig, String> {
+        match self.repos.get(name) {
+            None => Err(format!("unknown repo {name}")),
+            Some(r) => r.as_ref().map_err(Clone::clone),
+        }
+    }
 }
 
-/// A branch name Towercab accepts as `base`: `[A-Za-z0-9._/-]+`, not starting with `-` or `/`,
-/// no `..`, `//` or trailing `/`.
+/// A branch name Towercab accepts as `base` (within `git check-ref-format --branch`):
+/// `[A-Za-z0-9._/-]+`, not `HEAD`, not starting with `-` or ending with `.`, no `..`; each
+/// `/`-separated component non-empty, not starting with `.` or ending with `.lock`.
 pub fn is_branch(s: &str) -> bool {
-    !s.is_empty()
-        && !s.starts_with(['-', '/'])
-        && !s.ends_with('/')
+    s != "HEAD"
+        && !s.starts_with('-')
+        && !s.ends_with('.')
         && !s.contains("..")
-        && !s.contains("//")
+        && s.split('/')
+            .all(|c| !c.is_empty() && !c.starts_with('.') && !c.ends_with(".lock"))
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
 }
@@ -129,8 +143,8 @@ pub fn is_github(s: &str) -> bool {
         .is_some_and(|(o, n)| is_repo(o) && is_repo(n))
 }
 
-/// `[repos.<name>]`; errors read `repos.<name>[.<key>] …`. Other keys are ignored (the Python
-/// version's `verify`, `remote`).
+/// `[repos.<name>]`; errors read `repos.<name>[.<key>] …` (a bad name shown as a quoted TOML
+/// key). Other keys are ignored (the Python version's `verify`, `remote`).
 fn repo(name: &str, value: &toml::Value) -> Result<RepoConfig, String> {
     if !is_repo(name) {
         return Err(format!(
@@ -162,6 +176,9 @@ fn repo(name: &str, value: &toml::Value) -> Result<RepoConfig, String> {
         return Err(format!("{at}.path is empty"));
     }
     let path = expand(path).map_err(|e| format!("{at}.path: {e}"))?;
+    if !path.is_absolute() {
+        return Err(format!("{at}.path must be absolute or start with ~/"));
+    }
     let base = string("base")?.unwrap_or("main");
     if !is_branch(base) {
         return Err(format!("{at}.base must be a branch name ([A-Za-z0-9._/-])"));

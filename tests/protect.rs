@@ -250,14 +250,14 @@ fn config(remote: Option<&str>, repos: &[(&str, &str, &str)]) -> Config {
             .map(|(name, github, base)| {
                 (
                     name.to_string(),
-                    RepoConfig {
+                    Ok(RepoConfig {
                         name: name.to_string(),
                         github: github.to_string(),
                         path: PathBuf::from("/c").join(name),
                         base: base.to_string(),
                         workers: 1,
                         bash: vec![],
-                    },
+                    }),
                 )
             })
             .collect::<BTreeMap<_, _>>(),
@@ -506,9 +506,11 @@ fn test_protect_command() {
         fail(&["protect", "intents"]),
         "towercab: gh api repos/me/intents/rulesets?includes_parents=false&per_page=100: fake gh: unexpected call 5\n"
     );
+    // The Python version's `[repos.<name>]` (no `github`) fails only `protect <name>`.
     std::fs::write(
         &cfg,
-        "[intents]\nremote = \"r\"\n[repos.web]\npath = \"/srv/web\"\n",
+        "[intents]\nremote = \"git@github.com:me/intents.git\"\n\n[repos.web]\npath = \"/srv/web\"\n\
+         verify = [\"make test\"]\nbash = [\"make *\"]\n",
     )
     .unwrap();
     assert_eq!(
@@ -517,6 +519,17 @@ fn test_protect_command() {
             "towercab: config: {}: repos.web.github is required\n",
             cfg.display()
         )
+    );
+    let fake = FakeGh::new(&tmp.path().join("gh2"), &[ok("[]"), ok(r#"{"id": 6}"#)]);
+    let out = towercab_bin(&cfg, fake.bin.parent().unwrap(), &["protect", "intents"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "me/intents: created ruleset towercab 6 on refs/heads/main\nrules: non_fast_forward, deletion\n"
     );
     let out = towercab_bin(&cfg, bin_dir, &["protect"]);
     assert_eq!(out.status.code(), Some(2), "a missing argument");

@@ -37,8 +37,8 @@ fn test_repos_config() {
         "by name"
     );
     assert_eq!(
-        c.repos["towercab"],
-        RepoConfig {
+        c.repo("towercab").unwrap(),
+        &RepoConfig {
             name: "towercab".into(),
             github: "Me/towercab".into(),
             path: home.join("src/towercab"),
@@ -49,8 +49,8 @@ fn test_repos_config() {
     );
     // Defaults: base main, workers 1, bash [].
     assert_eq!(
-        c.repos["web"],
-        RepoConfig {
+        c.repo("web").unwrap(),
+        &RepoConfig {
             name: "web".into(),
             github: "me/web.site".into(),
             path: PathBuf::from("/srv/web"),
@@ -61,10 +61,32 @@ fn test_repos_config() {
     );
     // No [repos] at all is fine.
     assert!(load(&file, intents).unwrap().repos.is_empty());
+    assert_eq!(c.repo("nope"), Err("unknown repo nope".into()));
 
+    // A bad table fails only that repo, when it is used: the Python version's `[repos.<name>]`
+    // (no `github`) loads, and the other repos stay usable.
     let shown = file.display().to_string();
+    let c = load(
+        &file,
+        &format!(
+            "{intents}[repos.towercab]\npath = \"~/src/towercab\"\nbase = \"main\"\n\
+             verify = [\"python3 -m unittest\"]\nbash = [\"python3 *\"]\n\n\
+             [repos.web]\ngithub = \"me/web\"\npath = \"/srv/web\"\n"
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        c.repo("towercab"),
+        Err(format!(
+            "config: {shown}: repos.towercab.github is required"
+        ))
+    );
+    assert_eq!(c.repo("web").unwrap().github, "me/web");
+
     let err = |repo: &str| {
-        load(&file, &format!("{intents}{repo}"))
+        let c = load(&file, &format!("{intents}{repo}")).expect("a bad repo still loads");
+        let name = c.repos.keys().next().expect("one repo").clone();
+        c.repo(&name)
             .unwrap_err()
             .strip_prefix(&format!("config: {shown}: "))
             .unwrap_or_else(|| panic!("{repo}: error names the file"))
@@ -107,11 +129,20 @@ fn test_repos_config() {
             "[repos.\"a b\"]\ngithub = \"me/x\"\npath = \"/x\"\n",
             "repos.\"a b\" is not a repo name ([A-Za-z0-9._-], no leading -)",
         ),
+        (
+            "[repos.x]\ngithub = \"me/x\"\npath = \"src/x\"\n",
+            "repos.x.path must be absolute or start with ~/",
+        ),
+        (
+            "[repos.x]\ngithub = \"me/x\"\npath = \"~x/src\"\n",
+            "repos.x.path must be absolute or start with ~/",
+        ),
     ] {
         assert_eq!(err(repo), want, "{repo}");
     }
     for base in [
-        "", "-x", "/main", "main/", "a..b", "a//b", "a b", "main~1", "a:b", "x\\y",
+        "", "-x", "/main", "main/", "a..b", "a//b", "a b", "main~1", "a:b", "x\\y", "HEAD",
+        "foo.lock", "a/b.lock", ".x", "a/.b", "main.",
     ] {
         assert_eq!(
             err(&format!("[repos.x]\n{ok}base = {base:?}\n")),
@@ -129,10 +160,15 @@ fn test_repos_config() {
     assert_eq!(
         load(&file, &format!("{intents}[repos.x]\n{ok}workers = 255\n"))
             .unwrap()
-            .repos["x"]
+            .repo("x")
+            .unwrap()
             .workers,
         255
     );
+    for base in ["release/1.x", "v1.2", "a.b/c_d-e", "HEADS", "x/HEAD"] {
+        let c = load(&file, &format!("{intents}[repos.x]\n{ok}base = {base:?}\n")).unwrap();
+        assert_eq!(c.repo("x").unwrap().base, base);
+    }
     for bash in ["\"ls*\"", "[\"\"]", "[\" \"]", "[1]", "[[\"a\"]]"] {
         assert_eq!(
             err(&format!("[repos.x]\n{ok}bash = {bash}\n")),
