@@ -733,6 +733,14 @@ fn test_store_interface() {
     assert!(
         matches!(Store::open(&config), Err(StoreError::Sync(m)) if m.starts_with("clone failed: "))
     );
+    // A remote that looks like an option is a path to git, never an option.
+    let marker = home.tmp.path().join("ran");
+    config.intents.remote = Some(format!("--upload-pack=touch {}", marker.display()));
+    assert!(matches!(
+        Store::open(&config),
+        Err(StoreError::Sync(m)) if m.starts_with("clone failed: ") && m.contains("'--upload-pack=touch ")
+    ));
+    assert!(!marker.exists());
     config.intents.remote = None;
     assert!(
         matches!(Store::open(&config), Err(StoreError::Refused(m)) if m.contains("does not exist"))
@@ -765,4 +773,67 @@ fn test_store_interface() {
         format!("towercab: add {}", got.id)
     );
     assert!(local.join("TODO.md").exists() && local.join("DONE.md").exists());
+}
+
+#[test]
+fn test_symlinks_never_followed() {
+    use std::os::unix::fs::symlink;
+    let home = Home::new(&[(
+        "intents/261020-0721-real/intent.md",
+        &intent_md("towercab", "", "Real"),
+    )]);
+    // Outside the checkout: what a committed symlink could lead Towercab to read or write.
+    let outside = home.tmp.path().join("outside");
+    let text = intent_md("towercab", "", "Outside");
+    common::write(&outside, "intent.md", &text);
+    let outside_md = outside.join("intent.md");
+    symlink(&outside, home.me.join("intents/261020-0800-link")).unwrap();
+    fs::create_dir_all(home.me.join("intents/261020-0900-file")).unwrap();
+    symlink(
+        &outside_md,
+        home.me.join("intents/261020-0900-file/intent.md"),
+    )
+    .unwrap();
+    git(&home.me, &["add", "-A"]);
+    git(&home.me, &["commit", "--quiet", "-m", "links"]);
+    git(&home.me, &["push", "--quiet", "origin", "HEAD:main"]);
+
+    let store = home.store();
+    let l = store.list().unwrap();
+    assert_eq!(ids(&l.open), ["261020-0721"]);
+    let bad: Vec<(&str, &str)> = l
+        .unreadable
+        .iter()
+        .map(|u| (u.path.as_str(), u.reason.as_str()))
+        .collect();
+    assert_eq!(
+        bad,
+        [
+            ("intents/261020-0800-link", "symlink"),
+            ("intents/261020-0900-file/intent.md", "symlink"),
+        ]
+    );
+    assert_eq!(
+        store.update("0900", "touch", |_| Ok(())).unwrap_err(),
+        StoreError::Refused("intents/261020-0900-file/intent.md: symlink".into())
+    );
+    store
+        .update("0721", "start", |i| {
+            i.set("stage", Value::Str("design".into()))
+        })
+        .unwrap();
+    assert_eq!(fs::read_to_string(&outside_md).unwrap(), text);
+
+    // A symlinked view is never read or written through.
+    git(&home.me, &["pull", "--quiet", "--rebase", "origin", "main"]);
+    fs::remove_file(home.me.join("DONE.md")).unwrap();
+    symlink(&outside_md, home.me.join("DONE.md")).unwrap();
+    git(&home.me, &["add", "-A"]);
+    git(&home.me, &["commit", "--quiet", "-m", "linked view"]);
+    git(&home.me, &["push", "--quiet", "origin", "HEAD:main"]);
+    assert_eq!(
+        store.add(new("Through a link", None, None)).unwrap_err(),
+        StoreError::Refused("DONE.md: symlink".into())
+    );
+    assert_eq!(fs::read_to_string(&outside_md).unwrap(), text);
 }

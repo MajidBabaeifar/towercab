@@ -101,6 +101,34 @@ fn test_add_command() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert!(text(&out.stdout).contains("-no-scores/intent.md"));
 
+    // Run from a git hook (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE set for another repo):
+    // Towercab still writes to its own checkout and leaves the other repo alone.
+    let decoy = home.tmp.path().join("decoy");
+    std::fs::create_dir_all(&decoy).unwrap();
+    common::git(&decoy, &["init", "--quiet", "-b", "main"]);
+    let out = towercab(
+        &user_home,
+        &["--config", cfg_s, "add", "towercab: From a hook"],
+        &[
+            ("GIT_DIR", &decoy.join(".git")),
+            ("GIT_WORK_TREE", &decoy),
+            ("GIT_INDEX_FILE", &decoy.join(".git/index")),
+        ],
+    );
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(text(&out.stdout).contains("-from-a-hook/intent.md"));
+    assert!(home.log()[0].starts_with("towercab: add "));
+    assert!(
+        std::process::Command::new("git")
+            .args(["rev-parse", "--verify", "-q", "HEAD"])
+            .current_dir(&decoy)
+            .output()
+            .unwrap()
+            .stdout
+            .is_empty(),
+        "nothing committed in the other repo"
+    );
+
     // Bad arguments → exit 2, nothing written.
     let head = home.head();
     for args in [

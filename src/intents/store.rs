@@ -30,12 +30,30 @@ pub fn old_format(file: &str) -> String {
 }
 
 /// `rel` under `root`; missing → `None`; any other error → `<rel>: <error>`.
+/// A symlink, never followed: a file through one may be outside the checkout.
 pub fn read_optional(root: &Path, rel: &str) -> Result<Option<String>, String> {
+    if symlink_in(root, rel) {
+        return Err(format!("{rel}: symlink"));
+    }
     match fs::read_to_string(root.join(rel)) {
         Ok(t) => Ok(Some(t)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("{rel}: {e}")),
     }
+}
+
+/// Whether some part of `rel` (relative to `root`) is a symlink; parts that don't exist aren't.
+pub fn symlink_in(root: &Path, rel: &str) -> bool {
+    let mut p = root.to_path_buf();
+    for part in Path::new(rel).components() {
+        p.push(part);
+        match fs::symlink_metadata(&p) {
+            Ok(m) if m.file_type().is_symlink() => return true,
+            Ok(_) => {}
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -289,6 +307,9 @@ impl Store {
             self.write_file(&format!("{}/intent.md", intent.dir), &intent.render())?;
             if finished && intent.dir.starts_with("intents/") {
                 let to = format!("done/{}-{}", intent.id, intent.slug);
+                if symlink_in(self.path(), &to) {
+                    return Err(StoreError::Refused(format!("{to}: symlink")));
+                }
                 fs::create_dir_all(self.path().join("done"))
                     .map_err(|e| StoreError::Refused(format!("done/: {e}")))?;
                 self.checkout
@@ -426,6 +447,9 @@ impl Store {
 
     /// Writes `rel` (relative to the checkout), creating folders.
     pub(crate) fn write_file(&self, rel: &str, text: &str) -> Result<(), StoreError> {
+        if symlink_in(self.path(), rel) {
+            return Err(StoreError::Refused(format!("{rel}: symlink")));
+        }
         let path = self.path().join(rel);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| StoreError::Refused(format!("{rel}: {e}")))?;
@@ -481,27 +505,40 @@ fn find_open(listing: &Listing, s: &str) -> Result<Intent, StoreError> {
 }
 
 /// Reads `intents/` and `done/` under `root`.
+/// Symlinks are never followed: one in place of `intents/`, `done/`, a folder or an
+/// `intent.md` is listed as can't read (`symlink`).
 pub fn scan(root: &Path) -> Listing {
+    let mut listing = Listing::default();
     let mut folders = Vec::new();
     for base in ["intents", "done"] {
+        if symlink_in(root, base) {
+            listing.unreadable.push(Unreadable {
+                path: base.into(),
+                reason: "symlink".into(),
+            });
+            continue;
+        }
         let Ok(entries) = fs::read_dir(root.join(base)) else {
             continue;
         };
-        let mut names: Vec<String> = entries
+        // `file_type` doesn't follow symlinks.
+        let mut names: Vec<(String, bool)> = entries
             .filter_map(Result::ok)
-            .filter(|e| e.path().is_dir())
-            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter_map(|e| {
+                let t = e.file_type().ok()?;
+                let name = e.file_name().to_string_lossy().into_owned();
+                (t.is_dir() || t.is_symlink()).then_some((name, t.is_symlink()))
+            })
             .collect();
         names.sort();
-        folders.extend(names.into_iter().map(|n| (base, n)));
+        folders.extend(names.into_iter().map(|(n, link)| (base, n, link)));
     }
     let mut count: BTreeMap<String, usize> = BTreeMap::new();
-    for (_, name) in &folders {
+    for (_, name, _) in &folders {
         if let Some(id) = id::dir_id(name) {
             *count.entry(id).or_default() += 1;
         }
     }
-    let mut listing = Listing::default();
     match read_optional(root, LEGACY) {
         Ok(text) => listing.legacy = text.unwrap_or_default(),
         Err(e) => listing.unreadable.push(Unreadable {
@@ -509,7 +546,7 @@ pub fn scan(root: &Path) -> Listing {
             reason: e.trim_start_matches(&format!("{LEGACY}: ")).to_string(),
         }),
     }
-    for (base, name) in folders {
+    for (base, name, link) in folders {
         let dir = format!("{base}/{name}");
         let mut bad = |path: String, reason: &str| {
             listing.unreadable.push(Unreadable {
@@ -517,6 +554,10 @@ pub fn scan(root: &Path) -> Listing {
                 reason: reason.to_string(),
             })
         };
+        if link {
+            bad(dir, "symlink");
+            continue;
+        }
         let Some((id, slug)) = split_dir(&name) else {
             bad(dir, "not an <id>-<slug> folder");
             continue;
@@ -526,6 +567,10 @@ pub fn scan(root: &Path) -> Listing {
             continue;
         }
         let file = format!("{dir}/intent.md");
+        if symlink_in(root, &file) {
+            bad(file, "symlink");
+            continue;
+        }
         let text = match fs::read(root.join(&file)) {
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(t) => t,

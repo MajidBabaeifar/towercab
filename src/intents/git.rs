@@ -1,8 +1,14 @@
 //! Towercab's checkout of the intent home, through the `git` CLI (INT-10).
+//!
+//! Every call runs in an environment of its own: the caller's `GIT_DIR`, `GIT_WORK_TREE`,
+//! `GIT_INDEX_FILE` (set inside a git hook or `rebase --exec`) never point it elsewhere, and
+//! nothing prompts (`GIT_TERMINAL_PROMPT=0`; ssh `BatchMode=yes` unless I configured my own
+//! ssh command). No timeouts here: the loop bounds its calls (LOOP-10).
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::LazyLock;
 
 /// The generated views: a rebase conflict in them is resolved by taking `main`'s side, since
 /// the next write regenerates them (INT-10).
@@ -17,6 +23,46 @@ const GIT_CONFIG: [&str; 6] = [
     "-c",
     "commit.gpgsign=false",
 ];
+
+/// Repository-selecting variables a caller's environment may carry.
+const REPO_ENV: [&str; 7] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+];
+
+/// No ssh command of mine (`GIT_SSH_COMMAND`, `GIT_SSH`, `core.sshCommand`): use batch mode.
+static SSH_BATCH: LazyLock<bool> = LazyLock::new(|| {
+    let set = |v: &str| std::env::var_os(v).is_some_and(|x| !x.is_empty());
+    if set("GIT_SSH_COMMAND") || set("GIT_SSH") {
+        return false;
+    }
+    let mut c = Command::new("git");
+    for v in REPO_ENV {
+        c.env_remove(v);
+    }
+    !c.args(["config", "--get", "core.sshCommand"])
+        .output()
+        .is_ok_and(|o| o.status.success())
+});
+
+/// `git` with Towercab's identity and its own environment (module doc).
+fn git_command() -> Command {
+    let mut c = Command::new("git");
+    c.args(GIT_CONFIG);
+    for v in REPO_ENV {
+        c.env_remove(v);
+    }
+    c.env("GIT_TERMINAL_PROMPT", "0").env("GIT_EDITOR", "true");
+    if *SSH_BATCH {
+        c.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
+    }
+    c
+}
 
 /// A git working tree on `main`; `origin` = it has an `origin` remote to pull from and push to.
 #[derive(Debug, Clone)]
@@ -100,11 +146,9 @@ impl Checkout {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("clone failed: {e}"))?;
         }
-        let out = Command::new("git")
-            .args(GIT_CONFIG)
-            .args(["clone", "--quiet", remote])
+        let out = git_command()
+            .args(["clone", "--quiet", "--", remote])
             .arg(path)
-            .env("GIT_TERMINAL_PROMPT", "0")
             .output()
             .map_err(|e| format!("clone failed: git: {e}"))?;
         if !out.status.success() {
@@ -118,12 +162,9 @@ impl Checkout {
 
     /// Runs `git <args>` in the checkout; stdout on success, stderr (or stdout) on failure.
     pub fn git(&self, args: &[&str]) -> Result<String, String> {
-        let out = Command::new("git")
-            .args(GIT_CONFIG)
+        let out = git_command()
             .args(args)
             .current_dir(&self.path)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("GIT_EDITOR", "true")
             .output()
             .map_err(|e| format!("git: {e}"))?;
         if out.status.success() {
