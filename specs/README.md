@@ -12,6 +12,8 @@ not ahead of it.
 
 Short but technical: interfaces, fields, formulas, limits. ~30 lines per spec.
 `Draft` = agreed, not built; `Verified by` then names the planned check.
+Status line: `Live: <IDs>` lists the built rows (comma-separated, ranges as `INT-9..13`, up to the next ` · `);
+a bare `Live` = every row; otherwise none. Each live row's `test_*` names must exist as `fn` (`tests/spec_refs.rs`, [PIP-12](pipeline.md)).
 
 | Spec | Prefix | Covers |
 |---|---|---|
