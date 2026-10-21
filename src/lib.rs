@@ -4,6 +4,8 @@
 
 pub mod cli;
 pub mod config;
+pub mod db;
+pub mod home;
 pub mod intents;
 pub mod priority;
 pub mod repo;
