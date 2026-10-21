@@ -108,6 +108,8 @@ fn test_add_command() {
         vec!["add", ": no repo"],
         vec!["add", "towercab: "],
         vec!["add", "bad repo!: title"],
+        vec!["add", "..: title"],
+        vec!["add", "--", "-rf: title"],
         vec!["add", "towercab: x", "u6"],
         vec!["add", "towercab: x", "u3", "u4"],
         vec!["add", "towercab: x", "q3"],

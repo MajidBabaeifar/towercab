@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 use crate::config::Config;
+use crate::intents::intent::is_repo;
 use crate::intents::migrate::migrate;
 use crate::intents::store::now;
 use crate::intents::{NewIntent, Store};
@@ -89,11 +90,7 @@ pub fn parse_add(intent: &str, scores: &[String]) -> Result<NewIntent, String> {
     let usage = || format!("want \"<repo>: <title>\", got {intent:?}");
     let (repo, title) = intent.split_once(':').ok_or_else(usage)?;
     let (repo, title) = (repo.trim(), title.trim());
-    let repo_ok = !repo.is_empty()
-        && repo
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
-    if !repo_ok || title.is_empty() || title.contains(['\n', '\r']) {
+    if !is_repo(repo) || title.is_empty() || title.contains(['\n', '\r']) {
         return Err(usage());
     }
     let mut new = NewIntent {

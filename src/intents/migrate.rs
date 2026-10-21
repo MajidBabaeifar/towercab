@@ -8,14 +8,13 @@ use chrono::{DateTime, FixedOffset};
 use regex::Regex;
 
 use super::id::{self, is_id, new_id};
-use super::intent::{Intent, Value, format_value};
+use super::intent::{Intent, Value, format_value, is_repo};
 use super::store::{Store, StoreError, legacy_ids};
 use super::views::is_generated;
 
 static TASK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^- \[([ ~!xX])\] (.+)$").unwrap());
 static CONT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^  ([a-z][a-z ]*): (.*)$").unwrap());
 static SCORE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([uia])([1-5])$").unwrap());
-static REPO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([a-z0-9][a-z0-9._-]*):$").unwrap());
 static MODEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^@([\w.-]+)$").unwrap());
 static REVIEW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^review:([\w.-]+)$").unwrap());
 
@@ -65,9 +64,10 @@ pub fn parse_line(line: &str) -> Result<OldTask, String> {
     }
     let repo = tokens
         .first()
-        .and_then(|t| REPO.captures(t))
+        .and_then(|t| t.strip_suffix(':'))
+        .filter(|r| is_repo(r))
         .ok_or("expected `<repo>:` after marker, id and scores")?;
-    task.repo = repo[1].to_string();
+    task.repo = repo.to_string();
     tokens.remove(0);
     while let Some(last) = tokens.last() {
         if let Some(ids) = last.strip_prefix("after:").filter(|s| !s.is_empty()) {

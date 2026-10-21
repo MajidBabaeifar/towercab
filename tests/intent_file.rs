@@ -90,6 +90,10 @@ fn test_parse_intent() {
         (&["261020-0721".to_string()][..], "CRLF")
     );
 
+    // A UTF-8 BOM before the first `---` is kept.
+    let bom = Intent::parse("\u{feff}---\nrepo: x\n---\n# BOM\n").unwrap();
+    assert_eq!((bom.repo(), bom.title()), ("x", "BOM"));
+
     let bad = |fm: &str, body: &str| Intent::parse(&format!("---\n{fm}---\n{body}")).unwrap_err();
     let title = "\n# Intent: t\n";
     assert!(
@@ -106,14 +110,16 @@ fn test_parse_intent() {
     assert_eq!(bad("repo: x\nu: 6\n", title), "u must be an integer 1-5");
     assert_eq!(bad("repo: x\ni: high\n", title), "i must be an integer 1-5");
     assert_eq!(bad("repo: x\na: 2.5\n", title), "a must be an integer 1-5");
-    assert_eq!(
-        bad("repo: bad name!\n", title),
-        "repo must be a repo name [A-Za-z0-9._-]+"
-    );
-    assert_eq!(
-        bad("repo: 42\n", title),
-        "repo must be a repo name [A-Za-z0-9._-]+"
-    );
+    let bad_repo = "repo must be a repo name ([A-Za-z0-9._-], no leading -, not . or ..)";
+    for repo in ["bad name!", "42", "..", "\".\"", "-x", "a/b"] {
+        assert_eq!(bad(&format!("repo: {repo}\n"), title), bad_repo, "{repo}");
+    }
+    for repo in [".github", "pocket-notes", "a_b.c"] {
+        assert!(
+            Intent::parse(&format!("---\nrepo: {repo}\n---\n{title}")).is_ok(),
+            "{repo}"
+        );
+    }
     assert_eq!(
         bad("repo: x\nstage: shipping\n", title),
         "stage must be one of design, build, test, deploy, maintain, done, dropped"
@@ -140,7 +146,24 @@ fn test_parse_intent() {
     );
     assert_eq!(
         bad("repo: x\nafter: {a: 1}\n", title),
-        "after must be a list of strings"
+        "after must be a list of ids"
+    );
+    assert_eq!(
+        bad("repo: x\nafter: [nope]\n", title),
+        "after must be a list of ids"
+    );
+    assert_eq!(
+        bad("repo: x\nafter: nope\n", title),
+        "after must be a list of ids"
+    );
+    assert_eq!(
+        bad("repo: x\nunlock: CLAUDE.md\n", title),
+        "unlock must be a list of strings",
+        "one string is a list only for after"
+    );
+    assert_eq!(
+        bad("repo: x\nattempts: 4294967297\n", title),
+        "attempts must be an integer >= 1"
     );
     assert_eq!(
         bad("repo: x\nunlock: [1, 2]\n", title),
@@ -184,7 +207,14 @@ custom:\n  nested: {a: 1}\n\
 # Intent: Odd but valid\n\
 no trailing newline";
     let crlf = FULL.replace('\n', "\r\n");
-    for text in [FULL, odd, crlf.as_str(), "---\nrepo: x\n---\n# t"] {
+    let bom = format!("\u{feff}{crlf}");
+    for text in [
+        FULL,
+        odd,
+        crlf.as_str(),
+        bom.as_str(),
+        "---\nrepo: x\n---\n# t",
+    ] {
         let i = Intent::parse(text).unwrap();
         assert_eq!(i.render(), text);
         // Setting a value to what it already is leaves the bytes alone too.
@@ -238,10 +268,10 @@ fn test_changed_file_keeps_other_lines() {
     // A new key goes last, just before the closing `---`.
     let mut j = Intent::parse(FULL).unwrap();
     j.remove("retry").unwrap();
-    j.set("note_for_me", Value::Str("new".into())).unwrap();
+    j.set("retry", Value::Str("fresh".into())).unwrap();
     let want = FULL.replace("retry: fresh\n", "").replace(
         "finished: 2026-10-21T10:00:00+02:00\n---\n",
-        "finished: 2026-10-21T10:00:00+02:00\nnote_for_me: new\n---\n",
+        "finished: 2026-10-21T10:00:00+02:00\nretry: fresh\n---\n",
     );
     assert_eq!(j.render(), want);
 
@@ -250,12 +280,39 @@ fn test_changed_file_keeps_other_lines() {
     let rendered = j.render();
     let after: Vec<&str> = rendered.lines().collect();
     for line in &before {
-        if !line.starts_with("retry:") {
-            assert!(after.contains(line), "lost line {line:?}");
-        }
+        assert!(after.contains(line), "lost line {line:?}");
     }
     assert!(rendered.contains("owner: majid   # not a Towercab field: kept as written\n"));
     assert!(rendered.contains("\n# my own comment\n"));
+
+    // A key Towercab doesn't know is never written, not even to its current value.
+    for (key, v) in [
+        ("owner", Value::Str("majid".into())),
+        ("note_for_me", Value::Str("new".into())),
+        ("a: b", Value::Str("c".into())),
+    ] {
+        assert_eq!(
+            j.set(key, v).unwrap_err(),
+            format!("{key} is not a Towercab field")
+        );
+        assert_eq!(
+            j.remove(key).unwrap_err(),
+            format!("{key} is not a Towercab field")
+        );
+        assert_eq!(j.render(), rendered);
+    }
+
+    // CRLF files get CRLF lines; a new key too.
+    let crlf = FULL.replace('\n', "\r\n");
+    let mut c = Intent::parse(&crlf).unwrap();
+    c.set("stage", Value::Str("test".into())).unwrap();
+    c.remove("retry").unwrap();
+    c.set("retry", Value::Str("fresh".into())).unwrap();
+    assert_eq!(
+        c.render(),
+        want.replace("stage: build\n", "stage: test\n")
+            .replace('\n', "\r\n")
+    );
 }
 
 #[test]
@@ -320,6 +377,10 @@ finished: 2026-10-21T10:00:00+02:00\nafter: [261020-0721]\nunlock: [CLAUDE.md, \
         ("", "\"\""),
         (" padded", "\" padded\""),
         ("#hash", "\"#hash\""),
+        ("a\0b", "\"a\\x00b\""),
+        ("bell\u{7}", "\"bell\\x07\""),
+        ("del\u{7f}", "\"del\\x7f\""),
+        ("tab\there", "tab\there"),
     ] {
         i.set("waiting", Value::Str(s.into())).unwrap();
         assert!(

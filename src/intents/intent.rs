@@ -13,9 +13,21 @@ use chrono::{DateTime, FixedOffset};
 use regex::Regex;
 use yaml_rust2::{Yaml, YamlLoader};
 
+use super::id::is_id;
+
 static KEY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([A-Za-z_][A-Za-z0-9_-]*):(?:[ \t]|$)").unwrap());
-static REPO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9._-]+$").unwrap());
+
+/// A repo name: `[A-Za-z0-9._-]+`, not starting with `-`, not `.` or `..` (safe as a path
+/// part and as a `git`/`gh` argument). Used by `Intent::parse`, `towercab add` and `migrate`.
+pub fn is_repo(s: &str) -> bool {
+    !s.is_empty()
+        && s != "."
+        && s != ".."
+        && !s.starts_with('-')
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
 
 /// A front matter value as Towercab reads and writes it.
 #[derive(Debug, Clone, PartialEq)]
@@ -88,6 +100,7 @@ enum Kind {
     Repo,
     Score,
     Str,
+    After,
     List,
     Time,
     Stage,
@@ -102,7 +115,8 @@ fn kind(key: &str) -> Option<Kind> {
         "repo" => Kind::Repo,
         "u" | "i" | "a" => Kind::Score,
         "model" | "review" | "source" | "waiting" | "pr" | "retry" => Kind::Str,
-        "after" | "unlock" => Kind::List,
+        "after" => Kind::After,
+        "unlock" => Kind::List,
         "started" | "finished" => Kind::Time,
         "stage" => Kind::Stage,
         "cost" => Kind::Float,
@@ -112,12 +126,18 @@ fn kind(key: &str) -> Option<Kind> {
     })
 }
 
+/// The kind of a Towercab field; any other key can't be written (INT-2: kept verbatim).
+fn known(key: &str) -> Result<Kind, String> {
+    kind(key).ok_or_else(|| format!("{key} is not a Towercab field"))
+}
+
 /// What a known field must be, for the error message.
 fn describe(kind: Kind) -> String {
     match kind {
-        Kind::Repo => "a repo name [A-Za-z0-9._-]+".into(),
+        Kind::Repo => "a repo name ([A-Za-z0-9._-], no leading -, not . or ..)".into(),
         Kind::Score => "an integer 1-5".into(),
         Kind::Str => "a string".into(),
+        Kind::After => "a list of ids".into(),
         Kind::List => "a list of strings".into(),
         Kind::Time => "an RFC 3339 time with offset".into(),
         Kind::Stage => {
@@ -133,17 +153,19 @@ fn describe(kind: Kind) -> String {
 /// Type-checks a known field; the same rules for parse and `set`.
 fn check(key: &str, kind: Kind, value: Value) -> Result<Value, String> {
     let ok = match (kind, value) {
-        (Kind::Repo, Value::Str(s)) if REPO.is_match(&s) => Value::Str(s),
+        (Kind::Repo, Value::Str(s)) if is_repo(&s) => Value::Str(s),
         (Kind::Score, Value::Int(n)) if (1..=5).contains(&n) => Value::Int(n),
         (Kind::Str, Value::Str(s)) => Value::Str(s),
-        (Kind::List, Value::Str(s)) => Value::List(vec![s]),
+        // A single id counts as a one-item list (only for `after`).
+        (Kind::After, Value::Str(s)) if is_id(&s) => Value::List(vec![s]),
+        (Kind::After, Value::List(l)) if l.iter().all(|s| is_id(s)) => Value::List(l),
         (Kind::List, Value::List(l)) => Value::List(l),
         (Kind::Time, Value::Str(s)) if DateTime::parse_from_rfc3339(&s).is_ok() => Value::Str(s),
         (Kind::Stage, Value::Str(s)) if s.parse::<Stage>().is_ok() => Value::Str(s),
         (Kind::Float, Value::Float(f)) if f.is_finite() => Value::Float(f),
         (Kind::Float, Value::Int(n)) => Value::Float(n as f64),
         (Kind::Seconds, Value::Int(n)) if n >= 0 => Value::Int(n),
-        (Kind::Count, Value::Int(n)) if n >= 1 => Value::Int(n),
+        (Kind::Count, Value::Int(n)) if (1..=i64::from(u32::MAX)).contains(&n) => Value::Int(n),
         _ => return Err(format!("{key} must be {}", describe(kind))),
     };
     Ok(ok)
@@ -197,8 +219,9 @@ impl Intent {
     /// Parses an `intent.md`; the error is the reason shown under "Can't read" (INT-11).
     pub fn parse(text: &str) -> Result<Intent, String> {
         let mut lines = text.split_inclusive('\n');
+        // A UTF-8 BOM before the first `---` (some editors add one) is kept in `open`.
         let open = match lines.next() {
-            Some(l) if eol_stripped(l) == "---" => l.to_string(),
+            Some(l) if eol_stripped(l.trim_start_matches('\u{feff}')) == "---" => l.to_string(),
             _ => return Err("no front matter: the first line must be ---".into()),
         };
         let mut consumed = open.len();
@@ -299,20 +322,20 @@ impl Intent {
         out
     }
 
-    /// Sets a field: same type checks as parse; the key's lines become one `key: value` line in
-    /// place, a new key goes last. An unchanged value leaves the file untouched.
+    /// Sets a Towercab field (INT-2, INT-5): same type checks as parse; the key's lines become
+    /// one `key: value` line in place (with the file's line ending), a new key goes last. An
+    /// unchanged value leaves the file untouched; any other key is refused, never rewritten.
     pub fn set(&mut self, key: &str, value: Value) -> Result<(), String> {
-        if !KEY.is_match(&format!("{key}:")) {
-            return Err(format!("{key:?} is not a front matter key"));
-        }
-        let value = match kind(key) {
-            Some(k) => check(key, k, value)?,
-            None => value,
-        };
+        let value = check(key, known(key)?, value)?;
         if self.values.get(key) == Some(&value) {
             return Ok(());
         }
-        let line = format!("{key}: {}\n", format_value(&value));
+        let eol = if self.open.ends_with("\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        };
+        let line = format!("{key}: {}{eol}", format_value(&value));
         let mut next = self.clone();
         match next
             .segments
@@ -330,8 +353,9 @@ impl Intent {
         Ok(())
     }
 
-    /// Removes a field's lines; absent → nothing changes.
+    /// Removes a Towercab field's lines; absent → nothing changes; any other key is refused.
     pub fn remove(&mut self, key: &str) -> Result<(), String> {
+        known(key)?;
         let mut next = self.clone();
         next.segments.retain(|s| s.key.as_deref() != Some(key));
         if next.segments.len() == self.segments.len() {
@@ -485,7 +509,8 @@ pub fn format_value(value: &Value) -> String {
 }
 
 fn reads_back(doc: &str, want: impl Fn(&Yaml) -> bool) -> bool {
-    if doc.contains(['\n', '\r']) {
+    // Line breaks and control characters (YAML 1.2: not printable) are always quoted.
+    if doc.chars().any(|c| c.is_control() && c != '\t') {
         return false;
     }
     match YamlLoader::load_from_str(doc) {
@@ -504,6 +529,8 @@ fn quote(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
+            // C0, DEL and C1 are all below U+0100.
+            c if c.is_control() => out.push_str(&format!("\\x{:02x}", u32::from(c))),
             c => out.push(c),
         }
     }
