@@ -146,7 +146,8 @@ fn test_defaults() {
     let home = Home::new(&[("intents/261020-0721-bare/intent.md", &text)]);
     let store = home.store();
     let now = t("2026-10-21T12:00:00+02:00");
-    review::keep(&store, "0721", now).unwrap();
+    let seen = store.list().unwrap().open.remove(0);
+    review::keep(&store, &seen, now).unwrap();
     assert_eq!(
         home.remote_file("intents/261020-0721-bare/intent.md"),
         intent_md(
@@ -161,9 +162,10 @@ fn test_defaults() {
     );
     // A rescore writes only the scores given.
     let later = now + chrono::TimeDelta::days(REVIEW_DAYS);
+    let seen = store.list().unwrap().open.remove(0);
     let got = review::rescore(
         &store,
-        "0721",
+        &seen,
         Scores {
             u: Some(2),
             ..Scores::default()

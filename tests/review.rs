@@ -116,6 +116,14 @@ fn seed() -> Vec<(&'static str, String)> {
             "intents/261004-0900-parked-g/intent.md",
             intent_md("other-repo", "u: 1\ni: 1\n", "Parked \t G"),
         ),
+        (
+            "intents/261020-0910-after-f/intent.md",
+            intent_md(
+                "towercab",
+                "u: 4\ni: 5\nafter: [261003-0900]\nstarted: 2026-10-20T09:10:00+02:00\n",
+                "After F",
+            ),
+        ),
     ]
 }
 
@@ -174,7 +182,7 @@ fn test_review() {
     let home = home(&seeded);
     let store = home.store();
 
-    // B (stale), A, F, G (parked, never reviewed); C is new, D in flight, E reviewed lately.
+    // B (stale), A, F, G (parked, never reviewed); C, H are new, D in flight, E reviewed lately.
     let (r, out) = walk(&store, "x\nK\nr\nu5 i5\n d \nq\n");
     assert_eq!(r, Ok(tally(1, 1, 1, 1)));
     assert_eq!(
@@ -193,7 +201,7 @@ fn test_review() {
 
 [3/4] 261003-0900 towercab: Parked F · p4 u2 i1 · parked · never reviewed
   intents/261003-0900-parked-f/intent.md
-{PROMPT}dropped: done/261003-0900-parked-f
+{PROMPT}dropped: done/261003-0900-parked-f · blocks 261020-0910
 
 [4/4] 261004-0900 other-repo: Parked G · p3 u1 i1 · parked · never reviewed
   intents/261004-0900-parked-g/intent.md
@@ -228,9 +236,11 @@ kept 1, rescored 1, dropped 1, left 1
         )
     );
     let dropped = home.remote_file("done/261003-0900-parked-f/intent.md");
-    assert!(dropped.contains(&format!("stage: dropped\nreviewed: {NOW}\nfinished: ")));
+    assert!(dropped.contains(&format!(
+        "stage: dropped\nfinished: {NOW}\nreviewed: {NOW}\n"
+    )));
     for (path, text) in &seeded {
-        if ["fresh-c", "flight-d", "parked-e", "parked-g"]
+        if ["fresh-c", "flight-d", "parked-e", "parked-g", "after-f"]
             .iter()
             .any(|s| path.contains(s))
         {
@@ -262,9 +272,9 @@ kept 1, rescored 1, dropped 1, left 1
     // 30 days on (another offset): every queued intent is due again; the date shows.
     let later = t("2026-11-20T11:00:00+01:00");
     let (r, out) = walk_with(&store, &mut "Q\n".as_bytes(), later);
-    assert_eq!(r, Ok(tally(0, 0, 0, 5)));
+    assert_eq!(r, Ok(tally(0, 0, 0, 6)));
     assert!(out.starts_with(
-        "5 to review (parked, or not reviewed for 30 days)\n\n[1/5] 261001-0900 towercab: Parked A · p15 u5 i5 · next · reviewed 2026-10-21\n"
+        "6 to review (parked, or not reviewed for 30 days)\n\n[1/6] 261001-0900 towercab: Parked A · p15 u5 i5 · next · reviewed 2026-10-21\n"
     ), "{out}");
 
     // Picked by the loop mid-walk → refused, the walk goes on.
@@ -305,6 +315,88 @@ kept 1, rescored 1, dropped 1, left 1
         !home2
             .remote_file("intents/261001-0900-one/intent.md")
             .contains("reviewed")
+    );
+
+    // Changed since the listing (another review, my edit) → refused: the answer was given
+    // to what was shown.
+    let home5 = Home::new(&[
+        (
+            "intents/261001-0900-one/intent.md",
+            &intent_md("towercab", "u: 1\ni: 1\n", "One"),
+        ),
+        (
+            "intents/261002-0900-two/intent.md",
+            &intent_md("towercab", "u: 1\ni: 1\n", "Two"),
+        ),
+    ]);
+    let store5 = home5.store();
+    let one = intent_md(
+        "towercab",
+        "u: 1\ni: 1\nreviewed: 2026-10-21T11:59:00+02:00\n",
+        "One",
+    );
+    let two = intent_md("towercab", "u: 2\ni: 1\n", "Two");
+    let edited = || {
+        home5.push_mine(
+            &[
+                ("intents/261001-0900-one/intent.md", Some(&one)),
+                ("intents/261002-0900-two/intent.md", Some(&two)),
+            ],
+            "reviewed elsewhere; my edit",
+        )
+    };
+    let mut input = Hooked {
+        input: b"k\nr\nu5\n",
+        hook: Some(Box::new(edited)),
+    };
+    let (r, out) = walk_with(&store5, &mut input, now());
+    assert_eq!(r, Ok(tally(0, 0, 0, 2)));
+    assert!(
+        out.contains(&format!(
+            "{PROMPT}not changed: 261001-0900 changed meanwhile\n\n[2/2]"
+        )),
+        "{out}"
+    );
+    assert!(
+        out.ends_with(&format!(
+            "{PROMPT}scores (now u1 i1): not changed: 261002-0900 changed meanwhile\n\nkept 0, rescored 0, dropped 0, left 2\n"
+        )),
+        "{out}"
+    );
+    assert_eq!(home5.log()[0], "reviewed elsewhere; my edit");
+    assert_eq!(home5.remote_file("intents/261001-0900-one/intent.md"), one);
+    assert_eq!(home5.remote_file("intents/261002-0900-two/intent.md"), two);
+
+    // Intent text can't drive the terminal: control and bidi characters → U+FFFD. Input that
+    // isn't UTF-8 is an invalid answer; CRLF works.
+    let home6 = Home::new(&[(
+        "intents/261001-0900-evil/intent.md",
+        &intent_md(
+            "towercab",
+            "u: 1\ni: 1\n",
+            "Evil\x1b[2J \x1b]52;c;aGk=\x07 \u{9b}31m \u{202E}gnp.exe",
+        ),
+    )]);
+    let store6 = home6.store();
+    let (r, out) = walk_with(&store6, &mut &b"\xff\nk\r\n"[..], now());
+    assert_eq!(r, Ok(tally(1, 0, 0, 0)));
+    assert_eq!(
+        out,
+        format!(
+            "1 to review (parked, or not reviewed for 30 days)
+
+[1/1] 261001-0900 towercab: Evil\u{FFFD}[2J \u{FFFD}]52;c;aGk=\u{FFFD} \u{FFFD}31m \u{FFFD}gnp.exe · p3 u1 i1 · parked · never reviewed
+  intents/261001-0900-evil/intent.md
+{PROMPT}want k, r, d or q
+{PROMPT}kept
+
+kept 1, rescored 0, dropped 0, left 0
+"
+        )
+    );
+    assert_eq!(
+        review::shown("a\u{061C}b\u{200E}\u{200F}\u{202A}\u{2066}\u{2069}\u{7f}c\td\ne"),
+        "a\u{FFFD}b\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}c d e"
     );
 
     // A failed pull or push stops the walk: exit 1 from the CLI.
@@ -390,6 +482,7 @@ fn test_rescore_validates() {
     assert_eq!(home.head(), head, "nothing written");
 
     // Checked again by `Intent::set`: out-of-range scores never reach the file.
+    let seen = store.list().unwrap().open.remove(0);
     for (scores, err) in [
         (
             Scores {
@@ -408,7 +501,7 @@ fn test_rescore_validates() {
         ),
     ] {
         assert_eq!(
-            review::rescore(&store, "0900", scores, now()).unwrap_err(),
+            review::rescore(&store, &seen, scores, now()).unwrap_err(),
             StoreError::Refused(err.into())
         );
     }
@@ -448,18 +541,25 @@ fn test_drop() {
         ),
     ]);
     let store = home.store();
-    let got = review::drop(&store, "261001-0900", now()).unwrap();
+    let l = store.list().unwrap();
+    let seen = |id: &str| l.open.iter().find(|i| i.id == id).unwrap();
+    let got = review::drop_intent(&store, seen("261001-0900"), now()).unwrap();
     assert_eq!(got.dir, "done/261001-0900-drop-me");
     assert_eq!(got.stage(), Some(Stage::Dropped));
     assert_eq!(got.reviewed(), Some(now()));
-    assert!(got.finished().is_some(), "the store adds finished");
+    assert_eq!(got.finished(), Some(now()), "finished: the same now");
     assert_eq!(home.log()[0], "towercab: review drop 261001-0900");
 
     // Moved with `git mv`, never deleted.
     assert!(!home.remote_has("intents/261001-0900-drop-me"));
-    let file = home.remote_file("done/261001-0900-drop-me/intent.md");
-    assert!(file.starts_with("---\nrepo: towercab\nu: 1\ni: 1\nstage: dropped\n"));
-    assert!(file.ends_with("---\n\n# Intent: Drop me\n"));
+    assert_eq!(
+        home.remote_file("done/261001-0900-drop-me/intent.md"),
+        intent_md(
+            "towercab",
+            &format!("u: 1\ni: 1\nstage: dropped\nfinished: {NOW}\nreviewed: {NOW}\n"),
+            "Drop me"
+        )
+    );
     assert_eq!(
         home.remote_file("done/261001-0900-drop-me/plan.md"),
         "# Plan\n"
@@ -472,10 +572,9 @@ fn test_drop() {
         status.contains("intents/261001-0900-drop-me/plan.md\tdone/261001-0900-drop-me/plan.md"),
         "{status}"
     );
-    let date = got.finished().unwrap().format("%Y-%m-%d").to_string();
-    assert!(home.remote_file("DONE.md").contains(&format!(
-        "- {date} [261001-0900](done/261001-0900-drop-me/intent.md) towercab: Drop me · dropped\n"
-    )));
+    assert!(home.remote_file("DONE.md").contains(
+        "- 2026-10-21 [261001-0900](done/261001-0900-drop-me/intent.md) towercab: Drop me · dropped\n"
+    ));
     assert!(!home.remote_file("TODO.md").contains("Drop me"));
     let l = store.list().unwrap();
     assert!(l.done.iter().any(|i| i.id == "261001-0900"));
@@ -485,12 +584,12 @@ fn test_drop() {
     let head = home.head();
     for id in ["261002-0900", "261003-0900"] {
         assert_eq!(
-            review::drop(&store, id, now()).unwrap_err(),
+            review::drop_intent(&store, seen(id), now()).unwrap_err(),
             StoreError::Refused(format!("{id} is no longer queued"))
         );
     }
     assert_eq!(
-        review::drop(&store, "261001-0900", now()).unwrap_err(),
+        review::drop_intent(&store, seen("261001-0900"), now()).unwrap_err(),
         StoreError::Refused("no open intent matches 261001-0900".into()),
         "already dropped"
     );
