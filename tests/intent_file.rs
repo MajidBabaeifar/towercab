@@ -350,6 +350,8 @@ fn test_lifecycle_fields() {
     i.set("attempts", Value::Int(1)).unwrap();
     i.set("finished", Value::Str("2026-10-21T10:00:00+02:00".into()))
         .unwrap();
+    i.set("reviewed", Value::Str("2026-10-21T09:00:00+02:00".into()))
+        .unwrap();
     i.set("after", Value::Str("261020-0721".into())).unwrap();
     i.set(
         "unlock",
@@ -360,11 +362,15 @@ fn test_lifecycle_fields() {
         i.render(),
         "---\nrepo: towercab\nu: 4\ni: 5\nstage: deploy\nwaiting: review and merge PR\n\
 pr: https://github.com/o/towercab/pull/7\ncost: 3.46\nagent_time: 86\nattempts: 1\n\
-finished: 2026-10-21T10:00:00+02:00\nafter: [261020-0721]\nunlock: [CLAUDE.md, \"**/x\", \"a, b\"]\n\
+finished: 2026-10-21T10:00:00+02:00\nreviewed: 2026-10-21T09:00:00+02:00\nafter: [261020-0721]\nunlock: [CLAUDE.md, \"**/x\", \"a, b\"]\n\
 ---\n\n# Intent: Lifecycle\n"
     );
     assert_eq!(i.unlock(), ["CLAUDE.md", "**/x", "a, b"]);
     assert_eq!(i.cost(), Some(3.46));
+    assert_eq!(
+        i.reviewed().map(|t| t.to_rfc3339()),
+        Some("2026-10-21T09:00:00+02:00".into())
+    );
 
     // Strings YAML would misread are double-quoted, with escapes.
     for (s, written) in [
@@ -399,6 +405,7 @@ finished: 2026-10-21T10:00:00+02:00\nafter: [261020-0721]\nunlock: [CLAUDE.md, \
         ("stage", Value::Str("bogus".into())),
         ("attempts", Value::Int(0)),
         ("finished", Value::Str("today".into())),
+        ("reviewed", Value::Str("2026-10-21".into())),
         ("after", Value::Int(3)),
         ("repo", Value::Str("no spaces".into())),
         ("bad key", Value::Int(1)),
