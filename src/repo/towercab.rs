@@ -126,10 +126,7 @@ impl Towercab {
                 return Err(format!("line {n}: {key} outside front matter"));
             }
         }
-        let [live, release, rollback] = fences(&items, &["live", "release", "rollback"])?[..]
-        else {
-            unreachable!("three names")
-        };
+        let [live, release, rollback] = fences(&items, ["live", "release", "rollback"])?;
         t.live = live.map(parse_live).transpose()?;
         t.release = release.map(parse_release).transpose()?;
         t.rollback = rollback.map(parse_rollback).transpose()?;
@@ -141,8 +138,8 @@ impl Towercab {
 fn front_matter(lines: &[&str], t: &mut Towercab) -> Result<(), String> {
     let mut seen: Vec<&str> = Vec::new();
     for line in lines {
-        if let Some(c) = KEY.captures(line) {
-            let key = c.get(1).unwrap().as_str();
+        if let Some(key) = KEY.captures(line).and_then(|c| c.get(1)) {
+            let key = key.as_str();
             if seen.contains(&key) {
                 return Err(format!("{key} twice"));
             }
@@ -239,9 +236,7 @@ fn required<'a>(block: &str, key: &str, v: Option<&'a str>) -> Result<&'a str, S
 }
 
 fn parse_live(f: &Fence) -> Result<Live, String> {
-    let [d, t, e] = key_lines(f, &["deploy", "timeout", "e2e"])?[..] else {
-        unreachable!("three keys")
-    };
+    let [d, t, e] = key_lines(f, ["deploy", "timeout", "e2e"])?;
     Ok(Live {
         deploy: deploy("live", required("live", "deploy", d)?)?,
         timeout_min: timeout("live", t)?,
@@ -250,9 +245,7 @@ fn parse_live(f: &Fence) -> Result<Live, String> {
 }
 
 fn parse_release(f: &Fence) -> Result<Release, String> {
-    let [c, d, t, e] = key_lines(f, &["command", "deploy", "timeout", "e2e"])?[..] else {
-        unreachable!("four keys")
-    };
+    let [c, d, t, e] = key_lines(f, ["command", "deploy", "timeout", "e2e"])?;
     Ok(Release {
         command: required("release", "command", c)?.to_string(),
         deploy: deploy("release", required("release", "deploy", d)?)?,
@@ -262,9 +255,7 @@ fn parse_release(f: &Fence) -> Result<Release, String> {
 }
 
 fn parse_rollback(f: &Fence) -> Result<Rollback, String> {
-    let [c, r] = key_lines(f, &["command", "rehearse"])?[..] else {
-        unreachable!("two keys")
-    };
+    let [c, r] = key_lines(f, ["command", "rehearse"])?;
     Ok(Rollback {
         command: required("rollback", "command", c)?.to_string(),
         rehearse: required("rollback", "rehearse", r)?.to_string(),

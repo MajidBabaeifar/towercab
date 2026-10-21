@@ -106,11 +106,11 @@ fn is_heading(line: &str) -> bool {
 /// Per `known` title (ASCII case-insensitive), the items of its section (after the heading,
 /// up to the next `# ` or `## ` line outside fences), if present. A known title twice →
 /// `line <n>: two ## <title> sections`.
-pub fn sections<'a, 'b>(
+pub fn sections<'a, 'b, const N: usize>(
     items: &'b [Item<'a>],
-    known: &[&str],
-) -> Result<Vec<Option<&'b [Item<'a>]>>, String> {
-    let mut found: Vec<Option<&'b [Item<'a>]>> = vec![None; known.len()];
+    known: [&str; N],
+) -> Result<[Option<&'b [Item<'a>]>; N], String> {
+    let mut found: [Option<&'b [Item<'a>]>; N] = [None; N];
     let mut i = 0;
     while i < items.len() {
         let Item::Line(n, line) = items[i] else {
@@ -139,11 +139,11 @@ pub fn sections<'a, 'b>(
 
 /// Per name in `names`, its block with a non-empty body, if any. Two such blocks of a name →
 /// `line <n>: two ```<name> blocks`.
-pub fn fences<'a, 'b>(
+pub fn fences<'a, 'b, const N: usize>(
     items: &'b [Item<'a>],
-    names: &[&str],
-) -> Result<Vec<Option<&'b Fence<'a>>>, String> {
-    let mut found: Vec<Option<&'b Fence<'a>>> = vec![None; names.len()];
+    names: [&str; N],
+) -> Result<[Option<&'b Fence<'a>>; N], String> {
+    let mut found: [Option<&'b Fence<'a>>; N] = [None; N];
     for item in items {
         let Item::Fence(f) = item else { continue };
         let Some(k) = names.iter().position(|n| *n == f.name) else {
@@ -204,9 +204,12 @@ pub fn text(items: &[Item]) -> String {
 /// A block of `<key>: <value>` lines, split at the first `:`, both trimmed → per key in `keys`
 /// its value, if given. Errors `<block>: <reason>`: no `:`, an unknown key, an empty value or
 /// a key twice.
-pub fn key_lines<'a>(fence: &Fence<'a>, keys: &[&str]) -> Result<Vec<Option<&'a str>>, String> {
+pub fn key_lines<'a, const N: usize>(
+    fence: &Fence<'a>,
+    keys: [&str; N],
+) -> Result<[Option<&'a str>; N], String> {
     let block = fence.name;
-    let mut values: Vec<Option<&'a str>> = vec![None; keys.len()];
+    let mut values: [Option<&'a str>; N] = [None; N];
     for line in &fence.body {
         let Some((key, value)) = line.split_once(':') else {
             return Err(format!("{block}: want \"<key>: <value>\", got \"{line}\""));

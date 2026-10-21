@@ -45,7 +45,7 @@ no green run on <base>: no required status checks
 | File | Interface |
 |---|---|
 | `src/repo/mod.rs` | `RepoFiles { claude_md: String, verifying, review, towercab }`; `RepoError::{NoVerifyingBlock, Invalid(String), Git(String)}` (`Display` = the reason); `parse`, `load` (REPO-1). |
-| `src/repo/markdown.rs` | Line, fence, section, bullet and key-line readers (**Grammar**). |
+| `src/repo/markdown.rs` | Line, fence, section, bullet and key-line readers (**Grammar**); `sections`, `fences`, `key_lines` take `[&str; N]` and return `[Option<_>; N]`. |
 | `src/repo/verifying.rs` | `Verifying`, `Run`; `Verifying::parse(&str) -> Result<Verifying, RepoError>`. |
 | `src/repo/review.rs` | `Review` (`Default` = no file), `Pass`, `DEFAULT_PASSES: [(&str, &str); 3]` (name, one-line what), `DEFAULT_NIT_CAP = 5`; `Review::parse(&str) -> Result<Review, String>`. |
 | `src/repo/towercab.rs` | `Towercab { max_autonomy: u8, protected, tests: Vec<String>, live: Option<Live>, release: Option<Release>, rollback: Option<Rollback> }` (`Default` = no file), `Live`, `Deploy`, `Release`, `Rollback`, `DEFAULT_TESTS`, `DEFAULT_TIMEOUT_MIN = 15`; `Towercab::parse(&str) -> Result<Towercab, String>`. |

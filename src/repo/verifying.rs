@@ -40,18 +40,18 @@ impl Verifying {
     pub fn parse(text: &str) -> Result<Verifying, RepoError> {
         let invalid = |e: String| RepoError::Invalid(format!("CLAUDE.md: {e}"));
         let items = items(&lines(text), 1).map_err(invalid)?;
-        let Some(section) = sections(&items, &[SECTION]).map_err(invalid)?[0] else {
+        let [Some(section)] = sections(&items, [SECTION]).map_err(invalid)? else {
             return Err(RepoError::NoVerifyingBlock);
         };
-        let blocks = fences(section, &["setup", "checks", "run"]).map_err(invalid)?;
-        let run = blocks[2]
+        let [setup, checks, run] = fences(section, ["setup", "checks", "run"]).map_err(invalid)?;
+        let run = run
             .map(|f| parse_run(&f.body))
             .transpose()
             .map_err(invalid)?;
-        let checks = blocks[1].ok_or(RepoError::NoVerifyingBlock)?;
+        let checks = checks.ok_or(RepoError::NoVerifyingBlock)?;
         let owned = |body: &[&str]| body.iter().map(|l| l.to_string()).collect();
         Ok(Verifying {
-            setup: blocks[0].map(|f| owned(&f.body)).unwrap_or_default(),
+            setup: setup.map(|f| owned(&f.body)).unwrap_or_default(),
             checks: owned(&checks.body),
             run,
         })

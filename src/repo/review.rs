@@ -84,10 +84,7 @@ impl Review {
 
     fn read(file: &str) -> Result<Review, String> {
         let items = items(&lines(file), 1)?;
-        let [passes, important, cap, do_not_report, red_lines] = sections(&items, &SECTIONS)?[..]
-        else {
-            unreachable!("five titles")
-        };
+        let [passes, important, cap, do_not_report, red_lines] = sections(&items, SECTIONS)?;
         let passes = match passes.map(bullets).unwrap_or_default() {
             b if b.is_empty() => default_passes(),
             b => parse_passes(&b)?,
