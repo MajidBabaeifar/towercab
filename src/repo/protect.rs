@@ -191,7 +191,7 @@ pub fn find_ruleset(gh: &OsStr, github: &str) -> Result<Option<u64>, String> {
 }
 
 /// The job names (deduplicated, in order) of the last green `push` run on the base; `None`
-/// without one.
+/// without one. More jobs than one page (`total_count` > 100) → an error, never fewer checks.
 pub fn last_green_checks(gh: &OsStr, target: &Target) -> Result<Option<Vec<String>>, String> {
     let github = &target.github;
     let path = format!(
@@ -213,12 +213,19 @@ pub fn last_green_checks(gh: &OsStr, target: &Target) -> Result<Option<Vec<Strin
         .ok_or_else(|| unexpected(&path))?;
     let path = format!("repos/{github}/actions/runs/{id}/jobs?per_page=100");
     let jobs = gh_get(gh, &path)?;
-    let mut names: Vec<String> = Vec::new();
-    for job in jobs
+    let list = jobs
         .get("jobs")
         .and_then(Value::as_array)
-        .ok_or_else(|| unexpected(&path))?
+        .ok_or_else(|| unexpected(&path))?;
+    if jobs
+        .get("total_count")
+        .and_then(Value::as_u64)
+        .is_some_and(|n| n > list.len() as u64)
     {
+        return Err(format!("gh api {path}: more than 100 jobs"));
+    }
+    let mut names: Vec<String> = Vec::new();
+    for job in list {
         let name = job
             .get("name")
             .and_then(Value::as_str)

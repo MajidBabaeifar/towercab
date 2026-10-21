@@ -179,7 +179,7 @@ fn test_protect_payload() {
     );
 
     // gh failing or printing other JSON → `gh api <path>: <stderr, or unexpected output>`.
-    let cases: [(&[Response], String); 6] = [
+    let cases: [(&[Response], String); 7] = [
         (
             &[("", "HTTP 403: Must have admin rights to Repository.", 1)],
             format!("gh api {RULESETS}: HTTP 403: Must have admin rights to Repository."),
@@ -207,6 +207,15 @@ fn test_protect_payload() {
                 ok(r#"{"message": "Validation Failed"}"#),
             ],
             "gh api repos/me/web/rulesets: unexpected output".to_string(),
+        ),
+        // More jobs than one page: an error, never fewer required checks.
+        (
+            &[
+                ok("[]"),
+                ok(r#"{"workflow_runs": [{"id": 4}]}"#),
+                ok(r#"{"total_count": 101, "jobs": [{"name": "a"}]}"#),
+            ],
+            "gh api repos/me/web/actions/runs/4/jobs?per_page=100: more than 100 jobs".to_string(),
         ),
     ];
     for (i, (responses, want)) in cases.iter().enumerate() {
