@@ -367,6 +367,22 @@ finished: 2026-10-21T10:00:00+02:00\nreviewed: 2026-10-21T09:00:00+02:00\nafter:
     );
     assert_eq!(i.unlock(), ["CLAUDE.md", "**/x", "a, b"]);
     assert_eq!(i.cost(), Some(3.46));
+    // A lowered `a` and its reason (AUT-7).
+    let mut lowered = i.clone();
+    lowered.set("a", Value::Int(2)).unwrap();
+    lowered
+        .set("lower_why", Value::Str("touches auth".into()))
+        .unwrap();
+    assert!(
+        lowered
+            .render()
+            .ends_with("a: 2\nlower_why: touches auth\n---\n\n# Intent: Lifecycle\n")
+    );
+    assert_eq!(
+        (lowered.a(), lowered.lower_why()),
+        (Some(2), Some("touches auth"))
+    );
+    assert!(lowered.set("lower_why", Value::Int(1)).is_err());
     assert_eq!(
         i.reviewed().map(|t| t.to_rfc3339()),
         Some("2026-10-21T09:00:00+02:00".into())
