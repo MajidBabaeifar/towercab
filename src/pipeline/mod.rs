@@ -8,6 +8,7 @@ pub mod data;
 pub mod deploy;
 pub mod design;
 pub mod e2e;
+pub mod findings;
 pub mod gate;
 pub mod gh;
 pub mod git;

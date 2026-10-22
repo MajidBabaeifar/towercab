@@ -352,7 +352,10 @@ impl Review {
             }
             Err(why) => (false, vec![format!("review: {why}")], false),
         };
-        // Part 5 (PIP-36): `findings::record` of the review's findings goes here.
+        // PIP-36: the findings' rules, counted across PRs.
+        if let (Ok(r), Some(pr)) = (&result, m.pr) {
+            super::findings::record(cx.db.conn(), &m.repo, pr, m.id, r, cx.tick.unix())?;
+        }
         data.set(
             "review",
             json!({"head": m.head, "patch_id": pid, "result": if result.is_ok() { raw } else { Value::Null },

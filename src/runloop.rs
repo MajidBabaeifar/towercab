@@ -940,6 +940,7 @@ impl Loop {
                     .iter()
                     .map(|r| (format!("issues {}", r.name), drafts::poll_issues(cx, r)))
                     .collect();
+                out.push(("findings".into(), pipeline::findings::draft_due(cx)));
                 out.push(("drafts".into(), drafts::poll_drafts(cx)));
                 out
             })
