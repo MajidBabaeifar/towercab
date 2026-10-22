@@ -362,6 +362,10 @@ WantedBy=graphical-session.target
 - One `commands` path for the CLI and Telegram; with no loop running the CLI applies its own row, so `approve` never waits for a `run` that isn't coming.
 - Outbox `n` for pick-time waits is the condition (repo, `after` ids): a re-detection after a crash, or my continue without a fix, sends nothing new. A queued waiting message whose wait is over is dropped: stale asks aren't actionable.
 - Telegram and OTLP never open a fault: a dead chat can't carry its own alarm, and metrics never block (MET-13).
+- A step's fault is held (`missions.fault`) and closes only when that step succeeds; others' successes close only unheld faults (by their recheck): a repo whose token fails can't be reset every minute by another repo's reads and never reach `env_blocked`.
+- The preflight runs in the first pass, not in `Loop::open`: its faults carry the pass's clock, and a slow network check never delays taking the lock.
+- Woke = the wall clock ran ahead of the monotonic one (suspend stops only the latter): a pass slowed by a long call isn't a wake. A held mission (paused, waiting for my `resume`) doesn't keep the laptop awake.
+- A limit-hit run's run time counts toward its step's timeout (`step_secs`), the wait doesn't: the resumed run gets the rest.
 - `[agent].model` defaults to `opus` (the worker writes code; the review steps up from it, PIP-4); `[telegram].api_base` keeps the Python name; `[github].api_base` exists for the tests' fake server.
 - `fix repo files` added to the waits: REPO-1's `Invalid` needs one (repo.md Decisions), and a typo there must stop the intent, not default.
 - Crates: `rusqlite` (`bundled`), `ureq` (blocking HTTP, rustls), `rsa` + `sha2` + `base64` (RS256 JWT, pure Rust), `chrono-tz` (zones in limit texts), `uuid` (v4), `libc` (`killpg`), `signal-hook` (SIGTERM flag); dev `rand` for a test key generated at test time. No async.
