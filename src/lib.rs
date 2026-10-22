@@ -10,6 +10,7 @@ pub mod exes;
 pub mod handler;
 pub mod home;
 pub mod intents;
+pub mod machine;
 pub mod priority;
 pub mod repo;
 pub mod review;
