@@ -266,6 +266,12 @@ impl Config {
         }
     }
 
+    /// The GitHub App's private key: `app.pem` next to the config file
+    /// (`~/.config/towercab/app.pem`, LOOP-19).
+    pub fn app_key(&self) -> PathBuf {
+        self.file.parent().unwrap_or(Path::new(".")).join("app.pem")
+    }
+
     /// What `run`, `step`, `up` and `doctor` need beyond a loadable file: `[github]` `app_id`
     /// and `me`, and every `[repos]` table valid. Errors read like [`Config::load`]'s.
     pub fn check_loop(&self) -> Result<(), String> {

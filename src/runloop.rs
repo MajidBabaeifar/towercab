@@ -28,12 +28,13 @@ use crate::db::{Db, set_meta};
 use crate::env::{self, Fault};
 use crate::events::{self, GhPrs, PrSource};
 use crate::exes::Exes;
-use crate::github::{GhError, Identity};
+use crate::github::{Bot, GhError, Identity};
 use crate::handler::{
     ChildEnd, ChildSpec, Crashed, Ctx, Handler, Handlers, Outcome, Probe, Progress, StepError,
     update,
 };
 use crate::home::{Home, LoopLock};
+use crate::intents::git::AuthFn;
 use crate::intents::store::find_open;
 use crate::intents::{Intent, Listing, Store, Value as IValue};
 use crate::limits;
@@ -220,9 +221,13 @@ impl Loop {
             "running",
             &format!("{} {}", std::process::id(), now.wall.timestamp()),
         )?;
+        // The GitHub App (LOOP-19); its bot as last looked up.
+        let identity = Identity::from_config(&config, &exes);
+        if let Some(bot) = db.meta("bot")?.as_deref().and_then(Bot::from_meta) {
+            identity.seed_bot(bot);
+        }
         let prs = Box::new(GhPrs {
-            gh: exes.gh.clone(),
-            identity: Identity::none(),
+            identity: identity.clone(),
         });
         let mut lp = Loop {
             config,
@@ -233,7 +238,7 @@ impl Loop {
             db,
             unclean,
             prs,
-            identity: Identity::none(),
+            identity,
             probe: Probe::default(),
             telegram: None,
             target: None,
@@ -328,11 +333,17 @@ impl Loop {
         }
     }
 
+    /// The intent store, its network and commit calls as the App (LOOP-19).
     fn ensure_store(&mut self) {
         if self.store.is_some() {
             return;
         }
-        match Store::open(&self.config) {
+        let auth = self.identity.is_app().then(|| {
+            let id = self.identity.clone();
+            let url = self.config.intents.remote.clone().unwrap_or_default();
+            Box::new(move || id.auth_for_url(&url).map_err(|e| e.to_string())) as AuthFn
+        });
+        match Store::open_as(&self.config, auth) {
             Ok(s) => {
                 self.warned.remove("intents");
                 self.store = Some(s);
@@ -383,6 +394,7 @@ impl Loop {
             outbox::send_due(&self.db, tg, self.listing.as_ref(), tick.unix())?;
         }
         self.inhibit(tick)?;
+        self.save_bot()?;
         report.idle = report.picked.is_none() && self.idle(tick, decision.as_ref())?;
         report.target = self.target_state()?;
         Ok(report)
@@ -785,7 +797,7 @@ impl Loop {
         let moved = first
             || !co.origin
             || match (
-                co.git(&["ls-remote", "origin", "refs/heads/main"]),
+                co.git_as(&["ls-remote", "origin", "refs/heads/main"]),
                 co.git(&["rev-parse", "refs/remotes/origin/main"]),
             ) {
                 (Ok(remote), Ok(local)) => remote.split_whitespace().next() != Some(local.trim()),
@@ -956,6 +968,17 @@ impl Loop {
         }
         if wrote && let Some(s) = &self.store {
             self.listing = Some(s.scan());
+        }
+        Ok(())
+    }
+
+    /// The App's bot, once looked up, kept in `meta.bot` (LOOP-19).
+    fn save_bot(&mut self) -> Result<(), String> {
+        if let Some(bot) = self.identity.cached_bot() {
+            let meta = bot.meta();
+            if self.db.meta("bot")?.as_deref() != Some(meta.as_str()) {
+                self.db.set_meta("bot", &meta)?;
+            }
         }
         Ok(())
     }

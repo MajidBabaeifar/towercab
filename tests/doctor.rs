@@ -5,6 +5,7 @@ mod common;
 
 use std::path::Path;
 
+use common::app::{FakeGithub, key};
 use common::{exe, git, loop_config, output, towercab};
 
 /// A git repo at `dir` whose `origin` is `url`.
@@ -76,7 +77,8 @@ fn test_doctor() {
         out,
         format!(
             "config: {}\nhome: {}\ngit: {}\ngh: {}\nclaude: {}\ncargo: {}\nbwrap: {}\n\
-             systemd-inhibit: {}\nsystemctl: missing\ngithub app: not built yet: LOOP-19\n\
+             systemd-inhibit: {}\nsystemctl: missing\n\
+             github app: {}/app.pem: No such file or directory (os error 2)\n\
              api: ruleset: gh api repos/me/api/rulesets?includes_parents=false&per_page=100: \
              HTTP 404: Not Found\n\
              web: no towercab ruleset: towercab protect web\n\
@@ -90,15 +92,25 @@ fn test_doctor() {
             b("cargo"),
             b("bwrap"),
             b("systemd-inhibit"),
+            tmp.path().display(),
         )
     );
 
-    // No [telegram], no [repos]: said so; nothing to check.
-    let plain = loop_config(&tmp.path().join("plain"), "");
+    // No [telegram], no [repos]: said so; nothing to check. The App's key loads and GitHub
+    // knows its bot (LOOP-19).
+    let gh = FakeGithub::start(&[]);
+    let plain_dir = tmp.path().join("plain");
+    let plain = loop_config(&plain_dir, "");
+    let text = std::fs::read_to_string(&plain).unwrap().replace(
+        "[github]\n",
+        &format!("[github]\napi_base = \"{}\"\n", gh.http.url),
+    );
+    std::fs::write(&plain, text).unwrap();
+    key(&plain_dir.join("app.pem"), false);
     let (out, _, code) = doctor(&plain);
     assert_eq!(code, Some(0));
     assert!(
-        out.ends_with("github app: not built yet: LOOP-19\ntelegram: not configured\n"),
+        out.ends_with("github app: towercab[bot] 42\ntelegram: not configured\n"),
         "{out}"
     );
 

@@ -394,7 +394,7 @@ fn test_preflight() {
         fs::read_to_string(dir.join("calls"))
             .unwrap_or_default()
             .lines()
-            .filter(|l| !l.starts_with("git config"))
+            .filter(|l| !l.ends_with("config --get remote.origin.url"))
             .map(str::to_string)
             .collect()
     };

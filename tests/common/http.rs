@@ -14,6 +14,18 @@ pub struct Request {
     pub method: String,
     pub path: String,
     pub body: String,
+    /// (name lowercased, value), in order.
+    pub headers: Vec<(String, String)>,
+}
+
+impl Request {
+    /// The value of header `name` (any case).
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 type Handler = Box<dyn FnMut(&Request) -> (u16, String) + Send>;
@@ -33,6 +45,7 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
     let method = parts.next()?.to_string();
     let path = parts.next()?.to_string();
     let mut len = 0usize;
+    let mut headers = Vec::new();
     loop {
         let mut h = String::new();
         r.read_line(&mut h).ok()?;
@@ -40,10 +53,11 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
         if h.is_empty() {
             break;
         }
-        if let Some((k, v)) = h.split_once(':')
-            && k.eq_ignore_ascii_case("content-length")
-        {
-            len = v.trim().parse().ok()?;
+        if let Some((k, v)) = h.split_once(':') {
+            if k.eq_ignore_ascii_case("content-length") {
+                len = v.trim().parse().ok()?;
+            }
+            headers.push((k.trim().to_ascii_lowercase(), v.trim().to_string()));
         }
     }
     let mut body = vec![0u8; len];
@@ -52,6 +66,7 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
         method,
         path,
         body: String::from_utf8_lossy(&body).into_owned(),
+        headers,
     })
 }
 

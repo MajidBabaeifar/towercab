@@ -10,7 +10,7 @@ use std::path::Path;
 
 use chrono::{DateTime, FixedOffset, Local, SecondsFormat};
 
-use super::git::Checkout;
+use super::git::{AuthFn, Checkout};
 use super::id::{self, is_id, new_id, resolve, split_dir};
 use super::intent::{Intent, Stage, Value, format_value};
 use super::views;
@@ -200,16 +200,30 @@ impl Store {
     /// Opens `[intents].path`, cloning `[intents].remote` there when it is missing.
     /// Refuses a checkout on any branch but `main` (INT-4).
     pub fn open(config: &Config) -> Result<Store, StoreError> {
+        Store::open_as(config, None)
+    }
+
+    /// [`Store::open`] whose clone, fetches, commits and pushes act as `auth` returns (the
+    /// loop's: the GitHub App, LOOP-19).
+    pub fn open_as(config: &Config, mut auth: Option<AuthFn>) -> Result<Store, StoreError> {
         let path = &config.intents.path;
         let checkout = if path.exists() {
             Checkout::new(path).map_err(StoreError::Refused)?
         } else if let Some(remote) = &config.intents.remote {
-            Checkout::clone(remote, path).map_err(StoreError::Sync)?
+            let with = match auth.as_mut() {
+                Some(f) => f().map_err(StoreError::Sync)?,
+                None => Default::default(),
+            };
+            Checkout::clone_as(remote, path, &with).map_err(StoreError::Sync)?
         } else {
             return Err(StoreError::Refused(format!(
                 "intents: {} does not exist and [intents].remote is not set",
                 path.display()
             )));
+        };
+        let checkout = match auth {
+            Some(f) => checkout.with_auth(f),
+            None => checkout,
         };
         {
             let _lock = checkout.lock().map_err(StoreError::Refused)?;

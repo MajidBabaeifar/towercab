@@ -307,7 +307,12 @@ impl Handler for Pick {
     fn step(&mut self, cx: &mut Ctx<'_>, m: &Mission) -> Result<Progress, StepError> {
         let repo = cx.repo(m).map_err(StepError::Bug)?.clone();
         let git = cx.exes.git.clone();
-        checkout::ensure_clone(&git, &repo, None).map_err(|e| StepError::Env(Fault::Github, e))?;
+        let auth = cx
+            .identity
+            .auth_for_url(&checkout::origin_url(&git, &repo))
+            .map_err(|e| StepError::Env(Fault::Github, e.to_string()))?;
+        checkout::ensure_clone(&git, &repo, Some(&auth))
+            .map_err(|e| StepError::Env(Fault::Github, e))?;
         match repo::load(&repo.path, &repo.base) {
             Ok(_) => {}
             Err(RepoError::NoVerifyingBlock) => {

@@ -21,8 +21,7 @@ pub fn git(
     let failed = |e: String| format!("{}: {e}", dir.display());
     let mut cmd = git_command_for(git);
     if let Some(a) = auth {
-        cmd.args(&a.args);
-        cmd.envs(a.env.iter().map(|(k, v)| (k, v)));
+        a.apply(&mut cmd);
     }
     cmd.args(args).current_dir(dir);
     if let Some(parent) = std::path::absolute(dir)
@@ -42,6 +41,28 @@ pub fn git(
     } else {
         err
     }))
+}
+
+/// Where Towercab's clone of `repo` fetches from: its `origin` (`git config --get
+/// remote.origin.url`, as written: no `insteadOf`), else `https://github.com/<github>.git`,
+/// what [`ensure_clone`] clones. The App token is used only for a `https://github.com/` one.
+pub fn origin_url(exe: &OsStr, repo: &RepoConfig) -> String {
+    repo.path
+        .join(".git")
+        .exists()
+        .then(|| {
+            git(
+                exe,
+                &repo.path,
+                &["config", "--get", "remote.origin.url"],
+                None,
+            )
+            .ok()
+        })
+        .flatten()
+        .map(|u| u.trim().to_string())
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| format!("https://github.com/{}.git", repo.github))
 }
 
 /// Towercab's clone of `repo`: cloned from `https://github.com/<github>.git` when missing,

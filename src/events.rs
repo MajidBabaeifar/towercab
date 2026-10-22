@@ -1,8 +1,6 @@
 //! PR and intent events in every stage (LOOP-18). Level-triggered: each read re-derives at
 //! most one event from the PR (against `missions.head` and `feedback_seen`) or the intent.
 
-use std::ffi::OsString;
-
 use chrono::DateTime;
 use serde_json::Value;
 
@@ -40,9 +38,8 @@ pub trait PrSource {
 }
 
 /// `gh pr view <n> -R <github> --json state,mergedAt,mergeCommit,headRefOid,mergeable,comments,reviews`
-/// + `gh api repos/<github>/pulls/<n>/comments`.
+/// + `gh api repos/<github>/pulls/<n>/comments`, as `identity` (its `gh`; LOOP-19).
 pub struct GhPrs {
-    pub gh: OsString,
     pub identity: Identity,
 }
 
@@ -107,7 +104,7 @@ impl PrSource for GhPrs {
     fn read(&mut self, github: &str, pr: u64) -> Result<PrState, GhError> {
         let n = pr.to_string();
         let view = self.identity.gh(
-            &self.gh,
+            github,
             &[
                 "pr",
                 "view",
@@ -119,7 +116,7 @@ impl PrSource for GhPrs {
             ],
         )?;
         let rc = self.identity.gh(
-            &self.gh,
+            github,
             &["api", &format!("repos/{github}/pulls/{n}/comments")],
         )?;
         parse_pr(&view, &rc).map_err(GhError::Failed)

@@ -10,6 +10,7 @@ use tempfile::TempDir;
 use towercab::config::{Config, IntentsConfig};
 use towercab::intents::{Intent, Store};
 
+pub mod app;
 pub mod http;
 pub mod world;
 
@@ -356,4 +357,51 @@ pub fn loop_config(dir: &Path, extra: &str) -> PathBuf {
     )
     .unwrap();
     file
+}
+
+/// A `git` wrapper at `<dir>/git` for Towercab's `Exes::git`: `https://github.com/<o>/<n>.git`
+/// is the bare repo `<github>/<o>/<n>.git` (`url.insteadOf`), and each call's `GH_TOKEN` and
+/// arguments are logged to `<dir>/git.log` (`<GH_TOKEN or -> <args>`, one line per call).
+pub fn github_git(dir: &Path, github: &Path) -> PathBuf {
+    let real = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let real = String::from_utf8(real.stdout).unwrap().trim().to_string();
+    let path = dir.join("git");
+    exe(
+        &path,
+        &format!(
+            "echo \"${{GH_TOKEN:--}} $*\" >> '{log}'\nexec '{real}' -c 'url.{gh}/.insteadOf=https://github.com/' \"$@\"\n",
+            log = dir.join("git.log").display(),
+            gh = github.display(),
+        ),
+    );
+    path
+}
+
+/// A bare repo `<github>/<owner>/<name>.git` on `main` with one commit holding `files`.
+pub fn github_repo(github: &Path, repo: &str, files: &[(&str, &str)]) -> PathBuf {
+    let bare = github.join(format!("{repo}.git"));
+    fs::create_dir_all(&bare).unwrap();
+    git(&bare, &["init", "--quiet", "--bare", "-b", "main"]);
+    let work = github.join(format!("{repo}.work"));
+    git(
+        bare.parent().unwrap(),
+        &[
+            "clone",
+            "--quiet",
+            bare.to_str().unwrap(),
+            work.to_str().unwrap(),
+        ],
+    );
+    git(&work, &["checkout", "--quiet", "-B", "main"]);
+    write(&work, "README.md", "# repo\n");
+    for (rel, text) in files {
+        write(&work, rel, text);
+    }
+    git(&work, &["add", "-A"]);
+    git(&work, &["commit", "--quiet", "-m", "seed"]);
+    git(&work, &["push", "--quiet", "origin", "HEAD:main"]);
+    bare
 }

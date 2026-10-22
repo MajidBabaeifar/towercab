@@ -25,6 +25,7 @@ use crate::config::Config;
 use crate::db::{FaultRow, del_meta, get_meta, set_meta, sql};
 use crate::exes::Exes;
 use crate::github::Identity;
+use crate::intents::git::GitAuth;
 use crate::outbox::{self, Notice, cut, one_line};
 
 /// A fault open this long (seconds) → `env_blocked`.
@@ -257,12 +258,19 @@ impl From<CheckError> for String {
 /// Runs `exe args` in its own process group from `/`, stdin from `/dev/null`, for at most
 /// [`CHECK_TIMEOUT`]: exit 0 → ok; else its stderr's first line (or the exit) as the reason.
 pub fn run_check(exe: &OsStr, args: &[&OsStr]) -> Result<(), CheckError> {
+    run_check_as(exe, args, &GitAuth::default())
+}
+
+/// [`run_check`] of a git call as the App: `auth`'s `-c` args first, its env set (LOOP-19).
+pub fn run_check_as(exe: &OsStr, args: &[&OsStr], auth: &GitAuth) -> Result<(), CheckError> {
     let shown = std::iter::once(exe)
         .chain(args.iter().copied())
         .map(|a| a.to_string_lossy())
         .collect::<Vec<_>>()
         .join(" ");
     let mut child = Command::new(exe)
+        .args(&auth.args)
+        .envs(auth.env.iter().map(|(k, v)| (k, v)))
         .args(args)
         .current_dir("/")
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -309,43 +317,29 @@ pub fn run_check(exe: &OsStr, args: &[&OsStr]) -> Result<(), CheckError> {
 }
 
 /// The URLs the `github` checks `git ls-remote`: each valid repo's clone's `origin` (else
-/// `https://github.com/<github>.git`), then `[intents].remote`.
+/// `https://github.com/<github>.git`, `checkout::origin_url`), then `[intents].remote`.
 pub fn github_urls(config: &Config, exes: &Exes) -> Vec<String> {
     let mut urls: Vec<String> = config
         .repos
         .values()
         .filter_map(|r| r.as_ref().ok())
-        .map(|r| {
-            let origin = r
-                .path
-                .join(".git")
-                .exists()
-                .then(|| {
-                    Command::new(&exes.git)
-                        .args(["config", "--get", "remote.origin.url"])
-                        .current_dir(&r.path)
-                        .stdin(Stdio::null())
-                        .stderr(Stdio::null())
-                        .output()
-                        .ok()
-                })
-                .flatten()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .filter(|u| !u.is_empty());
-            origin.unwrap_or_else(|| format!("https://github.com/{}.git", r.github))
-        })
+        .map(|r| crate::checkout::origin_url(&exes.git, r))
         .collect();
     urls.extend(config.intents.remote.clone());
     urls
 }
 
-/// `git ls-remote <url> HEAD`.
-fn ls_remote(exes: &Exes, url: &str) -> Result<(), CheckError> {
+/// `git ls-remote <url> HEAD`, as the App on a `https://github.com/` URL: its token for that
+/// repo is minted first (LOOP-19); a failed mint is the check's failure.
+fn ls_remote(exes: &Exes, identity: &Identity, url: &str) -> Result<(), CheckError> {
+    let auth = identity
+        .auth_for_url(url)
+        .map_err(|e| CheckError::Failed(format!("{url}: GitHub App: {e}")))?;
     let url = OsString::from(url);
-    run_check(
+    run_check_as(
         &exes.git,
         &[OsStr::new("ls-remote"), url.as_os_str(), OsStr::new("HEAD")],
+        &auth,
     )
 }
 
@@ -370,7 +364,7 @@ fn tool<'a>(exes: &'a Exes, exe: &'a str) -> &'a OsStr {
 }
 
 /// Rechecks a fault no mission holds: `github` = every [`github_urls`] answers `ls-remote`
-/// (part 5 adds the App token per repo); `claude`, `tool:<exe>`, `sandbox` (bwrap) =
+/// (as the App: with its token for that repo); `claude`, `tool:<exe>`, `sandbox` (bwrap) =
 /// `--version` exits 0; `secrets:<repo>` = the file is absent or not readable by others.
 pub fn check(
     fault: &Fault,
@@ -378,11 +372,10 @@ pub fn check(
     exes: &Exes,
     identity: &mut Identity,
 ) -> Result<(), String> {
-    let _ = identity;
     match fault {
         Fault::Github => github_urls(config, exes)
             .iter()
-            .try_for_each(|u| ls_remote(exes, u).map_err(String::from)),
+            .try_for_each(|u| ls_remote(exes, identity, u).map_err(String::from)),
         Fault::Claude => version(&exes.claude).map_err(String::from),
         Fault::Tool(exe) => version(tool(exes, exe)).map_err(String::from),
         Fault::Sandbox => version(&exes.bwrap).map_err(String::from),
@@ -414,17 +407,16 @@ fn secrets(config: &Config, repo: &str) -> Result<(), String> {
 /// ls-remote <url> HEAD` per [`github_urls`] (`github`; the first failure ends them), `claude
 /// --version` (`claude`), `cargo --version` (`tool:cargo`), `bwrap --version` (`sandbox`),
 /// `systemd-inhibit --version` (`tool:systemd-inhibit`); a missing program → `tool:<name>`.
-/// A passed check also reports `tool:<name>` passed. With the GitHub App identity (LOOP-19,
-/// part 5) an installation token per repo comes first.
+/// A passed check also reports `tool:<name>` passed. As the GitHub App (LOOP-19) each
+/// `https://github.com/` URL's installation token is minted first (a failure: `github`).
 pub fn preflight(
     config: &Config,
     exes: &Exes,
     identity: &mut Identity,
 ) -> Vec<(Fault, Result<(), String>)> {
-    let _ = identity;
     let mut out = Vec::new();
     for url in github_urls(config, exes) {
-        match ls_remote(exes, &url) {
+        match ls_remote(exes, identity, &url) {
             Ok(()) => out.push((Fault::Github, Ok(()))),
             Err(CheckError::Missing(e)) => {
                 out.push((Fault::Tool("git".into()), Err(e)));

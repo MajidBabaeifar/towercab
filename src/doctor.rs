@@ -4,6 +4,7 @@
 use crate::checkout;
 use crate::config::Config;
 use crate::exes::{Exes, which};
+use crate::github::Identity;
 use crate::home::Home;
 use crate::repo::protect::find_ruleset;
 
@@ -27,8 +28,12 @@ pub fn doctor(config: &Config, home: &Home, exes: &Exes) -> String {
         let at = which(exe).map_or_else(|| "missing".to_string(), |p| p.display().to_string());
         out.push(format!("{name}: {at}"));
     }
-    // The App identity (towercab[bot] <id>) comes with loop-runner part 5 (LOOP-19).
-    out.push("github app: not built yet: LOOP-19".into());
+    // The App identity (LOOP-19): its key loads and GitHub knows its bot.
+    let identity = Identity::from_config(config, exes);
+    out.push(match identity.bot() {
+        Ok(bot) => format!("github app: {} {}", bot.login, bot.id),
+        Err(e) => format!("github app: {e}"),
+    });
     for (name, repo) in config
         .repos
         .iter()
