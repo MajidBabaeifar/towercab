@@ -28,7 +28,7 @@ const Y: &str = "261001-0901";
 const FAKE_CLAUDE: &str = r#"n=$(($(cat "$RUNS/count" 2>/dev/null || echo 0) + 1))
 printf '%s\n' "$@" > "$RUNS/claude-$n.argv"
 cat > "$RUNS/claude-$n.stdin"
-echo "$n" > "$RUNS/count"
+echo "$n" > "$RUNS/count.tmp" && mv "$RUNS/count.tmp" "$RUNS/count"
 if [ -e "$RUNS/gone" ]; then
   for a in "$@"; do
     if [ "$a" = "--resume" ]; then

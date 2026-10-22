@@ -33,7 +33,7 @@ const Z: &str = "261001-0902";
 const FAKE_CLAUDE: &str = r#"n=$(($(cat "$RUNS/count" 2>/dev/null || echo 0) + 1))
 printf '%s\n' "$@" > "$RUNS/claude-$n.argv"
 cat > "$RUNS/claude-$n.stdin"
-echo "$n" > "$RUNS/count"
+echo "$n" > "$RUNS/count.tmp" && mv "$RUNS/count.tmp" "$RUNS/count"
 while [ -e "$RUNS/hold" ]; do sleep 0.05; done
 if [ -e "$RUNS/limit" ]; then
   msg=$(cat "$RUNS/limit")
