@@ -1003,11 +1003,19 @@ pub fn apply_tx(
         Next::Backoff => {
             let retries = cur.retries + 1;
             put(&mut cols, "retries", retries);
-            put(
-                &mut cols,
-                "retry_at",
-                now + env::backoff(retries).as_secs_f64(),
-            );
+            // While env_blocked its calls retry every 5 min (LOOP-10).
+            let delay = if env::blocked(tx)? {
+                env::RECHECK
+            } else {
+                env::backoff(retries).as_secs_f64()
+            };
+            put(&mut cols, "retry_at", now + delay);
+            if let Some((fault, error)) = &o.fault {
+                if env::open(tx, fault, error, now)? {
+                    eprintln!("towercab: {fault}: {}", outbox::one_line(error));
+                }
+                put(&mut cols, "fault", fault.to_string());
+            }
             Act::Stay
         }
         Next::Recover => {
@@ -1041,9 +1049,24 @@ pub fn apply_tx(
         Next::Fresh => Act::Fresh,
         Next::Ignore | Next::Unexpected => unreachable!("handled above"),
     };
-    // A step's end: no child, not busy.
+    // A step's end: no child, not busy. Its handler's result (not an env_fail) closes the
+    // fault the step held (LOOP-10).
     for c in ["child_pid", "child_start", "child_kind", "child_since"] {
         put(&mut cols, c, Value::Null);
+    }
+    if let Some(kind) = &cur.fault
+        && matches!(
+            o.event,
+            Event::Ok
+                | Event::Red
+                | Event::Timeout
+                | Event::BadResult
+                | Event::Limit
+                | Event::Blocked
+        )
+    {
+        env::close(tx, kind)?;
+        put(&mut cols, "fault", Value::Null);
     }
     put(&mut cols, "busy", 0);
     let to = match &act {
@@ -1063,7 +1086,8 @@ pub fn apply_tx(
             put(&mut cols, c, 0);
         }
         put(&mut cols, "step_secs", 0.0);
-        for c in ["retry_at", "limit_model"] {
+        // A fault left behind is no longer held: rechecked until it passes.
+        for c in ["retry_at", "limit_model", "fault"] {
             put(&mut cols, c, Value::Null);
         }
     }

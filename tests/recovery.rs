@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 
 use common::world::{Act, Scripted, World, intent_file};
 use towercab::claude::{self, CONTINUE};
-use towercab::exes::Exes;
 use towercab::handler::{
     ChildEnd, ChildKind, ChildSpec, Ctx, Handler, Handlers, Outcome, Progress, Session, StepError,
 };
@@ -289,7 +288,7 @@ fn test_sigterm_not_counted() {
         kill_after: Duration::from_millis(500),
         ..LoopOpts::default()
     };
-    let mut lp = w.open_with(handlers(&w), Exes::default(), opts);
+    let mut lp = w.open_with(handlers(&w), w.exes(), opts);
     w.wait_for(&mut lp, 20, |w, _| runs(w, X) == 1);
     std::thread::sleep(Duration::from_millis(200));
     let pid = w.mission(X).child_pid.unwrap();

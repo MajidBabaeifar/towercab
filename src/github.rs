@@ -26,24 +26,9 @@ impl fmt::Display for GhError {
 
 impl std::error::Error for GhError {}
 
-/// Network and auth failures by their stderr (LOOP-10's classes; `env::classify` in part 3).
+/// Network and auth failures by their stderr (`env::classify`, LOOP-10).
 pub fn is_env_failure(stderr: &str) -> bool {
-    let s = stderr.to_ascii_lowercase();
-    [
-        "could not resolve host",
-        "connection refused",
-        "connection reset",
-        "timed out",
-        "timeout",
-        "tls",
-        "http 5",
-        "http 401",
-        "bad credentials",
-        "error connecting",
-        "network is unreachable",
-    ]
-    .iter()
-    .any(|p| s.contains(p))
+    crate::env::classify(stderr).is_some()
 }
 
 /// The identity Towercab's own `gh` and `git` calls use.

@@ -23,10 +23,10 @@ use crate::child::{self, Child};
 use crate::commands::{self, CmdCx};
 use crate::config::Config;
 use crate::db::{Db, sql};
-use crate::env::Fault;
+use crate::env::{self, Fault};
 use crate::events::{self, GhPrs, PrSource};
 use crate::exes::Exes;
-use crate::github::Identity;
+use crate::github::{GhError, Identity};
 use crate::handler::{
     ChildEnd, ChildSpec, Crashed, Ctx, Handler, Handlers, Outcome, Probe, Progress, StepError,
     update,
@@ -168,6 +168,10 @@ pub struct Loop {
     intents_due: Option<Duration>,
     /// The last message logged per kind (logged again only when it changes).
     warned: BTreeMap<String, String>,
+    /// An `env_blocked` episode is open (LOOP-10): no picks, no wait timeouts.
+    blocked: bool,
+    /// The start-up checks ran (the first pass's faults step).
+    preflighted: bool,
     stop: Arc<AtomicBool>,
     _lock: LoopLock,
 }
@@ -215,6 +219,8 @@ impl Loop {
             pr_due: BTreeMap::new(),
             intents_due: None,
             warned: BTreeMap::new(),
+            blocked: false,
+            preflighted: false,
             stop: Arc::new(AtomicBool::new(false)),
             _lock: lock,
         };
@@ -223,6 +229,7 @@ impl Loop {
             lp.listing = Some(s.scan());
         }
         lp.recover(now)?;
+        lp.blocked = env::blocked(lp.db.conn())?;
         Ok(lp)
     }
 
@@ -322,6 +329,7 @@ impl Loop {
         self.step_due(tick)?;
         self.spawn_queued(tick)?;
         let decision = self.pick(tick, &mut report)?;
+        self.faults(tick)?;
         report.idle = report.picked.is_none() && self.idle(tick, decision.as_ref())?;
         Ok(report)
     }
@@ -386,7 +394,7 @@ impl Loop {
             exes: &self.exes,
             identity: &mut self.identity,
             tick,
-            timeouts: true,
+            timeouts: !self.blocked,
             probe: &self.probe,
         };
         match catch_unwind(AssertUnwindSafe(|| f(h.as_mut(), &mut cx))) {
@@ -428,6 +436,7 @@ impl Loop {
             }
             Called::Returned(Ok(Progress::Poll { after })) => {
                 update(self.db.conn(), m.id, &[("busy".into(), Value::Integer(0))])?;
+                env::settle(self.db.conn(), m.id)?;
                 self.due.insert(m.id, tick.mono + after);
             }
             Called::Returned(Ok(Progress::Spawn(spec))) => {
@@ -473,6 +482,14 @@ impl Loop {
                         ("child_since".into(), Value::Real(tick.unix())),
                     ],
                 )?;
+                // The step's calls got this far; a Claude run or a sandboxed command settles
+                // its fault only when it ends well.
+                if m.fault
+                    .as_deref()
+                    .is_some_and(|f| !matches!(f.parse(), Ok(Fault::Claude) | Ok(Fault::Sandbox)))
+                {
+                    env::settle(self.db.conn(), m.id)?;
+                }
                 self.children.insert(m.id, c);
             }
             Err(e) => {
@@ -575,6 +592,10 @@ impl Loop {
             match store.list() {
                 Ok(l) => l,
                 Err(e) => {
+                    let e = e.to_string();
+                    if env::classify(&e).is_some() {
+                        env::open(self.db.conn(), &Fault::Github, &e, tick.unix())?;
+                    }
                     self.warn("intents", format!("intents: {e}"));
                     return Ok(());
                 }
@@ -676,6 +697,9 @@ impl Loop {
                     s
                 }
                 Err(e) => {
+                    if let GhError::Env(err) = &e {
+                        env::open(self.db.conn(), &Fault::Github, err, tick.unix())?;
+                    }
                     self.warn(&key, format!("{}: PR {pr}: {e}", m.label()));
                     continue;
                 }
@@ -716,7 +740,7 @@ impl Loop {
                 exes: &self.exes,
                 identity: &mut self.identity,
                 tick,
-                timeouts: true,
+                timeouts: !self.blocked,
                 probe: &self.probe,
             };
             match machine::enter(&mut cx, &m) {
@@ -865,8 +889,7 @@ impl Loop {
         Ok(PickState {
             cutoff: self.config.intents.cutoff,
             paused: machine::paused(conn)?,
-            // `env_blocked` (LOOP-10) comes with loop-runner part 3.
-            env_blocked: false,
+            env_blocked: env::blocked(conn)?,
             built: self.handlers.built(),
             repos: self
                 .config
@@ -955,6 +978,53 @@ impl Loop {
             .tx(|tx| mission::insert_pick(tx, intent, config, tick))?;
         self.probe.point();
         Ok(m)
+    }
+
+    /// LOOP-10, once per pass: the start-up checks (first pass: each failure opens its
+    /// fault, logged; a kind that passed closes unless held); faults no mission holds
+    /// rechecked when due (pass → closed); then the `env_blocked` episode started (its
+    /// message) or ended.
+    fn faults(&mut self, tick: Tick) -> Result<(), String> {
+        let now = tick.unix();
+        if !self.preflighted {
+            self.preflighted = true;
+            let results = env::preflight(&self.config, &self.exes, &mut self.identity);
+            for (fault, e) in self.db.tx(|tx| env::record(tx, &results, now))? {
+                eprintln!("towercab: preflight: {fault}: {e}");
+            }
+        }
+        let held = env::held(self.db.conn())?;
+        for row in env::faults(self.db.conn())? {
+            if row.next_try > now || held.contains(&row.kind) {
+                continue;
+            }
+            let Ok(fault) = row.kind.parse::<Fault>() else {
+                env::close(self.db.conn(), &row.kind)?;
+                continue;
+            };
+            match env::check(&fault, &self.config, &self.exes, &mut self.identity) {
+                Ok(()) => {
+                    env::close(self.db.conn(), &row.kind)?;
+                    eprintln!("towercab: {fault}: ok again");
+                }
+                Err(e) => {
+                    env::open(self.db.conn(), &fault, &e, now)?;
+                }
+            }
+        }
+        let blocked = self.db.tx(|tx| env::episode(tx, now))?;
+        if blocked != self.blocked {
+            eprintln!(
+                "towercab: {}",
+                if blocked {
+                    "env blocked"
+                } else {
+                    "env unblocked"
+                }
+            );
+        }
+        self.blocked = blocked;
+        Ok(())
     }
 
     /// LOOP-17: nothing runnable and no mission driven but by a limit wait.

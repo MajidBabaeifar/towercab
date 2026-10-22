@@ -43,7 +43,7 @@ fn handlers() -> Handlers {
 fn open(w: &World, git: &std::path::Path) -> Loop {
     let exes = Exes {
         git: git.into(),
-        ..Exes::default()
+        ..w.exes()
     };
     w.open_with(handlers(), exes, LoopOpts::default())
 }

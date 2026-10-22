@@ -13,7 +13,7 @@ pub const MIGRATIONS: &[&str] = &[SCHEMA_1];
 /// loop.md **Schema**, as written there.
 const SCHEMA_1: &str = r#"
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
--- running "<pid> <unix>", paused "1", tg_offset, env_episode, bot "<slug> <user id>", last_pass
+-- running "<pid> <unix>", paused "1", tg_offset, env_episode "<unix>" (while env_blocked), bot "<slug> <user id>", last_pass
 
 CREATE TABLE missions (
   id INTEGER PRIMARY KEY,
@@ -38,6 +38,7 @@ CREATE TABLE missions (
   verify_repairs INTEGER NOT NULL DEFAULT 0, ci_repairs INTEGER NOT NULL DEFAULT 0,
   sync_rounds INTEGER NOT NULL DEFAULT 0,
   retries INTEGER NOT NULL DEFAULT 0, retry_at REAL,              -- LOOP-10 backoff of this step
+  fault TEXT,                           -- its last env_fail's fault kind: the step's next success closes it
   limit_model TEXT,                     -- the step waits for this model's cooldown (LOOP-9)
   step_secs REAL NOT NULL DEFAULT 0,    -- children run time of this step (timeouts)
   child_pid INTEGER, child_start INTEGER, child_kind TEXT, child_since REAL,

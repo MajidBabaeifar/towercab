@@ -14,7 +14,7 @@ use crate::machine::Stage;
 use crate::runloop::Tick;
 
 /// The `missions` columns a transition or a record may set (`Outcome::set`, `Ctx::record`).
-pub const COLUMNS: [&str; 46] = [
+pub const COLUMNS: [&str; 47] = [
     "kind",
     "intent",
     "repo",
@@ -49,6 +49,7 @@ pub const COLUMNS: [&str; 46] = [
     "sync_rounds",
     "retries",
     "retry_at",
+    "fault",
     "limit_model",
     "step_secs",
     "child_pid",
@@ -106,6 +107,8 @@ pub struct Mission {
     pub sync_rounds: u32,
     pub retries: u32,
     pub retry_at: Option<f64>,
+    /// The fault kind (`env::Fault`) its last `env_fail` opened (LOOP-10).
+    pub fault: Option<String>,
     pub limit_model: Option<String>,
     pub step_secs: f64,
     pub child_pid: Option<i64>,
@@ -171,6 +174,7 @@ impl Mission {
             sync_rounds: r.get("sync_rounds")?,
             retries: r.get("retries")?,
             retry_at: r.get("retry_at")?,
+            fault: r.get("fault")?,
             limit_model: r.get("limit_model")?,
             step_secs: r.get("step_secs")?,
             child_pid: r.get("child_pid")?,

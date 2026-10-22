@@ -36,16 +36,21 @@ pub fn intent_file(dir: &str, repo: &str, extra: &str, title: &str) -> (String, 
     )
 }
 
-/// PR states by number; every read recorded.
+/// PR states by number; every read recorded; with `failing`, every read fails with it.
 #[derive(Clone, Default)]
 pub struct FakePrs {
     pub states: Rc<RefCell<BTreeMap<u64, PrState>>>,
     pub reads: Rc<RefCell<Vec<(String, u64)>>>,
+    pub failing: Rc<RefCell<Option<GhError>>>,
 }
 
 impl FakePrs {
     pub fn set(&self, pr: u64, state: PrState) {
         self.states.borrow_mut().insert(pr, state);
+    }
+
+    pub fn fail(&self, e: Option<GhError>) {
+        *self.failing.borrow_mut() = e;
     }
 
     pub fn reads(&self) -> usize {
@@ -56,6 +61,9 @@ impl FakePrs {
 impl PrSource for FakePrs {
     fn read(&mut self, github: &str, pr: u64) -> Result<PrState, GhError> {
         self.reads.borrow_mut().push((github.to_string(), pr));
+        if let Some(e) = self.failing.borrow().clone() {
+            return Err(e);
+        }
         self.states
             .borrow()
             .get(&pr)
@@ -174,7 +182,33 @@ impl World {
     }
 
     pub fn open(&self, handlers: Handlers) -> Loop {
-        self.open_with(handlers, Exes::default(), LoopOpts::default())
+        self.open_with(handlers, self.exes(), LoopOpts::default())
+    }
+
+    /// [`super::fake_exes`] in `<root>/fakebin`: preflight passes, the inhibitor is a fake.
+    pub fn exes(&self) -> Exes {
+        super::fake_exes(&self.fakebin())
+    }
+
+    pub fn fakebin(&self) -> PathBuf {
+        self.root.join("fakebin")
+    }
+
+    /// How many times the fake `systemd-inhibit` started; `inhibitor(n)`: its argv and pid.
+    pub fn inhibits(&self) -> usize {
+        fs::read_to_string(self.fakebin().join("inhibit.count"))
+            .map(|s| s.trim().parse().unwrap())
+            .unwrap_or(0)
+    }
+
+    pub fn inhibitor(&self, n: usize) -> (Vec<String>, i64) {
+        let d = self.fakebin();
+        let argv = fs::read_to_string(d.join(format!("inhibit-{n}.argv"))).unwrap();
+        let pid = fs::read_to_string(d.join(format!("inhibit-{n}.pid"))).unwrap();
+        (
+            argv.lines().map(str::to_string).collect(),
+            pid.trim().parse().unwrap(),
+        )
     }
 
     /// One pass, 61 s after the last one (every poll due).

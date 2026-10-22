@@ -11,7 +11,6 @@ use common::{loop_config, output, towercab};
 use towercab::commands::{self, Cmd, PAUSED, RESUMED};
 use towercab::config::Config;
 use towercab::db::Db;
-use towercab::exes::Exes;
 use towercab::handler::Handlers;
 use towercab::home::Home;
 use towercab::runloop::{Loop, LoopOpts, PASS, Tick};
@@ -21,7 +20,7 @@ fn open(config: &Config, home: &Home) -> Loop {
         config.clone(),
         home.clone(),
         Handlers::production(),
-        Exes::default(),
+        common::fake_exes(&home.root.with_file_name("fakebin")),
         LoopOpts::default(),
     )
     .unwrap()

@@ -1,8 +1,8 @@
 //! Messages only when I must act (LOOP-14, loop.md **Messages**): `outbox` rows, written in
 //! the transaction of what causes them.
 //!
-//! So far the rows and their text (loop-runner part 2); sending them over Telegram, dropping
-//! stale ones and the other notices come with part 4.
+//! So far the rows and their text (loop-runner parts 2, 3); sending them over Telegram,
+//! dropping stale ones and the other notices come with part 4.
 
 use rusqlite::{Connection, params};
 
@@ -29,12 +29,18 @@ pub struct Subject {
     pub why: Option<String>,
 }
 
-/// The other messages (part 2: those `machine::apply` writes).
+/// The other messages (so far those `machine::apply` and `env::episode` write).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Notice {
     RepoFrozen {
         repo: String,
         why: String,
+    },
+    /// LOOP-10: `kind` = the fault's kind, `fix` = `Fault::fix`.
+    EnvBlocked {
+        kind: String,
+        error: String,
+        fix: String,
     },
     RehearsalFailed {
         repo: String,
@@ -118,6 +124,10 @@ pub fn render_notice(n: &Notice) -> String {
         Notice::RepoFrozen { repo, why } => vec![
             format!("repo frozen: {repo}: trust {repo} when fixed"),
             cut(&one_line(why), WHY_MAX),
+        ],
+        Notice::EnvBlocked { kind, error, fix } => vec![
+            format!("env blocked: {kind}: {}", cut(&one_line(error), WHY_MAX)),
+            format!("fix: {fix}"),
         ],
         Notice::RehearsalFailed { repo, why, pr_url } => {
             let mut l = vec![
