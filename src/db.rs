@@ -13,7 +13,7 @@ pub const MIGRATIONS: &[&str] = &[SCHEMA_1];
 /// loop.md **Schema**, as written there.
 const SCHEMA_1: &str = r#"
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
--- running "<pid> <unix>", paused "1", tg_offset, env_episode "<unix>" (while env_blocked), bot "<slug> <user id>", last_pass
+-- running "<pid> <unix>", paused "1", tg_offset, env_episode "<unix>" (while env_blocked), bot "<slug> <user id>", last_pass "<unix>"
 
 CREATE TABLE missions (
   id INTEGER PRIMARY KEY,

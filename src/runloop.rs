@@ -1,10 +1,10 @@
 //! The loop (LOOP-12, `run` of LOOP-15): one pass every 5 s, single-threaded, until SIGTERM
 //! or SIGINT, or (without `--watch`) until it is idle.
 //!
-//! A pass so far, in LOOP-12's order: signals; `commands`; reap children → `Handler::finish`;
-//! entry effects; child timeouts; due polls (`intents`, PRs); due missions; children waiting
-//! for a slot; pick. The wake check, Telegram, faults and preflight, review due, outbox,
-//! inhibitor and gauges come with loop-runner parts 3 and 4.
+//! A pass so far, in LOOP-12's order: signals; wake check; `commands`; reap children →
+//! `Handler::finish`; entry effects; child timeouts; due polls (`intents`, PRs); due missions;
+//! children waiting for a slot; pick; faults and preflight; inhibitor. Telegram, review due,
+//! the outbox and gauges come with loop-runner part 4 and the metrics intent.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
@@ -19,6 +19,7 @@ use chrono::{DateTime, FixedOffset, Local, TimeZone};
 use rusqlite::types::Value;
 use signal_hook::consts::{SIGINT, SIGTERM};
 
+use crate::awake::{self, Inhibitor};
 use crate::child::{self, Child};
 use crate::commands::{self, CmdCx};
 use crate::config::Config;
@@ -132,6 +133,8 @@ pub struct PassReport {
     pub stop: bool,
     /// The intent picked this pass.
     pub picked: Option<String>,
+    /// The machine slept since the last pass (LOOP-11): every wait polls again first.
+    pub woke: bool,
 }
 
 /// What a handler call ended in.
@@ -172,6 +175,13 @@ pub struct Loop {
     blocked: bool,
     /// The start-up checks ran (the first pass's faults step).
     preflighted: bool,
+    /// Keeps the machine awake while a mission is driven (LOOP-11).
+    inhibitor: Inhibitor,
+    /// The last pass's clock; before the first, `meta.last_pass` (wall, unix s).
+    last_tick: Option<Tick>,
+    last_wall: Option<f64>,
+    /// Missions whose next handler call follows a wake: `Ctx::timeouts` false for it.
+    repoll: BTreeSet<i64>,
     stop: Arc<AtomicBool>,
     _lock: LoopLock,
 }
@@ -221,6 +231,10 @@ impl Loop {
             warned: BTreeMap::new(),
             blocked: false,
             preflighted: false,
+            inhibitor: Inhibitor::new(),
+            last_tick: None,
+            last_wall: None,
+            repoll: BTreeSet::new(),
             stop: Arc::new(AtomicBool::new(false)),
             _lock: lock,
         };
@@ -230,6 +244,7 @@ impl Loop {
         }
         lp.recover(now)?;
         lp.blocked = env::blocked(lp.db.conn())?;
+        lp.last_wall = lp.db.meta("last_pass")?.and_then(|v| v.parse().ok());
         Ok(lp)
     }
 
@@ -313,6 +328,7 @@ impl Loop {
             report.stop = true;
             return Ok(report);
         }
+        report.woke = self.wake_check(tick)?;
         let cx = CmdCx {
             config: &self.config,
             db: &self.db,
@@ -330,8 +346,52 @@ impl Loop {
         self.spawn_queued(tick)?;
         let decision = self.pick(tick, &mut report)?;
         self.faults(tick)?;
+        self.inhibit(tick)?;
         report.idle = report.picked.is_none() && self.idle(tick, decision.as_ref())?;
         Ok(report)
+    }
+
+    /// LOOP-11's wake check: the wall clock ran ahead of the monotonic one by more than 3
+    /// passes since the last pass (or, at a loop's first pass, since `meta.last_pass`): every
+    /// driven mission's poll, the PR reads and the `intents` poll are due now, and each
+    /// mission's next handler call gets `Ctx::timeouts` false.
+    fn wake_check(&mut self, tick: Tick) -> Result<bool, String> {
+        let woke = match (self.last_tick, self.last_wall) {
+            (Some(last), _) => awake::woke(last, tick, self.opts.pass),
+            (None, Some(wall)) => tick.unix() - wall > 3.0 * self.opts.pass.as_secs_f64(),
+            (None, None) => false,
+        };
+        self.last_tick = Some(tick);
+        self.db.set_meta("last_pass", &tick.unix().to_string())?;
+        if woke {
+            for m in mission::unfinished(self.db.conn())? {
+                if m.stage.driven() {
+                    self.due.remove(&m.id);
+                    self.repoll.insert(m.id);
+                }
+            }
+            self.pr_due.clear();
+            self.intents_due = self.intents_due.map(|_| tick.mono);
+        }
+        Ok(woke)
+    }
+
+    /// LOOP-11: the inhibitor runs while a mission (the first in PRI-4 order names it) is
+    /// driven: a stage of a sequence, not held, not in a limit wait.
+    fn inhibit(&mut self, tick: Tick) -> Result<(), String> {
+        let mut ms = mission::unfinished(self.db.conn())?;
+        ms.sort_by_key(|m| self.rank(m));
+        let driving = ms
+            .into_iter()
+            .find(|m| m.stage.driven() && !m.held && !self.limit_waiting(m, tick.unix()))
+            .map(|m| (m.label(), m.stage));
+        self.inhibitor.update(driving, &self.exes, tick.mono);
+        Ok(())
+    }
+
+    /// The running inhibitor's pid and `--why` (LOOP-11).
+    pub fn inhibitor(&self) -> Option<(u32, String)> {
+        Some((self.inhibitor.pid()?, self.inhibitor.why()?.to_string()))
     }
 
     fn apply_cx(&self, tick: Tick) -> Apply<'_> {
@@ -376,10 +436,13 @@ impl Loop {
     /// the tests' injected crash, is not).
     fn call(
         &mut self,
-        stage: Stage,
+        m: &Mission,
         tick: Tick,
         f: impl FnOnce(&mut dyn Handler, &mut Ctx<'_>) -> Result<Progress, StepError>,
     ) -> Called {
+        let (stage, id) = (m.stage, m.id);
+        // Its first call after a wake: no wait timeout fires before this poll.
+        let woke = self.repoll.remove(&id);
         let Some(store) = self.store.as_ref() else {
             return Called::Returned(Err(StepError::Bug("intents not open".into())));
         };
@@ -394,7 +457,7 @@ impl Loop {
             exes: &self.exes,
             identity: &mut self.identity,
             tick,
-            timeouts: !self.blocked,
+            timeouts: !self.blocked && !woke,
             probe: &self.probe,
         };
         match catch_unwind(AssertUnwindSafe(|| f(h.as_mut(), &mut cx))) {
@@ -544,7 +607,7 @@ impl Loop {
                 ],
             )?;
             let m = mission::get(self.db.conn(), id)?;
-            let called = self.call(m.stage, tick, |h, cx| h.finish(cx, &m, end));
+            let called = self.call(&m, tick, |h, cx| h.finish(cx, &m, end));
             // A run on a model that hit no limit: the model's backoffs start over (LOOP-9).
             let limited = matches!(&called, Called::Returned(Ok(Progress::Done(o))) if o.event == Event::Limit)
                 || matches!(&called, Called::Returned(Err(StepError::Env(..))))
@@ -812,7 +875,7 @@ impl Loop {
                 ],
             )?;
             let m = mission::get(self.db.conn(), m.id)?;
-            let called = self.call(m.stage, tick, |h, cx| h.step(cx, &m));
+            let called = self.call(&m, tick, |h, cx| h.step(cx, &m));
             self.progress(&m, called, tick)?;
         }
         Ok(())
@@ -1136,6 +1199,7 @@ impl Loop {
             )?;
         }
         self.queued.clear();
+        self.inhibitor.stop();
         self.db.del_meta("running")
     }
 }

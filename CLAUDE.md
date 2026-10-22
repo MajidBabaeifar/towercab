@@ -28,9 +28,8 @@ Being rewritten in Rust (crate at the root). The Python package (`towercab/`, `b
 - `src/cli.rs`: clap; errors → `towercab: <reason>`, exit 1; bad arguments 2. `config.rs`: **Config**.
 - The loop (file → interface: loop.md **Code**): `runloop.rs` (5 s pass), `machine.rs` (the one state
   machine, a red line), `mission.rs`, `handler.rs` (`Handler`, `Ctx::record`; production picks off),
-  `pick.rs`, `checkout.rs`, `events.rs`, `child.rs`, `home.rs`, `db.rs` (`Db::tx` = one `BEGIN
-  IMMEDIATE`), `commands.rs`, `service.rs`, `exes.rs`; part-2 subsets: `limits`, `env`, `outbox`,
-  `github`, `claude`. Loop test fixtures: `tests/common/world.rs` (`World`, fake PRs, a driven clock).
+  `pick.rs`, `checkout.rs`, `events.rs`, `child.rs`, `limits.rs`, `env.rs`, `awake.rs`, `home.rs`, `db.rs`
+  (`Db::tx` = one `BEGIN IMMEDIATE`), `commands.rs`, `service.rs`, `exes.rs`; subsets: `outbox`, `github`, `claude`.
 - `src/priority.rs`: PRI order, `pick_order`, `review_due`; `src/review.rs`: `towercab review`.
 - `src/intents/`: the intent home: `intent.rs` (parse, line-level `set`), `id.rs`, `store.rs` (`Store`:
   list/get/add/update; pull → write → commit → push, replay), `views.rs`, `git.rs`, `migrate.rs`.
@@ -42,9 +41,10 @@ Being rewritten in Rust (crate at the root). The Python package (`towercab/`, `b
 - Re-serialising front matter: write with `Intent::set`/`remove` so other lines stay byte-identical.
 - Adding a test name to a spec row without the `fn`, or marking a row Live before it is built.
 - `std::env::set_var` in a test binary that has other tests: give it its own `tests/*.rs`.
-- One change's writes outside one `Db::tx`; the binary in a test without `common::towercab` + `--home`.
-- Moving a mission anywhere but `machine::apply`, or a side effect before its `Ctx::record`.
+- One change's writes outside one `Db::tx`; in a test, the binary without `common::towercab` + `--home`
+  or a `Loop` without `common::fake_exes`/`World::exes` (loop fixtures: `tests/common/world.rs`).
 - Writing to the Python package or its tests for Rust work.
+- Moving a mission anywhere but `machine::apply`, or a side effect before its `Ctx::record`.
 
 ## Verifying your work
 

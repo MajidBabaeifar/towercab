@@ -2,6 +2,7 @@
 //!
 //! Every module is `pub` so its tests live in `tests/` (REPO-6).
 
+pub mod awake;
 pub mod checkout;
 pub mod child;
 pub mod claude;
