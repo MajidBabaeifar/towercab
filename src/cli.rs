@@ -1,5 +1,6 @@
 //! Command line (LOOP-15, so far `add`, `migrate`, `review`, `protect`, `up`, `down`, `logs`,
-//! `run`, `approve`, `retry --fresh`, `release`, `pause`, `resume`, `trust` and `--version`).
+//! `run`, `approve`, `retry --fresh`, `release`, `pause`, `resume`, `trust`, `status`, `next` and
+//! `--version`).
 
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
@@ -16,10 +17,12 @@ use crate::home::Home;
 use crate::intents::intent::is_repo;
 use crate::intents::migrate::migrate;
 use crate::intents::store::now;
-use crate::intents::{NewIntent, Store};
+use crate::intents::{Listing, NewIntent, Store};
+use crate::pick;
 use crate::repo::protect::{Target, protect};
-use crate::runloop::{Loop, LoopOpts};
+use crate::runloop::{Loop, LoopOpts, Tick};
 use crate::service;
+use crate::status::{self, Snapshot};
 
 #[derive(Parser, Debug)]
 #[command(name = "towercab", version, about = "Majid's software factory")]
@@ -83,6 +86,10 @@ enum Command {
     Resume,
     /// Lift a repo's autonomy cap and freeze
     Trust { repo: String },
+    /// What runs, what waits on you, what's next
+    Status,
+    /// The intent the loop would pick next, and why the others wait
+    Next,
 }
 
 /// Exit code: 0 ok, 1 error, 2 bad arguments.
@@ -167,7 +174,54 @@ where
         Command::Pause => command(&args.config, &args.home, Cmd::Pause),
         Command::Resume => command(&args.config, &args.home, Cmd::Resume),
         Command::Trust { repo } => command(&args.config, &args.home, Cmd::Trust(repo)),
+        Command::Status => report(status_cmd(&args.config, &args.home)),
+        Command::Next => report(next_cmd(&args.config, &args.home)),
     }
+}
+
+/// The intents for `status` and `next`: pulled; a failed pull → the checkout as it is, and
+/// the error.
+fn intents(config: &Config) -> (Option<Listing>, Option<String>) {
+    match Store::open(config) {
+        Err(e) => (None, Some(e.to_string())),
+        Ok(s) => match s.list() {
+            Ok(l) => (Some(l), None),
+            Err(e) => (Some(s.scan()), Some(e.to_string())),
+        },
+    }
+}
+
+/// `towercab status` (LOOP-13): SQLite and the intents; works without a running loop.
+fn status_cmd(config: &Option<PathBuf>, home: &Option<PathBuf>) -> Result<String, String> {
+    let config = Config::load(config.as_deref())?;
+    let home = Home::resolve(home.as_deref())?;
+    let db = Db::open(&home.db())?;
+    let (listing, error) = intents(&config);
+    let snapshot = Snapshot::read(
+        &db,
+        listing.as_ref(),
+        error.as_deref(),
+        &config,
+        home.holder(),
+        Handlers::production().built(),
+        Tick::now(),
+    )?;
+    Ok(status::render(&snapshot))
+}
+
+/// `towercab next` (loop.md **Next**): what `run` would pick.
+fn next_cmd(config: &Option<PathBuf>, home: &Option<PathBuf>) -> Result<String, String> {
+    let config = Config::load(config.as_deref())?;
+    let home = Home::resolve(home.as_deref())?;
+    let db = Db::open(&home.db())?;
+    let (listing, error) = intents(&config);
+    let listing = match (listing, error) {
+        (Some(l), _) => l,
+        (None, e) => return Err(format!("intents: {}", e.unwrap_or_default())),
+    };
+    let state = pick::state(&db, &config, Handlers::production().built(), Tick::now())?;
+    let d = pick::decide(&listing, &state);
+    Ok(status::next_text(&d, &listing, config.intents.cutoff))
 }
 
 /// The config of a loop command (`run`, `step`, `up`, `doctor`): loaded and

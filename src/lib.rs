@@ -27,3 +27,4 @@ pub mod repo;
 pub mod review;
 pub mod runloop;
 pub mod service;
+pub mod status;

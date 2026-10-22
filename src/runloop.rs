@@ -23,7 +23,7 @@ use crate::awake::{self, Inhibitor};
 use crate::child::{self, Child};
 use crate::commands::{self, CmdCx};
 use crate::config::Config;
-use crate::db::{Db, sql};
+use crate::db::Db;
 use crate::env::{self, Fault};
 use crate::events::{self, GhPrs, PrSource};
 use crate::exes::Exes;
@@ -948,57 +948,7 @@ impl Loop {
 
     /// LOOP-5's inputs from the database and config.
     pub fn pick_state(&self, tick: Tick) -> Result<PickState, String> {
-        let conn = self.db.conn();
-        let frozen: BTreeSet<String> = {
-            let mut q = conn
-                .prepare("SELECT repo FROM repo_caps WHERE frozen = 1")
-                .map_err(sql)?;
-            q.query_map([], |r| r.get(0))
-                .map_err(sql)?
-                .collect::<Result<_, _>>()
-                .map_err(sql)?
-        };
-        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
-        let mut active = BTreeSet::new();
-        for m in mission::unfinished(conn)? {
-            if m.stage != Stage::Blocked {
-                *counts.entry(m.repo.clone()).or_default() += 1;
-            }
-            active.extend(m.intent);
-        }
-        let full = self
-            .config
-            .repos
-            .iter()
-            .filter_map(|(name, r)| {
-                let r = r.as_ref().ok()?;
-                let n = counts.get(name).copied().unwrap_or(0);
-                (n >= usize::from(r.workers)).then(|| (name.clone(), (n, r.workers)))
-            })
-            .collect();
-        let cooling = limits::cooling(&self.db, tick.unix())?
-            .into_iter()
-            .filter(|c| c.provider == limits::CLAUDE)
-            .map(|c| (c.model.clone(), shown_time(c.until, tick.wall)))
-            .collect();
-        Ok(PickState {
-            cutoff: self.config.intents.cutoff,
-            paused: machine::paused(conn)?,
-            env_blocked: env::blocked(conn)?,
-            built: self.handlers.built(),
-            repos: self
-                .config
-                .repos
-                .iter()
-                .filter(|(_, r)| r.is_ok())
-                .map(|(n, _)| n.clone())
-                .collect(),
-            model: self.config.agent.model.clone(),
-            frozen,
-            full,
-            cooling,
-            active,
-        })
+        pick::state(&self.db, &self.config, self.handlers.built(), tick)
     }
 
     /// LOOP-5: the waits written without a mission (the outbox row first, then the intent),

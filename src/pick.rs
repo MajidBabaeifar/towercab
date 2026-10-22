@@ -4,13 +4,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::checkout;
-use crate::env::Fault;
+use crate::config::Config;
+use crate::db::{Db, sql};
+use crate::env::{self, Fault};
 use crate::handler::{ChildEnd, Ctx, Handler, Outcome, Progress, StepError};
 use crate::intents::{Listing, Stage as Playbook};
-use crate::machine::Waiting;
-use crate::mission::Mission;
+use crate::limits;
+use crate::machine::{self, Stage, Waiting};
+use crate::mission::{self, Mission};
 use crate::priority::{self, pick_order};
 use crate::repo::{self, RepoError};
+use crate::runloop::{Tick, shown_time};
 
 /// What a pick depends on besides the intents.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -196,6 +200,59 @@ pub fn decide(listing: &Listing, state: &PickState) -> Decision {
         }
     }
     d
+}
+
+/// LOOP-5's inputs from the database and config; `built`: every stage has a handler.
+pub fn state(db: &Db, config: &Config, built: bool, tick: Tick) -> Result<PickState, String> {
+    let conn = db.conn();
+    let frozen: BTreeSet<String> = {
+        let mut q = conn
+            .prepare("SELECT repo FROM repo_caps WHERE frozen = 1")
+            .map_err(sql)?;
+        q.query_map([], |r| r.get(0))
+            .map_err(sql)?
+            .collect::<Result<_, _>>()
+            .map_err(sql)?
+    };
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut active = BTreeSet::new();
+    for m in mission::unfinished(conn)? {
+        if m.stage != Stage::Blocked {
+            *counts.entry(m.repo.clone()).or_default() += 1;
+        }
+        active.extend(m.intent);
+    }
+    let full = config
+        .repos
+        .iter()
+        .filter_map(|(name, r)| {
+            let r = r.as_ref().ok()?;
+            let n = counts.get(name).copied().unwrap_or(0);
+            (n >= usize::from(r.workers)).then(|| (name.clone(), (n, r.workers)))
+        })
+        .collect();
+    let cooling = limits::cooling(db, tick.unix())?
+        .into_iter()
+        .filter(|c| c.provider == limits::CLAUDE)
+        .map(|c| (c.model.clone(), shown_time(c.until, tick.wall)))
+        .collect();
+    Ok(PickState {
+        cutoff: config.intents.cutoff,
+        paused: machine::paused(conn)?,
+        env_blocked: env::blocked(conn)?,
+        built,
+        repos: config
+            .repos
+            .iter()
+            .filter(|(_, r)| r.is_ok())
+            .map(|(n, _)| n.clone())
+            .collect(),
+        model: config.agent.model.clone(),
+        frozen,
+        full,
+        cooling,
+        active,
+    })
 }
 
 /// The `pick` stage: fetch Towercab's clone (LOOP-8), load the repo files (REPO-1), make the
