@@ -103,21 +103,6 @@ impl Child {
             kill_group(self.pid);
         }
     }
-
-    /// SIGTERM, wait up to `after`, then SIGKILL; reaps it.
-    pub fn stop(&mut self, after: Duration) {
-        signal_group(self.pid, libc::SIGTERM);
-        let end = std::time::Instant::now() + after;
-        while std::time::Instant::now() < end {
-            if let Ok(Some(_)) = self.proc.try_wait() {
-                kill_group(self.pid);
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        kill_group(self.pid);
-        let _ = self.proc.wait();
-    }
 }
 
 fn signal_group(pid: u32, sig: i32) {
