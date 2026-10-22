@@ -391,3 +391,21 @@ impl World {
         }
     }
 }
+
+/// A design that publishes PR 7 at head `h1` (`feedback_seen` 10:00 UTC).
+pub struct PublishesPr;
+
+impl Handler for PublishesPr {
+    fn step(&mut self, _: &mut Ctx<'_>, _: &Mission) -> Result<Progress, StepError> {
+        Ok(Progress::Done(
+            Outcome::ok()
+                .with("pr", 7)
+                .with("pr_url", "https://github.com/me/web/pull/7".to_string())
+                .with("head", "h1".to_string())
+                .with("feedback_seen", "2026-10-15T10:00:00Z".to_string()),
+        ))
+    }
+    fn finish(&mut self, _: &mut Ctx<'_>, _: &Mission, _: ChildEnd) -> Result<Progress, StepError> {
+        unreachable!()
+    }
+}

@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..5, LOOP-7, LOOP-8, LOOP-18 · Draft (Rust rewrite): rest · **Prefix:** LOOP
+**Status:** Live: LOOP-1..5, LOOP-7, LOOP-8, LOOP-17, LOOP-18 · Draft (Rust rewrite): rest · **Prefix:** LOOP
 
 ## Purpose
 

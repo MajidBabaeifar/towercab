@@ -165,3 +165,97 @@ fn test_run_passes_until_signal() {
         assert_eq!(home.holder(), None, "{sig}");
     }
 }
+
+#[test]
+fn test_idle() {
+    use common::world::{Act, Scripted, World, intent_file, open_pr};
+    use towercab::machine::{Stage, Waiting};
+    use towercab::pick::Pick;
+
+    const ID: &str = "261001-0900";
+    let mut w = World::new(&[intent_file("261001-0900-x", "web", "", "X")], &["web"]);
+    w.prs.set(7, open_pr("h1"));
+    let mut h = Handlers::stubs();
+    h.set(Stage::Pick, Box::new(Pick));
+    h.set(Stage::Design, Box::new(common::world::PublishesPr));
+    h.set(
+        Stage::Review,
+        Scripted::all(Act::Wait(Waiting::ReviewAndMergePr)),
+    );
+    let mut lp = w.open(h);
+    // Driven: not idle.
+    let r = w.pass(&mut lp);
+    assert_eq!(r.picked.as_deref(), Some(ID));
+    assert!(!r.idle);
+    w.until(&mut lp, 20, |w| w.stage(ID) == Some(Stage::ApprovalMerge));
+    // Waiting on me, nothing runnable: idle, and the passes go on: PR reads, intents pulls.
+    let rows = w.outbox().len();
+    let reads = w.prs.reads();
+    let r = w.pass(&mut lp);
+    assert!(r.idle && r.picked.is_none());
+    w.intents.push_mine(
+        &[(
+            "intents/261001-0900-x/intent.md",
+            Some(&common::intent_md(
+                "web",
+                "stage: deploy\nwaiting: review and merge PR\npr: https://github.com/me/web/pull/7\n",
+                "X, renamed",
+            )),
+        )],
+        "rename",
+    );
+    for _ in 0..3 {
+        assert!(w.pass(&mut lp).idle);
+    }
+    assert!(w.prs.reads() >= reads + 3, "PR reads go on");
+    let listing = lp.listing().unwrap();
+    assert_eq!(listing.open[0].title(), "X, renamed", "intents pulled");
+    assert_eq!(w.outbox().len(), rows, "no message for being idle");
+
+    // A limit wait is idle too; a CI poll isn't.
+    let db = w.db();
+    db.conn()
+        .execute_batch(
+            "INSERT INTO cooldowns (provider, model, until, parsed, text, since)
+               VALUES ('claude', 'opus', 9999999999, 1, 'limit', 0);
+             INSERT INTO missions (repo, stage, step, model, session, checkout, limit_model, created, updated)
+               VALUES ('web', 'build', '', 'opus', 's', 'work/l', 'opus', 0, 0);",
+        )
+        .unwrap();
+    let r = w.pass(&mut lp);
+    assert!(r.idle);
+    let l = towercab::mission::get(db.conn(), 2).unwrap();
+    assert_eq!(
+        (l.stage, l.limit_model.as_deref()),
+        (Stage::Build, Some("opus"))
+    );
+    db.conn()
+        .execute(
+            "UPDATE missions SET limit_model = NULL, stage = 'blocked' WHERE checkout = 'work/l'",
+            [],
+        )
+        .unwrap();
+    lp.shutdown().unwrap();
+    drop(lp);
+    let mut h = Handlers::stubs();
+    h.set(Stage::Ci, Scripted::all(Act::Poll(Duration::from_secs(30))));
+    let mut lp = w.open(h);
+    db.conn()
+        .execute(
+            "INSERT INTO missions (repo, stage, step, model, session, checkout, created, updated)
+               VALUES ('web', 'ci', '', 'opus', 's', 'work/c', 0, 0)",
+            [],
+        )
+        .unwrap();
+    assert!(!w.pass(&mut lp).idle, "polling CI is driven");
+    lp.shutdown().unwrap();
+
+    // Picks off (production handlers) with an intent queued: nothing runnable, idle.
+    let mut w = World::new(&[intent_file("261001-0900-x", "web", "", "X")], &["web"]);
+    let mut lp = w.open(Handlers::production());
+    for _ in 0..2 {
+        let r = w.pass(&mut lp);
+        assert!(r.idle && r.picked.is_none());
+    }
+    lp.shutdown().unwrap();
+}

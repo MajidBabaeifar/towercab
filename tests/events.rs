@@ -5,10 +5,10 @@ mod common;
 
 use std::time::Duration;
 
-use common::world::{Act, Scripted, World, intent_file, open_pr};
+use common::world::{Act, PublishesPr, Scripted, World, intent_file, open_pr};
 use rusqlite::params;
 use towercab::events::{Comment, PrState, intent_events, parse_pr, pr_events};
-use towercab::handler::{ChildEnd, Ctx, Handler, Handlers, Outcome, Progress, StepError};
+use towercab::handler::Handlers;
 use towercab::intents::Listing;
 use towercab::machine::{Event, Kind, Next, Stage, Waiting, continue_to, next};
 use towercab::mission::Mission;
@@ -183,23 +183,6 @@ fn pr_handlers() -> Handlers {
     h.set(Stage::Design, Box::new(PublishesPr));
     h.set(Stage::Ci, Scripted::all(Act::Child));
     h
-}
-
-struct PublishesPr;
-
-impl Handler for PublishesPr {
-    fn step(&mut self, _: &mut Ctx<'_>, _: &Mission) -> Result<Progress, StepError> {
-        Ok(Progress::Done(
-            Outcome::ok()
-                .with("pr", 7)
-                .with("pr_url", "https://github.com/me/web/pull/7".to_string())
-                .with("head", "h1".to_string())
-                .with("feedback_seen", "2026-10-15T10:00:00Z".to_string()),
-        ))
-    }
-    fn finish(&mut self, _: &mut Ctx<'_>, _: &Mission, _: ChildEnd) -> Result<Progress, StepError> {
-        unreachable!()
-    }
 }
 
 const ID: &str = "261001-0900";
