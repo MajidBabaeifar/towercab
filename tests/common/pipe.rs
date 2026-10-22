@@ -353,6 +353,18 @@ impl Pipe {
         assert_eq!(self.w.stage(id), Some(stage), "not reached in {max} steps");
     }
 
+    /// Passes (61 s of the world's clock apart: every poll due; 30 ms of real time) until
+    /// `done` holds, at most `secs` seconds of real time.
+    pub fn until(&mut self, secs: u64, done: impl Fn(&World) -> bool) {
+        let end = std::time::Instant::now() + Duration::from_secs(secs);
+        let lp = self.lp.as_mut().expect("the loop is open");
+        while !done(&self.w) {
+            assert!(std::time::Instant::now() < end, "not reached in {secs} s");
+            std::thread::sleep(Duration::from_millis(30));
+            self.w.pass(lp);
+        }
+    }
+
     pub fn mission(&self, id: &str) -> Mission {
         self.w.mission(id)
     }
