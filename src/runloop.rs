@@ -608,11 +608,16 @@ impl Loop {
             )?;
             let m = mission::get(self.db.conn(), id)?;
             let called = self.call(&m, tick, |h, cx| h.finish(cx, &m, end));
-            // A run on a model that hit no limit: the model's backoffs start over (LOOP-9).
-            let limited = matches!(&called, Called::Returned(Ok(Progress::Done(o))) if o.event == Event::Limit)
-                || matches!(&called, Called::Returned(Err(StepError::Env(..))))
-                || matches!(&called, Called::Returned(Ok(Progress::Done(o))) if o.event == Event::EnvFail);
-            if let (Some(model), false) = (&model, limited) {
+            // A run on a model that hit no limit (nor a network or auth failure): the model's
+            // backoffs start over (LOOP-9).
+            let ran = match &called {
+                Called::Returned(Ok(Progress::Done(o))) => {
+                    !matches!(o.event, Event::Limit | Event::EnvFail)
+                }
+                Called::Returned(Ok(_)) => true,
+                Called::Returned(Err(_)) | Called::Panicked(_) => false,
+            };
+            if let (Some(model), true) = (&model, ran) {
                 limits::success(self.db.conn(), model)?;
             }
             self.progress(&m, called, tick)?;
