@@ -30,7 +30,7 @@ Being rewritten in Rust (crate at the root). The Python package (`towercab/`, `b
   a red line), `mission.rs`, `handler.rs` (`Handler`, `Ctx::record`; production picks off), `pick.rs`, `checkout.rs`,
   `events.rs`, `child.rs`, `limits.rs`, `env.rs`, `awake.rs`, `home.rs`, `db.rs` (`Db::tx` = one `BEGIN IMMEDIATE`),
   `commands.rs`, `outbox.rs`, `telegram.rs` (`http.rs`), `status.rs`, `doctor.rs`, `service.rs`, `exes.rs`; subsets: `github`, `claude`.
-- `src/priority.rs`: PRI order, `pick_order`, `review_due`; `src/review.rs`: `towercab review`.
+- `src/priority.rs`: PRI order, `pick_order`, `review_due`; `src/review.rs`: `towercab review`. `src/autonomy.rs`: AUT cap, gate, spec gate, `lower_a`.
 - `src/intents/`: the intent home: `intent.rs` (parse, line-level `set`), `id.rs`, `store.rs` (`Store`:
   list/get/add/update; pull → write → commit → push, replay), `views.rs`, `git.rs`, `migrate.rs`.
 - `src/repo/`: `CLAUDE.md`/`REVIEW.md`/`TOWERCAB.md` from `origin/<base>` (`load`), `protected.rs`, `protect`.

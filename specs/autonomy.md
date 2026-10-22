@@ -1,6 +1,6 @@
 # Autonomy
 
-**Status:** Draft (Rust rewrite) · **Prefix:** AUT
+**Status:** Live: AUT-3..11 · **Prefix:** AUT
 
 ## Purpose
 
