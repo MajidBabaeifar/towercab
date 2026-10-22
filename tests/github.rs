@@ -104,6 +104,21 @@ fn test_installation_token_per_repo() {
     );
     assert_eq!(calls(&gh).len(), 5, "the installation id is kept");
 
+    // Reinstalled: the cached installation id is refused; looked up again once, then a token.
+    gh.reinstall("me/a", 21);
+    let a3 = id.token("me/a", t + 3100).unwrap();
+    assert!(a3.starts_with("tok-21-"), "{a3}");
+    assert_eq!(
+        calls(&gh)[5..],
+        [
+            ("POST".into(), "/app/installations/11/access_tokens".into()),
+            ("GET".into(), "/repos/me/a/installation".into()),
+            ("POST".into(), "/app/installations/21/access_tokens".into()),
+        ]
+    );
+    // Debug never shows a token.
+    assert!(!format!("{id:?}").contains(&a3), "{id:?}");
+
     // Not installed: GitHub's no; down or unauthorized: network or auth (LOOP-10).
     assert_eq!(
         id.token("me/c", t),
@@ -210,7 +225,7 @@ fn test_installation_token_per_repo() {
     let log = fs::read_to_string(bin.join("git.log")).unwrap();
     let ls: Vec<&str> = log.lines().filter(|l| l.contains("ls-remote")).collect();
     assert_eq!(ls.len(), 1, "{log}");
-    assert!(ls[0].starts_with("tok-11-"), "with me/a's token: {}", ls[0]);
+    assert!(ls[0].starts_with("tok-21-"), "with me/a's token: {}", ls[0]);
 }
 
 /// A fake `gh` in `dir`: `auth git-credential get` answers git's credential protocol with
@@ -264,6 +279,11 @@ fn test_git_uses_app_token() {
         ]
     );
     assert_eq!(auth.env, [("GH_TOKEN".to_string(), token.clone())]);
+    let shown = format!("{auth:?} {id:?}");
+    assert!(
+        !shown.contains(&token) && shown.contains("GH_TOKEN"),
+        "{shown}"
+    );
     assert_eq!(
         id.auth_for_url("https://github.com/me/a.git").unwrap(),
         auth
@@ -481,26 +501,29 @@ fn test_commit_author_is_bot() {
 #[test]
 fn test_app_manifest() {
     let m: Value = serde_json::from_str(&common::read("ops/github-app.json")).unwrap();
-    assert_eq!(m["name"], "towercab");
-    assert_eq!(m["url"], "https://github.com/MajidBabaeifar/towercab");
-    assert_eq!(m["public"], false);
+    let description = m["description"].as_str().unwrap_or_default();
+    assert!(!description.is_empty() && !description.contains('\n'));
     assert_eq!(
-        m["hook_attributes"],
-        json!({"url": "https://github.com/MajidBabaeifar/towercab", "active": false})
-    );
-    assert_eq!(
-        m["default_permissions"],
+        m,
         json!({
-            "contents": "write",
-            "pull_requests": "write",
-            "issues": "write",
-            "checks": "write",
-            "statuses": "write",
-            "workflows": "write",
-            "actions": "write",
-            "deployments": "read",
-            "metadata": "read",
-        })
+            "name": "towercab",
+            "url": "https://github.com/MajidBabaeifar/towercab",
+            "description": description,
+            "public": false,
+            "hook_attributes": {"url": "https://github.com/MajidBabaeifar/towercab", "active": false},
+            "default_permissions": {
+                "contents": "write",
+                "pull_requests": "write",
+                "issues": "write",
+                "checks": "write",
+                "statuses": "write",
+                "workflows": "write",
+                "actions": "write",
+                "deployments": "read",
+                "metadata": "read",
+            },
+            "default_events": [],
+        }),
+        "the manifest is exactly the spec's"
     );
-    assert_eq!(m["default_events"], json!([]));
 }

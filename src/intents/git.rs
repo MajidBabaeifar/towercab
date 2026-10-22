@@ -81,10 +81,25 @@ pub fn git_command_for(git: &OsStr) -> Command {
 /// What a git call adds to act as Towercab's GitHub App (LOOP-19, `github::Identity::git_auth`):
 /// `-c` args after Towercab's own (the credential helper, the bot's `user.name`/`user.email`,
 /// which win) and env (`GH_TOKEN`). Empty = my own git setup.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Clone, Default, PartialEq)]
 pub struct GitAuth {
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
+}
+
+/// The env values (a token) redacted.
+impl fmt::Debug for GitAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let env: Vec<(&str, &str)> = self
+            .env
+            .iter()
+            .map(|(k, _)| (k.as_str(), "<redacted>"))
+            .collect();
+        f.debug_struct("GitAuth")
+            .field("args", &self.args)
+            .field("env", &env)
+            .finish()
+    }
 }
 
 impl GitAuth {

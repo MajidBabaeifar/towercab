@@ -146,10 +146,19 @@ impl Bot {
 }
 
 /// An installation token and when it expires (unix s).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct Token {
     token: String,
     expires: i64,
+}
+
+impl fmt::Debug for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Token")
+            .field("token", &"<redacted>")
+            .field("expires", &self.expires)
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -165,7 +174,7 @@ struct AppState {
     calls: u64,
 }
 
-/// The identity Towercab's own `gh` and `git` calls use.
+/// The identity Towercab's own `gh` and `git` calls use (`Debug` never shows a token).
 #[derive(Debug, Clone)]
 pub struct Identity {
     app: Option<Arc<Mutex<AppState>>>,
@@ -283,7 +292,8 @@ impl Identity {
 
     /// A 1-hour installation token for `github` (`owner/name`): cached, re-minted when fewer
     /// than [`REMINT`] seconds remain at `now` (unix s). `GET /repos/<github>/installation`
-    /// (JWT) → `POST /app/installations/<id>/access_tokens` `{repositories: [<name>]}`.
+    /// (JWT) → `POST /app/installations/<id>/access_tokens` `{repositories: [<name>]}`; that
+    /// failing forgets the installation id (a cached one GitHub refuses is looked up again once).
     pub fn token(&self, github: &str, now: i64) -> Result<String, GhError> {
         let Some(mut s) = self.state() else {
             return Err(GhError::Failed("no GitHub App configured".into()));
@@ -299,35 +309,48 @@ impl Identity {
             Err(e) => return Err(GhError::Env(e.clone())),
         };
         let base = s.api_base.clone();
-        let install = match s.installs.get(&key) {
-            Some(id) => *id,
-            None => {
-                s.calls += 1;
-                let what = format!("GET /repos/{github}/installation");
-                let url = format!("{base}/repos/{github}/installation");
-                let (_, v) = http::get_json(&url, &headers(Some(&auth)), http::TIMEOUT).map_err(
-                    |e| match e {
-                        HttpError::Status(404, _) => {
-                            GhError::Failed(format!("the GitHub App isn't installed on {github}"))
-                        }
-                        e => api_error(&what, e),
-                    },
-                )?;
-                let id = v
-                    .get("id")
-                    .and_then(Value::as_u64)
-                    .ok_or_else(|| GhError::Failed(format!("{what}: no id")))?;
-                s.installs.insert(key.clone(), id);
-                id
+        // A cached installation id GitHub refuses (the App reinstalled) is looked up again, once.
+        let mut cached = true;
+        let (v, what) = loop {
+            let install = match s.installs.get(&key) {
+                Some(id) => *id,
+                None => {
+                    cached = false;
+                    s.calls += 1;
+                    let what = format!("GET /repos/{github}/installation");
+                    let url = format!("{base}/repos/{github}/installation");
+                    let (_, v) = http::get_json(&url, &headers(Some(&auth)), http::TIMEOUT)
+                        .map_err(|e| match e {
+                            HttpError::Status(404, _) => GhError::Failed(format!(
+                                "the GitHub App isn't installed on {github}"
+                            )),
+                            e => api_error(&what, e),
+                        })?;
+                    let id = v
+                        .get("id")
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| GhError::Failed(format!("{what}: no id")))?;
+                    s.installs.insert(key.clone(), id);
+                    id
+                }
+            };
+            let name = github.split_once('/').map_or(github, |(_, n)| n);
+            s.calls += 1;
+            let what = format!("POST /app/installations/{install}/access_tokens");
+            let url = format!("{base}/app/installations/{install}/access_tokens");
+            let body = json!({"repositories": [name]});
+            match http::post_json(&url, &headers(Some(&auth)), &body, http::TIMEOUT) {
+                Ok((_, v)) => break (v, what),
+                Err(e) => {
+                    s.installs.remove(&key);
+                    s.tokens.remove(&key);
+                    let e = api_error(&what, e);
+                    if !cached || matches!(e, GhError::Env(_)) {
+                        return Err(e);
+                    }
+                }
             }
         };
-        let name = github.split_once('/').map_or(github, |(_, n)| n);
-        s.calls += 1;
-        let what = format!("POST /app/installations/{install}/access_tokens");
-        let url = format!("{base}/app/installations/{install}/access_tokens");
-        let body = json!({"repositories": [name]});
-        let (_, v) = http::post_json(&url, &headers(Some(&auth)), &body, http::TIMEOUT)
-            .map_err(|e| api_error(&what, e))?;
         let token = v
             .get("token")
             .and_then(Value::as_str)

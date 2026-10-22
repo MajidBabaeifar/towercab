@@ -63,7 +63,7 @@ pub struct GhState {
 }
 
 /// The fake GitHub API: `GET /repos/<o>/<n>/installation`, `POST
-/// /app/installations/<id>/access_tokens` (token `tok-<id>-<n>`), `GET /app` (slug
+/// /app/installations/<id>/access_tokens` (token `tok-<id>-<n>`; an id not installed: 404), `GET /app` (slug
 /// `towercab`), `GET /users/towercab%5Bbot%5D` (id 42).
 pub struct FakeGithub {
     pub http: FakeHttp,
@@ -102,6 +102,9 @@ impl FakeGithub {
                 .and_then(|p| p.strip_suffix("/access_tokens"))
             {
                 let id: u64 = id.parse().unwrap();
+                if !s.installs.values().any(|i| *i == id) {
+                    return (404, json!({"message": "Not Found"}).to_string());
+                }
                 let token = format!("tok-{id}-{}", s.tokens.len() + 1);
                 s.tokens.push((id, token.clone()));
                 let at =
@@ -134,6 +137,11 @@ impl FakeGithub {
 
     pub fn lifetime(&self, secs: i64) {
         self.state.lock().unwrap().lifetime = Some(secs);
+    }
+
+    /// The App reinstalled on `repo`: a new installation id.
+    pub fn reinstall(&self, repo: &str, id: u64) {
+        self.state.lock().unwrap().installs.insert(repo.into(), id);
     }
 
     pub fn down(&self, code: Option<u16>) {
