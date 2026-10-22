@@ -314,6 +314,7 @@ impl Loop {
         report.commands = commands::apply_pending(&cx)?;
         self.ensure_store();
         self.reap(tick)?;
+        self.enter_all(tick)?;
         self.poll_intents(tick)?;
         self.poll_prs(tick)?;
         self.enter_all(tick)?;
@@ -525,9 +526,9 @@ impl Loop {
         Ok(())
     }
 
-    /// The `intents` poll (LOOP-5, LOOP-18): at most every 60 s, pulled when `origin`'s `main`
-    /// moved (`git ls-remote`, and always the first time); then intent events, `retry: fresh`
-    /// and orphaned stages.
+    /// The `intents` poll (LOOP-5, LOOP-18): every 60 s, pulled when `origin`'s `main` moved
+    /// (`git ls-remote`, and always the first time), else the checkout re-read; then intent
+    /// events, `retry: fresh` and orphaned stages.
     fn poll_intents(&mut self, tick: Tick) -> Result<(), String> {
         let Some(store) = self.store.as_ref() else {
             return Ok(());
@@ -547,15 +548,16 @@ impl Loop {
                 (Ok(remote), Ok(local)) => remote.split_whitespace().next() != Some(local.trim()),
                 _ => true,
             };
-        if !moved {
-            return Ok(());
-        }
-        let listing = match store.list() {
-            Ok(l) => l,
-            Err(e) => {
-                self.warn("intents", format!("intents: {e}"));
-                return Ok(());
+        let listing = if moved {
+            match store.list() {
+                Ok(l) => l,
+                Err(e) => {
+                    self.warn("intents", format!("intents: {e}"));
+                    return Ok(());
+                }
             }
+        } else {
+            store.scan()
         };
         self.warned.remove("intents");
         self.listing = Some(listing);
@@ -573,7 +575,13 @@ impl Loop {
                 self.apply(&m, &Outcome::event(ev), tick)?;
             }
         }
-        let unfinished = mission::unfinished(self.db.conn())?;
+        // A finished mission whose entry write is due still owns its intent.
+        let mut unfinished = mission::unfinished(self.db.conn())?;
+        unfinished.extend(
+            mission::entering(self.db.conn())?
+                .into_iter()
+                .filter(|m| m.stage.finished()),
+        );
         let busy: BTreeSet<&str> = unfinished
             .iter()
             .filter_map(|m| m.intent.as_deref())

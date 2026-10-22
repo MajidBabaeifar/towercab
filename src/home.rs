@@ -1,10 +1,12 @@
 //! The loop's home (LOOP-1, **Home**): `towercab.db`, `towercab.lock`, checkouts `work/`, run
 //! files `runs/`. One loop per home (LOOP-15): `flock` on `towercab.lock`.
 
+use std::collections::BTreeSet;
 use std::fs::{DirBuilder, File};
 use std::io::{Read, Seek, Write};
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::config::expand;
@@ -22,6 +24,19 @@ pub struct Home {
 pub struct LoopLock {
     _file: File,
     pub path: PathBuf,
+}
+
+/// Lock files a [`LoopLock`] of this process holds.
+static HELD: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+
+fn held() -> std::sync::MutexGuard<'static, BTreeSet<PathBuf>> {
+    HELD.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+impl Drop for LoopLock {
+    fn drop(&mut self) {
+        held().remove(&self.path);
+    }
 }
 
 impl Home {
@@ -61,8 +76,33 @@ impl Home {
     }
 
     /// Takes the home's lock without waiting and writes `<pid>\n` into it. Held elsewhere →
-    /// `towercab is running (pid N); towercab down first`.
+    /// `towercab is running (pid N); towercab down first`. Held, but by no `LoopLock` of this
+    /// process and not by another pid, it is retried for up to 5 s: a child this process is
+    /// forking holds a copy of the fd until its `exec` (another thread's spawn just as a loop
+    /// was dropped).
     pub fn lock(&self) -> Result<LoopLock, String> {
+        let end = std::time::Instant::now() + Duration::from_secs(5);
+        let path = self.lock_path();
+        loop {
+            match self.try_lock() {
+                Err(e)
+                    if e.starts_with("towercab is running ")
+                        && !held().contains(&path)
+                        && self.holder().is_none_or(|p| p == std::process::id())
+                        && std::time::Instant::now() < end =>
+                {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Ok(lock) => {
+                    held().insert(lock.path.clone());
+                    return Ok(lock);
+                }
+                r => return r,
+            }
+        }
+    }
+
+    fn try_lock(&self) -> Result<LoopLock, String> {
         let path = self.lock_path();
         let shown = |e: std::io::Error| format!("{}: {e}", path.display());
         let mut file = File::options()

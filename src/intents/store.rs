@@ -279,7 +279,22 @@ impl Store {
 
     /// Changes one open intent through `f` (commit `towercab: <what> <id>`); `Err` from `f` →
     /// nothing written. `stage: done|dropped` adds `finished` and moves the folder to `done/`.
-    pub fn update<F>(&self, id_or_suffix: &str, what: &str, mut f: F) -> Result<Intent, StoreError>
+    pub fn update<F>(&self, id_or_suffix: &str, what: &str, f: F) -> Result<Intent, StoreError>
+    where
+        F: FnMut(&mut Intent) -> Result<(), String>,
+    {
+        self.update_marked(id_or_suffix, what, None, f)
+    }
+
+    /// [`Store::update`] whose commit carries `mark` as its last line (a trailer), which
+    /// [`Store::has_mark`] finds: the loop's entry writes, made once across crashes (LOOP-6).
+    pub fn update_marked<F>(
+        &self,
+        id_or_suffix: &str,
+        what: &str,
+        mark: Option<&str>,
+        mut f: F,
+    ) -> Result<Intent, StoreError>
     where
         F: FnMut(&mut Intent) -> Result<(), String>,
     {
@@ -323,8 +338,22 @@ impl Store {
                     .map_err(StoreError::Refused)?;
                 intent.dir = to;
             }
-            Ok((format!("towercab: {what} {}", intent.id), intent))
+            let mut msg = format!("towercab: {what} {}", intent.id);
+            if let Some(mark) = mark {
+                msg.push_str("\n\n");
+                msg.push_str(mark);
+            }
+            Ok((msg, intent))
         })
+    }
+
+    /// A line of one of the last 200 commits on the checkout's `HEAD` is `mark`.
+    pub fn has_mark(&self, mark: &str) -> Result<bool, StoreError> {
+        let log = self
+            .checkout
+            .git(&["log", "-n", "200", "--format=%B%x00", "HEAD"])
+            .map_err(StoreError::Refused)?;
+        Ok(log.lines().any(|l| l.trim_matches('\0').trim() == mark))
     }
 
     /// Reads every folder in the working tree (no git).

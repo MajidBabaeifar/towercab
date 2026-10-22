@@ -675,6 +675,25 @@ fn test_store_interface() {
         .unwrap();
     assert_eq!(up.u(), Some(5));
     assert_eq!(home.log()[0], format!("towercab: rescore {}", added.id));
+    // A marked update: the same subject, the mark its last line, found by `has_mark`.
+    let mark = "Towercab-Entry: s 12";
+    assert!(!store.has_mark(mark).unwrap());
+    store
+        .update_marked(&added.id, "design", Some(mark), |i| {
+            i.set("stage", Value::Str("design".into()))
+        })
+        .unwrap();
+    assert_eq!(home.log()[0], format!("towercab: design {}", added.id));
+    let body = common::git(&home.remote, &["log", "-1", "--format=%B", "main"]);
+    assert!(
+        body.trim_end().ends_with("\n\nTowercab-Entry: s 12"),
+        "{body}"
+    );
+    assert!(store.has_mark(mark).unwrap());
+    assert!(
+        !store.has_mark("Towercab-Entry: s 1").unwrap(),
+        "whole lines only"
+    );
 
     // `Err` from the closure → nothing written.
     let head = home.head();

@@ -168,7 +168,7 @@ impl World {
     /// A loop on this world with `handlers`, the fake PRs and `opts`.
     pub fn open_with(&self, handlers: Handlers, exes: Exes, opts: LoopOpts) -> Loop {
         let mut lp = Loop::open(self.config.clone(), self.home.clone(), handlers, exes, opts)
-            .expect("loop opens");
+            .unwrap_or_else(|e| panic!("loop opens: {e}"));
         lp.prs = Box::new(self.prs.clone());
         lp
     }

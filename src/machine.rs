@@ -1219,8 +1219,20 @@ pub fn enter(cx: &mut Ctx<'_>, m: &Mission) -> Result<Mission, String> {
     if matches!(m.kind, Kind::Intent | Kind::Revert)
         && let Some(id) = m.intent.as_deref()
     {
-        write_intent(cx, m, id)?;
-        cx.probe.point();
+        let transition: i64 = cx
+            .db
+            .conn()
+            .query_row(
+                "SELECT COALESCE(MAX(id), 0) FROM transitions WHERE mission = ?1",
+                [m.id],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        let mark = format!("{ENTRY_MARK} {} {transition}", m.session);
+        if !cx.store.has_mark(&mark).map_err(|e| format!("{id}: {e}"))? {
+            write_intent(cx, m, id, &mark)?;
+            cx.probe.point();
+        }
     }
     if m.stage.finished() && m.checkout.starts_with("work/") {
         checkout::remove(&cx.checkout(m))?;
@@ -1245,9 +1257,13 @@ pub fn enter(cx: &mut Ctx<'_>, m: &Mission) -> Result<Mission, String> {
     Ok(out)
 }
 
+/// The trailer of an entry's intent commit: `Towercab-Entry: <session> <transition id>`. A
+/// re-run after a crash finds it and leaves the intent alone, so my edits since stay (LOOP-6).
+pub const ENTRY_MARK: &str = "Towercab-Entry:";
+
 /// One `Store::update(id, <stage>, …)`: `stage` (`playbook()`), `waiting` set or removed,
 /// `pr`; at `pick` `retry` removed; at `done` `cost`, `agent_time`, `attempts`.
-fn write_intent(cx: &Ctx<'_>, m: &Mission, id: &str) -> Result<(), String> {
+fn write_intent(cx: &Ctx<'_>, m: &Mission, id: &str, mark: &str) -> Result<(), String> {
     let totals = if m.stage == Stage::Done {
         let t: (f64, f64, u32) = cx
             .db
@@ -1263,27 +1279,29 @@ fn write_intent(cx: &Ctx<'_>, m: &Mission, id: &str) -> Result<(), String> {
     } else {
         None
     };
-    let r = cx.store.update(id, m.stage.as_str(), |i| {
-        if let Some(p) = m.stage.playbook() {
-            i.set("stage", IValue::Str(p.as_str().into()))?;
-        }
-        match &m.waiting {
-            Some(w) => i.set("waiting", IValue::Str(w.clone()))?,
-            None => i.remove("waiting")?,
-        }
-        if let Some(url) = &m.pr_url {
-            i.set("pr", IValue::Str(url.clone()))?;
-        }
-        if m.stage == Stage::Pick {
-            i.remove("retry")?;
-        }
-        if let Some((cost, secs, attempts)) = totals {
-            i.set("cost", IValue::Float(cost))?;
-            i.set("agent_time", IValue::Int(secs.round() as i64))?;
-            i.set("attempts", IValue::Int(i64::from(attempts.max(1))))?;
-        }
-        Ok(())
-    });
+    let r = cx
+        .store
+        .update_marked(id, m.stage.as_str(), Some(mark), |i| {
+            if let Some(p) = m.stage.playbook() {
+                i.set("stage", IValue::Str(p.as_str().into()))?;
+            }
+            match &m.waiting {
+                Some(w) => i.set("waiting", IValue::Str(w.clone()))?,
+                None => i.remove("waiting")?,
+            }
+            if let Some(url) = &m.pr_url {
+                i.set("pr", IValue::Str(url.clone()))?;
+            }
+            if m.stage == Stage::Pick {
+                i.remove("retry")?;
+            }
+            if let Some((cost, secs, attempts)) = totals {
+                i.set("cost", IValue::Float(cost))?;
+                i.set("agent_time", IValue::Int(secs.round() as i64))?;
+                i.set("attempts", IValue::Int(i64::from(attempts.max(1))))?;
+            }
+            Ok(())
+        });
     match r {
         Ok(_) => Ok(()),
         // Gone, or moved to done/ by an earlier run of this effect.
