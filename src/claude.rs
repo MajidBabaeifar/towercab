@@ -222,6 +222,9 @@ pub struct Run {
     pub deny_write: Vec<PathBuf>,
     /// The worker's `PreToolUse` guard hook (PIP-29).
     pub guard: bool,
+    /// Towercab's own secrets outside `HOME`'s [`SECRETS`] (`--config` elsewhere): the config
+    /// file, `app.pem` and `secrets/` next to it, absolute (path, is a directory).
+    pub deny_read: Vec<(PathBuf, bool)>,
     /// An eval's run (PIP-33): same argv, metrics agent `eval`.
     pub eval: bool,
 }
@@ -257,6 +260,7 @@ impl Run {
             verifier: None,
             deny_write: Vec::new(),
             guard: false,
+            deny_read: config_secrets(config),
             eval: false,
         }
     }
@@ -315,11 +319,36 @@ pub const SECRETS: [(&str, bool); 9] = [
     (".git-credentials", false),
 ];
 
-/// The loop's `HOME` (every run's too).
-pub fn home() -> PathBuf {
+/// The loop's `HOME` (every run's too); unset or empty → `HOME is not set`.
+pub fn home() -> Result<PathBuf, String> {
     std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_default()
+        .ok_or_else(|| "HOME is not set".to_string())
+}
+
+/// The config file, `app.pem` and `secrets/` next to it (absolute): no run reads them,
+/// wherever `--config` put them (PIP-24).
+pub fn config_secrets(config: &Config) -> Vec<(PathBuf, bool)> {
+    let file = std::path::absolute(&config.file).unwrap_or_else(|_| config.file.clone());
+    let dir = file.parent().map(Path::to_path_buf).unwrap_or_default();
+    vec![
+        (file, false),
+        (dir.join("app.pem"), false),
+        (dir.join("secrets"), true),
+    ]
+}
+
+/// The executable the worker's guard hook runs: `exe` (`current_exe`) without the ` (deleted)`
+/// Linux appends once a reinstall replaced it; missing → `<path>: missing`.
+pub fn live_exe(exe: &Path) -> Result<PathBuf, String> {
+    let shown = exe.to_string_lossy();
+    let path = PathBuf::from(shown.strip_suffix(" (deleted)").unwrap_or(&shown));
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(format!("{}: missing", path.display()))
+    }
 }
 
 /// [`SECRETS`] as absolute paths under `home`.
@@ -432,6 +461,14 @@ pub fn argv(run: &Run, exes: &Exes) -> Vec<OsString> {
     }
     a.push("--disallowedTools".into());
     a.extend(disallowed(run.kind).into_iter().map(OsString::from));
+    for (p, dir) in &run.deny_read {
+        let p = p.to_string_lossy();
+        a.push(if *dir {
+            format!("Read(/{p}/**)").into()
+        } else {
+            format!("Read(/{p})").into()
+        });
+    }
     if run.kind.policies() {
         a.push("--plugin-dir".into());
         a.push(f.policies.into());
@@ -453,19 +490,26 @@ pub fn argv(run: &Run, exes: &Exes) -> Vec<OsString> {
     a
 }
 
-/// The `--settings` file: the sandbox (secret paths unreadable, `deny_write` unwritable, the
-/// verifier's app its only network), plus the worker's guard hook (`'<towercab>' hook guard`).
+/// The `--settings` file: the sandbox (secret paths and `deny_read` unreadable, `deny_write`
+/// and a checkout run's `<cwd>/.git` unwritable, the verifier's app its only network), plus
+/// the worker's guard hook (`'<towercab>' hook guard`).
 pub fn settings(run: &Run, home: &Path, towercab: &Path) -> Value {
     let paths = |v: &[PathBuf]| -> Vec<String> {
         v.iter().map(|p| p.to_string_lossy().into_owned()).collect()
     };
+    let mut read = secret_paths(home);
+    read.extend(run.deny_read.iter().map(|(p, _)| p.clone()));
+    let mut write = run.deny_write.clone();
+    if !run.kind.toolless() {
+        write.push(run.cwd.join(".git"));
+    }
     let mut sandbox = json!({
         "enabled": true,
         "failIfUnavailable": true,
         "allowUnsandboxedCommands": false,
         "filesystem": {
-            "denyRead": paths(&secret_paths(home)),
-            "denyWrite": paths(&run.deny_write),
+            "denyRead": paths(&read),
+            "denyWrite": paths(&write),
         },
     });
     if let (RunKind::Verifier, Some(v)) = (run.kind, &run.verifier) {
@@ -510,10 +554,12 @@ pub fn env(config: &Config) -> Vec<(OsString, OsString)> {
         .filter(|l| !l.is_empty())
         .unwrap_or_else(|| "C.UTF-8".into());
     let mut e: Vec<(OsString, OsString)> = vec![
-        ("HOME".into(), home().into()),
         ("PATH".into(), config.agent.path.clone().into()),
         ("LANG".into(), lang),
     ];
+    if let Ok(h) = home() {
+        e.insert(0, ("HOME".into(), h.into()));
+    }
     for (k, v) in [
         ("CLAUDE_CODE_ENABLE_TELEMETRY", "1"),
         ("OTEL_METRICS_EXPORTER", "otlp"),
@@ -551,7 +597,8 @@ pub fn spec(run: &Run, config: &Config, exes: &Exes) -> ChildSpec {
 }
 
 /// Writes the run's files (the prompt, `--settings`, `CLAUDE.md` = `claude_md`, the base
-/// branch's or empty without a repo, the verifier's MCP config), then its [`spec`].
+/// branch's or empty without a repo, the verifier's MCP config), then its [`spec`]. Fails
+/// without `HOME`, or for the worker without its guard's executable ([`live_exe`]).
 pub fn prepare(
     run: &Run,
     claude_md: &str,
@@ -560,12 +607,18 @@ pub fn prepare(
 ) -> Result<ChildSpec, String> {
     let f = run.files();
     fs::create_dir_all(&run.runs).map_err(|e| format!("{}: {e}", run.runs.display()))?;
-    let towercab = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("towercab"));
+    let home = home()?;
+    let towercab = if run.guard {
+        let exe = std::env::current_exe().map_err(|e| format!("towercab executable: {e}"))?;
+        live_exe(&exe).map_err(|e| format!("guard hook: {e}"))?
+    } else {
+        PathBuf::from("towercab")
+    };
     let mut files = vec![
         (f.prompt.clone(), run.prompt.clone()),
         (
             f.settings.clone(),
-            settings(run, &home(), &towercab).to_string(),
+            settings(run, &home, &towercab).to_string(),
         ),
         (f.claude_md.clone(), claude_md.to_string()),
     ];
@@ -777,7 +830,8 @@ pub fn parse(
     if r.subtype == "error_max_budget_usd" {
         return RunEnd::Budget(r);
     }
-    let home = home();
+    // No HOME: every secret's name alone counts.
+    let home = home().unwrap_or_default();
     if r.permission_denials
         .iter()
         .any(|d| is_fatal_denial(d, &home))
@@ -803,7 +857,7 @@ pub fn parse(
 
 /// [`parse`] of an ended run's files.
 pub fn end(run: &Run, end: &ChildEnd, now: DateTime<FixedOffset>) -> RunEnd {
-    let read = |p: &Path| fs::read_to_string(p).unwrap_or_default();
+    let read = |p: &Path| String::from_utf8_lossy(&fs::read(p).unwrap_or_default()).into_owned();
     parse(
         &run.model,
         &read(&end.stdout),

@@ -84,6 +84,10 @@ fn deny() -> Vec<String> {
         "Read(~/.netrc)",
         "Read(~/.git-credentials)",
         "Read(**/.env*)",
+        // Towercab's own, wherever `--config` put them (`/cfg/config.toml` here).
+        "Read(//cfg/config.toml)",
+        "Read(//cfg/app.pem)",
+        "Read(//cfg/secrets/**)",
     ]
     .map(String::from)
     .to_vec()
@@ -170,7 +174,7 @@ fn test_worker_argv() {
     assert!(spec.slot);
     assert_eq!(spec.model.as_deref(), Some("opus"));
 
-    // Its settings: the sandbox, denyWrite = the protected paths, the guard hook.
+    // Its settings: the sandbox, denyWrite = the protected paths and its `.git`, the guard hook.
     r.deny_write = vec![PathBuf::from("/home/w/work/261001-0900-1/.github")];
     r.guard = true;
     let s = claude::settings(&r, Path::new("/home/me"), Path::new("/bin/towercab"));
@@ -181,7 +185,23 @@ fn test_worker_argv() {
     );
     assert_eq!(
         s["sandbox"]["filesystem"]["denyWrite"],
-        json!(["/home/w/work/261001-0900-1/.github"])
+        json!([
+            "/home/w/work/261001-0900-1/.github",
+            "/home/w/work/261001-0900-1/.git"
+        ])
+    );
+    // The guard's executable: `current_exe` without the ` (deleted)` a reinstall leaves;
+    // missing → no run.
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("towercab");
+    fs::write(&bin, "").unwrap();
+    let deleted = tmp.path().join("towercab (deleted)");
+    assert_eq!(claude::live_exe(&deleted), Ok(bin.clone()));
+    assert_eq!(claude::live_exe(&bin), Ok(bin.clone()));
+    fs::remove_file(&bin).unwrap();
+    assert_eq!(
+        claude::live_exe(&deleted),
+        Err(format!("{}: missing", bin.display()))
     );
     assert_eq!(
         s["sandbox"]["network"],
@@ -485,8 +505,9 @@ fn test_sandbox_denies_secret_read() {
                     "/home/me/.ssh", "/home/me/.config/gh", "/home/me/.aws", "/home/me/.gnupg",
                     "/home/me/.config/towercab", "/home/me/.claude/.credentials.json",
                     "/home/me/.codex/auth.json", "/home/me/.netrc", "/home/me/.git-credentials",
+                    "/cfg/config.toml", "/cfg/app.pem", "/cfg/secrets",
                 ],
-                "denyWrite": [],
+                "denyWrite": ["/home/w/work/261001-0900-1/.git"],
             },
         }})
     );
@@ -495,9 +516,19 @@ fn test_sandbox_denies_secret_read() {
         assert!(a.contains(&"Read(~/.ssh/**)".to_string()), "{kind:?}");
         assert!(a.contains(&"Read(~/.netrc)".to_string()), "{kind:?}");
         assert!(a.contains(&"Read(**/.env*)".to_string()), "{kind:?}");
+        assert!(a.contains(&"Read(//cfg/app.pem)".to_string()), "{kind:?}");
+        let s = claude::settings(&run(kind), home, Path::new("/bin/towercab"));
+        assert_eq!(
+            s["sandbox"]["filesystem"]["denyWrite"]
+                .as_array()
+                .unwrap()
+                .len(),
+            usize::from(!kind.toolless()),
+            "a checkout run can't write its .git: {kind:?}"
+        );
     }
     // A denied secret read fails the stage; the run's HOME is the loop's.
-    let real = claude::home();
+    let real = claude::home().unwrap();
     let denial = |tool: &str, input: Value| {
         parse(
             &result(json!({"permission_denials": [{"tool_name": tool, "tool_input": input}]})),
@@ -800,6 +831,26 @@ fn test_claude_result() {
         ),
         RunEnd::Ok(_)
     ));
+    // The files read lossily: a stray invalid byte doesn't hide the network failure.
+    let tmp = tempfile::tempdir().unwrap();
+    let (out, err) = (tmp.path().join("o.json"), tmp.path().join("o.err"));
+    fs::write(&out, b"\xff\n").unwrap();
+    fs::write(&err, b"\xfe Could not resolve host: api.anthropic.com\n").unwrap();
+    let end = ChildEnd {
+        status: exit(1),
+        timed_out: false,
+        run: Duration::from_secs(1),
+        stdout: out,
+        stderr: err,
+    };
+    let now = common::t("2026-10-15T13:30:00+02:00");
+    assert!(
+        matches!(
+            claude::end(&run(RunKind::Review), &end, now),
+            RunEnd::Env(_)
+        ),
+        "network"
+    );
 }
 
 #[test]

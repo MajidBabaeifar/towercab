@@ -99,7 +99,18 @@ fn test_token_never_in_claude_env() {
     assert!(got.contains("LANG=de_DE.UTF-8\n"), "{got}");
     assert!(got.contains("OTEL_SERVICE_NAME=towercab\n"), "{got}");
     assert!(
-        got.contains(&format!("HOME={}\n", claude::home().display())),
+        got.contains(&format!("HOME={}\n", claude::home().unwrap().display())),
         "{got}"
+    );
+
+    // No HOME: no run (its secret paths would be relative).
+    // SAFETY: as above.
+    unsafe {
+        std::env::remove_var("HOME");
+    }
+    assert_eq!(claude::home(), Err("HOME is not set".to_string()));
+    assert_eq!(
+        claude::prepare(&r, "", &config, &exes).unwrap_err(),
+        "HOME is not set"
     );
 }
