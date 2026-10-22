@@ -114,7 +114,7 @@ fn kind(key: &str) -> Option<Kind> {
     Some(match key {
         "repo" => Kind::Repo,
         "u" | "i" | "a" => Kind::Score,
-        "model" | "review" | "source" | "waiting" | "pr" | "retry" => Kind::Str,
+        "model" | "review" | "source" | "waiting" | "pr" | "retry" | "lower_why" => Kind::Str,
         "after" => Kind::After,
         "unlock" => Kind::List,
         "started" | "finished" | "reviewed" => Kind::Time,
@@ -450,6 +450,10 @@ impl Intent {
     }
     pub fn retry(&self) -> Option<&str> {
         self.str("retry")
+    }
+    /// The worker's reason for a lowered `a` (AUT-7).
+    pub fn lower_why(&self) -> Option<&str> {
+        self.str("lower_why")
     }
     pub fn cost(&self) -> Option<f64> {
         match self.values.get("cost") {
