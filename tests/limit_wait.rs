@@ -17,7 +17,7 @@ use towercab::db::Cooldown;
 use towercab::handler::{
     ChildEnd, ChildKind, ChildSpec, Ctx, Handler, Handlers, Outcome, Progress, StepError,
 };
-use towercab::limits;
+use towercab::limits::{self, Limit};
 use towercab::machine::Stage;
 use towercab::mission::Mission;
 use towercab::pick::{self, Pick, Skip};
@@ -420,4 +420,21 @@ fn test_past_reset_backs_off() {
     assert!(r.idle, "still cooling");
     assert_eq!(runs(&w, X), 1);
     lp.shutdown().unwrap();
+
+    // `since`: kept while the cooldown runs, the new limit's once it ended.
+    let db = w.db();
+    let since = c.since;
+    let limit = Limit {
+        model: "opus".into(),
+        reset: None,
+        text: "rate limited".into(),
+    };
+    let until = limits::cool(db.conn(), &limit, c.until - 1.0).unwrap();
+    assert_eq!(cooldown(&w, "opus").unwrap().since, since, "still cooling");
+    limits::cool(db.conn(), &limit, until + 5.0).unwrap();
+    assert_eq!(
+        cooldown(&w, "opus").unwrap().since,
+        until + 5.0,
+        "a new one"
+    );
 }

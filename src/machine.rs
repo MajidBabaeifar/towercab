@@ -1016,16 +1016,8 @@ pub fn apply_tx(
             let Some(limit) = &o.limit else {
                 unreachable!("checked above")
             };
-            // A reset time already past (a stale epoch, a log line's timestamp) is no reset
-            // time: the backoff applies, so the run isn't retried every pass.
-            let mut limit = limit.clone();
-            if limit
-                .reset
-                .is_some_and(|t| t.timestamp_micros() as f64 / 1e6 + limits::RESET_MARGIN <= now)
-            {
-                limit.reset = None;
-            }
-            limits::cool(tx, &limit, now)?;
+            // A reset already past: the backoff (`limits::cool`).
+            limits::cool(tx, limit, now)?;
             put(&mut cols, "limit_model", limit.model.clone());
             Act::Stay
         }

@@ -147,6 +147,10 @@ fn test_limit_formats() {
         ("resets Feb 30, 3pm", None),
         ("hit your limit", None),
         ("resets 3 times, then 4", None),
+        // Too far to be a time: none, never a panic.
+        ("rate limit retry-after: 99999999999999", None),
+        ("usage limit · resets in 99999999999 days", None),
+        ("usage limit · try again in 9223372036854775807 s", None),
         // The first rule that matches wins, the first valid clock time within its rule.
         (
             "resets 3pm|1760540400",

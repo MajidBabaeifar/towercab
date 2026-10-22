@@ -109,7 +109,7 @@ static AUTH: LazyLock<Regex> = LazyLock::new(|| {
 
 static NETWORK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?i)could not resolve (?:host|proxy)|name resolution|name or service not known|no address associated|connection (?:refused|reset|timed out|closed)|network is unreachable|no route to host|timed? ?out\b|\btls\b|\bssl\b|unexpected eof|early eof|\bhttp(?:/[0-9.]+)?:? 5[0-9]{2}\b|\b5[0-9]{2} (?:internal server error|bad gateway|service unavailable|gateway time-?out)|status(?: code)?:? 5[0-9]{2}\b|returned error: 5[0-9]{2}\b|api error: 5[0-9]{2}|error connecting|failed to connect to|could(?: not|n't) connect to server|econn(?:refused|reset)|etimedout|enotfound|eai_again|fetch failed|socket hang up",
+        r"(?i)could not resolve (?:host|proxy)|name resolution|name or service not known|no address associated|connection (?:refused|reset|timed out|closed)|network is unreachable|no route to host|timed? ?out\b|tls handshake|handshake (?:failed|failure)|ssl certificate problem|certificate verify failed|ssl_(?:connect|read|write|error)|ssl routines|tls connection|ssl connection|unexpected eof|early eof|\bhttp(?:/[0-9.]+)?:? 5[0-9]{2}\b|\b5[0-9]{2} (?:internal server error|bad gateway|service unavailable|gateway time-?out)|status(?: code)?:? 5[0-9]{2}\b|returned error: 5[0-9]{2}\b|api error: 5[0-9]{2}|error connecting|failed to connect to|could(?: not|n't) connect to server|econn(?:refused|reset)|etimedout|enotfound|eai_again|fetch failed|socket hang up",
     )
     .expect("network regex")
 });

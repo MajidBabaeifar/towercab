@@ -106,14 +106,14 @@ pub fn parse_reset(text: &str, now: DateTime<FixedOffset>) -> Option<DateTime<Ut
         return DateTime::from_timestamp(c[1].parse().ok()?, 0);
     }
     if let Some(c) = RETRY_AFTER.captures(text) {
-        return Some(utc + TimeDelta::try_seconds(c[1].parse().ok()?)?);
+        return utc.checked_add_signed(TimeDelta::try_seconds(c[1].parse().ok()?)?);
     }
     if let Some(c) = IN.captures(text) {
         let mut secs = span(&c[1], &c[2])?;
         if let (Some(n), Some(u)) = (c.get(3), c.get(4)) {
             secs = secs.checked_add(span(n.as_str(), u.as_str())?)?;
         }
-        return Some(utc + TimeDelta::try_seconds(secs)?);
+        return utc.checked_add_signed(TimeDelta::try_seconds(secs)?);
     }
     if let Some(c) = DATETIME.captures(text) {
         let num = |i: usize| c.get(i).map_or(Some(0), |m| m.as_str().parse::<u32>().ok());
@@ -227,7 +227,9 @@ pub fn backoff(n: u32) -> Duration {
 }
 
 /// Upserts the `cooldowns` row of `(claude, limit.model)`: `until` = reset + 30 s, else now +
-/// the next backoff (`backoffs + 1`). Returns `until`.
+/// the next backoff (`backoffs + 1`); a reset already past (a stale epoch, a log line's
+/// timestamp) is none, so the run isn't retried every pass. `since` = now unless the row's
+/// cooldown is still running. Returns `until`.
 pub fn cool(conn: &Connection, limit: &Limit, now: f64) -> Result<f64, String> {
     let backoffs: i64 = conn
         .query_row(
@@ -238,12 +240,12 @@ pub fn cool(conn: &Connection, limit: &Limit, now: f64) -> Result<f64, String> {
         .optional()
         .map_err(sql)?
         .unwrap_or(0);
-    let (until, parsed, backoffs) = match limit.reset {
-        Some(t) => (
-            t.timestamp_micros() as f64 / 1e6 + RESET_MARGIN,
-            true,
-            backoffs,
-        ),
+    let reset = limit
+        .reset
+        .map(|t| t.timestamp_micros() as f64 / 1e6 + RESET_MARGIN)
+        .filter(|u| *u > now);
+    let (until, parsed, backoffs) = match reset {
+        Some(u) => (u, true, backoffs),
         None => (
             now + backoff(backoffs as u32 + 1).as_secs_f64(),
             false,
@@ -254,7 +256,8 @@ pub fn cool(conn: &Connection, limit: &Limit, now: f64) -> Result<f64, String> {
         "INSERT INTO cooldowns (provider, model, until, parsed, backoffs, text, since)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT (provider, model) DO UPDATE SET until = excluded.until,
-           parsed = excluded.parsed, backoffs = excluded.backoffs, text = excluded.text",
+           parsed = excluded.parsed, backoffs = excluded.backoffs, text = excluded.text,
+           since = CASE WHEN cooldowns.until > excluded.since THEN cooldowns.since ELSE excluded.since END",
         params![
             CLAUDE,
             limit.model,

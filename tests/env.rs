@@ -53,6 +53,20 @@ fn test_classify() {
             Some(FaultClass::Network),
         ),
         (
+            "fatal: unable to access 'https://github.com/me/web.git/': SSL certificate problem: unable to get local issuer certificate",
+            Some(FaultClass::Network),
+        ),
+        (
+            "error: RPC failed; curl 35 OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to github.com:443",
+            Some(FaultClass::Network),
+        ),
+        // A word, not an error: the call's own failure.
+        ("error: tls feature not enabled; use --features ssl", None),
+        (
+            "error[E0432]: unresolved import `openssl::ssl::SslConnector`",
+            None,
+        ),
+        (
             "HTTP 502: Bad Gateway (https://api.github.com/graphql)",
             Some(FaultClass::Network),
         ),
