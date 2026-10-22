@@ -12,6 +12,7 @@ use towercab::intents::{Intent, Store};
 
 pub mod app;
 pub mod http;
+pub mod pipe;
 pub mod world;
 
 /// `git <args>` in `dir` as "me"; panics on failure.

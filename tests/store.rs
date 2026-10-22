@@ -891,7 +891,13 @@ fn test_store_put() {
     let head = home.head();
     assert_eq!(store.put(rel, "# Plan\n", "plan 261020-0721"), Ok(false));
     assert_eq!(home.head(), head);
-    for bad in ["../x", "/tmp/x", "intents/261020-0721-x/intent.md", "TODO.md", "a/../b"] {
+    for bad in [
+        "../x",
+        "/tmp/x",
+        "intents/261020-0721-x/intent.md",
+        "TODO.md",
+        "a/../b",
+    ] {
         assert!(
             matches!(store.put(bad, "x", "bad"), Err(StoreError::Refused(_))),
             "{bad}"

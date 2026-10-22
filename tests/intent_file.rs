@@ -465,7 +465,8 @@ finished: 2026-10-21T10:00:00+02:00\nreviewed: 2026-10-21T09:00:00+02:00\nafter:
 fn test_set_section_keeps_other_lines() {
     let text = "---\r\nrepo: web\r\n---\r\n\r\n# Intent: X\r\n\r\n## Problem\r\n\r\nslow\r\n";
     let mut i = Intent::parse(text).unwrap();
-    i.set_section("Towercab", "Design: a.\n# not a heading").unwrap();
+    i.set_section("Towercab", "Design: a.\n# not a heading")
+        .unwrap();
     let with = i.render();
     assert!(with.starts_with(text), "{with:?}");
     assert!(

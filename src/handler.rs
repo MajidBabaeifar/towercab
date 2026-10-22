@@ -476,6 +476,15 @@ impl Handlers {
         self.map.values().all(|h| h.built())
     }
 
+    /// The driven stages whose handler isn't built yet.
+    pub fn unbuilt(&self) -> Vec<Stage> {
+        self.map
+            .iter()
+            .filter(|(_, h)| !h.built())
+            .map(|(s, _)| *s)
+            .collect()
+    }
+
     pub fn get_mut(&mut self, stage: Stage) -> Option<&mut Box<dyn Handler>> {
         self.map.get_mut(&stage)
     }
