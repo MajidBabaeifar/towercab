@@ -815,10 +815,12 @@ impl Loop {
                 .map_err(sql)?
         };
         let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        let mut active = BTreeSet::new();
         for m in mission::unfinished(conn)? {
             if m.stage != Stage::Blocked {
                 *counts.entry(m.repo.clone()).or_default() += 1;
             }
+            active.extend(m.intent);
         }
         let full = self
             .config
@@ -852,6 +854,7 @@ impl Loop {
             frozen,
             full,
             cooling,
+            active,
         })
     }
 

@@ -32,6 +32,8 @@ pub struct PickState {
     pub full: BTreeMap<String, (usize, u8)>,
     /// Models cooling down (LOOP-9): model → until (as shown).
     pub cooling: BTreeMap<String, String>,
+    /// Intents with an unfinished mission: never picked again (LOOP-4).
+    pub active: BTreeSet<String>,
 }
 
 /// Why an intent isn't picked (`Display` = the **Next** reason).
@@ -153,7 +155,10 @@ pub fn decide(listing: &Listing, state: &PickState) -> Decision {
             .push((id.clone(), Waiting::BadAfter, ids.join(", ")));
         d.skipped.push((id, Skip::BadAfter(ids)));
     }
-    for i in pick_order(listing, state.cutoff) {
+    for i in pick_order(listing, state.cutoff)
+        .into_iter()
+        .filter(|i| !state.active.contains(&i.id))
+    {
         let repo = i.repo().to_string();
         if !state.repos.contains(&repo) {
             d.writes

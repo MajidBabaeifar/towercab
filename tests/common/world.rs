@@ -15,8 +15,11 @@ use towercab::db::Db;
 use towercab::events::{PrSource, PrState};
 use towercab::exes::Exes;
 use towercab::github::GhError;
-use towercab::handler::Handlers;
+use towercab::handler::{
+    ChildEnd, ChildKind, ChildSpec, Ctx, Handler, Handlers, Outcome, Progress, StepError,
+};
 use towercab::home::Home as LoopHome;
+use towercab::machine::{Stage, Waiting};
 use towercab::mission::{self, Mission};
 use towercab::runloop::{Loop, LoopOpts, PassReport, Tick};
 
@@ -212,7 +215,7 @@ impl World {
     }
 
     /// The stage of the intent's latest mission, if any.
-    pub fn stage(&self, intent: &str) -> Option<towercab::machine::Stage> {
+    pub fn stage(&self, intent: &str) -> Option<Stage> {
         self.missions(intent).pop().map(|m| m.stage)
     }
 
@@ -267,4 +270,124 @@ pub fn has_head(dir: &Path) -> bool {
             .current_dir(dir)
             .output()
             .is_ok_and(|o| o.status.success())
+}
+
+/// What [`Scripted`] does for an intent at its stage.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Act {
+    Ok,
+    Wait(Waiting),
+    /// `Progress::Poll` for ever.
+    Poll(Duration),
+    /// Records step `run`, then a slot child in the checkout that runs until
+    /// `runs/<id>/release-<stage>` exists; `ok` when it ends.
+    Child,
+}
+
+/// A test handler: per intent (else `default`), what to do.
+pub struct Scripted {
+    pub acts: BTreeMap<String, Act>,
+    pub default: Act,
+}
+
+impl Scripted {
+    pub fn all(default: Act) -> Box<Scripted> {
+        Box::new(Scripted {
+            acts: BTreeMap::new(),
+            default,
+        })
+    }
+
+    pub fn by(default: Act, acts: &[(&str, Act)]) -> Box<Scripted> {
+        Box::new(Scripted {
+            acts: acts
+                .iter()
+                .map(|(i, a)| (i.to_string(), a.clone()))
+                .collect(),
+            default,
+        })
+    }
+
+    fn act(&self, m: &Mission) -> Act {
+        m.intent
+            .as_ref()
+            .and_then(|i| self.acts.get(i))
+            .unwrap_or(&self.default)
+            .clone()
+    }
+}
+
+/// The child [`Act::Child`] runs: until `release` exists.
+pub fn waiter(cx: &Ctx<'_>, m: &Mission) -> ChildSpec {
+    let runs = cx.runs(m);
+    let release = runs.join(format!("release-{}", m.stage));
+    ChildSpec {
+        kind: ChildKind::Claude,
+        argv: vec![
+            "sh".into(),
+            "-c".into(),
+            format!(
+                "echo \"$PWD\" > {}; while [ ! -e {} ]; do sleep 0.05; done",
+                runs.join(format!("cwd-{}", m.stage)).display(),
+                release.display()
+            )
+            .into(),
+        ],
+        cwd: cx.checkout(m),
+        env: vec![("PATH".into(), std::env::var_os("PATH").unwrap_or_default())],
+        stdin: None,
+        stdout: runs.join(format!("{}.out", m.stage)),
+        stderr: runs.join(format!("{}.err", m.stage)),
+        timeout: None,
+        slot: true,
+        model: Some(m.model.clone()),
+    }
+}
+
+impl Handler for Scripted {
+    fn step(&mut self, cx: &mut Ctx<'_>, m: &Mission) -> Result<Progress, StepError> {
+        Ok(match self.act(m) {
+            Act::Ok => Progress::Done(Outcome::ok()),
+            Act::Wait(w) => Progress::Done(Outcome::wait(w, "")),
+            Act::Poll(after) => Progress::Poll { after },
+            Act::Child => {
+                let m = if m.step == "run" {
+                    m.clone()
+                } else {
+                    cx.record(m, "run", &[])?
+                };
+                Progress::Spawn(waiter(cx, &m))
+            }
+        })
+    }
+
+    fn finish(&mut self, _: &mut Ctx<'_>, _: &Mission, _: ChildEnd) -> Result<Progress, StepError> {
+        Ok(Progress::Done(Outcome::ok()))
+    }
+}
+
+impl World {
+    /// Lets the [`Act::Child`] of `intent` at `stage` end.
+    pub fn release(&self, intent: &str, stage: Stage) {
+        let runs = self.home.runs(intent);
+        fs::create_dir_all(&runs).unwrap();
+        fs::write(runs.join(format!("release-{stage}")), "").unwrap();
+    }
+
+    /// The directory the child of `intent` at `stage` ran in.
+    pub fn child_cwd(&self, intent: &str, stage: Stage) -> Option<String> {
+        fs::read_to_string(self.home.runs(intent).join(format!("cwd-{stage}")))
+            .ok()
+            .map(|s| s.trim().to_string())
+    }
+
+    /// Passes (1 s apart) until `done` holds, at most `secs` seconds of real time.
+    pub fn wait_for(&mut self, lp: &mut Loop, secs: u64, done: impl Fn(&World, &Loop) -> bool) {
+        let end = std::time::Instant::now() + Duration::from_secs(secs);
+        while !done(self, lp) {
+            assert!(std::time::Instant::now() < end, "not reached in {secs} s");
+            std::thread::sleep(Duration::from_millis(30));
+            self.pass_after(lp, 1);
+        }
+    }
 }
