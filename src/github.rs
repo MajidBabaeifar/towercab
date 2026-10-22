@@ -12,6 +12,7 @@ use std::fmt;
 use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -24,6 +25,7 @@ use rsa::signature::{SignatureEncoding, Signer};
 use serde_json::{Value, json};
 use sha2::Sha256;
 
+use crate::child::GH_TIMEOUT;
 use crate::config::Config;
 use crate::exes::Exes;
 use crate::http::{self, HttpError};
@@ -168,6 +170,8 @@ struct AppState {
 pub struct Identity {
     app: Option<Arc<Mutex<AppState>>>,
     gh: OsString,
+    /// Each `gh` call is killed after this ([`crate::child::GH_TIMEOUT`]).
+    timeout: Duration,
 }
 
 impl Default for Identity {
@@ -216,6 +220,7 @@ impl Identity {
         Identity {
             app: None,
             gh: "gh".into(),
+            timeout: GH_TIMEOUT,
         }
     }
 
@@ -231,6 +236,7 @@ impl Identity {
                 calls: 0,
             }))),
             gh: "gh".into(),
+            timeout: GH_TIMEOUT,
         }
     }
 
@@ -251,6 +257,12 @@ impl Identity {
     /// The `gh` executable its calls and the git credential helper run.
     pub fn with_gh(mut self, gh: &OsStr) -> Identity {
         self.gh = gh.to_os_string();
+        self
+    }
+
+    /// Its `gh` calls are killed after `timeout` (tests).
+    pub fn with_timeout(mut self, timeout: Duration) -> Identity {
+        self.timeout = timeout;
         self
     }
 
@@ -386,7 +398,8 @@ impl Identity {
         }
     }
 
-    /// `gh <args>` on repo `github` → stdout; a non-zero exit → [`GhError`] by its stderr.
+    /// `gh <args>` on repo `github` → stdout; a non-zero exit → [`GhError`] by its stderr;
+    /// still running after [`GH_TIMEOUT`] → killed, `Env` (`gh <arg>: timed out after 120 s`).
     /// As the App: `GH_TOKEN` = its token for `github`; else my `gh` login.
     pub fn gh(&self, github: &str, args: &[&str]) -> Result<String, GhError> {
         let mut cmd = Command::new(&self.gh);
@@ -397,9 +410,14 @@ impl Identity {
             let token = self.token(github, chrono::Utc::now().timestamp())?;
             cmd.env_remove("GITHUB_TOKEN").env("GH_TOKEN", token);
         }
-        let out = cmd
-            .output()
-            .map_err(|e| GhError::Env(format!("{}: {e}", self.gh.to_string_lossy())))?;
+        let out = crate::child::output(&mut cmd, self.timeout).map_err(|e| {
+            GhError::Env(match e.kind() {
+                std::io::ErrorKind::TimedOut => {
+                    format!("gh {}: {e}", args.first().unwrap_or(&""))
+                }
+                _ => format!("{}: {e}", self.gh.to_string_lossy()),
+            })
+        })?;
         if out.status.success() {
             return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
         }

@@ -7,11 +7,12 @@
 use std::ffi::OsStr;
 use std::path::Path;
 
+use crate::child::{GIT_TIMEOUT, output};
 use crate::config::RepoConfig;
 use crate::intents::git::{GitAuth, git_command_for};
 
 /// `git <args>` in `dir` (discovery stops at `dir`: its parent is the ceiling) → stdout;
-/// failure → `<dir>: <stderr>`.
+/// failure → `<dir>: <stderr>`. Killed after [`GIT_TIMEOUT`] (LOOP-10).
 pub fn git(
     git: &OsStr,
     dir: &Path,
@@ -31,7 +32,7 @@ pub fn git(
     {
         cmd.env("GIT_CEILING_DIRECTORIES", parent);
     }
-    let out = cmd.output().map_err(|e| failed(format!("git: {e}")))?;
+    let out = output(&mut cmd, GIT_TIMEOUT).map_err(|e| failed(format!("git: {e}")))?;
     if out.status.success() {
         return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
     }

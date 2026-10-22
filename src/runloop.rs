@@ -281,6 +281,14 @@ impl Loop {
             stop: Arc::new(AtomicBool::new(false)),
             _lock: lock,
         };
+        // SIGTERM or SIGINT sets `stop` from here on (a second one exits 1), so one while
+        // opening (git calls, recovery) stops the first pass cleanly.
+        for sig in [SIGTERM, SIGINT] {
+            let stop = Arc::clone(&lp.stop);
+            signal_hook::flag::register_conditional_shutdown(sig, 1, Arc::clone(&stop))
+                .and_then(|_| signal_hook::flag::register(sig, stop))
+                .map_err(|e| format!("signals: {e}"))?;
+        }
         lp.telegram = lp.config.telegram.as_ref().map(Telegram::new);
         lp.ensure_store();
         if let Some(s) = &lp.store {
@@ -1638,14 +1646,12 @@ impl Loop {
         self.shutdown()
     }
 
-    /// SIGTERM and SIGINT set the stop flag and write to the returned socket, which wakes
-    /// [`Loop::sleep_until`].
+    /// SIGTERM and SIGINT (which set the stop flag since `open`) write to the returned
+    /// socket, which wakes [`Loop::sleep_until`].
     fn signals(&self) -> std::io::Result<UnixStream> {
-        use signal_hook::{flag, low_level::pipe};
+        use signal_hook::low_level::pipe;
         let (read, write) = UnixStream::pair()?;
         for sig in [SIGTERM, SIGINT] {
-            flag::register_conditional_shutdown(sig, 1, Arc::clone(&self.stop))?;
-            flag::register(sig, Arc::clone(&self.stop))?;
             pipe::register(sig, write.try_clone()?)?;
         }
         Ok(read)

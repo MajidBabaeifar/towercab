@@ -130,11 +130,11 @@ fn test_run_passes_until_signal() {
         .spawn()
         .unwrap();
         let end = Instant::now() + Duration::from_secs(10);
-        while home.holder() != Some(child.id()) {
+        // The lock first, then `meta.running` (Loop::open).
+        while home.holder() != Some(child.id()) || db.meta("running").unwrap().is_none() {
             assert!(Instant::now() < end, "run --watch takes the lock");
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert!(db.meta("running").unwrap().is_some());
         if cmds {
             // Idle, it keeps passing: one row per pass, passes 5 s apart.
             let a = commands::queue(&db, &Cmd::Pause, "telegram").unwrap();

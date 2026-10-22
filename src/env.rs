@@ -11,12 +11,10 @@
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::io::Read;
-use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::str::FromStr;
 use std::sync::LazyLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use regex::Regex;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -268,47 +266,24 @@ pub fn run_check_as(exe: &OsStr, args: &[&OsStr], auth: &GitAuth) -> Result<(), 
         .map(|a| a.to_string_lossy())
         .collect::<Vec<_>>()
         .join(" ");
-    let mut child = Command::new(exe)
-        .args(&auth.args)
+    let mut cmd = Command::new(exe);
+    cmd.args(&auth.args)
         .envs(auth.env.iter().map(|(k, v)| (k, v)))
         .args(args)
         .current_dir("/")
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GH_PROMPT_DISABLED", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .process_group(0)
-        .spawn()
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => {
-                CheckError::Missing(format!("{}: not found", exe.to_string_lossy()))
-            }
-            _ => CheckError::Failed(format!("{shown}: {e}")),
-        })?;
-    let end = Instant::now() + CHECK_TIMEOUT;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break s,
-            Ok(None) if Instant::now() >= end => {
-                crate::child::kill_group(child.id());
-                let _ = child.wait();
-                return Err(CheckError::Failed(format!(
-                    "{shown}: timed out after {} s",
-                    CHECK_TIMEOUT.as_secs()
-                )));
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
-            Err(e) => return Err(CheckError::Failed(format!("{shown}: {e}"))),
+        .env("GH_PROMPT_DISABLED", "1");
+    let out = crate::child::output(&mut cmd, CHECK_TIMEOUT).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => {
+            CheckError::Missing(format!("{}: not found", exe.to_string_lossy()))
         }
-    };
+        _ => CheckError::Failed(format!("{shown}: {e}")),
+    })?;
+    let status = out.status;
     if status.success() {
         return Ok(());
     }
-    let mut err = String::new();
-    if let Some(mut e) = child.stderr.take() {
-        let _ = e.read_to_string(&mut err);
-    }
+    let err = String::from_utf8_lossy(&out.stderr);
     let line = err.lines().map(str::trim).find(|l| !l.is_empty());
     Err(CheckError::Failed(match line {
         Some(l) => format!("{shown}: {}", cut(l, outbox::WHY_MAX)),

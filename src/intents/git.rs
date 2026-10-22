@@ -3,7 +3,8 @@
 //! Every call runs in an environment of its own: the caller's `GIT_DIR`, `GIT_WORK_TREE`,
 //! `GIT_INDEX_FILE` (set inside a git hook or `rebase --exec`) never point it elsewhere, and
 //! nothing prompts (`GIT_TERMINAL_PROMPT=0`; ssh `BatchMode=yes` unless I configured my own
-//! ssh command). No timeouts here: the loop bounds its calls (LOOP-10).
+//! ssh command). Each call is killed after `child::GIT_TIMEOUT`, a transfer slower than
+//! 1000 B/s for 60 s fails first (`GIT_HTTP_LOW_SPEED_LIMIT`/`_TIME`, LOOP-10).
 
 use std::ffi::OsStr;
 use std::fmt;
@@ -11,6 +12,8 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, LazyLock, Mutex};
+
+use crate::child::{GIT_TIMEOUT, output};
 
 /// The generated views: a rebase conflict in them is resolved by taking `main`'s side, since
 /// the next write regenerates them (INT-10).
@@ -65,7 +68,10 @@ pub fn git_command_for(git: &OsStr) -> Command {
     for v in REPO_ENV {
         c.env_remove(v);
     }
-    c.env("GIT_TERMINAL_PROMPT", "0").env("GIT_EDITOR", "true");
+    c.env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_EDITOR", "true")
+        .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000")
+        .env("GIT_HTTP_LOW_SPEED_TIME", "60");
     if *SSH_BATCH {
         c.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
     }
@@ -211,11 +217,8 @@ impl Checkout {
         }
         let mut cmd = git_command();
         auth.apply(&mut cmd);
-        let out = cmd
-            .args(["clone", "--quiet", "--", remote])
-            .arg(path)
-            .output()
-            .map_err(|e| format!("clone failed: git: {e}"))?;
+        cmd.args(["clone", "--quiet", "--", remote]).arg(path);
+        let out = output(&mut cmd, GIT_TIMEOUT).map_err(|e| format!("clone failed: git: {e}"))?;
         if !out.status.success() {
             return Err(format!(
                 "clone failed: {}",
@@ -240,11 +243,8 @@ impl Checkout {
     fn run(&self, args: &[&str], auth: &GitAuth) -> Result<String, String> {
         let mut cmd = git_command();
         auth.apply(&mut cmd);
-        let out = cmd
-            .args(args)
-            .current_dir(&self.path)
-            .output()
-            .map_err(|e| format!("git: {e}"))?;
+        cmd.args(args).current_dir(&self.path);
+        let out = output(&mut cmd, GIT_TIMEOUT).map_err(|e| format!("git: {e}"))?;
         if out.status.success() {
             Ok(String::from_utf8_lossy(&out.stdout).into_owned())
         } else {

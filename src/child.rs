@@ -3,7 +3,8 @@
 //! polled with `try_wait`.
 //!
 //! A timeout is run time (monotonic): the step's budget used up → SIGTERM to the group,
-//! SIGKILL [`KILL_AFTER`] later.
+//! SIGKILL [`KILL_AFTER`] later. Towercab's own short `gh` and `git` calls block instead,
+//! bounded by [`output`].
 
 use std::fs::File;
 use std::os::unix::process::CommandExt;
@@ -152,6 +153,71 @@ pub fn start_time(pid: u32) -> Option<u64> {
     // The command name (field 2) is in parentheses and may hold spaces.
     let rest = &stat[stat.rfind(')')? + 1..];
     rest.split_whitespace().nth(19)?.parse().ok()
+}
+
+/// Towercab's own `gh` calls are killed after this (LOOP-10).
+pub const GH_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Towercab's own `git` calls are killed after this (LOOP-10); a stalled transfer fails
+/// sooner (`GIT_HTTP_LOW_SPEED_LIMIT`/`_TIME`, `intents::git::git_command_for`).
+pub const GIT_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Runs `cmd` to its end like `Command::output`, in its own process group with stdin from
+/// `/dev/null`, stdout and stderr read as it runs. Still running after `timeout` → its group
+/// SIGKILLed and an error of kind `TimedOut`: `timed out after <n> s` (network, LOOP-10).
+pub fn output(cmd: &mut Command, timeout: Duration) -> std::io::Result<std::process::Output> {
+    use std::io::Read;
+    use std::time::Instant;
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0);
+    let mut child = cmd.spawn()?;
+    fn drain<R: Read + Send + 'static>(r: Option<R>) -> Option<std::thread::JoinHandle<Vec<u8>>> {
+        r.map(|mut r| {
+            std::thread::spawn(move || {
+                let mut b = Vec::new();
+                let _ = r.read_to_end(&mut b);
+                b
+            })
+        })
+    }
+    let (out, err) = (drain(child.stdout.take()), drain(child.stderr.take()));
+    let end = Instant::now() + timeout;
+    let mut nap = Duration::from_millis(1);
+    let status = loop {
+        if let Some(s) = child.try_wait()? {
+            break Some(s);
+        }
+        if Instant::now() >= end {
+            kill_group(child.id());
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(nap);
+        nap = (nap * 2).min(Duration::from_millis(50));
+    };
+    // A process that left the group may hold a pipe open: its output isn't waited for long.
+    let collect = |h: Option<std::thread::JoinHandle<Vec<u8>>>| {
+        let h = h?;
+        let until = Instant::now() + Duration::from_secs(1);
+        while !h.is_finished() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if h.is_finished() { h.join().ok() } else { None }
+    };
+    let (stdout, stderr) = (collect(out), collect(err));
+    match status {
+        Some(status) => Ok(std::process::Output {
+            status,
+            stdout: stdout.unwrap_or_default(),
+            stderr: stderr.unwrap_or_default(),
+        }),
+        None => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!("timed out after {} s", timeout.as_secs()),
+        )),
+    }
 }
 
 /// A leftover child of an earlier loop: its group killed when `pid` still is that process

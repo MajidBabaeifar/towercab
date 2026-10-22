@@ -536,3 +536,59 @@ fn test_preflight() {
     assert_eq!(kinds(&w), ["sandbox"]);
     lp.shutdown().unwrap();
 }
+
+#[test]
+fn test_hanging_call_times_out() {
+    // A gh or git call that hangs (a stalled connection) is killed with its process group
+    // and fails as network (LOOP-10): the single-threaded loop never freezes on one.
+    let tmp = tempfile::tempdir().unwrap();
+    let gh = tmp.path().join("gh");
+    let pid = tmp.path().join("pid");
+    common::exe(
+        &gh,
+        &format!("sleep 30 &\necho $! > '{}'\nwait\n", pid.display()),
+    );
+    let id = towercab::github::Identity::none()
+        .with_gh(gh.as_os_str())
+        .with_timeout(Duration::from_secs(1));
+    let started = std::time::Instant::now();
+    let e = id.gh("me/web", &["pr", "view", "1"]).unwrap_err();
+    assert_eq!(e, GhError::Env("gh pr: timed out after 1 s".into()));
+    assert_eq!(env::classify(&e.to_string()), Some(FaultClass::Network));
+    assert!(started.elapsed() < Duration::from_secs(10), "bounded");
+    let pid = fs::read_to_string(&pid).unwrap();
+    let gone = || {
+        fs::read_to_string(format!("/proc/{}/stat", pid.trim())).map_or(true, |s| {
+            s.rsplit(')').next().unwrap().trim_start().starts_with('Z')
+        })
+    };
+    for _ in 0..100 {
+        if gone() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(gone(), "its group killed: sleep {pid}");
+
+    // The same bound for git (`child::output`, used by every git call): TimedOut.
+    let mut cmd = std::process::Command::new("sh");
+    cmd.args(["-c", "sleep 30"]);
+    let e = towercab::child::output(&mut cmd, Duration::from_secs(1)).unwrap_err();
+    assert_eq!(e.kind(), std::io::ErrorKind::TimedOut);
+    assert!(env::classify(&format!("git: {e}")).is_some(), "{e}");
+
+    // A check with a lot on stderr isn't mistaken for a hang: its output is read as it runs.
+    let loud = tmp.path().join("loud");
+    common::exe(
+        &loud,
+        "echo 'first line' >&2\nhead -c 200000 /dev/zero | tr '\\0' x >&2\nexit 1\n",
+    );
+    let r = env::run_check(loud.as_os_str(), &[]);
+    assert_eq!(
+        r,
+        Err(env::CheckError::Failed(format!(
+            "{}: first line",
+            loud.display()
+        )))
+    );
+}
