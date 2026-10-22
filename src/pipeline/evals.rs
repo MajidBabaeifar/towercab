@@ -43,6 +43,8 @@ pub const CONTEXT: &str = "towercab/evals";
 pub const BOUND: Duration = Duration::from_secs(12 * 3600);
 /// The weekly baseline.
 pub const WEEK: f64 = 7.0 * 86400.0;
+/// A case's loop stopped by SIGTERM or SIGINT: the run stops too.
+pub const INTERRUPTED: &str = "eval interrupted";
 /// Passes of a case's loop.
 pub const PASS: Duration = Duration::from_secs(1);
 
@@ -533,8 +535,12 @@ pub fn replay(
         pass,
         ..LoopOpts::default()
     };
-    let ran =
-        Loop::open(c, h.clone(), super::handlers(mode), exes.clone(), opts).and_then(Loop::run);
+    let lp = Loop::open(c, h.clone(), super::handlers(mode), exes.clone(), opts)?;
+    let stop = lp.stop_flag();
+    let ran = lp.run();
+    if stop.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(INTERRUPTED.into());
+    }
     let db = Db::open(&h.db())?;
     let m = mission::for_intent(db.conn(), &case.id)?.pop();
     let fail = |why: String| CaseResult {
@@ -619,6 +625,7 @@ pub fn run_cases(
             let home = dir.join(format!("{}-{t}", case.id));
             r = match replay(config, exes, case, &clone, &home, pass) {
                 Ok(r) => r,
+                Err(e) if e == INTERRUPTED => return Err(e),
                 Err(e) => CaseResult {
                     pass: false,
                     tries: 1,
