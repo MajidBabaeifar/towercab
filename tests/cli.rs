@@ -321,7 +321,8 @@ fn test_cli() {
         err("not built yet: MET-12", 1)
     );
     assert_eq!(run(&["eval"]), err("not built yet: PIP-33", 1));
-    assert_eq!(run(&["hook", "guard"]), err("not built yet: PIP-29", 2));
+    // `hook guard` without its rules file: a bad argument, blocked (PIP-29).
+    assert_eq!(run(&["hook", "guard"]).2, Some(2));
     assert_eq!(run(&["telemetry", "maybe"]).2, Some(2));
     assert_eq!(
         run(&["--version"]),

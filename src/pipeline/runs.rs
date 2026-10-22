@@ -16,7 +16,7 @@ use crate::machine::Waiting;
 use crate::mission::Mission;
 
 use super::data::Data;
-use super::{files, policies, prompts, schemas};
+use super::{files, guard, policies, prompts, schemas};
 
 /// The writer's model (PIP-14).
 pub const WRITER_MODEL: &str = "haiku";
@@ -35,7 +35,8 @@ pub struct Start {
     pub model: String,
     /// `Run.eval` (PIP-33).
     pub eval: bool,
-    /// Worker extras (part 2): the base's setup and checks commands, `denyWrite`, the guard.
+    /// Extras; a worker run's are set by [`start`] itself (the base's setup and checks
+    /// commands, the guard and its `denyWrite`).
     pub setup_checks: Vec<String>,
     pub deny_write: Vec<PathBuf>,
     pub guard: bool,
@@ -149,6 +150,18 @@ pub fn start(cx: &Ctx<'_>, m: &Mission, st: Start) -> Result<Progress, StepError
     run.guard = st.guard;
     run.verifier = st.verifier;
     if st.kind == RunKind::Worker {
+        // Every worker run, a continue or a new session too: the guard and its rules for the
+        // round (PIP-29, PIP-31), the base's commands allowed.
+        let round = super::round(cx.db.conn(), &m)?;
+        run.deny_write = guard::write_rules(cx, &m, &repo, round)?;
+        run.guard = true;
+        run.setup_checks = repo
+            .verifying
+            .setup
+            .iter()
+            .chain(&repo.verifying.checks)
+            .cloned()
+            .collect();
         run.bash = cx.repo(&m).map_err(StepError::Bug)?.bash.clone();
     }
     let spec =

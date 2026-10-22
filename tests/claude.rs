@@ -181,7 +181,8 @@ fn test_worker_argv() {
     assert_eq!(
         s["hooks"],
         json!({"PreToolUse": [{"matcher": "Edit|Write|NotebookEdit",
-            "hooks": [{"type": "command", "command": "'/bin/towercab' hook guard"}]}]})
+            "hooks": [{"type": "command",
+                "command": "'/bin/towercab' hook guard '/home/w/runs/261001-0900/guard.json'"}]}]})
     );
     assert_eq!(
         s["sandbox"]["filesystem"]["denyWrite"],
@@ -338,7 +339,10 @@ fn test_repo_hooks_not_loaded() {
         hooks[0]["hooks"][0]["command"]
             .as_str()
             .unwrap()
-            .ends_with("' hook guard")
+            .ends_with(&format!(
+                "' hook guard '{}'",
+                tmp.path().join("runs/guard.json").display()
+            ))
     );
     assert!(!s.to_string().contains("curl evil"));
 }

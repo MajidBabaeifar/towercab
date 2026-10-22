@@ -1,8 +1,9 @@
-//! Command line (LOOP-15): every command; `telemetry`, `eval` and `hook guard` are stubs until
-//! their intents (MET-12, PIP-33, PIP-29).
+//! Command line (LOOP-15): every command; `telemetry` and `eval` are stubs until their intents
+//! (MET-12, PIP-33).
 
 use std::ffi::{OsStr, OsString};
-use std::path::PathBuf;
+use std::io::Read as _;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
@@ -111,8 +112,11 @@ enum Command {
 
 #[derive(Subcommand, Debug)]
 enum Hook {
-    /// The worker's PreToolUse guard (PIP-29)
-    Guard,
+    /// The worker's PreToolUse guard (PIP-29): the hook input on stdin, exit 2 blocks
+    Guard {
+        /// `<runs>/guard.json`
+        rules: PathBuf,
+    },
 }
 
 /// Exit code: 0 ok, 1 error, 2 bad arguments.
@@ -214,7 +218,9 @@ where
         })),
         Command::Telemetry { .. } => not_built("MET-12", 1),
         Command::Eval => not_built("PIP-33", 1),
-        Command::Hook { hook: Hook::Guard } => not_built("PIP-29", 2),
+        Command::Hook {
+            hook: Hook::Guard { rules },
+        } => guard(&rules),
         Command::Doctor => match loop_config(&args.config) {
             Err(e) => {
                 println!("{e}");
@@ -225,6 +231,23 @@ where
                     .map(|home| doctor(&config, &home, &Exes::default())),
             ),
         },
+    }
+}
+
+/// `towercab hook guard <rules>` (PIP-29): stdin → `guard::hook`; allowed → exit 0, blocked →
+/// the reason on stderr, exit 2 (also when stdin or the rules can't be read: fail closed).
+fn guard(rules: &Path) -> i32 {
+    let mut stdin = String::new();
+    if let Err(e) = std::io::stdin().read_to_string(&mut stdin) {
+        eprintln!("guard: stdin: {e}: blocked");
+        return 2;
+    }
+    match crate::pipeline::guard::hook(&stdin, rules) {
+        Ok(()) => 0,
+        Err(why) => {
+            eprintln!("{why}");
+            2
+        }
     }
 }
 

@@ -492,7 +492,7 @@ pub fn argv(run: &Run, exes: &Exes) -> Vec<OsString> {
 
 /// The `--settings` file: the sandbox (secret paths and `deny_read` unreadable, `deny_write`
 /// and a checkout run's `<cwd>/.git` unwritable, the verifier's app its only network), plus
-/// the worker's guard hook (`'<towercab>' hook guard`).
+/// the worker's guard hook (`'<towercab>' hook guard '<runs>/guard.json'`).
 pub fn settings(run: &Run, home: &Path, towercab: &Path) -> Value {
     let paths = |v: &[PathBuf]| -> Vec<String> {
         v.iter().map(|p| p.to_string_lossy().into_owned()).collect()
@@ -500,8 +500,9 @@ pub fn settings(run: &Run, home: &Path, towercab: &Path) -> Value {
     let mut read = secret_paths(home);
     read.extend(run.deny_read.iter().map(|(p, _)| p.clone()));
     let mut write = run.deny_write.clone();
-    if !run.kind.toolless() {
-        write.push(run.cwd.join(".git"));
+    let git = run.cwd.join(".git");
+    if !run.kind.toolless() && !write.contains(&git) {
+        write.push(git);
     }
     let mut sandbox = json!({
         "enabled": true,
@@ -519,11 +520,16 @@ pub fn settings(run: &Run, home: &Path, towercab: &Path) -> Value {
     }
     let mut s = json!({ "sandbox": sandbox });
     if run.guard {
-        let exe = towercab.to_string_lossy().replace('\'', r"'\''");
+        let quote = |p: &Path| format!("'{}'", p.to_string_lossy().replace('\'', r"'\''"));
+        let command = format!(
+            "{} hook guard {}",
+            quote(towercab),
+            quote(&run.runs.join("guard.json"))
+        );
         s["hooks"] = json!({
             "PreToolUse": [{
                 "matcher": "Edit|Write|NotebookEdit",
-                "hooks": [{"type": "command", "command": format!("'{exe}' hook guard")}],
+                "hooks": [{"type": "command", "command": command}],
             }],
         });
     }

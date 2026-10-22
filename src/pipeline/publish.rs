@@ -9,12 +9,11 @@ use crate::handler::{ChildEnd, Ctx, Handler, Outcome, Progress, StepError};
 use crate::machine::Waiting;
 use crate::mission::Mission;
 use crate::repo::Protected;
-use crate::repo::protected::glob;
 
 use super::data::Data;
 use super::gh::{self, created, pr_list};
 use super::git::{self as pgit, Push};
-use super::{Mode, Round, files, intent, round, wait_note};
+use super::{Mode, Round, files, guard, intent, round, wait_note};
 
 /// Pushes the checkout's branch from the clone (PIP-2): rejected (my push onto the PR) →
 /// `git merge --no-edit refs/remotes/origin/<branch>` in the checkout (my commits kept), then
@@ -150,31 +149,15 @@ pub fn check_diff(
     let repo = cx.repo(m).map_err(StepError::Bug)?.clone();
     let dir = cx.checkout(m);
     let base = pgit::merge_base(cx, &dir, &repo.base)?;
-    let mut bad: Vec<String> = pgit::changed(cx, &dir, &base, "HEAD")?
-        .into_iter()
-        .filter(|(_, p)| protected.blocks(p))
-        .map(|(_, p)| format!("{p} (protected)"))
-        .collect();
-    if matches!(round, Round::Verify | Round::Ci)
-        && let Some(head) = m.head.as_deref()
-    {
-        let tests: Vec<_> = repo_files
-            .towercab
-            .tests
-            .iter()
-            .filter_map(|g| glob(g).ok())
-            .collect();
-        for (st, p) in pgit::changed(cx, &dir, head, "HEAD")? {
-            if matches!(st, 'M' | 'D' | 'T') && tests.iter().any(|g| g.is_match(&p)) {
-                bad.push(format!("{p} (a test already pushed)"));
-            }
-        }
-    }
-    Ok(if bad.is_empty() {
-        Ok(())
-    } else {
-        Err(bad.join(", "))
-    })
+    let changed = pgit::changed(cx, &dir, &base, "HEAD")?;
+    let (since_head, locked) = match m.head.as_deref() {
+        Some(head) if matches!(round, Round::Verify | Round::Ci) => (
+            pgit::changed(cx, &dir, head, "HEAD")?,
+            guard::locked(cx, m, &repo_files.towercab.tests)?,
+        ),
+        _ => (Vec::new(), Vec::new()),
+    };
+    Ok(guard::check(&changed, &protected, &since_head, &locked))
 }
 
 /// The `publish` stage.

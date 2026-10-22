@@ -6,6 +6,7 @@ pub mod data;
 pub mod design;
 pub mod gh;
 pub mod git;
+pub mod guard;
 pub mod policies;
 pub mod prompts;
 pub mod publish;
