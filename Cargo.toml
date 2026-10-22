@@ -26,3 +26,7 @@ yaml-rust2 = { version = "0.13.0", default-features = false }
 [dev-dependencies]
 rand = "0.8.5"
 tempfile = "3.27.0"
+
+# Test keys are generated at test time (LOOP-19); unoptimized bignum math takes seconds.
+[profile.dev.package.num-bigint-dig]
+opt-level = 3

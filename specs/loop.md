@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..11, LOOP-13..18 · Draft (Rust rewrite): rest · **Prefix:** LOOP
+**Status:** Live: LOOP-1..11, LOOP-13..19 · Draft (Rust rewrite): rest · **Prefix:** LOOP
 
 ## Purpose
 
@@ -330,7 +330,7 @@ WantedBy=graphical-session.target
 | 2, 5 | `src/github.rs` | `Identity` (a handle: clones share one token cache): `none()` (my `gh` login), `app(Result<App, String>, api_base)`, `from_config(&Config, &Exes)` (`[github].app_id` → the App, key `Config::app_key()`), `with_gh(exe)`, `token(github, now) -> Result<String, GhError>`, `bot() -> Result<Bot { login, id, email }, GhError>` (`cached_bot`, `seed_bot`: `meta.bot`, `Bot::{meta, from_meta}`), `gh(github, args) -> Result<String, GhError>` (`GH_TOKEN`), `git_auth(github) -> Result<GitAuth, GhError>`, `auth_for_url(url)` (`github_of(url) -> Option<String>`: only `https://github.com/<o>/<n>[.git]`); `App::load(&Path, app_id)`, `App::jwt(now) -> String`; `GhError::{Env(String), Failed(String)}`, `is_env_failure(stderr)`. |
 | 2, 5 | `src/intents/git.rs` | `git_command_for(exe)`, `GitAuth { args: Vec<String>, env: Vec<(String, String)> }` (`apply(&mut Command)`; `-c` args after Towercab's own, so the bot's `user.name`/`user.email` win); part 5: `AuthFn = Box<dyn FnMut() -> Result<GitAuth, String> + Send>`, `Checkout::with_auth(AuthFn)` (fetch, pull, rebase, commit, push and `git_as` use it; other calls stay local), `Checkout::clone_as(remote, path, &GitAuth)`; `Store::open_as(&Config, Option<AuthFn>)` (the loop's: `Identity::auth_for_url([intents].remote)`). |
 | 5 | `ops/github-app.json` | `{name: towercab, url: https://github.com/MajidBabaeifar/towercab, public: false, hook_attributes: {url: <same>, active: false}, default_permissions: {contents, pull_requests, issues, checks, statuses, workflows, actions: write; deployments, metadata: read}, default_events: []}`. |
-| 2, 5 | `src/claude.rs`, `src/drafts.rs` | Part 2: `CONTINUE`, `SESSION_GONE`, `session_gone(text)`, `fresh_context` (LOOP-7); part 5: [PIP-24](pipeline.md) **Claude runs**; [INT-7, INT-8](intents.md) **Code**. |
+| 2, 5 | `src/claude.rs`, `src/drafts.rs` | Part 2: `CONTINUE`, `SESSION_GONE`, `session_gone(text)`, `fresh_context` (LOOP-7); part 5: [PIP-24](pipeline.md) **Claude runs** (`env` has no GitHub token: LOOP-19); [INT-7, INT-8](intents.md) **Code**. |
 | all | `src/cli.rs` | `towercab [--config <file>] [--home <dir>] <command>`, LOOP-15; errors `towercab: <reason>`, exit 1; bad arguments exit 2. |
 
 ## Out of scope
