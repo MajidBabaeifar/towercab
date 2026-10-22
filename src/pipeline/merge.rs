@@ -7,14 +7,16 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use crate::autonomy::{self, GateIn, PrKind};
 use crate::handler::{ChildEnd, Ctx, Handler, Outcome, Progress, StepError};
 use crate::machine::{Event, Waiting};
 use crate::mission::Mission;
 
 use super::ci::Seq;
 use super::data::Data;
+use super::deploy::short;
 use super::gh::{self, merge_state};
-use super::{Mode, conventional, never_published, pr};
+use super::{Mode, conventional, gate, never_published, pr};
 
 /// The fields of `merge`'s `gh pr view`.
 pub const MERGE_FIELDS: &str = "headRefOid,mergeStateStatus,mergedAt,mergeCommit";
@@ -23,7 +25,7 @@ pub const MERGE_FIELDS: &str = "headRefOid,mergeStateStatus,mergedAt,mergeCommit
 pub const UNKNOWN_AFTER: Duration = Duration::from_secs(10);
 pub const UNKNOWN_READS: u64 = 6;
 
-/// The `merge` stage (and, from part 4, `revert_merge`).
+/// The `merge` stage and `revert_merge`.
 pub struct Merge {
     pub seq: Seq,
     mode: Mode,
@@ -233,10 +235,131 @@ impl Merge {
     }
 }
 
+impl Merge {
+    /// `revert_merge` (PIP-19): the revert PR (`data.revert.pr`), no worker steps, no review:
+    /// merged → `ok` (`data.revert.merge_sha`); `autonomy::gate(PrKind::Revert)` on the CI of
+    /// this head; `CLEAN`/`HAS_HOOKS` → squash merge (`Towercab-Gate: revert sha=<head>`);
+    /// `DRAFT` → `gh pr ready`; `UNKNOWN` read again (6×); any refusal → `revert failed`.
+    fn revert(&self, cx: &Ctx<'_>, m: &Mission) -> Result<Progress, StepError> {
+        let failed = |why: String| Ok(Progress::Done(Outcome::wait(Waiting::RevertFailed, why)));
+        let mut data = Data::of(m);
+        let mut rv = data.get("revert").cloned().unwrap_or(json!({}));
+        let Some(pr) = rv.get("pr").and_then(Value::as_u64) else {
+            return failed("no revert PR".into());
+        };
+        let github = gh::github(cx, m)?;
+        let n = pr.to_string();
+        let view = |cx: &Ctx<'_>| -> Result<_, StepError> {
+            let out = gh::gh(
+                cx,
+                m,
+                &["pr", "view", &n, "-R", &github, "--json", MERGE_FIELDS],
+            )?;
+            merge_state(&out).map_err(StepError::Bug)
+        };
+        let (head, state, merged_at, commit) = view(cx)?;
+        let merged = |mut data: Data, mut rv: Value, commit: Option<String>| {
+            rv["merge_sha"] = json!(commit);
+            data.set("revert", rv);
+            Ok(Progress::Done(Outcome::ok().with("data", data.text())))
+        };
+        if merged_at.is_some() {
+            return merged(data, rv, commit);
+        }
+        let ci_head = data
+            .get("ci")
+            .and_then(|c| c.get("head"))
+            .and_then(Value::as_str);
+        let ci = if ci_head == Some(head.as_str()) {
+            gate::ci_of(&data)
+        } else {
+            autonomy::Ci::NotGreen
+        };
+        let g = autonomy::gate(&GateIn {
+            kind: PrKind::Revert,
+            frozen: false,
+            cap: autonomy::CAPPED,
+            a: None,
+            ci,
+            unlock: false,
+            evals_red: false,
+            review: None,
+        });
+        if let autonomy::Gate::Approval(hold) = g {
+            return failed(format!("revert gate: {hold} on {}", short(&head)));
+        }
+        let mut counts = data.get("merge").cloned().unwrap_or(Value::Null);
+        if counts.get("head").and_then(Value::as_str) != Some(head.as_str()) {
+            counts = json!({"head": head, "blocked": 0, "unknown": 0});
+        }
+        match state.as_str() {
+            "CLEAN" | "HAS_HOOKS" => {
+                data.set("merge", counts);
+                let m = cx.record(m, "merge", &[("data", data.text().into())])?;
+                let title = super::revert::pr_title(cx, &m);
+                let subject = format!("revert: {title} (#{n})");
+                let body = format!("Towercab-Gate: revert sha={head}");
+                let args = [
+                    "pr",
+                    "merge",
+                    &n,
+                    "-R",
+                    &github,
+                    "--squash",
+                    "--match-head-commit",
+                    &head,
+                    "--subject",
+                    &subject,
+                    "--body",
+                    &body,
+                ];
+                if let Err(e) = gh::try_gh(cx, &m, &args)? {
+                    return failed(format!(
+                        "revert merge refused: {}",
+                        crate::outbox::cut(&crate::outbox::one_line(&e), 300)
+                    ));
+                }
+                let (_, _, merged_at, commit) = view(cx)?;
+                if merged_at.is_some() {
+                    rv = Data::of(&m).get("revert").cloned().unwrap_or(rv);
+                    return merged(Data::of(&m), rv, commit);
+                }
+                Ok(Progress::Poll {
+                    after: UNKNOWN_AFTER,
+                })
+            }
+            "DRAFT" => {
+                gh::gh(cx, m, &["pr", "ready", &n, "-R", &github])?;
+                Ok(Progress::Poll {
+                    after: Duration::ZERO,
+                })
+            }
+            "UNKNOWN" | "" => {
+                let k = counts.get("unknown").and_then(Value::as_u64).unwrap_or(0) + 1;
+                counts["unknown"] = json!(k);
+                data.set("merge", counts);
+                if k > UNKNOWN_READS {
+                    return failed(format!(
+                        "revert PR merge state UNKNOWN after {UNKNOWN_READS} reads"
+                    ));
+                }
+                cx.record(m, "read", &[("data", data.text().into())])?;
+                Ok(Progress::Poll {
+                    after: UNKNOWN_AFTER,
+                })
+            }
+            other => failed(format!("revert PR merge state {other}")),
+        }
+    }
+}
+
 impl Handler for Merge {
     fn step(&mut self, cx: &mut Ctx<'_>, m: &Mission) -> Result<Progress, StepError> {
         if self.mode.eval() {
             return Ok(Progress::Done(Outcome::ok()));
+        }
+        if self.seq == Seq::Revert {
+            return self.revert(cx, m);
         }
         if let Some(p) = never_published(m) {
             return Ok(p);

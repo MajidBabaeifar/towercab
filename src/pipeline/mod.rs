@@ -20,6 +20,7 @@ pub mod prompts;
 pub mod proof;
 pub mod publish;
 pub mod release;
+pub mod revert;
 pub mod review;
 pub mod runs;
 pub mod sandbox;
@@ -57,8 +58,8 @@ impl Mode {
     }
 }
 
-/// `pick::Pick` and every built stage handler; `NotBuilt` for the rest (picks stay off until
-/// none is left, LOOP-5).
+/// `pick::Pick` and every stage handler (`Handlers::production()` switches to it in part 5:
+/// picks stay off until then, LOOP-5).
 pub fn handlers(mode: Mode) -> Handlers {
     let mut h = Handlers::production();
     h.set(Stage::Design, Box::new(design::Design::new(mode.clone())));
@@ -92,7 +93,31 @@ pub fn handlers(mode: Mode) -> Handlers {
         Stage::E2e,
         Box::new(e2e::E2e::new(ci::Seq::Intent, mode.clone())),
     );
-    h.set(Stage::Release, Box::new(release::Release::new(mode)));
+    h.set(
+        Stage::Release,
+        Box::new(release::Release::new(mode.clone())),
+    );
+    h.set(
+        Stage::Rollback,
+        Box::new(revert::Rollback::new(mode.clone())),
+    );
+    h.set(Stage::Revert, Box::new(revert::Revert::new(mode.clone())));
+    h.set(
+        Stage::RevertCi,
+        Box::new(ci::Ci::new(ci::Seq::Revert, mode.clone())),
+    );
+    h.set(
+        Stage::RevertMerge,
+        Box::new(merge::Merge::new(ci::Seq::Revert, mode.clone())),
+    );
+    h.set(
+        Stage::RevertDeploy,
+        Box::new(deploy::Deploy::new(ci::Seq::Revert, mode.clone())),
+    );
+    h.set(
+        Stage::RevertE2e,
+        Box::new(e2e::E2e::new(ci::Seq::Revert, mode)),
+    );
     h
 }
 
