@@ -11,8 +11,17 @@ use crate::child::{GIT_TIMEOUT, output};
 use crate::config::RepoConfig;
 use crate::intents::git::{GitAuth, git_command_for};
 
+/// What every git call here adds: no hook or fsmonitor of the repo's runs (a worker can
+/// write a checkout's `.git`, LOOP-8).
+pub const NO_HOOKS: [&str; 4] = [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "core.fsmonitor=false",
+];
+
 /// `git <args>` in `dir` (discovery stops at `dir`: its parent is the ceiling) → stdout;
-/// failure → `<dir>: <stderr>`. Killed after [`GIT_TIMEOUT`] (LOOP-10).
+/// failure → `<dir>: <stderr>`. [`NO_HOOKS`]; killed after [`GIT_TIMEOUT`] (LOOP-10).
 pub fn git(
     git: &OsStr,
     dir: &Path,
@@ -21,6 +30,7 @@ pub fn git(
 ) -> Result<String, String> {
     let failed = |e: String| format!("{}: {e}", dir.display());
     let mut cmd = git_command_for(git);
+    cmd.args(NO_HOOKS);
     if let Some(a) = auth {
         a.apply(&mut cmd);
     }
@@ -93,7 +103,8 @@ pub fn refresh_base(exe: &OsStr, clone: &Path, checkout: &Path, base: &str) -> R
 }
 
 /// A new checkout of `clone` at `checkout` on `branch` from `refs/remotes/origin/<base>`,
-/// without a remote.
+/// without a remote: made in `<checkout>.tmp` (a leftover one removed first), renamed into
+/// place when done, so a crash never leaves a half-made one at `checkout`.
 pub fn create(
     exe: &OsStr,
     clone: &Path,
@@ -103,23 +114,27 @@ pub fn create(
 ) -> Result<(), String> {
     let parent = checkout.parent().ok_or("checkout: no parent directory")?;
     std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-    let (from, to) = (clone.to_string_lossy(), checkout.to_string_lossy());
+    let mut tmp = checkout.as_os_str().to_os_string();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    remove(&tmp)?;
+    let (from, to) = (clone.to_string_lossy(), tmp.to_string_lossy());
     git(
         exe,
         parent,
         &["clone", "--quiet", "--no-checkout", "--", &from, &to],
         None,
     )?;
-    git(exe, checkout, &["remote", "remove", "origin"], None)?;
-    refresh_base(exe, clone, checkout, base)?;
+    git(exe, &tmp, &["remote", "remove", "origin"], None)?;
+    refresh_base(exe, clone, &tmp, base)?;
     let start = format!("refs/remotes/origin/{base}");
     git(
         exe,
-        checkout,
+        &tmp,
         &["checkout", "--quiet", "-B", branch, &start],
         None,
-    )
-    .map(drop)
+    )?;
+    std::fs::rename(&tmp, checkout).map_err(|e| format!("{}: {e}", checkout.display()))
 }
 
 /// A checkout with a valid `HEAD` (`git rev-parse --verify HEAD`).

@@ -113,6 +113,33 @@ fn test_checkout_has_no_remote() {
     let moved = git(&clone, &["rev-parse", "refs/remotes/origin/main"]);
     assert_ne!(moved, base);
     assert_eq!(git(&dir, &["rev-parse", "refs/remotes/origin/main"]), moved);
+
+    // What a worker writes into the checkout's `.git` never runs as Towercab: no hooks (its
+    // own or a `core.hooksPath`), no fsmonitor.
+    let marker = w.root.join("hook-ran");
+    let hook = format!("#!/bin/sh\ntouch '{}'\n", marker.display());
+    for h in [
+        "hooks/reference-transaction",
+        "evil/reference-transaction",
+        "fsmonitor",
+    ] {
+        let p = dir.join(".git").join(h);
+        common::exe(&p, &hook);
+    }
+    git(&dir, &["config", "core.hooksPath", ".git/evil"]);
+    let fsmonitor = dir.join(".git/fsmonitor");
+    git(
+        &dir,
+        &["config", "core.fsmonitor", fsmonitor.to_str().unwrap()],
+    );
+    common::write(&mine, "NEWER.md", "newer\n");
+    git(&mine, &["add", "-A"]);
+    git(&mine, &["commit", "--quiet", "-m", "newer"]);
+    git(&mine, &["push", "--quiet", "origin", "HEAD:main"]);
+    checkout::ensure_clone(git_exe, &repo, None).unwrap();
+    checkout::refresh_base(git_exe, &clone, &dir, "main").unwrap();
+    checkout::git(git_exe, &dir, &["status", "--porcelain"], None).unwrap();
+    assert!(!marker.exists(), "a hook in the checkout ran");
     assert_eq!(git(&dir, &["remote"]), "");
     assert_eq!(git(&dir, &["rev-parse", "HEAD"]), base, "the branch stays");
 
@@ -161,6 +188,18 @@ fn test_checkout_recloned() {
     assert!(checkout::ensure(git_exe, &clone, &dir, "main", "towercab/x").unwrap());
     assert!(has_head(&dir));
     assert!(!dir.join("kept.txt").exists());
+
+    // A crash mid-create leaves `<checkout>.tmp`, never a half-made checkout: removed next time.
+    let fresh = w.root.join("scratch").join("d");
+    let tmp = w.root.join("scratch").join("d.tmp");
+    fs::create_dir_all(tmp.join(".git")).unwrap();
+    fs::write(tmp.join("junk"), "half a clone").unwrap();
+    assert!(checkout::ensure(git_exe, &clone, &fresh, "main", "towercab/y").unwrap());
+    assert!(has_head(&fresh) && !tmp.exists());
+    assert_eq!(
+        git(&fresh, &["symbolic-ref", "--short", "HEAD"]).trim(),
+        "towercab/y"
+    );
 
     // The pick step re-entered over a broken checkout (a crash mid-clone) makes it again.
     let mut lp = w.open(handlers());
