@@ -2,8 +2,8 @@
 //! group, env cleared then set, stdin from a file or `/dev/null`, stdout and stderr to files;
 //! polled with `try_wait`.
 //!
-//! Part 2: spawn, poll, SIGTERM/SIGKILL of a group, a pid's start time. Timeouts come with
-//! part 3.
+//! A timeout is run time (monotonic): the step's budget used up → SIGTERM to the group,
+//! SIGKILL [`KILL_AFTER`] later.
 
 use std::fs::File;
 use std::os::unix::process::CommandExt;
@@ -28,6 +28,10 @@ pub struct Child {
     pub since: Duration,
     /// When SIGTERM was sent (monotonic).
     pub termed: Option<Duration>,
+    /// Run time allowed: `spec.timeout`, less the step's earlier run time (the loop sets it).
+    pub budget: Option<Duration>,
+    /// The budget ran out: SIGTERM sent, its `ChildEnd` says so.
+    pub timed_out: bool,
 }
 
 /// Starts `spec` (directories of its output files created).
@@ -62,6 +66,8 @@ pub fn spawn(spec: &ChildSpec, mono: Duration) -> Result<Child, String> {
         spec: spec.clone(),
         since: mono,
         termed: None,
+        budget: spec.timeout,
+        timed_out: false,
     })
 }
 
@@ -71,7 +77,7 @@ impl Child {
         match self.proc.try_wait() {
             Ok(Some(status)) => Some(ChildEnd {
                 status: Some(status),
-                timed_out: false,
+                timed_out: self.timed_out,
                 run: mono.saturating_sub(self.since),
                 stdout: self.spec.stdout.clone(),
                 stderr: self.spec.stderr.clone(),
@@ -79,7 +85,7 @@ impl Child {
             Ok(None) => None,
             Err(_) => Some(ChildEnd {
                 status: None,
-                timed_out: false,
+                timed_out: self.timed_out,
                 run: mono.saturating_sub(self.since),
                 stdout: self.spec.stdout.clone(),
                 stderr: self.spec.stderr.clone(),
@@ -102,6 +108,20 @@ impl Child {
         {
             kill_group(self.pid);
         }
+    }
+
+    /// Its run time reached `budget` → timed out: SIGTERM to its group; SIGKILL `after` later
+    /// (LOOP-12).
+    pub fn enforce(&mut self, mono: Duration, after: Duration) {
+        if !self.timed_out
+            && self
+                .budget
+                .is_some_and(|b| mono.saturating_sub(self.since) >= b)
+        {
+            self.timed_out = true;
+            self.term(mono);
+        }
+        self.kill_if_due(mono, after);
     }
 }
 

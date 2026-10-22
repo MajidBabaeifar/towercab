@@ -275,7 +275,8 @@ pub struct Ctx<'a> {
 
 impl Ctx<'_> {
     /// One transaction storing `step` and `set` (ids the step will use) before a side effect
-    /// (LOOP-6). A new step resets `unclean` and `retries`. Returns the mission as stored.
+    /// (LOOP-6). A new step resets `unclean`, `retries` and `step_secs` (its children's run
+    /// time, which its timeouts count). Returns the mission as stored.
     pub fn record(
         &self,
         m: &Mission,
@@ -291,6 +292,7 @@ impl Ctx<'_> {
                 cols.push(("unclean".into(), Value::Integer(0)));
                 cols.push(("retries".into(), Value::Integer(0)));
                 cols.push(("retry_at".into(), Value::Null));
+                cols.push(("step_secs".into(), Value::Real(0.0)));
             }
             cols.extend(set.iter().map(|(k, v)| (k.to_string(), v.clone())));
             update(tx, m.id, &cols)?;

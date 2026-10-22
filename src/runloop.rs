@@ -2,8 +2,8 @@
 //! or SIGINT, or (without `--watch`) until it is idle.
 //!
 //! A pass so far, in LOOP-12's order: signals; `commands`; reap children → `Handler::finish`;
-//! due polls (`intents`, PRs); entry effects and due missions; children waiting for a slot;
-//! pick. The wake check, Telegram, child timeouts, faults and preflight, review due, outbox,
+//! entry effects; child timeouts; due polls (`intents`, PRs); due missions; children waiting
+//! for a slot; pick. The wake check, Telegram, faults and preflight, review due, outbox,
 //! inhibitor and gauges come with loop-runner parts 3 and 4.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -315,6 +315,7 @@ impl Loop {
         self.ensure_store();
         self.reap(tick)?;
         self.enter_all(tick)?;
+        self.timeouts(tick);
         self.poll_intents(tick)?;
         self.poll_prs(tick)?;
         self.enter_all(tick)?;
@@ -451,9 +452,13 @@ impl Loop {
         self.slots_used() < usize::from(self.config.agent.parallel)
     }
 
+    /// Starts a mission's child; its timeout counts the step's earlier run time (`step_secs`,
+    /// LOOP-9, LOOP-12), so a limit wait or a restart in between never adds to it.
     fn spawn(&mut self, m: &Mission, spec: ChildSpec, tick: Tick) -> Result<(), String> {
         match child::spawn(&spec, tick.mono) {
-            Ok(c) => {
+            Ok(mut c) => {
+                let used = Duration::try_from_secs_f64(m.step_secs).unwrap_or_default();
+                c.budget = spec.timeout.map(|t| t.saturating_sub(used));
                 update(
                     self.db.conn(),
                     m.id,
@@ -500,9 +505,11 @@ impl Loop {
             .filter_map(|(id, c)| c.poll(tick.mono).map(|e| (*id, e)))
             .collect();
         for (id, end) in ended {
+            let mut model = None;
             if let Some(c) = self.children.remove(&id) {
                 // What its group left behind (a shell's children) goes too.
                 child::kill_group(c.pid);
+                model = c.spec.model.clone();
             }
             let m = mission::get(self.db.conn(), id)?;
             update(
@@ -521,9 +528,25 @@ impl Loop {
             )?;
             let m = mission::get(self.db.conn(), id)?;
             let called = self.call(m.stage, tick, |h, cx| h.finish(cx, &m, end));
+            // A run on a model that hit no limit: the model's backoffs start over (LOOP-9).
+            let limited = matches!(&called, Called::Returned(Ok(Progress::Done(o))) if o.event == Event::Limit)
+                || matches!(&called, Called::Returned(Err(StepError::Env(..))))
+                || matches!(&called, Called::Returned(Ok(Progress::Done(o))) if o.event == Event::EnvFail);
+            if let (Some(model), false) = (&model, limited) {
+                limits::success(self.db.conn(), model)?;
+            }
             self.progress(&m, called, tick)?;
         }
         Ok(())
+    }
+
+    /// Children whose run time used up their budget: SIGTERM to the group, SIGKILL after
+    /// `kill_after` (LOOP-12); the next reap hands `finish` a `timed_out` end.
+    fn timeouts(&mut self, tick: Tick) {
+        let after = self.opts.kill_after;
+        for c in self.children.values_mut() {
+            c.enforce(tick.mono, after);
+        }
     }
 
     /// The `intents` poll (LOOP-5, LOOP-18): every 60 s, pulled when `origin`'s `main` moved
@@ -725,16 +748,10 @@ impl Loop {
         let Some(model) = &m.limit_model else {
             return false;
         };
-        let until: Option<f64> = self
-            .db
-            .conn()
-            .query_row(
-                "SELECT until FROM cooldowns WHERE provider = ?1 AND model = ?2",
-                [limits::CLAUDE, model.as_str()],
-                |r| r.get(0),
-            )
-            .ok();
-        until.is_some_and(|u| u > now)
+        limits::until(self.db.conn(), model)
+            .ok()
+            .flatten()
+            .is_some_and(|u| u > now)
     }
 
     /// Driven, not held, no running or queued child, no wait (poll, backoff, limit) pending.

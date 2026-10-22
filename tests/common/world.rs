@@ -409,3 +409,42 @@ impl Handler for PublishesPr {
         unreachable!()
     }
 }
+
+/// A wait (CI, deploy): `Progress::Poll { after }` for ever; each call logged as (intent,
+/// monotonic time, `cx.timeouts`).
+#[derive(Clone, Default)]
+pub struct Poller {
+    pub after: Duration,
+    pub calls: Rc<RefCell<Vec<(String, Duration, bool)>>>,
+}
+
+impl Poller {
+    pub fn every(after: Duration) -> Poller {
+        Poller {
+            after,
+            ..Poller::default()
+        }
+    }
+
+    /// The calls for `intent`: (monotonic time, `cx.timeouts`).
+    pub fn of(&self, intent: &str) -> Vec<(Duration, bool)> {
+        self.calls
+            .borrow()
+            .iter()
+            .filter(|(i, _, _)| i == intent)
+            .map(|(_, t, on)| (*t, *on))
+            .collect()
+    }
+}
+
+impl Handler for Poller {
+    fn step(&mut self, cx: &mut Ctx<'_>, m: &Mission) -> Result<Progress, StepError> {
+        self.calls
+            .borrow_mut()
+            .push((m.label(), cx.tick.mono, cx.timeouts));
+        Ok(Progress::Poll { after: self.after })
+    }
+    fn finish(&mut self, _: &mut Ctx<'_>, _: &Mission, _: ChildEnd) -> Result<Progress, StepError> {
+        unreachable!("a poller runs no child")
+    }
+}
