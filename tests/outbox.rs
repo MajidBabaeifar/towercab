@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::Duration;
 
+use common::http::FakeTelegram;
 use common::world::{World, intent_file, open_pr};
 use common::{intent, intent_md, read, t};
 use rusqlite::params;
@@ -570,4 +571,52 @@ fn test_obsolete_message_dropped() {
         outbox::Sent::default(),
         "dropped rows stay dropped"
     );
+
+    // Through the loop: a wait's message can't go out (Telegram down); I approve before it
+    // does → dropped, never sent.
+    let tg = FakeTelegram::start();
+    let mut w = World::new(
+        &[intent_file("261001-0900-spec", "web", "", "Spec it")],
+        &["web"],
+    );
+    w.config.telegram = Some(tg.config());
+    tg.down(Some(502));
+    let mut h = Handlers::stubs();
+    h.set(
+        Stage::Design,
+        Box::new(F(Box::new(|m: &Mission| {
+            if m.continued == 0 {
+                Outcome::wait(Waiting::ApproveSpec, "")
+            } else {
+                Outcome::ok()
+            }
+        }))),
+    );
+    h.set(
+        Stage::Plan,
+        common::world::Scripted::all(common::world::Act::Poll(Duration::from_secs(86_400))),
+    );
+    let mut lp = w.open(h);
+    w.until(&mut lp, 10, |w| {
+        w.stage("261001-0900") == Some(Stage::ApprovalSpec)
+    });
+    commands::queue(&w.db(), &Cmd::Approve("0900".into()), "cli").unwrap();
+    w.pass(&mut lp);
+    assert_eq!(w.stage("261001-0900"), Some(Stage::Plan));
+    tg.down(None);
+    w.pass(&mut lp);
+    w.pass(&mut lp);
+    let sent = tg.sent();
+    assert!(sent.is_empty(), "{sent:?}");
+    let r: Option<f64> = w
+        .db()
+        .conn()
+        .query_row(
+            "SELECT sent_at FROM outbox WHERE event = 'approve_spec'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(r, Some(0.0));
+    lp.shutdown().unwrap();
 }

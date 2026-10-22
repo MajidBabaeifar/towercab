@@ -10,6 +10,7 @@ use tempfile::TempDir;
 use towercab::config::{Config, IntentsConfig};
 use towercab::intents::{Intent, Store};
 
+pub mod http;
 pub mod world;
 
 /// `git <args>` in `dir` as "me"; panics on failure.

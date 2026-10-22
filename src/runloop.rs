@@ -1,10 +1,11 @@
 //! The loop (LOOP-12, `run` of LOOP-15): one pass every 5 s, single-threaded, until SIGTERM
 //! or SIGINT, or (without `--watch`) until it is idle.
 //!
-//! A pass so far, in LOOP-12's order: signals; wake check; `commands`; reap children →
-//! `Handler::finish`; entry effects; child timeouts; due polls (`intents`, PRs); due missions;
-//! children waiting for a slot; pick; faults and preflight; review due; inhibitor. Telegram,
-//! the outbox and gauges come with loop-runner part 4 and the metrics intent.
+//! A pass so far, in LOOP-12's order: signals; wake check; Telegram updates → `commands`;
+//! apply `commands`; reap children → `Handler::finish`; entry effects; child timeouts; due
+//! polls (`intents`, PRs); due missions; children waiting for a slot; pick; faults and
+//! preflight; review due; outbox; inhibitor. Issues (INT-7) and gauges come with loop-runner
+//! part 5 and the metrics intent.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
@@ -23,7 +24,7 @@ use crate::awake::{self, Inhibitor};
 use crate::child::{self, Child};
 use crate::commands::{self, CmdCx};
 use crate::config::Config;
-use crate::db::Db;
+use crate::db::{Db, set_meta};
 use crate::env::{self, Fault};
 use crate::events::{self, GhPrs, PrSource};
 use crate::exes::Exes;
@@ -37,9 +38,11 @@ use crate::intents::{Intent, Listing, Store, Value as IValue};
 use crate::limits;
 use crate::machine::{self, Apply, Event, Next, Stage};
 use crate::mission::{self, ENTER, Kind, Mission};
-use crate::outbox;
+use crate::outbox::{self, Notice};
 use crate::pick::{self, Decision, PickState};
 use crate::priority;
+use crate::status::{self, Snapshot};
+use crate::telegram::{self, HELP, Telegram, TgCommand};
 
 /// The pass interval.
 pub const PASS: Duration = Duration::from_secs(5);
@@ -159,6 +162,8 @@ pub struct Loop {
     pub identity: Identity,
     /// Crash injection (tests).
     pub probe: Probe,
+    /// `[telegram]`: updates read and the outbox sent each pass (LOOP-16).
+    pub telegram: Option<Telegram>,
     store: Option<Store>,
     listing: Option<Listing>,
     children: BTreeMap<i64, Child>,
@@ -221,6 +226,7 @@ impl Loop {
             prs,
             identity: Identity::none(),
             probe: Probe::default(),
+            telegram: None,
             store: None,
             listing: None,
             children: BTreeMap::new(),
@@ -239,6 +245,7 @@ impl Loop {
             stop: Arc::new(AtomicBool::new(false)),
             _lock: lock,
         };
+        lp.telegram = lp.config.telegram.as_ref().map(Telegram::new);
         lp.ensure_store();
         if let Some(s) = &lp.store {
             lp.listing = Some(s.scan());
@@ -331,6 +338,7 @@ impl Loop {
         }
         report.woke = self.wake_check(tick)?;
         self.ensure_store();
+        report.commands = self.telegram_updates(tick)?;
         let cx = CmdCx {
             config: &self.config,
             db: &self.db,
@@ -338,7 +346,7 @@ impl Loop {
             store: self.store.as_ref(),
             listing: self.listing.as_ref(),
         };
-        report.commands = commands::apply_pending(&cx)?;
+        report.commands.extend(commands::apply_pending(&cx)?);
         if !report.commands.is_empty() {
             self.left_by_commands(tick)?;
             if let Some(s) = &self.store {
@@ -359,9 +367,96 @@ impl Loop {
             let due = priority::review_due(l, self.config.intents.cutoff, tick.wall);
             outbox::review_due(self.db.conn(), due, tick.wall)?;
         }
+        if let Some(tg) = self.telegram.as_mut() {
+            outbox::send_due(&self.db, tg, self.listing.as_ref(), tick.unix())?;
+        }
         self.inhibit(tick)?;
         report.idle = report.picked.is_none() && self.idle(tick, decision.as_ref())?;
         Ok(report)
+    }
+
+    /// LOOP-16: my messages since `meta.tg_offset`, in order, each in one transaction with
+    /// the next offset: a command → a `commands` row, applied at once (its reply goes to the
+    /// outbox); `status`, `next`, `help` or anything else → the reply. Other chats and
+    /// messages without text are skipped. Returns the rows applied.
+    fn telegram_updates(&mut self, tick: Tick) -> Result<Vec<(i64, String)>, String> {
+        let Some(tg) = self.telegram.as_mut() else {
+            return Ok(Vec::new());
+        };
+        let offset = self.db.meta("tg_offset")?.and_then(|v| v.parse().ok());
+        let Ok(updates) = tg.updates(offset) else {
+            return Ok(Vec::new());
+        };
+        let chat = tg.chat_id().to_string();
+        let now = tick.unix();
+        let mut applied = Vec::new();
+        for u in updates {
+            let parsed = u
+                .text
+                .as_deref()
+                .filter(|_| u.chat == chat)
+                .map(telegram::parse);
+            let reply = match &parsed {
+                None | Some(Ok(TgCommand::Cmd(_))) => None,
+                Some(Ok(TgCommand::Status)) => Some(self.status_text(tick)?),
+                Some(Ok(TgCommand::Next)) => Some(self.next_text(tick)?),
+                Some(Ok(TgCommand::Help) | Err(_)) => Some(HELP.to_string()),
+            };
+            let cmd = match parsed {
+                Some(Ok(TgCommand::Cmd(c))) => Some(c),
+                _ => None,
+            };
+            let row = self.db.tx(|tx| {
+                let row = match &cmd {
+                    Some(c) => Some(commands::insert(tx, c, "telegram", Some(u.id), now)?),
+                    None => None,
+                };
+                if let Some(r) = &reply {
+                    let r = Notice::Reply(r.clone());
+                    outbox::notify(tx, &r, &u.id.to_string(), now)?;
+                }
+                set_meta(tx, "tg_offset", &(u.id + 1).to_string())?;
+                Ok(row)
+            })?;
+            if let Some(id) = row {
+                let cx = CmdCx {
+                    config: &self.config,
+                    db: &self.db,
+                    tick,
+                    store: self.store.as_ref(),
+                    listing: self.listing.as_ref(),
+                };
+                let reply = commands::apply(&cx, &commands::get(&self.db, id)?)?;
+                applied.push((id, reply));
+                if let Some(s) = &self.store {
+                    self.listing = Some(s.scan());
+                }
+            }
+        }
+        Ok(applied)
+    }
+
+    /// `status` as this loop sees it (LOOP-13).
+    pub fn status_text(&self, tick: Tick) -> Result<String, String> {
+        let snapshot = Snapshot::read(
+            &self.db,
+            self.listing.as_ref(),
+            self.warned.get("intents").map(String::as_str),
+            &self.config,
+            Some(std::process::id()),
+            self.handlers.built(),
+            tick,
+        )?;
+        Ok(status::render(&snapshot))
+    }
+
+    /// `next` as this loop sees it (loop.md **Next**).
+    pub fn next_text(&self, tick: Tick) -> Result<String, String> {
+        let Some(listing) = &self.listing else {
+            return Ok("next: nothing runnable".into());
+        };
+        let d = pick::decide(listing, &self.pick_state(tick)?);
+        Ok(status::next_text(&d, listing, self.config.intents.cutoff))
     }
 
     /// Missions a command moved (`step = 'enter'`): their child is stopped (SIGTERM now,
