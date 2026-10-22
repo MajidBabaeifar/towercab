@@ -162,6 +162,7 @@ while IFS= read -r pat; do
     $pat)
       k=$(($(cat "$d/r$i.used" 2>/dev/null || echo 0) + 1))
       if [ -f "$d/r$i-$k.code" ]; then echo "$k" > "$d/r$i.used"; else k=$((k - 1)); fi
+      [ -f "$d/r$i-$k.sh" ] && exec sh "$d/r$i-$k.sh" "$@"
       cat "$d/r$i-$k.out"
       cat "$d/r$i-$k.err" >&2
       exit "$(cat "$d/r$i-$k.code")"
@@ -196,6 +197,63 @@ exit 98
         }
         fs::write(rules, text).unwrap();
         self
+    }
+
+    /// A rule whose answers are shell scripts (run with the call's arguments; their output and
+    /// exit code are the answer), the last one repeating.
+    pub fn on_sh(&self, pattern: &str, scripts: &[&str]) -> &GhScript {
+        let rules = self.dir.join("rules");
+        let mut text = fs::read_to_string(&rules).unwrap();
+        let i = text.lines().count() + 1;
+        text.push_str(pattern);
+        text.push('\n');
+        for (k, sh) in scripts.iter().enumerate() {
+            let k = k + 1;
+            fs::write(self.dir.join(format!("r{i}-{k}.sh")), sh).unwrap();
+            fs::write(self.dir.join(format!("r{i}-{k}.code")), "0").unwrap();
+        }
+        fs::write(rules, text).unwrap();
+        self
+    }
+
+    /// Replaces the answers of the rule with exactly `pattern` (its queue starts again).
+    pub fn replace(&self, pattern: &str, answers: &[(&str, &str, i32)]) -> &GhScript {
+        let i = self.clear(pattern);
+        for (k, (out, err, code)) in answers.iter().enumerate() {
+            let k = k + 1;
+            fs::write(self.dir.join(format!("r{i}-{k}.out")), out).unwrap();
+            fs::write(self.dir.join(format!("r{i}-{k}.err")), err).unwrap();
+            fs::write(self.dir.join(format!("r{i}-{k}.code")), code.to_string()).unwrap();
+        }
+        self
+    }
+
+    /// [`GhScript::replace`] with script answers ([`GhScript::on_sh`]).
+    pub fn replace_sh(&self, pattern: &str, scripts: &[&str]) -> &GhScript {
+        let i = self.clear(pattern);
+        for (k, sh) in scripts.iter().enumerate() {
+            let k = k + 1;
+            fs::write(self.dir.join(format!("r{i}-{k}.sh")), sh).unwrap();
+            fs::write(self.dir.join(format!("r{i}-{k}.code")), "0").unwrap();
+        }
+        self
+    }
+
+    /// The rule `pattern`'s number, its answers removed.
+    fn clear(&self, pattern: &str) -> usize {
+        let text = fs::read_to_string(self.dir.join("rules")).unwrap();
+        let i = text
+            .lines()
+            .position(|l| l == pattern)
+            .unwrap_or_else(|| panic!("no gh rule {pattern}"))
+            + 1;
+        for e in fs::read_dir(&self.dir).unwrap() {
+            let name = e.unwrap().file_name().to_string_lossy().into_owned();
+            if name.starts_with(&format!("r{i}-")) || name == format!("r{i}.used") {
+                fs::remove_file(self.dir.join(name)).unwrap();
+            }
+        }
+        i
     }
 
     /// Every call's `"$*"`, in order.
@@ -340,6 +398,7 @@ impl Pipe {
             gh: gh.bin.clone().into(),
             bwrap: fake_bwrap(&bin).into(),
             git: github_git(&bin, &w.root.join("github")).into(),
+            towercab: env!("CARGO_BIN_EXE_towercab").into(),
             ..w.exes()
         };
         Pipe {
@@ -537,6 +596,47 @@ pub fn run_child(spec: &ChildSpec) -> ChildEnd {
     }
 }
 
+/// `gh pr view` of the CI handler.
+pub const CI_VIEW: &str = "pr view * --json headRefOid,mergeable,statusCheckRollup";
+/// `gh pr view` of a PR read (`events::GhPrs`).
+pub const PR_READ: &str =
+    "pr view * --json state,mergedAt,mergeCommit,headRefOid,mergeable,comments,reviews";
+/// The review comments of a PR read.
+pub const PR_COMMENTS: &str = "api --paginate --slurp *";
+/// `gh pr view` of the merge handler.
+pub const MERGE_VIEW: &str = "pr view * --json headRefOid,mergeStateStatus,mergedAt,mergeCommit";
+
+/// A `statusCheckRollup` check run of Actions run `run` (started long after any push).
+pub fn check(name: &str, status: &str, conclusion: &str, run: u64) -> String {
+    json!({
+        "__typename": "CheckRun", "name": name, "status": status, "conclusion": conclusion,
+        "startedAt": "2099-01-01T00:00:00Z",
+        "detailsUrl": format!("https://github.com/me/web/actions/runs/{run}/job/{}", run * 10),
+    })
+    .to_string()
+}
+
+/// A review result: approved, the login bullet met, nothing weakened, the plan followed,
+/// `findings` (JSON list), `door` (JSON) and no red line.
+pub fn review(approved: bool, findings: Value, door: Value) -> Value {
+    json!({
+        "approved": approved,
+        "outcomes": [{"bullet": "I can log in", "met": true, "why": "login works"}],
+        "tests_weakened": {"weakened": false, "where": ""},
+        "plan_followed": {"followed": true, "where": ""},
+        "findings": findings,
+        "door": door,
+        "red_lines": [],
+        "why": "Looks right.",
+    })
+}
+
+/// A finding.
+pub fn finding(important: bool, file: &str, line: Option<u64>, what: &str) -> Value {
+    json!({"pass": "correctness", "severity": if important { "important" } else { "nit" },
+           "file": file, "line": line, "what": what, "rule": null, "policy": null})
+}
+
 /// The login intent of the build tests.
 pub const LOGIN_ID: &str = "261001-0900";
 pub const LOGIN_DIR: &str = "261001-0900-login";
@@ -594,8 +694,54 @@ impl Pipe {
             )
             .on("pr ready *", &[("", "", 0)])
             .on("api -X POST repos/me/web/check-runs *", &[("{}", "", 0)])
-            .on("api -X PATCH *", &[("{}", "", 0)]);
+            .on("api -X PATCH *", &[("{}", "", 0)])
+            .on("pr comment *", &[("", "", 0)])
+            .on(
+                PR_READ,
+                &[(r#"{"state":"OPEN","comments":[],"reviews":[]}"#, "", 0)],
+            )
+            .on(PR_COMMENTS, &[("[[]]", "", 0)]);
         p
+    }
+
+    /// CI answers `checks` (the `statusCheckRollup` JSON) on the branch's head on origin, with
+    /// `mergeable` (each read: the head as origin has it now).
+    pub fn ci_answers(&self, mergeable: &str, checks: &str) -> &Pipe {
+        let sh = self.rollup_sh(mergeable, checks);
+        let rules = fs::read_to_string(self.gh.dir.join("rules")).unwrap();
+        if rules.lines().any(|l| l == CI_VIEW) {
+            self.gh.replace_sh(CI_VIEW, &[&sh]);
+        } else {
+            self.gh.on_sh(CI_VIEW, &[&sh]);
+        }
+        self
+    }
+
+    /// The script printing a rollup on the branch's origin head.
+    pub fn rollup_sh(&self, mergeable: &str, checks: &str) -> String {
+        let origin = self.w.root.join("repos/web.git");
+        let n = fs::read_dir(&self.gh.dir).unwrap().count();
+        let tpl = self.gh.dir.join(format!("rollup-{n}.json"));
+        fs::write(
+            &tpl,
+            format!(
+                r#"{{"headRefOid":"@HEAD@","mergeable":"{mergeable}","statusCheckRollup":{checks}}}"#
+            ),
+        )
+        .unwrap();
+        format!(
+            "h=$(git --git-dir='{}' rev-parse 'refs/heads/{LOGIN_BRANCH}')\nsed \"s/@HEAD@/$h/\" '{}'\n",
+            origin.display(),
+            tpl.display()
+        )
+    }
+
+    /// CI green: one completed, successful Actions check started after any push.
+    pub fn ci_green(&self) -> &Pipe {
+        self.ci_answers(
+            "MERGEABLE",
+            &format!("[{}]", check("test", "COMPLETED", "SUCCESS", 11)),
+        )
     }
 
     /// Call `n` plans (`src/login.rs`).
@@ -612,6 +758,19 @@ impl Pipe {
                 n,
                 &(writes("src/login.rs", "pub fn login() {}\n")
                     + &writes("tests/login_test.sh", LOGIN_TEST)),
+            )
+            .answer(n, &FakeClaude::result(done("Adds login.")));
+        self
+    }
+
+    /// Call `n` builds with a Rust test for `WEB-1` (`fn test_login(` in the diff).
+    pub fn builds_tested(&self, n: usize) -> &Pipe {
+        self.claude
+            .script(
+                n,
+                &(writes("src/login.rs", "pub fn login() {}\n")
+                    + &writes("tests/login_test.sh", LOGIN_TEST)
+                    + &writes("tests/login.rs", "#[test]\nfn test_login() {}\n")),
             )
             .answer(n, &FakeClaude::result(done("Adds login.")));
         self

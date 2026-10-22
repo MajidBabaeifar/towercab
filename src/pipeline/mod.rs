@@ -3,6 +3,7 @@
 //! mission. State the stages keep lives in `missions.data` ([`data::Data`]).
 
 pub mod build;
+pub mod ci;
 pub mod data;
 pub mod design;
 pub mod gh;
@@ -10,6 +11,7 @@ pub mod git;
 pub mod guard;
 pub mod plan;
 pub mod policies;
+pub mod pr;
 pub mod prompts;
 pub mod proof;
 pub mod publish;
@@ -23,8 +25,6 @@ use std::collections::BTreeMap;
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::env::Fault;
-use crate::events::{GhPrs, PrSource, new_feedback};
-use crate::github::GhError;
 use crate::handler::{Ctx, Handlers, Outcome, Progress, StepError};
 use crate::intents::{Intent, StoreError};
 use crate::machine::{Event, Stage, Waiting};
@@ -58,7 +58,11 @@ pub fn handlers(mode: Mode) -> Handlers {
     h.set(Stage::Build, Box::new(build::Build::new(mode.clone())));
     h.set(Stage::Verify, Box::new(verify::Verify::new(mode.clone())));
     h.set(Stage::Proof, Box::new(proof::Proof::new(mode.clone())));
-    h.set(Stage::Publish, Box::new(publish::Publish::new(mode)));
+    h.set(
+        Stage::Publish,
+        Box::new(publish::Publish::new(mode.clone())),
+    );
+    h.set(Stage::Ci, Box::new(ci::Ci::new(ci::Seq::Intent, mode)));
     h
 }
 
@@ -186,35 +190,8 @@ pub fn my_comments(cx: &Ctx<'_>, m: &Mission) -> Result<(String, Option<String>)
     let Some(pr) = m.pr else {
         return Ok(("(none)".into(), None));
     };
-    let github = gh::github(cx, m)?;
-    let me = cx
-        .config
-        .github
-        .as_ref()
-        .and_then(|g| g.me.clone())
-        .unwrap_or_default();
-    let mut prs = GhPrs {
-        identity: cx.identity.clone(),
-    };
-    let state = prs.read(&github, pr).map_err(|e| match e {
-        GhError::Env(e) => StepError::Env(Fault::Github, e),
-        GhError::Failed(e) => StepError::Bug(e),
-    })?;
-    let new = new_feedback(m, &state, &me);
-    let text = new
-        .iter()
-        .map(|c| format!("- {} at {}: {}", c.author, c.at, c.body.trim()))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let seen = new.iter().map(|c| c.at.clone()).max();
-    Ok((
-        if text.is_empty() {
-            "(none)".into()
-        } else {
-            text
-        },
-        seen,
-    ))
+    let state = pr::read(cx, m, pr)?;
+    Ok(pr::feedback_text(&state, m, &pr::me(cx)))
 }
 
 /// The message of the mission's last wait (its `outbox` row), if any.

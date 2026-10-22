@@ -12,6 +12,9 @@ pub struct Exes {
     pub systemd_inhibit: OsString,
     pub systemctl: OsString,
     pub journalctl: OsString,
+    /// Towercab itself, for the children that run it (`hook verifier`, PIP-32); empty = the
+    /// running executable ([`towercab`]).
+    pub towercab: OsString,
 }
 
 impl Default for Exes {
@@ -26,6 +29,7 @@ impl Default for Exes {
             systemd_inhibit: "systemd-inhibit".into(),
             systemctl: "systemctl".into(),
             journalctl: "journalctl".into(),
+            towercab: OsString::new(),
         }
     }
 }
@@ -45,4 +49,14 @@ pub fn which(exe: &std::ffi::OsStr) -> Option<std::path::PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH")?)
         .map(|d| d.join(exe))
         .find(|c| runs(c))
+}
+
+/// Towercab's executable for a child: `exes.towercab`, else the running one
+/// (`claude::live_exe`: a ` (deleted)` suffix after a reinstall stripped).
+pub fn towercab(exes: &Exes) -> Result<std::path::PathBuf, String> {
+    if !exes.towercab.is_empty() {
+        return Ok(std::path::PathBuf::from(&exes.towercab));
+    }
+    let exe = std::env::current_exe().map_err(|e| format!("towercab executable: {e}"))?;
+    crate::claude::live_exe(&exe)
 }
