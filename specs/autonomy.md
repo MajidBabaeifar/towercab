@@ -15,11 +15,11 @@ How far an agent may take an intent before it waits for me.
 | AUT-3 | a1–a3 (effective `a` ≤ 3, or cap ≤ 3): `gate` → `Approval` (`waiting: review and merge PR`); the PR review still runs (AUT-6) and its findings reach me as one PR comment, never blocking ([PIP-7](pipeline.md)). a1–a2 first stop at the spec (AUT-11). | test_gate_table |
 | AUT-4 | a4: `gate` → `Merge` only with CI green and `review.approved` ([PIP-4, 5](pipeline.md)); `Merge` carries no `Waiting`, so no message ([LOOP-14](loop.md)). | test_gate_table |
 | AUT-5 | a5: as a4 at the gate. After every merge, whoever merged, `deploy` and `e2e` follow (`machine::ORDER`; they act when the repo has `live`, [PIP-8, 9](pipeline.md)); e2e red twice → revert for Towercab's merge ([PIP-19](pipeline.md)) or triage for mine ([PIP-20](pipeline.md)): the pipeline's handlers. | test_gate_table, test_validation_always |
-| AUT-6 | Validation never shrinks with trust: `machine::ORDER` runs verify, ci, verifier, review, gate before merge for every intent mission, no stage chosen by `a` (handlers: [PIP-23, 3, 4](pipeline.md)); `gate` merges an intent only with CI green and `review.approved`; a revert PR (`PrKind::Revert`, [PIP-19](pipeline.md)'s `revert_merge`) merges on CI green or none, without a review. | test_validation_always |
+| AUT-6 | Validation never shrinks with trust: `machine::ORDER` runs verify, ci, verifier, review, gate before merge for every intent mission, no stage chosen by `a` (handlers: [PIP-23, 3, 4](pipeline.md)); `gate` merges an intent only with CI green and `review.approved`; a revert PR (`PrKind::Revert`, [PIP-19](pipeline.md)'s `revert_merge`) merges on CI green or none, without a review; CI not green → `waiting: revert failed`. | test_validation_always |
 | AUT-7 | `autonomy::lower(&mut Intent, lower_a: Option<u8>, lower_why: Option<&str>) -> Result<bool, String>` (the worker's result, [PIP-1](pipeline.md); `lowered(a, lower_a) -> Option<u8>`, pure): `lower_a` < `a` → `a = lower_a` and `lower_why` (trimmed; empty → removed) via `Intent::set`/`remove`, every other line byte-identical; equal, higher or outside 1–5 → nothing written; no `a` → written only when `lower_a` ≤ 3. Never raised. | test_lower_only |
 | AUT-8 | `RepoState { max_autonomy, capped, frozen }`, `read(&Connection, repo, &Towercab)` (the `repo_caps` row; `max_autonomy` from the base branch's `TOWERCAB.md`, [REPO-1](repo.md), default 5); `cap()` = `min(max_autonomy, 3 if capped or frozen else 5)`. `effective(a_at_pick, a_now, cap) -> Option<u8>` = min of the `a`s present and `cap`; neither → `None`. | test_repo_cap, test_max_autonomy_from_base |
 | AUT-9 | No `a` (effective `None`): cap ≤ 3 → `Approval`; else `Merge` only when approved and risk low (`Review::risk_low()` = `door` two-way ∧ no red line touched, [PIP-5](pipeline.md)), else `Approval`. | test_gate_table, test_no_a_under_cap_goes_to_me |
-| AUT-10 | After any revert Towercab makes, `machine::apply` sets, in its transaction, `repo_caps.capped` (`reverted, refine`) or `frozen` (`revert failed`, + `repo frozen` message): cap 3 until `towercab trust <repo>` deletes the row (`trusted <repo>`; not in `[repos]` → `trust: unknown repo <r>`, exit 1). Frozen: `pick` skips the repo (`repo <r> frozen`), `gate` → `Approval` for intents and reverts. `status`: `repos: <r> capped at a3, <r> frozen`. | test_cap_after_revert, test_trust_clears |
+| AUT-10 | After any revert Towercab makes, `machine::apply` sets, in its transaction, `repo_caps.capped` (`reverted, refine`) or `frozen` (`revert failed`, + `repo frozen` message): cap 3 until `towercab trust <repo>` deletes the row (`trusted <repo>`; not in `[repos]` → `trust: unknown repo <r>`, exit 1). Frozen: `pick` skips the repo (`repo <r> frozen`), `gate` → `Approval` for intents; a revert still merges. `status`: `repos: <r> capped at a3, <r> frozen`. | test_cap_after_revert, test_trust_clears |
 | AUT-11 | `spec_gate(a: Option<u8>, cap, concerns: bool) -> bool` (effective `a`): a concern, `a` ≤ 2, or no `a` and cap ≤ 2 → `waiting: approve spec` ([PIP-26](pipeline.md)), then as a3. | test_spec_gate |
 
 **Gate** (`src/autonomy.rs`, pure; first match wins)
@@ -28,9 +28,10 @@ How far an agent may take an intent before it waits for me.
 gate(&GateIn) -> Gate
 GateIn { kind: PrKind::{Intent, Revert}, frozen, cap: u8, a: Option<u8> (effective), ci: Ci::{Green, None, NotGreen},
          unlock: bool (PIP-29), evals_red: bool (PIP-33), review: Option<Review { approved, door: Door, red_lines: bool }> }
-Gate::{Merge, Approval(Hold)}   Approval = waiting: review and merge PR + the findings comment (PIP-7)
+Gate::{Merge, Approval(Hold)}, waiting(PrKind) -> Option<Waiting>: an intent's Approval = review and merge PR + the findings
+         comment (PIP-7); a revert's = revert failed (PIP-19)
 Hold (Display = the transition's why): repo frozen · CI not green · ci: none · unlock used · evals red · cap <n> · a<n> · not approved · risk high
-Revert: frozen, CI not green → Approval; else Merge.
+Revert: CI not green → Approval; else Merge (frozen too).
 Intent: frozen, CI not green, ci: none, unlock, evals red, cap ≤ 3, a ≤ 3 → Approval; a ≥ 4: approved → Merge;
         no a: approved ∧ risk low → Merge; else Approval (no review = not approved).
 ```
@@ -50,6 +51,7 @@ Intent: frozen, CI not green, ci: none, unlock, evals red, cap ≤ 3, a ≤ 3 �
   `test_no_a_under_cap_goes_to_me` test this layer; the pipeline adds its handler tests (PIP-7, 26). AUT-3's "review
   still runs" is AUT-6's; PIP-4's `test_review_on_every_pr` tests its handler.
 - `effective` = min of the `a`s present: deleting `a` mid-flight can't turn a1 into a risk-judged no-`a` intent.
-- Frozen counts as capped and holds revert merges too (I look first); `trust` clears both.
+- Frozen counts as capped; `trust` clears both. It holds intent merges, not reverts: my `approve` of `revert failed`
+  re-enters the revert at its stage (`continue_to`), which must then merge; `pause` holds reverts.
 - `lower_why` is written only with a lowered `a`; it replaces an older one.
 - Rehearsal PRs never reach the gate (`rehearse_close` closes them).

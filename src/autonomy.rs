@@ -24,7 +24,7 @@ pub struct RepoState {
     pub max_autonomy: u8,
     /// `repo_caps.capped`: a revert went green.
     pub capped: bool,
-    /// `repo_caps.frozen`: a revert failed; no picks or merges.
+    /// `repo_caps.frozen`: a revert failed; no picks or intent merges.
     pub frozen: bool,
 }
 
@@ -167,26 +167,33 @@ pub enum Gate {
 }
 
 impl Gate {
-    /// The wait it puts the mission in; a merge sends no message (LOOP-14).
-    pub fn waiting(&self) -> Option<Waiting> {
-        match self {
-            Gate::Merge => None,
-            Gate::Approval(_) => Some(Waiting::ReviewAndMergePr),
+    /// The wait it puts a `kind` mission in: an intent's `review and merge PR`; a revert's
+    /// `revert failed` (PIP-19: its machine path, which freezes the repo). A merge sends no
+    /// message (LOOP-14).
+    pub fn waiting(&self, kind: PrKind) -> Option<Waiting> {
+        match (self, kind) {
+            (Gate::Merge, _) => None,
+            (Gate::Approval(_), PrKind::Intent) => Some(Waiting::ReviewAndMergePr),
+            (Gate::Approval(_), PrKind::Revert) => Some(Waiting::RevertFailed),
         }
     }
 }
 
-/// The gate (AUT-3..6, AUT-9, PIP-7): first match wins.
+/// The gate (AUT-3..6, AUT-9, PIP-7): first match wins. A revert is held only by CI: my
+/// `approve` of `revert failed` re-enters it while the repo is still frozen.
 pub fn gate(g: &GateIn) -> Gate {
     let hold = |h| Gate::Approval(h);
+    if g.kind == PrKind::Revert {
+        return match g.ci {
+            Ci::NotGreen => hold(Hold::CiNotGreen),
+            Ci::Green | Ci::None => Gate::Merge,
+        };
+    }
     if g.frozen {
         return hold(Hold::Frozen);
     }
     if g.ci == Ci::NotGreen {
         return hold(Hold::CiNotGreen);
-    }
-    if g.kind == PrKind::Revert {
-        return Gate::Merge;
     }
     if g.ci == Ci::None {
         return hold(Hold::NoCi);

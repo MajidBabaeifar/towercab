@@ -341,21 +341,32 @@ fn test_gate_table() {
                 frozen: true,
                 ..revert()
             },
-            Gate::Approval(Hold::Frozen),
+            Gate::Merge,
         ),
     ];
     for (name, input, want) in &rows {
         assert_eq!(gate(input), *want, "{name}");
     }
 
-    // Approval is `waiting: review and merge PR` (PIP-7); a merge sends nothing (LOOP-14).
-    assert_eq!(Gate::Merge.waiting(), None);
+    // Approval is `waiting: review and merge PR` (PIP-7), for a revert `revert failed`
+    // (PIP-19); a merge sends nothing (LOOP-14).
     for input in every_input() {
-        match gate(&input) {
-            Gate::Merge => assert_eq!(Gate::Merge.waiting(), None),
-            g @ Gate::Approval(_) => assert_eq!(g.waiting(), Some(Waiting::ReviewAndMergePr)),
-        }
+        let want = match (gate(&input), input.kind) {
+            (Gate::Merge, _) => None,
+            (Gate::Approval(_), PrKind::Intent) => Some(Waiting::ReviewAndMergePr),
+            (Gate::Approval(_), PrKind::Revert) => Some(Waiting::RevertFailed),
+        };
+        assert_eq!(gate(&input).waiting(input.kind), want, "{input:?}");
     }
+    // continue_to of each: an intent's back to the gate, a revert's back to its stage.
+    assert_eq!(
+        machine::continue_to(&Waiting::ReviewAndMergePr, Stage::Gate),
+        Next::Go(Stage::Gate)
+    );
+    assert_eq!(
+        machine::continue_to(&Waiting::RevertFailed, Stage::RevertMerge),
+        Next::Go(Stage::RevertMerge)
+    );
     let whys: Vec<String> = [
         Hold::Frozen,
         Hold::CiNotGreen,
@@ -433,9 +444,9 @@ fn test_validation_always() {
             continue;
         }
         merges += 1;
-        assert!(!input.frozen, "{input:?}");
         match input.kind {
             PrKind::Intent => {
+                assert!(!input.frozen, "{input:?}");
                 assert_eq!(input.ci, Ci::Green, "{input:?}");
                 assert!(input.review.is_some_and(|r| r.approved), "{input:?}");
                 assert!(!input.unlock && !input.evals_red && input.cap > CAPPED);
@@ -782,10 +793,10 @@ fn test_cap_after_revert() {
             .contains("web")
     );
 
-    // A failed revert: the repo is frozen (no picks, no merges) and I'm told once.
+    // A failed revert: the repo is frozen (no picks, no intent merges) and I'm told once.
     let m = revert_mission(&db, "261001-0901", "api", Stage::RevertCi);
     let o = Outcome::wait(Waiting::RevertFailed, "CI red after the rerun");
-    machine::apply(&ax, &m, &o).unwrap();
+    let m = machine::apply(&ax, &m, &o).unwrap();
     let api = RepoState::read(db.conn(), "api", &tc).unwrap();
     assert!(api.frozen && api.cap() == 3);
     let state = pick::state(&db, &config, true, tick()).unwrap();
@@ -793,13 +804,21 @@ fn test_cap_after_revert() {
     let g = GateIn {
         frozen: api.frozen,
         cap: api.cap(),
+        a: Some(api.cap()),
+        ..intent(Some(5))
+    };
+    assert_eq!(gate(&g), Gate::Approval(Hold::Frozen), "no intent merges");
+    // My approve re-enters the revert at its stage; once its CI is green it merges, frozen.
+    assert_eq!(
+        machine::continue_to(&Waiting::RevertFailed, m.from_stage.unwrap()),
+        Next::Go(Stage::RevertCi)
+    );
+    let g = GateIn {
+        frozen: api.frozen,
+        cap: api.cap(),
         ..revert()
     };
-    assert_eq!(
-        gate(&g),
-        Gate::Approval(Hold::Frozen),
-        "not even a revert merges"
-    );
+    assert_eq!(gate(&g), Gate::Merge);
     let frozen: Vec<String> = db
         .conn()
         .prepare("SELECT text FROM outbox WHERE mission = 'repo:api' AND event = 'frozen'")
