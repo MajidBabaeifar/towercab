@@ -22,13 +22,14 @@ use towercab::runloop::LoopOpts;
 const X: &str = "261001-0900";
 const Y: &str = "261001-0901";
 
-/// A fake `claude`: each run's argv and stdin to `$RUNS/claude-<n>.argv` / `.stdin`; with
+/// A fake `claude`: each run's argv and stdin to `$RUNS/claude-<n>.argv` / `.stdin`, then
+/// `$RUNS/count` = n; with
 /// `$RUNS/gone`, `--resume` fails as Claude does when the session is gone; with
 /// `$RUNS/stubborn` it ignores SIGTERM; it runs while `$RUNS/hold` exists.
 const FAKE_CLAUDE: &str = r#"n=$(($(cat "$RUNS/count" 2>/dev/null || echo 0) + 1))
-echo "$n" > "$RUNS/count"
 printf '%s\n' "$@" > "$RUNS/claude-$n.argv"
 cat > "$RUNS/claude-$n.stdin"
+echo "$n" > "$RUNS/count"
 if [ -e "$RUNS/gone" ]; then
   for a in "$@"; do
     if [ "$a" = "--resume" ]; then

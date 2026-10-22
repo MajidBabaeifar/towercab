@@ -327,9 +327,9 @@ pub fn waiter(cx: &Ctx<'_>, m: &Mission) -> ChildSpec {
             "sh".into(),
             "-c".into(),
             format!(
-                "echo \"$PWD\" > {}; while [ ! -e {} ]; do sleep 0.05; done",
-                runs.join(format!("cwd-{}", m.stage)).display(),
-                release.display()
+                "echo \"$PWD\" > {cwd}.tmp && mv {cwd}.tmp {cwd}; while [ ! -e {} ]; do sleep 0.05; done",
+                release.display(),
+                cwd = runs.join(format!("cwd-{}", m.stage)).display(),
             )
             .into(),
         ],
