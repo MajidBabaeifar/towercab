@@ -315,7 +315,12 @@ fn test_bad_after() {
         Stage::Pick,
         "the next one is picked"
     );
-    let rows = w.outbox();
+    // (Next is parked and nothing was ever reviewed: PRI-8's message too.)
+    let rows: Vec<_> = w
+        .outbox()
+        .into_iter()
+        .filter(|r| r.1 != "review_due")
+        .collect();
     assert_eq!(rows.len(), 1);
     let (key, event, n, text) = &rows[0];
     assert_eq!(
@@ -337,7 +342,7 @@ fn test_bad_after() {
     w.pass(&mut lp);
     w.pass(&mut lp);
     assert!(w.intent_md("261001-0900-unknown").contains("bad after:"));
-    assert_eq!(w.outbox().len(), 1);
+    assert_eq!(w.outbox().len(), 2, "bad after and review due, once each");
     lp.shutdown().unwrap();
 }
 

@@ -1164,18 +1164,11 @@ pub fn apply_tx(
                     |r| r.get(0),
                 )
                 .map_err(sql)?;
-            let text = outbox::render_notice(&Notice::RepoFrozen {
+            let notice = Notice::RepoFrozen {
                 repo: cur.repo.clone(),
                 why,
-            });
-            outbox::enqueue(
-                tx,
-                &format!("repo:{}", cur.repo),
-                "frozen",
-                &since.to_string(),
-                &text,
-                now,
-            )?;
+            };
+            outbox::notify(tx, &notice, &since.to_string(), now)?;
         }
         Some(Waiting::RevertedRefine) => {
             tx.execute(
@@ -1189,19 +1182,12 @@ pub fn apply_tx(
     }
     if o.event == Event::Red && matches!(cur.stage, Stage::Rehearse | Stage::RehearseCi) {
         let day = ax.tick.wall.format("%y%m%d").to_string();
-        let text = outbox::render_notice(&Notice::RehearsalFailed {
+        let notice = Notice::RehearsalFailed {
             repo: cur.repo.clone(),
             why: why.clone().unwrap_or_default(),
             pr_url: cur.pr_url.clone(),
-        });
-        outbox::enqueue(
-            tx,
-            &format!("repo:{}", cur.repo),
-            "rehearsal_failed",
-            &day,
-            &text,
-            now,
-        )?;
+        };
+        outbox::notify(tx, &notice, &day, now)?;
     }
     tx.execute(
         "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",

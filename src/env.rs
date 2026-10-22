@@ -229,12 +229,12 @@ pub fn episode(conn: &Connection, now: f64) -> Result<bool, String> {
     let id = (now.floor() as i64).to_string();
     set_meta(conn, "env_episode", &id)?;
     let fix = f.kind.parse::<Fault>().map(|k| k.fix()).unwrap_or_default();
-    let text = outbox::render_notice(&Notice::EnvBlocked {
+    let notice = Notice::EnvBlocked {
         kind: f.kind.clone(),
         error: f.error.clone(),
         fix,
-    });
-    outbox::enqueue(conn, "loop", "env_blocked", &id, &text, now)?;
+    };
+    outbox::notify(conn, &notice, &id, now)?;
     Ok(true)
 }
 

@@ -3,7 +3,7 @@
 //!
 //! A pass so far, in LOOP-12's order: signals; wake check; `commands`; reap children →
 //! `Handler::finish`; entry effects; child timeouts; due polls (`intents`, PRs); due missions;
-//! children waiting for a slot; pick; faults and preflight; inhibitor. Telegram, review due,
+//! children waiting for a slot; pick; faults and preflight; review due; inhibitor. Telegram,
 //! the outbox and gauges come with loop-runner part 4 and the metrics intent.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -39,6 +39,7 @@ use crate::machine::{self, Apply, Event, Next, Stage};
 use crate::mission::{self, ENTER, Kind, Mission};
 use crate::outbox;
 use crate::pick::{self, Decision, PickState};
+use crate::priority;
 
 /// The pass interval.
 pub const PASS: Duration = Duration::from_secs(5);
@@ -346,6 +347,10 @@ impl Loop {
         self.spawn_queued(tick)?;
         let decision = self.pick(tick, &mut report)?;
         self.faults(tick)?;
+        if let Some(l) = &self.listing {
+            let due = priority::review_due(l, self.config.intents.cutoff, tick.wall);
+            outbox::review_due(self.db.conn(), due, tick.wall)?;
+        }
         self.inhibit(tick)?;
         report.idle = report.picked.is_none() && self.idle(tick, decision.as_ref())?;
         Ok(report)
