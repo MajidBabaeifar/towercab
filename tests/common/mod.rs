@@ -276,13 +276,15 @@ pub fn exe(path: &Path, body: &str) {
 /// Fakes of the programs the loop checks at start and runs itself, in `dir` (made once):
 /// `claude`, `cargo`, `bwrap` answer `--version`; `systemd-inhibit` answers `--version`, else
 /// logs its argv (`inhibit-<n>.argv`) and pid (`inhibit-<n>.pid`), then runs until `dir` is
-/// gone. Returns `Exes` with them (the rest by name).
+/// gone; `gh` logs each call to `gh.log` and lists no issues and no PRs (anything else fails).
+/// Returns `Exes` with them (the rest by name).
 pub fn fake_exes(dir: &Path) -> towercab::exes::Exes {
     let fakes = [
         ("claude", "[ \"$1\" = --version ] && echo '2.1.0 (Claude Code)' && exit 0\necho \"fake claude: $*\" >&2\nexit 1\n".to_string()),
         ("cargo", "echo 'cargo 1.98.0'\n".to_string()),
         ("bwrap", "echo 'bubblewrap 0.11.0'\n".to_string()),
         ("systemd-inhibit", FAKE_INHIBIT.to_string()),
+        ("gh", FAKE_LOOP_GH.to_string()),
     ];
     for (name, body) in &fakes {
         let path = dir.join(name);
@@ -295,9 +297,17 @@ pub fn fake_exes(dir: &Path) -> towercab::exes::Exes {
         cargo: dir.join("cargo").into(),
         bwrap: dir.join("bwrap").into(),
         systemd_inhibit: dir.join("systemd-inhibit").into(),
+        gh: dir.join("gh").into(),
         ..towercab::exes::Exes::default()
     }
 }
+
+const FAKE_LOOP_GH: &str = r#"echo "$*" >> "$(dirname "$0")/gh.log"
+case "$1 $2" in
+  "issue list"|"pr list") echo '[]' ;;
+  *) echo "fake gh: $*" >&2; exit 1 ;;
+esac
+"#;
 
 const FAKE_INHIBIT: &str = r#"[ "$1" = --version ] && echo 'systemd 255' && exit 0
 d="$(dirname "$0")"

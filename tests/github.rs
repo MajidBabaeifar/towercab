@@ -336,7 +336,8 @@ fn test_git_uses_app_token() {
     let mut w = World::new(&[intent_file("261001-0900-x", "web", "", "X")], &[]);
     let root = w.root.clone();
     fs::copy(&pem, root.join("app.pem")).unwrap();
-    w.config.github.as_mut().unwrap().api_base = gh.http.url.clone();
+    let g = w.config.github.as_mut().unwrap();
+    (g.app_id, g.api_base) = (Some(5), gh.http.url.clone());
     w.config.repos.insert(
         "web".into(),
         Ok(RepoConfig {
@@ -393,7 +394,8 @@ fn test_commit_author_is_bot() {
     let mut w = World::new(&[intent_file("261001-0900-x", "web", "", "X")], &["web"]);
     let root = w.root.clone();
     key(&root.join("app.pem"), false);
-    w.config.github.as_mut().unwrap().api_base = gh.http.url.clone();
+    let g = w.config.github.as_mut().unwrap();
+    (g.app_id, g.api_base) = (Some(5), gh.http.url.clone());
 
     // Towercab's intents checkout: origin https://github.com/me/intents.git (the bare repo
     // through this checkout's own insteadOf), as [intents].remote says.

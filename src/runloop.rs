@@ -1,11 +1,11 @@
 //! The loop (LOOP-12, `run` of LOOP-15): one pass every 5 s, single-threaded, until SIGTERM
 //! or SIGINT, or (without `--watch`) until it is idle.
 //!
-//! A pass so far, in LOOP-12's order: signals; wake check; Telegram updates → `commands`;
-//! apply `commands`; reap children → `Handler::finish`; entry effects; child timeouts; due
-//! polls (`intents`, PRs); due missions; children waiting for a slot; pick; faults and
-//! preflight; review due; outbox; inhibitor. Issues (INT-7) and gauges come with loop-runner
-//! part 5 and the metrics intent.
+//! A pass, in LOOP-12's order: signals; wake check; Telegram updates → `commands`; apply
+//! `commands`; reap children → `Handler::finish` (the drafter's → `drafts::finish_run`);
+//! entry effects; child timeouts; due polls (`intents`, PRs, issues and draft PRs); due
+//! missions; children waiting for a slot; pick; the drafter; faults and preflight; review due;
+//! outbox; inhibitor; gauges (a stub until the metrics intent).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
@@ -23,8 +23,9 @@ use signal_hook::consts::{SIGINT, SIGTERM};
 use crate::awake::{self, Inhibitor};
 use crate::child::{self, Child};
 use crate::commands::{self, CmdCx};
-use crate::config::Config;
+use crate::config::{Config, RepoConfig};
 use crate::db::{Db, set_meta};
+use crate::drafts;
 use crate::env::{self, Fault};
 use crate::events::{self, GhPrs, PrSource};
 use crate::exes::Exes;
@@ -51,6 +52,9 @@ pub const PASS: Duration = Duration::from_secs(5);
 
 /// PR reads and `intents` checks: at most every 60 s (LOOP-12).
 pub const POLL: Duration = Duration::from_secs(60);
+
+/// Gauges (MET, the metrics intent): every 60 s.
+pub const GAUGES: Duration = Duration::from_secs(60);
 
 static START: LazyLock<Instant> = LazyLock::new(Instant::now);
 
@@ -144,6 +148,10 @@ pub struct PassReport {
     /// `run --intent`: its mission reached `done`, `stopped`, `approval:*` or `blocked`
     /// (`Ok`: `<id>: <stage>[ · <waiting>]`), or it can't be picked (`Err`: why).
     pub target: Option<Result<String, String>>,
+    /// Issues and draft PRs were read this pass (every 300 s, INT-7).
+    pub drafts: bool,
+    /// The gauges step ran this pass (every 60 s; a stub until the metrics intent).
+    pub gauges: bool,
 }
 
 /// What a handler call ended in.
@@ -185,6 +193,11 @@ pub struct Loop {
     due: BTreeMap<i64, Duration>,
     pr_due: BTreeMap<i64, Duration>,
     intents_due: Option<Duration>,
+    /// Issues and draft PRs (INT-7, INT-8), every 300 s.
+    drafts_due: Option<Duration>,
+    /// The drafter's run: (its drafts key, the child).
+    drafter: Option<(String, Child)>,
+    gauges_due: Option<Duration>,
     /// The last message logged per kind (logged again only when it changes).
     warned: BTreeMap<String, String>,
     /// An `env_blocked` episode is open (LOOP-10): no picks, no wait timeouts.
@@ -252,6 +265,9 @@ impl Loop {
             due: BTreeMap::new(),
             pr_due: BTreeMap::new(),
             intents_due: None,
+            drafts_due: None,
+            drafter: None,
+            gauges_due: None,
             warned: BTreeMap::new(),
             blocked: false,
             preflighted: false,
@@ -381,10 +397,12 @@ impl Loop {
         self.timeouts(tick);
         self.poll_intents(tick)?;
         self.poll_prs(tick)?;
+        report.drafts = self.poll_drafts(tick)?;
         self.enter_all(tick)?;
         self.step_due(tick)?;
         self.spawn_queued(tick)?;
         let decision = self.pick(tick, &mut report)?;
+        self.spawn_drafter(tick)?;
         self.faults(tick)?;
         if let Some(l) = &self.listing {
             let due = priority::review_due(l, self.config.intents.cutoff, tick.wall);
@@ -394,6 +412,7 @@ impl Loop {
             outbox::send_due(&self.db, tg, self.listing.as_ref(), tick.unix())?;
         }
         self.inhibit(tick)?;
+        report.gauges = self.gauges(tick);
         self.save_bot()?;
         report.idle = report.picked.is_none() && self.idle(tick, decision.as_ref())?;
         report.target = self.target_state()?;
@@ -664,7 +683,13 @@ impl Loop {
 
     /// Children with a slot running.
     pub fn slots_used(&self) -> usize {
-        self.children.values().filter(|c| c.spec.slot).count()
+        let drafter = self.drafter.as_ref().is_some_and(|(_, c)| c.spec.slot);
+        self.children.values().filter(|c| c.spec.slot).count() + usize::from(drafter)
+    }
+
+    /// The drafts key whose drafter runs (INT-7).
+    pub fn drafting(&self) -> Option<&str> {
+        self.drafter.as_ref().map(|(k, _)| k.as_str())
     }
 
     fn slot_free(&self) -> bool {
@@ -726,6 +751,7 @@ impl Loop {
             c.kill_if_due(tick.mono, after);
             true
         });
+        self.reap_drafter(tick)?;
         let ended: Vec<(i64, ChildEnd)> = self
             .children
             .iter_mut()
@@ -779,6 +805,141 @@ impl Loop {
         for c in self.children.values_mut() {
             c.enforce(tick.mono, after);
         }
+        if let Some((_, c)) = self.drafter.as_mut() {
+            c.enforce(tick.mono, after);
+        }
+    }
+
+    /// A `Ctx` for work outside a mission's handler (drafts); `None` without the store.
+    fn with_cx<T>(&mut self, tick: Tick, f: impl FnOnce(&mut Ctx<'_>) -> T) -> Option<T> {
+        let store = self.store.as_ref()?;
+        let mut cx = Ctx {
+            config: &self.config,
+            home: &self.home,
+            db: &self.db,
+            store,
+            exes: &self.exes,
+            identity: &mut self.identity,
+            tick,
+            timeouts: !self.blocked,
+            probe: &self.probe,
+        };
+        Some(f(&mut cx))
+    }
+
+    /// A GitHub failure outside a mission: network or auth opens `github` (LOOP-10); logged.
+    fn gh_failed(&mut self, kind: &str, e: GhError, tick: Tick) -> Result<(), String> {
+        if let GhError::Env(m) = &e {
+            env::open(self.db.conn(), &Fault::Github, m, tick.unix())?;
+        }
+        self.warn(kind, format!("{kind}: {e}"));
+        Ok(())
+    }
+
+    /// INT-7, INT-8 every 300 s: each `[repos]` repo's issues labelled `intent`, then each
+    /// draft's PR. Not with `--intent`. True when it ran.
+    fn poll_drafts(&mut self, tick: Tick) -> Result<bool, String> {
+        if self.target.is_some() || self.store.is_none() {
+            return Ok(false);
+        }
+        if self.drafts_due.is_some_and(|d| tick.mono < d) {
+            return Ok(false);
+        }
+        self.drafts_due = Some(tick.mono + drafts::POLL);
+        let repos: Vec<RepoConfig> = self
+            .config
+            .repos
+            .values()
+            .filter_map(|r| r.as_ref().ok().cloned())
+            .collect();
+        let results = self
+            .with_cx(tick, |cx| {
+                let mut out: Vec<(String, Result<(), GhError>)> = repos
+                    .iter()
+                    .map(|r| (format!("issues {}", r.name), drafts::poll_issues(cx, r)))
+                    .collect();
+                out.push(("drafts".into(), drafts::poll_drafts(cx)));
+                out
+            })
+            .unwrap_or_default();
+        for (kind, r) in results {
+            match r {
+                Ok(()) => {
+                    self.warned.remove(&kind);
+                }
+                Err(e) => self.gh_failed(&kind, e, tick)?,
+            }
+        }
+        Ok(true)
+    }
+
+    /// The next issue's drafter (INT-7), when a slot is free after the missions' children and
+    /// the pick; one at a time, not while `env_blocked` or with `--intent`.
+    fn spawn_drafter(&mut self, tick: Tick) -> Result<(), String> {
+        if self.target.is_some()
+            || self.drafter.is_some()
+            || self.blocked
+            || !self.queued.is_empty()
+            || !self.slot_free()
+        {
+            return Ok(());
+        }
+        let Some(next) = self.with_cx(tick, drafts::next_run) else {
+            return Ok(());
+        };
+        let (key, spec) = match next {
+            Ok(Some(x)) => x,
+            Ok(None) => return Ok(()),
+            Err(e) => {
+                self.warn("drafter", format!("drafter: {e}"));
+                return Ok(());
+            }
+        };
+        match child::spawn(&spec, tick.mono) {
+            Ok(mut c) => {
+                c.budget = spec.timeout;
+                self.drafter = Some((key, c));
+            }
+            Err(e) => {
+                self.with_cx(tick, |cx| drafts::not_run(cx, &key));
+                let exe = spec
+                    .argv
+                    .first()
+                    .map(|a| a.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                env::open(self.db.conn(), &Fault::Tool(exe), &e, tick.unix())?;
+                self.warn("drafter", format!("drafter: {e}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// The drafter's end → `drafts::finish_run` (its PR opened, or the try counted).
+    fn reap_drafter(&mut self, tick: Tick) -> Result<(), String> {
+        let Some(end) = self.drafter.as_mut().and_then(|(_, c)| c.poll(tick.mono)) else {
+            return Ok(());
+        };
+        let Some((key, c)) = self.drafter.take() else {
+            return Ok(());
+        };
+        child::kill_group(c.pid);
+        match self.with_cx(tick, |cx| drafts::finish_run(cx, &key, &end)) {
+            Some(Err(e)) => self.gh_failed(&format!("draft {key}"), e, tick)?,
+            Some(Ok(_)) => {
+                self.warned.remove(&format!("draft {key}"));
+            }
+            None => {}
+        }
+        Ok(())
+    }
+
+    /// Gauges every 60 s: a stub until the metrics intent (MET) fills it. True when due.
+    fn gauges(&mut self, tick: Tick) -> bool {
+        if self.gauges_due.is_some_and(|d| tick.mono < d) {
+            return false;
+        }
+        self.gauges_due = Some(tick.mono + GAUGES);
+        true
     }
 
     /// The `intents` poll (LOOP-5, LOOP-18): every 60 s, pulled when `origin`'s `main` moved
@@ -1311,7 +1472,7 @@ impl Loop {
 
     /// LOOP-17: nothing runnable and no mission driven but by a limit wait.
     fn idle(&self, tick: Tick, decision: Option<&Decision>) -> Result<bool, String> {
-        if decision.is_some_and(|d| d.pick.is_some()) {
+        if decision.is_some_and(|d| d.pick.is_some()) || self.drafter.is_some() {
             return Ok(false);
         }
         Ok(mission::unfinished(self.db.conn())?.iter().all(|m| {
@@ -1407,6 +1568,10 @@ impl Loop {
             .map(|(id, c)| (Some(id), c))
             .collect();
         stopping.extend(self.dying.drain(..).map(|c| (None, c)));
+        let drafter = self.drafter.take().map(|(key, c)| {
+            stopping.push((None, c));
+            key
+        });
         for (_, c) in stopping.iter_mut() {
             child::term_group(c.pid);
         }
@@ -1429,6 +1594,12 @@ impl Loop {
                 &m,
                 &Outcome::event(Event::Interrupted),
             )?;
+        }
+        if let Some(key) = drafter {
+            // Stopped, not failed: the try isn't counted.
+            if let Some(Err(e)) = self.with_cx(tick, |cx| drafts::not_run(cx, &key)) {
+                eprintln!("towercab: draft {key}: {e}");
+            }
         }
         self.queued.clear();
         self.inhibitor.stop();

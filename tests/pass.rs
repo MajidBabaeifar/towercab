@@ -236,17 +236,28 @@ fn test_cadence() {
     );
     let seen =
         |lp: &towercab::runloop::Loop| lp.listing().unwrap().open.iter().any(|i| i.title() == "Y");
-    // Three minutes of passes 5 s apart.
-    for i in 1..=36 {
-        w.pass_after(&mut lp, 5);
+    // Three minutes of passes 5 s apart (then four more for issues and gauges).
+    let (mut drafts, mut gauges) = (Vec::new(), Vec::new());
+    for i in 1..=84 {
+        let r = w.pass_after(&mut lp, 5);
+        let t = (w.clock.mono - t0).as_secs();
+        if r.drafts {
+            drafts.push(t);
+        }
+        if r.gauges {
+            gauges.push(t);
+        }
         if i == 11 {
             assert!(!seen(&lp), "intents: not before 60 s");
         }
         if i == 12 {
             assert!(seen(&lp), "intents: at 60 s");
         }
+        if i == 36 {
+            assert_eq!(w.prs.reads() - reads, 3, "PR reads: every 60 s");
+        }
     }
-    let at: Vec<u64> = ci.of(X)[polls..]
+    let at: Vec<u64> = ci.of(X)[polls..polls + 6]
         .iter()
         .map(|(t, _)| (*t - t0).as_secs())
         .collect();
@@ -255,7 +266,16 @@ fn test_cadence() {
         [30, 60, 90, 120, 150, 180],
         "CI: ci_poll (the handler's Poll)"
     );
-    assert_eq!(w.prs.reads() - reads, 3, "PR reads: every 60 s");
-    // Telegram (every pass), issues (300 s) and gauges (60 s) come with loop-runner parts 4
-    // and 5 and the metrics intent.
+    // Issues and draft PRs every 300 s (each repo's `gh issue list`), gauges every 60 s (a
+    // stub until the metrics intent). Telegram goes every pass (LOOP-16's tests).
+    let steps = |v: &[u64]| v.windows(2).map(|p| p[1] - p[0]).collect::<Vec<_>>();
+    assert_eq!(steps(&drafts), [300], "{drafts:?}");
+    assert_eq!(steps(&gauges), [60; 6], "{gauges:?}");
+    let listed = std::fs::read_to_string(w.fakebin().join("gh.log")).unwrap();
+    assert!(
+        listed
+            .lines()
+            .all(|l| l.starts_with("issue list -R me/web --label intent")),
+        "{listed}"
+    );
 }

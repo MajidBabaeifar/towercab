@@ -11,6 +11,7 @@ pub mod commands;
 pub mod config;
 pub mod db;
 pub mod doctor;
+pub mod drafts;
 pub mod env;
 pub mod events;
 pub mod exes;

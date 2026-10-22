@@ -106,8 +106,9 @@ impl World {
             cutoff: 7,
             ..config.intents
         };
+        // No App (its tests add one): my login, through the fake `gh` (`World::exes`).
         config.github = Some(GithubConfig {
-            app_id: Some(1),
+            app_id: None,
             me: Some("me".into()),
             api_base: GITHUB_API.into(),
         });
