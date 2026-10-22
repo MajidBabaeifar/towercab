@@ -650,18 +650,21 @@ impl Loop {
                 self.apply(m, &o, tick)?;
             }
             Called::Returned(Err(StepError::Env(fault, e))) => {
-                self.apply(m, &Outcome::env(fault, e), tick)?;
+                self.apply_result(m, &Outcome::env(fault, e), None, tick)?;
             }
             Called::Returned(Err(StepError::Bug(e))) => {
-                eprintln!("towercab: {}: bug at {}: {e}", m.label(), m.stage);
                 let o = Outcome {
                     why: Some(format!("bug: {e}")),
                     ..Outcome::event(Event::Crash)
                 };
-                self.apply_as(m, &o, Some(Next::Recover), tick)?;
+                self.apply_as(m, &o, Some(Next::Unexpected), tick)?;
             }
             Called::Returned(Ok(Progress::Done(o))) => {
-                self.apply(m, &o, tick)?;
+                // An event its stage ignores would leave the step busy and re-called every
+                // pass: a handler's bug.
+                let given =
+                    (machine::next(m.stage, o.event) == Next::Ignore).then_some(Next::Unexpected);
+                self.apply_result(m, &o, given, tick)?;
             }
             Called::Returned(Ok(Progress::Poll { after })) => {
                 update(self.db.conn(), m.id, &[("busy".into(), Value::Integer(0))])?;
@@ -677,6 +680,25 @@ impl Loop {
                     self.spawn(&m, spec, tick)?;
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// A handler's result applied; one `apply` refuses is applied as `Unexpected` instead (a
+    /// bug, counted), so it can't stall every pass.
+    fn apply_result(
+        &mut self,
+        m: &Mission,
+        o: &Outcome,
+        given: Option<Next>,
+        tick: Tick,
+    ) -> Result<(), String> {
+        if let Err(e) = self.apply_as(m, o, given, tick) {
+            let o = Outcome {
+                why: Some(format!("bug: {e}")),
+                ..Outcome::event(Event::Crash)
+            };
+            self.apply_as(m, &o, Some(Next::Unexpected), tick)?;
         }
         Ok(())
     }
@@ -699,6 +721,28 @@ impl Loop {
     /// Starts a mission's child; its timeout counts the step's earlier run time (`step_secs`,
     /// LOOP-9, LOOP-12), so a limit wait or a restart in between never adds to it.
     fn spawn(&mut self, m: &Mission, spec: ChildSpec, tick: Tick) -> Result<(), String> {
+        let exe = spec
+            .argv
+            .first()
+            .map(|a| a.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        // A missing directory or input is the handler's bug, not the program's fault.
+        let missing = if !spec.cwd.is_dir() {
+            Some(format!("{}: no such directory", spec.cwd.display()))
+        } else {
+            spec.stdin
+                .as_ref()
+                .filter(|p| !p.is_file())
+                .map(|p| format!("{}: no such file", p.display()))
+        };
+        if let Some(e) = missing {
+            let o = Outcome {
+                why: Some(format!("bug: {e}")),
+                ..Outcome::event(Event::Crash)
+            };
+            self.apply_as(m, &o, Some(Next::Unexpected), tick)?;
+            return Ok(());
+        }
         match child::spawn(&spec, tick.mono) {
             Ok(mut c) => {
                 let used = Duration::try_from_secs_f64(m.step_secs).unwrap_or_default();
@@ -727,13 +771,17 @@ impl Loop {
                 }
                 self.children.insert(m.id, c);
             }
-            Err(e) => {
-                let exe = spec
-                    .argv
-                    .first()
-                    .map(|a| a.to_string_lossy().into_owned())
-                    .unwrap_or_default();
+            // `child::spawn` names the program when it can't start; any other error is a run
+            // file it couldn't make.
+            Err(e) if e.starts_with(&format!("{exe}: ")) => {
                 self.apply(m, &Outcome::env(Fault::Tool(exe), e), tick)?;
+            }
+            Err(e) => {
+                let o = Outcome {
+                    why: Some(format!("bug: {e}")),
+                    ..Outcome::event(Event::Crash)
+                };
+                self.apply_as(m, &o, Some(Next::Unexpected), tick)?;
             }
         }
         Ok(())
@@ -782,7 +830,8 @@ impl Loop {
             let m = mission::get(self.db.conn(), id)?;
             let called = self.call(&m, tick, |h, cx| h.finish(cx, &m, end));
             // A run on a model that hit no limit (nor a network or auth failure): the model's
-            // backoffs start over (LOOP-9).
+            // backoffs start over (LOOP-9). A bug or panic in `finish` says nothing either way
+            // (it may have missed a limit): left alone.
             let ran = match &called {
                 Called::Returned(Ok(Progress::Done(o))) => {
                     !matches!(o.event, Event::Limit | Event::EnvFail)
@@ -1055,7 +1104,10 @@ impl Loop {
             .unwrap_or_default();
         for m in mission::unfinished(self.db.conn())? {
             let Some(pr) = m.pr else { continue };
-            if m.kind != Kind::Intent || m.merge_sha.is_some() {
+            // The merge step, once recorded, may have merged: its re-entry reads `mergedAt`, so a
+            // crash after my merge isn't taken for a human one.
+            let merging = m.stage == Stage::Merge && !m.step.is_empty() && m.step != ENTER;
+            if m.kind != Kind::Intent || m.merge_sha.is_some() || merging {
                 continue;
             }
             if self.pr_due.get(&m.id).is_some_and(|d| tick.mono < *d) {
@@ -1086,6 +1138,11 @@ impl Loop {
             let running = self.children.contains_key(&m.id)
                 || self.queued.iter().any(|(id, _, _)| *id == m.id);
             if running && matches!(ev, Event::Feedback | Event::Conflict | Event::HeadMoved) {
+                continue;
+            }
+            // Back to its own stage (feedback at build, head moved at ci) would restart the step
+            // every read, its waits and counts wiped: it comes back at the next stage.
+            if machine::next(m.stage, ev) == Next::Go(m.stage) {
                 continue;
             }
             let mut o = Outcome::event(ev);

@@ -13,7 +13,7 @@ use towercab::claude::{self, CONTINUE};
 use towercab::handler::{
     ChildEnd, ChildKind, ChildSpec, Ctx, Handler, Handlers, Outcome, Progress, Session, StepError,
 };
-use towercab::machine::{Stage, Waiting};
+use towercab::machine::{Event, Stage, Waiting};
 use towercab::mission::Mission;
 use towercab::pick::Pick;
 use towercab::runloop::LoopOpts;
@@ -387,6 +387,95 @@ fn test_crash_loop_capped() {
         .count();
     assert_eq!(crashes, 3);
     lp.shutdown().unwrap();
+}
+
+/// What a [`Bad`] handler returns.
+#[derive(Clone, Copy)]
+enum Bad {
+    /// `blocked` without a mission's waiting (a pick-time one).
+    NoWaiting,
+    /// `limit` without a `Limit`.
+    NoLimit,
+    /// An event its stage ignores.
+    Ignored,
+    /// `StepError::Bug`.
+    Bug,
+    /// A child whose directory is missing: the handler's bug, not `sh`'s fault.
+    NoCwd,
+}
+
+impl Handler for Bad {
+    fn step(&mut self, cx: &mut Ctx<'_>, m: &Mission) -> Result<Progress, StepError> {
+        Ok(Progress::Done(match self {
+            Bad::NoCwd => {
+                let runs = cx.runs(m);
+                return Ok(Progress::Spawn(ChildSpec {
+                    kind: ChildKind::Checks,
+                    argv: vec!["sh".into(), "-c".into(), "exit 0".into()],
+                    cwd: runs.join("missing"),
+                    env: vec![],
+                    stdin: None,
+                    stdout: runs.join("plan.out"),
+                    stderr: runs.join("plan.err"),
+                    timeout: None,
+                    slot: true,
+                    model: None,
+                }));
+            }
+            Bad::NoWaiting => Outcome::wait(Waiting::UnknownRepo, ""),
+            Bad::NoLimit => Outcome::event(Event::Limit),
+            Bad::Ignored => Outcome::event(Event::Approve),
+            Bad::Bug => return Err(StepError::Bug("no plan.md".into())),
+        }))
+    }
+    fn finish(
+        &mut self,
+        cx: &mut Ctx<'_>,
+        m: &Mission,
+        _: ChildEnd,
+    ) -> Result<Progress, StepError> {
+        self.step(cx, m)
+    }
+}
+
+#[test]
+fn test_bad_outcome_counted() {
+    // An outcome the table can't carry out is Unexpected: counted like a crash, the third
+    // → crashed at <stage>; the passes go on, the step isn't left busy.
+    for bad in [
+        Bad::NoWaiting,
+        Bad::NoLimit,
+        Bad::Ignored,
+        Bad::Bug,
+        Bad::NoCwd,
+    ] {
+        let mut w = world(&[intent_file("261001-0900-x", "web", "", "X")]);
+        let mut h = handlers(&w);
+        h.set(Stage::Plan, Box::new(bad));
+        let mut lp = w.open(h);
+        w.until(&mut lp, 10, |w| w.stage(X) == Some(Stage::Blocked));
+        let x = w.mission(X);
+        assert_eq!(x.waiting(), Some(Waiting::CrashedAt(Stage::Plan)));
+        assert!(!x.busy);
+        let from_plan = w
+            .transitions(X)
+            .into_iter()
+            .filter(|(f, _, _)| f == "plan")
+            .count();
+        assert_eq!(from_plan, 3);
+        let why: Option<String> = w
+            .db()
+            .conn()
+            .query_row(
+                "SELECT why FROM transitions WHERE from_stage = 'plan' ORDER BY id LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(why.unwrap().starts_with("unexpected "));
+        assert!(towercab::env::faults(w.db().conn()).unwrap().is_empty());
+        lp.shutdown().unwrap();
+    }
 }
 
 struct Panics;

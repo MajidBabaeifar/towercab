@@ -326,7 +326,7 @@ fn test_git_uses_app_token() {
             format!(
                 "{web} pr view 7 -R me/web --json state,mergedAt,mergeCommit,headRefOid,mergeable,comments,reviews"
             ),
-            format!("{web} api repos/me/web/pulls/7/comments"),
+            format!("{web} api --paginate --slurp repos/me/web/pulls/7/comments?per_page=100"),
         ]
     );
 

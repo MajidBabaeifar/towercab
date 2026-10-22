@@ -856,7 +856,11 @@ pub fn continue_to(waiting: &Waiting, from: Stage) -> Next {
         | Waiting::NeverPublished
         | Waiting::ProtectedPathChanged
         | Waiting::ReleaseFailed
-        | Waiting::ProductionE2eRed => Next::Go(Stage::Build),
+        | Waiting::ProductionE2eRed => match from.kind() {
+            Kind::Intent => Next::Go(Stage::Build),
+            // A revert or rehearsal has no worker: it goes on where it stopped.
+            Kind::Revert | Kind::Rehearsal => Next::Go(from),
+        },
     }
 }
 
@@ -957,6 +961,30 @@ pub fn apply_tx(
     if n == Next::Ignore {
         return Ok(cur);
     }
+    let from = cur.from_stage.unwrap_or(cur.stage);
+    let cont = cur
+        .waiting()
+        .map_or(Next::Go(Stage::Build), |w| continue_to(&w, from));
+    // An outcome the table can't carry out is a handler's bug: Unexpected (counted), never an
+    // error that stalls every pass.
+    let bug = match n {
+        Next::Wait if o.waiting.and_then(|w| w.stage()).is_none() => {
+            Some("blocked without a mission's waiting")
+        }
+        Next::Cool if o.limit.is_none() => Some("limit without a Limit"),
+        Next::Fresh if cur.intent.is_none() => Some("a fresh attempt without an intent"),
+        Next::Continue if cont == Next::Fresh && cur.intent.is_none() => {
+            Some("a fresh attempt without an intent")
+        }
+        _ => None,
+    };
+    if let Some(b) = bug {
+        why = Some(match why {
+            Some(w) => format!("bug: {b}: {w}"),
+            None => format!("bug: {b}"),
+        });
+        n = Next::Unexpected;
+    }
     if n == Next::Unexpected {
         let what = format!("unexpected {} at {}", o.event, cur.stage);
         why = Some(match why {
@@ -976,14 +1004,7 @@ pub fn apply_tx(
         Next::Go(s) => Act::Move(s, None),
         Next::Wait => match o.waiting.and_then(|w| w.stage().map(|s| (s, w))) {
             Some((s, w)) => Act::Move(s, Some(w)),
-            None => {
-                return Err(format!(
-                    "{}: {} at {} without a mission's waiting",
-                    cur.label(),
-                    o.event,
-                    cur.stage
-                ));
-            }
+            None => unreachable!("checked above"),
         },
         Next::Again => {
             if o.event == Event::Resume {
@@ -992,11 +1013,19 @@ pub fn apply_tx(
             Act::Stay
         }
         Next::Cool => {
-            let limit = o
-                .limit
-                .as_ref()
-                .ok_or_else(|| format!("{}: limit without a Limit", cur.label()))?;
-            limits::cool(tx, limit, now)?;
+            let Some(limit) = &o.limit else {
+                unreachable!("checked above")
+            };
+            // A reset time already past (a stale epoch, a log line's timestamp) is no reset
+            // time: the backoff applies, so the run isn't retried every pass.
+            let mut limit = limit.clone();
+            if limit
+                .reset
+                .is_some_and(|t| t.timestamp_micros() as f64 / 1e6 + limits::RESET_MARGIN <= now)
+            {
+                limit.reset = None;
+            }
+            limits::cool(tx, &limit, now)?;
             put(&mut cols, "limit_model", limit.model.clone());
             Act::Stay
         }
@@ -1032,15 +1061,10 @@ pub fn apply_tx(
             (o.event == Event::PrClosed).then_some(Waiting::PrClosed),
         ),
         Next::Continue => {
-            put(&mut cols, "continued", cur.continued + 1);
             for c in ["verify_repairs", "ci_repairs", "sync_rounds"] {
                 put(&mut cols, c, 0);
             }
-            let from = cur.from_stage.unwrap_or(cur.stage);
-            match cur
-                .waiting()
-                .map_or(Next::Go(Stage::Build), |w| continue_to(&w, from))
-            {
+            match cont {
                 Next::Go(s) => Act::Move(s, None),
                 Next::Fresh => Act::Fresh,
                 other => return Err(format!("{}: continue gave {other:?}", cur.label())),
@@ -1082,6 +1106,11 @@ pub fn apply_tx(
             kind_in(cur.kind, to).as_str().to_string(),
         );
         put(&mut cols, "step", mission::ENTER.to_string());
+        // Every way out of a wait (my continue, feedback, a conflict, a push) counts: the
+        // next wait is a new message (outbox `n`, LOOP-14).
+        if cur.stage.waits() {
+            put(&mut cols, "continued", cur.continued + 1);
+        }
         for c in ["unclean", "retries", "held"] {
             put(&mut cols, c, 0);
         }
@@ -1226,7 +1255,20 @@ pub fn enter(cx: &mut Ctx<'_>, m: &Mission) -> Result<Mission, String> {
     if m.step != mission::ENTER {
         return Ok(m.clone());
     }
+    // A finished mission replaced by a newer one (`retry --fresh`) no longer owns its intent:
+    // a late write would undo the new attempt's (LOOP-6).
+    let replaced = m.stage.finished()
+        && cx
+            .db
+            .conn()
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM missions WHERE intent = ?1 AND id > ?2)",
+                params![m.intent, m.id],
+                |r| r.get::<_, bool>(0),
+            )
+            .map_err(sql)?;
     if matches!(m.kind, Kind::Intent | Kind::Revert)
+        && !replaced
         && let Some(id) = m.intent.as_deref()
     {
         let transition: i64 = cx

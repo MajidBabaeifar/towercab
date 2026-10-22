@@ -346,6 +346,15 @@ fn test_continue_to() {
         continue_to(&Waiting::FixRepoFiles, Stage::Pick),
         Next::Go(Stage::Pick)
     );
+    // A revert or rehearsal has no worker: any other wait goes on where it stopped.
+    for s in [Stage::RevertCi, Stage::RevertMerge, Stage::RehearseCi] {
+        assert_eq!(continue_to(&Waiting::CiRed, s), Next::Go(s), "{s}");
+        assert_eq!(continue_to(&Waiting::MergeFailed, s), Next::Go(s), "{s}");
+    }
+    assert_eq!(
+        continue_to(&Waiting::RevertedRefine, Stage::RevertE2e),
+        Next::Fresh
+    );
     for d in Door::ALL {
         let w = Waiting::E2eRedAfterYourMerge(d);
         assert_eq!(

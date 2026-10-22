@@ -393,3 +393,31 @@ fn test_limit_never_counts_as_crash() {
     drop(ends);
     lp.shutdown().unwrap();
 }
+
+#[test]
+fn test_past_reset_backs_off() {
+    // A reset time already past (a stale epoch) is no reset time: the backoff (1 min) applies,
+    // so the run isn't retried every pass.
+    let (mut w, ends) = world(&[intent_file("261001-0900-x", "web", "", "X")], &["web"]);
+    file(
+        &w,
+        X,
+        "limit",
+        Some("Claude AI usage limit reached|1760000000"),
+    );
+    let mut lp = w.open(handlers(&w, &ends, None));
+    w.wait_for(&mut lp, 20, |w, _| limited(w, X));
+    let c = cooldown(&w, "opus").expect("a cooldown for (claude, opus)");
+    assert!(!c.parsed);
+    assert_eq!(c.backoffs, 1);
+    assert!(
+        c.until > w.clock.unix() + 50.0,
+        "{} vs {}",
+        c.until,
+        w.clock.unix()
+    );
+    let r = w.pass_after(&mut lp, 1);
+    assert!(r.idle, "still cooling");
+    assert_eq!(runs(&w, X), 1);
+    lp.shutdown().unwrap();
+}

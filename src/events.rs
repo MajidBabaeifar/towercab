@@ -38,7 +38,8 @@ pub trait PrSource {
 }
 
 /// `gh pr view <n> -R <github> --json state,mergedAt,mergeCommit,headRefOid,mergeable,comments,reviews`
-/// + `gh api repos/<github>/pulls/<n>/comments`, as `identity` (its `gh`; LOOP-19).
+/// and `gh api --paginate --slurp repos/<github>/pulls/<n>/comments?per_page=100`, as
+/// `identity` (its `gh`; LOOP-19).
 pub struct GhPrs {
     pub identity: Identity,
 }
@@ -80,7 +81,14 @@ pub fn parse_pr(view: &str, review_comments: &str) -> Result<PrState, String> {
     if !review_comments.trim().is_empty() {
         let rc: Value =
             serde_json::from_str(review_comments).map_err(|e| format!("gh api comments: {e}"))?;
-        all.extend(comments(Some(&rc), "user", "created_at"));
+        // `--paginate --slurp`: one array per page.
+        let pages: Vec<Value> = match rc {
+            Value::Array(a) if a.iter().all(Value::is_array) => a,
+            one => vec![one],
+        };
+        for page in &pages {
+            all.extend(comments(Some(page), "user", "created_at"));
+        }
     }
     Ok(PrState {
         state: s(&v, "state"),
@@ -117,7 +125,12 @@ impl PrSource for GhPrs {
         )?;
         let rc = self.identity.gh(
             github,
-            &["api", &format!("repos/{github}/pulls/{n}/comments")],
+            &[
+                "api",
+                "--paginate",
+                "--slurp",
+                &format!("repos/{github}/pulls/{n}/comments?per_page=100"),
+            ],
         )?;
         parse_pr(&view, &rc).map_err(GhError::Failed)
     }
@@ -134,11 +147,12 @@ fn later(a: &str, b: &str) -> bool {
     }
 }
 
-/// My comments newer than `feedback_seen` (all of mine when it is unset).
+/// My comments newer than `feedback_seen` (all of mine when it is unset); one without text (an
+/// approval on GitHub) says nothing to change.
 pub fn new_feedback<'a>(m: &Mission, pr: &'a PrState, me: &str) -> Vec<&'a Comment> {
     pr.comments
         .iter()
-        .filter(|c| c.author.eq_ignore_ascii_case(me))
+        .filter(|c| c.author.eq_ignore_ascii_case(me) && !c.body.trim().is_empty())
         .filter(|c| {
             m.feedback_seen
                 .as_deref()

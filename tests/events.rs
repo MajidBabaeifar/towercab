@@ -322,6 +322,12 @@ fn test_pr_and_intent_event_derivation() {
         at("2026-10-15T11:00:00Z", "someone"),
     ];
     assert_eq!(pr_events(&m, &pr, "me"), None);
+    // An approval without text on GitHub isn't feedback.
+    pr.comments.push(Comment {
+        body: " \n".into(),
+        ..at("2026-10-15T11:00:00Z", "me")
+    });
+    assert_eq!(pr_events(&m, &pr, "me"), None);
     pr.comments.push(at("2026-10-15T10:30:00+00:00", "Me"));
     assert_eq!(pr_events(&m, &pr, "me"), Some(Event::Feedback));
     // No head yet: no head_moved.
@@ -341,6 +347,17 @@ fn test_pr_and_intent_event_derivation() {
             .map(|c| c.body.as_str())
             .collect::<Vec<_>>(),
         ["a", "b", "c"]
+    );
+    // Review comments `--paginate --slurp`: one array per page.
+    let pages = r#"[[{"user":{"login":"me"},"created_at":"2026-10-15T11:10:00Z","body":"c"}],
+      [{"user":{"login":"me"},"created_at":"2026-10-15T11:20:00Z","body":"d"}]]"#;
+    let pr = parse_pr(view, pages).unwrap();
+    assert_eq!(
+        pr.comments
+            .iter()
+            .map(|c| c.body.as_str())
+            .collect::<Vec<_>>(),
+        ["a", "b", "c", "d"]
     );
     let merged = parse_pr(
         r#"{"state":"MERGED","mergedAt":"2026-10-15T12:00:00Z","mergeCommit":{"oid":"m1"},"headRefOid":"h1","mergeable":"UNKNOWN"}"#,
@@ -387,4 +404,105 @@ fn test_pr_and_intent_event_derivation() {
     );
     let build = mission(Stage::Build, None, None);
     assert_eq!(intent_events(&build, &with("")), None);
+}
+
+/// design: publishes PR 7 (head h1), `feedback_seen` = now, then waits for `approve spec`.
+struct SpecWait;
+
+impl towercab::handler::Handler for SpecWait {
+    fn step(
+        &mut self,
+        cx: &mut towercab::handler::Ctx<'_>,
+        _: &Mission,
+    ) -> Result<towercab::handler::Progress, towercab::handler::StepError> {
+        Ok(towercab::handler::Progress::Done(
+            towercab::handler::Outcome::wait(Waiting::ApproveSpec, "")
+                .with("pr", 7)
+                .with("pr_url", "https://github.com/me/web/pull/7".to_string())
+                .with("head", "h1".to_string())
+                .with("feedback_seen", cx.tick.wall.to_rfc3339()),
+        ))
+    }
+    fn finish(
+        &mut self,
+        _: &mut towercab::handler::Ctx<'_>,
+        _: &Mission,
+        _: towercab::handler::ChildEnd,
+    ) -> Result<towercab::handler::Progress, towercab::handler::StepError> {
+        unreachable!()
+    }
+}
+
+#[test]
+fn test_wait_again_sends_again() {
+    // My comment on the spec PR sends it back to design; the next `approve spec` is a new
+    // message: every way out of a wait counts (outbox n = continued).
+    let mut w = World::new(&[intent_file("261001-0900-x", "web", "", "X")], &["web"]);
+    w.prs.set(7, open_pr("h1"));
+    let mut h = Handlers::stubs();
+    h.set(Stage::Pick, Box::new(Pick));
+    h.set(Stage::Design, Box::new(SpecWait));
+    let mut lp = w.open(h);
+    w.until(&mut lp, 5, |w| w.stage(ID) == Some(Stage::ApprovalSpec));
+    let mut pr = open_pr("h1");
+    pr.comments.push(Comment {
+        author: "me".into(),
+        at: (w.clock.wall + chrono::TimeDelta::seconds(10)).to_rfc3339(),
+        body: "split the table".into(),
+    });
+    w.prs.set(7, pr);
+    w.pass(&mut lp);
+    let m = w.mission(ID);
+    assert_eq!((m.stage, m.continued), (Stage::ApprovalSpec, 1));
+    let sent: Vec<(String, String)> = w.outbox().into_iter().map(|(_, e, n, _)| (e, n)).collect();
+    assert_eq!(
+        sent,
+        [
+            ("approve_spec".to_string(), "0".to_string()),
+            ("approve_spec".to_string(), "1".to_string())
+        ]
+    );
+    lp.shutdown().unwrap();
+}
+
+#[test]
+fn test_pr_reads_skipped() {
+    // At merge with its step recorded, the PR isn't read: the step's re-entry checks
+    // `mergedAt` (a crash after my merge isn't a human one). An event back to the mission's
+    // own stage (feedback at build) isn't raised: it comes back at the next stage.
+    let mut w = World::new(
+        &[
+            intent_file("261001-0900-x", "web", "stage: deploy\n", "X"),
+            intent_file("261001-0901-y", "web", "stage: build\n", "Y"),
+        ],
+        &["web"],
+    );
+    let db = w.db();
+    for (id, stage, step, n) in [
+        ("261001-0900", "merge", "merge", 7),
+        ("261001-0901", "build", "run", 8),
+    ] {
+        db.conn()
+            .execute(
+                "INSERT INTO missions (intent, repo, stage, step, model, session, checkout, branch,
+                   pr, pr_url, head, retry_at, created, updated)
+                 VALUES (?1, 'web', ?2, ?3, 'opus', 's', ?4, 'b', ?5, 'u', 'h1', 9e12, 0, 0)",
+                params![id, stage, step, format!("work/{id}-1"), n],
+            )
+            .unwrap();
+    }
+    let mut merged = open_pr("h1");
+    merged.state = "MERGED".into();
+    merged.merged_at = Some("2026-10-15T12:00:00Z".into());
+    w.prs.set(7, merged);
+    w.prs.set(8, pr_giving(Event::Feedback));
+    let mut lp = w.open(idle_handlers());
+    w.pass(&mut lp);
+    w.pass(&mut lp);
+    assert_eq!(w.prs.reads(), 2, "only Y's PR, once per 60 s");
+    let (x, y) = (w.mission("261001-0900"), w.mission("261001-0901"));
+    assert_eq!((x.stage, x.merged_by), (Stage::Merge, None));
+    assert_eq!((y.stage, y.step.as_str()), (Stage::Build, "run"));
+    assert!(w.transitions("261001-0901").is_empty());
+    lp.shutdown().unwrap();
 }
