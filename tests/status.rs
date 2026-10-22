@@ -92,9 +92,9 @@ fn test_status() {
     mission(
         Some("261001-0900"),
         "web",
-        "build",
-        ", child_pid, child_kind, child_since",
-        &format!(", 4242, 'claude', {since}"),
+        "review",
+        ", child_pid, child_kind, child_since, child_model",
+        &format!(", 4242, 'claude', {since}, 'fable'"),
     );
     mission(
         Some("261001-0901"),
@@ -191,7 +191,7 @@ fn test_status() {
         status::render(&s),
         format!(
             "towercab {V} · running (pid 777) · paused · env blocked
-active: 261001-0900 web: Alpha · build · opus · since 13:05
+active: 261001-0900 web: Alpha · review · fable · since 13:05
 active: 261001-0901 web: Echo · e2e · - · since 2026-10-14 09:00
 waiting on you:
 - 261001-0902 api: Bravo · approve spec: approve 261001-0902 · https://github.com/me/api/pull/3
@@ -288,6 +288,23 @@ review due: towercab review"
         )),
         "{out}"
     );
+
+    // The loop's status after a failed `intents` pull: the checkout as it is, and the error
+    // once.
+    let mut w = common::world::World::new(
+        &[common::world::intent_file("261001-0900-x", "web", "", "X")],
+        &["web"],
+    );
+    let mut lp = w.open(towercab::handler::Handlers::stubs());
+    std::fs::rename(&w.intents.remote, w.root.join("gone.git")).unwrap();
+    w.pass(&mut lp);
+    let text = lp.status_text(w.clock).unwrap();
+    let line = text
+        .lines()
+        .find(|l| l.starts_with("intents: "))
+        .unwrap_or_else(|| panic!("{text}"));
+    assert!(!line.starts_with("intents: intents:"), "{line}");
+    lp.shutdown().unwrap();
 }
 
 #[test]

@@ -13,7 +13,7 @@ pub const MIGRATIONS: &[&str] = &[SCHEMA_1];
 /// loop.md **Schema**, as written there.
 const SCHEMA_1: &str = r#"
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
--- running "<pid> <unix>", paused "1", tg_offset, env_episode "<unix>" (while env_blocked), bot "<slug> <user id>", last_pass "<unix>"
+-- running "<pid> <unix>", paused "1", tg_offset, env_episode "<unix>" (while env_blocked), bot "<slug> <user id>", last_pass "<unix>", dying "<pid>:<start> …"
 
 CREATE TABLE missions (
   id INTEGER PRIMARY KEY,
@@ -42,6 +42,7 @@ CREATE TABLE missions (
   limit_model TEXT,                     -- the step waits for this model's cooldown (LOOP-9)
   step_secs REAL NOT NULL DEFAULT 0,    -- children run time of this step (timeouts)
   child_pid INTEGER, child_start INTEGER, child_kind TEXT, child_since REAL,
+  child_model TEXT,                     -- a Claude child's --model (status)
   cost_usd REAL NOT NULL DEFAULT 0, agent_secs REAL NOT NULL DEFAULT 0,
   data TEXT NOT NULL DEFAULT '{}',      -- JSON: stage results the pipeline keeps
   created REAL NOT NULL, updated REAL NOT NULL, finished REAL

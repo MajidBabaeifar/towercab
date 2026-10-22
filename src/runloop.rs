@@ -31,8 +31,8 @@ use crate::events::{self, GhPrs, PrSource};
 use crate::exes::Exes;
 use crate::github::{Bot, GhError, Identity};
 use crate::handler::{
-    ChildEnd, ChildSpec, Crashed, Ctx, Handler, Handlers, Outcome, Probe, Progress, StepError,
-    update,
+    ChildEnd, ChildKind, ChildSpec, Crashed, Ctx, Handler, Handlers, Outcome, Probe, Progress,
+    StepError, update,
 };
 use crate::home::{Home, LoopLock};
 use crate::intents::git::AuthFn;
@@ -294,31 +294,35 @@ impl Loop {
     /// third: `crashed at <stage>`), committed before it re-enters its step.
     fn recover(&mut self, tick: Tick) -> Result<(), String> {
         let unfinished = mission::unfinished(self.db.conn())?;
-        for m in &unfinished {
-            if let (Some(pid), Some(start)) = (m.child_pid, m.child_start) {
-                child::kill_leftover(pid as u32, start as u64);
-            }
+        let mut leftovers = machine::dying(self.db.conn())?;
+        leftovers.extend(
+            unfinished
+                .iter()
+                .filter_map(|m| m.child_pid.zip(m.child_start)),
+        );
+        for (pid, start) in leftovers {
+            child::kill_leftover(pid as u32, start as u64);
         }
+        // A killed child's run time counts toward its step's timeout (LOOP-9), up to the last
+        // pass that saw it.
+        let last: Option<f64> = self.db.meta("last_pass")?.and_then(|v| v.parse().ok());
         let ax = self.apply_cx(tick);
         for m in unfinished.iter().filter(|m| m.busy || m.has_child()) {
             self.db.tx(|tx| {
                 if self.unclean.is_some() && m.busy {
-                    machine::apply_tx(tx, &ax, m, &Outcome::event(Event::Crash), None)?;
+                    let ran = m
+                        .child_since
+                        .zip(last)
+                        .map_or(0.0, |(since, last)| (last - since).max(0.0));
+                    let o = Outcome::event(Event::Crash).with("step_secs", m.step_secs + ran);
+                    machine::apply_tx(tx, &ax, m, &o, None)?;
                 }
-                update(
-                    tx,
-                    m.id,
-                    &[
-                        ("busy".into(), Value::Integer(0)),
-                        ("child_pid".into(), Value::Null),
-                        ("child_start".into(), Value::Null),
-                        ("child_kind".into(), Value::Null),
-                        ("child_since".into(), Value::Null),
-                    ],
-                )
+                let mut cols = vec![("busy".to_string(), Value::Integer(0))];
+                cols.extend(mission::CHILD.map(|c| (c.to_string(), Value::Null)));
+                update(tx, m.id, &cols)
             })?;
         }
-        Ok(())
+        machine::set_dying(self.db.conn(), &[])
     }
 
     /// Set by SIGTERM and SIGINT once `run` started; setting it stops the loop between passes.
@@ -485,7 +489,10 @@ impl Loop {
         let snapshot = Snapshot::read(
             &self.db,
             self.listing.as_ref(),
-            self.warned.get("intents").map(String::as_str),
+            // Logged as `intents: <error>`; the snapshot takes the error.
+            self.warned
+                .get("intents")
+                .map(|e| e.strip_prefix("intents: ").unwrap_or(e)),
             &self.config,
             Some(std::process::id()),
             self.handlers.built(),
@@ -674,7 +681,9 @@ impl Loop {
             Called::Returned(Ok(Progress::Spawn(spec))) => {
                 update(self.db.conn(), m.id, &[("busy".into(), Value::Integer(0))])?;
                 let m = mission::get(self.db.conn(), m.id)?;
-                if spec.slot && !self.slot_free() {
+                // A slot child always queues: `spawn_queued` hands free slots out in PRI-4
+                // order, so a later step (or a finish chaining a child) never overtakes it.
+                if spec.slot {
                     self.queued.push((m.id, m.stage, spec));
                 } else {
                     self.spawn(&m, spec, tick)?;
@@ -759,6 +768,13 @@ impl Loop {
                         ),
                         ("child_kind".into(), Value::Text(spec.kind.as_str().into())),
                         ("child_since".into(), Value::Real(tick.unix())),
+                        (
+                            "child_model".into(),
+                            spec.model
+                                .clone()
+                                .filter(|_| spec.kind == ChildKind::Claude)
+                                .map_or(Value::Null, Value::Text),
+                        ),
                     ],
                 )?;
                 // The step's calls got this far; a Claude run or a sandboxed command settles
@@ -791,14 +807,21 @@ impl Loop {
     /// when due.
     fn reap(&mut self, tick: Tick) -> Result<(), String> {
         let after = self.opts.kill_after;
+        let mut reaped = Vec::new();
         self.dying.retain_mut(|c| {
             if c.poll(tick.mono).is_some() {
                 child::kill_group(c.pid);
+                reaped.push(i64::from(c.pid));
                 return false;
             }
             c.kill_if_due(tick.mono, after);
             true
         });
+        if !reaped.is_empty() {
+            let mut d = machine::dying(self.db.conn())?;
+            d.retain(|(pid, _)| !reaped.contains(pid));
+            machine::set_dying(self.db.conn(), &d)?;
+        }
         self.reap_drafter(tick)?;
         let ended: Vec<(i64, ChildEnd)> = self
             .children
@@ -813,20 +836,13 @@ impl Loop {
                 model = c.spec.model.clone();
             }
             let m = mission::get(self.db.conn(), id)?;
-            update(
-                self.db.conn(),
-                id,
-                &[
-                    ("child_pid".into(), Value::Null),
-                    ("child_start".into(), Value::Null),
-                    ("child_kind".into(), Value::Null),
-                    ("child_since".into(), Value::Null),
-                    (
-                        "step_secs".into(),
-                        Value::Real(m.step_secs + end.run.as_secs_f64()),
-                    ),
-                ],
-            )?;
+            let mut cols: Vec<(String, Value)> =
+                mission::CHILD.map(|c| (c.to_string(), Value::Null)).into();
+            cols.push((
+                "step_secs".into(),
+                Value::Real(m.step_secs + end.run.as_secs_f64()),
+            ));
+            update(self.db.conn(), id, &cols)?;
             let m = mission::get(self.db.conn(), id)?;
             let called = self.call(&m, tick, |h, cx| h.finish(cx, &m, end));
             // A run on a model that hit no limit (nor a network or auth failure): the model's
@@ -1204,9 +1220,16 @@ impl Loop {
     /// The PRI-4 rank of a mission's intent (missions without an open intent last).
     fn rank(&self, m: &Mission) -> (usize, i64) {
         let at = self.listing.as_ref().and_then(|l| {
-            l.open
+            let i = l
+                .open
                 .iter()
-                .position(|i| Some(i.id.as_str()) == m.intent.as_deref())
+                .find(|i| Some(i.id.as_str()) == m.intent.as_deref())?;
+            Some(
+                l.open
+                    .iter()
+                    .filter(|o| priority::cmp(o, i) == std::cmp::Ordering::Less)
+                    .count(),
+            )
         });
         (at.unwrap_or(usize::MAX), m.id)
     }
@@ -1644,14 +1667,16 @@ impl Loop {
             child::kill_group(c.pid);
             let _ = c.proc.wait();
         }
-        for id in stopping.iter().filter_map(|(id, _)| *id) {
+        // Its run time counts toward the step's timeout (LOOP-9): the resumed run gets the
+        // rest. (Tests drive the passes' clock: the later of it and now.)
+        let mono = self.last_tick.map_or(tick.mono, |t| t.mono.max(tick.mono));
+        for (id, c) in stopping.iter().filter_map(|(id, c)| Some(((*id)?, c))) {
             let m = mission::get(self.db.conn(), id)?;
-            machine::apply(
-                &self.apply_cx(tick),
-                &m,
-                &Outcome::event(Event::Interrupted),
-            )?;
+            let ran = mono.saturating_sub(c.since).as_secs_f64();
+            let o = Outcome::event(Event::Interrupted).with("step_secs", m.step_secs + ran);
+            machine::apply(&self.apply_cx(tick), &m, &o)?;
         }
+        machine::set_dying(self.db.conn(), &[])?;
         if let Some(key) = drafter {
             // Stopped, not failed: the try isn't counted.
             if let Some(Err(e)) = self.with_cx(tick, |cx| drafts::not_run(cx, &key)) {

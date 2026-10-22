@@ -37,6 +37,10 @@ fn test_pick_while_others_wait() {
     );
     h.set(Stage::Build, Scripted::all(Act::Child));
     h.set(
+        Stage::Verify,
+        Scripted::by(Act::Ok, &[(B, Act::Child), (C, Act::Child)]),
+    );
+    h.set(
         Stage::Ci,
         Scripted::by(Act::Ok, &[(A, Act::Poll(Duration::from_secs(30)))]),
     );
@@ -82,12 +86,22 @@ fn test_pick_while_others_wait() {
     assert_eq!(w.stage(B), Some(Stage::Build));
     assert_eq!(lp.queued(), vec![w.mission(B).id], "B waits for the slot");
     assert_eq!(w.stage(A), Some(Stage::Ci), "A still polling");
-    // C's child ends: the slot goes to B, not to the picker.
+    // C's child ends: the slot goes to B, not to C's next step (verify, stepped in the same
+    // pass) nor to the picker.
     w.release(C, Stage::Build);
     w.wait_for(&mut lp, 20, |w, lp| lp.running() == vec![w.mission(B).id]);
+    assert_eq!(w.stage(C), Some(Stage::Verify));
+    assert_eq!(lp.queued(), vec![w.mission(C).id]);
     assert!(w.missions(D).is_empty());
-    // B's ends: now D.
+    // B's ends: B's verify is ahead of C's (PRI-4).
     w.release(B, Stage::Build);
+    w.wait_for(&mut lp, 20, |w, _| w.stage(B) == Some(Stage::Verify));
+    w.wait_for(&mut lp, 20, |w, lp| lp.running() == vec![w.mission(B).id]);
+    assert_eq!(lp.queued(), vec![w.mission(C).id]);
+    w.release(B, Stage::Verify);
+    w.wait_for(&mut lp, 20, |w, lp| lp.running() == vec![w.mission(C).id]);
+    // C's ends: now D.
+    w.release(C, Stage::Verify);
     w.wait_for(&mut lp, 20, |w, _| !w.missions(D).is_empty());
     lp.shutdown().unwrap();
 }

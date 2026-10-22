@@ -9,7 +9,7 @@ use rusqlite::{Connection, params};
 
 use crate::checkout;
 use crate::config::Config;
-use crate::db::{Db, get_meta, sql};
+use crate::db::{Db, del_meta, get_meta, set_meta, sql};
 use crate::env;
 use crate::handler::{Ctx, Outcome, update};
 use crate::intents::{self, Intent, Listing, StoreError, Value as IValue};
@@ -1074,8 +1074,15 @@ pub fn apply_tx(
         Next::Ignore | Next::Unexpected => unreachable!("handled above"),
     };
     // A step's end: no child, not busy. Its handler's result (not an env_fail) closes the
-    // fault the step held (LOOP-10).
-    for c in ["child_pid", "child_start", "child_kind", "child_since"] {
+    // fault the step held (LOOP-10). A child still running is remembered until reaped.
+    if let (Some(pid), Some(start)) = (cur.child_pid, cur.child_start) {
+        let mut d = dying(tx)?;
+        if !d.contains(&(pid, start)) {
+            d.push((pid, start));
+            set_dying(tx, &d)?;
+        }
+    }
+    for c in mission::CHILD {
         put(&mut cols, c, Value::Null);
     }
     if let Some(kind) = &cur.fault
@@ -1240,6 +1247,28 @@ fn slug_of(m: &Mission) -> String {
         .filter(|_| m.attempt >= 2)
         .unwrap_or(rest)
         .to_string()
+}
+
+/// Children a transition left running (`meta.dying`: `<pid>:<start> …`) until the loop reaps
+/// them: an unclean exit's recovery kills them (LOOP-7).
+pub fn dying(conn: &Connection) -> Result<Vec<(i64, i64)>, String> {
+    Ok(get_meta(conn, "dying")?
+        .unwrap_or_default()
+        .split_whitespace()
+        .filter_map(|e| {
+            let (pid, start) = e.split_once(':')?;
+            Some((pid.parse().ok()?, start.parse().ok()?))
+        })
+        .collect())
+}
+
+/// Stores `meta.dying` (none: removed).
+pub fn set_dying(conn: &Connection, d: &[(i64, i64)]) -> Result<(), String> {
+    if d.is_empty() {
+        return del_meta(conn, "dying");
+    }
+    let v: Vec<String> = d.iter().map(|(p, s)| format!("{p}:{s}")).collect();
+    set_meta(conn, "dying", &v.join(" "))
 }
 
 /// `meta.paused`.

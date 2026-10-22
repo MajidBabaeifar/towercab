@@ -260,11 +260,14 @@ fn test_sigterm_not_counted() {
     let mut lp = w.open(handlers(&w));
     w.wait_for(&mut lp, 20, |w, _| runs(w, X) == 1);
     let pid = w.mission(X).child_pid.unwrap();
-    // SIGTERM (`down`, logout): the child's group gets SIGTERM, the mission `interrupted`.
+    w.pass_after(&mut lp, 7);
+    // SIGTERM (`down`, logout): the child's group gets SIGTERM, the mission `interrupted`;
+    // its run time counts toward the step's timeout.
     lp.shutdown().unwrap();
     wait_dead(pid);
     let m = w.mission(X);
     assert_eq!((m.unclean, m.busy, m.child_pid), (0, false, None));
+    assert!(m.step_secs >= 7.0, "{}", m.step_secs);
     assert_eq!((m.stage, m.step.as_str()), (Stage::Build, "run"));
     assert_eq!(w.db().meta("running").unwrap(), None);
     let last = w.transitions(X).pop().unwrap();
@@ -324,6 +327,7 @@ fn test_crash_loop_capped() {
     });
     for crash in 1..=3 {
         let pid = w.mission(X).child_pid.unwrap();
+        w.pass_after(&mut lp, 7);
         drop(lp);
         lp = w.open(mk(&w));
         wait_dead(pid);
@@ -335,6 +339,8 @@ fn test_crash_loop_capped() {
         );
         if crash < 3 {
             assert_eq!((x.stage, x.unclean), (Stage::Build, crash));
+            // The killed run's time counts toward the step's timeout, up to the last pass.
+            assert!(x.step_secs >= 7.0 * f64::from(crash), "{}", x.step_secs);
             w.wait_for(&mut lp, 20, |w, _| runs(w, X) == crash as usize + 1);
         } else {
             assert_eq!(x.stage, Stage::Blocked);
@@ -387,6 +393,32 @@ fn test_crash_loop_capped() {
         .count();
     assert_eq!(crashes, 3);
     lp.shutdown().unwrap();
+}
+
+#[test]
+fn test_dying_child_killed_after_crash() {
+    // I remove the intent while its build runs: stopped, the child (ignoring SIGTERM) dying.
+    // The loop crashes before its SIGKILL: the next start kills it (`meta.dying`).
+    let mut w = world(&[intent_file("261001-0900-x", "web", "", "X")]);
+    hold(&w, X, true);
+    flag(&w, X, "stubborn");
+    let mut lp = w.open(handlers(&w));
+    w.wait_for(&mut lp, 20, |w, _| runs(w, X) == 1);
+    std::thread::sleep(Duration::from_millis(200));
+    let pid = w.mission(X).child_pid.unwrap();
+    w.intents
+        .push_mine(&[("intents/261001-0900-x/intent.md", None)], "drop X");
+    w.pass(&mut lp);
+    let m = w.mission(X);
+    assert_eq!((m.stage, m.child_pid), (Stage::Stopped, None));
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!dead(pid), "SIGTERM ignored");
+    assert!(w.db().meta("dying").unwrap().is_some());
+    drop(lp);
+    let lp = w.open(handlers(&w));
+    wait_dead(pid);
+    assert_eq!(w.db().meta("dying").unwrap(), None);
+    drop(lp);
 }
 
 /// What a [`Bad`] handler returns.

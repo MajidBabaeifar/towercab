@@ -14,7 +14,7 @@ use crate::machine::Stage;
 use crate::runloop::Tick;
 
 /// The `missions` columns a transition or a record may set (`Outcome::set`, `Ctx::record`).
-pub const COLUMNS: [&str; 47] = [
+pub const COLUMNS: [&str; 48] = [
     "kind",
     "intent",
     "repo",
@@ -56,6 +56,7 @@ pub const COLUMNS: [&str; 47] = [
     "child_start",
     "child_kind",
     "child_since",
+    "child_model",
     "cost_usd",
     "agent_secs",
     "data",
@@ -66,6 +67,15 @@ pub const COLUMNS: [&str; 47] = [
 
 /// `step` while a stage's entry effects are due (LOOP-6).
 pub const ENTER: &str = "enter";
+
+/// The running child's columns, cleared when it ends or its step does.
+pub const CHILD: [&str; 5] = [
+    "child_pid",
+    "child_start",
+    "child_kind",
+    "child_since",
+    "child_model",
+];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mission {
@@ -115,6 +125,7 @@ pub struct Mission {
     pub child_start: Option<i64>,
     pub child_kind: Option<String>,
     pub child_since: Option<f64>,
+    pub child_model: Option<String>,
     pub cost_usd: f64,
     pub agent_secs: f64,
     pub data: String,
@@ -181,6 +192,7 @@ impl Mission {
             child_start: r.get("child_start")?,
             child_kind: r.get("child_kind")?,
             child_since: r.get("child_since")?,
+            child_model: r.get("child_model")?,
             cost_usd: r.get("cost_usd")?,
             agent_secs: r.get("agent_secs")?,
             data: r.get("data")?,

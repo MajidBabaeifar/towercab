@@ -156,7 +156,7 @@ impl Snapshot {
             .map(|m| Active {
                 item: Item::mission(m, listing),
                 stage: m.stage,
-                model: (m.child_kind.as_deref() == Some("claude")).then(|| m.model.clone()),
+                model: m.child_model.clone(),
                 since: m.child_since.unwrap_or(m.updated),
             })
             .collect();
