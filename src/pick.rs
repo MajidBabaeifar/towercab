@@ -270,7 +270,9 @@ pub fn decide_for(
             .filter(|i| i.id != id)
             .map(|i| i.id.clone()),
     );
-    let d = decide(listing, &only);
+    let mut d = decide(listing, &only);
+    // Only its own wait is written: the others aren't looked at.
+    d.writes.retain(|(w, _, _)| w == id);
     if d.pick.as_deref() == Some(id) {
         return (d, Ok(()));
     }
@@ -299,6 +301,15 @@ pub fn decide_for(
     (d, Err(why))
 }
 
+/// A git failure: network or auth (`env::classify`) → `env_fail`; anything else (a
+/// `[repos.<r>].path` that isn't a clone, a bad remote path) is no outage: a bug, counted.
+fn git_failed(e: String) -> StepError {
+    match env::classify(&e) {
+        Some(_) => StepError::Env(Fault::Github, e),
+        None => StepError::Bug(e),
+    }
+}
+
 /// The `pick` stage: fetch Towercab's clone (LOOP-8), load the repo files (REPO-1), make the
 /// checkout (LOOP-8) → `design`.
 pub struct Pick;
@@ -311,8 +322,7 @@ impl Handler for Pick {
             .identity
             .auth_for_url(&checkout::origin_url(&git, &repo))
             .map_err(|e| StepError::Env(Fault::Github, e.to_string()))?;
-        checkout::ensure_clone(&git, &repo, Some(&auth))
-            .map_err(|e| StepError::Env(Fault::Github, e))?;
+        checkout::ensure_clone(&git, &repo, Some(&auth)).map_err(git_failed)?;
         match repo::load(&repo.path, &repo.base) {
             Ok(_) => {}
             Err(RepoError::NoVerifyingBlock) => {
@@ -327,7 +337,7 @@ impl Handler for Pick {
             Err(RepoError::Invalid(e)) => {
                 return Ok(Progress::Done(Outcome::wait(Waiting::FixRepoFiles, e)));
             }
-            Err(RepoError::Git(e)) => return Err(StepError::Env(Fault::Github, e)),
+            Err(RepoError::Git(e)) => return Err(git_failed(e)),
         }
         let m = if m.step == "checkout" {
             m.clone()

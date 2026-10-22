@@ -1310,7 +1310,8 @@ pub fn enter(cx: &mut Ctx<'_>, m: &Mission) -> Result<Mission, String> {
             )
             .map_err(sql)?;
         let mark = format!("{ENTRY_MARK} {} {transition}", m.session);
-        if !cx.store.has_mark(&mark).map_err(|e| format!("{id}: {e}"))? {
+        // Errors: the caller names the mission.
+        if !cx.store.has_mark(&mark).map_err(|e| e.to_string())? {
             write_intent(cx, m, id, &mark)?;
             cx.probe.point();
         }
@@ -1387,6 +1388,6 @@ fn write_intent(cx: &Ctx<'_>, m: &Mission, id: &str, mark: &str) -> Result<(), S
         Ok(_) => Ok(()),
         // Gone, or moved to done/ by an earlier run of this effect.
         Err(StoreError::Refused(e)) if e.starts_with("no open intent matches") => Ok(()),
-        Err(e) => Err(format!("{id}: {e}")),
+        Err(e) => Err(e.to_string()),
     }
 }

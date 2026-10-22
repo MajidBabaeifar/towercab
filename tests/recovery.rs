@@ -520,3 +520,63 @@ impl Handler for Panics {
         panic!("a bug in the handler");
     }
 }
+
+#[test]
+fn test_step_interrupted() {
+    // `towercab step` gets SIGINT (Ctrl-C) while its child runs: the child is stopped and the
+    // mission `interrupted` (not counted), as at a loop's shutdown.
+    let w = world(&[intent_file("261001-0900-x", "web", "", "X")]);
+    hold(&w, X, true);
+    let mut lp = w.open(handlers(&w));
+    assert_eq!(lp.step_intent(X).unwrap(), format!("{X}: pick → design"));
+    assert_eq!(lp.step_intent(X).unwrap(), format!("{X}: design → plan"));
+    assert_eq!(lp.step_intent(X).unwrap(), format!("{X}: plan → build"));
+    let stop = lp.stop_flag();
+    let runs_dir = w.home.runs(X);
+    std::thread::spawn(move || {
+        let end = Instant::now() + Duration::from_secs(10);
+        while !runs_dir.join("count").exists() && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    assert_eq!(lp.step_intent(X), Err(format!("{X}: interrupted")));
+    let pid = w.mission(X).child_pid.unwrap();
+    lp.shutdown().unwrap();
+    wait_dead(pid);
+    let m = w.mission(X);
+    assert_eq!((m.stage, m.unclean, m.busy), (Stage::Build, 0, false));
+    let last = w.transitions(X).pop().unwrap();
+    assert_eq!(last, ("build".into(), "interrupted".into(), "build".into()));
+}
+
+#[test]
+fn test_step_refuses_waits() {
+    // `step` doesn't wait: a cooling model, a backoff or entry effects not done refuse it.
+    let w = world(&[intent_file("261001-0900-x", "web", "", "X")]);
+    let mut lp = w.open(handlers(&w));
+    assert_eq!(lp.step_intent(X).unwrap(), format!("{X}: pick → design"));
+    let db = w.db();
+    db.conn()
+        .execute(
+            "INSERT INTO cooldowns (provider, model, until, parsed, text, since)
+             VALUES ('claude', 'opus', 9e9, 1, 'limit', 0)",
+            [],
+        )
+        .unwrap();
+    let set = |sql: &str| db.conn().execute(sql, []).unwrap();
+    set("UPDATE missions SET limit_model = 'opus'");
+    let e = lp.step_intent(X).unwrap_err();
+    assert!(e.starts_with(&format!("{X}: opus cooling until ")), "{e}");
+    set("UPDATE missions SET limit_model = NULL, retry_at = 9e9");
+    let e = lp.step_intent(X).unwrap_err();
+    assert!(e.starts_with(&format!("{X}: retry at ")), "{e}");
+    // Its entry write can't be pushed: refused with the error, the step not called.
+    set("UPDATE missions SET retry_at = NULL, step = 'enter'");
+    fs::rename(&w.intents.remote, w.root.join("gone.git")).unwrap();
+    let e = lp.step_intent(X).unwrap_err();
+    assert!(e.starts_with(&format!("{X}: pull failed: ")), "{e}");
+    let m = w.mission(X);
+    assert_eq!((m.stage, m.step.as_str()), (Stage::Design, "enter"));
+    lp.shutdown().unwrap();
+}

@@ -58,12 +58,20 @@ fn test_run_once_and_unclean_exit() {
     assert_eq!(db.meta("running").unwrap(), None, "a clean exit");
     assert_eq!(home.holder(), None);
 
-    // --intent: no stage handler built, so it can't be picked.
+    // --intent: no stage handler built, so it can't be picked (named by its full id).
+    let intents = tmp.path().join("intents");
+    common::write(
+        &intents,
+        "intents/261020-0721-x/intent.md",
+        &common::intent_md("web", "", "X"),
+    );
+    common::git(&intents, &["add", "-A"]);
+    common::git(&intents, &["commit", "--quiet", "-m", "x"]);
     assert_eq!(
         run(&["run", "--intent", "0721"]),
         (
             String::new(),
-            "towercab: 0721: not picked: picks off: pipeline not built\n".into(),
+            "towercab: 261020-0721: not picked: picks off: pipeline not built\n".into(),
             Some(1)
         )
     );

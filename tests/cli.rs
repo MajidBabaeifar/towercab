@@ -379,7 +379,7 @@ fn test_cli() {
     );
     assert_eq!(
         run(&["run", "--intent", "0904"]),
-        err("0904: not picked: picks off: pipeline not built", 1)
+        err("261001-0904: not picked: picks off: pipeline not built", 1)
     );
     assert_eq!(
         run(&["step", "7777"]),

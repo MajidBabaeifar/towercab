@@ -278,6 +278,18 @@ fn test_bad_after() {
         Skip::BadAfter(vec!["260101-0101".into(), "260101-0102".into()]).to_string(),
         "bad after: 260101-0101, 260101-0102"
     );
+    // `--intent` and `step` write only their own intent's wait.
+    let (d, _) = pick::decide_for(&l, &state(&["web"]), "261001-0905");
+    assert!(d.writes.is_empty(), "{:?}", d.writes);
+    let (d, r) = pick::decide_for(&l, &state(&["web"]), "261001-0907");
+    assert_eq!(
+        d.writes
+            .iter()
+            .map(|(i, _, _)| i.as_str())
+            .collect::<Vec<_>>(),
+        ["261001-0907"]
+    );
+    assert_eq!(r, Err("bad after: 260101-0101, 260101-0102".into()));
     // A legacy id is done.
     let mut legacy = listing(
         &[(
@@ -402,6 +414,12 @@ fn test_orphan_staged_intent() {
                 "u: 1\ni: 1\nstage: test\nwaiting: call me\n",
                 "Asks",
             ),
+            intent_file(
+                "261001-0903-later",
+                "web",
+                "u: 1\ni: 1\nstage: test\nwaiting: call me\nretry: later\n",
+                "Later",
+            ),
         ],
         &["web"],
     );
@@ -419,8 +437,9 @@ fn test_orphan_staged_intent() {
         !md.contains("stage:") && !md.contains("retry:") && !md.contains("waiting:"),
         "{md}"
     );
-    // A waiting intent keeps its stage until I answer.
+    // A waiting intent keeps its stage until I answer; only `retry: fresh` unstages one.
     assert!(w.intent_md("261001-0902-asks").contains("stage: test"));
+    assert!(w.intent_md("261001-0903-later").contains("stage: test"));
     assert_eq!(w.mission("261001-0900").stage, Stage::Pick);
 
     // `retry: fresh` with an unfinished mission: retry_fresh → this attempt stopped, attempt 2
@@ -596,10 +615,12 @@ fn test_pick_step_repo_files() {
             intent_file("261001-0900-a", "web", "u: 5\ni: 5\n", "A"),
             intent_file("261001-0901-b", "api", "", "B"),
             intent_file("261001-0902-c", "cli", "u: 1\ni: 1\n", "C"),
+            intent_file("261001-0903-d", "docs", "u: 1\ni: 1\n", "D"),
         ],
-        &["web", "api", "cli"],
+        &["web", "api", "cli", "docs"],
     );
-    // web: no verifying block; api: a bad TOWERCAB.md; cli: its clone has no origin.
+    // web: no verifying block; api: a bad TOWERCAB.md; cli: its origin refuses connections;
+    // docs: its path isn't a clone.
     let web = w.mine("web");
     write(&web, "CLAUDE.md", "# Web\n");
     git(&web, &["commit", "--quiet", "-am", "no block"]);
@@ -611,8 +632,11 @@ fn test_pick_step_repo_files() {
     git(&api, &["push", "--quiet", "origin", "HEAD:main"]);
     git(
         &w.clone_path("cli"),
-        &["remote", "set-url", "origin", "/nowhere/cli.git"],
+        &["remote", "set-url", "origin", "http://127.0.0.1:1/cli.git"],
     );
+    let docs = w.clone_path("docs");
+    std::fs::remove_dir_all(&docs).unwrap();
+    write(&docs, "README.md", "not a clone\n");
     let mut lp = w.open(handlers());
     w.until(&mut lp, 6, |w| {
         w.stage("261001-0900") == Some(Stage::Blocked)
@@ -634,7 +658,7 @@ fn test_pick_step_repo_files() {
         "{:?}",
         b.why
     );
-    // A git failure is the network's: backoff, the mission stays at pick.
+    // A network failure: backoff, the mission stays at pick.
     w.until(&mut lp, 6, |w| {
         w.missions("261001-0902")
             .last()
@@ -649,6 +673,13 @@ fn test_pick_step_repo_files() {
         .map(|t| t.1)
         .collect();
     assert_eq!(events, ["env_fail"]);
+    // Not a clone: no outage but a bug, counted; the third → crashed at pick.
+    w.until(&mut lp, 12, |w| {
+        w.stage("261001-0903") == Some(Stage::Blocked)
+    });
+    let d = w.mission("261001-0903");
+    assert_eq!(d.waiting.as_deref(), Some("crashed at pick"));
+    assert_eq!(d.retries, 0);
     // Continuing from `add CLAUDE.md verifying block` goes back to pick, which passes once fixed.
     write(&web, "CLAUDE.md", common::world::CLAUDE);
     git(&web, &["commit", "--quiet", "-am", "block"]);

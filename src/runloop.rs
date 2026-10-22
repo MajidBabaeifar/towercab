@@ -1074,7 +1074,7 @@ impl Loop {
         let mut ids: Vec<String> = listing
             .open
             .iter()
-            .filter(|i| i.retry().is_some() && !busy.contains(i.id.as_str()))
+            .filter(|i| i.retry() == Some("fresh") && !busy.contains(i.id.as_str()))
             .map(|i| i.id.clone())
             .collect();
         for id in pick::orphans(&listing, &unfinished) {
@@ -1089,7 +1089,7 @@ impl Loop {
             };
             let unstaged = store.update(&id, "unstage", |i| {
                 i.remove("stage")?;
-                if i.retry().is_some() {
+                if i.retry() == Some("fresh") {
                     i.remove("retry")?;
                     i.remove("waiting")?;
                 }
@@ -1465,12 +1465,30 @@ impl Loop {
         };
         let m = mission::get(self.db.conn(), mid)?;
         let from = m.stage;
+        if m.step == ENTER {
+            // Its entry effects failed (logged): the step would overwrite them.
+            let why = self.warned.get(&format!("enter {mid}")).cloned();
+            return Err(why.unwrap_or_else(|| format!("{id}: entry effects not done")));
+        }
         if !m.stage.driven() || m.held {
             return Ok(format!("{id}: {from} → {}", stage_line_rest(&m)));
         }
         if !self.handlers.get_mut(m.stage).is_some_and(|h| h.built()) {
             return Err(format!("{id}: {} handler not built", m.stage));
         }
+        // A foreground command doesn't wait (LOOP-15): a cooling model or a backoff refuses.
+        let now = tick.unix();
+        if let Some(model) = &m.limit_model
+            && let Some(until) = limits::until(self.db.conn(), model)?.filter(|u| *u > now)
+        {
+            let at = shown_time(until, tick.wall);
+            return Err(format!("{id}: {model} cooling until {at}"));
+        }
+        if let Some(at) = m.retry_at.filter(|t| *t > now) {
+            return Err(format!("{id}: retry at {}", shown_time(at, tick.wall)));
+        }
+        // SIGTERM or SIGINT while its child runs: stopped as at shutdown (`interrupted`).
+        let _wake = self.signals().map_err(|e| format!("signals: {e}"))?;
         update(
             self.db.conn(),
             m.id,
@@ -1483,6 +1501,9 @@ impl Loop {
         let called = self.call(&m, tick, |h, cx| h.step(cx, &m));
         self.progress(&m, called, tick)?;
         while self.children.contains_key(&mid) || self.queued.iter().any(|(i, _, _)| *i == mid) {
+            if self.stop.load(Ordering::SeqCst) {
+                return Err(format!("{id}: interrupted"));
+            }
             std::thread::sleep(Duration::from_millis(20));
             let tick = Tick::now();
             self.spawn_queued(tick)?;
@@ -1565,11 +1586,14 @@ impl Loop {
     /// A failed pass is logged to stderr and the loop goes on (`--watch`) or exits with it.
     pub fn run(mut self) -> Result<(), String> {
         if let Some(q) = self.opts.intent.clone() {
-            let target = if self.handlers.built() {
-                self.set_target(&q).map(drop)
-            } else {
-                Err(format!("{q}: not picked: picks off: pipeline not built"))
-            };
+            // Without every handler it can't be picked (an existing mission is stepped).
+            let target = self.set_target(&q).and_then(|id| {
+                if self.target_mission.is_none() && !self.handlers.built() {
+                    Err(format!("{id}: not picked: picks off: pipeline not built"))
+                } else {
+                    Ok(())
+                }
+            });
             if let Err(e) = target {
                 self.shutdown()?;
                 return Err(e);

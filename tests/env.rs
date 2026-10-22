@@ -45,6 +45,10 @@ fn test_classify() {
             Some(FaultClass::Network),
         ),
         (
+            "fatal: unable to access 'http://127.0.0.1:1/x.git/': Failed to connect to 127.0.0.1 port 1 after 0 ms: Could not connect to server",
+            Some(FaultClass::Network),
+        ),
+        (
             "gnutls_handshake() failed: The TLS connection was non-properly terminated.",
             Some(FaultClass::Network),
         ),
