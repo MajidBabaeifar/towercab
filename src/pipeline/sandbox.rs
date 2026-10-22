@@ -102,6 +102,53 @@ pub fn command(
     })
 }
 
+/// An e2e run's bound (PIP-9): hitting it is red.
+pub const E2E_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// The e2e `line` (PIP-9) sandboxed with network in `dir` ([`command`], `ChildKind::E2e`,
+/// [`E2E_TIMEOUT`]), its env plus the repo's secrets file (`e2e::secrets`); a refused secrets
+/// file → `Ok(Err(why))` (`env_blocked`, never red).
+pub fn e2e(
+    cx: &Ctx<'_>,
+    m: &Mission,
+    dir: &Path,
+    line: &str,
+    log: &Path,
+) -> Result<Result<ChildSpec, String>, StepError> {
+    let mut spec = command(cx, ChildKind::E2e, dir, line, log)?;
+    spec.timeout = Some(E2E_TIMEOUT);
+    match super::e2e::secrets(&super::e2e::secrets_file(cx.config, &m.repo)) {
+        Ok(kv) => spec
+            .env
+            .extend(kv.into_iter().map(|(k, v)| (k.into(), v.into()))),
+        Err(e) => return Ok(Err(e)),
+    }
+    Ok(Ok(spec))
+}
+
+/// A `TOWERCAB.md` command (release, rollback, rehearse): unsandboxed in `dir` like
+/// [`setup_spec`] (`ChildKind::Command`), plus `GH_TOKEN` = the App's token for the repo when
+/// Towercab is the App.
+pub fn repo_command(
+    cx: &Ctx<'_>,
+    m: &Mission,
+    dir: &Path,
+    line: &str,
+    log: &Path,
+) -> Result<ChildSpec, StepError> {
+    let mut spec = setup_spec(cx, m, dir, line, log)?;
+    spec.kind = ChildKind::Command;
+    if cx.identity.is_app() {
+        let github = super::gh::github(cx, m)?;
+        let token = cx
+            .identity
+            .token(&github, cx.tick.unix() as i64)
+            .map_err(|e| StepError::Env(crate::env::Fault::Github, e.to_string()))?;
+        spec.env.push(("GH_TOKEN".into(), token.into()));
+    }
+    Ok(spec)
+}
+
 /// A ` ```setup ` line, unsandboxed with network, in `dir`: `sh -c <line>`, env `HOME`, `PATH`,
 /// `LANG`; stdout `log`, stderr [`err_of`], `check_timeout`.
 pub fn setup_spec(

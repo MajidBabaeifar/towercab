@@ -5,7 +5,9 @@
 pub mod build;
 pub mod ci;
 pub mod data;
+pub mod deploy;
 pub mod design;
+pub mod e2e;
 pub mod gate;
 pub mod gh;
 pub mod git;
@@ -17,10 +19,12 @@ pub mod pr;
 pub mod prompts;
 pub mod proof;
 pub mod publish;
+pub mod release;
 pub mod review;
 pub mod runs;
 pub mod sandbox;
 pub mod schemas;
+pub mod triage;
 pub mod verifier;
 pub mod verify;
 
@@ -78,8 +82,17 @@ pub fn handlers(mode: Mode) -> Handlers {
     h.set(Stage::Gate, Box::new(gate::Gate::new(mode.clone())));
     h.set(
         Stage::Merge,
-        Box::new(merge::Merge::new(ci::Seq::Intent, mode)),
+        Box::new(merge::Merge::new(ci::Seq::Intent, mode.clone())),
     );
+    h.set(
+        Stage::Deploy,
+        Box::new(deploy::Deploy::new(ci::Seq::Intent, mode.clone())),
+    );
+    h.set(
+        Stage::E2e,
+        Box::new(e2e::E2e::new(ci::Seq::Intent, mode.clone())),
+    );
+    h.set(Stage::Release, Box::new(release::Release::new(mode)));
     h
 }
 

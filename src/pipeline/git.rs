@@ -115,6 +115,44 @@ pub fn merge(cx: &Ctx<'_>, dir: &Path, rev: &str, eval: bool) -> Result<bool, St
     }
 }
 
+/// `git revert --no-edit [-m 1] <sha>` in `dir` as the bot (`-m 1` for a two-parent merge):
+/// `Ok(true)` reverted; `Ok(false)` a conflict, the revert aborted (`git revert --abort`).
+pub fn revert(cx: &Ctx<'_>, dir: &Path, sha: &str, eval: bool) -> Result<bool, StepError> {
+    let (name, email) = bot(cx, eval)?;
+    let mut args = who(&name, &email);
+    args.extend(["revert".into(), "--no-edit".into()]);
+    if parents(cx, dir, sha)? >= 2 {
+        args.extend(["-m".into(), "1".into()]);
+    }
+    args.push(sha.into());
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    match checkout::git(&cx.exes.git, dir, &args, None) {
+        Ok(_) => Ok(true),
+        Err(_)
+            if ok(
+                cx,
+                dir,
+                &["rev-parse", "--quiet", "--verify", "REVERT_HEAD"],
+            ) =>
+        {
+            run(cx, dir, &["revert", "--abort"])?;
+            Ok(false)
+        }
+        Err(e) => Err(failed(e)),
+    }
+}
+
+/// `HEAD`'s message says it reverts `sha` (`This reverts commit <sha>`).
+pub fn reverts(cx: &Ctx<'_>, dir: &Path, sha: &str) -> bool {
+    checkout::git(
+        &cx.exes.git,
+        dir,
+        &["log", "-1", "--format=%B", "HEAD"],
+        None,
+    )
+    .is_ok_and(|msg| msg.contains(&format!("This reverts commit {sha}")))
+}
+
 /// `git rev-parse --verify <rev>` in `dir`.
 pub fn rev(cx: &Ctx<'_>, dir: &Path, rev: &str) -> Result<String, StepError> {
     checkout::rev(&cx.exes.git, dir, rev).map_err(failed)

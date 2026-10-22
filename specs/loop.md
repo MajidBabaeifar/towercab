@@ -283,6 +283,7 @@ home: <home>
 github app: towercab[bot] <id>|<error>         (the App's key and its bot, LOOP-19)
 <repo>: no towercab ruleset: towercab protect <repo>      (my gh; a failed check: "<repo>: ruleset: <error>")
 <repo>: origin isn't https://github.com/…: the App token isn't used   (its clone exists, origin elsewhere)
+<repo>: release block without live: ignored             (its base TOWERCAB.md, PIP-34)
 telegram: chat <chat_id>|not configured
 ```
 

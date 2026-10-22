@@ -812,3 +812,157 @@ pub fn real_bwrap() -> Option<PathBuf> {
         .filter(|o| o.status.success())
         .map(|_| bwrap)
 }
+
+/// The stages from design to merge: stubbed by [`Pipe::merged`].
+pub const DESIGN_TO_MERGE: [towercab::machine::Stage; 11] = {
+    use towercab::machine::Stage as S;
+    [
+        S::Design,
+        S::Plan,
+        S::Build,
+        S::Verify,
+        S::Proof,
+        S::Publish,
+        S::Ci,
+        S::Verifier,
+        S::Review,
+        S::Gate,
+        S::Merge,
+    ]
+};
+
+/// The deploy tests' `e2e` command: `sh '<root>/e2e.sh'`.
+pub const E2E_LINE: &str = "sh '{root}/e2e.sh'";
+
+impl Pipe {
+    /// The login intent merged into `web` (`merged_by`), at `deploy`: the base has
+    /// `towercab` as `TOWERCAB.md` (`{root}` = the world's root); the stages from design to merge
+    /// stubbed; the merge = a commit changing `src/login.rs` on origin's `main` (with
+    /// `two_parents`: a `--no-ff` merge of a branch); `pr` 7. Returns the merge sha.
+    pub fn merged_with(towercab: &str, merged_by: &str, two_parents: bool) -> (Pipe, String) {
+        let mut p = Pipe::login("");
+        let root = p.w.root.display().to_string();
+        p.base(
+            "web",
+            &[("TOWERCAB.md", &towercab.replace("{root}", &root))],
+            "towercab",
+        );
+        p.e2e_script();
+        let mut h = Pipe::handlers();
+        for s in DESIGN_TO_MERGE {
+            h.set(s, Box::new(Stub));
+        }
+        p.open_with(h);
+        p.step_to(LOGIN_ID, towercab::machine::Stage::Deploy, 20);
+        let mine = p.w.mine("web");
+        if two_parents {
+            git(&mine, &["checkout", "--quiet", "-B", "feature", "main"]);
+            write(&mine, "src/login.rs", "pub fn login() {}\n");
+            git(&mine, &["add", "-A"]);
+            git(&mine, &["commit", "--quiet", "-m", "login"]);
+            git(&mine, &["checkout", "--quiet", "main"]);
+            git(
+                &mine,
+                &[
+                    "merge",
+                    "--quiet",
+                    "--no-ff",
+                    "-m",
+                    "Merge feature",
+                    "feature",
+                ],
+            );
+            git(&mine, &["push", "--quiet", "origin", "HEAD:main"]);
+        } else {
+            p.base(
+                "web",
+                &[("src/login.rs", "pub fn login() {}\n")],
+                "feat(auth): Add login (#7)",
+            );
+        }
+        let merge = git(&mine, &["rev-parse", "HEAD"]).trim().to_string();
+        let data = json!({"design": {"title": "feat(auth): Add login"}}).to_string();
+        p.w.db()
+            .conn()
+            .execute(
+                "UPDATE missions SET merge_sha = ?1, merged_by = ?2, pr = 7,
+                   pr_url = 'https://github.com/me/web/pull/7', data = ?3 WHERE intent = ?4",
+                rusqlite::params![merge, merged_by, data, LOGIN_ID],
+            )
+            .unwrap();
+        (p, merge)
+    }
+
+    /// [`Pipe::merged_with`], a squash merge.
+    pub fn merged(towercab: &str, merged_by: &str) -> (Pipe, String) {
+        Pipe::merged_with(towercab, merged_by, false)
+    }
+
+    /// `<root>/e2e.sh`: run n writes its cwd, `HEAD` and env to `<root>/e2e-<n>.{cwd,head,env}`,
+    /// prints `e2e run <n>: token=$API_TOKEN` and exits line n of `<root>/e2e.exits` (none: 0).
+    pub fn e2e_script(&self) {
+        let d = self.w.root.display();
+        fs::write(
+            self.w.root.join("e2e.sh"),
+            format!(
+                r#"d='{d}'
+n=$(($(cat "$d/e2e.count" 2>/dev/null || echo 0) + 1))
+echo "$n" > "$d/e2e.count"
+pwd > "$d/e2e-$n.cwd"
+git rev-parse HEAD > "$d/e2e-$n.head" 2>/dev/null
+env > "$d/e2e-$n.env"
+echo "e2e run $n: token=$API_TOKEN"
+code=$(sed -n "${{n}}p" "$d/e2e.exits" 2>/dev/null)
+[ "${{code:-0}}" = 0 ] || echo "e2e run $n failed" >&2
+exit "${{code:-0}}"
+"#
+            ),
+        )
+        .unwrap();
+    }
+
+    /// The e2e runs exit `codes` in turn (then 0).
+    pub fn e2e_exits(&self, codes: &[i32]) {
+        let text: String = codes.iter().map(|c| format!("{c}\n")).collect();
+        fs::write(self.w.root.join("e2e.exits"), text).unwrap();
+    }
+
+    /// e2e runs so far.
+    pub fn e2e_runs(&self) -> usize {
+        fs::read_to_string(self.w.root.join("e2e.count"))
+            .map(|s| s.trim().parse().unwrap())
+            .unwrap_or(0)
+    }
+
+    /// A file the e2e script or a test command wrote under the root.
+    pub fn root_file(&self, rel: &str) -> String {
+        fs::read_to_string(self.w.root.join(rel)).unwrap_or_default()
+    }
+
+    /// gh: environment `env` has deployment `id` of `sha` with a `success` status, and compare
+    /// answers `status` (`ahead`, `behind`, …).
+    pub fn deploys(&self, env: &str, id: u64, sha: &str, status: &str) -> &Pipe {
+        let list = format!("api repos/me/web/deployments?environment={env}*");
+        let statuses = format!("api repos/me/web/deployments/{id}/statuses");
+        let compare = "api repos/me/web/compare/*";
+        let rules = fs::read_to_string(self.gh.dir.join("rules")).unwrap();
+        let has = |p: &str| rules.lines().any(|l| l == p);
+        let deployments = json!([{"id": id, "sha": sha}]).to_string();
+        let set = |p: &str, out: &str| {
+            if has(p) {
+                self.gh.replace(p, &[(out, "", 0)]);
+            } else {
+                self.gh.on(p, &[(out, "", 0)]);
+            }
+        };
+        set(&statuses, r#"[{"state":"success"}]"#);
+        set(&list, &deployments);
+        set(compare, &format!("{status}\n"));
+        self
+    }
+
+    /// The mission's data field `key`.
+    pub fn datum(&self, id: &str, key: &str) -> Value {
+        self.data(id).get(key).cloned().unwrap_or(Value::Null)
+    }
+}

@@ -46,6 +46,14 @@ pub fn doctor(config: &Config, home: &Home, exes: &Exes) -> String {
             )),
             Err(e) => out.push(format!("{name}: ruleset: {e}")),
         }
+        // PIP-34: a release block needs `live` (its staging).
+        if repo.path.exists()
+            && let Ok(files) = crate::repo::load(&repo.path, &repo.base)
+            && files.towercab.release.is_some()
+            && files.towercab.live.is_none()
+        {
+            out.push(format!("{name}: release block without live: ignored"));
+        }
         if repo.path.exists()
             && let Ok(url) = checkout::git(
                 &exes.git,
