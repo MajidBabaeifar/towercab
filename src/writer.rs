@@ -136,6 +136,17 @@ pub fn ci_line(result: &str) -> String {
     }
 }
 
+/// The review line (PIP-14): `approved`, or `not approved: <reasons, "; ">` (its verdicts).
+pub fn review_line(approved: bool, reasons: &[String]) -> String {
+    if approved {
+        "approved".into()
+    } else if reasons.is_empty() {
+        "not approved".into()
+    } else {
+        format!("not approved: {}", reasons.join("; "))
+    }
+}
+
 /// What the final text is made of.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Inputs {
