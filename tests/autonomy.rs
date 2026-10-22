@@ -430,6 +430,10 @@ fn test_validation_always() {
     for s in [Stage::Verify, Stage::Ci] {
         assert_eq!(machine::next(s, Event::Red), Next::Go(Stage::Build));
     }
+    // My merge (from approval or any stage up to merge) goes on to deploy and e2e too.
+    for s in [Stage::ApprovalMerge, Stage::Gate, Stage::Merge] {
+        assert_eq!(machine::next(s, Event::PrMerged), Next::Go(Stage::Deploy));
+    }
     let rpos = |s: Stage| REVERT.iter().position(|o| *o == s).unwrap();
     assert!(
         rpos(Stage::RevertCi) + 1 == rpos(Stage::RevertMerge),

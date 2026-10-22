@@ -162,7 +162,7 @@ impl fmt::Display for Hold {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Gate {
     Merge,
-    /// `waiting: review and merge PR`, the review's findings as one PR comment (PIP-7).
+    /// I merge, or look first ([`Gate::waiting`]).
     Approval(Hold),
 }
 
@@ -182,7 +182,7 @@ impl Gate {
 /// The gate (AUT-3..6, AUT-9, PIP-7): first match wins. A revert is held only by CI: my
 /// `approve` of `revert failed` re-enters it while the repo is still frozen.
 pub fn gate(g: &GateIn) -> Gate {
-    let hold = |h| Gate::Approval(h);
+    let hold = Gate::Approval;
     if g.kind == PrKind::Revert {
         return match g.ci {
             Ci::NotGreen => hold(Hold::CiNotGreen),
