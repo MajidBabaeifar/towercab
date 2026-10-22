@@ -20,6 +20,8 @@ pub struct Update {
     /// `message.chat.id`, as a string.
     pub chat: String,
     pub text: Option<String>,
+    /// `message.date` (unix s).
+    pub date: Option<i64>,
 }
 
 /// What a message asks for.
@@ -161,7 +163,13 @@ impl Telegram {
                 .and_then(|m| m.get("text"))
                 .and_then(Value::as_str)
                 .map(str::to_string);
-            out.push(Update { id, chat, text });
+            let date = msg.and_then(|m| m.get("date")).and_then(Value::as_i64);
+            out.push(Update {
+                id,
+                chat,
+                text,
+                date,
+            });
         }
         out.sort_by_key(|u| u.id);
         Ok(out)

@@ -268,6 +268,8 @@ fn test_cli() {
             "waiting: \"bad after:\"\n",
             "Wait",
         ),
+        ("done/261001-0905-drop", "stage: dropped\n", "Drop"),
+        ("intents/261001-0906-rev", "stage: maintain\n", "Rev"),
     ] {
         common::write(
             &intents,
@@ -280,15 +282,21 @@ fn test_cli() {
     let home = towercab::home::Home::resolve(Some(&tmp.path().join("home"))).unwrap();
     let db = Db::open(&home.db()).unwrap();
     for (intent, stage, waiting) in [
-        ("261001-0900", "approval:spec", "approve spec"),
-        ("261001-0901", "approval:release", "authorize release"),
+        ("261001-0900", "approval:spec", Some("approve spec")),
+        ("261001-0901", "approval:release", Some("authorize release")),
+        ("261001-0906", "revert_ci", None),
     ] {
+        let kind = if stage == "revert_ci" {
+            "revert"
+        } else {
+            "intent"
+        };
         db.conn()
             .execute(
-                "INSERT INTO missions (intent, repo, stage, step, model, session, checkout, branch,
-                   waiting, from_stage, created, updated)
-                 VALUES (?1, 'web', ?2, '', 'opus', 's', ?3, 'b', ?4, 'design', 0, 0)",
-                rusqlite::params![intent, stage, format!("work/{intent}-1"), waiting],
+                "INSERT INTO missions (kind, intent, repo, stage, step, model, session, checkout,
+                   branch, waiting, from_stage, created, updated)
+                 VALUES (?1, ?2, 'web', ?3, '', 'opus', 's', ?4, 'b', ?5, 'design', 0, 0)",
+                rusqlite::params![kind, intent, stage, format!("work/{intent}-1"), waiting],
             )
             .unwrap();
     }
@@ -352,6 +360,14 @@ fn test_cli() {
         run(&["retry", "--fresh", "0903"]),
         err("retry: 261001-0903 is done", 1)
     );
+    assert_eq!(
+        run(&["retry", "--fresh", "0905"]),
+        err("retry: 261001-0905 is dropped", 1)
+    );
+    assert_eq!(
+        run(&["retry", "--fresh", "0906"]),
+        err("retry: 261001-0906 is reverting", 1)
+    );
     assert_eq!(run(&["approve", "0904"]), ok("approved 261001-0904"));
     assert!(!md("intents/261001-0904-wait/intent.md").contains("waiting"));
     assert_eq!(
@@ -366,7 +382,7 @@ fn test_cli() {
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();
-    assert_eq!(stages, ["plan", "release"]);
+    assert_eq!(stages, ["plan", "release", "revert_ci"]);
 
     // No pipeline yet: `step` and `run --intent` refuse.
     assert_eq!(

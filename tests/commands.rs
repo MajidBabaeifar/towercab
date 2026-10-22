@@ -371,3 +371,57 @@ fn test_command_queued_while_held() {
         vec![(1, PAUSED.to_string())]
     );
 }
+
+#[test]
+fn test_command_reapplied_after_crash() {
+    // An intent-level `approve` writes `intent.md` first; a crash before its row is marked
+    // applied re-applies it: the marked write is found, the reply is the first one's.
+    let intents = common::Home::new(&[(
+        "intents/261001-0900-x/intent.md",
+        &common::intent_md("web", "waiting: \"bad after:\"\n", "X"),
+    )]);
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(&tmp.path().join("t.db")).unwrap();
+    let config = intents.config();
+    let store = intents.store();
+    let id = commands::queue(&db, &Cmd::Approve("0900".into()), "cli").unwrap();
+    let apply = || {
+        let listing = store.list().unwrap();
+        let cx = CmdCx {
+            config: &config,
+            db: &db,
+            tick: Tick::now(),
+            store: Some(&store),
+            listing: Some(&listing),
+        };
+        commands::apply(&cx, &commands::get(&db, id).unwrap()).unwrap()
+    };
+    assert_eq!(apply(), "approved 261001-0900");
+    db.conn()
+        .execute(
+            "UPDATE commands SET applied_at = NULL, result = NULL WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+    assert_eq!(apply(), "approved 261001-0900");
+    let approvals = intents
+        .log()
+        .iter()
+        .filter(|l| l.contains("approve"))
+        .count();
+    assert_eq!(approvals, 1, "{:?}", intents.log());
+    // A new approve on it isn't waiting any more.
+    let again = commands::queue(&db, &Cmd::Approve("0900".into()), "cli").unwrap();
+    let listing = store.list().unwrap();
+    let cx = CmdCx {
+        config: &config,
+        db: &db,
+        tick: Tick::now(),
+        store: Some(&store),
+        listing: Some(&listing),
+    };
+    assert_eq!(
+        commands::apply(&cx, &commands::get(&db, again).unwrap()).unwrap(),
+        "approve: 261001-0900 isn't waiting on you"
+    );
+}

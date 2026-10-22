@@ -580,3 +580,55 @@ fn test_step_refuses_waits() {
     assert_eq!((m.stage, m.step.as_str()), (Stage::Design, "enter"));
     lp.shutdown().unwrap();
 }
+
+#[test]
+fn test_run_session_fresh_per_run() {
+    // Review, triage and verifier runs: a new session per run (`missions.run_session`),
+    // resumed only when re-entered at its recorded step (a cut-off); the worker's untouched.
+    let w = world(&[intent_file("261001-0900-x", "web", "", "X")]);
+    let db = w.db();
+    db.conn()
+        .execute(
+            "INSERT INTO missions (intent, repo, stage, step, model, session, checkout, created,
+               updated)
+             VALUES ('261001-0900', 'web', 'review', '', 'opus', 'worker', 'work/x', 0, 0)",
+            [],
+        )
+        .unwrap();
+    let m = towercab::mission::get(db.conn(), 1).unwrap();
+    let store = w.intents.store();
+    let exes = w.exes();
+    let mut identity = towercab::github::Identity::none();
+    let probe = towercab::handler::Probe::default();
+    let cx = Ctx {
+        config: &w.config,
+        home: &w.home,
+        db: &db,
+        store: &store,
+        exes: &exes,
+        identity: &mut identity,
+        tick: w.clock,
+        timeouts: true,
+        probe: &probe,
+    };
+    let (m1, s1) = cx.run_session(&m, "review").unwrap();
+    let Session::New(first) = s1 else {
+        panic!("{s1:?}")
+    };
+    assert_ne!(first, "worker");
+    assert_eq!(
+        (m1.step.as_str(), m1.run_session.as_deref()),
+        ("review", Some(first.as_str()))
+    );
+    // Cut off and re-entered at its step: resumed.
+    let (m2, s2) = cx.run_session(&m1, "review").unwrap();
+    assert_eq!(s2, Session::Resume(first.clone()));
+    // The next run (after another step): a new one.
+    let m3 = cx.record(&m2, "triage", &[]).unwrap();
+    let (m4, s4) = cx.run_session(&m3, "review").unwrap();
+    let Session::New(second) = s4 else {
+        panic!("{s4:?}")
+    };
+    assert_ne!(second, first);
+    assert_eq!((m4.session.as_str(), m4.session_used), ("worker", false));
+}

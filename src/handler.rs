@@ -316,6 +316,21 @@ impl Ctx<'_> {
         Ok((m, flag))
     }
 
+    /// Before a review, triage or verifier run in `step` (PIP-13): a fresh session per run, a
+    /// new uuid in `missions.run_session` with `--session-id`; re-entered at that recorded step
+    /// after a cut-off (crash, kill, limit), the same one with `--resume`. (A gone one: the
+    /// handler records another step, then calls this again.)
+    pub fn run_session(&self, m: &Mission, step: &str) -> Result<(Mission, Session), String> {
+        if m.step == step
+            && let Some(uuid) = &m.run_session
+        {
+            return Ok((m.clone(), Session::Resume(uuid.clone())));
+        }
+        let uuid = uuid::Uuid::new_v4().to_string();
+        let m = self.record(m, step, &[("run_session", Value::Text(uuid.clone()))])?;
+        Ok((m, Session::New(uuid)))
+    }
+
     /// The session is gone (`claude::session_gone`): a new uuid, unused, step cleared, so the
     /// next run gets `--session-id` and a prompt with the context (`claude::fresh_context`).
     pub fn new_session(&self, m: &Mission) -> Result<Mission, String> {

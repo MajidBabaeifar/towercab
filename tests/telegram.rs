@@ -201,6 +201,12 @@ fn test_other_chat_ignored() {
     let tg = FakeTelegram::start();
     let mut w = World::new(&[], &["web"]);
     w.config.telegram = Some(tg.config());
+    // The first start skips Telegram's backlog: my `resume` of yesterday isn't applied.
+    tg.state.lock().unwrap().updates.push(serde_json::json!({
+        "update_id": 99,
+        "message": {"message_id": 99, "chat": {"id": 4242}, "text": "/resume",
+                    "date": w.clock.wall.timestamp() - 86_000},
+    }));
     let ids = [
         tg.message("999", Some("pause")),
         tg.message(CHAT, None),

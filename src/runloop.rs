@@ -53,6 +53,9 @@ pub const PASS: Duration = Duration::from_secs(5);
 /// PR reads and `intents` checks: at most every 60 s (LOOP-12).
 pub const POLL: Duration = Duration::from_secs(60);
 
+/// Telegram messages older than this at the first start are skipped (LOOP-16).
+pub const BACKLOG: Duration = Duration::from_secs(600);
+
 /// Gauges (MET, the metrics intent): every 60 s.
 pub const GAUGES: Duration = Duration::from_secs(60);
 
@@ -439,10 +442,15 @@ impl Loop {
         let now = tick.unix();
         let mut applied = Vec::new();
         for u in updates {
+            // The first start (no offset yet) skips Telegram's backlog (up to 24 h): an old
+            // `approve` or `retry` isn't applied now.
+            let stale = offset.is_none()
+                && u.date
+                    .is_some_and(|d| (d as f64) < now - BACKLOG.as_secs_f64());
             let parsed = u
                 .text
                 .as_deref()
-                .filter(|_| u.chat == chat)
+                .filter(|_| u.chat == chat && !stale)
                 .map(telegram::parse);
             let reply = match &parsed {
                 None | Some(Ok(TgCommand::Cmd(_))) => None,

@@ -186,7 +186,12 @@ fn resolve(cx: &CmdCx, cmd: &Cmd, q: &str) -> Result<Intent, String> {
     })
 }
 
-fn plan(cx: &CmdCx, cmd: &Cmd) -> Result<Plan, String> {
+/// The trailer of a command's own intent write: `Towercab-Command: <row id> <created>`. A
+/// re-apply after a crash between the write and its row's `applied_at` finds it and answers as
+/// the first time.
+pub const COMMAND_MARK: &str = "Towercab-Command:";
+
+fn plan(cx: &CmdCx, cmd: &Cmd, row: &CommandRow) -> Result<Plan, String> {
     let word = cmd.word();
     let intent = match cmd {
         Cmd::Pause => return Ok(Plan::Pause),
@@ -203,14 +208,20 @@ fn plan(cx: &CmdCx, cmd: &Cmd) -> Result<Plan, String> {
         id: m.id,
         intent: id.clone(),
     };
+    let mark = format!("{COMMAND_MARK} {} {}", row.id, row.created);
+    let written = || cx.store.is_some_and(|s| s.has_mark(&mark).unwrap_or(false));
     let write = |what: &str, f: &dyn Fn(&mut Intent) -> Result<(), String>| match cx.store {
         None => Err("intents can't be read".to_string()),
-        Some(s) => s.update(&id, what, f).map(drop).map_err(|e| e.to_string()),
+        Some(_) if written() => Ok(()),
+        Some(s) => s
+            .update_marked(&id, what, Some(&mark), f)
+            .map(drop)
+            .map_err(|e| e.to_string()),
     };
     Ok(match (cmd, m) {
         (Cmd::Approve(_), Some(m)) if m.stage.waits() => on_mission(&m),
         // An intent-level wait (LOOP-5) or one of mine: removed, as by hand (PIP-17).
-        (Cmd::Approve(_), None) if intent.waiting().is_some() => {
+        (Cmd::Approve(_), None) if intent.waiting().is_some() || written() => {
             match write("approve", &|i| i.remove("waiting")) {
                 Ok(()) => Plan::Reply(format!("approved {id}")),
                 Err(e) => Plan::Reply(format!("{word}: {e}")),
@@ -292,7 +303,7 @@ pub fn apply(cx: &CmdCx, row: &CommandRow) -> Result<String, String> {
         return Ok(reply);
     }
     let cmd = Cmd::from_row(row)?;
-    let plan = plan(cx, &cmd)?;
+    let plan = plan(cx, &cmd, row)?;
     let ax = Apply {
         db: cx.db,
         config: cx.config,
