@@ -255,6 +255,50 @@ pub fn state(db: &Db, config: &Config, built: bool, tick: Tick) -> Result<PickSt
     })
 }
 
+/// `run --intent` and `step` (LOOP-15): only `id`, regardless of order and cutoff, not of
+/// skips: [`decide`] with every other open intent counted active. `Err`: why it isn't picked.
+pub fn decide_for(
+    listing: &Listing,
+    state: &PickState,
+    id: &str,
+) -> (Decision, Result<(), String>) {
+    let mut only = state.clone();
+    only.active.extend(
+        listing
+            .open
+            .iter()
+            .filter(|i| i.id != id)
+            .map(|i| i.id.clone()),
+    );
+    let d = decide(listing, &only);
+    if d.pick.as_deref() == Some(id) {
+        return (d, Ok(()));
+    }
+    if let Some((_, skip)) = d.skipped.iter().find(|(s, _)| s == id) {
+        let why = skip.to_string();
+        return (d, Err(why));
+    }
+    let why = match listing.open.iter().find(|i| i.id == id) {
+        None => format!("no open intent matches {id}"),
+        Some(_) if state.active.contains(id) => "it has a mission".to_string(),
+        Some(i) => match (i.waiting(), i.stage()) {
+            (Some(w), _) => format!("waiting: {w}"),
+            (None, Some(s)) => format!("stage: {}", s.as_str()),
+            (None, None) => {
+                let done = listing.done_ids();
+                let left: Vec<&str> = i
+                    .after()
+                    .iter()
+                    .filter(|a| !done.contains(*a))
+                    .map(String::as_str)
+                    .collect();
+                format!("after: {} not done", left.join(", "))
+            }
+        },
+    };
+    (d, Err(why))
+}
+
 /// The `pick` stage: fetch Towercab's clone (LOOP-8), load the repo files (REPO-1), make the
 /// checkout (LOOP-8) → `design`.
 pub struct Pick;

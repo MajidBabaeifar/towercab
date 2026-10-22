@@ -29,3 +29,20 @@ impl Default for Exes {
         }
     }
 }
+
+/// Where `exe` runs from: a path (with a `/`) if it is an executable file, else the first
+/// executable `PATH` entry of that name.
+pub fn which(exe: &std::ffi::OsStr) -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let runs = |p: &std::path::Path| {
+        p.metadata()
+            .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    };
+    let path = std::path::Path::new(exe);
+    if path.components().count() > 1 {
+        return runs(path).then(|| path.to_path_buf());
+    }
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|d| d.join(exe))
+        .find(|c| runs(c))
+}

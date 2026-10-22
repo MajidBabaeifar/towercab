@@ -34,6 +34,7 @@ use crate::handler::{
     update,
 };
 use crate::home::{Home, LoopLock};
+use crate::intents::store::find_open;
 use crate::intents::{Intent, Listing, Store, Value as IValue};
 use crate::limits;
 use crate::machine::{self, Apply, Event, Next, Stage};
@@ -139,6 +140,9 @@ pub struct PassReport {
     pub picked: Option<String>,
     /// The machine slept since the last pass (LOOP-11): every wait polls again first.
     pub woke: bool,
+    /// `run --intent`: its mission reached `done`, `stopped`, `approval:*` or `blocked`
+    /// (`Ok`: `<id>: <stage>[ · <waiting>]`), or it can't be picked (`Err`: why).
+    pub target: Option<Result<String, String>>,
 }
 
 /// What a handler call ended in.
@@ -164,6 +168,11 @@ pub struct Loop {
     pub probe: Probe,
     /// `[telegram]`: updates read and the outbox sent each pass (LOOP-16).
     pub telegram: Option<Telegram>,
+    /// `run --intent`: the intent (resolved) and its mission.
+    target: Option<String>,
+    target_mission: Option<i64>,
+    /// Why the target can't be picked.
+    refused: Option<String>,
     store: Option<Store>,
     listing: Option<Listing>,
     children: BTreeMap<i64, Child>,
@@ -227,6 +236,9 @@ impl Loop {
             identity: Identity::none(),
             probe: Probe::default(),
             telegram: None,
+            target: None,
+            target_mission: None,
+            refused: None,
             store: None,
             listing: None,
             children: BTreeMap::new(),
@@ -372,6 +384,7 @@ impl Loop {
         }
         self.inhibit(tick)?;
         report.idle = report.picked.is_none() && self.idle(tick, decision.as_ref())?;
+        report.target = self.target_state()?;
         Ok(report)
     }
 
@@ -989,7 +1002,7 @@ impl Loop {
         ms.sort_by_key(|m| self.rank(m));
         for m in ms {
             let m = mission::get(self.db.conn(), m.id)?;
-            if !self.due_now(&m, tick) {
+            if !self.targets(&m) || !self.due_now(&m, tick) {
                 continue;
             }
             self.due.remove(&m.id);
@@ -1053,7 +1066,17 @@ impl Loop {
         let (Some(listing), true) = (self.listing.clone(), self.store.is_some()) else {
             return Ok(None);
         };
-        let decision = pick::decide(&listing, &self.pick_state(tick)?);
+        let state = self.pick_state(tick)?;
+        let decision = match self.target.clone() {
+            None => pick::decide(&listing, &state),
+            // Its mission exists: nothing to pick.
+            Some(_) if self.target_mission.is_some() => Decision::default(),
+            Some(id) => {
+                let (d, r) = pick::decide_for(&listing, &state, &id);
+                self.refused = r.err();
+                d
+            }
+        };
         let mut wrote = false;
         for (id, w, n) in &decision.writes {
             let Some(intent) = listing.open.iter().find(|i| i.id == *id) else {
@@ -1099,16 +1122,112 @@ impl Loop {
         let unfinished = mission::unfinished(self.db.conn())?;
         let ahead = !self.slot_free()
             || !self.queued.is_empty()
-            || unfinished.iter().any(|m| self.pending(m, tick));
+            || unfinished
+                .iter()
+                .any(|m| self.targets(m) && self.pending(m, tick));
         if ahead {
             return Ok(Some(decision));
         }
         let Some(intent) = listing.open.iter().find(|i| i.id == id).cloned() else {
             return Ok(Some(decision));
         };
-        self.insert_pick(&intent, tick)?;
+        let m = self.insert_pick(&intent, tick)?;
+        if self.target.is_some() {
+            self.target_mission = Some(m.id);
+        }
         report.picked = Some(id);
         Ok(Some(decision))
+    }
+
+    /// `m` is stepped: no `--intent`, or it is the target's.
+    fn targets(&self, m: &Mission) -> bool {
+        self.target
+            .as_ref()
+            .is_none_or(|t| m.intent.as_ref() == Some(t))
+    }
+
+    /// `run --intent` and `step` (LOOP-15): only intent `q`'s (any unique suffix) mission is
+    /// stepped and picked, regardless of order and cutoff (not of skips). Returns its id.
+    pub fn set_target(&mut self, q: &str) -> Result<String, String> {
+        let listing = self.listing.as_ref().ok_or("intents can't be read")?;
+        let id = find_open(listing, q).map_err(|e| e.to_string())?.id;
+        self.target_mission = mission::unfinished_for(self.db.conn(), &id)?.map(|m| m.id);
+        self.target = Some(id.clone());
+        self.refused = None;
+        Ok(id)
+    }
+
+    /// `<id>: <stage>[ · <waiting>]` once the target's mission is `done`, `stopped`,
+    /// `approval:*` or `blocked` (entry effects run); `Err` when it can't be picked.
+    fn target_state(&self) -> Result<Option<Result<String, String>>, String> {
+        let Some(id) = &self.target else {
+            return Ok(None);
+        };
+        if let Some(why) = &self.refused {
+            return Ok(Some(Err(format!("{id}: not picked: {why}"))));
+        }
+        let Some(mid) = self.target_mission else {
+            return Ok(None);
+        };
+        let m = mission::get(self.db.conn(), mid)?;
+        if m.step == ENTER || !(m.stage.finished() || m.stage.waits()) {
+            return Ok(None);
+        }
+        Ok(Some(Ok(stage_line(id, &m))))
+    }
+
+    /// `towercab step <id>` (LOOP-15): one step of the intent's unfinished mission in the
+    /// foreground: one handler call, then each child it spawns waited for and `finish`ed,
+    /// entry effects after. No mission → picked as `run --intent` does, then its first step.
+    /// Returns `<id>: <stage> → <stage>[ · <waiting>]`.
+    pub fn step_intent(&mut self, q: &str) -> Result<String, String> {
+        let id = self.set_target(q)?;
+        let tick = Tick::now();
+        self.enter_all(tick)?;
+        let mid = match self.target_mission {
+            Some(mid) => mid,
+            None => {
+                let listing = self.listing.clone().ok_or("intents can't be read")?;
+                let state = self.pick_state(tick)?;
+                pick::decide_for(&listing, &state, &id)
+                    .1
+                    .map_err(|why| format!("{id}: not picked: {why}"))?;
+                let intent = find_open(&listing, &id).map_err(|e| e.to_string())?;
+                let m = self.insert_pick(&intent, tick)?;
+                self.target_mission = Some(m.id);
+                self.enter_all(tick)?;
+                m.id
+            }
+        };
+        let m = mission::get(self.db.conn(), mid)?;
+        let from = m.stage;
+        if !m.stage.driven() || m.held {
+            return Ok(format!("{id}: {from} → {}", stage_line_rest(&m)));
+        }
+        if !self.handlers.get_mut(m.stage).is_some_and(|h| h.built()) {
+            return Err(format!("{id}: {} handler not built", m.stage));
+        }
+        update(
+            self.db.conn(),
+            m.id,
+            &[
+                ("busy".into(), Value::Integer(1)),
+                ("limit_model".into(), Value::Null),
+            ],
+        )?;
+        let m = mission::get(self.db.conn(), mid)?;
+        let called = self.call(&m, tick, |h, cx| h.step(cx, &m));
+        self.progress(&m, called, tick)?;
+        while self.children.contains_key(&mid) || self.queued.iter().any(|(i, _, _)| *i == mid) {
+            std::thread::sleep(Duration::from_millis(20));
+            let tick = Tick::now();
+            self.spawn_queued(tick)?;
+            self.timeouts(tick);
+            self.reap(tick)?;
+        }
+        self.enter_all(Tick::now())?;
+        let after = mission::get(self.db.conn(), mid)?;
+        Ok(format!("{id}: {from} → {}", stage_line_rest(&after)))
     }
 
     fn insert_pick(&mut self, intent: &Intent, tick: Tick) -> Result<Mission, String> {
@@ -1181,18 +1300,31 @@ impl Loop {
     /// or, without `--watch`, until a pass finds nothing to do; then [`Loop::shutdown`].
     /// A failed pass is logged to stderr and the loop goes on (`--watch`) or exits with it.
     pub fn run(mut self) -> Result<(), String> {
-        if let Some(id) = self.opts.intent.clone()
-            && !self.handlers.built()
-        {
-            self.shutdown()?;
-            return Err(format!("{id}: not picked: picks off: pipeline not built"));
+        if let Some(q) = self.opts.intent.clone() {
+            let target = if self.handlers.built() {
+                self.set_target(&q).map(drop)
+            } else {
+                Err(format!("{q}: not picked: picks off: pipeline not built"))
+            };
+            if let Err(e) = target {
+                self.shutdown()?;
+                return Err(e);
+            }
         }
         let mut wake = self.signals().map_err(|e| format!("signals: {e}"))?;
         let mut next = Instant::now();
         loop {
             match self.pass(Tick::now()) {
                 Ok(r) if r.stop => break,
-                Ok(r) if r.idle && !self.opts.watch => break,
+                Ok(PassReport {
+                    target: Some(end), ..
+                }) => {
+                    self.shutdown()?;
+                    let line = end?;
+                    println!("{line}");
+                    return Ok(());
+                }
+                Ok(r) if r.idle && !self.opts.watch && self.target.is_none() => break,
                 Ok(_) => {}
                 Err(e) if self.opts.watch => eprintln!("towercab: {e}"),
                 Err(e) => {
@@ -1279,4 +1411,17 @@ impl Loop {
         self.inhibitor.stop();
         self.db.del_meta("running")
     }
+}
+
+/// `<stage>[ · <waiting>]`.
+fn stage_line_rest(m: &Mission) -> String {
+    match &m.waiting {
+        Some(w) => format!("{} · {w}", m.stage),
+        None => m.stage.to_string(),
+    }
+}
+
+/// `<id>: <stage>[ · <waiting>]`.
+fn stage_line(id: &str, m: &Mission) -> String {
+    format!("{id}: {}", stage_line_rest(m))
 }

@@ -1,6 +1,5 @@
-//! Command line (LOOP-15, so far `add`, `migrate`, `review`, `protect`, `up`, `down`, `logs`,
-//! `run`, `approve`, `retry --fresh`, `release`, `pause`, `resume`, `trust`, `status`, `next` and
-//! `--version`).
+//! Command line (LOOP-15): every command; `telemetry`, `eval` and `hook guard` are stubs until
+//! their intents (MET-12, PIP-33, PIP-29).
 
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
@@ -11,6 +10,7 @@ use clap::{Parser, Subcommand};
 use crate::commands::{self, Cmd, QUEUED};
 use crate::config::Config;
 use crate::db::Db;
+use crate::doctor::doctor;
 use crate::exes::Exes;
 use crate::handler::Handlers;
 use crate::home::Home;
@@ -90,6 +90,29 @@ enum Command {
     Status,
     /// The intent the loop would pick next, and why the others wait
     Next,
+    /// One step of an intent's mission in the foreground
+    Step { id: String },
+    /// Claude Code telemetry to the metrics endpoint (not built yet)
+    Telemetry {
+        #[arg(value_parser = ["on", "off", "status"])]
+        what: String,
+    },
+    /// Run the evals (not built yet)
+    Eval,
+    /// Hooks Claude Code runs inside Towercab's workers
+    #[command(hide = true)]
+    Hook {
+        #[command(subcommand)]
+        hook: Hook,
+    },
+    /// Check the config, programs, GitHub App, rulesets and Telegram
+    Doctor,
+}
+
+#[derive(Subcommand, Debug)]
+enum Hook {
+    /// The worker's PreToolUse guard (PIP-29)
+    Guard,
 }
 
 /// Exit code: 0 ok, 1 error, 2 bad arguments.
@@ -176,7 +199,39 @@ where
         Command::Trust { repo } => command(&args.config, &args.home, Cmd::Trust(repo)),
         Command::Status => report(status_cmd(&args.config, &args.home)),
         Command::Next => report(next_cmd(&args.config, &args.home)),
+        Command::Step { id } => report(loop_config(&args.config).and_then(|config| {
+            let home = Home::resolve(args.home.as_deref())?;
+            let mut lp = Loop::open(
+                config,
+                home,
+                Handlers::production(),
+                Exes::default(),
+                LoopOpts::default(),
+            )?;
+            let out = lp.step_intent(&id);
+            lp.shutdown()?;
+            out
+        })),
+        Command::Telemetry { .. } => not_built("MET-12", 1),
+        Command::Eval => not_built("PIP-33", 1),
+        Command::Hook { hook: Hook::Guard } => not_built("PIP-29", 2),
+        Command::Doctor => match loop_config(&args.config) {
+            Err(e) => {
+                println!("{e}");
+                1
+            }
+            Ok(config) => report(
+                Home::resolve(args.home.as_deref())
+                    .map(|home| doctor(&config, &home, &Exes::default())),
+            ),
+        },
     }
+}
+
+/// A stub until its intent: `towercab: not built yet: <ID>`, exit `code`.
+fn not_built(id: &str, code: i32) -> i32 {
+    eprintln!("towercab: not built yet: {id}");
+    code
 }
 
 /// The intents for `status` and `next`: pulled; a failed pull → the checkout as it is, and
