@@ -10,6 +10,7 @@ pub mod gate;
 pub mod gh;
 pub mod git;
 pub mod guard;
+pub mod merge;
 pub mod plan;
 pub mod policies;
 pub mod pr;
@@ -74,7 +75,11 @@ pub fn handlers(mode: Mode) -> Handlers {
         Box::new(verifier::Verifier::new(mode.clone())),
     );
     h.set(Stage::Review, Box::new(review::Review::new(mode.clone())));
-    h.set(Stage::Gate, Box::new(gate::Gate::new(mode)));
+    h.set(Stage::Gate, Box::new(gate::Gate::new(mode.clone())));
+    h.set(
+        Stage::Merge,
+        Box::new(merge::Merge::new(ci::Seq::Intent, mode)),
+    );
     h
 }
 
