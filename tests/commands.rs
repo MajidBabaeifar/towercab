@@ -171,9 +171,9 @@ fn test_commands_row_applied() {
         PAUSED,
         "trusted web",
         "trust: unknown repo nope",
-        "approve: not built yet",
-        "retry: not built yet",
-        "release: not built yet",
+        "approve: no open intent matches 0721",
+        "retry: no open intent matches 0721",
+        "release: no open intent matches 0721",
     ];
     assert_eq!(
         report.commands,
@@ -204,13 +204,16 @@ fn test_commands_row_applied() {
     }
     assert!(Cmd::Trust("x".into()).failed("trust: unknown repo x"));
     assert!(!Cmd::Pause.failed(PAUSED));
-    assert!(Cmd::RetryFresh("1".into()).failed("retry: not built yet"));
+    assert!(Cmd::RetryFresh("1".into()).failed("retry: 1 is done"));
+    assert!(!Cmd::RetryFresh("1".into()).failed("fresh attempt 2 for 1"));
 
     // An applied row is never applied again, even when asked.
     let cx = CmdCx {
         config: &config,
         db: &db,
         tick: Tick::now(),
+        store: None,
+        listing: None,
     };
     let first = commands::get(&db, ids[0]).unwrap();
     db.del_meta("paused").unwrap();
@@ -272,19 +275,19 @@ fn test_commands_row_applied() {
         (
             &["approve", "0721"],
             String::new(),
-            "towercab: approve: not built yet\n",
+            "towercab: approve: no open intent matches 0721\n",
             1,
         ),
         (
             &["retry", "--fresh", "0721"],
             String::new(),
-            "towercab: retry: not built yet\n",
+            "towercab: retry: no open intent matches 0721\n",
             1,
         ),
         (
             &["release", "0721"],
             String::new(),
-            "towercab: release: not built yet\n",
+            "towercab: release: no open intent matches 0721\n",
             1,
         ),
     ] {

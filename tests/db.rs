@@ -146,6 +146,7 @@ fn test_db_migrations_tx_meta() {
             name: "trust".into(),
             arg: "web".into(),
             source: "cli".into(),
+            update_id: None,
             created: 1.5,
             applied_at: None,
             result: None,

@@ -330,13 +330,21 @@ impl Loop {
             return Ok(report);
         }
         report.woke = self.wake_check(tick)?;
+        self.ensure_store();
         let cx = CmdCx {
             config: &self.config,
             db: &self.db,
             tick,
+            store: self.store.as_ref(),
+            listing: self.listing.as_ref(),
         };
         report.commands = commands::apply_pending(&cx)?;
-        self.ensure_store();
+        if !report.commands.is_empty() {
+            self.left_by_commands(tick)?;
+            if let Some(s) = &self.store {
+                self.listing = Some(s.scan());
+            }
+        }
         self.reap(tick)?;
         self.enter_all(tick)?;
         self.timeouts(tick);
@@ -354,6 +362,20 @@ impl Loop {
         self.inhibit(tick)?;
         report.idle = report.picked.is_none() && self.idle(tick, decision.as_ref())?;
         Ok(report)
+    }
+
+    /// Missions a command moved (`step = 'enter'`): their child is stopped (SIGTERM now,
+    /// SIGKILL when due), their queued child and poll dropped.
+    fn left_by_commands(&mut self, tick: Tick) -> Result<(), String> {
+        for m in mission::entering(self.db.conn())? {
+            if let Some(mut c) = self.children.remove(&m.id) {
+                c.term(tick.mono);
+                self.dying.push(c);
+            }
+            self.queued.retain(|(id, _, _)| *id != m.id);
+            self.due.remove(&m.id);
+        }
+        Ok(())
     }
 
     /// LOOP-11's wake check: the wall clock ran ahead of the monotonic one by more than 3

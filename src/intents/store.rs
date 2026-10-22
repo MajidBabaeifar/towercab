@@ -507,7 +507,7 @@ fn on_main(checkout: &Checkout) -> Result<(), StoreError> {
 /// An open intent by ID or suffix (INT-3: over open intents). An unreadable folder in
 /// `intents/` fails with its reason (INT-11) when `s` is its exact ID, or when no open ID
 /// matches and it is the one unreadable ID ending with `s`.
-fn find_open(listing: &Listing, s: &str) -> Result<Intent, StoreError> {
+pub fn find_open(listing: &Listing, s: &str) -> Result<Intent, StoreError> {
     let bad: Vec<(String, &Unreadable)> = listing
         .unreadable
         .iter()

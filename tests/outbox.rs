@@ -3,17 +3,22 @@
 
 mod common;
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::time::Duration;
 
-use common::world::{World, intent_file};
+use common::world::{World, intent_file, open_pr};
 use common::{intent, intent_md, read, t};
 use rusqlite::params;
+use towercab::commands::{self, Cmd};
 use towercab::config::{Config, IntentsConfig};
 use towercab::db::{Db, OutboxRow};
-use towercab::handler::Handlers;
+use towercab::handler::{ChildEnd, Ctx, Handler, Handlers, Outcome, Progress, StepError};
 use towercab::intents::Listing;
+use towercab::limits::Limit;
 use towercab::machine::{Door, Stage, Waiting};
+use towercab::mission::Mission;
 use towercab::outbox::{self, Notice, Sender, Subject};
 use towercab::priority::ReviewDue;
 
@@ -318,6 +323,130 @@ fn idle() -> Handlers {
         );
     }
     h
+}
+
+/// A stage's handler from a closure over the mission.
+struct F(Box<dyn FnMut(&Mission) -> Outcome>);
+
+impl Handler for F {
+    fn step(&mut self, _: &mut Ctx<'_>, m: &Mission) -> Result<Progress, StepError> {
+        Ok(Progress::Done((self.0)(m)))
+    }
+    fn finish(&mut self, _: &mut Ctx<'_>, _: &Mission, _: ChildEnd) -> Result<Progress, StepError> {
+        unreachable!()
+    }
+}
+
+fn pr(n: u64, repo: &str) -> Outcome {
+    Outcome::ok()
+        .with("pr", n as i64)
+        .with("pr_url", format!("https://github.com/me/{repo}/pull/{n}"))
+        .with("head", "h1".to_string())
+        .with("feedback_seen", "2026-10-15T10:00:00Z".to_string())
+}
+
+#[test]
+fn test_only_actionable() {
+    // a: done. b: a usage limit. c: a PR I closed. d: a PR I merged. e: waits on me, I
+    // continue by hand (no message), then waits twice more.
+    let mut w = World::new(
+        &[
+            intent_file("261001-0900-a", "a", "", "A"),
+            intent_file("261001-0901-b", "b", "", "B"),
+            intent_file("261001-0902-c", "c", "", "C"),
+            intent_file("261001-0903-d", "d", "", "D"),
+            intent_file("261001-0904-e", "e", "", "E"),
+        ],
+        &["a", "b", "c", "d", "e"],
+    );
+    let mut closed = open_pr("h1");
+    closed.state = "CLOSED".into();
+    w.prs.set(7, closed);
+    let mut merged = open_pr("h1");
+    merged.state = "MERGED".into();
+    merged.merged_at = Some("2026-10-15T12:00:00Z".into());
+    merged.merge_commit = Some("m1".into());
+    w.prs.set(8, merged);
+    let mut h = Handlers::stubs();
+    h.set(
+        Stage::Design,
+        Box::new(F(Box::new(|m: &Mission| match m.repo.as_str() {
+            "c" => pr(7, "c"),
+            "d" => pr(8, "d"),
+            "e" if m.continued == 0 => Outcome::wait(Waiting::ApproveSpec, ""),
+            _ => Outcome::ok(),
+        }))),
+    );
+    let limited = Rc::new(Cell::new(false));
+    let l = Rc::clone(&limited);
+    h.set(
+        Stage::Build,
+        Box::new(F(Box::new(move |m: &Mission| match m.repo.as_str() {
+            "b" if !l.get() => {
+                l.set(true);
+                Outcome::limit(Limit {
+                    model: m.model.clone(),
+                    reset: None,
+                    text: "usage limit reached".into(),
+                })
+            }
+            "e" => Outcome::wait(Waiting::CiRed, "test_x"),
+            _ => Outcome::ok(),
+        }))),
+    );
+    let mut lp = w.open(h);
+    w.until(&mut lp, 150, |w| {
+        ["261001-0900", "261001-0901", "261001-0903"]
+            .iter()
+            .all(|i| w.stage(i) == Some(Stage::Done))
+            && w.stage("261001-0902") == Some(Stage::Stopped)
+            && w.stage("261001-0904") == Some(Stage::ApprovalSpec)
+    });
+    assert!(limited.get(), "b hit its limit");
+    assert_eq!(
+        w.mission("261001-0902").waiting.as_deref(),
+        Some("PR closed")
+    );
+    assert_eq!(w.mission("261001-0903").merged_by.as_deref(), Some("human"));
+    let e = w.mission("261001-0904").id.to_string();
+    let rows = w.outbox();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(
+        (rows[0].0.as_str(), rows[0].1.as_str(), rows[0].2.as_str()),
+        (e.as_str(), "approve_spec", "0")
+    );
+
+    // I remove `waiting` myself: it goes on, no message for my edit; the next wait is new.
+    w.intents.push_mine(
+        &[(
+            "intents/261001-0904-e/intent.md",
+            Some(&intent_md("e", "stage: design\n", "E")),
+        )],
+        "go on",
+    );
+    w.until(&mut lp, 10, |w| {
+        w.stage("261001-0904") == Some(Stage::Blocked)
+    });
+    // approve: continued again, the same wait → its own message (n = continued).
+    commands::queue(&w.db(), &Cmd::Approve("0904".into()), "cli").unwrap();
+    w.pass(&mut lp);
+    w.until(&mut lp, 10, |w| {
+        w.mission("261001-0904").continued == 2 && w.stage("261001-0904") == Some(Stage::Blocked)
+    });
+    let keys: Vec<(String, String, String)> = w
+        .outbox()
+        .into_iter()
+        .map(|(m, e, n, _)| (m, e, n))
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            (e.clone(), "approve_spec".into(), "0".into()),
+            (e.clone(), "ci_red".into(), "1".into()),
+            (e.clone(), "ci_red".into(), "2".into()),
+        ]
+    );
+    lp.shutdown().unwrap();
 }
 
 /// Records what it sends.

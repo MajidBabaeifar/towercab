@@ -64,6 +64,7 @@ CREATE TABLE outbox (mission TEXT NOT NULL,   -- mission id, 'intent:<id>', 'rep
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
   name TEXT NOT NULL CHECK (name IN ('approve','retry_fresh','release','pause','resume','trust')),
   arg TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,  -- 'cli' or 'telegram'
+  update_id INTEGER,                                    -- a Telegram one's update: its reply's outbox n
   created REAL NOT NULL, applied_at REAL, result TEXT);
 
 CREATE TABLE repo_caps (repo TEXT PRIMARY KEY, capped INTEGER NOT NULL DEFAULT 0,  -- cap 3 (AUT-10, MNT-6)
@@ -211,6 +212,8 @@ pub struct CommandRow {
     pub name: String,
     pub arg: String,
     pub source: String,
+    /// The Telegram update it came from (its reply goes to the outbox under this `n`).
+    pub update_id: Option<i64>,
     pub created: f64,
     pub applied_at: Option<f64>,
     pub result: Option<String>,
@@ -223,6 +226,7 @@ impl CommandRow {
             name: r.get("name")?,
             arg: r.get("arg")?,
             source: r.get("source")?,
+            update_id: r.get("update_id")?,
             created: r.get("created")?,
             applied_at: r.get("applied_at")?,
             result: r.get("result")?,
