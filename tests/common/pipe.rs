@@ -127,7 +127,8 @@ exit "$(cat "$d/claude-$n.exit" 2>/dev/null || echo 0)"
 
 /// A `gh` that matches `"$*"` against ordered shell `case` patterns ([`GhScript::on`]), each
 /// with a queue of answers (the last one repeats); every call logged (`calls.log`, argv per
-/// call); a `--body-file <f>` or `-F body=@<f>` copied to `body-<n>`. No rule → exit 98.
+/// call, newlines as spaces in `calls.log`); a `--body-file <f>` or `-F body=@<f>` copied to
+/// `body-<n>`. No rule → exit 98.
 pub struct GhScript {
     pub dir: PathBuf,
     pub bin: PathBuf,
@@ -144,7 +145,8 @@ impl GhScript {
                 r#"d='{d}'
 n=$(($(cat "$d/count" 2>/dev/null || echo 0) + 1))
 echo "$n" > "$d/count"
-printf '%s\n' "$*" >> "$d/calls.log"
+printf '%s' "$*" | tr '\n' ' ' >> "$d/calls.log"
+echo >> "$d/calls.log"
 : > "$d/argv-$n"
 prev=
 for a in "$@"; do
