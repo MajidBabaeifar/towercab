@@ -361,6 +361,37 @@ impl Store {
         })
     }
 
+    /// Writes `rel` (a file other than `intent.md`, `TODO.md`, `DONE.md`: `intents/<dir>/plan.md`,
+    /// `evals/<id>.json`) to `main`, commit `towercab: <what>`. The same text already there →
+    /// `false`, nothing committed. An absolute path, a `..` or a symlink on the way → `Refused`.
+    pub fn put(&self, rel: &str, text: &str, what: &str) -> Result<bool, StoreError> {
+        let refuse = |m: String| Err(StoreError::Refused(m));
+        let path = Path::new(rel);
+        if rel.is_empty()
+            || path.is_absolute()
+            || path
+                .components()
+                .any(|c| !matches!(c, std::path::Component::Normal(_)))
+        {
+            return refuse(format!("{rel}: not a relative path inside intents"));
+        }
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name == "intent.md" || rel == "TODO.md" || rel == "DONE.md" {
+            return refuse(format!("{rel}: written by its own store operation"));
+        }
+        self.write(true, false, |_| {
+            if symlink_in(self.path(), rel) {
+                return Err(StoreError::Refused(format!("{rel}: symlink")));
+            }
+            let old = read_optional(self.path(), rel).map_err(StoreError::Refused)?;
+            if old.as_deref() == Some(text) {
+                return Ok((format!("towercab: {what}"), false));
+            }
+            self.write_file(rel, text)?;
+            Ok((format!("towercab: {what}"), true))
+        })
+    }
+
     /// A line of one of the last 200 commits on the checkout's `HEAD` is `mark`, after a sync
     /// (under the lock): a marked commit a crash left unpushed is pushed first, or dropped when
     /// it conflicts, so a mark found is on `origin`.

@@ -460,3 +460,37 @@ finished: 2026-10-21T10:00:00+02:00\nreviewed: 2026-10-21T09:00:00+02:00\nafter:
         "## In flight\n\n- [261020-0721](intents/261020-0721-life/intent.md) towercab: Lifecycle · deploy\n"
     ));
 }
+
+#[test]
+fn test_set_section_keeps_other_lines() {
+    let text = "---\r\nrepo: web\r\n---\r\n\r\n# Intent: X\r\n\r\n## Problem\r\n\r\nslow\r\n";
+    let mut i = Intent::parse(text).unwrap();
+    i.set_section("Towercab", "Design: a.\n# not a heading").unwrap();
+    let with = i.render();
+    assert!(with.starts_with(text), "{with:?}");
+    assert!(
+        with.ends_with("\r\n## Towercab\r\n\r\nDesign: a.\r\n\\# not a heading\r\n"),
+        "{with:?}"
+    );
+    // Replaced whole, still last; then removed: the file as it was.
+    i.set_section("Towercab", "Question: b?").unwrap();
+    assert_eq!(i.render().matches("## Towercab").count(), 1);
+    assert!(i.render().ends_with("Question: b?\r\n"));
+    assert_eq!(i.section("Towercab").unwrap().trim(), "Question: b?");
+    i.set_section("Towercab", "").unwrap();
+    assert_eq!(i.render(), text);
+    assert_eq!(i.title(), "X");
+    // A section in the middle moves last; a fenced `## Towercab` isn't one.
+    let mid = intent_md(
+        "web",
+        "",
+        "Y\n\n## Towercab\n\nold\n\n## Open questions\n\n- q1?\n- q2?\n\n```\n## Towercab\n```\n",
+    );
+    let mut i = Intent::parse(&mid).unwrap();
+    assert_eq!(i.section_bullets("Open questions"), ["q1?", "q2?"]);
+    i.set_section("Towercab", "new").unwrap();
+    let out = i.render();
+    assert!(!out.contains("old"), "{out}");
+    assert!(out.contains("```\n## Towercab\n```\n"), "{out}");
+    assert!(out.ends_with("\n## Towercab\n\nnew\n"), "{out}");
+}
