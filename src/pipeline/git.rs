@@ -200,22 +200,33 @@ pub fn recreate(cx: &Ctx<'_>, m: &Mission, branch: &str) -> Result<(), StepError
     checkout::refresh_base(&cx.exes.git, &repo.path, &dir, &repo.base).map_err(failed)
 }
 
-/// The checkout = the PR head (`missions.branch` on origin): fetched in the clone, then into the
-/// checkout by path, `merge --ff-only`, else `reset --hard` to it; a missing or invalid checkout
-/// is re-made on the branch.
-pub fn sync_head(cx: &Ctx<'_>, m: &Mission) -> Result<(), StepError> {
+/// The checkout brought up to the PR head (`missions.branch` on origin) without losing a
+/// commit: missing or invalid → re-made on the branch (from base when origin has none); else the
+/// branch fetched into it by path and base refreshed, then a fast-forward, nothing when the
+/// checkout is ahead, or `git merge --no-edit` of it as the bot (`Ok(false)`: conflicts left
+/// in place). A merge already in progress is left alone.
+pub fn sync_head(cx: &Ctx<'_>, m: &Mission) -> Result<bool, StepError> {
     let branch = m
         .branch
         .clone()
         .ok_or_else(|| StepError::Bug(format!("{}: no branch", m.label())))?;
-    if !fetch_branch(cx, m, &branch)? {
-        return Err(StepError::Bug(format!("origin has no branch {branch}")));
-    }
-    let dir = cx.checkout(m);
-    if !checkout::valid(&cx.exes.git, &dir) {
-        return recreate(cx, m, &branch);
-    }
     let repo = cx.repo(m).map_err(StepError::Bug)?.clone();
+    let dir = cx.checkout(m);
+    let on_origin = fetch_branch(cx, m, &branch)?;
+    if !checkout::valid(&cx.exes.git, &dir) {
+        if on_origin {
+            recreate(cx, m, &branch)?;
+        } else {
+            checkout::remove(&dir).map_err(StepError::Bug)?;
+            checkout::create(&cx.exes.git, &repo.path, &dir, &repo.base, &branch)
+                .map_err(failed)?;
+        }
+        return Ok(true);
+    }
+    checkout::refresh_base(&cx.exes.git, &repo.path, &dir, &repo.base).map_err(failed)?;
+    if merging(cx, &dir) || !on_origin {
+        return Ok(true);
+    }
     let remote = format!("refs/remotes/origin/{branch}");
     let clone = repo.path.to_string_lossy().into_owned();
     run(
@@ -223,12 +234,16 @@ pub fn sync_head(cx: &Ctx<'_>, m: &Mission) -> Result<(), StepError> {
         &dir,
         &["fetch", "--quiet", &clone, &format!("+{remote}:{remote}")],
     )?;
-    checkout::refresh_base(&cx.exes.git, &repo.path, &dir, &repo.base).map_err(failed)?;
     run(cx, &dir, &["checkout", "--quiet", &branch])?;
-    if !ok(cx, &dir, &["merge", "--ff-only", "--quiet", &remote]) {
-        run(cx, &dir, &["reset", "--quiet", "--hard", &remote])?;
+    let ancestor = |a: &str, b: &str| ok(cx, &dir, &["merge-base", "--is-ancestor", a, b]);
+    if ancestor("HEAD", &remote) {
+        run(cx, &dir, &["merge", "--ff-only", "--quiet", &remote])?;
+        Ok(true)
+    } else if ancestor(&remote, "HEAD") {
+        Ok(true)
+    } else {
+        merge(cx, &dir, &remote, false)
     }
-    Ok(())
 }
 
 /// `git merge-base HEAD refs/remotes/origin/<base>` in `dir`.

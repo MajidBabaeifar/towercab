@@ -24,9 +24,30 @@ use super::{
 /// The rule the design prompt states.
 pub const SPECS_RULE: &str = "edit only specs/**; a new area starts from specs/_template.md";
 
-/// sha256 of `intent.md` (hex): `plan` revises the design when it changed (PIP-26, PIP-28).
-pub fn intent_hash(text: &str) -> String {
-    Sha256::digest(text.as_bytes())
+/// The fields Towercab writes into `intent.md` (not my edits).
+pub const TOWERCAB_FIELDS: [&str; 11] = [
+    "stage",
+    "waiting",
+    "pr",
+    "retry",
+    "started",
+    "finished",
+    "reviewed",
+    "cost",
+    "agent_time",
+    "attempts",
+    "lower_why",
+];
+
+/// sha256 (hex) of `intent.md` without Towercab's fields and its `## Towercab` section: what I
+/// wrote. `plan` revises the design when it changed (PIP-26, PIP-28).
+pub fn intent_hash(intent: &Intent) -> String {
+    let mut mine = intent.clone();
+    for k in TOWERCAB_FIELDS {
+        let _ = mine.remove(k);
+    }
+    let _ = mine.set_section("Towercab", "");
+    Sha256::digest(mine.render().as_bytes())
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
@@ -574,7 +595,7 @@ impl Design {
         .unwrap_or_else(|_| m.base_sha.clone().unwrap_or_default());
         let mut v = d.to_json();
         v["title"] = Value::from(pr_title(&d, intent.title()));
-        v["intent_hash"] = Value::from(intent_hash(&intent.render()));
+        v["intent_hash"] = Value::from(intent_hash(&intent));
         v["versions"] = json!({
             "towercab": env!("CARGO_PKG_VERSION"),
             "base": base,
