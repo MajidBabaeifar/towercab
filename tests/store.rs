@@ -694,6 +694,25 @@ fn test_store_interface() {
         !store.has_mark("Towercab-Entry: s 1").unwrap(),
         "whole lines only"
     );
+    // A marked commit a crash left unpushed: pushed before it counts as written.
+    common::write(
+        &home.checkout,
+        &format!("{}/intent.md", up.dir),
+        &intent_md("towercab", "u: 1\n", "Y"),
+    );
+    git(&home.checkout, &["add", "-A"]);
+    git(
+        &home.checkout,
+        &[
+            "commit",
+            "--quiet",
+            "-m",
+            "towercab: x\n\nTowercab-Entry: s 13",
+        ],
+    );
+    assert!(store.has_mark("Towercab-Entry: s 13").unwrap());
+    let body = common::git(&home.remote, &["log", "-3", "--format=%B", "main"]);
+    assert!(body.contains("Towercab-Entry: s 13"), "pushed: {body}");
 
     // `Err` from the closure → nothing written.
     let head = home.head();

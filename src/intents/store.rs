@@ -361,8 +361,12 @@ impl Store {
         })
     }
 
-    /// A line of one of the last 200 commits on the checkout's `HEAD` is `mark`.
+    /// A line of one of the last 200 commits on the checkout's `HEAD` is `mark`, after a sync
+    /// (under the lock): a marked commit a crash left unpushed is pushed first, or dropped when
+    /// it conflicts, so a mark found is on `origin`.
     pub fn has_mark(&self, mark: &str) -> Result<bool, StoreError> {
+        let _lock = self.lock()?;
+        self.sync()?;
         let log = self
             .checkout
             .git(&["log", "-n", "200", "--format=%B%x00", "HEAD"])
