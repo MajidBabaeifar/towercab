@@ -70,7 +70,7 @@ metrics.jsonl                OTLP spool (MET-13, metrics intent)
 
 ```sql
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
--- running "<pid> <unix>", paused "1", tg_offset, env_episode "<unix>" (while env_blocked), bot "<slug> <user id>", last_pass "<unix>", dying "<pid>:<start> …"
+-- running "<pid> <unix>", paused "1", tg_offset, env_episode "<unix>" (while env_blocked), bot "<slug> <user id>", last_pass "<unix>", dying "<pid>:<start> …", rehearse_checked "<unix>" (PIP-35)
 
 CREATE TABLE missions (
   id INTEGER PRIMARY KEY,

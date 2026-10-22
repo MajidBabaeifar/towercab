@@ -19,6 +19,7 @@ pub mod pr;
 pub mod prompts;
 pub mod proof;
 pub mod publish;
+pub mod rehearse;
 pub mod release;
 pub mod revert;
 pub mod review;
@@ -116,7 +117,19 @@ pub fn handlers(mode: Mode) -> Handlers {
     );
     h.set(
         Stage::RevertE2e,
-        Box::new(e2e::E2e::new(ci::Seq::Revert, mode)),
+        Box::new(e2e::E2e::new(ci::Seq::Revert, mode.clone())),
+    );
+    h.set(
+        Stage::Rehearse,
+        Box::new(rehearse::Rehearse::new(mode.clone())),
+    );
+    h.set(
+        Stage::RehearseCi,
+        Box::new(ci::Ci::new(ci::Seq::Rehearsal, mode.clone())),
+    );
+    h.set(
+        Stage::RehearseClose,
+        Box::new(rehearse::RehearseClose::new(mode)),
     );
     h
 }

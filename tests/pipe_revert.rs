@@ -1,4 +1,5 @@
-//! Revert missions (PIP-19) and the triage of e2e red after my merge (PIP-20).
+//! Revert missions (PIP-19), the triage of e2e red after my merge (PIP-20) and the rollback
+//! rehearsal (PIP-35).
 
 mod common;
 
@@ -504,4 +505,147 @@ fn test_triage_failure_no_revert() {
         p.mission(ID).waiting.as_deref(),
         Some("e2e red after your merge (unknown)")
     );
+}
+
+/// A world without intents whose `web` is live with a rollback block; `api` isn't live. gh:
+/// PR 9 for the rehearsal, CI `ci` (a check JSON), closes taken.
+fn rehearsal_world(ci: &str) -> Pipe {
+    let mut p = Pipe::new(&[], &["web", "api"]);
+    let root = p.w.root.display().to_string();
+    p.base(
+        "web",
+        &[("TOWERCAB.md", &with_rollback().replace("{root}", &root))],
+        "live",
+    );
+    command_script(&p, "rehearse");
+    let rollup = json!({"headRefOid": "", "mergeable": "MERGEABLE",
+        "statusCheckRollup": [serde_json::from_str::<Value>(ci).unwrap()]});
+    p.gh.on("pr list *", &[("[]", "", 0)])
+        .on(
+            "pr create *",
+            &[("https://github.com/me/web/pull/9\n", "", 0)],
+        )
+        .on(CI_VIEW, &[(&rollup.to_string(), "", 0)])
+        .on("pr close *", &[("", "", 0)])
+        .on("run rerun *", &[("", "", 0)]);
+    p.lp();
+    p
+}
+
+fn rehearsals(p: &Pipe) -> Vec<Mission> {
+    let db = p.w.db();
+    let mut q = db
+        .conn()
+        .prepare("SELECT * FROM missions WHERE kind = 'rehearsal' ORDER BY id")
+        .unwrap();
+    q.query_map([], Mission::from_row)
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+#[test]
+fn test_rehearsal_never_merges() {
+    let mut p = rehearsal_world(&check("test", "COMPLETED", "SUCCESS", 41));
+    let head = origin_rev(&p, "refs/heads/main").unwrap();
+    let parent = origin_rev(&p, "refs/heads/main^1").unwrap();
+    p.until(30, |w| {
+        w.db()
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM missions WHERE kind = 'rehearsal' AND stage = 'done'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap()
+            == 1
+    });
+    let r = rehearsals(&p);
+    assert_eq!(r.len(), 1);
+    let m = &r[0];
+    assert_eq!((m.repo.as_str(), m.intent.as_deref()), ("web", None));
+    assert_eq!(m.checkout, "work/rehearse-web-261015");
+    let branch = "towercab/rehearse-261015";
+    assert_eq!(m.branch.as_deref(), Some(branch));
+    // A revert of main's head on its branch, a draft PR, CI, the rehearse command; closed.
+    let log = p.origin_log("web", branch);
+    assert!(log[0].0.starts_with("Revert \"live\""), "{log:?}");
+    assert_eq!(
+        origin_rev(&p, &format!("refs/heads/{branch}^1")),
+        Some(head)
+    );
+    let n = p.gh.find("pr create")[0];
+    assert!(p.gh.argv(n).contains(&"--draft".to_string()));
+    assert_eq!(p.root_file("rehearse.args"), format!("{parent}\n"));
+    assert_eq!(p.gh.find("pr close 9 -R me/web --delete-branch").len(), 1);
+    assert!(p.gh.find("pr merge").is_empty(), "never merged");
+    let stages: Vec<String> = p
+        .w
+        .db()
+        .conn()
+        .prepare("SELECT from_stage || ' ' || event || ' ' || to_stage FROM transitions WHERE mission = ?1 ORDER BY id")
+        .unwrap()
+        .query_map([m.id], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        stages,
+        [
+            "rehearse ok rehearse_ci",
+            "rehearse_ci ok rehearse_close",
+            "rehearse_close ok done"
+        ]
+    );
+    // Weekly: no second one now; never for a repo without live.
+    for _ in 0..80 {
+        let lp = p.lp.as_mut().unwrap();
+        p.w.pass(lp);
+    }
+    assert_eq!(rehearsals(&p).len(), 1);
+    assert!(p.w.outbox().iter().all(|o| o.1 != "rehearsal_failed"));
+}
+
+#[test]
+fn test_rehearsal_failure_messages() {
+    // The rehearse command fails: closed all the same, and a message.
+    let mut p = rehearsal_world(&check("test", "COMPLETED", "SUCCESS", 41));
+    fs::write(p.w.root.join("rehearse.exit"), "1").unwrap();
+    let done = |w: &common::world::World| {
+        w.db()
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM missions WHERE kind = 'rehearsal' AND stage = 'done'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap()
+            == 1
+    };
+    p.until(30, done);
+    let msg =
+        p.w.outbox()
+            .into_iter()
+            .find(|o| o.1 == "rehearsal_failed")
+            .expect("a message");
+    assert_eq!(msg.0, "repo:web");
+    assert!(
+        msg.3.starts_with("rollback rehearsal failed: web"),
+        "{}",
+        msg.3
+    );
+    assert!(msg.3.contains("rehearse command: rehearse refused"));
+    assert!(msg.3.contains("PR https://github.com/me/web/pull/9"));
+    assert_eq!(p.gh.find("pr close 9").len(), 1);
+
+    // CI red: no rerun for a rehearsal, red at once.
+    let mut p = rehearsal_world(&check("test", "COMPLETED", "FAILURE", 51));
+    p.until(30, done);
+    assert!(p.gh.find("run rerun").is_empty());
+    assert!(
+        p.w.outbox()
+            .iter()
+            .any(|o| o.1 == "rehearsal_failed" && o.3.contains("rehearsal CI"))
+    );
+    assert_eq!(p.gh.find("pr close 9").len(), 1);
 }

@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..5, PIP-7..9, PIP-11..32, PIP-34 · Draft (Rust rewrite): rest · **Prefix:** PIP
+**Status:** Live: PIP-1..5, PIP-7..9, PIP-11..32, PIP-34, PIP-35 · Draft (Rust rewrite): rest · **Prefix:** PIP
 
 ## Purpose
 

@@ -43,6 +43,7 @@ use crate::machine::{self, Apply, Event, Next, Stage};
 use crate::mission::{self, ENTER, Kind, Mission};
 use crate::outbox::{self, Notice};
 use crate::pick::{self, Decision, PickState};
+use crate::pipeline;
 use crate::priority;
 use crate::status::{self, Snapshot};
 use crate::telegram::{self, HELP, Telegram, TgCommand};
@@ -1397,6 +1398,18 @@ impl Loop {
             self.listing = Some(s.scan());
         }
         let Some(id) = decision.pick.clone() else {
+            // Nothing to pick on an idle pass: the slot may go to a rollback rehearsal (PIP-35).
+            if self.target.is_none()
+                && self.handlers.built()
+                && !self.blocked
+                && self.slot_free()
+                && self.queued.is_empty()
+                && !machine::paused(self.db.conn())?
+                && self.idle(tick, Some(&decision))?
+                && pipeline::rehearse::schedule(&self.db, &self.config, tick)?.is_some()
+            {
+                self.probe.point();
+            }
             return Ok(Some(decision));
         };
         let unfinished = mission::unfinished(self.db.conn())?;
