@@ -147,6 +147,33 @@ fn test_gate_handler() {
         .unwrap();
     p.step(ID);
     assert_eq!(p.mission(ID).why.as_deref(), Some("repo frozen"));
+    // The Towercab repo: the gate waits for `towercab/evals` on the head; red → to me.
+    let mut p = approved("a: 5\n");
+    p.step_to(ID, Stage::Gate, 12);
+    let head = p.mission(ID).head.unwrap();
+    p.w.repo_mut("web").github = "me/towercab".into();
+    p.gh.on(
+        &format!("api repos/me/towercab/commits/{head}/status"),
+        &[
+            (r#"{"state": "pending", "statuses": []}"#, "", 0),
+            (
+                r#"{"state": "failure", "statuses": [{"context": "towercab/evals", "state": "failure"}]}"#,
+                "",
+                0,
+            ),
+        ],
+    );
+    p.open_with(Pipe::handlers());
+    assert_eq!(
+        p.step(ID),
+        "261001-0900: gate → gate",
+        "no status yet: polls"
+    );
+    assert_eq!(p.mission(ID).step, "decide");
+    p.step(ID);
+    let m = p.mission(ID);
+    assert_eq!(m.waiting.as_deref(), Some("review and merge PR"));
+    assert_eq!(m.why.as_deref(), Some("evals red"));
     // The review not approved at a5: to me.
     let mut p = approved("a: 5\n");
     p.claude.answer(
