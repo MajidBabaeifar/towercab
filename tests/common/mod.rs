@@ -10,6 +10,8 @@ use tempfile::TempDir;
 use towercab::config::{Config, IntentsConfig};
 use towercab::intents::{Intent, Store};
 
+pub mod world;
+
 /// `git <args>` in `dir` as "me"; panics on failure.
 pub fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -292,9 +294,15 @@ pub fn output(c: &mut Command) -> (String, String, Option<i32>) {
     )
 }
 
-/// A config the loop's commands accept (`[intents]` path in `dir`, `[github]` app 1 as `me`),
-/// then `extra`; written to `<dir>/config.toml`.
+/// A config the loop's commands accept (`[intents]` path in `dir`: an empty git repo on
+/// `main` without a remote; `[github]` app 1 as `me`), then `extra`; written to
+/// `<dir>/config.toml`.
 pub fn loop_config(dir: &Path, extra: &str) -> PathBuf {
+    let intents = dir.join("intents");
+    if !intents.exists() {
+        fs::create_dir_all(&intents).unwrap();
+        git(&intents, &["init", "--quiet", "-b", "main"]);
+    }
     let file = dir.join("config.toml");
     fs::write(
         &file,

@@ -4,7 +4,19 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::intents;
+use rusqlite::types::Value;
+use rusqlite::{Connection, params};
+
+use crate::checkout;
+use crate::config::Config;
+use crate::db::{Db, get_meta, sql};
+use crate::env;
+use crate::handler::{Ctx, Outcome, update};
+use crate::intents::{self, Intent, Listing, StoreError, Value as IValue};
+use crate::limits;
+use crate::mission::{self, Mission, NewMission};
+use crate::outbox::{self, Notice, Subject};
+use crate::runloop::Tick;
 
 /// A mission's stage: the order, revert and rehearsal sequences, the waits on me, and the ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -845,5 +857,437 @@ pub fn continue_to(waiting: &Waiting, from: Stage) -> Next {
         | Waiting::ProtectedPathChanged
         | Waiting::ReleaseFailed
         | Waiting::ProductionE2eRed => Next::Go(Stage::Build),
+    }
+}
+
+/// What `apply` reads besides the mission: messages need the intent's title and slug, a fresh
+/// attempt its `model` and `a`.
+pub struct Apply<'a> {
+    pub db: &'a Db,
+    pub config: &'a Config,
+    /// The last `intents` listing, if any.
+    pub listing: Option<&'a Listing>,
+    pub tick: Tick,
+}
+
+impl Apply<'_> {
+    fn intent(&self, m: &Mission) -> Option<&Intent> {
+        let id = m.intent.as_deref()?;
+        self.listing?.open.iter().find(|i| i.id == id)
+    }
+
+    /// The mission as a message's subject.
+    pub fn subject(&self, m: &Mission, why: Option<&str>) -> Subject {
+        let i = self.intent(m);
+        Subject {
+            id: m.label(),
+            repo: m.repo.clone(),
+            title: i.map_or_else(|| m.label(), |i| i.title().to_string()),
+            slug: i.map(|i| i.slug.clone()).unwrap_or_default(),
+            pr_url: m.pr_url.clone(),
+            why: why.map(str::to_string),
+        }
+    }
+}
+
+/// The kind a mission has in `to`: it follows the stage; a rehearsal stays one.
+fn kind_in(cur: Kind, to: Stage) -> Kind {
+    if cur == Kind::Rehearsal {
+        Kind::Rehearsal
+    } else {
+        to.kind()
+    }
+}
+
+/// Sets `col` in `cols`, replacing an earlier value.
+fn put(cols: &mut Vec<(String, Value)>, col: &str, v: impl Into<Value>) {
+    let v = v.into();
+    match cols.iter_mut().find(|(c, _)| c == col) {
+        Some(slot) => slot.1 = v,
+        None => cols.push((col.to_string(), v)),
+    }
+}
+
+fn text(s: Option<impl Into<String>>) -> Value {
+    s.map_or(Value::Null, |s| Value::Text(s.into()))
+}
+
+/// Moves `m` by `o` (LOOP-6): one transaction for the stage, `step = 'enter'`, `Outcome::set`,
+/// counters, `waiting`, `why`, a `transitions` row and its outbox rows. `Ignore`, or `m` no
+/// longer at its stage, writes nothing. Returns the mission as stored.
+pub fn apply(ax: &Apply, m: &Mission, o: &Outcome) -> Result<Mission, String> {
+    apply_as(ax, m, o, None)
+}
+
+/// [`apply`] with the `Next` given (`Unexpected` for a handler's bug), else the table's.
+pub fn apply_as(
+    ax: &Apply,
+    m: &Mission,
+    o: &Outcome,
+    given: Option<Next>,
+) -> Result<Mission, String> {
+    ax.db.tx(|tx| apply_tx(tx, ax, m, o, given))
+}
+
+/// What a transition does to the row.
+enum Act {
+    /// Same stage and step (`Again`, `Cool`, `Backoff`, `Recover` below 3).
+    Stay,
+    /// To a stage (waiting there with `Some`).
+    Move(Stage, Option<Waiting>),
+    /// This mission stopped, a new attempt at `pick`.
+    Fresh,
+}
+
+/// [`apply`] inside a transaction.
+pub fn apply_tx(
+    tx: &Connection,
+    ax: &Apply,
+    m: &Mission,
+    o: &Outcome,
+    given: Option<Next>,
+) -> Result<Mission, String> {
+    let cur = mission::get(tx, m.id)?;
+    if cur.stage != m.stage {
+        return Ok(cur);
+    }
+    let now = ax.tick.unix();
+    let mut n = given.unwrap_or_else(|| next(cur.stage, o.event));
+    let mut why = o.why.clone();
+    if n == Next::Ignore {
+        return Ok(cur);
+    }
+    if n == Next::Unexpected {
+        let what = format!("unexpected {} at {}", o.event, cur.stage);
+        why = Some(match why {
+            Some(w) => format!("{what}: {w}"),
+            None => what,
+        });
+        eprintln!(
+            "towercab: {}: {}",
+            cur.label(),
+            why.as_deref().unwrap_or("")
+        );
+        n = Next::Recover;
+    }
+    let mut cols: Vec<(String, Value)> = Vec::new();
+    put(&mut cols, "updated", now);
+    let act = match n {
+        Next::Go(s) => Act::Move(s, None),
+        Next::Wait => match o.waiting.and_then(|w| w.stage().map(|s| (s, w))) {
+            Some((s, w)) => Act::Move(s, Some(w)),
+            None => {
+                return Err(format!(
+                    "{}: {} at {} without a mission's waiting",
+                    cur.label(),
+                    o.event,
+                    cur.stage
+                ));
+            }
+        },
+        Next::Again => {
+            if o.event == Event::Resume {
+                put(&mut cols, "held", 0);
+            }
+            Act::Stay
+        }
+        Next::Cool => {
+            let limit = o
+                .limit
+                .as_ref()
+                .ok_or_else(|| format!("{}: limit without a Limit", cur.label()))?;
+            limits::cool(tx, limit, now)?;
+            put(&mut cols, "limit_model", limit.model.clone());
+            Act::Stay
+        }
+        Next::Backoff => {
+            let retries = cur.retries + 1;
+            put(&mut cols, "retries", retries);
+            put(
+                &mut cols,
+                "retry_at",
+                now + env::backoff(retries).as_secs_f64(),
+            );
+            Act::Stay
+        }
+        Next::Recover => {
+            let unclean = cur.unclean + 1;
+            if unclean >= 3 {
+                Act::Move(Stage::Blocked, Some(Waiting::CrashedAt(cur.stage)))
+            } else {
+                put(&mut cols, "unclean", unclean);
+                Act::Stay
+            }
+        }
+        Next::Stop => Act::Move(
+            Stage::Stopped,
+            (o.event == Event::PrClosed).then_some(Waiting::PrClosed),
+        ),
+        Next::Continue => {
+            put(&mut cols, "continued", cur.continued + 1);
+            for c in ["verify_repairs", "ci_repairs", "sync_rounds"] {
+                put(&mut cols, c, 0);
+            }
+            let from = cur.from_stage.unwrap_or(cur.stage);
+            match cur
+                .waiting()
+                .map_or(Next::Go(Stage::Build), |w| continue_to(&w, from))
+            {
+                Next::Go(s) => Act::Move(s, None),
+                Next::Fresh => Act::Fresh,
+                other => return Err(format!("{}: continue gave {other:?}", cur.label())),
+            }
+        }
+        Next::Fresh => Act::Fresh,
+        Next::Ignore | Next::Unexpected => unreachable!("handled above"),
+    };
+    // A step's end: no child, not busy.
+    for c in ["child_pid", "child_start", "child_kind", "child_since"] {
+        put(&mut cols, c, Value::Null);
+    }
+    put(&mut cols, "busy", 0);
+    let to = match &act {
+        Act::Stay => cur.stage,
+        Act::Move(s, _) => *s,
+        Act::Fresh => Stage::Stopped,
+    };
+    if !matches!(act, Act::Stay) {
+        put(&mut cols, "stage", to.as_str().to_string());
+        put(
+            &mut cols,
+            "kind",
+            kind_in(cur.kind, to).as_str().to_string(),
+        );
+        put(&mut cols, "step", mission::ENTER.to_string());
+        for c in ["unclean", "retries", "held"] {
+            put(&mut cols, c, 0);
+        }
+        put(&mut cols, "step_secs", 0.0);
+        for c in ["retry_at", "limit_model"] {
+            put(&mut cols, c, Value::Null);
+        }
+    }
+    let waiting = match &act {
+        Act::Move(_, w) => *w,
+        _ => None,
+    };
+    if let Act::Move(s, w) = &act {
+        put(&mut cols, "waiting", text(w.map(|w| w.text())));
+        put(&mut cols, "why", text(why.clone()));
+        let left = if cur.stage.waits() {
+            cur.from_stage
+        } else {
+            Some(cur.stage)
+        };
+        let from = (w.is_some() || *s == Stage::Stopped)
+            .then_some(left)
+            .flatten();
+        put(&mut cols, "from_stage", text(from.map(|s| s.as_str())));
+    }
+    for (c, v) in &o.set {
+        put(&mut cols, c, v.clone());
+    }
+    if let Act::Fresh = act {
+        put(&mut cols, "waiting", Value::Null);
+        put(&mut cols, "from_stage", cur.stage.as_str().to_string());
+        update(tx, cur.id, &cols)?;
+        let intent = ax.intent(&cur);
+        let new = NewMission {
+            intent: cur
+                .intent
+                .clone()
+                .ok_or("a fresh attempt needs an intent")?,
+            slug: intent
+                .map(|i| i.slug.clone())
+                .unwrap_or_else(|| slug_of(&cur)),
+            repo: cur.repo.clone(),
+            model: intent
+                .and_then(|i| i.model())
+                .map(str::to_string)
+                .unwrap_or_else(|| ax.config.agent.model.clone()),
+            a: intent.map_or(cur.a_at_pick, |i| i.a()),
+            min_attempt: cur.attempt + 1,
+        };
+        let fresh = mission::insert(tx, &new, ax.tick)?;
+        why = Some(format!("replaced by attempt {}", fresh.attempt));
+        update(tx, cur.id, &[("why".into(), text(why.clone()))])?;
+    } else {
+        update(tx, cur.id, &cols)?;
+    }
+    let stored = mission::get(tx, cur.id)?;
+    if let Some(w) = waiting.filter(|w| *w != Waiting::PrClosed) {
+        let n = if w == Waiting::ReviewAndMergePr {
+            stored.head.clone().unwrap_or_default()
+        } else {
+            stored.continued.to_string()
+        };
+        let text = outbox::render_waiting(&w, &ax.subject(&stored, why.as_deref()), ax.config);
+        outbox::enqueue(tx, &cur.id.to_string(), &w.key(), &n, &text, now)?;
+    }
+    match waiting {
+        Some(Waiting::RevertFailed) => {
+            let why = why.clone().unwrap_or_else(|| "revert failed".into());
+            tx.execute(
+                "INSERT INTO repo_caps (repo, frozen, why, since) VALUES (?1, 1, ?2, ?3)
+                 ON CONFLICT (repo) DO UPDATE SET frozen = 1, why = excluded.why",
+                params![cur.repo, why, now],
+            )
+            .map_err(sql)?;
+            let since: f64 = tx
+                .query_row(
+                    "SELECT since FROM repo_caps WHERE repo = ?1",
+                    [&cur.repo],
+                    |r| r.get(0),
+                )
+                .map_err(sql)?;
+            let text = outbox::render_notice(&Notice::RepoFrozen {
+                repo: cur.repo.clone(),
+                why,
+            });
+            outbox::enqueue(
+                tx,
+                &format!("repo:{}", cur.repo),
+                "frozen",
+                &since.to_string(),
+                &text,
+                now,
+            )?;
+        }
+        Some(Waiting::RevertedRefine) => {
+            tx.execute(
+                "INSERT INTO repo_caps (repo, capped, why, since) VALUES (?1, 1, 'reverted, refine', ?2)
+                 ON CONFLICT (repo) DO UPDATE SET capped = 1",
+                params![cur.repo, now],
+            )
+            .map_err(sql)?;
+        }
+        _ => {}
+    }
+    if o.event == Event::Red && matches!(cur.stage, Stage::Rehearse | Stage::RehearseCi) {
+        let day = ax.tick.wall.format("%y%m%d").to_string();
+        let text = outbox::render_notice(&Notice::RehearsalFailed {
+            repo: cur.repo.clone(),
+            why: why.clone().unwrap_or_default(),
+            pr_url: cur.pr_url.clone(),
+        });
+        outbox::enqueue(
+            tx,
+            &format!("repo:{}", cur.repo),
+            "rehearsal_failed",
+            &day,
+            &text,
+            now,
+        )?;
+    }
+    tx.execute(
+        "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![cur.id, now, cur.stage.as_str(), o.event.as_str(), to.as_str(), why],
+    )
+    .map_err(sql)?;
+    Ok(stored)
+}
+
+/// The slug in a mission's branch (`towercab/<id>-<slug>[-<attempt>]`).
+fn slug_of(m: &Mission) -> String {
+    let id = m.intent.as_deref().unwrap_or_default();
+    let b = m.branch.as_deref().unwrap_or_default();
+    let rest = b
+        .strip_prefix("towercab/")
+        .and_then(|r| r.strip_prefix(id))
+        .and_then(|r| r.strip_prefix('-'))
+        .unwrap_or("intent");
+    let suffix = format!("-{}", m.attempt);
+    rest.strip_suffix(&suffix)
+        .filter(|_| m.attempt >= 2)
+        .unwrap_or(rest)
+        .to_string()
+}
+
+/// `meta.paused`.
+pub fn paused(conn: &Connection) -> Result<bool, String> {
+    Ok(get_meta(conn, "paused")?.as_deref() == Some("1"))
+}
+
+/// Entry effects (LOOP-6, **Machine**), idempotent, after the transition's transaction: the
+/// intent write (kinds `intent`, `revert`; skipped when the file is gone), at `done`/`stopped`
+/// the checkout deleted and `finished` set, `merge`/`revert_merge`/`rollback` held while
+/// paused; then `step = ''`. (The left stage's child is killed by the loop at the transition.)
+pub fn enter(cx: &mut Ctx<'_>, m: &Mission) -> Result<Mission, String> {
+    if m.step != mission::ENTER {
+        return Ok(m.clone());
+    }
+    if matches!(m.kind, Kind::Intent | Kind::Revert)
+        && let Some(id) = m.intent.as_deref()
+    {
+        write_intent(cx, m, id)?;
+        cx.probe.point();
+    }
+    if m.stage.finished() && m.checkout.starts_with("work/") {
+        checkout::remove(&cx.checkout(m))?;
+    }
+    let hold = matches!(m.stage, Stage::Merge | Stage::RevertMerge | Stage::Rollback)
+        && paused(cx.db.conn())?;
+    let now = cx.tick.unix();
+    let out = cx.db.tx(|tx| {
+        let mut cols: Vec<(String, Value)> = Vec::new();
+        put(&mut cols, "step", String::new());
+        put(&mut cols, "updated", now);
+        if m.stage.finished() && m.finished.is_none() {
+            put(&mut cols, "finished", now);
+        }
+        if hold {
+            put(&mut cols, "held", 1);
+        }
+        update(tx, m.id, &cols)?;
+        mission::get(tx, m.id)
+    })?;
+    cx.probe.point();
+    Ok(out)
+}
+
+/// One `Store::update(id, <stage>, …)`: `stage` (`playbook()`), `waiting` set or removed,
+/// `pr`; at `pick` `retry` removed; at `done` `cost`, `agent_time`, `attempts`.
+fn write_intent(cx: &Ctx<'_>, m: &Mission, id: &str) -> Result<(), String> {
+    let totals = if m.stage == Stage::Done {
+        let t: (f64, f64, u32) = cx
+            .db
+            .conn()
+            .query_row(
+                "SELECT COALESCE(SUM(cost_usd), 0), COALESCE(SUM(agent_secs), 0), MAX(attempt)
+                 FROM missions WHERE intent = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map_err(sql)?;
+        Some(t)
+    } else {
+        None
+    };
+    let r = cx.store.update(id, m.stage.as_str(), |i| {
+        if let Some(p) = m.stage.playbook() {
+            i.set("stage", IValue::Str(p.as_str().into()))?;
+        }
+        match &m.waiting {
+            Some(w) => i.set("waiting", IValue::Str(w.clone()))?,
+            None => i.remove("waiting")?,
+        }
+        if let Some(url) = &m.pr_url {
+            i.set("pr", IValue::Str(url.clone()))?;
+        }
+        if m.stage == Stage::Pick {
+            i.remove("retry")?;
+        }
+        if let Some((cost, secs, attempts)) = totals {
+            i.set("cost", IValue::Float(cost))?;
+            i.set("agent_time", IValue::Int(secs.round() as i64))?;
+            i.set("attempts", IValue::Int(i64::from(attempts.max(1))))?;
+        }
+        Ok(())
+    });
+    match r {
+        Ok(_) => Ok(()),
+        // Gone, or moved to done/ by an earlier run of this effect.
+        Err(StoreError::Refused(e)) if e.starts_with("no open intent matches") => Ok(()),
+        Err(e) => Err(format!("{id}: {e}")),
     }
 }

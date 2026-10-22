@@ -5,6 +5,7 @@
 //! nothing prompts (`GIT_TERMINAL_PROMPT=0`; ssh `BatchMode=yes` unless I configured my own
 //! ssh command). No timeouts here: the loop bounds its calls (LOOP-10).
 
+use std::ffi::OsStr;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -53,7 +54,12 @@ static SSH_BATCH: LazyLock<bool> = LazyLock::new(|| {
 /// `git` with Towercab's identity and its own environment (module doc); also used by
 /// `repo::load` (REPO-1).
 pub fn git_command() -> Command {
-    let mut c = Command::new("git");
+    git_command_for(OsStr::new("git"))
+}
+
+/// [`git_command`] with another `git` executable (the loop's `Exes::git`).
+pub fn git_command_for(git: &OsStr) -> Command {
+    let mut c = Command::new(git);
     c.args(GIT_CONFIG);
     for v in REPO_ENV {
         c.env_remove(v);
@@ -63,6 +69,15 @@ pub fn git_command() -> Command {
         c.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
     }
     c
+}
+
+/// What a git call over HTTPS adds to act as Towercab's GitHub App (LOOP-19): `-c` args (the
+/// credential helper, the bot's `user.name`/`user.email`) and env (`GH_TOKEN`). Filled by the
+/// App in loop-runner part 5; empty = my own git setup.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GitAuth {
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
 }
 
 /// A git working tree on `main`; `origin` = it has an `origin` remote to pull from and push to.

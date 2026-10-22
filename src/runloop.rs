@@ -1,29 +1,49 @@
 //! The loop (LOOP-12, `run` of LOOP-15): one pass every 5 s, single-threaded, until SIGTERM
 //! or SIGINT, or (without `--watch`) until it is idle.
 //!
-//! So far a pass applies `commands`; the other steps of the pass (wake check, Telegram,
-//! children, polls, missions, pick, faults, outbox, inhibitor, gauges), recovery and preflight
-//! come with the later parts of the loop intent, in the order LOOP-12 gives.
+//! A pass so far, in LOOP-12's order: signals; `commands`; reap children → `Handler::finish`;
+//! due polls (`intents`, PRs); entry effects and due missions; children waiting for a slot;
+//! pick. The wake check, Telegram, child timeouts, faults and preflight, review due, outbox,
+//! inhibitor and gauges come with loop-runner parts 3 and 4.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::os::unix::net::UnixStream;
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, FixedOffset, Local};
+use chrono::{DateTime, FixedOffset, Local, TimeZone};
+use rusqlite::types::Value;
 use signal_hook::consts::{SIGINT, SIGTERM};
 
+use crate::child::{self, Child};
 use crate::commands::{self, CmdCx};
 use crate::config::Config;
-use crate::db::Db;
+use crate::db::{Db, sql};
+use crate::env::Fault;
+use crate::events::{self, GhPrs, PrSource};
 use crate::exes::Exes;
-use crate::handler::Handlers;
+use crate::github::Identity;
+use crate::handler::{
+    ChildEnd, ChildSpec, Crashed, Ctx, Handler, Handlers, Outcome, Probe, Progress, StepError,
+    update,
+};
 use crate::home::{Home, LoopLock};
+use crate::intents::{Intent, Listing, Store, Value as IValue};
+use crate::limits;
+use crate::machine::{self, Apply, Event, Next, Stage};
+use crate::mission::{self, ENTER, Kind, Mission};
+use crate::outbox;
+use crate::pick::{self, Decision, PickState};
 
 /// The pass interval.
 pub const PASS: Duration = Duration::from_secs(5);
+
+/// PR reads and `intents` checks: at most every 60 s (LOOP-12).
+pub const POLL: Duration = Duration::from_secs(60);
 
 static START: LazyLock<Instant> = LazyLock::new(Instant::now);
 
@@ -48,11 +68,33 @@ impl Tick {
     pub fn unix(&self) -> f64 {
         unix(self.wall)
     }
+
+    /// This tick `d` later, on both clocks.
+    pub fn after(&self, d: Duration) -> Tick {
+        Tick {
+            wall: self.wall + chrono::TimeDelta::from_std(d).unwrap_or_default(),
+            mono: self.mono + d,
+        }
+    }
 }
 
 /// Unix seconds (microsecond precision).
 pub fn unix(t: DateTime<FixedOffset>) -> f64 {
     t.timestamp_micros() as f64 / 1e6
+}
+
+/// `HH:MM` on `now`'s day, else `YYYY-MM-DD HH:MM`, in `now`'s offset.
+pub fn shown_time(at: f64, now: DateTime<FixedOffset>) -> String {
+    let t = now
+        .offset()
+        .timestamp_micros((at * 1e6) as i64)
+        .single()
+        .unwrap_or(now);
+    if t.date_naive() == now.date_naive() {
+        t.format("%H:%M").to_string()
+    } else {
+        t.format("%Y-%m-%d %H:%M").to_string()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +105,8 @@ pub struct LoopOpts {
     pub intent: Option<String>,
     /// Time between pass starts (5 s).
     pub pass: Duration,
+    /// SIGKILL a child's group this long after its SIGTERM (10 s).
+    pub kill_after: Duration,
 }
 
 impl Default for LoopOpts {
@@ -71,6 +115,7 @@ impl Default for LoopOpts {
             watch: false,
             intent: None,
             pass: PASS,
+            kill_after: child::KILL_AFTER,
         }
     }
 }
@@ -81,10 +126,18 @@ pub struct PassReport {
     /// `commands` rows applied, oldest first: (id, reply).
     pub commands: Vec<(i64, String)>,
     /// Nothing runnable and no mission driven but by a limit wait: `run` without `--watch`
-    /// exits.
+    /// exits (LOOP-17).
     pub idle: bool,
     /// A SIGTERM or SIGINT had arrived: the pass did nothing.
     pub stop: bool,
+    /// The intent picked this pass.
+    pub picked: Option<String>,
+}
+
+/// What a handler call ended in.
+enum Called {
+    Returned(Result<Progress, StepError>),
+    Panicked(String),
 }
 
 /// A running loop: holds the home's lock from `open` until dropped.
@@ -97,13 +150,32 @@ pub struct Loop {
     pub db: Db,
     /// `meta.running` found at `open`: the last loop's exit was unclean (LOOP-7).
     pub unclean: Option<String>,
+    /// PR reads (`gh`; tests set a fake).
+    pub prs: Box<dyn PrSource>,
+    pub identity: Identity,
+    /// Crash injection (tests).
+    pub probe: Probe,
+    store: Option<Store>,
+    listing: Option<Listing>,
+    children: BTreeMap<i64, Child>,
+    /// Children of stages left: SIGTERM sent, SIGKILL when due.
+    dying: Vec<Child>,
+    /// Slot children waiting for a free slot: (mission, its stage then, spec).
+    queued: Vec<(i64, Stage, ChildSpec)>,
+    /// `Progress::Poll`: a mission's next step (monotonic).
+    due: BTreeMap<i64, Duration>,
+    pr_due: BTreeMap<i64, Duration>,
+    intents_due: Option<Duration>,
+    /// The last message logged per kind (logged again only when it changes).
+    warned: BTreeMap<String, String>,
     stop: Arc<AtomicBool>,
     _lock: LoopLock,
 }
 
 impl Loop {
     /// Takes the home's lock (another loop or `step` → `towercab is running (pid N); towercab
-    /// down first`), opens the database and sets `meta.running` = `<pid> <unix s>`.
+    /// down first`), opens the database, sets `meta.running` = `<pid> <unix s>`, opens the
+    /// intent store and recovers from an unclean exit (LOOP-7).
     pub fn open(
         config: Config,
         home: Home,
@@ -119,7 +191,11 @@ impl Loop {
             "running",
             &format!("{} {}", std::process::id(), now.wall.timestamp()),
         )?;
-        Ok(Loop {
+        let prs = Box::new(GhPrs {
+            gh: exes.gh.clone(),
+            identity: Identity::none(),
+        });
+        let mut lp = Loop {
             config,
             home,
             handlers,
@@ -127,9 +203,59 @@ impl Loop {
             opts,
             db,
             unclean,
+            prs,
+            identity: Identity::none(),
+            probe: Probe::default(),
+            store: None,
+            listing: None,
+            children: BTreeMap::new(),
+            dying: Vec::new(),
+            queued: Vec::new(),
+            due: BTreeMap::new(),
+            pr_due: BTreeMap::new(),
+            intents_due: None,
+            warned: BTreeMap::new(),
             stop: Arc::new(AtomicBool::new(false)),
             _lock: lock,
-        })
+        };
+        lp.ensure_store();
+        if let Some(s) = &lp.store {
+            lp.listing = Some(s.scan());
+        }
+        lp.recover(now)?;
+        Ok(lp)
+    }
+
+    /// LOOP-7: leftover children killed (their group, when `/proc/<pid>/stat` still shows the
+    /// same start time); after an unclean exit each `busy` mission gets `unclean + 1` (the
+    /// third: `crashed at <stage>`), committed before it re-enters its step.
+    fn recover(&mut self, tick: Tick) -> Result<(), String> {
+        let unfinished = mission::unfinished(self.db.conn())?;
+        for m in &unfinished {
+            if let (Some(pid), Some(start)) = (m.child_pid, m.child_start) {
+                child::kill_leftover(pid as u32, start as u64);
+            }
+        }
+        let ax = self.apply_cx(tick);
+        for m in unfinished.iter().filter(|m| m.busy || m.has_child()) {
+            self.db.tx(|tx| {
+                if self.unclean.is_some() && m.busy {
+                    machine::apply_tx(tx, &ax, m, &Outcome::event(Event::Crash), None)?;
+                }
+                update(
+                    tx,
+                    m.id,
+                    &[
+                        ("busy".into(), Value::Integer(0)),
+                        ("child_pid".into(), Value::Null),
+                        ("child_start".into(), Value::Null),
+                        ("child_kind".into(), Value::Null),
+                        ("child_since".into(), Value::Null),
+                    ],
+                )
+            })?;
+        }
+        Ok(())
     }
 
     /// Set by SIGTERM and SIGINT once `run` started; setting it stops the loop between passes.
@@ -137,7 +263,43 @@ impl Loop {
         Arc::clone(&self.stop)
     }
 
-    /// One pass (LOOP-12 order): signals, then `commands`.
+    /// The last `intents` listing.
+    pub fn listing(&self) -> Option<&Listing> {
+        self.listing.as_ref()
+    }
+
+    /// Missions with a running child.
+    pub fn running(&self) -> Vec<i64> {
+        self.children.keys().copied().collect()
+    }
+
+    /// Missions whose slot child waits for a free slot.
+    pub fn queued(&self) -> Vec<i64> {
+        self.queued.iter().map(|(id, _, _)| *id).collect()
+    }
+
+    /// Logs `msg` for `kind` unless it was the last one logged for it.
+    fn warn(&mut self, kind: &str, msg: String) {
+        if self.warned.get(kind) != Some(&msg) {
+            eprintln!("towercab: {msg}");
+            self.warned.insert(kind.to_string(), msg);
+        }
+    }
+
+    fn ensure_store(&mut self) {
+        if self.store.is_some() {
+            return;
+        }
+        match Store::open(&self.config) {
+            Ok(s) => {
+                self.warned.remove("intents");
+                self.store = Some(s);
+            }
+            Err(e) => self.warn("intents", format!("intents: {e}")),
+        }
+    }
+
+    /// One pass (LOOP-12 order).
     pub fn pass(&mut self, tick: Tick) -> Result<PassReport, String> {
         let mut report = PassReport::default();
         if self.stop.load(Ordering::SeqCst) {
@@ -150,9 +312,631 @@ impl Loop {
             tick,
         };
         report.commands = commands::apply_pending(&cx)?;
-        // No stage handler yet: nothing is runnable and no mission is driven.
-        report.idle = true;
+        self.ensure_store();
+        self.reap(tick)?;
+        self.poll_intents(tick)?;
+        self.poll_prs(tick)?;
+        self.enter_all(tick)?;
+        self.step_due(tick)?;
+        self.spawn_queued(tick)?;
+        let decision = self.pick(tick, &mut report)?;
+        report.idle = report.picked.is_none() && self.idle(tick, decision.as_ref())?;
         Ok(report)
+    }
+
+    fn apply_cx(&self, tick: Tick) -> Apply<'_> {
+        Apply {
+            db: &self.db,
+            config: &self.config,
+            listing: self.listing.as_ref(),
+            tick,
+        }
+    }
+
+    /// `machine::apply`, then: a stage left kills its child (SIGTERM now, SIGKILL when due),
+    /// entry effects run.
+    fn apply(&mut self, m: &Mission, o: &Outcome, tick: Tick) -> Result<Mission, String> {
+        self.apply_as(m, o, None, tick)
+    }
+
+    fn apply_as(
+        &mut self,
+        m: &Mission,
+        o: &Outcome,
+        given: Option<Next>,
+        tick: Tick,
+    ) -> Result<Mission, String> {
+        let after = machine::apply_as(&self.apply_cx(tick), m, o, given)?;
+        if after != *m {
+            self.probe.point();
+        }
+        if after.stage != m.stage || after.step == ENTER {
+            if let Some(mut c) = self.children.remove(&m.id) {
+                c.term(tick.mono);
+                self.dying.push(c);
+            }
+            self.queued.retain(|(id, _, _)| *id != m.id);
+            self.due.remove(&m.id);
+        }
+        self.enter_all(tick)?;
+        mission::get(self.db.conn(), m.id)
+    }
+
+    /// Runs `f` on the handler of `stage` with a fresh `Ctx`; a panic is caught (`Crashed`,
+    /// the tests' injected crash, is not).
+    fn call(
+        &mut self,
+        stage: Stage,
+        tick: Tick,
+        f: impl FnOnce(&mut dyn Handler, &mut Ctx<'_>) -> Result<Progress, StepError>,
+    ) -> Called {
+        let Some(store) = self.store.as_ref() else {
+            return Called::Returned(Err(StepError::Bug("intents not open".into())));
+        };
+        let Some(h) = self.handlers.get_mut(stage) else {
+            return Called::Returned(Err(StepError::Bug(format!("no handler for {stage}"))));
+        };
+        let mut cx = Ctx {
+            config: &self.config,
+            home: &self.home,
+            db: &self.db,
+            store,
+            exes: &self.exes,
+            identity: &mut self.identity,
+            tick,
+            timeouts: true,
+            probe: &self.probe,
+        };
+        match catch_unwind(AssertUnwindSafe(|| f(h.as_mut(), &mut cx))) {
+            Ok(r) => Called::Returned(r),
+            Err(p) if p.is::<Crashed>() => resume_unwind(p),
+            Err(p) => Called::Panicked(
+                p.downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+                    .unwrap_or_else(|| "panic".into()),
+            ),
+        }
+    }
+
+    /// What a handler call leads to (LOOP-4, LOOP-6, LOOP-7).
+    fn progress(&mut self, m: &Mission, called: Called, tick: Tick) -> Result<(), String> {
+        match called {
+            Called::Panicked(msg) => {
+                eprintln!("towercab: {}: panic at {}: {msg}", m.label(), m.stage);
+                let o = Outcome {
+                    why: Some(format!("panic: {msg}")),
+                    ..Outcome::event(Event::Crash)
+                };
+                self.apply(m, &o, tick)?;
+            }
+            Called::Returned(Err(StepError::Env(fault, e))) => {
+                self.apply(m, &Outcome::env(fault, e), tick)?;
+            }
+            Called::Returned(Err(StepError::Bug(e))) => {
+                eprintln!("towercab: {}: bug at {}: {e}", m.label(), m.stage);
+                let o = Outcome {
+                    why: Some(format!("bug: {e}")),
+                    ..Outcome::event(Event::Crash)
+                };
+                self.apply_as(m, &o, Some(Next::Recover), tick)?;
+            }
+            Called::Returned(Ok(Progress::Done(o))) => {
+                self.apply(m, &o, tick)?;
+            }
+            Called::Returned(Ok(Progress::Poll { after })) => {
+                update(self.db.conn(), m.id, &[("busy".into(), Value::Integer(0))])?;
+                self.due.insert(m.id, tick.mono + after);
+            }
+            Called::Returned(Ok(Progress::Spawn(spec))) => {
+                update(self.db.conn(), m.id, &[("busy".into(), Value::Integer(0))])?;
+                let m = mission::get(self.db.conn(), m.id)?;
+                if spec.slot && !self.slot_free() {
+                    self.queued.push((m.id, m.stage, spec));
+                } else {
+                    self.spawn(&m, spec, tick)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Children with a slot running.
+    pub fn slots_used(&self) -> usize {
+        self.children.values().filter(|c| c.spec.slot).count()
+    }
+
+    fn slot_free(&self) -> bool {
+        self.slots_used() < usize::from(self.config.agent.parallel)
+    }
+
+    fn spawn(&mut self, m: &Mission, spec: ChildSpec, tick: Tick) -> Result<(), String> {
+        match child::spawn(&spec, tick.mono) {
+            Ok(c) => {
+                update(
+                    self.db.conn(),
+                    m.id,
+                    &[
+                        ("busy".into(), Value::Integer(1)),
+                        ("child_pid".into(), Value::Integer(i64::from(c.pid))),
+                        (
+                            "child_start".into(),
+                            c.start.map_or(Value::Null, |s| Value::Integer(s as i64)),
+                        ),
+                        ("child_kind".into(), Value::Text(spec.kind.as_str().into())),
+                        ("child_since".into(), Value::Real(tick.unix())),
+                    ],
+                )?;
+                self.children.insert(m.id, c);
+            }
+            Err(e) => {
+                let exe = spec
+                    .argv
+                    .first()
+                    .map(|a| a.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.apply(m, &Outcome::env(Fault::Tool(exe), e), tick)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Children that ended → `Handler::finish` (LOOP-12); children of stages left: SIGKILL
+    /// when due.
+    fn reap(&mut self, tick: Tick) -> Result<(), String> {
+        let after = self.opts.kill_after;
+        self.dying.retain_mut(|c| {
+            if c.poll(tick.mono).is_some() {
+                child::kill_group(c.pid);
+                return false;
+            }
+            c.kill_if_due(tick.mono, after);
+            true
+        });
+        let ended: Vec<(i64, ChildEnd)> = self
+            .children
+            .iter_mut()
+            .filter_map(|(id, c)| c.poll(tick.mono).map(|e| (*id, e)))
+            .collect();
+        for (id, end) in ended {
+            if let Some(c) = self.children.remove(&id) {
+                // What its group left behind (a shell's children) goes too.
+                child::kill_group(c.pid);
+            }
+            let m = mission::get(self.db.conn(), id)?;
+            update(
+                self.db.conn(),
+                id,
+                &[
+                    ("child_pid".into(), Value::Null),
+                    ("child_start".into(), Value::Null),
+                    ("child_kind".into(), Value::Null),
+                    ("child_since".into(), Value::Null),
+                    (
+                        "step_secs".into(),
+                        Value::Real(m.step_secs + end.run.as_secs_f64()),
+                    ),
+                ],
+            )?;
+            let m = mission::get(self.db.conn(), id)?;
+            let called = self.call(m.stage, tick, |h, cx| h.finish(cx, &m, end));
+            self.progress(&m, called, tick)?;
+        }
+        Ok(())
+    }
+
+    /// The `intents` poll (LOOP-5, LOOP-18): at most every 60 s, pulled when `origin`'s `main`
+    /// moved (`git ls-remote`, and always the first time); then intent events, `retry: fresh`
+    /// and orphaned stages.
+    fn poll_intents(&mut self, tick: Tick) -> Result<(), String> {
+        let Some(store) = self.store.as_ref() else {
+            return Ok(());
+        };
+        if self.intents_due.is_some_and(|d| tick.mono < d) {
+            return Ok(());
+        }
+        let first = self.intents_due.is_none();
+        self.intents_due = Some(tick.mono + POLL);
+        let co = store.checkout();
+        let moved = first
+            || !co.origin
+            || match (
+                co.git(&["ls-remote", "origin", "refs/heads/main"]),
+                co.git(&["rev-parse", "refs/remotes/origin/main"]),
+            ) {
+                (Ok(remote), Ok(local)) => remote.split_whitespace().next() != Some(local.trim()),
+                _ => true,
+            };
+        if !moved {
+            return Ok(());
+        }
+        let listing = match store.list() {
+            Ok(l) => l,
+            Err(e) => {
+                self.warn("intents", format!("intents: {e}"));
+                return Ok(());
+            }
+        };
+        self.warned.remove("intents");
+        self.listing = Some(listing);
+        self.intent_events(tick)
+    }
+
+    /// Intent events for unfinished missions (LOOP-18); intents with `retry: fresh` or a
+    /// `stage` but no unfinished mission unstaged (LOOP-5, `towercab: unstage <id>`).
+    fn intent_events(&mut self, tick: Tick) -> Result<(), String> {
+        let Some(listing) = self.listing.clone() else {
+            return Ok(());
+        };
+        for m in mission::unfinished(self.db.conn())? {
+            if let Some(ev) = events::intent_events(&m, &listing) {
+                self.apply(&m, &Outcome::event(ev), tick)?;
+            }
+        }
+        let unfinished = mission::unfinished(self.db.conn())?;
+        let busy: BTreeSet<&str> = unfinished
+            .iter()
+            .filter_map(|m| m.intent.as_deref())
+            .collect();
+        let mut ids: Vec<String> = listing
+            .open
+            .iter()
+            .filter(|i| i.retry().is_some() && !busy.contains(i.id.as_str()))
+            .map(|i| i.id.clone())
+            .collect();
+        for id in pick::orphans(&listing, &unfinished) {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        let mut wrote = false;
+        for id in ids {
+            let Some(store) = self.store.as_ref() else {
+                break;
+            };
+            let unstaged = store.update(&id, "unstage", |i| {
+                i.remove("stage")?;
+                if i.retry().is_some() {
+                    i.remove("retry")?;
+                    i.remove("waiting")?;
+                }
+                Ok(())
+            });
+            match unstaged {
+                Ok(_) => {
+                    wrote = true;
+                    self.probe.point();
+                }
+                Err(e) => self.warn(&format!("unstage {id}"), format!("{id}: unstage: {e}")),
+            }
+        }
+        if wrote && let Some(s) = &self.store {
+            self.listing = Some(s.scan());
+        }
+        Ok(())
+    }
+
+    /// PR reads every 60 s per mission with a PR Towercab hasn't merged (LOOP-18, PIP-21): at
+    /// most one event each; `feedback`, `conflict` and `head_moved` wait while a child runs.
+    fn poll_prs(&mut self, tick: Tick) -> Result<(), String> {
+        let me = self
+            .config
+            .github
+            .as_ref()
+            .and_then(|g| g.me.clone())
+            .unwrap_or_default();
+        for m in mission::unfinished(self.db.conn())? {
+            let Some(pr) = m.pr else { continue };
+            if m.kind != Kind::Intent || m.merge_sha.is_some() {
+                continue;
+            }
+            if self.pr_due.get(&m.id).is_some_and(|d| tick.mono < *d) {
+                continue;
+            }
+            self.pr_due.insert(m.id, tick.mono + POLL);
+            let Ok(repo) = self.config.repo(&m.repo) else {
+                continue;
+            };
+            let github = repo.github.clone();
+            let key = format!("pr {}", m.id);
+            let state = match self.prs.read(&github, pr) {
+                Ok(s) => {
+                    self.warned.remove(&key);
+                    s
+                }
+                Err(e) => {
+                    self.warn(&key, format!("{}: PR {pr}: {e}", m.label()));
+                    continue;
+                }
+            };
+            let Some(ev) = events::pr_events(&m, &state, &me) else {
+                continue;
+            };
+            let running = self.children.contains_key(&m.id)
+                || self.queued.iter().any(|(id, _, _)| *id == m.id);
+            if running && matches!(ev, Event::Feedback | Event::Conflict | Event::HeadMoved) {
+                continue;
+            }
+            let mut o = Outcome::event(ev);
+            if ev == Event::PrMerged {
+                o = o.with("merged_by", "human".to_string());
+                if let Some(sha) = state.merge_commit.clone() {
+                    o = o.with("merge_sha", sha);
+                }
+            }
+            self.apply(&m, &o, tick)?;
+        }
+        Ok(())
+    }
+
+    /// Entry effects of every mission whose stage changed (LOOP-6); a failure is logged and
+    /// retried at the next pass.
+    fn enter_all(&mut self, tick: Tick) -> Result<(), String> {
+        let mut wrote = false;
+        for m in mission::entering(self.db.conn())? {
+            let Some(store) = self.store.as_ref() else {
+                break;
+            };
+            let mut cx = Ctx {
+                config: &self.config,
+                home: &self.home,
+                db: &self.db,
+                store,
+                exes: &self.exes,
+                identity: &mut self.identity,
+                tick,
+                timeouts: true,
+                probe: &self.probe,
+            };
+            match machine::enter(&mut cx, &m) {
+                Ok(_) => {
+                    wrote = true;
+                    self.warned.remove(&format!("enter {}", m.id));
+                }
+                Err(e) => self.warn(&format!("enter {}", m.id), format!("{}: {e}", m.label())),
+            }
+        }
+        if wrote && let Some(s) = &self.store {
+            self.listing = Some(s.scan());
+        }
+        Ok(())
+    }
+
+    /// The PRI-4 rank of a mission's intent (missions without an open intent last).
+    fn rank(&self, m: &Mission) -> (usize, i64) {
+        let at = self.listing.as_ref().and_then(|l| {
+            l.open
+                .iter()
+                .position(|i| Some(i.id.as_str()) == m.intent.as_deref())
+        });
+        (at.unwrap_or(usize::MAX), m.id)
+    }
+
+    /// Waiting for a model's cooldown (LOOP-9).
+    fn limit_waiting(&self, m: &Mission, now: f64) -> bool {
+        let Some(model) = &m.limit_model else {
+            return false;
+        };
+        let until: Option<f64> = self
+            .db
+            .conn()
+            .query_row(
+                "SELECT until FROM cooldowns WHERE provider = ?1 AND model = ?2",
+                [limits::CLAUDE, model.as_str()],
+                |r| r.get(0),
+            )
+            .ok();
+        until.is_some_and(|u| u > now)
+    }
+
+    /// Driven, not held, no running or queued child, no wait (poll, backoff, limit) pending.
+    fn due_now(&self, m: &Mission, tick: Tick) -> bool {
+        m.step != ENTER
+            && m.stage.driven()
+            && !m.held
+            && !self.children.contains_key(&m.id)
+            && !self.queued.iter().any(|(id, _, _)| *id == m.id)
+            && m.retry_at.is_none_or(|t| t <= tick.unix())
+            && self.due.get(&m.id).is_none_or(|d| *d <= tick.mono)
+            && !self.limit_waiting(m, tick.unix())
+    }
+
+    /// One handler step for each due mission, in their intents' PRI-4 order.
+    fn step_due(&mut self, tick: Tick) -> Result<(), String> {
+        if self.store.is_none() {
+            return Ok(());
+        }
+        let mut ms = mission::unfinished(self.db.conn())?;
+        ms.sort_by_key(|m| self.rank(m));
+        for m in ms {
+            let m = mission::get(self.db.conn(), m.id)?;
+            if !self.due_now(&m, tick) {
+                continue;
+            }
+            self.due.remove(&m.id);
+            update(
+                self.db.conn(),
+                m.id,
+                &[
+                    ("busy".into(), Value::Integer(1)),
+                    ("limit_model".into(), Value::Null),
+                ],
+            )?;
+            let m = mission::get(self.db.conn(), m.id)?;
+            let called = self.call(m.stage, tick, |h, cx| h.step(cx, &m));
+            self.progress(&m, called, tick)?;
+        }
+        Ok(())
+    }
+
+    /// Slot children waiting, in their intents' PRI-4 order, while a slot is free (LOOP-4).
+    fn spawn_queued(&mut self, tick: Tick) -> Result<(), String> {
+        let mut queued = std::mem::take(&mut self.queued);
+        queued.sort_by_key(|(id, _, _)| {
+            mission::get(self.db.conn(), *id).map_or((usize::MAX, *id), |m| self.rank(&m))
+        });
+        for (id, stage, spec) in queued {
+            let Ok(m) = mission::get(self.db.conn(), id) else {
+                continue;
+            };
+            if m.stage != stage || m.step == ENTER {
+                continue;
+            }
+            if self.slot_free() {
+                self.spawn(&m, spec, tick)?;
+            } else {
+                self.queued.push((id, stage, spec));
+            }
+        }
+        Ok(())
+    }
+
+    /// A mission ahead of a new pick for a slot: driven and stepping (not held, no child, no
+    /// poll, backoff or limit wait).
+    fn pending(&self, m: &Mission, tick: Tick) -> bool {
+        m.stage.driven()
+            && !m.held
+            && !self.children.contains_key(&m.id)
+            && self.due.get(&m.id).is_none_or(|d| *d <= tick.mono)
+            && m.retry_at.is_none_or(|t| t <= tick.unix())
+            && !self.limit_waiting(m, tick.unix())
+    }
+
+    /// LOOP-5's inputs from the database and config.
+    pub fn pick_state(&self, tick: Tick) -> Result<PickState, String> {
+        let conn = self.db.conn();
+        let frozen: BTreeSet<String> = {
+            let mut q = conn
+                .prepare("SELECT repo FROM repo_caps WHERE frozen = 1")
+                .map_err(sql)?;
+            q.query_map([], |r| r.get(0))
+                .map_err(sql)?
+                .collect::<Result<_, _>>()
+                .map_err(sql)?
+        };
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        for m in mission::unfinished(conn)? {
+            if m.stage != Stage::Blocked {
+                *counts.entry(m.repo.clone()).or_default() += 1;
+            }
+        }
+        let full = self
+            .config
+            .repos
+            .iter()
+            .filter_map(|(name, r)| {
+                let r = r.as_ref().ok()?;
+                let n = counts.get(name).copied().unwrap_or(0);
+                (n >= usize::from(r.workers)).then(|| (name.clone(), (n, r.workers)))
+            })
+            .collect();
+        let cooling = limits::cooling(&self.db, tick.unix())?
+            .into_iter()
+            .filter(|c| c.provider == limits::CLAUDE)
+            .map(|c| (c.model.clone(), shown_time(c.until, tick.wall)))
+            .collect();
+        Ok(PickState {
+            cutoff: self.config.intents.cutoff,
+            paused: machine::paused(conn)?,
+            // `env_blocked` (LOOP-10) comes with loop-runner part 3.
+            env_blocked: false,
+            built: self.handlers.built(),
+            repos: self
+                .config
+                .repos
+                .iter()
+                .filter(|(_, r)| r.is_ok())
+                .map(|(n, _)| n.clone())
+                .collect(),
+            model: self.config.agent.model.clone(),
+            frozen,
+            full,
+            cooling,
+        })
+    }
+
+    /// LOOP-5: the waits written without a mission (the outbox row first, then the intent),
+    /// then, with a slot free and no mission ahead of it, the pick: one transaction inserts the
+    /// mission at `pick`.
+    fn pick(&mut self, tick: Tick, report: &mut PassReport) -> Result<Option<Decision>, String> {
+        let (Some(listing), true) = (self.listing.clone(), self.store.is_some()) else {
+            return Ok(None);
+        };
+        let decision = pick::decide(&listing, &self.pick_state(tick)?);
+        let mut wrote = false;
+        for (id, w, n) in &decision.writes {
+            let Some(intent) = listing.open.iter().find(|i| i.id == *id) else {
+                continue;
+            };
+            let why = decision
+                .skipped
+                .iter()
+                .find(|(s, _)| s == id)
+                .map(|(_, skip)| skip.to_string());
+            let subject = outbox::Subject {
+                id: id.clone(),
+                repo: intent.repo().to_string(),
+                title: intent.title().to_string(),
+                slug: intent.slug.clone(),
+                pr_url: None,
+                why,
+            };
+            let text = outbox::render_waiting(w, &subject, &self.config);
+            let key = format!("intent:{id}");
+            outbox::enqueue(self.db.conn(), &key, &w.key(), n, &text, tick.unix())?;
+            self.probe.point();
+            let Some(store) = self.store.as_ref() else {
+                break;
+            };
+            let waiting = w.text();
+            match store.update(id, "wait", |i| {
+                i.set("waiting", IValue::Str(waiting.clone()))
+            }) {
+                Ok(_) => {
+                    wrote = true;
+                    self.probe.point();
+                }
+                Err(e) => self.warn(&format!("wait {id}"), format!("{id}: {e}")),
+            }
+        }
+        if wrote && let Some(s) = &self.store {
+            self.listing = Some(s.scan());
+        }
+        let Some(id) = decision.pick.clone() else {
+            return Ok(Some(decision));
+        };
+        let unfinished = mission::unfinished(self.db.conn())?;
+        let ahead = !self.slot_free()
+            || !self.queued.is_empty()
+            || unfinished.iter().any(|m| self.pending(m, tick));
+        if ahead {
+            return Ok(Some(decision));
+        }
+        let Some(intent) = listing.open.iter().find(|i| i.id == id).cloned() else {
+            return Ok(Some(decision));
+        };
+        self.insert_pick(&intent, tick)?;
+        report.picked = Some(id);
+        Ok(Some(decision))
+    }
+
+    fn insert_pick(&mut self, intent: &Intent, tick: Tick) -> Result<Mission, String> {
+        let config = &self.config;
+        let m = self
+            .db
+            .tx(|tx| mission::insert_pick(tx, intent, config, tick))?;
+        self.probe.point();
+        Ok(m)
+    }
+
+    /// LOOP-17: nothing runnable and no mission driven but by a limit wait.
+    fn idle(&self, tick: Tick, decision: Option<&Decision>) -> Result<bool, String> {
+        if decision.is_some_and(|d| d.pick.is_some()) {
+            return Ok(false);
+        }
+        Ok(mission::unfinished(self.db.conn())?.iter().all(|m| {
+            m.step != ENTER && (!m.stage.driven() || m.held || self.limit_waiting(m, tick.unix()))
+        }))
     }
 
     /// Passes every `opts.pass` until SIGTERM or SIGINT (a second one exits at once, uncleanly),
@@ -220,8 +1004,40 @@ impl Loop {
         }
     }
 
-    /// A clean exit: `meta.running` removed. Dropping a `Loop` without it is a crash.
+    /// A clean exit (LOOP-7): SIGTERM to each child's group, SIGKILL after `kill_after`,
+    /// `interrupted` for its mission (not counted); `meta.running` removed. Dropping a `Loop`
+    /// without it is a crash.
     pub fn shutdown(&mut self) -> Result<(), String> {
+        let tick = Tick::now();
+        let mut stopping: Vec<(Option<i64>, Child)> = std::mem::take(&mut self.children)
+            .into_iter()
+            .map(|(id, c)| (Some(id), c))
+            .collect();
+        stopping.extend(self.dying.drain(..).map(|c| (None, c)));
+        for (_, c) in stopping.iter_mut() {
+            child::term_group(c.pid);
+        }
+        let end = Instant::now() + self.opts.kill_after;
+        while Instant::now() < end
+            && stopping
+                .iter_mut()
+                .any(|(_, c)| matches!(c.proc.try_wait(), Ok(None)))
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        for (_, c) in stopping.iter_mut() {
+            child::kill_group(c.pid);
+            let _ = c.proc.wait();
+        }
+        for id in stopping.iter().filter_map(|(id, _)| *id) {
+            let m = mission::get(self.db.conn(), id)?;
+            machine::apply(
+                &self.apply_cx(tick),
+                &m,
+                &Outcome::event(Event::Interrupted),
+            )?;
+        }
+        self.queued.clear();
         self.db.del_meta("running")
     }
 }

@@ -1,0 +1,270 @@
+//! A whole loop world: the intent home, target repos (a bare `origin` with a verifying block
+//! and Towercab's clone of it), the loop's home and config, a fake PR source and a clock the
+//! test drives.
+
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::time::Duration;
+
+use chrono::DateTime;
+use towercab::config::{Config, GITHUB_API, GithubConfig, IntentsConfig, RepoConfig};
+use towercab::db::Db;
+use towercab::events::{PrSource, PrState};
+use towercab::exes::Exes;
+use towercab::github::GhError;
+use towercab::handler::Handlers;
+use towercab::home::Home as LoopHome;
+use towercab::mission::{self, Mission};
+use towercab::runloop::{Loop, LoopOpts, PassReport, Tick};
+
+use super::{Home, git, write};
+
+/// A `CLAUDE.md` with a verifying block (REPO-5).
+pub const CLAUDE: &str = "# Repo\n\n## Verifying your work\n\n```checks\nmake test\n```\n";
+
+/// `intents/<dir>/intent.md` with `repo`, `extra` front matter and `title`.
+pub fn intent_file(dir: &str, repo: &str, extra: &str, title: &str) -> (String, String) {
+    (
+        format!("intents/{dir}/intent.md"),
+        super::intent_md(repo, extra, title),
+    )
+}
+
+/// PR states by number; every read recorded.
+#[derive(Clone, Default)]
+pub struct FakePrs {
+    pub states: Rc<RefCell<BTreeMap<u64, PrState>>>,
+    pub reads: Rc<RefCell<Vec<(String, u64)>>>,
+}
+
+impl FakePrs {
+    pub fn set(&self, pr: u64, state: PrState) {
+        self.states.borrow_mut().insert(pr, state);
+    }
+
+    pub fn reads(&self) -> usize {
+        self.reads.borrow().len()
+    }
+}
+
+impl PrSource for FakePrs {
+    fn read(&mut self, github: &str, pr: u64) -> Result<PrState, GhError> {
+        self.reads.borrow_mut().push((github.to_string(), pr));
+        self.states
+            .borrow()
+            .get(&pr)
+            .cloned()
+            .ok_or_else(|| GhError::Failed(format!("no PR {pr}")))
+    }
+}
+
+/// An open PR at `head`, mergeable, no comments.
+pub fn open_pr(head: &str) -> PrState {
+    PrState {
+        state: "OPEN".into(),
+        head: head.into(),
+        mergeable: "MERGEABLE".into(),
+        ..PrState::default()
+    }
+}
+
+pub struct World {
+    pub intents: Home,
+    pub root: PathBuf,
+    pub home: LoopHome,
+    pub config: Config,
+    pub prs: FakePrs,
+    pub clock: Tick,
+}
+
+impl World {
+    /// The intent home holding `files`, and each of `repos` (`[repos.<r>]`, github `me/<r>`,
+    /// workers 1) with a `CLAUDE.md` verifying block on `main`.
+    pub fn new(files: &[(String, String)], repos: &[&str]) -> World {
+        let files: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, t)| (p.as_str(), t.as_str()))
+            .collect();
+        let intents = Home::new(&files);
+        let root = intents.tmp.path().to_path_buf();
+        let mut config = intents.config();
+        config.intents = IntentsConfig {
+            cutoff: 7,
+            ..config.intents
+        };
+        config.github = Some(GithubConfig {
+            app_id: Some(1),
+            me: Some("me".into()),
+            api_base: GITHUB_API.into(),
+        });
+        for name in repos {
+            let origin = root.join("repos").join(format!("{name}.git"));
+            fs::create_dir_all(&origin).unwrap();
+            git(&origin, &["init", "--quiet", "--bare", "-b", "main"]);
+            let mine = root.join("mine").join(name);
+            fs::create_dir_all(mine.parent().unwrap()).unwrap();
+            git(
+                mine.parent().unwrap(),
+                &["clone", "--quiet", origin.to_str().unwrap(), name],
+            );
+            git(&mine, &["checkout", "--quiet", "-B", "main"]);
+            write(&mine, "CLAUDE.md", CLAUDE);
+            write(&mine, "src/lib.rs", "// code\n");
+            git(&mine, &["add", "-A"]);
+            git(&mine, &["commit", "--quiet", "-m", "seed"]);
+            git(&mine, &["push", "--quiet", "origin", "HEAD:main"]);
+            let clone = root.join("clones").join(name);
+            fs::create_dir_all(clone.parent().unwrap()).unwrap();
+            git(
+                clone.parent().unwrap(),
+                &["clone", "--quiet", origin.to_str().unwrap(), name],
+            );
+            config.repos.insert(
+                name.to_string(),
+                Ok(RepoConfig {
+                    name: name.to_string(),
+                    github: format!("me/{name}"),
+                    path: clone,
+                    base: "main".into(),
+                    workers: 1,
+                    bash: Vec::new(),
+                }),
+            );
+        }
+        let home = LoopHome::resolve(Some(&root.join("home"))).unwrap();
+        World {
+            intents,
+            root,
+            home,
+            config,
+            prs: FakePrs::default(),
+            clock: Tick {
+                wall: DateTime::parse_from_rfc3339("2026-10-15T13:30:00+02:00").unwrap(),
+                mono: Duration::from_secs(1000),
+            },
+        }
+    }
+
+    /// My clone of repo `name`.
+    pub fn mine(&self, name: &str) -> PathBuf {
+        self.root.join("mine").join(name)
+    }
+
+    /// Towercab's clone of repo `name`.
+    pub fn clone_path(&self, name: &str) -> PathBuf {
+        self.root.join("clones").join(name)
+    }
+
+    pub fn repo_mut(&mut self, name: &str) -> &mut RepoConfig {
+        self.config.repos.get_mut(name).unwrap().as_mut().unwrap()
+    }
+
+    /// A loop on this world with `handlers`, the fake PRs and `opts`.
+    pub fn open_with(&self, handlers: Handlers, exes: Exes, opts: LoopOpts) -> Loop {
+        let mut lp = Loop::open(self.config.clone(), self.home.clone(), handlers, exes, opts)
+            .expect("loop opens");
+        lp.prs = Box::new(self.prs.clone());
+        lp
+    }
+
+    pub fn open(&self, handlers: Handlers) -> Loop {
+        self.open_with(handlers, Exes::default(), LoopOpts::default())
+    }
+
+    /// One pass, 61 s after the last one (every poll due).
+    pub fn pass(&mut self, lp: &mut Loop) -> PassReport {
+        self.clock = self.clock.after(Duration::from_secs(61));
+        lp.pass(self.clock).expect("pass")
+    }
+
+    /// One pass, `secs` after the last one.
+    pub fn pass_after(&mut self, lp: &mut Loop, secs: u64) -> PassReport {
+        self.clock = self.clock.after(Duration::from_secs(secs));
+        lp.pass(self.clock).expect("pass")
+    }
+
+    /// Passes until `done` holds (at most `max`).
+    pub fn until(&mut self, lp: &mut Loop, max: usize, done: impl Fn(&World) -> bool) {
+        for _ in 0..max {
+            if done(self) {
+                return;
+            }
+            self.pass(lp);
+        }
+        assert!(done(self), "not reached in {max} passes");
+    }
+
+    pub fn db(&self) -> Db {
+        Db::open(&self.home.db()).unwrap()
+    }
+
+    /// The intent's missions, oldest attempt first.
+    pub fn missions(&self, intent: &str) -> Vec<Mission> {
+        mission::for_intent(self.db().conn(), intent).unwrap()
+    }
+
+    /// The intent's latest mission.
+    pub fn mission(&self, intent: &str) -> Mission {
+        self.missions(intent).pop().expect("a mission")
+    }
+
+    /// The stage of the intent's latest mission, if any.
+    pub fn stage(&self, intent: &str) -> Option<towercab::machine::Stage> {
+        self.missions(intent).pop().map(|m| m.stage)
+    }
+
+    /// `intent.md` on the remote's `main` (`intents/` or `done/`).
+    pub fn intent_md(&self, dir: &str) -> String {
+        for base in ["intents", "done"] {
+            let rel = format!("{base}/{dir}/intent.md");
+            if self.intents.remote_has(&rel) {
+                return self.intents.remote_file(&rel);
+            }
+        }
+        panic!("{dir}: no intent.md on main");
+    }
+
+    /// The `outbox` rows: (mission, event, n, text).
+    pub fn outbox(&self) -> Vec<(String, String, String, String)> {
+        let db = self.db();
+        let mut q = db
+            .conn()
+            .prepare(
+                "SELECT mission, event, n, text FROM outbox ORDER BY created, mission, event, n",
+            )
+            .unwrap();
+        q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
+    /// The transitions of `intent`'s missions: (from, event, to).
+    pub fn transitions(&self, intent: &str) -> Vec<(String, String, String)> {
+        let db = self.db();
+        let mut q = db
+            .conn()
+            .prepare(
+                "SELECT t.from_stage, t.event, t.to_stage FROM transitions t
+                 JOIN missions m ON m.id = t.mission WHERE m.intent = ?1 ORDER BY t.id",
+            )
+            .unwrap();
+        q.query_map([intent], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+}
+
+/// Whether `dir` is a git checkout with a valid `HEAD`.
+pub fn has_head(dir: &Path) -> bool {
+    dir.join(".git").exists()
+        && std::process::Command::new("git")
+            .args(["rev-parse", "--verify", "--quiet", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .is_ok_and(|o| o.status.success())
+}
