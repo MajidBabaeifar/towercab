@@ -304,7 +304,7 @@ TimeoutStopSec=30
 WantedBy=graphical-session.target
 ```
 
-**Code** (all `pub`; tests only in `tests/`; part = build order: 1 home, config, service; 2 machine, pick; 3 limits, network, awake; 4 status, messages, commands; 5 identity, Claude runs)
+**Code** (all `pub`; tests only in `tests/`; part = build order: 1 home, config, service; 2 machine, pick; 3 limits, network, awake; 4 status, messages, commands; 5 identity, Claude runs; 6 autonomy, [AUT](autonomy.md))
 
 | Part | File | Interface |
 |---|---|---|
@@ -334,13 +334,14 @@ WantedBy=graphical-session.target
 | 2, 5 | `src/intents/git.rs` | `git_command_for(exe)`, `GitAuth { args: Vec<String>, env: Vec<(String, String)> }` (`apply(&mut Command)`; `-c` args after Towercab's own, so the bot's `user.name`/`user.email` win); part 5: `AuthFn = Box<dyn FnMut() -> Result<GitAuth, String> + Send>`, `Checkout::with_auth(AuthFn)` (fetch, pull, rebase, commit, push and `git_as` use it; other calls stay local), `Checkout::clone_as(remote, path, &GitAuth)`; `Store::open_as(&Config, Option<AuthFn>)` (the loop's: `Identity::auth_for_url([intents].remote)`). |
 | 5 | `ops/github-app.json` | `{name: towercab, url: https://github.com/MajidBabaeifar/towercab, description: <one line>, public: false, hook_attributes: {url: <same>, active: false}, default_permissions: {contents, pull_requests, issues, checks, statuses, workflows, actions: write; deployments, metadata: read}, default_events: []}`. |
 | 2, 5 | `src/claude.rs`, `src/drafts.rs` | Part 2: `CONTINUE`, `SESSION_GONE`, `session_gone(text)`, `fresh_context` (LOOP-7); part 5: [PIP-24](pipeline.md) **Claude runs** (`env` has no GitHub token: LOOP-19); [INT-7, INT-8](intents.md) **Code**. |
+| 6 | `src/autonomy.rs` | [AUT](autonomy.md) **Gate**: `RepoState` (`read`, `cap`), `effective`, `spec_gate`, `gate(&GateIn) -> Gate`, `GateIn`, `PrKind`, `Ci`, `Review` (`risk_low`), `Gate`, `Hold`, `CAPPED` (3), `lowered`, `lower`. Pure but `RepoState::read`; the pipeline's handlers call it. |
 | all | `src/cli.rs` | `towercab [--config <file>] [--home <dir>] <command>`, LOOP-15; errors `towercab: <reason>`, exit 1; bad arguments exit 2. |
 
 ## Out of scope
 
 - Claims across machines (laptop + VPS).
 - Periodic e2e watch of live services ([PIP-10](pipeline.md)).
-- Stage handlers other than `pick` (the pipeline intent); the gate's use of `repo_caps` (autonomy); `telemetry`, `eval`, `hook guard` and gauges beyond stubs (metrics and pipeline intents).
+- Stage handlers other than `pick` (the pipeline intent); their use of `src/autonomy.rs` (cap, gate, spec gate, `lower_a`); `telemetry`, `eval`, `hook guard` and gauges beyond stubs (metrics and pipeline intents).
 
 ## Decisions
 
