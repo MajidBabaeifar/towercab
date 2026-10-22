@@ -23,7 +23,6 @@ revert the wrong thing, leak a secret, or leave the loop stuck or crash-looping.
 ## Do not report
 
 - Style `cargo fmt` and `clippy -D warnings` already enforce.
-- The Python package (`towercab/`, `tests/*.py`) unless the PR changes it.
 - Missing docs on private items.
 
 ## Red lines

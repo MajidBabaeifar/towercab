@@ -1,15 +1,14 @@
 # Towercab
 
 Majid's software factory: intents in the `intents` repo → Claude Code builds them → PRs.
-Being rewritten in Rust (crate at the root). The Python package (`towercab/`, `bin/towercab`,
-`tests/*.py`) keeps running until the pipeline intent switches over; don't extend it.
+One Rust crate at the root; the Python version lives on branch `python`.
 
 ## Commands
 
 - `cargo test --locked`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo fmt`
   (a machine with a zig `cc`: `export CRATE_CC_NO_DEFAULTS=1` first)
 - `cargo run -- add "towercab: <title>" u3 i4` · `migrate` · `review` · `--home /tmp/tc run [--watch]` · `status` · `doctor`
-- `python3 -m unittest discover -s tests`: the Python version's tests
+- `python3 -m unittest discover -s tests`: `tests/test_ops.py` (the `ops/` scripts, until the metrics intent ports them)
 
 ## Conventions
 
@@ -27,13 +26,15 @@ Being rewritten in Rust (crate at the root). The Python package (`towercab/`, `b
 
 - `src/cli.rs`: clap; errors → `towercab: <reason>`, exit 1; bad arguments 2. `config.rs`: **Config**.
 - The loop (file → interface: loop.md **Code**): `runloop.rs` (5 s pass), `machine.rs` (the one state machine,
-  a red line), `mission.rs`, `handler.rs` (`Handler`, `Ctx::record`; production picks off), `pick.rs`, `checkout.rs`,
+  a red line), `mission.rs`, `handler.rs` (`Handler`, `Ctx::record`; `production()` = the pipeline), `pick.rs`, `checkout.rs`,
   `events.rs`, `child.rs`, `limits.rs`, `env.rs`, `awake.rs`, `home.rs`, `db.rs` (`Db::tx` = one `BEGIN IMMEDIATE`),
   `commands.rs`, `outbox.rs`, `telegram.rs` (`http.rs`), `status.rs`, `doctor.rs`, `service.rs`, `exes.rs`; subsets: `github`, `claude`.
 - `src/priority.rs`: PRI order, `pick_order`, `review_due`; `src/review.rs`: `towercab review`. `src/autonomy.rs`: AUT cap, gate, spec gate, `lower_a`.
 - `src/intents/`: the intent home: `intent.rs` (parse, line-level `set`), `id.rs`, `store.rs` (`Store`:
   list/get/add/update; pull → write → commit → push, replay), `views.rs`, `git.rs`, `migrate.rs`.
 - `src/repo/`: `CLAUDE.md`/`REVIEW.md`/`TOWERCAB.md` from `origin/<base>` (`load`), `protected.rs`, `protect`.
+- `src/pipeline/` (pipeline.md **Code**): a handler per stage, state in `missions.data`, Claude runs (`runs.rs`),
+  `evals.rs`, `findings.rs`; `prompts/*.md`; `src/writer.rs` (PR text). Tests: `tests/pipe_*.rs`, `common/pipe.rs`.
 
 ## Things Claude gets wrong here
 
@@ -43,7 +44,6 @@ Being rewritten in Rust (crate at the root). The Python package (`towercab/`, `b
 - `std::env::set_var` in a test binary that has other tests: give it its own `tests/*.rs`.
 - One change's writes outside one `Db::tx`; in a test, the binary without `common::towercab` + `--home`
   or a `Loop` without `common::fake_exes`/`World::exes` (fixtures: `tests/common/world.rs`, HTTP `http.rs`).
-- Writing to the Python package or its tests for Rust work.
 - Moving a mission anywhere but `machine::apply`, or a side effect before its `Ctx::record`.
 
 ## Verifying your work

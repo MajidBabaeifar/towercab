@@ -1,5 +1,5 @@
 //! Usage limits detected and their reset times parsed in every format (LOOP-9, loop.md
-//! **Limits**; the Python `towercab/limits.py` cases, extended).
+//! **Limits**; the Python version's limit cases, extended).
 
 use chrono::{DateTime, FixedOffset, TimeZone, Utc};
 use chrono_tz::Europe::Berlin;
