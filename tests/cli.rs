@@ -406,19 +406,21 @@ fn test_cli() {
         .unwrap();
     assert_eq!(stages, ["plan", "release", "revert_ci"]);
 
-    // No pipeline yet: `step` and `run --intent` refuse.
+    // Picks on (the pipeline): `step` runs the plan handler (the repo's clone is missing: a
+    // github fault, the step again later); a pick still skips a full repo.
+    let (out, errs, code) = run(&["step", "0900"]);
     assert_eq!(
-        run(&["step", "0900"]),
-        err("261001-0900: plan handler not built", 1)
+        (out.as_str(), code),
+        ("261001-0900: plan → plan\n", Some(0)),
+        "{errs}"
     );
-    assert_eq!(
-        run(&["step", "0904"]),
-        err("261001-0904: not picked: picks off: pipeline not built", 1)
-    );
-    assert_eq!(
-        run(&["run", "--intent", "0904"]),
-        err("261001-0904: not picked: picks off: pipeline not built", 1)
-    );
+    assert!(errs.contains("github: /srv/web"), "{errs}");
+    for args in [&["step", "0904"][..], &["run", "--intent", "0904"]] {
+        assert_eq!(
+            run(args),
+            err("261001-0904: not picked: repo web full (3/1)", 1)
+        );
+    }
     assert_eq!(
         run(&["step", "7777"]),
         err("no open intent matches 7777", 1)

@@ -519,7 +519,7 @@ fn test_preflight() {
         format!("{}: not found", dir.join("no-cargo").display())
     );
 
-    let mut lp = w.open_with(Handlers::production(), exes.clone(), Default::default());
+    let mut lp = w.open_with(Handlers::picks_off(), exes.clone(), Default::default());
     assert!(kinds(&w).is_empty(), "checked in the first pass");
     w.pass(&mut lp);
     assert_eq!(kinds(&w), ["claude", "github", "sandbox", "tool:cargo"]);
@@ -545,7 +545,7 @@ fn test_preflight() {
         &["remote", "set-url", "origin", &origin("api")],
     );
     exes.cargo = logged(&dir, "cargo", "exit 0\n").into();
-    let mut lp = w.open_with(Handlers::production(), exes, Default::default());
+    let mut lp = w.open_with(Handlers::picks_off(), exes, Default::default());
     w.pass(&mut lp);
     assert_eq!(kinds(&w), ["sandbox"]);
     lp.shutdown().unwrap();

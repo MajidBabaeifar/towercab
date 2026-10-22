@@ -61,10 +61,10 @@ impl Mode {
     }
 }
 
-/// `pick::Pick` and every stage handler (`Handlers::production()` switches to it in part 5:
-/// picks stay off until then, LOOP-5).
+/// `pick::Pick` (`Mode::Eval`: `evals::EvalPick`) and every stage handler: what
+/// `Handlers::production()` runs (`Mode::Live`).
 pub fn handlers(mode: Mode) -> Handlers {
-    let mut h = Handlers::production();
+    let mut h = Handlers::picks_off();
     if let Mode::Eval(cases) = &mode {
         h.set(Stage::Pick, Box::new(evals::EvalPick::new(cases.clone())));
     }

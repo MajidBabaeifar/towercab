@@ -457,9 +457,15 @@ impl Handlers {
         Handlers::every(|| Box::new(Stub))
     }
 
-    /// What `run` uses: `pick::Pick`, every other stage [`NotBuilt`]: picks stay off until the
-    /// pipeline exists.
+    /// What `run`, `step`, `status` and `next` use: the pipeline (`pipeline::handlers(Mode::Live)`),
+    /// every stage built: picks on (LOOP-5).
     pub fn production() -> Handlers {
+        crate::pipeline::handlers(crate::pipeline::Mode::Live)
+    }
+
+    /// `pick::Pick` and every other stage [`NotBuilt`]: picks off (the pipeline's base; tests
+    /// of a loop that never picks).
+    pub fn picks_off() -> Handlers {
         let mut h = Handlers::every(|| Box::new(NotBuilt));
         h.set(Stage::Pick, Box::new(crate::pick::Pick));
         h

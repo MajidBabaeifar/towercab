@@ -19,7 +19,7 @@ fn open(config: &Config, home: &Home) -> Result<Loop, String> {
     Loop::open(
         config.clone(),
         home.clone(),
-        Handlers::production(),
+        Handlers::picks_off(),
         common::fake_exes(&home.root.with_file_name("fakebin")),
         LoopOpts::default(),
     )
