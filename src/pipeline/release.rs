@@ -14,7 +14,7 @@ use super::data::Data;
 use super::deploy::{DEPLOY_POLL, behind_other, contains, deployed, short};
 use super::e2e::{self as e2e_mod, E2eEnd, at_sha, last_log, settle};
 use super::verify::tail;
-use super::{Mode, files, sandbox};
+use super::{Mode, evals, files, sandbox};
 
 /// The `release` stage.
 pub struct Release {
@@ -49,9 +49,12 @@ impl Release {
         Ok(Ok(Some((block, merge))))
     }
 
-    /// No release to make: `ok` (part 5 writes the eval case here, PIP-33).
-    fn done() -> Progress {
-        Progress::Done(Outcome::ok())
+    /// On its way to `done`: the eval case (PIP-33; not in an eval), then `ok`.
+    fn done(&self, cx: &Ctx<'_>, m: &Mission) -> Result<Progress, StepError> {
+        if !self.mode.eval() {
+            evals::write_case(cx, m)?;
+        }
+        Ok(Progress::Done(Outcome::ok()))
     }
 
     /// Waits until production shows the merge (PIP-8 rules, the block's `deploy` and
@@ -74,7 +77,8 @@ impl Release {
         {
             data.set("release", r);
             let Some(line) = &block.e2e else {
-                return Ok(Progress::Done(Outcome::ok().with("data", data.text())));
+                let m = cx.record(m, "wait", &[("data", data.text().into())])?;
+                return self.done(cx, &m);
             };
             let dir = at_sha(cx, m, merge)?;
             return e2e_mod::spawn(cx, m, &mut data, "e2e", &dir, line);
@@ -100,11 +104,11 @@ impl Release {
 impl Handler for Release {
     fn step(&mut self, cx: &mut Ctx<'_>, m: &Mission) -> Result<Progress, StepError> {
         if self.mode.eval() {
-            return Ok(Self::done());
+            return self.done(cx, m);
         }
         let (block, merge) = match Self::block(cx, m)? {
             Err(o) => return Ok(Progress::Done(o)),
-            Ok(None) => return Ok(Self::done()),
+            Ok(None) => return self.done(cx, m),
             Ok(Some(b)) => b,
         };
         if behind_other(cx, m)? {
@@ -156,7 +160,7 @@ impl Handler for Release {
     ) -> Result<Progress, StepError> {
         let (block, merge) = match Self::block(cx, m)? {
             Err(o) => return Ok(Progress::Done(o)),
-            Ok(None) => return Ok(Self::done()),
+            Ok(None) => return self.done(cx, m),
             Ok(Some(b)) => b,
         };
         match m.step.as_str() {
@@ -183,7 +187,7 @@ impl Handler for Release {
             "e2e" => {
                 let line = block.e2e.clone().unwrap_or_default();
                 match settle(cx, m, &line, &end, &last_log(cx, m)) {
-                    E2eEnd::Green => Ok(Self::done()),
+                    E2eEnd::Green => self.done(cx, m),
                     E2eEnd::Env(fault, why) => Ok(Progress::Done(Outcome::env(fault, why))),
                     E2eEnd::Red(why) => Ok(Progress::Done(Outcome::wait(
                         Waiting::ProductionE2eRed,

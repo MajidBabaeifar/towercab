@@ -5,7 +5,8 @@
 //! `commands`; reap children → `Handler::finish` (the drafter's → `drafts::finish_run`);
 //! entry effects; child timeouts; due polls (`intents`, PRs, issues and draft PRs); due
 //! missions; children waiting for a slot; pick; the drafter; faults and preflight; review due;
-//! outbox; inhibitor; gauges (a stub until the metrics intent).
+//! outbox; inhibitor; gauges (a stub until the metrics intent). The drafts poll also drafts
+//! repeated review findings and polls the evals (PIP-33, PIP-36).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
@@ -201,6 +202,8 @@ pub struct Loop {
     drafts_due: Option<Duration>,
     /// The drafter's run: (its drafts key, the child).
     drafter: Option<(String, Child)>,
+    /// An eval child (PIP-33): its job and the child.
+    evaluator: Option<(pipeline::evals::Job, Child)>,
     gauges_due: Option<Duration>,
     /// The last message logged per kind (logged again only when it changes).
     warned: BTreeMap<String, String>,
@@ -271,6 +274,7 @@ impl Loop {
             intents_due: None,
             drafts_due: None,
             drafter: None,
+            evaluator: None,
             gauges_due: None,
             warned: BTreeMap::new(),
             blocked: false,
@@ -732,7 +736,15 @@ impl Loop {
     /// Children with a slot running.
     pub fn slots_used(&self) -> usize {
         let drafter = self.drafter.as_ref().is_some_and(|(_, c)| c.spec.slot);
-        self.children.values().filter(|c| c.spec.slot).count() + usize::from(drafter)
+        let evaluator = self.evaluator.as_ref().is_some_and(|(_, c)| c.spec.slot);
+        self.children.values().filter(|c| c.spec.slot).count()
+            + usize::from(drafter)
+            + usize::from(evaluator)
+    }
+
+    /// The eval child's job, while one runs (PIP-33).
+    pub fn evaluating(&self) -> Option<&pipeline::evals::Job> {
+        self.evaluator.as_ref().map(|(j, _)| j)
     }
 
     /// The drafts key whose drafter runs (INT-7).
@@ -840,6 +852,7 @@ impl Loop {
             machine::set_dying(self.db.conn(), &d)?;
         }
         self.reap_drafter(tick)?;
+        self.reap_evaluator(tick)?;
         let ended: Vec<(i64, ChildEnd)> = self
             .children
             .iter_mut()
@@ -888,6 +901,9 @@ impl Loop {
             c.enforce(tick.mono, after);
         }
         if let Some((_, c)) = self.drafter.as_mut() {
+            c.enforce(tick.mono, after);
+        }
+        if let Some((_, c)) = self.evaluator.as_mut() {
             c.enforce(tick.mono, after);
         }
     }
@@ -953,7 +969,67 @@ impl Loop {
                 Err(e) => self.gh_failed(&kind, e, tick)?,
             }
         }
+        self.poll_evals(tick)?;
         Ok(true)
+    }
+
+    /// PIP-33 with the drafts poll: `towercab/evals` on the Towercab repo's PR heads, the
+    /// baseline triggers when idle; an eval child (one at a time, a slot) when one is due.
+    fn poll_evals(&mut self, tick: Tick) -> Result<(), String> {
+        if self.evaluator.is_some() || self.blocked || !self.queued.is_empty() {
+            return Ok(());
+        }
+        let idle = self.idle(tick, None)?;
+        let polled = self.with_cx(tick, |cx| {
+            pipeline::evals::poll(cx, idle).map(|job| {
+                job.map(|j| {
+                    let spec = pipeline::evals::spec(cx, &j);
+                    (j, spec)
+                })
+            })
+        });
+        let (job, spec) = match polled {
+            None | Some(Ok(None)) => {
+                self.warned.remove("evals");
+                return Ok(());
+            }
+            Some(Err(e)) => return self.gh_failed("evals", e, tick),
+            Some(Ok(Some((job, Err(e))))) => {
+                self.warn("evals", format!("evals: {job:?}: {e}"));
+                return Ok(());
+            }
+            Some(Ok(Some((job, Ok(spec))))) => (job, spec),
+        };
+        if !self.slot_free() {
+            return Ok(());
+        }
+        match child::spawn(&spec, tick.mono) {
+            Ok(mut c) => {
+                c.budget = spec.timeout;
+                self.evaluator = Some((job, c));
+            }
+            Err(e) => self.warn("evals", format!("evals: {e}")),
+        }
+        Ok(())
+    }
+
+    /// The eval child's end → `evals::ended` (a PR's failure posted, a baseline's metas).
+    fn reap_evaluator(&mut self, tick: Tick) -> Result<(), String> {
+        let Some(end) = self.evaluator.as_mut().and_then(|(_, c)| c.poll(tick.mono)) else {
+            return Ok(());
+        };
+        let Some((job, c)) = self.evaluator.take() else {
+            return Ok(());
+        };
+        child::kill_group(c.pid);
+        match self.with_cx(tick, |cx| pipeline::evals::ended(cx, &job, Some(&end))) {
+            Some(Err(e)) => self.gh_failed("evals", e, tick)?,
+            Some(Ok(())) => {
+                self.warned.remove("evals");
+            }
+            None => {}
+        }
+        Ok(())
     }
 
     /// The next issue's drafter (INT-7), when a slot is free after the missions' children and
@@ -1603,7 +1679,10 @@ impl Loop {
 
     /// LOOP-17: nothing runnable and no mission driven but by a limit wait.
     fn idle(&self, tick: Tick, decision: Option<&Decision>) -> Result<bool, String> {
-        if decision.is_some_and(|d| d.pick.is_some()) || self.drafter.is_some() {
+        if decision.is_some_and(|d| d.pick.is_some())
+            || self.drafter.is_some()
+            || self.evaluator.is_some()
+        {
             return Ok(false);
         }
         Ok(mission::unfinished(self.db.conn())?.iter().all(|m| {
@@ -1704,6 +1783,10 @@ impl Loop {
             stopping.push((None, c));
             key
         });
+        if let Some((_, c)) = self.evaluator.take() {
+            // A PR's eval runs again at the next poll (its head has no status yet).
+            stopping.push((None, c));
+        }
         for (_, c) in stopping.iter_mut() {
             child::term_group(c.pid);
         }

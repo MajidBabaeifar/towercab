@@ -1,5 +1,4 @@
-//! Command line (LOOP-15): every command; `telemetry` and `eval` are stubs until their intents
-//! (MET-12, PIP-33).
+//! Command line (LOOP-15): every command; `telemetry` is a stub until its intent (MET-12).
 
 use std::ffi::{OsStr, OsString};
 use std::io::Read as _;
@@ -20,6 +19,7 @@ use crate::intents::migrate::migrate;
 use crate::intents::store::now;
 use crate::intents::{Listing, NewIntent, Store};
 use crate::pick;
+use crate::pipeline::evals;
 use crate::repo::protect::{Target, protect};
 use crate::runloop::{Loop, LoopOpts, Tick};
 use crate::service;
@@ -98,8 +98,22 @@ enum Command {
         #[arg(value_parser = ["on", "off", "status"])]
         what: String,
     },
-    /// Run the evals (not built yet)
-    Eval,
+    /// Run the evals (PIP-33): a baseline with this binary, a Towercab PR's build, or the
+    /// cases in a directory (the PR build's inner run)
+    Eval {
+        /// What changed (a drop of 10 points or more sends a message)
+        #[arg(long, conflicts_with_all = ["pr", "cases"])]
+        reason: Option<String>,
+        /// Build this Towercab PR's head, run the cases with it, post towercab/evals
+        #[arg(long, conflicts_with = "cases")]
+        pr: Option<u64>,
+        /// Run only the cases in this directory (with --out)
+        #[arg(long, requires = "out", value_name = "DIR")]
+        cases: Option<PathBuf>,
+        /// Where the run's result.json goes (with --cases)
+        #[arg(long, requires = "cases", value_name = "FILE")]
+        out: Option<PathBuf>,
+    },
     /// Hooks Claude Code runs inside Towercab's workers
     #[command(hide = true)]
     Hook {
@@ -232,7 +246,20 @@ where
             out
         })),
         Command::Telemetry { .. } => not_built("MET-12", 1),
-        Command::Eval => not_built("PIP-33", 1),
+        Command::Eval {
+            reason,
+            pr,
+            cases,
+            out,
+        } => report(Config::load(args.config.as_deref()).and_then(|config| {
+            let home = Home::resolve(args.home.as_deref())?;
+            let exes = Exes::default();
+            match (pr, cases, out) {
+                (Some(n), _, _) => evals::pr(&config, &home, &exes, n),
+                (None, Some(dir), Some(out)) => evals::inner(&config, &exes, &dir, &out),
+                _ => evals::baseline(&config, &home, &exes, reason.as_deref()),
+            }
+        })),
         Command::Hook {
             hook: Hook::Guard { rules },
         } => guard(&rules),

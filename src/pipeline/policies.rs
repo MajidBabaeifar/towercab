@@ -195,6 +195,19 @@ pub fn assemble(cx: &Ctx<'_>, m: &Mission) -> Result<String, StepError> {
     Ok(sha)
 }
 
+/// The `policies/` tree sha of `[policies].github` at its base (the clone fetched as
+/// [`assemble`] does); `none` without `[policies]` or without that folder (PIP-33's trigger).
+pub fn tree(cx: &Ctx<'_>) -> Result<String, StepError> {
+    let Some(github) = cx.config.policies.github.clone() else {
+        return Ok("none".into());
+    };
+    let (clone, sha) = policies_clone(cx, &github)?;
+    Ok(
+        checkout::rev(&cx.exes.git, &clone, &format!("{sha}:policies"))
+            .unwrap_or_else(|_| "none".into()),
+    )
+}
+
 /// The footer's `policies <owner/name>@<sha7>|none`.
 pub fn shown(cx: &Ctx<'_>, sha: &str) -> String {
     match (&cx.config.policies.github, sha) {

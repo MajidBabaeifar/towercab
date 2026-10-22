@@ -310,8 +310,44 @@ fn git_failed(e: String) -> StepError {
     }
 }
 
-/// The `pick` stage: fetch Towercab's clone (LOOP-8), load the repo files (REPO-1), make the
-/// checkout (LOOP-8) → `design`.
+/// The pick after its fetch: load the repo files (REPO-1), make the checkout from the clone's
+/// `origin/<base>` (LOOP-8) → `ok` with `base_sha` (shared with the evals' pick, PIP-33).
+pub fn prepare(cx: &mut Ctx<'_>, m: &Mission) -> Result<Progress, StepError> {
+    let repo = cx.repo(m).map_err(StepError::Bug)?.clone();
+    let git = cx.exes.git.clone();
+    match repo::load(&repo.path, &repo.base) {
+        Ok(_) => {}
+        Err(RepoError::NoVerifyingBlock) => {
+            return Ok(Progress::Done(Outcome::wait(
+                Waiting::AddVerifyingBlock,
+                format!(
+                    "{}: no ## Verifying your work with a ```checks block",
+                    repo.github
+                ),
+            )));
+        }
+        Err(RepoError::Invalid(e)) => {
+            return Ok(Progress::Done(Outcome::wait(Waiting::FixRepoFiles, e)));
+        }
+        Err(RepoError::Git(e)) => return Err(git_failed(e)),
+    }
+    let m = if m.step == "checkout" {
+        m.clone()
+    } else {
+        cx.record(m, "checkout", &[])?
+    };
+    let dir = cx.checkout(&m);
+    let branch = m
+        .branch
+        .clone()
+        .ok_or_else(|| StepError::Bug(format!("{}: no branch", m.label())))?;
+    checkout::ensure(&git, &repo.path, &dir, &repo.base, &branch).map_err(StepError::Bug)?;
+    let base = checkout::rev(&git, &dir, &format!("refs/remotes/origin/{}", repo.base))
+        .map_err(StepError::Bug)?;
+    Ok(Progress::Done(Outcome::ok().with("base_sha", base)))
+}
+
+/// The `pick` stage: fetch Towercab's clone (LOOP-8), then [`prepare`] → `design`.
 pub struct Pick;
 
 impl Handler for Pick {
@@ -323,36 +359,7 @@ impl Handler for Pick {
             .auth_for_url(&checkout::origin_url(&git, &repo))
             .map_err(|e| StepError::Env(Fault::Github, e.to_string()))?;
         checkout::ensure_clone(&git, &repo, Some(&auth)).map_err(git_failed)?;
-        match repo::load(&repo.path, &repo.base) {
-            Ok(_) => {}
-            Err(RepoError::NoVerifyingBlock) => {
-                return Ok(Progress::Done(Outcome::wait(
-                    Waiting::AddVerifyingBlock,
-                    format!(
-                        "{}: no ## Verifying your work with a ```checks block",
-                        repo.github
-                    ),
-                )));
-            }
-            Err(RepoError::Invalid(e)) => {
-                return Ok(Progress::Done(Outcome::wait(Waiting::FixRepoFiles, e)));
-            }
-            Err(RepoError::Git(e)) => return Err(git_failed(e)),
-        }
-        let m = if m.step == "checkout" {
-            m.clone()
-        } else {
-            cx.record(m, "checkout", &[])?
-        };
-        let dir = cx.checkout(&m);
-        let branch = m
-            .branch
-            .clone()
-            .ok_or_else(|| StepError::Bug(format!("{}: no branch", m.label())))?;
-        checkout::ensure(&git, &repo.path, &dir, &repo.base, &branch).map_err(StepError::Bug)?;
-        let base = checkout::rev(&git, &dir, &format!("refs/remotes/origin/{}", repo.base))
-            .map_err(StepError::Bug)?;
-        Ok(Progress::Done(Outcome::ok().with("base_sha", base)))
+        prepare(cx, m)
     }
 
     fn finish(&mut self, _: &mut Ctx<'_>, m: &Mission, _: ChildEnd) -> Result<Progress, StepError> {

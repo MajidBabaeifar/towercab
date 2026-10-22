@@ -8,6 +8,7 @@ pub mod data;
 pub mod deploy;
 pub mod design;
 pub mod e2e;
+pub mod evals;
 pub mod findings;
 pub mod gate;
 pub mod gh;
@@ -64,6 +65,9 @@ impl Mode {
 /// picks stay off until then, LOOP-5).
 pub fn handlers(mode: Mode) -> Handlers {
     let mut h = Handlers::production();
+    if let Mode::Eval(cases) = &mode {
+        h.set(Stage::Pick, Box::new(evals::EvalPick::new(cases.clone())));
+    }
     h.set(Stage::Design, Box::new(design::Design::new(mode.clone())));
     h.set(Stage::Plan, Box::new(plan::Plan::new(mode.clone())));
     h.set(Stage::Build, Box::new(build::Build::new(mode.clone())));

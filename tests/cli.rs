@@ -320,7 +320,28 @@ fn test_cli() {
         run(&["telemetry", "status"]),
         err("not built yet: MET-12", 1)
     );
-    assert_eq!(run(&["eval"]), err("not built yet: PIP-33", 1));
+    // `eval` (PIP-33): `--cases` needs `--out`, `--reason` goes alone; an empty case directory
+    // is a run of nothing.
+    assert_eq!(run(&["eval", "--cases", "x"]).2, Some(2));
+    assert_eq!(run(&["eval", "--reason", "weekly", "--pr", "3"]).2, Some(2));
+    let empty = home.root.join("no-cases");
+    std::fs::create_dir_all(&empty).unwrap();
+    let out = home.root.join("evals/r/result.json");
+    assert_eq!(
+        run(&[
+            "eval",
+            "--cases",
+            empty.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap()
+        ]),
+        ok("evals: 0/0 (0%)")
+    );
+    assert!(
+        std::fs::read_to_string(&out)
+            .unwrap()
+            .contains("\"total\": 0")
+    );
     // `hook guard` without its rules file: a bad argument, blocked (PIP-29).
     assert_eq!(run(&["hook", "guard"]).2, Some(2));
     assert_eq!(run(&["telemetry", "maybe"]).2, Some(2));

@@ -39,15 +39,20 @@ pub const TOWERCAB_FIELDS: [&str; 11] = [
     "lower_why",
 ];
 
-/// sha256 (hex) of `intent.md` without Towercab's fields and its `## Towercab` section: what I
-/// wrote. `plan` revises the design when it changed (PIP-26, PIP-28).
-pub fn intent_hash(intent: &Intent) -> String {
+/// `intent.md` as I wrote it: without Towercab's fields and its `## Towercab` section.
+pub fn mine(intent: &Intent) -> Intent {
     let mut mine = intent.clone();
     for k in TOWERCAB_FIELDS {
         let _ = mine.remove(k);
     }
     let _ = mine.set_section("Towercab", "");
-    Sha256::digest(mine.render().as_bytes())
+    mine
+}
+
+/// sha256 (hex) of `intent.md` without Towercab's fields and its `## Towercab` section: what I
+/// wrote. `plan` revises the design when it changed (PIP-26, PIP-28).
+pub fn intent_hash(intent: &Intent) -> String {
+    Sha256::digest(mine(intent).render().as_bytes())
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()

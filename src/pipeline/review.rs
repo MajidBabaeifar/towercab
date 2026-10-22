@@ -229,7 +229,10 @@ impl Review {
     }
 
     fn start(&self, cx: &Ctx<'_>, m: &Mission) -> Result<Progress, StepError> {
-        if let Some(p) = never_published(m) {
+        // An eval never publishes: it reviews the checkout (PIP-33).
+        if !self.mode.eval()
+            && let Some(p) = never_published(m)
+        {
             return Ok(p);
         }
         if !self.mode.eval() && !pgit::sync_head(cx, m)? {
