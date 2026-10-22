@@ -358,9 +358,21 @@ fn test_approve_starts_build() {
         t.contains(&("approval:spec".into(), "approve".into(), "plan".into())),
         "{t:?}"
     );
-    // No second design run.
-    assert_eq!(p.claude.calls(), 1);
     assert!(!p.w.intent_md("261001-0900-login").contains("waiting:"));
+    // No second design run: my approval's own edit of intent.md is no revision; the plan runs
+    // next (no answer here: its result continue, then `no result`).
+    let Pipe { w, lp, .. } = &mut p;
+    w.until(lp.as_mut().unwrap(), 10, |w| {
+        w.stage(ID) == Some(Stage::Blocked)
+    });
+    assert_eq!(p.claude.calls(), 3);
+    for n in [2, 3] {
+        assert_eq!(
+            p.claude.flag(n, "--tools").as_deref(),
+            Some("Read,Glob,Grep,Bash,Skill"),
+            "call {n} is the plan's"
+        );
+    }
 }
 
 /// The policies repo `me/policies` and a skill in the target repo's base.

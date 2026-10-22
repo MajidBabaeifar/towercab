@@ -3,26 +3,20 @@
 
 mod common;
 
-use std::cell::RefCell;
 use std::fs;
-use std::rc::Rc;
-use std::time::Duration;
 
 use common::git;
 use common::pipe::{FakeClaude, Pipe, design, writes};
 use common::world::{intent_file, open_pr};
 use rusqlite::types::Value as Sql;
 use serde_json::json;
-use towercab::claude::SessionArg;
 use towercab::commands::{self, Cmd};
 use towercab::events::PrState;
-use towercab::handler::{ChildEnd, Ctx, Handler, Progress, StepError, update};
+use towercab::handler::update;
 use towercab::machine::{Next, Stage, Waiting, continue_to};
-use towercab::mission::Mission;
 use towercab::pipeline::design::{Adoption, adoption};
 use towercab::pipeline::gh::pr_view;
-use towercab::pipeline::runs::worker_session;
-use towercab::pipeline::{Round, continue_what, round};
+use towercab::pipeline::{Round, round};
 
 const ID: &str = "261001-0900";
 const DIR: &str = "261001-0900-login";
@@ -258,60 +252,39 @@ fn test_retry_continues_on_open_pr() {
     );
 }
 
-/// What the continued build saw: its round, the continue text, its session, its checkout.
-type Seen = (Round, String, SessionArg, String);
-
-/// A build that asks a question once, then records what a continue gives it and polls.
-#[derive(Clone, Default)]
-struct Asks {
-    calls: Rc<RefCell<u32>>,
-    seen: Rc<RefCell<Option<Seen>>>,
+/// A plan result.
+fn plan() -> String {
+    FakeClaude::result(
+        json!({"files": ["src/login.rs"], "order": ["test", "code"], "risks": [], "proof": ["log in"]}),
+    )
 }
 
-impl Handler for Asks {
-    fn step(&mut self, cx: &mut Ctx<'_>, m: &Mission) -> Result<Progress, StepError> {
-        *self.calls.borrow_mut() += 1;
-        if *self.calls.borrow() == 1 {
-            return towercab::pipeline::wait_note(
-                cx,
-                m,
-                Waiting::AnswerTheQuestion,
-                "which provider?",
-                "Question: which provider?",
-            );
-        }
-        if self.seen.borrow().is_none() {
-            let r = round(cx.db.conn(), m).unwrap();
-            let (what, _) = continue_what(cx, m)?;
-            towercab::pipeline::git::sync_head(cx, m)?;
-            *self.seen.borrow_mut() = Some((r, what, worker_session(m), m.checkout.clone()));
-        }
-        Ok(Progress::Poll {
-            after: Duration::from_secs(86_400),
-        })
-    }
-    fn finish(&mut self, _: &mut Ctx<'_>, _: &Mission, _: ChildEnd) -> Result<Progress, StepError> {
-        unreachable!()
-    }
+/// A blocked worker result asking `q`.
+fn blocked(q: &str) -> String {
+    FakeClaude::result(
+        json!({"status": "blocked", "question": q, "notes": "", "plan": null,
+        "plan_why": null, "lower_a": null, "lower_why": null}),
+    )
 }
 
 #[test]
 fn test_continue_resumes_session() {
     let mut p = pipe("a: 4\n");
     designs(&p, 1, "| WEB-1 | log in | test_login |\n", &["WEB-1"]);
+    p.claude
+        .answer(2, &plan())
+        .answer(3, &blocked("which provider?"))
+        .answer(4, &blocked("and the scope?"));
     p.gh.on("pr list *", &[("[]", "", 0)])
         .on(
             "pr create *",
             &[("https://github.com/me/web/pull/7\n", "", 0)],
         )
         .on("api -X PATCH *", &[("{}", "", 0)]);
-    let asks = Asks::default();
-    let mut h = Pipe::handlers();
-    h.set(Stage::Build, Box::new(asks.clone()));
-    p.open_with(h);
-    p.step_to(ID, Stage::Blocked, 5);
+    p.step_to(ID, Stage::Blocked, 6);
     let m = p.mission(ID);
     assert_eq!(m.waiting.as_deref(), Some("answer the question"));
+    assert_eq!(p.claude.calls(), 3);
     // I comment on the PR, the checkout is gone, I remove `waiting`.
     let head = m.head.clone().unwrap();
     let mut pr: PrState = open_pr(&head);
@@ -335,18 +308,25 @@ fn test_continue_resumes_session() {
         &[(&format!("intents/{DIR}/intent.md"), Some(&md))],
         "me: GitHub",
     );
-    let Pipe { w, lp, .. } = &mut p;
-    w.until(lp.as_mut().unwrap(), 6, |_| asks.seen.borrow().is_some());
-    let (r, what, session, dir) = asks.seen.borrow().clone().unwrap();
-    // The same attempt, session (resumed) and checkout, re-made on the PR head.
-    assert_eq!(r, Round::Continue);
+    p.until(10, |w| {
+        w.transitions(ID).iter().any(|t| t.1 == "intent_continued")
+            && w.stage(ID) == Some(Stage::Blocked)
+    });
+    // The build resumed: a Continue round of the same attempt, session (resumed) and checkout,
+    // re-made on the PR head.
     let after = p.mission(ID);
     assert_eq!((after.id, after.attempt), (m.id, 1));
-    assert_eq!(session, SessionArg::Resume(m.session.clone()));
-    assert_eq!(dir, m.checkout);
+    assert_eq!(round(p.w.db().conn(), &after).unwrap(), Round::Continue);
+    assert_eq!(p.claude.calls(), 4);
+    assert_eq!(p.claude.flag(4, "--resume"), Some(m.session.clone()));
+    assert_eq!(
+        fs::canonicalize(p.claude.cwd(4)).unwrap(),
+        fs::canonicalize(&checkout).unwrap()
+    );
     assert_eq!(git(&checkout, &["rev-parse", "HEAD"]).trim(), head);
     assert_eq!(git(&checkout, &["branch", "--show-current"]).trim(), BRANCH);
-    // The prompt: the wait's reason, intent.md, my new comment, all as data.
+    // The prompt: the wait's reason, intent.md, my new comment, all as data; my comment seen.
+    let what = p.claude.stdin(4);
     assert!(
         what.contains("<wait>\nanswer the question\n261001-0900 web: Add login\nwhich provider?"),
         "{what}"
@@ -360,6 +340,9 @@ fn test_continue_resumes_session() {
         what.contains("<comments>\n- me at 2099-01-01T09:00:00Z: Use GitHub.\n</comments>"),
         "{what}"
     );
+    assert_eq!(after.feedback_seen.as_deref(), Some("2099-01-01T09:00:00Z"));
+    assert_eq!(after.waiting.as_deref(), Some("answer the question"));
+    assert_eq!(after.why.as_deref(), Some("and the scope?"));
 }
 
 #[test]

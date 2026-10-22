@@ -2,13 +2,16 @@
 //! eval gate (PIP-33) sees them change, `{{key}}` placeholders filled in one pass.
 
 /// Every prompt by name (later parts add theirs).
-const PROMPTS: [(&str, &str); 4] = [
+const PROMPTS: [(&str, &str); 7] = [
+    ("build", include_str!("../../prompts/build.md")),
     ("design", include_str!("../../prompts/design.md")),
     (
         "design_revise",
         include_str!("../../prompts/design_revise.md"),
     ),
+    ("plan", include_str!("../../prompts/plan.md")),
     ("result", include_str!("../../prompts/result.md")),
+    ("round", include_str!("../../prompts/round.md")),
     ("writer", include_str!("../../prompts/writer.md")),
 ];
 

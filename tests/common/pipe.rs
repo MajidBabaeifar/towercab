@@ -231,21 +231,62 @@ exit 98
     }
 }
 
-/// A `bwrap` that drops its options (`--chdir <dir>` honoured) and runs what follows `--`.
+/// A `bwrap` that logs each call's argv (`bwrap-<n>.argv` next to it, one per line), drops its
+/// options (`--chdir <dir>` honoured) and runs what follows `--`.
 pub fn fake_bwrap(dir: &Path) -> PathBuf {
     let bin = dir.join("bwrap");
     exe(
         &bin,
-        r#"[ "$1" = --version ] && echo 'bubblewrap 0.11.0' && exit 0
+        &r#"[ "$1" = --version ] && echo 'bubblewrap 0.11.0' && exit 0
+d='{dir}'
+n=$(($(cat "$d/bwrap.count" 2>/dev/null || echo 0) + 1))
+echo "$n" > "$d/bwrap.count"
+: > "$d/bwrap-$n.argv"
+for a in "$@"; do printf '%s\n' "$a" >> "$d/bwrap-$n.argv"; done
 while [ $# -gt 0 ] && [ "$1" != -- ]; do
   if [ "$1" = --chdir ]; then cd "$2" || exit 1; shift; fi
   shift
 done
 shift
 exec "$@"
-"#,
+"#
+        .replace("{dir}", &dir.display().to_string()),
     );
     bin
+}
+
+/// The argv of the fake `bwrap`'s calls in `dir`, in order.
+pub fn bwrap_calls(dir: &Path) -> Vec<Vec<String>> {
+    let n: usize = fs::read_to_string(dir.join("bwrap.count"))
+        .map(|s| s.trim().parse().unwrap())
+        .unwrap_or(0);
+    (1..=n)
+        .map(|k| {
+            fs::read_to_string(dir.join(format!("bwrap-{k}.argv")))
+                .unwrap()
+                .lines()
+                .map(str::to_string)
+                .collect()
+        })
+        .collect()
+}
+
+/// A plan result listing `files`.
+pub fn plan_result(files: &[&str]) -> Value {
+    json!({"files": files, "order": ["tests first", "then the code"], "risks": ["none known"],
+        "proof": ["run the checks"]})
+}
+
+/// A worker result: `done` with `notes`.
+pub fn done(notes: &str) -> Value {
+    json!({"status": "done", "question": null, "notes": notes, "plan": null, "plan_why": null,
+        "lower_a": null, "lower_why": null})
+}
+
+/// A worker result: `blocked` on `question`.
+pub fn blocked(question: &str) -> Value {
+    json!({"status": "blocked", "question": question, "notes": "", "plan": null,
+        "plan_why": null, "lower_a": null, "lower_why": null})
 }
 
 /// A design result: `type` feat, scope `auth`, the spec IDs and concerns given.
@@ -379,6 +420,43 @@ impl Pipe {
         self.w.home.runs(id)
     }
 
+    /// Files on `main` of the repo's origin (pushed from my clone) and in Towercab's clone.
+    pub fn base(&self, repo: &str, files: &[(&str, &str)], msg: &str) {
+        let mine = self.w.mine(repo);
+        for (rel, text) in files {
+            write(&mine, rel, text);
+        }
+        git(&mine, &["add", "-A"]);
+        git(&mine, &["commit", "--quiet", "-m", msg]);
+        git(&mine, &["push", "--quiet", "origin", "HEAD:main"]);
+        git(&self.w.clone_path(repo), &["fetch", "--quiet", "origin"]);
+    }
+
+    /// The fake `bwrap`'s calls so far.
+    pub fn bwraps(&self) -> Vec<Vec<String>> {
+        bwrap_calls(&self.w.root.join("pipebin"))
+    }
+
+    /// A file of the intent home's `main` (Towercab's pushes).
+    pub fn intents_file(&self, rel: &str) -> Option<String> {
+        let out = std::process::Command::new("git")
+            .args(["show", &format!("main:{rel}")])
+            .current_dir(&self.w.intents.remote)
+            .output()
+            .unwrap();
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    /// The subjects of the intent home's `main`, newest first.
+    pub fn intents_log(&self) -> Vec<String> {
+        git(&self.w.intents.remote, &["log", "--format=%s", "main"])
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
     /// A branch's commits on the repo's origin, newest first: (subject, author name).
     pub fn origin_log(&self, repo: &str, branch: &str) -> Vec<(String, String)> {
         let origin = self.w.root.join("repos").join(format!("{repo}.git"));
@@ -457,4 +535,121 @@ pub fn run_child(spec: &ChildSpec) -> ChildEnd {
         c.enforce(mono(start), Duration::from_millis(200));
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// The login intent of the build tests.
+pub const LOGIN_ID: &str = "261001-0900";
+pub const LOGIN_DIR: &str = "261001-0900-login";
+pub const LOGIN_BRANCH: &str = "towercab/261001-0900-login";
+
+/// The base's checks: every `tests/*.sh` passes (none: green).
+pub const CHECK_SH: &str =
+    "for t in tests/*.sh; do [ -f \"$t\" ] || continue; sh \"$t\" || exit 1; done\n";
+
+/// The worker's test: `src/login.rs` has `fn login`.
+pub const LOGIN_TEST: &str = "grep -q 'fn login' src/login.rs\n";
+
+/// The base's `CLAUDE.md`: setup `setup` (one line), checks `sh check.sh`.
+pub fn claude_md(setup: &str) -> String {
+    format!(
+        "# Web\n\n## Verifying your work\n\n```setup\n{setup}\n```\n\n```checks\nsh check.sh\n```\n"
+    )
+}
+
+impl Pipe {
+    /// The login intent (`extra` front matter) on repo `web`, whose base has setup (each run
+    /// appends its cwd to `<root>/setup.log`) and checks `sh check.sh`; design run 1 changes
+    /// `WEB-1`; gh opens PR 7 and takes every write.
+    pub fn login(extra: &str) -> Pipe {
+        let p = Pipe::new(
+            &[(
+                format!("intents/{LOGIN_DIR}/intent.md"),
+                super::intent_md(
+                    "web",
+                    extra,
+                    "Add login\n\nspec IDs: WEB-1..3\n\n## Proposed outcome\n\n- I can log in\n",
+                ),
+            )],
+            &["web"],
+        );
+        let setup = format!(
+            "echo \"$PWD\" >> '{}'",
+            p.w.root.join("setup.log").display()
+        );
+        p.base(
+            "web",
+            &[("CLAUDE.md", &claude_md(&setup)), ("check.sh", CHECK_SH)],
+            "verifying",
+        );
+        p.claude
+            .script(
+                1,
+                &writes("specs/web.md", "| WEB-1 | log in | test_login |\n"),
+            )
+            .answer(1, &FakeClaude::result(design(&["WEB-1"], &[])));
+        p.gh.on("pr list *", &[("[]", "", 0)])
+            .on(
+                "pr create *",
+                &[("https://github.com/me/web/pull/7\n", "", 0)],
+            )
+            .on("pr ready *", &[("", "", 0)])
+            .on("api -X POST repos/me/web/check-runs *", &[("{}", "", 0)])
+            .on("api -X PATCH *", &[("{}", "", 0)]);
+        p
+    }
+
+    /// Call `n` plans (`src/login.rs`).
+    pub fn plans(&self, n: usize) -> &Pipe {
+        self.claude
+            .answer(n, &FakeClaude::result(plan_result(&["src/login.rs"])));
+        self
+    }
+
+    /// Call `n` builds: `src/login.rs` and its test, `done`.
+    pub fn builds(&self, n: usize) -> &Pipe {
+        self.claude
+            .script(
+                n,
+                &(writes("src/login.rs", "pub fn login() {}\n")
+                    + &writes("tests/login_test.sh", LOGIN_TEST)),
+            )
+            .answer(n, &FakeClaude::result(done("Adds login.")));
+        self
+    }
+
+    /// `setup.log`'s lines: where setup ran, in order.
+    pub fn setups(&self) -> Vec<String> {
+        fs::read_to_string(self.w.root.join("setup.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// The intent's checkout (absolute).
+    pub fn checkout(&self, id: &str) -> PathBuf {
+        self.w.home.root.join(self.mission(id).checkout)
+    }
+}
+
+/// A real `bwrap` that can sandbox on this machine (user namespaces allowed), if any: tests
+/// run the sandbox for real there, and only check its argv elsewhere.
+pub fn real_bwrap() -> Option<PathBuf> {
+    let bwrap = towercab::exes::which(std::ffi::OsStr::new("bwrap"))?;
+    std::process::Command::new(&bwrap)
+        .args([
+            "--unshare-net",
+            "--die-with-parent",
+            "--ro-bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--",
+            "true",
+        ])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|_| bwrap)
 }

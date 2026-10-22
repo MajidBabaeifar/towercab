@@ -2,16 +2,21 @@
 //! parts (pipeline.md **Code**). Handlers return an `Outcome`; only `machine::apply` moves a
 //! mission. State the stages keep lives in `missions.data` ([`data::Data`]).
 
+pub mod build;
 pub mod data;
 pub mod design;
 pub mod gh;
 pub mod git;
 pub mod guard;
+pub mod plan;
 pub mod policies;
 pub mod prompts;
+pub mod proof;
 pub mod publish;
 pub mod runs;
+pub mod sandbox;
 pub mod schemas;
+pub mod verify;
 
 use std::collections::BTreeMap;
 
@@ -49,6 +54,10 @@ impl Mode {
 pub fn handlers(mode: Mode) -> Handlers {
     let mut h = Handlers::production();
     h.set(Stage::Design, Box::new(design::Design::new(mode.clone())));
+    h.set(Stage::Plan, Box::new(plan::Plan::new(mode.clone())));
+    h.set(Stage::Build, Box::new(build::Build::new(mode.clone())));
+    h.set(Stage::Verify, Box::new(verify::Verify::new(mode.clone())));
+    h.set(Stage::Proof, Box::new(proof::Proof::new(mode.clone())));
     h.set(Stage::Publish, Box::new(publish::Publish::new(mode)));
     h
 }

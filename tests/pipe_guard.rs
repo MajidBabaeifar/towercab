@@ -3,15 +3,43 @@
 
 mod common;
 
+use std::cell::Cell;
 use std::fs;
 use std::io::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::rc::Rc;
 
-use serde_json::json;
+use common::pipe::{FakeClaude, LOGIN_BRANCH, LOGIN_ID as ID, LOGIN_TEST, Pipe, done, writes};
+use serde_json::{Value, json};
 use towercab::autonomy::{self, Ci, Gate, GateIn, Hold, PrKind, Review};
+use towercab::handler::{ChildEnd, Ctx, Handler, Outcome, Progress, StepError};
 use towercab::machine::Door;
+use towercab::machine::Stage;
+use towercab::mission::Mission;
+use towercab::pipeline::data::Data;
 use towercab::pipeline::guard::{self, Rules};
+use towercab::pipeline::{Round, files, publish};
+
+/// The login world (a4, `unlock: [docs/**]`) whose base protects `deploy/**` and `docs/**`.
+fn guarded() -> Pipe {
+    let p = Pipe::login("a: 4\nunlock: [\"docs/**\"]\n");
+    p.base(
+        "web",
+        &[
+            (
+                "TOWERCAB.md",
+                "---\nprotected: [\"deploy/**\", \"docs/**\"]\n---\n",
+            ),
+            ("deploy/run.sh", "echo deploy\n"),
+            ("docs/guide.md", "# Guide\n"),
+            (".github/workflows/ci.yml", "on: push\n"),
+        ],
+        "protected paths",
+    );
+    p.plans(2);
+    p
+}
 
 /// The hook's input for `tool` on `path`.
 fn input(tool: &str, path: &str) -> String {
@@ -21,6 +49,195 @@ fn input(tool: &str, path: &str) -> String {
         "file_path"
     };
     json!({"tool_name": tool, "tool_input": {key: path, "content": "x"}}).to_string()
+}
+
+fn settings(p: &Pipe) -> Value {
+    serde_json::from_str(&fs::read_to_string(p.runs(ID).join("settings-worker.json")).unwrap())
+        .unwrap()
+}
+
+fn deny_write(p: &Pipe) -> Vec<String> {
+    settings(p)["sandbox"]["filesystem"]["denyWrite"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect()
+}
+
+fn blocks(p: &Pipe) -> Vec<Value> {
+    fs::read_to_string(p.runs(ID).join("guard-blocks.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+#[test]
+fn test_guard_blocks_protected_write() {
+    let mut p = guarded();
+    p.builds(3);
+    p.step_to(ID, Stage::Verify, 5);
+    let checkout = fs::canonicalize(p.checkout(ID)).unwrap();
+    let c = checkout.display().to_string();
+    let rules_file = p.runs(ID).join("guard.json");
+    // The worker run's hook: `'<towercab>' hook guard '<runs>/guard.json'` on every edit.
+    let hook = &settings(&p)["hooks"]["PreToolUse"][0];
+    assert_eq!(hook["matcher"], "Edit|Write|NotebookEdit");
+    let command = hook["hooks"][0]["command"].as_str().unwrap();
+    assert!(
+        command.ends_with(&format!(" hook guard '{}'", rules_file.display())),
+        "{command}"
+    );
+    // Its rules: the control files + TOWERCAB.md's, the intent's unlock, nothing locked yet.
+    let rules = Rules::read(&rules_file).unwrap();
+    assert_eq!(fs::canonicalize(&rules.checkout).unwrap(), checkout);
+    assert_eq!(
+        rules.protected,
+        [
+            "CLAUDE.md",
+            "REVIEW.md",
+            "TOWERCAB.md",
+            ".github/**",
+            ".claude/**",
+            ".git/**",
+            "deploy/**",
+            "docs/**"
+        ]
+    );
+    assert_eq!(rules.unlock, ["docs/**"]);
+    assert!(rules.locked.is_empty());
+    // Blocked: protected, outside, through `..` or a symlink; allowed: the rest, unlocked docs.
+    let protected = |rel: &str| format!("{rel} is protected: changes here go through Majid");
+    std::os::unix::fs::symlink("../.github", checkout.join("src/gh")).unwrap();
+    for (tool, path, want) in [
+        (
+            "Write",
+            format!("{c}/.github/workflows/ci.yml"),
+            Err(protected(".github/workflows/ci.yml")),
+        ),
+        (
+            "Edit",
+            format!("{c}/CLAUDE.md"),
+            Err(protected("CLAUDE.md")),
+        ),
+        (
+            "Write",
+            format!("{c}/deploy/run.sh"),
+            Err(protected("deploy/run.sh")),
+        ),
+        (
+            "NotebookEdit",
+            format!("{c}/deploy/x.ipynb"),
+            Err(protected("deploy/x.ipynb")),
+        ),
+        (
+            "Write",
+            ".github/new.yml".into(),
+            Err(protected(".github/new.yml")),
+        ),
+        (
+            "Write",
+            format!("{c}/src/../.github/x.yml"),
+            Err(protected(".github/x.yml")),
+        ),
+        (
+            "Write",
+            format!("{c}/src/gh/y.yml"),
+            Err(protected(".github/y.yml")),
+        ),
+        (
+            "Write",
+            "/etc/passwd".into(),
+            Err("/etc/passwd is outside the checkout: changes here go through Majid".into()),
+        ),
+        (
+            "Edit",
+            format!("{c}/.git/config"),
+            Err(protected(".git/config")),
+        ),
+        ("Edit", format!("{c}/docs/guide.md"), Ok(())),
+        ("Write", format!("{c}/src/new.rs"), Ok(())),
+    ] {
+        assert_eq!(
+            guard::hook(&input(tool, &path), &rules_file),
+            want,
+            "{tool} {path}"
+        );
+    }
+    // Each block logged for the metrics.
+    let logged = blocks(&p);
+    assert_eq!(logged.len(), 9);
+    assert_eq!(logged[0]["path"], format!("{c}/.github/workflows/ci.yml"));
+    assert_eq!(logged[0]["kind"], "protected");
+    assert_eq!(logged[0]["reason"], protected(".github/workflows/ci.yml"));
+    // Fails closed: no path, no rules.
+    assert!(guard::hook("{}", &rules_file).is_err());
+    assert!(guard::hook("not json", &rules_file).is_err());
+    assert!(
+        guard::hook(
+            &input("Write", "src/a.rs"),
+            Path::new("/nonexistent/guard.json")
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn test_sandbox_denies_protected_bash_write() {
+    let mut p = guarded();
+    p.builds(3);
+    p.step_to(ID, Stage::Verify, 5);
+    // What Bash could write is denied by the sandbox: each protected path that exists
+    // (absolute), never the unlocked docs; and the checkout's .git.
+    let c = std::path::absolute(p.checkout(ID))
+        .unwrap()
+        .display()
+        .to_string();
+    assert_eq!(
+        deny_write(&p),
+        [
+            format!("{c}/.git"),
+            format!("{c}/.github"),
+            format!("{c}/CLAUDE.md"),
+            format!("{c}/TOWERCAB.md"),
+            format!("{c}/deploy"),
+        ]
+    );
+}
+
+#[test]
+fn test_publish_refuses_protected_diff() {
+    let mut p = guarded();
+    // A new protected file (no denyWrite entry can name it) and an unlocked doc.
+    p.claude
+        .script(
+            3,
+            &(writes("src/login.rs", "pub fn login() {}\n")
+                + &writes("tests/login_test.sh", LOGIN_TEST)
+                + &writes(".github/workflows/evil.yml", "on: push\n")
+                + &writes("docs/login.md", "# Login\n")),
+        )
+        .answer(3, &FakeClaude::result(done("Adds login.")));
+    p.step_to(ID, Stage::Blocked, 10);
+    let m = p.mission(ID);
+    assert_eq!(m.waiting.as_deref(), Some("protected path changed"));
+    assert_eq!(
+        m.why.as_deref(),
+        Some("changed: .github/workflows/evil.yml (protected)")
+    );
+    // Nothing pushed: origin has only the spec commit.
+    let log = p.origin_log("web", LOGIN_BRANCH);
+    assert_eq!(
+        log.len(),
+        4,
+        "seed, verifying, protected paths, spec: {log:?}"
+    );
+    assert_eq!(log[0].0, "docs(specs): Add login");
+    assert!(
+        p.w.intent_md(common::pipe::LOGIN_DIR)
+            .contains("## Towercab\n\nPublish refused: changed: .github/workflows/evil.yml")
+    );
 }
 
 #[test]
@@ -136,4 +353,112 @@ fn test_guard_hook_cli() {
             .count(),
         2
     );
+}
+
+/// A weaker login test: any `login` in the file.
+const WEAKER: &str = "grep -q login src/login.rs\n";
+
+/// CI: red once (as part 3's CI would leave `repair`), then green.
+struct RedOnce(Rc<Cell<bool>>);
+
+impl Handler for RedOnce {
+    fn step(&mut self, _: &mut Ctx<'_>, m: &Mission) -> Result<Progress, StepError> {
+        if self.0.replace(false) {
+            let mut data = Data::of(m);
+            data.set(
+                "repair",
+                json!({"what": "CI red: test", "findings": "test failed", "log": ""}),
+            );
+            return Ok(Progress::Done(
+                Outcome::red("CI red").with("data", data.text()),
+            ));
+        }
+        Ok(Progress::Done(Outcome::ok()))
+    }
+    fn finish(&mut self, _: &mut Ctx<'_>, _: &Mission, _: ChildEnd) -> Result<Progress, StepError> {
+        unreachable!()
+    }
+}
+
+/// The login world published once, CI red: the build's CI round is next (call 4).
+fn ci_red(call4: &str) -> Pipe {
+    let mut p = Pipe::login("a: 4\n");
+    p.plans(2).builds(3);
+    p.claude
+        .script(4, call4)
+        .answer(4, &FakeClaude::result(done("Fixed CI.")));
+    let mut h = Pipe::handlers();
+    h.set(Stage::Ci, Box::new(RedOnce(Rc::new(Cell::new(true)))));
+    p.open_with(h);
+    p.step_to(ID, Stage::Ci, 8);
+    assert_eq!(p.step(ID), "261001-0900: ci → build");
+    p
+}
+
+#[test]
+fn test_lock_blocks_test_edit_in_repair() {
+    let mut p = ci_red("");
+    assert_eq!(p.step(ID), "261001-0900: build → verify");
+    let c = std::path::absolute(p.checkout(ID)).unwrap();
+    // The CI round's worker run: the pushed test is locked in the guard and the sandbox.
+    let rules_file = p.runs(ID).join("guard.json");
+    assert_eq!(
+        Rules::read(&rules_file).unwrap().locked,
+        ["tests/login_test.sh"]
+    );
+    assert!(deny_write(&p).contains(&format!("{}/tests/login_test.sh", c.display())));
+    let test = format!("{}/tests/login_test.sh", c.display());
+    let err = guard::hook(&input("Edit", &test), &rules_file).unwrap_err();
+    assert_eq!(
+        err,
+        "tests/login_test.sh is a test already pushed: it is locked in repair rounds; changes here go through Majid"
+    );
+    assert_eq!(blocks(&p).last().unwrap()["kind"], "test_lock");
+    // A new test is fine.
+    let new = format!("{}/tests/logout_test.sh", c.display());
+    assert_eq!(guard::hook(&input("Write", &new), &rules_file), Ok(()));
+    assert!(p.claude.stdin(4).contains("CI red: test:\ntest failed"));
+}
+
+#[test]
+fn test_publish_refuses_locked_test_change() {
+    // The CI repair weakens the pushed test through Bash (still red on base).
+    let mut p = ci_red(&writes("tests/login_test.sh", WEAKER));
+    let pushed = p.mission(ID).head.unwrap();
+    p.step_to(ID, Stage::Blocked, 8);
+    let m = p.mission(ID);
+    assert_eq!(m.waiting.as_deref(), Some("protected path changed"));
+    assert_eq!(
+        m.why.as_deref(),
+        Some("changed: tests/login_test.sh (a test already pushed)")
+    );
+    assert_eq!(m.head.as_deref(), Some(pushed.as_str()), "nothing pushed");
+}
+
+#[test]
+fn test_feedback_round_unlocked() {
+    let mut p = ci_red(&writes("tests/login_test.sh", WEAKER));
+    p.step_to(ID, Stage::Blocked, 8);
+    let m = p.mission(ID);
+    // The same changed test: refused in a CI or verify round, fine in my feedback and conflict
+    // rounds (I asked for it, or base moved).
+    p.cx(|cx| {
+        for (round, refused) in [
+            (Round::Ci, true),
+            (Round::Verify, true),
+            (Round::Feedback, false),
+            (Round::Conflict, false),
+            (Round::Continue, false),
+        ] {
+            let r = publish::check_diff(cx, &m, round).unwrap();
+            assert_eq!(r.is_err(), refused, "{round:?}: {r:?}");
+        }
+        let repo = files(cx, &m).unwrap();
+        let deny = guard::write_rules(cx, &m, &repo, Round::Feedback).unwrap();
+        let rules = Rules::read(&cx.runs(&m).join("guard.json")).unwrap();
+        assert!(rules.locked.is_empty());
+        assert!(!deny.iter().any(|d| d.ends_with("tests/login_test.sh")));
+        let deny = guard::write_rules(cx, &m, &repo, Round::Verify).unwrap();
+        assert!(deny.iter().any(|d| d.ends_with("tests/login_test.sh")));
+    });
 }

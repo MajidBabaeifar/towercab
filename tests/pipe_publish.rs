@@ -11,7 +11,7 @@ use common::git;
 use common::pipe::{FakeClaude, Pipe, design, writes};
 use common::world::intent_file;
 use serde_json::json;
-use towercab::handler::{ChildEnd, Ctx, Handler, Handlers, Outcome, Progress, StepError};
+use towercab::handler::{ChildEnd, Ctx, Handler, Handlers, Outcome, Progress, StepError, Stub};
 use towercab::machine::Stage;
 use towercab::mission::Mission;
 use towercab::pipeline::data::Data;
@@ -86,8 +86,10 @@ impl Handler for Ci {
 
 fn handlers(builds: &Builds, reds: u32) -> Handlers {
     let mut h = Pipe::handlers();
+    h.set(Stage::Plan, Box::new(Stub));
     h.set(Stage::Build, Box::new(builds.clone()));
     h.set(Stage::Verify, Box::new(Green));
+    h.set(Stage::Proof, Box::new(Stub));
     h.set(Stage::Ci, Box::new(Ci(Rc::new(Cell::new(reds)))));
     h
 }
