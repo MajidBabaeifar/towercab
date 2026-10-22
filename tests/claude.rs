@@ -822,6 +822,15 @@ fn test_claude_result() {
         ),
         RunEnd::Failed("it broke".into())
     );
+    // Each ends in one short line (a draft's failed try logs it).
+    assert_eq!(
+        RunEnd::Failed("it broke".into()).to_string(),
+        "failed: it broke"
+    );
+    assert_eq!(
+        RunEnd::Budget(ClaudeResult::default()).to_string(),
+        "budget used up"
+    );
     // A successful result that mentions a network word is not a failure.
     assert!(matches!(
         parse(

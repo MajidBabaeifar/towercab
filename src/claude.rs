@@ -680,6 +680,22 @@ pub enum RunEnd {
     Ok(ClaudeResult),
 }
 
+/// One short line: why a run ended so (logs, a draft's failed try).
+impl std::fmt::Display for RunEnd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RunEnd::SessionGone => f.write_str("session gone"),
+            RunEnd::Limit(l) => write!(f, "usage limit: {}", l.text),
+            RunEnd::Env(e) => write!(f, "network or auth: {e}"),
+            RunEnd::Budget(_) => f.write_str("budget used up"),
+            RunEnd::Denied(_) => f.write_str("denied: a push or a secret read"),
+            RunEnd::NoResult(e) => write!(f, "no result: {e}"),
+            RunEnd::Failed(e) => write!(f, "failed: {e}"),
+            RunEnd::Ok(_) => f.write_str("ok"),
+        }
+    }
+}
+
 fn num(v: &Value, keys: &[&str]) -> u64 {
     keys.iter()
         .find_map(|k| v.get(*k).and_then(Value::as_u64))

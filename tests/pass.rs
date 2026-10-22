@@ -216,12 +216,23 @@ fn test_cadence() {
     let mut w = World::new(&[intent_file("261001-0900-x", "web", "", "X")], &["web"]);
     w.config.agent.ci_poll = Duration::from_secs(30);
     w.prs.set(7, open_pr("h1"));
+    // Issues are polled only with `[intents].remote` on GitHub (INT-7): the bare intents repo
+    // as `https://github.com/me/intents.git`, Towercab's checkout cloned before.
+    drop(w.intents.store());
+    let hub = w.root.join("hub");
+    fs::create_dir_all(hub.join("me")).unwrap();
+    std::os::unix::fs::symlink(&w.intents.remote, hub.join("me/intents.git")).unwrap();
+    w.config.intents.remote = Some("https://github.com/me/intents.git".into());
+    let exes = towercab::exes::Exes {
+        git: common::github_git(&w.root.join("gitbin"), &hub).into(),
+        ..w.exes()
+    };
     let ci = Poller::every(w.config.agent.ci_poll);
     let mut h = Handlers::stubs();
     h.set(Stage::Pick, Box::new(Pick));
     h.set(Stage::Design, Box::new(PublishesPr));
     h.set(Stage::Ci, Box::new(ci.clone()));
-    let mut lp = w.open(h);
+    let mut lp = w.open_with(h, exes, Default::default());
     w.until(&mut lp, 20, |w| w.stage(X) == Some(Stage::Ci));
     // Line the clock up on an intents poll (every 60 s): 61 s on, every poll is due.
     w.pass(&mut lp);
