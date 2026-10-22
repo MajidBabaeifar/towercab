@@ -225,3 +225,305 @@ fn test_add_command() {
         "towercab: TODO.md is already generated: migrate has run\n"
     );
 }
+
+/// The loop's commands from the binary (LOOP-15): stubs, `status`/`next`/`step`/`run
+/// --intent` refusals with no pipeline, and `approve`, `retry --fresh`, `release` applied by
+/// the CLI itself (no loop running), entry effects included; then `step` and `--intent` with
+/// stub handlers.
+#[test]
+fn test_cli() {
+    use common::world::{Act, Scripted, World, intent_file};
+    use towercab::db::Db;
+    use towercab::handler::Handlers;
+    use towercab::machine::{Stage, Waiting};
+    use towercab::runloop::LoopOpts;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let user = tmp.path().join("user");
+    std::fs::create_dir_all(&user).unwrap();
+    let file = common::loop_config(
+        tmp.path(),
+        "[repos.web]\ngithub = \"me/web\"\npath = \"/srv/web\"\n",
+    );
+    let intents = tmp.path().join("intents");
+    for (rel, extra, title) in [
+        (
+            "intents/261001-0900-spec",
+            "stage: design\nwaiting: approve spec\n",
+            "Spec",
+        ),
+        (
+            "intents/261001-0901-ship",
+            "stage: deploy\nwaiting: authorize release\n",
+            "Ship",
+        ),
+        (
+            "intents/261001-0902-old",
+            "stage: test\nwaiting: CI red\nattempts: 2\n",
+            "Old",
+        ),
+        ("done/261001-0903-gone", "stage: done\n", "Gone"),
+        (
+            "intents/261001-0904-wait",
+            "waiting: \"bad after:\"\n",
+            "Wait",
+        ),
+        ("done/261001-0905-drop", "stage: dropped\n", "Drop"),
+        ("intents/261001-0906-rev", "stage: maintain\n", "Rev"),
+    ] {
+        common::write(
+            &intents,
+            &format!("{rel}/intent.md"),
+            &common::intent_md("web", extra, title),
+        );
+    }
+    common::git(&intents, &["add", "-A"]);
+    common::git(&intents, &["commit", "--quiet", "-m", "seed"]);
+    let home = towercab::home::Home::resolve(Some(&tmp.path().join("home"))).unwrap();
+    let db = Db::open(&home.db()).unwrap();
+    for (intent, stage, waiting) in [
+        ("261001-0900", "approval:spec", Some("approve spec")),
+        ("261001-0901", "approval:release", Some("authorize release")),
+        ("261001-0906", "revert_ci", None),
+    ] {
+        let kind = if stage == "revert_ci" {
+            "revert"
+        } else {
+            "intent"
+        };
+        db.conn()
+            .execute(
+                "INSERT INTO missions (kind, intent, repo, stage, step, model, session, checkout,
+                   branch, waiting, from_stage, created, updated)
+                 VALUES (?1, ?2, 'web', ?3, '', 'opus', 's', ?4, 'b', ?5, 'design', 0, 0)",
+                rusqlite::params![kind, intent, stage, format!("work/{intent}-1"), waiting],
+            )
+            .unwrap();
+    }
+    let run = |args: &[&str]| {
+        let mut full = vec![
+            "--config",
+            file.to_str().unwrap(),
+            "--home",
+            home.root.to_str().unwrap(),
+        ];
+        full.extend_from_slice(args);
+        common::output(&mut common::towercab(&user, &full))
+    };
+    let ok = |s: &str| (format!("{s}\n"), String::new(), Some(0));
+    let err = |s: &str, code: i32| (String::new(), format!("towercab: {s}\n"), Some(code));
+    let md = |rel: &str| std::fs::read_to_string(intents.join(rel)).unwrap();
+
+    // Stubs until their intents.
+    assert_eq!(run(&["telemetry", "on"]), err("not built yet: MET-12", 1));
+    assert_eq!(
+        run(&["telemetry", "status"]),
+        err("not built yet: MET-12", 1)
+    );
+    assert_eq!(run(&["eval"]), err("not built yet: PIP-33", 1));
+    assert_eq!(run(&["hook", "guard"]), err("not built yet: PIP-29", 2));
+    assert_eq!(run(&["telemetry", "maybe"]).2, Some(2));
+    assert_eq!(
+        run(&["--version"]),
+        ok(&format!("towercab {}", env!("CARGO_PKG_VERSION")))
+    );
+
+    // Commands, applied here (no loop), their entry effects too.
+    assert_eq!(run(&["approve", "0900"]), ok("approved 261001-0900"));
+    let spec = md("intents/261001-0900-spec/intent.md");
+    assert!(
+        !spec.contains("waiting:") && spec.contains("stage: build"),
+        "{spec}"
+    );
+    assert_eq!(
+        run(&["approve", "0900"]),
+        err("approve: 261001-0900 isn't waiting on you", 1)
+    );
+    assert_eq!(
+        run(&["release", "0900"]),
+        err("release: 261001-0900 isn't waiting for release", 1)
+    );
+    assert_eq!(
+        run(&["release", "261001-0901"]),
+        ok("releasing 261001-0901")
+    );
+    assert_eq!(
+        run(&["retry", "--fresh", "0902"]),
+        ok("fresh attempt 3 for 261001-0902")
+    );
+    let old = md("intents/261001-0902-old/intent.md");
+    assert!(
+        !old.contains("stage:") && !old.contains("waiting:"),
+        "{old}"
+    );
+    assert_eq!(
+        run(&["retry", "--fresh", "0903"]),
+        err("retry: 261001-0903 is done", 1)
+    );
+    assert_eq!(
+        run(&["retry", "--fresh", "0905"]),
+        err("retry: 261001-0905 is dropped", 1)
+    );
+    assert_eq!(
+        run(&["retry", "--fresh", "0906"]),
+        err("retry: 261001-0906 is reverting", 1)
+    );
+    assert_eq!(run(&["approve", "0904"]), ok("approved 261001-0904"));
+    assert!(!md("intents/261001-0904-wait/intent.md").contains("waiting"));
+    assert_eq!(
+        run(&["approve", "7777"]),
+        err("approve: no open intent matches 7777", 1)
+    );
+    let stages: Vec<String> = db
+        .conn()
+        .prepare("SELECT stage FROM missions ORDER BY id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(stages, ["plan", "release", "revert_ci"]);
+
+    // No pipeline yet: `step` and `run --intent` refuse.
+    assert_eq!(
+        run(&["step", "0900"]),
+        err("261001-0900: plan handler not built", 1)
+    );
+    assert_eq!(
+        run(&["step", "0904"]),
+        err("261001-0904: not picked: picks off: pipeline not built", 1)
+    );
+    assert_eq!(
+        run(&["run", "--intent", "0904"]),
+        err("261001-0904: not picked: picks off: pipeline not built", 1)
+    );
+    assert_eq!(
+        run(&["step", "7777"]),
+        err("no open intent matches 7777", 1)
+    );
+    let lock = home.lock().unwrap();
+    assert_eq!(
+        run(&["step", "0900"]),
+        err(
+            &format!(
+                "towercab is running (pid {}); towercab down first",
+                std::process::id()
+            ),
+            1
+        )
+    );
+    drop(lock);
+    let (out, _, code) = run(&["status"]);
+    assert_eq!(code, Some(0));
+    assert!(
+        out.starts_with(&format!(
+            "towercab {} · not running\nactive: none\n",
+            env!("CARGO_PKG_VERSION")
+        )) && !out.contains("waiting on you"),
+        "{out}"
+    );
+    let (out, _, code) = run(&["next"]);
+    assert_eq!(
+        (out.lines().next(), code),
+        (Some("next: nothing runnable"), Some(0))
+    );
+
+    // `step` with stub handlers: X is picked first though parked and after Y, one step at a
+    // time; a child is waited for.
+    let w = World::new(
+        &[
+            intent_file("261001-0900-x", "web", "u: 1\ni: 1\n", "X"),
+            intent_file("261001-0901-y", "web", "", "Y"),
+        ],
+        &["web"],
+    );
+    let mut h = Handlers::stubs();
+    h.set(Stage::Pick, Box::new(towercab::pick::Pick));
+    h.set(Stage::Build, Scripted::all(Act::Child));
+    let mut lp = w.open(h);
+    assert_eq!(
+        lp.step_intent("0900").unwrap(),
+        "261001-0900: pick → design"
+    );
+    assert_eq!(
+        lp.step_intent("0900").unwrap(),
+        "261001-0900: design → plan"
+    );
+    assert_eq!(lp.step_intent("0900").unwrap(), "261001-0900: plan → build");
+    w.release("261001-0900", Stage::Build);
+    assert_eq!(
+        lp.step_intent("0900").unwrap(),
+        "261001-0900: build → verify"
+    );
+    assert!(w.missions("261001-0901").is_empty(), "Y untouched");
+    lp.shutdown().unwrap();
+    drop(lp);
+
+    // `run --intent`: only its mission, until it waits on me; a frozen repo refuses it.
+    let mut w = World::new(
+        &[
+            intent_file("261001-0900-x", "web", "u: 1\ni: 1\n", "X"),
+            intent_file("261001-0901-y", "web", "", "Y"),
+            intent_file("261001-0902-z", "api", "", "Z"),
+        ],
+        &["web", "api"],
+    );
+    let spec_waits = || {
+        let mut h = Handlers::stubs();
+        h.set(
+            Stage::Design,
+            Scripted::all(Act::Wait(Waiting::ApproveSpec)),
+        );
+        h
+    };
+    let mut lp = w.open(spec_waits());
+    lp.set_target("0900").unwrap();
+    let mut end = None;
+    for _ in 0..10 {
+        let r = w.pass(&mut lp);
+        if r.target.is_some() {
+            end = r.target;
+            break;
+        }
+    }
+    assert_eq!(
+        end,
+        Some(Ok("261001-0900: approval:spec · approve spec".to_string()))
+    );
+    assert!(w.missions("261001-0901").is_empty() && w.missions("261001-0902").is_empty());
+    lp.shutdown().unwrap();
+    drop(lp);
+    w.db()
+        .conn()
+        .execute(
+            "INSERT INTO repo_caps (repo, frozen, why, since) VALUES ('api', 1, 'x', 0)",
+            [],
+        )
+        .unwrap();
+    let mut lp = w.open(spec_waits());
+    lp.set_target("0902").unwrap();
+    assert_eq!(
+        w.pass(&mut lp).target,
+        Some(Err("261001-0902: not picked: repo api frozen".to_string()))
+    );
+    lp.shutdown().unwrap();
+    drop(lp);
+    // `run` itself: passes until the target is done (stub handlers everywhere); web is full
+    // (X waits on me), so Y can't be picked.
+    let run_intent = |id: &str| {
+        let opts = LoopOpts {
+            intent: Some(id.into()),
+            pass: std::time::Duration::from_millis(5),
+            ..LoopOpts::default()
+        };
+        w.open_with(Handlers::stubs(), w.exes(), opts).run()
+    };
+    assert_eq!(
+        run_intent("0901"),
+        Err("261001-0901: not picked: repo web full (1/1)".into())
+    );
+    w.db().conn().execute("DELETE FROM repo_caps", []).unwrap();
+    run_intent("0902").unwrap();
+    assert_eq!(w.stage("261001-0902"), Some(Stage::Done));
+    assert!(w.missions("261001-0901").is_empty());
+}

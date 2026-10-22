@@ -675,6 +675,44 @@ fn test_store_interface() {
         .unwrap();
     assert_eq!(up.u(), Some(5));
     assert_eq!(home.log()[0], format!("towercab: rescore {}", added.id));
+    // A marked update: the same subject, the mark its last line, found by `has_mark`.
+    let mark = "Towercab-Entry: s 12";
+    assert!(!store.has_mark(mark).unwrap());
+    store
+        .update_marked(&added.id, "design", Some(mark), |i| {
+            i.set("stage", Value::Str("design".into()))
+        })
+        .unwrap();
+    assert_eq!(home.log()[0], format!("towercab: design {}", added.id));
+    let body = common::git(&home.remote, &["log", "-1", "--format=%B", "main"]);
+    assert!(
+        body.trim_end().ends_with("\n\nTowercab-Entry: s 12"),
+        "{body}"
+    );
+    assert!(store.has_mark(mark).unwrap());
+    assert!(
+        !store.has_mark("Towercab-Entry: s 1").unwrap(),
+        "whole lines only"
+    );
+    // A marked commit a crash left unpushed: pushed before it counts as written.
+    common::write(
+        &home.checkout,
+        &format!("{}/intent.md", up.dir),
+        &intent_md("towercab", "u: 1\n", "Y"),
+    );
+    git(&home.checkout, &["add", "-A"]);
+    git(
+        &home.checkout,
+        &[
+            "commit",
+            "--quiet",
+            "-m",
+            "towercab: x\n\nTowercab-Entry: s 13",
+        ],
+    );
+    assert!(store.has_mark("Towercab-Entry: s 13").unwrap());
+    let body = common::git(&home.remote, &["log", "-3", "--format=%B", "main"]);
+    assert!(body.contains("Towercab-Entry: s 13"), "pushed: {body}");
 
     // `Err` from the closure → nothing written.
     let head = home.head();
@@ -758,15 +796,14 @@ fn test_store_interface() {
         &local,
         &["commit", "--quiet", "--allow-empty", "-m", "start"],
     );
-    let config = Config {
-        file: home.tmp.path().join("config.toml"),
-        intents: IntentsConfig {
+    let config = Config::new(
+        home.tmp.path().join("config.toml"),
+        IntentsConfig {
             remote: None,
             path: local.clone(),
             cutoff: 7,
         },
-        repos: Default::default(),
-    };
+    );
     let store = Store::open(&config).unwrap();
     let got = store.add(new("Local only", None, None)).unwrap();
     assert_eq!(

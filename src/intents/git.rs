@@ -3,12 +3,17 @@
 //! Every call runs in an environment of its own: the caller's `GIT_DIR`, `GIT_WORK_TREE`,
 //! `GIT_INDEX_FILE` (set inside a git hook or `rebase --exec`) never point it elsewhere, and
 //! nothing prompts (`GIT_TERMINAL_PROMPT=0`; ssh `BatchMode=yes` unless I configured my own
-//! ssh command). No timeouts here: the loop bounds its calls (LOOP-10).
+//! ssh command). Each call is killed after `child::GIT_TIMEOUT`, a transfer slower than
+//! 1000 B/s for 60 s fails first (`GIT_HTTP_LOW_SPEED_LIMIT`/`_TIME`, LOOP-10).
 
+use std::ffi::OsStr;
+use std::fmt;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, Mutex};
+
+use crate::child::{GIT_TIMEOUT, output};
 
 /// The generated views: a rebase conflict in them is resolved by taking `main`'s side, since
 /// the next write regenerates them (INT-10).
@@ -53,25 +58,82 @@ static SSH_BATCH: LazyLock<bool> = LazyLock::new(|| {
 /// `git` with Towercab's identity and its own environment (module doc); also used by
 /// `repo::load` (REPO-1).
 pub fn git_command() -> Command {
-    let mut c = Command::new("git");
+    git_command_for(OsStr::new("git"))
+}
+
+/// [`git_command`] with another `git` executable (the loop's `Exes::git`).
+pub fn git_command_for(git: &OsStr) -> Command {
+    let mut c = Command::new(git);
     c.args(GIT_CONFIG);
     for v in REPO_ENV {
         c.env_remove(v);
     }
-    c.env("GIT_TERMINAL_PROMPT", "0").env("GIT_EDITOR", "true");
+    c.env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_EDITOR", "true")
+        .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000")
+        .env("GIT_HTTP_LOW_SPEED_TIME", "60");
     if *SSH_BATCH {
         c.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
     }
     c
 }
 
+/// What a git call adds to act as Towercab's GitHub App (LOOP-19, `github::Identity::git_auth`):
+/// `-c` args after Towercab's own (the credential helper, the bot's `user.name`/`user.email`,
+/// which win) and env (`GH_TOKEN`). Empty = my own git setup.
+#[derive(Clone, Default, PartialEq)]
+pub struct GitAuth {
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
+/// The env values (a token) redacted.
+impl fmt::Debug for GitAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let env: Vec<(&str, &str)> = self
+            .env
+            .iter()
+            .map(|(k, _)| (k.as_str(), "<redacted>"))
+            .collect();
+        f.debug_struct("GitAuth")
+            .field("args", &self.args)
+            .field("env", &env)
+            .finish()
+    }
+}
+
+impl GitAuth {
+    /// Adds it to a git command, before the subcommand.
+    pub fn apply(&self, cmd: &mut Command) {
+        cmd.args(&self.args);
+        cmd.envs(self.env.iter().map(|(k, v)| (k, v)));
+    }
+}
+
+/// Where a checkout's network and commit calls get their [`GitAuth`] (minted when called, so a
+/// token is fresh); `Err` fails that call with the reason.
+pub type AuthFn = Box<dyn FnMut() -> Result<GitAuth, String> + Send>;
+
 /// A git working tree on `main`; `origin` = it has an `origin` remote to pull from and push to.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Checkout {
     pub path: PathBuf,
     pub origin: bool,
     /// Its absolute git directory (`.git`, or the worktree's).
     pub git_dir: PathBuf,
+    /// Used by fetch, pull, commit and push (`with_auth`); none → my own git setup.
+    auth: Option<Arc<Mutex<AuthFn>>>,
+}
+
+impl fmt::Debug for Checkout {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Checkout")
+            .field("path", &self.path)
+            .field("origin", &self.origin)
+            .field("git_dir", &self.git_dir)
+            .field("auth", &self.auth.is_some())
+            .finish()
+    }
 }
 
 impl Checkout {
@@ -81,6 +143,7 @@ impl Checkout {
             path: path.to_path_buf(),
             origin: false,
             git_dir: PathBuf::new(),
+            auth: None,
         };
         let not_checkout = || format!("intents: {} is not a git checkout", path.display());
         let top = c
@@ -96,6 +159,21 @@ impl Checkout {
         c.origin = c.git(&["remote", "get-url", "origin"]).is_ok();
         c.git_dir = PathBuf::from(c.git(&["rev-parse", "--absolute-git-dir"])?.trim());
         Ok(c)
+    }
+
+    /// Its fetches, pulls, commits and pushes act as `auth` returns (LOOP-19: the App's token
+    /// and bot); every other call stays local and plain.
+    pub fn with_auth(mut self, auth: AuthFn) -> Checkout {
+        self.auth = Some(Arc::new(Mutex::new(auth)));
+        self
+    }
+
+    /// The [`GitAuth`] of a network or commit call now.
+    fn auth(&self) -> Result<GitAuth, String> {
+        match &self.auth {
+            None => Ok(GitAuth::default()),
+            Some(f) => (f.lock().unwrap_or_else(|p| p.into_inner()))(),
+        }
     }
 
     /// Blocks until this process holds `<git dir>/towercab.lock` (`flock`), so one store
@@ -144,14 +222,18 @@ impl Checkout {
 
     /// `git clone --quiet <remote> <path>`.
     pub fn clone(remote: &str, path: &Path) -> Result<Checkout, String> {
+        Checkout::clone_as(remote, path, &GitAuth::default())
+    }
+
+    /// [`Checkout::clone`] with `auth` (LOOP-19).
+    pub fn clone_as(remote: &str, path: &Path, auth: &GitAuth) -> Result<Checkout, String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("clone failed: {e}"))?;
         }
-        let out = git_command()
-            .args(["clone", "--quiet", "--", remote])
-            .arg(path)
-            .output()
-            .map_err(|e| format!("clone failed: git: {e}"))?;
+        let mut cmd = git_command();
+        auth.apply(&mut cmd);
+        cmd.args(["clone", "--quiet", "--", remote]).arg(path);
+        let out = output(&mut cmd, GIT_TIMEOUT).map_err(|e| format!("clone failed: git: {e}"))?;
         if !out.status.success() {
             return Err(format!(
                 "clone failed: {}",
@@ -163,11 +245,21 @@ impl Checkout {
 
     /// Runs `git <args>` in the checkout; stdout on success, stderr (or stdout) on failure.
     pub fn git(&self, args: &[&str]) -> Result<String, String> {
-        let out = git_command()
-            .args(args)
-            .current_dir(&self.path)
-            .output()
-            .map_err(|e| format!("git: {e}"))?;
+        self.run(args, &GitAuth::default())
+    }
+
+    /// [`Checkout::git`] with its auth (`with_auth`): fetches, rebases, commits, pushes and
+    /// `ls-remote`.
+    pub fn git_as(&self, args: &[&str]) -> Result<String, String> {
+        let auth = self.auth()?;
+        self.run(args, &auth)
+    }
+
+    fn run(&self, args: &[&str], auth: &GitAuth) -> Result<String, String> {
+        let mut cmd = git_command();
+        auth.apply(&mut cmd);
+        cmd.args(args).current_dir(&self.path);
+        let out = output(&mut cmd, GIT_TIMEOUT).map_err(|e| format!("git: {e}"))?;
         if out.status.success() {
             Ok(String::from_utf8_lossy(&out.stdout).into_owned())
         } else {
@@ -202,7 +294,7 @@ impl Checkout {
             return Ok(());
         }
         let failed = |e: String| format!("pull failed: {e}");
-        self.git(&["fetch", "--quiet", "origin", "main"])
+        self.git_as(&["fetch", "--quiet", "origin", "main"])
             .map_err(failed)?;
         let local = self.local_commits().map_err(failed)?;
         if local.is_empty() {
@@ -211,7 +303,7 @@ impl Checkout {
                 .map(drop)
                 .map_err(failed);
         }
-        let mut step = self.git(&["rebase", "--quiet", "origin/main"]);
+        let mut step = self.git_as(&["rebase", "--quiet", "origin/main"]);
         for _ in 0..=local.len() {
             if step.is_ok() {
                 return Ok(());
@@ -233,7 +325,7 @@ impl Checkout {
             }
             // Only the views changed: the commit is empty now.
             let only_views = self.git(&["diff", "--cached", "--quiet"]).is_ok();
-            step = self.git(&["rebase", if only_views { "--skip" } else { "--continue" }]);
+            step = self.git_as(&["rebase", if only_views { "--skip" } else { "--continue" }]);
         }
         let _ = self.git(&["rebase", "--abort"]);
         let _ = self.reset_to_origin();
@@ -249,7 +341,7 @@ impl Checkout {
         if self.is_clean()? {
             return Ok(false);
         }
-        self.git(&["commit", "--quiet", "-m", msg])
+        self.git_as(&["commit", "--quiet", "-m", msg])
             .map(|_| true)
             .map_err(|e| format!("commit failed: {e}"))
     }
@@ -259,13 +351,13 @@ impl Checkout {
         if !self.origin {
             return Ok(());
         }
-        self.git(&["push", "--quiet", "origin", "HEAD:main"])
+        self.git_as(&["push", "--quiet", "origin", "HEAD:main"])
             .map(drop)
     }
 
     /// `git fetch origin main`.
     pub fn fetch(&self) -> Result<(), String> {
-        self.git(&["fetch", "--quiet", "origin", "main"])
+        self.git_as(&["fetch", "--quiet", "origin", "main"])
             .map(drop)
             .map_err(|e| format!("fetch failed: {e}"))
     }

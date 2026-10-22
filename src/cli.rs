@@ -1,16 +1,28 @@
-//! Command line (LOOP-15, so far `add`, `migrate`, `review`, `protect` and `--version`).
+//! Command line (LOOP-15): every command; `telemetry`, `eval` and `hook guard` are stubs until
+//! their intents (MET-12, PIP-33, PIP-29).
 
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
+use crate::commands::{self, Cmd, QUEUED};
 use crate::config::Config;
+use crate::db::Db;
+use crate::doctor::doctor;
+use crate::exes::Exes;
+use crate::handler::Handlers;
+use crate::home::Home;
 use crate::intents::intent::is_repo;
 use crate::intents::migrate::migrate;
 use crate::intents::store::now;
-use crate::intents::{NewIntent, Store};
+use crate::intents::{Listing, NewIntent, Store};
+use crate::pick;
 use crate::repo::protect::{Target, protect};
+use crate::runloop::{Loop, LoopOpts, Tick};
+use crate::service;
+use crate::status::{self, Snapshot};
 
 #[derive(Parser, Debug)]
 #[command(name = "towercab", version, about = "Majid's software factory")]
@@ -18,6 +30,9 @@ struct Args {
     /// Config file (default: $TOWERCAB_CONFIG, else ~/.config/towercab/config.toml)
     #[arg(long, global = true, value_name = "FILE")]
     config: Option<PathBuf>,
+    /// The loop's home (default: $TOWERCAB_HOME, else ~/.local/share/towercab)
+    #[arg(long, global = true, value_name = "DIR")]
+    home: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -40,6 +55,64 @@ enum Command {
         /// A [repos] name, or `intents` for the intent home
         repo: String,
     },
+    /// Install the systemd user service and start it
+    Up,
+    /// Stop and disable the service (missions stay)
+    Down,
+    /// Follow the service's log
+    Logs,
+    /// Run the loop: a pass every 5 s until nothing is runnable
+    Run {
+        /// Keep running until SIGTERM or SIGINT
+        #[arg(long)]
+        watch: bool,
+        /// Step only this intent's mission
+        #[arg(long, value_name = "ID")]
+        intent: Option<String>,
+    },
+    /// Go on with an intent waiting on you
+    Approve { id: String },
+    /// Start an intent over as a new attempt
+    Retry {
+        #[arg(long, required = true)]
+        fresh: bool,
+        id: String,
+    },
+    /// Authorize an intent's release
+    Release { id: String },
+    /// No picks; merges and reverts hold
+    Pause,
+    /// Undo pause
+    Resume,
+    /// Lift a repo's autonomy cap and freeze
+    Trust { repo: String },
+    /// What runs, what waits on you, what's next
+    Status,
+    /// The intent the loop would pick next, and why the others wait
+    Next,
+    /// One step of an intent's mission in the foreground
+    Step { id: String },
+    /// Claude Code telemetry to the metrics endpoint (not built yet)
+    Telemetry {
+        #[arg(value_parser = ["on", "off", "status"])]
+        what: String,
+    },
+    /// Run the evals (not built yet)
+    Eval,
+    /// Hooks Claude Code runs inside Towercab's workers
+    #[command(hide = true)]
+    Hook {
+        #[command(subcommand)]
+        hook: Hook,
+    },
+    /// Check the config, programs, GitHub App, rulesets and Telegram
+    Doctor,
+}
+
+#[derive(Subcommand, Debug)]
+enum Hook {
+    /// The worker's PreToolUse guard (PIP-29)
+    Guard,
 }
 
 /// Exit code: 0 ok, 1 error, 2 bad arguments.
@@ -90,6 +163,151 @@ where
                 .and_then(|c| Target::resolve(&c, &repo))
                 .and_then(|t| protect(&t, OsStr::new("gh"))),
         ),
+        Command::Up => {
+            report(loop_config(&args.config).and_then(|_| service::up(&Exes::default())))
+        }
+        Command::Down => report(
+            Config::load(args.config.as_deref()).and_then(|_| service::down(&Exes::default())),
+        ),
+        Command::Logs => report(
+            Config::load(args.config.as_deref())
+                .and_then(|_| service::logs(&Exes::default()).map(|never| match never {})),
+        ),
+        Command::Run { watch, intent } => {
+            let run = loop_config(&args.config).and_then(|config| {
+                let home = Home::resolve(args.home.as_deref())?;
+                let opts = LoopOpts {
+                    watch,
+                    intent,
+                    ..LoopOpts::default()
+                };
+                Loop::open(config, home, Handlers::production(), Exes::default(), opts)?.run()
+            });
+            match run {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("towercab: {e}");
+                    1
+                }
+            }
+        }
+        Command::Approve { id } => command(&args.config, &args.home, Cmd::Approve(id)),
+        Command::Retry { fresh: _, id } => command(&args.config, &args.home, Cmd::RetryFresh(id)),
+        Command::Release { id } => command(&args.config, &args.home, Cmd::Release(id)),
+        Command::Pause => command(&args.config, &args.home, Cmd::Pause),
+        Command::Resume => command(&args.config, &args.home, Cmd::Resume),
+        Command::Trust { repo } => command(&args.config, &args.home, Cmd::Trust(repo)),
+        Command::Status => report(status_cmd(&args.config, &args.home)),
+        Command::Next => report(next_cmd(&args.config, &args.home)),
+        Command::Step { id } => report(loop_config(&args.config).and_then(|config| {
+            let home = Home::resolve(args.home.as_deref())?;
+            let mut lp = Loop::open(
+                config,
+                home,
+                Handlers::production(),
+                Exes::default(),
+                LoopOpts::default(),
+            )?;
+            let out = lp.step_intent(&id);
+            lp.shutdown()?;
+            out
+        })),
+        Command::Telemetry { .. } => not_built("MET-12", 1),
+        Command::Eval => not_built("PIP-33", 1),
+        Command::Hook { hook: Hook::Guard } => not_built("PIP-29", 2),
+        Command::Doctor => match loop_config(&args.config) {
+            Err(e) => {
+                println!("{e}");
+                1
+            }
+            Ok(config) => report(
+                Home::resolve(args.home.as_deref())
+                    .map(|home| doctor(&config, &home, &Exes::default())),
+            ),
+        },
+    }
+}
+
+/// A stub until its intent: `towercab: not built yet: <ID>`, exit `code`.
+fn not_built(id: &str, code: i32) -> i32 {
+    eprintln!("towercab: not built yet: {id}");
+    code
+}
+
+/// The intents for `status` and `next`: pulled; a failed pull → the checkout as it is, and
+/// the error.
+fn intents(config: &Config) -> (Option<Listing>, Option<String>) {
+    match Store::open(config) {
+        Err(e) => (None, Some(e.to_string())),
+        Ok(s) => match s.list() {
+            Ok(l) => (Some(l), None),
+            Err(e) => (Some(s.scan()), Some(e.to_string())),
+        },
+    }
+}
+
+/// `towercab status` (LOOP-13): SQLite and the intents; works without a running loop.
+fn status_cmd(config: &Option<PathBuf>, home: &Option<PathBuf>) -> Result<String, String> {
+    let config = Config::load(config.as_deref())?;
+    let home = Home::resolve(home.as_deref())?;
+    let db = Db::open(&home.db())?;
+    let (listing, error) = intents(&config);
+    let snapshot = Snapshot::read(
+        &db,
+        listing.as_ref(),
+        error.as_deref(),
+        &config,
+        home.holder(),
+        Handlers::production().built(),
+        Tick::now(),
+    )?;
+    Ok(status::render(&snapshot))
+}
+
+/// `towercab next` (loop.md **Next**): what `run` would pick.
+fn next_cmd(config: &Option<PathBuf>, home: &Option<PathBuf>) -> Result<String, String> {
+    let config = Config::load(config.as_deref())?;
+    let home = Home::resolve(home.as_deref())?;
+    let db = Db::open(&home.db())?;
+    let (listing, error) = intents(&config);
+    let listing = match (listing, error) {
+        (Some(l), _) => l,
+        (None, e) => return Err(format!("intents: {}", e.unwrap_or_default())),
+    };
+    let state = pick::state(&db, &config, Handlers::production().built(), Tick::now())?;
+    let d = pick::decide(&listing, &state);
+    Ok(status::next_text(&d, &listing, config.intents.cutoff))
+}
+
+/// The config of a loop command (`run`, `step`, `up`, `doctor`): loaded and
+/// [`Config::check_loop`]ed.
+fn loop_config(config: &Option<PathBuf>) -> Result<Config, String> {
+    let config = Config::load(config.as_deref())?;
+    config.check_loop()?;
+    Ok(config)
+}
+
+/// A `commands` row from the CLI (LOOP-15): applied here when no loop holds the home, else
+/// the loop's reply within 10 s, else `queued: …`. An error reply exits 1.
+fn command(config: &Option<PathBuf>, home: &Option<PathBuf>, cmd: Cmd) -> i32 {
+    let submitted = Config::load(config.as_deref()).and_then(|config| {
+        let home = Home::resolve(home.as_deref())?;
+        let db = Db::open(&home.db())?;
+        commands::submit(&config, &home, &db, &cmd, Duration::from_secs(10))
+    });
+    match submitted {
+        Ok(Some(reply)) if cmd.failed(&reply) => {
+            eprintln!("towercab: {reply}");
+            1
+        }
+        Ok(reply) => {
+            println!("{}", reply.as_deref().unwrap_or(QUEUED));
+            0
+        }
+        Err(e) => {
+            eprintln!("towercab: {e}");
+            1
+        }
     }
 }
 

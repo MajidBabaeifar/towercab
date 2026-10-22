@@ -10,7 +10,7 @@ use std::path::Path;
 
 use chrono::{DateTime, FixedOffset, Local, SecondsFormat};
 
-use super::git::Checkout;
+use super::git::{AuthFn, Checkout};
 use super::id::{self, is_id, new_id, resolve, split_dir};
 use super::intent::{Intent, Stage, Value, format_value};
 use super::views;
@@ -200,16 +200,30 @@ impl Store {
     /// Opens `[intents].path`, cloning `[intents].remote` there when it is missing.
     /// Refuses a checkout on any branch but `main` (INT-4).
     pub fn open(config: &Config) -> Result<Store, StoreError> {
+        Store::open_as(config, None)
+    }
+
+    /// [`Store::open`] whose clone, fetches, commits and pushes act as `auth` returns (the
+    /// loop's: the GitHub App, LOOP-19).
+    pub fn open_as(config: &Config, mut auth: Option<AuthFn>) -> Result<Store, StoreError> {
         let path = &config.intents.path;
         let checkout = if path.exists() {
             Checkout::new(path).map_err(StoreError::Refused)?
         } else if let Some(remote) = &config.intents.remote {
-            Checkout::clone(remote, path).map_err(StoreError::Sync)?
+            let with = match auth.as_mut() {
+                Some(f) => f().map_err(StoreError::Sync)?,
+                None => Default::default(),
+            };
+            Checkout::clone_as(remote, path, &with).map_err(StoreError::Sync)?
         } else {
             return Err(StoreError::Refused(format!(
                 "intents: {} does not exist and [intents].remote is not set",
                 path.display()
             )));
+        };
+        let checkout = match auth {
+            Some(f) => checkout.with_auth(f),
+            None => checkout,
         };
         {
             let _lock = checkout.lock().map_err(StoreError::Refused)?;
@@ -279,7 +293,22 @@ impl Store {
 
     /// Changes one open intent through `f` (commit `towercab: <what> <id>`); `Err` from `f` →
     /// nothing written. `stage: done|dropped` adds `finished` and moves the folder to `done/`.
-    pub fn update<F>(&self, id_or_suffix: &str, what: &str, mut f: F) -> Result<Intent, StoreError>
+    pub fn update<F>(&self, id_or_suffix: &str, what: &str, f: F) -> Result<Intent, StoreError>
+    where
+        F: FnMut(&mut Intent) -> Result<(), String>,
+    {
+        self.update_marked(id_or_suffix, what, None, f)
+    }
+
+    /// [`Store::update`] whose commit carries `mark` as its last line (a trailer), which
+    /// [`Store::has_mark`] finds: the loop's entry writes, made once across crashes (LOOP-6).
+    pub fn update_marked<F>(
+        &self,
+        id_or_suffix: &str,
+        what: &str,
+        mark: Option<&str>,
+        mut f: F,
+    ) -> Result<Intent, StoreError>
     where
         F: FnMut(&mut Intent) -> Result<(), String>,
     {
@@ -323,8 +352,26 @@ impl Store {
                     .map_err(StoreError::Refused)?;
                 intent.dir = to;
             }
-            Ok((format!("towercab: {what} {}", intent.id), intent))
+            let mut msg = format!("towercab: {what} {}", intent.id);
+            if let Some(mark) = mark {
+                msg.push_str("\n\n");
+                msg.push_str(mark);
+            }
+            Ok((msg, intent))
         })
+    }
+
+    /// A line of one of the last 200 commits on the checkout's `HEAD` is `mark`, after a sync
+    /// (under the lock): a marked commit a crash left unpushed is pushed first, or dropped when
+    /// it conflicts, so a mark found is on `origin`.
+    pub fn has_mark(&self, mark: &str) -> Result<bool, StoreError> {
+        let _lock = self.lock()?;
+        self.sync()?;
+        let log = self
+            .checkout
+            .git(&["log", "-n", "200", "--format=%B%x00", "HEAD"])
+            .map_err(StoreError::Refused)?;
+        Ok(log.lines().any(|l| l.trim_matches('\0').trim() == mark))
     }
 
     /// Reads every folder in the working tree (no git).
@@ -478,7 +525,7 @@ fn on_main(checkout: &Checkout) -> Result<(), StoreError> {
 /// An open intent by ID or suffix (INT-3: over open intents). An unreadable folder in
 /// `intents/` fails with its reason (INT-11) when `s` is its exact ID, or when no open ID
 /// matches and it is the one unreadable ID ending with `s`.
-fn find_open(listing: &Listing, s: &str) -> Result<Intent, StoreError> {
+pub fn find_open(listing: &Listing, s: &str) -> Result<Intent, StoreError> {
     let bad: Vec<(String, &Unreadable)> = listing
         .unreadable
         .iter()

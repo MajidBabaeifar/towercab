@@ -10,6 +10,10 @@ use tempfile::TempDir;
 use towercab::config::{Config, IntentsConfig};
 use towercab::intents::{Intent, Store};
 
+pub mod app;
+pub mod http;
+pub mod world;
+
 /// `git <args>` in `dir` as "me"; panics on failure.
 pub fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -107,15 +111,14 @@ impl Home {
     }
 
     pub fn config(&self) -> Config {
-        Config {
-            file: self.tmp.path().join("config.toml"),
-            intents: IntentsConfig {
+        Config::new(
+            self.tmp.path().join("config.toml"),
+            IntentsConfig {
                 remote: Some(self.remote.to_str().unwrap().to_string()),
                 path: self.checkout.clone(),
                 cutoff: 7,
             },
-            repos: Default::default(),
-        }
+        )
     }
 
     pub fn store(&self) -> Store {
@@ -243,4 +246,172 @@ impl FakeGh {
     pub fn stdin(&self, n: usize) -> String {
         fs::read_to_string(self.dir.join(format!("stdin-{n}"))).unwrap()
     }
+}
+
+/// Writes an executable `#!/bin/sh` script at `path` (`$FAKE_PROBE` set → exit 0) and waits
+/// until it can run: another test's fork may hold the file open for writing (ETXTBSY).
+pub fn exe(path: &Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        format!("#!/bin/sh\n[ -n \"$FAKE_PROBE\" ] && exit 0\n{body}"),
+    )
+    .unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    for _ in 0..500 {
+        match Command::new(path).env("FAKE_PROBE", "1").status() {
+            Err(e) if e.raw_os_error() == Some(26) => {
+                std::thread::sleep(std::time::Duration::from_millis(10))
+            }
+            r => {
+                assert!(r.unwrap().success(), "{} runs", path.display());
+                return;
+            }
+        }
+    }
+    panic!("{} stays busy", path.display());
+}
+
+/// Fakes of the programs the loop checks at start and runs itself, in `dir` (made once):
+/// `claude`, `cargo`, `bwrap` answer `--version`; `systemd-inhibit` answers `--version`, else
+/// logs its argv (`inhibit-<n>.argv`) and pid (`inhibit-<n>.pid`), then runs until `dir` is
+/// gone; `gh` logs each call to `gh.log` and lists no issues and no PRs (anything else fails).
+/// Returns `Exes` with them (the rest by name).
+pub fn fake_exes(dir: &Path) -> towercab::exes::Exes {
+    let fakes = [
+        ("claude", "[ \"$1\" = --version ] && echo '2.1.0 (Claude Code)' && exit 0\necho \"fake claude: $*\" >&2\nexit 1\n".to_string()),
+        ("cargo", "echo 'cargo 1.98.0'\n".to_string()),
+        ("bwrap", "echo 'bubblewrap 0.11.0'\n".to_string()),
+        ("systemd-inhibit", FAKE_INHIBIT.to_string()),
+        ("gh", FAKE_LOOP_GH.to_string()),
+    ];
+    for (name, body) in &fakes {
+        let path = dir.join(name);
+        if !path.exists() {
+            exe(&path, body);
+        }
+    }
+    towercab::exes::Exes {
+        claude: dir.join("claude").into(),
+        cargo: dir.join("cargo").into(),
+        bwrap: dir.join("bwrap").into(),
+        systemd_inhibit: dir.join("systemd-inhibit").into(),
+        gh: dir.join("gh").into(),
+        ..towercab::exes::Exes::default()
+    }
+}
+
+const FAKE_LOOP_GH: &str = r#"echo "$*" >> "$(dirname "$0")/gh.log"
+case "$1 $2" in
+  "issue list"|"pr list") echo '[]' ;;
+  *) echo "fake gh: $*" >&2; exit 1 ;;
+esac
+"#;
+
+const FAKE_INHIBIT: &str = r#"[ "$1" = --version ] && echo 'systemd 255' && exit 0
+d="$(dirname "$0")"
+n=$(($(cat "$d/inhibit.count" 2>/dev/null || echo 0) + 1))
+printf '%s\n' "$@" > "$d/inhibit-$n.argv"
+echo $$ > "$d/inhibit-$n.pid"
+echo "$n" > "$d/inhibit.count"
+while [ -d "$d" ]; do sleep 0.1; done
+"#;
+
+/// The built `towercab` with `HOME` = `home`, [`fake_exes`] (in `<home>/.fakebin`) first on
+/// `PATH`, and none of `TOWERCAB_CONFIG`, `TOWERCAB_HOME`, `XDG_CONFIG_HOME` from the test's
+/// environment.
+pub fn towercab(home: &Path, args: &[&str]) -> Command {
+    let fakes = home.join(".fakebin");
+    fake_exes(&fakes);
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = vec![fakes];
+    paths.extend(std::env::split_paths(&path));
+    let mut c = Command::new(env!("CARGO_BIN_EXE_towercab"));
+    c.args(args)
+        .env("HOME", home)
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .env_remove("TOWERCAB_CONFIG")
+        .env_remove("TOWERCAB_HOME")
+        .env_remove("XDG_CONFIG_HOME")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    c
+}
+
+/// stdout, stderr and the exit code of a finished command.
+pub fn output(c: &mut Command) -> (String, String, Option<i32>) {
+    let out = c.output().expect("towercab runs");
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.code(),
+    )
+}
+
+/// A config the loop's commands accept (`[intents]` path in `dir`: an empty git repo on
+/// `main` without a remote; `[github]` app 1 as `me`), then `extra`; written to
+/// `<dir>/config.toml`.
+pub fn loop_config(dir: &Path, extra: &str) -> PathBuf {
+    let intents = dir.join("intents");
+    if !intents.exists() {
+        fs::create_dir_all(&intents).unwrap();
+        git(&intents, &["init", "--quiet", "-b", "main"]);
+    }
+    let file = dir.join("config.toml");
+    fs::write(
+        &file,
+        format!(
+            "[intents]\npath = \"{}\"\n\n[github]\napp_id = 1\nme = \"me\"\n\n{extra}",
+            dir.join("intents").display()
+        ),
+    )
+    .unwrap();
+    file
+}
+
+/// A `git` wrapper at `<dir>/git` for Towercab's `Exes::git`: `https://github.com/<o>/<n>.git`
+/// is the bare repo `<github>/<o>/<n>.git` (`url.insteadOf`), and each call's `GH_TOKEN` and
+/// arguments are logged to `<dir>/git.log` (`<GH_TOKEN or -> <args>`, one line per call).
+pub fn github_git(dir: &Path, github: &Path) -> PathBuf {
+    let real = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let real = String::from_utf8(real.stdout).unwrap().trim().to_string();
+    let path = dir.join("git");
+    exe(
+        &path,
+        &format!(
+            "echo \"${{GH_TOKEN:--}} $*\" >> '{log}'\nexec '{real}' -c 'url.{gh}/.insteadOf=https://github.com/' \"$@\"\n",
+            log = dir.join("git.log").display(),
+            gh = github.display(),
+        ),
+    );
+    path
+}
+
+/// A bare repo `<github>/<owner>/<name>.git` on `main` with one commit holding `files`.
+pub fn github_repo(github: &Path, repo: &str, files: &[(&str, &str)]) -> PathBuf {
+    let bare = github.join(format!("{repo}.git"));
+    fs::create_dir_all(&bare).unwrap();
+    git(&bare, &["init", "--quiet", "--bare", "-b", "main"]);
+    let work = github.join(format!("{repo}.work"));
+    git(
+        bare.parent().unwrap(),
+        &[
+            "clone",
+            "--quiet",
+            bare.to_str().unwrap(),
+            work.to_str().unwrap(),
+        ],
+    );
+    git(&work, &["checkout", "--quiet", "-B", "main"]);
+    write(&work, "README.md", "# repo\n");
+    for (rel, text) in files {
+        write(&work, rel, text);
+    }
+    git(&work, &["add", "-A"]);
+    git(&work, &["commit", "--quiet", "-m", "seed"]);
+    git(&work, &["push", "--quiet", "origin", "HEAD:main"]);
+    bare
 }
