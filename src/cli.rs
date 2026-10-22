@@ -117,6 +117,21 @@ enum Hook {
         /// `<runs>/guard.json`
         rules: PathBuf,
     },
+    /// The verifier's child (PIP-32): starts the app, waits for its url, runs Claude, kills the
+    /// app; the app never answered → `<log>.nostart`, exit 3
+    Verifier {
+        /// The app's `{argv, env}` (JSON)
+        #[arg(long)]
+        app: String,
+        #[arg(long)]
+        url: String,
+        /// The app's output
+        #[arg(long)]
+        log: PathBuf,
+        /// The Claude run's argv
+        #[arg(last = true, required = true)]
+        claude: Vec<OsString>,
+    },
 }
 
 /// Exit code: 0 ok, 1 error, 2 bad arguments.
@@ -221,6 +236,15 @@ where
         Command::Hook {
             hook: Hook::Guard { rules },
         } => guard(&rules),
+        Command::Hook {
+            hook:
+                Hook::Verifier {
+                    app,
+                    url,
+                    log,
+                    claude,
+                },
+        } => crate::pipeline::verifier::hook(&app, &url, &log, &claude),
         Command::Doctor => match loop_config(&args.config) {
             Err(e) => {
                 println!("{e}");

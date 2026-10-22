@@ -78,6 +78,16 @@ pub fn get_json(
     answer("GET", url, req.call())
 }
 
+/// `GET url` → (status, body) of any answer (PIP-32's app check, PIP-8's `url:` deploy);
+/// no answer → `Net`.
+pub fn get_text(url: &str, timeout: Duration) -> Result<(u16, String), HttpError> {
+    let net = |e: ureq::Error| HttpError::Net(mask(&format!("GET {}: {e}", mask(url))));
+    let mut resp = agent(timeout).get(url).call().map_err(net)?;
+    let status = resp.status().as_u16();
+    let text = resp.body_mut().read_to_string().map_err(net)?;
+    Ok((status, text))
+}
+
 /// `POST url` with `headers` and `body` as JSON → (status, JSON body) of a 2xx answer.
 pub fn post_json(
     url: &str,

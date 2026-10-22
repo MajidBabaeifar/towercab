@@ -6,6 +6,7 @@ pub mod build;
 pub mod ci;
 pub mod data;
 pub mod design;
+pub mod gate;
 pub mod gh;
 pub mod git;
 pub mod guard;
@@ -15,9 +16,11 @@ pub mod pr;
 pub mod prompts;
 pub mod proof;
 pub mod publish;
+pub mod review;
 pub mod runs;
 pub mod sandbox;
 pub mod schemas;
+pub mod verifier;
 pub mod verify;
 
 use std::collections::BTreeMap;
@@ -62,7 +65,16 @@ pub fn handlers(mode: Mode) -> Handlers {
         Stage::Publish,
         Box::new(publish::Publish::new(mode.clone())),
     );
-    h.set(Stage::Ci, Box::new(ci::Ci::new(ci::Seq::Intent, mode)));
+    h.set(
+        Stage::Ci,
+        Box::new(ci::Ci::new(ci::Seq::Intent, mode.clone())),
+    );
+    h.set(
+        Stage::Verifier,
+        Box::new(verifier::Verifier::new(mode.clone())),
+    );
+    h.set(Stage::Review, Box::new(review::Review::new(mode.clone())));
+    h.set(Stage::Gate, Box::new(gate::Gate::new(mode)));
     h
 }
 
