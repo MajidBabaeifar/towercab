@@ -813,7 +813,7 @@ fn write_lessons(cx: &Ctx<'_>) -> Result<(), GhError> {
             pr,
             after: point.zip(value).map(|(t, v)| (t, v, within)),
         };
-        let rel = lessons::path(fixed, &intent.slug, *cx.tick.wall.offset());
+        let rel = lessons::path(fixed, &intent.slug);
         if let Err(e) = cx
             .store
             .put(&rel, &lessons::text(&lesson), &format!("lesson {id}"))

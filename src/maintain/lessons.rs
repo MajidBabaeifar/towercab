@@ -1,7 +1,7 @@
 //! Lessons (MNT-8): what an alert intent's fix taught, written by code on `main` of `intents`
 //! for the next diagnoses to read.
 
-use chrono::{DateTime, FixedOffset};
+use chrono::DateTime;
 
 use crate::outbox::{cut, num, one_line};
 
@@ -32,10 +32,11 @@ pub struct Lesson {
     pub after: Option<(f64, f64, Option<bool>)>,
 }
 
-/// `lessons/<yymmdd of fixed>-<slug>.md` (`fixed` in `offset`'s local time).
-pub fn path(fixed: f64, slug: &str, offset: FixedOffset) -> String {
+/// `lessons/<yymmdd of fixed, UTC>-<slug>.md`: the same name on every retry, whatever the
+/// loop's offset is by then.
+pub fn path(fixed: f64, slug: &str) -> String {
     let day = DateTime::from_timestamp(fixed as i64, 0)
-        .map(|t| t.with_timezone(&offset).format("%y%m%d").to_string())
+        .map(|t| t.format("%y%m%d").to_string())
         .unwrap_or_else(|| "000000".into());
     format!("lessons/{day}-{slug}.md")
 }
