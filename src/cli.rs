@@ -265,7 +265,7 @@ where
         })),
         Command::Hook {
             hook: Hook::Guard { rules },
-        } => guard(&rules),
+        } => fail_closed(move || guard(&rules)),
         Command::Hook {
             hook:
                 Hook::Verifier {
@@ -290,6 +290,15 @@ where
 
 /// `towercab hook guard <rules>` (PIP-29): stdin → `guard::hook`; allowed → exit 0, blocked →
 /// the reason on stderr, exit 2 (also when stdin or the rules can't be read: fail closed).
+/// `f`'s exit code, a panic in it → 2 (`guard: panicked: blocked`): Claude Code takes any exit
+/// but 2 from a hook as a non-blocking error, so a panicking guard would let the write through.
+pub fn fail_closed(f: impl FnOnce() -> i32 + std::panic::UnwindSafe) -> i32 {
+    std::panic::catch_unwind(f).unwrap_or_else(|_| {
+        eprintln!("guard: panicked: blocked");
+        2
+    })
+}
+
 fn guard(rules: &Path) -> i32 {
     let mut stdin = String::new();
     if let Err(e) = std::io::stdin().read_to_string(&mut stdin) {

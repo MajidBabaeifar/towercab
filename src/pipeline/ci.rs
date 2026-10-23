@@ -353,8 +353,7 @@ impl Ci {
         }
         if self.seq == Seq::Intent && mergeable == "CONFLICTING" {
             data.set("ci", ci);
-            let m = cx.record(&m, "poll", &[("data", data.text().into())])?;
-            let _ = m;
+            cx.record(&m, "poll", &[("data", data.text().into())])?;
             return Ok(Progress::Done(Outcome::event(Event::Conflict)));
         }
         let config = &cx.config.agent;
