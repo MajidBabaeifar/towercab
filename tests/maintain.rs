@@ -49,7 +49,7 @@ fn points(values: &[f64]) -> Vec<(f64, f64)> {
 }
 
 fn tier(recent: &[f64], side: Side) -> Option<Tier> {
-    detect::detect(&points(&series(recent)), side).map(|v| v.tier)
+    detect::detect(&points(&series(recent)), side, 0.0).map(|v| v.tier)
 }
 
 #[test]
@@ -121,6 +121,7 @@ fn test_western_electric_rules() {
     let v = detect::detect(
         &points(&series(&[2.2, 2.2, 2.2, 2.2, 2.2, 2.2, 2.8, 4.0])),
         Side::Both,
+        0.0,
     )
     .unwrap();
     let (mean, sigma) = detect::stats(&series(&[])).unwrap();
@@ -147,19 +148,61 @@ fn test_short_baseline_no_verdict() {
     spike[7] = 40.0;
     // 14 points before the newest 8: a verdict; 13: none.
     let mut v = series(&spike);
-    assert!(detect::detect(&points(&v), Side::Both).is_some());
+    assert!(detect::detect(&points(&v), Side::Both, 0.0).is_some());
     v.drain(..8);
     assert_eq!(v.len(), 22);
-    assert!(detect::detect(&points(&v), Side::Both).is_some());
+    assert!(detect::detect(&points(&v), Side::Both, 0.0).is_some());
     v.remove(0);
     assert_eq!(v.len(), 21);
-    assert_eq!(detect::detect(&points(&v), Side::Both), None);
-    assert_eq!(detect::detect(&[], Side::Both), None);
+    assert_eq!(detect::detect(&points(&v), Side::Both, 0.0), None);
+    assert_eq!(detect::detect(&[], Side::Both, 0.0), None);
     // A flat baseline (σ = 0) judges nothing.
     let mut flat = vec![0.0; 22];
     flat.extend_from_slice(&[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]);
-    assert_eq!(detect::detect(&points(&flat), Side::Both), None);
+    assert_eq!(detect::detect(&points(&flat), Side::Both, 0.0), None);
     assert_eq!(detect::baseline(&points(&flat)), None);
+    // So is one whose σ is only rounding: 0.1 or 0.9 summed isn't exact.
+    for (n, x, newest) in [(22, 0.1, 0.12), (174, 0.9, 0.88)] {
+        let mut v = vec![x; n];
+        assert!(detect::stats(&v).unwrap().1 > 0.0, "σ isn't exactly 0");
+        v.extend_from_slice(&[x, x, x, x, x, x, x, newest]);
+        let pts: Vec<(f64, f64)> = v
+            .iter()
+            .enumerate()
+            .map(|(i, x)| (i as f64 * DAY, *x))
+            .collect();
+        assert_eq!(detect::baseline(&pts), None, "{n} × {x}");
+        assert_eq!(detect::detect(&pts, Side::Both, 0.0), None);
+    }
+}
+
+#[test]
+fn test_min_shift() {
+    // A sparse rate: σ ≈ 0.002 makes a drop of 0.02 "beyond 3σ" (z ≈ −9).
+    let mut base = vec![0.9; 21];
+    base.push(0.89);
+    let with = |recent: &[f64], min_shift: f64| {
+        let mut v = base.clone();
+        v.extend_from_slice(recent);
+        detect::detect(&points(&v), Side::Low, min_shift).map(|v| v.tier)
+    };
+    let dip = [0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.88];
+    assert_eq!(with(&dip, 0.0), Some(Tier::Three));
+    // At least min_shift from the mean, or it never counts: no rule fires on 0.02.
+    assert_eq!(with(&dip, 0.05), None);
+    assert_eq!(with(&[0.88; 8], 0.05), None, "nor 2σ, 1σ or one side");
+    assert_eq!(with(&[0.88; 8], 0.0), Some(Tier::Three));
+    // A real drop still breaches.
+    assert_eq!(
+        with(&[0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.8], 0.05),
+        Some(Tier::Three)
+    );
+    // beyond: strictly more than kσ, at least min_shift, on the side.
+    assert!(detect::beyond(0.06, 0.01, 3.0, 0.05, Side::High));
+    assert!(!detect::beyond(0.04, 0.01, 3.0, 0.05, Side::High));
+    assert!(!detect::beyond(0.03, 0.01, 3.0, 0.0, Side::High));
+    assert!(detect::beyond(-0.06, 0.01, 3.0, 0.05, Side::Both));
+    assert!(!detect::beyond(-0.06, 0.01, 3.0, 0.05, Side::High));
 }
 
 const BAND: &str = r#"bands:
@@ -172,6 +215,7 @@ const BAND: &str = r#"bands:
     baseline: rolling_30d
     rules: western_electric
     side: high
+    min_shift: 0.05
     repo: web
     tiers:
       1sigma: {action: log}
@@ -203,6 +247,7 @@ fn test_parse_bands() {
         )
     );
     assert!(b.query.starts_with("(sum(sum_over_time({__name__"));
+    assert_eq!(b.min_shift, 0.05);
     assert!(!b.query.contains('\n'), "folded: {}", b.query);
     assert_eq!(b.points(), 30);
     assert_eq!(
@@ -225,8 +270,14 @@ fn test_parse_bands() {
     // Defaults: period 1d, baseline 30d, side both, Western Electric, the playbook's tiers.
     let b = bands::parse("bands:\n  cost:\n    metric: intent.cost\n    query: sum(x)\n").unwrap();
     assert_eq!(
-        (b[0].period, b[0].baseline, b[0].side, b[0].repo.clone()),
-        (86_400, 30 * 86_400, Side::Both, None)
+        (
+            b[0].period,
+            b[0].baseline,
+            b[0].side,
+            b[0].min_shift,
+            b[0].repo.clone()
+        ),
+        (86_400, 30 * 86_400, Side::Both, 0.0, None)
     );
     assert_eq!(b[0].tiers, PLAYBOOK);
     // A tier left out keeps the playbook's; propose without routes → a pull request; weeks.
@@ -280,6 +331,14 @@ fn test_parse_bands() {
         (
             "bands:\n  b:\n    metric: ci.result\n    query: q\n    side: up\n",
             "b: side up: high, low or both",
+        ),
+        (
+            "bands:\n  b:\n    metric: ci.result\n    query: q\n    min_shift: -0.1\n",
+            "b: min_shift -0.1: a number ≥ 0",
+        ),
+        (
+            "bands:\n  b:\n    metric: ci.result\n    query: q\n    min_shift: some\n",
+            "b: min_shift some: a number ≥ 0",
         ),
         (
             "bands:\n  b:\n    metric: ci.result\n    query: q\n    tiers:\n      4sigma: {action: log}\n",
@@ -355,12 +414,18 @@ fn test_default_bands() {
             "eval_pass_rate" => ("1d", 182, Side::Low),
             _ => ("1d", 30, Side::High),
         };
+        // Rates move by at least 0.05 to count; durations and costs by any amount.
+        let min_shift = match b.name.as_str() {
+            "cycle_time" | "cost_per_intent" => 0.0,
+            _ => 0.05,
+        };
         assert_eq!(
-            (b.period, b.baseline, b.side),
+            (b.period, b.baseline, b.side, b.min_shift),
             (
                 if period == "1w" { 7 * 86_400 } else { 86_400 },
                 days * 86_400,
-                side
+                side,
+                min_shift
             ),
             "{}",
             b.name

@@ -187,7 +187,7 @@ pub fn evaluate(
     points: &[(f64, f64)],
     tick: Tick,
 ) -> Result<(), String> {
-    if let Some(v) = detect::detect(points, band.side) {
+    if let Some(v) = detect::detect(points, band.side, band.min_shift) {
         record(db, config, home, band, &v, points, tick)?;
     }
     evaluated(db.conn(), band, points, detect::baseline(points))

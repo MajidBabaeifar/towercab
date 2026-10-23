@@ -123,6 +123,8 @@ pub struct Band {
     /// Seconds.
     pub baseline: u64,
     pub side: Side,
+    /// The least shift from the mean (absolute units) any rule counts; 0 by default.
+    pub min_shift: f64,
     pub repo: Option<String>,
     /// By tier: 1σ, 2σ, 3σ.
     pub tiers: [Action; 3],
@@ -151,8 +153,16 @@ static PERIOD: LazyLock<Regex> =
 static BASELINE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^rolling_([1-9][0-9]{0,3})d$").expect("baseline regex"));
 
-const KEYS: [&str; 8] = [
-    "metric", "query", "period", "baseline", "rules", "side", "repo", "tiers",
+const KEYS: [&str; 9] = [
+    "metric",
+    "query",
+    "period",
+    "baseline",
+    "rules",
+    "side",
+    "min_shift",
+    "repo",
+    "tiers",
 ];
 
 fn period_secs(s: &str) -> Option<u64> {
@@ -227,7 +237,10 @@ fn action(y: &Yaml) -> Result<Action, String> {
 }
 
 fn shown(y: &Yaml) -> String {
-    text(y).unwrap_or_else(|| format!("{y:?}"))
+    match y {
+        Yaml::Real(r) => r.clone(),
+        _ => text(y).unwrap_or_else(|| format!("{y:?}")),
+    }
 }
 
 fn band(name: &str, y: &Yaml) -> Result<Band, String> {
@@ -289,6 +302,16 @@ fn band(name: &str, y: &Yaml) -> Result<Band, String> {
         Some("low") => Side::Low,
         Some(s) => return Err(format!("side {s}: high, low or both")),
     };
+    let min_shift = match get("min_shift") {
+        None => 0.0,
+        Some(y) => match y {
+            Yaml::Integer(n) => Some(*n as f64),
+            Yaml::Real(r) => r.parse::<f64>().ok(),
+            _ => None,
+        }
+        .filter(|x| x.is_finite() && *x >= 0.0)
+        .ok_or_else(|| format!("min_shift {}: a number ≥ 0", shown(y)))?,
+    };
     let repo = string("repo")?;
     if let Some(r) = &repo
         && !is_repo(r)
@@ -316,6 +339,7 @@ fn band(name: &str, y: &Yaml) -> Result<Band, String> {
         period,
         baseline,
         side,
+        min_shift,
         repo,
         tiers,
     })

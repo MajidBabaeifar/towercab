@@ -1,6 +1,8 @@
 # Bands (specs/maintain.md, MNT-1, MNT-2): Towercab's own process metrics, judged by Western
 # Electric rules once per completed period against [metrics].prometheus. Changed by PR only.
 # Delta series are summed with sum_over_time (never rate/increase); each query gives one series.
+# min_shift (absolute units): a rate moving less than this from its mean never breaches, however
+# small σ is (sparse rates sit at 0 or 1 most periods).
 bands:
   ci_failure_rate:
     metric: ci.result
@@ -11,6 +13,7 @@ bands:
     baseline: rolling_30d
     rules: western_electric
     side: high
+    min_shift: 0.05
     tiers:
       1sigma: {action: log}
       2sigma: {action: diagnose}
@@ -53,6 +56,7 @@ bands:
     baseline: rolling_182d
     rules: western_electric
     side: high
+    min_shift: 0.05
     tiers:
       1sigma: {action: log}
       2sigma: {action: diagnose}
@@ -66,6 +70,7 @@ bands:
     baseline: rolling_182d
     rules: western_electric
     side: low
+    min_shift: 0.05
     tiers:
       1sigma: {action: log}
       2sigma: {action: diagnose}
