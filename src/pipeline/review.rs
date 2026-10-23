@@ -75,17 +75,44 @@ static TEST: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"test_[a-z0-9_]+").e
 /// Each of `ids`' rows in `specs_dir/*.md` → the `test_*` names of its `Verified by` (last)
 /// cell. An id without a row is left out.
 pub fn verified_by(specs_dir: &Path, ids: &[String]) -> BTreeMap<String, Vec<String>> {
-    let mut out = BTreeMap::new();
     let Ok(rd) = std::fs::read_dir(specs_dir) else {
-        return out;
+        return BTreeMap::new();
     };
     let mut paths: Vec<_> = rd
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().is_some_and(|x| x == "md"))
         .collect();
     paths.sort();
-    for p in paths {
-        let text = std::fs::read_to_string(&p).unwrap_or_default();
+    let texts: Vec<String> = paths
+        .iter()
+        .map(|p| std::fs::read_to_string(p).unwrap_or_default())
+        .collect();
+    verified_by_texts(&texts, ids)
+}
+
+/// The `specs/*.md` texts at `rev` of the checkout `dir` (`git ls-tree` + `git cat-file
+/// blob`): the commit's, never the worktree a check could have rewritten. No `specs/`: none.
+pub fn specs_at(cx: &Ctx<'_>, dir: &Path, rev: &str) -> Result<Vec<String>, StepError> {
+    let Ok(names) = crate::checkout::git_sane(
+        &cx.exes.git,
+        dir,
+        &["ls-tree", "--name-only", "-z", &format!("{rev}:specs")],
+        None,
+    ) else {
+        return Ok(Vec::new());
+    };
+    let mut names: Vec<&str> = names.split('\0').filter(|n| n.ends_with(".md")).collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|n| pgit::run(cx, dir, &["cat-file", "blob", &format!("{rev}:specs/{n}")]))
+        .collect()
+}
+
+/// [`verified_by`] over spec texts.
+pub fn verified_by_texts(texts: &[String], ids: &[String]) -> BTreeMap<String, Vec<String>> {
+    let mut out = BTreeMap::new();
+    for text in texts {
         for line in text.lines().filter(|l| l.trim_start().starts_with('|')) {
             let c = cells(line);
             let (Some(first), Some(last)) = (c.first(), c.last()) else {
@@ -381,10 +408,16 @@ impl Review {
         let intent = intent(cx, m)?;
         let ids = spec_ids(data);
         let dir = cx.checkout(m);
-        let tests = verified_by(&dir.join("specs"), &ids);
+        // From the commit, never the worktree (a check may have rewritten it).
+        let head = pgit::rev(cx, &dir, "HEAD")?;
+        let tests = verified_by_texts(&specs_at(cx, &dir, &head)?, &ids);
         let base = cx.repo(m).map_err(StepError::Bug)?.base.clone();
         let mb = pgit::merge_base(cx, &dir, &base)?;
-        let diff = pgit::run(cx, &dir, &["diff", &mb, "HEAD"])?;
+        let diff = pgit::run(
+            cx,
+            &dir,
+            &["diff", "--no-ext-diff", "--no-textconv", &mb, &head],
+        )?;
         let verifier = data
             .get("verifier")
             .and_then(|v| VerifierReport::from_json(v).ok());

@@ -40,6 +40,19 @@ pub fn push_branch(
         );
         wait_note(cx, m, Waiting::AnswerTheQuestion, &why, &note).map(Err)
     };
+    // What check_diff checked is what goes: the branch, checked out.
+    let at = pgit::run(cx, &dir, &["symbolic-ref", "--quiet", "HEAD"]).unwrap_or_default();
+    if at.trim() != format!("refs/heads/{branch}") {
+        return Err(StepError::Bug(format!(
+            "{}: HEAD is {}, not {branch}: not pushed",
+            m.label(),
+            if at.trim().is_empty() {
+                "detached"
+            } else {
+                at.trim()
+            }
+        )));
+    }
     for _ in 0..3 {
         let why = match pgit::push(cx, m, &dir, &branch)? {
             Push::Pushed(sha) => return Ok(Ok(sha)),
@@ -145,10 +158,11 @@ pub fn open_pr(
         .ok_or_else(|| StepError::Bug(format!("gh pr create: no PR URL in {:?}", out.trim())))
 }
 
-/// The publish refusals (PIP-29, PIP-31): a path changed since the merge-base with base that
-/// is protected and not unlocked; in a verify or CI repair round, a locked test file
-/// (`guard::locked`) changed or deleted since the lock's baseline (`guard::lock_base`), unless
-/// HEAD keeps the version my push made after it. `Err` inside: the paths.
+/// The publish refusals (PIP-29, PIP-31) on `refs/heads/<branch>` of the checkout, exactly what
+/// [`push_branch`] sends: a path changed since the merge-base with base that is protected and
+/// not unlocked; in a verify or CI repair round, a locked test file (`guard::locked`) changed
+/// or deleted since the lock's baseline (`guard::lock_base`), unless the tip keeps the version
+/// my push made after it. `Err` inside: the paths.
 pub fn check_diff(
     cx: &Ctx<'_>,
     m: &Mission,
@@ -160,16 +174,28 @@ pub fn check_diff(
         Protected::new(&repo_files.towercab.protected, intent.unlock()).map_err(StepError::Bug)?;
     let repo = cx.repo(m).map_err(StepError::Bug)?.clone();
     let dir = cx.checkout(m);
-    let base = pgit::merge_base(cx, &dir, &repo.base)?;
-    let changed = pgit::changed(cx, &dir, &base, "HEAD")?;
+    let branch = m
+        .branch
+        .clone()
+        .ok_or_else(|| StepError::Bug(format!("{}: no branch", m.label())))?;
+    let tip = pgit::rev(cx, &dir, &format!("refs/heads/{branch}"))?;
+    let base = pgit::run(
+        cx,
+        &dir,
+        &[
+            "merge-base",
+            &tip,
+            &format!("refs/remotes/origin/{}", repo.base),
+        ],
+    )?
+    .trim()
+    .to_string();
+    let changed = pgit::changed(cx, &dir, &base, &tip)?;
     let (since_head, locked) = match guard::lock_base(cx, m) {
         Some(lock) if matches!(round, Round::Verify | Round::Ci) => {
-            let mut since = pgit::changed(cx, &dir, &lock, "HEAD")?;
+            let mut since = pgit::changed(cx, &dir, &lock, &tip)?;
             // My push onto the PR after the baseline, merged in as it is: not the worker's.
-            let remote = format!(
-                "refs/remotes/origin/{}",
-                m.branch.as_deref().unwrap_or_default()
-            );
+            let remote = format!("refs/remotes/origin/{branch}");
             if let Ok(mine) = pgit::rev(cx, &dir, &remote)
                 && !pgit::ok(cx, &dir, &["merge-base", "--is-ancestor", &mine, &lock])
             {
@@ -177,7 +203,7 @@ pub fn check_diff(
                     v.into_iter().map(|(_, p)| p).collect()
                 };
                 let pushed = paths(pgit::changed(cx, &dir, &lock, &mine)?);
-                let differs = paths(pgit::changed(cx, &dir, &mine, "HEAD")?);
+                let differs = paths(pgit::changed(cx, &dir, &mine, &tip)?);
                 since.retain(|(_, p)| !pushed.contains(p) || differs.contains(p));
             }
             (since, guard::locked(cx, m, &repo_files.towercab.tests)?)

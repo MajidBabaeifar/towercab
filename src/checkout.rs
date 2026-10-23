@@ -11,14 +11,98 @@ use crate::child::{GIT_TIMEOUT, output};
 use crate::config::RepoConfig;
 use crate::intents::git::{GitAuth, git_command_for};
 
-/// What every git call here adds: no hook or fsmonitor of the repo's runs (a worker can
-/// write a checkout's `.git`, LOOP-8).
+/// What every git call here adds: no hook or fsmonitor of the repo's runs (LOOP-8; with
+/// [`sane`] and the read-only `.git` in every sandbox, nothing a run writes there runs).
 pub const NO_HOOKS: [&str; 4] = [
     "-c",
     "core.hooksPath=/dev/null",
     "-c",
     "core.fsmonitor=false",
 ];
+
+/// Whether a repo-local config key is one Towercab's clones and checkouts are made with (`git
+/// clone`, `git remote remove`, `git checkout -B`): `core.{repositoryformatversion, filemode,
+/// bare, logallrefupdates, ignorecase, precomposeunicode, symlinks}`,
+/// `extensions.{objectformat, refstorage}`, `remote.<name>.{url, fetch}`,
+/// `branch.<name>.{remote, merge}`. Anything else (`filter.<x>.clean`, `diff.external`,
+/// `merge.<x>.driver`, `core.worktree`, `core.sshCommand`, `include.path` …) could run code
+/// as Towercab or redirect its git.
+pub fn allowed_key(key: &str) -> bool {
+    const EXACT: [&str; 9] = [
+        "core.repositoryformatversion",
+        "core.filemode",
+        "core.bare",
+        "core.logallrefupdates",
+        "core.ignorecase",
+        "core.precomposeunicode",
+        "core.symlinks",
+        "extensions.objectformat",
+        "extensions.refstorage",
+    ];
+    if EXACT.contains(&key) {
+        return true;
+    }
+    let last =
+        |rest: &str, ok: [&str; 2]| rest.rsplit_once('.').is_some_and(|(_, k)| ok.contains(&k));
+    match key.split_once('.') {
+        Some(("remote", rest)) => last(rest, ["url", "fetch"]),
+        Some(("branch", rest)) => last(rest, ["remote", "merge"]),
+        _ => false,
+    }
+}
+
+/// The repo at `dir` is one Towercab's git runs in (LOOP-8): `.git` a directory (no gitfile,
+/// no `commondir`) whose `config` holds only [`allowed_key`]s, listed with `git config --file
+/// <config> --no-includes --list --name-only` (which runs nothing). Else `Err` naming the keys:
+/// something wrote the repo's `.git` (no run can: it is read-only in every sandbox).
+pub fn sane(exe: &OsStr, dir: &Path) -> Result<(), String> {
+    let gitdir = dir.join(".git");
+    let refused = |why: String| format!("{}: {why}: refused (LOOP-8)", gitdir.display());
+    let meta = std::fs::symlink_metadata(&gitdir).map_err(|e| refused(e.to_string()))?;
+    if !meta.is_dir() {
+        return Err(refused("not a directory".into()));
+    }
+    if std::fs::symlink_metadata(gitdir.join("commondir")).is_ok() {
+        return Err(refused("has a commondir".into()));
+    }
+    let config = gitdir.join("config");
+    let mut cmd = git_command_for(exe);
+    cmd.args(["config", "--file"])
+        .arg(&config)
+        .args(["--no-includes", "--list", "--name-only"])
+        .current_dir(dir);
+    let out = output(&mut cmd, GIT_TIMEOUT).map_err(|e| refused(format!("git: {e}")))?;
+    if !out.status.success() {
+        return Err(refused(
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        ));
+    }
+    let bad: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|k| !k.is_empty() && !allowed_key(k))
+        .map(str::to_string)
+        .collect();
+    if bad.is_empty() {
+        Ok(())
+    } else {
+        Err(refused(format!(
+            "config has {}, not written by Towercab",
+            bad.join(", ")
+        )))
+    }
+}
+
+/// [`sane`], then [`git`]: Towercab's own git in a mission checkout (or its clone) after a run
+/// was there: commit, merge, revert, checkout, diff.
+pub fn git_sane(
+    exe: &OsStr,
+    dir: &Path,
+    args: &[&str],
+    auth: Option<&GitAuth>,
+) -> Result<String, String> {
+    sane(exe, dir)?;
+    git(exe, dir, args, auth)
+}
 
 /// `git <args>` in `dir` (discovery stops at `dir`: its parent is the ceiling) → stdout;
 /// failure → `<dir>: <stderr>`. [`NO_HOOKS`]; killed after [`GIT_TIMEOUT`] (LOOP-10).

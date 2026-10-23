@@ -258,6 +258,12 @@ fn test_review_on_every_pr() {
     );
     p.step_to(ID, Stage::Review, 10);
     let m = p.mission(ID);
+    // The approval reads the spec rows from the commit: a worktree edit (a check could make
+    // one) counts for nothing.
+    let spec = p.checkout(ID).join("specs/web.md");
+    let text = fs::read_to_string(&spec).unwrap();
+    assert!(text.contains("test_login"), "{text}");
+    fs::write(&spec, text.replace("test_login", "test_ghost")).unwrap();
     assert_eq!(p.step(ID), "261001-0900: review → gate");
     // One fresh read-only session in the PR head's checkout.
     let new = p.claude.flag(4, "--session-id").unwrap();

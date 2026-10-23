@@ -355,7 +355,7 @@ impl Revert {
 /// merge's change that `base` also changed), for the why.
 fn conflicts(cx: &Ctx<'_>, dir: &Path, base: &str, merge: &str) -> String {
     let changed = |a: &str, b: &str| -> Vec<String> {
-        pgit::run(cx, dir, &["diff", "--name-only", a, b])
+        pgit::run(cx, dir, &["diff", "--no-ext-diff", "--name-only", a, b])
             .map(|o| o.lines().map(str::to_string).collect())
             .unwrap_or_default()
     };

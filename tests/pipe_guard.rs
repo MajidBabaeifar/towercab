@@ -239,6 +239,33 @@ fn test_publish_refuses_protected_diff() {
         p.w.intent_md(common::pipe::LOGIN_DIR)
             .contains("## Towercab\n\nPublish refused: changed: .github/workflows/evil.yml")
     );
+    // The check is on what a push sends, the branch, not on HEAD: HEAD moved to a clean
+    // commit, the branch still refuses; and nothing pushes a HEAD that isn't the branch.
+    let dir = p.checkout(ID);
+    common::git(
+        &dir,
+        &[
+            "checkout",
+            "--quiet",
+            "--detach",
+            "refs/remotes/origin/main",
+        ],
+    );
+    let m = p.mission(ID);
+    let refused = p.cx(|cx| {
+        let f = files(cx, &m).unwrap();
+        publish::check_diff(cx, &m, Round::First, &f).unwrap()
+    });
+    assert_eq!(
+        refused,
+        Err(".github/workflows/evil.yml (protected)".to_string())
+    );
+    let pushed = p.cx(|cx| publish::push_branch(cx, &m, false).map(|_| ()));
+    match pushed {
+        Err(StepError::Bug(why)) => assert!(why.contains("HEAD is detached"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(p.origin_log("web", LOGIN_BRANCH).len(), 4);
 }
 
 #[test]

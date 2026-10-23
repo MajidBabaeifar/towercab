@@ -1,5 +1,6 @@
 //! Towercab's own git in a mission's checkout and its clone (pipeline.md **gh and git**), all
-//! through `checkout::git` (no hooks, LOOP-8). The worker never runs any of it (PIP-24):
+//! through `checkout::git` (no hooks, LOOP-8), in a checkout after `checkout::sane` (its
+//! config only what Towercab writes); every diff `--no-ext-diff --no-textconv`. The worker never runs any of it (PIP-24):
 //! Towercab commits as the bot and pushes from its clone, never with `--force`.
 
 use std::ffi::OsStr;
@@ -36,14 +37,16 @@ pub fn failed(e: String) -> StepError {
     }
 }
 
-/// `git <args>` in `dir` (local: no auth).
+/// `git <args>` in `dir` (local: no auth), a repo `checkout::sane` passes (a refused one is a
+/// bug: nothing should have written its `.git`).
 pub fn run(cx: &Ctx<'_>, dir: &Path, args: &[&str]) -> Result<String, StepError> {
+    checkout::sane(&cx.exes.git, dir).map_err(StepError::Bug)?;
     checkout::git(&cx.exes.git, dir, args, None).map_err(failed)
 }
 
-/// `git <args>` in `dir` → whether it succeeded (its output dropped).
+/// `git <args>` in `dir` → whether it succeeded (its output dropped; not sane: false).
 pub fn ok(cx: &Ctx<'_>, dir: &Path, args: &[&str]) -> bool {
-    checkout::git(&cx.exes.git, dir, args, None).is_ok()
+    checkout::git_sane(&cx.exes.git, dir, args, None).is_ok()
 }
 
 /// The identity flags of a commit or merge as the bot.
@@ -65,11 +68,15 @@ pub fn merging(cx: &Ctx<'_>, dir: &Path) -> bool {
 
 /// The files still unmerged in `dir` (a merge in progress).
 pub fn unmerged(cx: &Ctx<'_>, dir: &Path) -> Result<Vec<String>, StepError> {
-    Ok(run(cx, dir, &["diff", "--name-only", "--diff-filter=U"])?
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(str::to_string)
-        .collect())
+    Ok(run(
+        cx,
+        dir,
+        &["diff", "--no-ext-diff", "--name-only", "--diff-filter=U"],
+    )?
+    .lines()
+    .filter(|l| !l.trim().is_empty())
+    .map(str::to_string)
+    .collect())
 }
 
 /// The unmerged files of `dir` that still hold a conflict marker (a line starting `<<<<<<< `,
@@ -96,7 +103,11 @@ pub fn commit(
     eval: bool,
 ) -> Result<Option<String>, StepError> {
     run(cx, dir, &["add", "-A"])?;
-    let staged = run(cx, dir, &["diff", "--cached", "--name-only"])?;
+    let staged = run(
+        cx,
+        dir,
+        &["diff", "--no-ext-diff", "--cached", "--name-only"],
+    )?;
     if staged.trim().is_empty() && !merging(cx, dir) {
         return Ok(None);
     }
@@ -131,6 +142,7 @@ pub fn merge(cx: &Ctx<'_>, dir: &Path, rev: &str, eval: bool) -> Result<bool, St
         rev.into(),
     ]);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    checkout::sane(&cx.exes.git, dir).map_err(StepError::Bug)?;
     match checkout::git(&cx.exes.git, dir, &args, None) {
         Ok(_) => Ok(true),
         Err(_) if merging(cx, dir) => Ok(false),
@@ -149,6 +161,7 @@ pub fn revert(cx: &Ctx<'_>, dir: &Path, sha: &str, eval: bool) -> Result<bool, S
     }
     args.push(sha.into());
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    checkout::sane(&cx.exes.git, dir).map_err(StepError::Bug)?;
     match checkout::git(&cx.exes.git, dir, &args, None) {
         Ok(_) => Ok(true),
         Err(_)
@@ -167,7 +180,7 @@ pub fn revert(cx: &Ctx<'_>, dir: &Path, sha: &str, eval: bool) -> Result<bool, S
 
 /// `HEAD`'s message says it reverts `sha` (`This reverts commit <sha>`).
 pub fn reverts(cx: &Ctx<'_>, dir: &Path, sha: &str) -> bool {
-    checkout::git(
+    checkout::git_sane(
         &cx.exes.git,
         dir,
         &["log", "-1", "--format=%B", "HEAD"],
@@ -328,7 +341,8 @@ pub fn merge_base(cx: &Ctx<'_>, dir: &Path, base: &str) -> Result<String, StepEr
     Ok(out.trim().to_string())
 }
 
-/// `git diff --name-status -z --no-renames <from> <to>` → (status letter, path).
+/// `git diff --no-ext-diff --no-textconv --name-status -z --no-renames <from> <to>` → (status
+/// letter, path).
 pub fn changed(
     cx: &Ctx<'_>,
     dir: &Path,
@@ -338,7 +352,16 @@ pub fn changed(
     let out = run(
         cx,
         dir,
-        &["diff", "--name-status", "-z", "--no-renames", from, to],
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-status",
+            "-z",
+            "--no-renames",
+            from,
+            to,
+        ],
     )?;
     let mut parts = out.split('\0').filter(|p| !p.is_empty());
     let mut v = Vec::new();
@@ -348,9 +371,15 @@ pub fn changed(
     Ok(v)
 }
 
-/// `git diff <from> <to> | git patch-id --stable` → the patch id (no diff: empty).
+/// `git diff --no-ext-diff --no-textconv <from> <to> | git patch-id --stable` → the patch id
+/// (no diff: empty); a repo `checkout::sane` refuses → `Err`.
 pub fn patch_id(exe: &OsStr, dir: &Path, from: &str, to: &str) -> Result<String, String> {
-    let diff = checkout::git(exe, dir, &["diff", from, to], None)?;
+    let diff = checkout::git_sane(
+        exe,
+        dir,
+        &["diff", "--no-ext-diff", "--no-textconv", from, to],
+        None,
+    )?;
     let mut cmd = git_command_for(exe);
     cmd.args(NO_HOOKS)
         .args(["patch-id", "--stable"])
