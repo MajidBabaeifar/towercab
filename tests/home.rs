@@ -91,6 +91,7 @@ fn test_home_layout() {
             "commands",
             "cooldowns",
             "drafts",
+            "episodes",
             "faults",
             "findings",
             "lessons",
