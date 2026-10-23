@@ -119,6 +119,8 @@ impl Rehearse {
             &dir,
             &["checkout", "--quiet", "--force", "-B", &branch, &base],
         )?;
+        // Clean: the rehearse command runs unsandboxed here (**Sandbox**).
+        pgit::run(cx, &dir, &["clean", "-ffdxq"])?;
         let sha = pgit::rev(cx, &dir, "HEAD")?;
         let mut data = Data::of(&m);
         data.set("rehearsal", json!({"sha": sha}));
