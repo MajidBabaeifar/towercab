@@ -18,6 +18,7 @@ use towercab::exes::Exes;
 use towercab::handler::{ChildKind, ChildSpec};
 use towercab::machine::Stage;
 use towercab::pipeline::sandbox::{self, Cache};
+use towercab::pipeline::{files, proof};
 
 /// A config for sandboxed commands: `PATH` the test's, toolchain `toolchain`.
 fn config(toolchain: Vec<PathBuf>) -> Config {
@@ -562,6 +563,38 @@ fn test_proof_red_on_base() {
     let overlay = PathBuf::from(format!("{}-proof", p.checkout(ID).display()));
     assert!(!overlay.exists());
     assert!(p.setups()[2].ends_with("-proof"), "{:?}", p.setups());
+}
+
+#[test]
+fn test_proof_tests_from_commit() {
+    let p = published();
+    let dir = p.checkout(ID);
+    let secret = p.w.root.join("secret.env");
+    fs::write(&secret, "TOKEN=s3cret\n").unwrap();
+    // A symlinked "test" committed; a test rewritten in the worktree after the commit (a check
+    // can write the checkout).
+    std::os::unix::fs::symlink(&secret, dir.join("tests/secret_test.sh")).unwrap();
+    common::git(&dir, &["add", "-A"]);
+    common::git(&dir, &["commit", "--quiet", "-m", "link"]);
+    let committed = common::git(&dir, &["show", "HEAD:tests/login_test.sh"]);
+    fs::write(dir.join("tests/login_test.sh"), "planted\n").unwrap();
+    let head = common::git(&dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let m = p.mission(ID);
+    let (tests, overlay) = p.cx(|cx| {
+        let f = files(cx, &m).unwrap();
+        let tests = proof::test_files(cx, &dir, "main", &head, &f.towercab).unwrap();
+        // Asked for the symlink anyway: left out.
+        let mut asked = tests.clone();
+        asked.push("tests/secret_test.sh".into());
+        (tests, proof::overlay(cx, &m, &head, &asked).unwrap())
+    });
+    assert_eq!(tests, ["tests/login_test.sh"]);
+    assert_eq!(
+        fs::read_to_string(overlay.join("tests/login_test.sh")).unwrap(),
+        committed
+    );
+    assert!(fs::symlink_metadata(overlay.join("tests/secret_test.sh")).is_err());
+    let _ = fs::remove_dir_all(&overlay);
 }
 
 #[test]
