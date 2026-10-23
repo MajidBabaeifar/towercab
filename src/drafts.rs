@@ -320,7 +320,8 @@ pub fn all(conn: &Connection) -> Result<Vec<(i64, DraftRow)>, String> {
         .map_err(sql)
 }
 
-const FINISHED: [&str; 3] = ["accepted", "rejected", "failed"];
+/// Steps a draft ends at.
+pub const FINISHED: [&str; 3] = ["accepted", "rejected", "failed"];
 
 fn insert(conn: &Connection, d: &Draft, now: f64) -> Result<(), String> {
     conn.execute(
@@ -851,23 +852,95 @@ fn state(cx: &Ctx<'_>, row: &DraftRow) -> Result<(), GhError> {
     )?;
     let v: Value =
         serde_json::from_str(&out).map_err(|e| GhError::Failed(format!("gh pr view: {e}")))?;
-    match v.get("state").and_then(Value::as_str) {
-        Some("MERGED") => {
-            record(cx, &row.key, "accepted", &[]).map_err(GhError::Failed)?;
-            drafted(row, "accepted");
-            Ok(())
-        }
+    let result = match v.get("state").and_then(Value::as_str) {
+        Some("MERGED") => "accepted",
         Some("CLOSED") => {
             if let Some(url) = row.source.strip_prefix("issue:") {
                 let pr_url = row.pr_url.clone().unwrap_or_default();
                 comment_once(cx, url, &format!("Not accepted: {pr_url}"))?;
             }
-            record(cx, &row.key, "rejected", &[]).map_err(GhError::Failed)?;
-            drafted(row, "rejected");
-            Ok(())
+            "rejected"
         }
-        _ => Ok(()),
+        _ => return Ok(()),
+    };
+    match row.source.strip_prefix("alert:") {
+        // MNT-7: a band's triage counted with the step.
+        Some(band) => {
+            cx.db
+                .tx(|tx| {
+                    tx.execute(
+                        "UPDATE drafts SET step = ?2, updated = ?3 WHERE key = ?1",
+                        params![row.key, result, cx.tick.unix()],
+                    )
+                    .map_err(sql)?;
+                    crate::maintain::triaged(tx, band, result)?;
+                    drafted(row, result);
+                    Ok(())
+                })
+                .map_err(GhError::Failed)?;
+            cx.probe.point();
+        }
+        None => {
+            record(cx, &row.key, result, &[]).map_err(GhError::Failed)?;
+            drafted(row, result);
+        }
     }
+    Ok(())
+}
+
+/// `gh pr comment <n> -R <intents github> --body <text>` once: not when a comment of
+/// Towercab's or mine already starts with its first line (MNT-5).
+pub fn comment_pr_once(cx: &Ctx<'_>, pr: u64, text: &str) -> Result<(), GhError> {
+    let github = intents_github(cx)?;
+    let authors = authors(cx)?;
+    let first = text.lines().next().unwrap_or_default().trim();
+    let out = cx.identity.gh(
+        &github,
+        &[
+            "pr",
+            "view",
+            &pr.to_string(),
+            "-R",
+            &github,
+            "--json",
+            "comments",
+        ],
+    )?;
+    let v: Value =
+        serde_json::from_str(&out).map_err(|e| GhError::Failed(format!("gh pr view: {e}")))?;
+    let there = v
+        .get("comments")
+        .and_then(Value::as_array)
+        .is_some_and(|a| {
+            a.iter().any(|c| {
+                let author = c
+                    .get("author")
+                    .and_then(|a| a.get("login"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                by(&authors, author)
+                    && c.get("body")
+                        .and_then(Value::as_str)
+                        .is_some_and(|b| b.trim_start().starts_with(first))
+            })
+        });
+    if there {
+        return Ok(());
+    }
+    cx.identity
+        .gh(
+            &github,
+            &[
+                "pr",
+                "comment",
+                &pr.to_string(),
+                "-R",
+                &github,
+                "--body",
+                text,
+            ],
+        )
+        .map(drop)
 }
 
 /// `towercab.intent.drafts` (MET-23): a draft accepted (merged) or rejected (closed).
@@ -886,55 +959,98 @@ fn drafted(row: &DraftRow, result: &str) {
     );
 }
 
-/// The next issue draft due a drafter run: step `draft`, fewer than [`TRIES`] runs, new or
-/// last changed [`POLL`] ago (a failed, uncounted or stopped run waits for the next poll),
-/// `[agent].drafter` not cooling, no `claude` fault open. Its try is counted (recorded) before
-/// the run's files are written; returns (key, the child). A row whose `issue.json` doesn't
-/// read → `failed`.
+/// The child a row's run is: an issue's drafter (`[agent].drafter`) or an alert's diagnosis
+/// (MNT-5: `diagnose`, the review model of `[agent].model`).
+pub fn runner(cx: &Ctx<'_>, row: &DraftRow) -> (RunKind, String) {
+    if row.source.starts_with("alert:") {
+        (
+            RunKind::Diagnose,
+            crate::pipeline::review::review_model(&cx.config.agent.model, None),
+        )
+    } else {
+        (RunKind::Drafter, cx.config.agent.drafter.clone())
+    }
+}
+
+/// The run's `--json-schema`.
+fn schema(kind: RunKind) -> Value {
+    if kind == RunKind::Diagnose {
+        crate::maintain::diagnose::DIAGNOSIS_SCHEMA.clone()
+    } else {
+        DRAFT_SCHEMA.clone()
+    }
+}
+
+/// The JSON a row's run is made from: `issue.json` (an issue) or `breach.json` (an alert).
+fn input(files: &std::path::Path, row: &DraftRow) -> Result<Value, String> {
+    let name = if row.source.starts_with("alert:") {
+        "breach.json"
+    } else {
+        "issue.json"
+    };
+    fs::read_to_string(files.join(name))
+        .map_err(|e| format!("{name}: {e}"))
+        .and_then(|t| serde_json::from_str::<Value>(&t).map_err(|e| format!("{name}: {e}")))
+}
+
+/// The next draft due a run (an issue's drafter, INT-7; an alert's diagnosis, MNT-5): step
+/// `draft`, fewer than [`TRIES`] runs, new or last changed [`POLL`] ago (a failed, uncounted
+/// or stopped run waits for the next poll), its model not cooling, no `claude` fault open. Its
+/// try is counted (recorded) before the run's files are written; returns (key, the child). A
+/// row whose `issue.json`/`breach.json` doesn't read → `failed`.
 pub fn next_run(cx: &mut Ctx<'_>) -> Result<Option<(String, ChildSpec)>, String> {
     let now = cx.tick.unix();
-    let model = cx.config.agent.drafter.clone();
-    if limits::until(cx.db.conn(), &model)?.is_some_and(|u| u > now)
-        || env::faults(cx.db.conn())?
-            .iter()
-            .any(|f| f.kind == Fault::Claude.to_string())
+    if env::faults(cx.db.conn())?
+        .iter()
+        .any(|f| f.kind == Fault::Claude.to_string())
     {
         return Ok(None);
     }
-    let due = all(cx.db.conn())?.into_iter().find(|(_, r)| {
-        r.step == "draft"
-            && r.source.starts_with("issue:")
-            && r.tries < TRIES
-            && (r.updated <= r.created || now - r.updated >= POLL.as_secs_f64())
-    });
+    let mut due = None;
+    for (rowid, r) in all(cx.db.conn())? {
+        if r.step != "draft"
+            || !(r.source.starts_with("issue:") || r.source.starts_with("alert:"))
+            || r.tries >= TRIES
+            || (r.updated > r.created && now - r.updated < POLL.as_secs_f64())
+        {
+            continue;
+        }
+        let (_, model) = runner(cx, &r);
+        if limits::until(cx.db.conn(), &model)?.is_some_and(|u| u > now) {
+            continue;
+        }
+        due = Some((rowid, r));
+        break;
+    }
     let Some((rowid, row)) = due else {
         return Ok(None);
     };
+    let (kind, model) = runner(cx, &row);
     let files = dir(cx, rowid);
-    let issue = fs::read_to_string(files.join("issue.json"))
-        .map_err(|e| e.to_string())
-        .and_then(|t| serde_json::from_str::<Value>(&t).map_err(|e| e.to_string()))
-        .and_then(|v| Issue::from_json(&v).ok_or_else(|| "not an issue".to_string()));
-    let issue = match issue {
-        Ok(i) => i,
+    let prompt = input(&files, &row).and_then(|v| {
+        if kind == RunKind::Diagnose {
+            Ok(crate::maintain::diagnose::prompt(
+                &v,
+                &crate::maintain::diagnose::lessons(cx.store),
+            ))
+        } else {
+            Issue::from_json(&v)
+                .map(|i| prompt(&i, &row.repo))
+                .ok_or_else(|| "issue.json: not an issue".to_string())
+        }
+    });
+    let prompt = match prompt {
+        Ok(p) => p,
         Err(e) => {
-            eprintln!("towercab: draft {}: issue.json: {e}", row.key);
+            eprintln!("towercab: draft {}: {e}", row.key);
             record(cx, &row.key, "failed", &[])?;
             return Ok(None);
         }
     };
     let n = row.tries + 1;
     record(cx, &row.key, "draft", &[("tries", n.into())])?;
-    let mut run = Run::new(
-        RunKind::Drafter,
-        &model,
-        &files,
-        &files,
-        n as u32,
-        prompt(&issue, &row.repo),
-        cx.config,
-    );
-    run.schema = Some(DRAFT_SCHEMA.clone());
+    let mut run = Run::new(kind, &model, &files, &files, n as u32, prompt, cx.config);
+    run.schema = Some(schema(kind));
     let spec = claude::prepare(&run, "", cx.config, cx.exes)?;
     Ok(Some((row.key, spec)))
 }
@@ -949,19 +1065,74 @@ pub fn not_run(cx: &Ctx<'_>, key: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The drafter of `key` ended: a valid answer → `intent.md` (it must parse) and [`open`]
-/// (saved as `drafted` first: a later failure goes on at the next poll), then the issue's
-/// link. A limit cools the model, a network or auth failure opens `claude`, each in one
-/// transaction with the try uncounted. Otherwise the try failed: the next poll retries, the
-/// third → `failed`. Returns the PR opened, if any.
+/// An issue drafter's answer → its draft (INT-7).
+fn issue_draft(key: &str, row: &DraftRow, input: &Value, out: &Value) -> Result<Draft, String> {
+    let issue = Issue::from_json(input).ok_or("issue.json unreadable")?;
+    let d = DraftResult::from_json(out)?;
+    let text = intent_md(&d, &row.repo, &row.source, &issue.created_at);
+    Intent::parse(&text).map_err(|e| format!("intent.md doesn't parse: {e}"))?;
+    Ok(Draft {
+        key: key.to_string(),
+        repo: row.repo.clone(),
+        source: row.source.clone(),
+        title: d.title.clone(),
+        intent_md: text,
+        pr_body: issue_pr_body(&issue.url, &d),
+        repeat: false,
+    })
+}
+
+/// A diagnosis's answer → its draft (MNT-5): `started` = the breach's `at`; its `cause`
+/// saved in `cause` when it is one of the merged PRs it was given (MET-27).
+fn alert_draft(
+    cx: &Ctx<'_>,
+    key: &str,
+    row: &DraftRow,
+    files: &std::path::Path,
+    breach: &Value,
+    out: &Value,
+) -> Result<Draft, String> {
+    use crate::maintain::diagnose::{self, Diagnosis};
+    let d = Diagnosis::from_json(out)?;
+    let band = row.source.trim_start_matches("alert:");
+    let at = breach.get("at").and_then(Value::as_f64).unwrap_or_default();
+    let started = chrono::DateTime::from_timestamp(at as i64, 0)
+        .map(|t| crate::intents::store::rfc3339(t.with_timezone(cx.tick.wall.offset())))
+        .ok_or("breach.json: no at")?;
+    let text = diagnose::intent_md(&d, &row.repo, band, &started);
+    Intent::parse(&text).map_err(|e| format!("intent.md doesn't parse: {e}"))?;
+    let cause = if diagnose::merges(breach).contains(&d.cause) {
+        d.cause.clone()
+    } else {
+        String::new()
+    };
+    fs::write(files.join(diagnose::CAUSE), cause)
+        .map_err(|e| format!("{}: {e}", files.display()))?;
+    Ok(Draft {
+        key: key.to_string(),
+        repo: row.repo.clone(),
+        source: row.source.clone(),
+        title: d.title.clone(),
+        intent_md: text,
+        pr_body: diagnose::pr_body(breach, &d),
+        repeat: true,
+    })
+}
+
+/// The run of `key` ended (an issue's drafter or an alert's diagnosis): a valid answer →
+/// `intent.md` (it must parse) and [`open`] (saved as `drafted` first: a later failure goes on
+/// at the next poll), then the issue's link, or the alert's breach settled
+/// (`maintain::opened`). A limit cools the model, a network or auth failure opens `claude`,
+/// each in one transaction with the try uncounted. Otherwise the try failed: the next poll
+/// retries, the third → `failed`. Returns the PR opened, if any.
 pub fn finish_run(cx: &mut Ctx<'_>, key: &str, end: &ChildEnd) -> Result<Option<u64>, GhError> {
     let Some((rowid, row)) = get(cx.db.conn(), key).map_err(GhError::Failed)? else {
         return Ok(None);
     };
     let files = dir(cx, rowid);
-    let model = cx.config.agent.drafter.clone();
+    let (kind, model) = runner(cx, &row);
     let mut run = Run::new(
-        RunKind::Drafter,
+        kind,
         &model,
         &files,
         &files,
@@ -969,11 +1140,8 @@ pub fn finish_run(cx: &mut Ctx<'_>, key: &str, end: &ChildEnd) -> Result<Option<
         "",
         cx.config,
     );
-    run.schema = Some(DRAFT_SCHEMA.clone());
-    let issue = fs::read_to_string(files.join("issue.json"))
-        .ok()
-        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-        .and_then(|v| Issue::from_json(&v));
+    run.schema = Some(schema(kind));
+    let input = input(&files, &row);
     let now = cx.tick.unix();
     let ended = claude::end(&run, end, cx.tick.wall);
     // Its cost and tokens, however it ended (MET-16).
@@ -988,52 +1156,14 @@ pub fn finish_run(cx: &mut Ctx<'_>, key: &str, end: &ChildEnd) -> Result<Option<
         // The model ran: its limit backoffs start over (LOOP-9).
         limits::success(cx.db.conn(), &model).map_err(GhError::Failed)?;
     }
-    let invalid = match ended {
-        RunEnd::Ok(r) => match (r.structured_output.as_ref(), &issue) {
-            (Some(out), Some(issue)) => match DraftResult::from_json(out) {
-                Ok(d) => {
-                    let text = intent_md(&d, &row.repo, &row.source, &issue.created_at);
-                    match Intent::parse(&text) {
-                        Ok(_) => {
-                            let draft = Draft {
-                                key: key.to_string(),
-                                repo: row.repo.clone(),
-                                source: row.source.clone(),
-                                title: d.title.clone(),
-                                intent_md: text,
-                                pr_body: issue_pr_body(&issue.url, &d),
-                                repeat: false,
-                            };
-                            let pr = match open(cx, &draft) {
-                                Ok(Drafted::Opened { pr, .. } | Drafted::Exists { pr, .. }) => pr,
-                                Ok(Drafted::Done) => return Ok(None),
-                                Err(e) => {
-                                    // Saved (`drafted` or later): `poll_drafts` goes on. Else
-                                    // it couldn't be saved: a failed try.
-                                    if get(cx.db.conn(), key)
-                                        .map_err(GhError::Failed)?
-                                        .is_some_and(|(_, r)| r.step == "draft")
-                                    {
-                                        tried(cx, key, row.tries, &e.to_string())
-                                            .map_err(GhError::Failed)?;
-                                    }
-                                    return Err(e);
-                                }
-                            };
-                            if let Some((_, r)) = get(cx.db.conn(), key).map_err(GhError::Failed)?
-                                && r.step == "link"
-                            {
-                                link(cx, &r)?;
-                            }
-                            return Ok(Some(pr));
-                        }
-                        Err(e) => format!("intent.md doesn't parse: {e}"),
-                    }
-                }
-                Err(e) => e,
-            },
-            (None, _) => "no structured_output".into(),
-            (_, None) => "issue.json unreadable".into(),
+    let draft = match ended {
+        RunEnd::Ok(r) => match (r.structured_output.as_ref(), &input) {
+            (None, _) => Err("no structured_output".to_string()),
+            (_, Err(e)) => Err(e.clone()),
+            (Some(out), Ok(v)) if kind == RunKind::Diagnose => {
+                alert_draft(cx, key, &row, &files, v, out)
+            }
+            (Some(out), Ok(v)) => issue_draft(key, &row, v, out),
         },
         RunEnd::Limit(l) => {
             cx.db
@@ -1053,10 +1183,39 @@ pub fn finish_run(cx: &mut Ctx<'_>, key: &str, end: &ChildEnd) -> Result<Option<
                 .map_err(GhError::Failed)?;
             return Ok(None);
         }
-        other => other.to_string(),
+        other => Err(other.to_string()),
     };
-    tried(cx, key, row.tries, &invalid).map_err(GhError::Failed)?;
-    Ok(None)
+    let draft = match draft {
+        Ok(d) => d,
+        Err(invalid) => {
+            tried(cx, key, row.tries, &invalid).map_err(GhError::Failed)?;
+            return Ok(None);
+        }
+    };
+    let pr = match open(cx, &draft) {
+        Ok(Drafted::Opened { pr, .. } | Drafted::Exists { pr, .. }) => pr,
+        Ok(Drafted::Done) => return Ok(None),
+        Err(e) => {
+            // Saved (`drafted` or later): `poll_drafts` goes on. Else it couldn't be saved:
+            // a failed try.
+            if get(cx.db.conn(), key)
+                .map_err(GhError::Failed)?
+                .is_some_and(|(_, r)| r.step == "draft")
+            {
+                tried(cx, key, row.tries, &e.to_string()).map_err(GhError::Failed)?;
+            }
+            return Err(e);
+        }
+    };
+    if let Some(band) = row.source.strip_prefix("alert:") {
+        crate::maintain::opened(cx, band).map_err(GhError::Failed)?;
+    }
+    if let Some((_, r)) = get(cx.db.conn(), key).map_err(GhError::Failed)?
+        && r.step == "link"
+    {
+        link(cx, &r)?;
+    }
+    Ok(Some(pr))
 }
 
 /// Try `tries` of `key` failed (`why` logged): the next poll retries, the [`TRIES`]th →

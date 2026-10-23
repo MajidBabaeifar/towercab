@@ -42,6 +42,7 @@ use crate::intents::store::find_open;
 use crate::intents::{Intent, Listing, Store, Value as IValue};
 use crate::limits;
 use crate::machine::{self, Apply, Event, Next, Stage};
+use crate::maintain;
 use crate::metrics::Sink;
 use crate::mission::{self, ENTER, Kind, Mission};
 use crate::outbox::{self, Notice};
@@ -209,6 +210,8 @@ pub struct Loop {
     /// An eval child (PIP-33): its job and the child.
     evaluator: Option<(pipeline::evals::Job, Child)>,
     gauges_due: Option<Duration>,
+    /// The bands (MNT-3): last periods evaluated, the next round, the query thread.
+    pub watch: maintain::Watch,
     /// The last message logged per kind (logged again only when it changes).
     warned: BTreeMap<String, String>,
     /// An `env_blocked` episode is open (LOOP-10): no picks, no wait timeouts.
@@ -282,6 +285,7 @@ impl Loop {
             drafter: None,
             evaluator: None,
             gauges_due: None,
+            watch: maintain::Watch::default(),
             warned: BTreeMap::new(),
             blocked: false,
             preflighted: false,
@@ -430,6 +434,7 @@ impl Loop {
         self.poll_intents(tick)?;
         self.poll_prs(tick)?;
         report.drafts = self.poll_drafts(tick)?;
+        self.bands(tick);
         self.enter_all(tick)?;
         self.step_due(tick)?;
         self.spawn_queued(tick)?;
@@ -970,6 +975,7 @@ impl Loop {
                     .collect();
                 out.push(("findings".into(), pipeline::findings::draft_due(cx)));
                 out.push(("drafts".into(), drafts::poll_drafts(cx)));
+                out.push(("maintain".into(), maintain::settle(cx)));
                 out
             })
             .unwrap_or_default();
@@ -983,6 +989,15 @@ impl Loop {
         }
         self.poll_evals(tick)?;
         Ok(true)
+    }
+
+    /// MNT-3 (not with `--intent`): the bands' round; Prometheus never blocks it, nothing
+    /// in it fails the pass.
+    fn bands(&mut self, tick: Tick) {
+        if self.target.is_none() {
+            self.watch
+                .round(&self.config, &self.exes, &self.db, &self.home, tick);
+        }
     }
 
     /// PIP-33 with the drafts poll: `towercab/evals` on the Towercab repo's PR heads, the

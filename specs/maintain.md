@@ -1,6 +1,6 @@
 # Maintain
 
-**Status:** Live: MNT-1, MNT-2 · **Prefix:** MNT
+**Status:** Live: MNT-1..8 · **Prefix:** MNT
 
 ## Purpose
 
@@ -65,13 +65,13 @@ bands:
 
 | File | Interface |
 |---|---|
-| `src/maintain/bands.rs` | `Band { name, metric, query, period: u64 (s), baseline: u64 (s), side: Side, repo: Option<String>, tiers: [Action; 3] }` (`points()` = baseline ÷ period, `end(now)` = E), `Side::{High, Low, Both}`, `Tier::{One, Two, Three}` (`as_str`: `1sigma`…), `Action::{Log, Diagnose, Propose { pull_request, cap_repo, pause }}`; `parse(&str) -> Result<Vec<Band>, String>`; `PATH` (`ops/bands.yaml`), `read(&Config, &Exes) -> Result<Option<Vec<Band>>, String>`. |
+| `src/maintain/bands.rs` | `Band { name, metric, query, period: u64 (s), baseline: u64 (s), side: Side, repo: Option<String>, tiers: [Action; 3] }` (`points()` = baseline ÷ period, `end(now)` = E), `Side::{High, Low, Both}`, `Tier::{One, Two, Three}` (`as_str`: `1sigma`…), `Action::{Log, Diagnose, Propose { pull_request, cap_repo, pause }}`; `parse(&str) -> Result<Vec<Band>, String>`; `PATH` (`ops/bands.yaml`), `read(&Config, &Exes) -> Result<Option<Vec<Band>>, String>` (`None`: no Towercab repo or clone; no file → `Some([])`). |
 | `src/maintain/detect.rs` | `Verdict { tier, point: (t, v), mean, sigma }`, `stats(&[f64]) -> Option<(mean, sigma)>`, `detect(&[(f64, f64)], Side) -> Option<Verdict>`, `RECENT` (8), `MIN_BASELINE` (14). |
-| `src/maintain/prom.rs` | `query_range(base, query, start, end, step, timeout) -> Result<Vec<(f64, f64)>, String>`, `parse_matrix(&Value) -> Result<…>`, `TIMEOUT` (10 s); `Fetch` (a thread: `start(base, Vec<Query>)`, `poll() -> Option<Vec<(band, Result<…>)>>`). |
-| `src/maintain/mod.rs` | `Watch` (`round(&mut self, cx, now) -> Result<(), String>`: answers taken, due bands fetched; `ROUND` (300 s), `GRACE` (600 s)); `record(&Db, &Config, &Home, &Band, &Verdict, &[(f64, f64)], Tick) -> Result<bool, String>` (MNT-3..6); `evaluated(&Connection, &Band, &[(f64, f64)], Option<(mean, sigma)>, now)` (lessons' value); `settle(&mut Ctx) -> Result<(), GhError>` (MNT-5's comments and `done`s, MNT-8's rows, lessons and incident cases); `opened(&Ctx, band)`; `triaged(&Connection, band, result)`; `incident(&Connection, &Intent) -> bool`, `incident_since(&Connection, &Intent) -> Option<f64>`. |
-| `src/maintain/diagnose.rs` | `DIAGNOSIS_SCHEMA`, `Diagnosis::from_json`, `prompt(&Value breach, lessons: &[(name, text)]) -> String`, `intent_md(&Diagnosis, repo, band, started)`, `pr_body`, `lessons(&Store) -> Vec<(name, text)>` (newest 5). |
+| `src/maintain/prom.rs` | `query_range(base, query, start, end, step, timeout) -> Result<Vec<(f64, f64)>, String>`, `parse_matrix(&Value) -> Result<…>`, `TIMEOUT` (10 s); `Query { band, query, start, end, step }`; `Fetch` (a thread: `start(base, Vec<Query>, timeout)`, `poll() -> Option<Result<Vec<(band, Result<points, String>)>, String>>`, never waits). |
+| `src/maintain/mod.rs` | `Watch` (`round(&mut self, &Config, &Exes, &Db, &Home, Tick)`: answers taken, due bands fetched, failures logged, never the pass's; `checked(band)`, `fetching()`; `ROUND` (300 s), `GRACE` (600 s), `CONTEXT` (8)); `evaluate(…, &Band, points, Tick)` = `detect` → `record`, then `evaluated`; `record(&Db, &Config, &Home, &Band, &Verdict, &[(f64, f64)], Tick) -> Result<bool, String>` (MNT-3..6; `breach_json`); `evaluated(&Connection, &Band, &[(f64, f64)], Option<(mean, sigma)>)` (lessons' value); `settle(&mut Ctx) -> Result<(), GhError>` (MNT-5's comments and `done`s, MNT-8's rows, lessons and the cases of open intents with an e2e red); `opened(&Ctx, band)`; `triaged(&Connection, band, result)`, `dismissed(&Connection)`; `incident(&Connection, &Intent) -> bool`, `incident_since(&Connection, &Intent) -> Option<f64>`. |
+| `src/maintain/diagnose.rs` | `DIAGNOSIS_SCHEMA`, `Diagnosis::from_json`, `prompt(&Value breach, lessons: &[(name, text)]) -> String`, `intent_md(&Diagnosis, repo, band, started)`, `pr_body`, `merges(&Value) -> Vec<url>`, `lessons(&Store) -> Vec<(name, text)>` (newest 5), `CAUSE` (`runs/draft-<rowid>/cause`), `utc(t)`. |
 | `src/maintain/lessons.rs` | `text(…) -> String` (**Lesson**), `path(fixed, slug, offset)`. |
-| callers | `Loop::pass` (`Watch::round` after the due polls), `Loop::poll_drafts` (`settle` after `drafts::poll_drafts`), `drafts::{next_run, finish_run}` (an `alert:` row is diagnosed), `drafts::poll_drafts` (`triaged`), `evals::write_case` (`incident`, MET-27), `status` (`triage`). |
+| callers | `Loop::pass` (`Watch::round` after the due polls), `Loop::poll_drafts` (`settle` after `drafts::poll_drafts`), `drafts::{next_run, finish_run}` (`runner`: an `alert:` row is diagnosed; `opened` after its draft opens), `drafts::poll_drafts` (`triaged`), `drafts::comment_pr_once`, `evals::{read_case, write_case}` (`incident`, MET-27), `status` (`dismissed`). |
 
 ## Out of scope
 

@@ -101,6 +101,8 @@ pub struct Snapshot {
     pub caps: Vec<RepoCap>,
     /// `drafts` keys at step `failed`.
     pub drafts_failed: Vec<String>,
+    /// Alert drafts dismissed per band (MNT-7), bands with one.
+    pub dismissed: Vec<(String, i64)>,
     pub intents_error: Option<String>,
     pub next: Option<Item>,
     pub review_due: bool,
@@ -238,6 +240,7 @@ impl Snapshot {
             cooling: limits::cooling(db, now)?,
             caps,
             drafts_failed,
+            dismissed: crate::maintain::dismissed(db.conn())?,
             intents_error: intents_error.map(str::to_string),
             next,
             review_due,
@@ -330,6 +333,14 @@ pub fn render(s: &Snapshot) -> String {
     if !s.drafts_failed.is_empty() {
         let keys: Vec<String> = s.drafts_failed.iter().map(|k| shown(k)).collect();
         out.push(format!("drafts failed: {}", keys.join(", ")));
+    }
+    if !s.dismissed.is_empty() {
+        let bands: Vec<String> = s
+            .dismissed
+            .iter()
+            .map(|(b, n)| format!("{} {n}", shown(b)))
+            .collect();
+        out.push(format!("alerts dismissed: {}", bands.join(", ")));
     }
     if let Some(e) = &s.intents_error {
         out.push(format!("intents: {}", shown(e)));

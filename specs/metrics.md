@@ -1,6 +1,6 @@
 # Metrics
 
-**Status:** Live: MET-10, MET-12..21, MET-23..26 · **Prefix:** MET
+**Status:** Live: MET-10, MET-12..27 · **Prefix:** MET
 
 ## Purpose
 

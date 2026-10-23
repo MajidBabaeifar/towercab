@@ -87,16 +87,19 @@ fn test_home_layout() {
     assert_eq!(
         tables,
         [
+            "breaches",
             "commands",
             "cooldowns",
             "drafts",
             "faults",
             "findings",
+            "lessons",
             "meta",
             "missions",
             "outbox",
             "repo_caps",
-            "transitions"
+            "transitions",
+            "triage"
         ]
     );
     db.set_meta("paused", "1").unwrap();
