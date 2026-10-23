@@ -394,8 +394,14 @@ impl Loop {
         }
     }
 
-    /// One pass (LOOP-12 order).
+    /// One pass (LOOP-12 order); the metrics are flushed at its end even when a step failed.
     pub fn pass(&mut self, tick: Tick) -> Result<PassReport, String> {
+        let r = self.pass_steps(tick);
+        self.metrics.flush(tick);
+        r
+    }
+
+    fn pass_steps(&mut self, tick: Tick) -> Result<PassReport, String> {
         let mut report = PassReport::default();
         if self.stop.load(Ordering::SeqCst) {
             report.stop = true;
@@ -442,7 +448,6 @@ impl Loop {
         self.save_bot()?;
         report.idle = report.picked.is_none() && self.idle(tick, decision.as_ref())?;
         report.target = self.target_state()?;
-        self.metrics.flush(tick);
         Ok(report)
     }
 
@@ -1859,13 +1864,20 @@ impl Loop {
         // Its run time counts toward the step's timeout (LOOP-9): the resumed run gets the
         // rest. (Tests drive the passes' clock: the later of it and now.)
         let mono = self.last_tick.map_or(tick.mono, |t| t.mono.max(tick.mono));
-        for (id, c) in stopping.iter().filter_map(|(id, c)| Some(((*id)?, c))) {
-            let m = mission::get(self.db.conn(), id)?;
-            let ran = mono.saturating_sub(c.since).as_secs_f64();
-            let o = Outcome::event(Event::Interrupted).with("step_secs", m.step_secs + ran);
-            machine::apply(&self.apply_cx(tick), &m, &o)?;
+        let interrupted = (|| {
+            for (id, c) in stopping.iter().filter_map(|(id, c)| Some(((*id)?, c))) {
+                let m = mission::get(self.db.conn(), id)?;
+                let ran = mono.saturating_sub(c.since).as_secs_f64();
+                let o = Outcome::event(Event::Interrupted).with("step_secs", m.step_secs + ran);
+                machine::apply(&self.apply_cx(tick), &m, &o)?;
+            }
+            machine::set_dying(self.db.conn(), &[])
+        })();
+        if let Err(e) = interrupted {
+            // The transitions committed before it still send theirs.
+            self.metrics.flush(tick);
+            return Err(e);
         }
-        machine::set_dying(self.db.conn(), &[])?;
         if let Some(key) = drafter {
             // Stopped, not failed: the try isn't counted.
             if let Some(Err(e)) = self.with_cx(tick, |cx| drafts::not_run(cx, &key)) {

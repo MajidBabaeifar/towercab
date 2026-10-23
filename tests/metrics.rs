@@ -295,14 +295,15 @@ fn test_metric_spool() {
     let old: Vec<f64> = spool_read(&s.spool, 100).iter().map(|r| r.at).collect();
 
     // Later, a success: the spool first (oldest first), then the new record; points stamped
-    // with the send time, events with their own; the spool is gone.
+    // with the send time, events with their own; the spool is emptied (truncated, not unlinked:
+    // another process may hold it open).
     let later = Tick {
         wall: Local::now().fixed_offset() + chrono::TimeDelta::hours(2),
         mono: t.mono + Duration::from_secs(7200),
     };
     metrics::add(Metric::CiRepairs, 4.0, &[("repo", "web")], &ev);
     s.flush(later);
-    assert!(!s.spool.exists());
+    assert_eq!(fs::metadata(&s.spool).unwrap().len(), 0);
     assert_eq!(s.down_until, None);
     let m = last(&http, "/v1/metrics");
     let p = &metric(&m, "towercab.ci.repairs")["sum"]["dataPoints"][0];
@@ -353,19 +354,113 @@ fn test_spool_bounded() {
         at: 1.0,
         seq: 0,
     };
-    let mut i = 0;
+    let (mut i, mut trims) = (0, 0);
     while i < 60_000 {
         let batch: Vec<Record> = (i..i + 1000).map(rec).collect();
+        let before = fs::metadata(&spool).map_or(0, |m| m.len());
         spool_append(&spool, &batch);
         i += 1000;
-        assert!(fs::metadata(&spool).unwrap().len() <= SPOOL_MAX);
+        let len = fs::metadata(&spool).unwrap().len();
+        assert!(len <= SPOOL_MAX);
+        if len < before {
+            // A trim: the oldest lines dropped down to half the bound, the batch included.
+            assert!(len <= SPOOL_MAX / 2, "{len}");
+            trims += 1;
+        }
     }
+    assert!(trims > 0);
     // The oldest went first; the newest are kept, in order.
     let kept = spool_read(&spool, usize::MAX);
     assert!(kept.len() < 60_000 && kept.len() > 1000, "{}", kept.len());
     assert_eq!(kept.last().unwrap().value, 59_999.0);
     assert!(kept.windows(2).all(|w| w[0].value + 1.0 == w[1].value));
     assert!(kept[0].value > 0.0);
+}
+
+fn rec(value: f64) -> Record {
+    Record {
+        metric: Metric::CiRepairs,
+        value,
+        labels: [("repo".to_string(), "web".to_string())].into(),
+        ev: Ev::none(),
+        at: 1.0,
+        seq: 0,
+    }
+}
+
+#[test]
+fn test_spool_damage_and_locks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let spool = tmp.path().join("metrics.jsonl");
+    let line = |v: f64| rec(v).to_json().to_string() + "\n";
+
+    // Invalid UTF-8 and a torn last line spoil only themselves; an append starts a new line.
+    let mut bytes = line(1.0).into_bytes();
+    bytes.extend_from_slice(b"\xff\xfe not utf-8\n");
+    bytes.extend_from_slice(line(2.0).as_bytes());
+    bytes.extend_from_slice(br#"{"metric": "ci.rep"#);
+    fs::write(&spool, &bytes).unwrap();
+    let values = |n| -> Vec<f64> { spool_read(&spool, n).iter().map(|r| r.value).collect() };
+    assert_eq!(values(100), [1.0, 2.0]);
+    spool_append(&spool, &[rec(3.0)]);
+    assert_eq!(values(100), [1.0, 2.0, 3.0]);
+
+    // Another process holds the lock: an append gives up within LOCK_WAIT, nothing written.
+    let held = fs::OpenOptions::new().write(true).open(&spool).unwrap();
+    held.lock().unwrap();
+    let t = std::time::Instant::now();
+    spool_append(&spool, &[rec(4.0)]);
+    assert!(t.elapsed() < metrics::LOCK_WAIT + Duration::from_secs(1));
+    drop(held);
+    assert_eq!(values(100), [1.0, 2.0, 3.0]);
+
+    // A record appended while a replay is in flight stays; the replayed lines (bad ones too) go.
+    let path = spool.clone();
+    let http = FakeHttp::start(move |r: &Request| {
+        if r.path == "/v1/metrics" {
+            spool_append(&path, &[rec(5.0)]);
+        }
+        (200, "{}".into())
+    });
+    let mut s = sink(&http.url, tmp.path());
+    metrics::take();
+    s.send(vec![rec(6.0)], now());
+    assert_eq!(values(100), [5.0]);
+    let sent = last(&http, "/v1/metrics");
+    let p = &metric(&sent, "towercab.ci.repairs")["sum"]["dataPoints"][0];
+    assert_eq!(p["asDouble"], 12.0);
+
+    // A permanent 4xx drops the batch, replayed lines too; 429 is a failure: spooled.
+    let code = Arc::new(Mutex::new(400));
+    let http = collector(Arc::clone(&code));
+    s.endpoint = http.url.clone();
+    s.send(vec![rec(7.0)], now());
+    assert_eq!(values(100), Vec::<f64>::new());
+    assert_eq!(s.down_until, None);
+    *code.lock().unwrap() = 429;
+    s.send(vec![rec(8.0)], now());
+    assert_eq!(values(100), [8.0]);
+    assert!(s.down_until.is_some());
+}
+
+#[test]
+fn test_eval_scope_defers_flush() {
+    // A replay's scratch loop flushes nothing: its runs' cost waits for the `towercab eval`
+    // flush into the real home (a scratch home's spool would be deleted with it).
+    let tmp = tempfile::tempdir().unwrap();
+    let mut scratch = sink(&dead_url(), &tmp.path().join("case"));
+    metrics::take();
+    let scope = metrics::eval_scope();
+    metrics::add(Metric::CostUsd, 0.5, &[("agent", "eval")], &Ev::none());
+    metrics::add(Metric::CiRepairs, 1.0, &[("repo", "web")], &Ev::none());
+    scratch.flush(now());
+    assert!(!scratch.spool.exists());
+    drop(scope);
+    let mut real = sink(&dead_url(), tmp.path());
+    real.flush(now());
+    let spooled = spool_read(&real.spool, 100);
+    assert_eq!(spooled.len(), 1, "only cost and tokens in a scope");
+    assert_eq!(spooled[0].metric, Metric::CostUsd);
 }
 
 #[test]

@@ -5,10 +5,10 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
@@ -37,6 +37,9 @@ pub const RETRY: Duration = Duration::from_secs(60);
 
 /// The spool's bound; an append past it first drops the oldest lines down to half.
 pub const SPOOL_MAX: u64 = 4 << 20;
+
+/// How long a spool append or rewrite waits for another process's `flock`, else gives up.
+pub const LOCK_WAIT: Duration = Duration::from_millis(500);
 
 /// Spool lines replayed per send.
 pub const REPLAY: usize = 5000;
@@ -489,13 +492,49 @@ fn open_spool(path: &Path) -> std::io::Result<File> {
         .open(path)
 }
 
-fn lines_of(text: &str) -> Vec<&str> {
-    text.lines().filter(|l| !l.trim().is_empty()).collect()
+/// Waits up to `wait` for `f`'s `flock` (held by others only around file I/O, never the network).
+fn lock_within(f: &File, wait: Duration) -> bool {
+    let end = Instant::now() + wait;
+    loop {
+        match f.try_lock() {
+            Ok(()) => return true,
+            Err(TryLockError::WouldBlock) if Instant::now() < end => {
+                std::thread::sleep(Duration::from_millis(5))
+            }
+            Err(_) => return false,
+        }
+    }
 }
 
-/// Appends `records` but periodic gauges to the spool (under `flock`); one that would pass
-/// [`SPOOL_MAX`] first drops the oldest lines down to half of it. Errors are logged, never
-/// raised: metrics never fail the loop.
+fn read_all(f: &mut File) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    f.seek(SeekFrom::Start(0))?;
+    f.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+fn rewrite(f: &mut File, bytes: &[u8]) -> std::io::Result<()> {
+    f.set_len(0)?;
+    f.seek(SeekFrom::Start(0))?;
+    f.write_all(bytes)?;
+    f.flush()
+}
+
+/// The spool's non-empty lines, as bytes (a torn or invalid UTF-8 line only spoils itself).
+fn raw_lines(bytes: &[u8]) -> impl DoubleEndedIterator<Item = &[u8]> {
+    bytes
+        .split(|b| *b == b'\n')
+        .filter(|l| !l.iter().all(u8::is_ascii_whitespace))
+}
+
+fn parse_line(line: &[u8]) -> Option<Record> {
+    let text = std::str::from_utf8(line).ok()?;
+    Record::from_json(&serde_json::from_str(text).ok()?)
+}
+
+/// Appends `records` but periodic gauges to the spool (under `flock`, waited for at most
+/// [`LOCK_WAIT`], else they are dropped); one that would pass [`SPOOL_MAX`] first drops the
+/// oldest lines down to half of it. Errors are logged, never raised: metrics never fail the loop.
 pub fn spool_append(path: &Path, records: &[Record]) {
     let new: String = records
         .iter()
@@ -505,48 +544,125 @@ pub fn spool_append(path: &Path, records: &[Record]) {
     if new.is_empty() {
         return;
     }
-    let r = (|| -> std::io::Result<()> {
+    let r = (|| -> std::io::Result<bool> {
         let mut f = open_spool(path)?;
-        f.lock()?;
+        if !lock_within(&f, LOCK_WAIT) {
+            return Ok(false);
+        }
         let len = f.metadata()?.len();
         if len + new.len() as u64 > SPOOL_MAX {
-            let mut text = String::new();
-            f.read_to_string(&mut text)?;
-            let mut keep: Vec<&str> = Vec::new();
+            let bytes = read_all(&mut f)?;
+            let mut keep: Vec<&[u8]> = Vec::new();
             let mut size = new.len() as u64;
-            for l in lines_of(&text).into_iter().rev() {
+            for l in raw_lines(&bytes).rev() {
                 size += l.len() as u64 + 1;
                 if size > SPOOL_MAX / 2 {
                     break;
                 }
                 keep.push(l);
             }
-            keep.reverse();
-            let mut all: String = keep.iter().map(|l| format!("{l}\n")).collect();
-            all.push_str(&new);
-            f.set_len(0)?;
-            f.seek(SeekFrom::Start(0))?;
-            f.write_all(all.as_bytes())?;
+            let mut all: Vec<u8> = Vec::with_capacity(size as usize);
+            for l in keep.into_iter().rev() {
+                all.extend_from_slice(l);
+                all.push(b'\n');
+            }
+            all.extend_from_slice(new.as_bytes());
+            rewrite(&mut f, &all)?;
         } else {
+            // A torn last line (a crash mid-write) stays alone, not glued to the first new one.
+            let mut last = *b"\n";
+            if len > 0 {
+                f.seek(SeekFrom::End(-1))?;
+                f.read_exact(&mut last)?;
+            }
             f.seek(SeekFrom::End(0))?;
+            if last[0] != b'\n' {
+                f.write_all(b"\n")?;
+            }
             f.write_all(new.as_bytes())?;
         }
-        f.flush()
+        f.flush()?;
+        Ok(true)
     })();
-    if let Err(e) = r {
-        eprintln!("towercab: metrics spool {}: {e}", path.display());
+    match r {
+        Ok(true) => {}
+        Ok(false) => eprintln!(
+            "towercab: metrics spool {}: locked past {} ms: dropped {} records",
+            path.display(),
+            LOCK_WAIT.as_millis(),
+            new.lines().count()
+        ),
+        Err(e) => eprintln!("towercab: metrics spool {}: {e}", path.display()),
     }
 }
 
 /// The spool's records, oldest first (at most `max`; lines that don't parse are skipped).
 pub fn spool_read(path: &Path, max: usize) -> Vec<Record> {
-    let text = fs::read_to_string(path).unwrap_or_default();
-    lines_of(&text)
-        .into_iter()
-        .take(max)
-        .filter_map(|l| serde_json::from_str(l).ok())
-        .filter_map(|v| Record::from_json(&v))
-        .collect()
+    let bytes = fs::read(path).unwrap_or_default();
+    raw_lines(&bytes).filter_map(parse_line).take(max).collect()
+}
+
+/// Up to [`REPLAY`] records from the spool's head, and the head's bytes they came from (lines
+/// that don't parse included: they leave with it).
+fn spool_head(path: &Path) -> (Vec<Record>, Vec<u8>) {
+    let none = (Vec::new(), Vec::new());
+    if fs::metadata(path).map_or(true, |m| m.len() == 0) {
+        return none;
+    }
+    let Ok(mut f) = open_spool(path) else {
+        return none;
+    };
+    if !lock_within(&f, LOCK_WAIT) {
+        return none;
+    }
+    let Ok(bytes) = read_all(&mut f) else {
+        return none;
+    };
+    drop(f);
+    let (mut old, mut pos) = (Vec::new(), 0);
+    while pos < bytes.len() && old.len() < REPLAY {
+        let end = bytes[pos..]
+            .iter()
+            .position(|b| *b == b'\n')
+            .map_or(bytes.len(), |i| pos + i + 1);
+        old.extend(parse_line(bytes[pos..end].trim_ascii()));
+        pos = end;
+    }
+    (old, bytes[..pos].to_vec())
+}
+
+/// Removes `head` (from [`spool_head`]) from the spool, keeping what was appended since. The
+/// file is truncated, never unlinked: another process may hold it open. An append that trimmed
+/// the spool meanwhile kept only a tail of `head`: that tail goes.
+fn spool_drop(path: &Path, head: &[u8]) {
+    if head.is_empty() {
+        return;
+    }
+    let r = (|| -> std::io::Result<()> {
+        let mut f = open_spool(path)?;
+        if !lock_within(&f, LOCK_WAIT) {
+            return Err(std::io::Error::other("locked"));
+        }
+        let bytes = read_all(&mut f)?;
+        let starts =
+            std::iter::once(0).chain((0..head.len()).filter(|&i| head[i] == b'\n').map(|i| i + 1));
+        for at in starts {
+            if bytes.starts_with(&head[at..]) {
+                return if at == head.len() {
+                    Ok(())
+                } else {
+                    rewrite(&mut f, &bytes[head.len() - at..])
+                };
+            }
+        }
+        Ok(())
+    })();
+    if let Err(e) = r {
+        eprintln!(
+            "towercab: metrics spool {}: replayed lines kept: {e}",
+            path.display()
+        );
+    }
 }
 
 /// Where records go: `[metrics].endpoint`, else the spool.
@@ -569,84 +685,81 @@ impl Sink {
         }
     }
 
-    /// Sends this thread's records (see [`Sink::send`]).
+    /// Sends this thread's records (see [`Sink::send`]). Not while an [`EvalScope`] lives: a
+    /// replay's scratch loop keeps them for the `towercab eval` flush into the real home.
     pub fn flush(&mut self, now: Tick) {
+        if BUF.with(|b| b.borrow().eval > 0) {
+            return;
+        }
         let records = take();
         self.send(records, now);
     }
 
-    /// `records`, after up to [`REPLAY`] spooled ones (when the spool isn't locked by another
-    /// process), as one `/v1/logs` and one `/v1/metrics` POST, [`TIMEOUT`] each, all stamped
-    /// `now`; both answered 2xx → the replayed lines leave the spool. Else, or within
-    /// [`RETRY`] of a failure, `records` go to the spool. Never fails, never waits longer.
+    /// `records`, after up to [`REPLAY`] spooled ones (when no other process is replaying:
+    /// `<spool>.replay` is `flock`ed across the POSTs), as one `/v1/logs` and one `/v1/metrics`
+    /// POST, [`TIMEOUT`] each, all stamped `now`; both answered 2xx → the replayed lines leave
+    /// the spool. A 4xx but 408/429 → the batch is dropped (replayed lines too), one log line.
+    /// Else, or within [`RETRY`] of a failure, `records` go to the spool. Never fails.
     pub fn send(&mut self, records: Vec<Record>, now: Tick) {
         if self.down_until.is_some_and(|d| now.mono < d) {
             spool_append(&self.spool, &records);
             return;
         }
-        // Only a spool to replay is opened (and locked: another process may be replaying it).
-        let spool = self
-            .spool
-            .exists()
-            .then(|| open_spool(&self.spool).ok())
-            .flatten()
-            .filter(|f| f.try_lock().is_ok());
-        let (old, text) = match spool.as_ref() {
-            Some(f) => {
-                let mut text = String::new();
-                let mut r: &File = f;
-                let _ = r.read_to_string(&mut text);
-                let old: Vec<Record> = lines_of(&text)
-                    .into_iter()
-                    .take(REPLAY)
-                    .filter_map(|l| serde_json::from_str(l).ok())
-                    .filter_map(|v| Record::from_json(&v))
-                    .collect();
-                (old, text)
-            }
-            None => (Vec::new(), String::new()),
+        let replayer = self.replayer();
+        let (old, head) = match replayer {
+            Some(_) => spool_head(&self.spool),
+            None => (Vec::new(), Vec::new()),
         };
         if old.is_empty() && records.is_empty() {
-            if spool.is_some() && text.trim().is_empty() {
-                let _ = fs::remove_file(&self.spool);
-            }
+            spool_drop(&self.spool, &head);
             return;
         }
         let mut all = old;
-        let replayed = lines_of(&text).len().min(REPLAY);
         all.extend(records.iter().cloned());
         let (m, l) = payload(&all, now.wall.timestamp_micros() as f64 / 1e6);
         let has_logs = all.iter().any(|r| r.metric.instrument() != Gauge);
-        let sent = (!has_logs || self.post("/v1/logs", &l)) && self.post("/v1/metrics", &m);
-        match (sent, spool) {
-            (true, Some(mut f)) => {
-                // The replayed lines leave the spool; anything appended since stays.
-                let rest: String = lines_of(&text)
-                    .into_iter()
-                    .skip(replayed)
-                    .map(|l| format!("{l}\n"))
-                    .collect();
-                let r = f
-                    .set_len(0)
-                    .and_then(|()| f.seek(SeekFrom::Start(0)).map(drop))
-                    .and_then(|()| f.write_all(rest.as_bytes()));
-                drop(f);
-                if r.is_ok() && rest.is_empty() {
-                    let _ = fs::remove_file(&self.spool);
-                }
+        let sent = if has_logs {
+            self.post("/v1/logs", &l)
+        } else {
+            Ok(())
+        }
+        .and_then(|()| self.post("/v1/metrics", &m));
+        match sent {
+            Ok(()) => {
                 self.down_until = None;
+                spool_drop(&self.spool, &head);
             }
-            (true, None) => self.down_until = None,
-            (false, f) => {
-                drop(f);
+            Err(crate::http::HttpError::Status(code, why))
+                if (400..500).contains(&code) && code != 408 && code != 429 =>
+            {
+                eprintln!(
+                    "towercab: metrics {}: HTTP {code}: dropped {} records: {why}",
+                    self.endpoint,
+                    all.len()
+                );
+                spool_drop(&self.spool, &head);
+            }
+            Err(_) => {
                 self.down_until = Some(now.mono + RETRY);
                 spool_append(&self.spool, &records);
             }
         }
     }
 
-    fn post(&self, path: &str, body: &Value) -> bool {
+    /// `<spool>.replay`, `flock`ed (not waited for), when there is a spool to replay.
+    fn replayer(&self) -> Option<File> {
+        if fs::metadata(&self.spool).map_or(true, |m| m.len() == 0) {
+            return None;
+        }
+        let mut name = self.spool.file_name()?.to_os_string();
+        name.push(".replay");
+        let f = open_spool(&self.spool.with_file_name(name)).ok()?;
+        f.try_lock().ok()?;
+        Some(f)
+    }
+
+    fn post(&self, path: &str, body: &Value) -> Result<(), crate::http::HttpError> {
         let url = format!("{}{path}", self.endpoint);
-        crate::http::post_any(&url, body, TIMEOUT).is_ok()
+        crate::http::post_any(&url, body, TIMEOUT).map(drop)
     }
 }
