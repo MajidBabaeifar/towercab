@@ -24,6 +24,7 @@ use towercab::maintain;
 use towercab::maintain::bands::{self, Action, PLAYBOOK, Side, Tier};
 use towercab::maintain::detect::{self, Verdict};
 use towercab::maintain::diagnose::DIAGNOSIS_SCHEMA;
+use towercab::maintain::prom;
 use towercab::metrics::{self, METRICS, Metric, Record};
 use towercab::runloop::Loop;
 
@@ -891,6 +892,49 @@ fn test_prometheus_never_blocks_a_pass() {
     assert_eq!(lp.watch.checked("ci_failure_rate"), None);
     assert!(env::faults(m.db().conn()).unwrap().is_empty());
     assert!(m.breaches().is_empty());
+
+    // An answer that isn't one series: the band stays due too.
+    let two = json!({"status": "success", "data": {"resultType": "matrix", "result": [
+        {"metric": {"repo": "a"}, "values": [[1.0, "1"]]},
+        {"metric": {"repo": "b"}, "values": [[1.0, "2"]]},
+    ]}});
+    assert_eq!(
+        prom::parse_matrix(&two).unwrap_err(),
+        "2 series: aggregate the query to one"
+    );
+    let body = two.to_string();
+    let fake = FakeHttp::start(move |_| (200, body.clone()));
+    let mut m = Mnt::new(BAND, &[]);
+    m.w.config.metrics.prometheus = fake.url.clone();
+    let mut lp = m.open();
+    for _ in 0..8 {
+        std::thread::sleep(Duration::from_millis(20));
+        m.w.pass(&mut lp);
+    }
+    assert!(!fake.requests.lock().unwrap().is_empty());
+    assert_eq!(lp.watch.checked("ci_failure_rate"), None);
+    assert!(env::faults(m.db().conn()).unwrap().is_empty());
+
+    // Its other answers: an error status, no series, non-finite values skipped.
+    let err = json!({"status": "error", "errorType": "bad_data", "error": "parse error"});
+    assert_eq!(
+        prom::parse_matrix(&err).unwrap_err(),
+        "prometheus: parse error"
+    );
+    let none = json!({"status": "success", "data": {"resultType": "matrix", "result": []}});
+    assert_eq!(prom::parse_matrix(&none).unwrap(), vec![]);
+    let one = json!({"status": "success", "data": {"resultType": "matrix", "result": [
+        {"metric": {}, "values": [[1.0, "0.5"], [2.0, "NaN"], [3.0, "+Inf"], [4.0, "1e-1"]]},
+    ]}});
+    assert_eq!(
+        prom::parse_matrix(&one).unwrap(),
+        vec![(1.0, 0.5), (4.0, 0.1)]
+    );
+    let vector = json!({"status": "success", "data": {"resultType": "vector", "result": []}});
+    assert_eq!(
+        prom::parse_matrix(&vector).unwrap_err(),
+        "prometheus: not a matrix"
+    );
 }
 
 #[test]
