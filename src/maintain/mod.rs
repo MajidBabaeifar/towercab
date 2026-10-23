@@ -322,7 +322,9 @@ pub fn record(
     let action = band.action(v.tier);
     let repo = band_repo(config, band);
     let tier = v.tier.as_str();
-    db.tx(|tx| {
+    // Log lines print once the transaction commits: a rolled-back try logs nothing.
+    let mut logs: Vec<String> = Vec::new();
+    let new = db.tx(|tx| {
         let n = tx
             .execute(
                 "INSERT OR IGNORE INTO breaches (band, tier, point, value, mean, sigma, at, step)
@@ -339,13 +341,13 @@ pub fn record(
             &[("band", &band.name), ("tier", tier)],
             &Ev::none(),
         );
-        eprintln!(
-            "towercab: band {} at {tier}: value {} · mean {} · σ {}",
+        logs.push(format!(
+            "band {} at {tier}: value {} · mean {} · σ {}",
             band.name,
             num(v.point.1),
             num(v.mean),
             num(v.sigma)
-        );
+        ));
         let (drafted, proposed) = match episode(tx, &band.name)? {
             Some(e) => e,
             None => {
@@ -417,10 +419,10 @@ pub fn record(
                     )
                     .map_err(sql)?;
                 } else {
-                    eprintln!(
-                        "towercab: band {}: runbook:cap_repo: {repo} isn't in [repos]",
+                    logs.push(format!(
+                        "band {}: runbook:cap_repo: {repo} isn't in [repos]",
                         band.name
-                    );
+                    ));
                 }
             }
             if pause {
@@ -441,7 +443,11 @@ pub fn record(
         )
         .map_err(sql)?;
         Ok(true)
-    })
+    })?;
+    for l in &logs {
+        eprintln!("towercab: {l}");
+    }
+    Ok(new)
 }
 
 /// MNT-8: each lesson waiting on `band` gets the band's first point whose period began at or
