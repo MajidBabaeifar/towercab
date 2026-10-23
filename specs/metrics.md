@@ -134,6 +134,7 @@ Names are `towercab.<name>`. Auto mode, Hooks as build-time guardrails and Claud
   never observed, only its planned length; its sum is the dashboard's "paused on usage limit".
 - The 60 s gauges are never spooled, and no gauge is an event: a stale value stamped with a later
   time would lie. `eval.pass_rate` (once per eval run) is spooled: it stays the latest.
-- Maintain-fed values (breaches, incident → eval, alert escapes) wait for [maintain.md](maintain.md):
-  MET-27 collects them.
+- Maintain-fed values (breaches, incident → eval, alert escapes) come from [maintain.md](maintain.md)
+  (MET-27). `incident_to_eval.duration` is observed after the case's commit, outside a transaction: a
+  crash between them loses that one sample (the retry finds the case incident already).
 - `towercab telemetry` works without a Towercab config (default endpoint): it is for my own sessions.

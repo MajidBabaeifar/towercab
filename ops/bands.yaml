@@ -23,7 +23,7 @@ bands:
     metric: intent.duration
     query: >-
       histogram_quantile(0.5, sum by (le) (sum_over_time(
-      {__name__=~"towercab_intent_duration(_seconds)?_bucket",kind="cycle",outcome="done"}[1d])))
+      {__name__=~"towercab_intent_duration(_seconds|_USD)?_bucket",kind="cycle",outcome="done"}[1d])))
     period: 1d
     baseline: rolling_30d
     rules: western_electric
@@ -37,7 +37,7 @@ bands:
     metric: intent.cost
     query: >-
       histogram_quantile(0.5, sum by (le) (sum_over_time(
-      {__name__=~"towercab_intent_cost(_USD)?_bucket"}[1d])))
+      {__name__=~"towercab_intent_cost(_seconds|_USD)?_bucket"}[1d])))
     period: 1d
     baseline: rolling_30d
     rules: western_electric

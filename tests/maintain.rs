@@ -483,7 +483,7 @@ fn test_default_bands() {
     let q = |n: &str| all.iter().find(|b| b.name == n).unwrap().query.clone();
     assert!(q("ci_failure_rate").contains(r#"result="red""#));
     assert!(q("cycle_time").contains(r#"kind="cycle",outcome="done""#));
-    assert!(q("cost_per_intent").contains("towercab_intent_cost(_USD)?_bucket"));
+    assert!(q("cost_per_intent").contains("towercab_intent_cost(_seconds|_USD)?_bucket"));
     assert!(q("change_failure_rate").contains(r#"where="e2e""#));
     assert!(q("change_failure_rate").contains(r#"outcome=~"done|reverted|revert_failed""#));
 }
