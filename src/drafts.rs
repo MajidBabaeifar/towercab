@@ -32,6 +32,7 @@ use crate::intents::id::{self, new_id};
 use crate::intents::intent::{Value as IValue, format_value};
 use crate::intents::{Intent, Listing};
 use crate::limits;
+use crate::metrics::{self, Ev, Metric};
 use crate::outbox::one_line;
 
 /// Issues and open drafts are read this often (LOOP-12).
@@ -851,16 +852,38 @@ fn state(cx: &Ctx<'_>, row: &DraftRow) -> Result<(), GhError> {
     let v: Value =
         serde_json::from_str(&out).map_err(|e| GhError::Failed(format!("gh pr view: {e}")))?;
     match v.get("state").and_then(Value::as_str) {
-        Some("MERGED") => record(cx, &row.key, "accepted", &[]).map_err(GhError::Failed),
+        Some("MERGED") => {
+            record(cx, &row.key, "accepted", &[]).map_err(GhError::Failed)?;
+            drafted(row, "accepted");
+            Ok(())
+        }
         Some("CLOSED") => {
             if let Some(url) = row.source.strip_prefix("issue:") {
                 let pr_url = row.pr_url.clone().unwrap_or_default();
                 comment_once(cx, url, &format!("Not accepted: {pr_url}"))?;
             }
-            record(cx, &row.key, "rejected", &[]).map_err(GhError::Failed)
+            record(cx, &row.key, "rejected", &[]).map_err(GhError::Failed)?;
+            drafted(row, "rejected");
+            Ok(())
         }
         _ => Ok(()),
     }
+}
+
+/// `towercab.intent.drafts` (MET-23): a draft accepted (merged) or rejected (closed).
+fn drafted(row: &DraftRow, result: &str) {
+    let source = crate::indicators::source_kind(Some(&row.source));
+    let ev = Ev {
+        intent: row.intent.clone(),
+        stage: None,
+        pr: row.pr.map(|p| p as u64),
+    };
+    metrics::add(
+        Metric::IntentDrafts,
+        1.0,
+        &[("source", source), ("result", result)],
+        &ev,
+    );
 }
 
 /// The next issue draft due a drafter run: step `draft`, fewer than [`TRIES`] runs, new or
@@ -953,6 +976,14 @@ pub fn finish_run(cx: &mut Ctx<'_>, key: &str, end: &ChildEnd) -> Result<Option<
         .and_then(|v| Issue::from_json(&v));
     let now = cx.tick.unix();
     let ended = claude::end(&run, end, cx.tick.wall);
+    // Its cost and tokens, however it ended (MET-16).
+    if let Ok(r) = fs::read(&end.stdout)
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .map_err(|e| e.to_string())
+        .and_then(|out| claude::result_of(&out))
+    {
+        crate::indicators::run_usage(&row.repo, run.agent(), "draft", &r, &Ev::none());
+    }
     if !matches!(ended, RunEnd::Limit(_) | RunEnd::Env(_)) {
         // The model ran: its limit backoffs start over (LOOP-9).
         limits::success(cx.db.conn(), &model).map_err(GhError::Failed)?;

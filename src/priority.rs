@@ -63,7 +63,7 @@ fn stale(t: DateTime<FixedOffset>, now: DateTime<FixedOffset>) -> bool {
 }
 
 /// The time in an ID (`YYMMDD-HHMM`), read in `offset`.
-fn id_time(id: &str, offset: FixedOffset) -> Option<DateTime<FixedOffset>> {
+pub fn id_time(id: &str, offset: FixedOffset) -> Option<DateTime<FixedOffset>> {
     let (ymd, hm, _) = sort_key(id);
     let naive = NaiveDate::from_ymd_opt(2000 + (ymd / 10000) as i32, ymd / 100 % 100, ymd % 100)?
         .and_hms_opt(hm / 100, hm % 100, 0)?;

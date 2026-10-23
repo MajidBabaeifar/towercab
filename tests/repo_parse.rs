@@ -125,7 +125,6 @@ fn test_parse_repo_files() {
             "cargo fmt --check",
             "cargo clippy --all-targets --locked -- -D warnings",
             "cargo test --locked",
-            "python3 -m unittest discover -s tests",
         ]
     );
     assert_eq!(own.verifying.run, None);

@@ -56,22 +56,10 @@ fn test_ci_workflow() {
         ]
     );
 
-    let python = steps("python");
-    let setup = python
-        .iter()
-        .find(|s| {
-            s["uses"]
-                .as_str()
-                .is_some_and(|u| u.starts_with("actions/setup-python@"))
-        })
-        .expect("setup-python");
-    assert_eq!(setup["with"]["python-version"].as_str(), Some("3.12"));
-    assert_eq!(
-        field(&python, "run"),
-        ["python3 -m unittest discover -s tests"]
-    );
+    // One job: the Python tests are gone (`ops/` is ported, MET-12, MET-19).
+    assert_eq!(ci["jobs"].as_hash().map(|j| j.len()), Some(1));
     // No step may swallow a failure.
-    for s in rust.iter().chain(&python) {
+    for s in &rust {
         assert!(s["continue-on-error"].is_badvalue(), "{s:?}");
     }
 }

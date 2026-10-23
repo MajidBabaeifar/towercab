@@ -461,6 +461,13 @@ fn test_eval_builds_pr_head() {
         )]
     );
     assert!(out.contains("17/20 (85%)"), "{out}");
+    // The run's pass rate (MET-25), 0–1.
+    let rates: Vec<(f64, Option<String>)> = towercab::metrics::take()
+        .into_iter()
+        .filter(|r| r.metric == towercab::metrics::Metric::EvalPassRate)
+        .map(|r| (r.value, r.label("kind").map(str::to_string)))
+        .collect();
+    assert_eq!(rates, [(0.85, Some("pr".to_string()))]);
 
     // A build that fails posts `error`.
     fs::write(bin.join("cargo-fails"), "").unwrap();

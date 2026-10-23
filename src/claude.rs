@@ -566,21 +566,11 @@ pub fn env(config: &Config) -> Vec<(OsString, OsString)> {
     if let Ok(h) = home() {
         e.insert(0, ("HOME".into(), h.into()));
     }
-    for (k, v) in [
-        ("CLAUDE_CODE_ENABLE_TELEMETRY", "1"),
-        ("OTEL_METRICS_EXPORTER", "otlp"),
-        ("OTEL_LOGS_EXPORTER", "otlp"),
-        ("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"),
-        (
-            "OTEL_EXPORTER_OTLP_ENDPOINT",
-            config.metrics.endpoint.as_str(),
-        ),
-        ("OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE", "delta"),
-        ("OTEL_METRIC_EXPORT_INTERVAL", "30000"),
-        ("OTEL_SERVICE_NAME", "towercab"),
-    ] {
+    // The same variables `towercab telemetry on` writes for my sessions, plus the Source.
+    for (k, v) in crate::telemetry::vars(&config.metrics.endpoint) {
         e.push((k.into(), v.into()));
     }
+    e.push(("OTEL_SERVICE_NAME".into(), "towercab".into()));
     e
 }
 
@@ -759,7 +749,7 @@ impl ClaudeResult {
 
 /// The last stdout line that is a JSON object with `type: "result"` (or all of stdout, when it
 /// is one such object over several lines).
-fn result_of(stdout: &str) -> Result<ClaudeResult, String> {
+pub fn result_of(stdout: &str) -> Result<ClaudeResult, String> {
     let is_result =
         |v: &Value| v.is_object() && v.get("type").and_then(Value::as_str) == Some("result");
     let found = stdout

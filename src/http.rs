@@ -103,3 +103,23 @@ pub fn post_json(
     }
     answer("POST", url, req.send(body.to_string()))
 }
+
+/// `POST url` with `body` as JSON → the status of a 2xx answer, whatever its body (OTLP,
+/// MET-13); another status → `Status`, no answer → `Net`.
+pub fn post_any(url: &str, body: &Value, timeout: Duration) -> Result<u16, HttpError> {
+    let net = |e: ureq::Error| HttpError::Net(mask(&format!("POST {}: {e}", mask(url))));
+    let mut resp = agent(timeout)
+        .post(url)
+        .header("Content-Type", "application/json")
+        .send(body.to_string())
+        .map_err(net)?;
+    let status = resp.status().as_u16();
+    let text = resp.body_mut().read_to_string().unwrap_or_default();
+    if !(200..300).contains(&status) {
+        return Err(HttpError::Status(
+            status,
+            crate::outbox::cut(&crate::outbox::one_line(&text), 300),
+        ));
+    }
+    Ok(status)
+}

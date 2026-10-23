@@ -1,4 +1,4 @@
-//! Command line (LOOP-15): every command; `telemetry` is a stub until its intent (MET-12).
+//! Command line (LOOP-15): every command.
 
 use std::ffi::{OsStr, OsString};
 use std::io::Read as _;
@@ -18,6 +18,7 @@ use crate::intents::intent::is_repo;
 use crate::intents::migrate::migrate;
 use crate::intents::store::now;
 use crate::intents::{Listing, NewIntent, Store};
+use crate::metrics::Sink;
 use crate::pick;
 use crate::pipeline::evals;
 use crate::repo::protect::{Target, protect};
@@ -93,7 +94,7 @@ enum Command {
     Next,
     /// One step of an intent's mission in the foreground
     Step { id: String },
-    /// Claude Code telemetry to the metrics endpoint (not built yet)
+    /// Your Claude Code sessions' telemetry to the metrics endpoint (MET-12)
     Telemetry {
         #[arg(value_parser = ["on", "off", "status"])]
         what: String,
@@ -245,7 +246,13 @@ where
             lp.shutdown()?;
             out
         })),
-        Command::Telemetry { .. } => not_built("MET-12", 1),
+        Command::Telemetry { what } => {
+            // My own sessions: no Towercab config needed (the default endpoint).
+            let endpoint = Config::load(args.config.as_deref())
+                .map(|c| c.metrics.endpoint)
+                .unwrap_or_else(|_| crate::config::MetricsConfig::default().endpoint);
+            report(crate::telemetry::run(&what, &endpoint))
+        }
         Command::Eval {
             reason,
             pr,
@@ -254,14 +261,17 @@ where
         } => report(Config::load(args.config.as_deref()).and_then(|config| {
             let home = Home::resolve(args.home.as_deref())?;
             let exes = Exes::default();
-            match (pr, cases, out) {
+            let out = match (pr, cases, out) {
                 // It posts statuses: as the App only (LOOP-19).
                 (Some(n), _, _) => config
                     .check_loop()
                     .and_then(|()| evals::pr(&config, &home, &exes, n)),
                 (None, Some(dir), Some(out)) => evals::inner(&config, &exes, &dir, &out),
                 _ => evals::baseline(&config, &home, &exes, reason.as_deref()),
-            }
+            };
+            // The runs' cost and the pass rate (MET-13, MET-16, MET-25).
+            Sink::new(&config, &home).flush(Tick::now());
+            out
         })),
         Command::Hook {
             hook: Hook::Guard { rules },
@@ -312,12 +322,6 @@ fn guard(rules: &Path) -> i32 {
             2
         }
     }
-}
-
-/// A stub until its intent: `towercab: not built yet: <ID>`, exit `code`.
-fn not_built(id: &str, code: i32) -> i32 {
-    eprintln!("towercab: not built yet: {id}");
-    code
 }
 
 /// The intents for `status` and `next`: pulled; a failed pull → the checkout as it is, and
@@ -379,7 +383,10 @@ fn command(config: &Option<PathBuf>, home: &Option<PathBuf>, cmd: Cmd) -> i32 {
     let submitted = Config::load(config.as_deref()).and_then(|config| {
         let home = Home::resolve(home.as_deref())?;
         let db = Db::open(&home.db())?;
-        commands::submit(&config, &home, &db, &cmd, Duration::from_secs(10))
+        let reply = commands::submit(&config, &home, &db, &cmd, Duration::from_secs(10));
+        // Applied here: its transitions' metrics (MET-13).
+        Sink::new(&config, &home).flush(Tick::now());
+        reply
     });
     match submitted {
         Ok(Some(reply)) if cmd.failed(&reply) => {

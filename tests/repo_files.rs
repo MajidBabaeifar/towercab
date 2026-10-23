@@ -67,7 +67,6 @@ fn test_own_repo_files() {
             "cargo fmt --check",
             "cargo clippy --all-targets --locked -- -D warnings",
             "cargo test --locked",
-            "python3 -m unittest discover -s tests",
         ]
     );
 

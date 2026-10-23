@@ -91,7 +91,7 @@ fi
 if grep -q BROKEN "$d/claude-$n.stdin"; then
   echo '{{"type":"result","subtype":"success","is_error":false,"result":"no idea"}}'
 else
-  printf '{{"type":"result","subtype":"success","is_error":false,"result":"ok","structured_output":%s}}\n' "$(cat "$d/draft.json")"
+  printf '{{"type":"result","subtype":"success","is_error":false,"result":"ok","modelUsage":{{"claude-sonnet-4":{{"inputTokens":5,"outputTokens":1,"cacheReadInputTokens":0,"cacheCreationInputTokens":0,"costUSD":0.02}}}},"structured_output":%s}}\n' "$(cat "$d/draft.json")"
 fi
 echo "$n" > "$d/runs"
 "#,
@@ -233,6 +233,24 @@ fn test_issue_draft() {
     });
     let row = d.row(&format!("issue:{WEB_ISSUE}"));
     let id = row.intent.clone().unwrap();
+    // The drafter's cost (MET-16): agent `drafter`, stage `draft`.
+    let cost: Vec<f64> =
+        towercab::metrics::spool_read(&d.w.home.root.join("metrics.jsonl"), usize::MAX)
+            .into_iter()
+            .chain(towercab::metrics::take())
+            .filter(|r| {
+                r.metric == towercab::metrics::Metric::CostUsd
+                    && r.label("agent") == Some("drafter")
+                    && r.label("stage") == Some("draft")
+                    && r.label("repo") == Some("web")
+                    && r.label("model") == Some("claude-sonnet-4")
+            })
+            .map(|r| r.value)
+            .collect();
+    assert!(
+        !cost.is_empty() && cost.iter().all(|c| *c == 0.02),
+        "{cost:?}"
+    );
     assert_eq!(row.slug.as_deref(), Some("fix-safari-login"));
     assert_eq!(
         (row.repo.as_str(), row.source.as_str()),
@@ -504,6 +522,27 @@ fn test_rejected_intent_comments() {
     d.until(&mut lp, |d| {
         d.row(&safari).step == "rejected" && d.row(&dark).step == "accepted"
     });
+    // Survival (MET-23): one accepted, one rejected, by source kind (spooled: no collector).
+    let mut drafts: Vec<(String, String)> =
+        towercab::metrics::spool_read(&d.w.home.root.join("metrics.jsonl"), usize::MAX)
+            .into_iter()
+            .chain(towercab::metrics::take())
+            .filter(|r| r.metric == towercab::metrics::Metric::IntentDrafts)
+            .map(|r| {
+                (
+                    r.label("source").unwrap().to_string(),
+                    r.label("result").unwrap().to_string(),
+                )
+            })
+            .collect();
+    drafts.sort();
+    assert_eq!(
+        drafts,
+        [
+            ("issue".to_string(), "accepted".to_string()),
+            ("issue".to_string(), "rejected".to_string())
+        ]
+    );
     for _ in 0..12 {
         d.w.pass(&mut lp);
     }

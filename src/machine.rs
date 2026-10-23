@@ -12,6 +12,7 @@ use crate::config::Config;
 use crate::db::{Db, del_meta, get_meta, set_meta, sql};
 use crate::env;
 use crate::handler::{Ctx, Outcome, update};
+use crate::indicators;
 use crate::intents::{self, Intent, Listing, StoreError, Value as IValue};
 use crate::limits;
 use crate::mission::{self, Mission, NewMission};
@@ -988,7 +989,8 @@ pub fn apply_tx(
         });
         n = Next::Unexpected;
     }
-    if n == Next::Unexpected {
+    let unexpected = n == Next::Unexpected;
+    if unexpected {
         let what = format!("unexpected {} at {}", o.event, cur.stage);
         why = Some(match why {
             Some(w) => format!("{what}: {w}"),
@@ -1170,6 +1172,10 @@ pub fn apply_tx(
         update(tx, cur.id, &cols)?;
     }
     let stored = mission::get(tx, cur.id)?;
+    // Its metrics (MET-14..26), before its own `transitions` row; never its failure.
+    if let Err(e) = indicators::transition(tx, ax, &cur, o, to, unexpected, &stored) {
+        eprintln!("towercab: {}: metrics: {e}", cur.label());
+    }
     if let Some(w) = waiting.filter(|w| *w != Waiting::PrClosed) {
         let n = if w == Waiting::ReviewAndMergePr {
             stored.head.clone().unwrap_or_default()
@@ -1309,6 +1315,10 @@ pub fn enter(cx: &mut Ctx<'_>, m: &Mission) -> Result<Mission, String> {
         if !cx.store.has_mark(&mark).map_err(|e| e.to_string())? {
             write_intent(cx, m, id, &mark)?;
             cx.probe.point();
+            // Once per entry, like the write (MET-23, MET-24, MET-26); never its failure.
+            if let Err(e) = indicators::entered(cx, m) {
+                eprintln!("towercab: {}: metrics: {e}", m.label());
+            }
         }
     }
     if m.stage.finished() && m.checkout.starts_with("work/") {

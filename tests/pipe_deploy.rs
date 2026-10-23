@@ -510,6 +510,19 @@ fn at_release() -> (Pipe, String) {
 #[test]
 fn test_release_runs_command() {
     let (mut p, merge) = at_release();
+    // The PR's head (a stub merge has none): one commit for the change's lead time (MET-26).
+    let dir = p.checkout(ID);
+    common::write(&dir, "src/logout.rs", "pub fn logout() {}\n");
+    common::git(&dir, &["add", "-A"]);
+    common::git(&dir, &["commit", "--quiet", "-m", "logout"]);
+    let head = common::git(&dir, &["rev-parse", "HEAD"]).trim().to_string();
+    p.w.db()
+        .conn()
+        .execute(
+            "UPDATE missions SET head = ?1 WHERE intent = ?2",
+            rusqlite::params![head, ID],
+        )
+        .unwrap();
     // Production shows nothing yet; `release <id>` runs the command once.
     p.gh.on(
         "api repos/me/web/deployments?environment=production*",
@@ -535,6 +548,22 @@ fn test_release_runs_command() {
     p.until(30, |w| w.stage(ID) == Some(Stage::Done));
     assert_eq!(p.root_file("release.args"), format!("{merge}\n"), "once");
     assert_eq!(p.e2e_runs(), 2, "staging, then production");
+    // DORA (MET-26): `live` was staging; the release's deploy is production, and ends the
+    // change's lead time (spooled: the test's collector is dead).
+    let recs = towercab::metrics::spool_read(&p.w.home.root.join("metrics.jsonl"), usize::MAX);
+    let deploys: Vec<&str> = recs
+        .iter()
+        .filter(|r| r.metric == towercab::metrics::Metric::Deploys)
+        .map(|r| r.label("env").unwrap())
+        .collect();
+    assert_eq!(deploys, ["staging", "production"]);
+    // Stored before it counts: a re-entry of `wait` (an env failure after it) doesn't again.
+    assert_eq!(p.datum(ID, "release")["counted"], json!(merge));
+    let leads = recs
+        .iter()
+        .filter(|r| r.metric == towercab::metrics::Metric::ChangeLeadDuration)
+        .count();
+    assert_eq!(leads, 1);
     assert!(
         transitions(&p)
             .iter()

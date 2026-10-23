@@ -208,7 +208,7 @@ y += 8
 # ---- Claude Code usage
 panels.append(row("Claude Code usage", y)); y += 1
 COST, TOK = "cost_usage(_USD)?(_total)?", "token_usage(_tokens)?(_total)?"
-CCD = "From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `ops/telemetry on`)."
+CCD = "From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `towercab telemetry on`)."
 panels += [
     stat("Cost", [S(CC(COST))], 0, y, "currencyUSD", "API-price estimate; on a subscription this is not a bill. " + CCD, decimals=2),
     stat("Tokens", [S(CC(TOK))], 4, y, "short", CCD),

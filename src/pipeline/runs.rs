@@ -12,7 +12,9 @@ use crate::claude::{self, ClaudeResult, Run, RunEnd, RunKind, SessionArg, Verifi
 use crate::db::sql;
 use crate::env::Fault;
 use crate::handler::{ChildEnd, Ctx, Outcome, Progress, StepError};
+use crate::indicators;
 use crate::machine::Waiting;
+use crate::metrics::Ev;
 use crate::mission::Mission;
 
 use super::data::Data;
@@ -337,6 +339,17 @@ pub fn finish(cx: &Ctx<'_>, m: &Mission, end: &ChildEnd) -> Result<Ended, StepEr
         String::from_utf8_lossy(&std::fs::read(p).unwrap_or_default()).into_owned()
     };
     let (stdout, stderr) = (read(&end.stdout), read(&end.stderr));
+    // Cost and tokens per model, however it ended (MET-16); the guard's blocks (MET-26).
+    let ev = Ev::of(m);
+    if let Ok(r) = claude::result_of(&stdout) {
+        let agent = if eval { "eval" } else { kind.agent() };
+        indicators::run_usage(&m.repo, agent, m.stage.as_str(), &r, &ev);
+    }
+    if kind == RunKind::Worker
+        && let Err(e) = indicators::guard_blocks(&cx.runs(m), &m.repo, &ev)
+    {
+        eprintln!("towercab: {}: metrics: {e}", m.label());
+    }
     cx.db
         .conn()
         .execute(

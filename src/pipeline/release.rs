@@ -75,13 +75,20 @@ impl Release {
         if let Some(sha) = deployed(cx, m, &block.deploy)?
             && contains(cx, m, merge, &sha)?
         {
+            // Counted once per merge (MET-26): stored first, so a re-entry after an env
+            // failure below doesn't count it again.
+            let count = r.get("counted").and_then(Value::as_str) != Some(merge);
+            r["counted"] = json!(merge);
             data.set("release", r);
+            let m = cx.record(m, "wait", &[("data", data.text().into())])?;
+            if count {
+                crate::indicators::deployed(cx, &m, "production");
+            }
             let Some(line) = &block.e2e else {
-                let m = cx.record(m, "wait", &[("data", data.text().into())])?;
                 return self.done(cx, &m);
             };
-            let dir = at_sha(cx, m, merge)?;
-            return e2e_mod::spawn(cx, m, &mut data, "e2e", &dir, line);
+            let dir = at_sha(cx, &m, merge)?;
+            return e2e_mod::spawn(cx, &m, &mut data, "e2e", &dir, line);
         }
         let since = r.get("since").and_then(Value::as_f64).unwrap_or(now);
         let mins = block.timeout_min;

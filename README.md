@@ -71,11 +71,14 @@ First start: `towercab migrate` on the `intents` repo, `towercab protect <repo>`
 
 ```bash
 docker compose -f ops/docker-compose.yml up -d   # Grafana on http://localhost:3000
-ops/telemetry on                                 # Claude Code sessions export to it
+towercab telemetry on                            # your Claude Code sessions export to it
 ```
+
+The loop sends its own metrics and events (`service.name=towercab-loop`, `specs/metrics.md`) to
+`[metrics].endpoint`; while that is down they wait in `<home>/metrics.jsonl`.
 
 ## CI
 
 `.github/workflows/ci.yml` on every PR and push to `main`: job `rust` (`cargo fmt --check`, `cargo clippy
---all-targets --locked -- -D warnings`, `cargo test --locked`); job `python` (`tests/test_ops.py` for `ops/`).
+--all-targets --locked -- -D warnings`, `cargo test --locked`).
 The Python version of Towercab lives on branch `python`.

@@ -226,7 +226,7 @@ fn test_add_command() {
     );
 }
 
-/// The loop's commands from the binary (LOOP-15): stubs, `status`/`next`/`step`/`run
+/// The loop's commands from the binary (LOOP-15): `status`/`next`/`step`/`run
 /// --intent` refusals with no pipeline, and `approve`, `retry --fresh`, `release` applied by
 /// the CLI itself (no loop running), entry effects included; then `step` and `--intent` with
 /// stub handlers.
@@ -314,12 +314,6 @@ fn test_cli() {
     let err = |s: &str, code: i32| (String::new(), format!("towercab: {s}\n"), Some(code));
     let md = |rel: &str| std::fs::read_to_string(intents.join(rel)).unwrap();
 
-    // Stubs until their intents.
-    assert_eq!(run(&["telemetry", "on"]), err("not built yet: MET-12", 1));
-    assert_eq!(
-        run(&["telemetry", "status"]),
-        err("not built yet: MET-12", 1)
-    );
     // `eval` (PIP-33): `--cases` needs `--out`, `--reason` goes alone; an empty case directory
     // is a run of nothing.
     assert_eq!(run(&["eval", "--cases", "x"]).2, Some(2));

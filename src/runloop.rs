@@ -5,7 +5,7 @@
 //! `commands`; reap children → `Handler::finish` (the drafter's → `drafts::finish_run`);
 //! entry effects; child timeouts; due polls (`intents`, PRs, issues and draft PRs); due
 //! missions; children waiting for a slot; pick; the drafter; faults and preflight; review due;
-//! outbox; inhibitor; gauges (a stub until the metrics intent). The drafts poll also drafts
+//! outbox; inhibitor; gauges (MET-20); the metrics flushed (MET-13). The drafts poll also drafts
 //! repeated review findings and polls the evals (PIP-33, PIP-36).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -36,11 +36,13 @@ use crate::handler::{
     StepError, update,
 };
 use crate::home::{Home, LoopLock};
+use crate::indicators;
 use crate::intents::git::AuthFn;
 use crate::intents::store::find_open;
 use crate::intents::{Intent, Listing, Store, Value as IValue};
 use crate::limits;
 use crate::machine::{self, Apply, Event, Next, Stage};
+use crate::metrics::Sink;
 use crate::mission::{self, ENTER, Kind, Mission};
 use crate::outbox::{self, Notice};
 use crate::pick::{self, Decision, PickState};
@@ -58,7 +60,7 @@ pub const POLL: Duration = Duration::from_secs(60);
 /// Telegram messages older than this at the first start are skipped (LOOP-16).
 pub const BACKLOG: Duration = Duration::from_secs(600);
 
-/// Gauges (MET, the metrics intent): every 60 s.
+/// Gauges (MET-20): every 60 s.
 pub const GAUGES: Duration = Duration::from_secs(60);
 
 static START: LazyLock<Instant> = LazyLock::new(Instant::now);
@@ -155,7 +157,7 @@ pub struct PassReport {
     pub target: Option<Result<String, String>>,
     /// Issues and draft PRs were read this pass (every 300 s, INT-7).
     pub drafts: bool,
-    /// The gauges step ran this pass (every 60 s; a stub until the metrics intent).
+    /// The gauges step ran this pass (every 60 s, MET-20).
     pub gauges: bool,
 }
 
@@ -182,6 +184,8 @@ pub struct Loop {
     pub probe: Probe,
     /// `[telegram]`: updates read and the outbox sent each pass (LOOP-16).
     pub telegram: Option<Telegram>,
+    /// Where this thread's metrics go at the end of each pass (MET-13).
+    pub metrics: Sink,
     /// `run --intent`: the intent (resolved) and its mission.
     target: Option<String>,
     target_mission: Option<i64>,
@@ -249,6 +253,7 @@ impl Loop {
         let prs = Box::new(GhPrs {
             identity: identity.clone(),
         });
+        let metrics = Sink::new(&config, &home);
         let mut lp = Loop {
             config,
             home,
@@ -261,6 +266,7 @@ impl Loop {
             identity,
             probe: Probe::default(),
             telegram: None,
+            metrics,
             target: None,
             target_mission: None,
             refused: None,
@@ -388,8 +394,14 @@ impl Loop {
         }
     }
 
-    /// One pass (LOOP-12 order).
+    /// One pass (LOOP-12 order); the metrics are flushed at its end even when a step failed.
     pub fn pass(&mut self, tick: Tick) -> Result<PassReport, String> {
+        let r = self.pass_steps(tick);
+        self.metrics.flush(tick);
+        r
+    }
+
+    fn pass_steps(&mut self, tick: Tick) -> Result<PassReport, String> {
         let mut report = PassReport::default();
         if self.stop.load(Ordering::SeqCst) {
             report.stop = true;
@@ -1092,13 +1104,54 @@ impl Loop {
         Ok(())
     }
 
-    /// Gauges every 60 s: a stub until the metrics intent (MET) fills it. True when due.
+    /// Gauges every 60 s (MET-20, MET-24): the backlog, the loop's state, its children. True
+    /// when due. A failure is logged, never the pass's.
     fn gauges(&mut self, tick: Tick) -> bool {
         if self.gauges_due.is_some_and(|d| tick.mono < d) {
             return false;
         }
         self.gauges_due = Some(tick.mono + GAUGES);
+        let active = self.children.len()
+            + usize::from(self.drafter.is_some())
+            + usize::from(self.evaluator.is_some());
+        let r = self.loop_state(tick, active).and_then(|state| {
+            indicators::gauges(
+                self.db.conn(),
+                self.listing.as_ref(),
+                self.config.intents.cutoff,
+                state,
+                active,
+            )
+        });
+        if let Err(e) = r {
+            self.warn("gauges", format!("gauges: {e}"));
+        }
         true
+    }
+
+    /// MET-20's `loop.state`: `paused` > `env_blocked` > `running` (a child, or a driven
+    /// mission not in a limit wait) > `limit` (every driven mission in one) > `idle`.
+    fn loop_state(&self, tick: Tick, active: usize) -> Result<&'static str, String> {
+        if machine::paused(self.db.conn())? {
+            return Ok("paused");
+        }
+        if self.blocked {
+            return Ok("env_blocked");
+        }
+        let now = tick.unix();
+        let driven: Vec<Mission> = mission::unfinished(self.db.conn())?
+            .into_iter()
+            .filter(|m| m.stage.driven() && !m.held)
+            .collect();
+        Ok(
+            if active > 0 || driven.iter().any(|m| !self.limit_waiting(m, now)) {
+                "running"
+            } else if !driven.is_empty() {
+                "limit"
+            } else {
+                "idle"
+            },
+        )
     }
 
     /// The `intents` poll (LOOP-5, LOOP-18): every 60 s, pulled when `origin`'s `main` moved
@@ -1551,6 +1604,12 @@ impl Loop {
     /// entry effects after. No mission → picked as `run --intent` does, then its first step.
     /// Returns `<id>: <stage> → <stage>[ · <waiting>]`.
     pub fn step_intent(&mut self, q: &str) -> Result<String, String> {
+        let out = self.step_once(q);
+        self.metrics.flush(Tick::now());
+        out
+    }
+
+    fn step_once(&mut self, q: &str) -> Result<String, String> {
         let id = self.set_target(q)?;
         let tick = Tick::now();
         self.enter_all(tick)?;
@@ -1805,13 +1864,20 @@ impl Loop {
         // Its run time counts toward the step's timeout (LOOP-9): the resumed run gets the
         // rest. (Tests drive the passes' clock: the later of it and now.)
         let mono = self.last_tick.map_or(tick.mono, |t| t.mono.max(tick.mono));
-        for (id, c) in stopping.iter().filter_map(|(id, c)| Some(((*id)?, c))) {
-            let m = mission::get(self.db.conn(), id)?;
-            let ran = mono.saturating_sub(c.since).as_secs_f64();
-            let o = Outcome::event(Event::Interrupted).with("step_secs", m.step_secs + ran);
-            machine::apply(&self.apply_cx(tick), &m, &o)?;
+        let interrupted = (|| {
+            for (id, c) in stopping.iter().filter_map(|(id, c)| Some(((*id)?, c))) {
+                let m = mission::get(self.db.conn(), id)?;
+                let ran = mono.saturating_sub(c.since).as_secs_f64();
+                let o = Outcome::event(Event::Interrupted).with("step_secs", m.step_secs + ran);
+                machine::apply(&self.apply_cx(tick), &m, &o)?;
+            }
+            machine::set_dying(self.db.conn(), &[])
+        })();
+        if let Err(e) = interrupted {
+            // The transitions committed before it still send theirs.
+            self.metrics.flush(tick);
+            return Err(e);
         }
-        machine::set_dying(self.db.conn(), &[])?;
         if let Some(key) = drafter {
             // Stopped, not failed: the try isn't counted.
             if let Some(Err(e)) = self.with_cx(tick, |cx| drafts::not_run(cx, &key)) {
@@ -1820,6 +1886,7 @@ impl Loop {
         }
         self.queued.clear();
         self.inhibitor.stop();
+        self.metrics.flush(tick);
         self.db.del_meta("running")
     }
 }

@@ -277,8 +277,8 @@ fn test_cadence() {
         [30, 60, 90, 120, 150, 180],
         "CI: ci_poll (the handler's Poll)"
     );
-    // Issues and draft PRs every 300 s (each repo's `gh issue list`), gauges every 60 s (a
-    // stub until the metrics intent). Telegram goes every pass (LOOP-16's tests).
+    // Issues and draft PRs every 300 s (each repo's `gh issue list`), gauges every 60 s
+    // (MET-20). Telegram goes every pass (LOOP-16's tests).
     let steps = |v: &[u64]| v.windows(2).map(|p| p[1] - p[0]).collect::<Vec<_>>();
     assert_eq!(steps(&drafts), [300], "{drafts:?}");
     assert_eq!(steps(&gauges), [60; 6], "{gauges:?}");
