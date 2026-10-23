@@ -124,6 +124,7 @@ local checks and CI, a code gate with a review before any auto-merge, then deplo
 | `plan_url` | 2 | `plan.md`'s URL once written |
 | `plan` | 2 | the plan run's `PlanResult` (until `plan:write`) |
 | `worker` | 2 | a `done` build's `{notes, plan, plan_why, lower_a, lower_why}` between its steps; `before`: `HEAD` before its commit (`no changes`) |
+| `plan_updated` | 2 | a build rewrote `plan.md` (plan drift's `updated`, [MET-24](metrics.md)) |
 | `lock_head` | 2 | `HEAD` after the commit of the last build round that wasn't a repair: PIP-31's baseline |
 | `setup` | 2 | the checkout path setup last ran in (build runs it once per checkout) |
 | `repair` | 2 | `{what, findings, log}`: set with each `red`; the next worker round's input |
@@ -132,7 +133,7 @@ local checks and CI, a code gate with a review before any auto-merge, then deplo
 | `verifier` | 3 | `VerifierReport` + `line` (not opted in: `{line}` only) |
 | `review` | 3 | `{head, patch_id, result: ReviewResult (null: the review failed), approved, reasons, risk_low}` |
 | `review_limited`, `verifier_limited`, `triage_limited` | 3, 4 | the run hit a usage limit once (`review::limit_once`) |
-| `gate` | 3 | `{head, hold \| verdict, commented: head, evals_since}` (`verdict` of a merge: `a<n> approved` or `approved, risk low`, the trailer's; `commented` recorded before the comment is posted; `evals_since`: the wait for `towercab/evals` on this head) |
+| `gate` | 3 | `{head, hold \| verdict, commented: head, evals_since, label, counted: head}` (`verdict` of a merge: `a<n> approved` or `approved, risk low`, the trailer's; `commented` recorded before the comment is posted; `evals_since`: the wait for `towercab/evals` on this head; `label`: [MET-15](metrics.md)'s gate label; `counted`: the head whose findings and evals were counted, MET-25, 26) |
 | `merge` | 3 | `{head, blocked, unknown, merging}`: counts on this head (`DRAFT` counted as `unknown`); `merging`: the head Towercab's `gh pr merge` went through for |
 | `deploy` | 4 | `{merge, since, sha}`: the merge waited for, since when (a new wait: now), the last deployed sha seen |
 | `e2e` | 4 | `{merge, runs: 1\|2, red: <log path>}` (the last red run's log) |
@@ -200,7 +201,7 @@ WRITER    {summary: S, changes: [S]}         (changes trimmed to 5)
 | `verifier` | `url`, `proof` (`plan.md` `## Proof`), `ui` |
 | `writer` | `title`, `notes` (`head_and_tail`), `verdicts` |
 
-**Run files** (`runs/<id>/`, besides **Claude runs**' and [loop.md](loop.md) **Home**'s): `<kind>-<n>.asked` (a continued run's prompt), `guard.json`, `guard-blocks.jsonl` (one line per block: time, path, reason, kind `protected`/`test_lock`), `commit.txt`, `pr-body.md`, `findings-<head7>.md`, `build-<attempt>.txt`, `setup-<n>-<i>.log` (build's setup), `verify-<n>-<k>.log` → `verify-<n>.log` (`$ <command>` before each output; `k` over setup then checks lines), `proof-<n>-<k>.log` → `proof-<n>.log`, `app-<n>.log` (+ `.nostart`), `e2e-<n>.log` (redacted; stdout then stderr, `.err` redacted too; raw `e2e-<n>.{out,err}.raw` until then), `release-<n>.log`, `rollback-<n>.log`, `rehearse-<n>.log` (a rehearsal's under `runs/rehearse-<repo>-<yymmdd>/`); children's stderr `<file>.err`. Proof checkout `work/<id>-<attempt>-proof/` (removed after). Eval runs `<home>/evals/<run>/` (**Evals**).
+**Run files** (`runs/<id>/`, besides **Claude runs**' and [loop.md](loop.md) **Home**'s): `<kind>-<n>.asked` (a continued run's prompt), `guard.json`, `guard-blocks.jsonl` (one line per block: time, path, reason, kind `protected`/`test_lock`), `guard-blocks.seen` (the lines counted, [MET-26](metrics.md)), `commit.txt`, `pr-body.md`, `findings-<head7>.md`, `build-<attempt>.txt`, `setup-<n>-<i>.log` (build's setup), `verify-<n>-<k>.log` → `verify-<n>.log` (`$ <command>` before each output; `k` over setup then checks lines), `proof-<n>-<k>.log` → `proof-<n>.log`, `app-<n>.log` (+ `.nostart`), `e2e-<n>.log` (redacted; stdout then stderr, `.err` redacted too; raw `e2e-<n>.{out,err}.raw` until then), `release-<n>.log`, `rollback-<n>.log`, `rehearse-<n>.log` (a rehearsal's under `runs/rehearse-<repo>-<yymmdd>/`); children's stderr `<file>.err`. Proof checkout `work/<id>-<attempt>-proof/` (removed after). Eval runs `<home>/evals/<run>/` (**Evals**).
 
 **gh and git** (`gh` as the App, `-R <github>` on every `pr`/`run` command; `<r>` = `owner/name`)
 
@@ -341,5 +342,6 @@ A row goes Live (Status line) in the part that builds it, with its tests.
 - `intent.md`'s hash leaves out what Towercab writes (`stage`, `waiting`, `pr`, …, `## Towercab`): only my edits revise the design.
 - A child's output files exist only once it started (`child::spawn` removes them when it can't): a re-entered step
   reads them as "it ran" (Claude runs, release, rollback), so a run queued at a crash is never taken for a cut-off.
-- No metrics are emitted here: the metrics intent derives them from `transitions`, `missions.data` and
-  `guard-blocks.jsonl`.
+- Metrics ([metrics.md](metrics.md)) come mostly from `transitions`, `missions.data` and `guard-blocks.jsonl`
+  (`src/indicators.rs`); handlers record only what only they see: a run's usage, findings, the gate's
+  findings and evals, deploys.

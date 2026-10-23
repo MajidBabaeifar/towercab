@@ -136,6 +136,12 @@ metrics! {
 pub const METRICS: &[Metric] = Metric::ALL;
 
 impl Metric {
+    /// Sent every 60 s by the loop: never spooled (a stale one stamped later would lie; the
+    /// next minute has a fresh one).
+    pub fn periodic(self) -> bool {
+        matches!(self, Metric::Backlog | Metric::LoopState | Metric::Active)
+    }
+
     /// By OTel name.
     pub fn by_name(name: &str) -> Option<Metric> {
         Metric::ALL.iter().copied().find(|m| m.name() == name)
@@ -487,13 +493,13 @@ fn lines_of(text: &str) -> Vec<&str> {
     text.lines().filter(|l| !l.trim().is_empty()).collect()
 }
 
-/// Appends `records` but gauges to the spool (under `flock`); one that would pass
+/// Appends `records` but periodic gauges to the spool (under `flock`); one that would pass
 /// [`SPOOL_MAX`] first drops the oldest lines down to half of it. Errors are logged, never
 /// raised: metrics never fail the loop.
 pub fn spool_append(path: &Path, records: &[Record]) {
     let new: String = records
         .iter()
-        .filter(|r| r.metric.instrument() != Gauge)
+        .filter(|r| !r.metric.periodic())
         .map(|r| r.to_json().to_string() + "\n")
         .collect();
     if new.is_empty() {
@@ -578,7 +584,10 @@ impl Sink {
             spool_append(&self.spool, &records);
             return;
         }
-        let spool = (records.iter().any(|r| r.metric.instrument() != Gauge) || self.spool.exists())
+        // Only a spool to replay is opened (and locked: another process may be replaying it).
+        let spool = self
+            .spool
+            .exists()
             .then(|| open_spool(&self.spool).ok())
             .flatten()
             .filter(|f| f.try_lock().is_ok());

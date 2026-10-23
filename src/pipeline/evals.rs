@@ -530,6 +530,8 @@ pub fn replay(
     home: &Path,
     pass: Duration,
 ) -> Result<CaseResult, String> {
+    // Its stages are no real intent's: only its runs' cost and tokens count (MET-16).
+    let _scope = crate::metrics::eval_scope();
     checkout::remove(home)?;
     fs::create_dir_all(home).map_err(|e| format!("{}: {e}", home.display()))?;
     let bare = scratch_intents(exes, home, case)?;
@@ -694,6 +696,7 @@ pub fn baseline(
     let out = dir(home).join(&run);
     let result = run_cases(config, exes, &cases, &out, PASS)?;
     result.write(&out.join("result.json"))?;
+    pass_rate(&result, "baseline");
     let db = Db::open(&home.db())?;
     let before = baseline_of(&db, home).ok().flatten();
     db.set_meta("eval_baseline", &run)?;
@@ -711,6 +714,14 @@ pub fn baseline(
         )?;
     }
     Ok(format!("evals: {}", result.summary()))
+}
+
+/// `towercab.eval.pass_rate` of a run, 0–1 (MET-25); none without cases.
+fn pass_rate(r: &RunResult, kind: &str) {
+    if r.total > 0 {
+        let m = crate::metrics::Metric::EvalPassRate;
+        crate::metrics::gauge(m, r.rate / 100.0, &[("kind", kind)]);
+    }
 }
 
 /// `towercab eval --cases <dir> --out <file>`: those cases with this binary (scratch homes next
@@ -934,6 +945,7 @@ pub fn pr(config: &Config, home: &Home, exes: &Exes, n: u64) -> Result<String, S
         return Err(failed(format!("eval run failed: {status}")));
     }
     let result = RunResult::read(&file).map_err(failed)?;
+    pass_rate(&result, "pr");
     let db = Db::open(&home.db())?;
     let base = baseline_of(&db, home).ok().flatten();
     let v = compare(&result, base.as_ref());

@@ -6,7 +6,9 @@ use serde_json::{Value, json};
 
 use crate::autonomy::{self, Ci, GateIn, PrKind, RepoState};
 use crate::handler::{ChildEnd, Ctx, Handler, Outcome, Progress, StepError};
+use crate::indicators;
 use crate::machine::{Door, Waiting};
+use crate::metrics::{self, Ev, Metric};
 use crate::mission::Mission;
 use crate::writer::{self, Checks, Inputs};
 
@@ -171,6 +173,54 @@ impl Gate {
         })
     }
 
+    /// The PR is the Towercab repo's (`[repos]`' entry named `towercab`, PIP-33).
+    fn towercab_pr(cx: &Ctx<'_>, m: &Mission) -> Result<bool, StepError> {
+        let github = gh::github(cx, m)?;
+        Ok(super::evals::towercab_repo(cx.config).is_some_and(|r| r.github == github))
+    }
+
+    /// The gate's first decision on a head (MET-25, MET-26): each review finding by `path`
+    /// (`auto`: it merges), and a Towercab PR's evals as read (`pass`/`drop`).
+    fn count(m: &Mission, data: &Data, g: &autonomy::Gate, evals: Option<bool>) {
+        let ev = Ev::of(m);
+        let path = match g {
+            autonomy::Gate::Merge => "auto",
+            autonomy::Gate::Approval(_) => "approval",
+        };
+        let findings = data
+            .get("review")
+            .and_then(|r| r.get("result"))
+            .and_then(|r| r.get("findings"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for f in findings {
+            let s = |k: &str| {
+                f.get(k)
+                    .and_then(Value::as_str)
+                    .unwrap_or("none")
+                    .to_string()
+            };
+            let (pass, policy, severity) = (s("pass"), s("policy"), s("severity"));
+            metrics::add(
+                Metric::ReviewFindings,
+                1.0,
+                &[
+                    ("repo", &m.repo),
+                    ("pass", &pass),
+                    ("policy", &policy),
+                    ("severity", &severity),
+                    ("path", path),
+                ],
+                &ev,
+            );
+        }
+        if let Some(red) = evals {
+            let result = if red { "drop" } else { "pass" };
+            metrics::add(Metric::EvalGate, 1.0, &[("result", result)], &ev);
+        }
+    }
+
     /// `towercab/evals` red on the head (PIP-33): only on the Towercab repo (`[repos]`' entry
     /// named `towercab`); absent or pending → `None` (poll).
     fn evals_red(cx: &Ctx<'_>, m: &Mission) -> Result<Option<bool>, StepError> {
@@ -231,11 +281,16 @@ impl Gate {
         let old = data.get("gate").cloned().unwrap_or(Value::Null);
         let commented = old.get("commented").cloned().unwrap_or(Value::Null);
         let mut hold_why = None;
+        // The Towercab PR's `towercab/evals` as read (MET-25).
+        let mut evals_read = None;
         // `towercab/evals` only matters for a merge: a gate that goes to me anyway doesn't
         // wait for it. Absent or pending → poll, at most `evals::BOUND` on this head.
         if matches!(g, autonomy::Gate::Merge) {
             match Self::evals_red(cx, m)? {
                 Some(red) => {
+                    if Self::towercab_pr(cx, m)? {
+                        evals_read = Some(red);
+                    }
                     g = autonomy::gate(&GateIn {
                         evals_red: red,
                         ..gin
@@ -252,7 +307,8 @@ impl Gate {
                     if !(cx.timeouts && now - since >= bound) {
                         data.set(
                             "gate",
-                            json!({"head": head, "evals_since": since, "commented": commented}),
+                            json!({"head": head, "evals_since": since, "commented": commented,
+                                   "counted": old.get("counted").cloned().unwrap_or(Value::Null)}),
                         );
                         cx.record(m, "decide", &[("data", data.text().into())])?;
                         return Ok(Progress::Poll { after: EVALS_POLL });
@@ -265,6 +321,11 @@ impl Gate {
                 }
             }
         }
+        let label = indicators::gate_label(&g, a);
+        // Counted once per head (my continue re-runs the gate on it).
+        if old.get("counted").and_then(Value::as_str) != Some(head.as_str()) {
+            Self::count(m, &data, &g, evals_read);
+        }
         match g {
             autonomy::Gate::Merge => {
                 let verdict = match a {
@@ -273,7 +334,8 @@ impl Gate {
                 };
                 data.set(
                     "gate",
-                    json!({"head": head, "verdict": verdict, "commented": commented}),
+                    json!({"head": head, "verdict": verdict, "commented": commented,
+                           "label": label, "counted": head}),
                 );
                 Ok(Progress::Done(Outcome::ok().with("data", data.text())))
             }
@@ -281,7 +343,8 @@ impl Gate {
                 let hold = hold_why.unwrap_or_else(|| hold.to_string());
                 data.set(
                     "gate",
-                    json!({"head": head, "hold": hold, "commented": commented}),
+                    json!({"head": head, "hold": hold, "commented": commented,
+                           "label": label, "counted": head}),
                 );
                 let m = cx.record(m, "comment", &[("data", data.text().into())])?;
                 self.comment(cx, &m)

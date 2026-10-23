@@ -397,6 +397,8 @@ impl Build {
                         let plan = PlanResult::from_json(plan).map_err(StepError::Bug)?;
                         let why = w.get("plan_why").and_then(Value::as_str);
                         write_plan(cx, &m, &mut data, &plan, why)?;
+                        // Plan drift's `updated` (MET-24).
+                        data.set("plan_updated", Value::Bool(true));
                     }
                     let before = pgit::rev(cx, &cx.checkout(&m), "HEAD")?;
                     data.set("before", before);

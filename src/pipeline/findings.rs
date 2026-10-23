@@ -38,13 +38,24 @@ pub fn record(
         let Some(rule) = f.rule.as_deref().and_then(rule_key) else {
             continue;
         };
-        added += conn
+        let n = conn
             .execute(
                 "INSERT OR IGNORE INTO findings (repo, rule, pr, mission, at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![repo, rule, pr as i64, mission, at],
             )
             .map_err(sql)?;
+        if n > 0 {
+            // The same mistake in another PR (MET-24).
+            let ev = crate::metrics::Ev {
+                pr: Some(pr),
+                ..crate::metrics::Ev::none()
+            };
+            if let Err(e) = crate::indicators::repeated(conn, repo, &rule, pr, &ev) {
+                eprintln!("towercab: {repo}#{pr}: metrics: {e}");
+            }
+        }
+        added += n;
     }
     Ok(added)
 }

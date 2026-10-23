@@ -231,15 +231,15 @@ pub fn backoff(n: u32) -> Duration {
 /// timestamp) is none, so the run isn't retried every pass. `since` = now unless the row's
 /// cooldown is still running. Returns `until`.
 pub fn cool(conn: &Connection, limit: &Limit, now: f64) -> Result<f64, String> {
-    let backoffs: i64 = conn
+    let (backoffs, old_until): (i64, Option<f64>) = conn
         .query_row(
-            "SELECT backoffs FROM cooldowns WHERE provider = ?1 AND model = ?2",
+            "SELECT backoffs, until FROM cooldowns WHERE provider = ?1 AND model = ?2",
             params![CLAUDE, limit.model],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, Some(r.get(1)?))),
         )
         .optional()
         .map_err(sql)?
-        .unwrap_or(0);
+        .unwrap_or((0, None));
     let reset = limit
         .reset
         .map(|t| t.timestamp_micros() as f64 / 1e6 + RESET_MARGIN)
@@ -269,6 +269,7 @@ pub fn cool(conn: &Connection, limit: &Limit, now: f64) -> Result<f64, String> {
         ],
     )
     .map_err(sql)?;
+    crate::indicators::cooled(&limit.model, old_until, until, now);
     Ok(until)
 }
 

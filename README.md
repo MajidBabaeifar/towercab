@@ -74,6 +74,9 @@ docker compose -f ops/docker-compose.yml up -d   # Grafana on http://localhost:3
 towercab telemetry on                            # your Claude Code sessions export to it
 ```
 
+The loop sends its own metrics and events (`service.name=towercab-loop`, `specs/metrics.md`) to
+`[metrics].endpoint`; while that is down they wait in `<home>/metrics.jsonl`.
+
 ## CI
 
 `.github/workflows/ci.yml` on every PR and push to `main`: job `rust` (`cargo fmt --check`, `cargo clippy

@@ -34,8 +34,8 @@ One Rust crate at the root; the Python version lives on branch `python`.
 - `src/repo/`: `CLAUDE.md`/`REVIEW.md`/`TOWERCAB.md` from `origin/<base>` (`load`), `protected.rs`, `protect`.
 - `src/pipeline/` (pipeline.md **Code**): a handler per stage, state in `missions.data`, Claude runs (`runs.rs`),
   `evals.rs`, `findings.rs`; `prompts/*.md`; `src/writer.rs` (PR text). Tests: `tests/pipe_*.rs`, `common/pipe.rs`.
-- `src/metrics.rs` (metrics.md **Code**): `METRICS`, a per-thread buffer, `Sink` (OTLP, spool); `telemetry.rs`.
-  Tests send to a dead endpoint (`common::NO_METRICS`), never a real collector.
+- `src/metrics.rs` (metrics.md **Code**): `METRICS`, a per-thread buffer, `Sink` (OTLP, spool); `indicators.rs`
+  (where each metric comes from: `machine::apply`/`enter`, handlers); `telemetry.rs`. Tests: a dead endpoint (`common::NO_METRICS`).
 
 ## Things Claude gets wrong here
 

@@ -193,6 +193,15 @@ impl Handler for Deploy {
         if let Some(sha) = &seen {
             d["sha"] = json!(sha);
             if contains(cx, m, &merge, sha)? {
+                if self.seq == Seq::Intent {
+                    // DORA (MET-26): `live` is staging when a release block follows it.
+                    let env = if repo.towercab.release.is_some() {
+                        "staging"
+                    } else {
+                        "production"
+                    };
+                    crate::indicators::deployed(cx, m, env);
+                }
                 data.set("deploy", d);
                 return Ok(Progress::Done(Outcome::ok().with("data", data.text())));
             }

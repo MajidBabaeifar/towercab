@@ -749,7 +749,7 @@ impl ClaudeResult {
 
 /// The last stdout line that is a JSON object with `type: "result"` (or all of stdout, when it
 /// is one such object over several lines).
-fn result_of(stdout: &str) -> Result<ClaudeResult, String> {
+pub fn result_of(stdout: &str) -> Result<ClaudeResult, String> {
     let is_result =
         |v: &Value| v.is_object() && v.get("type").and_then(Value::as_str) == Some("result");
     let found = stdout

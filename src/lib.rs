@@ -20,6 +20,7 @@ pub mod github;
 pub mod handler;
 pub mod home;
 pub mod http;
+pub mod indicators;
 pub mod intents;
 pub mod limits;
 pub mod machine;

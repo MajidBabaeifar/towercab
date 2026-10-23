@@ -75,6 +75,7 @@ impl Release {
         if let Some(sha) = deployed(cx, m, &block.deploy)?
             && contains(cx, m, merge, &sha)?
         {
+            crate::indicators::deployed(cx, m, "production");
             data.set("release", r);
             let Some(line) = &block.e2e else {
                 let m = cx.record(m, "wait", &[("data", data.text().into())])?;

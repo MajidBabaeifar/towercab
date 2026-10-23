@@ -118,7 +118,8 @@ fn test_gate_handler() {
     );
     assert_eq!(
         p.data(ID)["gate"],
-        json!({"head": head, "verdict": "a4 approved", "commented": null})
+        json!({"head": head, "verdict": "a4 approved", "commented": null, "label": "a4",
+               "counted": head})
     );
     assert!(p.gh.find("pr comment").is_empty());
     // a3: to me, with the review's verdicts in the text.
