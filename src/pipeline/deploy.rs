@@ -44,17 +44,25 @@ pub fn merge_of(seq: Seq, m: &Mission) -> Option<String> {
     }
 }
 
-/// Another unfinished mission of the repo with a lower id is in `deploy`, `e2e`, `release`,
-/// `revert_deploy` or `revert_e2e`: this one waits its turn.
+/// This one waits its turn on the repo's staging: a revert (`revert_deploy`, `revert_e2e`)
+/// behind a lower-id revert there only; an intent's `deploy`, `e2e`, `release` behind a revert
+/// mission on its way (`rollback` … `revert_e2e`: staging still has the broken merge) and a
+/// lower-id intent in `deploy`, `e2e` or `release`.
 pub fn behind_other(cx: &Ctx<'_>, m: &Mission) -> Result<bool, StepError> {
+    let sql = if m.kind == crate::machine::Kind::Revert {
+        "SELECT EXISTS (SELECT 1 FROM missions WHERE repo = ?1 AND id < ?2
+           AND stage IN ('revert_deploy', 'revert_e2e'))"
+    } else {
+        "SELECT EXISTS (SELECT 1 FROM missions WHERE repo = ?1 AND id <> ?2
+           AND (stage IN ('rollback', 'revert', 'revert_ci', 'revert_merge', 'revert_deploy',
+                          'revert_e2e')
+                OR (id < ?2 AND stage IN ('deploy', 'e2e', 'release'))))"
+    };
     cx.db
         .conn()
-        .query_row(
-            "SELECT EXISTS (SELECT 1 FROM missions WHERE repo = ?1 AND id < ?2
-               AND stage IN ('deploy', 'e2e', 'release', 'revert_deploy', 'revert_e2e'))",
-            rusqlite::params![m.repo, m.id],
-            |r| r.get::<_, bool>(0),
-        )
+        .query_row(sql, rusqlite::params![m.repo, m.id], |r| {
+            r.get::<_, bool>(0)
+        })
         .map_err(|e| StepError::Bug(crate::db::sql(e)))
 }
 
@@ -65,17 +73,21 @@ pub fn deployed(cx: &Ctx<'_>, m: &Mission, at: &Where) -> Result<Option<String>,
     match at {
         Where::Env(env) => {
             let github = gh::github(cx, m)?;
-            let path = format!("repos/{github}/deployments?environment={env}&per_page=20");
+            let path = format!(
+                "repos/{github}/deployments?environment={}&per_page=20",
+                encode(env)
+            );
             let out = gh::gh(cx, m, &["api", &path])?;
             for (id, sha) in gh::deployments(&out).map_err(StepError::Bug)? {
                 let path = format!("repos/{github}/deployments/{id}/statuses");
                 let out = gh::gh(cx, m, &["api", &path])?;
                 let v: Value = serde_json::from_str(&out)
                     .map_err(|e| StepError::Bug(format!("gh api {path}: {e}")))?;
-                let ok = v.as_array().is_some_and(|a| {
-                    a.iter()
-                        .any(|s| s.get("state").and_then(Value::as_str) == Some("success"))
-                });
+                // The newest status (GitHub lists them newest first) says where it stands.
+                let ok = v
+                    .as_array()
+                    .and_then(|a| a.first())
+                    .is_some_and(|s| s.get("state").and_then(Value::as_str) == Some("success"));
                 if ok {
                     return Ok(Some(sha));
                 }
@@ -110,6 +122,9 @@ pub fn compare(
 
 /// The deployed `sha` contains `merge`: the same commit, or compare `ahead` / `identical`.
 pub fn contains(cx: &Ctx<'_>, m: &Mission, merge: &str, sha: &str) -> Result<bool, StepError> {
+    if sha.is_empty() || merge.is_empty() {
+        return Ok(false);
+    }
     if merge.starts_with(sha) || sha.starts_with(merge) {
         return Ok(true);
     }
@@ -117,6 +132,18 @@ pub fn contains(cx: &Ctx<'_>, m: &Mission, merge: &str, sha: &str) -> Result<boo
         compare(cx, m, merge, sha)?.as_deref(),
         Some("ahead" | "identical")
     ))
+}
+
+/// A query value percent-encoded (all but `A-Za-z0-9-._~`).
+pub fn encode(v: &str) -> String {
+    v.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 /// The first 7 characters of a sha.

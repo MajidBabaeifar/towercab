@@ -922,6 +922,10 @@ pub fn append_notes(path: &Path, note: Note, text: &str) -> Result<(), String> {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
                 Err(e) => return Err(err(e)),
             };
+            // Appended again (a re-entry after a crash): once.
+            if all.ends_with(&format!("Repair: {text}")) {
+                return Ok(());
+            }
             if !all.is_empty() {
                 all.push_str("\n\n");
             }

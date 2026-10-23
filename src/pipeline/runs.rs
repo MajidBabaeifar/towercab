@@ -41,6 +41,12 @@ pub struct Start {
     pub deny_write: Vec<PathBuf>,
     pub guard: bool,
     pub verifier: Option<VerifierNet>,
+    /// `missions.feedback_seen`, recorded with the run's step: my comments its prompt carries
+    /// count as seen only once the run is on its way (PIP-21).
+    pub feedback_seen: Option<String>,
+    /// The recorded run again ([`restart`]): its number kept, a `New` session too (a run that
+    /// never started); otherwise a `New` session is always a new run.
+    pub again: bool,
 }
 
 impl Start {
@@ -58,6 +64,8 @@ impl Start {
             deny_write: Vec::new(),
             guard: false,
             verifier: None,
+            feedback_seen: None,
+            again: false,
         }
     }
 }
@@ -96,24 +104,33 @@ fn kind_of(s: &str) -> Option<RunKind> {
 
 /// Records the run's step (its number `n.<kind>` and `data.run` with it), assembles the policy
 /// plugin (PIP-27), writes the run's files with the base `CLAUDE.md` (PIP-24) → `Spawn`. A
-/// re-entry at `st.step` with a `Resume` session (a cut-off, a limit wait, a backoff) keeps the
-/// number and its prompt is `claude::CONTINUE`.
+/// re-entry at `st.step` ([`restart`]) keeps the number; a new one is one no earlier attempt's
+/// run used, so its output files exist only once its child started.
 pub fn start(cx: &Ctx<'_>, m: &Mission, st: Start) -> Result<Progress, StepError> {
-    // A new session is a first run, never a re-entry.
-    let reentry =
-        !st.step.is_empty() && m.step == st.step && !matches!(st.session, SessionArg::New(_));
+    let reentry = !st.step.is_empty()
+        && m.step == st.step
+        && (st.again || !matches!(st.session, SessionArg::New(_)));
     let mut data = Data::of(m);
-    let n = if reentry && data.n(st.kind.as_str()) > 0 {
+    let keep = reentry && data.n(st.kind.as_str()) > 0;
+    let n = if keep {
         data.n(st.kind.as_str())
     } else {
-        data.next_n(st.kind.as_str())
-    };
-    let (session, prompt) = match (&st.session, reentry) {
-        (SessionArg::Resume(u), true) => {
-            (SessionArg::Resume(u.clone()), claude::CONTINUE.to_string())
+        // A number no earlier attempt's run used (`runs/<id>/` is the intent's): its files
+        // exist only once its child started (`restart`).
+        let runs = cx.runs(m);
+        let used = |n: u32| {
+            ["prompt", "json", "err"]
+                .iter()
+                .any(|x| runs.join(format!("{}-{n}.{x}", st.kind.as_str())).exists())
+        };
+        let mut n = data.next_n(st.kind.as_str());
+        while used(n) {
+            n = data.next_n(st.kind.as_str());
         }
-        _ => (st.session.clone(), st.prompt.clone()),
+        n
     };
+    let session = st.session.clone();
+    let prompt = st.prompt.clone();
     let repo = match files(cx, m) {
         Ok(f) => f,
         Err(o) => return Ok(Progress::Done(o)),
@@ -123,14 +140,22 @@ pub fn start(cx: &Ctx<'_>, m: &Mission, st: Start) -> Result<Progress, StepError
     } else {
         "none".to_string()
     };
+    let new = match &session {
+        SessionArg::New(_) => "new",
+        SessionArg::Resume(_) => "resume",
+        SessionArg::None => "none",
+    };
     data.set(
         "run",
         json!({"kind": st.kind.as_str(), "model": st.model, "step": st.step, "n": n,
-               "policies": policies, "eval": st.eval}),
+               "policies": policies, "eval": st.eval, "session": new}),
     );
     let mut set: Vec<(&str, rusqlite::types::Value)> = vec![("data", data.text().into())];
     if worker_kind(st.kind) && matches!(session, SessionArg::New(_)) {
         set.push(("session_used", 1.into()));
+    }
+    if let Some(seen) = &st.feedback_seen {
+        set.push(("feedback_seen", seen.clone().into()));
     }
     let m = cx.record(m, &st.step, &set)?;
     let mut run = Run::new(
@@ -164,9 +189,21 @@ pub fn start(cx: &Ctx<'_>, m: &Mission, st: Start) -> Result<Progress, StepError
             .collect();
         run.bash = cx.repo(&m).map_err(StepError::Bug)?.bash.clone();
     }
+    let f = run.files();
+    let asked = asked_of(&f.prompt);
+    // A continue keeps what the run was asked (a new session needs it, LOOP-7).
+    if run.prompt == claude::CONTINUE && !asked.exists() && f.prompt.is_file() {
+        std::fs::copy(&f.prompt, &asked)
+            .map_err(|e| StepError::Bug(format!("{}: {e}", asked.display())))?;
+    }
     let spec =
         claude::prepare(&run, &repo.claude_md, cx.config, cx.exes).map_err(StepError::Bug)?;
     Ok(Progress::Spawn(spec))
+}
+
+/// `<kind>-<n>.asked`: the prompt of a run continued with `claude::CONTINUE`.
+fn asked_of(prompt: &std::path::Path) -> PathBuf {
+    prompt.with_extension("asked")
 }
 
 /// The run recorded in `data.run`: (kind, model, step, eval).
@@ -191,32 +228,48 @@ fn recorded(m: &Mission) -> Result<(RunKind, String, String, bool), StepError> {
 }
 
 /// The recorded run again at `m.step` (re-entered after a cut-off, a limit wait or a backoff):
-/// the same number and session, `claude::CONTINUE` (the writer: its prompt again).
+/// the same number and session, `claude::CONTINUE` (the writer: its prompt again). A run that
+/// never started (queued for a slot at a shutdown or crash: no output files) gets its own
+/// prompt with its own session flag (`--session-id` for a session's first run).
 pub fn restart(cx: &Ctx<'_>, m: &Mission) -> Result<Progress, StepError> {
     let (kind, model, _, eval) = recorded(m)?;
     let data = Data::of(m);
     let n = data.n(kind.as_str());
-    let session = if worker_kind(kind) {
-        SessionArg::Resume(m.session.clone())
-    } else if kind.toolless() {
-        SessionArg::None
-    } else {
-        SessionArg::Resume(m.run_session.clone().unwrap_or_default())
+    let base = cx.runs(m).join(format!("{}-{n}", kind.as_str()));
+    let started = base.with_extension("json").exists() || base.with_extension("err").exists();
+    let first = !started
+        && data
+            .get("run")
+            .and_then(|r| r.get("session"))
+            .and_then(Value::as_str)
+            == Some("new");
+    let run_session = m.run_session.clone().unwrap_or_default();
+    let session = match (worker_kind(kind), kind.toolless(), first) {
+        (true, _, true) => SessionArg::New(m.session.clone()),
+        (true, _, false) => SessionArg::Resume(m.session.clone()),
+        (false, true, _) => SessionArg::None,
+        (false, false, true) => SessionArg::New(run_session),
+        (false, false, false) => SessionArg::Resume(run_session),
     };
-    let prompt = match session {
-        SessionArg::None => prompt_file(cx, m, kind, n),
-        _ => claude::CONTINUE.to_string(),
+    let prompt = if !started || matches!(session, SessionArg::None) {
+        prompt_file(cx, m, kind, n)
+    } else {
+        claude::CONTINUE.to_string()
     };
     let mut st = Start::new(kind, &m.step, &model, prompt);
     st.schema = schema_of(kind);
     st.session = session;
     st.eval = eval;
+    st.again = true;
     start(cx, m, st)
 }
 
-/// What run `n` of `kind` was asked (its `.prompt` file; gone: empty).
+/// What run `n` of `kind` was asked (its `.asked` file after a continue, else its `.prompt`;
+/// gone: empty).
 fn prompt_file(cx: &Ctx<'_>, m: &Mission, kind: RunKind, n: u32) -> String {
-    std::fs::read_to_string(cx.runs(m).join(format!("{}-{n}.prompt", kind.as_str())))
+    let prompt = cx.runs(m).join(format!("{}-{n}.prompt", kind.as_str()));
+    std::fs::read_to_string(asked_of(&prompt))
+        .or_else(|_| std::fs::read_to_string(&prompt))
         .unwrap_or_default()
 }
 

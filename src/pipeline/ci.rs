@@ -163,8 +163,8 @@ fn cancelled(c: &Check) -> bool {
 
 /// The checks in code (PIP-3): `towercab/*` ignored; within `grace` s of `pushed_at`, checks
 /// started before the push are ignored and none counted = pending (after it: `None`). A
-/// failed check → `Red`, else a cancelled one → `Cancel`, else any not passed → `Pending`,
-/// else `Green`.
+/// failed check → `Red`, else a cancelled one → `Cancel` (each only once every check of its
+/// Actions run completed), else any not passed → `Pending`, else `Green`.
 pub fn bucket(checks: &[Check], pushed_at: f64, now: f64, grace: f64) -> Bucket {
     let within = now - pushed_at < grace;
     let counted: Vec<&Check> = checks
@@ -179,9 +179,18 @@ pub fn bucket(checks: &[Check], pushed_at: f64, now: f64, grace: f64) -> Bucket 
             Bucket::None
         };
     }
+    // An Actions run with a job still going can't be rerun or its log read yet: its red jobs
+    // wait for it (pending).
+    let busy: BTreeSet<u64> = counted
+        .iter()
+        .filter(|c| c.kind == CheckKind::CheckRun && c.status != "COMPLETED")
+        .filter_map(|c| c.run)
+        .collect();
+    let settled = |c: &&&Check| c.run.is_none_or(|r| !busy.contains(&r));
     let red: Vec<Check> = counted
         .iter()
         .filter(|c| failed(c))
+        .filter(settled)
         .map(|c| (*c).clone())
         .collect();
     if !red.is_empty() {
@@ -190,6 +199,7 @@ pub fn bucket(checks: &[Check], pushed_at: f64, now: f64, grace: f64) -> Bucket 
     let cancel: Vec<Check> = counted
         .iter()
         .filter(|c| cancelled(c))
+        .filter(settled)
         .map(|c| (*c).clone())
         .collect();
     if !cancel.is_empty() {
@@ -292,7 +302,7 @@ impl Ci {
         }
         let Some(t) = self.target(m) else {
             return Ok(never_published(m).unwrap_or_else(|| {
-                Progress::Done(Outcome::bad_result(format!("{}: no PR for CI", m.label())))
+                Progress::Done(super::bug(format!("{}: no PR for CI", m.label())))
             }));
         };
         let github = gh::github(cx, m)?;
@@ -335,6 +345,12 @@ impl Ci {
         if ci.get("head").and_then(Value::as_str) != Some(current.as_str()) {
             ci = json!({"head": current, "reruns": [], "cancels": 0, "since": pushed_at});
         }
+        // My continue of `CI stuck` / `no CI checks appeared`: `ci_wait` again from now.
+        if m.step.is_empty()
+            && super::continued(cx.db.conn(), &m, m.stage).map_err(StepError::Bug)?
+        {
+            ci["continued"] = json!(now);
+        }
         if self.seq == Seq::Intent && mergeable == "CONFLICTING" {
             data.set("ci", ci);
             let m = cx.record(&m, "poll", &[("data", data.text().into())])?;
@@ -342,7 +358,10 @@ impl Ci {
             return Ok(Progress::Done(Outcome::event(Event::Conflict)));
         }
         let config = &cx.config.agent;
-        let waited = now - pushed_at >= config.ci_wait.as_secs_f64() && cx.timeouts;
+        let since = ci["continued"]
+            .as_f64()
+            .map_or(pushed_at, |c| c.max(pushed_at));
+        let waited = now - since >= config.ci_wait.as_secs_f64() && cx.timeouts;
         let mins = config.ci_wait.as_secs().div_ceil(60);
         let b = bucket(&all, pushed_at, now, config.ci_grace.as_secs_f64());
         let reruns: BTreeSet<u64> = ci["reruns"]

@@ -150,6 +150,10 @@ fn later(a: &str, b: &str) -> bool {
 /// My comments newer than `feedback_seen` (all of mine when it is unset); one without text (an
 /// approval on GitHub) says nothing to change.
 pub fn new_feedback<'a>(m: &Mission, pr: &'a PrState, me: &str) -> Vec<&'a Comment> {
+    // No `[github].me`: nobody's comments are mine (a deleted user's author is empty too).
+    if me.is_empty() {
+        return Vec::new();
+    }
     pr.comments
         .iter()
         .filter(|c| c.author.eq_ignore_ascii_case(me) && !c.body.trim().is_empty())

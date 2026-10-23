@@ -510,6 +510,17 @@ fn test_approved_computed_in_code() {
         added_fns(diff),
         BTreeSet::from(["test_login".to_string(), "test_login_twice".to_string()])
     );
+    // Any language; an existing test whose body a hunk edits counts too (its header).
+    let other = "+def test_py(x):\n+    test_called(1)\n+  it('test_js', () => {})\n\
+                 @@ -3,4 +3,5 @@ fn test_edited() {\n+    assert!(true);\n";
+    assert_eq!(
+        added_fns(other),
+        BTreeSet::from([
+            "test_edited".to_string(),
+            "test_js".to_string(),
+            "test_py".to_string()
+        ])
+    );
     let r = ReviewResult::from_json(&base()).unwrap();
     let (ok, why) = approved(
         &r,
@@ -521,4 +532,47 @@ fn test_approved_computed_in_code() {
     );
     assert!(!ok);
     assert_eq!(why, ["WEB-9: no spec row"]);
+}
+
+#[test]
+fn test_review_limit_after_its_wait() {
+    use towercab::handler::{Handler, Progress};
+    use towercab::pipeline::{Mode, review::Review};
+    // A usage limit: the first waits for the cooldown; the run after it hitting one too =
+    // not approved. That failed review isn't reused on the same diff: it runs again.
+    let mut p = login("a: 4\n");
+    for n in [4, 5] {
+        p.claude
+            .stderr(n, "Claude AI usage limit reached|1760540400")
+            .exit(n, 1);
+    }
+    p.step_to(ID, Stage::Review, 10);
+    p.step(ID);
+    let m = p.mission(ID);
+    assert_eq!(m.stage, Stage::Review);
+    assert!(m.limit_model.is_some(), "cooling");
+    assert_eq!(p.data(ID)["review_limited"], true);
+    let db = p.w.db();
+    db.conn().execute("DELETE FROM cooldowns", []).unwrap();
+    db.conn()
+        .execute(
+            "UPDATE missions SET limit_model = NULL, retry_at = NULL",
+            [],
+        )
+        .unwrap();
+    assert_eq!(p.step(ID), "261001-0900: review → gate");
+    let r = &p.data(ID)["review"];
+    assert_eq!(r["approved"], false);
+    assert!(
+        r["reasons"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("review: usage limit after its wait"),
+        "{r}"
+    );
+    assert_eq!(r["result"], Value::Null);
+    let mut m = p.mission(ID);
+    m.step = String::new();
+    let again = p.cx(|cx| Review::new(Mode::Live).step(cx, &m)).unwrap();
+    assert!(matches!(again, Progress::Spawn(_)), "{again:?}");
 }

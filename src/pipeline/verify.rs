@@ -159,8 +159,7 @@ impl Runner {
             data.set(key, state);
         }
         if self.lines.is_empty() {
-            let m = cx.record(m, m.step.as_str(), &[("data", data.text().into())])?;
-            let _ = m;
+            cx.record(m, m.step.as_str(), &[("data", data.text().into())])?;
             return Ok(LineEnd::Green(0));
         }
         let m = cx.record(m, &self.lines.step(1), &[("data", data.text().into())])?;
@@ -311,15 +310,12 @@ pub fn repair_or_wait(
     ))
 }
 
-/// The `verify` stage.
-pub struct Verify {
-    #[allow(dead_code)]
-    mode: Mode,
-}
+/// The `verify` stage (the same in `Mode::Eval`).
+pub struct Verify;
 
 impl Verify {
-    pub fn new(mode: Mode) -> Verify {
-        Verify { mode }
+    pub fn new(_mode: Mode) -> Verify {
+        Verify
     }
 
     fn runner(cx: &Ctx<'_>, m: &Mission) -> Result<Result<Runner, Outcome>, StepError> {

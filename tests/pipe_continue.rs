@@ -123,10 +123,34 @@ fn test_continue_by_waiting() {
     ] {
         assert_eq!(go(w), Next::Go(Stage::Build), "{w}");
     }
-    // A wait in design (no result) continued by removing `waiting`: the same mission resumes in
-    // build, repair counts reset.
+    // A wait before the build goes back to its stage; CI waits wait again; after the merge
+    // nothing is rebuilt: a failed release command runs again, a red production e2e is kept.
+    for (w, from) in [
+        (W::NoResult, Stage::Design),
+        (W::PrStateUnknown, Stage::Design),
+        (W::AnswerTheQuestion, Stage::Design),
+        (W::WorkerTimeout, Stage::Plan),
+        (W::CiStuck, Stage::Ci),
+        (W::NoCiChecks, Stage::Ci),
+        (W::ReleaseFailed, Stage::Release),
+    ] {
+        assert_eq!(continue_to(&w, from), Next::Go(from), "{w}");
+    }
+    assert_eq!(
+        continue_to(&W::ProductionE2eRed, Stage::Release),
+        Next::Go(Stage::Done)
+    );
+    // A wait in design (no result) continued by removing `waiting`: the same mission designs
+    // again (no build without a spec), repair counts reset.
     let mut p = pipe("a: 4\n");
     p.claude.answer(1, "").answer(2, "");
+    designs(&p, 3, "| WEB-1 | log in | test_login |\n", &["WEB-1"]);
+    p.gh.on("pr list *", &[("[]", "", 0)])
+        .on(
+            "pr create *",
+            &[("https://github.com/me/web/pull/7\n", "", 0)],
+        )
+        .on("api -X PATCH *", &[("{}", "", 0)]);
     p.step_to(ID, Stage::Blocked, 3);
     let m = p.mission(ID);
     let db = p.w.db();
@@ -147,11 +171,19 @@ fn test_continue_by_waiting() {
     });
     let t = p.w.transitions(ID);
     assert!(
-        t.contains(&("blocked".into(), "intent_continued".into(), "build".into())),
+        t.contains(&("blocked".into(), "intent_continued".into(), "design".into())),
         "{t:?}"
     );
     assert_eq!(p.w.missions(ID).len(), 1);
     assert_eq!(p.mission(ID).verify_repairs, 0);
+    // The design runs again in its session, and its spec gate stops it (a4 with a spec: no
+    // gate; the PR opens as a draft).
+    let Pipe { w, lp, .. } = &mut p;
+    w.until(lp.as_mut().unwrap(), 5, |w| {
+        w.stage(ID) == Some(Stage::Plan)
+    });
+    assert!(p.claude.stdin(3).contains("Add login"), "the design prompt");
+    assert_eq!(p.mission(ID).pr, Some(7));
     // `PR closed` (a stopped mission): my approve → attempt 2, fresh from base, nothing closed.
     let mut p = spec_waiting(&[("[]", "", 0)]);
     let mut closed = open_pr("x");
@@ -502,6 +534,19 @@ fn test_gh_failure_at_retry_asks_and_never_force_pushes() {
     for push in log.lines().filter(|l| l.contains(" push ")) {
         assert!(!push.contains("--force") && !push.contains(" +"), "{push}");
     }
+    // My continue: design again, adoption first: PR 7 adopted, never a second PR.
+    let creates = p.gh.find("pr create").len();
+    p.gh.replace("pr view 7 *", &[(&view("OPEN", &head1, None, ""), "", 0)]);
+    designs(&p, 2, "| WEB-1 | log in again | test_login |\n", &["WEB-1"]);
+    commands::queue(&p.w.db(), &Cmd::Approve(ID.into()), "cli").unwrap();
+    p.until(20, |w| w.stage(ID) == Some(Stage::ApprovalSpec));
+    assert!(
+        p.w.transitions(ID)
+            .contains(&("blocked".into(), "approve".into(), "design".into()))
+    );
+    assert_eq!(p.data(ID)["adopted"]["state"], "open");
+    assert_eq!(p.mission(ID).pr, Some(7));
+    assert_eq!(p.gh.find("pr create").len(), creates);
 }
 
 #[test]

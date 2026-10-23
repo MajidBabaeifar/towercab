@@ -28,6 +28,7 @@ pub fn read(cx: &Ctx<'_>, m: &Mission, pr: u64) -> Result<PrState, StepError> {
     };
     prs.read(&github, pr).map_err(|e| match e {
         GhError::Env(e) => StepError::Env(Fault::Github, e),
+        GhError::Failed(e) if gh::throttled(&e) => StepError::Env(Fault::Github, e),
         GhError::Failed(e) => StepError::Bug(e),
     })
 }

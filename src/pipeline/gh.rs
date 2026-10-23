@@ -27,8 +27,22 @@ pub fn try_gh(
     match cx.identity.gh(&github, args) {
         Ok(out) => Ok(Ok(out)),
         Err(GhError::Env(e)) => Err(StepError::Env(Fault::Github, e)),
+        Err(GhError::Failed(e)) if throttled(&e) => Err(StepError::Env(Fault::Github, e)),
         Err(GhError::Failed(e)) => Ok(Err(e)),
     }
+}
+
+static THROTTLED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)rate limit|\bhttp(?:/[0-9.]+)?:? 429\b|too many requests|abuse detection|something went wrong while executing your query",
+    )
+    .expect("throttled regex")
+});
+
+/// GitHub throttling (a primary or secondary rate limit, 429) or a transient GraphQL error: an
+/// outage to back off from (LOOP-10), never a refusal a poll counts as a bug.
+pub fn throttled(e: &str) -> bool {
+    THROTTLED.is_match(e)
 }
 
 /// [`try_gh`] where a refusal is a bug (`gh <first arg> <second>: <stderr>`).

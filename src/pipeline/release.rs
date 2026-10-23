@@ -124,30 +124,31 @@ impl Handler for Release {
                 e2e_mod::spawn(cx, m, &mut data, "e2e", &dir, &line)
             }
             "wait" => self.wait(cx, m, &block, &merge),
-            _ => {
+            step => {
                 let mut data = Data::of(m);
                 let ran = data
                     .get("release")
                     .and_then(|r| r.get("ran"))
                     .and_then(Value::as_str)
                     == Some(merge.as_str());
-                // `command` once per merge (recorded before it runs): entered again (deploy not
-                // seen, a cut-off) it only waits.
-                if ran {
+                // `command` once per merge (recorded right before its spawn): entered again
+                // (deploy not seen, a cut-off) it only waits; a spawn that never happened (its
+                // log never made: a crash, a refused start) runs it then.
+                let log = |n: u32| cx.runs(m).join(format!("release-{n}.log"));
+                let n = data.n("release");
+                if ran && (step != "command" || log(n).exists()) {
                     return self.wait(cx, m, &block, &merge);
                 }
-                let n = data.next_n("release");
-                data.set("release", json!({"ran": merge, "since": cx.tick.unix()}));
-                let m = cx.record(m, "command", &[("data", data.text().into())])?;
-                let dir = at_sha(cx, &m, &merge)?;
-                let runs = cx.runs(&m);
+                let n = if ran { n } else { data.next_n("release") };
+                let dir = at_sha(cx, m, &merge)?;
+                let runs = cx.runs(m);
                 std::fs::create_dir_all(&runs)
                     .map_err(|e| StepError::Bug(format!("{}: {e}", runs.display())))?;
-                let log = runs.join(format!("release-{n}.log"));
                 let line = block.command.replace("<sha>", &merge);
-                Ok(Progress::Spawn(sandbox::repo_command(
-                    cx, &m, &dir, &line, &log,
-                )?))
+                let spec = sandbox::repo_command(cx, m, &dir, &line, &log(n))?;
+                data.set("release", json!({"ran": merge, "since": cx.tick.unix()}));
+                cx.record(m, "command", &[("data", data.text().into())])?;
+                Ok(Progress::Spawn(spec))
             }
         }
     }
@@ -177,10 +178,16 @@ impl Handler for Release {
                                 .map_or("unknown".into(), |c| c.to_string())
                         ),
                     };
-                    return Ok(Progress::Done(Outcome::wait(
-                        Waiting::ReleaseFailed,
-                        crate::outbox::cut(&crate::outbox::one_line(&why), 300),
-                    )));
+                    // Not ran: my continue runs the command again (PIP-17).
+                    let mut data = Data::of(m);
+                    data.set("release", json!({}));
+                    return Ok(Progress::Done(
+                        Outcome::wait(
+                            Waiting::ReleaseFailed,
+                            crate::outbox::cut(&crate::outbox::one_line(&why), 300),
+                        )
+                        .with("data", data.text()),
+                    ));
                 }
                 self.wait(cx, m, &block, &merge)
             }

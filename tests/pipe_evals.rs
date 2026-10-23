@@ -105,7 +105,18 @@ fn posts(gh: &GhScript) -> Vec<(String, String, String)> {
 #[test]
 fn test_eval_case_written() {
     let (mut p, merge) = Pipe::merged("# Towercab\n", "towercab");
-    p.step_to(ID, Stage::Done, 10);
+    p.step_to(ID, Stage::Release, 10);
+    // Written again on the way (a re-entry after a crash): one case, one commit.
+    let m = p.mission(ID);
+    p.cx(|cx| evals::write_case(cx, &m)).unwrap();
+    p.cx(|cx| evals::write_case(cx, &m)).unwrap();
+    p.step_to(ID, Stage::Done, 4);
+    let eval_commits = p
+        .intents_log()
+        .iter()
+        .filter(|l| l.as_str() == format!("towercab: eval {ID}"))
+        .count();
+    assert_eq!(eval_commits, 1);
     let m = p.mission(ID);
     let text = p
         .intents_file(&format!("evals/{ID}.json"))
@@ -250,7 +261,7 @@ fn test_eval_replays_case() {
     let r = evals::run_cases(
         &p.w.config,
         &p.exes,
-        &[c],
+        std::slice::from_ref(&c),
         &p.w.root.join("evals/r2"),
         Duration::from_millis(10),
     )
@@ -258,6 +269,22 @@ fn test_eval_replays_case() {
     assert_eq!(r.cases[ID].tries, 2, "{r:?}");
     assert!(!r.cases[ID].pass);
     assert!(r.cases[ID].why.starts_with("ended at"), "{r:?}");
+
+    // A case whose repo left `[repos]` fails alone: the run goes on.
+    let mut gone = c.clone();
+    gone.id = "261001-0800".into();
+    gone.repo = "api".into();
+    let r = evals::run_cases(
+        &p.w.config,
+        &p.exes,
+        &[gone],
+        &p.w.root.join("evals/r3"),
+        Duration::from_millis(10),
+    )
+    .unwrap();
+    let case = &r.cases["261001-0800"];
+    assert!(!case.pass);
+    assert!(case.why.starts_with("not set up: "), "{case:?}");
 }
 
 /// A `cargo` whose `build` (in a checkout) logs `<pwd> <args>` and makes

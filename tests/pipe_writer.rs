@@ -161,6 +161,21 @@ fn test_pr_writer() {
 
 #[test]
 fn test_no_ci_pr_text_says_nothing_ran() {
+    // The gate's inputs of a repo without checks (`ci.result = none`).
+    let (p, m) = picked();
+    set(
+        &p,
+        &m,
+        &[(
+            "data",
+            Sql::Text(json!({"ci": {"result": "none"}}).to_string()),
+        )],
+    );
+    let m = p.mission(ID);
+    let i = p
+        .cx(|cx| towercab::pipeline::gate::Gate::inputs(cx, &m))
+        .unwrap();
+    assert_eq!(i.checks.ci, "no CI checks on this repo, nothing ran");
     let mut i = inputs();
     i.checks.ci = ci_line("none");
     let text = template(&i);
@@ -444,6 +459,26 @@ fn test_ready_without_pr_does_not_crash() {
         )))
     );
     assert!(!p.cx(|cx| writer::patch(cx, &m, "body")));
+    // The stages that need a PR, stepped without one: the wait, never a crash.
+    use towercab::handler::Handler;
+    use towercab::pipeline::{Mode, gate::Gate, merge::Merge, review::Review};
+    let never = Progress::Done(Outcome::wait(
+        Waiting::NeverPublished,
+        "towercab/261001-0900-login has no PR",
+    ));
+    assert_eq!(
+        p.cx(|cx| Gate::new(Mode::Live).step(cx, &m)).unwrap(),
+        never
+    );
+    assert_eq!(
+        p.cx(|cx| Review::new(Mode::Live).step(cx, &m)).unwrap(),
+        never
+    );
+    assert_eq!(
+        p.cx(|cx| Merge::new(towercab::pipeline::ci::Seq::Intent, Mode::Live).step(cx, &m))
+            .unwrap(),
+        never
+    );
     let r = p
         .cx(|cx| wait_note(cx, &m, Waiting::CiRed, "red", ""))
         .unwrap();

@@ -263,6 +263,23 @@ fn test_build_result_schema() {
         "{}",
         intent_md(&p)
     );
+    // `lower_a`: the build lowers the intent's `a` (AUT-7), with its reason.
+    let mut p = Pipe::login("a: 4\n");
+    p.plans(2);
+    let mut lower = done("Adds login.");
+    lower["lower_a"] = json!(2);
+    lower["lower_why"] = json!("touches billing");
+    p.claude
+        .script(
+            3,
+            &(writes("src/login.rs", "pub fn login() {}\n")
+                + &writes("tests/login_test.sh", common::pipe::LOGIN_TEST)),
+        )
+        .answer(3, &FakeClaude::result(lower));
+    p.step_to(ID, Stage::Verify, 6);
+    let md = intent_md(&p);
+    assert!(md.contains("\na: 2\n"), "{md}");
+    assert!(md.contains("touches billing"), "{md}");
 }
 
 #[test]

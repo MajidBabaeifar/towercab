@@ -36,14 +36,15 @@ impl Merge {
         Merge { seq, mode }
     }
 
-    /// `merged → ok`: `merged_by` (`towercab` when the recorded `merge` step did it),
-    /// `merge_sha`.
+    /// `merged → ok`: `merged_by` (`towercab` when the recorded `merge` step did it, or its
+    /// `gh pr merge` went through: `merge.merging`), `merge_sha`.
     fn merged(m: &Mission, commit: Option<String>) -> Progress {
-        let by = if m.step == "merge" {
-            "towercab"
-        } else {
-            "human"
-        };
+        let ours = m.step == "merge"
+            || Data::of(m)
+                .get("merge")
+                .and_then(|c| c.get("merging"))
+                .is_some_and(|v| !v.is_null());
+        let by = if ours { "towercab" } else { "human" };
         let mut o = Outcome::ok().with("merged_by", by.to_string());
         if let Some(sha) = commit {
             o = o.with("merge_sha", sha);
@@ -64,12 +65,36 @@ impl Merge {
         if merged_at.is_some() {
             return Ok(Self::merged(m, commit));
         }
+        let mut data = Data::of(m);
+        let mut counts = data.get("merge").cloned().unwrap_or(Value::Null);
+        if counts.get("head").and_then(Value::as_str) != Some(head.as_str()) {
+            counts = json!({"head": head, "blocked": 0, "unknown": 0});
+        }
+        let count = |c: &Value, k: &str| c.get(k).and_then(Value::as_u64).unwrap_or(0);
+        // Merged by Towercab, not seen yet: only read until `mergedAt` (never a second merge).
+        if counts.get("merging").and_then(Value::as_str) == Some(head.as_str()) {
+            let k = count(&counts, "unknown") + 1;
+            counts["unknown"] = json!(k);
+            data.set("merge", counts);
+            if k > UNKNOWN_READS {
+                return Ok(Progress::Done(
+                    Outcome::wait(
+                        Waiting::ReviewAndMergePr,
+                        format!("merged, but not seen after {UNKNOWN_READS} reads"),
+                    )
+                    .with("data", data.text()),
+                ));
+            }
+            cx.record(m, "read", &[("data", data.text().into())])?;
+            return Ok(Progress::Poll {
+                after: UNKNOWN_AFTER,
+            });
+        }
         // No merge while my feedback is unhandled (LOOP-18).
         let prs = pr::read(cx, m, pr)?;
         if !crate::events::new_feedback(m, &prs, &pr::me(cx)).is_empty() {
             return Ok(Progress::Done(Outcome::event(Event::Feedback)));
         }
-        let mut data = Data::of(m);
         let gated = data
             .get("gate")
             .and_then(|g| g.get("head"))
@@ -79,11 +104,6 @@ impl Merge {
         if head != gated {
             return Ok(Progress::Done(Outcome::event(Event::HeadMoved)));
         }
-        let mut counts = data.get("merge").cloned().unwrap_or(Value::Null);
-        if counts.get("head").and_then(Value::as_str) != Some(head.as_str()) {
-            counts = json!({"head": head, "blocked": 0, "unknown": 0});
-        }
-        let count = |c: &Value, k: &str| c.get(k).and_then(Value::as_u64).unwrap_or(0);
         match state.as_str() {
             "CLEAN" | "HAS_HOOKS" => {
                 data.set("merge", counts);
@@ -109,6 +129,8 @@ impl Merge {
                 self.update(cx, &m, &head)
             }
             "DIRTY" => Ok(Progress::Done(Outcome::event(Event::Conflict))),
+            // A required check or rule still settling: read again after `ci_poll` (the head
+            // didn't move: CI, the verifier and the review would only repeat themselves).
             "BLOCKED" | "UNSTABLE" => {
                 let k = count(&counts, "blocked") + 1;
                 counts["blocked"] = json!(k);
@@ -122,14 +144,29 @@ impl Merge {
                         .with("data", data.text()),
                     ));
                 }
-                Ok(Progress::Done(
-                    Outcome::event(Event::HeadMoved).with("data", data.text()),
-                ))
-            }
-            "DRAFT" => {
-                gh::gh(cx, m, &["pr", "ready", &n, "-R", &github])?;
+                cx.record(m, "read", &[("data", data.text().into())])?;
                 Ok(Progress::Poll {
-                    after: Duration::ZERO,
+                    after: cx.config.agent.ci_poll,
+                })
+            }
+            // Counted with UNKNOWN: GitHub may keep showing a draft for a while.
+            "DRAFT" => {
+                let k = count(&counts, "unknown") + 1;
+                counts["unknown"] = json!(k);
+                data.set("merge", counts);
+                if k > UNKNOWN_READS {
+                    return Ok(Progress::Done(
+                        Outcome::wait(
+                            Waiting::ReviewAndMergePr,
+                            format!("still a draft after {UNKNOWN_READS} reads"),
+                        )
+                        .with("data", data.text()),
+                    ));
+                }
+                let m = cx.record(m, "read", &[("data", data.text().into())])?;
+                gh::gh(cx, &m, &["pr", "ready", &n, "-R", &github])?;
+                Ok(Progress::Poll {
+                    after: UNKNOWN_AFTER,
                 })
             }
             other => {
@@ -191,6 +228,12 @@ impl Merge {
         ];
         if let Err(e) = gh::try_gh(cx, m, &args)? {
             let low = e.to_lowercase();
+            if low.contains("already merged") {
+                // A merge GitHub has, not seen yet: read until `mergedAt`.
+                return Ok(Progress::Poll {
+                    after: UNKNOWN_AFTER,
+                });
+            }
             if low.contains("head branch was modified")
                 || low.contains("match-head-commit")
                 || low.contains("head commit")
@@ -203,6 +246,13 @@ impl Merge {
                 crate::outbox::cut(&crate::outbox::one_line(&e), 300),
             )));
         }
+        // It went through: a lagging read never merges again, and it was Towercab's.
+        let mut data = Data::of(m);
+        let mut counts = data.get("merge").cloned().unwrap_or(json!({}));
+        counts["merging"] = json!(head);
+        counts["unknown"] = json!(0);
+        data.set("merge", counts);
+        let m = &cx.record(m, "merge", &[("data", data.text().into())])?;
         let out = gh::gh(
             cx,
             m,
@@ -230,8 +280,17 @@ impl Merge {
                 m.label(),
                 crate::outbox::one_line(&e)
             );
+            return Ok(Progress::Done(Outcome::event(Event::HeadMoved)));
         }
-        Ok(Progress::Done(Outcome::event(Event::HeadMoved)))
+        // GitHub moves the head later (202): CI counts it as a push now, so the old head's
+        // green checks don't pass it again before the new head shows (PIP-3's grace).
+        let mut data = Data::of(m);
+        data.set("ci", Value::Null);
+        Ok(Progress::Done(
+            Outcome::event(Event::HeadMoved)
+                .with("pushed_at", cx.tick.unix())
+                .with("data", data.text()),
+        ))
     }
 }
 

@@ -322,11 +322,14 @@ fn test_continue_to() {
             "approve spec" => Next::Go(Stage::Plan),
             "review and merge PR" => Next::Go(Stage::Gate),
             "authorize release" => Next::Go(Stage::Release),
-            "e2e red after your merge (two-way)" => Next::Go(Stage::Done),
+            "e2e red after your merge (two-way)" | "production e2e red" => Next::Go(Stage::Done),
             "deploy not seen"
             | "revert failed"
             | "add CLAUDE.md verifying block"
-            | "fix repo files" => Next::Go(from),
+            | "fix repo files"
+            | "release failed"
+            | "CI stuck"
+            | "no CI checks appeared" => Next::Go(from),
             "crashed at build" => Next::Go(Stage::Build),
             "reverted, refine" | "PR closed" => Next::Fresh,
             _ => Next::Go(Stage::Build),
@@ -346,6 +349,16 @@ fn test_continue_to() {
         continue_to(&Waiting::FixRepoFiles, Stage::Pick),
         Next::Go(Stage::Pick)
     );
+    // Before the build there is nothing to resume: design or plan again.
+    for s in [Stage::Design, Stage::Plan] {
+        assert_eq!(continue_to(&Waiting::NoResult, s), Next::Go(s), "{s}");
+        assert_eq!(continue_to(&Waiting::PrStateUnknown, s), Next::Go(s), "{s}");
+        assert_eq!(
+            continue_to(&Waiting::AnswerTheQuestion, s),
+            Next::Go(s),
+            "{s}"
+        );
+    }
     // A revert or rehearsal has no worker: any other wait goes on where it stopped.
     for s in [Stage::RevertCi, Stage::RevertMerge, Stage::RehearseCi] {
         assert_eq!(continue_to(&Waiting::CiRed, s), Next::Go(s), "{s}");

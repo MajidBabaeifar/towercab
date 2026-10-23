@@ -315,6 +315,24 @@ fn test_revert_failure_freezes() {
     );
     assert_eq!(p.mission(ID).ci_repairs, 0);
     assert!(p.gh.find("run view").is_empty());
+    // The merge refused: revert failed with GitHub's words.
+    let (mut p, _) = at_revert(&live(), false);
+    p.step_to(ID, Stage::RevertCi, 3);
+    revert_ci_green(&p);
+    p.step(ID);
+    let branch = p.mission(ID).revert_branch.unwrap();
+    let head = origin_rev(&p, &format!("refs/heads/{branch}")).unwrap();
+    let clean = json!({"headRefOid": head, "mergeStateStatus": "CLEAN", "mergedAt": null, "mergeCommit": null});
+    p.gh.on(MERGE_VIEW, &[(&clean.to_string(), "", 0)])
+        .on("pr merge *", &[("", "Pull request is not mergeable", 1)]);
+    assert_eq!(
+        p.step(ID),
+        "261001-0900: revert_merge → blocked · revert failed"
+    );
+    assert_eq!(
+        p.mission(ID).why.as_deref(),
+        Some("revert merge refused: Pull request is not mergeable")
+    );
 }
 
 #[test]
@@ -505,6 +523,22 @@ fn test_triage_failure_no_revert() {
         p.mission(ID).waiting.as_deref(),
         Some("e2e red after your merge (unknown)")
     );
+    // Timed out: the same.
+    let (mut p, merge) = Pipe::merged(&live(), "human");
+    p.w.config.agent.review_timeout = std::time::Duration::from_secs(1);
+    p.open_with(Pipe::handlers());
+    p.deploys("staging", 1, &merge, "ahead");
+    p.e2e_exits(&[1, 1]);
+    p.claude.script(1, "sleep 5\n");
+    p.step_to(ID, Stage::E2e, 2);
+    p.step(ID);
+    p.step(ID);
+    let m = p.mission(ID);
+    assert_eq!(
+        m.waiting.as_deref(),
+        Some("e2e red after your merge (unknown)")
+    );
+    assert_eq!(m.why.as_deref(), Some("triage: timed out"));
 }
 
 /// A world without intents whose `web` is live with a rollback block; `api` isn't live. gh:

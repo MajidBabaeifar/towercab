@@ -71,6 +71,14 @@ pub fn overlay(cx: &Ctx<'_>, m: &Mission, files: &[String]) -> Result<PathBuf, S
     Ok(dir)
 }
 
+/// The proof's one rerun after 60 s was used (`proof.retried`).
+fn retried(data: &Data) -> bool {
+    data.get("proof")
+        .and_then(|p| p.get("retried"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 /// A proof is due: the design changed spec rows or its type is `fix` (no design: no).
 pub fn due(data: &Data) -> bool {
     data.get("design")
@@ -78,15 +86,12 @@ pub fn due(data: &Data) -> bool {
         .is_some_and(|d| !d.spec_ids.is_empty() || d.kind == "fix")
 }
 
-/// The `proof` stage.
-pub struct Proof {
-    #[allow(dead_code)]
-    mode: Mode,
-}
+/// The `proof` stage (the same in `Mode::Eval`).
+pub struct Proof;
 
 impl Proof {
-    pub fn new(mode: Mode) -> Proof {
-        Proof { mode }
+    pub fn new(_mode: Mode) -> Proof {
+        Proof
     }
 
     fn runner(cx: &Ctx<'_>, m: &Mission) -> Result<Result<Runner, Outcome>, StepError> {
@@ -152,7 +157,10 @@ impl Proof {
                 );
                 Ok(Progress::Done(Outcome::ok().with("data", data.text())))
             }
-            LineEnd::SetupRed { again: false, .. } | LineEnd::CheckRed { again: false, .. } => {
+            // Once per proof, not per line (PIP-30).
+            LineEnd::SetupRed { again: false, .. } | LineEnd::CheckRed { again: false, .. }
+                if !retried(&data) =>
+            {
                 if let Some(Value::Object(p)) = data.0.get_mut("proof") {
                     p.insert("retried".into(), Value::Bool(true));
                 }

@@ -832,19 +832,21 @@ pub fn continue_to(waiting: &Waiting, from: Stage) -> Next {
         Waiting::ApproveSpec => Next::Go(Stage::Plan),
         Waiting::ReviewAndMergePr => Next::Go(Stage::Gate),
         Waiting::AuthorizeRelease => Next::Go(Stage::Release),
-        Waiting::E2eRedAfterYourMerge(_) => Next::Go(Stage::Done),
+        // Kept: merged and live, no rebuild (PIP-20, PIP-34).
+        Waiting::E2eRedAfterYourMerge(_) | Waiting::ProductionE2eRed => Next::Go(Stage::Done),
         Waiting::DeployNotSeen
         | Waiting::RevertFailed
         | Waiting::AddVerifyingBlock
-        | Waiting::FixRepoFiles => Next::Go(from),
+        | Waiting::FixRepoFiles
+        | Waiting::ReleaseFailed
+        | Waiting::CiStuck
+        | Waiting::NoCiChecks => Next::Go(from),
         Waiting::CrashedAt(s) => Next::Go(*s),
         Waiting::RevertedRefine | Waiting::PrClosed => Next::Fresh,
         Waiting::AnswerTheQuestion
         | Waiting::CiRed
         | Waiting::ChecksRed
         | Waiting::TestsDontProve
-        | Waiting::NoCiChecks
-        | Waiting::CiStuck
         | Waiting::WorkerTimeout
         | Waiting::WorkerBudget
         | Waiting::NoResult
@@ -854,9 +856,10 @@ pub fn continue_to(waiting: &Waiting, from: Stage) -> Next {
         | Waiting::PrStateUnknown
         | Waiting::MergeFailed
         | Waiting::NeverPublished
-        | Waiting::ProtectedPathChanged
-        | Waiting::ReleaseFailed
-        | Waiting::ProductionE2eRed => match from.kind() {
+        | Waiting::ProtectedPathChanged => match from.kind() {
+            // Before the build there is no work to resume: design or plan again (the spec
+            // gate, the adoption and `plan.md` stay on the way).
+            Kind::Intent if matches!(from, Stage::Design | Stage::Plan) => Next::Go(from),
             Kind::Intent => Next::Go(Stage::Build),
             // A revert or rehearsal has no worker: it goes on where it stopped.
             Kind::Revert | Kind::Rehearsal => Next::Go(from),
@@ -1310,6 +1313,8 @@ pub fn enter(cx: &mut Ctx<'_>, m: &Mission) -> Result<Mission, String> {
     }
     if m.stage.finished() && m.checkout.starts_with("work/") {
         checkout::remove(&cx.checkout(m))?;
+        // The red→green proof's overlay, left by a mission that left `proof` early (PIP-30).
+        checkout::remove(&cx.home.root.join(format!("{}-proof", m.checkout)))?;
     }
     let hold = matches!(m.stage, Stage::Merge | Stage::RevertMerge | Stage::Rollback)
         && paused(cx.db.conn())?;

@@ -140,8 +140,9 @@ impl Rollback {
     /// Until the deploy no longer contains the merge (compare `behind` or `diverged`); the
     /// live block's timeout → on to the revert anyway.
     fn wait(&self, cx: &Ctx<'_>, m: &Mission, merge: &str) -> Result<Progress, StepError> {
-        let Ok(repo) = files(cx, m) else {
-            return Ok(Progress::Done(Outcome::ok()));
+        let repo = match files(cx, m) {
+            Ok(f) => f,
+            Err(o) => return Ok(Progress::Done(o)),
         };
         let Some(live) = repo.towercab.live else {
             return Ok(Progress::Done(Outcome::ok()));
@@ -192,24 +193,30 @@ impl Handler for Rollback {
             .merge_sha
             .clone()
             .ok_or_else(|| StepError::Bug(format!("{}: no merge sha to roll back", m.label())))?;
+        let mut data = Data::of(m);
+        let log = |n: u32| cx.runs(m).join(format!("rollback-{n}.log"));
+        // Once: recorded right before its spawn; re-entered after it started (its log made) it
+        // only waits.
+        let started = m.step == "command" && log(data.n("rollback")).exists();
         match m.step.as_str() {
-            // Recorded before it ran: once.
-            "command" | "wait" => self.wait(cx, m, &merge),
-            _ => {
+            "wait" => self.wait(cx, m, &merge),
+            "command" if started => self.wait(cx, m, &merge),
+            step => {
+                let n = if step == "command" {
+                    data.n("rollback")
+                } else {
+                    data.next_n("rollback")
+                };
                 let dir = at_sha(cx, m, &merge)?;
                 let parent = pgit::rev(cx, &dir, &format!("{merge}^1"))?;
-                let mut data = Data::of(m);
-                let n = data.next_n("rollback");
-                data.set("rollback", json!({"parent": parent}));
-                let m = cx.record(m, "command", &[("data", data.text().into())])?;
-                let runs = cx.runs(&m);
+                let runs = cx.runs(m);
                 std::fs::create_dir_all(&runs)
                     .map_err(|e| StepError::Bug(format!("{}: {e}", runs.display())))?;
-                let log = runs.join(format!("rollback-{n}.log"));
                 let line = block.command.replace("<sha>", &parent);
-                Ok(Progress::Spawn(sandbox::repo_command(
-                    cx, &m, &dir, &line, &log,
-                )?))
+                let spec = sandbox::repo_command(cx, m, &dir, &line, &log(n))?;
+                data.set("rollback", json!({"parent": parent}));
+                cx.record(m, "command", &[("data", data.text().into())])?;
+                Ok(Progress::Spawn(spec))
             }
         }
     }
@@ -313,7 +320,7 @@ impl Revert {
                 let m = cx.record(m, "pr", &[("data", data.text().into())])?;
                 self.pr(cx, &m)
             }
-            pgit::Push::Rejected(e) => Ok(Progress::Done(Outcome::wait(
+            pgit::Push::Rejected(e) | pgit::Push::Refused(e) => Ok(Progress::Done(Outcome::wait(
                 Waiting::RevertFailed,
                 format!(
                     "revert push of {branch} rejected: {}",

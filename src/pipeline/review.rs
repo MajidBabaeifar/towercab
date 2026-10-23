@@ -104,17 +104,32 @@ pub fn verified_by(specs_dir: &Path, ids: &[String]) -> BTreeMap<String, Vec<Str
     out
 }
 
-static ADDED_FN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\bfn\s+(test_[A-Za-z0-9_]+)\s*\(").expect("fn"));
+/// A test definition named `test_…`, in any language: `fn`/`def`/`func`/`function test_x(`
+/// (or `<` for generics), `test("test_x"` / `it('test_x'`.
+static ADDED_FN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"\b(?:fn|def|func|function)\s+(test_[A-Za-z0-9_]+)\s*[(<]|\b(?:test|it)\s*\(\s*["'`](test_[A-Za-z0-9_]+)"#,
+    )
+    .expect("test definition")
+});
 
-/// The `fn test_…(` names on the diff's added lines.
+/// The tests a diff adds or changes: each `test_…` definition ([`ADDED_FN`]) on an added line,
+/// or in a hunk header's context (`@@ … @@ fn test_x(`: a test whose body the hunk edits).
 pub fn added_fns(diff: &str) -> BTreeSet<String> {
     diff.lines()
-        .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
+        .filter_map(|l| {
+            if l.starts_with('+') && !l.starts_with("+++") {
+                Some(l)
+            } else if l.starts_with("@@") {
+                l.splitn(3, "@@").nth(2)
+            } else {
+                None
+            }
+        })
         .flat_map(|l| {
             ADDED_FN
                 .captures_iter(l)
-                .map(|c| c[1].to_string())
+                .filter_map(|c| c.get(1).or(c.get(2)).map(|x| x.as_str().to_string()))
                 .collect::<Vec<_>>()
         })
         .collect()
@@ -240,12 +255,21 @@ impl Review {
         }
         let (mb, pid) = Self::patch(cx, m)?;
         let mut data = Data::of(m);
+        // The same diff: its review again (a failed one, `result` null, runs again), the
+        // verdict computed anew (the verifier ran again on this head).
         if let Some(r) = data.get("review").cloned()
             && r.get("patch_id").and_then(Value::as_str) == Some(pid.as_str())
-            && r.get("result").is_some()
+            && let Some(result) = r
+                .get("result")
+                .filter(|v| !v.is_null())
+                .and_then(|v| ReviewResult::from_json(v).ok())
         {
+            let (ok, why, risk) = Self::verdict(cx, m, &data, &result)?;
             let mut r = r;
             r["head"] = json!(m.head);
+            r["approved"] = json!(ok);
+            r["reasons"] = json!(why);
+            r["risk_low"] = json!(risk);
             data.set("review", r);
             return Ok(Progress::Done(Outcome::ok().with("data", data.text())));
         }
@@ -332,27 +356,7 @@ impl Review {
         let mut data = Data::of(m);
         data.set("review_limited", Value::Null);
         let (approved_, reasons, risk) = match &result {
-            Ok(r) => {
-                let intent = intent(cx, m)?;
-                let ids = spec_ids(&data);
-                let dir = cx.checkout(m);
-                let tests = verified_by(&dir.join("specs"), &ids);
-                let base = cx.repo(m).map_err(StepError::Bug)?.base.clone();
-                let mb = pgit::merge_base(cx, &dir, &base)?;
-                let diff = pgit::run(cx, &dir, &["diff", &mb, "HEAD"])?;
-                let verifier = data
-                    .get("verifier")
-                    .and_then(|v| VerifierReport::from_json(v).ok());
-                let (ok, why) = approved(
-                    r,
-                    &intent,
-                    &ids,
-                    &tests,
-                    &added_fns(&diff),
-                    verifier.as_ref(),
-                );
-                (ok, why, risk_low(r))
-            }
+            Ok(r) => Self::verdict(cx, m, &data, r)?,
             Err(why) => (false, vec![format!("review: {why}")], false),
         };
         // PIP-36: the findings' rules, counted across PRs.
@@ -365,6 +369,34 @@ impl Review {
                    "approved": approved_, "reasons": reasons, "risk_low": risk}),
         );
         Ok(Progress::Done(Outcome::ok().with("data", data.text())))
+    }
+
+    /// PIP-5's verdict in code on the checkout's diff: (approved, reasons, risk low).
+    fn verdict(
+        cx: &Ctx<'_>,
+        m: &Mission,
+        data: &Data,
+        r: &ReviewResult,
+    ) -> Result<(bool, Vec<String>, bool), StepError> {
+        let intent = intent(cx, m)?;
+        let ids = spec_ids(data);
+        let dir = cx.checkout(m);
+        let tests = verified_by(&dir.join("specs"), &ids);
+        let base = cx.repo(m).map_err(StepError::Bug)?.base.clone();
+        let mb = pgit::merge_base(cx, &dir, &base)?;
+        let diff = pgit::run(cx, &dir, &["diff", &mb, "HEAD"])?;
+        let verifier = data
+            .get("verifier")
+            .and_then(|v| VerifierReport::from_json(v).ok());
+        let (ok, why) = approved(
+            r,
+            &intent,
+            &ids,
+            &tests,
+            &added_fns(&diff),
+            verifier.as_ref(),
+        );
+        Ok((ok, why, risk_low(r)))
     }
 
     fn ended(&self, cx: &Ctx<'_>, m: &Mission, r: ClaudeResult) -> Result<Progress, StepError> {

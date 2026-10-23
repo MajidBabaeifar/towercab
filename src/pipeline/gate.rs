@@ -171,11 +171,11 @@ impl Gate {
         })
     }
 
-    /// `towercab/evals` red on the head (PIP-33): only on the Towercab repo; absent or pending
-    /// → `None` (poll).
+    /// `towercab/evals` red on the head (PIP-33): only on the Towercab repo (`[repos]`' entry
+    /// named `towercab`); absent or pending → `None` (poll).
     fn evals_red(cx: &Ctx<'_>, m: &Mission) -> Result<Option<bool>, StepError> {
         let github = gh::github(cx, m)?;
-        if github.rsplit('/').next() != Some("towercab") {
+        if super::evals::towercab_repo(cx.config).is_none_or(|r| r.github != github) {
             return Ok(Some(false));
         }
         let head = m.head.clone().unwrap_or_default();
@@ -214,29 +214,57 @@ impl Gate {
         let state = RepoState::read(cx.db.conn(), &m.repo, &repo_files.towercab)?;
         let cap = state.cap();
         let a = autonomy::effective(m.a_at_pick, intent.a(), cap);
-        let Some(evals_red) = Self::evals_red(cx, m)? else {
-            let m = cx.record(m, "decide", &[])?;
-            let _ = m;
-            return Ok(Progress::Poll { after: EVALS_POLL });
-        };
         let mut data = Data::of(m);
         let review = review_of(&data);
-        let g = autonomy::gate(&GateIn {
+        let gin = GateIn {
             kind: PrKind::Intent,
             frozen: state.frozen,
             cap,
             a,
             ci: ci_of(&data),
             unlock: !intent.unlock().is_empty(),
-            evals_red,
+            evals_red: false,
             review,
-        });
+        };
+        let mut g = autonomy::gate(&gin);
         let head = m.head.clone().unwrap_or_default();
-        let commented = data
-            .get("gate")
-            .and_then(|g| g.get("commented"))
-            .cloned()
-            .unwrap_or(Value::Null);
+        let old = data.get("gate").cloned().unwrap_or(Value::Null);
+        let commented = old.get("commented").cloned().unwrap_or(Value::Null);
+        let mut hold_why = None;
+        // `towercab/evals` only matters for a merge: a gate that goes to me anyway doesn't
+        // wait for it. Absent or pending → poll, at most `evals::BOUND` on this head.
+        if matches!(g, autonomy::Gate::Merge) {
+            match Self::evals_red(cx, m)? {
+                Some(red) => {
+                    g = autonomy::gate(&GateIn {
+                        evals_red: red,
+                        ..gin
+                    })
+                }
+                None => {
+                    let now = cx.tick.unix();
+                    let since = old
+                        .get("evals_since")
+                        .and_then(Value::as_f64)
+                        .filter(|_| old.get("head").and_then(Value::as_str) == Some(&head))
+                        .unwrap_or(now);
+                    let bound = super::evals::BOUND.as_secs_f64();
+                    if !(cx.timeouts && now - since >= bound) {
+                        data.set(
+                            "gate",
+                            json!({"head": head, "evals_since": since, "commented": commented}),
+                        );
+                        cx.record(m, "decide", &[("data", data.text().into())])?;
+                        return Ok(Progress::Poll { after: EVALS_POLL });
+                    }
+                    hold_why = Some(format!(
+                        "towercab/evals not posted after {} h",
+                        super::evals::BOUND.as_secs() / 3600
+                    ));
+                    g = autonomy::Gate::Approval(autonomy::Hold::EvalsRed);
+                }
+            }
+        }
         match g {
             autonomy::Gate::Merge => {
                 let verdict = match a {
@@ -250,9 +278,10 @@ impl Gate {
                 Ok(Progress::Done(Outcome::ok().with("data", data.text())))
             }
             autonomy::Gate::Approval(hold) => {
+                let hold = hold_why.unwrap_or_else(|| hold.to_string());
                 data.set(
                     "gate",
-                    json!({"head": head, "hold": hold.to_string(), "commented": commented}),
+                    json!({"head": head, "hold": hold, "commented": commented}),
                 );
                 let m = cx.record(m, "comment", &[("data", data.text().into())])?;
                 self.comment(cx, &m)
@@ -271,6 +300,11 @@ impl Gate {
             .unwrap_or("not approved")
             .to_string();
         if gate.get("commented").and_then(Value::as_str) != Some(head.as_str()) {
+            // Recorded before it is posted: a crash in between loses the comment rather than
+            // posting it twice on this head (PIP-7, LOOP-6).
+            gate["commented"] = json!(head);
+            data.set("gate", gate.clone());
+            let m = &cx.record(m, "comment", &[("data", data.text().into())])?;
             let result = data
                 .get("review")
                 .and_then(|r| r.get("result"))
@@ -301,8 +335,6 @@ impl Gate {
                     );
                 }
             }
-            gate["commented"] = json!(head);
-            data.set("gate", gate);
         }
         Ok(Progress::Done(
             Outcome::wait(Waiting::ReviewAndMergePr, hold).with("data", data.text()),

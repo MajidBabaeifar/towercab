@@ -11,9 +11,10 @@ use std::process::{Command, Stdio};
 use std::rc::Rc;
 
 use common::pipe::{FakeClaude, LOGIN_BRANCH, LOGIN_ID as ID, LOGIN_TEST, Pipe, done, writes};
+use rusqlite::types::Value as Sql;
 use serde_json::{Value, json};
 use towercab::autonomy::{self, Ci, Gate, GateIn, Hold, PrKind, Review};
-use towercab::handler::{ChildEnd, Ctx, Handler, Outcome, Progress, StepError};
+use towercab::handler::{ChildEnd, Ctx, Handler, Outcome, Progress, StepError, update};
 use towercab::machine::Door;
 use towercab::machine::Stage;
 use towercab::mission::Mission;
@@ -271,6 +272,20 @@ fn test_unlock_goes_to_me() {
     };
     assert_eq!(guard::decide(&rules, "docs/a.md"), Ok(()));
     assert!(guard::decide(&rules, "CLAUDE.md").is_err());
+    // Through the gate handler: approved at a5 with `unlock`, to me.
+    let mut p = Pipe::login("a: 5\nunlock: [\"docs/**\"]\n");
+    p.plans(2).builds_tested(3).ci_green();
+    p.claude.answer(
+        4,
+        &FakeClaude::result(common::pipe::review(true, json!([]), Value::Null)),
+    );
+    p.step_to(ID, Stage::Gate, 12);
+    assert_eq!(
+        p.step(ID),
+        "261001-0900: gate → approval:merge · review and merge PR"
+    );
+    assert_eq!(p.mission(ID).why.as_deref(), Some("unlock used"));
+    assert!(p.gh.find("pr merge").is_empty());
 }
 
 /// `towercab hook guard <rules>` with `stdin` → (exit code, stderr).
@@ -450,7 +465,8 @@ fn test_feedback_round_unlocked() {
             (Round::Conflict, false),
             (Round::Continue, false),
         ] {
-            let r = publish::check_diff(cx, &m, round).unwrap();
+            let repo = files(cx, &m).unwrap();
+            let r = publish::check_diff(cx, &m, round, &repo).unwrap();
             assert_eq!(r.is_err(), refused, "{round:?}: {r:?}");
         }
         let repo = files(cx, &m).unwrap();
@@ -461,4 +477,163 @@ fn test_feedback_round_unlocked() {
         let deny = guard::write_rules(cx, &m, &repo, Round::Verify).unwrap();
         assert!(deny.iter().any(|d| d.ends_with("tests/login_test.sh")));
     });
+}
+
+#[test]
+fn test_lock_kept_after_outage_in_repair() {
+    // The CI round's worker run fails on the network: a backoff in `build` (build → build),
+    // then the same run again; the round is still CI, its tests still locked.
+    let mut p = ci_red("");
+    p.claude
+        .stderr(4, "error: connect ECONNREFUSED: connection refused")
+        .exit(4, 1)
+        .answer(5, &FakeClaude::result(done("Fixed CI.")));
+    p.step(ID);
+    let m = p.mission(ID);
+    assert_eq!(m.stage, Stage::Build);
+    assert!(m.retry_at.is_some(), "backing off");
+    let t = p.w.transitions(ID);
+    assert_eq!(
+        t.last().unwrap(),
+        &(
+            "build".to_string(),
+            "env_fail".to_string(),
+            "build".to_string()
+        )
+    );
+    let db = p.w.db();
+    update(db.conn(), m.id, &[("retry_at".into(), Sql::Null)]).unwrap();
+    assert_eq!(p.step(ID), "261001-0900: build → verify");
+    assert_eq!(p.claude.calls(), 5);
+    assert_eq!(p.claude.stdin(5).trim(), towercab::claude::CONTINUE);
+    let rules = Rules::read(&p.runs(ID).join("guard.json")).unwrap();
+    assert_eq!(rules.locked, ["tests/login_test.sh"]);
+    assert_eq!(
+        towercab::pipeline::round(db.conn(), &p.mission(ID)).unwrap(),
+        Round::Ci
+    );
+}
+
+#[test]
+fn test_lock_baseline_after_first_build() {
+    // The first build edits a test base already has; verify goes red once. The verify round
+    // locks the tests as the first build left them, and publish takes the build's edit.
+    let mut p = Pipe::login("a: 4\n");
+    p.base("web", &[("tests/old_test.sh", "true\n")], "an old test");
+    p.plans(2);
+    p.claude
+        .script(
+            3,
+            &(writes("src/login.rs", "pub fn logon() {}\n")
+                + &writes("tests/login_test.sh", LOGIN_TEST)
+                + &writes("tests/old_test.sh", "true # checked\n")),
+        )
+        .answer(3, &FakeClaude::result(done("Adds login.")))
+        .script(4, &writes("src/login.rs", "pub fn login() {}\n"))
+        .answer(4, &FakeClaude::result(done("Fixed login.")));
+    p.step_to(ID, Stage::Publish, 12);
+    let rules = Rules::read(&p.runs(ID).join("guard.json")).unwrap();
+    assert!(
+        rules.locked.contains(&"tests/old_test.sh".to_string()),
+        "{:?}",
+        rules.locked
+    );
+    assert_eq!(p.step(ID), "261001-0900: publish → ci");
+    assert_eq!(
+        p.origin_file("web", LOGIN_BRANCH, "tests/old_test.sh"),
+        "true # checked\n"
+    );
+}
+
+#[test]
+fn test_guard_blocks_dangling_symlink() {
+    // A write through a symlink to nowhere would land wherever it points: blocked.
+    let tmp = tempfile::tempdir().unwrap();
+    let checkout = tmp.path().join("c");
+    fs::create_dir_all(&checkout).unwrap();
+    std::os::unix::fs::symlink(tmp.path().join("nowhere/x"), checkout.join("link")).unwrap();
+    let rules = Rules {
+        checkout: checkout.clone(),
+        protected: Vec::new(),
+        unlock: Vec::new(),
+        locked: Vec::new(),
+    };
+    let file = tmp.path().join("guard.json");
+    fs::write(&file, rules.to_json().to_string()).unwrap();
+    let path = format!("{}/link", checkout.display());
+    assert_eq!(
+        guard::hook(&input("Write", &path), &file),
+        Err(format!(
+            "{path} goes through a dangling symlink: changes here go through Majid"
+        ))
+    );
+}
+
+#[test]
+fn test_repair_round_merges_my_push() {
+    // I push onto the PR while CI runs; the CI round's sync merges it in and it conflicts:
+    // the worker is told first, resolves it, Towercab concludes the merge.
+    let resolve = writes("src/login.rs", "pub fn login() { mine() }\n");
+    let mut p = ci_red(&resolve);
+    unpushed(&p);
+    p.push_mine(
+        "web",
+        LOGIN_BRANCH,
+        &[("src/login.rs", "pub fn login() { mine() }\n")],
+        "fix: mine",
+    );
+    let origin = p.w.root.join("repos/web.git");
+    let mine = common::git(&origin, &["rev-parse", LOGIN_BRANCH])
+        .trim()
+        .to_string();
+    assert_eq!(p.step(ID), "261001-0900: build → verify");
+    let stdin = p.claude.stdin(4);
+    assert!(
+        stdin.contains("`git merge` of the branch as it is on GitHub")
+            && stdin.contains("Resolve the conflicts in:\nsrc/login.rs\n"),
+        "{stdin}"
+    );
+    assert!(
+        stdin.contains("CI red: test"),
+        "the round's own text too: {stdin}"
+    );
+    let c = p.checkout(ID);
+    let parents = common::git(&c, &["rev-list", "--parents", "-n", "1", "HEAD"]);
+    assert!(parents.contains(&mine), "my push merged in: {parents}");
+    // A worker that leaves the markers: concluding would commit them, so it asks me.
+    let mut p = ci_red("");
+    unpushed(&p);
+    p.push_mine(
+        "web",
+        LOGIN_BRANCH,
+        &[("src/login.rs", "pub fn login() { mine() }\n")],
+        "fix: mine",
+    );
+    p.step(ID);
+    let m = p.mission(ID);
+    assert_eq!(m.waiting.as_deref(), Some("answer the question"));
+    assert_eq!(
+        m.why.as_deref(),
+        Some("conflict markers left in src/login.rs")
+    );
+}
+
+/// An earlier round's commit in the checkout, not pushed yet (a verify round's).
+fn unpushed(p: &Pipe) {
+    let c = p.checkout(ID);
+    fs::write(c.join("src/login.rs"), "pub fn login() { ours() }\n").unwrap();
+    common::git(&c, &["add", "-A"]);
+    common::git(
+        &c,
+        &[
+            "-c",
+            "user.name=Towercab",
+            "-c",
+            "user.email=towercab@localhost",
+            "commit",
+            "--quiet",
+            "-m",
+            "fix: address checks red",
+        ],
+    );
 }

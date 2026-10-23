@@ -469,6 +469,32 @@ fn test_release_runs_command() {
     let m = p.mission(ID);
     assert_eq!(m.waiting.as_deref(), Some("release failed"));
     assert_eq!(m.why.as_deref(), Some("deploy.yml: workflow not found"));
+    // My continue runs the command again (no rebuild of the merged PR).
+    fs::write(p.w.root.join("release.exit"), "0").unwrap();
+    p.gh.on(
+        "api repos/me/web/deployments?environment=production*",
+        &[("[]", "", 0)],
+    );
+    commands::queue(&p.w.db(), &Cmd::Approve(ID.into()), "cli").unwrap();
+    p.until(30, |w| {
+        fs::read_to_string(w.root.join("release.args"))
+            .unwrap_or_default()
+            .lines()
+            .count()
+            == 2
+    });
+    assert!(
+        transitions(&p)
+            .iter()
+            .any(|t| t == "blocked approve release"),
+        "{:?}",
+        transitions(&p)
+    );
+    assert!(
+        !transitions(&p)
+            .iter()
+            .any(|t| t.starts_with("blocked ") && t.ends_with(" build"))
+    );
 }
 
 #[test]
@@ -513,4 +539,57 @@ fn test_release_production_e2e_red() {
     // Once, no rerun, no revert in production.
     assert_eq!(p.e2e_runs(), 2);
     assert!(!transitions(&p).iter().any(|t| t.contains("rollback")));
+    // My continue keeps it: done, nothing rebuilt.
+    commands::queue(&p.w.db(), &Cmd::Approve(ID.into()), "cli").unwrap();
+    p.until(30, |w| w.stage(ID) == Some(Stage::Done));
+    assert!(transitions(&p).iter().any(|t| t == "blocked approve done"));
+    assert_eq!(p.e2e_runs(), 2);
+}
+
+#[test]
+fn test_revert_deploys_first() {
+    use towercab::mission::{self, NewMission};
+    use towercab::pipeline::deploy::behind_other;
+    // A revert mission on its way holds every intent's deploy, e2e and release on its repo
+    // (staging still has the broken merge), whatever the ids; a revert waits only for a
+    // lower-id revert.
+    let (p, _) = Pipe::merged(&live(), "towercab");
+    let m = p.mission(ID);
+    assert!(!p.cx(|cx| behind_other(cx, &m)).unwrap());
+    let db = p.w.db();
+    let other = db
+        .tx(|tx| {
+            mission::insert(
+                tx,
+                &NewMission {
+                    intent: "261002-0900".into(),
+                    slug: "other".into(),
+                    repo: "web".into(),
+                    model: "sonnet".into(),
+                    a: None,
+                    min_attempt: 1,
+                },
+                towercab::runloop::Tick::now(),
+            )
+        })
+        .unwrap();
+    assert!(other.id > m.id);
+    let set = |id: i64, stage: &str, kind: &str| {
+        db.conn()
+            .execute(
+                "UPDATE missions SET stage = ?1, kind = ?2 WHERE id = ?3",
+                rusqlite::params![stage, kind, id],
+            )
+            .unwrap();
+    };
+    set(other.id, "revert_ci", "revert");
+    assert!(p.cx(|cx| behind_other(cx, &m)).unwrap(), "behind a revert");
+    set(other.id, "e2e", "intent");
+    assert!(!p.cx(|cx| behind_other(cx, &m)).unwrap(), "a higher id");
+    // The revert (higher id) goes first past a lower-id intent in e2e.
+    set(other.id, "revert_deploy", "revert");
+    set(m.id, "e2e", "intent");
+    let other = mission::get(db.conn(), other.id).unwrap();
+    assert!(!p.cx(|cx| behind_other(cx, &other)).unwrap());
+    assert!(p.cx(|cx| behind_other(cx, &p.mission(ID))).unwrap());
 }

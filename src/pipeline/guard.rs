@@ -75,12 +75,31 @@ impl Rules {
     }
 }
 
-/// Test files (`TOWERCAB.md` `tests` globs) in `missions.head` (`git ls-tree -r --name-only`
-/// in the checkout); no head yet → none.
+/// The test lock's baseline (PIP-31): the commit the last round that wasn't a repair (the
+/// first build, feedback, conflict, continue) ended with (`data.lock_head`), or the pushed
+/// head (`missions.head`) when it is later or that commit is gone; neither → none.
+pub fn lock_base(cx: &Ctx<'_>, m: &Mission) -> Option<String> {
+    let dir = cx.checkout(m);
+    let lock = super::data::Data::of(m)
+        .str("lock_head")
+        .map(str::to_string)
+        .filter(|l| pgit::ok(cx, &dir, &["cat-file", "-e", &format!("{l}^{{commit}}")]));
+    match (lock, m.head.clone()) {
+        (Some(l), Some(h)) if pgit::ok(cx, &dir, &["merge-base", "--is-ancestor", &l, &h]) => {
+            Some(h)
+        }
+        (Some(l), _) => Some(l),
+        (None, h) => h,
+    }
+}
+
+/// Test files (`TOWERCAB.md` `tests` globs) in the lock's baseline ([`lock_base`]; `git
+/// ls-tree -r --name-only` in the checkout); none yet → none.
 pub fn locked(cx: &Ctx<'_>, m: &Mission, tests: &[String]) -> Result<Vec<String>, StepError> {
-    let Some(head) = m.head.as_deref() else {
+    let Some(head) = lock_base(cx, m) else {
         return Ok(Vec::new());
     };
+    let head = head.as_str();
     let globs: Vec<_> = tests.iter().filter_map(|g| glob(g).ok()).collect();
     let out = pgit::run(
         cx,

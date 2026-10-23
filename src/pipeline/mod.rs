@@ -156,12 +156,13 @@ pub enum Round {
     Continue,
 }
 
-/// The mission's build round: its last `transitions` row into `build` (none: `First`).
+/// The mission's build round: its last `transitions` row into `build` from another stage (a
+/// limit, outage, restart or crash in `build` stays there and changes no round; none: `First`).
 pub fn round(conn: &Connection, m: &Mission) -> Result<Round, String> {
     let row: Option<(String, String)> = conn
         .query_row(
             "SELECT from_stage, event FROM transitions WHERE mission = ?1 AND to_stage = 'build'
-             ORDER BY id DESC LIMIT 1",
+             AND from_stage <> to_stage ORDER BY id DESC LIMIT 1",
             [m.id],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -180,7 +181,7 @@ pub fn round(conn: &Connection, m: &Mission) -> Result<Round, String> {
     })
 }
 
-/// The mission's last transition into `stage`: (from stage, event).
+/// The mission's last transition into `stage` from another stage: (from stage, event).
 pub fn entered(
     conn: &Connection,
     m: &Mission,
@@ -189,7 +190,7 @@ pub fn entered(
     let row: Option<(String, String)> = conn
         .query_row(
             "SELECT from_stage, event FROM transitions WHERE mission = ?1 AND to_stage = ?2
-             ORDER BY id DESC LIMIT 1",
+             AND from_stage <> to_stage ORDER BY id DESC LIMIT 1",
             rusqlite::params![m.id, stage.as_str()],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -201,6 +202,14 @@ pub fn entered(
             .find(|x| x.as_str() == e)
             .map(|e| (f, e))
     }))
+}
+
+/// The mission entered `stage` last by my continue (`approve`, `intent_continued`; PIP-17).
+pub fn continued(conn: &Connection, m: &Mission, stage: Stage) -> Result<bool, String> {
+    Ok(matches!(
+        entered(conn, m, stage)?,
+        Some((_, Event::Approve | Event::IntentContinued))
+    ))
 }
 
 /// A store failure in a step: unreachable → `Env(github)`; refused → a bug.
@@ -220,13 +229,20 @@ pub fn intent(cx: &Ctx<'_>, m: &Mission) -> Result<Intent, StepError> {
     cx.store.get(id).map_err(store_failed)
 }
 
+/// A handler's bug as an outcome: `crash` with why `bug: …` (counted, `crashed at <stage>`
+/// on the third; LOOP-7), never an uncounted `bad_result` re-run every pass.
+pub fn bug(why: String) -> Outcome {
+    Outcome {
+        why: Some(format!("bug: {why}")),
+        ..Outcome::event(Event::Crash)
+    }
+}
+
 /// The base branch's repo files from Towercab's clone (REPO-1): `NoVerifyingBlock`/`Invalid`
 /// → the pick's waits, `Git` → `env_fail` (github).
 #[allow(clippy::result_large_err)] // the outcome is what the step returns
 pub fn files(cx: &Ctx<'_>, m: &Mission) -> Result<RepoFiles, Outcome> {
-    let repo = cx
-        .repo(m)
-        .map_err(|e| Outcome::bad_result(format!("bug: {e}")))?;
+    let repo = cx.repo(m).map_err(bug)?;
     repo::load(&repo.path, &repo.base).map_err(|e| match e {
         RepoError::NoVerifyingBlock => Outcome::wait(
             Waiting::AddVerifyingBlock,
@@ -322,11 +338,13 @@ pub fn wait_note(
     if not_ready(w) && m.pr.is_some() {
         let footer = crate::writer::footer(cx, m);
         let url = intent_url(cx, m);
-        crate::writer::patch(
-            cx,
-            m,
-            &crate::writer::not_ready(&format!("{w}: {why}"), &url, &footer),
-        );
+        // `<waiting>: <why>`, the wait named once (`CI red: test`).
+        let line = if why.starts_with(&w.text()) {
+            why.to_string()
+        } else {
+            format!("{w}: {why}")
+        };
+        crate::writer::patch(cx, m, &crate::writer::not_ready(&line, &url, &footer));
     }
     Ok(Progress::Done(Outcome::wait(w, why)))
 }

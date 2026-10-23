@@ -174,6 +174,40 @@ fn test_gate_handler() {
     let m = p.mission(ID);
     assert_eq!(m.waiting.as_deref(), Some("review and merge PR"));
     assert_eq!(m.why.as_deref(), Some("evals red"));
+    // Never posted: 12 h on the head, then to me, said so.
+    let mut p = approved("a: 5\n");
+    p.step_to(ID, Stage::Gate, 12);
+    let head = p.mission(ID).head.unwrap();
+    p.w.repo_mut("web").github = "me/towercab".into();
+    p.gh.on(
+        &format!("api repos/me/towercab/commits/{head}/status"),
+        &[(r#"{"state": "pending", "statuses": []}"#, "", 0)],
+    );
+    p.open_with(Pipe::handlers());
+    assert_eq!(p.step(ID), "261001-0900: gate → gate");
+    let mut data = p.data(ID);
+    let since = data["gate"]["evals_since"].as_f64().unwrap();
+    data["gate"]["evals_since"] = json!(since - 13.0 * 3600.0);
+    p.w.db()
+        .conn()
+        .execute(
+            "UPDATE missions SET data = ?1 WHERE intent = ?2",
+            rusqlite::params![data.to_string(), ID],
+        )
+        .unwrap();
+    p.step(ID);
+    assert_eq!(
+        p.mission(ID).why.as_deref(),
+        Some("towercab/evals not posted after 12 h")
+    );
+    // A gate that goes to me anyway (a3) doesn't wait for it.
+    let mut p = approved("a: 3\n");
+    p.step_to(ID, Stage::Gate, 12);
+    p.w.repo_mut("web").github = "me/towercab".into();
+    p.open_with(Pipe::handlers());
+    p.step(ID);
+    assert_eq!(p.mission(ID).why.as_deref(), Some("a3"));
+    assert!(p.gh.find("api repos/me/towercab/commits/").is_empty());
     // The review not approved at a5: to me.
     let mut p = approved("a: 5\n");
     p.claude.answer(
@@ -620,10 +654,14 @@ fn test_merge_state_table() {
     let event = |e: Event| Progress::Done(Outcome::event(e));
     let none = Value::Null;
     assert_eq!(run("DIRTY", 0, none.clone(), None), event(Event::Conflict));
-    match run("BLOCKED", 0, none.clone(), None) {
-        Progress::Done(o) => assert_eq!(o.event, Event::HeadMoved),
-        p => panic!("{p:?}"),
-    }
+    // A required check or rule settling: read again after `ci_poll`, the head unchanged.
+    assert_eq!(
+        run("BLOCKED", 0, none.clone(), None),
+        Progress::Poll {
+            after: p.w.config.agent.ci_poll
+        }
+    );
+    assert_eq!(p.data(ID)["merge"]["blocked"], 1);
     match run(
         "UNSTABLE",
         0,
@@ -654,7 +692,7 @@ fn test_merge_state_table() {
     assert_eq!(
         run("DRAFT", 0, none.clone(), None),
         Progress::Poll {
-            after: Duration::ZERO
+            after: Duration::from_secs(10)
         }
     );
     assert_eq!(
@@ -662,6 +700,30 @@ fn test_merge_state_table() {
         2,
         "publish's and this one"
     );
+    // Counted with UNKNOWN: a PR GitHub keeps showing as a draft goes to me.
+    match run(
+        "DRAFT",
+        0,
+        json!({"head": head, "blocked": 0, "unknown": 6}),
+        None,
+    ) {
+        Progress::Done(o) => assert_eq!(o.waiting, Some(Waiting::ReviewAndMergePr)),
+        p => panic!("{p:?}"),
+    }
+    // Merged by Towercab, the read lagging (CLEAN): read again, never a second merge.
+    let merges = p.gh.find("pr merge").len();
+    assert_eq!(
+        run(
+            "CLEAN",
+            0,
+            json!({"head": head, "blocked": 0, "unknown": 0, "merging": head}),
+            None
+        ),
+        Progress::Poll {
+            after: Duration::from_secs(10)
+        }
+    );
+    assert_eq!(p.gh.find("pr merge").len(), merges);
     match run("BEHIND", 3, none.clone(), None) {
         Progress::Done(o) => {
             assert_eq!(o.waiting, Some(Waiting::ReviewAndMergePr));
@@ -766,6 +828,21 @@ fn test_behind_updates_via_api() {
         p.w.transitions(ID)
             .contains(&("merge".into(), "head_moved".into(), "ci".into()))
     );
+    // GitHub moves the head later: CI counts the update as a push (the old head's green
+    // checks don't pass it again within the grace).
+    assert!(p.data(ID)["ci"].is_null());
+    let gated = p.data(ID)["gate"]["head"].clone();
+    assert_eq!(gated, json!(head));
+    let at: f64 =
+        p.w.db()
+            .conn()
+            .query_row(
+                "SELECT at FROM transitions WHERE mission = ?1 ORDER BY id DESC LIMIT 1",
+                [m.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+    assert_eq!(m.pushed_at, Some(at), "pushed at the update");
 }
 
 #[test]

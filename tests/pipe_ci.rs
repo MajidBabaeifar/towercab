@@ -341,7 +341,7 @@ fn test_ci_cap() {
     assert!(
         p.gh.body(patch)
             .unwrap()
-            .starts_with("⛔ Not ready: CI red: CI red: test")
+            .starts_with("⛔ Not ready: CI red: test\n")
     );
 }
 
@@ -450,4 +450,63 @@ fn test_checks_from_status_rollup() {
     );
     assert_eq!(bucket(&[old], pushed, pushed + 600.0, 120.0), Bucket::Green);
     assert_eq!(bucket(&[], pushed, pushed + 600.0, 120.0), Bucket::None);
+}
+
+#[test]
+fn test_red_job_waits_for_its_run() {
+    // One job of an Actions run failed while another still runs: GitHub refuses a rerun and
+    // a failed log until the run completes, so it is pending; then red.
+    let pushed = 1_792_663_000.0;
+    let now = pushed + 1000.0;
+    let job = |name: &str, status: &str, conclusion: &str, run: u64| Check {
+        name: name.into(),
+        kind: CheckKind::CheckRun,
+        status: status.into(),
+        conclusion: conclusion.into(),
+        started_at: Some(pushed + 1.0),
+        run: Some(run),
+        url: format!("https://github.com/me/web/actions/runs/{run}/job/1"),
+    };
+    let failed = job("rust", "COMPLETED", "FAILURE", 5);
+    let running = job("python", "IN_PROGRESS", "", 5);
+    assert_eq!(
+        bucket(&[failed.clone(), running.clone()], pushed, now, 120.0),
+        Bucket::Pending
+    );
+    // Another run's red job doesn't wait for it.
+    let other = job("lint", "COMPLETED", "FAILURE", 6);
+    assert_eq!(
+        bucket(
+            &[failed.clone(), running, other.clone()],
+            pushed,
+            now,
+            120.0
+        ),
+        Bucket::Red(vec![other])
+    );
+    let done = job("python", "COMPLETED", "SUCCESS", 5);
+    assert_eq!(
+        bucket(&[failed.clone(), done], pushed, now, 120.0),
+        Bucket::Red(vec![failed])
+    );
+}
+
+#[test]
+fn test_throttled_is_an_outage() {
+    use towercab::pipeline::gh::throttled;
+    // A rate limit or a transient GraphQL error backs off (LOOP-10); a refusal is a refusal.
+    for e in [
+        "HTTP 403: API rate limit exceeded for installation ID 1",
+        "HTTP 429: Too Many Requests",
+        "You have exceeded a secondary rate limit",
+        "GraphQL: Something went wrong while executing your query. (repository.pullRequest)",
+    ] {
+        assert!(throttled(e), "{e}");
+    }
+    for e in [
+        "HTTP 403: Resource not accessible by integration",
+        "GraphQL: Could not resolve to a PullRequest with the number of 9.",
+    ] {
+        assert!(!throttled(e), "{e}");
+    }
 }

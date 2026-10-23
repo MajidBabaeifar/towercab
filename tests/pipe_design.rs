@@ -585,3 +585,58 @@ fn test_design_result_continue() {
     assert_eq!(p.claude.calls(), 2);
     assert!(p.mission(ID).why.unwrap().contains("no JSON result"));
 }
+
+#[test]
+fn test_queued_run_restarts_with_its_prompt() {
+    use towercab::handler::{Handler, Progress};
+    use towercab::pipeline::{Mode, design::Design, runs};
+    // The design run recorded and queued for a slot, never started (a shutdown or crash
+    // dropped it): re-entered, it gets its own prompt and its session's first flag.
+    let mut p = pipe("a: 4\n");
+    assert_eq!(p.step(ID), "261001-0900: pick → design");
+    let m = p.mission(ID);
+    let flag = |spec: &towercab::handler::ChildSpec, f: &str| {
+        let a: Vec<String> = spec
+            .argv
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        a.iter()
+            .position(|x| x == f)
+            .and_then(|i| a.get(i + 1).cloned())
+    };
+    let Ok(Progress::Spawn(first)) = p.cx(|cx| Design::new(Mode::Live).step(cx, &m)) else {
+        panic!("design spawns")
+    };
+    let asked = fs::read_to_string(first.stdin.clone().unwrap()).unwrap();
+    assert!(asked.contains("Add login"), "{asked}");
+    assert_eq!(flag(&first, "--session-id"), Some(m.session.clone()));
+    let m = p.mission(ID);
+    assert_eq!(m.step, "design:run");
+    let Ok(Progress::Spawn(again)) = p.cx(|cx| runs::restart(cx, &m)) else {
+        panic!("restart spawns")
+    };
+    assert_eq!(again.stdin, first.stdin, "the same run number");
+    assert_eq!(
+        fs::read_to_string(again.stdin.clone().unwrap()).unwrap(),
+        asked
+    );
+    assert_eq!(flag(&again, "--session-id"), Some(m.session.clone()));
+    // Started (its output files made) and cut off: the session resumes with a continue; what
+    // it was asked is kept for a new session.
+    fs::write(&again.stdout, "").unwrap();
+    let m = p.mission(ID);
+    let Ok(Progress::Spawn(cont)) = p.cx(|cx| runs::restart(cx, &m)) else {
+        panic!("restart spawns")
+    };
+    assert_eq!(flag(&cont, "--resume"), Some(m.session.clone()));
+    let stdin = cont.stdin.clone().unwrap();
+    assert_eq!(
+        fs::read_to_string(&stdin).unwrap(),
+        towercab::claude::CONTINUE
+    );
+    assert_eq!(
+        fs::read_to_string(stdin.with_extension("asked")).unwrap(),
+        asked
+    );
+}

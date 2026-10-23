@@ -153,10 +153,12 @@ impl Rehearse {
                 let m = cx.record(m, "pr", &[("data", data.text().into())])?;
                 self.pr(cx, &m)
             }
-            pgit::Push::Rejected(e) => Ok(Progress::Done(Outcome::red(format!(
-                "push of {branch} rejected: {}",
-                crate::outbox::cut(&crate::outbox::one_line(&e), 200)
-            )))),
+            pgit::Push::Rejected(e) | pgit::Push::Refused(e) => {
+                Ok(Progress::Done(Outcome::red(format!(
+                    "push of {branch} rejected: {}",
+                    crate::outbox::cut(&crate::outbox::one_line(&e), 200)
+                ))))
+            }
         }
     }
 

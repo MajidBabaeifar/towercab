@@ -63,6 +63,29 @@ pub fn merging(cx: &Ctx<'_>, dir: &Path) -> bool {
     ok(cx, dir, &["rev-parse", "--quiet", "--verify", "MERGE_HEAD"])
 }
 
+/// The files still unmerged in `dir` (a merge in progress).
+pub fn unmerged(cx: &Ctx<'_>, dir: &Path) -> Result<Vec<String>, StepError> {
+    Ok(run(cx, dir, &["diff", "--name-only", "--diff-filter=U"])?
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// The unmerged files of `dir` that still hold a conflict marker (a line starting `<<<<<<< `,
+/// `>>>>>>> ` or exactly `=======`): concluding the merge would commit them.
+pub fn conflict_markers(cx: &Ctx<'_>, dir: &Path) -> Result<Vec<String>, StepError> {
+    Ok(unmerged(cx, dir)?
+        .into_iter()
+        .filter(|rel| {
+            let text = std::fs::read(dir.join(rel)).unwrap_or_default();
+            String::from_utf8_lossy(&text)
+                .lines()
+                .any(|l| l.starts_with("<<<<<<< ") || l.starts_with(">>>>>>> ") || l == "=======")
+        })
+        .collect())
+}
+
 /// `git add -A` and, with something staged (or a merge in progress, which this concludes),
 /// `git commit -q -F <runs>/commit.txt` as the bot → the new sha; nothing → `None`.
 pub fn commit(
@@ -165,6 +188,8 @@ pub enum Push {
     Pushed(String),
     /// Not a fast-forward (someone pushed): git's words.
     Rejected(String),
+    /// Refused otherwise (a ruleset, a hook): git's words.
+    Refused(String),
 }
 
 /// The checkout's `branch` pushed from Towercab's clone: `git fetch --quiet -- <dir> <branch>`
@@ -177,14 +202,22 @@ pub fn push(cx: &Ctx<'_>, m: &Mission, dir: &Path, branch: &str) -> Result<Push,
         .auth_for_url(&checkout::origin_url(&git, &repo))
         .map_err(|e| StepError::Env(Fault::Github, e.to_string()))?;
     let from = dir.to_string_lossy();
+    // Into a ref of its own, never `FETCH_HEAD`: an eval child fetches into this clone too.
+    let local = format!("refs/towercab/push/{branch}");
     checkout::git(
         &git,
         &repo.path,
-        &["fetch", "--quiet", "--", &from, branch],
+        &[
+            "fetch",
+            "--quiet",
+            "--",
+            &from,
+            &format!("+refs/heads/{branch}:{local}"),
+        ],
         None,
     )
     .map_err(failed)?;
-    let sha = checkout::rev(&git, &repo.path, "FETCH_HEAD").map_err(failed)?;
+    let sha = checkout::rev(&git, &repo.path, &local).map_err(failed)?;
     let refspec = format!("{sha}:refs/heads/{branch}");
     match checkout::git(
         &git,
@@ -195,12 +228,13 @@ pub fn push(cx: &Ctx<'_>, m: &Mission, dir: &Path, branch: &str) -> Result<Push,
         Ok(_) => Ok(Push::Pushed(sha)),
         Err(e) if env::classify(&e).is_some() => Err(StepError::Env(Fault::Github, e)),
         Err(e)
-            if ["rejected", "non-fast-forward", "fetch first"]
+            if ["non-fast-forward", "fetch first"]
                 .iter()
                 .any(|w| e.contains(w)) =>
         {
             Ok(Push::Rejected(e))
         }
+        Err(e) if e.contains("rejected") || e.contains("declined") => Ok(Push::Refused(e)),
         Err(e) => Err(StepError::Bug(e)),
     }
 }

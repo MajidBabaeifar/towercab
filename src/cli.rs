@@ -255,7 +255,10 @@ where
             let home = Home::resolve(args.home.as_deref())?;
             let exes = Exes::default();
             match (pr, cases, out) {
-                (Some(n), _, _) => evals::pr(&config, &home, &exes, n),
+                // It posts statuses: as the App only (LOOP-19).
+                (Some(n), _, _) => config
+                    .check_loop()
+                    .and_then(|()| evals::pr(&config, &home, &exes, n)),
                 (None, Some(dir), Some(out)) => evals::inner(&config, &exes, &dir, &out),
                 _ => evals::baseline(&config, &home, &exes, reason.as_deref()),
             }

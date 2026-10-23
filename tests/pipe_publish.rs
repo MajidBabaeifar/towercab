@@ -273,3 +273,37 @@ fn test_push_rejected_keeps_my_commits() {
         "{body}"
     );
 }
+
+#[test]
+fn test_push_refused_asks() {
+    // GitHub refuses the push (a ruleset, a hook): not a race to merge, a question for me.
+    let (mut p, _) = designed(0);
+    p.step_to(ID, Stage::Publish, 8);
+    let origin = p.w.root.join("repos/web.git");
+    let hook = origin.join("hooks/pre-receive");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    fs::write(
+        &hook,
+        "#!/bin/sh\necho 'repository rule violations' >&2\nexit 1\n",
+    )
+    .unwrap();
+    let mut perm = fs::metadata(&hook).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o755);
+    fs::set_permissions(&hook, perm).unwrap();
+    let before = git(&origin, &["rev-parse", BRANCH]);
+    p.step_to(ID, Stage::Blocked, 2);
+    let m = p.mission(ID);
+    assert_eq!(m.waiting.as_deref(), Some("answer the question"));
+    let why = m.why.unwrap();
+    assert!(why.starts_with("publish failed: "), "{why}");
+    assert!(why.contains("declined") || why.contains("rule"), "{why}");
+    assert_eq!(
+        git(&origin, &["rev-parse", BRANCH]),
+        before,
+        "nothing pushed"
+    );
+    assert!(
+        !p.w.transitions(ID).iter().any(|t| t.1 == "crash"),
+        "not a crash"
+    );
+}

@@ -3,12 +3,14 @@
 //! (never `--force`; my push onto the PR is merged in first), opens the PR the first time,
 //! marks it ready once, and posts `towercab/verify` and `towercab/proof` on the pushed head.
 
+use std::collections::BTreeSet;
+
 use serde_json::Value;
 
 use crate::handler::{ChildEnd, Ctx, Handler, Outcome, Progress, StepError};
 use crate::machine::Waiting;
 use crate::mission::Mission;
-use crate::repo::Protected;
+use crate::repo::{Protected, RepoFiles};
 
 use super::data::Data;
 use super::gh::{self, created, pr_list};
@@ -32,9 +34,21 @@ pub fn push_branch(
         .branch
         .clone()
         .ok_or_else(|| StepError::Bug(format!("{}: no branch", m.label())))?;
+    let wait = |why: String| {
+        let note = format!(
+            "{why}. Fix what GitHub refused (a ruleset, a hook) or push the branch yourself, then remove `waiting`."
+        );
+        wait_note(cx, m, Waiting::AnswerTheQuestion, &why, &note).map(Err)
+    };
     for _ in 0..3 {
         let why = match pgit::push(cx, m, &dir, &branch)? {
             Push::Pushed(sha) => return Ok(Ok(sha)),
+            Push::Refused(e) => {
+                return wait(format!(
+                    "publish failed: {}",
+                    crate::outbox::cut(&crate::outbox::one_line(&e), 300)
+                ));
+            }
             Push::Rejected(why) => why,
         };
         eprintln!(
@@ -62,7 +76,7 @@ pub fn push_branch(
             return wait_note(cx, m, Waiting::AnswerTheQuestion, &why, &note).map(Err);
         }
     }
-    Err(StepError::Bug(format!("{branch}: push rejected 3 times")))
+    wait(format!("publish failed: {branch}: push rejected 3 times"))
 }
 
 /// The intent's PR (PIP-2): an open one on the branch first (`gh pr list --head`: a re-entry
@@ -132,17 +146,15 @@ pub fn open_pr(
 }
 
 /// The publish refusals (PIP-29, PIP-31): a path changed since the merge-base with base that
-/// is protected and not unlocked; in a verify or CI repair round, a test file already in the
-/// pushed head changed or deleted. `Err` inside: the paths.
+/// is protected and not unlocked; in a verify or CI repair round, a locked test file
+/// (`guard::locked`) changed or deleted since the lock's baseline (`guard::lock_base`), unless
+/// HEAD keeps the version my push made after it. `Err` inside: the paths.
 pub fn check_diff(
     cx: &Ctx<'_>,
     m: &Mission,
     round: Round,
+    repo_files: &RepoFiles,
 ) -> Result<Result<(), String>, StepError> {
-    let repo_files = match files(cx, m) {
-        Ok(f) => f,
-        Err(o) => return Err(StepError::Bug(format!("repo files: {:?}", o.why))),
-    };
     let intent = intent(cx, m)?;
     let protected =
         Protected::new(&repo_files.towercab.protected, intent.unlock()).map_err(StepError::Bug)?;
@@ -150,11 +162,26 @@ pub fn check_diff(
     let dir = cx.checkout(m);
     let base = pgit::merge_base(cx, &dir, &repo.base)?;
     let changed = pgit::changed(cx, &dir, &base, "HEAD")?;
-    let (since_head, locked) = match m.head.as_deref() {
-        Some(head) if matches!(round, Round::Verify | Round::Ci) => (
-            pgit::changed(cx, &dir, head, "HEAD")?,
-            guard::locked(cx, m, &repo_files.towercab.tests)?,
-        ),
+    let (since_head, locked) = match guard::lock_base(cx, m) {
+        Some(lock) if matches!(round, Round::Verify | Round::Ci) => {
+            let mut since = pgit::changed(cx, &dir, &lock, "HEAD")?;
+            // My push onto the PR after the baseline, merged in as it is: not the worker's.
+            let remote = format!(
+                "refs/remotes/origin/{}",
+                m.branch.as_deref().unwrap_or_default()
+            );
+            if let Ok(mine) = pgit::rev(cx, &dir, &remote)
+                && !pgit::ok(cx, &dir, &["merge-base", "--is-ancestor", &mine, &lock])
+            {
+                let paths = |v: Vec<(char, String)>| -> BTreeSet<String> {
+                    v.into_iter().map(|(_, p)| p).collect()
+                };
+                let pushed = paths(pgit::changed(cx, &dir, &lock, &mine)?);
+                let differs = paths(pgit::changed(cx, &dir, &mine, "HEAD")?);
+                since.retain(|(_, p)| !pushed.contains(p) || differs.contains(p));
+            }
+            (since, guard::locked(cx, m, &repo_files.towercab.tests)?)
+        }
         _ => (Vec::new(), Vec::new()),
     };
     Ok(guard::check(&changed, &protected, &since_head, &locked))
@@ -223,7 +250,11 @@ impl Handler for Publish {
             match m.step.as_str() {
                 "" | "check" => {
                     let r = round(cx.db.conn(), &m).map_err(StepError::Bug)?;
-                    if let Err(paths) = check_diff(cx, &m, r)? {
+                    let repo_files = match files(cx, &m) {
+                        Ok(f) => f,
+                        Err(o) => return Ok(Progress::Done(o)),
+                    };
+                    if let Err(paths) = check_diff(cx, &m, r, &repo_files)? {
                         let why = format!("changed: {paths}");
                         let note = format!(
                             "Publish refused: {why}. These paths go through Majid: revert them on the branch, or unlock them in intent.md, then remove `waiting`."

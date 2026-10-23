@@ -116,6 +116,15 @@ pub fn write_case(cx: &Ctx<'_>, m: &Mission) -> Result<(), StepError> {
     let checks = super::files(cx, m)
         .map(|f| f.verifying.checks)
         .unwrap_or_default();
+    let rel = format!("evals/{}.json", intent.id);
+    let merge_sha = m.merge_sha.clone().unwrap_or_default();
+    // Written again (a re-entry after a crash): the same text, no second commit; an incident
+    // mark kept.
+    let earlier = fs::read_to_string(cx.store.path().join(&rel))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| Case::from_json(&v).ok())
+        .filter(|c| c.merge_sha == merge_sha);
     let case = Case {
         id: intent.id.clone(),
         repo: m.repo.clone(),
@@ -124,17 +133,15 @@ pub fn write_case(cx: &Ctx<'_>, m: &Mission) -> Result<(), StepError> {
         spec_ids: plan::spec_ids(&Data::of(m)),
         model: m.model.clone(),
         checks,
-        merge_sha: m.merge_sha.clone().unwrap_or_default(),
-        added: rfc3339(cx.tick.wall),
-        incident: false,
+        merge_sha,
+        added: earlier
+            .as_ref()
+            .map_or_else(|| rfc3339(cx.tick.wall), |c| c.added.clone()),
+        incident: earlier.is_some_and(|c| c.incident),
     };
     let text = serde_json::to_string_pretty(&case.to_json()).map_err(|e| e.to_string())? + "\n";
     cx.store
-        .put(
-            &format!("evals/{}.json", case.id),
-            &text,
-            &format!("eval {}", case.id),
-        )
+        .put(&rel, &text, &format!("eval {}", case.id))
         .map(drop)
         .map_err(store_failed)
 }
@@ -301,10 +308,15 @@ impl Verdict {
 
 /// The PR touches what the evals measure: `prompts/**` or `src/claude.rs`.
 pub fn affected(files: &[String]) -> bool {
-    files
-        .iter()
-        .any(|f| f.starts_with("prompts/") || f == "src/claude.rs")
+    // `gh pr view --json files` lists at most 100: a longer list can't say "not affected".
+    files.len() >= FILES_SHOWN
+        || files
+            .iter()
+            .any(|f| f.starts_with("prompts/") || f == "src/claude.rs")
 }
+
+/// The most files `gh pr view --json files` lists.
+pub const FILES_SHOWN: usize = 100;
 
 /// The statuses that need no run: unaffected → success `not affected`; fewer than [`CASES`]
 /// cases → success `<n>/20 cases`.
@@ -614,8 +626,26 @@ pub fn run_cases(
 ) -> Result<RunResult, String> {
     let mut out = BTreeMap::new();
     for case in cases {
-        let repo = config.repo(&case.repo)?;
-        let clone = run_clone(exes, repo, dir)?;
+        // A case that can't be set up fails alone (its repo left `[repos]`, its clone failed):
+        // the run and every other case go on.
+        let clone = match config
+            .repo(&case.repo)
+            .and_then(|repo| run_clone(exes, repo, dir))
+        {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("towercab: eval {}: {e}", case.id);
+                out.insert(
+                    case.id.clone(),
+                    CaseResult {
+                        pass: false,
+                        tries: 0,
+                        why: format!("not set up: {e}"),
+                    },
+                );
+                continue;
+            }
+        };
         let mut r = CaseResult {
             pass: false,
             tries: 0,
@@ -809,23 +839,20 @@ fn build_head(
         .map_err(|e| e.to_string())?;
     checkout::ensure_clone(&exes.git, repo, Some(&auth))?;
     let pr_ref = format!("refs/remotes/origin/pr/{n}");
+    checkout::ensure(&exes.git, &repo.path, dir, &repo.base, "eval")?;
+    // Fetched into the build's own checkout, never the clone the loop pushes from: this
+    // process runs beside the loop (ref locks, `FETCH_HEAD`).
+    let url = checkout::origin_url(&exes.git, repo);
     checkout::git(
         &exes.git,
-        &repo.path,
+        dir,
         &[
             "fetch",
             "--quiet",
-            "origin",
+            &url,
             &format!("+refs/pull/{n}/head:{pr_ref}"),
         ],
         Some(&auth),
-    )?;
-    checkout::ensure(&exes.git, &repo.path, dir, &repo.base, "eval")?;
-    let clone = repo.path.to_string_lossy();
-    git(
-        exes,
-        dir,
-        &["fetch", "--quiet", &clone, &format!("+{pr_ref}:{pr_ref}")],
     )?;
     git(
         exes,
