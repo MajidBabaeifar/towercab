@@ -3123,7 +3123,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "API-price estimate; on a subscription this is not a bill. From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `ops/telemetry on`).",
+      "description": "API-price estimate; on a subscription this is not a bill. From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `towercab telemetry on`).",
       "gridPos": {
         "x": 0,
         "y": 73,
@@ -3177,7 +3177,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `ops/telemetry on`).",
+      "description": "From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `towercab telemetry on`).",
       "gridPos": {
         "x": 4,
         "y": 73,
@@ -3230,7 +3230,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `ops/telemetry on`).",
+      "description": "From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `towercab telemetry on`).",
       "gridPos": {
         "x": 8,
         "y": 73,
@@ -3283,7 +3283,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Time Claude was working. From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `ops/telemetry on`).",
+      "description": "Time Claude was working. From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `towercab telemetry on`).",
       "gridPos": {
         "x": 12,
         "y": 73,
@@ -3336,7 +3336,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Cache-read \u00f7 all input tokens. From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `ops/telemetry on`).",
+      "description": "Cache-read \u00f7 all input tokens. From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `towercab telemetry on`).",
       "gridPos": {
         "x": 16,
         "y": 73,
@@ -3389,7 +3389,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Added + removed. From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `ops/telemetry on`).",
+      "description": "Added + removed. From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `towercab telemetry on`).",
       "gridPos": {
         "x": 20,
         "y": 73,
@@ -3443,7 +3443,7 @@
         "uid": "prometheus"
       },
       "interval": "5m",
-      "description": "From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `ops/telemetry on`).",
+      "description": "From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `towercab telemetry on`).",
       "gridPos": {
         "x": 0,
         "y": 77,
@@ -3502,7 +3502,7 @@
         "uid": "prometheus"
       },
       "interval": "5m",
-      "description": "From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `ops/telemetry on`).",
+      "description": "From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `towercab telemetry on`).",
       "gridPos": {
         "x": 12,
         "y": 77,
@@ -3560,7 +3560,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `ops/telemetry on`).",
+      "description": "From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `towercab telemetry on`).",
       "gridPos": {
         "x": 0,
         "y": 85,
@@ -3617,7 +3617,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `ops/telemetry on`).",
+      "description": "From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `towercab telemetry on`).",
       "gridPos": {
         "x": 8,
         "y": 85,
@@ -3674,7 +3674,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Created by Claude Code. From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `ops/telemetry on`).",
+      "description": "Created by Claude Code. From Claude Code's own telemetry (Towercab's runs as Source `towercab`; your sessions after `towercab telemetry on`).",
       "gridPos": {
         "x": 16,
         "y": 85,
