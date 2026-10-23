@@ -7,7 +7,6 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-TELEMETRY = ROOT / "ops" / "telemetry"
 DASHBOARD = ROOT / "ops" / "grafana" / "dashboards" / "towercab.json"
 # OTel names the loop emits (specs/metrics.md MET-13..27); Prometheus turns dots into underscores.
 METRICS = [
@@ -52,41 +51,6 @@ METRICS = [
     "towercab.breaches",
     "towercab.breach_to_intent.duration",
 ]
-
-
-def telemetry(config_dir, *args):
-    env = dict(os.environ, CLAUDE_CONFIG_DIR=str(config_dir))
-    return subprocess.run([sys.executable, str(TELEMETRY), *args], env=env, capture_output=True, text=True)
-
-
-class TelemetryTest(unittest.TestCase):
-    def test_on_off_keeps_other_settings(self):
-        with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "settings.json"
-            path.write_text(json.dumps({"model": "opus", "env": {"FOO": "1"}}))
-            self.assertEqual(telemetry(d, "on").returncode, 0)
-            s = json.loads(path.read_text())
-            self.assertEqual(s["model"], "opus")
-            self.assertEqual(s["env"]["FOO"], "1")
-            self.assertEqual(s["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"], "1")
-            self.assertEqual(s["env"]["OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE"], "delta")
-            self.assertIn("telemetry on", telemetry(d, "status").stdout)
-            self.assertEqual(telemetry(d, "off").returncode, 0)
-            self.assertEqual(json.loads(path.read_text()), {"model": "opus", "env": {"FOO": "1"}})
-            self.assertIn("telemetry off", telemetry(d, "status").stdout)
-
-    def test_off_keeps_values_it_did_not_set(self):
-        with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "settings.json"
-            path.write_text(json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://elsewhere:4318"}}))
-            telemetry(d, "off")
-            self.assertEqual(json.loads(path.read_text())["env"]["OTEL_EXPORTER_OTLP_ENDPOINT"], "http://elsewhere:4318")
-
-    def test_creates_missing_file_and_rejects_bad_args(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(telemetry(Path(d) / "new", "on").returncode, 0)
-            self.assertTrue((Path(d) / "new" / "settings.json").exists())
-            self.assertEqual(telemetry(d, "maybe").returncode, 2)
 
 
 class DashboardTest(unittest.TestCase):

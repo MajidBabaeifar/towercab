@@ -1,4 +1,4 @@
-//! Command line (LOOP-15): every command; `telemetry` is a stub until its intent (MET-12).
+//! Command line (LOOP-15): every command.
 
 use std::ffi::{OsStr, OsString};
 use std::io::Read as _;
@@ -93,7 +93,7 @@ enum Command {
     Next,
     /// One step of an intent's mission in the foreground
     Step { id: String },
-    /// Claude Code telemetry to the metrics endpoint (not built yet)
+    /// Your Claude Code sessions' telemetry to the metrics endpoint (MET-12)
     Telemetry {
         #[arg(value_parser = ["on", "off", "status"])]
         what: String,
@@ -245,7 +245,13 @@ where
             lp.shutdown()?;
             out
         })),
-        Command::Telemetry { .. } => not_built("MET-12", 1),
+        Command::Telemetry { what } => {
+            // My own sessions: no Towercab config needed (the default endpoint).
+            let endpoint = Config::load(args.config.as_deref())
+                .map(|c| c.metrics.endpoint)
+                .unwrap_or_else(|_| crate::config::MetricsConfig::default().endpoint);
+            report(crate::telemetry::run(&what, &endpoint))
+        }
         Command::Eval {
             reason,
             pr,
@@ -312,12 +318,6 @@ fn guard(rules: &Path) -> i32 {
             2
         }
     }
-}
-
-/// A stub until its intent: `towercab: not built yet: <ID>`, exit `code`.
-fn not_built(id: &str, code: i32) -> i32 {
-    eprintln!("towercab: not built yet: {id}");
-    code
 }
 
 /// The intents for `status` and `next`: pulled; a failed pull → the checkout as it is, and

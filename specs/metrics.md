@@ -1,6 +1,6 @@
 # Metrics
 
-**Status:** Draft (Rust rewrite) · **Prefix:** MET
+**Status:** Live: MET-12 · **Prefix:** MET
 
 ## Purpose
 

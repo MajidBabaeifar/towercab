@@ -34,4 +34,5 @@ pub mod runloop;
 pub mod service;
 pub mod status;
 pub mod telegram;
+pub mod telemetry;
 pub mod writer;

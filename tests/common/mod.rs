@@ -320,8 +320,8 @@ while [ -d "$d" ]; do sleep 0.1; done
 "#;
 
 /// The built `towercab` with `HOME` = `home`, [`fake_exes`] (in `<home>/.fakebin`) first on
-/// `PATH`, and none of `TOWERCAB_CONFIG`, `TOWERCAB_HOME`, `XDG_CONFIG_HOME` from the test's
-/// environment.
+/// `PATH`, and none of `TOWERCAB_CONFIG`, `TOWERCAB_HOME`, `XDG_CONFIG_HOME`,
+/// `CLAUDE_CONFIG_DIR` from the test's environment.
 pub fn towercab(home: &Path, args: &[&str]) -> Command {
     let fakes = home.join(".fakebin");
     fake_exes(&fakes);
@@ -335,6 +335,7 @@ pub fn towercab(home: &Path, args: &[&str]) -> Command {
         .env_remove("TOWERCAB_CONFIG")
         .env_remove("TOWERCAB_HOME")
         .env_remove("XDG_CONFIG_HOME")
+        .env_remove("CLAUDE_CONFIG_DIR")
         .env("GIT_CONFIG_NOSYSTEM", "1");
     c
 }

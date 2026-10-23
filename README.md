@@ -71,7 +71,7 @@ First start: `towercab migrate` on the `intents` repo, `towercab protect <repo>`
 
 ```bash
 docker compose -f ops/docker-compose.yml up -d   # Grafana on http://localhost:3000
-ops/telemetry on                                 # Claude Code sessions export to it
+towercab telemetry on                            # your Claude Code sessions export to it
 ```
 
 ## CI
