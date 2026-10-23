@@ -1,6 +1,6 @@
 # Maintain
 
-**Status:** Draft (Rust rewrite) · **Prefix:** MNT
+**Status:** Live: MNT-1, MNT-2 · **Prefix:** MNT
 
 ## Purpose
 
