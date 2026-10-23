@@ -380,6 +380,11 @@ fn test_parse_bands() {
     );
     push_bands(&w, "bands: 3\n");
     assert!(bands::read(&w.config, &w.exes()).is_err());
+    // Git failing otherwise (no origin/<base>) isn't "no file": an error, lessons keep waiting.
+    w.repo_mut("towercab").base = "gone".into();
+    let e = bands::read(&w.config, &w.exes()).unwrap_err();
+    assert!(e.starts_with("ops/bands.yaml: "), "{e}");
+    w.repo_mut("towercab").base = "main".into();
     let clone = w.clone_path("towercab");
     w.repo_mut("towercab").path = w.root.join("no-clone");
     assert_eq!(bands::read(&w.config, &w.exes()).unwrap(), None, "no clone");

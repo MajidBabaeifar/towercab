@@ -376,7 +376,8 @@ pub fn parse(yaml: &str) -> Result<Vec<Band>, String> {
 }
 
 /// The bands on the Towercab repo's base in its clone (`evals::towercab_repo`): `None` without
-/// that repo or its clone; no file there → none; `Err` when it doesn't parse.
+/// that repo or its clone; no file on that base → none; `Err` when it doesn't parse or git
+/// fails otherwise (no `origin/<base>`, a broken clone): not "no bands".
 pub fn read(config: &Config, exes: &Exes) -> Result<Option<Vec<Band>>, String> {
     let Some(repo) = crate::pipeline::evals::towercab_repo(config) else {
         return Ok(None);
@@ -384,9 +385,16 @@ pub fn read(config: &Config, exes: &Exes) -> Result<Option<Vec<Band>>, String> {
     if !checkout::valid(&exes.git, &repo.path) {
         return Ok(None);
     }
-    let spec = format!("refs/remotes/origin/{}:{PATH}", repo.base);
-    match checkout::git(&exes.git, &repo.path, &["show", &spec], None) {
-        Ok(text) => parse(&text).map(Some),
-        Err(_) => Ok(Some(Vec::new())),
+    let base = format!("refs/remotes/origin/{}", repo.base);
+    let git = |args: &[&str]| {
+        checkout::git(&exes.git, &repo.path, args, None).map_err(|e| format!("{PATH}: {e}"))
+    };
+    // ls-tree: an absent path is empty output, a missing ref an error (whatever the locale).
+    if git(&["ls-tree", "--name-only", &base, "--", PATH])?
+        .trim()
+        .is_empty()
+    {
+        return Ok(Some(Vec::new()));
     }
+    parse(&git(&["show", &format!("{base}:{PATH}")])?).map(Some)
 }
