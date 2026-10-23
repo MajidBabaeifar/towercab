@@ -120,7 +120,7 @@ impl Watch {
                     continue;
                 };
                 let kind = format!("band {name}");
-                match r.and_then(|points| evaluate(db, config, home, band, &points, tick)) {
+                match r.and_then(|points| evaluate(db, config, home, band, &points, *end, tick)) {
                     Err(e) => self.warn(&kind, format!("band {name}: {e}")),
                     Ok(()) => {
                         self.ok(&kind);
@@ -177,17 +177,27 @@ impl Watch {
     }
 }
 
-/// A band's points judged (MNT-3): a verdict recorded with its action, lessons waiting on the
-/// band given their value.
+/// The newest of `points` is the period ending at `end` (the one queried): only then is there
+/// a point no evaluation has judged.
+pub fn fresh(points: &[(f64, f64)], end: f64) -> bool {
+    points.last().is_some_and(|p| (p.0 - end).abs() < 1.0)
+}
+
+/// A band's points for the period ending at `end` judged (MNT-3): a verdict recorded with its
+/// action (none unless the newest point is that period's: an older one was judged when it was
+/// new), lessons waiting on the band given their value.
 pub fn evaluate(
     db: &Db,
     config: &Config,
     home: &Home,
     band: &Band,
     points: &[(f64, f64)],
+    end: f64,
     tick: Tick,
 ) -> Result<(), String> {
-    if let Some(v) = detect::detect(points, band.side, band.min_shift) {
+    if fresh(points, end)
+        && let Some(v) = detect::detect(points, band.side, band.min_shift)
+    {
         record(db, config, home, band, &v, points, tick)?;
     }
     evaluated(db.conn(), band, points, detect::baseline(points))

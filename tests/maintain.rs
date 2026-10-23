@@ -745,6 +745,26 @@ fn spike() -> Vec<f64> {
 
 #[test]
 fn test_breach_once_per_point() {
+    // The period just ended has no value (NaN is skipped): yesterday's 3σ point is the newest,
+    // judged when it was new: no verdict now.
+    let mut stale = spike();
+    stale.push(f64::NAN);
+    let mut m = Mnt::new(BAND, &stale);
+    let mut lp = m.open();
+    for _ in 0..400 {
+        if lp.watch.checked("ci_failure_rate").is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+        m.w.pass(&mut lp);
+    }
+    assert!(lp.watch.checked("ci_failure_rate").is_some());
+    assert!(m.breaches().is_empty(), "{:?}", m.breaches());
+    assert!(!maintain::fresh(&[(DAY, 1.0)], 2.0 * DAY));
+    assert!(maintain::fresh(&[(DAY, 1.0), (2.0 * DAY, 1.0)], 2.0 * DAY));
+    assert!(!maintain::fresh(&[], 2.0 * DAY));
+    drop(lp);
+
     let mut m = Mnt::new(
         &BAND.replace("runbook:cap_repo, runbook:pause", ""),
         &spike(),
