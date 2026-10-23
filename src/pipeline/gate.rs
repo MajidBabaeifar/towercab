@@ -181,8 +181,25 @@ impl Gate {
 
     /// The gate's first decision on a head (MET-25, MET-26): each review finding by `path`
     /// (`auto`: it merges), and a Towercab PR's evals as read (`pass`/`drop`).
-    fn count(m: &Mission, data: &Data, g: &autonomy::Gate, evals: Option<bool>) {
+    /// `pass` and `policy` kept to the REVIEW.md pass names and the policy skills the review
+    /// had (`<runs>/policies/skills/`), else `other`.
+    fn count(
+        cx: &Ctx<'_>,
+        m: &Mission,
+        data: &Data,
+        g: &autonomy::Gate,
+        evals: Option<bool>,
+        review: &crate::repo::review::Review,
+    ) {
         let ev = Ev::of(m);
+        let passes: Vec<&str> = review.passes.iter().map(|p| p.name.as_str()).collect();
+        let policies: Vec<String> = std::fs::read_dir(cx.runs(m).join("policies").join("skills"))
+            .map(|d| {
+                d.flatten()
+                    .filter_map(|e| e.file_name().into_string().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
         let path = match g {
             autonomy::Gate::Merge => "auto",
             autonomy::Gate::Approval(_) => "approval",
@@ -195,13 +212,12 @@ impl Gate {
             .cloned()
             .unwrap_or_default();
         for f in findings {
-            let s = |k: &str| {
-                f.get(k)
-                    .and_then(Value::as_str)
-                    .unwrap_or("none")
-                    .to_string()
-            };
-            let (pass, policy, severity) = (s("pass"), s("policy"), s("severity"));
+            let s = |k: &str| f.get(k).and_then(Value::as_str);
+            let pass = indicators::bounded(s("pass"), &passes);
+            // A plugin skill may be named with its plugin: `towercab-policies:<name>`.
+            let policy = s("policy").map(|p| p.trim().trim_start_matches("towercab-policies:"));
+            let policy = indicators::bounded(policy, &policies);
+            let severity = indicators::bounded(s("severity"), &["important", "nit"]);
             metrics::add(
                 Metric::ReviewFindings,
                 1.0,
@@ -324,7 +340,7 @@ impl Gate {
         let label = indicators::gate_label(&g, a);
         // Counted once per head (my continue re-runs the gate on it).
         if old.get("counted").and_then(Value::as_str) != Some(head.as_str()) {
-            Self::count(m, &data, &g, evals_read);
+            Self::count(cx, m, &data, &g, evals_read, &repo_files.review);
         }
         match g {
             autonomy::Gate::Merge => {

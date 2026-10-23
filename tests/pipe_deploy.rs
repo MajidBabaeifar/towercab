@@ -557,6 +557,8 @@ fn test_release_runs_command() {
         .map(|r| r.label("env").unwrap())
         .collect();
     assert_eq!(deploys, ["staging", "production"]);
+    // Stored before it counts: a re-entry of `wait` (an env failure after it) doesn't again.
+    assert_eq!(p.datum(ID, "release")["counted"], json!(merge));
     let leads = recs
         .iter()
         .filter(|r| r.metric == towercab::metrics::Metric::ChangeLeadDuration)

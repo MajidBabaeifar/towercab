@@ -30,6 +30,21 @@ pub fn source_kind(source: Option<&str>) -> &'static str {
         .unwrap_or("me")
 }
 
+/// A model-written label value kept to a bounded set (MET-26, cardinality): none or empty →
+/// `none`; one of `known` (any case) → that name; anything else → `other`.
+pub fn bounded<S: AsRef<str>>(value: Option<&str>, known: &[S]) -> String {
+    let v = value.map(str::trim).unwrap_or_default();
+    if v.is_empty() || v == "none" {
+        return "none".into();
+    }
+    known
+        .iter()
+        .map(AsRef::as_ref)
+        .find(|k| k.eq_ignore_ascii_case(v))
+        .unwrap_or("other")
+        .to_string()
+}
+
 /// `data.gate.label` (metrics.md **Gate labels**): a merge `a<n>` (effective `a`) or
 /// `risk_low`; a hold its kind.
 pub fn gate_label(g: &Gate, a: Option<u8>) -> String {
@@ -313,7 +328,21 @@ pub fn transition(
                 }
             }),
         };
-        if let Some(outcome) = outcome {
+        // A mission ends once: a `revert failed` continued to `reverted, refine` (or failing
+        // again) isn't a second end. Marked in `data.metrics.ended`, in this transaction.
+        let mut data = data_of(stored);
+        let ended = data["metrics"]["ended"].is_string();
+        if let Some(outcome) = outcome
+            && !ended
+        {
+            if data.is_object() || data.is_null() {
+                data["metrics"]["ended"] = Value::from(outcome);
+                tx.execute(
+                    "UPDATE missions SET data = ?1 WHERE id = ?2",
+                    params![data.to_string(), cur.id],
+                )
+                .map_err(sql)?;
+            }
             intent_end(tx, ax, cur, stored, id, outcome, now, &ev)?;
         }
     }
@@ -486,6 +515,12 @@ pub fn guard_blocks(runs: &Path, repo: &str, ev: &Ev) -> Result<(), String> {
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0);
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    if lines.len() == seen {
+        return Ok(());
+    }
+    // Written first: a failed write counts nothing, never the same lines twice.
+    std::fs::write(&seen_file, lines.len().to_string())
+        .map_err(|e| format!("{}: {e}", seen_file.display()))?;
     for l in lines.iter().skip(seen) {
         let kind = serde_json::from_str::<Value>(l)
             .ok()
@@ -498,10 +533,6 @@ pub fn guard_blocks(runs: &Path, repo: &str, ev: &Ev) -> Result<(), String> {
             &[("repo", repo), ("kind", &kind)],
             ev,
         );
-    }
-    if lines.len() != seen {
-        std::fs::write(&seen_file, lines.len().to_string())
-            .map_err(|e| format!("{}: {e}", seen_file.display()))?;
     }
     Ok(())
 }

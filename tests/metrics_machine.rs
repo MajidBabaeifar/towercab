@@ -12,6 +12,7 @@ use towercab::config::{Config, IntentsConfig};
 use towercab::db::Db;
 use towercab::env::Fault;
 use towercab::handler::Outcome;
+use towercab::indicators;
 use towercab::intents::Listing;
 use towercab::limits::Limit;
 use towercab::machine::{self, Apply, Door, Event, Stage, Waiting};
@@ -432,6 +433,16 @@ fn test_counters() {
         .len(),
         2
     );
+    // Continued and reverted after all: the revert counts, the mission's end doesn't again.
+    let d = w.apply(&d, Outcome::event(Event::Approve), 10);
+    assert_eq!(d.stage, Stage::RevertCi);
+    let d = w.ok_to(d, Stage::RevertE2e, 10);
+    let d = w.apply(&d, Outcome::wait(Waiting::RevertedRefine, "e2e green"), 10);
+    assert_eq!(d.stage, Stage::Blocked);
+    let recs = metrics::take();
+    assert_eq!(sum(&recs, Metric::Reverts, &[("result", "ok")]), 1.0);
+    assert!(find(&recs, Metric::IntentDuration, &[]).is_empty());
+    assert!(find(&recs, Metric::IntentCost, &[]).is_empty());
 
     // Usage limits: a wait starts (reset + 30 s); a later limit while it runs lengthens it.
     let mut w = M::new(&[""]);
@@ -617,6 +628,18 @@ fn test_change_failure_rate() {
 
 #[test]
 fn test_deploy_metrics() {
+    // review.findings' `pass` and `policy` are model-written: kept to the known names.
+    let passes = ["Bugs", "Security"];
+    assert_eq!(indicators::bounded(Some("bugs"), &passes), "Bugs");
+    assert_eq!(indicators::bounded(Some("Security"), &passes), "Security");
+    assert_eq!(
+        indicators::bounded(Some("a long free text pass"), &passes),
+        "other"
+    );
+    assert_eq!(indicators::bounded(None, &passes), "none");
+    assert_eq!(indicators::bounded(Some(" "), &passes), "none");
+    assert_eq!(indicators::bounded::<&str>(Some("secrets"), &[]), "other");
+
     let mut w = M::new(&["", ""]);
     // Time to first review: the PR ready (first exit from publish) → the first review.
     let a = w.pick(0);

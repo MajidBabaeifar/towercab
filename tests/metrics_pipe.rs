@@ -151,14 +151,15 @@ fn test_build_git_metrics() {
         values(&recs, Metric::FirstPass, &[("result", "yes")]),
         [1.0]
     );
-    // The gate's first decision on the head: the nit, on the auto path; its label.
+    // The gate's first decision on the head: the nit, on the auto path; its label. Its pass,
+    // `correctness`, isn't one of REVIEW.md's (none here: the defaults): `other`.
     assert_eq!(
         values(
             &recs,
             Metric::ReviewFindings,
             &[
                 ("repo", "web"),
-                ("pass", "correctness"),
+                ("pass", "other"),
                 ("policy", "none"),
                 ("severity", "nit"),
                 ("path", "auto"),
