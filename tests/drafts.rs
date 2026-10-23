@@ -151,11 +151,8 @@ impl Drafts {
 
     /// A loop that never picks (no stage handlers): only drafts move.
     fn open(&self) -> Loop {
-        self.w.open_with(
-            Handlers::production(),
-            self.exes.clone(),
-            Default::default(),
-        )
+        self.w
+            .open_with(Handlers::picks_off(), self.exes.clone(), Default::default())
     }
 
     fn rows(&self) -> Vec<(String, String, i64)> {

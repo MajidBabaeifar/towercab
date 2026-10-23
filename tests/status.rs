@@ -376,7 +376,7 @@ skipped:
             .starts_with("next: 261001-0900 web: Frozen one · p15 u5 i5\n")
     );
 
-    // The binary: no pipeline yet, so every pick is off; a repo not in [repos] says so.
+    // The binary: picks on (the pipeline); a repo not in [repos] says so.
     let tmp = tempfile::tempdir().unwrap();
     let user = tmp.path().join("user");
     std::fs::create_dir_all(&user).unwrap();
@@ -393,7 +393,7 @@ skipped:
     write(
         &intents,
         "intents/261001-0901-l/intent.md",
-        &intent_md("nowhere", "", "Lost"),
+        &intent_md("nowhere", "u: 5\ni: 5\n", "Lost"),
     );
     git(&intents, &["add", "-A"]);
     git(&intents, &["commit", "--quiet", "-m", "seed"]);
@@ -410,8 +410,7 @@ skipped:
     assert_eq!(code, Some(0), "{err}");
     assert_eq!(
         out,
-        "next: nothing runnable\nskipped:\n\
-         - 261001-0900 web: Alpha · picks off: pipeline not built\n\
+        "next: 261001-0900 web: Alpha · p9 u3 i3\nskipped:\n\
          - 261001-0901 nowhere: Lost · unknown repo nowhere\n"
     );
     assert!(

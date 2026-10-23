@@ -91,6 +91,7 @@ fn test_home_layout() {
             "cooldowns",
             "drafts",
             "faults",
+            "findings",
             "meta",
             "missions",
             "outbox",

@@ -150,6 +150,10 @@ fn later(a: &str, b: &str) -> bool {
 /// My comments newer than `feedback_seen` (all of mine when it is unset); one without text (an
 /// approval on GitHub) says nothing to change.
 pub fn new_feedback<'a>(m: &Mission, pr: &'a PrState, me: &str) -> Vec<&'a Comment> {
+    // No `[github].me`: nobody's comments are mine (a deleted user's author is empty too).
+    if me.is_empty() {
+        return Vec::new();
+    }
     pr.comments
         .iter()
         .filter(|c| c.author.eq_ignore_ascii_case(me) && !c.body.trim().is_empty())
@@ -162,7 +166,8 @@ pub fn new_feedback<'a>(m: &Mission, pr: &'a PrState, me: &str) -> Vec<&'a Comme
 }
 
 /// At most one event from a PR read: `pr_merged` > `pr_closed` > `feedback` (mine, newer than
-/// `feedback_seen`) > `conflict` (`CONFLICTING`) > `head_moved` (head ≠ `missions.head`).
+/// `feedback_seen`) > `conflict` (`CONFLICTING`; not once `sync_rounds` is at its cap of 3:
+/// the PR waits on me, PIP-21) > `head_moved` (head ≠ `missions.head`).
 pub fn pr_events(m: &Mission, pr: &PrState, me: &str) -> Option<Event> {
     if pr.state == "MERGED" || pr.merged_at.is_some() {
         return Some(Event::PrMerged);
@@ -173,7 +178,7 @@ pub fn pr_events(m: &Mission, pr: &PrState, me: &str) -> Option<Event> {
     if !new_feedback(m, pr, me).is_empty() {
         return Some(Event::Feedback);
     }
-    if pr.mergeable == "CONFLICTING" {
+    if pr.mergeable == "CONFLICTING" && m.sync_rounds < 3 {
         return Some(Event::Conflict);
     }
     if let Some(head) = &m.head

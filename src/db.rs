@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehav
 
 /// Migration `i` takes `user_version` from `i` to `i + 1` in one transaction; later intents
 /// append.
-pub const MIGRATIONS: &[&str] = &[SCHEMA_1];
+pub const MIGRATIONS: &[&str] = &[SCHEMA_1, SCHEMA_2];
 
 /// loop.md **Schema**, as written there.
 const SCHEMA_1: &str = r#"
@@ -78,6 +78,13 @@ CREATE TABLE drafts (key TEXT PRIMARY KEY,   -- 'issue:<url>', 'alert:<band>', '
   repo TEXT NOT NULL, source TEXT NOT NULL, intent TEXT, slug TEXT, pr INTEGER, pr_url TEXT,
   step TEXT NOT NULL,                        -- draft, drafted, push, pr, link, open, accepted, rejected, failed
   tries INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL, updated REAL NOT NULL);
+"#;
+
+/// The pipeline's findings (PIP-36): review findings with a `rule`, one row per repo, rule
+/// (lowercased) and PR.
+const SCHEMA_2: &str = r#"
+CREATE TABLE findings (repo TEXT NOT NULL, rule TEXT NOT NULL /* lowercased */, pr INTEGER NOT NULL,
+  mission INTEGER NOT NULL REFERENCES missions(id), at REAL NOT NULL, PRIMARY KEY (repo, rule, pr));
 "#;
 
 /// An open `towercab.db`.

@@ -19,7 +19,7 @@ fn open(config: &Config, home: &Home) -> Loop {
     Loop::open(
         config.clone(),
         home.clone(),
-        Handlers::production(),
+        Handlers::picks_off(),
         common::fake_exes(&home.root.with_file_name("fakebin")),
         LoopOpts::default(),
     )
@@ -58,7 +58,7 @@ fn test_run_once_and_unclean_exit() {
     assert_eq!(db.meta("running").unwrap(), None, "a clean exit");
     assert_eq!(home.holder(), None);
 
-    // --intent: no stage handler built, so it can't be picked (named by its full id).
+    // --intent: picks on, but its repo isn't in [repos] (named by its full id).
     let intents = tmp.path().join("intents");
     common::write(
         &intents,
@@ -71,12 +71,12 @@ fn test_run_once_and_unclean_exit() {
         run(&["run", "--intent", "0721"]),
         (
             String::new(),
-            "towercab: 261020-0721: not picked: picks off: pipeline not built\n".into(),
+            "towercab: 261020-0721: not picked: unknown repo web\n".into(),
             Some(1)
         )
     );
     assert_eq!(db.meta("running").unwrap(), None);
-    assert!(!Handlers::production().built());
+    assert!(!Handlers::picks_off().built());
 
     // meta.running = "<pid> <unix s>" while a loop runs; a loop dropped without shutdown
     // leaves it, and the next loop sees the unclean exit.
@@ -259,7 +259,7 @@ fn test_idle() {
 
     // Picks off (production handlers) with an intent queued: nothing runnable, idle.
     let mut w = World::new(&[intent_file("261001-0900-x", "web", "", "X")], &["web"]);
-    let mut lp = w.open(Handlers::production());
+    let mut lp = w.open(Handlers::picks_off());
     for _ in 0..2 {
         let r = w.pass(&mut lp);
         assert!(r.idle && r.picked.is_none());

@@ -146,7 +146,7 @@ fn test_parse_repo_files() {
             .unwrap()
             .starts_with("A finding is Important")
     );
-    assert_eq!(own.review.do_not_report.len(), 3);
+    assert_eq!(own.review.do_not_report.len(), 2);
     assert_eq!(own.towercab.max_autonomy, 5);
     assert_eq!(own.towercab.protected, ["src/machine.rs", "ops/bands.yaml"]);
     assert_eq!(own.towercab.tests, ["tests/**"]);

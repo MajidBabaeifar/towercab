@@ -153,7 +153,7 @@ anything = true
             ci_wait: Duration::from_secs(1800),
             path: format!("/loop/bin:{path}"),
             toolchain: vec![
-                home.join(".cargo"),
+                home.join(".cargo/bin"),
                 home.join(".rustup"),
                 home.join(".local/bin"),
             ],

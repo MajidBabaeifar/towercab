@@ -366,6 +366,103 @@ impl Intent {
         Ok(())
     }
 
+    /// Replaces the body section `## <title>` with `text` (pipeline.md **Notes**): the old one
+    /// (its heading up to the next `# `/`## ` line, with the blank line before it) removed, the
+    /// new one appended last; empty `text` → only removed. Other lines stay byte-identical; a
+    /// line of `text` starting with `#` is escaped (`\#`) so it can't end the section.
+    pub fn set_section(&mut self, title: &str, text: &str) -> Result<(), String> {
+        let eol = if self.open.ends_with("\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        };
+        let heading = format!("## {title}");
+        let body = self.body.clone();
+        let mut start = None;
+        let mut end = body.len();
+        let mut pos = 0;
+        let mut fence: Option<char> = None;
+        for line in body.split_inclusive('\n') {
+            let l = eol_stripped(line);
+            let t = l.trim_start();
+            if let Some(c) = t.chars().next().filter(|c| matches!(c, '`' | '~'))
+                && t.starts_with(&c.to_string().repeat(3))
+            {
+                fence = match fence {
+                    Some(f) if f == c => None,
+                    None => Some(c),
+                    other => other,
+                };
+            } else if fence.is_none() {
+                if start.is_none() && l.trim_end() == heading {
+                    start = Some(pos);
+                } else if start.is_some() && (l.starts_with("# ") || l.starts_with("## ")) {
+                    end = pos;
+                    break;
+                }
+            }
+            pos += line.len();
+        }
+        let mut next = match start {
+            Some(s) => {
+                let blank = format!("{eol}{eol}");
+                let s = if body[..s].ends_with(&blank) {
+                    s - eol.len()
+                } else {
+                    s
+                };
+                format!("{}{}", &body[..s], &body[end..])
+            }
+            None => body,
+        };
+        let text = text.trim();
+        if !text.is_empty() {
+            if !next.is_empty() && !next.ends_with('\n') {
+                next.push_str(eol);
+            }
+            next.push_str(eol);
+            next.push_str(&heading);
+            next.push_str(eol);
+            next.push_str(eol);
+            for line in text.lines() {
+                let line = line.trim_end_matches('\r');
+                if line.starts_with('#') {
+                    next.push('\\');
+                }
+                next.push_str(line);
+                next.push_str(eol);
+            }
+        }
+        let mut changed = self.clone();
+        changed.body = next;
+        changed.title = title_of(&changed.body).ok_or("no title: the body needs a `# ` line")?;
+        *self = changed;
+        Ok(())
+    }
+
+    /// The body section `## <title>` (ASCII case-insensitive, outside fences): its lines up to
+    /// the next `# `/`## ` line, as written; absent → `None`.
+    pub fn section(&self, title: &str) -> Option<String> {
+        use crate::repo::markdown;
+        let lines = markdown::lines(&self.body);
+        let items = markdown::items(&lines, 1).ok()?;
+        let [found] = markdown::sections(&items, [title]).ok()?;
+        found.map(markdown::text)
+    }
+
+    /// The bullets of the body section `## <title>` (none: empty).
+    pub fn section_bullets(&self, title: &str) -> Vec<String> {
+        use crate::repo::markdown;
+        let lines = markdown::lines(&self.body);
+        let Ok(items) = markdown::items(&lines, 1) else {
+            return Vec::new();
+        };
+        match markdown::sections(&items, [title]) {
+            Ok([Some(s)]) => markdown::bullets(s),
+            _ => Vec::new(),
+        }
+    }
+
     /// Typed value of a known field.
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.values.get(key)

@@ -1,8 +1,8 @@
-//! Command line (LOOP-15): every command; `telemetry`, `eval` and `hook guard` are stubs until
-//! their intents (MET-12, PIP-33, PIP-29).
+//! Command line (LOOP-15): every command; `telemetry` is a stub until its intent (MET-12).
 
 use std::ffi::{OsStr, OsString};
-use std::path::PathBuf;
+use std::io::Read as _;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
@@ -19,6 +19,7 @@ use crate::intents::migrate::migrate;
 use crate::intents::store::now;
 use crate::intents::{Listing, NewIntent, Store};
 use crate::pick;
+use crate::pipeline::evals;
 use crate::repo::protect::{Target, protect};
 use crate::runloop::{Loop, LoopOpts, Tick};
 use crate::service;
@@ -97,8 +98,22 @@ enum Command {
         #[arg(value_parser = ["on", "off", "status"])]
         what: String,
     },
-    /// Run the evals (not built yet)
-    Eval,
+    /// Run the evals (PIP-33): a baseline with this binary, a Towercab PR's build, or the
+    /// cases in a directory (the PR build's inner run)
+    Eval {
+        /// What changed (a drop of 10 points or more sends a message)
+        #[arg(long, conflicts_with_all = ["pr", "cases"])]
+        reason: Option<String>,
+        /// Build this Towercab PR's head, run the cases with it, post towercab/evals
+        #[arg(long, conflicts_with = "cases")]
+        pr: Option<u64>,
+        /// Run only the cases in this directory (with --out)
+        #[arg(long, requires = "out", value_name = "DIR")]
+        cases: Option<PathBuf>,
+        /// Where the run's result.json goes (with --cases)
+        #[arg(long, requires = "cases", value_name = "FILE")]
+        out: Option<PathBuf>,
+    },
     /// Hooks Claude Code runs inside Towercab's workers
     #[command(hide = true)]
     Hook {
@@ -111,8 +126,26 @@ enum Command {
 
 #[derive(Subcommand, Debug)]
 enum Hook {
-    /// The worker's PreToolUse guard (PIP-29)
-    Guard,
+    /// The worker's PreToolUse guard (PIP-29): the hook input on stdin, exit 2 blocks
+    Guard {
+        /// `<runs>/guard.json`
+        rules: PathBuf,
+    },
+    /// The verifier's child (PIP-32): starts the app, waits for its url, runs Claude, kills the
+    /// app; the app never answered → `<log>.nostart`, exit 3
+    Verifier {
+        /// The app's `{argv, env}` (JSON)
+        #[arg(long)]
+        app: String,
+        #[arg(long)]
+        url: String,
+        /// The app's output
+        #[arg(long)]
+        log: PathBuf,
+        /// The Claude run's argv
+        #[arg(last = true, required = true)]
+        claude: Vec<OsString>,
+    },
 }
 
 /// Exit code: 0 ok, 1 error, 2 bad arguments.
@@ -213,8 +246,35 @@ where
             out
         })),
         Command::Telemetry { .. } => not_built("MET-12", 1),
-        Command::Eval => not_built("PIP-33", 1),
-        Command::Hook { hook: Hook::Guard } => not_built("PIP-29", 2),
+        Command::Eval {
+            reason,
+            pr,
+            cases,
+            out,
+        } => report(Config::load(args.config.as_deref()).and_then(|config| {
+            let home = Home::resolve(args.home.as_deref())?;
+            let exes = Exes::default();
+            match (pr, cases, out) {
+                // It posts statuses: as the App only (LOOP-19).
+                (Some(n), _, _) => config
+                    .check_loop()
+                    .and_then(|()| evals::pr(&config, &home, &exes, n)),
+                (None, Some(dir), Some(out)) => evals::inner(&config, &exes, &dir, &out),
+                _ => evals::baseline(&config, &home, &exes, reason.as_deref()),
+            }
+        })),
+        Command::Hook {
+            hook: Hook::Guard { rules },
+        } => fail_closed(move || guard(&rules)),
+        Command::Hook {
+            hook:
+                Hook::Verifier {
+                    app,
+                    url,
+                    log,
+                    claude,
+                },
+        } => crate::pipeline::verifier::hook(&app, &url, &log, &claude),
         Command::Doctor => match loop_config(&args.config) {
             Err(e) => {
                 println!("{e}");
@@ -225,6 +285,32 @@ where
                     .map(|home| doctor(&config, &home, &Exes::default())),
             ),
         },
+    }
+}
+
+/// `towercab hook guard <rules>` (PIP-29): stdin → `guard::hook`; allowed → exit 0, blocked →
+/// the reason on stderr, exit 2 (also when stdin or the rules can't be read: fail closed).
+/// `f`'s exit code, a panic in it → 2 (`guard: panicked: blocked`): Claude Code takes any exit
+/// but 2 from a hook as a non-blocking error, so a panicking guard would let the write through.
+pub fn fail_closed(f: impl FnOnce() -> i32 + std::panic::UnwindSafe) -> i32 {
+    std::panic::catch_unwind(f).unwrap_or_else(|_| {
+        eprintln!("guard: panicked: blocked");
+        2
+    })
+}
+
+fn guard(rules: &Path) -> i32 {
+    let mut stdin = String::new();
+    if let Err(e) = std::io::stdin().read_to_string(&mut stdin) {
+        eprintln!("guard: stdin: {e}: blocked");
+        return 2;
+    }
+    match crate::pipeline::guard::hook(&stdin, rules) {
+        Ok(()) => 0,
+        Err(why) => {
+            eprintln!("{why}");
+            2
+        }
     }
 }
 

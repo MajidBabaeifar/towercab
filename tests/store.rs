@@ -875,3 +875,37 @@ fn test_symlinks_never_followed() {
     );
     assert_eq!(fs::read_to_string(&outside_md).unwrap(), text);
 }
+
+#[test]
+fn test_store_put() {
+    let home = Home::new(&[(
+        "intents/261020-0721-x/intent.md",
+        &intent_md("towercab", "", "X"),
+    )]);
+    let store = home.store();
+    let rel = "intents/261020-0721-x/plan.md";
+    assert_eq!(store.put(rel, "# Plan\n", "plan 261020-0721"), Ok(true));
+    assert_eq!(home.remote_file(rel), "# Plan\n");
+    assert_eq!(home.log()[0], "towercab: plan 261020-0721");
+    // The same text: no commit.
+    let head = home.head();
+    assert_eq!(store.put(rel, "# Plan\n", "plan 261020-0721"), Ok(false));
+    assert_eq!(home.head(), head);
+    for bad in [
+        "../x",
+        "/tmp/x",
+        "intents/261020-0721-x/intent.md",
+        "TODO.md",
+        "a/../b",
+    ] {
+        assert!(
+            matches!(store.put(bad, "x", "bad"), Err(StoreError::Refused(_))),
+            "{bad}"
+        );
+    }
+    std::os::unix::fs::symlink("/tmp", home.checkout.join("evals")).unwrap();
+    assert!(matches!(
+        store.put("evals/1.json", "{}", "eval"),
+        Err(StoreError::Refused(_))
+    ));
+}

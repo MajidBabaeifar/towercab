@@ -1,209 +1,81 @@
 # Towercab
 
-Personal software factory. One central task list ([gradient-tasks](https://github.com/MajidBabaeifar/gradient-tasks)); agents pick tasks by
-priority, validate, push, and report how they did.
+Majid's software factory. Intents live in one repo ([gradient-tasks](https://github.com/MajidBabaeifar/gradient-tasks));
+the `towercab` loop picks the top one, has Claude Code design, plan and build it, checks it in code
+(sandboxed checks, red→green proof, CI, review), opens the PR, merges when its autonomy allows, then
+deploys, runs e2e and reverts on red. What it does exactly: [specs/](specs/README.md). Working here: [CLAUDE.md](CLAUDE.md).
 
-**Status:** reads the task list, delegates, waits out limits, opens PRs, loops. The rest of the design: [specs/](specs/README.md).
-
-**Rust rewrite:** the `towercab` crate at the root (`cargo install --path . --locked`) has the intent store so far: `towercab add "<repo>: <title>" [uN iN aN]`, `towercab migrate` (once, converts the old `TODO.md` lines; [INT-13](specs/intents.md)), and `towercab protect <repo>` (the `towercab` branch ruleset, with your `gh` login; needs `github = "<owner>/<name>"` under `[repos.<repo>]`; [REPO-7](specs/repo.md)). The Python version below runs until the pipeline intent switches over. Working here: [CLAUDE.md](CLAUDE.md).
-
-**CI:** GitHub Actions (`.github/workflows/ci.yml`) on every PR and push to `main`: job `rust` runs `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`; job `python` runs `python3 -m unittest discover -s tests` on Python 3.12. Any failure turns the check red. See [PIP-12](specs/pipeline.md).
-
-## Target workflow
-
-- Tasks live in `gradient-tasks`, each scored urgency, importance, autonomy (1–5).
-- Towercab picks the top runnable task, claims it, runs an agent in its own worktree.
-- Validation always runs in full; autonomy decides where the task waits for me.
-- `towercab inbox` · `towercab watch <id>` · `towercab review` · `towercab report`
-
-## Run the task list
-
-1. `~/.config/towercab/config.toml` (example: `towercab doctor` prints it if missing):
-
-   ```toml
-   [tasks]
-   remote = "https://github.com/MajidBabaeifar/gradient-tasks.git"
-
-   [repos.towercab]
-   path = "~/Repositories/towercab"
-   verify = ["python3", "-m", "unittest", "discover", "-s", "tests"]
-   bash = ["python3 -m unittest *", "python3 -m towercab *", "git status*", "git diff*", "ls*", "rg *"]
-   ```
-
-2. Install once (links `towercab` into `~/.local/bin`; make sure that is on `PATH`):
-
-   ```bash
-   ./install.sh
-   ```
-
-3. Then, from any folder:
-
-   ```bash
-   towercab doctor          # git, gh, claude, sandbox (bwrap, socat), systemd-inhibit, config
-   towercab --version       # print version
-   towercab next            # what it would run, and why
-   towercab run --watch     # work down the list; Ctrl-C stops cleanly
-   towercab run --task 1715 # just this one task (ID or unique suffix), even if [!]
-   towercab up              # run --watch, laptop kept awake
-   ```
-
-`towercab up [--max-tasks N] [--task ID]` runs the same loop under
-`systemd-inhibit --what=sleep:idle:handle-lid-switch --mode=block`. Sleep, idle and
-lid-close are blocked only while it runs; Ctrl-C stops the loop and releases them.
-Lid inhibit depends on your logind/polkit policy. Needs systemd; otherwise use `run --watch`.
-
-Each task: marked `[~]`, built in its own checkout (one session plans, implements, writes tests
-and docs), pushed as `towercab/<id>-<slug>` with a PR right away, then CI (`gh pr checks`) is the
-gate: red sends the failing logs back to the same build session and pushes again (max 3, then
-`[!]` + question + Telegram). Green → reviewer agent; the task becomes `[!]` with `pr:` until you merge,
-then moves to `DONE.md` with cost, time and attempts. Blocked or unknown-repo tasks become
-`[!]` with a question in `tasks/<id>.md`; set them back to `[ ]` to retry. Agent access and
-limit handling: [specs/runner.md](specs/runner.md).
-
-## Metrics (Grafana)
-
-One local container (Grafana + Prometheus + Loki + OTLP collector) and one overall dashboard.
-Needs Docker.
+## Install
 
 ```bash
-docker compose -f ops/docker-compose.yml up -d   # Grafana on http://localhost:3000
-ops/telemetry on                                 # Claude Code sessions export to it (new sessions)
+cargo install --path . --locked   # → ~/.cargo/bin/towercab
+./install.sh                      # the /intent skill into ~/.claude/skills
+towercab doctor                   # config, programs, GitHub App, rulesets, Telegram
 ```
 
-The **Claude Code usage** half fills as soon as a session with telemetry runs; **Tasks** fills
-once the loop emits `towercab.*` metrics ([MET-12..19](specs/metrics.md)). Pick the refresh rate
-top right. `ops/telemetry off` stops the export; `docker compose -f ops/docker-compose.yml down`
-stops the stack (data stays in the `lgtm-data` volume).
+Needs `git`, `gh`, `claude`, `bwrap` and, for `up`, systemd.
 
-## Telegram notifications
+## Config
 
-Optional. Towercab messages you when a PR is ready, a task is stuck or asking, CI stays red, a usage limit
-makes it wait (with the reset time), and when a task is merged.
+`~/.config/towercab/config.toml` (`--config`, `TOWERCAB_CONFIG`; every key: [loop.md](specs/loop.md) **Config**):
 
-1. In Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`, follow the prompts, copy the token.
-2. Send your new bot any message, then open `https://api.telegram.org/bot<token>/getUpdates` and copy `chat` → `id`.
-3. Add to `config.toml`:
+```toml
+[intents]
+remote = "https://github.com/MajidBabaeifar/gradient-tasks.git"
+cutoff = 7
 
-   ```toml
-   [telegram]
-   bot_token = "123456:ABC..."
-   chat_id = "123456789"
-   ```
+[agent]
+model = "opus"        # parallel, timeouts, budget, ci_poll … have defaults
 
-A failed send (offline, bad token) is logged once and ignored; the loop never stops for it.
+[github]
+app_id = 123456       # the towercab GitHub App (ops/github-app.json); key: app.pem next to this file
+me = "MajidBabaeifar"
 
-### Commands from your phone
+[repos.towercab]
+github = "MajidBabaeifar/towercab"
+path = "~/.local/share/towercab/repos/towercab"   # Towercab's own clone, not your checkout
+base = "main"
 
-While `towercab run --watch` (or `towercab up`) is running, message the bot from the configured chat:
+[policies]
+github = "MajidBabaeifar/agent-instructions"
+
+[telegram]            # optional
+bot_token = "123456:ABC..."
+chat_id = "123456789"
+```
+
+e2e secrets per repo: `~/.config/towercab/secrets/<repo>.env` (`KEY=VALUE`, mode 0600).
+
+## Commands
 
 | Command | Does |
 |---|---|
-| `status` | running task, tasks waiting on you, next task, limit cooldowns |
-| `next` | same as `towercab next` |
-| `approve <id>` | `[!]` → `[ ]` (clears `note`, keeps `pr:`), pushed |
-| `run <id>` | start that task now, even if `[!]`; refused while another is in flight |
+| `towercab migrate` | once: the old `TODO.md` lines become intent folders |
+| `towercab up` · `down` · `logs` | the systemd user service running `run --watch` |
+| `towercab run [--watch] [--intent ID]` | the loop; without `--watch` it exits when nothing is runnable |
+| `towercab step <id>` | one step of an intent's mission in the foreground |
+| `towercab status` · `next` | what runs, what waits on you, what it would pick and why |
+| `towercab add "<repo>: <title>" [uN iN aN]` | a thin intent on `main` (or `/intent` in Claude Code) |
+| `towercab approve <id>` · `retry --fresh <id>` · `release <id>` | go on after a wait, start over, authorize a release |
+| `towercab pause` · `resume` · `trust <repo>` | no picks; lift a repo's cap and freeze |
+| `towercab review` | walk parked and stale intents |
+| `towercab protect <repo>` | the `towercab` ruleset on a repo's base branch (your `gh` login) |
+| `towercab eval [--reason <change>]` · `eval --pr <n>` | replay the eval cases; post `towercab/evals` on a Towercab PR |
 
-`<id>` is the full ID or a unique suffix. Messages from other chats are ignored. Commands are polled once
-per loop pass, so during a long stage they are answered when that step ends.
+Telegram (from the configured chat): `status`, `next`, `approve <id>`, `retry <id>`, `release <id>`,
+`pause`, `resume`. Messages come only when you must act.
 
-## Missions by hand (the original MVP)
+First start: `towercab migrate` on the `intents` repo, `towercab protect <repo>` per repo, `towercab up`.
 
-Imported from my earlier `local agent` prototype. It predates the specs above.
-
-For a first useful product, follow [Pocket Notes setup and monitoring](examples/pocket-notes/RUN.md).
-
-A dependency-free Python MVP for Linux/macOS. Queue a new product or a change to
-an existing Git repository. A persistent scheduler runs **build → verify → review**,
-feeding failed checks/review findings back into a bounded repair loop. Claude repairs
-resume the build session (`claude --resume <session_id>`); Codex repairs start fresh.
-
-### Try it without an account
-
-From this directory:
+## Metrics (Grafana)
 
 ```bash
-python3 -m towercab doctor
-python3 -m towercab --home /tmp/towercab-demo demo
-python3 -m towercab --home /tmp/towercab-demo status
-python3 -m unittest discover -s tests -v
+docker compose -f ops/docker-compose.yml up -d   # Grafana on http://localhost:3000
+ops/telemetry on                                 # Claude Code sessions export to it
 ```
 
-The demo is a deterministic fixture, **not an AI-generated product**. It exercises
-the real queue, Git isolation, verification command, stage transitions and report.
+## CI
 
-### Run an actual mission
-
-Install/login to Codex and/or Claude Code first; the factory reuses their CLI
-authentication. `doctor` reports executable availability, not login validity.
-
-```bash
-python3 -m towercab add 'First product' \
-  --brief examples/hello.md \
-  --provider codex \
-  --verify '["python3","-c","from hello import greet; assert greet(\"Factory\") == \"Hello, Factory!\""]'
-python3 -m towercab run --missions-only
-python3 -m towercab status
-```
-
-Add `--reviewer claude` for cross-provider review. For an existing project, add
-`--repo /absolute/path/to/repo` and supply its real check command. The source must
-be clean and have a commit. Committed files are cloned into a separate checkout;
-uncommitted/ignored files and installed dependencies are not copied. Submodules
-are not initialized automatically. The original checkout is never edited.
-
-`--verify` is an argv JSON array, not shell syntax. For a script use e.g.
-`["bash","scripts/check.sh"]`. This command is executed locally with your user's
-permissions and should be a check you trust. Agents may edit project tests;
-passing a check is evidence, not proof that all requirements are met.
-
-### Operating the queue
-
-```bash
-python3 -m towercab run --missions-only --watch --timeout 900
-python3 -m towercab show MISSION_ID
-python3 -m towercab logs MISSION_ID --follow
-python3 -m towercab retry MISSION_ID
-```
-
-`run` drains currently eligible work and exits. `--watch` keeps waiting for new
-missions and expired provider cooldowns. Ctrl-C stops the active process group
-and saves the mission as blocked. Higher `--priority` runs first. Each stage has
-a timeout; each mission defaults to two repair rounds (`--max-repairs`).
-
-Rate-limit failures put that provider into persistent exponential cooldown
-(60 seconds up to an hour; numeric retry-after can extend it). Other providers'
-eligible missions and local verification can proceed. Reset dates in free-form
-messages are not parsed yet. Auth, permission, missing executable, and other
-errors block a mission for inspection instead of retrying forever. A retry keeps
-the repair counter; it does not secretly replenish the budget.
-
-State and evidence live under `~/.local/share/towercab` (`--home PATH`, `TOWERCAB_HOME`):
-
-- `towercab.sqlite3`: missions, events and provider cooldowns.
-- `missions/ID/workspace/`: isolated Git checkout and all resulting files.
-- `missions/ID/*-STAGE.log`: full process output.
-- `missions/ID/build.txt`, `review.txt`, `changes.patch`, `report.json`: evidence.
-
-Ready means verification passed and the agent reviewer approved. Changes remain
-local for human review. There is no automatic merge, push, publishing or deploy.
-Inspect the workspace diff before copying/integrating changes into your project.
-
-### Current boundaries
-
-- One active stage at a time across projects. This makes local testing predictable;
-  concurrent workers, dependencies and fair scheduling are follow-up work.
-- No automatic provider handoff mid-mission. Each provider retains its own queue.
-- Process timeouts and repair caps are implemented; token/dollar budgets are not.
-- Ordinary restarts preserve queued work/cooldowns. An uncleanly interrupted running
-  stage is blocked: ensure orphaned workers have stopped, inspect logs, then retry.
-- Codex uses workspace-write for building and read-only for review, with
-  approvals disabled (requests requiring approval fail). Claude uses explicit tool
-  allowlists and dontAsk. Claude Bash and verification are **not OS sandboxes**;
-  use trusted projects. Full permission bypass flags are never used.
-- The host must stay awake and connected for real agent work. `towercab up` blocks
-  sleep only while it runs. No background service; power settings are not changed.
-- Review is text-based. Browser interaction, product memory and
-  long-running product discovery are not implemented in this first slice.
-
-CLI references: [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode)
-and [Claude Code programmatic mode](https://code.claude.com/docs/en/headless).
+`.github/workflows/ci.yml` on every PR and push to `main`: job `rust` (`cargo fmt --check`, `cargo clippy
+--all-targets --locked -- -D warnings`, `cargo test --locked`); job `python` (`tests/test_ops.py` for `ops/`).
+The Python version of Towercab lives on branch `python`.

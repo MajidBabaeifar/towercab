@@ -35,7 +35,8 @@ pub struct Child {
     pub timed_out: bool,
 }
 
-/// Starts `spec` (directories of its output files created).
+/// Starts `spec` (directories of its output files created; the files removed again when it
+/// can't start).
 pub fn spawn(spec: &ChildSpec, mono: Duration) -> Result<Child, String> {
     let (exe, args) = spec.argv.split_first().ok_or("child: empty argv")?;
     let shown = |e: std::io::Error| format!("{}: {e}", exe.to_string_lossy());
@@ -58,7 +59,13 @@ pub fn spawn(spec: &ChildSpec, mono: Duration) -> Result<Child, String> {
         .stdout(file(&spec.stdout)?)
         .stderr(file(&spec.stderr)?)
         .process_group(0);
-    let proc = c.spawn().map_err(shown)?;
+    // Its output files exist only for a child that started: a handler re-entering a step reads
+    // them as "it ran" (pipeline runs, release, rollback).
+    let proc = c.spawn().map_err(|e| {
+        let _ = std::fs::remove_file(&spec.stdout);
+        let _ = std::fs::remove_file(&spec.stderr);
+        shown(e)
+    })?;
     let pid = proc.id();
     Ok(Child {
         proc,

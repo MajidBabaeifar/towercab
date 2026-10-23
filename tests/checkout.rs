@@ -218,3 +218,86 @@ fn test_checkout_recloned() {
     assert_eq!(git(&work, &["remote"]), "");
     lp.shutdown().unwrap();
 }
+
+#[test]
+fn test_planted_git_config_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("co");
+    fs::create_dir_all(&dir).unwrap();
+    git(&dir, &["init", "--quiet"]);
+    common::write(&dir, "a.txt", "one\n");
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "--quiet", "-m", "one"]);
+    common::write(&dir, "a.txt", "two\n");
+    git(&dir, &["commit", "--quiet", "-am", "two"]);
+    let exe = OsStr::new("git");
+    checkout::sane(exe, &dir).unwrap();
+    // What a run could plant in `.git` (no sandbox lets it: `.git` is read-only there): a clean
+    // filter `git add -A` would run, a `diff.external` the review's diff would.
+    let ran = tmp.path().join("ran");
+    let script = tmp.path().join("evil.sh");
+    common::exe(
+        &script,
+        &format!("#!/bin/sh\necho \"$0 $*\" >> '{}'\ncat\n", ran.display()),
+    );
+    common::write(&dir, ".gitattributes", "* filter=x\n");
+    git(
+        &dir,
+        &["config", "filter.x.clean", script.to_str().unwrap()],
+    );
+    git(&dir, &["config", "diff.external", script.to_str().unwrap()]);
+    common::write(&dir, "a.txt", "three\n");
+    let err = checkout::sane(exe, &dir).unwrap_err();
+    assert!(
+        err.contains("filter.x.clean") && err.contains("diff.external"),
+        "{err}"
+    );
+    assert!(checkout::git_sane(exe, &dir, &["add", "-A"], None).is_err());
+    let diff = towercab::pipeline::git::patch_id(exe, &dir, "HEAD~1", "HEAD");
+    assert!(diff.is_err(), "{diff:?}");
+    assert!(!ran.exists(), "planted config ran");
+    // `--no-ext-diff --no-textconv` alone keeps `diff.external` out too.
+    let out = checkout::git(
+        exe,
+        &dir,
+        &["diff", "--no-ext-diff", "--no-textconv", "HEAD~1", "HEAD"],
+        None,
+    )
+    .unwrap();
+    assert!(out.contains("+two"), "{out}");
+    assert!(!ran.exists());
+    // Only what clone, `remote remove` and `checkout -B` write passes.
+    for k in [
+        "core.repositoryformatversion",
+        "core.logallrefupdates",
+        "remote.origin.url",
+        "remote.origin.fetch",
+        "branch.main.merge",
+    ] {
+        assert!(checkout::allowed_key(k), "{k}");
+    }
+    for k in [
+        "core.worktree",
+        "core.sshcommand",
+        "include.path",
+        "includeif.gitdir:/x.path",
+        "merge.x.driver",
+        "remote.origin.uploadpack",
+        "diff.x.textconv",
+    ] {
+        assert!(!checkout::allowed_key(k), "{k}");
+    }
+    // A `.git` file (gitdir elsewhere) is refused.
+    let linked = tmp.path().join("linked");
+    fs::create_dir_all(&linked).unwrap();
+    fs::write(
+        linked.join(".git"),
+        format!("gitdir: {}\n", dir.join(".git").display()),
+    )
+    .unwrap();
+    assert!(
+        checkout::sane(exe, &linked)
+            .unwrap_err()
+            .contains("not a directory")
+    );
+}

@@ -582,7 +582,7 @@ fn test_pick_skips() {
         &[intent_file("261001-0900-web", "web", "", "Web")],
         &["web", "api"],
     );
-    let lp = w.open(Handlers::production());
+    let lp = w.open(Handlers::picks_off());
     let db = w.db();
     db.set_meta("paused", "1").unwrap();
     db.conn()

@@ -21,7 +21,7 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
 
-  # The Python version, until the pipeline intent switches over.
+  # tests/test_ops.py (the ops/ scripts) until the metrics intent ports them.
   python:
     runs-on: ubuntu-latest
     steps:
