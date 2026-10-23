@@ -1316,6 +1316,18 @@ pub fn enter(cx: &mut Ctx<'_>, m: &Mission) -> Result<Mission, String> {
         // The red→green proof's overlay, left by a mission that left `proof` early (PIP-30).
         checkout::remove(&cx.home.root.join(format!("{}-proof", m.checkout)))?;
     }
+    if m.stage.finished() {
+        // Raw e2e output a stop cut off before its redaction (PIP-9).
+        for e in std::fs::read_dir(cx.runs(m))
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            if e.file_name().to_string_lossy().ends_with(".raw") {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
     let hold = matches!(m.stage, Stage::Merge | Stage::RevertMerge | Stage::Rollback)
         && paused(cx.db.conn())?;
     let now = cx.tick.unix();

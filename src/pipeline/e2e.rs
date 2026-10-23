@@ -47,10 +47,17 @@ pub fn secrets_file(config: &Config, repo: &str) -> PathBuf {
 /// matching quotes unquoted); absent → none. Readable by group or others (mode not 0600) or a
 /// bad line → `Err` (the e2e is refused, `env_blocked`).
 pub fn secrets(file: &Path) -> Result<Vec<(String, String)>, String> {
+    read_secrets(file).map(|(kv, _)| kv)
+}
+
+/// [`secrets`] and the sha256 of the bytes they were parsed from (absent: of none), read once.
+pub fn read_secrets(file: &Path) -> Result<(Vec<(String, String)>, String), String> {
     use std::os::unix::fs::PermissionsExt;
     let meta = match std::fs::metadata(file) {
         Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((Vec::new(), sha256(b"")));
+        }
         Err(e) => return Err(format!("{}: {e}", file.display())),
     };
     let mode = meta.permissions().mode() & 0o777;
@@ -60,7 +67,21 @@ pub fn secrets(file: &Path) -> Result<Vec<(String, String)>, String> {
             file.display()
         ));
     }
-    let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let bytes = std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    Ok((parse_secrets(file, &bytes)?, sha256(&bytes)))
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// The `KEY=VALUE` lines of a secrets file's `bytes`.
+fn parse_secrets(file: &Path, bytes: &[u8]) -> Result<Vec<(String, String)>, String> {
+    let text = std::str::from_utf8(bytes).map_err(|e| format!("{}: {e}", file.display()))?;
     let mut out = Vec::new();
     for (i, line) in text.lines().enumerate() {
         let line = line.trim();
@@ -102,17 +123,107 @@ pub fn redact(text: &str, values: &[String]) -> String {
     out
 }
 
-/// The repo's secret values (none when the file is absent or refused).
-pub fn secret_values(cx: &Ctx<'_>, m: &Mission) -> Vec<String> {
-    secrets(&secrets_file(cx.config, &m.repo))
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(_, v)| v)
-        .collect()
+/// What an e2e log says instead of its output when the secrets it ran with are no longer
+/// known (the secrets file changed or became unreadable since the spawn, by a process that
+/// isn't the one that spawned it).
+pub const WITHHELD: &str =
+    "(output withheld: the secrets file changed since this e2e started, so it can't be redacted)";
+
+/// The raw output of e2e run `n` in `runs` (stdout, stderr): written by the child, redacted
+/// into `e2e-<n>.log`/`.err` by [`settle`] (or [`scrub`]), then deleted. Nothing else reads it.
+pub fn raw(runs: &Path, n: u32) -> (PathBuf, PathBuf) {
+    (
+        runs.join(format!("e2e-{n}.out.raw")),
+        runs.join(format!("e2e-{n}.err.raw")),
+    )
 }
 
-/// The mission checkout at `sha`, detached: base fetched into the clone (as the App), the
-/// checkout ensured (LOOP-8) and its base refreshed, then `git checkout --force --detach <sha>`.
+type Held = std::collections::BTreeMap<PathBuf, Vec<String>>;
+
+/// The secret values each e2e child spawned by this process ran with, by its raw stdout path.
+static HELD: std::sync::Mutex<Held> = std::sync::Mutex::new(Held::new());
+
+/// The values e2e run `n` ran with: held since its spawn by this process, else the secrets
+/// file's when its sha256 is still the one recorded at the spawn (`data.e2e_secrets`), else
+/// unknown (`None`: the output is withheld).
+fn values_of(cx: &Ctx<'_>, m: &Mission, n: u32, out: &Path) -> Option<Vec<String>> {
+    if let Some(v) = HELD.lock().ok().and_then(|mut h| h.remove(out)) {
+        return Some(v);
+    }
+    let rec = Data::of(m).get("e2e_secrets").cloned()?;
+    if rec.get("n").and_then(Value::as_u64) != Some(u64::from(n)) {
+        return None;
+    }
+    let file = secrets_file(cx.config, &m.repo);
+    let bytes = match std::fs::read(&file) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(_) => return None,
+    };
+    if rec.get("sha").and_then(Value::as_str) != Some(sha256(&bytes).as_str()) {
+        return None;
+    }
+    parse_secrets(&file, &bytes)
+        .ok()
+        .map(|kv| kv.into_iter().map(|(_, v)| v).collect())
+}
+
+/// Run `n`'s raw output redacted into `log` (`$ <line>`, stdout, stderr) and its `.err`
+/// (stderr), or [`WITHHELD`] in both; the raw files deleted → (the raw stderr's first line,
+/// the written stderr's first line).
+fn redact_raw(cx: &Ctx<'_>, m: &Mission, n: u32, line: &str, log: &Path) -> (String, String) {
+    let (out_raw, err_raw) = raw(&cx.runs(m), n);
+    let read =
+        |p: &Path| String::from_utf8_lossy(&std::fs::read(p).unwrap_or_default()).into_owned();
+    let (out, err) = (read(&out_raw), read(&err_raw));
+    let (text, err_text) = match values_of(cx, m, n, &out_raw) {
+        Some(v) => (
+            redact(&format!("$ {line}\n{out}{err}"), &v),
+            redact(&err, &v),
+        ),
+        None => (format!("$ {line}\n{WITHHELD}\n"), format!("{WITHHELD}\n")),
+    };
+    let _ = std::fs::write(sandbox::err_of(log), &err_text);
+    let _ = std::fs::write(log, text);
+    let _ = std::fs::remove_file(&out_raw);
+    let _ = std::fs::remove_file(&err_raw);
+    let first = |s: &str| s.lines().next().unwrap_or_default().to_string();
+    (first(&err), first(&err_text))
+}
+
+/// Raw e2e output a run left (a crash or a restart before [`settle`]) redacted into its log
+/// as [`settle`] would (or withheld), then deleted: run first by every e2e and release step.
+pub fn scrub(cx: &Ctx<'_>, m: &Mission) {
+    let runs = cx.runs(m);
+    let Ok(rd) = std::fs::read_dir(&runs) else {
+        return;
+    };
+    let ns: std::collections::BTreeSet<u32> = rd
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let rest = name.strip_prefix("e2e-")?;
+            rest.strip_suffix(".out.raw")
+                .or_else(|| rest.strip_suffix(".err.raw"))?
+                .parse()
+                .ok()
+        })
+        .collect();
+    for n in ns {
+        redact_raw(
+            cx,
+            m,
+            n,
+            "(interrupted)",
+            &runs.join(format!("e2e-{n}.log")),
+        );
+    }
+}
+
+/// The mission checkout at `sha`, detached and clean: base fetched into the clone (as the
+/// App), the checkout ensured (LOOP-8) and its base refreshed, then `git checkout --force
+/// --detach <sha>` and `git clean -ffdxq` (nothing a worker or a PR's commands left, ignored
+/// files too, stays for e2e or a release command).
 pub fn at_sha(cx: &Ctx<'_>, m: &Mission, sha: &str) -> Result<PathBuf, StepError> {
     let repo = cx.repo(m).map_err(StepError::Bug)?.clone();
     pgit::fetch_branch(cx, m, &repo.base)?;
@@ -128,6 +239,7 @@ pub fn at_sha(cx: &Ctx<'_>, m: &Mission, sha: &str) -> Result<PathBuf, StepError
         &dir,
         &["checkout", "--quiet", "--force", "--detach", sha],
     )?;
+    pgit::run(cx, &dir, &["clean", "-ffdxq"])?;
     Ok(dir)
 }
 
@@ -141,16 +253,12 @@ pub enum E2eEnd {
     Env(Fault, String),
 }
 
-/// The child's output (stdout then stderr) redacted into `log` (the `.err` redacted too) →
-/// how it ended.
+/// The child's raw output redacted into `log` (`$ <line>`, stdout, stderr; the `.err` too)
+/// with the secret values it ran with, or withheld when those aren't known any more; the raw
+/// files deleted → how it ended.
 pub fn settle(cx: &Ctx<'_>, m: &Mission, line: &str, end: &ChildEnd, log: &Path) -> E2eEnd {
-    let values = secret_values(cx, m);
-    let out = String::from_utf8_lossy(&std::fs::read(&end.stdout).unwrap_or_default()).into_owned();
-    let err = String::from_utf8_lossy(&std::fs::read(&end.stderr).unwrap_or_default()).into_owned();
-    let err = redact(&err, &values);
-    let _ = std::fs::write(&end.stderr, &err);
-    let _ = std::fs::write(log, redact(&format!("$ {line}\n{out}{err}"), &values));
-    let first = err.lines().next().unwrap_or_default().to_string();
+    let n = Data::of(m).n("e2e");
+    let (raw_first, first) = redact_raw(cx, m, n, line, log);
     if end.timed_out {
         return E2eEnd::Red(format!(
             "timed out after {} min",
@@ -163,7 +271,7 @@ pub fn settle(cx: &Ctx<'_>, m: &Mission, line: &str, end: &ChildEnd, log: &Path)
             let exe = line.split_whitespace().next().unwrap_or("sh").to_string();
             E2eEnd::Env(Fault::Tool(exe), format!("e2e: exit {c}: {first}"))
         }
-        Some(_) if first.starts_with("bwrap:") => {
+        Some(_) if raw_first.starts_with("bwrap:") => {
             E2eEnd::Env(Fault::Sandbox, format!("e2e: {first}"))
         }
         Some(c) => E2eEnd::Red(format!("exit {c}")),
@@ -171,8 +279,10 @@ pub fn settle(cx: &Ctx<'_>, m: &Mission, line: &str, end: &ChildEnd, log: &Path)
     }
 }
 
-/// The e2e `line` at `step` in `dir`: its log number `n.e2e` recorded with the step (and
-/// `data`) → the child; a refused secrets file → `env_blocked`.
+/// The e2e `line` at `step` in `dir`: the repo's secrets file read once (refused →
+/// `env_blocked`), its log number `n.e2e` and the file's sha256 (`data.e2e_secrets` = `{n,
+/// sha}`) recorded with the step → the child, writing [`raw`] output; its values held for
+/// [`settle`].
 pub fn spawn(
     cx: &Ctx<'_>,
     m: &Mission,
@@ -181,16 +291,28 @@ pub fn spawn(
     dir: &Path,
     line: &str,
 ) -> Result<Progress, StepError> {
+    let (kv, sha) = match read_secrets(&secrets_file(cx.config, &m.repo)) {
+        Ok(s) => s,
+        Err(why) => {
+            return Ok(Progress::Done(Outcome::env(
+                Fault::Secrets(m.repo.clone()),
+                why,
+            )));
+        }
+    };
     let n = data.next_n("e2e");
+    data.set("e2e_secrets", json!({"n": n, "sha": sha}));
     let m = cx.record(m, step, &[("data", data.text().into())])?;
     let runs = cx.runs(&m);
     std::fs::create_dir_all(&runs)
         .map_err(|e| StepError::Bug(format!("{}: {e}", runs.display())))?;
-    let log = runs.join(format!("e2e-{n}.log"));
-    Ok(match sandbox::e2e(cx, &m, dir, line, &log)? {
-        Ok(spec) => Progress::Spawn(spec),
-        Err(why) => Progress::Done(Outcome::env(Fault::Secrets(m.repo.clone()), why)),
-    })
+    let (out, err) = raw(&runs, n);
+    let values: Vec<String> = kv.iter().map(|(_, v)| v.clone()).collect();
+    let spec = sandbox::e2e(cx, &m, dir, line, &out, &err, kv)?;
+    if let Ok(mut h) = HELD.lock() {
+        h.insert(out, values);
+    }
+    Ok(Progress::Spawn(spec))
 }
 
 /// The log of the last e2e run (`e2e-<n>.log`).
@@ -385,6 +507,7 @@ impl Handler for E2e {
         if self.mode.eval() {
             return Ok(Progress::Done(Outcome::ok()));
         }
+        scrub(cx, m);
         if m.step.starts_with("triage:") {
             return runs::restart(cx, m);
         }

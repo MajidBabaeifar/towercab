@@ -32,15 +32,18 @@ pub const APP_WAIT: Duration = Duration::from_secs(60);
 /// The wrapper's exit code when the app never answered (Claude not run).
 pub const NO_START: i32 = 3;
 
-/// The app's command as the wrapper runs it: PIP-23's `bwrap` with network in `dir`, and the
-/// sandbox's environment.
-pub fn app_argv(cx: &Ctx<'_>, dir: &Path, command: &str) -> Result<Value, StepError> {
+/// The app's command as the wrapper runs it: PIP-23's `bwrap` with network in `dir`, the
+/// repo's cache read-only, and the sandbox's environment.
+pub fn app_argv(cx: &Ctx<'_>, m: &Mission, dir: &Path, command: &str) -> Result<Value, StepError> {
     let home = crate::claude::home().map_err(StepError::Bug)?;
-    let argv: Vec<String> = sandbox::checks_argv(cx.exes, cx.config, &home, dir, command, true)
-        .into_iter()
-        .map(|a| a.to_string_lossy().into_owned())
-        .collect();
-    let env: serde_json::Map<String, Value> = sandbox::env(cx.config, &home)
+    let cache_dir = sandbox::cache_dir(cx, m)?;
+    let cache = sandbox::Cache::Read(&cache_dir);
+    let argv: Vec<String> =
+        sandbox::checks_argv(cx.exes, cx.config, &home, dir, command, true, cache)
+            .into_iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+    let env: serde_json::Map<String, Value> = sandbox::env(cx.config, &home, cache)
         .into_iter()
         .map(|(k, v)| {
             (
@@ -122,7 +125,7 @@ impl Verifier {
         };
         let m = crate::mission::get(cx.db.conn(), m.id)?;
         let exe = crate::exes::towercab(cx.exes).map_err(StepError::Bug)?;
-        let app_json = app_argv(cx, &cx.checkout(&m), &app.command)?;
+        let app_json = app_argv(cx, &m, &cx.checkout(&m), &app.command)?;
         let log = Self::app_log(cx, &m);
         let mut argv: Vec<OsString> = vec![
             exe.into(),

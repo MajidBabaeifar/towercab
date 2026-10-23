@@ -106,6 +106,7 @@ impl Handler for Release {
         if self.mode.eval() {
             return self.done(cx, m);
         }
+        e2e_mod::scrub(cx, m);
         let (block, merge) = match Self::block(cx, m)? {
             Err(o) => return Ok(Progress::Done(o)),
             Ok(None) => return self.done(cx, m),

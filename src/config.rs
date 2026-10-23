@@ -90,7 +90,7 @@ impl Default for AgentConfig {
     }
 }
 
-pub const DEFAULT_TOOLCHAIN: [&str; 3] = ["~/.cargo", "~/.rustup", "~/.local/bin"];
+pub const DEFAULT_TOOLCHAIN: [&str; 3] = ["~/.cargo/bin", "~/.rustup", "~/.local/bin"];
 
 /// `[github]`: the GitHub App Towercab acts as (LOOP-19). `app_id` and `me` are required only
 /// by the loop's commands ([`Config::check_loop`]).

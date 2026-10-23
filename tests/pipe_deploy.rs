@@ -12,9 +12,10 @@ use std::sync::{Arc, Mutex};
 use common::http::FakeHttp;
 use common::pipe::{E2E_LINE, LOGIN_ID as ID, Pipe};
 use serde_json::{Value, json};
+use sha2::Digest as _;
 use towercab::commands::{self, Cmd};
 use towercab::machine::Stage;
-use towercab::pipeline::e2e::{REDACTED, redact, secrets};
+use towercab::pipeline::e2e::{self, REDACTED, WITHHELD, redact, secrets};
 
 /// `TOWERCAB.md` with ` ```live ` on `env:staging` and the e2e script.
 fn live() -> String {
@@ -310,6 +311,85 @@ fn test_e2e_env_only_secrets() {
         format!("a {REDACTED} b 12"),
         "values under 3 characters stay"
     );
+}
+
+#[test]
+fn test_e2e_redaction_fails_closed() {
+    let (mut p, merge) = Pipe::merged(&live(), "towercab");
+    p.deploys("staging", 1, &merge, "ahead");
+    let dir = p.w.root.join("secrets");
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("web.env");
+    fs::write(&file, "API_TOKEN=s3cr3t-token-value\n").unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+    // The e2e rotates the secret while it runs: what it ran with is still redacted.
+    fs::write(
+        p.w.root.join("e2e.sh"),
+        format!(
+            "echo \"token=$API_TOKEN\" >&2\nprintf 'API_TOKEN=rotated-value\\n' > '{}'\n",
+            file.display()
+        ),
+    )
+    .unwrap();
+    assert_eq!(p.step(ID), "261001-0900: deploy → e2e");
+    // What a worker or a PR's commands left in the checkout is gone before the e2e runs.
+    let co = p.checkout(ID);
+    assert!(co.join(".git").is_dir());
+    fs::write(co.join("planted.txt"), "x").unwrap();
+    assert_eq!(p.step(ID), "261001-0900: e2e → release");
+    assert!(!co.join("planted.txt").exists());
+    let runs = p.runs(ID);
+    let log = fs::read_to_string(runs.join("e2e-1.log")).unwrap();
+    assert!(log.contains(&format!("token={REDACTED}")), "{log}");
+    let err = fs::read_to_string(runs.join("e2e-1.err")).unwrap();
+    assert_eq!(err, format!("token={REDACTED}\n"));
+    let raw = |runs: &std::path::Path| -> Vec<String> {
+        fs::read_dir(runs)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".raw"))
+            .collect()
+    };
+    assert!(raw(&runs).is_empty());
+    // Raw output a cut-off run left (another process spawned it): redacted when the secrets
+    // file is as recorded at its spawn, withheld when it changed; deleted either way, before
+    // the next step reads a log.
+    let now = fs::read(&file).unwrap();
+    let sha: String = sha2::Sha256::digest(&now)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    for (n, rec) in [(5, sha.as_str()), (6, "0000")] {
+        fs::write(
+            runs.join(format!("e2e-{n}.out.raw")),
+            "token=rotated-value\n",
+        )
+        .unwrap();
+        fs::write(runs.join(format!("e2e-{n}.err.raw")), "rotated-value\n").unwrap();
+        let mut d = p.data(ID);
+        d["e2e_secrets"] = json!({"n": n, "sha": rec});
+        p.w.db()
+            .conn()
+            .execute(
+                "UPDATE missions SET data = ?1 WHERE intent = ?2",
+                rusqlite::params![d.to_string(), ID],
+            )
+            .unwrap();
+        let m = p.mission(ID);
+        p.cx(|cx| e2e::scrub(cx, &m));
+        let log = fs::read_to_string(runs.join(format!("e2e-{n}.log"))).unwrap();
+        assert!(!log.contains("rotated"), "{log}");
+        if n == 5 {
+            assert_eq!(
+                log,
+                format!("$ (interrupted)\ntoken={REDACTED}\n{REDACTED}\n")
+            );
+        } else {
+            assert_eq!(log, format!("$ (interrupted)\n{WITHHELD}\n"));
+        }
+        assert!(raw(&runs).is_empty());
+    }
 }
 
 #[test]

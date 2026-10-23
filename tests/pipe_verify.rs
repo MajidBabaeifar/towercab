@@ -17,7 +17,7 @@ use towercab::config::{Config, IntentsConfig};
 use towercab::exes::Exes;
 use towercab::handler::{ChildKind, ChildSpec};
 use towercab::machine::Stage;
-use towercab::pipeline::sandbox;
+use towercab::pipeline::sandbox::{self, Cache};
 
 /// A config for sandboxed commands: `PATH` the test's, toolchain `toolchain`.
 fn config(toolchain: Vec<PathBuf>) -> Config {
@@ -34,8 +34,20 @@ fn config(toolchain: Vec<PathBuf>) -> Config {
     c
 }
 
-/// `line` sandboxed in `dir` (no network) with `bwrap` → (exit code, stdout + stderr).
+/// `line` sandboxed in `dir` (no network, no cache) with `bwrap` → (exit code, stdout +
+/// stderr).
 fn sandboxed(bwrap: &Path, config: &Config, dir: &Path, line: &str) -> (Option<i32>, String) {
+    sandboxed_with(bwrap, config, dir, line, Cache::None)
+}
+
+/// [`sandboxed`] with the cache `cache`.
+fn sandboxed_with(
+    bwrap: &Path,
+    config: &Config,
+    dir: &Path,
+    line: &str,
+    cache: Cache<'_>,
+) -> (Option<i32>, String) {
     let home = claude::home().unwrap();
     let exes = Exes {
         bwrap: bwrap.into(),
@@ -44,9 +56,9 @@ fn sandboxed(bwrap: &Path, config: &Config, dir: &Path, line: &str) -> (Option<i
     let log = dir.parent().unwrap().join("out.log");
     let spec = ChildSpec {
         kind: ChildKind::Checks,
-        argv: sandbox::checks_argv(&exes, config, &home, dir, line, false),
+        argv: sandbox::checks_argv(&exes, config, &home, dir, line, false, cache),
         cwd: dir.to_path_buf(),
-        env: sandbox::env(config, &home),
+        env: sandbox::env(config, &home, cache),
         stdin: None,
         stdout: log.clone(),
         stderr: sandbox::err_of(&log),
@@ -87,40 +99,86 @@ fn test_verify_sandboxed() {
         )
         .answer(3, &FakeClaude::result(done("Adds login.")));
     p.step_to(ID, Stage::Proof, 6);
-    // One sandbox per checks line: no network, `/` read-only, HOME and /tmp empty, the
-    // toolchain read-only, only the checkout writable.
+    // One sandbox per setup and checks line: own pid/IPC/UTS namespaces and session, `/`
+    // read-only, /run, HOME and /tmp empty, the toolchain read-only, the repo's cache, only the
+    // checkout writable but its `.git`; no network for checks.
     let dir = p.checkout(ID).display().to_string();
+    let git = format!("{dir}/.git");
     let home = claude::home().unwrap().display().to_string();
+    let cache = p.w.home.root.join("cache/web").display().to_string();
     let calls = p.bwraps();
-    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(
+        calls.len(),
+        3,
+        "setup twice (build, verify), checks once: {calls:?}"
+    );
     let t = tool.display().to_string();
-    let want: Vec<&str> = vec![
-        "--unshare-net",
-        "--die-with-parent",
-        "--ro-bind",
-        "/",
-        "/",
-        "--dev",
-        "/dev",
-        "--tmpfs",
-        &home,
-        "--ro-bind",
-        &t,
-        &t,
-        "--tmpfs",
-        "/tmp",
-        "--bind",
-        &dir,
-        &dir,
-        "--chdir",
-        &dir,
-        "--",
-        "sh",
-        "-c",
-        "sh check.sh",
-    ];
-    assert_eq!(calls[0], want);
-    // Its environment: HOME, PATH ([agent].path), LANG, TMPDIR, XDG_CACHE_HOME; nothing else.
+    let argv = |net: &[&str], mount: &str, line: &str| -> Vec<String> {
+        let mut v: Vec<&str> = net.to_vec();
+        v.extend([
+            "--unshare-pid",
+            "--unshare-ipc",
+            "--unshare-uts",
+            "--new-session",
+            "--die-with-parent",
+            "--ro-bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--proc",
+            "/proc",
+            "--tmpfs",
+            "/run",
+        ]);
+        let mut v: Vec<String> = v.into_iter().map(str::to_string).collect();
+        // With network, a resolv.conf under /run is bound back.
+        if net.is_empty()
+            && let Ok(r) = fs::canonicalize("/etc/resolv.conf")
+            && r.starts_with("/run")
+        {
+            let r = r.display().to_string();
+            v.extend(["--ro-bind-try".into(), r.clone(), r]);
+        }
+        for a in [
+            "--tmpfs",
+            &home,
+            "--tmpfs",
+            "/tmp",
+            "--ro-bind",
+            &t,
+            &t,
+            mount,
+            &cache,
+            &cache,
+            "--bind",
+            &dir,
+            &dir,
+            "--ro-bind-try",
+            &git,
+            &git,
+            "--chdir",
+            &dir,
+            "--",
+            "sh",
+            "-c",
+            line,
+        ] {
+            v.push(a.to_string());
+        }
+        v
+    };
+    assert_eq!(
+        calls[2],
+        argv(&["--unshare-net"], "--ro-bind", "sh check.sh")
+    );
+    // Setup: network, the cache writable.
+    let setup = calls[0].last().unwrap().clone();
+    assert!(setup.contains("setup.log"), "{setup}");
+    assert_eq!(calls[0], argv(&[], "--bind", &setup));
+    assert_eq!(calls[0], calls[1]);
+    // Its environment: HOME, PATH ([agent].path), LANG, TMPDIR, XDG_CACHE_HOME, CARGO_HOME
+    // (the cache's); nothing else.
     let seen = fs::read_to_string(&env).unwrap();
     let keys: Vec<&str> = seen
         .lines()
@@ -135,6 +193,7 @@ fn test_verify_sandboxed() {
                 "LANG",
                 "TMPDIR",
                 "XDG_CACHE_HOME",
+                "CARGO_HOME",
                 "PWD",
                 "OLDPWD",
                 "SHLVL",
@@ -145,8 +204,12 @@ fn test_verify_sandboxed() {
         );
     }
     assert!(seen.contains("TMPDIR=/tmp\n") && seen.contains("XDG_CACHE_HOME=/tmp/cache\n"));
+    assert!(
+        seen.contains(&format!("CARGO_HOME={cache}/cargo\n")),
+        "{seen}"
+    );
     assert!(seen.contains(&format!("PATH={}\n", p.w.config.agent.path)));
-    // Setup is not sandboxed.
+    // Setup ran (in the sandbox) in the checkout.
     assert_eq!(p.setups(), vec![dir.clone(), dir.clone()]);
     let d = p.data(ID);
     assert_eq!(d["verify"]["line"], "green (1 command)");
@@ -171,6 +234,121 @@ fn test_verify_sandboxed() {
 }
 
 #[test]
+fn test_sandbox_isolated() {
+    let c = config(Vec::new());
+    let tmp = tempfile::tempdir().unwrap();
+    let work = tmp.path().join("work");
+    fs::create_dir_all(work.join(".git")).unwrap();
+    fs::write(work.join(".git/config"), "[core]\n\tbare = false\n").unwrap();
+    let home = claude::home().unwrap();
+    let argv: Vec<String> = sandbox::checks_argv(
+        &Exes::default(),
+        &c,
+        &home,
+        &work,
+        "true",
+        false,
+        Cache::None,
+    )
+    .iter()
+    .map(|a| a.to_string_lossy().into_owned())
+    .collect();
+    for flag in [
+        "--unshare-net",
+        "--unshare-pid",
+        "--unshare-ipc",
+        "--unshare-uts",
+        "--new-session",
+        "--die-with-parent",
+    ] {
+        assert!(argv.contains(&flag.to_string()), "{flag}: {argv:?}");
+    }
+    let git = work.join(".git").display().to_string();
+    let at = |w: &[&str]| {
+        argv.windows(w.len())
+            .position(|x| x == w)
+            .unwrap_or_else(|| panic!("{w:?}: {argv:?}"))
+    };
+    at(&["--proc", "/proc"]);
+    at(&["--tmpfs", "/run"]);
+    // `.git` read-only over the writable checkout.
+    let d = work.display().to_string();
+    assert!(at(&["--bind", &d, &d]) < at(&["--ro-bind-try", &git, &git]));
+    let Some(bwrap) = real_bwrap() else {
+        eprintln!("no usable bwrap here: argv checked only");
+        return;
+    };
+    // No /run (D-Bus, ssh-agent, gpg-agent sockets), no host pid, `.git` unwritable; a
+    // `setsid` child dies with the sandbox.
+    let (code, out) = sandboxed(
+        &bwrap,
+        &c,
+        &work,
+        &format!(
+            "ls -A /run; kill -0 {} 2>/dev/null && echo host-pid; \
+             {{ echo x >> .git/config; }} 2>/dev/null && echo git-writable; \
+             (setsid sh -c 'sleep 2; echo alive > late.txt' &); echo ok > here.txt",
+            std::process::id()
+        ),
+    );
+    assert_eq!(code, Some(0), "{out}");
+    assert_eq!(out, "", "{out}");
+    assert_eq!(fs::read_to_string(work.join("here.txt")).unwrap(), "ok\n");
+    assert_eq!(
+        fs::read_to_string(work.join(".git/config")).unwrap(),
+        "[core]\n\tbare = false\n"
+    );
+    std::thread::sleep(Duration::from_secs(3));
+    assert!(
+        !work.join("late.txt").exists(),
+        "a setsid child outlived the sandbox"
+    );
+}
+
+#[test]
+fn test_sandbox_masks_credentials() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cargo = tmp.path().join("cargo");
+    fs::create_dir_all(&cargo).unwrap();
+    fs::write(cargo.join("credentials.toml"), "token = \"s3cret\"\n").unwrap();
+    fs::write(cargo.join("tool"), "#!/bin/sh\necho tool\n").unwrap();
+    let c = config(vec![cargo.clone()]);
+    let work = tmp.path().join("work");
+    fs::create_dir_all(&work).unwrap();
+    let home = claude::home().unwrap();
+    let argv: Vec<String> = sandbox::checks_argv(
+        &Exes::default(),
+        &c,
+        &home,
+        &work,
+        "true",
+        false,
+        Cache::None,
+    )
+    .iter()
+    .map(|a| a.to_string_lossy().into_owned())
+    .collect();
+    let (d, f) = (
+        cargo.display().to_string(),
+        cargo.join("credentials.toml").display().to_string(),
+    );
+    let at = |w: &[&str]| argv.windows(w.len()).position(|x| x == w);
+    assert!(at(&["--ro-bind", &d, &d]).unwrap() < at(&["--ro-bind", "/dev/null", &f]).unwrap());
+    let Some(bwrap) = real_bwrap() else {
+        eprintln!("no usable bwrap here: argv checked only");
+        return;
+    };
+    let (code, out) = sandboxed(
+        &bwrap,
+        &c,
+        &work,
+        &format!("cat '{f}' 2>/dev/null; cat '{d}/tool'"),
+    );
+    assert_eq!(code, Some(0), "{out}");
+    assert_eq!(out, "#!/bin/sh\necho tool\n", "{out}");
+}
+
+#[test]
 fn test_verify_cannot_read_home() {
     let home = claude::home().unwrap();
     let c = config(Vec::new());
@@ -178,7 +356,15 @@ fn test_verify_cannot_read_home() {
     let work = tmp.path().join("work");
     fs::create_dir_all(&work).unwrap();
     // HOME is an empty tmpfs (with no toolchain dir), /tmp too.
-    let argv = sandbox::checks_argv(&Exes::default(), &c, &home, &work, "true", false);
+    let argv = sandbox::checks_argv(
+        &Exes::default(),
+        &c,
+        &home,
+        &work,
+        "true",
+        false,
+        Cache::None,
+    );
     let argv: Vec<String> = argv
         .iter()
         .map(|a| a.to_string_lossy().into_owned())
@@ -188,7 +374,7 @@ fn test_verify_cannot_read_home() {
         .filter(|w| w[0] == "--tmpfs")
         .map(|w| w[1].as_str())
         .collect();
-    assert_eq!(tmpfs, vec![home.to_str().unwrap(), "/tmp"]);
+    assert_eq!(tmpfs, vec!["/run", home.to_str().unwrap(), "/tmp"]);
     let Some(bwrap) = real_bwrap() else {
         eprintln!("no usable bwrap here: argv checked only");
         return;
@@ -218,13 +404,26 @@ fn test_verify_cannot_read_home() {
 #[test]
 fn test_verify_cargo_in_sandbox() {
     let home = claude::home().unwrap();
-    let toolchain: Vec<PathBuf> = [".cargo", ".rustup"].iter().map(|d| home.join(d)).collect();
+    let toolchain: Vec<PathBuf> = [".cargo/bin", ".rustup"]
+        .iter()
+        .map(|d| home.join(d))
+        .collect();
     let c = config(toolchain.clone());
     let tmp = tempfile::tempdir().unwrap();
     let work = tmp.path().join("work");
     fs::create_dir_all(work.join("src")).unwrap();
     // The toolchain dirs that exist are mounted read-only at their place, over the empty HOME.
-    let argv = sandbox::checks_argv(&Exes::default(), &c, &home, &work, "cargo check", false);
+    let cache = tmp.path().join("cache");
+    fs::create_dir_all(&cache).unwrap();
+    let argv = sandbox::checks_argv(
+        &Exes::default(),
+        &c,
+        &home,
+        &work,
+        "cargo check",
+        false,
+        Cache::Read(&cache),
+    );
     let argv: Vec<String> = argv
         .iter()
         .map(|a| a.to_string_lossy().into_owned())
@@ -253,12 +452,14 @@ fn test_verify_cargo_in_sandbox() {
     )
     .unwrap();
     fs::write(work.join("src/lib.rs"), "pub fn one() -> u8 { 1 }\n").unwrap();
-    // Offline, HOME empty but the toolchain: cargo builds into the checkout.
-    let (code, out) = sandboxed(
+    // Offline, HOME empty but the toolchain, `CARGO_HOME` the read-only cache: cargo builds
+    // into the checkout.
+    let (code, out) = sandboxed_with(
         &bwrap,
         &c,
         &work,
         "cargo check --offline --quiet && echo built",
+        Cache::Read(&cache),
     );
     assert_eq!(code, Some(0), "{out}");
     assert!(out.ends_with("built\n"), "{out}");

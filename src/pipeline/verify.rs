@@ -1,5 +1,5 @@
 //! Verify (PIP-23): after each build or repair, in code: the base branch's ` ```setup ` lines
-//! (unsandboxed, network), then its ` ```checks ` lines in order under the sandbox, one child
+//! (sandboxed with network and the repo's cache), then its ` ```checks ` lines in order under the sandbox, one child
 //! per line (steps `setup:<i>`, `check:<i>`). Red → the output to the worker session as a
 //! verify repair (cap 3, then `waiting: checks red`). [`run_lines`] is shared with the proof
 //! (PIP-30).
@@ -29,7 +29,7 @@ pub fn tail(path: &Path, bytes: usize) -> String {
     String::from_utf8_lossy(&all[all.len().saturating_sub(bytes)..]).into_owned()
 }
 
-/// The commands of one run: setup lines (unsandboxed) then checks lines (sandboxed).
+/// The commands of one run: setup lines then checks lines (both sandboxed).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lines {
     pub setup: Vec<String>,
@@ -180,7 +180,7 @@ impl Runner {
         let spec = if setup {
             sandbox::setup_spec(cx, m, &self.dir, line, &log)?
         } else {
-            sandbox::command(cx, ChildKind::Checks, &self.dir, line, &log)?
+            sandbox::command(cx, m, ChildKind::Checks, &self.dir, line, &log)?
         };
         Ok(Progress::Spawn(spec))
     }
