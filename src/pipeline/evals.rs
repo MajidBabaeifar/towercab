@@ -723,12 +723,24 @@ pub fn inner(config: &Config, exes: &Exes, cases_dir: &Path, out: &Path) -> Resu
     Ok(format!("evals: {}", result.summary()))
 }
 
-/// The PR's head and changed files (`gh pr view <n> --json headRefOid,files`).
-pub fn pr_files(
-    identity: &Identity,
-    github: &str,
-    n: u64,
-) -> Result<(String, Vec<String>), GhError> {
+/// What `eval --pr` needs of a PR (`gh pr view <n> --json headRefOid,files,isCrossRepository,author,commits`).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PrInfo {
+    pub head: String,
+    pub files: Vec<String>,
+    /// From a fork.
+    pub cross: bool,
+    /// The PR's author login (`app/<slug>` for an App).
+    pub author: String,
+    /// Each head commit: (sha, its authors' (login, email)).
+    pub commits: Vec<(String, Vec<(String, String)>)>,
+}
+
+/// The `--json` fields of [`pr_info`].
+pub const PR_INFO_FIELDS: &str = "headRefOid,files,isCrossRepository,author,commits";
+
+/// PR `n` of `github` ([`PrInfo`]).
+pub fn pr_info(identity: &Identity, github: &str, n: u64) -> Result<PrInfo, GhError> {
     let out = identity.gh(
         github,
         &[
@@ -738,26 +750,121 @@ pub fn pr_files(
             "-R",
             github,
             "--json",
-            "headRefOid,files",
+            PR_INFO_FIELDS,
         ],
     )?;
     let v: Value =
         serde_json::from_str(&out).map_err(|e| GhError::Failed(format!("gh pr view {n}: {e}")))?;
-    let head = v
-        .get("headRefOid")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let files = v
-        .get("files")
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(|f| f.get("path").and_then(Value::as_str).map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    Ok((head, files))
+    let s = |v: &Value, k: &str| {
+        v.get(k)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    let arr = |v: &Value, k: &str| {
+        v.get(k)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    Ok(PrInfo {
+        head: s(&v, "headRefOid"),
+        files: arr(&v, "files")
+            .iter()
+            .map(|f| s(f, "path"))
+            .filter(|p| !p.is_empty())
+            .collect(),
+        cross: v
+            .get("isCrossRepository")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        author: v.get("author").map(|a| s(a, "login")).unwrap_or_default(),
+        commits: arr(&v, "commits")
+            .iter()
+            .map(|c| {
+                let who = arr(c, "authors")
+                    .iter()
+                    .map(|a| (s(a, "login"), s(a, "email")))
+                    .collect();
+                (s(c, "oid"), who)
+            })
+            .collect(),
+    })
+}
+
+/// A login without `app/` and `[bot]` (`app/towercab`, `towercab[bot]` → `towercab`).
+fn bare_login(login: &str) -> &str {
+    let l = login.strip_prefix("app/").unwrap_or(login);
+    l.strip_suffix("[bot]").unwrap_or(l)
+}
+
+/// Whether `eval --pr` may build PR `info` (its head runs as me, outside any sandbox: see
+/// pipeline.md **Evals**): from the repo itself, not a fork; opened by `me` or the App's bot;
+/// every head commit authored by one of them (login, or the bot's email). `Err`: why not.
+pub fn trusted(info: &PrInfo, me: Option<&str>, bot: Option<(&str, &str)>) -> Result<(), String> {
+    if info.cross {
+        return Err("a fork's PR".into());
+    }
+    let ok_login = |l: &str| {
+        !l.is_empty()
+            && (me.is_some_and(|m| m == l)
+                || bot.is_some_and(|(b, _)| bare_login(b) == bare_login(l)))
+    };
+    if !ok_login(&info.author) {
+        return Err(format!(
+            "opened by {}",
+            if info.author.is_empty() {
+                "nobody known"
+            } else {
+                &info.author
+            }
+        ));
+    }
+    for (sha, who) in &info.commits {
+        let mine = !who.is_empty()
+            && who
+                .iter()
+                .all(|(l, e)| ok_login(l) || bot.is_some_and(|(_, be)| !e.is_empty() && be == e));
+        if !mine {
+            let names: Vec<&str> = who
+                .iter()
+                .map(|(l, e)| if l.is_empty() { e.as_str() } else { l.as_str() })
+                .collect();
+            return Err(format!(
+                "commit {} by {}",
+                &sha[..sha.len().min(7)],
+                if names.is_empty() {
+                    "nobody known".into()
+                } else {
+                    names.join(", ")
+                }
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A bot's (login, email).
+type Login = (String, String);
+
+/// Who [`trusted`] trusts: `[github].me` and the App's bot (login, email; no App: none).
+fn trusted_people(
+    config: &Config,
+    identity: &Identity,
+) -> Result<(Option<String>, Option<Login>), GhError> {
+    let me = config.github.as_ref().and_then(|g| g.me.clone());
+    let bot = if identity.is_app() {
+        let b = identity.bot()?;
+        Some((b.login, b.email))
+    } else {
+        None
+    };
+    Ok((me, bot))
+}
+
+/// The status of a PR not built: `error` `not evaluated: <why>`.
+fn untrusted(why: &str) -> Verdict {
+    Verdict::new("error", &format!("not evaluated: {why}"))
 }
 
 /// `towercab eval --pr <n>`: the Towercab repo's PR `n`; the cheap statuses inline; else its
@@ -769,13 +876,21 @@ pub fn pr(config: &Config, home: &Home, exes: &Exes, n: u64) -> Result<String, S
     let repo = towercab_repo(config).ok_or("no [repos] entry whose github name is towercab")?;
     let identity = Identity::from_config(config, exes);
     let gh = |e: GhError| e.to_string();
-    let (head, files) = pr_files(&identity, &repo.github, n).map_err(gh)?;
+    let info = pr_info(&identity, &repo.github, n).map_err(gh)?;
+    let head = info.head.clone();
     let store = Store::open(config).map_err(|e| e.to_string())?;
     store.list().map_err(|e| e.to_string())?;
     let cases = cases(&store);
-    if let Some(v) = cheap(&files, cases.len()) {
+    if let Some(v) = cheap(&info.files, cases.len()) {
         post(&identity, &repo.github, &head, &v).map_err(gh)?;
         return Ok(format!("evals: {}", v.description));
+    }
+    let (me, bot) = trusted_people(config, &identity).map_err(gh)?;
+    let bot = bot.as_ref().map(|(l, e)| (l.as_str(), e.as_str()));
+    if let Err(why) = trusted(&info, me.as_deref(), bot) {
+        let v = untrusted(&why);
+        post(&identity, &repo.github, &head, &v).map_err(gh)?;
+        return Err(v.description);
     }
     let failed = |why: String| {
         let v = Verdict::new("error", &why);
@@ -783,29 +898,36 @@ pub fn pr(config: &Config, home: &Home, exes: &Exes, n: u64) -> Result<String, S
         why
     };
     let build = dir(home).join(format!("build-{n}"));
-    let built = build_head(exes, &identity, &repo, n, &head, &build);
+    let built = build_head(config, exes, &identity, &repo, n, &head, &build);
     let exe = built.map_err(failed)?;
     let tick = Tick::now();
     let run = run_name(tick);
     let out = dir(home).join(&run);
     let cases_dir = out.join("cases");
     fs::create_dir_all(&cases_dir).map_err(|e| format!("{}: {e}", cases_dir.display()))?;
+    let scratch = scratch_config(&config.file, &out).map_err(failed)?;
+    let scratch_home = out.join("home");
+    let mirror = policies_mirror(config, home, exes, &identity).map_err(failed)?;
     for c in &cases {
         let text = serde_json::to_string_pretty(&c.to_json()).map_err(|e| e.to_string())?;
         fs::write(cases_dir.join(format!("{}.json", c.id)), text).map_err(|e| e.to_string())?;
     }
     let file = out.join("result.json");
-    let status = Command::new(&exe)
+    let mut inner = Command::new(&exe);
+    inner
         .arg("--config")
-        .arg(&config.file)
+        .arg(&scratch)
         .arg("--home")
-        .arg(&home.root)
+        .arg(&scratch_home)
         .arg("eval")
         .arg("--cases")
         .arg(&cases_dir)
         .arg("--out")
         .arg(&file)
-        .current_dir(&home.root)
+        .current_dir(&out)
+        .env_clear()
+        .envs(inner_env(mirror.as_ref()));
+    let status = inner
         .status()
         .map_err(|e| failed(format!("{}: {e}", exe.display())))?;
     if !status.success() {
@@ -824,9 +946,115 @@ pub fn pr(config: &Config, home: &Home, exes: &Exes, n: u64) -> Result<String, S
     ))
 }
 
-/// PR `n`'s head checked out in `dir` (kept between runs: its `target/` too) and built →
-/// its `target/debug/towercab`.
+/// What the inner run gets of the environment: `HOME` (its Claude runs need my Claude login),
+/// `PATH`, `LANG`; with `[policies]` `url.<mirror>.insteadOf <policies url>` (`GIT_CONFIG_*`):
+/// it clones the policies from [`policies_mirror`], no App needed.
+fn inner_env(mirror: Option<&(String, PathBuf)>) -> Vec<(OsString, OsString)> {
+    let mut v: Vec<(OsString, OsString)> = ["HOME", "PATH", "LANG"]
+        .iter()
+        .filter_map(|k| std::env::var_os(k).map(|x| (OsString::from(k), x)))
+        .collect();
+    if let Some((url, path)) = mirror {
+        v.push(("GIT_CONFIG_COUNT".into(), "1".into()));
+        v.push((
+            "GIT_CONFIG_KEY_0".into(),
+            format!("url.{}.insteadOf", path.display()).into(),
+        ));
+        v.push(("GIT_CONFIG_VALUE_0".into(), url.into()));
+    }
+    v
+}
+
+/// The inner run's config: `--config`'s text without `[telegram]` and `[github]` (no Telegram
+/// token, no App: its `app.pem` lives next to the config file, and none is next to this copy),
+/// at `<run>/config.toml` (mode 0600).
+pub fn scratch_config(file: &Path, run: &Path) -> Result<PathBuf, String> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let text = fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let mut t: toml::Table = text
+        .parse()
+        .map_err(|e| format!("{}: {e}", file.display()))?;
+    t.remove("telegram");
+    t.remove("github");
+    let out = run.join("config.toml");
+    let body = toml::to_string(&t).map_err(|e| format!("{}: {e}", out.display()))?;
+    fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&out)
+        .and_then(|mut f| f.write_all(body.as_bytes()))
+        .map_err(|e| format!("{}: {e}", out.display()))?;
+    Ok(out)
+}
+
+/// A bare mirror of `[policies].github` at `<home>/evals/policies.git` (cloned, else fetched,
+/// as the App) for the inner run → (its `https://github.com/` url, path); none without
+/// `[policies]`.
+fn policies_mirror(
+    config: &Config,
+    home: &Home,
+    exes: &Exes,
+    identity: &Identity,
+) -> Result<Option<(String, PathBuf)>, String> {
+    let Some(github) = config.policies.github.clone() else {
+        return Ok(None);
+    };
+    let url = format!("https://github.com/{github}.git");
+    let auth = identity.auth_for_url(&url).map_err(|e| e.to_string())?;
+    let path = dir(home).join("policies.git");
+    if path.join("HEAD").exists() {
+        checkout::git(
+            &exes.git,
+            &path,
+            &[
+                "fetch",
+                "--quiet",
+                "--prune",
+                "origin",
+                "+refs/heads/*:refs/heads/*",
+            ],
+            Some(&auth),
+        )?;
+    } else {
+        checkout::remove(&path)?;
+        fs::create_dir_all(dir(home)).map_err(|e| format!("{}: {e}", dir(home).display()))?;
+        let to = path.to_string_lossy();
+        checkout::git(
+            &exes.git,
+            &dir(home),
+            &["clone", "--quiet", "--bare", "--", &url, &to],
+            Some(&auth),
+        )?;
+    }
+    Ok(Some((url, path)))
+}
+
+/// The build's environment variables passed on from mine (a compiler setup): `CC`, `CXX`, `AR`,
+/// `CFLAGS`, `CXXFLAGS`, `LDFLAGS`, `RUSTFLAGS`, `CRATE_CC_NO_DEFAULTS`.
+const BUILD_ENV: [&str; 8] = [
+    "CC",
+    "CXX",
+    "AR",
+    "CFLAGS",
+    "CXXFLAGS",
+    "LDFLAGS",
+    "RUSTFLAGS",
+    "CRATE_CC_NO_DEFAULTS",
+];
+
+/// `s` single-quoted for `sh`.
+fn quoted(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// PR `n`'s head checked out in `dir` (kept between runs: its `target/` too) and built in the
+/// **Sandbox** (network, `CARGO_HOME` in `<home>/evals/cache`, writable; env the sandbox's +
+/// [`BUILD_ENV`]) → its `target/debug/towercab`.
 fn build_head(
+    config: &Config,
     exes: &Exes,
     identity: &Identity,
     repo: &RepoConfig,
@@ -854,20 +1082,38 @@ fn build_head(
         ],
         Some(&auth),
     )?;
-    git(
-        exes,
+    checkout::git_sane(
+        &exes.git,
         dir,
         &["checkout", "--quiet", "--force", "-B", "eval", &pr_ref],
+        None,
     )?;
     let at = checkout::rev(&exes.git, dir, "HEAD")?;
     if at != head {
         return Err(format!("PR #{n} head is {at}, not {head}"));
     }
-    let out = Command::new(&exes.cargo)
-        .args(["build", "--locked"])
+    let home = crate::claude::home()?;
+    let cache = dir
+        .parent()
+        .ok_or("build: no parent directory")?
+        .join("cache");
+    fs::create_dir_all(&cache).map_err(|e| format!("{}: {e}", cache.display()))?;
+    let cache = super::sandbox::Cache::Write(&cache);
+    let line = format!("{} build --locked", quoted(&exes.cargo.to_string_lossy()));
+    let argv = super::sandbox::checks_argv(exes, config, &home, dir, &line, true, cache);
+    let mut env = super::sandbox::env(config, &home, cache);
+    env.extend(
+        BUILD_ENV
+            .iter()
+            .filter_map(|k| std::env::var_os(k).map(|v| (OsString::from(k), v))),
+    );
+    let out = Command::new(&argv[0])
+        .args(&argv[1..])
         .current_dir(dir)
+        .env_clear()
+        .envs(env)
         .output()
-        .map_err(|e| format!("{}: {e}", exes.cargo.to_string_lossy()))?;
+        .map_err(|e| format!("{}: {e}", argv[0].to_string_lossy()))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         let last = err
@@ -990,16 +1236,21 @@ pub fn poll(cx: &mut Ctx<'_>, idle: bool) -> Result<Option<Job>, GhError> {
             if has_status(cx.identity, &g, head)? {
                 continue;
             }
-            let (_, files) = pr_files(cx.identity, &g, n)?;
-            match cheap(&files, n_cases) {
-                Some(v) => post(cx.identity, &g, head, &v)?,
-                None => {
-                    return Ok(Some(Job::Pr {
-                        n,
-                        head: head.to_string(),
-                    }));
-                }
+            let info = pr_info(cx.identity, &g, n)?;
+            if let Some(v) = cheap(&info.files, n_cases) {
+                post(cx.identity, &g, head, &v)?;
+                continue;
             }
+            let (me, bot) = trusted_people(cx.config, cx.identity)?;
+            let bot = bot.as_ref().map(|(l, e)| (l.as_str(), e.as_str()));
+            if let Err(why) = trusted(&info, me.as_deref(), bot) {
+                post(cx.identity, &g, head, &untrusted(&why))?;
+                continue;
+            }
+            return Ok(Some(Job::Pr {
+                n,
+                head: head.to_string(),
+            }));
         }
     }
     if !idle {

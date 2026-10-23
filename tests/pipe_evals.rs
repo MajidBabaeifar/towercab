@@ -18,7 +18,7 @@ use towercab::home::Home;
 use towercab::machine::Stage;
 use towercab::mission;
 use towercab::pipeline::evals::{
-    self, CASES, Case, CaseResult, Job, RunResult, Verdict, cheap, compare,
+    self, CASES, Case, CaseResult, Job, PrInfo, RunResult, Verdict, cheap, compare, trusted,
 };
 
 /// A case of intent `id` on `web` at `base`, added at `added`.
@@ -287,6 +287,19 @@ fn test_eval_replays_case() {
     assert!(case.why.starts_with("not set up: "), "{case:?}");
 }
 
+/// `gh pr view --json headRefOid,files,isCrossRepository,author,commits` of a PR of mine:
+/// opened by `me`, one commit by `me`, from the repo itself.
+fn mine_pr(head: &str, path: &str) -> String {
+    json!({
+        "headRefOid": head,
+        "files": [{"path": path}],
+        "isCrossRepository": false,
+        "author": {"login": "me"},
+        "commits": [{"oid": head, "authors": [{"login": "me", "email": "me@localhost"}]}],
+    })
+    .to_string()
+}
+
 /// A `cargo` whose `build` (in a checkout) logs `<pwd> <args>` and makes
 /// `target/debug/towercab`: it logs its argv to `<log dir>/inner.argv` and writes a result
 /// to `--out`: every case passes but those listed in `<log dir>/fail` (failed twice).
@@ -303,6 +316,7 @@ cat > target/debug/towercab <<'INNER'
 #!/bin/sh
 d='{d}'
 printf '%s\n' "$@" > "$d/inner.argv"
+env > "$d/inner.env"
 cases='' out=''
 while [ $# -gt 0 ]; do
   [ "$1" = --cases ] && cases="$2"
@@ -351,12 +365,8 @@ fn test_eval_builds_pr_head() {
     fs::create_dir_all(&bin).unwrap();
     p.exes.cargo = fake_cargo(&bin).into();
     p.gh.on(
-        "pr view 12 -R me/towercab --json headRefOid,files",
-        &[(
-            &json!({"headRefOid": head, "files": [{"path": "prompts/build.md"}]}).to_string(),
-            "",
-            0,
-        )],
+        "pr view 12 -R me/towercab --json headRefOid,files,isCrossRepository,author,commits",
+        &[(&mine_pr(&head, "prompts/build.md"), "", 0)],
     )
     .on("api -X POST repos/me/towercab/statuses/*", &[("{}", "", 0)]);
     // The baseline: every case passed.
@@ -378,34 +388,67 @@ fn test_eval_builds_pr_head() {
         .unwrap();
     // Three cases that passed there fail twice now: 85% ≤ 100 − 10 → red.
     fs::write(bin.join("fail"), all[..3].join("\n") + "\n").unwrap();
+    // My config: a Telegram token and the App, which the inner run never gets.
+    fs::write(
+        &p.w.config.file,
+        "[telegram]\nbot_token = \"t0ken\"\nchat_id = \"1\"\n\n[github]\napp_id = 7\nme = \"me\"\n\n[agent]\nmodel = \"opus\"\n",
+    )
+    .unwrap();
 
     let out = evals::pr(&p.w.config, &home, &p.exes, 12).unwrap();
-    // The PR head checked out and built with `cargo build --locked`.
+    // The PR head checked out and built with `cargo build --locked`, in the sandbox (network,
+    // the evals' cargo cache writable).
     let build = home.root.join("evals/build-12");
     assert_eq!(git(&build, &["rev-parse", "HEAD"]).trim(), head);
     assert_eq!(
         fs::read_to_string(bin.join("cargo.log")).unwrap(),
         format!("{} build --locked\n", build.display())
     );
-    // Its binary ran the cases: same config and home, the cases in a directory.
+    let sandbox = p.bwraps().pop().unwrap();
+    let cache = home.root.join("evals/cache").display().to_string();
+    let b = build.display().to_string();
+    let has = |w: &[&str]| sandbox.windows(w.len()).any(|x| x == w);
+    assert!(has(&["--bind", &cache, &cache]), "{sandbox:?}");
+    assert!(has(&["--bind", &b, &b]) && !sandbox.contains(&"--unshare-net".to_string()));
+    assert!(
+        sandbox.last().unwrap().ends_with("build --locked"),
+        "{sandbox:?}"
+    );
+    // Its binary ran the cases: a scratch config (no [telegram], no [github]) and home, the
+    // cases in a directory, an environment of HOME, PATH, LANG only.
     let argv: Vec<String> = fs::read_to_string(bin.join("inner.argv"))
         .unwrap()
         .lines()
         .map(str::to_string)
         .collect();
+    let cases_dir = Path::new(&argv[6]);
+    let run = cases_dir.parent().unwrap();
     assert_eq!(
         argv[..5],
         [
             "--config".to_string(),
-            p.w.config.file.display().to_string(),
+            run.join("config.toml").display().to_string(),
             "--home".into(),
-            home.root.display().to_string(),
+            run.join("home").display().to_string(),
             "eval".into(),
         ]
     );
+    let scratch = fs::read_to_string(run.join("config.toml")).unwrap();
+    assert!(
+        !scratch.contains("telegram") && !scratch.contains("github") && !scratch.contains("t0ken"),
+        "{scratch}"
+    );
+    assert!(scratch.contains("[agent]"), "{scratch}");
+    let env = fs::read_to_string(bin.join("inner.env")).unwrap();
+    for l in env.lines() {
+        let k = l.split_once('=').map_or(l, |(k, _)| k);
+        assert!(
+            ["HOME", "PATH", "LANG", "PWD", "OLDPWD", "SHLVL", "_"].contains(&k),
+            "{k} leaked: {env}"
+        );
+    }
     assert_eq!(argv[5], "--cases");
     assert_eq!(argv[7], "--out");
-    let cases_dir = Path::new(&argv[6]);
     assert_eq!(fs::read_dir(cases_dir).unwrap().count(), CASES);
     assert_eq!(Path::new(&argv[8]).parent(), cases_dir.parent());
     let ids3 = all[..3].join(", ");
@@ -438,9 +481,12 @@ fn test_eval_status_every_head() {
     let mut p = Pipe::new(&[], &["web", "towercab"]);
     let list = "pr list -R me/towercab --state open --json number,headRefOid";
     let status = |sha: &str| format!("api repos/me/towercab/commits/{sha}/status");
-    let files = |n: u64| format!("pr view {n} -R me/towercab --json headRefOid,files");
-    let view =
-        |sha: &str, path: &str| json!({"headRefOid": sha, "files": [{"path": path}]}).to_string();
+    let files = |n: u64| {
+        format!(
+            "pr view {n} -R me/towercab --json headRefOid,files,isCrossRepository,author,commits"
+        )
+    };
+    let view = |sha: &str, path: &str| mine_pr(sha, path);
     p.gh.on(
         list,
         &[(
@@ -638,4 +684,94 @@ fn test_eval_waits_for_20() {
     assert!(db.meta("eval_at").unwrap().is_some());
     // Set: nothing due until a week passes or the model changes.
     assert_eq!(q.cx(|cx| evals::poll(cx, true)).unwrap(), None);
+}
+
+#[test]
+fn test_eval_builds_only_my_prs() {
+    // Who may run as me: a PR from the repo itself, opened by me or the App, every commit
+    // theirs.
+    let mine = PrInfo {
+        head: "h".into(),
+        files: vec![],
+        cross: false,
+        author: "me".into(),
+        commits: vec![("h".into(), vec![("me".into(), "me@x".into())])],
+    };
+    let email = "1+towercab[bot]@users.noreply.github.com";
+    let bot = Some(("towercab[bot]", email));
+    assert_eq!(trusted(&mine, Some("me"), bot), Ok(()));
+    let by_bot = PrInfo {
+        author: "app/towercab".into(),
+        commits: vec![("h".into(), vec![(String::new(), email.into())])],
+        ..mine.clone()
+    };
+    assert_eq!(trusted(&by_bot, Some("me"), bot), Ok(()));
+    assert_eq!(
+        trusted(&by_bot, Some("me"), None),
+        Err("opened by app/towercab".into())
+    );
+    let fork = PrInfo {
+        cross: true,
+        ..mine.clone()
+    };
+    assert_eq!(trusted(&fork, Some("me"), bot), Err("a fork's PR".into()));
+    let stranger = PrInfo {
+        author: "eve".into(),
+        ..mine.clone()
+    };
+    assert_eq!(
+        trusted(&stranger, Some("me"), bot),
+        Err("opened by eve".into())
+    );
+    let pushed = PrInfo {
+        commits: vec![("abcdef123".into(), vec![("eve".into(), "eve@x".into())])],
+        ..mine.clone()
+    };
+    assert_eq!(
+        trusted(&pushed, Some("me"), bot),
+        Err("commit abcdef1 by eve".into())
+    );
+
+    // The loop: a fork's PR that needs a run gets `error` `not evaluated: …`, no eval child.
+    let p = Pipe::new(&cases_files(CASES), &["web", "towercab"]);
+    let fork = json!({
+        "headRefOid": "h15",
+        "files": [{"path": "prompts/build.md"}],
+        "isCrossRepository": true,
+        "author": {"login": "me"},
+        "commits": [{"oid": "h15", "authors": [{"login": "me", "email": "me@x"}]}],
+    })
+    .to_string();
+    p.gh.on(
+        "pr list -R me/towercab --state open --json number,headRefOid",
+        &[(
+            &json!([{"number": 15, "headRefOid": "h15"}]).to_string(),
+            "",
+            0,
+        )],
+    )
+    .on(
+        "api repos/me/towercab/commits/h15/status",
+        &[(r#"{"statuses":[]}"#, "", 0)],
+    )
+    .on(
+        "pr view 15 -R me/towercab --json headRefOid,files,isCrossRepository,author,commits",
+        &[(&fork, "", 0)],
+    )
+    .on("api -X POST repos/me/towercab/statuses/*", &[("{}", "", 0)]);
+    p.w.intents.store().list().unwrap();
+    assert_eq!(p.cx(|cx| evals::poll(cx, false)).unwrap(), None);
+    assert_eq!(
+        posts(&p.gh),
+        vec![(
+            "h15".into(),
+            "error".into(),
+            "not evaluated: a fork's PR".into()
+        )]
+    );
+    // By hand too: nothing fetched or built.
+    let home = Home::resolve(Some(&p.w.root.join("home"))).unwrap();
+    let e = evals::pr(&p.w.config, &home, &p.exes, 15).unwrap_err();
+    assert_eq!(e, "not evaluated: a fork's PR");
+    assert!(!home.root.join("evals/build-15").exists());
 }
