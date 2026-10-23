@@ -1499,12 +1499,29 @@ fn test_lesson_written() {
     // points before the newest (2026-10-15).
     let n = points.len();
     points[n - 4] = 1.4;
+    // Without a value: a band no longer in bands.yaml; a fix (its last mission's `finished`, not
+    // the intent's) more than 8 periods ago.
+    let gone = "---\nrepo: web\nu: 2\ni: 2\nsource: alert:gone_band\nstarted: 2026-10-04T08:00:00+02:00\nstage: done\nfinished: 2026-10-05T12:00:00+02:00\n---\n\n# Intent: Gone band\n\n## Problem\n\nA band since removed.\n";
+    let old = "---\nrepo: web\nu: 2\ni: 2\nsource: alert:ci_failure_rate\nstarted: 2026-09-01T08:00:00+02:00\nstage: done\nfinished: 2026-10-14T12:00:00+02:00\n---\n\n# Intent: Old fix\n\n## Problem\n\nLong fixed.\n";
     let mut m = Mnt::with(
-        &[(format!("done/{dir}/intent.md"), md.into())],
+        &[
+            (format!("done/{dir}/intent.md"), md.into()),
+            ("done/261004-0900-gone-band/intent.md".into(), gone.into()),
+            ("done/260901-0900-old-fix/intent.md".into(), old.into()),
+        ],
         BAND,
         &points,
         Duration::ZERO,
     );
+    let fixed = m.w.clock.unix() - 20.0 * DAY;
+    m.db()
+        .conn()
+        .execute(
+            "INSERT INTO missions (intent, repo, stage, step, model, session, checkout, created, updated, finished)
+             VALUES ('260901-0900', 'web', 'done', '', 'opus', 's', 'work/y', ?1, ?1, ?1)",
+            [fixed],
+        )
+        .unwrap();
     let started = chrono::DateTime::parse_from_rfc3339("2026-10-01T08:00:00+02:00")
         .unwrap()
         .timestamp() as f64;
@@ -1542,12 +1559,54 @@ fn test_lesson_written() {
         "{:?}",
         m.w.intents.log()
     );
-    let step: String = m
-        .db()
-        .conn()
-        .query_row("SELECT step FROM lessons", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(step, "written");
+    let gone_rel = "lessons/261005-gone-band.md";
+    let old_rel = format!(
+        "lessons/{}-old-fix.md",
+        chrono::DateTime::from_timestamp(fixed as i64, 0)
+            .unwrap()
+            .format("%y%m%d")
+    );
+    m.until(&mut lp, |m| {
+        m.w.intents.remote_has(gone_rel) && m.w.intents.remote_has(&old_rel)
+    });
+    assert_eq!(
+        m.w.intents.remote_file(gone_rel),
+        "# Lesson: Gone band\n\n- Intent: 261004-0900 (source: alert:gone_band)\n\
+         - Anomaly: gone_band: no breach recorded\n- Cause: A band since removed.\n- Fix: none\n\
+         - After the fix: no value\n- Eval case: evals/261004-0900.json (incident)\n"
+    );
+    let old_text = m.w.intents.remote_file(&old_rel);
+    for line in [
+        "- Anomaly: ci_failure_rate: no breach recorded\n",
+        "- After the fix: no value\n",
+    ] {
+        assert!(old_text.contains(line), "{old_text}");
+    }
+    let steps: Vec<String> = {
+        let db = m.db();
+        let mut q = db.conn().prepare("SELECT step FROM lessons").unwrap();
+        q.query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(steps, ["written"; 3]);
+    // Not within 1σ, or no baseline to tell.
+    let mut l = towercab::maintain::lessons::Lesson {
+        id: "x".into(),
+        title: "t".into(),
+        band: "b".into(),
+        anomaly: None,
+        problem: String::new(),
+        pr: None,
+        after: Some((DAY, 2.0, Some(false))),
+    };
+    assert!(
+        towercab::maintain::lessons::text(&l)
+            .contains("- After the fix: 2 on 1970-01-02 00:00 UTC, back within 1σ: no\n")
+    );
+    l.after = Some((DAY, 2.0, None));
+    assert!(towercab::maintain::lessons::text(&l).contains("back within 1σ: unknown\n"));
     // Written once.
     for _ in 0..8 {
         m.w.pass(&mut lp);
@@ -1558,6 +1617,6 @@ fn test_lesson_written() {
             .iter()
             .filter(|l| l.starts_with("towercab: lesson"))
             .count();
-    assert_eq!(lessons, 1);
+    assert_eq!(lessons, 3);
     drop(m.values);
 }
