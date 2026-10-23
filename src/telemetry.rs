@@ -4,7 +4,9 @@
 //! set these: Claude Code ignores OTEL exporter variables there. New sessions pick it up.
 
 use std::fs;
-use std::path::PathBuf;
+use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
@@ -72,26 +74,66 @@ pub fn run(what: &str, endpoint: &str) -> Result<String, String> {
         "off" => {
             for (k, v) in &vars {
                 if holds(&env, k, v) {
-                    env.remove(*k);
+                    env.shift_remove(*k);
                 }
             }
         }
         other => return Err(format!("telemetry: want on, off or status, got {other:?}")),
     }
     if env.is_empty() {
-        settings.remove("env");
+        settings.shift_remove("env");
     } else {
         settings.insert("env".into(), Value::Object(env));
     }
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| err(&e))?;
-    }
     let text = serde_json::to_string_pretty(&Value::Object(settings)).map_err(|e| err(&e))? + "\n";
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, text)
-        .and_then(|()| fs::rename(&tmp, &path))
-        .map_err(|e| err(&e))?;
+    write_keeping(&path, &text).map_err(|e| err(&e))?;
     Ok(format!(
         "telemetry {what} ({shown}); applies to new Claude Code sessions"
     ))
+}
+
+/// Writes `text` to `path` whole: through a symlink to its target, via `<target>.tmp` + rename in
+/// the target's directory, with the target's mode (a new file: 0600, `env` may hold tokens).
+pub fn write_keeping(path: &Path, text: &str) -> std::io::Result<()> {
+    let mut target = path.to_path_buf();
+    for _ in 0..40 {
+        match fs::symlink_metadata(&target) {
+            Ok(m) if m.file_type().is_symlink() => {
+                let to = fs::read_link(&target)?;
+                target = match target.parent() {
+                    Some(dir) if to.is_relative() => dir.join(to),
+                    _ => to,
+                };
+            }
+            _ => break,
+        }
+    }
+    let mode = match fs::metadata(&target) {
+        Ok(m) => m.permissions().mode() & 0o7777,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0o600,
+        Err(e) => return Err(e),
+    };
+    if let Some(dir) = target.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let mut name = target.file_name().unwrap_or_default().to_os_string();
+    name.push(".tmp");
+    let tmp = target.with_file_name(name);
+    let written = (|| {
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(mode)
+            .open(&tmp)?;
+        // `mode` applies only on creation and through the umask: set it outright.
+        f.set_permissions(fs::Permissions::from_mode(mode))?;
+        f.write_all(text.as_bytes())?;
+        f.sync_all()?;
+        fs::rename(&tmp, &target)
+    })();
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    written
 }

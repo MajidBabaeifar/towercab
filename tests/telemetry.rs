@@ -209,3 +209,72 @@ fn test_telemetry_creates_file_and_rejects_bad_args() {
         "[1, 2]\n"
     );
 }
+
+#[test]
+fn test_telemetry_keeps_mode_link_and_order() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let tmp = tempfile::tempdir().unwrap();
+    let (home, dir) = (tmp.path().join("user"), tmp.path().join("claude"));
+    fs::create_dir_all(&dir).unwrap();
+    let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o7777;
+
+    // A 0600 file stays 0600, its keys in their order.
+    let path = dir.join("settings.json");
+    fs::write(
+        &path,
+        r#"{"model": "opus", "env": {"FOO": "1"}, "apiKeyHelper": "x"}"#,
+    )
+    .unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(telemetry(&home, Some(&dir), None, &["on"]).2, Some(0));
+    assert_eq!(mode(&path), 0o600);
+    let text = fs::read_to_string(&path).unwrap();
+    let at = |k: &str| text.find(&format!("\"{k}\"")).unwrap();
+    assert!(
+        at("model") < at("env") && at("env") < at("apiKeyHelper"),
+        "{text}"
+    );
+    assert!(at("FOO") < at("CLAUDE_CODE_ENABLE_TELEMETRY"), "{text}");
+    assert_eq!(telemetry(&home, Some(&dir), None, &["off"]).2, Some(0));
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "{\n  \"model\": \"opus\",\n  \"env\": {\n    \"FOO\": \"1\"\n  },\n  \"apiKeyHelper\": \"x\"\n}\n"
+    );
+    assert_eq!(mode(&path), 0o600);
+    // An `env` left empty goes without moving the keys after it.
+    fs::write(&path, r#"{"env": {}, "a": 1, "b": 2, "c": 3}"#).unwrap();
+    telemetry(&home, Some(&dir), None, &["on"]);
+    telemetry(&home, Some(&dir), None, &["off"]);
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "{\n  \"a\": 1,\n  \"b\": 2,\n  \"c\": 3\n}\n"
+    );
+
+    // A new file is 0600.
+    let fresh = tmp.path().join("fresh");
+    assert_eq!(telemetry(&home, Some(&fresh), None, &["on"]).2, Some(0));
+    assert_eq!(mode(&fresh.join("settings.json")), 0o600);
+
+    // A symlink (a dotfiles repo): the target changes, keeps its 0640, the link stays a link.
+    let (dots, linked) = (tmp.path().join("dots"), tmp.path().join("linked"));
+    fs::create_dir_all(&dots).unwrap();
+    fs::create_dir_all(&linked).unwrap();
+    let target = dots.join("claude-settings.json");
+    fs::write(&target, r#"{"model": "opus"}"#).unwrap();
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o640)).unwrap();
+    let link = linked.join("settings.json");
+    symlink("../dots/claude-settings.json", &link).unwrap();
+    assert_eq!(telemetry(&home, Some(&linked), None, &["on"]).2, Some(0));
+    assert!(
+        fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(read(&target)["env"], on_env());
+    assert_eq!(mode(&target), 0o640);
+    assert!(!dots.join("claude-settings.json.tmp").exists());
+    assert!(!linked.join("settings.json.tmp").exists());
+    assert_eq!(telemetry(&home, Some(&linked), None, &["off"]).2, Some(0));
+    assert_eq!(read(&target), json!({"model": "opus"}));
+}

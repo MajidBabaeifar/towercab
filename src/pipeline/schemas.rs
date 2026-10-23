@@ -29,10 +29,12 @@ fn strings() -> Value {
 
 /// An object with exactly these properties, all required.
 fn object(props: Value) -> Value {
-    let keys: Vec<Value> = props
+    // Sorted: the same schema whatever the map's key order (`preserve_order`).
+    let mut keys: Vec<&str> = props
         .as_object()
-        .map(|o| o.keys().map(|k| Value::from(k.as_str())).collect())
+        .map(|o| o.keys().map(String::as_str).collect())
         .unwrap_or_default();
+    keys.sort_unstable();
     json!({
         "type": "object",
         "properties": props,
