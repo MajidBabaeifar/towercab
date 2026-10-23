@@ -87,11 +87,13 @@ CREATE TABLE findings (repo TEXT NOT NULL, rule TEXT NOT NULL /* lowercased */, 
   mission INTEGER NOT NULL REFERENCES missions(id), at REAL NOT NULL, PRIMARY KEY (repo, rule, pr));
 "#;
 
-/// Maintain (MNT-3..8): breach events, triage counts per band, lessons.
+/// Maintain (MNT-3..8): breach events, open episodes, triage counts per band, lessons.
 const SCHEMA_3: &str = r#"
 CREATE TABLE breaches (band TEXT NOT NULL, tier TEXT NOT NULL CHECK (tier IN ('1sigma','2sigma','3sigma')),
   point REAL NOT NULL /* the newest point's time */, value REAL NOT NULL, mean REAL NOT NULL, sigma REAL NOT NULL,
   at REAL NOT NULL, step TEXT NOT NULL /* diagnose, comment, done */, PRIMARY KEY (band, tier, point));
+CREATE TABLE episodes (band TEXT PRIMARY KEY, since REAL NOT NULL /* its first breach's point */,
+  drafted INTEGER NOT NULL DEFAULT 0, proposed INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE triage (band TEXT PRIMARY KEY, accepted INTEGER NOT NULL DEFAULT 0, dismissed INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE lessons (intent TEXT PRIMARY KEY, band TEXT NOT NULL, pr TEXT, fixed REAL NOT NULL,
   point REAL, value REAL, within INTEGER, step TEXT NOT NULL /* wait, write, written */);

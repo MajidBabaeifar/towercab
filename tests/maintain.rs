@@ -690,6 +690,35 @@ impl Mnt {
         );
     }
 
+    /// The next day's value: pushed, the clock a day on, passes until the band has judged it.
+    fn day(&mut self, lp: &mut Loop, value: f64) {
+        self.values.lock().unwrap().push(value);
+        self.w.pass_after(lp, 86_400);
+        let end = ((self.w.clock.unix() - 600.0) / DAY).floor() * DAY;
+        for _ in 0..400 {
+            if lp.watch.checked("ci_failure_rate") == Some(end) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+            self.w.pass(lp);
+        }
+        panic!("day {end} not judged: breaches {:?}", self.breaches());
+    }
+
+    /// The band's open episode: (drafted, proposed).
+    fn episode(&self) -> Option<(bool, bool)> {
+        maintain::episode(self.db().conn(), "ci_failure_rate").unwrap()
+    }
+
+    /// `triage:` messages so far.
+    fn triage(&self) -> usize {
+        self.w
+            .outbox()
+            .into_iter()
+            .filter(|(_, e, _, _)| e.starts_with("triage:"))
+            .count()
+    }
+
     /// (band, tier, step) of each breach.
     fn breaches(&self) -> Vec<(String, String, String)> {
         let db = self.db();
@@ -1064,18 +1093,44 @@ fn test_one_draft_per_band() {
             .any(|r| r.metric == Metric::Escapes && r.label("where") == Some("alert")),
         "the cause wasn't a merge given"
     );
+    // A comment already there (mine, or one a crash left before `done`) isn't made again.
+    let text = maintain::comment_text("ci_failure_rate", "2sigma", 3.0 * DAY, 2.8, 1.5, 0.51);
+    fs::write(
+        m.bin.join("prcomments-5"),
+        format!("{}\n", m.log("prcomments-5") + &text),
+    )
+    .unwrap();
+    m.db()
+        .conn()
+        .execute(
+            "INSERT INTO breaches (band, tier, point, value, mean, sigma, at, step)
+             VALUES ('ci_failure_rate', '2sigma', ?1, 2.8, 1.5, 0.51, ?1, 'comment')",
+            [3.0 * DAY],
+        )
+        .unwrap();
+    m.until(&mut lp, |m| m.breaches().iter().all(|b| b.2 == "done"));
+    assert_eq!(m.gh("pr comment").len(), 1);
 
-    // Merged: the band's next breach drafts anew (a new row, PR, diagnosis).
+    // Merged: the episode goes on (no draft) until the band is back within 1σ; its next
+    // breach is a new episode and drafts anew (a new row, PR, diagnosis).
     fs::write(m.bin.join("pr-5.json"), r#"{"state":"MERGED"}"#).unwrap();
     m.until(&mut lp, |m| m.draft().is_some_and(|d| d.step == "accepted"));
-    m.w.pass_after(&mut lp, 86_400);
+    m.day(&mut lp, 1.5);
+    assert_eq!(m.breaches().last().unwrap().1, "2sigma", "2 of the last 3");
+    assert!(m.episode().is_some());
+    assert_eq!(m.gh("pr create").len(), 1);
+    m.day(&mut lp, 1.5);
+    assert_eq!(m.episode(), None, "back within 1σ");
+    m.day(&mut lp, 2.8);
+    assert_eq!(m.episode(), None, "beyond 1σ alone opens nothing");
+    m.day(&mut lp, 2.8);
     m.until(&mut lp, |m| {
         m.draft()
             .is_some_and(|d| d.step == "open" && d.pr == Some(6))
     });
     assert_eq!(m.log("runs").trim(), "2");
     assert_eq!(m.gh("pr create").len(), 2);
-    assert_eq!(m.breaches().len(), 3);
+    assert_eq!(m.breaches().len(), 5);
     assert!(
         m.breaches().iter().all(|b| b.2 == "done"),
         "{:?}",
@@ -1124,6 +1179,27 @@ fn test_runbook_cap_repo() {
     );
     // And it is drafted as diagnose would (pull_request).
     m.until(&mut lp, |m| m.draft().is_some_and(|d| d.step == "open"));
+    // A band whose repo isn't in [repos]: no cap (logged), the message still goes.
+    let mut other = bands::parse(&yaml).unwrap().remove(0);
+    other.name = "elsewhere".into();
+    other.repo = Some("elsewhere".into());
+    let v = Verdict {
+        tier: Tier::Three,
+        point: (9.0 * DAY, 4.0),
+        mean: 1.5,
+        sigma: 0.5,
+    };
+    let db = m.db();
+    assert!(maintain::record(&db, &m.w.config, &m.w.home, &other, &v, &[], m.w.clock).unwrap());
+    let caps: Vec<String> = {
+        let mut q = db.conn().prepare("SELECT repo FROM repo_caps").unwrap();
+        q.query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(caps, ["web"]);
+    assert_eq!(m.triage(), 2);
     // `trust web` clears the cap (AUT-10).
     let out = towercab::commands::submit(
         &m.w.config,
@@ -1140,6 +1216,70 @@ fn test_runbook_cap_repo() {
         .query_row("SELECT COUNT(*) FROM repo_caps", [], |r| r.get(0))
         .unwrap();
     assert_eq!(left, 0);
+}
+
+#[test]
+fn test_episode_acts_once() {
+    // A sustained 3σ shift: one pause, one cap, one message, one draft, however many days it
+    // lasts; my resume and trust hold.
+    let mut m = Mnt::new(BAND, &spike());
+    let mut lp = m.open();
+    m.until(&mut lp, |m| !m.breaches().is_empty());
+    assert!(machine::paused(m.db().conn()).unwrap());
+    assert_eq!(m.triage(), 1);
+    assert_eq!(m.episode(), Some((true, true)));
+    for cmd in [
+        towercab::commands::Cmd::Resume,
+        towercab::commands::Cmd::Trust("web".into()),
+    ] {
+        towercab::commands::submit(&m.w.config, &m.w.home, &m.db(), &cmd, Duration::ZERO).ok();
+    }
+    m.until(&mut lp, |m| m.draft().is_some_and(|d| d.step == "open"));
+    assert!(!machine::paused(m.db().conn()).unwrap());
+    let caps = |m: &Mnt| -> i64 {
+        m.db()
+            .conn()
+            .query_row("SELECT COUNT(*) FROM repo_caps", [], |r| r.get(0))
+            .unwrap()
+    };
+    assert_eq!(caps(&m), 0);
+    for _ in 0..3 {
+        m.day(&mut lp, 4.0);
+        m.until(&mut lp, |m| m.breaches().iter().all(|b| b.2 == "done"));
+    }
+    let tiers: Vec<String> = m.breaches().into_iter().map(|b| b.1).collect();
+    assert_eq!(tiers, ["3sigma"; 4], "every breach an event");
+    assert!(!machine::paused(m.db().conn()).unwrap(), "not paused again");
+    assert_eq!(caps(&m), 0, "not capped again");
+    assert_eq!(m.triage(), 1, "one message");
+    assert_eq!(m.gh("pr create").len(), 1, "one draft");
+    assert_eq!(m.log("runs").trim(), "1", "one diagnosis");
+    assert_eq!(m.gh("pr comment").len(), 3, "the rest comment on it");
+
+    // I reject the draft: the episode's later breaches don't draft again.
+    fs::write(m.bin.join("pr-5.json"), r#"{"state":"CLOSED"}"#).unwrap();
+    m.until(&mut lp, |m| m.draft().is_some_and(|d| d.step == "rejected"));
+    m.day(&mut lp, 4.0);
+    for _ in 0..4 {
+        m.w.pass(&mut lp);
+    }
+    assert_eq!(m.breaches().len(), 5);
+    assert_eq!(m.draft().unwrap().step, "rejected");
+    assert_eq!((m.gh("pr create").len(), m.triage()), (1, 1));
+
+    // Back within 1σ: the episode ends; the next 3σ is a new one and acts again.
+    m.day(&mut lp, 1.5);
+    assert!(m.episode().is_some(), "2 of the last 3 still beyond 2σ");
+    m.day(&mut lp, 1.5);
+    assert_eq!(m.episode(), None);
+    m.day(&mut lp, 4.0);
+    assert!(machine::paused(m.db().conn()).unwrap());
+    assert_eq!(caps(&m), 1);
+    assert_eq!(m.triage(), 2);
+    m.until(&mut lp, |m| {
+        m.draft()
+            .is_some_and(|d| d.step == "draft" || d.step == "open")
+    });
 }
 
 #[test]
@@ -1181,6 +1321,8 @@ fn test_runbook_pause() {
         mean: 1.5,
         sigma: 0.5,
     };
+    // A new episode (the first one's runbook and message are done).
+    maintain::close_episode(db.conn(), "ci_failure_rate").unwrap();
     let new = maintain::record(&db, &m.w.config, &m.w.home, band, &v, &[], m.w.clock).unwrap();
     assert!(new);
     assert!(
@@ -1201,6 +1343,28 @@ fn test_runbook_pause() {
         )
         .unwrap();
     assert_eq!(step, "comment");
+    // That draft rejected and a new episode: a new row replaces it, its `comment` breach → done.
+    db.conn()
+        .execute("UPDATE drafts SET step = 'rejected'", [])
+        .unwrap();
+    maintain::close_episode(db.conn(), "ci_failure_rate").unwrap();
+    let v2 = Verdict {
+        point: (10.0 * DAY, 4.0),
+        ..v
+    };
+    assert!(maintain::record(&db, &m.w.config, &m.w.home, band, &v2, &[], m.w.clock).unwrap());
+    let steps: Vec<String> = {
+        let mut q = db
+            .conn()
+            .prepare("SELECT step FROM breaches WHERE point IN (?1, ?2) ORDER BY point")
+            .unwrap();
+        q.query_map([9.0 * DAY, 10.0 * DAY], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(steps, ["done", "diagnose"]);
+    assert_eq!(m.draft().unwrap().step, "draft");
     // `resume` lifts it.
     towercab::commands::submit(
         &m.w.config,

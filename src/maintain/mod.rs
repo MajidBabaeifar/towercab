@@ -195,12 +195,41 @@ pub fn evaluate(
     end: f64,
     tick: Tick,
 ) -> Result<(), String> {
-    if fresh(points, end)
-        && let Some(v) = detect::detect(points, band.side, band.min_shift)
-    {
-        record(db, config, home, band, &v, points, tick)?;
+    let base = detect::baseline(points);
+    if fresh(points, end) {
+        match detect::detect(points, band.side, band.min_shift) {
+            Some(v) => {
+                record(db, config, home, band, &v, points, tick)?;
+            }
+            None => {
+                if let (Some((mean, sigma)), Some((_, v))) = (base, points.last())
+                    && !detect::beyond(v - mean, sigma, 1.0, band.min_shift, band.side)
+                {
+                    close_episode(db.conn(), &band.name)?;
+                }
+            }
+        }
     }
-    evaluated(db.conn(), band, points, detect::baseline(points))
+    evaluated(db.conn(), band, points, base)
+}
+
+/// The band's episode (MNT-6) ends: its newest point is back within 1σ with no verdict.
+pub fn close_episode(conn: &Connection, band: &str) -> Result<(), String> {
+    conn.execute("DELETE FROM episodes WHERE band = ?1", [band])
+        .map(drop)
+        .map_err(sql)
+}
+
+/// The band's open episode: (drafted, proposed): whether a draft, and runbooks with the
+/// triage message, already came of it.
+pub fn episode(conn: &Connection, band: &str) -> Result<Option<(bool, bool)>, String> {
+    conn.query_row(
+        "SELECT drafted, proposed FROM episodes WHERE band = ?1",
+        [band],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .optional()
+    .map_err(sql)
 }
 
 /// The facts a diagnosis gets (`breach.json`): the band, the verdict, the series, and the
@@ -276,9 +305,10 @@ pub fn breach_json(
 
 /// One breach event (MNT-3) with its tier's action (MNT-4..6), in one transaction: the
 /// `breaches` row (a known (band, tier, point) → nothing, `false`), `towercab.breaches`, the
-/// log line; a draft (`diagnose`, `propose` with `pull_request`): a new `alert:<band>` row and
-/// its `breach.json` when none is pending or open, else the breach comments later; runbooks
-/// and the `triage` message for `propose`.
+/// log line; the band's episode opened when none is; a draft (`diagnose`, `propose` with
+/// `pull_request`): the breach comments on a pending or open one, else a new `alert:<band>` row
+/// and its `breach.json` unless the episode already drafted; runbooks and the `triage` message
+/// for `propose`, once per episode.
 pub fn record(
     db: &Db,
     config: &Config,
@@ -316,6 +346,17 @@ pub fn record(
             num(v.mean),
             num(v.sigma)
         );
+        let (drafted, proposed) = match episode(tx, &band.name)? {
+            Some(e) => e,
+            None => {
+                tx.execute(
+                    "INSERT INTO episodes (band, since) VALUES (?1, ?2)",
+                    params![band.name, v.point.0],
+                )
+                .map_err(sql)?;
+                (false, false)
+            }
+        };
         let key = key(&band.name);
         let draft = drafts::get(tx, &key)?;
         let open_url = draft
@@ -329,7 +370,7 @@ pub fn record(
                 .is_some_and(|(_, r)| !drafts::FINISHED.contains(&r.step.as_str()));
             if pending {
                 step = "comment";
-            } else {
+            } else if !drafted {
                 if draft.is_some() {
                     tx.execute("DELETE FROM drafts WHERE key = ?1", [&key])
                         .map_err(sql)?;
@@ -351,10 +392,22 @@ pub fn record(
                 fs::create_dir_all(&dir)
                     .and_then(|()| fs::write(dir.join("breach.json"), breach.to_string()))
                     .map_err(|e| format!("{}: {e}", dir.display()))?;
+                tx.execute(
+                    "UPDATE episodes SET drafted = 1 WHERE band = ?1",
+                    [&band.name],
+                )
+                .map_err(sql)?;
                 step = "diagnose";
             }
         }
-        if let Action::Propose { cap_repo, pause, .. } = action {
+        if let Action::Propose { cap_repo, pause, .. } = action
+            && !proposed
+        {
+            tx.execute(
+                "UPDATE episodes SET proposed = 1 WHERE band = ?1",
+                [&band.name],
+            )
+            .map_err(sql)?;
             if cap_repo {
                 if config.repo(&repo).is_ok() {
                     tx.execute(
