@@ -8,7 +8,6 @@ One Rust crate at the root; the Python version lives on branch `python`.
 - `cargo test --locked`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo fmt`
   (a machine with a zig `cc`: `export CRATE_CC_NO_DEFAULTS=1` first)
 - `cargo run -- add "towercab: <title>" u3 i4` · `migrate` · `review` · `--home /tmp/tc run [--watch]` · `status` · `doctor`
-- `python3 -m unittest discover -s tests`: `tests/test_ops.py` (the `ops/` scripts, until the metrics intent ports them)
 
 ## Conventions
 
@@ -35,6 +34,8 @@ One Rust crate at the root; the Python version lives on branch `python`.
 - `src/repo/`: `CLAUDE.md`/`REVIEW.md`/`TOWERCAB.md` from `origin/<base>` (`load`), `protected.rs`, `protect`.
 - `src/pipeline/` (pipeline.md **Code**): a handler per stage, state in `missions.data`, Claude runs (`runs.rs`),
   `evals.rs`, `findings.rs`; `prompts/*.md`; `src/writer.rs` (PR text). Tests: `tests/pipe_*.rs`, `common/pipe.rs`.
+- `src/metrics.rs` (metrics.md **Code**): `METRICS`, a per-thread buffer, `Sink` (OTLP, spool); `telemetry.rs`.
+  Tests send to a dead endpoint (`common::NO_METRICS`), never a real collector.
 
 ## Things Claude gets wrong here
 
@@ -56,5 +57,4 @@ cargo fetch --locked
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
-python3 -m unittest discover -s tests
 ```

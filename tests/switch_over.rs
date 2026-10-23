@@ -32,14 +32,14 @@ fn test_python_package_gone() {
     ] {
         assert!(!root.join(gone).exists(), "{gone} left main");
     }
-    // Only the dashboard's tests stay (until the metrics intent ports them), with its generator;
-    // `ops/telemetry` is `towercab telemetry` now (MET-12).
+    // No Python is left: `ops/telemetry` is `towercab telemetry` (MET-12), the dashboard's tests
+    // are Rust (MET-19); its generator stays.
     let py: Vec<String> = std::fs::read_dir(root.join("tests"))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .filter(|n| n.ends_with(".py"))
         .collect();
-    assert_eq!(py, ["test_ops.py"]);
+    assert!(py.is_empty(), "{py:?}");
     assert!(root.join("ops/grafana/build_dashboard.py").is_file());
     assert!(!root.join("ops/telemetry").exists());
     // install.sh links only the /intent skill; the binary comes from cargo install.

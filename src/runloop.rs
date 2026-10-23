@@ -41,6 +41,7 @@ use crate::intents::store::find_open;
 use crate::intents::{Intent, Listing, Store, Value as IValue};
 use crate::limits;
 use crate::machine::{self, Apply, Event, Next, Stage};
+use crate::metrics::Sink;
 use crate::mission::{self, ENTER, Kind, Mission};
 use crate::outbox::{self, Notice};
 use crate::pick::{self, Decision, PickState};
@@ -182,6 +183,8 @@ pub struct Loop {
     pub probe: Probe,
     /// `[telegram]`: updates read and the outbox sent each pass (LOOP-16).
     pub telegram: Option<Telegram>,
+    /// Where this thread's metrics go at the end of each pass (MET-13).
+    pub metrics: Sink,
     /// `run --intent`: the intent (resolved) and its mission.
     target: Option<String>,
     target_mission: Option<i64>,
@@ -249,6 +252,7 @@ impl Loop {
         let prs = Box::new(GhPrs {
             identity: identity.clone(),
         });
+        let metrics = Sink::new(&config, &home);
         let mut lp = Loop {
             config,
             home,
@@ -261,6 +265,7 @@ impl Loop {
             identity,
             probe: Probe::default(),
             telegram: None,
+            metrics,
             target: None,
             target_mission: None,
             refused: None,
@@ -436,6 +441,7 @@ impl Loop {
         self.save_bot()?;
         report.idle = report.picked.is_none() && self.idle(tick, decision.as_ref())?;
         report.target = self.target_state()?;
+        self.metrics.flush(tick);
         Ok(report)
     }
 
@@ -1551,6 +1557,12 @@ impl Loop {
     /// entry effects after. No mission → picked as `run --intent` does, then its first step.
     /// Returns `<id>: <stage> → <stage>[ · <waiting>]`.
     pub fn step_intent(&mut self, q: &str) -> Result<String, String> {
+        let out = self.step_once(q);
+        self.metrics.flush(Tick::now());
+        out
+    }
+
+    fn step_once(&mut self, q: &str) -> Result<String, String> {
         let id = self.set_target(q)?;
         let tick = Tick::now();
         self.enter_all(tick)?;
@@ -1820,6 +1832,7 @@ impl Loop {
         }
         self.queued.clear();
         self.inhibitor.stop();
+        self.metrics.flush(tick);
         self.db.del_meta("running")
     }
 }

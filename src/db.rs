@@ -163,13 +163,18 @@ impl Db {
         version(&self.conn)
     }
 
-    /// Runs `f` in one `BEGIN IMMEDIATE` transaction: committed on `Ok`, rolled back on `Err`.
+    /// Runs `f` in one `BEGIN IMMEDIATE` transaction: committed on `Ok`, rolled back on `Err`
+    /// (with the metrics it recorded).
     pub fn tx<T>(&self, f: impl FnOnce(&Transaction) -> Result<T, String>) -> Result<T, String> {
         let tx =
             Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate).map_err(sql)?;
-        let out = f(&tx)?;
-        tx.commit().map_err(sql)?;
-        Ok(out)
+        // Metrics recorded inside count only if it commits (MET-13).
+        let mark = crate::metrics::mark();
+        let out = f(&tx).and_then(|out| tx.commit().map(|()| out).map_err(sql));
+        if out.is_err() {
+            crate::metrics::drop_since(mark);
+        }
+        out
     }
 
     pub fn meta(&self, key: &str) -> Result<Option<String>, String> {

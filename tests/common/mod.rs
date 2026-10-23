@@ -112,14 +112,16 @@ impl Home {
     }
 
     pub fn config(&self) -> Config {
-        Config::new(
+        let mut c = Config::new(
             self.tmp.path().join("config.toml"),
             IntentsConfig {
                 remote: Some(self.remote.to_str().unwrap().to_string()),
                 path: self.checkout.clone(),
                 cutoff: 7,
             },
-        )
+        );
+        c.metrics.endpoint = NO_METRICS.into();
+        c
     }
 
     pub fn store(&self) -> Store {
@@ -350,9 +352,13 @@ pub fn output(c: &mut Command) -> (String, String, Option<i32>) {
     )
 }
 
+/// An OTLP endpoint nothing answers: tests never send metrics to a real collector on this
+/// machine (MET-13); the loop spools them in its temp home.
+pub const NO_METRICS: &str = "http://127.0.0.1:9";
+
 /// A config the loop's commands accept (`[intents]` path in `dir`: an empty git repo on
-/// `main` without a remote; `[github]` app 1 as `me`), then `extra`; written to
-/// `<dir>/config.toml`.
+/// `main` without a remote; `[github]` app 1 as `me`; `[metrics]` [`NO_METRICS`] unless `extra`
+/// has one), then `extra`; written to `<dir>/config.toml`.
 pub fn loop_config(dir: &Path, extra: &str) -> PathBuf {
     let intents = dir.join("intents");
     if !intents.exists() {
@@ -363,8 +369,13 @@ pub fn loop_config(dir: &Path, extra: &str) -> PathBuf {
     fs::write(
         &file,
         format!(
-            "[intents]\npath = \"{}\"\n\n[github]\napp_id = 1\nme = \"me\"\n\n{extra}",
-            dir.join("intents").display()
+            "[intents]\npath = \"{}\"\n\n[github]\napp_id = 1\nme = \"me\"\n\n{metrics}{extra}",
+            dir.join("intents").display(),
+            metrics = if extra.contains("[metrics]") {
+                String::new()
+            } else {
+                format!("[metrics]\nendpoint = \"{NO_METRICS}\"\n\n")
+            },
         ),
     )
     .unwrap();

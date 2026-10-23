@@ -77,5 +77,5 @@ towercab telemetry on                            # your Claude Code sessions exp
 ## CI
 
 `.github/workflows/ci.yml` on every PR and push to `main`: job `rust` (`cargo fmt --check`, `cargo clippy
---all-targets --locked -- -D warnings`, `cargo test --locked`); job `python` (`tests/test_ops.py` for `ops/`).
+--all-targets --locked -- -D warnings`, `cargo test --locked`).
 The Python version of Towercab lives on branch `python`.

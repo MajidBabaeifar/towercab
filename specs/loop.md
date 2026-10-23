@@ -44,7 +44,7 @@ runs/<id>/                   per intent, across attempts: build.txt, ci-<n>.log,
                              rehearsals runs/rehearse-<repo>-<yymmdd>/, drafts runs/draft-<rowid>/
                              (issue.json, intent.md, pr.md, title, drafter-<try>.*)
 drafts/                      clone of [intents].remote for draft intent branches (INT-8), never on main
-metrics.jsonl                OTLP spool (MET-13, metrics intent)
+metrics.jsonl                OTLP spool while the collector is down (MET-13)
 ```
 
 **Config** (`src/config.rs`; `Config` gains `agent: AgentConfig`, `github: Option<GithubConfig>`, `telegram: Option<TelegramConfig>`, `metrics: MetricsConfig`, `policies: PoliciesConfig`)

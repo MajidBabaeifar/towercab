@@ -23,6 +23,7 @@ pub mod http;
 pub mod intents;
 pub mod limits;
 pub mod machine;
+pub mod metrics;
 pub mod mission;
 pub mod outbox;
 pub mod pick;
