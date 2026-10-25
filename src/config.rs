@@ -145,6 +145,23 @@ impl Default for PoliciesConfig {
     }
 }
 
+/// `[ui]`: the local web page (UI-1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiConfig {
+    /// `127.0.0.1:<port>`; 0 = off.
+    pub port: u16,
+}
+
+pub const DEFAULT_UI_PORT: u16 = 7311;
+
+impl Default for UiConfig {
+    fn default() -> UiConfig {
+        UiConfig {
+            port: DEFAULT_UI_PORT,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     /// The file this was read from.
@@ -158,6 +175,7 @@ pub struct Config {
     pub telegram: Option<TelegramConfig>,
     pub metrics: MetricsConfig,
     pub policies: PoliciesConfig,
+    pub ui: UiConfig,
 }
 
 pub const DEFAULT_INTENTS_PATH: &str = "~/.local/share/towercab/intents";
@@ -178,6 +196,7 @@ impl Config {
             telegram: None,
             metrics: MetricsConfig::default(),
             policies: PoliciesConfig::default(),
+            ui: UiConfig::default(),
         }
     }
 
@@ -239,9 +258,10 @@ impl Config {
                 telegram(&Section::of(&table, "telegram")?)?,
                 metrics(&Section::of(&table, "metrics")?)?,
                 policies(&Section::of(&table, "policies")?)?,
+                ui(&Section::of(&table, "ui")?)?,
             ))
         };
-        let (agent, github, telegram, metrics, policies) = sections().map_err(|e| err(&e))?;
+        let (agent, github, telegram, metrics, policies, ui) = sections().map_err(|e| err(&e))?;
         Ok(Config {
             file,
             intents: IntentsConfig {
@@ -255,6 +275,7 @@ impl Config {
             telegram,
             metrics,
             policies,
+            ui,
         })
     }
 
@@ -481,6 +502,12 @@ fn policies(s: &Section) -> Result<PoliciesConfig, String> {
         base: s
             .string("base", "a branch name ([A-Za-z0-9._/-])", is_branch)?
             .unwrap_or_else(|| "main".into()),
+    })
+}
+
+fn ui(s: &Section) -> Result<UiConfig, String> {
+    Ok(UiConfig {
+        port: s.int("port", 0, 65535, i64::from(DEFAULT_UI_PORT), "")? as u16,
     })
 }
 

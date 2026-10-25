@@ -38,4 +38,5 @@ pub mod service;
 pub mod status;
 pub mod telegram;
 pub mod telemetry;
+pub mod ui;
 pub mod writer;

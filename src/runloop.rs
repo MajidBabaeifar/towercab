@@ -1783,6 +1783,10 @@ impl Loop {
             }
         }
         let mut wake = self.signals().map_err(|e| format!("signals: {e}"))?;
+        // The web UI (UI-1): the service's own, on its own threads; stopped when this returns.
+        let _ui = (self.opts.watch && self.config.ui.port != 0)
+            .then(|| crate::ui::Running::start(&self.config, &self.home, &self.exes))
+            .flatten();
         let mut next = Instant::now();
         loop {
             match self.pass(Tick::now()) {

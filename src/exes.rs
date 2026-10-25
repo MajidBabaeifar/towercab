@@ -12,6 +12,8 @@ pub struct Exes {
     pub systemd_inhibit: OsString,
     pub systemctl: OsString,
     pub journalctl: OsString,
+    /// Opens the web page (`towercab ui`, UI-2).
+    pub xdg_open: OsString,
     /// Towercab itself, for the children that run it (`hook verifier`, PIP-32); empty = the
     /// running executable ([`towercab`]).
     pub towercab: OsString,
@@ -29,6 +31,7 @@ impl Default for Exes {
             systemd_inhibit: "systemd-inhibit".into(),
             systemctl: "systemctl".into(),
             journalctl: "journalctl".into(),
+            xdg_open: "xdg-open".into(),
             towercab: OsString::new(),
         }
     }
