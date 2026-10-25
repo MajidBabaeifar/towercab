@@ -37,6 +37,10 @@ fn waiting_in(s: Stage) -> Option<Waiting> {
 
 /// Where `next` sends a mission at `s` on `e`, as the loop applies it.
 fn expected(s: Stage, e: Event) -> Stage {
+    // My merge of the spec PR is read as `approve` (PIP-21): on to plan.
+    if s == Stage::ApprovalSpec && e == Event::PrMerged {
+        return Stage::Plan;
+    }
     match next(s, e) {
         Next::Go(to) => to,
         Next::Stop => Stage::Stopped,

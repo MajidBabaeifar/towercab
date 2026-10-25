@@ -1325,7 +1325,14 @@ impl Loop {
                 continue;
             }
             let mut o = Outcome::event(ev);
-            if ev == Event::PrMerged {
+            if ev == Event::PrMerged && m.stage == Stage::ApprovalSpec {
+                // My merge of the spec PR = approve spec (PIP-17): the build goes on in a new PR.
+                o = Outcome::event(Event::Approve)
+                    .with("pr", rusqlite::types::Value::Null)
+                    .with("pr_url", rusqlite::types::Value::Null)
+                    .with("head", rusqlite::types::Value::Null)
+                    .with("pushed_at", rusqlite::types::Value::Null);
+            } else if ev == Event::PrMerged {
                 o = o.with("merged_by", "human".to_string());
                 if let Some(sha) = state.merge_commit.clone() {
                     o = o.with("merge_sha", sha);

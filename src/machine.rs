@@ -934,7 +934,32 @@ pub fn apply_as(
     o: &Outcome,
     given: Option<Next>,
 ) -> Result<Mission, String> {
-    ax.db.tx(|tx| apply_tx(tx, ax, m, o, given))
+    let after = ax.db.tx(|tx| apply_tx(tx, ax, m, o, given))?;
+    if let Some(line) = move_line(m, &after, o) {
+        crate::tlog!("{line}");
+    }
+    Ok(after)
+}
+
+/// The log line of a move (LOOP-21): `towercab: <mission> <from> → <to> (<event>[: <why>])`;
+/// none when it stayed.
+pub fn move_line(before: &Mission, after: &Mission, o: &Outcome) -> Option<String> {
+    if before.stage == after.stage && before.id == after.id {
+        return None;
+    }
+    let why = after
+        .why
+        .as_deref()
+        .filter(|w| !w.is_empty())
+        .map(|w| format!(": {w}"))
+        .unwrap_or_default();
+    Some(format!(
+        "towercab: {} {} → {} ({}{why})",
+        before.label(),
+        before.stage.as_str(),
+        after.stage.as_str(),
+        o.event.as_str()
+    ))
 }
 
 /// What a transition does to the row.
