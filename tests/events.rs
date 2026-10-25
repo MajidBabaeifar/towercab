@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use common::world::{Act, PublishesPr, Scripted, World, intent_file, open_pr};
 use rusqlite::params;
-use towercab::events::{Comment, PrState, intent_events, parse_pr, pr_events};
+use towercab::events::{Comment, GhPrs, PrSource, PrState, intent_events, parse_pr, pr_events};
+use towercab::github::{GhError, Identity};
 use towercab::handler::Handlers;
 use towercab::intents::Listing;
 use towercab::machine::{Event, Kind, Next, Stage, Waiting, continue_to, next};
@@ -348,9 +349,9 @@ fn test_pr_and_intent_event_derivation() {
             .collect::<Vec<_>>(),
         ["a", "b", "c"]
     );
-    // Review comments `--paginate --slurp`: one array per page.
-    let pages = r#"[[{"user":{"login":"me"},"created_at":"2026-10-15T11:10:00Z","body":"c"}],
-      [{"user":{"login":"me"},"created_at":"2026-10-15T11:20:00Z","body":"d"}]]"#;
+    // Review comments `--paginate`: one array per page, back to back.
+    let pages = r#"[{"user":{"login":"me"},"created_at":"2026-10-15T11:10:00Z","body":"c"}][
+      {"user":{"login":"me"},"created_at":"2026-10-15T11:20:00Z","body":"d"}]"#;
     let pr = parse_pr(view, pages).unwrap();
     assert_eq!(
         pr.comments
@@ -505,4 +506,70 @@ fn test_pr_reads_skipped() {
     assert_eq!((y.stage, y.step.as_str()), (Stage::Build, "run"));
     assert!(w.transitions("261001-0901").is_empty());
     lp.shutdown().unwrap();
+}
+
+/// PIP-21 on gh 2.46 (no `api --slurp`): the review comments are read with `--paginate` alone,
+/// its pages (`[…][…]`) flattened; the fake refuses what gh 2.46 refuses, as gh does.
+#[test]
+fn test_pr_read_on_gh_246() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gh = common::pipe::GhScript::new(tmp.path());
+    let view = r#"{"state":"OPEN","headRefOid":"h1","mergeable":"MERGEABLE",
+      "comments":[{"author":{"login":"me"},"createdAt":"2026-10-15T11:00:00Z","body":"a"}],"reviews":[]}"#;
+    let pages = concat!(
+        r#"[{"user":{"login":"me"},"created_at":"2026-10-15T11:10:00Z","body":"b"}]"#,
+        r#"[{"user":{"login":"me"},"created_at":"2026-10-15T11:20:00Z","body":"c"}]"#,
+        "\n[]\n"
+    );
+    gh.on(common::pipe::PR_READ, &[(view, "", 0)])
+        .on(common::pipe::PR_COMMENTS, &[(pages, "", 0)]);
+    let mut prs = GhPrs {
+        identity: Identity::none().with_gh(gh.bin.as_os_str()),
+    };
+    let pr = prs.read("me/web", 7).unwrap();
+    let bodies: Vec<&str> = pr.comments.iter().map(|c| c.body.as_str()).collect();
+    assert_eq!(bodies, ["a", "b", "c"]);
+    assert_eq!(
+        gh.calls()[1],
+        "api --paginate repos/me/web/pulls/7/comments?per_page=100"
+    );
+
+    // gh 2.46 has none of these: each fails as gh's own error, usage text and all.
+    for (args, err) in [
+        (
+            &[
+                "api",
+                "--paginate",
+                "--slurp",
+                "repos/me/web/pulls/7/comments",
+            ][..],
+            "unknown flag: --slurp",
+        ),
+        (
+            &["pr", "checks", "7", "--json", "state"][..],
+            "unknown flag: --json",
+        ),
+        (
+            &["pr", "update-branch", "7", "-R", "me/web"][..],
+            "unknown command \"update-branch\" for \"gh pr\"",
+        ),
+    ] {
+        let out = std::process::Command::new(&gh.bin)
+            .args(args)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {stderr}");
+        assert!(stderr.starts_with(err), "{args:?}: {stderr}");
+        assert!(stderr.contains("Usage:"), "{stderr}");
+    }
+    // A refused read is a refusal (not an outage), its stderr kept whole for the log line.
+    let e = Identity::none()
+        .with_gh(gh.bin.as_os_str())
+        .gh("me/web", &["api", "--slurp", "x"])
+        .unwrap_err();
+    assert!(
+        matches!(&e, GhError::Failed(t) if t.starts_with("unknown flag: --slurp\n")),
+        "{e:?}"
+    );
 }

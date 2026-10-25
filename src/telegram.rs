@@ -119,7 +119,7 @@ impl Telegram {
             Ok(_) => self.down = false,
             Err(e) if !self.down => {
                 self.down = true;
-                eprintln!("towercab: {e}");
+                crate::tlog!("towercab: {e}");
                 self.logged.push(e.clone());
             }
             Err(_) => {}

@@ -431,7 +431,7 @@ fn enter_due(config: &Config, home: &Home, db: &Db, store: &Store, tick: Tick) {
             probe: &probe,
         };
         if let Err(e) = machine::enter(&mut cx, &m) {
-            eprintln!("towercab: {}: {e}", m.label());
+            crate::tlog!("towercab: {}: {e}", m.label());
         }
     }
 }

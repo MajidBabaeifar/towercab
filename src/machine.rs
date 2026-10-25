@@ -996,7 +996,7 @@ pub fn apply_tx(
             Some(w) => format!("{what}: {w}"),
             None => what,
         });
-        eprintln!(
+        crate::tlog!(
             "towercab: {}: {}",
             cur.label(),
             why.as_deref().unwrap_or("")
@@ -1038,7 +1038,7 @@ pub fn apply_tx(
             put(&mut cols, "retry_at", now + delay);
             if let Some((fault, error)) = &o.fault {
                 if env::open(tx, fault, error, now)? {
-                    eprintln!("towercab: {fault}: {}", outbox::one_line(error));
+                    crate::tlog!("towercab: {fault}: {}", outbox::one_line(error));
                 }
                 put(&mut cols, "fault", fault.to_string());
             }
@@ -1174,7 +1174,7 @@ pub fn apply_tx(
     let stored = mission::get(tx, cur.id)?;
     // Its metrics (MET-14..26), before its own `transitions` row; never its failure.
     if let Err(e) = indicators::transition(tx, ax, &cur, o, to, unexpected, &stored) {
-        eprintln!("towercab: {}: metrics: {e}", cur.label());
+        crate::tlog!("towercab: {}: metrics: {e}", cur.label());
     }
     if let Some(w) = waiting.filter(|w| *w != Waiting::PrClosed) {
         let n = if w == Waiting::ReviewAndMergePr {
@@ -1317,7 +1317,7 @@ pub fn enter(cx: &mut Ctx<'_>, m: &Mission) -> Result<Mission, String> {
             cx.probe.point();
             // Once per entry, like the write (MET-23, MET-24, MET-26); never its failure.
             if let Err(e) = indicators::entered(cx, m) {
-                eprintln!("towercab: {}: metrics: {e}", m.label());
+                crate::tlog!("towercab: {}: metrics: {e}", m.label());
             }
         }
     }

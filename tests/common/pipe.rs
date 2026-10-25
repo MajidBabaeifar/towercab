@@ -128,7 +128,8 @@ exit "$(cat "$d/claude-$n.exit" 2>/dev/null || echo 0)"
 /// A `gh` that matches `"$*"` against ordered shell `case` patterns ([`GhScript::on`]), each
 /// with a queue of answers (the last one repeats); every call logged (`calls.log`, argv per
 /// call, newlines as spaces in `calls.log`); a `--body-file <f>` or `-F body=@<f>` copied to
-/// `body-<n>`. No rule → exit 98.
+/// `body-<n>`. A call gh 2.46 would refuse ([`super::gh246::guard`]) fails as gh does; no
+/// rule → exit 98.
 pub struct GhScript {
     pub dir: PathBuf,
     pub bin: PathBuf,
@@ -155,7 +156,7 @@ for a in "$@"; do
   case "$a" in body=@*) cp "${{a#body=@}}" "$d/body-$n" ;; esac
   prev="$a"
 done
-i=0
+{guard}i=0
 while IFS= read -r pat; do
   i=$((i + 1))
   case "$*" in
@@ -172,7 +173,8 @@ done < "$d/rules"
 echo "gh script: no rule for: $*" >&2
 exit 98
 "#,
-                d = dir.display()
+                d = dir.display(),
+                guard = super::gh246::guard()
             ),
         );
         GhScript {
@@ -602,7 +604,7 @@ pub const CI_VIEW: &str = "pr view * --json headRefOid,mergeable,statusCheckRoll
 pub const PR_READ: &str =
     "pr view * --json state,mergedAt,mergeCommit,headRefOid,mergeable,comments,reviews";
 /// The review comments of a PR read.
-pub const PR_COMMENTS: &str = "api --paginate --slurp *";
+pub const PR_COMMENTS: &str = "api --paginate *";
 /// `gh pr view` of the merge handler.
 pub const MERGE_VIEW: &str = "pr view * --json headRefOid,mergeStateStatus,mergedAt,mergeCommit";
 
@@ -700,7 +702,7 @@ impl Pipe {
                 PR_READ,
                 &[(r#"{"state":"OPEN","comments":[],"reviews":[]}"#, "", 0)],
             )
-            .on(PR_COMMENTS, &[("[[]]", "", 0)]);
+            .on(PR_COMMENTS, &[("[]", "", 0)]);
         p
     }
 

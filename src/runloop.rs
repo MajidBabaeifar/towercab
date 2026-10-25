@@ -241,6 +241,7 @@ impl Loop {
         opts: LoopOpts,
     ) -> Result<Loop, String> {
         let lock = home.lock()?;
+        crate::log::init(&home.root);
         let db = Db::open(&home.db())?;
         let unclean = db.meta("running")?;
         let now = Tick::now();
@@ -374,7 +375,7 @@ impl Loop {
     /// Logs `msg` for `kind` unless it was the last one logged for it.
     fn warn(&mut self, kind: &str, msg: String) {
         if self.warned.get(kind) != Some(&msg) {
-            eprintln!("towercab: {msg}");
+            crate::tlog!("towercab: {msg}");
             self.warned.insert(kind.to_string(), msg);
         }
     }
@@ -687,7 +688,7 @@ impl Loop {
     fn progress(&mut self, m: &Mission, called: Called, tick: Tick) -> Result<(), String> {
         match called {
             Called::Panicked(msg) => {
-                eprintln!("towercab: {}: panic at {}: {msg}", m.label(), m.stage);
+                crate::tlog!("towercab: {}: panic at {}: {msg}", m.label(), m.stage);
                 let o = Outcome {
                     why: Some(format!("panic: {msg}")),
                     ..Outcome::event(Event::Crash)
@@ -1714,7 +1715,7 @@ impl Loop {
             self.preflighted = true;
             let results = env::preflight(&self.config, &self.exes, &mut self.identity);
             for (fault, e) in self.db.tx(|tx| env::record(tx, &results, now))? {
-                eprintln!("towercab: preflight: {fault}: {e}");
+                crate::tlog!("towercab: preflight: {fault}: {e}");
             }
         }
         let held = env::held(self.db.conn())?;
@@ -1729,7 +1730,7 @@ impl Loop {
             match env::check(&fault, &self.config, &self.exes, &mut self.identity) {
                 Ok(()) => {
                     env::close(self.db.conn(), &row.kind)?;
-                    eprintln!("towercab: {fault}: ok again");
+                    crate::tlog!("towercab: {fault}: ok again");
                 }
                 Err(e) => {
                     env::open(self.db.conn(), &fault, &e, now)?;
@@ -1738,7 +1739,7 @@ impl Loop {
         }
         let blocked = self.db.tx(|tx| env::episode(tx, now))?;
         if blocked != self.blocked {
-            eprintln!(
+            crate::tlog!(
                 "towercab: {}",
                 if blocked {
                     "env blocked"
@@ -1797,7 +1798,7 @@ impl Loop {
                 }
                 Ok(r) if r.idle && !self.opts.watch && self.target.is_none() => break,
                 Ok(_) => {}
-                Err(e) if self.opts.watch => eprintln!("towercab: {e}"),
+                Err(e) if self.opts.watch => crate::tlog!("towercab: {e}"),
                 Err(e) => {
                     self.shutdown()?;
                     return Err(e);
@@ -1896,7 +1897,7 @@ impl Loop {
         if let Some(key) = drafter {
             // Stopped, not failed: the try isn't counted.
             if let Some(Err(e)) = self.with_cx(tick, |cx| drafts::not_run(cx, &key)) {
-                eprintln!("towercab: draft {key}: {e}");
+                crate::tlog!("towercab: draft {key}: {e}");
             }
         }
         self.queued.clear();

@@ -273,7 +273,7 @@ impl Handler for RehearseClose {
                 m,
                 &["pr", "close", &n, "-R", &github, "--delete-branch"],
             )? {
-                eprintln!(
+                crate::tlog!(
                     "towercab: {}: gh pr close {n}: {}",
                     m.label(),
                     crate::outbox::one_line(&e)

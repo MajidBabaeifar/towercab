@@ -348,7 +348,7 @@ pub fn finish(cx: &Ctx<'_>, m: &Mission, end: &ChildEnd) -> Result<Ended, StepEr
     if kind == RunKind::Worker
         && let Err(e) = indicators::guard_blocks(&cx.runs(m), &m.repo, &ev)
     {
-        eprintln!("towercab: {}: metrics: {e}", m.label());
+        crate::tlog!("towercab: {}: metrics: {e}", m.label());
     }
     cx.db
         .conn()

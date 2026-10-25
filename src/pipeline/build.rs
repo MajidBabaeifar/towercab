@@ -232,7 +232,7 @@ impl Build {
                 self.run(cx, &m, repo_files)
             }
             LineEnd::SetupRed { why, .. } | LineEnd::CheckRed { why, .. } => {
-                eprintln!("towercab: {}: build setup: {why}", m.label());
+                crate::tlog!("towercab: {}: build setup: {why}", m.label());
                 self.run(cx, m, repo_files)
             }
         }

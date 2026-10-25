@@ -62,7 +62,7 @@ impl Inhibitor {
         if let Some(c) = &mut self.child
             && let Ok(Some(status)) = c.try_wait()
         {
-            eprintln!("towercab: systemd-inhibit exited: {status}");
+            crate::tlog!("towercab: systemd-inhibit exited: {status}");
             kill_group(c.id());
             self.child = None;
             self.retry_at = Some(mono + RETRY);
@@ -95,7 +95,7 @@ impl Inhibitor {
                 self.retry_at = None;
             }
             Err(e) => {
-                eprintln!("towercab: {}: {e}", exes.systemd_inhibit.to_string_lossy());
+                crate::tlog!("towercab: {}: {e}", exes.systemd_inhibit.to_string_lossy());
                 self.retry_at = Some(mono + RETRY);
             }
         }

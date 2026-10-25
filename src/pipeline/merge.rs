@@ -275,7 +275,7 @@ impl Merge {
         let path = format!("repos/{github}/pulls/{n}/update-branch");
         let sha = format!("expected_head_sha={head}");
         if let Err(e) = gh::try_gh(cx, m, &["api", "-X", "PUT", &path, "-f", &sha])? {
-            eprintln!(
+            crate::tlog!(
                 "towercab: {}: update-branch: {}",
                 m.label(),
                 crate::outbox::one_line(&e)

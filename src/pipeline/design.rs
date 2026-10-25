@@ -518,7 +518,7 @@ impl Design {
                                 &format!("Replaced by {to}"),
                             ],
                         )? {
-                            eprintln!("towercab: {}: closing PR #{n}: {e}", m.label());
+                            crate::tlog!("towercab: {}: closing PR #{n}: {e}", m.label());
                         }
                         data.set("closed_old", true);
                     }

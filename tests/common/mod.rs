@@ -11,6 +11,7 @@ use towercab::config::{Config, IntentsConfig};
 use towercab::intents::{Intent, Store};
 
 pub mod app;
+pub mod gh246;
 pub mod http;
 pub mod pipe;
 pub mod world;
@@ -176,7 +177,8 @@ impl Home {
 
 /// A fake `gh` on disk: `<dir>/bin/gh`, a shell script that records each call's argv
 /// (`argv-<n>`, one argument per line) and stdin (`stdin-<n>`), then answers with canned
-/// response `n` (stdout, stderr, exit code). A call without a response exits 99.
+/// response `n` (stdout, stderr, exit code). A call without a response exits 99; one gh 2.46
+/// would refuse ([`gh246::guard`]) fails as gh does.
 pub struct FakeGh {
     pub dir: PathBuf,
     /// The executable; its directory can go first on `PATH`.
@@ -191,7 +193,7 @@ echo "$n" > "$d/count"
 : > "$d/argv-$n"
 for a in "$@"; do printf '%s\n' "$a" >> "$d/argv-$n"; done
 cat > "$d/stdin-$n"
-if [ ! -f "$d/code-$n" ]; then echo "fake gh: unexpected call $n" >&2; exit 99; fi
+{guard}if [ ! -f "$d/code-$n" ]; then echo "fake gh: unexpected call $n" >&2; exit 99; fi
 cat "$d/out-$n"
 cat "$d/err-$n" >&2
 exit "$(cat "$d/code-$n")"
@@ -209,7 +211,7 @@ impl FakeGh {
             fs::write(dir.join(format!("err-{n}")), err).unwrap();
             fs::write(dir.join(format!("code-{n}")), code.to_string()).unwrap();
         }
-        fs::write(&bin, FAKE_GH).unwrap();
+        fs::write(&bin, FAKE_GH.replace("{guard}", &gh246::guard())).unwrap();
         fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
         // Another test's fork may still hold the file open for writing (ETXTBSY) for a moment.
         for _ in 0..500 {
@@ -279,7 +281,8 @@ pub fn exe(path: &Path, body: &str) {
 /// Fakes of the programs the loop checks at start and runs itself, in `dir` (made once):
 /// `claude`, `cargo`, `bwrap` answer `--version`; `systemd-inhibit` answers `--version`, else
 /// logs its argv (`inhibit-<n>.argv`) and pid (`inhibit-<n>.pid`), then runs until `dir` is
-/// gone; `gh` logs each call to `gh.log` and lists no issues and no PRs (anything else fails).
+/// gone; `gh` logs each call to `gh.log`, refuses what gh 2.46 would ([`gh246::guard`]) and
+/// lists no issues and no PRs (anything else fails).
 /// Returns `Exes` with them (the rest by name).
 pub fn fake_exes(dir: &Path) -> towercab::exes::Exes {
     let fakes = [
@@ -287,7 +290,7 @@ pub fn fake_exes(dir: &Path) -> towercab::exes::Exes {
         ("cargo", "echo 'cargo 1.98.0'\n".to_string()),
         ("bwrap", "echo 'bubblewrap 0.11.0'\n".to_string()),
         ("systemd-inhibit", FAKE_INHIBIT.to_string()),
-        ("gh", FAKE_LOOP_GH.to_string()),
+        ("gh", FAKE_LOOP_GH.replace("{guard}", &gh246::guard())),
     ];
     for (name, body) in &fakes {
         let path = dir.join(name);
@@ -306,7 +309,7 @@ pub fn fake_exes(dir: &Path) -> towercab::exes::Exes {
 }
 
 const FAKE_LOOP_GH: &str = r#"echo "$*" >> "$(dirname "$0")/gh.log"
-case "$1 $2" in
+{guard}case "$1 $2" in
   "issue list"|"pr list") echo '[]' ;;
   *) echo "fake gh: $*" >&2; exit 1 ;;
 esac

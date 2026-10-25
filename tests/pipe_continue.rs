@@ -330,7 +330,7 @@ fn test_continue_resumes_session() {
         &[(&json!({"state": "OPEN", "headRefOid": head, "mergeable": "MERGEABLE", "reviews": [],
             "comments": [{"author": {"login": "me"}, "createdAt": "2099-01-01T09:00:00Z", "body": "Use GitHub."}]}).to_string(), "", 0)],
     )
-    .on("api --paginate *", &[("[[]]", "", 0)]);
+    .on("api --paginate *", &[("[]", "", 0)]);
     let checkout = p.w.home.root.join(&m.checkout);
     fs::remove_dir_all(&checkout).unwrap();
     let md =

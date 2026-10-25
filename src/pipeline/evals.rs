@@ -181,7 +181,7 @@ pub fn read_dir(dir: &Path) -> Vec<Case> {
             {
                 Ok(c) => Some(c),
                 Err(e) => {
-                    eprintln!("towercab: eval case {}: {e}", p.display());
+                    crate::tlog!("towercab: eval case {}: {e}", p.display());
                     None
                 }
             }
@@ -655,7 +655,7 @@ pub fn run_cases(
         {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("towercab: eval {}: {e}", case.id);
+                crate::tlog!("towercab: eval {}: {e}", case.id);
                 out.insert(
                     case.id.clone(),
                     CaseResult {
@@ -684,7 +684,7 @@ pub fn run_cases(
                 },
             };
             r.tries = t;
-            eprintln!("towercab: eval {} try {t}: {}", case.id, r.why);
+            crate::tlog!("towercab: eval {} try {t}: {}", case.id, r.why);
             if r.pass {
                 break;
             }

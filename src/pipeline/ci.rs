@@ -461,7 +461,7 @@ impl Ci {
             }
         }
         if let Err(e) = gh::try_gh(cx, m, &["run", "rerun", &id, "--failed", "-R", &github])? {
-            eprintln!(
+            crate::tlog!(
                 "towercab: {}: gh run rerun {run}: {}",
                 m.label(),
                 crate::outbox::one_line(&e)
