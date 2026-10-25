@@ -354,3 +354,51 @@ fn test_tab_count_and_log_scroll() {
     );
     server.stop();
 }
+
+#[test]
+fn test_recently_finished() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ctx, _fake, server, home, _) = start(tmp.path());
+    let s = ui::state(&ctx).unwrap();
+    assert!(
+        s["html"]["finished"]
+            .as_str()
+            .unwrap()
+            .contains("Nothing has finished yet.")
+    );
+    let db = Db::open(&home.db()).unwrap();
+    let m = mission::insert(
+        db.conn(),
+        &NewMission {
+            intent: "261025-0902".into(),
+            slug: "staging".into(),
+            repo: "web".into(),
+            model: "opus".into(),
+            a: None,
+            min_attempt: 1,
+        },
+        Tick::now(),
+    )
+    .unwrap();
+    db.conn()
+        .execute(
+            "UPDATE missions SET stage = 'done', merged_by = 'human', \
+             pr_url = 'https://github.com/me/web/pull/9', finished = ?2 WHERE id = ?1",
+            rusqlite::params![m.id, Tick::now().unix()],
+        )
+        .unwrap();
+    let s = ui::state(&ctx).unwrap();
+    let f = s["html"]["finished"].as_str().unwrap();
+    for want in [
+        "href=\"/i/261025-0902\"",
+        "Staging first",
+        "done</span> · merged by human",
+        "pull/9",
+        &format!("href=\"/m/{}\"", m.id),
+    ] {
+        assert!(f.contains(want), "{want}: {f}");
+    }
+    let (_, page) = get(server.port, "/");
+    assert!(page.contains("Recently finished"), "{page}");
+    server.stop();
+}
