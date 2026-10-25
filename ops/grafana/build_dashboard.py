@@ -135,14 +135,15 @@ y += 6
 # ---- Test
 panels.append(row("Test · feedback loop, evals", y)); y += 1
 merged = HC("intent_duration", ',kind="lead",outcome=~"done|reverted|revert_failed"')
-cfr = f"{S(C('escapes'))} / {S(merged)}"
+escaped = C("escapes", ',where="e2e"')  # MET-25: e2e escapes; alert ones (MET-27) shown apart
+cfr = f"{S(escaped)} / {S(merged)}"
 panels += [
     stat("First-pass CI", [RATIO(C("ci_result", ',first="yes",result="green"'), C("ci_result", ',first="yes"'))], 0, y, "percentunit", ind(LEAD, "Feedback loop", "first CI run after the build is green")),
     stat("Wait for my merge p50", [Q(0.5, H("gate_wait_duration", ',gate="merge"'))], 4, y, "s", ind(LAG, "Feedback loop", "review time per PR")),
     stat("Change failure rate", [cfr], 8, y, "percentunit", ind(LAG, "Feedback loop / CI/CD", "escapes ÷ merged intents (MET-25)")),
     stat("Eval pass rate", [f'max(last_over_time({G("eval_pass_rate")}[$__range]))'], 12, y, "percentunit", ind(LEAD, "Evals", "last eval run")),
     stat("Incident → eval p50", [Q(0.5, H("incident_to_eval_duration"))], 16, y, "s", ind(LEAD, "Evals", "escape → incident eval case")),
-    stat("Caught by evals · escaped", [S(C("eval_gate", ',result="drop"')), S(C("escapes"))], 20, y, "short", ind(LAG, "Evals", "regressions caught by the eval gate vs escaped"), legends=["evals", "escaped"], text="value_and_name"),
+    stat("Caught by evals · escaped", [S(C("eval_gate", ',result="drop"')), S(escaped)], 20, y, "short", ind(LAG, "Evals", "regressions caught by the eval gate vs escaped"), legends=["evals", "escaped"], text="value_and_name"),
 ]
 y += 4
 # ---- Deploy
@@ -150,7 +151,7 @@ panels.append(row("Deploy · PR review, approval gates, CI/CD (DORA)", y)); y +=
 panels += [
     stat("Time to first review p50", [Q(0.5, H("review_first_duration"))], 0, y, "s", ind(LEAD, "PR review", "PR ready → first review")),
     stat("Feedback fixed by worker", [RATIO(C("feedback_rounds", ',resolved_by="worker"'), C("feedback_rounds"))], 4, y, "percentunit", ind(LEAD, "PR review", "my comments resolved without me touching the branch")),
-    stat("Important before merge · escaped", [S(C("review_findings", ',severity="important"')), S(C("escapes"))], 8, y, "short", ind(LAG, "PR review", "defects caught before merge vs escaping"), legends=["caught", "escaped"], text="value_and_name"),
+    stat("Important before merge · escaped", [S(C("review_findings", ',severity="important"')), S(escaped)], 8, y, "short", ind(LAG, "PR review", "defects caught before merge vs escaping"), legends=["caught", "escaped"], text="value_and_name"),
     stat("Gate violations", [S(C("gate_violations"))], 12, y, "short", ind(LAG, "Approval gates", "protected path merged without unlock; target 0")),
     stat("CI failures fixed without me", [RATIO(C("ci_triage", ',by="worker"'), C("ci_triage"))], 16, y, "percentunit", ind(LEAD, "CI/CD", "red CI resolved by the worker")),
     stat("Guard blocks", [SB("kind", C("guard_blocks"))], 20, y, "short", "Writes the guard stopped (PIP-29, PIP-31)." + EMPTY, legends=["{{kind}}"], text="value_and_name"),
@@ -169,7 +170,8 @@ panels.append(row("Maintain · closing the loop", y)); y += 1
 panels += [
     stat("Breach → intent p50", [Q(0.5, H("breach_to_intent_duration"))], 0, y, "s", ind(LEAD, "Closing the loop", "breach → draft intent PR")),
     stat("Alert findings fixed", [RATIO(HC("intent_duration", ',kind="lead",source="alert",outcome="done"'), C("intent_drafts", ',source="alert"'))], 4, y, "percentunit", ind(LAG, "Closing the loop", "alert intents that became merged fixes")),
-    gauge("Breaches by band", [tgt(SB("band, tier", C("breaches")), legend="{{band}} · {{tier}}")], 8, y, 16, 4, desc=ind(LAG, "Closing the loop", "repeat breaches per band (MNT-3)")),
+    gauge("Breaches by band", [tgt(SB("band, tier", C("breaches")), legend="{{band}} · {{tier}}")], 8, y, 12, 4, desc=ind(LAG, "Closing the loop", "repeat breaches per band (MNT-3)")),
+    stat("Alert escapes", [S(C("escapes", ',where="alert"'))], 20, y, "short", ind(LAG, "Closing the loop", "breaches traced to a merged PR (MET-27)")),
 ]
 y += 4
 # ---- Intents

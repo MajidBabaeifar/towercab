@@ -617,7 +617,8 @@ fn test_change_failure_rate() {
     let b = w.ok_to(b, Stage::E2e, 10);
     let _ = reverted(&mut w, b);
     let recs = metrics::take();
-    let escapes = sum(&recs, Metric::Escapes, &[]);
+    // MET-25: e2e escapes only (alert ones, MET-27, are counted apart).
+    let escapes = sum(&recs, Metric::Escapes, &[("where", "e2e")]);
     let merged = find(&recs, Metric::IntentDuration, &[("kind", "lead")])
         .iter()
         .filter(|r| ["done", "reverted", "revert_failed"].contains(&r.label("outcome").unwrap()))

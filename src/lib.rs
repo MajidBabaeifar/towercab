@@ -24,6 +24,7 @@ pub mod indicators;
 pub mod intents;
 pub mod limits;
 pub mod machine;
+pub mod maintain;
 pub mod metrics;
 pub mod mission;
 pub mod outbox;

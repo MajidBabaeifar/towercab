@@ -1390,7 +1390,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(sum_over_time({__name__=~\"towercab_escapes(_total)?\"}[$__range])) / sum(sum_over_time({__name__=~\"towercab_intent_duration(_seconds|_USD)?_count\",kind=\"lead\",outcome=~\"done|reverted|revert_failed\"}[$__range]))",
+          "expr": "sum(sum_over_time({__name__=~\"towercab_escapes(_total)?\",where=\"e2e\"}[$__range])) / sum(sum_over_time({__name__=~\"towercab_intent_duration(_seconds|_USD)?_count\",kind=\"lead\",outcome=~\"done|reverted|revert_failed\"}[$__range]))",
           "instant": true,
           "range": false
         }
@@ -1560,7 +1560,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(sum_over_time({__name__=~\"towercab_escapes(_total)?\"}[$__range]))",
+          "expr": "sum(sum_over_time({__name__=~\"towercab_escapes(_total)?\",where=\"e2e\"}[$__range]))",
           "instant": true,
           "range": false,
           "legendFormat": "escaped"
@@ -1744,7 +1744,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(sum_over_time({__name__=~\"towercab_escapes(_total)?\"}[$__range]))",
+          "expr": "sum(sum_over_time({__name__=~\"towercab_escapes(_total)?\",where=\"e2e\"}[$__range]))",
           "instant": true,
           "range": false,
           "legendFormat": "escaped"
@@ -2122,7 +2122,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(sum_over_time({__name__=~\"towercab_escapes(_total)?\"}[$__range])) / sum(sum_over_time({__name__=~\"towercab_intent_duration(_seconds|_USD)?_count\",kind=\"lead\",outcome=~\"done|reverted|revert_failed\"}[$__range]))",
+          "expr": "sum(sum_over_time({__name__=~\"towercab_escapes(_total)?\",where=\"e2e\"}[$__range])) / sum(sum_over_time({__name__=~\"towercab_intent_duration(_seconds|_USD)?_count\",kind=\"lead\",outcome=~\"done|reverted|revert_failed\"}[$__range]))",
           "instant": true,
           "range": false
         }
@@ -2337,7 +2337,7 @@
       "gridPos": {
         "x": 8,
         "y": 43,
-        "w": 16,
+        "w": 12,
         "h": 4
       },
       "targets": [
@@ -2384,6 +2384,59 @@
     },
     {
       "id": 49,
+      "type": "stat",
+      "title": "Alert escapes",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Lagging \u00b7 Closing the loop: breaches traced to a merged PR (MET-27) (playbook \"How to measure it\", MET-22). Empty until the loop emits it.",
+      "gridPos": {
+        "x": 20,
+        "y": 43,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(sum_over_time({__name__=~\"towercab_escapes(_total)?\",where=\"alert\"}[$__range]))",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "\u2013",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 50,
       "type": "row",
       "title": "Intents",
       "collapsed": false,
@@ -2396,7 +2449,7 @@
       "panels": []
     },
     {
-      "id": 51,
+      "id": 52,
       "type": "stat",
       "title": "Intents done",
       "datasource": {
@@ -2449,7 +2502,7 @@
       }
     },
     {
-      "id": 52,
+      "id": 53,
       "type": "stat",
       "title": "Lead time p50",
       "datasource": {
@@ -2502,7 +2555,7 @@
       }
     },
     {
-      "id": 53,
+      "id": 54,
       "type": "stat",
       "title": "Lead time p90",
       "datasource": {
@@ -2555,7 +2608,7 @@
       }
     },
     {
-      "id": 50,
+      "id": 51,
       "type": "stat",
       "title": "Cycle time p50 \u00b7 p90",
       "datasource": {
@@ -2620,7 +2673,7 @@
       }
     },
     {
-      "id": 54,
+      "id": 55,
       "type": "stat",
       "title": "Cost per intent",
       "datasource": {
@@ -2674,7 +2727,7 @@
       }
     },
     {
-      "id": 55,
+      "id": 56,
       "type": "stat",
       "title": "Auto-merged",
       "datasource": {
@@ -2727,7 +2780,7 @@
       }
     },
     {
-      "id": 56,
+      "id": 57,
       "type": "stat",
       "title": "Tokens per intent",
       "datasource": {
@@ -2780,7 +2833,7 @@
       }
     },
     {
-      "id": 57,
+      "id": 58,
       "type": "stat",
       "title": "Paused on usage limit",
       "datasource": {
@@ -2833,7 +2886,7 @@
       }
     },
     {
-      "id": 58,
+      "id": 59,
       "type": "stat",
       "title": "Reverts",
       "datasource": {
@@ -2886,7 +2939,7 @@
       }
     },
     {
-      "id": 59,
+      "id": 60,
       "type": "bargauge",
       "title": "Gate outcomes",
       "datasource": {
@@ -2943,7 +2996,7 @@
       }
     },
     {
-      "id": 60,
+      "id": 61,
       "type": "bargauge",
       "title": "Time per stage (p50 \u00b7 p90)",
       "datasource": {
@@ -3011,7 +3064,7 @@
       }
     },
     {
-      "id": 61,
+      "id": 62,
       "type": "bargauge",
       "title": "Cost by agent",
       "datasource": {
@@ -3068,7 +3121,7 @@
       }
     },
     {
-      "id": 62,
+      "id": 63,
       "type": "logs",
       "title": "Intent events",
       "datasource": {
@@ -3103,7 +3156,7 @@
       }
     },
     {
-      "id": 63,
+      "id": 64,
       "type": "row",
       "title": "Claude Code usage",
       "collapsed": false,
@@ -3116,7 +3169,7 @@
       "panels": []
     },
     {
-      "id": 64,
+      "id": 65,
       "type": "stat",
       "title": "Cost",
       "datasource": {
@@ -3170,7 +3223,7 @@
       }
     },
     {
-      "id": 65,
+      "id": 66,
       "type": "stat",
       "title": "Tokens",
       "datasource": {
@@ -3223,7 +3276,7 @@
       }
     },
     {
-      "id": 66,
+      "id": 67,
       "type": "stat",
       "title": "Sessions",
       "datasource": {
@@ -3276,7 +3329,7 @@
       }
     },
     {
-      "id": 67,
+      "id": 68,
       "type": "stat",
       "title": "Active time",
       "datasource": {
@@ -3329,7 +3382,7 @@
       }
     },
     {
-      "id": 68,
+      "id": 69,
       "type": "stat",
       "title": "Cache hit rate",
       "datasource": {
@@ -3382,7 +3435,7 @@
       }
     },
     {
-      "id": 69,
+      "id": 70,
       "type": "stat",
       "title": "Lines changed",
       "datasource": {
@@ -3435,7 +3488,7 @@
       }
     },
     {
-      "id": 70,
+      "id": 71,
       "type": "timeseries",
       "title": "Cost by model",
       "datasource": {
@@ -3494,7 +3547,7 @@
       }
     },
     {
-      "id": 71,
+      "id": 72,
       "type": "timeseries",
       "title": "Tokens by type",
       "datasource": {
@@ -3553,7 +3606,7 @@
       }
     },
     {
-      "id": 73,
+      "id": 74,
       "type": "bargauge",
       "title": "Cost by model",
       "datasource": {
@@ -3610,7 +3663,7 @@
       }
     },
     {
-      "id": 74,
+      "id": 75,
       "type": "bargauge",
       "title": "Cost: main vs subagents",
       "datasource": {
@@ -3667,7 +3720,7 @@
       }
     },
     {
-      "id": 72,
+      "id": 73,
       "type": "stat",
       "title": "Commits \u00b7 PRs",
       "datasource": {

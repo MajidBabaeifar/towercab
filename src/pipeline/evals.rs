@@ -109,8 +109,18 @@ impl Case {
     }
 }
 
-/// The case of an intent `release` brings to `done` (Mode::Live): `evals/<id>.json` on
-/// `intents` (`Store::put`, commit `towercab: eval <id>`).
+/// `evals/<id>.json` in the store's working tree, when it reads.
+pub fn read_case(store: &Store, id: &str) -> Option<Case> {
+    fs::read_to_string(store.path().join(format!("evals/{id}.json")))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| Case::from_json(&v).ok())
+}
+
+/// The case of an intent `release` brings to `done` (Mode::Live), or of a merged change found
+/// broken (MNT-8): `evals/<id>.json` on `intents` (`Store::put`, commit `towercab: eval <id>`),
+/// `incident: true` when it was, or `maintain::incident`; the first incident case observes
+/// `incident_to_eval.duration` (MET-27).
 pub fn write_case(cx: &Ctx<'_>, m: &Mission) -> Result<(), StepError> {
     let intent = super::intent(cx, m)?;
     let checks = super::files(cx, m)
@@ -118,13 +128,11 @@ pub fn write_case(cx: &Ctx<'_>, m: &Mission) -> Result<(), StepError> {
         .unwrap_or_default();
     let rel = format!("evals/{}.json", intent.id);
     let merge_sha = m.merge_sha.clone().unwrap_or_default();
-    // Written again (a re-entry after a crash): the same text, no second commit; an incident
-    // mark kept.
-    let earlier = fs::read_to_string(cx.store.path().join(&rel))
-        .ok()
-        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-        .and_then(|v| Case::from_json(&v).ok())
-        .filter(|c| c.merge_sha == merge_sha);
+    let any = read_case(cx.store, &intent.id);
+    let was_incident = any.as_ref().is_some_and(|c| c.incident);
+    let incident = was_incident || crate::maintain::incident(cx.db.conn(), &intent)?;
+    // Written again (a re-entry after a crash): the same text, no second commit.
+    let earlier = any.filter(|c| c.merge_sha == merge_sha);
     let case = Case {
         id: intent.id.clone(),
         repo: m.repo.clone(),
@@ -137,13 +145,24 @@ pub fn write_case(cx: &Ctx<'_>, m: &Mission) -> Result<(), StepError> {
         added: earlier
             .as_ref()
             .map_or_else(|| rfc3339(cx.tick.wall), |c| c.added.clone()),
-        incident: earlier.is_some_and(|c| c.incident),
+        incident,
     };
     let text = serde_json::to_string_pretty(&case.to_json()).map_err(|e| e.to_string())? + "\n";
     cx.store
         .put(&rel, &text, &format!("eval {}", case.id))
-        .map(drop)
-        .map_err(store_failed)
+        .map_err(store_failed)?;
+    if incident
+        && !was_incident
+        && let Some(since) = crate::maintain::incident_since(cx.db.conn(), &intent)?
+    {
+        crate::metrics::observe(
+            crate::metrics::Metric::IncidentToEvalDuration,
+            (cx.tick.unix() - since).max(0.0),
+            &[("repo", &m.repo)],
+            &crate::metrics::Ev::of(m),
+        );
+    }
+    Ok(())
 }
 
 /// The `*.json` cases in `dir` (unreadable ones skipped, logged), newest first.
