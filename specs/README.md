@@ -25,6 +25,7 @@ a bare `Live` = every row; otherwise none. Each live row's `test_*` names must e
 | [tasks.md](tasks.md) | TSK | Removed: superseded by intents.md |
 | [metrics.md](metrics.md) | MET | Playbook indicators, OTLP metrics and events, Claude Code telemetry, Grafana dashboard |
 | [runner.md](runner.md) | RUN | Removed: superseded by loop.md |
+| [ui.md](ui.md) | UI | Local web page: state, actions, mission pages, run files, log |
 | [pipeline.md](pipeline.md) | PIP | Design, spec gate, plan, build, verify, red→green proof, publish, CI, verifier, PR review, gate, merge, deploy, e2e, release, revert, rehearsal, evals |
 | [loop.md](loop.md) | LOOP | Rust runner: service, state machine, crash recovery, limits, status, Telegram, commands |
 | [repo.md](repo.md) | REPO | `CLAUDE.md` verifying block (setup, checks, run), `REVIEW.md` (passes, red lines), `TOWERCAB.md` (max_autonomy, protected, tests, live, release, rollback); protected paths; `protect` |

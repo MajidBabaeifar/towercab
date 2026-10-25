@@ -55,6 +55,7 @@ e2e secrets per repo: `~/.config/towercab/secrets/<repo>.env` (`KEY=VALUE`, mode
 | `towercab run [--watch] [--intent ID]` | the loop; without `--watch` it exits when nothing is runnable |
 | `towercab step <id>` | one step of an intent's mission in the foreground |
 | `towercab status` · `next` | what runs, what waits on you, what it would pick and why |
+| `towercab ui` | the web page: http://127.0.0.1:7311/ while `up` (`[ui] port`, 0 = off) |
 | `towercab add "<repo>: <title>" [uN iN aN]` | a thin intent on `main` (or `/intent` in Claude Code) |
 | `towercab approve <id>` · `retry --fresh <id>` · `release <id>` | go on after a wait, start over, authorize a release |
 | `towercab pause` · `resume` · `trust <repo>` | no picks; lift a repo's cap and freeze |

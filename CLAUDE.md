@@ -31,7 +31,7 @@ One Rust crate at the root; the Python version lives on branch `python`.
 - `src/priority.rs`: PRI order, `pick_order`, `review_due`; `src/review.rs`: `towercab review`. `src/autonomy.rs`: AUT cap, gate, spec gate, `lower_a`.
 - `src/intents/`: the intent home: `intent.rs` (parse, line-level `set`), `id.rs`, `store.rs` (`Store`:
   list/get/add/update; pull → write → commit → push, replay), `views.rs`, `git.rs`, `migrate.rs`.
-- `src/repo/`: repo files from `origin/<base>` (`load`), `protected.rs`, `protect`. `src/maintain/`: bands, pure detection (maintain.md **Code**).
+- `src/repo/`: repo files from `origin/<base>` (`load`), `protected.rs`, `protect`. `src/maintain/`: bands, pure detection (maintain.md **Code**). `src/ui/` (ui.md): the loop's web page; `wire.rs` HTTP, `mod.rs` routes, state, actions → `commands`.
 - `src/pipeline/` (pipeline.md **Code**): a handler per stage, state in `missions.data`, Claude runs (`runs.rs`),
   `evals.rs`, `findings.rs`; `prompts/*.md`; `src/writer.rs` (PR text). Tests: `tests/pipe_*.rs`, `common/pipe.rs`.
 - `src/metrics.rs` (metrics.md **Code**): `METRICS`, a per-thread buffer, `Sink` (OTLP, spool); `indicators.rs`

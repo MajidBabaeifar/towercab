@@ -123,6 +123,12 @@ enum Command {
     },
     /// Check the config, programs, GitHub App, rulesets and Telegram
     Doctor,
+    /// Open the web UI (served by the running loop; else here, read-only)
+    Ui {
+        /// Print the URL only
+        #[arg(long)]
+        no_open: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -285,6 +291,7 @@ where
                     claude,
                 },
         } => crate::pipeline::verifier::hook(&app, &url, &log, &claude),
+        Command::Ui { no_open } => report(ui_cmd(&args.config, &args.home, no_open)),
         Command::Doctor => match loop_config(&args.config) {
             Err(e) => {
                 println!("{e}");
@@ -334,6 +341,49 @@ fn intents(config: &Config) -> (Option<Listing>, Option<String>) {
             Err(e) => (Some(s.scan()), Some(e.to_string())),
         },
     }
+}
+
+/// `towercab ui` (UI-2): the loop's page if it answers, else served here read-only until
+/// SIGTERM or SIGINT.
+fn ui_cmd(
+    config: &Option<PathBuf>,
+    home: &Option<PathBuf>,
+    no_open: bool,
+) -> Result<String, String> {
+    let config = Config::load(config.as_deref())?;
+    let port = config.ui.port;
+    if port == 0 {
+        return Err("ui is off: [ui] port = 0".into());
+    }
+    let exes = Exes::default();
+    let url = crate::ui::url(port);
+    let open = |url: &str| {
+        if !no_open {
+            let _ = std::process::Command::new(&exes.xdg_open)
+                .arg(url)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        }
+    };
+    if crate::ui::answers(port) {
+        open(&url);
+        return Ok(url);
+    }
+    let home = Home::resolve(home.as_deref())?;
+    let ctx = std::sync::Arc::new(crate::ui::Ctx::new(config, home, exes.clone(), false));
+    let server = crate::ui::serve(ctx, port).map_err(|e| format!("ui: {e}"))?;
+    println!("{url} (towercab isn't running: read-only; Ctrl-C to stop)");
+    open(&url);
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    for sig in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
+        signal_hook::flag::register(sig, stop.clone()).map_err(|e| e.to_string())?;
+    }
+    while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    server.stop();
+    Ok(String::new())
 }
 
 /// `towercab status` (LOOP-13): SQLite and the intents; works without a running loop.
