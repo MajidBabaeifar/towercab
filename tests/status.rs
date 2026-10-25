@@ -342,14 +342,14 @@ skipped:
 - 261001-0902 ops: Cooling one · sonnet cooling until 14:30
 - 261001-0903 nowhere: Lost · unknown repo nowhere"
     );
-    // Only a parked one left.
+    // Only a parked one left: it waits for me (PRI-5).
     let parked = Listing {
         open: vec![listing.open[6].clone()],
         ..Listing::default()
     };
     assert_eq!(
         status::next_text(&pick::decide(&parked, &state), &parked, 7),
-        "next: 261001-0906 ops: Golf · p5 u1 i2 · parked"
+        "next: nothing runnable\nskipped:\n- 261001-0906 ops: Golf · parked (p5 < 7): raise u or i to run it"
     );
     // Paused, env blocked, picks off: each says so; nothing runnable.
     for (set, why) in [
@@ -365,9 +365,20 @@ skipped:
     ] {
         let mut st = state.clone();
         set(&mut st);
+        let one = Listing {
+            open: vec![
+                listing
+                    .open
+                    .iter()
+                    .find(|i| i.id == "261001-0905")
+                    .unwrap()
+                    .clone(),
+            ],
+            ..Listing::default()
+        };
         assert_eq!(
-            status::next_text(&pick::decide(&parked, &st), &parked, 7),
-            format!("next: nothing runnable\nskipped:\n- 261001-0906 ops: Golf · {why}")
+            status::next_text(&pick::decide(&one, &st), &one, 7),
+            format!("next: nothing runnable\nskipped:\n- 261001-0905 ops: Foxtrot · {why}")
         );
     }
     state.frozen.clear();

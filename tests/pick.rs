@@ -78,7 +78,7 @@ fn test_pick_order() {
     // Through the loop: the picked intent gets a mission at `pick` in one transaction.
     let mut w = World::new(
         &[
-            intent_file("261001-0900-low", "web", "u: 1\ni: 1\n", "Low"),
+            intent_file("261001-0900-low", "web", "u: 3\ni: 2\n", "Low"),
             intent_file(
                 "261002-0900-high",
                 "api",
@@ -142,7 +142,7 @@ fn test_pick_order() {
 }
 
 #[test]
-fn test_parked_after_important() {
+fn test_parked_waits() {
     // p = 2i + u: 9 (u3 i3) is at the cutoff 7; 5 (u1 i2) is parked even when older.
     let l = listing(
         &[
@@ -158,36 +158,54 @@ fn test_parked_after_important() {
         decide(&l, &state(&["web", "api"])).pick.as_deref(),
         Some("261005-0900")
     );
-    // The important one skipped (its repo full): the parked one is next.
+    // The important one skipped (its repo full): the parked one still waits, listed why.
     let mut s = state(&["web", "api"]);
     s.full.insert("api".into(), (1, 1));
     let d = decide(&l, &s);
-    assert_eq!(d.pick.as_deref(), Some("260901-0900"));
+    assert_eq!(d.pick, None);
     assert_eq!(
         d.skipped,
-        vec![(
-            "261005-0900".into(),
-            Skip::Full {
-                repo: "api".into(),
-                n: 1,
-                workers: 1
-            }
-        )]
+        vec![
+            (
+                "261005-0900".into(),
+                Skip::Full {
+                    repo: "api".into(),
+                    n: 1,
+                    workers: 1
+                }
+            ),
+            ("260901-0900".into(), Skip::Parked { p: 5, cutoff: 7 }),
+        ]
     );
-    // A higher cutoff parks both: PRI-4 order among the parked.
-    let mut s = state(&["web", "api"]);
-    s.cutoff = 15;
-    assert_eq!(decide(&l, &s).pick.as_deref(), Some("261005-0900"));
-    // Nothing important, the parked one runs.
+    assert_eq!(
+        Skip::Parked { p: 5, cutoff: 7 }.to_string(),
+        "parked (p5 < 7): raise u or i to run it"
+    );
+    // Nothing important: still nothing picked, and a parked intent's unknown repo writes no wait.
     let only = listing(
         &[(
             "intents/260901-0900-parked",
-            &intent_md("web", "u: 1\ni: 1\n", "Parked"),
+            &intent_md("nowhere", "u: 1\ni: 1\n", "Parked"),
+        )],
+        &[],
+    );
+    let d = decide(&only, &state(&["web"]));
+    assert_eq!(d.pick, None);
+    assert!(d.writes.is_empty(), "{:?}", d.writes);
+    // Asked for by name (`run --intent`, `step`): picked, parked or not.
+    let (d, r) = pick::decide_for(&l, &state(&["web", "api"]), "260901-0900");
+    assert_eq!(r, Ok(()));
+    assert_eq!(d.pick.as_deref(), Some("260901-0900"));
+    // Raising u or i un-parks it: u3 i3 = 9.
+    let raised = listing(
+        &[(
+            "intents/260901-0900-parked",
+            &intent_md("web", "u: 3\ni: 3\n", "Parked"),
         )],
         &[],
     );
     assert_eq!(
-        decide(&only, &state(&["web"])).pick.as_deref(),
+        decide(&raised, &state(&["web"])).pick.as_deref(),
         Some("260901-0900")
     );
 }
@@ -310,7 +328,7 @@ fn test_bad_after() {
                 "after: [260101-0101]\n",
                 "Unknown",
             ),
-            intent_file("261001-0901-next", "web", "u: 1\ni: 1\n", "Next"),
+            intent_file("261001-0901-next", "web", "u: 3\ni: 2\n", "Next"),
         ],
         &["web"],
     );
@@ -327,7 +345,7 @@ fn test_bad_after() {
         Stage::Pick,
         "the next one is picked"
     );
-    // (Next is parked and nothing was ever reviewed: PRI-8's message too.)
+    // (A review-due message, if any, is PRI-8's: not counted here.)
     let rows: Vec<_> = w
         .outbox()
         .into_iter()
@@ -354,7 +372,12 @@ fn test_bad_after() {
     w.pass(&mut lp);
     w.pass(&mut lp);
     assert!(w.intent_md("261001-0900-unknown").contains("bad after:"));
-    assert_eq!(w.outbox().len(), 2, "bad after and review due, once each");
+    let bad: Vec<_> = w
+        .outbox()
+        .into_iter()
+        .filter(|r| r.1 == "bad_after")
+        .collect();
+    assert_eq!(bad.len(), 1, "bad after, once");
     lp.shutdown().unwrap();
 }
 
@@ -614,8 +637,8 @@ fn test_pick_step_repo_files() {
         &[
             intent_file("261001-0900-a", "web", "u: 5\ni: 5\n", "A"),
             intent_file("261001-0901-b", "api", "", "B"),
-            intent_file("261001-0902-c", "cli", "u: 1\ni: 1\n", "C"),
-            intent_file("261001-0903-d", "docs", "u: 1\ni: 1\n", "D"),
+            intent_file("261001-0902-c", "cli", "u: 3\ni: 2\n", "C"),
+            intent_file("261001-0903-d", "docs", "u: 3\ni: 2\n", "D"),
         ],
         &["web", "api", "cli", "docs"],
     );

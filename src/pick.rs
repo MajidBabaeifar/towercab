@@ -47,10 +47,22 @@ pub enum Skip {
     EnvBlocked,
     NotBuilt,
     Frozen(String),
-    Full { repo: String, n: usize, workers: u8 },
-    Cooling { model: String, until: String },
+    Full {
+        repo: String,
+        n: usize,
+        workers: u8,
+    },
+    Cooling {
+        model: String,
+        until: String,
+    },
     UnknownRepo(String),
     BadAfter(Vec<String>),
+    /// Below the cutoff (PRI-5): waits until I raise its u or i.
+    Parked {
+        p: u8,
+        cutoff: u8,
+    },
 }
 
 impl fmt::Display for Skip {
@@ -64,6 +76,9 @@ impl fmt::Display for Skip {
             Skip::Cooling { model, until } => write!(f, "{model} cooling until {until}"),
             Skip::UnknownRepo(r) => write!(f, "unknown repo {r}"),
             Skip::BadAfter(ids) => write!(f, "bad after: {}", ids.join(", ")),
+            Skip::Parked { p, cutoff } => {
+                write!(f, "parked (p{p} < {cutoff}): raise u or i to run it")
+            }
         }
     }
 }
@@ -150,7 +165,7 @@ pub fn orphans(listing: &Listing, unfinished: &[Mission]) -> Vec<String> {
         .collect()
 }
 
-/// LOOP-5: [PRI-4](priority.md) order over `priority::pick_order` (at or above the cutoff
+/// LOOP-5: [PRI-4](priority.md) order over `priority::pick_order` (parked ones never picked; at or above the cutoff
 /// first, then parked); the first intent nothing skips is picked.
 pub fn decide(listing: &Listing, state: &PickState) -> Decision {
     let mut d = Decision::default();
@@ -163,6 +178,18 @@ pub fn decide(listing: &Listing, state: &PickState) -> Decision {
         .into_iter()
         .filter(|i| !state.active.contains(&i.id))
     {
+        // Parked intents wait for me (PRI-5): listed, never picked, nothing written.
+        let p = priority::p(i);
+        if priority::parked(p, state.cutoff) {
+            d.skipped.push((
+                i.id.clone(),
+                Skip::Parked {
+                    p,
+                    cutoff: state.cutoff,
+                },
+            ));
+            continue;
+        }
         let repo = i.repo().to_string();
         if !state.repos.contains(&repo) {
             d.writes
@@ -263,6 +290,8 @@ pub fn decide_for(
     id: &str,
 ) -> (Decision, Result<(), String>) {
     let mut only = state.clone();
+    // Asked for by name: parked or not (`run --intent`, `step`).
+    only.cutoff = 1;
     only.active.extend(
         listing
             .open
