@@ -20,7 +20,7 @@ pub fn priority(u: Option<u8>, i: Option<u8>) -> u8 {
 }
 
 /// An intent's priority.
-fn p(i: &Intent) -> u8 {
+pub fn p(i: &Intent) -> u8 {
     priority(i.u(), i.i())
 }
 
