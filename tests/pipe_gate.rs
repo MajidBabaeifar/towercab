@@ -875,3 +875,39 @@ fn test_review_reused_same_patch() {
             .contains(&format!("Towercab-Gate: a4 approved sha={updated}"))
     );
 }
+
+#[test]
+fn test_spec_merge_approves() {
+    let mut p = Pipe::login("a: 2\n");
+    p.plans(2);
+    p.step_to(ID, Stage::ApprovalSpec, 3);
+    let pr = p.mission(ID).pr.expect("the design's PR");
+    // I merge the spec PR instead of `approve`: that is the approval (PIP-17).
+    p.w.prs.set(
+        pr,
+        PrState {
+            state: "MERGED".into(),
+            merged_at: Some("2026-10-15T12:00:00Z".into()),
+            merge_commit: Some("m3rg3d".into()),
+            ..open_pr("")
+        },
+    );
+    p.until(10, |w| w.stage(ID) != Some(Stage::ApprovalSpec));
+    let m = p.mission(ID);
+    assert!(
+        matches!(m.stage, Stage::Plan | Stage::Build),
+        "on to plan, not deploy: {:?}",
+        m.stage
+    );
+    assert_eq!(m.pr, None, "the build opens a new PR");
+    assert_eq!((m.merged_by, m.merge_sha), (None, None));
+    assert!(p.w.transitions(ID).contains(&(
+        "approval:spec".into(),
+        "approve".into(),
+        "plan".into()
+    )));
+    let md = p
+        .intents_file(&format!("intents/{}/intent.md", common::pipe::LOGIN_DIR))
+        .unwrap();
+    assert!(!md.contains("waiting:"), "the wait is removed: {md}");
+}

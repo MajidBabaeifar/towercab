@@ -33,3 +33,35 @@ fn test_log_full_text_in_file() {
     );
     assert!(text.starts_with("--- "), "{text}");
 }
+
+#[test]
+fn test_move_logged() {
+    use towercab::handler::Outcome;
+    use towercab::machine::{Event, Stage};
+    let tmp = tempfile::tempdir().unwrap();
+    let db = towercab::db::Db::open(&tmp.path().join("t.db")).unwrap();
+    let m = towercab::mission::insert(
+        db.conn(),
+        &towercab::mission::NewMission {
+            intent: "261025-2000".into(),
+            slug: "public".into(),
+            repo: "towercab".into(),
+            model: "opus".into(),
+            a: Some(3),
+            min_attempt: 1,
+        },
+        towercab::runloop::Tick::now(),
+    )
+    .unwrap();
+    let mut after = m.clone();
+    after.stage = Stage::ApprovalSpec;
+    after.why = Some("4 concern(s)".into());
+    assert_eq!(
+        towercab::machine::move_line(&m, &after, &Outcome::event(Event::Blocked)).as_deref(),
+        Some("towercab: 261025-2000 pick → approval:spec (blocked: 4 concern(s))")
+    );
+    assert_eq!(
+        towercab::machine::move_line(&m, &m, &Outcome::event(Event::Limit)),
+        None
+    );
+}
