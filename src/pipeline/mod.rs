@@ -176,9 +176,25 @@ pub fn round(conn: &Connection, m: &Mission) -> Result<Round, String> {
         "red" => Round::Verify,
         "feedback" => Round::Feedback,
         "conflict" => Round::Conflict,
+        // Approving the plan (AUT-12) starts the first build, not a continue.
+        "approve" | "intent_continued" if from == "blocked" && after_plan(conn, m)? => Round::First,
         "approve" | "intent_continued" => Round::Continue,
         _ => Round::First,
     })
+}
+
+/// The mission's last wait (into `blocked`) came from `plan`: the plan review (AUT-12).
+fn after_plan(conn: &Connection, m: &Mission) -> Result<bool, String> {
+    let from: Option<String> = conn
+        .query_row(
+            "SELECT from_stage FROM transitions WHERE mission = ?1 AND to_stage = 'blocked'
+             ORDER BY id DESC LIMIT 1",
+            [m.id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(crate::db::sql)?;
+    Ok(from.as_deref() == Some("plan"))
 }
 
 /// The mission's last transition into `stage` from another stage: (from stage, event).

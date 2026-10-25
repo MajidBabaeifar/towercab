@@ -109,6 +109,7 @@ pub fn first_line(w: &Waiting, id: &str) -> Option<String> {
     Some(match w {
         Waiting::PrClosed => return None,
         Waiting::ApproveSpec => format!("approve spec: approve {id}"),
+        Waiting::ApprovePlan => format!("approve plan: approve {id}"),
         Waiting::AuthorizeRelease => format!("authorize release: release {id}"),
         Waiting::E2eRedAfterYourMerge(_) => format!(
             "{}: approve {id} to keep it, or retry --fresh {id} to fix forward",

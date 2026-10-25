@@ -1,6 +1,6 @@
 # Autonomy
 
-**Status:** Live: AUT-3..11 · **Prefix:** AUT
+**Status:** Live: AUT-3..12 · **Prefix:** AUT
 
 ## Purpose
 
@@ -21,6 +21,7 @@ How far an agent may take an intent before it waits for me.
 | AUT-9 | No `a` (effective `None`): cap ≤ 3 → `Approval`; else `Merge` only when approved and risk low (`Review::risk_low()` = `door` two-way ∧ no red line touched, [PIP-5](pipeline.md)), else `Approval`. | test_gate_table, test_no_a_under_cap_goes_to_me |
 | AUT-10 | After any revert Towercab makes, `machine::apply` sets, in its transaction, `repo_caps.capped` (`reverted, refine`) or `frozen` (`revert failed`, + `repo frozen` message): cap 3 until `towercab trust <repo>` deletes the row (`trusted <repo>`; not in `[repos]` → `trust: unknown repo <r>`, exit 1). Frozen: `pick` skips the repo (`repo <r> frozen`), `gate` → `Approval` for intents; a revert still merges. `status`: `repos: <r> capped at a3, <r> frozen`. | test_cap_after_revert, test_trust_clears |
 | AUT-11 | `spec_gate(a: Option<u8>, cap, concerns: bool) -> bool` (effective `a`): a concern, `a` ≤ 2, or no `a` and cap ≤ 2 → `waiting: approve spec` ([PIP-26](pipeline.md)), then as a3. | test_spec_gate |
+| AUT-12 | **Plan review** (the playbook's plan mode): `plan_gate(a: Option<u8>, cap) -> bool` (effective `a` ≤ 3, or no `a` and cap ≤ 3: where I merge anyway) → after `plan.md` is written, `waiting: approve plan` (stage `blocked`, why `a<n>` or `no a, repo cap <n>`, a `## Towercab` note with the plan's link, one message); `approve` → `build`, its first round (`pipeline::round`: an approve out of a wait that came from `plan` = `Round::First`, the build prompt, not a continue). a4–a5: no stop. | test_plan_review |
 
 **Gate** (`src/autonomy.rs`, pure; first match wins)
 
@@ -47,6 +48,7 @@ Intent: frozen, CI not green, ci: none, unlock, evals red, cap ≤ 3, a ≤ 3 �
   with trust.
 - rust-policies: `max_autonomy: 3` in its `TOWERCAB.md` (I always merge there).
 - a1–a3: I merge. a1–a2 also approve the spec (playbook: design is approved before build); a3+ only when the design flags a Concern.
+- a1–a3 also approve the plan (AUT-12; playbook plan mode: the engineer reviews the plan before code). Earlier: "plan.md, no stop"; changed by me on 2026-10-25.
 - Decisions in pure functions (`src/autonomy.rs`), I/O in the pipeline's handlers. `test_gate_table`, `test_spec_gate`,
   `test_no_a_under_cap_goes_to_me` test this layer; the pipeline adds its handler tests (PIP-7, 26). AUT-3's "review
   still runs" is AUT-6's; PIP-4's `test_review_on_every_pr` tests its handler.

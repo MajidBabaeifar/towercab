@@ -335,7 +335,7 @@ fn test_continue_to() {
             _ => Next::Go(Stage::Build),
         }
     };
-    assert_eq!(Waiting::ALL.len(), 29);
+    assert_eq!(Waiting::ALL.len(), 30);
     for w in Waiting::ALL {
         assert_eq!(continue_to(&w, from), want(&w), "{w}");
         // Text round-trips; a parameter is kept.
