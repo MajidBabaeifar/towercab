@@ -366,6 +366,7 @@ pub fn state(ctx: &Ctx) -> Result<Value, String> {
         "now".into(),
         now_html(&snap, &missions, &title, &lk, &tick).into(),
     );
+    html.insert("finished".into(), finished_html(&db, &lk, &tick)?.into());
     html.insert("next".into(), next_html(&decision, &listing, &lk).into());
     html.insert(
         "attention".into(),
@@ -704,6 +705,84 @@ fn now_html(
     out
 }
 
+/// The last 10 missions that ended (UI-19): intent, how it ended, its PR, when.
+fn finished_html(db: &Db, lk: &Links, tick: &Tick) -> Result<String, String> {
+    let mut q = db
+        .conn()
+        .prepare(
+            "SELECT id, intent, repo, stage, waiting, pr_url, merged_by, finished FROM missions \
+             WHERE finished IS NOT NULL ORDER BY finished DESC LIMIT 10",
+        )
+        .map_err(sql)?;
+    type Row = (
+        i64,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        f64,
+    );
+    let rows: Vec<Row> = q
+        .query_map([], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+                r.get(7)?,
+            ))
+        })
+        .map_err(sql)?
+        .collect::<Result<_, _>>()
+        .map_err(sql)?;
+    if rows.is_empty() {
+        return Ok("<p class=\"dim\">Nothing has finished yet.</p>".into());
+    }
+    let mut out = String::from("<ul>");
+    for (id, intent, repo, stage, waiting, pr, merged_by, at) in rows {
+        let title = intent
+            .as_deref()
+            .and_then(|i| {
+                lk.listing
+                    .open
+                    .iter()
+                    .chain(&lk.listing.done)
+                    .find(|x| x.id == i)
+            })
+            .map(|i| i.title().to_string())
+            .unwrap_or_default();
+        let how = match (stage.as_str(), waiting.as_deref(), merged_by.as_deref()) {
+            ("done", _, Some(by)) => {
+                format!("<span class=\"ok\">done</span> · merged by {}", esc(by))
+            }
+            ("done", _, None) => "<span class=\"ok\">done</span>".into(),
+            (_, Some(w), _) => format!("<span class=\"warn\">stopped</span> · {}", esc(w)),
+            (s, None, _) => format!("<span class=\"warn\">{}</span>", esc(s)),
+        };
+        let _ = write!(
+            out,
+            "<li>{} <span class=\"dim\">{} · {}</span> · {how}{} · <a href=\"/m/{id}\">details</a> <span class=\"dim\">{} ago</span></li>",
+            intent
+                .as_deref()
+                .map_or_else(|| esc(&title), |i| lk.title(i, &title)),
+            intent.as_deref().map_or_else(String::new, |i| lk.intent(i)),
+            lk.repo(&repo),
+            match pr.as_deref() {
+                Some(u) => format!(" · {}", link(Some(u), "PR")),
+                None => String::new(),
+            },
+            ago(at, tick)
+        );
+    }
+    out.push_str("</ul>");
+    Ok(out)
+}
+
 fn next_html(d: &pick::Decision, listing: &store::Listing, lk: &Links) -> String {
     let line = |id: &str| match listing.open.iter().find(|i| i.id == id) {
         Some(i) => format!(
@@ -963,7 +1042,7 @@ select,input{font:inherit;background:var(--card);color:var(--fg);border:1px soli
 form.edit{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap}.md p{margin:4px 0}"#;
 
 const SCRIPT: &str = r#"const T=document.querySelector('meta[name=towercab-token]').content;
-const S=['top','onme','now','next','attention','activity','log'];const BASE=document.title;
+const S=['top','onme','now','finished','next','attention','activity','log'];const BASE=document.title;
 function show(t){const r=document.getElementById('reply');r.textContent=t;r.style.display='block';setTimeout(()=>r.style.display='none',6000)}
 function logEl(){return document.querySelector('#log pre')}
 function atBottom(e){return e.scrollHeight-e.scrollTop-e.clientHeight<24}
@@ -1033,6 +1112,7 @@ pub fn page(ctx: &Ctx) -> Response {
     for (id, name) in [
         ("onme", "Waiting on you"),
         ("now", "Now"),
+        ("finished", "Recently finished"),
         ("next", "Next"),
         ("attention", "Attention"),
         ("activity", "Activity"),
