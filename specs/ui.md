@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..11 · **Prefix:** UI
+**Status:** Live: UI-1..18 · **Prefix:** UI
 
 ## Purpose
 
@@ -22,11 +22,18 @@ the same facts as `status`, `next` and the logs, and the same commands as the CL
 | UI-9 | **Mission** `GET /m/<mission id>` : label, repo, kind, stage, attempt, waiting/why, PR link, cost and agent time, every transition, and its run files (`runs/<label>/`, regular files only, name, size, time; newest first). | test_mission_page |
 | UI-10 | **Run files** `GET /m/<id>/runs/<name>`: `name` `[A-Za-z0-9._-]+`, not starting with `.`, not `*.raw`; a regular file directly in the mission's runs dir (no symlink: `symlink_metadata`, canonical parent = the runs dir); text (no NUL); the last 512 KiB, redacted; `text/plain; charset=utf-8`, CSP `sandbox`. Else 404. | test_run_files_path_checked |
 | UI-11 | **Log:** the last 200 lines of `journalctl --user -u towercab -n 200 -o short-iso --no-pager` (`Exes::journalctl`, `child::output`, 5 s; cached 10 s), redacted; lines matching `error\|failed\|panic\|unexpected` (any case) flagged. None or a failure → one line saying so. | test_log_and_redaction |
+| UI-12 | **Links:** a `[repos]` repo's name links to `https://github.com/<github>`; an intent's ID to its `intent.md` on the `intents` remote's `main` (`https://github.com/<owner>/<repo>/blob/main/<dir>/intent.md`; only for a `https://github.com/` remote); its title to `/i/<id>`. Every page has the nav: Overview, Intents, Repos, Grafana (`http://localhost:3000`). | test_links_and_intents_list |
+| UI-13 | **Intents** `GET /intents`: every open intent in PRI-4 order (id, repo, title, p, u i a · model, state: `running: <stage>`, `waiting on you: <waiting>`, `waiting: <waiting>`, `parked`, `queued`), then up to 100 done ones (stage, PR, finished day); unreadable intent files listed with their reason. | test_links_and_intents_list |
+| UI-14 | **Edits** `POST /api/intent` (Origin, token and a running loop as UI-4/UI-6): `{op: save, id, u, i, a, model}` (u, i 1–5; a 1–5 or empty = none; model `opus\|sonnet\|haiku` or empty = default), `{op: drop, id}` (refused with a running mission: 409), `{op: add, repo (in [repos]), title (1–200 chars), u, i, a}` → `{ok, reply}`. Every edit goes through `intents::edit::IntentWriter` (`edit(id, &Edit)`, `add(NewIntent)`); today `GitWriter` (`Store::update`/`add` as the App: pull, line-level `Intent::set`/`remove`, commit `towercab: rescore\|model\|drop <id>`, push), so a database store can replace it (intent 261025-1900). `edit::apply(&mut Intent, &Edit)` is pure. | test_intent_edits_apply, test_intent_api |
+| UI-15 | **Intent page** `GET /i/<id>` (open or done): title, links (file, repo, PR, `plan.md` when it exists), p and u/i/a/model, `waiting`, the edit form (open ones, with a loop), the Problem, Proposed outcome, Affected, Constraints, Open questions and Towercab sections (escaped; `- ` lines as a list), and every attempt (mission, attempt, stage, cost, updated). | test_intent_page |
+| UI-16 | **Repos** `GET /repos`: per `[repos]` repo: GitHub link, base, clone present, `CLAUDE.md` checks (`repo::load` on its clone: `ok: <n> check line(s)` or the error), GitHub App installed (`Identity::token`), `towercab` ruleset (`find_ruleset`, my `gh`), cap or freeze (with `trust <repo>`). The GitHub checks are kept 5 min; `?fresh` reads again. | test_repos_panel |
+| UI-17 | **Cost and limits:** the top bar shows `spend today $x · 7 d $y` (Prometheus at `[metrics].prometheus`: `sum(sum_over_time(towercab_cost_usd…[1d|7d]))`, 2 s, kept 60 s; left out when it doesn't answer); a cooling model shows `cooling until <time> (usage limit, in <left>)`. | test_tab_count_and_log_scroll |
+| UI-18 | **Tab and log:** the tab title is `(<n>) <page>` while n things wait on me (`on_me_count` in the state); the log shows the newest lines at the bottom and stays there on each poll unless I've scrolled up. | test_tab_count_and_log_scroll |
 
 **State** (`/api/state`)
 
 ```
-version, pid (the loop's | null), running, paused, env_blocked, actions (= running and not `towercab ui`'s own), now
+version, pid (the loop's | null), running, paused, env_blocked, actions (= running and not `towercab ui`'s own), on_me_count, now
 on_me     [{intent, repo, title, action (message line 1), pr_url}]
 missions  [{id, intent, repo, title, kind, stage, step, waiting, why, pr_url}]
 next      the intent the picker would take | null;  skipped [{intent, reason}]
@@ -37,7 +44,8 @@ html      {top, onme, now, next, attention, activity, log}: each section rendere
 ## Out of scope
 
 - Access from another machine (Tailscale, a reverse proxy), logins, TLS.
-- New powers: editing intents, config or the database other than through `commands`.
+- New powers beyond `commands` and the intent edits of UI-14: editing config or the database directly.
+- Playbook indicators: the Grafana dashboard has them (metrics.md); the UI links to it.
 
 ## Decisions
 
