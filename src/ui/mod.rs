@@ -1,6 +1,7 @@
 //! The local web UI ([UI](../specs/ui.md)): what Towercab is doing now, and the CLI's commands
 //! as buttons. Served by the loop on its own threads (UI-1) or by `towercab ui` (UI-2).
 
+pub mod pages;
 pub mod wire;
 
 use std::fmt::Write as _;
@@ -35,6 +36,12 @@ pub const RUN_FILE_MAX: u64 = 512 << 10;
 /// The log tail and when it was read.
 type LogCache = Mutex<Option<(Instant, Vec<(String, bool)>)>>;
 
+/// A rendered piece kept a while.
+type Cache = Mutex<Option<(Instant, String)>>;
+
+/// Spend today and this week from Prometheus, kept [`COST_CACHE`].
+pub const COST_CACHE: Duration = Duration::from_secs(60);
+
 /// What every request reads from.
 pub struct Ctx {
     pub config: Config,
@@ -48,11 +55,45 @@ pub struct Ctx {
     pub actions: bool,
     /// How long a POST waits for the loop's reply ([`REPLY_WAIT`]).
     pub reply_wait: Duration,
+    /// The GitHub App (the repos panel's install check).
+    pub identity: crate::github::Identity,
+    /// Where intent edits go (UI-14).
+    pub writer: Arc<dyn crate::intents::edit::IntentWriter>,
     log: LogCache,
+    pub(crate) repos_cache: Cache,
+    cost_cache: Cache,
 }
 
 impl Ctx {
     pub fn new(config: Config, home: Home, exes: Exes, actions: bool) -> Ctx {
+        let identity = crate::github::Identity::from_config(&config, &exes);
+        let auth_id = identity.clone();
+        let remote = config.intents.remote.clone().unwrap_or_default();
+        let auth: Arc<dyn Fn() -> Option<crate::intents::git::AuthFn> + Send + Sync> =
+            Arc::new(move || {
+                let (id, url) = (auth_id.clone(), remote.clone());
+                id.is_app().then(|| {
+                    Box::new(move || id.auth_for_url(&url).map_err(|e| e.to_string()))
+                        as crate::intents::git::AuthFn
+                })
+            });
+        let writer: Arc<dyn crate::intents::edit::IntentWriter> =
+            Arc::new(crate::intents::edit::GitWriter {
+                config: config.clone(),
+                auth: Some(auth),
+            });
+        Self::with_writer(config, home, exes, actions, writer, identity)
+    }
+
+    /// [`Ctx::new`] with another intent writer (tests; a database later).
+    pub fn with_writer(
+        config: Config,
+        home: Home,
+        exes: Exes,
+        actions: bool,
+        writer: Arc<dyn crate::intents::edit::IntentWriter>,
+        identity: crate::github::Identity,
+    ) -> Ctx {
         let token = format!(
             "{}{}",
             uuid::Uuid::new_v4().simple(),
@@ -66,8 +107,17 @@ impl Ctx {
             port: Mutex::new(0),
             actions,
             reply_wait: REPLY_WAIT,
+            identity: identity.clone(),
+            writer,
             log: Mutex::new(None),
+            repos_cache: Mutex::new(None),
+            cost_cache: Mutex::new(None),
         }
+    }
+
+    /// Buttons and edits work: the loop's own UI while the loop holds the home.
+    pub fn can_act(&self) -> bool {
+        self.actions && self.home.holder().is_some()
     }
 }
 
@@ -156,6 +206,13 @@ pub fn route(ctx: &Ctx, r: &Request) -> Response {
             Err(e) => Response::text(500, &e),
         },
         ("POST", "/api/cmd") => action(ctx, r),
+        ("POST", "/api/intent") => pages::intent_api(ctx, r),
+        ("GET", "/intents") => pages::intents_page(ctx).unwrap_or_else(|e| Response::text(500, &e)),
+        ("GET", "/repos") => pages::repos_page(ctx, r.path.contains("?fresh"))
+            .unwrap_or_else(|e| Response::text(500, &e)),
+        ("GET", p) if p.starts_with("/i/") => {
+            pages::intent_page(ctx, &p[3..]).unwrap_or_else(|e| Response::text(500, &e))
+        }
         ("GET", p) if p.starts_with("/m/") => mission_route(ctx, &p[3..]),
         (_, "/api/cmd") | (_, "/") | (_, "/api/state") => Response::text(405, "method"),
         _ => Response::text(404, "not found"),
@@ -181,7 +238,7 @@ pub fn esc(s: &str) -> String {
 }
 
 /// A link, only for `http(s)://` targets; else the escaped text.
-fn link(url: Option<&str>, text: &str) -> String {
+pub(crate) fn link(url: Option<&str>, text: &str) -> String {
     match url {
         Some(u) if u.starts_with("https://") || u.starts_with("http://") => {
             format!(
@@ -224,12 +281,16 @@ pub fn redact(ctx: &Ctx, text: &str) -> String {
 
 // ---------- state ----------
 
-fn when(at: f64, now: &Tick) -> String {
+pub(crate) fn when(at: f64, now: &Tick) -> String {
     shown_time(at, now.wall)
 }
 
-fn ago(at: f64, now: &Tick) -> String {
-    let s = (now.unix() - at).max(0.0) as i64;
+pub(crate) fn ago(at: f64, now: &Tick) -> String {
+    dur((now.unix() - at).max(0.0) as i64)
+}
+
+/// `42s`, `5m`, `2h 3m`, `3d`.
+pub(crate) fn dur(s: i64) -> String {
     match s {
         0..=59 => format!("{s}s"),
         60..=3599 => format!("{}m", s / 60),
@@ -287,14 +348,25 @@ pub fn state(ctx: &Ctx) -> Result<Value, String> {
     let last_pass = db.meta("last_pass")?.and_then(|v| v.parse::<f64>().ok());
     let actions = ctx.actions && running.is_some();
 
+    let lk = Links {
+        ctx,
+        listing: &listing,
+    };
     let mut html = serde_json::Map::new();
-    html.insert("top".into(), top_html(&snap, last_pass, &tick).into());
-    html.insert("onme".into(), on_me_html(&snap, &missions, actions).into());
+    let cost = cost_line(ctx, &tick);
+    html.insert(
+        "top".into(),
+        top_html(&snap, last_pass, &tick, &cost).into(),
+    );
+    html.insert(
+        "onme".into(),
+        on_me_html(&snap, &missions, actions, &lk).into(),
+    );
     html.insert(
         "now".into(),
-        now_html(&snap, &missions, &title, &tick).into(),
+        now_html(&snap, &missions, &title, &lk, &tick).into(),
     );
-    html.insert("next".into(), next_html(&decision, &listing).into());
+    html.insert("next".into(), next_html(&decision, &listing, &lk).into());
     html.insert(
         "attention".into(),
         attention_html(&db, &snap, &tick)?.into(),
@@ -312,6 +384,7 @@ pub fn state(ctx: &Ctx) -> Result<Value, String> {
         "paused": snap.paused,
         "env_blocked": !snap.env_blocked.is_empty(),
         "actions": actions,
+        "on_me_count": snap.on_me.len(),
         "now": tick.unix(),
         "on_me": snap.on_me.iter().map(|o| json!({
             "intent": o.item.id, "repo": o.item.repo, "title": o.item.title,
@@ -327,6 +400,48 @@ pub fn state(ctx: &Ctx) -> Result<Value, String> {
         "log": log.iter().map(|(t, e)| json!({"text": t, "error": e})).collect::<Vec<_>>(),
         "html": html,
     }))
+}
+
+/// Links for ids and repos in the sections (UI-12).
+pub(crate) struct Links<'a> {
+    ctx: &'a Ctx,
+    listing: &'a store::Listing,
+}
+
+impl Links<'_> {
+    /// The repo, linked to GitHub.
+    fn repo(&self, repo: &str) -> String {
+        pages::repo_link(self.ctx, repo)
+    }
+
+    /// The intent ID, linked to its `intent.md`; a mission label as it is.
+    fn intent(&self, id: &str) -> String {
+        match self
+            .listing
+            .open
+            .iter()
+            .chain(&self.listing.done)
+            .find(|i| i.id == id)
+        {
+            Some(i) => pages::intent_link(self.ctx, i),
+            None => esc(id),
+        }
+    }
+
+    /// The title, linked to the intent's page.
+    fn title(&self, id: &str, title: &str) -> String {
+        if self
+            .listing
+            .open
+            .iter()
+            .chain(&self.listing.done)
+            .any(|i| i.id == id)
+        {
+            format!("<a href=\"/i/{}\"><b>{}</b></a>", esc(id), esc(title))
+        } else {
+            format!("<b>{}</b>", esc(title))
+        }
+    }
 }
 
 struct Transition {
@@ -360,7 +475,7 @@ fn recent_transitions(db: &Db, n: i64) -> Result<Vec<Transition>, String> {
 
 // ---------- sections ----------
 
-fn top_html(s: &Snapshot, last_pass: Option<f64>, tick: &Tick) -> String {
+fn top_html(s: &Snapshot, last_pass: Option<f64>, tick: &Tick, cost: &str) -> String {
     let state = match s.running {
         Some(pid) => format!("<span class=\"ok\">running</span> · pid {pid}"),
         None => "<span class=\"bad\">stopped</span> · <code>towercab up</code> to start".into(),
@@ -387,13 +502,52 @@ fn top_html(s: &Snapshot, last_pass: Option<f64>, tick: &Tick) -> String {
             esc(&fix)
         );
     }
-    out.push_str(
-        " · <a href=\"http://localhost:3000\" target=\"_blank\" rel=\"noopener\">Grafana</a>",
-    );
+    if !cost.is_empty() {
+        let _ = write!(out, " · {}", esc(cost));
+    }
     out
 }
 
-fn on_me_html(s: &Snapshot, missions: &[Mission], actions: bool) -> String {
+/// `spend today $x · 7 d $y` from Prometheus (`towercab.cost.usd`, MET-16), kept
+/// [`COST_CACHE`]; empty when Prometheus doesn't answer.
+fn cost_line(ctx: &Ctx, tick: &Tick) -> String {
+    if let Ok(c) = ctx.cost_cache.lock()
+        && let Some((at, line)) = c.as_ref()
+        && at.elapsed() < COST_CACHE
+    {
+        return line.clone();
+    }
+    let now = tick.unix();
+    let sum = |window: &str| {
+        let q = crate::maintain::prom::Query {
+            band: "cost".into(),
+            query: format!(
+                "sum(sum_over_time({{__name__=~\"towercab_cost_usd(_USD)?(_total)?\"}}[{window}]))"
+            ),
+            start: now,
+            end: now,
+            step: 60,
+        };
+        crate::maintain::prom::query_range(
+            &ctx.config.metrics.prometheus,
+            &q,
+            Duration::from_secs(2),
+        )
+        .ok()
+        .and_then(|pts| pts.last().map(|p| p.1))
+    };
+    let line = match (sum("1d"), sum("7d")) {
+        (Some(d), Some(w)) => format!("spend today ${d:.2} · 7 d ${w:.2}"),
+        (Some(d), None) => format!("spend today ${d:.2}"),
+        _ => String::new(),
+    };
+    if let Ok(mut c) = ctx.cost_cache.lock() {
+        *c = Some((Instant::now(), line.clone()));
+    }
+    line
+}
+
+fn on_me_html(s: &Snapshot, missions: &[Mission], actions: bool, lk: &Links) -> String {
     if s.on_me.is_empty() {
         return "<p class=\"dim\">Nothing waits on you.</p>".into();
     }
@@ -406,10 +560,10 @@ fn on_me_html(s: &Snapshot, missions: &[Mission], actions: bool) -> String {
         let why = m.and_then(|m| m.why.clone()).unwrap_or_default();
         let _ = write!(
             out,
-            "<li><b>{}</b> <span class=\"dim\">{} · {}</span><br>{}",
-            esc(&o.item.title),
-            esc(&id),
-            esc(&o.item.repo),
+            "<li>{} <span class=\"dim\">{} · {}</span><br>{}",
+            lk.title(&id, &o.item.title),
+            lk.intent(&id),
+            lk.repo(&o.item.repo),
             esc(&o.action)
         );
         if !why.is_empty() {
@@ -448,6 +602,7 @@ fn now_html(
     s: &Snapshot,
     missions: &[Mission],
     title: &dyn Fn(&Mission) -> String,
+    lk: &Links,
     tick: &Tick,
 ) -> String {
     let mut out = String::new();
@@ -461,7 +616,7 @@ fn now_html(
                 "<li class=\"active\"><b>{}</b> <span class=\"dim\">{} · {}</span><br>{}{} · for {}</li>",
                 esc(&a.item.title),
                 esc(&a.item.id),
-                esc(&a.item.repo),
+                lk.repo(&a.item.repo),
                 esc(a.stage.as_str()),
                 a.model
                     .as_deref()
@@ -485,8 +640,10 @@ fn now_html(
             "<div class=\"mission\"><a href=\"/m/{}\"><b>{}</b></a> <span class=\"dim\">{} · {} · attempt {}</span><div class=\"strip\">",
             m.id,
             esc(&title(m)),
-            esc(&m.label()),
-            esc(&m.repo),
+            m.intent
+                .as_deref()
+                .map_or_else(|| esc(&m.label()), |i| lk.intent(i)),
+            lk.repo(&m.repo),
             m.attempt
         );
         for (i, st) in seq.iter().enumerate() {
@@ -547,33 +704,24 @@ fn now_html(
     out
 }
 
-fn next_html(d: &pick::Decision, listing: &store::Listing) -> String {
-    let title = |id: &str| {
-        listing
-            .open
-            .iter()
-            .find(|i| i.id == id)
-            .map(|i| format!("{} · {}", i.repo(), i.title()))
-            .unwrap_or_else(|| id.to_string())
+fn next_html(d: &pick::Decision, listing: &store::Listing, lk: &Links) -> String {
+    let line = |id: &str| match listing.open.iter().find(|i| i.id == id) {
+        Some(i) => format!(
+            "{} <span class=\"dim\">{} · {}</span>",
+            lk.title(id, i.title()),
+            lk.intent(id),
+            lk.repo(i.repo())
+        ),
+        None => esc(id),
     };
     let mut out = match &d.pick {
-        Some(id) => format!(
-            "<p>Next: <b>{}</b> <span class=\"dim\">{}</span></p>",
-            esc(&title(id)),
-            esc(id)
-        ),
+        Some(id) => format!("<p>Next: {}</p>", line(id)),
         None => "<p class=\"dim\">Nothing runnable.</p>".into(),
     };
     if !d.skipped.is_empty() {
         out.push_str("<ul>");
         for (id, why) in &d.skipped {
-            let _ = write!(
-                out,
-                "<li>{} <span class=\"dim\">{} · {}</span></li>",
-                esc(&title(id)),
-                esc(id),
-                esc(&why.to_string())
-            );
+            let _ = write!(out, "<li>{} · {}</li>", line(id), esc(&why.to_string()));
         }
         out.push_str("</ul>");
     }
@@ -584,9 +732,10 @@ fn attention_html(db: &Db, s: &Snapshot, tick: &Tick) -> Result<String, String> 
     let mut items = Vec::new();
     for c in &s.cooling {
         items.push(format!(
-            "{} cooling until {} (usage limit)",
+            "{} cooling until {} (usage limit, in {})",
             c.model,
-            when(c.until, tick)
+            when(c.until, tick),
+            dur((c.until - tick.unix()).max(0.0) as i64)
         ));
     }
     for f in crate::env::faults(db.conn())? {
@@ -738,17 +887,25 @@ pub fn log_lines(ctx: &Ctx) -> Vec<(String, bool)> {
 
 // ---------- actions ----------
 
-fn action(ctx: &Ctx, r: &Request) -> Response {
+/// A POST's `Origin` and token (UI-4); `Err` = the 403 to send.
+pub(crate) fn post_ok(ctx: &Ctx, r: &Request) -> Result<(), Response> {
     let port = ctx.port.lock().map(|p| *p).unwrap_or(0);
     let host = r.header("host").unwrap_or_default();
     if r.header("origin") != Some(&format!("http://{host}")) || host.is_empty() || port == 0 {
-        return Response::text(403, "bad Origin");
+        return Err(Response::text(403, "bad Origin"));
     }
     let token = r.header("x-towercab-token").unwrap_or_default();
     if !constant_eq(token.as_bytes(), ctx.token.as_bytes()) {
-        return Response::text(403, "bad token");
+        return Err(Response::text(403, "bad token"));
     }
-    if !ctx.actions || ctx.home.holder().is_none() {
+    Ok(())
+}
+
+fn action(ctx: &Ctx, r: &Request) -> Response {
+    if let Err(resp) = post_ok(ctx, r) {
+        return resp;
+    }
+    if !ctx.can_act() {
         return Response::text(409, "towercab isn't running: towercab up");
     }
     let Ok(body) = serde_json::from_slice::<Value>(&r.body) else {
@@ -801,20 +958,33 @@ section{border-top:1px solid var(--line)}ul{padding-left:18px}li{margin:6px 0}
 table{border-collapse:collapse;width:100%;font-size:13px}td,th{text-align:left;padding:3px 6px;border-bottom:1px solid var(--line);vertical-align:top}
 pre.log{font-size:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;background:var(--card);padding:8px;border-radius:8px;max-height:420px;overflow-y:auto}
 #reply{position:fixed;bottom:12px;right:12px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;display:none}
-#ctl{float:right}"#;
+#ctl{float:right}nav{margin-bottom:10px}.danger{color:var(--bad)}
+select,input{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:2px 4px}
+form.edit{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap}.md p{margin:4px 0}"#;
 
 const SCRIPT: &str = r#"const T=document.querySelector('meta[name=towercab-token]').content;
-const S=['top','onme','now','next','attention','activity','log'];
+const S=['top','onme','now','next','attention','activity','log'];const BASE=document.title;
 function show(t){const r=document.getElementById('reply');r.textContent=t;r.style.display='block';setTimeout(()=>r.style.display='none',6000)}
+function logEl(){return document.querySelector('#log pre')}
+function atBottom(e){return e.scrollHeight-e.scrollTop-e.clientHeight<24}
+function bottom(){const l=logEl();if(l)l.scrollTop=l.scrollHeight}
 async function poll(){try{const r=await fetch('/api/state',{cache:'no-store'});if(!r.ok)throw new Error(r.status);const s=await r.json();
+const l=logEl();const stick=!l||atBottom(l);
 for(const k of S){const e=document.getElementById(k);if(e&&e.innerHTML!==s.html[k])e.innerHTML=s.html[k]}
-document.getElementById('ctl').hidden=!s.actions;document.getElementById('pause').hidden=s.paused;document.getElementById('resume').hidden=!s.paused}
-catch(e){document.getElementById('top').textContent='Towercab UI: no answer ('+e.message+')'}}
+if(stick)bottom();document.title=(s.on_me_count?'('+s.on_me_count+') ':'')+BASE;
+const c=document.getElementById('ctl');if(c){c.hidden=!s.actions;document.getElementById('pause').hidden=s.paused;document.getElementById('resume').hidden=!s.paused}}
+catch(e){const t=document.getElementById('top');if(t)t.textContent='Towercab UI: no answer ('+e.message+')'}}
+function post(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json','X-Towercab-Token':T},body:JSON.stringify(b)})}
 async function cmd(c,a){if((c==='retry_fresh'||c==='release')&&!confirm(c.replace('_',' ')+' '+a+'?'))return;
-const r=await fetch('/api/cmd',{method:'POST',headers:{'Content-Type':'application/json','X-Towercab-Token':T},body:JSON.stringify({cmd:c,arg:a||''})});
+const r=await post('/api/cmd',{cmd:c,arg:a||''});
 const t=r.ok?((await r.json()).result||'queued: applied on the loop\'s next pass'):await r.text();show(t);poll()}
-document.addEventListener('click',e=>{const b=e.target.closest('button[data-cmd]');if(b)cmd(b.dataset.cmd,b.dataset.arg)});
-poll();setInterval(poll,3000);"#;
+async function intent(f,op){const b={op};for(const el of f.elements){if(el.name)b[el.name]=el.value}if(f.dataset.id)b.id=f.dataset.id;
+if(op==='drop'&&!confirm('drop '+b.id+'?'))return;
+const r=await post('/api/intent',b);const j=r.ok?await r.json():null;show(j?j.reply:await r.text());if(j&&j.ok)setTimeout(()=>location.reload(),900)}
+document.addEventListener('click',e=>{const b=e.target.closest('button[data-cmd]');if(b){cmd(b.dataset.cmd,b.dataset.arg);return}
+const o=e.target.closest('button[data-op]');if(o){e.preventDefault();intent(o.closest('form'),o.dataset.op)}});
+document.addEventListener('submit',e=>e.preventDefault());
+bottom();poll();setInterval(poll,3000);"#;
 
 fn csp_hash(s: &str) -> String {
     use base64::Engine;
@@ -825,10 +995,12 @@ fn csp_hash(s: &str) -> String {
     )
 }
 
-fn page_shell(ctx: &Ctx, title: &str, body: &str, script: bool) -> Response {
+pub(crate) fn page_shell(ctx: &Ctx, title: &str, body: &str, script: bool) -> Response {
     let mut html = format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-         <meta name=\"towercab-token\" content=\"{}\"><title>{}</title><style>{STYLE}</style></head><body>{body}",
+         <meta name=\"towercab-token\" content=\"{}\"><title>{}</title><style>{STYLE}</style></head><body>\
+         <nav><a href=\"/\">Overview</a> · <a href=\"/intents\">Intents</a> · <a href=\"/repos\">Repos</a> · \
+         <a href=\"http://localhost:3000\" target=\"_blank\" rel=\"noopener\">Grafana</a></nav>{body}<div id=\"reply\"></div>",
         esc(&ctx.token),
         esc(title)
     );
@@ -872,7 +1044,6 @@ pub fn page(ctx: &Ctx) -> Response {
             h(id)
         );
     }
-    body.push_str("<div id=\"reply\"></div>");
     page_shell(ctx, "Towercab", &body, true)
 }
 
@@ -910,9 +1081,9 @@ fn runs_dir(ctx: &Ctx, m: &Mission) -> PathBuf {
 fn mission_page(ctx: &Ctx, db: &Db, m: &Mission) -> Result<Response, String> {
     let tick = Tick::now();
     let mut b = format!(
-        "<p><a href=\"/\">← Towercab</a></p><h1>{} <span class=\"dim\">{}</span></h1><p>{} · {} · attempt {}{}</p>",
+        "<h1>{} <span class=\"dim\">{}</span></h1><p>{} · {} · attempt {}{}</p>",
         esc(&m.label()),
-        esc(&m.repo),
+        pages::repo_link(ctx, &m.repo),
         esc(m.kind.as_str()),
         esc(m.stage.as_str()),
         m.attempt,
@@ -995,7 +1166,7 @@ fn mission_page(ctx: &Ctx, db: &Db, m: &Mission) -> Result<Response, String> {
         b.push_str("<li class=\"dim\">none yet</li>");
     }
     b.push_str("</ul>");
-    Ok(page_shell(ctx, &m.label(), &b, false))
+    Ok(page_shell(ctx, &m.label(), &b, true))
 }
 
 fn name_ok(name: &str) -> bool {

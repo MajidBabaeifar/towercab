@@ -1,5 +1,6 @@
 //! The intent home (`intents` repo): folders, `intent.md`, generated views, git sync ([INT](../../specs/intents.md)).
 
+pub mod edit;
 pub mod git;
 pub mod id;
 pub mod intent;
