@@ -28,6 +28,10 @@ pub fn doctor(config: &Config, home: &Home, exes: &Exes) -> String {
         let at = which(exe).map_or_else(|| "missing".to_string(), |p| p.display().to_string());
         out.push(format!("{name}: {at}"));
     }
+    // The oldest gh Towercab's calls work with (LOOP-20).
+    if which(&exes.gh).is_some() {
+        out.push(gh_version(&exes.gh));
+    }
     // The App identity (LOOP-19): its key loads and GitHub knows its bot.
     let identity = Identity::from_config(config, exes);
     out.push(match identity.bot() {
@@ -73,4 +77,41 @@ pub fn doctor(config: &Config, home: &Home, exes: &Exes) -> String {
         None => "telegram: not configured".into(),
     });
     out.join("\n")
+}
+
+/// The oldest gh every call Towercab makes works with (LOOP-20).
+pub const GH_MIN: (u32, u32) = (2, 46);
+
+/// `gh version: <x.y.z>`, with `: Towercab needs 2.46 or newer` below [`GH_MIN`]; `gh --version`
+/// failing or unreadable → `gh version: unknown (<why>)`.
+pub fn gh_version(gh: &std::ffi::OsStr) -> String {
+    let mut cmd = std::process::Command::new(gh);
+    cmd.arg("--version");
+    let text = match crate::child::output(&mut cmd, std::time::Duration::from_secs(10)) {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+        Ok(o) => {
+            return format!(
+                "gh version: unknown (exit {})",
+                o.status.code().unwrap_or(-1)
+            );
+        }
+        Err(e) => return format!("gh version: unknown ({e})"),
+    };
+    let version = text
+        .lines()
+        .next()
+        .and_then(|l| l.strip_prefix("gh version "))
+        .and_then(|l| l.split_whitespace().next());
+    let Some(version) = version else {
+        return "gh version: unknown (no `gh version x.y.z` line)".into();
+    };
+    let mut parts = version.split('.').map(|p| p.parse::<u32>().ok());
+    match (parts.next().flatten(), parts.next().flatten()) {
+        (Some(major), Some(minor)) if (major, minor) < GH_MIN => format!(
+            "gh version: {version}: Towercab needs {}.{} or newer",
+            GH_MIN.0, GH_MIN.1
+        ),
+        (Some(_), Some(_)) => format!("gh version: {version}"),
+        _ => format!("gh version: unknown ({version})"),
+    }
 }

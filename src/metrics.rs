@@ -586,13 +586,13 @@ pub fn spool_append(path: &Path, records: &[Record]) {
     })();
     match r {
         Ok(true) => {}
-        Ok(false) => eprintln!(
+        Ok(false) => crate::tlog!(
             "towercab: metrics spool {}: locked past {} ms: dropped {} records",
             path.display(),
             LOCK_WAIT.as_millis(),
             new.lines().count()
         ),
-        Err(e) => eprintln!("towercab: metrics spool {}: {e}", path.display()),
+        Err(e) => crate::tlog!("towercab: metrics spool {}: {e}", path.display()),
     }
 }
 
@@ -658,7 +658,7 @@ fn spool_drop(path: &Path, head: &[u8]) {
         Ok(())
     })();
     if let Err(e) = r {
-        eprintln!(
+        crate::tlog!(
             "towercab: metrics spool {}: replayed lines kept: {e}",
             path.display()
         );
@@ -732,7 +732,7 @@ impl Sink {
             Err(crate::http::HttpError::Status(code, why))
                 if (400..500).contains(&code) && code != 408 && code != 429 =>
             {
-                eprintln!(
+                crate::tlog!(
                     "towercab: metrics {}: HTTP {code}: dropped {} records: {why}",
                     self.endpoint,
                     all.len()

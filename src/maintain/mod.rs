@@ -88,7 +88,7 @@ impl Watch {
 
     fn warn(&mut self, kind: &str, msg: String) {
         if self.warned.get(kind) != Some(&msg) {
-            eprintln!("towercab: {msg}");
+            crate::tlog!("towercab: {msg}");
             self.warned.insert(kind.to_string(), msg);
         }
     }
@@ -445,7 +445,7 @@ pub fn record(
         Ok(true)
     })?;
     for l in &logs {
-        eprintln!("towercab: {l}");
+        crate::tlog!("towercab: {l}");
     }
     Ok(new)
 }

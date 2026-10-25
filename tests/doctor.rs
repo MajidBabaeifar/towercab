@@ -15,7 +15,11 @@ fn clone_with_origin(dir: &Path, url: &str) {
     git(dir, &["remote", "add", "origin", url]);
 }
 
-const GH: &str = r#"case "$2" in
+const GH: &str = r#"if [ "$1" = --version ]; then
+  v=2.40.1; [ -f "${0%/*}/gh-version" ] && read -r v < "${0%/*}/gh-version"
+  echo "gh version $v (2023-12-13)"; exit 0
+fi
+case "$2" in
   repos/me/web/rulesets*) echo '[{"name":"other","id":1}]' ;;
   repos/me/ok/rulesets*) echo '[{"name":"towercab","id":5}]' ;;
   *) echo 'HTTP 404: Not Found' >&2; exit 1 ;;
@@ -78,6 +82,7 @@ fn test_doctor() {
         format!(
             "config: {}\nhome: {}\ngit: {}\ngh: {}\nclaude: {}\ncargo: {}\nbwrap: {}\n\
              systemd-inhibit: {}\nsystemctl: missing\n\
+             gh version: 2.40.1: Towercab needs 2.46 or newer\n\
              github app: {}/app.pem: No such file or directory (os error 2)\n\
              api: ruleset: gh api repos/me/api/rulesets?includes_parents=false&per_page=100: \
              HTTP 404: Not Found\n\
@@ -107,10 +112,13 @@ fn test_doctor() {
     );
     std::fs::write(&plain, text).unwrap();
     key(&plain_dir.join("app.pem"), false);
+    std::fs::write(user.join(".fakebin/gh-version"), "2.46.0").unwrap();
     let (out, _, code) = doctor(&plain);
     assert_eq!(code, Some(0));
     assert!(
-        out.ends_with("github app: towercab[bot] 42\ntelegram: not configured\n"),
+        out.ends_with(
+            "gh version: 2.46.0\ngithub app: towercab[bot] 42\ntelegram: not configured\n"
+        ),
         "{out}"
     );
 

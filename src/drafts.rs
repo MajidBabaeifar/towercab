@@ -1042,7 +1042,7 @@ pub fn next_run(cx: &mut Ctx<'_>) -> Result<Option<(String, ChildSpec)>, String>
     let prompt = match prompt {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("towercab: draft {}: {e}", row.key);
+            crate::tlog!("towercab: draft {}: {e}", row.key);
             record(cx, &row.key, "failed", &[])?;
             return Ok(None);
         }
@@ -1222,7 +1222,7 @@ pub fn finish_run(cx: &mut Ctx<'_>, key: &str, end: &ChildEnd) -> Result<Option<
 /// `failed`.
 fn tried(cx: &Ctx<'_>, key: &str, tries: i64, why: &str) -> Result<(), String> {
     let step = if tries >= TRIES { "failed" } else { "draft" };
-    eprintln!(
+    crate::tlog!(
         "towercab: draft {key}: try {tries}: {}",
         crate::outbox::cut(&one_line(why), 300)
     );

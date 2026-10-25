@@ -98,7 +98,7 @@ pub fn deployed(cx: &Ctx<'_>, m: &Mission, at: &Where) -> Result<Option<String>,
             Ok((status, body)) if (200..300).contains(&status) => Ok(sha_in(&body)),
             Ok(_) => Ok(None),
             Err(e) => {
-                eprintln!("towercab: {}: deploy {url}: {e}", m.label());
+                crate::tlog!("towercab: {}: deploy {url}: {e}", m.label());
                 Ok(None)
             }
         },

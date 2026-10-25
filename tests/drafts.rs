@@ -26,7 +26,8 @@ const WEB_ISSUE: &str = "https://github.com/me/web/issues/12";
 /// A fake `gh` for drafts in `dir`: `issue list` → `issues.json`; `issue view <n>` → the
 /// comments `issue comment <n>` wrote (`comments-<n>`, one per line, by `me`: my login); `pr list` →
 /// `prlist.json`; `pr create` → PR 5, 6, … (title and body saved; fails while `create-fails`
-/// exists); `pr view <n>` → `pr-<n>.json`. Each call logged to `gh.log` as `<GH_TOKEN> <args>`.
+/// exists); `pr view <n>` → `pr-<n>.json`. Each call logged to `gh.log` as `<GH_TOKEN> <args>`;
+/// gh 2.46's flags only (`common::gh246`).
 fn fake_gh(dir: &Path) -> PathBuf {
     let path = dir.join("gh");
     exe(
@@ -34,7 +35,7 @@ fn fake_gh(dir: &Path) -> PathBuf {
         &format!(
             r#"d='{d}'
 echo "${{GH_TOKEN:--}} $*" >> "$d/gh.log"
-case "$1 $2" in
+{guard}case "$1 $2" in
   "issue list") cat "$d/issues.json" 2>/dev/null || echo '[]' ;;
   "issue view")
     f="$d/comments-$3"
@@ -57,7 +58,8 @@ case "$1 $2" in
   *) echo "fake gh: $*" >&2; exit 1 ;;
 esac
 "#,
-            d = dir.display()
+            d = dir.display(),
+            guard = common::gh246::guard()
         ),
     );
     path

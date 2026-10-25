@@ -220,7 +220,7 @@ where
             match run {
                 Ok(()) => 0,
                 Err(e) => {
-                    eprintln!("towercab: {e}");
+                    crate::tlog!("towercab: {e}");
                     1
                 }
             }

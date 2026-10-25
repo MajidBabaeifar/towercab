@@ -229,13 +229,14 @@ fn test_installation_token_per_repo() {
 }
 
 /// A fake `gh` in `dir`: `auth git-credential get` answers git's credential protocol with
-/// `GH_TOKEN`; every call logs `<GH_TOKEN> <args>` to `<dir>/gh.log`.
+/// `GH_TOKEN`; every call logs `<GH_TOKEN> <args>` to `<dir>/gh.log`; gh 2.46's flags only
+/// (`common::gh246`).
 fn fake_gh(dir: &Path) -> std::path::PathBuf {
     let path = dir.join("gh");
     exe(
         &path,
         &format!(
-            "echo \"${{GH_TOKEN:--}} $*\" >> '{log}'\n\
+            "echo \"${{GH_TOKEN:--}} $*\" >> '{log}'\n{guard}\
              if [ \"$1 $2\" = 'auth git-credential' ]; then\n\
                cat > /dev/null\n\
                [ \"$3\" = get ] && printf 'protocol=https\\nhost=github.com\\nusername=x-access-token\\npassword=%s\\n' \"$GH_TOKEN\"\n\
@@ -245,7 +246,8 @@ fn fake_gh(dir: &Path) -> std::path::PathBuf {
                pr) echo '{{\"state\":\"OPEN\",\"headRefOid\":\"h1\",\"mergeable\":\"MERGEABLE\",\"comments\":[],\"reviews\":[]}}' ;;\n\
                api) echo '[]' ;;\n\
              esac\n",
-            log = dir.join("gh.log").display()
+            log = dir.join("gh.log").display(),
+            guard = common::gh246::guard()
         ),
     );
     path
@@ -346,7 +348,7 @@ fn test_git_uses_app_token() {
             format!(
                 "{web} pr view 7 -R me/web --json state,mergedAt,mergeCommit,headRefOid,mergeable,comments,reviews"
             ),
-            format!("{web} api --paginate --slurp repos/me/web/pulls/7/comments?per_page=100"),
+            format!("{web} api --paginate repos/me/web/pulls/7/comments?per_page=100"),
         ]
     );
 

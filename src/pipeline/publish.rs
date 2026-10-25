@@ -64,7 +64,7 @@ pub fn push_branch(
             }
             Push::Rejected(why) => why,
         };
-        eprintln!(
+        crate::tlog!(
             "towercab: {}: push rejected, merging {branch}: {}",
             m.label(),
             crate::outbox::one_line(&why)
@@ -259,7 +259,7 @@ impl Publish {
             ];
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
             if let Err(e) = gh::try_gh(cx, m, &args)? {
-                eprintln!("towercab: {}: towercab/{name} check run: {e}", m.label());
+                crate::tlog!("towercab: {}: towercab/{name} check run: {e}", m.label());
             }
         }
         Ok(())

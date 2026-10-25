@@ -23,6 +23,7 @@ pub mod http;
 pub mod indicators;
 pub mod intents;
 pub mod limits;
+pub mod log;
 pub mod machine;
 pub mod maintain;
 pub mod metrics;

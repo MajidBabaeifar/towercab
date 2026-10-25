@@ -285,7 +285,7 @@ fn test_spec_feedback_revises() {
             0,
         )],
     )
-    .on("api --paginate *", &[("[[]]", "", 0)]);
+    .on("api --paginate *", &[("[]", "", 0)]);
     p.claude
         .script(
             2,

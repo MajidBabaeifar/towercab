@@ -52,7 +52,7 @@ pub fn record(
                 ..crate::metrics::Ev::none()
             };
             if let Err(e) = crate::indicators::repeated(conn, repo, &rule, pr, &ev) {
-                eprintln!("towercab: {repo}#{pr}: metrics: {e}");
+                crate::tlog!("towercab: {repo}#{pr}: metrics: {e}");
             }
         }
         added += n;

@@ -38,7 +38,7 @@ pub trait PrSource {
 }
 
 /// `gh pr view <n> -R <github> --json state,mergedAt,mergeCommit,headRefOid,mergeable,comments,reviews`
-/// and `gh api --paginate --slurp repos/<github>/pulls/<n>/comments?per_page=100`, as
+/// and `gh api --paginate repos/<github>/pulls/<n>/comments?per_page=100`, as
 /// `identity` (its `gh`; LOOP-19).
 pub struct GhPrs {
     pub identity: Identity,
@@ -78,16 +78,18 @@ pub fn parse_pr(view: &str, review_comments: &str) -> Result<PrState, String> {
     let v: Value = serde_json::from_str(view).map_err(|e| format!("gh pr view: {e}"))?;
     let mut all = comments(v.get("comments"), "author", "createdAt");
     all.extend(comments(v.get("reviews"), "author", "submittedAt"));
-    if !review_comments.trim().is_empty() {
-        let rc: Value =
-            serde_json::from_str(review_comments).map_err(|e| format!("gh api comments: {e}"))?;
-        // `--paginate --slurp`: one array per page.
-        let pages: Vec<Value> = match rc {
-            Value::Array(a) if a.iter().all(Value::is_array) => a,
-            one => vec![one],
-        };
-        for page in &pages {
-            all.extend(comments(Some(page), "user", "created_at"));
+    // `--paginate` (no `--slurp`: gh 2.46 lacks it) prints one JSON array per page, back to
+    // back (`[…][…]`): a stream of values, each page flattened.
+    for page in serde_json::Deserializer::from_str(review_comments).into_iter::<Value>() {
+        let page = page.map_err(|e| format!("gh api comments: {e}"))?;
+        match page {
+            Value::Array(items) if items.iter().all(Value::is_array) => {
+                for inner in &items {
+                    all.extend(comments(Some(inner), "user", "created_at"));
+                }
+            }
+            Value::Array(_) => all.extend(comments(Some(&page), "user", "created_at")),
+            _ => return Err("gh api comments: not a list".into()),
         }
     }
     Ok(PrState {
@@ -128,7 +130,6 @@ impl PrSource for GhPrs {
             &[
                 "api",
                 "--paginate",
-                "--slurp",
                 &format!("repos/{github}/pulls/{n}/comments?per_page=100"),
             ],
         )?;

@@ -407,7 +407,7 @@ impl Gate {
                     m,
                     &["pr", "comment", &n, "-R", &github, "--body-file", &f],
                 )? {
-                    eprintln!(
+                    crate::tlog!(
                         "towercab: {}: findings comment: {}",
                         m.label(),
                         crate::outbox::one_line(&e)

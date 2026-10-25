@@ -350,7 +350,7 @@ pub fn patch(cx: &Ctx<'_>, m: &Mission, body: &str) -> bool {
         return false;
     };
     let failed = |e: String| {
-        eprintln!(
+        crate::tlog!(
             "towercab: {}: PR text not updated: {}",
             m.label(),
             one_line(&e)
@@ -388,12 +388,12 @@ pub fn start(
     let prompt = match writer_prompt(i) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("towercab: {}: writer: {e}", m.label());
+            crate::tlog!("towercab: {}: writer: {e}", m.label());
             return Ok(Err(template(i)));
         }
     };
     if crate::exes::which(&cx.exes.claude).is_none() {
-        eprintln!(
+        crate::tlog!(
             "towercab: {}: writer: {} not found",
             m.label(),
             cx.exes.claude.to_string_lossy()
@@ -417,7 +417,7 @@ pub fn finish(cx: &Ctx<'_>, m: &Mission, end: &ChildEnd, i: &Inputs) -> Result<S
         Ended::Failed(why) => why,
         Ended::Out(p) => format!("{p:?}"),
     };
-    eprintln!(
+    crate::tlog!(
         "towercab: {}: writer: {}: the template",
         m.label(),
         one_line(&why)
