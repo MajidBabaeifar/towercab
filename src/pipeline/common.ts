@@ -216,6 +216,8 @@ export function ended<T>(
           done: {
             event: end.timedOut ? "timeout" : "bad_result",
             why,
+            // The one continue gets the step's whole budget again.
+            set: { step_secs: 0 },
             data: { continued: { ...continued, [kind]: true } },
           },
         },
