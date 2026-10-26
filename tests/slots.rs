@@ -296,3 +296,36 @@ fn test_one_mission_per_intent() {
     assert_eq!(next.attempt, 2);
     lp.shutdown().unwrap();
 }
+
+#[test]
+fn test_command_sees_new_intent() {
+    // `towercab add` writes the loop's checkout; an `unlock` for it right after is applied on
+    // the next pass, not refused until the intents poll.
+    let mut w = World::new(&[], &["web"]);
+    let mut lp = w.open(Handlers::picks_off());
+    w.pass(&mut lp);
+    let i = w
+        .intents
+        .store()
+        .add(towercab::intents::NewIntent {
+            repo: "web".into(),
+            title: "New".into(),
+            u: Some(2),
+            i: Some(2),
+            a: None,
+            source: "me".into(),
+            created: w.clock.wall,
+        })
+        .unwrap();
+    let cmd = towercab::commands::Cmd::Unlock(i.id.clone(), vec!["CLAUDE.md".into()]);
+    let row = towercab::commands::queue(&w.db(), &cmd, "cli").unwrap();
+    w.pass(&mut lp);
+    assert_eq!(
+        towercab::commands::get(&w.db(), row)
+            .unwrap()
+            .result
+            .as_deref(),
+        Some(format!("unlocked CLAUDE.md for {}", i.id).as_str())
+    );
+    lp.shutdown().unwrap();
+}

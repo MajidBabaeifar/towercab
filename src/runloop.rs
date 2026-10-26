@@ -415,6 +415,13 @@ impl Loop {
         report.woke = self.wake_check(tick)?;
         self.ensure_store();
         report.commands = self.telegram_updates(tick)?;
+        // A command may name an intent written since the last poll (`towercab add`, then
+        // `unlock` at once): re-read the checkout first.
+        if !commands::pending(&self.db)?.is_empty()
+            && let Some(s) = &self.store
+        {
+            self.listing = Some(s.scan());
+        }
         let cx = CmdCx {
             config: &self.config,
             db: &self.db,
