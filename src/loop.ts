@@ -556,9 +556,8 @@ export class Loop {
       }
       // The step's budget minus the run time it already spent (a restart or a limit wait in between
       // never adds to it, LOOP-12).
-      const cur2 = getMission(this.d.db, m.id) ?? m;
       if (spec.timeoutMs !== undefined)
-        spec = { ...spec, timeoutMs: Math.max(0, spec.timeoutMs - cur2.step_secs * 1000) };
+        spec = { ...spec, timeoutMs: Math.max(0, spec.timeoutMs - cur.step_secs * 1000) };
       let handle: ChildHandle;
       try {
         handle = this.d.tools.spawn(spec);
