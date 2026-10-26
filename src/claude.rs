@@ -594,6 +594,9 @@ pub fn env(config: &Config) -> Vec<(OsString, OsString)> {
         e.push((k.into(), v.into()));
     }
     e.push(("OTEL_SERVICE_NAME".into(), "towercab".into()));
+    for (k, v) in &config.agent.env {
+        e.push((k.into(), v.into()));
+    }
     e
 }
 

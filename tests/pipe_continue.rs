@@ -628,3 +628,130 @@ fn test_open_pr_states() {
     assert_eq!(p.data(ID)["adopted"]["state"], "other repo");
     assert!(p.gh.find("pr view").is_empty());
 }
+
+/// Attempt 1 blocked at build with `q` (a4: no plan review); PR 7 open, read without comments.
+fn asked(q: &str) -> Pipe {
+    let mut p = pipe("a: 4\n");
+    designs(&p, 1, "| WEB-1 | log in | test_login |\n", &["WEB-1"]);
+    p.claude
+        .answer(2, &plan())
+        .answer(3, &blocked(q))
+        .answer(4, &blocked("anything else?"));
+    p.gh.on("pr list *", &[("[]", "", 0)])
+        .on(
+            "pr create *",
+            &[("https://github.com/me/web/pull/7\n", "", 0)],
+        )
+        .on("api -X PATCH *", &[("{}", "", 0)])
+        .on("api --paginate *", &[("[]", "", 0)]);
+    p.step_to(ID, Stage::Blocked, 6);
+    let head = p.mission(ID).head.clone().unwrap();
+    p.gh.on(
+        "pr view 7 *",
+        &[(&json!({"state": "OPEN", "headRefOid": head, "mergeable": "MERGEABLE", "reviews": [], "comments": []}).to_string(), "", 0)],
+    );
+    p
+}
+
+#[test]
+fn test_answer_continues() {
+    let mut p = asked("which provider?");
+    let db = p.w.db();
+    commands::queue(
+        &db,
+        &Cmd::Answer(ID.into(), "Use GitHub, not Google.".into()),
+        "ui",
+    )
+    .unwrap();
+    p.until(10, |w| {
+        w.transitions(ID)
+            .iter()
+            .filter(|t| t.2 == "blocked")
+            .count()
+            >= 2
+    });
+    // The answer is in the intent, and the worker got it with the wait.
+    let md = p.w.intent_md(DIR);
+    assert!(md.contains("## Answers\n"), "{md}");
+    assert!(md.contains(": Use GitHub, not Google."), "{md}");
+    assert!(
+        p.w.transitions(ID)
+            .contains(&("blocked".into(), "approve".into(), "build".into()))
+    );
+    let what = p.claude.stdin(4);
+    assert!(what.contains("Use GitHub, not Google."), "{what}");
+    assert!(what.contains("which provider?"), "{what}");
+}
+
+#[test]
+fn test_unlock_continues() {
+    let mut p = asked("can I change .github/workflows/ci.yml?");
+    let db = p.w.db();
+    let cmd = Cmd::Unlock(ID.into(), vec![".github/workflows/**".into()]);
+    commands::queue(&db, &cmd, "telegram").unwrap();
+    p.until(10, |w| {
+        w.transitions(ID)
+            .iter()
+            .filter(|t| t.2 == "blocked")
+            .count()
+            >= 2
+    });
+    let md = p.w.intent_md(DIR);
+    assert!(
+        md.contains("unlock:") && md.contains(".github/workflows/**"),
+        "{md}"
+    );
+    // Refused: a path out of the checkout.
+    assert!(!commands::glob_ok("../x") && !commands::glob_ok("/etc/passwd"));
+    assert!(commands::glob_ok(".github/workflows/**") && commands::glob_ok("CLAUDE.md"));
+}
+
+#[test]
+fn test_drop_stops() {
+    let mut p = asked("should I go on?");
+    let db = p.w.db();
+    commands::queue(&db, &Cmd::Drop(ID.into()), "ui").unwrap();
+    p.until(10, |w| w.stage(ID) == Some(Stage::Stopped));
+    assert!(
+        p.intents_file(&format!("intents/{DIR}/intent.md"))
+            .is_none(),
+        "no longer open"
+    );
+    let md = p
+        .intents_file(&format!("done/{DIR}/intent.md"))
+        .expect("moved to done/");
+    assert!(md.contains("stage: dropped"), "{md}");
+}
+
+#[test]
+fn test_env_failure_is_fault() {
+    let mut p = pipe("a: 4\n");
+    designs(&p, 1, "| WEB-1 | log in | test_login |\n", &["WEB-1"]);
+    p.claude.answer(2, &plan()).answer(
+        3,
+        &blocked("Every Bash call fails: apply-seccomp: write /proc/self/setgroups (nested userns is capability-restricted): Permission denied"),
+    );
+    p.gh.on("pr list *", &[("[]", "", 0)])
+        .on(
+            "pr create *",
+            &[("https://github.com/me/web/pull/7\n", "", 0)],
+        )
+        .on("api -X PATCH *", &[("{}", "", 0)]);
+    p.step_to(ID, Stage::Build, 6);
+    for _ in 0..3 {
+        if p.claude.calls() >= 3 {
+            break;
+        }
+        p.step(ID);
+    }
+    let m = p.mission(ID);
+    assert_eq!(m.stage, Stage::Build, "not a wait on me");
+    assert_eq!(m.waiting, None);
+    assert_eq!(m.fault.as_deref(), Some("sandbox"));
+    // A missing program in a setup log: tool:<exe>.
+    let (f, why) = towercab::env::classify_run("$ npm ci\nsh: 1: npm: not found\n").unwrap();
+    assert_eq!(f.to_string(), "tool:npm");
+    assert!(why.contains("npm: not found"));
+    assert!(towercab::env::classify_run("which provider?").is_none());
+    assert!(towercab::env::classify_run("src/login.rs: not found in the plan").is_none());
+}

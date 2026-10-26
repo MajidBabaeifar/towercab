@@ -486,3 +486,27 @@ fn test_telegram_commands() {
     assert!(!w.intent_md("261001-0900-spec").contains("waiting:"));
     lp.shutdown().unwrap();
 }
+
+#[test]
+fn test_telegram_answer_unlock_drop() {
+    use towercab::commands::Cmd;
+    use towercab::telegram::{TgCommand, parse};
+    assert_eq!(
+        parse("answer 0901 Use GitHub, not Google.").unwrap(),
+        TgCommand::Cmd(Cmd::Answer("0901".into(), "Use GitHub, not Google.".into()))
+    );
+    assert_eq!(
+        parse("/unlock 0901 .github/workflows/** CLAUDE.md").unwrap(),
+        TgCommand::Cmd(Cmd::Unlock(
+            "0901".into(),
+            vec![".github/workflows/**".into(), "CLAUDE.md".into()]
+        ))
+    );
+    assert_eq!(
+        parse("drop 0901").unwrap(),
+        TgCommand::Cmd(Cmd::Drop("0901".into()))
+    );
+    assert!(parse("answer 0901").is_err());
+    assert!(parse("unlock 0901").is_err());
+    assert!(towercab::telegram::HELP.contains("answer <id> <text>"));
+}

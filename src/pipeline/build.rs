@@ -232,6 +232,10 @@ impl Build {
                 self.run(cx, &m, repo_files)
             }
             LineEnd::SetupRed { why, .. } | LineEnd::CheckRed { why, .. } => {
+                // A missing program or a broken sandbox: a fault, not a build without setup.
+                if let Some((fault, line)) = crate::env::classify_run(&why) {
+                    return Ok(Progress::Done(Outcome::env(fault, line)));
+                }
                 crate::tlog!("towercab: {}: build setup: {why}", m.label());
                 self.run(cx, m, repo_files)
             }
@@ -328,12 +332,22 @@ impl Build {
         };
         if !w.done {
             let q = w.question.clone().unwrap_or_default();
+            // A broken environment isn't a question for me (LOOP-10): a fault with its fix,
+            // retried when it clears.
+            if let Some((fault, why)) = crate::env::classify_run(&q) {
+                return Ok(Progress::Done(Outcome::env(fault, why)));
+            }
             return wait_note(
                 cx,
                 m,
                 Waiting::AnswerTheQuestion,
                 &q,
-                &format!("Question: {q}\n\nAnswer here or on the PR, then remove `waiting`."),
+                &format!(
+                    "Question: {q}\n\nAnswer with the UI's box, `answer {id} <text>` on Telegram or \
+                     `towercab answer {id} <text>`; protected paths: Unlock in the UI or \
+                     `towercab unlock {id} <glob>`.",
+                    id = m.intent.as_deref().unwrap_or_default()
+                ),
             );
         }
         let notes = if w.notes.trim().is_empty() {

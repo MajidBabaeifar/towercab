@@ -83,7 +83,7 @@ impl Fault {
             Fault::Github => "check the network and the GitHub App (ops/github-app.json, ~/.config/towercab/app.pem)".into(),
             Fault::Claude => "run claude and /login, or check the network".into(),
             Fault::Tool(exe) => format!("install {exe} on the unit's PATH"),
-            Fault::Sandbox => "check bwrap (unprivileged user namespaces)".into(),
+            Fault::Sandbox => "the sandbox can't start: on Ubuntu set [agent] sandbox_unix_sockets = true (towercab doctor), else check bwrap".into(),
             Fault::Secrets(repo) => {
                 format!("chmod 600 ~/.config/towercab/secrets/{repo}.env")
             }
@@ -458,4 +458,30 @@ pub fn record(
         }
     }
     Ok(opened)
+}
+
+/// An environment failure in a run's text (a worker's question, a setup log), not a question
+/// for me (LOOP-10): Claude Code's sandbox not starting → `sandbox`; `sh: 1: <exe>: not found`
+/// or `<exe>: command not found` → `tool:<exe>`. The reason is the matching line.
+pub fn classify_run(text: &str) -> Option<(Fault, String)> {
+    let line = |pat: &dyn Fn(&str) -> bool| {
+        text.lines()
+            .find(|l| pat(l))
+            .map(|l| crate::outbox::cut(l.trim(), 200))
+    };
+    if let Some(l) = line(&|l: &str| {
+        l.contains("apply-seccomp")
+            || l.contains("bwrap:")
+            || (l.contains("setgroups") && l.contains("Permission denied"))
+    }) {
+        return Some((Fault::Sandbox, l));
+    }
+    let re = regex::Regex::new(
+        r"(?:\bsh: \d+: ([A-Za-z0-9._+-]+): not found|\b([A-Za-z0-9._+-]+): command not found)",
+    )
+    .expect("static regex");
+    let caps = re.captures(text)?;
+    let exe = caps.get(1).or(caps.get(2))?.as_str().to_string();
+    let why = crate::outbox::cut(caps.get(0)?.as_str(), 200);
+    Some((Fault::Tool(exe), why))
 }

@@ -58,13 +58,14 @@ e2e secrets per repo: `~/.config/towercab/secrets/<repo>.env` (`KEY=VALUE`, mode
 | `towercab ui` | the web page at http://127.0.0.1:7311/ while `up` (`[ui] port`, 0 = off): what runs and waits on you, every intent (edit u/i/a, model, drop, add), the repos' readiness |
 | `towercab add "<repo>: <title>" [uN iN aN]` | a thin intent on `main` (or `/intent` in Claude Code) |
 | `towercab approve <id>` · `retry --fresh <id>` · `release <id>` | go on after a wait, start over, authorize a release |
+| `towercab answer <id> <text>` · `unlock <id> <glob>…` · `drop <id>` | answer a wait (the worker gets it), let the worker change protected paths, drop an intent; also in the UI and on Telegram |
 | `towercab pause` · `resume` · `trust <repo>` | no picks; lift a repo's cap and freeze |
 | `towercab review` | walk parked and stale intents |
 | `towercab protect <repo>` | the `towercab` ruleset on a repo's base branch (your `gh` login) |
 | `towercab eval [--reason <change>]` · `eval --pr <n>` | replay the eval cases; post `towercab/evals` on a Towercab PR |
 
 Telegram (from the configured chat): `status`, `next`, `approve <id>`, `retry <id>`, `release <id>`,
-`pause`, `resume`. Messages come only when you must act.
+`pause`, `resume`, `answer <id> <text>`, `unlock <id> <glob>…`, `drop <id>`. Messages come only when you must act; every wait can be answered from the UI or Telegram.
 
 First start: `towercab migrate` on the `intents` repo, `towercab protect <repo>` per repo, `towercab up`.
 

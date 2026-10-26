@@ -154,6 +154,10 @@ pub fn env(config: &Config, home: &Path, cache: Cache<'_>) -> Vec<(OsString, OsS
             v.push(("npm_config_cache".into(), c.join("npm").into()));
         }
     }
+    // `[agent].env`: the machine's own settings (a zig `cc`'s CRATE_CC_NO_DEFAULTS).
+    for (k, val) in &config.agent.env {
+        v.push((k.into(), val.into()));
+    }
     v
 }
 

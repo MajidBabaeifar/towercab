@@ -10,8 +10,7 @@ use crate::http::{self, TIMEOUT};
 use crate::outbox::{self, Sender};
 
 /// The reply to `help`, `start` and anything [`parse`] refuses.
-pub const HELP: &str =
-    "commands: status · next · approve <id> · retry <id> · release <id> · pause · resume";
+pub const HELP: &str = "commands: status · next · approve <id> · answer <id> <text> · unlock <id> <glob> · drop <id> · retry <id> · release <id> · pause · resume";
 
 /// A message from `getUpdates`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +58,29 @@ pub fn parse(text: &str) -> Result<TgCommand, String> {
         "pause" => none(TgCommand::Cmd(Cmd::Pause)),
         "resume" => none(TgCommand::Cmd(Cmd::Resume)),
         "approve" => one(Cmd::Approve),
+        "drop" => one(Cmd::Drop),
+        "answer" => match args.as_slice() {
+            [id, rest @ ..] if !rest.is_empty() => {
+                // The text as typed: everything after the id.
+                let text = text
+                    .trim_start()
+                    .split_once(char::is_whitespace)
+                    .map(|(_, r)| r.trim_start())
+                    .and_then(|r| r.strip_prefix(id))
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                Ok(TgCommand::Cmd(Cmd::Answer(id.to_string(), text)))
+            }
+            _ => Err(bad()),
+        },
+        "unlock" => match args.as_slice() {
+            [id, globs @ ..] if !globs.is_empty() => Ok(TgCommand::Cmd(Cmd::Unlock(
+                id.to_string(),
+                globs.iter().map(|g| g.to_string()).collect(),
+            ))),
+            _ => Err(bad()),
+        },
         "release" => one(Cmd::Release),
         "retry" => match args.as_slice() {
             [id] | ["--fresh", id] if *id != "--fresh" => {
