@@ -193,10 +193,20 @@ pub fn command(
         stdin: None,
         stdout: log.to_path_buf(),
         stderr: err_of(log),
-        timeout: Some(cx.config.agent.check_timeout),
+        timeout: Some(check_timeout(cx, m)),
         slot: false,
         model: None,
     })
+}
+
+/// `[agent].check_timeout` × the mission's `data.check_x` (doubled by each `approve` of
+/// `checks timed out`, PIP-23).
+pub fn check_timeout(cx: &Ctx<'_>, m: &Mission) -> std::time::Duration {
+    let x = super::data::Data::of(m)
+        .u64("check_x")
+        .unwrap_or(1)
+        .clamp(1, 64);
+    cx.config.agent.check_timeout * u32::try_from(x).unwrap_or(1)
 }
 
 /// An e2e run's bound (PIP-9): hitting it is red.

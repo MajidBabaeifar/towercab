@@ -470,6 +470,13 @@ fn on_mission(
             let mut ci = ci;
             ci["reruns"] = serde_json::json!([]);
             data.set("ci", ci);
+        }
+        // `checks timed out`: this intent's checks get twice the time (PIP-23).
+        if cur.waiting == Some(machine::Waiting::ChecksTimedOut.text()) {
+            let x = data.u64("check_x").unwrap_or(1);
+            data.set("check_x", (x * 2).min(64));
+        }
+        if data.text() != crate::pipeline::data::Data::of(&cur).text() {
             o = o.with("data", data.text());
         }
     }
