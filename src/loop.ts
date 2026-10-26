@@ -19,6 +19,7 @@ import {
   finished,
   isWait,
   isWorking,
+  next,
   type Outcome,
   phaseOf,
   type Subject,
@@ -490,7 +491,7 @@ export class Loop {
             },
           );
         }
-        const o = prEvents(m, prs, this.d.github.me, bot);
+        const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot);
         if (!o) continue;
         const running = this.children.has(m.id);
         if (running && !["code_merged", "spec_merged", "plan_merged", "closed"].includes(o.event)) continue;
@@ -752,6 +753,20 @@ export class Loop {
   state(): { listing: Listing | null; listingError: string | null } {
     return { listing: this.listing, listingError: this.listingError };
   }
+}
+
+/**
+ * The mission as PR events should see it: a spec or plan PR whose merge the mission has already moved
+ * past (its merge event would be ignored) is left out of the event order, so it can't mask the
+ * owner's comments on it (an answer on the merged plan PR before a code PR exists).
+ */
+export function pastMerges(m: Mission, prs: { spec?: PrState; plan?: PrState }): Mission {
+  const out = { ...m };
+  if (prs.plan?.state === "MERGED" && next(m.stage, "plan_merged", m.from_stage).kind === "ignore")
+    out.plan_pr = null;
+  if (prs.spec?.state === "MERGED" && next(m.stage, "spec_merged", m.from_stage).kind === "ignore")
+    out.spec_pr = null;
+  return out;
 }
 
 /** `HH:MM` today, else `YYYY-MM-DD HH:MM`, local time. */
