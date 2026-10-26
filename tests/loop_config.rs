@@ -47,6 +47,7 @@ ci_grace = 0
 ci_wait = 3600
 path = "/usr/bin:/bin"
 toolchain = ["~/.cargo", "/opt/go"]
+sandbox_unix_sockets = true
 provider = "claude"
 timeout = 1200
 max_repairs = 2
@@ -94,6 +95,7 @@ anything = true
             ci_wait: Duration::from_secs(3600),
             path: "/usr/bin:/bin".into(),
             toolchain: vec![home.join(".cargo"), PathBuf::from("/opt/go")],
+            sandbox_unix_sockets: true,
         }
     );
     assert_eq!(
@@ -157,6 +159,7 @@ anything = true
                 home.join(".rustup"),
                 home.join(".local/bin"),
             ],
+            sandbox_unix_sockets: false,
         },
         "path = the loop's PATH, toolchain under ~"
     );
