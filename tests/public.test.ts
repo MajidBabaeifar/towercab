@@ -93,9 +93,7 @@ test("public: no personal names", () => {
 test("public: the App manifest stays private", () => {
   const manifest = JSON.parse(read("ops/github-app.json"));
   expect(manifest.public).toBe(false);
-  const src = walk("src")
-    .map(read)
-    .join("\n");
+  const src = walk("src").map(read).join("\n");
   expect(src).not.toMatch(/gh repo edit|\/repos\/[^"`]*\/(topics|visibility)/);
 });
 
