@@ -68,6 +68,21 @@ Telegram (from the configured chat): `status`, `next`, `approve <id>`, `retry <i
 
 First start: `towercab migrate` on the `intents` repo, `towercab protect <repo>` per repo, `towercab up`.
 
+## Known issues
+
+**Claude Code's Bash sandbox fails on Ubuntu ≥ 24.04** (`apply-seccomp: write /proc/self/setgroups … Permission denied`
+on every shell command; the worker can't run checks and stops). Ubuntu restricts unprivileged user namespaces
+(`/proc/sys/kernel/apparmor_restrict_unprivileged_userns` = 1), and Claude Code's sandbox only starts with Unix
+sockets allowed. `towercab doctor` warns about it. Fix:
+
+```toml
+[agent]
+sandbox_unix_sockets = true
+```
+
+This lets sandboxed commands use Unix sockets; Towercab hides the ones that reach the host's power
+(`/var/run/docker.sock`, `/run/docker.sock`, `/run/dbus`, `/run/user`). Secrets stay unreadable as before.
+
 ## Metrics (Grafana)
 
 ```bash
