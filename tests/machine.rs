@@ -330,13 +330,14 @@ fn test_continue_to() {
             | "fix repo files"
             | "release failed"
             | "CI stuck"
+            | "checks timed out"
             | "no CI checks appeared" => Next::Go(from),
             "crashed at build" => Next::Go(Stage::Build),
             "reverted, refine" | "PR closed" => Next::Fresh,
             _ => Next::Go(Stage::Build),
         }
     };
-    assert_eq!(Waiting::ALL.len(), 30);
+    assert_eq!(Waiting::ALL.len(), 31);
     for w in Waiting::ALL {
         assert_eq!(continue_to(&w, from), want(&w), "{w}");
         // Text round-trips; a parameter is kept.

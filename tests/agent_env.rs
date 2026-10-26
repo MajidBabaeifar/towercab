@@ -30,6 +30,13 @@ fn test_agent_env() {
         sbx.iter()
             .any(|(k, v)| k == "CRATE_CC_NO_DEFAULTS" && v == "1")
     );
+    // A worker's cache variables point into its writable cache.
+    let cache = towercab::claude::cache_env(std::path::Path::new("/h/cache/web/worker"));
+    assert!(
+        cache
+            .iter()
+            .any(|(k, v)| k == "XDG_CACHE_HOME" && v == "/h/cache/web/worker/xdg")
+    );
     // Towercab's own variables can't be overridden; bad names refused.
     for bad in ["PATH = \"/x\"", "lower = \"1\"", "X = 1"] {
         std::fs::write(

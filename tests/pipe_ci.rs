@@ -370,6 +370,14 @@ fn test_ci_cap() {
             .unwrap()
             .starts_with("⛔ Not ready: CI red: test\n")
     );
+    // My continue gives the red run one fresh rerun (what I fixed may be outside the branch).
+    assert_eq!(p.data(ID)["ci"]["reruns"], json!([11]));
+    let db = p.w.db();
+    towercab::commands::queue(&db, &towercab::commands::Cmd::Approve(ID.into()), "cli").unwrap();
+    let lp = p.lp.as_mut().unwrap();
+    p.w.pass(lp);
+    assert_eq!(p.data(ID)["ci"]["reruns"], json!([]));
+    assert_eq!(p.mission(ID).ci_repairs, 0);
 }
 
 #[test]

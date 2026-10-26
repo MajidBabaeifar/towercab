@@ -197,8 +197,10 @@ impl World {
 
     /// How many times the fake `systemd-inhibit` started; `inhibitor(n)`: its argv and pid.
     pub fn inhibits(&self) -> usize {
+        // Read while the fake may be rewriting it: an empty or partial file counts as 0.
         fs::read_to_string(self.fakebin().join("inhibit.count"))
-            .map(|s| s.trim().parse().unwrap())
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
             .unwrap_or(0)
     }
 

@@ -782,3 +782,40 @@ fn test_proof_setup_failure_not_red() {
     let log = fs::read_to_string(p.runs(ID).join("proof-1.log")).unwrap();
     assert_eq!(log.matches("\nno db\n").count(), 2, "{log}");
 }
+
+#[test]
+fn test_check_timeout_waits() {
+    // A check that hits its time limit isn't sent to the worker: it waits on me, and my approve
+    // reruns verify with twice the time for this intent.
+    let mut p = Pipe::login("a: 4\n");
+    p.w.config.agent.check_timeout = Duration::from_secs(1);
+    p.open_with(Pipe::handlers());
+    p.plans(2);
+    p.claude
+        .script(
+            3,
+            &(writes("src/login.rs", "pub fn login() {}\n")
+                + &writes("tests/login_test.sh", "sleep 30\n")),
+        )
+        .answer(3, &FakeClaude::result(done("Adds login.")));
+    p.step_to(ID, Stage::Blocked, 20);
+    let m = p.mission(ID);
+    assert_eq!(m.waiting.as_deref(), Some("checks timed out"));
+    assert_eq!(m.why.as_deref(), Some("sh check.sh: timed out after 1 min"));
+    assert_eq!(m.verify_repairs, 0);
+    assert_eq!(p.claude.calls(), 3, "no repair run");
+    assert!(
+        p.w.intent_md(common::pipe::LOGIN_DIR)
+            .contains("Approve to rerun verify with 2 min per check")
+    );
+    towercab::commands::queue(
+        &p.w.db(),
+        &towercab::commands::Cmd::Approve(ID.into()),
+        "cli",
+    )
+    .unwrap();
+    let lp = p.lp.as_mut().unwrap();
+    p.w.pass(lp);
+    assert_eq!(p.data(ID)["check_x"], 2);
+    assert_eq!(p.w.stage(ID), Some(Stage::Verify));
+}
