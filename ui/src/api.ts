@@ -1,0 +1,118 @@
+// Talking to the loop (UI-65, UI-67): JSON reads, actions with the page's token, and a live version
+// from /api/events (polling every 5 s while the stream is down).
+
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import type { ActionReply } from "../../src/ui/view.ts";
+
+const token = document.querySelector('meta[name="towercab-token"]')?.getAttribute("content") ?? "";
+
+export async function getJson<T>(path: string): Promise<T> {
+  let r: Response;
+  try {
+    r = await fetch(path, { headers: { Accept: "application/json" } });
+  } catch {
+    throw new Error("Can't reach Towercab. Is it still running?");
+  }
+  const body = (await r.json().catch(() => null)) as (T & { error?: string }) | null;
+  if (!r.ok) throw new Error(body?.error ?? `Towercab answered ${r.status}.`);
+  return body as T;
+}
+
+export async function act(action: string, intent?: string, text?: string): Promise<ActionReply> {
+  try {
+    const r = await fetch("/api/actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Towercab-Token": token },
+      body: JSON.stringify({ action, intent, text }),
+    });
+    const body = (await r.json().catch(() => null)) as ActionReply | null;
+    return body ?? { ok: false, message: `Towercab answered ${r.status}.` };
+  } catch {
+    return { ok: false, message: "Can't reach Towercab. Is it still running?" };
+  } finally {
+    bump();
+  }
+}
+
+// The live version: every subscriber reloads when it changes.
+const subs = new Set<() => void>();
+let version = "";
+let poll: number | null = null;
+let source: EventSource | null = null;
+
+function bump() {
+  for (const s of subs) s();
+}
+
+function connect() {
+  if (source || typeof EventSource === "undefined") return;
+  source = new EventSource("/api/events");
+  source.addEventListener("version", (e) => {
+    const v = (e as MessageEvent<string>).data;
+    if (v !== version) {
+      const first = version === "";
+      version = v;
+      if (!first) bump();
+    }
+  });
+  source.onopen = () => {
+    if (poll !== null) {
+      clearInterval(poll);
+      poll = null;
+    }
+  };
+  source.onerror = () => {
+    if (poll === null) poll = window.setInterval(bump, 5000);
+  };
+}
+
+/** Freshness for "Updated n s ago": the time of the last successful read. */
+let lastRead = 0;
+const freshSubs = new Set<(t: number) => void>();
+
+export function useFreshness(): number {
+  const [t, setT] = useState(lastRead);
+  useEffect(() => {
+    freshSubs.add(setT);
+    return () => freshSubs.delete(setT);
+  }, []);
+  return t;
+}
+
+export interface Live<T> {
+  data: T | null;
+  error: string | null;
+  loading: boolean;
+}
+
+/** Read `path` now and again whenever Towercab's version changes. Keeps the last data while reloading. */
+export function useLive<T>(path: string): Live<T> {
+  const [state, setState] = useState<Live<T>>({ data: null, error: null, loading: true });
+  const current = useRef(path);
+  current.current = path;
+  const load = useCallback(() => {
+    const p = path;
+    getJson<T>(p).then(
+      (data) => {
+        if (current.current !== p) return;
+        lastRead = Date.now();
+        for (const f of freshSubs) f(lastRead);
+        setState({ data, error: null, loading: false });
+      },
+      (e: Error) => {
+        if (current.current !== p) return;
+        setState((s) => ({ data: s.data, error: e.message, loading: false }));
+      },
+    );
+  }, [path]);
+  useEffect(() => {
+    connect();
+    setState((s) => ({ ...s, loading: true }));
+    load();
+    subs.add(load);
+    return () => {
+      subs.delete(load);
+    };
+  }, [load]);
+  return state;
+}
