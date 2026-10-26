@@ -112,6 +112,9 @@ pub struct Runner {
     pub family: &'static str,
     pub dir: PathBuf,
     pub lines: Lines,
+    /// Proof (PIP-30): the PR's test files (from commit `.0`) laid over `dir` after the setup
+    /// lines, before the first check, so a test needing the change can't break the setup.
+    pub before_checks: Option<(String, Vec<String>)>,
 }
 
 /// How one line ended.
@@ -225,6 +228,11 @@ impl Runner {
                 return Ok(LineEnd::Green(self.lines.checks.len()));
             }
             let m = cx.record(m, &self.lines.step(k + 1), &[])?;
+            if k == self.lines.setup.len()
+                && let Some((head, files)) = &self.before_checks
+            {
+                super::proof::lay(cx, &self.dir, head, files)?;
+            }
             return self.spawn(cx, &m).map(LineEnd::Next);
         }
         let why = if end.timed_out {
@@ -307,6 +315,7 @@ pub fn run_lines(
         family,
         dir: dir.to_path_buf(),
         lines: run_set_lines(cx, m, &f)?,
+        before_checks: None,
     }))
 }
 
