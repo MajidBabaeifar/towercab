@@ -2,6 +2,7 @@
 //! as buttons. Served by the loop on its own threads (UI-1) or by `towercab ui` (UI-2).
 
 pub mod pages;
+pub mod wait;
 pub mod wire;
 
 use std::fmt::Write as _;
@@ -309,7 +310,7 @@ fn sequence(kind: Kind) -> &'static [Stage] {
 }
 
 /// The buttons a wait gets (UI-6).
-fn buttons(stage: Option<Stage>) -> Vec<&'static str> {
+pub(crate) fn buttons(stage: Option<Stage>) -> Vec<&'static str> {
     match stage {
         Some(Stage::ApprovalRelease) => vec!["release", "retry_fresh"],
         Some(Stage::ApprovalSpec | Stage::ApprovalMerge | Stage::Blocked) | None => {
@@ -549,6 +550,7 @@ fn cost_line(ctx: &Ctx, tick: &Tick) -> String {
 }
 
 fn on_me_html(s: &Snapshot, missions: &[Mission], actions: bool, lk: &Links) -> String {
+    let ctx = lk.ctx;
     if s.on_me.is_empty() {
         return "<p class=\"dim\">Nothing waits on you.</p>".into();
     }
@@ -558,40 +560,26 @@ fn on_me_html(s: &Snapshot, missions: &[Mission], actions: bool, lk: &Links) -> 
         let id = m
             .and_then(|m| m.intent.clone())
             .unwrap_or_else(|| o.item.id.clone());
-        let why = m.and_then(|m| m.why.clone()).unwrap_or_default();
+        let intent = lk
+            .listing
+            .open
+            .iter()
+            .chain(&lk.listing.done)
+            .find(|i| i.id == id);
         let _ = write!(
             out,
-            "<li>{} <span class=\"dim\">{} · {}</span><br>{}",
+            "<li class=\"wait\">{} <span class=\"dim\">{} · {}</span><br><b>{}</b>",
             lk.title(&id, &o.item.title),
             lk.intent(&id),
             lk.repo(&o.item.repo),
             esc(&o.action)
         );
-        if !why.is_empty() {
-            let _ = write!(out, "<br><span class=\"dim\">{}</span>", esc(&why));
-        }
-        let pr = link(o.pr_url.as_deref(), "PR");
-        if !pr.is_empty() {
-            let _ = write!(out, " · {pr}");
-        }
         if let Some(m) = m {
             let _ = write!(out, " · <a href=\"/m/{}\">details</a>", m.id);
         }
+        out.push_str(&wait::context(ctx, m, intent));
         if actions {
-            out.push_str("<div class=\"btns\">");
-            for b in buttons(m.map(|m| m.stage)) {
-                let label = match b {
-                    "approve" => "Approve",
-                    "release" => "Release",
-                    _ => "Retry fresh",
-                };
-                let _ = write!(
-                    out,
-                    "<button data-cmd=\"{b}\" data-arg=\"{}\">{label}</button>",
-                    esc(&id)
-                );
-            }
-            out.push_str("</div>");
+            out.push_str(&wait::controls(ctx, m, &id));
         }
         out.push_str("</li>");
     }
@@ -996,13 +984,57 @@ fn action(ctx: &Ctx, r: &Request) -> Response {
         && arg
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
+    let text = body
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let globs: Vec<String> = text
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|g| !g.is_empty())
+        .map(str::to_string)
+        .collect();
     let cmd = match (body.get("cmd").and_then(Value::as_str), arg_ok) {
+        (Some("answer"), true)
+            if !text.is_empty() && text.chars().count() <= commands::ANSWER_MAX =>
+        {
+            Cmd::Answer(arg.into(), text.clone())
+        }
+        (Some("unlock"), true)
+            if !globs.is_empty()
+                && globs.len() <= 20
+                && globs.iter().all(|g| commands::glob_ok(g)) =>
+        {
+            Cmd::Unlock(arg.into(), globs)
+        }
+        (Some("allow"), true)
+            if !globs.is_empty()
+                && globs.len() <= 20
+                && globs.iter().all(|d| commands::domain_ok(d)) =>
+        {
+            Cmd::Allow(arg.into(), globs)
+        }
+        (Some("drop"), true) => Cmd::Drop(arg.into()),
         (Some("approve"), true) => Cmd::Approve(arg.into()),
         (Some("retry_fresh"), true) => Cmd::RetryFresh(arg.into()),
         (Some("release"), true) => Cmd::Release(arg.into()),
         (Some("trust"), true) => Cmd::Trust(arg.into()),
         (Some("pause"), _) if arg.is_empty() => Cmd::Pause,
         (Some("resume"), _) if arg.is_empty() => Cmd::Resume,
+        (Some("answer"), true) => return Response::text(400, "an answer is 1-2000 characters"),
+        (Some("unlock"), true) => {
+            return Response::text(
+                400,
+                "unlock: relative paths or globs, no `..`, 1-20 of them",
+            );
+        }
+        (Some("allow"), true) => {
+            return Response::text(
+                400,
+                "allow: lowercase hosts like registry.npmjs.org, 1-20 of them",
+            );
+        }
         _ => return Response::text(400, "unknown command or argument"),
     };
     let db = match Db::open(&ctx.home.db()) {
@@ -1039,7 +1071,11 @@ pre.log{font-size:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all
 #reply{position:fixed;bottom:12px;right:12px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;display:none}
 #ctl{float:right}nav{margin-bottom:10px}.danger{color:var(--bad)}
 select,input{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:2px 4px}
-form.edit{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap}.md p{margin:4px 0}"#;
+form.edit{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap}.md p{margin:4px 0}
+li.wait,div.wait{background:var(--card);border-radius:8px;padding:8px 10px;margin:8px 0;list-style:none}.why{white-space:pre-wrap}
+.ctx details{margin:6px 0}.ctx summary{cursor:pointer;color:var(--here)}.answer,.unlock,.allow{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.answer textarea{flex:1;min-width:220px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px}
+.unlock input,.allow input{flex:1;min-width:220px}"#;
 
 const SCRIPT: &str = r#"const T=document.querySelector('meta[name=towercab-token]').content;
 const S=['top','onme','now','finished','next','attention','activity','log'];const BASE=document.title;
@@ -1049,18 +1085,20 @@ function atBottom(e){return e.scrollHeight-e.scrollTop-e.clientHeight<24}
 function bottom(){const l=logEl();if(l)l.scrollTop=l.scrollHeight}
 async function poll(){try{const r=await fetch('/api/state',{cache:'no-store'});if(!r.ok)throw new Error(r.status);const s=await r.json();
 const l=logEl();const stick=!l||atBottom(l);
-for(const k of S){const e=document.getElementById(k);if(e&&e.innerHTML!==s.html[k])e.innerHTML=s.html[k]}
+for(const k of S){const e=document.getElementById(k);if(!e||e.innerHTML===s.html[k])continue;
+if(e.querySelector('textarea:focus,input:focus')||[...e.querySelectorAll('textarea,input')].some(x=>x.value&&x.value!==x.defaultValue))continue;e.innerHTML=s.html[k]}
 if(stick)bottom();document.title=(s.on_me_count?'('+s.on_me_count+') ':'')+BASE;
 const c=document.getElementById('ctl');if(c){c.hidden=!s.actions;document.getElementById('pause').hidden=s.paused;document.getElementById('resume').hidden=!s.paused}}
 catch(e){const t=document.getElementById('top');if(t)t.textContent='Towercab UI: no answer ('+e.message+')'}}
 function post(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json','X-Towercab-Token':T},body:JSON.stringify(b)})}
-async function cmd(c,a){if((c==='retry_fresh'||c==='release')&&!confirm(c.replace('_',' ')+' '+a+'?'))return;
-const r=await post('/api/cmd',{cmd:c,arg:a||''});
+async function cmd(c,a,inp){let text='';if(inp){const el=document.getElementById(inp);text=el?el.value.trim():'';if(!text){show(c==='answer'?'Type the answer first':'Type the paths first');return}}
+if((c==='retry_fresh'||c==='release'||c==='drop')&&!confirm(c.replace('_',' ')+' '+a+'?'))return;
+const r=await post('/api/cmd',{cmd:c,arg:a||'',text});if(r.ok&&inp){const el=document.getElementById(inp);if(el){el.value='';el.defaultValue=''}}
 const t=r.ok?((await r.json()).result||'queued: applied on the loop\'s next pass'):await r.text();show(t);poll()}
 async function intent(f,op){const b={op};for(const el of f.elements){if(el.name)b[el.name]=el.value}if(f.dataset.id)b.id=f.dataset.id;
 if(op==='drop'&&!confirm('drop '+b.id+'?'))return;
 const r=await post('/api/intent',b);const j=r.ok?await r.json():null;show(j?j.reply:await r.text());if(j&&j.ok)setTimeout(()=>location.reload(),900)}
-document.addEventListener('click',e=>{const b=e.target.closest('button[data-cmd]');if(b){cmd(b.dataset.cmd,b.dataset.arg);return}
+document.addEventListener('click',e=>{const b=e.target.closest('button[data-cmd]');if(b){cmd(b.dataset.cmd,b.dataset.arg,b.dataset.input);return}
 const o=e.target.closest('button[data-op]');if(o){e.preventDefault();intent(o.closest('form'),o.dataset.op)}});
 document.addEventListener('submit',e=>e.preventDefault());
 bottom();poll();setInterval(poll,3000);"#;
@@ -1169,10 +1207,27 @@ fn mission_page(ctx: &Ctx, db: &Db, m: &Mission) -> Result<Response, String> {
         m.attempt,
         link(m.pr_url.as_deref(), " · PR")
     );
-    if let Some(w) = &m.waiting {
-        let _ = write!(b, "<p class=\"warn\">waiting: {}</p>", esc(w));
-    }
-    if let Some(w) = &m.why {
+    if let Some(w) = m.waiting.as_deref().filter(|_| m.stage.waits()) {
+        let listing = store::scan(&ctx.config.intents.path);
+        let intent = m.intent.as_deref().and_then(|id| {
+            listing
+                .open
+                .iter()
+                .chain(&listing.done)
+                .find(|i| i.id == id)
+        });
+        let _ = write!(
+            b,
+            "<div class=\"wait\"><p class=\"warn\"><b>waiting on you: {}</b></p>",
+            esc(w)
+        );
+        b.push_str(&wait::context(ctx, Some(m), intent));
+        if ctx.can_act() {
+            let id = m.intent.clone().unwrap_or_else(|| m.label());
+            b.push_str(&wait::controls(ctx, Some(m), &id));
+        }
+        b.push_str("</div>");
+    } else if let Some(w) = &m.why {
         let _ = write!(b, "<p class=\"dim\">{}</p>", esc(w));
     }
     let _ = write!(

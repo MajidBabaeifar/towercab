@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehav
 
 /// Migration `i` takes `user_version` from `i` to `i + 1` in one transaction; later intents
 /// append.
-pub const MIGRATIONS: &[&str] = &[SCHEMA_1, SCHEMA_2, SCHEMA_3];
+pub const MIGRATIONS: &[&str] = &[SCHEMA_1, SCHEMA_2, SCHEMA_3, SCHEMA_4, SCHEMA_5];
 
 /// loop.md **Schema**, as written there.
 const SCHEMA_1: &str = r#"
@@ -97,6 +97,30 @@ CREATE TABLE episodes (band TEXT PRIMARY KEY, since REAL NOT NULL /* its first b
 CREATE TABLE triage (band TEXT PRIMARY KEY, accepted INTEGER NOT NULL DEFAULT 0, dismissed INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE lessons (intent TEXT PRIMARY KEY, band TEXT NOT NULL, pr TEXT, fixed REAL NOT NULL,
   point REAL, value REAL, within INTEGER, step TEXT NOT NULL /* wait, write, written */);
+"#;
+
+/// Commands I answer waits with (LOOP-15): `answer`, `unlock`, `allow`, `drop`, and their `text`.
+const SCHEMA_4: &str = r#"
+CREATE TABLE commands_new (id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL CHECK (name IN ('approve','retry_fresh','release','pause','resume','trust','answer','unlock','drop')),
+  arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
+  update_id INTEGER, created REAL NOT NULL, applied_at REAL, result TEXT);
+INSERT INTO commands_new (id, name, arg, source, update_id, created, applied_at, result)
+  SELECT id, name, arg, source, update_id, created, applied_at, result FROM commands;
+DROP TABLE commands;
+ALTER TABLE commands_new RENAME TO commands;
+"#;
+
+/// `allow` (PIP-24's network for an intent's worker).
+const SCHEMA_5: &str = r#"
+CREATE TABLE commands_new (id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL CHECK (name IN ('approve','retry_fresh','release','pause','resume','trust','answer','unlock','allow','drop')),
+  arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
+  update_id INTEGER, created REAL NOT NULL, applied_at REAL, result TEXT);
+INSERT INTO commands_new (id, name, arg, text, source, update_id, created, applied_at, result)
+  SELECT id, name, arg, text, source, update_id, created, applied_at, result FROM commands;
+DROP TABLE commands;
+ALTER TABLE commands_new RENAME TO commands;
 "#;
 
 /// An open `towercab.db`.
@@ -236,6 +260,8 @@ pub struct CommandRow {
     pub id: i64,
     pub name: String,
     pub arg: String,
+    /// `answer`'s text, `unlock`'s globs (one per line); else empty.
+    pub text: String,
     pub source: String,
     /// The Telegram update it came from (its reply goes to the outbox under this `n`).
     pub update_id: Option<i64>,
@@ -250,6 +276,7 @@ impl CommandRow {
             id: r.get("id")?,
             name: r.get("name")?,
             arg: r.get("arg")?,
+            text: r.get("text")?,
             source: r.get("source")?,
             update_id: r.get("update_id")?,
             created: r.get("created")?,

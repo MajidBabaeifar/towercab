@@ -1,7 +1,7 @@
 {
   "name": "towercab",
   "url": "https://github.com/MajidBabaeifar/towercab",
-  "description": "Majid's software factory: builds intents into PRs, merges, deploys and reverts as towercab[bot].",
+  "description": "Orchestrator for Claude Code: builds the owner's intents into PRs, merges, deploys and reverts as towercab[bot].",
   "public": false,
   "hook_attributes": {
     "url": "https://github.com/MajidBabaeifar/towercab",

@@ -185,6 +185,9 @@ pub fn start(cx: &Ctx<'_>, m: &Mission, st: Start) -> Result<Progress, StepError
         // The setup and the run set (REPO-9): with CI and a ```fast block, only those commands.
         run.setup_checks = repo.verifying.allowed(super::has_ci(cx, &m));
         run.bash = cx.repo(&m).map_err(StepError::Bug)?.bash.clone();
+        if m.intent.is_some() {
+            run.network = super::intent(cx, &m)?.network().to_vec();
+        }
     }
     let f = run.files();
     let asked = asked_of(&f.prompt);

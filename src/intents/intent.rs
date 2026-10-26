@@ -116,7 +116,7 @@ fn kind(key: &str) -> Option<Kind> {
         "u" | "i" | "a" => Kind::Score,
         "model" | "review" | "source" | "waiting" | "pr" | "retry" | "lower_why" => Kind::Str,
         "after" => Kind::After,
-        "unlock" => Kind::List,
+        "unlock" | "network" => Kind::List,
         "started" | "finished" | "reviewed" => Kind::Time,
         "stage" => Kind::Stage,
         "cost" => Kind::Float,
@@ -523,6 +523,10 @@ impl Intent {
     }
     pub fn unlock(&self) -> &[String] {
         self.list("unlock")
+    }
+    /// Domains its worker runs may reach (PIP-24, `towercab allow`).
+    pub fn network(&self) -> &[String] {
+        self.list("network")
     }
     pub fn model(&self) -> Option<&str> {
         self.str("model")

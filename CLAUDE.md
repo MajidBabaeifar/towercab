@@ -1,12 +1,12 @@
 # Towercab
 
-Majid's software factory: intents in the `intents` repo → Claude Code builds them → PRs.
+The owner's software factory: intents in the `intents` repo → Claude Code builds them → PRs.
 One Rust crate at the root; the Python version lives on branch `python`.
 
 ## Commands
 
 - `cargo test --locked`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo fmt`
-  (a machine with a zig `cc`: `export CRATE_CC_NO_DEFAULTS=1` first)
+  (a zig `cc`: `CRATE_CC_NO_DEFAULTS=1`; Towercab's workers get it from `[agent].env`, never prefix `export`)
 - `cargo run -- add "towercab: <title>" u3 i4` · `migrate` · `review` · `--home /tmp/tc run [--watch]` · `status` · `doctor`
 - Before pushing run the `fast` checks below and `cargo test --locked --test <file>` for the tests you touched; CI runs the full suite.
 

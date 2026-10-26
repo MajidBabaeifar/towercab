@@ -836,6 +836,9 @@ pub fn continue_to(waiting: &Waiting, from: Stage) -> Next {
     match waiting {
         Waiting::ApproveSpec => Next::Go(Stage::Plan),
         Waiting::ApprovePlan => Next::Go(Stage::Build),
+        // I accept the change without a proving test (PIP-30): on to publish; CI and the review
+        // still run. An answer sends the worker back instead (`commands`).
+        Waiting::TestsDontProve => Next::Go(Stage::Publish),
         Waiting::ReviewAndMergePr => Next::Go(Stage::Gate),
         Waiting::AuthorizeRelease => Next::Go(Stage::Release),
         // Kept: merged and live, no rebuild (PIP-20, PIP-34).
@@ -852,7 +855,6 @@ pub fn continue_to(waiting: &Waiting, from: Stage) -> Next {
         Waiting::AnswerTheQuestion
         | Waiting::CiRed
         | Waiting::ChecksRed
-        | Waiting::TestsDontProve
         | Waiting::WorkerTimeout
         | Waiting::WorkerBudget
         | Waiting::NoResult

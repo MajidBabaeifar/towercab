@@ -94,6 +94,8 @@ pub struct Snapshot {
     /// The open faults while `env_blocked` (LOOP-10), else empty.
     pub env_blocked: Vec<FaultRow>,
     pub active: Vec<Active>,
+    /// Missions queued behind an older one of their repo (LOOP-4): (it, its stage, the one ahead).
+    pub queued: Vec<(Item, Stage, String)>,
     pub on_me: Vec<OnMe>,
     pub on_ci: Vec<OnCi>,
     pub cooling: Vec<Cooldown>,
@@ -160,6 +162,26 @@ impl Snapshot {
                 stage: m.stage,
                 model: m.child_model.clone(),
                 since: m.child_since.unwrap_or(m.updated),
+            })
+            .collect();
+        let behind = pick::behind(&missions, config);
+        let queued = missions
+            .iter()
+            .filter(|m| behind.contains(&m.id))
+            .map(|m| {
+                let ahead = missions
+                    .iter()
+                    .filter(|a| {
+                        a.repo == m.repo
+                            && a.id < m.id
+                            && a.kind == machine::Kind::Intent
+                            && a.merge_sha.is_none()
+                            && !behind.contains(&a.id)
+                    })
+                    .map(Mission::label)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                (Item::mission(m, listing), m.stage, ahead)
             })
             .collect();
         let mut on_me: Vec<OnMe> = missions
@@ -235,6 +257,7 @@ impl Snapshot {
             paused: machine::paused(conn)?,
             env_blocked,
             active,
+            queued,
             on_me,
             on_ci,
             cooling: limits::cooling(db, now)?,
@@ -273,6 +296,12 @@ pub fn render(s: &Snapshot) -> String {
             a.stage,
             a.model.as_deref().map_or("-".to_string(), shown),
             time(a.since)
+        ));
+    }
+    for (item, stage, ahead) in &s.queued {
+        out.push(format!(
+            "queued: {} · {stage} · behind {ahead}",
+            item.line()
         ));
     }
     if !s.on_me.is_empty() {

@@ -108,8 +108,8 @@ fn test_pick_while_others_wait() {
 
 #[test]
 fn test_repo_slot() {
-    // workers 1: a second intent in the repo waits while one is unfinished; blocked doesn't
-    // count, approval:* does.
+    // workers 1: a second intent in the repo waits while one is unfinished, blocked and
+    // approval:* included (LOOP-4: one after another).
     let mut w = World::new(
         &[
             intent_file("261001-0900-a", "web", "u: 5\ni: 5\n", "A"),
@@ -147,7 +147,7 @@ fn test_repo_slot() {
             .collect::<Vec<_>>(),
         [format!("{B} repo web full (1/1)")]
     );
-    // I approve; A asks a question (blocked): B runs.
+    // I approve; A asks a question (blocked): B still waits.
     w.intents.push_mine(
         &[(
             "intents/261001-0900-a/intent.md",
@@ -160,8 +160,15 @@ fn test_repo_slot() {
         "approve",
     );
     w.until(&mut lp, 6, |w| w.stage(A) == Some(Stage::Blocked));
-    w.until(&mut lp, 4, |w| !w.missions(B).is_empty());
-    assert_eq!(w.stage(A), Some(Stage::Blocked));
+    for _ in 0..3 {
+        w.pass(&mut lp);
+    }
+    assert!(w.missions(B).is_empty(), "blocked holds web's one worker");
+    // A is removed (stopped): B runs.
+    w.intents
+        .push_mine(&[("intents/261001-0900-a/intent.md", None)], "remove");
+    w.until(&mut lp, 6, |w| !w.missions(B).is_empty());
+    assert_eq!(w.stage(A), Some(Stage::Stopped));
     lp.shutdown().unwrap();
     drop(lp);
 
@@ -185,6 +192,46 @@ fn test_repo_slot() {
         w.stage(A) == Some(Stage::ApprovalSpec) && w.stage(B) == Some(Stage::ApprovalSpec)
     });
     assert!(lp.pick_state(w.clock).unwrap().full.contains_key("web"));
+    lp.shutdown().unwrap();
+    drop(lp);
+
+    // Back to workers 1 with both unfinished: the older (A) steps, B is queued behind it and
+    // doesn't step, not even after I approve it, until A ends.
+    w.repo_mut("web").workers = 1;
+    let mut h = Handlers::stubs();
+    h.set(Stage::Pick, Box::new(Pick));
+    h.set(
+        Stage::Plan,
+        Scripted::by(Act::Ok, &[(A, Act::Wait(Waiting::AnswerTheQuestion))]),
+    );
+    let mut lp = w.open(h);
+    let approve = |dir: &str, title: &str| {
+        (
+            format!("intents/{dir}/intent.md"),
+            common::intent_md("web", "u: 5\ni: 5\nstage: design\n", title),
+        )
+    };
+    let (a, b) = (approve("261001-0900-a", "A"), approve("261001-0901-b", "B"));
+    w.intents.push_mine(
+        &[
+            (a.0.as_str(), Some(a.1.as_str())),
+            (b.0.as_str(), Some(b.1.as_str())),
+        ],
+        "approve both",
+    );
+    w.until(&mut lp, 8, |w| w.stage(A) == Some(Stage::Blocked));
+    for _ in 0..3 {
+        w.pass(&mut lp);
+    }
+    assert_eq!(w.stage(B), Some(Stage::Plan), "B queued at its first stage");
+    let status = lp.status_text(w.clock).unwrap();
+    assert!(
+        status.contains(&format!("queued: {B} web: B · plan · behind {A}")),
+        "{status}"
+    );
+    w.intents
+        .push_mine(&[("intents/261001-0900-a/intent.md", None)], "remove");
+    w.until(&mut lp, 6, |w| w.stage(B) != Some(Stage::Plan));
     lp.shutdown().unwrap();
 }
 
@@ -247,5 +294,38 @@ fn test_one_mission_per_intent() {
     // Once finished, a new attempt may start.
     let next = mission::insert(db.conn(), &again, w.clock).unwrap();
     assert_eq!(next.attempt, 2);
+    lp.shutdown().unwrap();
+}
+
+#[test]
+fn test_command_sees_new_intent() {
+    // `towercab add` writes the loop's checkout; an `unlock` for it right after is applied on
+    // the next pass, not refused until the intents poll.
+    let mut w = World::new(&[], &["web"]);
+    let mut lp = w.open(Handlers::picks_off());
+    w.pass(&mut lp);
+    let i = w
+        .intents
+        .store()
+        .add(towercab::intents::NewIntent {
+            repo: "web".into(),
+            title: "New".into(),
+            u: Some(2),
+            i: Some(2),
+            a: None,
+            source: "me".into(),
+            created: w.clock.wall,
+        })
+        .unwrap();
+    let cmd = towercab::commands::Cmd::Unlock(i.id.clone(), vec!["CLAUDE.md".into()]);
+    let row = towercab::commands::queue(&w.db(), &cmd, "cli").unwrap();
+    w.pass(&mut lp);
+    assert_eq!(
+        towercab::commands::get(&w.db(), row)
+            .unwrap()
+            .result
+            .as_deref(),
+        Some(format!("unlocked CLAUDE.md for {}", i.id).as_str())
+    );
     lp.shutdown().unwrap();
 }

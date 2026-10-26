@@ -67,6 +67,10 @@ pub struct AgentConfig {
     /// restrict user namespaces (Ubuntu ≥ 24.04); Docker's and the session's sockets stay
     /// hidden (PIP-24). Default off.
     pub sandbox_unix_sockets: bool,
+    /// Extra variables for every Claude run and sandboxed command (e.g.
+    /// `CRATE_CC_NO_DEFAULTS = "1"` for a zig `cc`); names `[A-Z_][A-Z0-9_]*`, not the
+    /// ones Towercab sets.
+    pub env: Vec<(String, String)>,
 }
 
 impl Default for AgentConfig {
@@ -91,6 +95,7 @@ impl Default for AgentConfig {
                 .map(|d| expand(d).unwrap_or_else(|_| PathBuf::from(d)))
                 .collect(),
             sandbox_unix_sockets: false,
+            env: Vec::new(),
         }
     }
 }
@@ -458,6 +463,41 @@ fn agent(s: &Section) -> Result<AgentConfig, String> {
             None => false,
             Some(toml::Value::Boolean(b)) => *b,
             Some(_) => return Err(s.must("sandbox_unix_sockets", "true or false")),
+        },
+        env: match s.get("env") {
+            None => Vec::new(),
+            Some(toml::Value::Table(t)) => {
+                let reserved = [
+                    "HOME",
+                    "PATH",
+                    "LANG",
+                    "TMPDIR",
+                    "XDG_CACHE_HOME",
+                    "CARGO_HOME",
+                ];
+                let name_ok = |k: &str| {
+                    k.chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_uppercase() || c == '_')
+                        && k.chars()
+                            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+                        && !reserved.contains(&k)
+                };
+                let mut v = Vec::new();
+                for (k, val) in t {
+                    match val {
+                        toml::Value::String(x) if name_ok(k) => v.push((k.clone(), x.clone())),
+                        _ => {
+                            return Err(s.must(
+                                "env",
+                                "a table of NAME = \"value\" strings (not HOME, PATH, LANG, TMPDIR, XDG_CACHE_HOME, CARGO_HOME)",
+                            ));
+                        }
+                    }
+                }
+                v
+            }
+            Some(_) => return Err(s.must("env", "a table of NAME = \"value\" strings")),
         },
     })
 }

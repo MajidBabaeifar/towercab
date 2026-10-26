@@ -1,4 +1,4 @@
-An end-to-end test went red twice right after Majid merged a pull request. Classify the merged change, read-only: you change nothing, you judge.
+An end-to-end test went red twice right after the owner merged a pull request. Classify the merged change, read-only: you change nothing, you judge.
 
 The merged diff: run `{{diff_cmd}}` in this checkout (the merge commit); read the code around it as you need.
 

@@ -323,6 +323,7 @@ fn test_continue_to() {
             "review and merge PR" => Next::Go(Stage::Gate),
             "authorize release" => Next::Go(Stage::Release),
             "e2e red after your merge (two-way)" | "production e2e red" => Next::Go(Stage::Done),
+            "tests don't prove the change" => Next::Go(Stage::Publish),
             "deploy not seen"
             | "revert failed"
             | "add CLAUDE.md verifying block"
