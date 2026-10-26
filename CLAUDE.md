@@ -1,15 +1,14 @@
 # Towercab
 
 The owner's software factory: intents in the `intents` repo → Claude Code builds them → reviewed PRs.
-TypeScript on Node ≥ 22.18, run straight from this checkout (no build step for the program).
-v1 (Rust) lives on branch `rust`.
+TypeScript on Node ≥ 22.18, run straight from this checkout (no build step). v1 (Rust): branch `rust`.
 
 ## Commands
 
 - `npm run check` = lint (Biome) + typecheck (`tsc`) + all tests (Vitest); `npm run format` fixes style.
 - `npx vitest run tests/<file>` for one file; `npm run test:ui` builds the UI and takes Playwright screenshots.
-- `bin/towercab --home /tmp/tc run --watch` runs a loop on a scratch home; `towercab restart` reloads the service.
-- `npm run dev:ui` serves the UI with hot reload against the running loop.
+- `bin/towercab --home /tmp/tc run --watch`: a scratch loop; `towercab restart` reloads the service;
+  `npm run dev:ui` serves the UI with hot reload against the running loop.
 
 ## Conventions
 
