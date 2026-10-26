@@ -7,7 +7,7 @@ import { removeCheckout } from "./checkout.ts";
 import { applyPending, paused } from "./commands.ts";
 import type { Config } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
-import { Health } from "./faults.ts";
+import { fixFor, Health } from "./faults.ts";
 import { approveRequested, intentEvents, prEvents, releaseRequested } from "./github/events.ts";
 import { type PrState, readPr } from "./github/prs.ts";
 import { type ChildEnd, type Clock, type Ctx, EnvError, type GitHub, type Handlers } from "./handlers.ts";
@@ -216,6 +216,7 @@ export class Loop {
           if (step !== m.step) {
             cols.unclean = 0;
             cols.retries = 0;
+            cols.step_secs = 0;
           }
           let fresh = update(d.db, m.id, cols, this.now);
           if (data)
@@ -309,7 +310,8 @@ export class Loop {
       };
       const h = this.d.handlers[fresh.stage];
       if (!h) continue;
-      await this.drive(fresh, () => h.finish(this.ctx(), fresh, end));
+      // A Claude run that ended without a network or auth failure: Claude is reachable.
+      await this.drive(fresh, () => h.finish(this.ctx(), fresh, end), r.spec.model !== undefined);
     }
   }
 
@@ -522,7 +524,11 @@ export class Loop {
   }
 
   /** Call a handler and act on its progress. */
-  private async drive(m: Mission, call: () => Promise<import("./handlers.ts").Progress>): Promise<void> {
+  private async drive(
+    m: Mission,
+    call: () => Promise<import("./handlers.ts").Progress>,
+    claudeRun = false,
+  ): Promise<void> {
     let p: import("./handlers.ts").Progress;
     try {
       p = await call();
@@ -539,18 +545,24 @@ export class Loop {
     }
     const cur = getMission(this.d.db, m.id) ?? m;
     if ("done" in p) {
-      if (p.done.event !== "env_fail") this.health.ok("claude");
+      // Only a Claude run's end closes a Claude fault: another mission's git step says nothing of it.
+      if (claudeRun && p.done.event !== "env_fail") this.health.ok("claude");
       this.move(cur, p.done);
     } else if ("poll" in p) {
       this.pollAt.set(m.id, this.now + p.poll);
       update(this.d.db, m.id, { busy: 0 }, this.now);
     } else {
-      const spec = p.spawn;
+      let spec = p.spawn;
       if (spec.slot && this.slotsUsed() >= this.d.config.agent.parallel) {
         update(this.d.db, m.id, { busy: 0 }, this.now);
         this.pollAt.set(m.id, this.now + 1);
         return;
       }
+      // The step's budget minus the run time it already spent (a restart or a limit wait in between
+      // never adds to it, LOOP-12).
+      const cur2 = getMission(this.d.db, m.id) ?? m;
+      if (spec.timeoutMs !== undefined)
+        spec = { ...spec, timeoutMs: Math.max(0, spec.timeoutMs - cur2.step_secs * 1000) };
       let handle: ChildHandle;
       try {
         handle = this.d.tools.spawn(spec);
@@ -628,13 +640,15 @@ export class Loop {
 
   pickState(): PickState {
     const { db, config } = this.d;
-    const full = new Map<string, { n: number; workers: number }>();
+    const busy = new Map<string, { n: number; workers: number }>();
     for (const m of unfinished(db)) {
       if (m.merge_sha) continue;
-      const cur = full.get(m.repo) ?? { n: 0, workers: config.repos.get(m.repo)?.workers ?? 1 };
+      const cur = busy.get(m.repo) ?? { n: 0, workers: config.repos.get(m.repo)?.workers ?? 1 };
       cur.n++;
-      full.set(m.repo, cur);
+      busy.set(m.repo, cur);
     }
+    // Only repos at their `workers` are full (LOOP-4).
+    const full = new Map([...busy].filter(([, c]) => c.n >= c.workers));
     const cooling = new Map<string, string>();
     for (const row of db.all<{ key: string }>("SELECT key FROM meta WHERE key LIKE 'cooldown:%'")) {
       const model = row.key.slice("cooldown:".length);
@@ -732,7 +746,7 @@ export class Loop {
       this.d.db.run(
         "INSERT OR IGNORE INTO outbox (key, mission, text, created) VALUES (?, NULL, ?, ?)",
         `health:${n.kind}:${n.since}`,
-        `Towercab can't reach ${n.kind} and has paused new work.\n${n.error}`,
+        `Towercab can't reach ${n.kind} and has paused new work.\n${n.error}\n${fixFor(n.kind)}`,
         this.now,
       );
     }
