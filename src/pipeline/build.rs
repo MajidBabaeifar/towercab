@@ -364,6 +364,11 @@ impl Build {
             }
         };
         if !w.done {
+            // It stopped because a compound command was refused and took that for "no Bash":
+            // told so once, it goes on (the run's only refusals are compound shell lines).
+            if !m.step.contains(":shell") && only_compound_denials(r) {
+                return runs::resume(cx, m, "shell", "shell");
+            }
             let q = w.question.clone().unwrap_or_default();
             // A broken environment isn't a question for me (LOOP-10): a fault with its fix,
             // retried when it clears.
@@ -540,4 +545,24 @@ impl Handler for Build {
             Ended::Ok(r) => self.result(cx, m, &r),
         }
     }
+}
+
+/// A command the worker's allow-list refuses by its form: chained, piped, redirected, a
+/// heredoc or a substitution (the allowed commands run one at a time).
+pub fn compound(cmd: &str) -> bool {
+    ["&&", "||", ";", "|", "\n", "<<", ">", "`", "$("]
+        .iter()
+        .any(|t| cmd.contains(t))
+}
+
+/// Every refusal of the run is a compound Bash command (and there is one).
+pub fn only_compound_denials(r: &claude::ClaudeResult) -> bool {
+    !r.permission_denials.is_empty()
+        && r.permission_denials.iter().all(|d| {
+            d.get("tool_name").and_then(Value::as_str) == Some("Bash")
+                && d.get("tool_input")
+                    .and_then(|i| i.get("command"))
+                    .and_then(Value::as_str)
+                    .is_some_and(compound)
+        })
 }

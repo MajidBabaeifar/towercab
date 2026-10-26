@@ -437,6 +437,22 @@ pub fn retry_result(cx: &Ctx<'_>, m: &Mission, f: Failure) -> Result<Progress, S
     start(cx, &m, st)
 }
 
+/// Resumes the session at step `<step>:<suffix>` with prompt `name` (`prompts/<name>.md`):
+/// one more round of the same run, e.g. after a misread refusal (PIP-24).
+pub fn resume(cx: &Ctx<'_>, m: &Mission, suffix: &str, name: &str) -> Result<Progress, StepError> {
+    let (kind, model, _, eval) = recorded(m)?;
+    let mut st = Start::new(
+        kind,
+        &format!("{}:{suffix}", m.step),
+        &model,
+        prompts::render(name, &[]).map_err(StepError::Bug)?,
+    );
+    st.schema = schema_of(kind);
+    st.session = SessionArg::Resume(m.session.clone());
+    st.eval = eval;
+    start(cx, m, st)
+}
+
 /// The session is gone (LOOP-7): a worker kind gets a new uuid and a `New` run with
 /// `claude::fresh_context` and the step's prompt; others a new `run_session`.
 fn new_session(
