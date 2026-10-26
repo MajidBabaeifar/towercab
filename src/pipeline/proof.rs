@@ -1,6 +1,6 @@
 //! The red→green proof (PIP-30): after a green verify of a behaviour change (`spec_ids` or a
 //! `fix`), the PR's changed test files (from the commit) laid over a checkout of `origin/<base>`
-//! (`work/<id>-<attempt>-proof`) must make the ` ```checks ` red with ` ```setup ` green. Base
+//! (`work/<id>-<attempt>-proof`) must make the run set (REPO-9, as verify's) red with ` ```setup ` green. Base
 //! green, or no test changed → back to the worker as a verify repair; the environment failing
 //! on base (setup red, a timeout, exit 126/127) → rerun once after 60 s, then `waiting: tests
 //! don't prove the change`.

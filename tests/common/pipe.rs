@@ -746,6 +746,37 @@ impl Pipe {
         p
     }
 
+    /// [`Pipe::login`] (a4) whose base also has a ```fast block (PIP-23, REPO-9) and, if `ci`,
+    /// `.github/workflows/ci.yml`. Every command appends to `<root>/ran.log`: the full suite
+    /// `full`, the fast lint `lint <cwd>`; the fast tests (`sh fast.sh {tests}`) run the touched
+    /// test files, and `check.sh` stays the base's (red for a test that needs the change).
+    pub fn login_fast(ci: bool) -> Pipe {
+        let p = Pipe::login("a: 4\n");
+        let root = p.w.root.display().to_string();
+        let claude = format!(
+            "# Web\n\n## Verifying your work\n\n```setup\necho \"$PWD\" >> '{root}/setup.log'\n```\n\n```checks\necho full >> '{root}/ran.log'\nsh check.sh\n```\n\n```fast\necho \"lint $PWD\" >> '{root}/ran.log'\nsh fast.sh {{tests}}\n```\n"
+        );
+        let mut files = vec![
+            ("CLAUDE.md", claude.as_str()),
+            ("fast.sh", "for t in \"$@\"; do sh \"$t\" || exit 1; done\n"),
+            ("check.sh", CHECK_SH),
+        ];
+        if ci {
+            files.push((".github/workflows/ci.yml", "on: push\n"));
+        }
+        p.base("web", &files, "fast");
+        p
+    }
+
+    /// `ran.log`'s lines: the commands of `login_fast` that ran, in order.
+    pub fn ran(&self) -> Vec<String> {
+        fs::read_to_string(self.w.root.join("ran.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
     /// CI answers `checks` (the `statusCheckRollup` JSON) on the branch's head on origin, with
     /// `mergeable` (each read: the head as origin has it now).
     pub fn ci_answers(&self, mergeable: &str, checks: &str) -> &Pipe {

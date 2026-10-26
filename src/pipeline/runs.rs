@@ -182,13 +182,8 @@ pub fn start(cx: &Ctx<'_>, m: &Mission, st: Start) -> Result<Progress, StepError
         let round = super::round(cx.db.conn(), &m)?;
         run.deny_write = guard::write_rules(cx, &m, &repo, round)?;
         run.guard = true;
-        run.setup_checks = repo
-            .verifying
-            .setup
-            .iter()
-            .chain(&repo.verifying.checks)
-            .cloned()
-            .collect();
+        // The setup and the run set (REPO-9): with CI and a ```fast block, only those commands.
+        run.setup_checks = repo.verifying.allowed(super::has_ci(cx, &m));
         run.bash = cx.repo(&m).map_err(StepError::Bug)?.bash.clone();
     }
     let f = run.files();

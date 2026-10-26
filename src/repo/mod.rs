@@ -14,7 +14,7 @@ use std::path::Path;
 pub use protected::Protected;
 pub use review::{Pass, Review};
 pub use towercab::{Deploy, Live, Release, Rollback, Towercab};
-pub use verifying::{Run, Verifying};
+pub use verifying::{Run, Verifying, run_set};
 
 use crate::config::is_branch;
 use crate::intents::git::git_command;
@@ -110,6 +110,25 @@ fn git(clone: &Path, args: &[&str]) -> Result<Vec<u8>, RepoError> {
         }));
     }
     Ok(out.stdout)
+}
+
+/// Whether `origin/<base>` of the local `clone` has a `.github/workflows/*.yml` or `*.yaml`
+/// (REPO-9's `ci`): the base's, never the PR's. Errors as [`load`]'s.
+pub fn has_workflows(clone: &Path, base: &str) -> Result<bool, RepoError> {
+    if !is_branch(base) {
+        return Err(RepoError::Git(format!(
+            "{}: bad base {base:?}",
+            clone.display()
+        )));
+    }
+    let tree = format!("refs/remotes/origin/{base}");
+    let out = git(
+        clone,
+        &["ls-tree", "--name-only", &tree, ".github/workflows/"],
+    )?;
+    Ok(String::from_utf8_lossy(&out)
+        .lines()
+        .any(|l| l.ends_with(".yml") || l.ends_with(".yaml")))
 }
 
 /// The three files from `refs/remotes/origin/<base>` of the local `clone` (never the working
