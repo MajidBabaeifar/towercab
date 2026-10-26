@@ -250,11 +250,14 @@ fn test_idle() {
     db.conn()
         .execute(
             "INSERT INTO missions (repo, stage, step, model, session, checkout, created, updated)
-               VALUES ('web', 'ci', '', 'opus', 's', 'work/c', 0, 0)",
+               VALUES ('api', 'ci', '', 'opus', 's', 'work/c', 0, 0)",
             [],
         )
         .unwrap();
-    assert!(!w.pass(&mut lp).idle, "polling CI is driven");
+    assert!(
+        !w.pass(&mut lp).idle,
+        "polling CI is driven (another repo: not queued behind web's)"
+    );
     lp.shutdown().unwrap();
 
     // Picks off (production handlers) with an intent queued: nothing runnable, idle.

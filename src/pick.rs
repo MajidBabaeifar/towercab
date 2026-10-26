@@ -165,6 +165,31 @@ pub fn orphans(listing: &Listing, unfinished: &[Mission]) -> Vec<String> {
         .collect()
 }
 
+/// LOOP-4: intent missions queued behind others of their repo: past its first `workers`
+/// unmerged ones, oldest first. They don't step until one ahead merges or ends.
+pub fn behind(unfinished: &[Mission], config: &Config) -> BTreeSet<i64> {
+    let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut ms: Vec<&Mission> = unfinished
+        .iter()
+        .filter(|m| m.kind == machine::Kind::Intent && m.merge_sha.is_none())
+        .collect();
+    ms.sort_by_key(|m| m.id);
+    let mut out = BTreeSet::new();
+    for m in ms {
+        let workers = config
+            .repos
+            .get(&m.repo)
+            .and_then(|r| r.as_ref().ok())
+            .map_or(1, |r| usize::from(r.workers));
+        let n = seen.entry(m.repo.as_str()).or_default();
+        *n += 1;
+        if *n > workers {
+            out.insert(m.id);
+        }
+    }
+    out
+}
+
 /// LOOP-5: [PRI-4](priority.md) order over `priority::pick_order` (parked ones never picked; at or above the cutoff
 /// first, then parked); the first intent nothing skips is picked.
 pub fn decide(listing: &Listing, state: &PickState) -> Decision {

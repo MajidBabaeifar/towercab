@@ -193,6 +193,46 @@ fn test_repo_slot() {
     });
     assert!(lp.pick_state(w.clock).unwrap().full.contains_key("web"));
     lp.shutdown().unwrap();
+    drop(lp);
+
+    // Back to workers 1 with both unfinished: the older (A) steps, B is queued behind it and
+    // doesn't step, not even after I approve it, until A ends.
+    w.repo_mut("web").workers = 1;
+    let mut h = Handlers::stubs();
+    h.set(Stage::Pick, Box::new(Pick));
+    h.set(
+        Stage::Plan,
+        Scripted::by(Act::Ok, &[(A, Act::Wait(Waiting::AnswerTheQuestion))]),
+    );
+    let mut lp = w.open(h);
+    let approve = |dir: &str, title: &str| {
+        (
+            format!("intents/{dir}/intent.md"),
+            common::intent_md("web", "u: 5\ni: 5\nstage: design\n", title),
+        )
+    };
+    let (a, b) = (approve("261001-0900-a", "A"), approve("261001-0901-b", "B"));
+    w.intents.push_mine(
+        &[
+            (a.0.as_str(), Some(a.1.as_str())),
+            (b.0.as_str(), Some(b.1.as_str())),
+        ],
+        "approve both",
+    );
+    w.until(&mut lp, 8, |w| w.stage(A) == Some(Stage::Blocked));
+    for _ in 0..3 {
+        w.pass(&mut lp);
+    }
+    assert_eq!(w.stage(B), Some(Stage::Plan), "B queued at its first stage");
+    let status = lp.status_text(w.clock).unwrap();
+    assert!(
+        status.contains(&format!("queued: {B} web: B · plan · behind {A}")),
+        "{status}"
+    );
+    w.intents
+        .push_mine(&[("intents/261001-0900-a/intent.md", None)], "remove");
+    w.until(&mut lp, 6, |w| w.stage(B) != Some(Stage::Plan));
+    lp.shutdown().unwrap();
 }
 
 #[test]

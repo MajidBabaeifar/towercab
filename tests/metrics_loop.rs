@@ -125,6 +125,8 @@ fn test_gauges() {
         seen.lock().unwrap().push(r.body.clone());
         (200, "{}".into())
     });
+    // Two workers: the build isn't queued behind the merge wait (LOOP-4).
+    w.repo_mut("web").workers = 2;
     let mut h = Handlers::stubs();
     h.set(Stage::Build, Box::new(Sleeper));
     let mut lp = w.open(h);

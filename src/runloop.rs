@@ -1155,9 +1155,11 @@ impl Loop {
             return Ok("env_blocked");
         }
         let now = tick.unix();
-        let driven: Vec<Mission> = mission::unfinished(self.db.conn())?
+        let unfinished = mission::unfinished(self.db.conn())?;
+        let behind = pick::behind(&unfinished, &self.config);
+        let driven: Vec<Mission> = unfinished
             .into_iter()
-            .filter(|m| m.stage.driven() && !m.held)
+            .filter(|m| m.stage.driven() && !m.held && !behind.contains(&m.id))
             .collect();
         Ok(
             if active > 0 || driven.iter().any(|m| !self.limit_waiting(m, now)) {
@@ -1433,10 +1435,11 @@ impl Loop {
             return Ok(());
         }
         let mut ms = mission::unfinished(self.db.conn())?;
+        let behind = pick::behind(&ms, &self.config);
         ms.sort_by_key(|m| self.rank(m));
         for m in ms {
             let m = mission::get(self.db.conn(), m.id)?;
-            if !self.targets(&m) || !self.due_now(&m, tick) {
+            if !self.targets(&m) || behind.contains(&m.id) || !self.due_now(&m, tick) {
                 continue;
             }
             self.due.remove(&m.id);
@@ -1566,11 +1569,12 @@ impl Loop {
             return Ok(Some(decision));
         };
         let unfinished = mission::unfinished(self.db.conn())?;
+        let behind = pick::behind(&unfinished, &self.config);
         let ahead = !self.slot_free()
             || !self.queued.is_empty()
             || unfinished
                 .iter()
-                .any(|m| self.targets(m) && self.pending(m, tick));
+                .any(|m| self.targets(m) && !behind.contains(&m.id) && self.pending(m, tick));
         if ahead {
             return Ok(Some(decision));
         }
@@ -1767,8 +1771,14 @@ impl Loop {
         {
             return Ok(false);
         }
-        Ok(mission::unfinished(self.db.conn())?.iter().all(|m| {
-            m.step != ENTER && (!m.stage.driven() || m.held || self.limit_waiting(m, tick.unix()))
+        let unfinished = mission::unfinished(self.db.conn())?;
+        let behind = pick::behind(&unfinished, &self.config);
+        Ok(unfinished.iter().all(|m| {
+            m.step != ENTER
+                && (!m.stage.driven()
+                    || m.held
+                    || behind.contains(&m.id)
+                    || self.limit_waiting(m, tick.unix()))
         }))
     }
 
