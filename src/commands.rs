@@ -372,7 +372,11 @@ fn plan(cx: &CmdCx, cmd: &Cmd, row: &CommandRow) -> Result<Plan, String> {
             match (write("unlock", &add), m) {
                 (Err(e), _) => Plan::Reply(format!("{word}: {e}")),
                 (Ok(()), Some(m)) if m.stage.waits() => on_mission(&m),
-                (Ok(()), _) => Plan::Reply(format!("unlocked {} for {id}", globs.join(", "))),
+                (Ok(()), Some(_)) => Plan::Reply(format!(
+                    "unlocked {} for {id}: from its worker's next run",
+                    globs.join(", ")
+                )),
+                (Ok(()), None) => Plan::Reply(format!("unlocked {} for {id}", globs.join(", "))),
             }
         }
         (Cmd::Allow(_, domains), m) => {
@@ -393,7 +397,11 @@ fn plan(cx: &CmdCx, cmd: &Cmd, row: &CommandRow) -> Result<Plan, String> {
             match (write("allow", &add), m) {
                 (Err(e), _) => Plan::Reply(format!("{word}: {e}")),
                 (Ok(()), Some(m)) if m.stage.waits() => on_mission(&m),
-                (Ok(()), _) => Plan::Reply(format!("allowed {} for {id}", domains.join(", "))),
+                (Ok(()), Some(_)) => Plan::Reply(format!(
+                    "allowed {} for {id}: from its worker's next run",
+                    domains.join(", ")
+                )),
+                (Ok(()), None) => Plan::Reply(format!("allowed {} for {id}", domains.join(", "))),
             }
         }
         (Cmd::Drop(_), _) => {
