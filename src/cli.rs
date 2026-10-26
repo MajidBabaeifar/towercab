@@ -403,7 +403,12 @@ fn ui_cmd(
         return Ok(url);
     }
     let home = Home::resolve(home.as_deref())?;
-    let ctx = std::sync::Arc::new(crate::ui::Ctx::new(config, home, exes.clone(), false));
+    let ctx = std::sync::Arc::new(crate::ui::Ctx::new(
+        config,
+        home.clone(),
+        exes.clone(),
+        false,
+    ));
     let server = crate::ui::serve(ctx, port).map_err(|e| format!("ui: {e}"))?;
     println!("{url} (towercab isn't running: read-only; Ctrl-C to stop)");
     open(&url);
@@ -411,8 +416,19 @@ fn ui_cmd(
     for sig in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
         signal_hook::flag::register(sig, stop.clone()).map_err(|e| e.to_string())?;
     }
+    // Once a loop holds this home, its own UI (with actions) takes the port.
+    let mut checked = std::time::Instant::now();
     while !stop.load(std::sync::atomic::Ordering::SeqCst) {
         std::thread::sleep(Duration::from_millis(200));
+        if checked.elapsed() >= Duration::from_secs(2) {
+            checked = std::time::Instant::now();
+            if let Some(pid) = home.holder() {
+                server.stop();
+                return Ok(format!(
+                    "towercab is running (pid {pid}): its UI takes over {url}"
+                ));
+            }
+        }
     }
     server.stop();
     Ok(String::new())

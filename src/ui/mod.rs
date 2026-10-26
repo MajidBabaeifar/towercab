@@ -140,13 +140,15 @@ pub fn serve(ctx: Arc<Ctx>, port: u16) -> Result<Server, String> {
 pub struct Running(Option<Server>);
 
 impl Running {
-    /// `127.0.0.1:<[ui] port>` with actions on; a bind failure is logged, `None`.
-    pub fn start(config: &Config, home: &Home, exes: &Exes) -> Option<Running> {
+    /// `127.0.0.1:<[ui] port>` with actions on; a bind failure is logged when `log`, `None`.
+    pub fn start(config: &Config, home: &Home, exes: &Exes, log: bool) -> Option<Running> {
         let ctx = Arc::new(Ctx::new(config.clone(), home.clone(), exes.clone(), true));
         match serve(ctx, config.ui.port) {
             Ok(s) => Some(Running(Some(s))),
             Err(e) => {
-                eprintln!("towercab: ui: {e}");
+                if log {
+                    eprintln!("towercab: ui: {e} (retried every 30 s)");
+                }
                 None
             }
         }

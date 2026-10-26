@@ -1809,11 +1809,21 @@ impl Loop {
         }
         let mut wake = self.signals().map_err(|e| format!("signals: {e}"))?;
         // The web UI (UI-1): the service's own, on its own threads; stopped when this returns.
-        let _ui = (self.opts.watch && self.config.ui.port != 0)
-            .then(|| crate::ui::Running::start(&self.config, &self.home, &self.exes))
+        // A port held (a read-only `towercab ui` from while I was down) is retried every 30 s.
+        let serve_ui = self.opts.watch && self.config.ui.port != 0;
+        let mut ui = serve_ui
+            .then(|| crate::ui::Running::start(&self.config, &self.home, &self.exes, true))
             .flatten();
+        let mut ui_tried = Instant::now();
         let mut next = Instant::now();
         loop {
+            if serve_ui && ui.is_none() && ui_tried.elapsed() >= Duration::from_secs(30) {
+                ui = crate::ui::Running::start(&self.config, &self.home, &self.exes, false);
+                ui_tried = Instant::now();
+                if ui.is_some() {
+                    crate::tlog!("towercab: ui: serving on port {} now", self.config.ui.port);
+                }
+            }
             match self.pass(Tick::now()) {
                 Ok(r) if r.stop => break,
                 Ok(PassReport {
