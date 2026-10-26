@@ -238,6 +238,7 @@ export class Loop {
     }
     this.last = nowPoint;
     db.setMeta("last_pass", String(Math.floor(this.now)));
+    db.setMeta("health", JSON.stringify(this.health.open()));
 
     // Commands from the CLI and the UI.
     for (const c of await applyPending({
