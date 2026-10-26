@@ -82,10 +82,11 @@ Follow the repo's `specs/README.md`. Each requirement is a `### <ID> · <name>` 
 plain sentence that a person who never saw the code can follow, then the technical detail as short
 bullets, then how it is verified:
 
-```markdown
+```text
 ### PRI-3 · Priority score
 
 An intent's priority is twice its importance plus its urgency.
+
 - `priority(u, i) = 2 * i + u`, 3–15; missing scores count as 3.
 - Verified by: `priority: score is 2i + u`
 ```
