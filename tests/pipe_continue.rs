@@ -848,3 +848,50 @@ fn test_continue_resets_caps() {
     let m = p.mission(ID);
     assert_eq!((m.sync_rounds, m.verify_repairs, m.ci_repairs), (0, 0, 0));
 }
+
+#[test]
+fn test_compound_refusal_resumes() {
+    // The worker stops, saying Bash is denied, when only a compound line was refused: Towercab
+    // tells it so once and it goes on; it doesn't wait on me.
+    let mut p = pipe("a: 4\n");
+    designs(&p, 1, "| WEB-1 | log in | test_login |\n", &["WEB-1"]);
+    let mut refused: serde_json::Value = serde_json::from_str(
+        FakeClaude::result(common::pipe::blocked(
+            "Bash is denied; can you run the checks?",
+        ))
+        .trim(),
+    )
+    .unwrap();
+    refused["permission_denials"] = json!([{"tool_name": "Bash", "tool_use_id": "t",
+        "tool_input": {"command": "cat >> tests/x.rs <<'EOF'\nfn x() {}\nEOF\ncargo test"}}]);
+    p.claude
+        .answer(2, &plan())
+        .answer(3, &format!("{refused}\n"))
+        .script(
+            4,
+            &common::pipe::writes("src/login.rs", "pub fn login() {}\n"),
+        )
+        .answer(4, &FakeClaude::result(common::pipe::done("Adds login.")));
+    p.gh.on("pr list *", &[("[]", "", 0)])
+        .on(
+            "pr create *",
+            &[("https://github.com/me/web/pull/7\n", "", 0)],
+        )
+        .on("api -X PATCH *", &[("{}", "", 0)])
+        .on("api --paginate *", &[("[]", "", 0)]);
+    p.step_to(ID, Stage::Verify, 8);
+    assert!(
+        p.claude
+            .stdin(4)
+            .starts_with("Only your compound shell command was refused"),
+        "{}",
+        p.claude.stdin(4)
+    );
+    assert_eq!(p.claude.flag(4, "--resume"), Some(p.mission(ID).session));
+    assert!(p.mission(ID).waiting.is_none());
+    // A plain command refused is a real question: it waits on me.
+    assert!(towercab::pipeline::build::compound("a && b"));
+    assert!(!towercab::pipeline::build::compound(
+        "cargo test --locked --test login"
+    ));
+}
