@@ -27,7 +27,11 @@ use crate::service;
 use crate::status::{self, Snapshot};
 
 #[derive(Parser, Debug)]
-#[command(name = "towercab", version, about = "Majid's software factory")]
+#[command(
+    name = "towercab",
+    version,
+    about = "Orchestrator for Claude Code: intents in, reviewed PRs out"
+)]
 struct Args {
     /// Config file (default: $TOWERCAB_CONFIG, else ~/.config/towercab/config.toml)
     #[arg(long, global = true, value_name = "FILE")]

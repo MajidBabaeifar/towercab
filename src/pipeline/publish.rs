@@ -283,7 +283,7 @@ impl Handler for Publish {
                     if let Err(paths) = check_diff(cx, &m, r, &repo_files)? {
                         let why = format!("changed: {paths}");
                         let note = format!(
-                            "Publish refused: {why}. These paths go through Majid: revert them on the branch, or unlock them in intent.md, then remove `waiting`."
+                            "Publish refused: {why}. These paths go through the owner: revert them on the branch, or unlock them in intent.md, then remove `waiting`."
                         );
                         return wait_note(cx, &m, Waiting::ProtectedPathChanged, &why, &note);
                     }
