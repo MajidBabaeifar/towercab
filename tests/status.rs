@@ -100,8 +100,8 @@ fn test_status() {
         Some("261001-0901"),
         "web",
         "e2e",
-        ", child_pid, child_kind, child_since, model",
-        &format!(", 4243, 'e2e', {yesterday}, 'sonnet'"),
+        ", child_pid, child_kind, child_since, model, merge_sha",
+        &format!(", 4243, 'e2e', {yesterday}, 'sonnet', 'abc'"),
     );
     mission(
         Some("261001-0902"),
@@ -116,8 +116,8 @@ fn test_status() {
         Some("261001-0905"),
         "web",
         "blocked",
-        ", waiting",
-        ", 'e2e red after your merge (two-way)'",
+        ", waiting, merge_sha",
+        ", 'e2e red after your merge (two-way)', 'def'",
     );
     mission(Some("261001-0909"), "web", "done", "", "");
     for (m, when) in [(ci, "12:00"), (rehearsal, "11:00")] {
@@ -193,6 +193,7 @@ fn test_status() {
             "towercab {V} · running (pid 777) · paused · env blocked
 active: 261001-0900 web: Alpha · review · fable · since 13:05
 active: 261001-0901 web: Echo · e2e · - · since 2026-10-14 09:00
+queued: 261001-0903 api: Delta · ci · behind 261001-0902
 waiting on you:
 - 261001-0902 api: Bravo · approve spec: approve 261001-0902 · https://github.com/me/api/pull/3
 - 261001-0905 web: Mike · e2e red after your merge (two-way): approve 261001-0905 to keep it, or retry --fresh 261001-0905 to fix forward

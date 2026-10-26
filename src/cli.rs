@@ -78,6 +78,26 @@ enum Command {
     },
     /// Go on with an intent waiting on you
     Approve { id: String },
+    /// Answer an intent waiting on you, and go on (the worker gets the answer)
+    Answer {
+        id: String,
+        #[arg(required = true, num_args = 1..)]
+        text: Vec<String>,
+    },
+    /// Let an intent's worker change protected paths (globs), and go on if it waits
+    Unlock {
+        id: String,
+        #[arg(required = true, num_args = 1..)]
+        globs: Vec<String>,
+    },
+    /// Let an intent's worker reach network domains (e.g. registry.npmjs.org), and go on if it waits
+    Allow {
+        id: String,
+        #[arg(required = true, num_args = 1..)]
+        domains: Vec<String>,
+    },
+    /// Drop an intent: its mission stops, its folder moves to done/
+    Drop { id: String },
     /// Start an intent over as a new attempt
     Retry {
         #[arg(long, required = true)]
@@ -236,6 +256,14 @@ where
             }
         }
         Command::Approve { id } => command(&args.config, &args.home, Cmd::Approve(id)),
+        Command::Answer { id, text } => {
+            command(&args.config, &args.home, Cmd::Answer(id, text.join(" ")))
+        }
+        Command::Unlock { id, globs } => command(&args.config, &args.home, Cmd::Unlock(id, globs)),
+        Command::Allow { id, domains } => {
+            command(&args.config, &args.home, Cmd::Allow(id, domains))
+        }
+        Command::Drop { id } => command(&args.config, &args.home, Cmd::Drop(id)),
         Command::Retry { fresh: _, id } => command(&args.config, &args.home, Cmd::RetryFresh(id)),
         Command::Release { id } => command(&args.config, &args.home, Cmd::Release(id)),
         Command::Pause => command(&args.config, &args.home, Cmd::Pause),

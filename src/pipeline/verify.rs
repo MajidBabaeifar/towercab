@@ -289,6 +289,13 @@ pub fn repair_or_wait(
     findings: &str,
     log: &Path,
 ) -> Result<Progress, StepError> {
+    // A missing program or a broken sandbox isn't the worker's to repair (LOOP-10).
+    if let Ok(text) = std::fs::read(log) {
+        let tail = &text[text.len().saturating_sub(16 << 10)..];
+        if let Some((fault, line)) = crate::env::classify_run(&String::from_utf8_lossy(tail)) {
+            return Ok(Progress::Done(Outcome::env(fault, line)));
+        }
+    }
     let why = crate::outbox::cut(&crate::outbox::one_line(why), 300);
     if m.verify_repairs >= 3 {
         let m = cx.record(m, &m.step, &[("data", data.text().into())])?;

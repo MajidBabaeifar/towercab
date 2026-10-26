@@ -330,7 +330,7 @@ fn test_env_blocked_once() {
             "env_blocked".to_string(),
             episode.clone(),
             "env blocked: sandbox: bwrap --version: bwrap: setting up uid map: Permission denied\n\
-             fix: check bwrap (unprivileged user namespaces)"
+             fix: the sandbox can't start: on Ubuntu set [agent] sandbox_unix_sockets = true (towercab doctor), else check bwrap"
                 .replace("bwrap --version", &format!("{} --version", bwrap.display()))
         )]
     );

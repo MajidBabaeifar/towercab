@@ -402,3 +402,122 @@ fn test_recently_finished() {
     assert!(page.contains("Recently finished"), "{page}");
     server.stop();
 }
+
+#[test]
+fn test_wait_inputs_and_context() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ctx, _fake, server, home, mid) = start(tmp.path());
+    let lock = home.lock().unwrap();
+    let port = server.port;
+    // approve spec, no PR: said so; the inputs.
+    let (_, page) = get(port, "/");
+    for want in [
+        "No spec change, so no PR",
+        "data-cmd=\"answer\"",
+        "id=\"ans-261025-0901\"",
+        "data-cmd=\"unlock\"",
+        "data-cmd=\"allow\"",
+        "data-cmd=\"drop\"",
+        "data-cmd=\"approve\"",
+    ] {
+        assert!(page.contains(want), "{want}: {page}");
+    }
+    // approve plan: plan.md shown next to the button; blocked paths prefill the unlock field.
+    let db = Db::open(&home.db()).unwrap();
+    db.conn()
+        .execute(
+            "UPDATE missions SET stage = 'blocked', waiting = 'approve plan', why = 'a3', \
+             checkout = 'work/261025-0901-1' WHERE id = ?1",
+            [mid],
+        )
+        .unwrap();
+    let runs = home.runs("261025-0901");
+    std::fs::create_dir_all(&runs).unwrap();
+    std::fs::write(
+        runs.join("guard-blocks.jsonl"),
+        format!(
+            "{{\"path\":\"{}/work/261025-0901-1/.github/workflows/ci.yml\",\"kind\":\"protected\"}}\n",
+            home.root.display()
+        ),
+    )
+    .unwrap();
+    let (_, page) = get(port, "/");
+    assert!(page.contains("<summary>plan.md</summary>"), "{page}");
+    assert!(
+        page.contains("value=\".github/workflows/ci.yml\""),
+        "{page}"
+    );
+    // The same on the mission and intent pages.
+    for path in [format!("/m/{mid}"), "/i/261025-0901".to_string()] {
+        let (_, p) = get(port, &path);
+        assert!(
+            p.contains("waiting on you: approve plan") && p.contains("data-cmd=\"answer\""),
+            "{path}: {p}"
+        );
+    }
+    // The inputs post as commands.
+    let send = |body: &str| {
+        http(
+            port,
+            &format!(
+                "POST /api/cmd HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\n\
+                 X-Towercab-Token: {}\r\nContent-Length: {}\r\n\r\n{body}",
+                ctx.token,
+                body.len()
+            ),
+        )
+        .0
+    };
+    assert_eq!(
+        send(r#"{"cmd":"answer","arg":"261025-0901","text":"Use GitHub."}"#),
+        200
+    );
+    assert_eq!(
+        send(r#"{"cmd":"unlock","arg":"261025-0901","text":".github/workflows/** CLAUDE.md"}"#),
+        200
+    );
+    assert_eq!(
+        send(r#"{"cmd":"allow","arg":"261025-0901","text":"registry.npmjs.org"}"#),
+        200
+    );
+    assert_eq!(send(r#"{"cmd":"drop","arg":"261025-0902"}"#), 200);
+    assert_eq!(
+        send(r#"{"cmd":"allow","arg":"261025-0901","text":"https://evil.example/x"}"#),
+        400
+    );
+    assert_eq!(
+        send(r#"{"cmd":"answer","arg":"261025-0901","text":"  "}"#),
+        400
+    );
+    assert_eq!(
+        send(r#"{"cmd":"unlock","arg":"261025-0901","text":"../secrets"}"#),
+        400
+    );
+    let rows: Vec<(String, String, String)> = db
+        .conn()
+        .prepare("SELECT name, arg, text FROM commands ORDER BY id")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            ("answer".into(), "261025-0901".into(), "Use GitHub.".into()),
+            (
+                "unlock".into(),
+                "261025-0901".into(),
+                ".github/workflows/**\nCLAUDE.md".into()
+            ),
+            (
+                "allow".into(),
+                "261025-0901".into(),
+                "registry.npmjs.org".into()
+            ),
+            ("drop".into(), "261025-0902".into(), String::new()),
+        ]
+    );
+    drop(lock);
+    server.stop();
+}
