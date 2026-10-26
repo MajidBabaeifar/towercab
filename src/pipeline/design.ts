@@ -140,7 +140,7 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
 async function pushSpec(cx: Ctx, m: Mission): Promise<Progress> {
   const specBranch = `${m.branch}-spec`;
   const head = await pushBranch(cx, m, m.branch, specBranch);
-  return openPr(cx, cx.record(m, "pr", { head }, { specBranch }));
+  return openPr(cx, cx.record(m, "pr", { head, pushed_at: cx.clock.now() }, { specBranch }));
 }
 
 /** The design may edit only specs/ (PIP-25): anything else it left in the checkout is discarded. */
@@ -221,7 +221,7 @@ async function gateStep(cx: Ctx, m: Mission): Promise<Progress> {
       : undefined;
     return { done: wait("approve spec", why) };
   }
-  return specCi(cx, cx.record(m, "spec_ci", { pushed_at: m.pushed_at ?? cx.clock.now() }));
+  return specCi(cx, cx.record(m, "spec_ci"));
 }
 
 /** PIP-50: Towercab merges the spec PR once its CI is green or absent. */
@@ -231,8 +231,19 @@ async function specCi(cx: Ctx, m: Mission): Promise<Progress> {
   const s = await ciState(cx, repo.github, m.spec_pr!, m.head, pushedAt);
   if (s.kind === "pending") return { poll: cx.config.agent.ciPoll };
   if (s.kind === "red" || s.kind === "cancel") return { done: wait("approve spec", "CI red on the spec PR") };
+  if (s.kind === "moved") return { done: wait("approve spec", "someone else pushed to the spec PR") };
+  if (s.kind === "conflict") return { done: wait("approve spec", "the spec PR conflicts with its base") };
   try {
-    await gh(cx, repo.github, ["pr", "merge", String(m.spec_pr), "-R", repo.github, "--squash"]);
+    await gh(cx, repo.github, [
+      "pr",
+      "merge",
+      String(m.spec_pr),
+      "-R",
+      repo.github,
+      "--squash",
+      "--match-head-commit",
+      m.head!,
+    ]);
   } catch (e) {
     throw asEnv(e);
   }

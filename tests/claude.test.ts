@@ -75,9 +75,30 @@ const DENY = [
   "Read(~/.claude/.credentials.json)",
   "Read(~/.netrc)",
   "Read(~/.git-credentials)",
+  "Read(~/.config/sops/**)",
+  "Read(~/.config/restic/**)",
+  "Read(~/.config/age/**)",
+  "Read(~/.password-store/**)",
+  "Read(~/.docker/**)",
+  "Read(~/.kube/**)",
+  "Read(~/.npmrc)",
+  "Read(~/.pypirc)",
+  "Read(~/.cargo/credentials)",
+  "Read(~/.cargo/credentials.toml)",
+  "Read(~/.config/rclone/**)",
   // Towercab's own config and App key, wherever --config put them.
   "Read(//cfg/config.toml)",
   "Read(//cfg/app.pem)",
+  // Towercab's home outside this mission: clones, intents, plans, the database and log.
+  ...[
+    "repos",
+    "intents",
+    "plans",
+    "towercab.db",
+    "towercab.db-wal",
+    "towercab.db-shm",
+    "towercab.log",
+  ].flatMap((f) => [`Read(/h/${f})`, `Read(/h/${f}/**)`]),
 ];
 
 test("claude: worker argv", () => {
@@ -197,10 +218,11 @@ test("claude: review argv", () => {
     U,
   ]);
   const root = tempDir();
-  const spec = prepareRun({ ...r, runsDir: join(root, "runs"), cwd: root }, O);
+  const cwd = join(root, "work", "261001-0900-1");
+  const spec = prepareRun({ ...r, runsDir: join(root, "runs", "261001-0900"), cwd, cache: null }, O);
   expect(spec.timeoutMs).toBe(15 * 60_000);
   // No guard for the review: no hook, only its .git unwritable, no network.
-  const s = JSON.parse(readFileSync(join(root, "runs", "settings-review.json"), "utf8"));
+  const s = JSON.parse(readFileSync(join(root, "runs", "261001-0900", "settings-review.json"), "utf8"));
   expect(s.hooks).toBeUndefined();
   expect(s.sandbox).toEqual({
     enabled: true,
@@ -216,10 +238,31 @@ test("claude: review argv", () => {
         "/home/me/.claude/.credentials.json",
         "/home/me/.netrc",
         "/home/me/.git-credentials",
+        "/home/me/.config/sops",
+        "/home/me/.config/restic",
+        "/home/me/.config/age",
+        "/home/me/.password-store",
+        "/home/me/.docker",
+        "/home/me/.kube",
+        "/home/me/.npmrc",
+        "/home/me/.pypirc",
+        "/home/me/.cargo/credentials",
+        "/home/me/.cargo/credentials.toml",
+        "/home/me/.config/rclone",
         "/cfg/config.toml",
         "/cfg/app.pem",
+        // The rest of Towercab's home; this run's own checkout and run files stay readable.
+        ...[
+          "repos",
+          "intents",
+          "plans",
+          "towercab.db",
+          "towercab.db-wal",
+          "towercab.db-shm",
+          "towercab.log",
+        ].map((f) => join(root, f)),
       ],
-      denyWrite: [join(root, ".git")],
+      denyWrite: [join(cwd, ".git")],
     },
   });
 });

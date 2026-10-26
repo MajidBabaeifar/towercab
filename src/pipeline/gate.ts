@@ -79,6 +79,12 @@ export const gateHandler: Handler = {
       proven: !d.unproven,
     });
     if (!g.merge) return { done: wait("review and merge PR", g.why) };
+    // Beyond the gate table: work Towercab didn't check itself goes to the owner.
+    const a = effectiveOf(m, intent, files);
+    if (d.foreignHead) return { done: wait("review and merge PR", "someone else pushed commits to the PR") };
+    if (d.build?.planChanged && a !== 5) {
+      return { done: wait("review and merge PR", "the build departed from the approved plan") };
+    }
     return { done: ok({ set: { head: m.head } }) };
   },
   async finish() {
@@ -140,7 +146,13 @@ export const mergeHandler: Handler = {
           "-f",
           `expected_head_sha=${m.head}`,
         ]);
-        return { done: { event: "head_moved", why: "updated the branch with its base" } };
+        return {
+          done: {
+            event: "head_moved",
+            why: "updated the branch with its base",
+            data: { updatedBranch: true },
+          },
+        };
       case "DIRTY":
         return {
           done: {

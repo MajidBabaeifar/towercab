@@ -102,7 +102,11 @@ test("pipeline: spec PR is opened", () => {
 test("pipeline: spec PR merged when the gate is open", () => {
   // a5, no concerns: Towercab merged it itself after its (absent) CI, and moved on to plan.
   expect(spec().state).toBe("MERGED");
-  expect(p.tools.lines("gh")).toContain(`pr merge ${spec().number} -R owner/web --squash`);
+  expect(
+    p.tools
+      .lines("gh")
+      .some((l) => l.startsWith(`pr merge ${spec().number} -R owner/web --squash --match-head-commit `)),
+  ).toBe(true);
   const moves = p.db.all<{ event: string; to_stage: string }>(
     "SELECT event, to_stage FROM transitions WHERE mission = ? ORDER BY id",
     m.id,

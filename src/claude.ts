@@ -6,8 +6,8 @@
 // writing guide go into the system prompt file; the sandbox and the guard come from Towercab's own
 // `--settings` file.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { appKeyPath, type Config } from "./config.ts";
 import { classifyFailure } from "./faults.ts";
@@ -34,10 +34,61 @@ export const SECRET_PATHS = [
   ".claude/.credentials.json",
   ".netrc",
   ".git-credentials",
+  ".config/sops",
+  ".config/restic",
+  ".config/age",
+  ".password-store",
+  ".docker",
+  ".kube",
+  ".npmrc",
+  ".pypirc",
+  ".cargo/credentials",
+  ".cargo/credentials.toml",
+  ".config/rclone",
 ];
 
 /** Which of SECRET_PATHS are files (the rest are directories). */
-const SECRET_FILES = new Set([".claude/.credentials.json", ".netrc", ".git-credentials"]);
+const SECRET_FILES = new Set([
+  ".claude/.credentials.json",
+  ".netrc",
+  ".git-credentials",
+  ".npmrc",
+  ".pypirc",
+  ".cargo/credentials",
+  ".cargo/credentials.toml",
+]);
+
+/**
+ * Towercab's own home outside this run's mission (PIP-24): other missions' checkouts, run files and
+ * caches, the clones, the intents checkout and the database. A worker sees only its own work.
+ */
+export function othersInHome(run: Pick<ClaudeRun, "cwd" | "runsDir" | "cache">): string[] {
+  const home = dirname(dirname(resolve(run.runsDir)));
+  const own = new Set([resolve(run.cwd), `${resolve(run.cwd)}-proof`, resolve(run.runsDir)]);
+  if (run.cache) own.add(resolve(run.cache));
+  const out = [
+    "repos",
+    "intents",
+    "plans",
+    "towercab.db",
+    "towercab.db-wal",
+    "towercab.db-shm",
+    "towercab.log",
+  ].map((f) => join(home, f));
+  for (const dir of ["work", "runs", "cache"]) {
+    let names: string[] = [];
+    try {
+      names = readdirSync(join(home, dir));
+    } catch {
+      continue;
+    }
+    for (const n of names) {
+      const p = join(home, dir, n);
+      if (!own.has(p)) out.push(p);
+    }
+  }
+  return out;
+}
 
 /** Sockets that reach the host's power, hidden when Unix sockets are allowed. */
 export const HOST_SOCKETS = ["/var/run/docker.sock", "/run/docker.sock", "/run/dbus", "/run/user"];
@@ -173,6 +224,10 @@ export function claudeArgv(run: ClaudeRun): string[] {
     ...k.allowed,
     "--disallowedTools",
     ...disallowed(run.config),
+    ...othersInHome(run).flatMap((p) => [
+      `Read(/${p.replace(/^\//, "")})`,
+      `Read(/${p.replace(/^\//, "")}/**)`,
+    ]),
   ];
   if (run.session.mode === "new") a.push("--session-id", run.session.id);
   if (run.session.mode === "resume") a.push("--resume", run.session.id);
@@ -190,7 +245,11 @@ export function claudeSettings(
   run: ClaudeRun,
   o: { towercabExe: string; home: string },
 ): Record<string, unknown> {
-  const denyRead = [...SECRET_PATHS.map((p) => join(o.home, p)), ...configSecrets(run.config)];
+  const denyRead = [
+    ...SECRET_PATHS.map((p) => join(o.home, p)),
+    ...configSecrets(run.config),
+    ...othersInHome(run),
+  ];
   if (run.config.agent.sandboxUnixSockets) denyRead.push(...HOST_SOCKETS);
   const denyWrite = [join(resolve(run.cwd), ".git")];
   if (run.guardRules) {

@@ -27,6 +27,7 @@ import {
   repoFiles,
   spawnRun,
   tail,
+  takeRemote,
 } from "./common.ts";
 import { lockedTests } from "./guard.ts";
 import { writePlanToMain } from "./plan.ts";
@@ -157,7 +158,25 @@ export const buildHandler: Handler = {
             },
           );
         } else {
-          m = cx.record(m, "setup");
+          // A later round builds on what is on the PR now: the owner may have pushed to it.
+          const r = m.pr ? await takeRemote(cx, m, m.branch) : "none";
+          if (r === "conflict") {
+            const files = (await coGit(cx, m, ["diff", "--name-only", "--diff-filter=U"])).trim().split("\n");
+            m = cx.record(
+              m,
+              "setup",
+              {},
+              {
+                repair: {
+                  what: "Commits pushed to the PR conflict with this branch. Resolve the conflicts in these files, keeping both sides' intent, then run the checks:",
+                  details: files.join("\n"),
+                  kind: "conflict",
+                },
+              },
+            );
+          } else {
+            m = cx.record(m, "setup");
+          }
         }
         return setupOrWorker(cx, m);
       }

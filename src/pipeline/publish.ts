@@ -5,7 +5,18 @@ import type { Ctx, Handler, Progress } from "../handlers.ts";
 import { ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { CONTROL, Protected } from "../repo/protected.ts";
-import { coGit, commitTitle, data, gh, grants, intentOf, prUrl, pushBranch, repoFiles } from "./common.ts";
+import {
+  coGit,
+  commitTitle,
+  data,
+  gh,
+  grants,
+  intentOf,
+  prUrl,
+  pushBranch,
+  repoFiles,
+  takeRemote,
+} from "./common.ts";
 import { lockedTests, publishRefusals } from "./guard.ts";
 import { codeBody } from "./prtext.ts";
 
@@ -38,6 +49,15 @@ export const publishHandler: Handler = {
     );
     if (bad.length)
       return { done: wait("answer the question", `the branch changes paths it may not: ${bad.join(", ")}`) };
+    if (m.pr && (await takeRemote(cx, m, m.branch)) === "conflict") {
+      await coGit(cx, m, ["merge", "--abort"]).catch(() => "");
+      return {
+        done: wait(
+          "answer the question",
+          "commits pushed to the PR conflict with Towercab's; reply to let the worker merge them",
+        ),
+      };
+    }
     const head = (await coGit(cx, m, ["rev-parse", "HEAD"])).trim();
     const fresh = cx.record(m, "push", { head });
     await pushBranch(cx, fresh, m.branch, m.branch);

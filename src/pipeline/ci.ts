@@ -175,7 +175,13 @@ export const ciHandler: Handler = {
         // Someone else pushed (the owner, GitHub's update branch): the checkout takes their head, so
         // the review reads it and a later round builds on it instead of pushing over it.
         await adoptHead(cx, m, s.head);
-        cx.record(m, m.step, { head: s.head, pushed_at: cx.clock.now() });
+        // GitHub's update-branch (asked for by merge) isn't someone else's work.
+        cx.record(
+          m,
+          m.step,
+          { head: s.head, pushed_at: cx.clock.now() },
+          d.updatedBranch ? { updatedBranch: undefined } : { foreignHead: true },
+        );
         return { poll: cx.config.agent.ciPoll };
       case "conflict":
         return {

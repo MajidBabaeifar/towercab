@@ -66,6 +66,10 @@ export interface PipeData {
   /** Session cost already counted (MET-28). */
   sessionCost?: Record<string, number>;
   mergeTries?: number;
+  /** Someone else's commits are on the branch (takeRemote, CI's adopted head). */
+  foreignHead?: boolean;
+  /** Merge asked GitHub to update the branch: the next moved head is that, not someone else's. */
+  updatedBranch?: boolean;
   dropped?: boolean;
   /** The question the owner is asked (the UI's card). */
   question?: Question;
@@ -360,7 +364,9 @@ export async function pushBranch(
     await git(
       cx.tools,
       clone,
-      ["push", "--quiet", "--force", "origin", `refs/heads/${remoteBranch}:refs/heads/${remoteBranch}`],
+      // Never --force: someone else's commits on the branch are merged in first (takeRemote), so a push
+      // that isn't a fast-forward means a race, and it fails instead of dropping their work.
+      ["push", "--quiet", "origin", `refs/heads/${remoteBranch}:refs/heads/${remoteBranch}`],
       auth,
     );
   } catch (e) {
@@ -443,4 +449,39 @@ export function commitTitle(m: Mission, intent: Intent): string {
 
 function lowerFirst(s: string): string {
   return /^[A-Z][a-z]/.test(s) ? s[0]!.toLowerCase() + s.slice(1) : s;
+}
+
+/**
+ * Commits someone else pushed to `remoteBranch` (the owner, GitHub's update-branch) come into the
+ * checkout before Towercab builds or pushes on top: merged, never dropped. Marks `foreignHead`, so the
+ * gate sends the PR to the owner at a4 and above.
+ */
+export async function takeRemote(
+  cx: Ctx,
+  m: Mission,
+  remoteBranch: string,
+): Promise<"none" | "merged" | "conflict"> {
+  const repo = cx.repo(m);
+  const clone = cloneOf(cx, m);
+  await git(
+    cx.tools,
+    clone,
+    ["fetch", "--quiet", "--prune", "origin"],
+    await cx.github.gitAuth(repo.github),
+  ).catch((e) => {
+    throw asEnv(e);
+  });
+  const ref = `refs/remotes/origin/${remoteBranch}`;
+  const remote = await git(cx.tools, clone, ["rev-parse", "--verify", "--quiet", ref]).catch(() => "");
+  if (!remote.trim()) return "none";
+  await coGit(cx, m, ["fetch", "--quiet", clone, `+${ref}:${ref}`]);
+  const isAncestor = await coGit(cx, m, ["merge-base", "--is-ancestor", ref, "HEAD"])
+    .then(() => true)
+    .catch(() => false);
+  if (isAncestor) return "none";
+  const merged = await coGit(cx, m, [...(await botAuthor(cx)), "merge", "--no-edit", ref])
+    .then(() => true)
+    .catch(() => false);
+  cx.record(m, m.step, {}, { foreignHead: true });
+  return merged ? "merged" : "conflict";
 }

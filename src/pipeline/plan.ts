@@ -26,7 +26,7 @@ import {
   spawnRun,
 } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
-import { planBody, planFile } from "./prtext.ts";
+import { planBody, planFile, section } from "./prtext.ts";
 import { PLAN_SCHEMA, parseResult } from "./schemas.ts";
 
 /** The clone the plan branches are pushed from (re-cloned when broken). */
@@ -83,13 +83,47 @@ async function commitToIntents(
 
 /** PIP-28's plan-changed path: the new plan straight to `plan.md` on main. */
 export async function writePlanToMain(cx: Ctx, intent: Intent, md: string): Promise<void> {
+  // The worker's new plan replaces the approach and steps; the access the owner approved stays as merged.
+  const merged = (await cx.store.readFile(`${intent.dir}/plan.md`)) ?? "";
+  const access = section(merged, "Access");
+  const body = md.replace(/^## Access[\s\S]*?(?=^## |(?![\s\S]))/m, "").trimEnd();
+  const text = `${body}\n\n## Access\n\n${access || "Nothing beyond the defaults."}\n`;
   await commitToIntents(
     cx,
     "main",
     "origin/main",
-    { [`${intent.dir}/plan.md`]: md },
+    { [`${intent.dir}/plan.md`]: text },
     `towercab: plan changed ${intent.id}`,
   );
+}
+
+/** Keep the owner's unticked access lines when a plan is revised (PIP-47). */
+export function keepUnticked(newAccess: string, oldPlan: string): string {
+  const refused = new Set(
+    oldPlan
+      .split("\n")
+      .filter((l) => /^- \[ \] /.test(l))
+      .map((l) =>
+        l
+          .slice(6)
+          .replace(/ \(.*$/, "")
+          .trim(),
+      ),
+  );
+  return newAccess
+    .split("\n")
+    .map((l) =>
+      /^- \[x\] /i.test(l) &&
+      refused.has(
+        l
+          .slice(6)
+          .replace(/ \(.*$/, "")
+          .trim(),
+      )
+        ? `- [ ] ${l.slice(6)}`
+        : l,
+    )
+    .join("\n");
 }
 
 export const planHandler: Handler = {
@@ -156,14 +190,19 @@ async function push(cx: Ctx, m: Mission): Promise<Progress> {
   const files = await repoFiles(cx, m);
   const d = data(m);
   const a = effectiveOf(m, intent, files);
+  const branch = planBranch(intent);
+  const { dir } = await plansClone(cx);
+  const before = await git(cx.tools, dir, [
+    "show",
+    `refs/remotes/origin/${branch}:${intent.dir}/plan.md`,
+  ]).catch(() => "");
   const md = planFile(
     intent.title,
     intent.id,
     d.design?.specIds ?? [],
     d.plan!.md,
-    renderAccess(d.plan!.access, a),
+    keepUnticked(renderAccess(d.plan!.access, a), before),
   );
-  const branch = planBranch(intent);
   await commitToIntents(
     cx,
     branch,

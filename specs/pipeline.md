@@ -40,7 +40,10 @@ push.
   `gh pr create` (ready for review, not a draft), title = the design's Conventional Commit line, body
   = PIP-48; `missions.pr`, `head`, `pushed_at` recorded first. A push refused other than as
   non-fast-forward, or rejected 3 times → `waiting: answer the question` with the reason.
-- Verified by: `pipeline: first publish opens the code PR`, `pipeline: later rounds only push`
+- Never a force-push: commits someone else pushed to the PR branch (the owner) are merged into the
+  checkout first, at the start of each later build round and before each push; a conflict there is a
+  conflict round. Such a PR is marked as having someone else's commits (PIP-7).
+- Verified by: `pipeline: first publish opens the code PR`, `pipeline: later rounds only push`, `pipeline: the owner's commits on the PR are kept`
 
 ### PIP-3 · CI
 
@@ -87,8 +90,9 @@ After the review, code decides whether Towercab merges the code PR or the owner 
 
 - Effective `a` and caps from [AUT-8, 13](autonomy.md). First match wins → `approval:merge`
   (`waiting: review and merge PR`, why): CI not green; review not approved; access beyond the plan at
-  a4 (AUT-15); proof missing (PIP-30); effective `a` ≤ 3; no `a` and not low-risk (AUT-9). Else →
-  `merge`. The PR body's Checks section is updated first (PIP-48).
+  a4 (AUT-15); proof missing (PIP-30); effective `a` ≤ 3; no `a` and not low-risk (AUT-9); someone
+  else's commits on the PR (PIP-2); the build departed from the approved plan, below a5 (PIP-28).
+  Else → `merge`. The PR body's Checks section is updated first (PIP-48).
 - Verified by: `pipeline: gate table`
 
 ### PIP-8 · Deploy
@@ -218,11 +222,14 @@ Every Claude run is headless, sandboxed, and gets only the tools and access its 
   cache}, network {allowedDomains: the granted domains}}`, `permissions.allow: WebFetch(domain:<d>)`
   per granted domain (`WebFetch(domain:*)` at a5), the guard hook for workers (PIP-29). Secret paths:
   `~/.ssh`, `~/.config/gh`, `~/.aws`, `~/.gnupg`, `~/.config/towercab`, `~/.claude/.credentials.json`,
-  `~/.netrc`, `~/.git-credentials`.
+  `~/.netrc`, `~/.git-credentials`, `~/.config/sops`, `~/.config/restic`, `~/.config/age`,
+  `~/.password-store`, `~/.docker`, `~/.kube`, `~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials*`,
+  `~/.config/rclone`; and Towercab's home outside this mission (other checkouts, run files and caches,
+  the clones, the intents checkout, the database and log).
 - Tools by kind: **Claude runs** table. Disallowed for every run: `Bash(git push:*)`,
   `Bash(git remote:*)`, `Bash(git config:*)`, `Bash(gh:*)`, `Bash(ssh:*)`, `Bash(sudo:*)`, `Read` of
   each secret path. A denied push or secret read fails the step.
-- Verified by: `claude: worker argv`, `claude: review argv`, `claude: settings by autonomy`, `claude: result parse`, `claude: no token in env`
+- Verified by: `claude: worker argv`, `claude: review argv`, `claude: settings by autonomy`, `claude: result parse`, `claude: no token in env`, `claude: other missions are unreadable`
 
 ### PIP-25 · Design
 
@@ -262,7 +269,8 @@ The worker plans the build, read-only, and Towercab opens the plan as a PR on th
 - The owner's comments on the plan PR → a plan revision, a new commit on the same PR. Merged → the
   grants are read from the merged `plan.md` (PIP-47) and the build starts.
 - A build that departs from the plan returns `plan_changed`; Towercab commits it to `plan.md` on
-  `main` of the intents repo (`towercab: plan changed <id>`) and says so in the code PR.
+  `main` of the intents repo (`towercab: plan changed <id>`), keeping the merged Access section, and the
+  gate sends the PR to the owner below a5. A revised plan PR keeps the boxes the owner unticked.
 - Verified by: `pipeline: plan PR is opened on intents`, `pipeline: feedback revises the plan`, `pipeline: merged plan grants its ticked access`
 
 ### PIP-29 · Guard
@@ -447,8 +455,9 @@ For a repo with a screenshots command, the review sees the UI as it now looks.
 
 When the owner doesn't need to approve the spec, Towercab merges the spec PR once its checks pass.
 
-- Spec gate open ([AUT-11](autonomy.md)) → wait for the spec PR's CI (PIP-3 rules, no repairs: red →
-  `waiting: approve spec` with why `CI red on the spec PR`), then `gh pr merge --squash`.
+- Spec gate open ([AUT-11](autonomy.md)) → wait for the spec PR's CI on the head Towercab pushed
+  (PIP-3 rules, no repairs: red, a conflict or someone else's push → `waiting: approve spec` with the
+  reason), then `gh pr merge --squash --match-head-commit <head>`.
 - Verified by: `pipeline: spec PR merged when the gate is open`
 
 ### PIP-51 · Towercab merges the plan PR at a5
