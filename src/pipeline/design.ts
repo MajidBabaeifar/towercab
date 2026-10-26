@@ -118,9 +118,14 @@ export const designHandler: Handler = {
 /** Commit the spec change; no change → straight to plan. Edits outside specs/ are dropped. */
 async function commit(cx: Ctx, m: Mission): Promise<Progress> {
   const changed = (await coGit(cx, m, ["status", "--porcelain", "--", "specs"])).trim();
-  const d = data(m);
   if (!changed) {
     await dropOthers(cx, m);
+    // A spec commit made before a crash, not yet on the spec PR: push it now (LOOP-6).
+    const repo = cx.repo(m);
+    const base = `refs/remotes/origin/${repo.base}`;
+    const ahead = (await coGit(cx, m, ["rev-list", "--count", `${base}..HEAD`, "--", "specs"])).trim();
+    const head = (await coGit(cx, m, ["rev-parse", "HEAD"])).trim();
+    if (ahead !== "0" && head !== m.head) return pushSpec(cx, m);
     if (!m.spec_pr) return { done: ok({ why: "no behaviour change: no spec PR" }) };
     return gateStep(cx, cx.record(m, "gate"));
   }
@@ -128,9 +133,13 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
   await coGit(cx, m, ["add", "-A", "--", "specs"]);
   await coGit(cx, m, [...(await botAuthor(cx)), "commit", "--quiet", "-m", `docs(specs): ${intent.title}`]);
   await dropOthers(cx, m);
+  return pushSpec(cx, m);
+}
+
+/** Push the spec commit to `<branch>-spec`, then open or update the spec PR. */
+async function pushSpec(cx: Ctx, m: Mission): Promise<Progress> {
   const specBranch = `${m.branch}-spec`;
   const head = await pushBranch(cx, m, m.branch, specBranch);
-  void d;
   return openPr(cx, cx.record(m, "pr", { head }, { specBranch }));
 }
 
