@@ -67,6 +67,12 @@ export interface PipeData {
   sessionCost?: Record<string, number>;
   mergeTries?: number;
   dropped?: boolean;
+  /** The question the owner is asked (the UI's card). */
+  question?: Question;
+  /** The plan's access list (the UI's plan card). */
+  access?: Access;
+  /** Each run's time and cost, 30 days (MET-29). */
+  runs?: { at: number; cost: number }[];
 }
 
 export const data = (m: Mission): PipeData => dataOf(m) as PipeData;
@@ -238,12 +244,15 @@ export function ended<T>(
       const sessionKey = kind === "review" ? `review:${e.result.sessionId}` : m.session;
       const before = d.sessionCost?.[sessionKey] ?? 0;
       const delta = Math.max(0, e.result.costUsd - before);
+      const now = cx.clock.now();
+      const runs = [...(d.runs ?? []), { at: now, cost: delta }].filter((r) => r.at > now - 30 * 86400);
       cx.db.run(
-        "UPDATE missions SET cost_usd = cost_usd + ?, agent_secs = agent_secs + ?, data = json_set(data, '$.sessionCost', json(?), '$.continued', json(?)) WHERE id = ?",
+        "UPDATE missions SET cost_usd = cost_usd + ?, agent_secs = agent_secs + ?, data = json_set(data, '$.sessionCost', json(?), '$.continued', json(?), '$.runs', json(?)) WHERE id = ?",
         delta,
         e.result.durationMs / 1000,
         JSON.stringify({ ...(d.sessionCost ?? {}), [sessionKey]: e.result.costUsd }),
         JSON.stringify({ ...continued, [kind]: false }),
+        JSON.stringify(runs),
         m.id,
       );
       return { ok: true, value: parsed.value, costDelta: delta, secs: e.result.durationMs / 1000 };
@@ -384,7 +393,7 @@ export async function ask(cx: Ctx, m: Mission, q: Question): Promise<Outcome> {
   const body = questionMd(q);
   if (pr) await upsertStageComment(cx.github, pr.github, pr.n, "Question", m.continued + 1, body);
   else await cx.store.update(m.intent, "question", (e) => e.setSection("Towercab", body));
-  return wait("answer the question", q.question);
+  return wait("answer the question", q.question, { data: { question: q } });
 }
 
 /** A stage comment on the current PR, never failing the step. */

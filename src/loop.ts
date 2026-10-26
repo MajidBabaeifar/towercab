@@ -28,6 +28,7 @@ import { sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState } from "./pick.ts";
 import { checkoutRoot } from "./service.ts";
 import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
+import { budgetReached } from "./ui/state.ts";
 import { checkUpdate, RESTART_CODE } from "./update.ts";
 
 export const PASS_MS = 5_000;
@@ -256,7 +257,9 @@ export class Loop {
     await this.pollIntents(false);
     await this.pollPrs();
     await this.stepDue(!report.woke);
-    if (!paused(db) && !this.health.blocked(this.now)) report.picked = await this.pick();
+    if (!paused(db) && !this.health.blocked(this.now) && !budgetReached(db, this.d.config, this.now)) {
+      report.picked = await this.pick();
+    }
     await this.selfUpdate();
     await this.sendMessages();
 

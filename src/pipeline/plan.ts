@@ -141,7 +141,12 @@ export const planHandler: Handler = {
     if (!r.ok) return r.progress;
     return push(
       cx,
-      cx.record(m, "push", {}, { plan: { md: r.value.plan, access: r.value.access }, answer: undefined }),
+      cx.record(
+        m,
+        "push",
+        {},
+        { plan: { md: r.value.plan, access: r.value.access }, access: r.value.access, answer: undefined },
+      ),
     );
   },
 };
