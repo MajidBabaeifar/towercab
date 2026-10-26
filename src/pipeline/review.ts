@@ -74,7 +74,9 @@ export const reviewHandler: Handler = {
       screenshots: shots,
       diff_cmd: `git diff refs/remotes/origin/${repo.base}...HEAD`,
     });
-    return spawnRun(cx, cx.record(m, "pending", {}, { review: null }), {
+    // A run cut off by a crash runs again as the same round, so its comment is edited, not added.
+    const at = m.step === "review" ? m : cx.record(m, "pending", {}, { review: null });
+    return spawnRun(cx, at, {
       kind: "review",
       step: "review",
       prompt,
