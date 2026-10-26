@@ -725,7 +725,8 @@ export class Loop {
   }
 
   private async sendMessages(): Promise<void> {
-    for (const n of this.health.noticeDue(this.now)) {
+    const n = this.health.noticeDue(this.now);
+    if (n) {
       this.d.db.run(
         "INSERT OR IGNORE INTO outbox (key, mission, text, created) VALUES (?, NULL, ?, ?)",
         `health:${n.kind}:${n.since}`,

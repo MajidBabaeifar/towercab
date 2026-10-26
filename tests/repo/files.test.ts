@@ -359,8 +359,7 @@ test("repo: read from the base branch only", async () => {
   expect([e3.kind, e3.message]).toEqual(["invalid", "REVIEW.md: a symlink, not a file"]);
 });
 
-// Skipped: the root CLAUDE.md, REVIEW.md and TOWERCAB.md are still v1's here; the lead rewrites them (REPO-6).
-test.skip("repo: Towercab's own files parse", () => {
+test("repo: Towercab's own files parse", () => {
   const read = (f: string) => readFileSync(f, "utf8");
   const own = parseRepoFiles(read("CLAUDE.md"), read("REVIEW.md"), read("TOWERCAB.md"));
   expect(own.claudeMd.split("\n").length).toBeLessThanOrEqual(61);

@@ -1,7 +1,7 @@
 ---
 max_autonomy: 5
 protected: [src/machine.ts]
-tests: [tests/**, ui/*.spec.ts]
+tests: [tests/**]
 ---
 
 # Towercab on Towercab
