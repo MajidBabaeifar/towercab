@@ -335,6 +335,7 @@ pub fn not_ready(w: Waiting) -> bool {
     matches!(
         w,
         Waiting::ChecksRed
+            | Waiting::ChecksTimedOut
             | Waiting::TestsDontProve
             | Waiting::CiRed
             | Waiting::NoCiChecks

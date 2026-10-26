@@ -729,6 +729,12 @@ fn test_allow_continues() {
         s["sandbox"]["network"]["allowedDomains"],
         json!(["registry.npmjs.org"])
     );
+    // Its own writable cache, so builds don't hit a read-only ~/.cache.
+    let cache = s["sandbox"]["filesystem"]["allowWrite"][0]
+        .as_str()
+        .unwrap();
+    assert!(cache.ends_with("/cache/web/worker"), "{cache}");
+    assert!(std::path::Path::new(cache).is_dir());
     // Refused: not a host.
     for bad in ["registry", "https://x.org", "x.org/path", "*", "X.ORG"] {
         assert!(!commands::domain_ok(bad), "{bad}");

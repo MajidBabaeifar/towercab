@@ -130,6 +130,22 @@ pub fn commit(
     Ok(Some(rev(cx, dir, "HEAD")?))
 }
 
+/// An empty commit `msg` as the bot → its sha: a new head so CI runs afresh (PIP-3).
+pub fn commit_empty(cx: &Ctx<'_>, dir: &Path, msg: &str) -> Result<String, StepError> {
+    let (name, email) = bot(cx, false)?;
+    let mut args = who(&name, &email);
+    args.extend([
+        "commit".into(),
+        "-q".into(),
+        "--allow-empty".into(),
+        "-m".into(),
+        msg.into(),
+    ]);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    run(cx, dir, &args)?;
+    rev(cx, dir, "HEAD")
+}
+
 /// `git merge --no-edit <rev>` in `dir` as the bot: `Ok(true)` clean, `Ok(false)` conflicts
 /// (left in place).
 pub fn merge(cx: &Ctx<'_>, dir: &Path, rev: &str, eval: bool) -> Result<bool, StepError> {

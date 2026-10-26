@@ -193,6 +193,10 @@ pub fn start(cx: &Ctx<'_>, m: &Mission, st: Start) -> Result<Progress, StepError
         if m.intent.is_some() {
             run.network = super::intent(cx, &m)?.network().to_vec();
         }
+        let cache = super::sandbox::cache_dir(cx, &m)?.join("worker");
+        std::fs::create_dir_all(&cache)
+            .map_err(|e| StepError::Bug(format!("{}: {e}", cache.display())))?;
+        run.cache = Some(std::path::absolute(&cache).unwrap_or(cache));
     }
     let f = run.files();
     let asked = asked_of(&f.prompt);
