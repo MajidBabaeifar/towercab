@@ -545,3 +545,24 @@ fn test_throttled_is_an_outage() {
         assert!(!throttled(e), "{e}");
     }
 }
+
+#[test]
+fn test_red_unchanged_head_gets_fresh_run() {
+    // A CI repair that changes nothing (the fix was outside the branch): publish makes an
+    // empty commit, so CI runs afresh with today's workflows instead of replaying the old run.
+    let mut p = login();
+    p.ci_answers("MERGEABLE", &red(11));
+    p.claude.answer(
+        4,
+        &common::pipe::FakeClaude::result(common::pipe::done("Nothing to change here.")),
+    );
+    at_ci(&mut p);
+    let first = p.mission(ID).head.unwrap();
+    assert_eq!(p.step(ID), "261001-0900: ci → ci", "the rerun");
+    assert_eq!(p.step(ID), "261001-0900: ci → build", "red twice");
+    p.step_to(ID, Stage::Ci, 8);
+    let m = p.mission(ID);
+    assert_ne!(m.head.as_deref(), Some(first.as_str()), "a new head");
+    let log = p.origin_log("web", LOGIN_BRANCH);
+    assert_eq!(log[0].0, "chore: run CI again");
+}
