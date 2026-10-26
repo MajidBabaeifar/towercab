@@ -174,7 +174,7 @@ local checks and CI, a code gate with a review before any auto-merge, then deplo
 DESIGN    {type: feat|fix|perf|revert|refactor|docs|test|build|ci|chore|style, scope: S, breaking: bool,
            spec_ids: [S], concerns: [{what: S, why: S, policy: S?}],
            open_questions: [{question: S, answer: S?, carried: bool}], summary: S}
-           code: one open_questions entry per `## Open questions` bullet, answer xor carried; spec_ids match ^[A-Z]+-\d+$
+           code: one open_questions entry per `## Open questions` bullet, an answer, else carried (both or neither never fail the run); placeholder bullets (`None.`, `n/a`, `-`) are no questions; spec_ids match ^[A-Z]+-\d+$
 PLAN      {files: [S], order: [S], risks: [S], proof: [S]}
 WORKER    {status: done|blocked, question: S?, notes: S, plan: PLAN|null, plan_why: S?, lower_a: 1..5|null, lower_why: S?}
            code: blocked needs a question; plan needs plan_why

@@ -755,3 +755,33 @@ fn test_env_failure_is_fault() {
     assert!(towercab::env::classify_run("which provider?").is_none());
     assert!(towercab::env::classify_run("src/login.rs: not found in the plan").is_none());
 }
+
+#[test]
+fn test_open_question_placeholders() {
+    use towercab::pipeline::schemas::{DesignResult, no_question};
+    for p in ["None.", "none", "- None.", "n/a", "-", "Nothing."] {
+        assert!(no_question(p), "{p}");
+    }
+    assert!(!no_question("Which provider?"));
+    let d = |qs: serde_json::Value| {
+        DesignResult::from_json(&json!({"type": "feat", "scope": "ui", "breaking": false,
+            "spec_ids": [], "concerns": [], "open_questions": qs, "summary": "s"}))
+    };
+    // `- None.` in the intent: zero or one placeholder entry both pass; both/neither never fail.
+    let none = vec!["None.".to_string()];
+    d(json!([])).unwrap().check_questions(&none).unwrap();
+    d(json!([{"question": "None.", "answer": "n/a", "carried": true}]))
+        .unwrap()
+        .check_questions(&none)
+        .unwrap();
+    let real =
+        d(json!([{"question": "Which provider?", "answer": null, "carried": false}])).unwrap();
+    assert!(real.open_questions[0].carried, "neither: left to me");
+    real.check_questions(&["Which provider?".into()]).unwrap();
+    assert!(
+        d(json!([]))
+            .unwrap()
+            .check_questions(&["Which provider?".into()])
+            .is_err()
+    );
+}

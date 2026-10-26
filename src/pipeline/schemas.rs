@@ -196,6 +196,20 @@ pub struct OpenQuestion {
     pub carried: bool,
 }
 
+/// A placeholder bullet under `## Open questions`: `None`, `None.`, `n/a`, `-`, `nothing`.
+pub fn no_question(text: &str) -> bool {
+    let t = text
+        .trim()
+        .trim_start_matches("- ")
+        .trim_end_matches('.')
+        .trim()
+        .to_ascii_lowercase();
+    matches!(
+        t.as_str(),
+        "" | "none" | "n/a" | "na" | "-" | "nothing" | "no"
+    )
+}
+
 /// The design's result (PIP-25).
 #[derive(Debug, Clone, PartialEq)]
 pub struct DesignResult {
@@ -234,10 +248,8 @@ impl DesignResult {
         })?;
         let open_questions = each(v, "open_questions", |q| {
             let answer = text_or_null(q, "answer")?.map(|a| one_line(&a));
-            let carried = flag(q, "carried")?;
-            if answer.is_some() == carried {
-                return Err("answer xor carried".into());
-            }
+            // Both: answered; neither: left to me. Never a reason to fail the run.
+            let carried = answer.is_none();
             Ok(OpenQuestion {
                 question: one_line(&text(q, "question")?),
                 answer,
@@ -274,11 +286,16 @@ impl DesignResult {
 
     /// One `open_questions` entry per `## Open questions` bullet of the intent (PIP-25).
     pub fn check_questions(&self, bullets: &[String]) -> Result<(), String> {
-        if self.open_questions.len() != bullets.len() {
+        // `- None.` and the like aren't questions, on either side.
+        let real = bullets.iter().filter(|b| !no_question(b)).count();
+        let answered = self
+            .open_questions
+            .iter()
+            .filter(|q| !no_question(&q.question))
+            .count();
+        if answered != real {
             return Err(format!(
-                "open_questions: {} entries for {} ## Open questions bullets",
-                self.open_questions.len(),
-                bullets.len()
+                "open_questions: {answered} entries for {real} ## Open questions bullets"
             ));
         }
         Ok(())
