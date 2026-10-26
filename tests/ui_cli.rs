@@ -31,11 +31,11 @@ fn test_loop_serves_ui() {
     );
     config.ui.port = free_port();
     let home = Home::resolve(Some(&tmp.path().join("home"))).unwrap();
-    let running = ui::Running::start(&config, &home, &Exes::default()).unwrap();
+    let running = ui::Running::start(&config, &home, &Exes::default(), true).unwrap();
     assert_eq!(running.port(), config.ui.port);
     assert!(ui::answers(config.ui.port));
     // A second one on the same port: logged, no server, the caller goes on.
-    assert!(ui::Running::start(&config, &home, &Exes::default()).is_none());
+    assert!(ui::Running::start(&config, &home, &Exes::default(), true).is_none());
     drop(running);
     assert!(!ui::answers(config.ui.port));
 }
@@ -60,7 +60,7 @@ fn test_ui_command() {
     .unwrap();
     let config = Config::load(Some(&file)).unwrap();
     let home = Home::resolve(Some(&user.join("home"))).unwrap();
-    let running = ui::Running::start(&config, &home, &Exes::default()).unwrap();
+    let running = ui::Running::start(&config, &home, &Exes::default(), true).unwrap();
     let (out, err, code) = output(&mut towercab(user, &["--config", cfg, "ui", "--no-open"]));
     assert_eq!(code, Some(0), "{err}");
     assert_eq!(out.trim(), format!("http://127.0.0.1:{port}/"));
@@ -88,5 +88,46 @@ fn test_ui_command() {
     assert!(ui::answers(port));
     unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
     assert!(child.wait().unwrap().success());
+    assert!(!ui::answers(port));
+}
+
+#[test]
+fn test_ui_yields_to_loop() {
+    // A read-only `towercab ui` started while the loop was down steps aside once a loop holds
+    // the home, so the loop's own UI (retried every 30 s) gets the port.
+    let tmp = tempfile::tempdir().unwrap();
+    let user = tmp.path();
+    let file = user.join("config.toml");
+    let port = free_port();
+    std::fs::write(
+        &file,
+        format!("[intents]\npath = \"/nowhere\"\n\n[ui]\nport = {port}\n"),
+    )
+    .unwrap();
+    let home = Home::resolve(Some(&user.join("home"))).unwrap();
+    let child = towercab(
+        user,
+        &[
+            "--config",
+            file.to_str().unwrap(),
+            "--home",
+            home.root.to_str().unwrap(),
+            "ui",
+            "--no-open",
+        ],
+    )
+    .stdout(std::process::Stdio::piped())
+    .spawn()
+    .unwrap();
+    let t = std::time::Instant::now();
+    while !ui::answers(port) && t.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(ui::answers(port));
+    let _lock = home.lock().unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("its UI takes over"), "{text}");
     assert!(!ui::answers(port));
 }
