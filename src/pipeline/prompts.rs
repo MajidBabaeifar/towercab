@@ -8,7 +8,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 /// Every prompt by name (later parts add theirs).
-const PROMPTS: [(&str, &str); 10] = [
+const PROMPTS: [(&str, &str); 11] = [
     ("build", include_str!("../../prompts/build.md")),
     ("design", include_str!("../../prompts/design.md")),
     (
@@ -19,6 +19,7 @@ const PROMPTS: [(&str, &str); 10] = [
     ("result", include_str!("../../prompts/result.md")),
     ("review", include_str!("../../prompts/review.md")),
     ("round", include_str!("../../prompts/round.md")),
+    ("shell", include_str!("../../prompts/shell.md")),
     ("triage", include_str!("../../prompts/triage.md")),
     ("verifier", include_str!("../../prompts/verifier.md")),
     ("writer", include_str!("../../prompts/writer.md")),
