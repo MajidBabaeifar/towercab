@@ -190,6 +190,8 @@ export class Pipe {
   readonly sandboxRuns: { kind: string; argv: string[]; cwd: string }[] = [];
   /** `gh run rerun` run IDs. */
   readonly reruns: number[] = [];
+  /** Heads GitHub's "update branch" made. */
+  readonly updates: string[] = [];
   /** Every log line the loop wrote. */
   readonly logs: string[] = [];
   /** Per-kind answers used when the queue is empty. */
@@ -202,6 +204,7 @@ export class Pipe {
   private nextPr = 1;
   private nextComment = 1;
   private claude: ClaudeScript[] = [];
+  private queues = new Map<string, ClaudeScript[]>();
   private startOpts: StartOpts = {};
   private extra: Record<string, unknown> = {};
   readonly gitconfig: string;
@@ -327,9 +330,14 @@ export class Pipe {
     return this.loop;
   }
 
-  /** Queue the next Claude runs' answers, in order. */
+  /** Queue the next Claude runs' answers, in order, whatever their kind. */
   script(...s: ClaudeScript[]): void {
     this.claude.push(...s);
+  }
+
+  /** Queue the next answers of one kind of run (before `script`'s and `respond`). */
+  queue(kind: string, ...s: ClaudeScript[]): void {
+    this.queues.set(kind, [...(this.queues.get(kind) ?? []), ...s]);
   }
 
   /** Passes 61 s apart (every poll due) until `done` or `max` passes. */
@@ -468,7 +476,7 @@ export class Pipe {
       cwd: spec.cwd,
       settings,
     });
-    const s = this.claude.shift() ?? this.respond[kind];
+    const s = this.queues.get(kind)?.shift() ?? this.claude.shift() ?? this.respond[kind];
     if (!s) {
       writeFileSync(spec.stdout, "");
       writeFileSync(spec.stderr, "no claude script left\n");
@@ -538,6 +546,7 @@ export class Pipe {
     git(dirname(work), "clone", "-q", "-b", p.head, this.bareOf(p.repo), work);
     git(work, "merge", "-q", "--no-edit", "origin/main");
     git(work, "push", "-q", "origin", p.head);
+    this.updates.push(git(work, "rev-parse", "HEAD").trim());
   }
 
   private fakeGh(): void {
