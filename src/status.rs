@@ -176,6 +176,7 @@ impl Snapshot {
                             && a.id < m.id
                             && a.kind == machine::Kind::Intent
                             && a.merge_sha.is_none()
+                            && !behind.contains(&a.id)
                     })
                     .map(Mission::label)
                     .collect::<Vec<_>>()
