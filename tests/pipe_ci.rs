@@ -240,6 +240,33 @@ fn test_cancel_twice_is_red() {
 }
 
 #[test]
+fn test_red_job_log() {
+    // A red job's own log (reusable workflows' jobs are missing from `--log-failed`), up to
+    // its last error: the cleanup after it is left out.
+    let mut p = login();
+    p.gh.on(
+        "api repos/me/web/actions/jobs/110/logs",
+        &[(
+            "T1 Run gitleaks\nT2 leak found: src/key.rs\nT3 ##[error]Process completed with exit code 1.\nT4 Post job cleanup.\n",
+            "",
+            0,
+        )],
+    );
+    p.ci_answers("MERGEABLE", &red(11));
+    at_ci(&mut p);
+    assert_eq!(p.step(ID), "261001-0900: ci → ci");
+    assert_eq!(p.step(ID), "261001-0900: ci → build");
+    let text = std::fs::read_to_string(p.runs(ID).join("ci-1.log")).unwrap();
+    assert_eq!(
+        text,
+        "== job 110 (test) ==\nT1 Run gitleaks\nT2 leak found: src/key.rs\nT3 ##[error]Process completed with exit code 1.\n\n"
+    );
+    assert_eq!(calls(&p, "run view"), 0);
+    let part = towercab::pipeline::ci::failed_part("aaaa\nbbbb\n##[error]x\ncleanup\n", 13);
+    assert_eq!(part, "##[error]x\n", "cut at a line start");
+}
+
+#[test]
 fn test_non_actions_check_not_rerun() {
     let mut p = login();
     let status = json!({"__typename": "StatusContext", "context": "ci/jenkins", "state": "FAILURE",

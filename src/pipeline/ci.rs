@@ -79,6 +79,31 @@ pub fn run_id(details_url: &str) -> Option<u64> {
     RUN.captures(details_url)?.get(1)?.as_str().parse().ok()
 }
 
+static JOB: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"/actions/runs/\d+/job/(\d+)(?:[/?#]|$)").expect("job regex"));
+
+/// The Actions job of a check's `detailsUrl`.
+pub fn job_id(details_url: &str) -> Option<u64> {
+    JOB.captures(details_url)?.get(1)?.as_str().parse().ok()
+}
+
+/// Where a job's log failed, in at most `max` bytes: the text up to its last `##[error]` line
+/// (else its end; the cleanup after an error says nothing), cut at a line start.
+pub fn failed_part(log: &str, max: usize) -> &str {
+    let end = log.rfind("##[error]").map_or(log.len(), |i| {
+        log[i..].find('\n').map_or(log.len(), |n| i + n + 1)
+    });
+    let start = end.saturating_sub(max);
+    let start = (start..=end)
+        .find(|i| log.is_char_boundary(*i))
+        .unwrap_or(end);
+    let start = match log[start..end].find('\n') {
+        Some(n) if start > 0 && n + 1 < end - start => start + n + 1,
+        _ => start,
+    };
+    &log[start..end]
+}
+
 fn unix(s: &str) -> Option<f64> {
     DateTime::parse_from_rfc3339(s)
         .ok()
@@ -470,8 +495,10 @@ impl Ci {
         Ok(())
     }
 
-    /// Red after the rerun (PIP-3): the failed logs (`gh run view <run> --log-failed`, last
-    /// 16k) in `ci-<n>.log`, then a CI repair (`ci_repairs` + 1), or `CI red` after 3.
+    /// Red after the rerun (PIP-3): the failed logs (each red job's own log, `gh api
+    /// repos/<r>/actions/jobs/<job>/logs`, up to its last error; without one `gh run view <run>
+    /// --log-failed`; last 16k) in `ci-<n>.log`, then a CI repair (`ci_repairs` + 1), or
+    /// `CI red` after 3.
     fn red(&self, cx: &Ctx<'_>, m: &Mission) -> Result<Progress, StepError> {
         let mut data = Data::of(m);
         let red: Vec<Value> = data
@@ -499,7 +526,22 @@ impl Ci {
         let log = cx.runs(m).join(format!("ci-{n}.log"));
         let mut text = String::new();
         let mut seen = BTreeSet::new();
+        // A job's own log first: `run view --log-failed` misses jobs of reusable workflows
+        // (`caller / job`). Each red job gets an equal share of the 16k.
+        let share = TAIL / red.len().max(1);
         for c in &red {
+            let job = job_id(&s(c, "url"));
+            if let Some(job) = job {
+                let path = format!("repos/{github}/actions/jobs/{job}/logs");
+                if let Ok(out) = gh::try_gh(cx, m, &["api", &path])? {
+                    text.push_str(&format!(
+                        "== job {job} ({}) ==\n{}\n",
+                        s(c, "name"),
+                        failed_part(&out, share)
+                    ));
+                    continue;
+                }
+            }
             match c.get("run").and_then(Value::as_u64) {
                 Some(run) if seen.insert(run) => {
                     let id = run.to_string();
