@@ -360,6 +360,7 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
 
     switch (n.kind) {
       case "go":
+        if (o.text) data.answer = o.text;
         move(n.to, {}, o.why ?? null);
         break;
       case "wait":

@@ -8,7 +8,6 @@ import { applyPending, paused } from "./commands.ts";
 import type { Config } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
 import { Health } from "./faults.ts";
-import { upsertStageComment } from "./github/comments.ts";
 import { approveRequested, intentEvents, prEvents, releaseRequested } from "./github/events.ts";
 import { type PrState, readPr } from "./github/prs.ts";
 import { type ChildEnd, type Clock, type Ctx, EnvError, type GitHub, type Handlers } from "./handlers.ts";
@@ -466,18 +465,18 @@ export class Loop {
           this.lastPrPoll.delete(m.id);
           continue;
         }
-        const release = releaseRequested(m, prs, this.d.github.me);
-        if (release) {
-          await upsertStageComment(
-            this.d.github,
-            release.repo,
-            release.pr,
-            "Release",
-            1,
-            "Releases are part of the ship stage, which v2 doesn't have yet (intent 261026-2204-4). Merging the PR is the last step for now.",
+        const bot = (await this.d.github.bot()).login;
+        for (const ask of releaseRequested(m, prs, this.d.github.me, bot)) {
+          const target = ask.kind === "plan" ? intentsRepo! : repo.github;
+          await this.d.github.gh(
+            target,
+            ["pr", "comment", String(ask.pr), "-R", target, "--body-file", "-"],
+            {
+              input: ask.reply,
+            },
           );
         }
-        const o = prEvents(m, prs, this.d.github.me, (await this.d.github.bot()).login);
+        const o = prEvents(m, prs, this.d.github.me, bot);
         if (!o) continue;
         const running = this.children.has(m.id);
         if (running && !["code_merged", "spec_merged", "plan_merged", "closed"].includes(o.event)) continue;

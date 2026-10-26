@@ -1,6 +1,6 @@
 // Every live spec row's `Verified by` tests exist (specs/README.md).
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 
@@ -48,6 +48,7 @@ function liveSet(file: string): (id: string) => boolean {
 
 function testTitles(dir: string): Set<string> {
   const titles = new Set<string>();
+  if (!existsSync(dir)) return titles;
   const walk = (d: string) => {
     for (const f of readdirSync(d)) {
       const p = join(d, f);
