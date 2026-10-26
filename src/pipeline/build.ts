@@ -234,7 +234,12 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
   const intent = await intentOf(cx, m);
   await coGit(cx, m, ["add", "-A"]);
   const staged = (await coGit(cx, m, ["diff", "--cached", "--name-only"])).trim();
-  if (staged) {
+  // A conflict round's merge is committed even when the resolution kept this branch's side whole.
+  const merging = await coGit(cx, m, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]).then(
+    () => true,
+    () => false,
+  );
+  if (staged || merging) {
     await coGit(cx, m, [...(await botAuthor(cx)), "commit", "--quiet", "-m", commitTitle(m, intent)]);
   }
   const repo = cx.repo(m);

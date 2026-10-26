@@ -7,7 +7,7 @@ import { removeCheckout } from "./checkout.ts";
 import { applyPending, paused } from "./commands.ts";
 import type { Config } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
-import { Health } from "./faults.ts";
+import { fixFor, Health } from "./faults.ts";
 import { approveRequested, intentEvents, prEvents, releaseRequested } from "./github/events.ts";
 import { type PrState, readPr } from "./github/prs.ts";
 import { type ChildEnd, type Clock, type Ctx, EnvError, type GitHub, type Handlers } from "./handlers.ts";
@@ -19,6 +19,7 @@ import {
   finished,
   isWait,
   isWorking,
+  next,
   type Outcome,
   phaseOf,
   type Subject,
@@ -216,6 +217,7 @@ export class Loop {
           if (step !== m.step) {
             cols.unclean = 0;
             cols.retries = 0;
+            cols.step_secs = 0;
           }
           let fresh = update(d.db, m.id, cols, this.now);
           if (data)
@@ -293,13 +295,8 @@ export class Loop {
       const fresh = update(
         this.d.db,
         m.id,
-        {
-          child_pid: null,
-          child_kind: null,
-          child_since: null,
-          child_model: null,
-          step_secs: m.step_secs + runMs / 1000,
-        },
+        // `child_model` stays while `finish` reads the run (a limit cools the model that ran).
+        { child_pid: null, child_kind: null, child_since: null, step_secs: m.step_secs + runMs / 1000 },
         this.now,
       );
       const end: ChildEnd = {
@@ -311,7 +308,9 @@ export class Loop {
       };
       const h = this.d.handlers[fresh.stage];
       if (!h) continue;
-      await this.drive(fresh, () => h.finish(this.ctx(), fresh, end));
+      // A Claude run that ended without a network or auth failure: Claude is reachable.
+      await this.drive(fresh, () => h.finish(this.ctx(), fresh, end), r.spec.model !== undefined);
+      if (!this.children.has(id)) update(this.d.db, id, { child_model: null }, this.now);
     }
   }
 
@@ -493,7 +492,7 @@ export class Loop {
             },
           );
         }
-        const o = prEvents(m, prs, this.d.github.me, bot);
+        const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot);
         if (!o) continue;
         const running = this.children.has(m.id);
         if (running && !["code_merged", "spec_merged", "plan_merged", "closed"].includes(o.event)) continue;
@@ -524,7 +523,11 @@ export class Loop {
   }
 
   /** Call a handler and act on its progress. */
-  private async drive(m: Mission, call: () => Promise<import("./handlers.ts").Progress>): Promise<void> {
+  private async drive(
+    m: Mission,
+    call: () => Promise<import("./handlers.ts").Progress>,
+    claudeRun = false,
+  ): Promise<void> {
     let p: import("./handlers.ts").Progress;
     try {
       p = await call();
@@ -541,18 +544,23 @@ export class Loop {
     }
     const cur = getMission(this.d.db, m.id) ?? m;
     if ("done" in p) {
-      if (p.done.event !== "env_fail") this.health.ok("claude");
+      // Only a Claude run's end closes a Claude fault: another mission's git step says nothing of it.
+      if (claudeRun && p.done.event !== "env_fail") this.health.ok("claude");
       this.move(cur, p.done);
     } else if ("poll" in p) {
       this.pollAt.set(m.id, this.now + p.poll);
       update(this.d.db, m.id, { busy: 0 }, this.now);
     } else {
-      const spec = p.spawn;
+      let spec = p.spawn;
       if (spec.slot && this.slotsUsed() >= this.d.config.agent.parallel) {
         update(this.d.db, m.id, { busy: 0 }, this.now);
         this.pollAt.set(m.id, this.now + 1);
         return;
       }
+      // The step's budget minus the run time it already spent (a restart or a limit wait in between
+      // never adds to it, LOOP-12).
+      if (spec.timeoutMs !== undefined)
+        spec = { ...spec, timeoutMs: Math.max(0, spec.timeoutMs - cur.step_secs * 1000) };
       let handle: ChildHandle;
       try {
         handle = this.d.tools.spawn(spec);
@@ -630,13 +638,15 @@ export class Loop {
 
   pickState(): PickState {
     const { db, config } = this.d;
-    const full = new Map<string, { n: number; workers: number }>();
+    const busy = new Map<string, { n: number; workers: number }>();
     for (const m of unfinished(db)) {
       if (m.merge_sha) continue;
-      const cur = full.get(m.repo) ?? { n: 0, workers: config.repos.get(m.repo)?.workers ?? 1 };
+      const cur = busy.get(m.repo) ?? { n: 0, workers: config.repos.get(m.repo)?.workers ?? 1 };
       cur.n++;
-      full.set(m.repo, cur);
+      busy.set(m.repo, cur);
     }
+    // Only repos at their `workers` are full (LOOP-4).
+    const full = new Map([...busy].filter(([, c]) => c.n >= c.workers));
     const cooling = new Map<string, string>();
     for (const row of db.all<{ key: string }>("SELECT key FROM meta WHERE key LIKE 'cooldown:%'")) {
       const model = row.key.slice("cooldown:".length);
@@ -734,7 +744,7 @@ export class Loop {
       this.d.db.run(
         "INSERT OR IGNORE INTO outbox (key, mission, text, created) VALUES (?, NULL, ?, ?)",
         `health:${n.kind}:${n.since}`,
-        `Towercab can't reach ${n.kind} and has paused new work.\n${n.error}`,
+        `Towercab can't reach ${n.kind} and has paused new work.\n${n.error}\n${fixFor(n.kind)}`,
         this.now,
       );
     }
@@ -755,6 +765,20 @@ export class Loop {
   state(): { listing: Listing | null; listingError: string | null } {
     return { listing: this.listing, listingError: this.listingError };
   }
+}
+
+/**
+ * The mission as PR events should see it: a spec or plan PR whose merge the mission has already moved
+ * past (its merge event would be ignored) is left out of the event order, so it can't mask the
+ * owner's comments on it (an answer on the merged plan PR before a code PR exists).
+ */
+export function pastMerges(m: Mission, prs: { spec?: PrState; plan?: PrState }): Mission {
+  const out = { ...m };
+  if (prs.plan?.state === "MERGED" && next(m.stage, "plan_merged", m.from_stage).kind === "ignore")
+    out.plan_pr = null;
+  if (prs.spec?.state === "MERGED" && next(m.stage, "spec_merged", m.from_stage).kind === "ignore")
+    out.spec_pr = null;
+  return out;
 }
 
 /** `HH:MM` today, else `YYYY-MM-DD HH:MM`, local time. */

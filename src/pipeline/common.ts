@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { effectiveA } from "../autonomy.ts";
 import { git, gitSane } from "../checkout.ts";
-import { type ClaudeRun, parseRun, prepareRun, type RunEnd, type RunKind } from "../claude.ts";
+import { type ClaudeRun, freshContext, parseRun, prepareRun, type RunEnd, type RunKind } from "../claude.ts";
 import { clonePath, type RepoConfig } from "../config.ts";
 import { classifyRun } from "../faults.ts";
 import { type Step, upsertStageComment } from "../github/comments.ts";
@@ -165,13 +165,27 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
   if (p.session === "fresh") session = { mode: "new", id: crypto.randomUUID() };
   else session = { mode: m.session_used ? "resume" : "new", id: m.session };
   const fresh = cx.record(m, p.step, p.session === "worker" ? { session_used: 1 } : {}, nd);
+  let prompt = reentered && resumePrompt ? resumePrompt : p.prompt;
+  // A re-entered step on a new worker session: the old one was gone (LOOP-7), so the new one is
+  // told where the work is, then given the step's task.
+  if (reentered && p.session === "worker" && session.mode === "new") {
+    const pr = currentPr(cx, m, repo);
+    const plan = m.plan_pr && cx.store.github() ? prUrl(cx.store.github()!, m.plan_pr) : null;
+    prompt = `${freshContext(
+      m.branch,
+      pr ? prUrl(pr.github, pr.n) : null,
+      cx.store.url(p.intent) ?? `${p.intent.dir}/intent.md in the intents repo`,
+      data(m).design?.specIds ?? [],
+      plan,
+    )}\n\n${p.prompt}`;
+  }
   const run: ClaudeRun = {
     kind: p.kind,
     model: p.model,
     cwd: cx.checkout(fresh),
     runsDir: runs,
     n,
-    prompt: reentered && resumePrompt ? resumePrompt : p.prompt,
+    prompt,
     schema: p.schema,
     session,
     budgetUsd: p.kind === "review" ? null : cx.config.agent.maxBudgetUsd,
@@ -207,8 +221,10 @@ export function ended<T>(
 ): Ended<T> {
   const out = readText(end.stdout);
   const err = readText(end.stderr);
+  // The model that ran (the review's may differ from the mission's): a limit cools that one.
+  const model = m.child_model ?? m.model;
   const e: RunEnd = parseRun(out, err, end.code, {
-    model: m.model,
+    model,
     now: new Date(cx.clock.now() * 1000),
     home: homedir(),
   });
@@ -222,6 +238,8 @@ export function ended<T>(
           done: {
             event: end.timedOut ? "timeout" : "bad_result",
             why,
+            // The one continue gets the step's whole budget again.
+            set: { step_secs: 0 },
             data: { continued: { ...continued, [kind]: true } },
           },
         },
@@ -241,6 +259,8 @@ export function ended<T>(
         if (env) throw new EnvError(env.kind, env.why);
         return once("no result", parsed.why);
       }
+      // The first success on a model ends its cooldown and resets its backoff (LOOP-9).
+      cx.db.delMeta(`cooldown:${model}`);
       const sessionKey = kind === "review" ? `review:${e.result.sessionId}` : m.session;
       const before = d.sessionCost?.[sessionKey] ?? 0;
       const delta = Math.max(0, e.result.costUsd - before);
@@ -269,7 +289,7 @@ export function ended<T>(
         progress: {
           done: {
             event: "limit",
-            limit: cooldown(e.limit, backoffsOf(cx, m.model), cx.clock.now()),
+            limit: cooldown(e.limit, backoffsOf(cx, model), cx.clock.now()),
             why: e.limit.text,
           },
         },
