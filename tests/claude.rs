@@ -1050,3 +1050,27 @@ fn test_build_notes_keep_summary() {
     claude::append_notes(&other, Note::Repair, "r").unwrap();
     assert_eq!(fs::read_to_string(&other).unwrap(), "Repair: r");
 }
+
+#[test]
+fn test_sandbox_unix_sockets() {
+    let home = Path::new("/home/w");
+    let exe = Path::new("/bin/towercab");
+    // Off (the default): no allowAllUnixSockets, no host sockets hidden.
+    let off = towercab::claude::settings(&run(RunKind::Worker), home, exe);
+    assert!(off["sandbox"].get("network").is_none(), "{off}");
+    // On: every Unix socket allowed, Docker's and the session's hidden.
+    let mut r = run(RunKind::Worker);
+    r.unix_sockets = true;
+    let on = towercab::claude::settings(&r, home, exe);
+    assert_eq!(on["sandbox"]["network"]["allowAllUnixSockets"], true);
+    let read: Vec<&str> = on["sandbox"]["filesystem"]["denyRead"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    for p in towercab::claude::HOST_SOCKETS {
+        assert!(read.contains(&p), "{p} hidden: {read:?}");
+    }
+    assert!(read.contains(&"/home/w/.ssh"), "secrets still hidden");
+}

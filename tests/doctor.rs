@@ -83,7 +83,7 @@ fn test_doctor() {
             "config: {}\nhome: {}\ngit: {}\ngh: {}\nclaude: {}\ncargo: {}\nbwrap: {}\n\
              systemd-inhibit: {}\nsystemctl: missing\n\
              gh version: 2.40.1: Towercab needs 2.46 or newer\n\
-             github app: {}/app.pem: No such file or directory (os error 2)\n\
+             {}github app: {}/app.pem: No such file or directory (os error 2)\n\
              api: ruleset: gh api repos/me/api/rulesets?includes_parents=false&per_page=100: \
              HTTP 404: Not Found\n\
              web: no towercab ruleset: towercab protect web\n\
@@ -97,6 +97,12 @@ fn test_doctor() {
             b("cargo"),
             b("bwrap"),
             b("systemd-inhibit"),
+            // The host's own user-namespace setting (PIP-24): the hint only where it bites.
+            if towercab::doctor::userns_restricted() {
+                format!("{}\n", towercab::doctor::SANDBOX_HINT)
+            } else {
+                String::new()
+            },
             tmp.path().display(),
         )
     );
@@ -116,9 +122,10 @@ fn test_doctor() {
     let (out, _, code) = doctor(&plain);
     assert_eq!(code, Some(0));
     assert!(
-        out.ends_with(
-            "gh version: 2.46.0\ngithub app: towercab[bot] 42\ntelegram: not configured\n"
-        ),
+        out.replace(&format!("{}\n", towercab::doctor::SANDBOX_HINT), "")
+            .ends_with(
+                "gh version: 2.46.0\ngithub app: towercab[bot] 42\ntelegram: not configured\n"
+            ),
         "{out}"
     );
 

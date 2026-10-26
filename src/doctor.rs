@@ -32,6 +32,10 @@ pub fn doctor(config: &Config, home: &Home, exes: &Exes) -> String {
     if which(&exes.gh).is_some() {
         out.push(gh_version(&exes.gh));
     }
+    // Claude Code's Bash sandbox can't start where user namespaces are restricted (PIP-24).
+    if userns_restricted() && !config.agent.sandbox_unix_sockets {
+        out.push(SANDBOX_HINT.into());
+    }
     // The App identity (LOOP-19): its key loads and GitHub knows its bot.
     let identity = Identity::from_config(config, exes);
     out.push(match identity.bot() {
@@ -77,6 +81,16 @@ pub fn doctor(config: &Config, home: &Home, exes: &Exes) -> String {
         None => "telegram: not configured".into(),
     });
     out.join("\n")
+}
+
+/// The `doctor` line when Claude Code's Bash sandbox can't start here.
+pub const SANDBOX_HINT: &str = "sandbox: user namespaces are restricted (Ubuntu): Claude Code's Bash sandbox fails \
+     (apply-seccomp setgroups); set [agent] sandbox_unix_sockets = true (README: Known issues)";
+
+/// `/proc/sys/kernel/apparmor_restrict_unprivileged_userns` is 1.
+pub fn userns_restricted() -> bool {
+    std::fs::read_to_string("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
+        .is_ok_and(|v| v.trim() == "1")
 }
 
 /// The oldest gh every call Towercab makes works with (LOOP-20).

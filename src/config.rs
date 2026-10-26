@@ -63,6 +63,10 @@ pub struct AgentConfig {
     pub path: String,
     /// Toolchain directories runs may use (`~/` expanded, absolute).
     pub toolchain: Vec<PathBuf>,
+    /// Claude Code's Bash sandbox may use any Unix socket, so it starts on systems that
+    /// restrict user namespaces (Ubuntu ≥ 24.04); Docker's and the session's sockets stay
+    /// hidden (PIP-24). Default off.
+    pub sandbox_unix_sockets: bool,
 }
 
 impl Default for AgentConfig {
@@ -86,6 +90,7 @@ impl Default for AgentConfig {
                 .iter()
                 .map(|d| expand(d).unwrap_or_else(|_| PathBuf::from(d)))
                 .collect(),
+            sandbox_unix_sockets: false,
         }
     }
 }
@@ -449,6 +454,11 @@ fn agent(s: &Section) -> Result<AgentConfig, String> {
         ci_wait: s.secs("ci_wait", 60, 86400, 1800)?,
         path,
         toolchain,
+        sandbox_unix_sockets: match s.get("sandbox_unix_sockets") {
+            None => false,
+            Some(toml::Value::Boolean(b)) => *b,
+            Some(_) => return Err(s.must("sandbox_unix_sockets", "true or false")),
+        },
     })
 }
 

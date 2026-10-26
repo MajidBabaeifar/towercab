@@ -225,6 +225,8 @@ pub struct Run {
     /// Towercab's own secrets outside `HOME`'s [`SECRETS`] (`--config` elsewhere): the config
     /// file, `app.pem` and `secrets/` next to it, absolute (path, is a directory).
     pub deny_read: Vec<(PathBuf, bool)>,
+    /// `[agent].sandbox_unix_sockets`: `allowAllUnixSockets`, with [`HOST_SOCKETS`] hidden.
+    pub unix_sockets: bool,
     /// An eval's run (PIP-33): same argv, metrics agent `eval`.
     pub eval: bool,
 }
@@ -261,6 +263,7 @@ impl Run {
             deny_write: Vec::new(),
             guard: false,
             deny_read: config_secrets(config),
+            unix_sockets: config.agent.sandbox_unix_sockets,
             eval: false,
         }
     }
@@ -499,6 +502,9 @@ pub fn settings(run: &Run, home: &Path, towercab: &Path) -> Value {
     };
     let mut read = secret_paths(home);
     read.extend(run.deny_read.iter().map(|(p, _)| p.clone()));
+    if run.unix_sockets {
+        read.extend(host_sockets());
+    }
     let mut write = run.deny_write.clone();
     let git = run.cwd.join(".git");
     if !run.kind.toolless() && !write.contains(&git) {
@@ -518,6 +524,9 @@ pub fn settings(run: &Run, home: &Path, towercab: &Path) -> Value {
             "allowedDomains": [format!("localhost:{}", v.port), format!("127.0.0.1:{}", v.port)],
         });
     }
+    if run.unix_sockets {
+        sandbox["network"]["allowAllUnixSockets"] = json!(true);
+    }
     let mut s = json!({ "sandbox": sandbox });
     if run.guard {
         let quote = |p: &Path| format!("'{}'", p.to_string_lossy().replace('\'', r"'\''"));
@@ -534,6 +543,20 @@ pub fn settings(run: &Run, home: &Path, towercab: &Path) -> Value {
         });
     }
     s
+}
+
+/// Sockets that reach the host's power, hidden when Unix sockets are allowed: Docker (root
+/// for its group), the user's session (`/run/user/<uid>`: D-Bus, systemd, agents), the system
+/// bus.
+pub const HOST_SOCKETS: [&str; 4] = [
+    "/var/run/docker.sock",
+    "/run/docker.sock",
+    "/run/dbus",
+    "/run/user",
+];
+
+fn host_sockets() -> Vec<PathBuf> {
+    HOST_SOCKETS.iter().map(PathBuf::from).collect()
 }
 
 /// The verifier's `--mcp-config`: Playwright limited to its app's `url`.
