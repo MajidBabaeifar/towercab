@@ -1,0 +1,42 @@
+{
+  "name": "towercab",
+  "version": "1.0.0",
+  "description": "Orchestrator for Claude Code: intents in, reviewed PRs out",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "bin": {
+    "towercab": "bin/towercab"
+  },
+  "scripts": {
+    "towercab": "node --disable-warning=ExperimentalWarning src/cli.ts",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/cli.ts --home .towercab-dev run --watch",
+    "dev:ui": "vite --config ui/vite.config.ts",
+    "build:ui": "vite build --config ui/vite.config.ts",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:ui": "npm run build:ui && playwright test -c ui/playwright.config.ts",
+    "check": "npm run lint && npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "picomatch": "4.0.7",
+    "smol-toml": "1.9.1",
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.2",
+    "@playwright/test": "1.64.1",
+    "@preact/preset-vite": "2.10.6",
+    "@types/node": "22.20.5",
+    "@types/picomatch": "4.0.3",
+    "preact": "10.29.8",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}

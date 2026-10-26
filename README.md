@@ -13,14 +13,14 @@ Anthropic.
 How the playbook's stages map to what Towercab does. The rows that define each step are in
 [specs/pipeline.md](specs/pipeline.md).
 
-| Playbook stage | In Towercab |
-|---|---|
-| 1 Plan | An intent is captured once as a file in the intents repo ([specs/intents.md](specs/intents.md)); scores decide the order ([specs/priority.md](specs/priority.md)) |
-| 2 Design | The `design` stage adds the requirement rows to `specs/`; the spec is approved before any code |
-| 3 Build | The `build` stage: a plan you can review, then Claude Code in a sandbox behind a guard hook |
-| 4 Verify and review | Checks in code, red→green proof, CI, a PR review pass, then the gate |
-| 5 Ship | Merge by autonomy level, deploy, e2e, release gate, revert on red |
-| 6 Maintain | Bands on Towercab's own metrics open new intents ([specs/maintain.md](specs/maintain.md)) |
+| Playbook stage      | In Towercab                                                                                                                                                       |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 Plan              | An intent is captured once as a file in the intents repo ([specs/intents.md](specs/intents.md)); scores decide the order ([specs/priority.md](specs/priority.md)) |
+| 2 Design            | The `design` stage adds the requirement rows to `specs/`; the spec is approved before any code                                                                    |
+| 3 Build             | The `build` stage: a plan you can review, then Claude Code in a sandbox behind a guard hook                                                                       |
+| 4 Verify and review | Checks in code, red→green proof, CI, a PR review pass, then the gate                                                                                              |
+| 5 Ship              | Merge by autonomy level, deploy, e2e, release gate, revert on red                                                                                                 |
+| 6 Maintain          | Bands on Towercab's own metrics open new intents ([specs/maintain.md](specs/maintain.md))                                                                         |
 
 ## Requirements
 
@@ -93,21 +93,21 @@ e2e secrets per repo: `~/.config/towercab/secrets/<repo>.env` (`KEY=VALUE`, mode
 
 ## Commands
 
-| Command | Does |
-|---|---|
-| `towercab migrate` | once: the old `TODO.md` lines become intent folders |
-| `towercab up` · `down` · `logs` | the systemd user service running `run --watch` |
-| `towercab run [--watch] [--intent ID]` | the loop; without `--watch` it exits when nothing is runnable |
-| `towercab step <id>` | one step of an intent's mission in the foreground |
-| `towercab status` · `next` | what runs, what waits on you, what it would pick and why |
-| `towercab ui` | the web page at http://127.0.0.1:7311/ while `up` (`[ui] port`, 0 = off): what runs and waits on you, every intent (edit u/i/a, model, drop, add), the repos' readiness |
-| `towercab add "<repo>: <title>" [uN iN aN]` | a thin intent on `main` (or `/intent` in Claude Code) |
-| `towercab approve <id>` · `retry --fresh <id>` · `release <id>` | go on after a wait, start over, authorize a release |
-| `towercab answer <id> <text>` · `unlock <id> <glob>…` · `drop <id>` | answer a wait (the worker gets it), let the worker change protected paths, drop an intent; also in the UI and on Telegram |
-| `towercab pause` · `resume` · `trust <repo>` | no picks; lift a repo's cap and freeze |
-| `towercab review` | walk parked and stale intents |
-| `towercab protect <repo>` | the `towercab` ruleset on a repo's base branch (your `gh` login) |
-| `towercab eval [--reason <change>]` · `eval --pr <n>` | replay the eval cases; post `towercab/evals` on a Towercab PR |
+| Command                                                             | Does                                                                                                                                                                    |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `towercab migrate`                                                  | once: the old `TODO.md` lines become intent folders                                                                                                                     |
+| `towercab up` · `down` · `logs`                                     | the systemd user service running `run --watch`                                                                                                                          |
+| `towercab run [--watch] [--intent ID]`                              | the loop; without `--watch` it exits when nothing is runnable                                                                                                           |
+| `towercab step <id>`                                                | one step of an intent's mission in the foreground                                                                                                                       |
+| `towercab status` · `next`                                          | what runs, what waits on you, what it would pick and why                                                                                                                |
+| `towercab ui`                                                       | the web page at http://127.0.0.1:7311/ while `up` (`[ui] port`, 0 = off): what runs and waits on you, every intent (edit u/i/a, model, drop, add), the repos' readiness |
+| `towercab add "<repo>: <title>" [uN iN aN]`                         | a thin intent on `main` (or `/intent` in Claude Code)                                                                                                                   |
+| `towercab approve <id>` · `retry --fresh <id>` · `release <id>`     | go on after a wait, start over, authorize a release                                                                                                                     |
+| `towercab answer <id> <text>` · `unlock <id> <glob>…` · `drop <id>` | answer a wait (the worker gets it), let the worker change protected paths, drop an intent; also in the UI and on Telegram                                               |
+| `towercab pause` · `resume` · `trust <repo>`                        | no picks; lift a repo's cap and freeze                                                                                                                                  |
+| `towercab review`                                                   | walk parked and stale intents                                                                                                                                           |
+| `towercab protect <repo>`                                           | the `towercab` ruleset on a repo's base branch (your `gh` login)                                                                                                        |
+| `towercab eval [--reason <change>]` · `eval --pr <n>`               | replay the eval cases; post `towercab/evals` on a Towercab PR                                                                                                           |
 
 Telegram (from the configured chat): `status`, `next`, `approve <id>`, `retry <id>`, `release <id>`,
 `pause`, `resume`, `answer <id> <text>`, `unlock <id> <glob>…`, `drop <id>`. Messages come only when you must act; every wait can be answered from the UI or Telegram.
@@ -152,7 +152,6 @@ give it `a4` or `a5`, which merge without you.
 ## Docs
 
 Everything Towercab does is a requirement row in `specs/`:
-
 - [specs/README.md](specs/README.md): how specs are written and the index
 - [specs/priority.md](specs/priority.md): scores, order, cutoff, review
 - [specs/autonomy.md](specs/autonomy.md): where an intent waits for the owner

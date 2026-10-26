@@ -1,4 +1,5 @@
 ---
+
 name: intent
 description: Capture a new intent for Towercab with the owner - ask what an analyst would, write intents/<id>-<slug>/intent.md from the template, propose u/i scores and commit it to main of the intents repo. Use when the owner types /intent or asks to add, capture or file an intent.
 ---
@@ -18,7 +19,6 @@ on claude.ai, the current local time). It becomes `started:` and the ID.
 
 Let the owner describe the problem in their words. Then ask, a few questions at a time, only
 what you can't infer:
-
 - **Scope**: which repo, which part; what is explicitly not included.
 - **Users and systems**: who or what is affected.
 - **Constraints**: deadlines, compatibility, things that must not change.
@@ -53,10 +53,10 @@ started: <conversation start, RFC 3339 with offset, e.g. 2026-10-21T09:05:00+02:
 
 - Propose `u` and `i` against the anchors (from `priority.md`), each with a one-line reason:
 
-  | | 1 | 2 | 3 | 4 | 5 |
-  |---|---|---|---|---|---|
-  | u | someday | this quarter | this month | this week | now / blocking |
-  | i | nice to have | small gain | real value | core to a goal | goal depends on it |
+  |     | 1            | 2            | 3          | 4              | 5                  |
+  | --- | ------------ | ------------ | ---------- | -------------- | ------------------ |
+  | u   | someday      | this quarter | this month | this week      | now / blocking     |
+  | i   | nice to have | small gain   | real value | core to a goal | goal depends on it |
 
 - Leave `a` out unless the owner gives it (autonomy is their call).
 - Optional keys only when they ask: `after: [<ids>]`, `model`, `review`, `unlock: [<globs>]`.
