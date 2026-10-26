@@ -1,10 +1,11 @@
 // CI (PIP-3, PIP-18): poll the PR's checks, bucket them in code, rerun a first red or cancelled
 // Actions run once, send a red to the worker as a repair (2 at most), else wait for the owner.
 
+import { git, refreshBase } from "../checkout.ts";
 import type { Ctx, Handler, Progress } from "../handlers.ts";
 import { ok, red, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
-import { data, gh, tail } from "./common.ts";
+import { asEnv, cloneOf, coGit, data, gh, tail } from "./common.ts";
 
 export interface Check {
   name: string;
@@ -144,6 +145,25 @@ async function failedLog(cx: Ctx, github: string, checks: Check[]): Promise<stri
   return `${named}\n\n${parts.join("\n\n")}`.trim();
 }
 
+/** Move the mission's checkout to the PR's `head` (fetched through Towercab's clone). */
+async function adoptHead(cx: Ctx, m: Mission, head: string): Promise<void> {
+  const repo = cx.repo(m);
+  const clone = cloneOf(cx, m);
+  await git(cx.tools, clone, ["fetch", "--quiet", "origin"], await cx.github.gitAuth(repo.github)).catch(
+    (e) => {
+      throw asEnv(e);
+    },
+  );
+  await refreshBase(cx.tools, clone, cx.checkout(m), repo.base);
+  await coGit(cx, m, [
+    "fetch",
+    "--quiet",
+    clone,
+    `+refs/remotes/origin/${m.branch}:refs/remotes/origin/${m.branch}`,
+  ]);
+  await coGit(cx, m, ["reset", "--hard", "--quiet", head]);
+}
+
 export const ciHandler: Handler = {
   async step(cx: Ctx, m: Mission): Promise<Progress> {
     const repo = cx.repo(m);
@@ -152,7 +172,9 @@ export const ciHandler: Handler = {
     const s = await ciState(cx, repo.github, m.pr!, m.head, pushedAt);
     switch (s.kind) {
       case "moved":
-        // Someone else pushed (the owner): adopt their head and wait for its checks.
+        // Someone else pushed (the owner, GitHub's update branch): the checkout takes their head, so
+        // the review reads it and a later round builds on it instead of pushing over it.
+        await adoptHead(cx, m, s.head);
         cx.record(m, m.step, { head: s.head, pushed_at: cx.clock.now() });
         return { poll: cx.config.agent.ciPoll };
       case "conflict":

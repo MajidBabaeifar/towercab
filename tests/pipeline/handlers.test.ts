@@ -13,6 +13,7 @@ import { pickHandler } from "../../src/pipeline/start.ts";
 import { defaultReview } from "../../src/repo/files.ts";
 import { checkRun, ID, intent, REVIEW, TARGET } from "../helpers/flows.ts";
 import { type FakePr, Pipe } from "../helpers/pipe.ts";
+import { git } from "../helpers/world.ts";
 
 const NO_A = "261026-1001";
 
@@ -214,12 +215,38 @@ test("pipeline: stale green is ignored", async () => {
   // Within the grace after a push, a green that started before it is the old head's: pending.
   expect(bucket([run("SUCCESS", { startedAt: 900 })], 1000, 1050, 120).kind).toBe("pending");
   expect(bucket([run("SUCCESS", { startedAt: 1010 })], 1000, 1050, 120).kind).toBe("green");
-  // Checks read for another head than the mission's never count: the new head is adopted and polled.
-  pr.checks = () => [checkRun("test", "SUCCESS")];
-  const m = atCi({ head: "0".repeat(40) });
-  const out = await ciHandler.step(cx, m);
-  expect(out).toEqual({ poll: 5 });
-  expect(p.mission(m.id)!.head).toBe(head);
+  // Checks read for another head than the mission's never count: the PR's head is adopted (the
+  // checkout moves to it) and polled again.
+  const m = make(ID, 5);
+  await pickHandler.step(cx, m);
+  const co = cx.checkout(m);
+  git(co, "commit", "-q", "--allow-empty", "-m", "someone else's commit");
+  git(co, "push", "-q", p.bares.web!, `HEAD:refs/heads/${m.branch}`);
+  const theirs = git(co, "rev-parse", "HEAD").trim();
+  git(co, "reset", "-q", "--hard", "HEAD~1");
+  await p.tools.run("gh", [
+    "pr",
+    "create",
+    "-R",
+    "owner/web",
+    "--base",
+    "main",
+    "--head",
+    m.branch,
+    "--title",
+    "t",
+  ]);
+  const pr2 = p.prs.at(-1)!;
+  pr2.checks = () => [checkRun("test", "SUCCESS")];
+  const stale = update(
+    p.db,
+    m.id,
+    { pr: pr2.number, head: "0".repeat(40), pushed_at: p.clock.now() - 600 },
+    p.clock.now(),
+  );
+  expect(await ciHandler.step(cx, stale)).toEqual({ poll: 5 });
+  expect(p.mission(m.id)!.head).toBe(theirs);
+  expect(git(co, "rev-parse", "HEAD").trim()).toBe(theirs);
   const again = await ciHandler.step(cx, p.mission(m.id)!);
   expect(again).toMatchObject({ done: { event: "ok", data: { ci: { result: "green" } } } });
 });
