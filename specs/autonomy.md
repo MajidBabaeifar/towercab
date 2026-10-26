@@ -1,59 +1,152 @@
 # Autonomy
 
-**Status:** Live: AUT-3..12 · **Prefix:** AUT
+**Status:** Draft · **Prefix:** AUT
 
 ## Purpose
 
-How far an agent may take an intent before it waits for me.
+How far Towercab may take an intent before the owner decides, and what a worker may touch. The
+owner sets `a` (1–5) per intent; a repo can cap it. Validation never shrinks with trust: every
+intent goes through the same checks, and autonomy only decides who merges and how much access the
+worker has without asking.
 
 ## Requirements
 
-| ID | Requirement | Verified by |
-|---|---|---|
-| AUT-1 | Removed: plan gate for a1. a1–a3 all mean "I merge" (AUT-3). | — |
-| AUT-2 | Removed: plan approval for a2. a1–a3 all mean "I merge" (AUT-3). | — |
-| AUT-3 | a1–a3 (effective `a` ≤ 3, or cap ≤ 3): `gate` → `Approval` (`waiting: review and merge PR`); the PR review still runs (AUT-6) and its findings reach me as one PR comment, never blocking ([PIP-7](pipeline.md)). a1–a2 first stop at the spec (AUT-11). | test_gate_table |
-| AUT-4 | a4: `gate` → `Merge` only with CI green and `review.approved` ([PIP-4, 5](pipeline.md)); `Merge` carries no `Waiting`, so no message ([LOOP-14](loop.md)). | test_gate_table |
-| AUT-5 | a5: as a4 at the gate. After every merge, whoever merged, `deploy` and `e2e` follow (`machine::ORDER`; they act when the repo has `live`, [PIP-8, 9](pipeline.md)); e2e red twice → revert for Towercab's merge ([PIP-19](pipeline.md)) or triage for mine ([PIP-20](pipeline.md)): the pipeline's handlers. | test_gate_table, test_validation_always |
-| AUT-6 | Validation never shrinks with trust: `machine::ORDER` runs verify, ci, verifier, review, gate before merge for every intent mission, no stage chosen by `a` (handlers: [PIP-23, 3, 4](pipeline.md)); `gate` merges an intent only with CI green and `review.approved`; a revert PR (`PrKind::Revert`, [PIP-19](pipeline.md)'s `revert_merge`) merges on CI green or none, without a review; CI not green → `waiting: revert failed`. | test_validation_always |
-| AUT-7 | `autonomy::lower(&mut Intent, lower_a: Option<u8>, lower_why: Option<&str>) -> Result<bool, String>` (the worker's result, [PIP-1](pipeline.md); `lowered(a, lower_a) -> Option<u8>`, pure): `lower_a` < `a` → `a = lower_a` and `lower_why` (trimmed; empty → removed) via `Intent::set`/`remove`, every other line byte-identical; equal, higher or outside 1–5 → nothing written; no `a` → written only when `lower_a` ≤ 3. Never raised. | test_lower_only |
-| AUT-8 | `RepoState { max_autonomy, capped, frozen }`, `read(&Connection, repo, &Towercab)` (the `repo_caps` row; `max_autonomy` from the base branch's `TOWERCAB.md`, [REPO-1](repo.md), default 5); `cap()` = `min(max_autonomy, 3 if capped or frozen else 5)`. `effective(a_at_pick, a_now, cap) -> Option<u8>` = min of the `a`s present and `cap`; neither → `None`. | test_repo_cap, test_max_autonomy_from_base |
-| AUT-9 | No `a` (effective `None`): cap ≤ 3 → `Approval`; else `Merge` only when approved and risk low (`Review::risk_low()` = `door` two-way ∧ no red line touched, [PIP-5](pipeline.md)), else `Approval`. | test_gate_table, test_no_a_under_cap_goes_to_me |
-| AUT-10 | After any revert Towercab makes, `machine::apply` sets, in its transaction, `repo_caps.capped` (`reverted, refine`) or `frozen` (`revert failed`, + `repo frozen` message): cap 3 until `towercab trust <repo>` deletes the row (`trusted <repo>`; not in `[repos]` → `trust: unknown repo <r>`, exit 1). Frozen: `pick` skips the repo (`repo <r> frozen`), `gate` → `Approval` for intents; a revert still merges. `status`: `repos: <r> capped at a3, <r> frozen`. | test_cap_after_revert, test_trust_clears |
-| AUT-11 | `spec_gate(a: Option<u8>, cap, concerns: bool) -> bool` (effective `a`): a concern, `a` ≤ 2, or no `a` and cap ≤ 2 → `waiting: approve spec` ([PIP-26](pipeline.md)), then as a3. | test_spec_gate |
-| AUT-12 | **Plan review** (the playbook's plan mode): `plan_gate(a: Option<u8>, cap) -> bool` (effective `a` ≤ 3, or no `a` and cap ≤ 3: where I merge anyway) → after `plan.md` is written, `waiting: approve plan` (stage `blocked`, why `a<n>` or `no a, repo cap <n>`, a `## Towercab` note with the plan's link, one message); `approve` → `build`, its first round (`pipeline::round`: an approve out of a wait that came from `plan` = `Round::First`, the build prompt, not a continue). a4–a5: no stop. | test_plan_review |
+### AUT-1 · Plan gate for a1
 
-**Gate** (`src/autonomy.rs`, pure; first match wins)
+Removed: in v1 already.
 
-```
-gate(&GateIn) -> Gate
-GateIn { kind: PrKind::{Intent, Revert}, frozen, cap: u8, a: Option<u8> (effective), ci: Ci::{Green, None, NotGreen},
-         unlock: bool (PIP-29), evals_red: bool (PIP-33), review: Option<Review { approved, door: Door, red_lines: bool }> }
-Gate::{Merge, Approval(Hold)}, waiting(PrKind) -> Option<Waiting>: an intent's Approval = review and merge PR + the findings
-         comment (PIP-7); a revert's = revert failed (PIP-19)
-Hold (Display = the transition's why): repo frozen · CI not green · ci: none · unlock used · evals red · cap <n> · a<n> · not approved · risk high
-Revert: CI not green → Approval; else Merge (frozen too).
-Intent: frozen, CI not green, ci: none, unlock, evals red, cap ≤ 3, a ≤ 3 → Approval; a ≥ 4: approved → Merge;
-        no a: approved ∧ risk low → Merge; else Approval (no review = not approved).
-```
+### AUT-2 · Plan approval for a2
+
+Removed: in v1 already.
+
+### AUT-3 · a1–a3: the owner merges
+
+At a1 to a3 the owner merges every code PR; Towercab prepares it and waits.
+
+- The gate ([PIP-7](pipeline.md)) sends the mission to `approval:merge` (`waiting: review and merge
+  PR`). The review still runs and posts its findings on the PR, never blocking
+  ([PIP-4](pipeline.md)).
+- Verified by: `autonomy: gate table`
+
+### AUT-4 · a4: Towercab merges when every check passes
+
+At a4 Towercab merges the code PR itself, but only when CI is green, the review approved it, and
+nothing in the build went beyond the approved plan.
+
+- Gate → `merge` only with CI green, `review.approved`, and no unplanned access (AUT-15); otherwise
+  `approval:merge` with the reason.
+- Verified by: `autonomy: gate table`
+
+### AUT-5 · a5: deploy and e2e
+
+Removed: the ship stage is parked (intent 261026-2204-4). a5 now means AUT-13.
+
+### AUT-6 · Validation never shrinks
+
+Every intent runs verify, the red→green proof, CI, the review and the gate, whatever its autonomy.
+
+- The stage order ([LOOP-3](loop.md)) has no stage chosen by `a`. The gate merges only with CI green
+  and the review approved.
+- Verified by: `autonomy: every stage runs at every level`
+
+### AUT-7 · A worker may lower autonomy
+
+A worker that finds the change riskier than the intent says may lower `a`, never raise it.
+
+- From the build result (`lower_a`, `lower_why`, [PIP-1](pipeline.md)): `lower_a` below the current
+  `a` (or no `a`: at most 3) → written to the intent with `lower_why`; anything else → nothing written.
+- Verified by: `autonomy: a worker only lowers a`
+
+### AUT-8 · Repo cap
+
+A repo can cap the autonomy of every intent in it.
+
+- `max_autonomy` (1–5, default 5) in the base branch's `TOWERCAB.md` ([REPO-1](repo.md)).
+  Effective `a` = the minimum of `a` at pick, `a` now, and the cap; no `a` anywhere → none.
+- Verified by: `autonomy: repo cap`
+
+### AUT-9 · No autonomy set
+
+An intent without `a` merges on its own only when the repo allows a4 or more and the review judges
+the change low-risk.
+
+- Cap ≤ 3 → `approval:merge`. Else merge only when approved and low-risk (the review's `door` is
+  `two-way` and no red line of `REVIEW.md` is touched, [PIP-5](pipeline.md)), else `approval:merge`.
+- Verified by: `autonomy: no a goes to the owner under the cap`
+
+### AUT-10 · Caps after a revert
+
+Removed: reverts are parked with the ship stage.
+
+### AUT-11 · Spec gate
+
+The owner approves the spec PR at a1–a2, or whenever the design raises a concern; otherwise
+Towercab merges it once its checks pass.
+
+- `specGate(a, cap, concerns)`: a concern, effective `a` ≤ 2, or no `a` and cap ≤ 2 → the owner
+  merges the spec PR (`approval:spec`). Else Towercab merges it after its CI is green or absent
+  ([PIP-50](pipeline.md)).
+- Verified by: `autonomy: spec gate`
+
+### AUT-12 · Plan gate
+
+The owner approves the plan PR at a1–a4; at a5 Towercab merges it itself.
+
+- `planGate(a, cap, source)`: effective `a` ≤ 4, or no `a` → the owner merges the plan PR
+  (`approval:plan`); merging it also grants the access ticked in it (AUT-14).
+- Verified by: `autonomy: plan gate`
+
+### AUT-13 · a5 only for the owner's own intents
+
+Full autonomy applies only to intents the owner wrote; an intent from anywhere else counts as a4.
+
+- Effective `a` = 5 only when the intent's `source` is `me` (or missing: the owner's file);
+  any other `source` → at most 4.
+- Verified by: `autonomy: a5 needs source me`
+
+### AUT-14 · Access by autonomy
+
+What a worker may reach without asking depends on the effective autonomy.
+
+| | a1–a3 (owner merges) | a4 | a5 |
+|---|---|---|---|
+| Network | default list + plan + requests | default list + plan | open |
+| Protected paths ([REPO-8](repo.md)) | writable, listed in the PR | only those the plan grants | writable |
+| Mid-build request | granted, noted in the PR | granted, PR goes to the owner (AUT-15) | not needed |
+
+- Default network list: `[agent].network` (default: `registry.npmjs.org`, `*.npmjs.org`,
+  `pypi.org`, `files.pythonhosted.org`, `crates.io`, `*.crates.io`, `proxy.golang.org`,
+  `sum.golang.org`, `github.com`, `*.github.com`, `*.githubusercontent.com`, `docs.rs`,
+  `nodejs.org`, `developer.mozilla.org`).
+- Plan grants: the ticked boxes in the merged plan's Access section ([PIP-47](pipeline.md)), plus
+  the intent's own `unlock` and `network` fields.
+- Verified by: `autonomy: access by level`
+
+### AUT-15 · Unplanned access
+
+When a worker needs access the plan didn't grant, Towercab grants it and keeps building; at a4 the
+code PR then waits for the owner instead of merging.
+
+- The worker returns `status: access` with the domains or paths and why ([PIP-1](pipeline.md)).
+  Towercab adds them to the mission's grants, records `data.unplanned` (what and why), and resumes
+  the worker. The code PR lists them under "Access beyond the plan". At a4 the gate then goes to
+  `approval:merge`, why `access beyond the plan`.
+- Verified by: `autonomy: unplanned access at a4 goes to the owner`,
+  `autonomy: unplanned access at a1-a3 is granted`
 
 ## Out of scope
 
-- Raising autonomy automatically. The dashboard's change failure rate and auto-merged share inform it; I change the score.
-- The handlers that call this (design, build, review, gate, merge, revert): the pipeline intent.
+- Raising autonomy automatically.
+- Repo caps after a revert (parked with the ship stage).
 
 ## Decisions
 
-- Urgency and importance set order; autonomy only moves gates. Validation never shrinks
-  with trust.
-- rust-policies: `max_autonomy: 3` in its `TOWERCAB.md` (I always merge there).
-- a1–a3: I merge. a1–a2 also approve the spec (playbook: design is approved before build); a3+ only when the design flags a Concern.
-- a1–a3 also approve the plan (AUT-12; playbook plan mode: the engineer reviews the plan before code). Earlier: "plan.md, no stop"; changed by me on 2026-10-25.
-- Decisions in pure functions (`src/autonomy.rs`), I/O in the pipeline's handlers. `test_gate_table`, `test_spec_gate`,
-  `test_no_a_under_cap_goes_to_me` test this layer; the pipeline adds its handler tests (PIP-7, 26). AUT-3's "review
-  still runs" is AUT-6's; PIP-4's `test_review_on_every_pr` tests its handler.
-- `effective` = min of the `a`s present: deleting `a` mid-flight can't turn a1 into a risk-judged no-`a` intent.
-- Frozen counts as capped; `trust` clears both. It holds intent merges, not reverts: my `approve` of `revert failed`
-  re-enters the revert at its stage (`continue_to`), which must then merge; `pause` holds reverts.
-- `lower_why` is written only with a lowered `a`; it replaces an older one.
-- Rehearsal PRs never reach the gate (`rehearse_close` closes them).
+- Urgency and importance set the order; autonomy only moves gates and access.
+- Access follows who merges: when the owner reads every diff before it lands (a1–a3), asking for
+  access mid-build only costs time. The locks matter when Towercab merges on its own.
+- Access is asked for in the plan, so the wait happens before the build, when the owner is reviewing
+  anyway, not in the middle of it.
+- a5 is limited to `source: me` because open network, editable CI and auto-merge together would let a
+  planted instruction in an issue change CI and merge itself.
+- The decisions are pure functions in `src/autonomy.ts`; the pipeline's handlers do the I/O.
+- `effective` takes the minimum of the `a`s present, so removing `a` mid-flight can't loosen a gate.

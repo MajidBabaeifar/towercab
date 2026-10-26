@@ -1,21 +1,24 @@
 # Area name
 
-**Status:** Draft | Live · **Prefix:** XXX
+**Status:** Draft · **Prefix:** XXX
 
 ## Purpose
 
-One or two sentences: what this is for.
+Two to four sentences: what this area is for and who it serves.
 
 ## Requirements
 
-| ID | Requirement | Verified by |
-|---|---|---|
-| XXX-1 | One testable statement of what is true. | test_name |
+### XXX-1 · Short name
+
+One plain sentence that says what is true, readable without knowing the code.
+
+- The technical detail under it: interfaces, fields, commands, limits.
+- Verified by: `area: what the test checks`
 
 ## Out of scope
 
-What this deliberately doesn't do.
+What this area deliberately doesn't do, and where that lives instead.
 
 ## Decisions
 
-Non-obvious choices, with the reason.
+Non-obvious choices, each with its reason.

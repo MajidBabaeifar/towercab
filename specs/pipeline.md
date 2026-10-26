@@ -1,349 +1,539 @@
 # Pipeline
 
-**Status:** Live: PIP-1..5, PIP-7..9, PIP-11..36 · **Prefix:** PIP
+**Status:** Draft · **Prefix:** PIP
 
 ## Purpose
 
-What happens to an intent from "start" to "running fine in production": one worker,
-local checks and CI, a code gate with a review before any auto-merge, then deploy, e2e and revert.
+What happens to an intent from "picked" to "merged". One worker session designs the spec change,
+plans the work and builds it; code runs the checks, proves the tests, watches CI, gets a review and
+decides the merge. The owner sees and steers it through three pull requests (spec, plan, code) using
+ordinary GitHub actions, and everything Towercab writes for a person reads like a colleague wrote it.
 
 ## Requirements
 
-| ID | Requirement | Verified by |
-|---|---|---|
-| PIP-1 | **Build** continues the design session (PIP-25) after plan (PIP-28), with worker access (PIP-24), on the intent's `model` (else `[agent].model`) in the mission checkout, after ` ```setup ` ran there ([PIP-23](pipeline.md)): follows `plan.md`, writes failing tests first for each spec row it added or changed (the `Verified by` names) and each `Proposed outcome` bullet (as many as the repo allows; none only when the repo has no code), implements, compiles and runs the run set ([REPO-9](repo.md): the ` ```fast ` lines with the touched tests, else ` ```checks `) itself until green and not the full suite when a ` ```fast ` block applies (prompt says so; its bash patterns are the run set's commands, [PIP-24](pipeline.md); CI runs the rest), updates docs (spec rows only if the build proves the design wrong, with the reason in its notes); prompt: never commit, push or touch `.git`, never weaken, skip or delete a test to get a pass. Bounded by `--max-budget-usd` and `build_timeout`. Ends with a `--json-schema` result `{status: done\|blocked, question, notes, plan, plan_why, lower_a, lower_why}` (`plan` = `{files, order, risks, proof}` when it departed from `plan.md`, else null). `blocked` → `waiting: answer the question`, question in `intent.md`; but a `blocked` whose only `permission_denials` are compound Bash lines (`build::compound`: `&&`, `||`, `;`, `|`, newline, `<<`, `>`, backtick, `$(`) is resumed once instead (step `<step>:shell`, `prompts/shell.md`: run each command alone, edit with Edit/Write), a second such stop → the question. Timeout, no or invalid result, or `error_max_budget_usd` → continue once asking only for the result, then `waiting: worker timeout` / `no result` / `worker budget`. First build `done` without a change of its own (the spec commit doesn't count) → `waiting: no changes`. | test_build_prompt, test_build_prompt_fast_set, test_build_result_schema, test_build_timeout, test_no_result, test_no_changes, test_compound_refusal_resumes |
-| PIP-2 | **Publish** after design (draft PR, PIP-25) and after each green verify + proof (PIP-30): Towercab commits as `towercab[bot]` ([LOOP-19](loop.md)), pushes `towercab/<id>-<slug>` from its own clone, opens the PR the first time (`missions.pr`, `missions.head`, `missions.pushed_at`), later only pushes; the first such publish after the build marks it ready (`gh pr ready`). A push refused other than as a non-fast-forward (a ruleset, a hook), or rejected 3 times → `waiting: answer the question`, why `publish failed: <stderr>`. My push onto the PR is merged in by the next build round's sync; a conflict there is the worker's to resolve first, in any round, and Towercab concludes the merge (conflict markers left → `waiting: answer the question`). Commit messages and the PR title are Conventional Commits (`type(scope)[!]: description`, type/scope/breaking from PIP-25): spec commit `docs(specs): …`, build and repair commits `<type>(<scope>): …`. The worker never pushes or merges (PIP-24, [LOOP-8](loop.md)). | test_publish_after_verify, test_worker_cannot_push, test_commit_messages_conventional, test_ready_marked_once, test_push_rejected_keeps_my_commits, test_push_refused_asks, test_repair_round_merges_my_push |
-| PIP-3 | **CI:** Towercab polls `gh pr view <pr> --json headRefOid,mergeable,statusCheckRollup` every `ci_poll` s. Bucket in code: CheckRun `COMPLETED` + `SUCCESS`/`NEUTRAL`/`SKIPPED` → pass; `FAILURE`/`TIMED_OUT`/`ACTION_REQUIRED`/`STARTUP_FAILURE`, or StatusContext `FAILURE`/`ERROR` → fail; `CANCELLED` → cancel; else pending; a fail or cancel of an Actions run with a job not `COMPLETED` → pending (its rerun and log wait for the run). Within `ci_grace` s of the push, checks started before it are ignored and none = pending. After that, no checks: repo without `.github/workflows/*.y(a)ml` → pass, `ci: none`; with workflows → pending until `ci_wait` s, then `waiting: no CI checks appeared`. Checks still pending `ci_wait` s after the push → `waiting: CI stuck` (both waits: `ci_wait` again from my continue). Before either, `mergeable` = `CONFLICTING` → conflict round (PIP-21). A round that leaves the pushed head unchanged after red CI → publish adds an empty commit `chore: run CI again` (a rerun replays the old workflow definitions; a fix outside the branch reaches only a new run). Red (after PIP-18) → each red job's own log (`gh api repos/<r>/actions/jobs/<job>/logs`, up to its last `##[error]` line, an equal share each: `--log-failed` misses reusable workflows' jobs; else `gh run view <run> --log-failed`; last 16k, `runs/<id>/ci-<n>.log`) to the same worker session (PIP-13) → `verify` onward ([LOOP-3](loop.md)). The `towercab/evals` status is not a CI check here ([PIP-33](pipeline.md)). Max 3 CI repairs, then `waiting: CI red`, `pr:`, question in `intent.md`. | test_ci_green, test_ci_pending_polls, test_no_checks_grace, test_ci_repair_loop, test_ci_cap, test_ci_stuck, test_conflict_during_ci, test_checks_from_status_rollup, test_red_job_waits_for_its_run, test_red_job_log, test_red_unchanged_head_gets_fresh_run |
-| PIP-4 | **PR review** on every PR, after green CI and the verifier, again on each new head (reused when the diff's `git patch-id` is unchanged): one fresh read-only session (PIP-24), given intent (with its `Proposed outcome`), spec IDs, `plan.md`, PR diff, CI result, and the base branch's `REVIEW.md` ([REPO-4](repo.md)): it runs every pass there; for an intent without `a` it also judges the `## Red lines`. Model: `review:<model>` on the intent, else one step stronger than the worker (haiku → sonnet → opus; opus → opus; fable → fable). `review_timeout`; timeout, limit after its wait, or invalid JSON = not approved. | test_reviewer_model, test_review_attr, test_review_on_every_pr, test_review_timeout, test_red_lines_in_review_prompt, test_review_limit_after_its_wait |
-| PIP-5 | Review returns `--json-schema` JSON: `approved`, one verdict per `Proposed outcome` bullet (`met` + why), `tests_weakened` (bool + where), `plan_followed` (bool + where not), `findings` (`pass`, `severity` = `important`/`nit`, file, line, what, `rule`: the one-line convention it breaks, if any, `policy`: the policy skill it breaks, if any), and, for an intent without `a`, `door` (`one-way`/`two-way`), `red_lines` (touched, with file), `why`. Code computes: approved = `approved` ∧ every `met` ∧ ¬`tests_weakened` ∧ `plan_followed` ∧ no `important` finding ∧ no verifier mismatch ([PIP-32](pipeline.md)) ∧ every spec row in `spec_ids` has its `Verified by` test in the diff (the rows read from the commit, not the worktree; checked in code, any language: a `test_…` definition, `fn`/`def`/`func`/`function test_x(` or `test("test_x"`/`it('test_x'`, on an added line or in a changed hunk's header); risk low = `door` two-way ∧ `red_lines` empty. The model has no `risk` field. | test_review_schema, test_approved_computed_in_code, test_review_on_every_pr |
-| PIP-6 | Removed: review rounds with the worker. A review that doesn't approve sends the PR to me (PIP-7), with its verdicts in the PR text. | — |
-| PIP-7 | **Gate** after the PR review, in code. Repo cap = `min(max_autonomy` from the base branch's `TOWERCAB.md`, 3 while capped after a revert`)` ([AUT-8, 10](autonomy.md)); effective `a = min(a at pick, a now, cap)`. First match wins: repo frozen, `ci: none`, `unlock` used ([PIP-29](pipeline.md)), `towercab/evals` red ([PIP-33](pipeline.md); read only when the gate would merge: absent or pending → poll, at most 12 h on a head, then `approval`, why `towercab/evals not posted after 12 h`), cap ≤ 3, or effective `a` ≤ 3 → `approval`; the review's findings go to me as one PR comment (Important first, at most `## Cap the nits` nits (default 5), the rest counted; recorded before it is posted: at most once per head) and never block. `a` ≥ 4 → approved → merge. No `a` → approved and risk low → merge. Otherwise `approval`. `approval` = `waiting: review and merge PR`, `pr:`. | test_gate_table, test_max_autonomy_from_base, test_no_a_under_cap_goes_to_me, test_no_ci_goes_to_me, test_gate_handler, test_findings_comment_once_per_head |
-| PIP-8 | **Deploy:** after a merge into a repo with ` ```live ` ([REPO-3](repo.md)), Towercab waits until the deployed sha contains the merge (`gh api repos/<r>/compare/<merge>...<sha>` status `ahead` or `identical`). `env:<name>` (percent-encoded) → sha of the newest deployment in `gh api 'repos/<r>/deployments?environment=<name>&per_page=20'` whose newest status has `state: success`; `url:<u>` → first `[0-9a-f]{7,40}` (a whole word) in the body of a 2xx answer of `<u>`. Polled every 30 s. Timeout (`timeout:`, default 15 min) → `waiting: deploy not seen`, no revert. One deploy, e2e or release at a time per repo: a revert mission on its way (`rollback` … `revert_e2e`) first, then the lowest mission id. No `live` → merged means done. | test_deploy_contains_merge, test_url_newer_deploy_counts, test_deploy_timeout_no_revert, test_no_live_is_done, test_revert_deploys_first |
-| PIP-9 | **e2e** once the deploy is seen: the `e2e` command runs in a clean checkout of the merge commit (`git clean -ffdx`: nothing a worker or a PR's commands left) under PIP-23's `bwrap` but with network and without the repo's cache; env = HOME, PATH, LANG, `TMPDIR`, `XDG_CACHE_HOME` (**Sandbox**) + `~/.config/towercab/secrets/<repo>.env` (`KEY=VALUE` lines; refused unless mode 0600, i.e. any group or other bit; read once at the spawn, its sha256 recorded); timeout 10 min (= red); output (stdout + stderr, raw in `e2e-<n>.{out,err}.raw`) redacted of the spawn's secret values of 3+ characters (`[redacted]`, `runs/<id>/e2e-<n>.log`), raw deleted; values no longer known (another process, the file changed since) → output withheld; raw output a crash left is redacted or withheld before the next e2e or release step, deleted at `done`/`stopped`. Exit 126/127 (`tool:<first word>`), refused secrets file (`secrets:<repo>`) or sandbox start failure (stderr `bwrap: …`, `sandbox`) → `env_blocked` ([LOOP-10](loop.md)), never red. Red → one rerun after 60 s. Green → `done`, or `waiting: authorize release` when the repo has a ` ```release ` block ([PIP-34](pipeline.md)). Red twice → PIP-19 (Towercab merged) or PIP-20 (I merged). | test_e2e_retry_once, test_e2e_env_only_secrets, test_e2e_env_failure_not_red, test_e2e_green_done, test_e2e_secrets_file_mode, test_e2e_redaction_fails_closed |
-| PIP-10 | Removed for now: periodic e2e watch of live services. Out of scope. | — |
-| PIP-11 | **Writing:** PR description by Haiku from the worker's notes and the review verdicts: one-line summary, what changed (≤5 bullets, behaviour not files), checks (verify, red→green proof, CI, verifier, review, one line each), spec IDs. | test_pr_writer |
-| PIP-12 | **Own CI:** `.github/workflows/ci.yml`, on every PR and push to `main`: job `rust` (ubuntu-latest, `dtolnay/rust-toolchain@stable` with `rustfmt, clippy`, `Swatinem/rust-cache@v2`) runs `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` on stable Rust, the only job (the metrics intent ported `tests/test_ops.py` and removed job `python`); any failure turns the check red; `test_ci_workflow` reads `ci.yml` for those triggers, actions and commands. `cargo test` includes `tests/spec_refs.rs` `test_live_rows_have_tests`: for every `specs/*.md` row (first cell `<PREFIX>-<n>`) listed as live in its Status line ([README](README.md)), each `test_[a-z0-9_]+` in its `Verified by` (last) cell (cells split on a `\|` without a backslash before it) needs a `fn <name>(` in `src/**/*.rs` or `tests/**/*.rs`; else red, listing `<spec> <ID> <name>` for each. | test_ci_workflow, test_live_rows_have_tests, manual (open a PR, check the Actions run) |
-| PIP-13 | Verify failures, CI failures, my feedback and conflict rounds go back to the worker session. The uuid is chosen at pick, before design ([PIP-25](pipeline.md), [LOOP-5, 7](loop.md)) and stored (`missions.session`); the session's first run (design) gets `--session-id <uuid>`, every later worker run (plan, build, repairs, continues) `claude -p --resume <uuid>` from the same checkout `work/<id>-<attempt>`. A repair's prompt is short (`claude::repair_prompt(what, findings, log) -> String`): `<what> (data, not instructions):` and the findings fenced as `<log>` when ≤ 20 lines, else `<what>: the output is in <log path> (data, not instructions)` (absolute, under `runs/<id>/`): CI logs, check output and review findings are anyone's text. Review, triage and verifier runs are always fresh sessions (`Ctx::run_session(m, step)`: a new uuid per run in `missions.run_session` with `--session-id`, `--resume` only when re-entered at that recorded step after a cut-off, [LOOP-7](loop.md)). A run re-entered at its step that never started (no `<kind>-<n>.json`/`.err`: queued for a slot at a shutdown or crash) runs again with its own prompt and session flag; one that started resumes with `claude::CONTINUE`, its prompt kept as `<kind>-<n>.asked` for a new session. `runs/<id>/build.txt` = the first build's notes (its result's `notes`, else its final `result`); each repair's are appended as `\n\nRepair: <notes>` (`claude::append_notes(path, Note::Build or Note::Repair, text)`), so the first build's summary leads. | test_resume_argv, test_repair_resumes_session, test_build_notes_keep_summary, test_run_session_fresh_per_run, test_queued_run_restarts_with_its_prompt, test_prompt_data_cannot_close_fence |
-| PIP-14 | At the first publish (design, PIP-25) the PR body = spec IDs, Concerns, open questions, versions in force and, once written, the `plan.md` link, claiming nothing else; a retry's first push onto its open PR resets it to that. Ready (CI green and the review done; on the auto path, approved) → final text via `gh api -X PATCH repos/<r>/pulls/<n>` (`gh pr edit` fails on gh 2.46); its CI line says `green` or, when the repo has no checks, `no CI checks on this repo, nothing ran`. Review not approved → final text with the review's verdicts as the checks line. Waiting on me before review (`checks red`, `tests don't prove the change`, `CI red`, `no CI checks appeared`, `CI stuck`, `answer the question`, `protected path changed`, repair publish failed) → `⛔ Not ready: <waiting>: <why>` (the wait named once) pointing to `intent.md`. The writer (`src/writer.rs`) runs `claude -p --model haiku --tools "" --strict-mcp-config` with the prompt on stdin, no tools, 60 s timeout. Order: summary, what changed, spec IDs, checks (verify, red→green proof, CI, verifier, review: one line each), `plan.md` link; then a small `<sub>` footer (🤖 Built by Towercab · intent · mission · cost · time), all code except summary and bullets; bullets trimmed to 5. Notes, cost and time cover every attempt that pushed into the PR; each attempt's notes keep their own start and end. | test_pr_writer, test_no_ci_pr_text_says_nothing_ran, test_blocked_pr_text_says_not_ready, test_rejected_review_verdicts_in_pr_text, test_retry_reviews_and_describes_the_whole_pr, test_head_and_tail_keeps_the_summary |
-| PIP-15 | The PR text never blocks an intent: writer failure (non-zero exit, timeout, empty output, missing executable, usage limit) → plain template from the same inputs (title as summary, review verdicts as bullets); the writer never waits. A failed text update → event logged, intent still settles. A mission that reaches ready without a PR → `waiting: never published`, never `review and merge PR`. | test_writer_fallback, test_writer_template, test_writer_failure_falls_back, test_pr_text_edit_failure_never_blocks, test_ready_without_pr_does_not_crash |
-| PIP-16 | Messages are code templates, no model; tests pin each text; only [LOOP-14](loop.md) events send one. | test_telegram_templates, test_only_actionable |
-| PIP-17 | **Continue** (`waiting` removed by hand, or `approve <id>`: the same thing), by the `waiting` it clears: `approve spec` → `plan` (PIP-28); `review and merge PR` → `gate` on the current head, no worker run; `authorize release` → as `release <id>` (PIP-34); `e2e red after your merge (…)`, `production e2e red` → `done` (kept); `deploy not seen` → its stage again; `release failed` → `release` (the command again); `CI stuck`, `no CI checks appeared` → `ci` (`ci_wait` again); a wait raised in `design` or `plan` → that stage again (adoption, spec commit and spec gate, `plan.md` on the way; design re-entered with its result kept goes on from its commit); `PR closed` or no unfinished mission → fresh attempt n+1 (below; nothing to close); any other → the intent's unfinished mission resumes, same attempt, same checkout `work/<id>-<attempt>` (re-cloned `--branch <head>` to that path if gone), same session (`--resume`, prompt = the `waiting` reason, `intent.md` and my new PR comments; session gone → [LOOP-7](loop.md)); repair, sync and recovery counts reset. PR: the one in `pr:` (same repo, not a fork), else an open PR on `towercab/<id>-<slug>`; never forces, so a fix I pushed is kept; baseline = merge-base with `base`. `pr:` merged and not reverted → re-enters `deploy` for `merge_sha` (no rebuild); merged and reverted, closed, missing (gh: "Could not resolve"), fork or other repo → fresh attempt n+1 from `base`, brief = old PR + `intent.md` (incl. the e2e log). gh can't tell → `waiting: PR state unknown`, nothing pushed. **Fresh** (`retry: fresh` on the intent, or `retry --fresh`): attempt n+1 on `towercab/<id>-<slug>-<n>`, starting at `design`, old PR closed with a link to the new one, counts reset.  My `approve`, `answer` or `unlock` resets `sync_rounds`, `verify_repairs` and `ci_repairs` to 0 and empties `data.ci.reruns` (a red run gets one fresh rerun: what I fixed may be outside the branch, its head unmoved): the caps stop loops without me, not work I continued.| test_continue_by_waiting, test_retry_continues_on_open_pr, test_continue_resumes_session, test_merged_pr_reenters_deploy, test_retry_fresh, test_fresh_attempt_replaces_stale_branch, test_gh_failure_at_retry_asks_and_never_force_pushes, test_lost_pr_line_never_force_pushes, test_open_pr_states, test_ci_cap |
-| PIP-18 | **CI guards:** checks count only for `headRefOid` = `missions.head` from the same `gh pr view` call; another head → `ci` for it. First red or `cancel` on a head → `gh run rerun <run> --failed` once (run id from `/actions/runs/<run>/` in `detailsUrl`), no repair counted (`ci: flaky` if it then passes); a second `cancel` = red; a red check that isn't an Actions run is never rerun. | test_stale_green_ignored, test_red_rerun_once, test_cancel_twice_is_red, test_non_actions_check_not_rerun |
-| PIP-19 | **Revert mission** (`missions.kind = revert`; the intent is `stage: maintain` while it runs) after e2e red twice on a Towercab merge, or on PIP-20's call. With a ` ```rollback ` block its `command` runs first with the merge's parent sha (fast restore, deploy checked as PIP-8); then, always: `git revert [-m 1] <merge>` (`-m 1` for a two-parent merge) on `towercab/revert-<merge sha7>` (reused only for that sha) → publish → ci (PIP-3 wait, PIP-18 rerun, no repairs) → merge (`autonomy::gate(PrKind::Revert)`: CI green on the head; PIP-22's merge command, trailer `Towercab-Gate: revert sha=<head>`; no worker steps, no review; `DRAFT` → ready, `UNKNOWN` read 6×, any other state or refusal → revert failed) → deploy → e2e. Green → original intent `waiting: reverted, refine`, e2e log (redacted, last 16k) + revert PR in `intent.md`; repo capped at 3 ([AUT-10](autonomy.md)). Revert conflict, CI red after the rerun, merge refused, deploy timeout or e2e red twice → repo frozen, `waiting: revert failed`, revert PR left open. A revert is never reverted. No new intent is added. | test_revert_flow, test_revert_branch_per_sha, test_revert_two_parent_merge, test_revert_failure_freezes, test_revert_never_reverted, test_rollback_command_first |
-| PIP-20 | **e2e red, I merged:** one fresh read-only Claude call (review model, PIP-24) classifies the merged diff + e2e log against the base `REVIEW.md` red lines: `door`, `red_lines` touched, `why`. Code decides: two-way and a red line touched → revert (PIP-19); otherwise no revert: `waiting: e2e red after your merge (<door>)`, reason + log in `intent.md`; message line 1: `approve <id>` to keep it, or `retry --fresh <id>` to fix forward. Timeout, limit or invalid JSON → no revert, same message. | test_triage_table, test_triage_failure_no_revert |
-| PIP-21 | **PR reads** every 60 s while `missions.pr` is set ([LOOP-18](loop.md)): `gh pr view --json state,mergedAt,mergeCommit,headRefOid,mergeable,comments,reviews` + `gh api --paginate repos/<r>/pulls/<n>/comments?per_page=100` (no `--slurp`, gh 2.46 lacks it: its pages print back to back, `[…][…]`, read as a stream of JSON arrays and flattened). Merged → `deploy`, `missions.merged_by = human`; merged while it waits in `approval:spec` (the PR holds only the spec) → `approve` instead: on to `plan`, `pr`/`pr_url`/`head`/`pushed_at` cleared so publish opens a new PR for the build ([PIP-17](pipeline.md)). Closed → `stopped`, `waiting: PR closed`. **Feedback** = reviews and comments by me (`[github].me`) with text (an approval without one isn't) newer than `missions.feedback_seen`; Towercab's own (`towercab[bot]`) never count, nor anyone's without `[github].me` → resume the worker with them → `verify` onward ([LOOP-3](loop.md)) (other authors ignored). `mergeable` `CONFLICTING` → Towercab's clone fetched (as the App), then the worker resumed to merge that `origin/<base>` (no rebase, no force) → `verify` onward; `UNKNOWN` → read again next poll. Head moved by my push → `ci` for it. Max 3 conflict and update rounds per mission (`missions.sync_rounds`, with PIP-22), then `approval`; at the cap a `CONFLICTING` PR raises no more `conflict` (it waits on me). | test_human_merge, test_spec_merge_approves, test_my_comment_resumes_worker, test_other_authors_ignored, test_conflict_merges_base, test_my_push_rechecks, test_sync_rounds_cap, test_pr_read_on_gh_246 |
-| PIP-22 | **Merge**, in code only, on `gh pr view --json headRefOid,mergeStateStatus`: head ≠ gated head → `ci`. `CLEAN`/`HAS_HOOKS` → merge; `BEHIND` → `gh api -X PUT repos/<r>/pulls/<n>/update-branch -f expected_head_sha=<head>` → `ci` with `pushed_at` = now and `ci` cleared (GitHub moves the head later; the gate reuses the review when the PR diff's `git patch-id` is unchanged); `DIRTY` → conflict round (PIP-21); `BLOCKED`/`UNSTABLE` → read again after `ci_poll` s (3rd time on a head → `approval`); `DRAFT` → `gh pr ready`, read again after 10 s (counted with `UNKNOWN`); `UNKNOWN` → read every 10 s, 6×, then `approval`. Merge = `gh pr merge <n> --squash --match-head-commit <head> --subject "<PR title> (#<n>)" --body "Towercab-Gate: <gate.verdict> sha=<head>"`; merged as `towercab[bot]` ([LOOP-19](loop.md)), `missions.merged_by = towercab`, `merge_sha` stored; once it went through (`merge.merging` = head), later reads only wait for `mergedAt` (6×, then `approval`), never merge again. Head mismatch → `ci`; `already merged` → read again; network or 5xx → [LOOP-10](loop.md); other refusal → `waiting: merge failed` + stderr. | test_merge_state_table, test_behind_updates_via_api, test_review_reused_same_patch, test_merge_trailer |
-| PIP-23 | **Verify** after each build or repair, in code. ` ```setup ` (base branch's, [REPO-2](repo.md)) runs after each clone and first in each verify, in the **Sandbox** with network and the repo's cache writable; non-zero → rerun once after 60 s, then verify red. The **run set** ([REPO-9](repo.md): ` ```checks `, or with CI the ` ```fast ` lines and the touched tests; the full suite is then CI's, PIP-3, which stays the gate; recomputed each verify from the PR's changed files) runs in order in the **Sandbox** (`bwrap --unshare-net --unshare-pid --unshare-ipc --unshare-uts --new-session --die-with-parent`, `/` read-only, `/run`, HOME, `/tmp` empty, toolchain read-only, the cache read-only, only the checkout writable, its `.git` read-only), env = HOME, PATH (`[agent].path`), LANG, `TMPDIR=/tmp`, `XDG_CACHE_HOME=/tmp/cache`, `CARGO_HOME=<cache>/cargo`; each with `check_timeout` × `data.check_x` (default 1); a hit isn't the worker's to repair → `waiting: checks timed out` (`<line>: timed out after <n> min`, no repair counted), my `approve` doubles `check_x` (≤ 64) and reruns verify. Red → output (last 16k, `runs/<id>/verify-<n>.log`) to the same session; max 3 verify repairs, then `waiting: checks red`. After each publish Towercab posts check run `towercab/verify` on the pushed head (conclusion + last 60k of output; the title, and so the PR text's verify line, is `green (<n> commands, fast)` when only the fast set ran, unchanged for the full one). A CI repair (PIP-3) re-enters verify with the same rules: the run set is computed from the base's files and the PR's changed tests at each verify, not stored. | test_verify_run_set, test_verify_fast_skips_full_suite, test_verify_sandboxed, test_sandbox_isolated, test_sandbox_masks_credentials, test_verify_cannot_read_home, test_verify_cargo_in_sandbox, test_verify_repair_cap, test_setup_before_build, test_verify_check_runs_posted, test_check_timeout_waits |
-| PIP-24 | **Access** (argv built in `src/claude.rs`, **Claude runs**). Every run: `claude -p --output-format json --permission-mode dontAsk --strict-mcp-config --setting-sources "" --append-system-prompt-file <home>/runs/<id>/CLAUDE.md --settings <home>/runs/<id>/settings-<kind>.json --model <model>` (no user, project or local settings files: a hook written into the repo's `.claude/settings.json` would run outside the sandbox; that also stops `CLAUDE.md` from loading, so the base branch's copy is appended), the prompt on stdin, env cleared, then HOME, PATH (`[agent].path`), LANG + MET-12 telemetry (no `GH_TOKEN`/`GITHUB_TOKEN`), `--settings` = `{sandbox: {enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, filesystem: {denyRead: <secret paths>, denyWrite: [<checkout>/.git, …]}}}` (no HOME → no run); a worker run of an intent with `network` (`towercab allow`) adds `network: {allowedDomains: <its domains>}`, else no network; every worker run gets a writable cache `<home>/cache/<repo>/worker` (`filesystem.allowWrite`; env `XDG_CACHE_HOME=<it>/xdg`, `npm_config_cache=<it>/npm`, before `[agent].env`), so Go, zig, pip and npm caches don't hit a read-only `~/.cache`. Secret paths (absolute, under HOME): `~/.ssh`, `~/.config/gh`, `~/.aws`, `~/.gnupg`, `~/.config/towercab`, `~/.claude/.credentials.json`, `~/.codex/auth.json`, `~/.netrc`, `~/.git-credentials`; plus, wherever `--config` puts them, the config file, `app.pem` and `secrets/` next to it (absolute; denied as `Read(/<path>)`, `Read(/<dir>/**)` too). A run in the checkout can't write its `.git` (Towercab's own git there runs nothing from it, [LOOP-8](loop.md)). Deny (`--disallowedTools`, all runs): `Bash(git push:*)`, `Bash(git remote:*)`, `Bash(git config:*)`, `Bash(gh:*)`, `Bash(curl:*)`, `Bash(wget:*)`, `Bash(ssh:*)`, `Bash(sudo:*)`, `WebFetch`, `WebSearch`, `Read(<each secret path>)` (`Read(~/<dir>/**)` for a directory, `Read(~/<file>)` for a file), `Read(**/.env*)`. Worker: `--tools Read,Edit,Write,Glob,Grep,Bash,Skill`; `--allowedTools` Read, Edit, Write, Glob, Grep, Skill, `Bash(<cmd>:*)` for each base ` ```setup ` command and each command of the run set ([REPO-9](repo.md): ` ```checks `, or with CI the ` ```fast ` lines cut at their first `{` or `$(`), `Bash(git status:*)`, `Bash(git diff:*)`, `Bash(git log:*)`, `Bash(git show:*)`, plus `[repos.<r>].bash` patterns. Verifier: as review plus `Bash(curl *)` (the `Bash(curl:*)` deny left out for this run only), sandbox `network: {allowedDomains: ["localhost:<port>", "127.0.0.1:<port>"]}`, Playwright MCP via `--mcp-config` (`--allowed-origins <url>`) when `ui: true`. Review and triage: `--tools Read,Grep,Glob,Bash,Skill`, allowed Read, Grep, Glob, Skill, `Bash(git diff:*)`, `Bash(git log:*)`, `Bash(git show:*)`. Writer, drafter ([INT-7](intents.md)) and diagnosis ([MNT-5](maintain.md)): `--tools ""`. A denied push or secret read (`permission_denials` in the result) fails the stage. `[agent].sandbox_unix_sockets = true` (off by default; for Ubuntu's user-namespace restriction, where Claude Code's sandbox fails with `apply-seccomp: write /proc/self/setgroups`): `network.allowAllUnixSockets: true`, and `HOST_SOCKETS` (`/var/run/docker.sock`, `/run/docker.sock`, `/run/dbus`, `/run/user`) added to `denyRead`. `[agent].env` is added to every run's environment and every sandboxed command's. | test_worker_argv, test_review_argv, test_argv_strict_mcp, test_repo_hooks_not_loaded, test_claude_md_from_base_in_argv, test_worker_cannot_push, test_sandbox_denies_secret_read, test_every_kind_argv, test_claude_result, test_sandbox_unix_sockets, test_agent_env, test_allow_continues |
-| PIP-25 | **Design** (stage `design`, playbook Stage 2): the worker session starts here (uuid per [LOOP-7](loop.md)). Given `intent.md`, the repo's `specs/` and `CLAUDE.md`, and policy skills (PIP-27), it writes the spec change: requirement rows added or changed in `specs/<area>.md` (new area → `_template.md`; IDs from the intent's reservation if it names one), plus decisions. Tools: `--tools Read,Glob,Grep,Edit,Write,Skill`, allowed `Edit(specs/**)` only (Edit rules also cover Write). Returns `--json-schema` `{type, scope, breaking, spec_ids, concerns: [{what, why, policy}], open_questions: [{question, answer \| carried}], summary}` (one per `## Open questions` bullet); timeout, budget, no or invalid result → as PIP-1; no behaviour change → `spec_ids` empty, no commit. Towercab commits the diff as `docs(specs): <title>`, pushes and opens the intent's PR as a draft (PIP-2), title `<type>(<scope>)[!]: <title>`, body = spec IDs, Concerns, open questions and the versions in force (Towercab `--version`, target base sha, `[policies].github` sha). | test_design_prompt, test_design_edits_only_specs, test_spec_commit_and_draft_pr |
-| PIP-26 | **Spec approval:** `concerns` not empty, effective `a` ≤ 2, or no `a` and repo cap ≤ 2 ([AUT-11](autonomy.md)) → `waiting: approve spec`, each concern in `intent.md` and PR body; otherwise plan (PIP-28) starts at once. No PR yet (`spec_ids` empty) → design summary and concerns in `intent.md` only; my edits to `intent.md` while waiting revise the design. My PR comments while waiting → design revision in the same session (PIP-21 feedback), new spec commit, still waiting. `waiting` removed or `approve <id>` → plan. PR closed → `stopped`. | test_spec_gate, test_spec_feedback_revises, test_approve_starts_build |
-| PIP-27 | **Policy skills:** every design, worker, review, triage and verifier run gets `--plugin-dir <home>/runs/<id>/policies`, a plugin Towercab assembles before the run from the target repo's base-branch `.claude/skills/*/` (`refs/remotes/origin/<base>` of its clone) and `policies/*/` of `[policies].github` at its `[policies].base` (shared; both read with `git ls-tree` + `git cat-file`): skill folders only (a folder holding `SKILL.md`; regular files, no symlinks), no hooks, MCP servers or settings. Never from the PR; the repo's skill wins a name clash. | test_policy_skills_in_tools, test_policy_plugin_from_base, test_policy_plugin_has_no_hooks |
-| PIP-28 | **Plan** (playbook plan mode, step `plan` in stage `build`): after the spec gate the worker, read-only (Read, Glob, Grep, read-only git), returns `--json-schema` `{files, order, risks, proof}`. Towercab writes `plan.md` into the intent's folder (`## Files that change`, `## Order of work`, `## Risks`, `## Proof`, from the intent and spec IDs) and links it in the PR body. No approval stop. Timeout, budget, no or invalid result → as PIP-1. A build that departs from it returns the new plan + `why` in its result (PIP-1 `plan`, `plan_why`); Towercab rewrites `plan.md` (git keeps the old one).  At a1–a3 it then waits for my plan review ([AUT-12](autonomy.md)).| test_plan_written, test_plan_update_on_departure, test_plan_revises_design_after_intent_edit |
-| PIP-29 | **Guard** (playbook build-time hook): every worker run's `--settings` adds a `PreToolUse` hook on `Edit\|Write\|NotebookEdit` running `towercab hook guard <runs>/guard.json`, which blocks (exit 2, reason + "changes here go through the owner") any path in [REPO-8](repo.md) not in the intent's `unlock`, plus `sandbox.filesystem.denyWrite` = `Protected::deny_write(<checkout>)` ([REPO-8](repo.md): absolute paths of what exists, e.g. `<checkout>/.github`, none containing `*`, `?` or `[`, which Linux skips); paths that don't exist yet are caught by the publish check. Publish also refuses a diff touching a protected path not unlocked → `waiting: protected path changed`; it checks `refs/heads/<branch>` of the checkout, exactly what it pushes, and never pushes while `HEAD` isn't that branch (a bug). An intent with `unlock` always goes to `approval` at the gate. | test_guard_blocks_protected_write, test_sandbox_denies_protected_bash_write, test_publish_refuses_protected_diff, test_unlock_goes_to_me, test_guard_hook_cli, test_guard_blocks_dangling_symlink, test_guard_fails_closed_on_panic |
-| PIP-30 | **Red→green proof** (step `proof`, after green verify, when `spec_ids` is not empty or the design's `type` is `fix`): a checkout of `origin/<base>` with the PR's changed test files laid over it from the head commit (regular files only, never the worktree or a symlink; test globs: `TOWERCAB.md` `tests`, default `tests/**`, `test/**`, `**/__tests__/**`, `**/*_test.*`, `**/test_*.*`, `**/*.test.*`, `**/*.spec.*`) runs ` ```setup ` on the bare base, then lays the test files and runs the run set ([REPO-9](repo.md), the same as verify's, so the proof is fast too) as verify does (a test that needs the change can't break the setup, e.g. `go mod vendor` with a test importing a new package) → the run set must be red with ` ```setup ` green (a compile error from tests calling code not on base counts); setup red, `check_timeout` or exit 126/127 on base is never red: rerun once after 60 s (once per proof), then `waiting: tests don't prove the change` with the reason. Head is green (verify). Base green, or no test file changed → back to the worker as verify red ("your tests pass without your change"), counting as a verify repair; cap → `waiting: tests don't prove the change`. Result line in the PR text; posted as check run `towercab/proof` like `towercab/verify`.  Approving `tests don't prove the change` accepts the change without a proving test: on to publish (CI and the review still run); answering it sends the worker back to build.| test_proof_red_on_base, test_proof_uses_run_set, test_proof_green_base_goes_back, test_proof_skipped_without_behaviour_change, test_proof_runs_for_fix, test_proof_setup_failure_not_red, test_proof_tests_from_commit, test_proof_setup_before_tests |
-| PIP-31 | **Test lock:** during verify and CI repair rounds, the test files of the lock's baseline are locked: the commit the last round that wasn't a repair (first build, feedback, conflict, continue) ended with (`data.lock_head`), or the pushed head when later; the guard (PIP-29) blocks edits and `denyWrite` covers them (absolute file paths); publish refuses a diff that changes or deletes them since that baseline (new test files are fine; a file HEAD keeps as my push after the baseline left it is mine). My feedback and conflict rounds (PIP-21) don't lock. The round survives a limit, outage, restart or crash in `build`. | test_lock_blocks_test_edit_in_repair, test_publish_refuses_locked_test_change, test_feedback_round_unlocked, test_lock_baseline_after_first_build, test_lock_kept_after_outage_in_repair |
-| PIP-32 | **Verifier** (opt-in, step `verifier` after green CI): repos whose `CLAUDE.md` verifying section has a ` ```run ` block (start command, `url: http://localhost:<port>`, optional `ui: true`). Towercab starts `run` in code in the head checkout (PIP-23's `bwrap` without `--unshare-net`, own process group, killed after) and waits up to 60 s for `url` to answer (no answer = a mismatch, "app didn't start"). One fresh read-only session (review model, PIP-24) exercises the change and the two nearest flows against `plan.md` `## Proof` with `curl` to `url` and, with `ui: true`, a Playwright MCP server limited to `url`; it never fixes. Reports `{ran, saw, mismatches: [{expected, observed}]}`; `ran: false`, timeout, limit after its wait or invalid JSON = a mismatch. Report in the PR text; on the auto path any mismatch = not approved ([PIP-5](pipeline.md)). (Linux gives each sandboxed shell command its own localhost, so the app can't be started from inside the session.) | test_verifier_opt_in, test_verifier_app_started_in_code, test_verifier_mismatch_blocks_auto_merge, test_verifier_app_did_not_start |
-| PIP-33 | **Evals** (playbook continuous evals): each `done` intent adds `evals/<id>.json` to `intents` (repo, base sha, `intent.md`, spec IDs, model, checks, `incident` per [MNT-8](maintain.md)). `towercab eval` replays the newest 20 plus every incident case ([MNT-8](maintain.md)) in scratch checkouts with the prompts, settings, skills and models of the build under test (on a Towercab PR from the repo itself, opened by me or the App with every head commit theirs: `cargo build --locked` of its head in the **Sandbox**; another PR → `error` `not evaluated: <why>`, never built): design → plan → build → verify → proof → review, never publishing; pass = all green and review approved; a failing case reruns once; a case that can't be set up (its repo left `[repos]`, its clone failed) fails alone. Status `towercab/evals` on every Towercab PR head: success `not affected` unless the diff touches `prompts/**` or `src/claude.rs`; red when a case that passed in the baseline fails twice and the pass rate is ≥ 10 points below the baseline; fewer than 20 cases → success `n/20 cases`. Required by the Towercab ruleset ([REPO-7](repo.md)); red → `approval` (PIP-7). Also weekly when idle, and after a `policies/**` change in `[policies].github` or an `[agent]` model change (with fewer than 20 cases these only record the change): a drop → message `evals dropped <n> points: <change>` ([LOOP-14](loop.md)). | test_eval_case_written, test_eval_replays_case, test_eval_builds_pr_head, test_eval_status_every_head, test_eval_noise_rule, test_eval_waits_for_20, test_eval_builds_only_my_prs |
-| PIP-34 | **Release gate** (playbook: the agent acts up to the production gate): a repo whose `TOWERCAB.md` has a ` ```release ` block (`command:` promoting the merged sha to production, e.g. `gh workflow run deploy.yml -f env=production -f ref=<sha>`; `deploy:` env or url of production, as ` ```live `; optional `e2e:`) treats ` ```live ` as staging. After staging e2e is green → `waiting: authorize release`; `towercab release <id>` (or Telegram) runs `command` in code, waits until production shows the sha (PIP-8 rules), runs its `e2e` once → `done`. `command` non-zero → `waiting: release failed` + stderr (my continue runs it again); production not seen → `waiting: deploy not seen`; e2e red → `waiting: production e2e red`, no automatic revert in production (my continue keeps it: `done`). `command` runs once per merge: recorded right before its spawn; re-entered after it started (its log made) only the wait. No ` ```release ` block → merged and live e2e green means done; a ` ```release ` block without ` ```live ` is ignored and `doctor` warns. | test_release_waits_for_me, test_release_runs_command, test_no_release_block_done, test_release_production_e2e_red |
-| PIP-35 | **Rollback rehearsal** (playbook: the most rehearsed path): weekly per repo with ` ```live `, when the loop is idle and the repo has no unfinished mission: `git revert` of `origin/<base>`'s head on `towercab/rehearse-<yymmdd>`, draft PR, CI (PIP-3 wait), never merged; PR closed and branch deleted after. With a ` ```rollback ` block in `TOWERCAB.md` (`command:` restoring a given sha, `rehearse:` the same against staging), its `rehearse` runs too. Conflict, red CI or a failing rehearse → message `rollback rehearsal failed: <repo>`. | test_rehearsal_never_merges, test_rehearsal_failure_messages |
-| PIP-36 | **Findings feed `CLAUDE.md`** (playbook p.38 step 5): the same `rule` (exact match after lowercasing) in PR review findings of two PRs in one repo → draft intent PR on `intents` ([INT-8](intents.md)): "update CLAUDE.md: <rule>", `unlock: [CLAUDE.md]`, `source: review:<pr>,<pr>`. Once per rule. | test_repeated_rule_drafts_intent |
-| PIP-37 | Removed: built as LOOP-15 `answer`: the continue prompt carries `intent.md` with its `## Answers` (the self-sufficient fix, 2026-10-26). | — |
-| PIP-38 | Removed: built as LOOP-10 `env::classify_run` (the self-sufficient fix, 2026-10-26). | — |
+### PIP-1 · Build
 
-**Claude runs** (`src/claude.rs`, PIP-13, PIP-24; all `pub`; built by the loop intent, part 5)
+The worker builds the plan in the mission's checkout: failing tests first, then the code, then the
+docs, until the repo's checks pass.
 
-- `RunKind::{Design, Plan, Worker, Review, Triage, Verifier, Writer, Drafter, Diagnose}` (`ALL`, `as_str`, `tools`, `policies`, `budgeted`, `toolless`, `slot`, `timeout(&Config)`, `agent`: MET-16's, `worker` for design, plan, worker); `Run { kind, model, cwd, runs: PathBuf (runs/<id>/), n: u32, session: SessionArg, prompt: String, schema: Option<Value>, budget_usd: Option<f64>, setup_checks: Vec<String>, bash: Vec<String>, verifier: Option<VerifierNet { port, url, ui }>, deny_write: Vec<PathBuf>, guard: bool, deny_read: Vec<(PathBuf, bool)>, eval: bool }` (`deny_read` = `config_secrets(&Config)`: config file, `app.pem`, `secrets/`) (`eval`: same argv, metrics agent `eval`, PIP-33); `Run::new(kind, model, cwd, runs, n, prompt, &Config)` (toolless kinds: cwd `runs`; budget `[agent].max_budget_usd` for budgeted kinds), `files() -> RunFiles { prompt, stdout, stderr, settings, claude_md, policies, mcp }`; `SessionArg::{New(uuid), Resume(uuid), None}` (uuid strings, as `missions.session`; `From<handler::Session>`).
-- `argv(&Run, &Exes) -> Vec<OsString>`: PIP-24's common flags in its order, then `--tools <comma list or "">`, `--allowedTools` (left out when empty) and `--disallowedTools` (`disallowed(kind)`, then `Read(/<path>)` or `Read(/<dir>/**)` per `deny_read`; one flag each, every pattern its own argument), `--plugin-dir <runs>/policies` (design, plan, worker, review, triage, verifier; PIP-27), `--session-id <uuid>` or `--resume <uuid>`, `--max-budget-usd <budget_usd>` (design, plan, worker), `--json-schema <compact JSON>`, `--mcp-config <runs>/mcp-verifier.json` (verifier with `ui`: `mcp_config` = `{mcpServers: {playwright: {command: npx, args: [--yes, @playwright/mcp@<PLAYWRIGHT_MCP>, --allowed-origins, <url>]}}}`, `PLAYWRIGHT_MCP` = `0.0.41`).
+- Resumes the worker session ([PIP-13](pipeline.md)) on the intent's model, after the repo's
+  ` ```setup ` ran in the checkout. The prompt (`prompts/build.md`) gives `plan.md`, `intent.md` (with
+  `## Answers`), the spec IDs, the run set ([REPO-9](repo.md)), the access granted
+  ([AUT-14](autonomy.md)) and the writing guide (PIP-39). The worker writes a failing test for each
+  spec row's `Verified by` and each `Proposed outcome` bullet, implements, runs the checks itself,
+  updates docs, and switches the spec rows it built from Draft to Live.
+- Result (`--json-schema`, **Schemas** `build`): `status` `done`, `blocked` (with a `question`,
+  PIP-41) or `access` (with what and why, [AUT-15](autonomy.md)); `pr` (the code PR's text, PIP-48);
+  `plan_changed` (markdown, when it departed from the plan, with why); `lower_a`, `lower_why`.
+- Towercab then commits everything as the bot (`git add -A`, message = the design's Conventional
+  Commit line) and goes to verify. No diff → `waiting: no changes`. Timeout, budget used up, or no
+  valid result → one continue with `Continue where you stopped.`, then the matching wait.
+- Verified by: `pipeline: build prompt has plan, intent and checks`, `pipeline: build commits as the
+  bot`, `pipeline: no changes waits`, `pipeline: timeout continues once`
 
-| Kind | `--tools` | `--allowedTools` | Session | Model |
+### PIP-2 · Publish
+
+After green checks and a proof, Towercab pushes the branch and opens the code PR; later rounds only
+push.
+
+- Push `towercab/<id>-<slug>` from Towercab's clone (fetched from the checkout by path). First time:
+  `gh pr create` (ready for review, not a draft), title = the design's Conventional Commit line, body
+  = PIP-48; `missions.pr`, `head`, `pushed_at` recorded first. A push refused other than as
+  non-fast-forward, or rejected 3 times → `waiting: answer the question` with the reason.
+- Verified by: `pipeline: first publish opens the code PR`, `pipeline: later rounds only push`
+
+### PIP-3 · CI
+
+Towercab waits for the PR's checks and sorts them into pass, fail and pending in code.
+
+- `gh pr view <n> --json headRefOid,mergeable,statusCheckRollup` every `ci_poll` s. A check run
+  `COMPLETED` with `SUCCESS`, `NEUTRAL` or `SKIPPED` passes; `FAILURE`, `TIMED_OUT`,
+  `ACTION_REQUIRED`, `STARTUP_FAILURE`, or a status `FAILURE`/`ERROR` fails; `CANCELLED` cancels;
+  else pending. Within `ci_grace` s of a push, checks started before it are ignored. No checks after
+  `ci_grace` → green with `no CI on this repo`. Pending past `ci_wait` → `waiting: CI stuck`.
+- Red → a repair round in `build` with the failing jobs' log tails (at most 2, `ci_repairs`), then
+  `waiting: CI red`.
+- Verified by: `pipeline: CI buckets`, `pipeline: no checks counts as green`, `pipeline: CI red
+  repairs twice then waits`
+
+### PIP-4 · Review
+
+A separate, read-only Claude session reviews every code PR against the intent, the plan and the
+repo's `REVIEW.md`, and posts what it found on the PR.
+
+- After green CI, again on each new head (reused when the diff's `git patch-id` is unchanged). Model:
+  the intent's `review`, else `[agent].review_model`, else one step above the worker (haiku → sonnet →
+  opus; opus stays). Given intent, spec IDs, `plan.md`, the PR diff, the CI result, `REVIEW.md` and
+  the screenshots (PIP-49). Its verdict is posted as a Review comment (PIP-42).
+- Verified by: `pipeline: review on every PR`, `pipeline: review reused for an unchanged diff`,
+  `pipeline: review comment is posted`
+
+### PIP-5 · Review verdict
+
+The review returns a structured verdict, and code decides from it whether the PR is approved.
+
+- **Schemas** `review`: `approved`, one verdict per `Proposed outcome` bullet (`met`, `why`),
+  `tests_weakened` (`value`, `where`), `plan_followed` (`value`, `where`), `findings` (`severity`
+  `important`/`nit`, `file`, `line`, `what`), `door` (`one-way`/`two-way`), `red_lines` (touched,
+  with file), `summary` (markdown, for the owner). Approved = `approved` ∧ every outcome met ∧ no
+  weakened tests ∧ plan followed ∧ no important finding. Nits are capped by `REVIEW.md`.
+- Verified by: `pipeline: approval is computed in code`
+
+### PIP-6 · Review rounds
+
+Removed: in v1 already.
+
+### PIP-7 · Gate
+
+After the review, code decides whether Towercab merges the code PR or the owner does.
+
+- Effective `a` and caps from [AUT-8, 13](autonomy.md). First match wins → `approval:merge`
+  (`waiting: review and merge PR`, why): CI not green; review not approved; access beyond the plan at
+  a4 (AUT-15); proof missing (PIP-30); effective `a` ≤ 3; no `a` and not low-risk (AUT-9). Else →
+  `merge`. The PR body's Checks section is updated first (PIP-48).
+- Verified by: `pipeline: gate table`
+
+### PIP-8 · Deploy
+
+Removed: the ship stage is parked (intent 261026-2204-4).
+
+### PIP-9 · e2e
+
+Removed: with PIP-8.
+
+### PIP-10 · e2e watch
+
+Removed: in v1 already.
+
+### PIP-11 · PR description by Haiku
+
+Removed: replaced by PIP-39, 40 and 48.
+
+### PIP-12 · Towercab's own CI
+
+Towercab's repo runs its checks on every PR and push to `main`.
+
+- `.github/workflows/ci.yml`: job `Node 22: lint, typecheck, tests` (`actions/setup-node` with
+  `node-version: 22`, `cache: npm`): `npm ci`, `npm run check`. Job `Playwright: UI screenshots`:
+  `npx playwright install --with-deps chromium`, `npm run test:ui`, screenshots uploaded as an
+  artifact. Every job sets `name:`.
+- Verified by: `public: CI workflow runs the checks`
+
+### PIP-13 · One worker session per mission
+
+Design, plan, build and every repair continue the same Claude session, so the worker keeps its
+context.
+
+- The uuid is picked at pick ([LOOP-5, 7](loop.md)); design's run gets `--session-id`, every later
+  worker run `--resume` from the same checkout. A repair's prompt is short: what failed, the findings
+  or the log tail, fenced as data. Review is always a fresh session.
+- Verified by: `pipeline: one session from design to repairs`
+
+### PIP-14 · PR body lifecycle
+
+Removed: replaced by PIP-48.
+
+### PIP-15 · Writer fallback
+
+Removed: there is no separate writer; PIP-48 says what happens without a worker text.
+
+### PIP-16 · Message texts are code
+
+Telegram messages come from code templates, never a model.
+
+- One template per wait ([LOOP-14](loop.md) **Waits**); tests pin each text.
+- Verified by: `outbox: every wait has a text`
+
+### PIP-17 · Continue by waiting
+
+Removed: replaced by owner gestures (PIP-43).
+
+### PIP-18 · CI guards
+
+A stale check never counts, and a first red or cancelled Actions run is rerun once before it counts.
+
+- Checks count only for `headRefOid` = `missions.head` from the same call. The first red or cancel on
+  a head → `gh run rerun <run> --failed` once (run ID from the check's `detailsUrl`), no repair
+  counted; a second cancel = red; a check that isn't an Actions run is never rerun.
+- Verified by: `pipeline: stale green is ignored`, `pipeline: red is rerun once`
+
+### PIP-19 · Revert mission
+
+Removed: parked with the ship stage.
+
+### PIP-20 · e2e triage
+
+Removed: parked with the ship stage.
+
+### PIP-21 · Reading the intent's PRs
+
+Every minute Towercab reads the intent's open PRs: their state, the owner's reviews and comments,
+and conflicts.
+
+- For each of `spec_pr`, `plan_pr`, `pr` that is open, and the current PR (the newest of the three)
+  even when merged: `gh pr view <n> --json state,mergedAt,mergeCommit,headRefOid,mergeable,
+  reviews,comments,body` plus `gh api --paginate repos/<r>/pulls/<n>/comments?per_page=100`
+  (pages read as a stream of JSON arrays). The events it gives: PIP-43.
+- Verified by: `github: PR read parses gh 2.46 output`
+
+### PIP-22 · Merge
+
+Towercab merges in code, only on the head that passed the gate.
+
+- `gh pr view --json headRefOid,mergeStateStatus`: head ≠ gated head → `ci`. `CLEAN`/`HAS_HOOKS` →
+  `gh pr merge <n> --squash` with `--match-head-commit <head>`. `BEHIND` → `gh api -X PUT
+  repos/<r>/pulls/<n>/update-branch -f expected_head_sha=<head>` → `ci`. `DIRTY` → a conflict round
+  in `build`. `BLOCKED`/`UNSTABLE` → read again after `ci_poll` (the third time → `approval:merge`).
+  Refused otherwise → `waiting: merge failed`. While paused, a mission entering `merge` holds until
+  `resume`.
+- Verified by: `pipeline: merge on the gated head`, `pipeline: behind updates the branch`,
+  `pipeline: dirty is a conflict round`
+
+### PIP-23 · Verify
+
+After each build or repair, code runs the repo's setup and checks in a sandbox and sends failures
+back to the worker.
+
+- ` ```setup ` (base branch's) runs first, with network and the repo cache writable; non-zero → once
+  more after 60 s, then red. The run set ([REPO-9](repo.md)) runs in order without network, each
+  bounded by `check_timeout`. Logs: `runs/<id>/verify-<n>.log` (`$ <command>` before each output).
+- Red → a repair round in `build` with the log tail (at most 2 for verify and proof together,
+  `repairs`), then `waiting: checks red`. A log that shows a missing tool or a sandbox failure is a
+  fault ([LOOP-10](loop.md)), not a repair.
+- **Sandbox**: `bwrap [--unshare-net] --unshare-pid --unshare-ipc --unshare-uts --new-session
+  --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /run --tmpfs <HOME> --tmpfs /tmp`,
+  the toolchain dirs read-only with credential files masked, the repo cache (LOOP-34), `--bind
+  <checkout>` with its `.git` read-only, `--chdir <checkout>`, `sh -c <line>`.
+- Verified by: `pipeline: verify runs setup then checks`, `pipeline: verify red repairs then waits`,
+  `pipeline: sandbox argv`
+
+### PIP-24 · Claude runs
+
+Every Claude run is headless, sandboxed, and gets only the tools and access its job needs.
+
+- `claude -p --output-format json --permission-mode dontAsk --strict-mcp-config --setting-sources ""
+  --append-system-prompt-file <runs>/system-<kind>.md --settings <runs>/settings-<kind>.json --model
+  <m> --tools <list> [--allowedTools …] [--disallowedTools …] [--session-id|--resume <uuid>]
+  [--max-budget-usd <n>] [--json-schema <schema>]`, the prompt on stdin. The system file = the base
+  branch's `CLAUDE.md` + the writing guide (PIP-39). Env: HOME, PATH, LANG, the repo cache's
+  variables (LOOP-34), `[agent].env`; never a GitHub token.
+- Settings: `sandbox {enabled, failIfUnavailable, allowUnsandboxedCommands: false, filesystem
+  {denyRead: secret paths, denyWrite: <checkout>/.git + blocked protected paths, allowWrite: the repo
+  cache}, network {allowedDomains: the granted domains}}`, `permissions.allow: WebFetch(domain:<d>)`
+  per granted domain (`WebFetch(domain:*)` at a5), the guard hook for workers (PIP-29). Secret paths:
+  `~/.ssh`, `~/.config/gh`, `~/.aws`, `~/.gnupg`, `~/.config/towercab`, `~/.claude/.credentials.json`,
+  `~/.netrc`, `~/.git-credentials`.
+- Tools by kind: **Claude runs** table. Disallowed for every run: `Bash(git push:*)`,
+  `Bash(git remote:*)`, `Bash(git config:*)`, `Bash(gh:*)`, `Bash(ssh:*)`, `Bash(sudo:*)`, `Read` of
+  each secret path. A denied push or secret read fails the step.
+- Verified by: `claude: worker argv`, `claude: review argv`, `claude: settings by autonomy`,
+  `claude: result parse`, `claude: no token in env`
+
+### PIP-25 · Design
+
+The worker's first run turns the intent into spec changes, and Towercab opens them as the spec PR.
+
+- Given `intent.md`, the repo's `specs/`, `CLAUDE.md` and the writing guide; tools Read, Glob, Grep,
+  Edit, Write, allowed to edit `specs/**` only. Result (**Schemas** `design`): `type`, `scope`,
+  `breaking`, `spec_ids`, `concerns` (`what`, `why`), `open_questions` (each answered or left to the
+  owner), `pr` (the spec PR's text: what changes in behaviour and why, for a reader who wasn't
+  there).
+- Spec rows added here are `Draft`. Towercab commits `docs(specs): <title>` on
+  `towercab/<id>-<slug>-spec`, pushes, and opens the spec PR (title `docs(specs): <title>`). Then the
+  spec gate ([AUT-11](autonomy.md)): the owner (`approval:spec`) or Towercab (PIP-50). No behaviour
+  change (`spec_ids` empty, no diff) → no spec PR; on to plan.
+- The owner's review comments on the spec PR → a design revision in the same session, a new commit
+  on the same PR.
+- Verified by: `pipeline: design edits only specs`, `pipeline: spec PR is opened`,
+  `pipeline: no behaviour change skips the spec PR`, `pipeline: feedback revises the spec`
+
+### PIP-26 · Spec approval
+
+Removed: now AUT-11 with PIP-25 and PIP-50.
+
+### PIP-27 · Policy skills
+
+Removed: never configured; parked as intent 261026-2204-5.
+
+### PIP-28 · Plan
+
+The worker plans the build, read-only, and Towercab opens the plan as a PR on the intents repo.
+
+- Resumes the session; tools Read, Glob, Grep and read-only git. Result (**Schemas** `plan`): `plan`
+  (markdown, PIP-46) and `access` (`domains` and `paths`, each with `why`).
+- Towercab writes `intents/<id>-<slug>/plan.md` (PIP-46) on branch `plan/<id>-<slug>` of the intents
+  repo, pushes, and opens the plan PR (title `docs(plan): <title>`, body: the approach in a few
+  sentences and the access asked for). Then the plan gate ([AUT-12](autonomy.md)): the owner
+  (`approval:plan`) or Towercab (PIP-51).
+- The owner's comments on the plan PR → a plan revision, a new commit on the same PR. Merged → the
+  grants are read from the merged `plan.md` (PIP-47) and the build starts.
+- A build that departs from the plan returns `plan_changed`; Towercab commits it to `plan.md` on
+  `main` of the intents repo (`towercab: plan changed <id>`) and says so in the code PR.
+- Verified by: `pipeline: plan PR is opened on intents`, `pipeline: feedback revises the plan`,
+  `pipeline: merged plan grants its ticked access`
+
+### PIP-29 · Guard
+
+A hook stops the worker from writing paths it hasn't been granted, and tells it how to ask.
+
+- Every worker run's settings add a `PreToolUse` hook on `Edit|Write|NotebookEdit` running
+  `towercab hook guard <runs>/guard.json` (`{checkout, protected, granted, locked}`), which exits 2
+  with a reason for: a path outside the checkout, a protected path not granted
+  ([REPO-8](repo.md), [AUT-14](autonomy.md)), a locked test (PIP-31). The reason for a protected path
+  ends `if you need it, finish what you can and return status access with this path and why`. It
+  fails closed (unreadable rules, no path, an error → exit 2).
+- Publish also refuses a diff that touches a protected path that isn't granted.
+- Verified by: `guard: blocks a protected path`, `guard: allows a granted path`,
+  `guard: blocks outside the checkout`, `guard: fails closed`
+
+### PIP-30 · Red→green proof
+
+Towercab checks that the PR's tests fail without the change, so the tests prove something.
+
+- After green verify, when the design changed spec rows or its `type` is `fix`: a checkout of
+  `origin/<base>` with the PR's changed test files laid over it (globs: `TOWERCAB.md` `tests`, default
+  `tests/**`, `test/**`, `**/__tests__/**`, `**/*_test.*`, `**/test_*.*`, `**/*.test.*`,
+  `**/*.spec.*`) runs setup, then the run set. Red = proven. Green → a repair round asking for a test
+  that fails without the change; after the repairs → `waiting: tests don't prove the change`. After
+  the owner answers, a proof that still fails to prove → publish with `data.unproven` (the gate then
+  sends the PR to the owner, PIP-7).
+- Verified by: `pipeline: proof red on base proves`, `pipeline: green on base repairs`,
+  `pipeline: unproven goes to the owner`
+
+### PIP-31 · Test lock in repair rounds
+
+During repair rounds the worker can't change tests it already pushed, so it can't make a red check
+green by weakening the test.
+
+- Locked = test files (PIP-30's globs) at the head of the last non-repair round; the guard blocks
+  them and publish refuses a diff that changes or deletes them. New test files are fine.
+- Verified by: `pipeline: repair can't edit pushed tests`
+
+### PIP-32 · Verifier
+
+Removed: never used; parked as intent 261026-2204-5. Screenshots (PIP-49) replace its UI check.
+
+### PIP-33 · Evals
+
+Removed: parked as intent 261026-2204-5.
+
+### PIP-34 · Release gate
+
+Removed: parked with the ship stage (intent 261026-2204-4).
+
+### PIP-35 · Rollback rehearsal
+
+Removed: parked with the ship stage.
+
+### PIP-36 · Findings feed CLAUDE.md
+
+Removed: parked as intent 261026-2204-3.
+
+### PIP-37 · Answers in the continue prompt
+
+Removed: in v1 already.
+
+### PIP-38 · Environment failures in a run
+
+Removed: in v1 already; now LOOP-10.
+
+### PIP-39 · Writing guide
+
+Every Claude run gets one writing guide, so everything Towercab writes for a person reads clearly.
+
+- `prompts/writing.md`, appended to every run's system file (PIP-24). It covers: who the reader is
+  (the owner, who wasn't there; a reviewer); the answer or outcome first; full sentences; plain words
+  before identifiers; one idea per paragraph; headings and lists only where they help; no internal
+  jargon (step names, field names, schema keys) in text for a person; questions with context, options
+  and a recommendation.
+- Verified by: `prompts: writing guide is in every run`
+
+### PIP-40 · Text a person reads is free Markdown
+
+Claude writes the text a person reads as Markdown in its own words; JSON carries only what code
+needs.
+
+- Text for people: the spec, plan and code PR texts, questions, the review summary. These are
+  Markdown strings in the result, written by the run that did the work, on its own model. Code adds
+  only facts it owns (links, check results, the footer) and never stitches sentences from fields.
+- Verified by: `pipeline: PR text comes from the worker`
+
+### PIP-41 · Questions
+
+When the worker needs the owner, it asks one question with its context, the options and its
+recommendation.
+
+- `question`: `context` (what it was doing and why it is stuck), `question`, `options` (each with
+  what follows from it), `recommendation`. Towercab renders it as a Question comment (PIP-42) on the
+  intent's current PR, or, with no PR yet, in the intent's `## Towercab` section; `waiting: answer the
+  question`.
+- Verified by: `pipeline: question comment has context, options, recommendation`,
+  `pipeline: question without a PR goes to the intent`
+
+### PIP-42 · Stage comments
+
+Every comment Towercab posts on a PR says which step wrote it, and only informs.
+
+- Visible header `**<Step>** · round <n>` (Design, Plan, Build, Verify, Proof, CI, Review, Gate,
+  Question, Access) and a hidden marker `<!-- towercab:<step>:<n> -->` on the first line. A comment
+  for the same step and round is edited, not added again. Towercab's own comments never cause an
+  event.
+- Verified by: `github: stage comment has header and marker`, `github: same step edits its comment`
+
+### PIP-43 · The owner's GitHub actions
+
+What the owner does on a PR moves the intent: merge approves, close drops, a review or comment
+steers.
+
+- Merged spec, plan or code PR → `spec_merged`, `plan_merged`, `code_merged`. Closed without merge →
+  `closed` (the mission stops and the intent is dropped, [PRI-9](priority.md)). A review with
+  Approve on a PR waiting on the owner → Towercab merges it (as the owner's approval). A review with
+  Request changes, or a comment, → `feedback` with its text (or `answered` while blocked). A comment
+  that is exactly `/retry` → `retry_fresh`. Edited checkboxes in an open plan PR are read when it
+  merges.
+- Verified by: `events: merge, close, review and comment`, `events: approve review merges`,
+  `events: retry command`
+
+### PIP-44 · Only the owner acts
+
+Only the owner's reviews and comments move an intent; anyone else's are ignored.
+
+- Author login = `[github].me` (case-insensitive), with a non-empty body or a review state. Comments
+  by the App's bot or anyone else never raise an event. Comments older than `feedback_seen` are
+  skipped; `feedback_seen` moves forward when an event is taken.
+- Verified by: `events: only the owner's comments count`
+
+### PIP-45 · Slash commands
+
+Two short commands cover what a GitHub action can't express.
+
+- `/retry` (alone in a comment by the owner on any of the intent's PRs): a fresh attempt.
+  `/release`: reserved for the ship stage (parked); today it gets a reply comment saying so.
+- Verified by: `events: retry command`, `events: release says it is parked`
+
+### PIP-46 · plan.md
+
+The plan explains the approach before the steps, so the owner can judge it in a minute.
+
+- `plan.md`: `# Plan: <title>`, a line with the intent and spec IDs, then the worker's markdown:
+  `## Approach` (what will be built and why this way), `## Steps` (in order; failing tests first),
+  `## Risks`, `## How to check it`; then Towercab's `## Access` (PIP-47).
+- Verified by: `pipeline: plan.md sections`
+
+### PIP-47 · Access checklist
+
+The plan lists the access the worker expects to need as checkboxes, and the merged boxes are what
+it gets.
+
+- `## Access` lines: `- [x] network: <domain> (<why>)` and `- [x] path: <glob> (<why>)`, ticked by
+  default; plus a sentence on what each level grants ([AUT-14](autonomy.md)). Parsed from the merged
+  `plan.md`: ticked lines are granted, unticked ones are not; no section → nothing beyond the
+  defaults.
+- Verified by: `pipeline: access checklist round-trips`, `pipeline: unticked access is not granted`
+
+### PIP-48 · The code PR's text
+
+The code PR opens with what it does, why, and what to check before merging, in plain words; the
+technical detail follows.
+
+- Body: the worker's `pr` markdown (sections `## What this does`, `## Why`, `## What to check before
+  merging`, `## Changes`); then Towercab's `## Checks` (one line each: verify, proof, CI, review, in
+  plain words), `## Access beyond the plan` (when any), links to the spec PR and the plan PR, the spec
+  IDs, the review's details in a `<details>` block, and the footer `<sub>Built by Towercab · intent ·
+  $<cost> · <h>h<mm>m</sub>`. Updated at the gate. Without a worker text: the intent's title and
+  problem under `## What this does`.
+- Verified by: `pipeline: code PR body sections`, `pipeline: body without worker text`
+
+### PIP-49 · Screenshots in the review
+
+For a repo with a screenshots command, the review sees the UI as it now looks.
+
+- After green verify, the ` ```screenshots ` command ([REPO-10](repo.md)) runs in the sandbox with
+  network to localhost only; its PNGs are copied to `runs/<id>/shots-<n>/` and their paths go into the
+  review prompt (the review reads them with `Read`). A failing command is logged and noted in the
+  review prompt; it never blocks.
+- Verified by: `pipeline: screenshots reach the review`
+
+### PIP-50 · Towercab merges the spec PR
+
+When the owner doesn't need to approve the spec, Towercab merges the spec PR once its checks pass.
+
+- Spec gate open ([AUT-11](autonomy.md)) → wait for the spec PR's CI (PIP-3 rules, no repairs: red →
+  `waiting: approve spec` with why `CI red on the spec PR`), then `gh pr merge --squash`.
+- Verified by: `pipeline: spec PR merged when the gate is open`
+
+### PIP-51 · Towercab merges the plan PR at a5
+
+At a5 Towercab merges its own plan PR and starts building.
+
+- Plan gate open ([AUT-12](autonomy.md)) → `gh pr merge --squash` on the intents repo as the App.
+- Verified by: `pipeline: plan PR merged at a5`
+
+### PIP-52 · A change's three PRs link to each other
+
+Each PR links to the intent and to the intent's other PRs, so the owner can follow a change from
+any of them.
+
+- Spec and plan PR bodies end with links to the intent file and the PRs before them; the code PR
+  links both (PIP-48). The intent records each URL ([INT-5](intents.md)).
+- Verified by: `pipeline: PRs link to each other`
+
+**Claude runs** (`src/claude.ts`)
+
+| Kind | `--tools` | Allowed | Session | Model |
 |---|---|---|---|---|
-| design | `Read,Glob,Grep,Edit,Write,Skill` | Read, Glob, Grep, Skill, `Edit(specs/**)` (PIP-25) | `New` (the session's first run), else `Resume` | mission |
-| plan | `Read,Glob,Grep,Bash,Skill` | Read, Glob, Grep, Skill, `Bash(git status:*)`, `Bash(git diff:*)`, `Bash(git log:*)`, `Bash(git show:*)` | `Resume` | mission |
-| worker (build, repairs, continues) | `Read,Edit,Write,Glob,Grep,Bash,Skill` | PIP-24's worker list | `Resume` (`New` if no run used the session yet) | mission |
-| review, triage | `Read,Grep,Glob,Bash,Skill` | Read, Grep, Glob, Skill, `Bash(git diff:*)`, `Bash(git log:*)`, `Bash(git show:*)` | `New` per run | review model (PIP-4) |
-| verifier | as review | review's + `Bash(curl *)` (+ `mcp__playwright` with `ui`) | `New` per run | review model |
-| writer, drafter, diagnose | `""` | none | `None` | haiku, `[agent].drafter`, review model |
+| design | `Read,Glob,Grep,Edit,Write` | Read, Glob, Grep, `Edit(specs/**)` | new (`--session-id`) | mission |
+| plan | `Read,Glob,Grep,Bash` | Read, Glob, Grep, `Bash(git log:*)`, `Bash(git diff:*)`, `Bash(git show:*)`, `Bash(ls:*)` | resume | mission |
+| worker | `Read,Edit,Write,Glob,Grep,Bash,WebFetch` | Read, Edit, Write, Glob, Grep, Bash (sandboxed), WebFetch for granted domains | resume | mission |
+| review | `Read,Glob,Grep,Bash` | Read, Glob, Grep, `Bash(git diff:*)`, `Bash(git log:*)`, `Bash(git show:*)` | new per run | review model |
 
-- Settings file `<runs>/settings-<kind>.json` = `settings(&Run, home, towercab) -> Value` = `{sandbox: {enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, filesystem: {denyRead: [<secret paths>, <deny_read>], denyWrite: [<deny_write>, <cwd>/.git (all but writer, drafter, diagnose)]}, network: <verifier only>}}`, plus with `guard` (the worker) `hooks: {PreToolUse: [{matcher: "Edit|Write|NotebookEdit", hooks: [{type: command, command: "'<towercab exe>' hook guard '<runs>/guard.json'"}]}]}` (PIP-29, rules file: **Guard**; the exe = `live_exe(current_exe)`: a ` (deleted)` suffix after a reinstall stripped, missing → `prepare` fails). Secret paths: `SECRETS` (path, is a directory), `secret_paths(home)`, `home() -> Result<PathBuf, String>` = the loop's `HOME` (unset → `HOME is not set`: `prepare` fails).
-- `env(&Config) -> Vec<(OsString, OsString)>`: HOME, PATH = `[agent].path`, LANG (the loop's, else `C.UTF-8`), MET-12's `CLAUDE_CODE_ENABLE_TELEMETRY` … `OTEL_SERVICE_NAME=towercab`; nothing else.
-- Files: prompt `<runs>/<kind>-<n>.prompt` (stdin), stdout `<kind>-<n>.json`, stderr `<kind>-<n>.err`; `<runs>/CLAUDE.md` = the base branch's `CLAUDE.md` (`RepoFiles.claude_md`, empty without a repo); cwd = the mission checkout, or `<runs>` for writer, drafter, diagnose. `prepare(&Run, claude_md, &Config, &Exes) -> Result<ChildSpec, String>` writes the prompt, settings, `CLAUDE.md` and MCP config before each run, then `spec(&Run, &Config, &Exes) -> ChildSpec` ([LOOP-12](loop.md); `env(&Config)`): timeout `build_timeout` (design, plan, worker), `review_timeout` (review, triage, verifier, drafter, diagnose), 60 s (writer); `slot` for all but the writer; `model` = the run's.
-- `parse(model, stdout, stderr, status: Option<ExitStatus>, now) -> RunEnd` (`end(&Run, &ChildEnd, now)` reads the files, invalid UTF-8 replaced): `ClaudeResult { subtype, is_error, result, session_id, total_cost_usd, duration_ms, model_usage: BTreeMap<String, ModelUsage { input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens, cost_usd }>, structured_output: Option<Value>, permission_denials: Vec<Value> }` (`modelUsage` camelCase as Claude Code writes it, or snake_case) from the last stdout line that is a JSON object with `type: "result"` (else all of stdout as one); failed = a non-zero or unknown exit, or `is_error`; first match: `SessionGone` (stderr `No conversation found with session ID`), `Limit(Limit)` (`limits::of_run`, [LOOP-9](loop.md)), `Env(String)` (failed and `env::classify` of result or stderr, [LOOP-10](loop.md)), `Budget(ClaudeResult)` (`error_max_budget_usd`), `Denied(ClaudeResult)` (`is_fatal_denial`: a Bash `git … push`, or any input naming a secret path, absolute or `~/…`), `NoResult(String)` (no or invalid JSON, with stderr's first line), `Failed(String)` (failed otherwise: the result, else the subtype, else stderr), `Ok(ClaudeResult)`; `Display`: one short line (`failed: <why>`, `budget used up`, …).
-- `CONTINUE = "Continue where you stopped."`; `fresh_context(branch, pr, intent_md, spec_ids, plan_md) -> String` ([LOOP-7](loop.md)); `repair_prompt`, `append_notes` (PIP-13).
+Result: the last stdout line that is a JSON object with `type: "result"`: `is_error`, `result`,
+`session_id`, `total_cost_usd`, `duration_ms`, `structured_output`, `permission_denials`. A failed
+run is, first match: session gone, a usage limit ([LOOP-9](loop.md)), a network or auth failure
+([LOOP-10](loop.md)), budget used up, a denied push or secret read, no valid result, other failure.
 
-**Code** (the pipeline intent; part = build order: 1 design, spec gate, policies, publish, PR text, continue; 2 plan, build, guard, test lock, verify, proof; 3 CI, verifier, PR reads, review, gate, merge; 4 deploy, e2e, release, revert, triage, rehearsal; 5 evals, findings, picks on, switch-over. All `pub`; logic under `src/pipeline/`, tests in `tests/pipe_*.rs`)
-
-| Part | File | Interface |
-|---|---|---|
-| 1 | `src/pipeline/mod.rs` | `Mode::{Live, Eval(EvalCases)}` (`EvalCases` = intent id → base sha, PIP-33; `eval()`); `handlers(Mode) -> Handlers` = `Handlers::picks_off()` with each stage handler below (`Mode::Eval`: `evals::EvalPick` for `pick`), none `NotBuilt`; `Round::{First, Verify, Ci, Feedback, Conflict, Continue}`, `round(&Connection, &Mission) -> Result<Round, String>` = the last `transitions` row into `build` from another stage (a limit, outage, restart or crash in `build` changes no round): from `plan` → First; `red` from verify or proof → Verify, from ci → Ci; `feedback`; `conflict`; `approve`/`intent_continued` → Continue; `entered(&Connection, &Mission, Stage) -> Result<Option<(from, Event)>, String>` (the last transition into a stage from another); `continued(&Connection, &Mission, Stage) -> Result<bool, String>` (entered last by my `approve`/`intent_continued`); `bug(why) -> Outcome` (`crash`, why `bug: …`: counted, never an uncounted `bad_result`); `intent(cx, m) -> Result<Intent, StepError>` (`Store::get`; `store_failed`: `Sync` → `Env(github)`); `files(cx, m) -> Result<RepoFiles, Outcome>` (`repo::load` of Towercab's clone: `NoVerifyingBlock`/`Invalid` → the pick's waits, `Git` → `Env`, the repo gone from `[repos]` → `bug`); `note(cx, m, text)` (`intent.md` `## Towercab` section, **Notes**); `not_ready(Waiting) -> bool` (PIP-14's list); `wait_note(cx, m, Waiting, why, note) -> Result<Progress, StepError>` (note, then ⛔ PR text `<waiting>: <why>` when `not_ready`, the wait named once, then `Outcome::wait`); `never_published(&Mission) -> Option<Progress>` (PIP-15); `my_comments(cx, m) -> (lines, newest at)` (my PR comments since `feedback_seen`, as data); `last_wait(&Connection, &Mission)` (its last `outbox` message); `continue_what(cx, m) -> (text, newest at)` (PIP-17, the build's `Continue` round: that message, `intent.md`, my new comments, as data); `conventional(type, scope, breaking, description)` (`<type>(<scope>)[!]: …`, scope empty → `<type>[!]: …`); `intent_url(cx, m)`. |
-| 1 | `src/pipeline/data.rs` | `Data(serde_json::Map)` over `missions.data` (**Mission data**): `of(&Mission)`, `get(key) -> Option<&Value>`, typed `str`/`u64`/`bool`, `set(key, Value)`, `text() -> String` (for `Ctx::record` and `Outcome::with("data", …)`); `next_n(&mut self, family) -> u32` (`n.<family>` + 1: run and log numbers, chosen at `record`, reused on re-entry). |
-| 1 | `src/pipeline/prompts.rs`, `prompts/*.md` | `render(name, &[(&str, &str)]) -> Result<String, String>`: `include_str!` of `prompts/<name>.md`, `{{key}}` replaced (each value `neutral` for every fence its template closes), a key left over → `Err` (a bug); `neutral(tag, text)` (`</tag`, any case and blanks → `&lt;/tag`), `fence(tag, text)` (`<tag>\n<text, neutral>\n</tag>`: every fence built in code); **Prompts**. |
-| 1 | `src/pipeline/schemas.rs` | `DESIGN`, `PLAN`, `WORKER`, `REVIEW`, `TRIAGE`, `VERIFIER`, `WRITER`: `LazyLock<Value>` (**Schemas**); `DesignResult`, `PlanResult`, `WorkerResult`, `ReviewResult`, `TriageResult`, `VerifierReport`, `WriterResult`, each `from_json(&Value) -> Result<Self, String>` (as `DraftResult`: a missing, mistyped or out-of-range field → why; strings one-lined where they go into a title or bullet). |
-| 1 | `src/pipeline/runs.rs` | Claude runs of the pipeline: `start(cx, m, Start { kind, step, prompt, schema, session: SessionArg, model, eval, setup_checks, deny_write, guard, verifier, feedback_seen }) -> Result<Progress, StepError>` (`Start::new(kind, step, model, prompt)`; `policies::assemble` for kinds with `policies()`, `claude::prepare` with the base `CLAUDE.md`; the run's `n` from `Data::next_n(kind)`, skipping a number an earlier attempt's run files use, and `data.run`, recorded with `step` (and `feedback_seen` with it: my comments count as seen only with the run on its way); `session_used = 1` with a worker kind's `New`; a re-entry at `step` keeps `n`; a `CONTINUE` prompt first copies the run's prompt to `<kind>-<n>.asked`; every worker run, a continue or a new session too, gets `guard::write_rules` for its round as `deny_write`, `guard: true` and `setup_checks` = the base's setup + checks lines); `worker_session(&Mission)` (`New` until used, then `Resume`); `restart(cx, m)` (the recorded run again at `m.step`: a cut-off, limit wait or backoff; started (`<kind>-<n>.json` or `.err` exists: `child::spawn` makes them only for a child that started) → `CONTINUE` with `Resume`; never started → its own prompt (`.asked`, else `.prompt`) with its own session flag (`data.run.session` `new` → `New`)); `schema_of(kind)`; `finish(cx, m, &ChildEnd) -> Result<Ended, StepError>`: adds `total_cost_usd` to `cost_usd` and the run time to `agent_secs` at once; `Ended::{Ok(ClaudeResult), Out(Progress), Failed(why)}`: `Limit` → `Outcome::limit`; `Env` → `Outcome::env(Fault::Claude)`; `SessionGone` → worker kinds `Ctx::new_session` + a `New` run with `fresh_context` and the step's prompt, others a new `run_session`; `Denied` → worker kinds `waiting: no result`, why `denied: <tool> <input>`; `Timeout`, `NoResult`, `Failed`, `Budget` → for design, plan, worker `retry_result(cx, m, Failure::{Timeout, Budget, NoResult(why)})` (also the handler's for a `structured_output` its `from_json` refuses): the one continue (`data.cont` = the step), a `Resume` run at `<step>:result` with `prompts/result.md`, its own failure → `worker timeout` / `worker budget` / `no result`; review, verifier, triage, writer → `Failed(why)` (their own "not approved / mismatch / no revert / template"; the writer never waits, so a limit or an outage is `Failed` too). |
-| 1 | `src/pipeline/policies.rs` | `assemble(cx, m) -> Result<String, StepError>` (PIP-27; returns the `[policies].github` sha or `none`): `<runs>/policies/` rebuilt: `.claude-plugin/plugin.json` `{"name":"towercab-policies","version":"0.0.0","description":"Policy skills (Towercab)"}` + `skills/<name>/…` = every folder holding a `SKILL.md`, first `policies/<name>/` of `<home>/policies` (Towercab's clone of `[policies].github`, cloned as the App, `git fetch origin <base>` at most every 300 s, read from `refs/remotes/origin/<base>`), then the target's `.claude/skills/<name>/` of `refs/remotes/origin/<base>` in its clone, replacing a same-named folder; files by `git ls-tree -r -z` + `git cat-file blob` (modes `100644`/`100755` only; symlinks, submodules skipped); nothing else copied. |
-| 1 | `src/pipeline/git.rs` | Through `checkout::git` (no hooks; in a checkout after `checkout::sane`; diffs `--no-ext-diff --no-textconv`): `bot(cx, eval) -> Result<(name, email), StepError>` (`Identity::bot`; `Mode::Eval` or no App: `Towercab <towercab@localhost>`); `commit(cx, m, dir, msg, eval) -> Result<Option<String>, StepError>` (`git add -A`, nothing staged and no merge in progress → `None`, else `git -c user.name -c user.email -c commit.gpgsign=false commit -q -F <runs>/commit.txt`, the new sha; concludes a merge in progress); `merge(cx, dir, rev, eval) -> Result<bool, StepError>` (`merge --no-edit` as the bot; `false`: conflicts left); `push(cx, m, dir, branch) -> Result<Push::{Pushed(sha), Rejected(String), Refused(String)}, StepError>` (in the clone: `git fetch --quiet -- <dir> +refs/heads/<branch>:refs/towercab/push/<branch>` (never `FETCH_HEAD`: an eval child fetches into the clone too), `git push --quiet origin <sha>:refs/heads/<branch>` as the App, never `--force`; `Rejected`: non-fast-forward or `fetch first`; `Refused`: any other `rejected`/`declined`); `fetch_branch(cx, m, branch) -> Result<bool, StepError>` (the clone's `refs/remotes/origin/<branch>`; `false`: no such branch); `recreate(cx, m, branch)` (checkout re-made on `branch` from the clone, base refreshed); `sync_head(cx, m) -> Result<bool, StepError>` (the checkout brought up to the PR head without losing a commit: missing or invalid → re-made on the branch, from base when origin has none, LOOP-8; else the branch fetched into it by path and base refreshed, then `merge --ff-only`, nothing when the checkout is ahead, or `merge --no-edit` of it as the bot, `false`: conflicts left; a merge in progress is left alone); `merge_base(cx, dir, base) -> sha`; `unmerged(cx, dir)` (`git diff --name-only --diff-filter=U`), `conflict_markers(cx, dir)` (unmerged files with a line starting `<<<<<<< `, `>>>>>>> ` or `=======`); `changed(cx, dir, from, to) -> Vec<(char, String)>` (`git diff --name-status -z --no-renames`); `patch_id(exe, dir, from, to)` (`git diff <from> <to> \| git patch-id --stable`); `parents(cx, dir, sha) -> usize`; `has_workflows(cx, dir) -> bool` (`.github/workflows/*.yml\|yaml` at HEAD); part 4: `revert(cx, dir, sha, eval) -> Result<bool, StepError>` (`git revert --no-edit [-m 1] <sha>` as the bot, `-m 1` for two parents; `false`: a conflict, `revert --abort` done), `reverts(cx, dir, sha) -> bool` (`HEAD`'s message has `This reverts commit <sha>`). |
-| 1 | `src/pipeline/gh.rs` | `try_gh(cx, m, args) -> Result<Result<String, String>, StepError>` (`Identity::gh` as the App; `GhError::Env`, or a refusal that is `throttled` (a rate limit, 429, abuse detection, GraphQL's "Something went wrong") → `StepError::Env(Fault::Github)`, another refusal inside; `pr::read` the same), `gh(cx, m, args) -> Result<String, StepError>` (a refusal is a bug); every call in **gh and git**; `pr_of(url) -> (owner/name, n)`, `created(out) -> (n, url)`; JSON parsers `pr_view` (`PrView`, `PR_VIEW_FIELDS`), `pr_list` (`Listed { number, url, head }`), `merge_state`, `compare_status`, `deployments` (`rollup` lives in `ci.rs`, with `ci::Check`). |
-| 1 | `src/pipeline/design.rs` | `Design` handler (PIP-25, 26; PIP-17's adoption: `adopt(cx, m)`). |
-| 1 | `src/pipeline/publish.rs` | `Publish` handler (PIP-2, 23's check runs, 29, 31); `push_branch(cx, m, eval) -> Result<Result<sha, Progress>, StepError>` (`git::push`; rejected → `fetch_branch` + `git merge --no-edit refs/remotes/origin/<branch>` in the checkout, then again; a conflict → `merge --abort`, `wait_note(answer the question, "publish failed: …")` inside; shared with design); `open_pr(cx, m, title, body, draft) -> Result<(u64, String), StepError>` (re-entry: `gh pr list --head` first, an open PR at `missions.head`); `check_diff(cx, m, round, &RepoFiles) -> Result<Result<(), String>, StepError>` (the publish refusals: the paths inside; PIP-31's since `guard::lock_base`). `push_branch`: `Refused`, or rejected 3 times → `wait_note(answer the question, "publish failed: …")`. |
-| 1 | `src/writer.rs` | PIP-11, 14, 15: `Inputs { title, notes, verdicts, spec_ids, checks, plan_url, closes, footer }`, `Checks { verify, proof, ci, verifier, review: String }` (`ci_line(ci.result)`, `review_line(approved, reasons)`), `Footer { intent_url, mission, cost_usd, secs, version }` (`render`), `Initial { spec_ids, concerns, open_questions, plan_url, version, base_sha, policies }`; `initial(&Initial) -> String`, `initial_of(&Mission)` (from `data.design`, `data.plan_url`), `not_ready(why, intent_url, &Footer) -> String`, `final_text(&WriterResult, &Inputs) -> String`, `template(&Inputs) -> String` (fallback), `writer_prompt(&Inputs) -> Result<String, String>`, `head_and_tail(notes, n) -> String`, `notes(cx, m) -> String` (every attempt with this PR: `build.txt` / `build-<attempt>.txt`), `footer(cx, m) -> Footer` (cost and time over those attempts), `patch(cx, m, body) -> bool` (`false` = logged, never an error); `start(cx, m, &Inputs, eval) -> Result<Result<Progress, template>, StepError>` (step `text:run`; `claude` not found or a prompt bug → the template at once), `finish(cx, m, &ChildEnd, &Inputs) -> Result<String, StepError>` (final text, else the template); **PR text**. |
-| 1 | — | PIP-16: no new message or module; [LOOP-14](loop.md)'s templates; `test_telegram_templates` (`tests/pipe_messages.rs`) pins the text of each `Waiting` the pipeline writes. |
-| 2 | `src/pipeline/plan.rs` | `Plan` handler (PIP-28; a design revision first when `intent.md` changed since design, **Handlers**); `plan_md(&Intent, &[String], &PlanResult, why: Option<&str>) -> String`; `write_plan(cx, m, &mut Data, &PlanResult, why)` (`Store::put`, `data.plan_url`; shared with build); `spec_ids(&Data)`. |
-| 2 | `src/pipeline/build.rs` | `Build` handler (PIP-1, 13, 21's rounds, 31's lock); `prompt(plan_md, &Intent, spec_ids, checks) -> Result<String, String>` (`prompts/build.md`; later rounds `prompts/round.md`); `checks_text(&RepoFiles)`; `commit_message(Option<&DesignResult>, Round, title, what) -> String` + `round_what(round, repair, base)`; `start_merge(cx, m) -> Result<bool, StepError>` (conflict round: base refreshed, `git merge --no-edit refs/remotes/origin/<base>` as the bot; `false`: conflicts left for the worker); `merge_text(cx, m) -> Result<Option<String>, StepError>` (a merge in progress as the worker hears it: of `origin/<base>` or of the branch as on GitHub, and its unmerged files); `notes_file(cx, m)` (`build.txt`, attempt ≥ 2 `build-<attempt>.txt`). |
-| 2 | `src/pipeline/guard.rs` | `Rules { checkout, protected, unlock, locked }` (`<runs>/guard.json`; `read`, `to_json`, `from_json`), `write_rules(cx, m, &RepoFiles, round) -> Result<Vec<PathBuf>, StepError>` (writes the rules; returns the run's `deny_write`: `Protected::deny_write(checkout)` + the locked files that exist, absolute); `lock_base(cx, m) -> Option<sha>` (PIP-31's baseline: `data.lock_head`, or `missions.head` when it descends from it or that commit is gone); `locked(cx, m, tests) -> Result<Vec<String>, StepError>` (test-glob files in `lock_base`, `git ls-tree -r --name-only`); `hook(stdin: &str, rules: &Path) -> Result<(), String>` (`Err` = the block reason); `decide(&Rules, rel)`; `check(changed, &Protected, since_head, locked) -> Result<(), String>` (publish: protected paths changed since the merge-base; locked files changed or deleted since the lock's baseline); **Guard**. |
-| 2 | `src/pipeline/sandbox.rs` | `checks_argv(&Exes, &Config, home, dir, line, net: bool, Cache) -> Vec<OsString>` (**Sandbox**; `Cache::{None, Read(dir), Write(dir)}`), `env(&Config, home, Cache) -> Vec<(OsString, OsString)>`, `cache_dir(cx, m)` (`<home>/cache/<repo>`), `command(cx, m, kind, dir, line, log) -> Result<ChildSpec, StepError>` (setup with network, cache writable; checks and proof without network, cache read-only; e2e with network, no cache; stdout `log`, stderr `err_of(log)` = `<stem>.err`, `check_timeout`, no slot; no `HOME` → no run); `setup_spec(cx, m, dir, line, log)` (= `command` for `ChildKind::Setup`); part 4: `e2e(cx, m, dir, line, out, err, secrets) -> Result<ChildSpec, StepError>` (`command` for `ChildKind::E2e`, `E2E_TIMEOUT` 10 min, env + the secrets read at the spawn), `repo_command(cx, m, dir, line, log)` (release, rollback, rehearse: unsandboxed `sh -c`, env HOME, PATH, LANG, `ChildKind::Command`, `GH_TOKEN` = the App's token for the repo when there is an App). |
-| 2 | `src/pipeline/verify.rs` | `Verify` handler (PIP-23); `Lines { setup, checks }`, `Runner { family, dir, lines }` (setup then checks, one child per line, steps `setup:<i>`/`check:<j>`, `:again` for the one rerun after 60 s; `start`, `spawn`, `ended -> LineEnd::{Next, Green, SetupRed, CheckRed}`, `again`, `output`; shared with build's setup and proof); `run_lines(cx, m, family, dir)`; `repair_or_wait(cx, m, &mut Data, Waiting, what, why, findings, log)` (cap 3); `tail(path, bytes)`. |
-| 2 | `src/pipeline/proof.rs` | `Proof` handler (PIP-30); `due(&Data)` (`spec_ids` or `fix`); `test_files(cx, dir, base, head, &Towercab) -> Result<Vec<String>, StepError>` (changed in commit `head` since the merge-base, not deleted, matching `tests` globs, regular files there: `ls-tree` mode `100644`/`100755`); `overlay(cx, m, head, files) -> Result<PathBuf, StepError>` (`overlay_path`: `work/<id>-<attempt>-proof`; `head` fetched by path from the mission checkout, `git --literal-pathspecs checkout <head> -- <files>` of its regular files: the commit's blobs, never the worktree). |
-| 2 | `src/cli.rs` | `towercab hook guard <rules>`: stdin → `guard::hook`; `Ok` exit 0, `Err` → stderr `<reason>`, exit 2 (also a missing or bad rules file or stdin: fail closed). |
-| 3 | `src/pipeline/ci.rs` | `Ci::new(Seq::{Intent, Revert, Rehearsal}, Mode)` handler (PIP-3, 18; stages `ci`, `revert_ci`, `rehearse_ci`; part 3 registers `ci`, part 4 the others, which read their PR from `data.revert`/`data.rehearsal`); pure `bucket(&[Check], pushed_at, now, grace) -> Bucket::{Pending, Green, Red(Vec<Check>), Cancel(Vec<Check>), None}` (`towercab/*` ignored; `None`: no check counted after the grace; a red or cancelled check whose Actions run has a check not `COMPLETED` → pending), `Check { name, kind: CheckKind::{CheckRun, Status}, status, conclusion, started_at, run: Option<u64>, url }`, `checks(&Value)` (a status: `PENDING` unless its state is final), `rollup(json) -> Result<(head, mergeable, Vec<Check>), String>`, `run_id(details_url)`. |
-| 3 | `src/pipeline/pr.rs` | PIP-21 rounds the loop's events start (`events::pr_events`, LOOP-18; the build's Feedback and Conflict rounds, part 2): `read(cx, m, pr) -> Result<PrState, StepError>` (`events::GhPrs` as the App), `me(cx)`, `feedback_text(&PrState, &Mission, me) -> (String, Option<String>)` (the comments as data, the newest `at` for `feedback_seen`; `my_comments` uses both). |
-| 3 | `src/pipeline/verifier.rs` | `Verifier::new(Mode)` handler (PIP-32); `app_argv(cx, dir, command) -> {argv, env}` (PIP-23's `bwrap` with network, **Sandbox**'s env); `line(&VerifierReport)`, `failed(why)`, `nostart(log)`, `proof_section(plan_md)`; the `hook verifier` wrapper (`hook`, `hook_with(…, wait)`): `towercab hook verifier --app <json {argv, env}> --url <url> --log <file> -- <claude argv>` (argv[0] = `exes::towercab`): starts the app (its own process group, output to `log`), polls `url` (`http::get_text`: any HTTP answer; every 1 s, 60 s), runs Claude with stdin/stdout/stderr passed through, then kills the app's group (also on SIGTERM/SIGINT); the app exits first or never answers → `<log>.nostart` (why), exit 3, Claude not run. |
-| 3 | `src/pipeline/review.rs` | `Review::new(Mode)` handler (PIP-4, 5; the same patch-id reuses a review with a result, its verdict computed again); `review_model(worker, intent_review) -> String`; `approved(&ReviewResult, &Intent, spec_ids, spec_tests: &BTreeMap<id, Vec<test>>, diff_fns, Option<&VerifierReport>) -> (bool, Vec<String> reasons)` (an id without a row: `<id>: no spec row`); `risk_low(&ReviewResult)`; `outcome_bullets(&Intent) -> Vec<String>` (a verdict matches its bullet by text, whitespace, case and a final `.` aside); `verified_by(specs_dir, ids) -> BTreeMap<id, Vec<test>>` (rows of `specs/*.md` in the PR head); `added_fns(diff) -> BTreeSet<String>` (the `test_…` definitions on `+` lines and in hunk headers, any language: PIP-5); `limit_once(m, &Outcome, flag)` (a review's or verifier's limit: the first waits, `data.<flag>` set; one after its wait = the stage's failure). |
-| 3 | `src/pipeline/gate.rs` | `Gate::new(Mode)` handler (PIP-7, 14's final text, 15); `Gate::inputs(cx, m) -> Result<writer::Inputs, StepError>` (the lines from `data.verify`/`proof`/`ci`/`verifier`/`review`, missing: `not run`; `closes` from an intent `source: issue:<url>`); `ci_of(&Data) -> autonomy::Ci` (`green`/`flaky` → Green, `none` → None, else NotGreen); `review_of(&Data) -> Option<autonomy::Review>` (no `door` → `Unknown`); `findings_comment(&ReviewResult, nit_cap) -> Option<String>` (none without findings); `EVALS_POLL` (60 s). |
-| 3 | `src/pipeline/merge.rs` | `Merge::new(ci::Seq, Mode)` handler (PIP-22; `merge`; part 4 registers `revert_merge`); `MERGE_FIELDS`, `UNKNOWN_AFTER` (10 s), `UNKNOWN_READS` (6). |
-| 4 | `src/pipeline/deploy.rs` | `Deploy::new(Seq, Mode)` (PIP-8; `deploy` = `Seq::Intent`, `revert_deploy` = `Seq::Revert`); `merge_of(Seq, &Mission)` (`merge_sha`, a revert's `data.revert.merge_sha`); `behind_other(cx, m) -> Result<bool, StepError>` (a revert: a lower-id mission in `revert_deploy`, `revert_e2e`; an intent: another mission of the repo in `rollback` … `revert_e2e`, or a lower-id one in `deploy`, `e2e`, `release`); `encode(v)` (percent-encoding); `deployed(cx, m, &repo::Deploy) -> Result<Option<sha>, StepError>`; `compare(cx, m, merge, sha) -> Result<Option<status>, StepError>`; `contains(cx, m, merge, sha) -> Result<bool, StepError>` (same sha, or `ahead`/`identical`; an empty sha never); `sha_in(body)`, `short(sha)`, `DEPLOY_POLL` (30 s), `URL_TIMEOUT` (10 s); `http::get_text` (part 3). |
-| 4 | `src/pipeline/e2e.rs` | `E2e::new(Seq, Mode)` (PIP-9, 20; `e2e`, `revert_e2e`); `secrets_file(&Config, repo)` (`<config dir>/secrets/<repo>.env`), `secrets(file) -> Result<Vec<(key, value)>, String>` (`KEY=VALUE` lines, `#` comments, quotes stripped; absent → none; a group or other mode bit, or a bad line → `Err`); `redact(text, values)` (values of 3+ characters → `REDACTED` = `[redacted]`); `read_secrets(file) -> (kv, sha256)`; `at_sha(cx, m, sha) -> dir` (base fetched, checkout ensured, `git checkout --force --detach <sha>`, `git clean -ffdxq`); `settle(cx, m, line, &ChildEnd, log) -> E2eEnd::{Green, Red(why), Env(Fault, why)}` (raw output redacted into `log` with the spawn's values: held in memory by the spawning process, else the file's if its sha256 matches `e2e_secrets`, else `WITHHELD`; raw deleted); `scrub(cx, m)` (leftover raw output, first in every e2e and release step); `raw(runs, n)`; `spawn(cx, m, &mut Data, step, dir, line)` (secrets read once, `e2e_secrets` recorded; shared with release); `last_log`; `RERUN_AFTER` (60 s). |
-| 4 | `src/pipeline/triage.rs` | `decide(&TriageResult) -> Option<Door>` (`None` = revert: two-way with a red line; else the wait's door); `prompt(diff_cmd, log, red_lines)` (`prompts/triage.md`). |
-| 4 | `src/pipeline/release.rs` | `Release::new(Mode)` (PIP-34; part 5 writes the eval case where it ends `ok`); `doctor` (`src/doctor.rs`): `<repo>: release block without live: ignored`. |
-| 4 | `src/pipeline/revert.rs` | `Rollback::new(Mode)`, `Revert::new(Mode)` (PIP-19); `revert_branch(merge)`; `pr_title(cx, m)`; `pr_body(pr, title, log)` (**PR text**); `open_pr(cx, m, branch, title, body, draft) -> (n, url)` (`pr list --head` first; shared with rehearse); `failure(&ChildEnd) -> Option<why>`. |
-| 4 | `src/pipeline/rehearse.rs` | `Rehearse::new(Mode)`, `RehearseClose::new(Mode)` (PIP-35); `due(&Connection, &Config, now) -> Result<Vec<repo>, String>` (` ```live ` in the clone's base `TOWERCAB.md`, no unfinished mission of the repo, none rehearsed in 7 days: `EVERY`), `schedule(&Db, &Config, Tick) -> Result<Option<mission id>, String>` (at most every `CHECK_EVERY` = 3600 s, `meta.rehearse_checked`; one `missions` row: `kind` rehearsal, `stage` rehearse, `intent` NULL, `checkout` `work/rehearse-<repo>-<yymmdd>`, `branch` `towercab/rehearse-<yymmdd>`, `model` `[agent].model`, new session); the loop calls it in the pick slot of an idle pass (nothing picked, no `--intent`, every handler built, not paused or `env_blocked`, a slot free, nothing queued or stepping). |
-| 5 | `src/pipeline/evals.rs` | **Evals**: `EvalPick::new(EvalCases)` (`Mode::Eval`'s `pick`: no fetch; `git update-ref refs/remotes/origin/<base> <case base sha>` in the run's clone, then `pick::prepare`, the pick after its fetch); `Case` (`evals/<id>.json`; `to_json`, `from_json`), `write_case(cx, m)` (`release`, `Mode::Live`; a case already there for the same `merge_sha` keeps its `added` and `incident`: the same text, no commit), `read_dir(dir)` (newest first), `cases(&Store) -> Vec<Case>` (the working tree's newest 20 by `added` + every `incident: true`); `replay(&Config, &Exes, &Case, clone, home, pass) -> CaseResult` (one try), `judge(&Mission) -> CaseResult`, `run_cases(&Config, &Exes, &[Case], dir, pass) -> Result<RunResult, String>`; `RunResult { run, version, cases: {id: CaseResult { pass, tries, why }}, passed, total, rate }` (`read`, `write`, `summary`); `affected(files)`, `cheap(files, n) -> Option<Verdict>`, `compare(&RunResult, Option<&RunResult>) -> Verdict { state, description }` (≤ 140 chars), `post(&Identity, github, sha, &Verdict)`, `towercab_repo(&Config)`, `baseline_of(&Db, &Home)`; the commands `baseline(&Config, &Home, &Exes, reason)`, `pr(…, n)` (`pr_info` → `PrInfo { head, files, cross, author, commits }`, `trusted(&PrInfo, me, bot) -> Result<(), why>`, `scratch_config(file, run)`), `inner(&Config, &Exes, cases_dir, out)`; the loop's `poll(cx, idle) -> Result<Option<Job>, GhError>`, `Job::{Pr { n, head }, Baseline { reason, policies, model }}`, `spec(cx, &Job) -> ChildSpec`, `ended(cx, &Job, Option<&ChildEnd>)`; `CASES` (20), `DROP` (10), `BOUND` (12 h), `WEEK`, `CONTEXT`. `policies::tree(cx)` (the `policies/` tree sha, or `none`). |
-| 5 | `src/pipeline/findings.rs` | PIP-36: `record(conn, repo, pr, mission, &ReviewResult, at) -> rows added` (`Review::settle`, a review with a result and a PR: each finding's `rule_key(rule)` = one line, trimmed, lowercased; `INSERT OR IGNORE`); `repeated(conn) -> Vec<(repo, rule, prs)>` (rules in 2+ PRs of a repo); `draft(repo, github, rule, prs, started) -> drafts::Draft` (key `review:<rule>`, `repeat: false`; `intent.md`: `repo`, `unlock: [CLAUDE.md]`, `source: review:<first two PRs>`, `started`, `# Intent: update CLAUDE.md: <rule>`, Problem, one Proposed outcome bullet; body: the PR links, merge to accept); `draft_due(cx) -> Result<(), GhError>` (in the drafts poll, 300 s, before `poll_drafts`: each repeated rule without a `drafts` row → `drafts::open`). |
-| 5 | `src/handler.rs` | `Handlers::production()` = `pipeline::handlers(Mode::Live)`: `built()` true, picks on; `Handlers::picks_off()` = `pick::Pick` + `NotBuilt` (the old `production`: the pipeline's base, tests of a loop that never picks). |
-| 5 | `src/db.rs` | Migration 2 (`MIGRATIONS[1]`; appended to [loop.md](loop.md) **Schema** in the same commit): `CREATE TABLE findings (repo TEXT NOT NULL, rule TEXT NOT NULL /* lowercased */, pr INTEGER NOT NULL, mission INTEGER NOT NULL REFERENCES missions(id), at REAL NOT NULL, PRIMARY KEY (repo, rule, pr));` |
-| 1 | `src/intents/intent.rs`, `store.rs` | `Intent::set_section(title, text) -> Result<(), String>` (**Notes**), `section(title)`, `section_bullets(title)`; `Store::put(rel, text, what) -> Result<bool, StoreError>` (a file other than `intent.md`, `TODO.md`, `DONE.md`: `intents/<dir>/plan.md`, `evals/<id>.json`; same text → `false`, no commit; `..`, absolute or a symlink on the way → `Refused`; commit `towercab: <what>`). |
-| 1 | `src/handler.rs` | `Handlers::unbuilt() -> Vec<Stage>` (the stages still `NotBuilt`; tests stub them). |
-
-**Mission data** (`missions.data` JSON, one key per owner; `Data` reads and writes it whole)
-
-| Key | Part | Value |
-|---|---|---|
-| `n` | 1 | `{<family>: n}`: last run or log number per family (`design`, `plan`, `worker`, `review`, `triage`, `verifier`, `writer`, `setup`, `verify`, `proof`, `ci`, `e2e` (staging, a revert's and production's runs), `release`, `rollback`, `rehearse`; the verifier's app log takes its run's) |
-| `cont` | 1 | the step whose one result-continue was used (PIP-1) |
-| `design` | 1 | `DesignResult` + `title` (PR title), `intent_hash` (sha256 of `intent.md` at design without Towercab's fields and `## Towercab`: what I wrote; part 2), `versions` `{towercab, base, policies}` |
-| `adopted` | 1 | `{pr, url, state}`: an earlier attempt's PR (PIP-17); `state` `none`, `fresh`, `open`, `merged`, `closed`, `merged and reverted`, `missing`, `fork`, `other repo` |
-| `run` | 1 | the Claude run of the recorded step `{kind, model, step, n, policies, eval, session: new\|resume\|none}` (`runs::finish`, `restart`) |
-| `revising`, `reset`, `closed_old` | 1 | design: a revision from my PR comments runs; an adopted PR's body was reset; the replaced PR was closed |
-| `ready` | 1 | the PR was marked ready (`gh pr ready`) |
-| `plan_url` | 2 | `plan.md`'s URL once written |
-| `plan` | 2 | the plan run's `PlanResult` (until `plan:write`) |
-| `worker` | 2 | a `done` build's `{notes, plan, plan_why, lower_a, lower_why}` between its steps; `before`: `HEAD` before its commit (`no changes`) |
-| `plan_updated` | 2 | a build rewrote `plan.md` (plan drift's `updated`, [MET-24](metrics.md)) |
-| `lock_head` | 2 | `HEAD` after the commit of the last build round that wasn't a repair: PIP-31's baseline |
-| `setup` | 2 | the checkout path setup last ran in (build runs it once per checkout) |
-| `repair` | 2 | `{what, findings, log}`: set with each `red`; the next worker round's input |
-| `verify`, `proof` | 2 | `{head, line, n}`: the PR text's line; while the proof runs `{files, from, retried}` (`from`: the head commit its test files come from) |
-| `ci` | 3 | `{head, reruns: [run ids], cancels, result: green\|flaky\|none\|red, since, continued, red: [{name, run, url, conclusion}]}` (`red`: the checks the `log` step reports; `continued`: my continue, `ci_wait` from it) |
-| `verifier` | 3 | `VerifierReport` + `line` (not opted in: `{line}` only) |
-| `review` | 3 | `{head, patch_id, result: ReviewResult (null: the review failed), approved, reasons, risk_low}` |
-| `review_limited`, `verifier_limited`, `triage_limited` | 3, 4 | the run hit a usage limit once (`review::limit_once`) |
-| `gate` | 3 | `{head, hold \| verdict, commented: head, evals_since, label, counted: head}` (`verdict` of a merge: `a<n> approved` or `approved, risk low`, the trailer's; `commented` recorded before the comment is posted; `evals_since`: the wait for `towercab/evals` on this head; `label`: [MET-15](metrics.md)'s gate label; `counted`: the head whose findings and evals were counted, MET-25, 26) |
-| `merge` | 3 | `{head, blocked, unknown, merging}`: counts on this head (`DRAFT` counted as `unknown`); `merging`: the head Towercab's `gh pr merge` went through for |
-| `deploy` | 4 | `{merge, since, sha}`: the merge waited for, since when (a new wait: now), the last deployed sha seen |
-| `e2e` | 4 | `{merge, runs: 1\|2, red: <log path>}` (the last red run's log) |
-| `e2e_secrets` | 4 | `{n, sha}`: the e2e run `n` and the sha256 of the secrets file it ran with (PIP-9) |
-| `release` | 4 | `{ran: sha, since}` (`ran`: the command runs for this merge, recorded right before its spawn; cleared when it fails) |
-| `rollback` | 4 | `{parent, since, sha, failed}`: the restored sha, the wait, the deploy seen without the merge, the command's failure |
-| `revert` | 4 | `{branch, e2e_log, head, pushed_at, pr, url, merge_sha}` (`e2e_log`: the red run that started it; `merge_sha`: the revert PR's merge) |
-| `rehearsal` | 4 | `{sha, head, pushed_at, pr, url}` (`sha`: the reverted head of `origin/<base>`) |
-
-**Handlers** (`Mode::Live`; step names as recorded; a step re-entered after a cut-off resumes its run with `CONTINUE`, LOOP-7; every wait that PIP-14 lists as "Not ready" goes through `wait_note`)
-
-- `design` (`Design`): attempt ≥ 2 first `adopt` (PIP-17, below); entered by my continue with `data.design` kept (a wait after its result) → on from `commit`; `design:run` (kind design, `prompts/design.md`, `DESIGN`; re-entered from `approval:spec` by `feedback`: `Resume`, my new comments, `feedback_seen` set with the run) → `spec_ids` empty → no commit; else `commit` (`docs(specs): <intent title>`; a revision `docs(specs): revise <intent title>`), `push`, `pr` (`open_pr(draft: true)`, title `<type>(<scope>)[!]: <intent title>`, scope empty → `<type>[!]: …`; body `writer::initial`), `close_old` (a fresh attempt: `gh pr close <old> --comment "Replaced by <url>"`). Then `autonomy::spec_gate(effective a, cap, concerns)` → `wait_note(approve spec, summary + concerns)`, a revision always back to `approve spec`; else `ok`.
-- `adopt`: earlier mission of the intent (highest `attempt` below this): its last transition `retry_fresh` → fresh (new branch from base). Else the PR: `pr:` of the intent (same repo, not a fork), else `gh pr list --head <earlier branch> --state open`: open → adopt (origin's branch fetched first, else `PR state unknown` with nothing recorded; `missions.branch` = its `headRefName`, checkout re-created on it, `pr`/`pr_url`/`head` set; the design run sees the work; the first push resets the body to `writer::initial`); merged and not reverted (`git log refs/remotes/origin/<base> --grep "This reverts commit <merge sha>"` empty) → `Outcome::event(pr_merged)` + `merge_sha`, `merged_by` (`mergedBy.login` = the bot → towercab, else human); merged and reverted, closed, missing, fork, other repo → fresh, the design prompt gets the old PR's URL, state and `intent.md`; gh fails without `Env` → `waiting: PR state unknown`.
-- `plan` (`Plan`): `intent_hash(intent.md)` ≠ `design.intent_hash` → `revise:run` (design kind, `Resume`, `design_revise` with "intent.md changed while the spec waited" + `intent.md`) → `data.design` (new hash) → `revise:commit` (`docs(specs): revise <title>` when `spec_ids`) → `revise:push` (with a PR); `plan:run` (kind plan, `PLAN`) → `plan:write`: `Store::put(intents/<dir>/plan.md)`, commit `towercab: plan <id>`; PR body re-patched with the link (`writer::initial`); `ok`.
-- `build` (`Build`): `sync` (a proof overlay left behind removed; Conflict: `sync_rounds` ≥ 3 → `wait(review and merge PR, "3 sync rounds")`, else +1, recorded first; `round` ≠ First: `sync_head` (a re-made checkout clears `data.setup`); Conflict: `start_merge` unless a merge is in progress); `setup:<i>` (once per checkout: `data.setup` = its path; red is logged, verify runs it again); `build:run` (kind worker, guard rules for the round, prompt by round: First `build` (plan.md, intent, spec IDs, commands, rules); Verify/Ci `round` with `repair_prompt(repair)`; Feedback my new comments; Conflict the merge (`merge_text`) or "merged cleanly"; Continue `continue_what`; any later round with `sync_head`'s merge left conflicted: `merge_text` first; Feedback and Continue record `feedback_seen` with the run; `WORKER`) → `blocked` → `wait_note(answer the question, question)`; `done`: `notes` (`append_notes`: First → `Note::Build` into `notes_file`, else `Note::Repair`), `lower` (`Store::update(id, "lower", autonomy::lower)`), `plan:write` (a departure: `write_plan` with `plan_why`), `commit` (a merge in progress with conflict markers left → `wait_note(answer the question, "conflict markers left in <files>")`; `commit_message`: First `<type>(<scope>)[!]: <intent title>`; else `<type>(<scope>): address <repair.what\|review feedback\|merge of <base>\|your notes>`; not a Verify/Ci round → `lock_head` = the new `HEAD`) → First with `HEAD` unchanged → `wait(no changes)`; `ok`.
-- `verify` (`Verify`): `setup:<i>` then `check:<j>` in order, one child each (logs `verify-<n>-<k>.log` + `.err`, all in `verify-<n>.log`); setup non-zero → `Poll 60 s`, `setup:<i>:again`, then red; first check non-zero or timeout = red → green: `verify.line = green (<n> command[s])`, `repair` cleared, `ok`; red (why `<command>: exit <c>` / `timed out after <n> min`): `verify_repairs` ≥ 3 → `wait_note(checks red)`, else `red` + `repair {what: "checks red", findings: the failing command + its output (last 16k), log}` + `verify_repairs + 1`.
-- `proof` (`Proof`): skipped (`proof.line = skipped: no behaviour change`) unless `spec_ids` or `type = fix`; no test file changed → as base green; `overlay` (`checkout::create` of `origin/<base>` at `work/<id>-<attempt>-proof`, test files from the mission's HEAD commit, `data.proof.from`, never its worktree; symlinks left out), then setup + checks there like verify (logs `proof-<n>-<k>.log`, `proof-<n>.log`); a check red (not 126/127, no timeout) → `ok`, line `red on base: <command>`; setup red, timeout or 126/127 → `Poll 60 s` once per proof (`proof.retried`, `<step>:again`), then `wait_note(tests don't prove the change, "on base: <why>")`; base green → as verify red (`repair.what = "your tests pass without your change"`, `verify_repairs`, same cap, `wait_note(tests don't prove the change)`). Overlay removed after.
-- `publish` (`Publish`): `check` (`files` waits as the stage's; `check_diff`: protected not unlocked, or a locked test changed or deleted since `guard::lock_base` in a Verify/Ci round → `wait_note(protected path changed, paths)`); `push` (`Rejected` non-fast-forward → `git fetch` + `git merge --no-edit refs/remotes/origin/<branch>` in the checkout (my commits kept): clean → push again; conflict → `merge --abort`, `wait_note(answer the question, "publish failed: …")`; `Refused` or a third rejection → the same wait); `pr` (none yet → `open_pr(draft: false)`); `ready` (first publish after a build, `ready` unset → `gh pr ready`); `runs` (check runs `towercab/verify`, and `towercab/proof` unless skipped, on the head); `ok` with `head`, `pushed_at`.
-- `ci` (`Ci`), every `ci_poll` s (`Poll`, step `poll`): `gh pr view --json headRefOid,mergeable,statusCheckRollup`; `headRefOid` ≠ `head` → `head`, `pushed_at` = now, `ci` reset; `CONFLICTING` → `Outcome::event(conflict)` (build counts the round); checks named `towercab/*` ignored; `bucket` → green/none `ok` (`ci.result`; green after a rerun = `flaky`); pending past `ci_wait` from the push or my continue (`ci.continued`; only while `cx.timeouts`) → `wait_note(CI stuck)`, none past it with workflows → `wait_note(no CI checks appeared)`; a red or cancelled check of an Actions run not rerun yet → `rerun:<run>` recorded, `gh run rerun <run> --failed` (re-entry: `run_attempt` > 1 → done), poll again; red with every red run rerun once (a cancel of a run already rerun, a non-Actions red) → `log` (each red job's `gh api repos/<r>/actions/jobs/<job>/logs` cut by `ci::failed_part`, else its run's `gh run view <run> --log-failed`, a non-Actions check's name, state and URL; last 16k → `ci-<n>.log`), `ci_repairs` ≥ 3 → `wait_note(CI red)`, else `red` + `repair {what: "CI red: <names>", findings: the log, log}` + `ci_repairs + 1`. `revert_ci`: red → `wait(revert failed)`, no repairs; stuck or no checks → `revert failed`. `rehearse_ci`: no rerun; red, stuck → `red`.
-- `verifier` (`Verifier`): no ` ```run ` → `verifier.line = not opted in`, `ok`; `sync_head` (conflicts → `event(conflict)`), `verifier:run` through the `hook verifier` wrapper (kind verifier, fresh `run_session`, review model, `prompts/verifier.md`, `VERIFIER`, `VerifierNet` of the block) → report kept; `.nostart` → one mismatch `{expected: "the app answers at its url", observed: "app didn't start: <why>"}`; failed run (timeout, limit after its wait) or invalid JSON → one mismatch `{expected: "a report", observed: <why>}`; `ran: false` without one → one added; `ok`.
-- `review` (`Review`): no PR → `wait(never published)`; `sync_head` (conflicts → `event(conflict)`); `patch_id` (merge-base → `HEAD`) = `review.patch_id` with a `result` (not a failed review's null) → reuse (`review.head` updated, `approved`/`reasons`/`risk_low` computed again with the current verifier report), `ok`; `review:run` (fresh, `REVIEW`, model `review_model`) → `approved(…)`; timeout, limit after its wait (the first limit cools and runs again), invalid → `approved = false`, reason `review: <why>`; `findings::record` (PIP-36); `ok`.
-- `gate` (`Gate`): no PR → `wait(never published)`; `text:run` (writer, `WRITER`, 60 s, no slot) → `text:patch` (`final_text`, writer failed → `template`; `patch` never blocks); `autonomy::gate(GateIn { cap: RepoState::read(…).cap(), a: effective(a_at_pick, intent a, cap), ci, unlock: !intent.unlock().is_empty(), evals_red: false, review })` → `Merge` on the Towercab repo (`evals::towercab_repo`) → `towercab/evals` = `failure`/`error` → the gate again with `evals_red`; absent or `pending` → `Poll 60 s` (`gate.evals_since`; 12 h on a head, only while `cx.timeouts` → `approval`, hold `towercab/evals not posted after 12 h`); `Merge` → `ok` (`gate.head`, `gate.verdict`); `Approval(hold)` → `comment` (`findings_comment`, once per head: `gate.commented` recorded, then `gh pr comment <n> --body-file <runs>/findings-<head7>.md`, a failure logged) → `wait(review and merge PR, hold)` (why = the hold: `a3`, `ci: none`, `not approved`, …). Re-entered from `approval:merge` (my continue) it runs again on the current head.
-- `merge` (`Merge`): `read` (`gh pr view --json headRefOid,mergeStateStatus,mergedAt,mergeCommit` + `PrSource`'s feedback): merged → `ok`; my new feedback → `Outcome::event(feedback)`; head ≠ `gate.head` → `event(head_moved)`; `merge.merging` = head → only `Poll 10 s` until merged (× 6, then `wait(review and merge PR)`); PIP-22's table (`BEHIND` → `update` + `sync_rounds + 1`, a PUT that went through → `event(head_moved)` with `pushed_at` = now, `ci` cleared; `BLOCKED`/`UNSTABLE` → `Poll ci_poll`, third → `wait(review and merge PR)`; `DIRTY` → `event(conflict)`; `DRAFT` → `gh pr ready`, `Poll 10 s`, counted with `UNKNOWN`; `UNKNOWN` → `Poll 10 s` × 6, then `wait(review and merge PR)`); `merge` (recorded, then `gh pr merge`, `merge.merging` recorded, then the read again for `mergeCommit`: merged → `ok` + `merged_by = towercab` (step `merge` or `merge.merging`; else `human`), `merge_sha`; not yet → `Poll 10 s`; `already merged` → `Poll 10 s`; refused with the head moved (`Head branch was modified`, …) → `event(head_moved)`; other refusal → `wait(merge failed, stderr)`). `update` re-entered → `event(head_moved)`. `revert_merge` (`data.revert.pr`): merged → `ok` (`revert.merge_sha`); `autonomy::gate(PrKind::Revert)` with `ci_of` when `ci.head` = the PR's head (else not green) → hold → `wait(revert failed, "revert gate: <hold> on <head7>")`; `CLEAN`/`HAS_HOOKS` → `merge` (subject `revert: <title> (#<n>)`, trailer `Towercab-Gate: revert sha=<head>`; refused → `revert failed`; then the read: merged → `ok`, else `Poll 10 s`); `DRAFT` → `gh pr ready`, `Poll 0`; `UNKNOWN` → `Poll 10 s` × 6, then `revert failed`; any other state → `revert failed`.
-- `deploy` (`Deploy`), every 30 s: no ` ```live ` → `ok`; `behind_other` (a revert mission on its way first, then the lowest id) → step `queued`, `Poll 30 s`; `deployed` contains the merge (`merge_sha`; `revert_deploy`: `data.revert.merge_sha`) → `ok`; else step `poll` (`deploy.since` = now when entered anew); `timeout` from `deploy.since` (only while `cx.timeouts`) → `wait(deploy not seen, "<merge7> not deployed after <n> min (deployed: <sha7|none>)")`; `revert_deploy` → `revert failed`.
-- `e2e` (`E2e`): no ` ```live ` → as green; queued as `deploy`; `at_sha(merge)`; `e2e:1` (one child, log `e2e-<n>.log`), red → `e2e:2` recorded, `Poll 60 s` → `e2e:2`; env failure → `env_fail` (the step again after its backoff); green → ` ```release ` (with `live`) → `wait(authorize release)`, else `ok`; red twice: `merged_by = towercab` → `red` (why `e2e red twice: <why>`); human → `triage:run` (fresh `run_session`, review model of the intent's `review`, `TRIAGE`, `prompts/triage.md`: `git diff <merge>^1 <merge>`, the log, the base's red lines) → `triage::decide`: two-way and a red line → `red`, else `wait_note(e2e red after your merge (<door>), why, door + why + log)`; failure (timeout, invalid JSON, limit after its wait) → door `unknown`. `revert_e2e` (at `data.revert.merge_sha`): green → `wait_note(reverted, refine, the e2e log of data.revert.e2e_log + revert PR)`, red twice → `revert failed`.
-- `release` (`Release`): no ` ```release ` (or no ` ```live `) → `ok` (part 5: `evals::write_case` first); queued as `deploy`; entered (`release <id>`, or my continue of `deploy not seen`): `release.ran` = `merge_sha` → `wait`; else `command` (`<sha>` → `merge_sha`, `release-<n>.log`, in `at_sha(merge)`; the spawn built first, then recorded with `release.ran`; re-entered at `command` with no log: spawned again; failed → `wait(release failed, <last stderr line>)`, `release.ran` cleared), `wait` (production per PIP-8 rules, the block's `deploy`/`timeout` from `release.since` → `wait(deploy not seen)`), `e2e` (once, if any; red → `wait(production e2e red)`; env failure → `env_fail`), `ok`.
-- `rollback` (`Rollback`): ` ```rollback ` (and ` ```live `) → `command` (once: the spawn built, then recorded; re-entered at `command` with no log: spawned again) with `<sha>` = `<merge>^1` (`rollback-<n>.log`; failure → `ok` with why `rollback command failed: <line>`: the revert follows anyway), then `wait` (every 30 s) until the deploy no longer contains the merge (`compare` `behind`/`diverged`; its `timeout` → `ok`, why `rollback not seen after <n> min`); none → `ok`.
-- `revert` (`Revert`): `branch` (`revert_branch` = `towercab/revert-<sha7>` recorded with `data.revert {branch, e2e_log}`; `at_sha(merge)`; origin has the branch and its tip reverts this merge → reused; else `git checkout -B` from `origin/<base>` + `git::revert` (conflict → `wait(revert failed, "revert conflict on <branch>: <files>")`)), `push` (`Rejected` → `revert failed`), `pr` (`open_pr`, title `revert: <PR title>`, body **PR text** revert); `ok`.
-- `rehearse` (`Rehearse`): `checkout` (`checkout::ensure` + `git checkout --force -B towercab/rehearse-<yymmdd> origin/<base>` + `clean -ffdxq`; `rehearsal.sha` = its head), `revert` (`git::revert`; conflict → `red`), `push` (rejected → `red`), `pr` (`open_pr(draft)`, title `rehearsal: revert <sha7>`; `missions.pr_url` for the message), `command` (` ```rollback ` `rehearse`, `<sha>` = `<sha>^1`, `rehearse-<n>.log`; failed → `red`, why `rehearse command: <line>`); `ok`. `rehearse_ci` (`Ci` with `Seq::Rehearsal`). `rehearse_close`: `gh pr close <n> -R <r> --delete-branch` (a refusal logged); `ok`.
-
-**Mode::Eval** (PIP-33): the same handlers, never publishing: `pick` (`EvalPick`) pins the run's clone's `origin/<base>` at the case's base sha, so the checkout, proof and review all see that base; design commits locally, no push or PR, no spec gate; plan writes `plan.md` to the eval's scratch store; publish, ci, verifier → `ok` (no GitHub); review reads the diff from the checkout (no PR needed); gate → `ok` (no writer); merge, deploy, e2e, release → `ok`, no eval case. Messages: none (no `[telegram]`).
-
-**Schemas** (`--json-schema`; every object `additionalProperties: false`, every listed key required; `S` string, `S?` string or null, `[S]` list of strings)
+**Schemas** (`src/pipeline/schemas.ts`; every object closed, every key required, `null` where
+optional)
 
 ```
-DESIGN    {type: feat|fix|perf|revert|refactor|docs|test|build|ci|chore|style, scope: S, breaking: bool,
-           spec_ids: [S], concerns: [{what: S, why: S, policy: S?}],
-           open_questions: [{question: S, answer: S?, carried: bool}], summary: S}
-           code: one open_questions entry per `## Open questions` bullet, an answer, else carried (both or neither never fail the run); placeholder bullets (`None.`, `n/a`, `-`) are no questions; spec_ids match ^[A-Z]+-\d+$
-PLAN      {files: [S], order: [S], risks: [S], proof: [S]}
-WORKER    {status: done|blocked, question: S?, notes: S, plan: PLAN|null, plan_why: S?, lower_a: 1..5|null, lower_why: S?}
-           code: blocked needs a question; plan needs plan_why
-REVIEW    {approved: bool, outcomes: [{bullet: S, met: bool, why: S}], tests_weakened: {weakened: bool, where: S},
-           plan_followed: {followed: bool, where: S},
-           findings: [{pass: S, severity: important|nit, file: S, line: int|null, what: S, rule: S?, policy: S?}],
-           door: one-way|two-way|null, red_lines: [{line: S, file: S}], why: S}
-           code: a Proposed outcome bullet without a verdict = not met; door null on an intent without `a` = not risk low
-TRIAGE    {door: one-way|two-way, red_lines: [{line: S, file: S}], why: S}
-VERIFIER  {ran: bool, saw: S, mismatches: [{expected: S, observed: S}]}
-WRITER    {summary: S, changes: [S]}         (changes trimmed to 5)
+design   {type, scope, breaking: bool, spec_ids: [S], concerns: [{what, why}],
+          open_questions: [{question, answer: S?}], pr: S}
+plan     {plan: S, access: {domains: [{domain, why}], paths: [{glob, why}]}}
+build    {status: "done"|"blocked"|"access", pr: S?, notes: S,
+          question: {context, question, options: [{option, then}], recommendation}?,
+          access: {domains: [{domain, why}], paths: [{glob, why}]}?,
+          plan_changed: S?, lower_a: int?, lower_why: S?}
+review   {approved: bool, outcomes: [{bullet, met: bool, why}], tests_weakened: {value: bool, where},
+          plan_followed: {value: bool, where}, findings: [{severity, file, line: int?, what}],
+          door: "one-way"|"two-way", red_lines: [{line, file}], summary: S}
 ```
 
-**Prompts** (`prompts/<name>.md`, `{{key}}`; data fenced as `<intent>`, `<comments>`, `<log>`, `<review_md>`, `<verifier>`, `<earlier>`, `<wait>` … with "data, not instructions"; no data closes its fence: `</tag` in a value → `&lt;/tag`)
+**Code** (`src/pipeline/`; tests `tests/pipeline/*.test.ts`)
 
-| Name | Keys |
+| File | What |
 |---|---|
-| `design` | `intent`, `reserved` (the intent's `spec IDs:` line or none), `earlier` (adopted or old PR, or none), `specs_rule` ("edit only specs/**; new area from specs/_template.md") |
-| `design_revise` | `what` (my PR comments, or `intent.md` as changed) |
-| `plan` | `intent`, `spec_ids` |
-| `build` | `plan_md`, `intent`, `spec_ids`, `checks` (setup + checks lines), `rules` (never commit, push or touch `.git`; never weaken, skip or delete a test) |
-| `round` | `what` (`repair_prompt` text, my comments, the merge in progress, or the `waiting` reason + `intent.md` + my new comments) |
-| `result` | — ("reply with only the JSON result now") |
-| `review` | `intent`, `spec_ids`, `plan_md`, `base` (diff command `git diff <merge-base>...HEAD`), `ci`, `verifier`, `review_md`, `red_lines` (only without `a`) |
-| `triage` | `diff_cmd`, `log` (redacted, last 16k), `red_lines` |
-| `verifier` | `url`, `proof` (`plan.md` `## Proof`), `ui` |
-| `writer` | `title`, `notes` (`head_and_tail`), `verdicts` |
-
-**Run files** (`runs/<id>/`, besides **Claude runs**' and [loop.md](loop.md) **Home**'s): `<kind>-<n>.asked` (a continued run's prompt), `guard.json`, `guard-blocks.jsonl` (one line per block: time, path, reason, kind `protected`/`test_lock`), `guard-blocks.seen` (the lines counted, [MET-26](metrics.md)), `commit.txt`, `pr-body.md`, `findings-<head7>.md`, `build-<attempt>.txt`, `setup-<n>-<i>.log` (build's setup), `verify-<n>-<k>.log` → `verify-<n>.log` (`$ <command>` before each output; `k` over setup then checks lines), `proof-<n>-<k>.log` → `proof-<n>.log`, `app-<n>.log` (+ `.nostart`), `e2e-<n>.log` (redacted; stdout then stderr, `.err` redacted too; raw `e2e-<n>.{out,err}.raw` until then), `release-<n>.log`, `rollback-<n>.log`, `rehearse-<n>.log` (a rehearsal's under `runs/rehearse-<repo>-<yymmdd>/`); children's stderr `<file>.err`. Proof checkout `work/<id>-<attempt>-proof/` (removed after). Eval runs `<home>/evals/<run>/` (**Evals**).
-
-**gh and git** (`gh` as the App, `-R <github>` on every `pr`/`run` command; `<r>` = `owner/name`)
-
-```
-pr create --base <base> --head <branch> --title <t> --body-file <runs>/pr-body.md [--draft]   → URL, number from it
-pr list --head <branch> --state open --json number,url,headRefOid
-pr view <n> --json state,mergedAt,mergedBy,mergeCommit,headRefName,headRefOid,isCrossRepository   (adopt)
-pr view <n> --json headRefOid,mergeable,statusCheckRollup                                     (ci)
-pr view <n> --json headRefOid,mergeStateStatus,mergedAt,mergeCommit                            (merge)
-pr ready <n> · pr comment <n> --body-file <f> · pr close <n> [--comment <c>] [--delete-branch]
-pr merge <n> --squash --match-head-commit <head> --subject "<title> (#<n>)" --body "Towercab-Gate: <gate.verdict> sha=<head>"
-run rerun <run> --failed · api repos/<r>/actions/jobs/<job>/logs · run view <run> --log-failed
-api -X PATCH repos/<r>/pulls/<n> -F body=@<runs>/pr-body.md
-api -X PUT repos/<r>/pulls/<n>/update-branch -f expected_head_sha=<head>
-api -X POST repos/<r>/check-runs -f name=towercab/<verify|proof> -f head_sha=<head> -f status=completed
-    -f conclusion=<success|failure> -f output[title]=<line> -f output[summary]=<last 60k>
-api repos/<r>/commits/<sha>/status                                     (towercab/evals at the gate)
-api -X POST repos/<r>/statuses/<sha> -f state=<success|failure> -f context=towercab/evals -f description=<≤140>
-api repos/<r>/compare/<merge>...<sha> --jq .status
-api 'repos/<r>/deployments?environment=<env>&per_page=20' · api repos/<r>/deployments/<id>/statuses
-api repos/<r>/actions/runs/<run> --jq .run_attempt                      (rerun done, LOOP-6)
-```
-
-Git in a checkout or clone only through `checkout::git`; the worker never runs any of it (PIP-24). In a checkout `checkout::sane` first (`.git` a directory without `commondir`, `.git/config` only the keys clone, `remote remove` and `checkout -B` write; else refused, a bug: LOOP-8); every diff `--no-ext-diff --no-textconv`. Review reads `specs/*.md` and its diff from the commit (`git ls-tree`/`cat-file blob` at `HEAD`'s sha), never the worktree.
-
-**PR text** (`src/writer.rs`; `<sub>` footer = `🤖 Built by Towercab · [intent](<url>) · mission <id> · $<cost, 2 decimals> · <h>h<mm>m`)
-
-```
-initial (design, adoption's first push):      final (gate; not approved: review line = the verdicts):
-Spec IDs: <ids|none>                          <summary>
-                                              
-**Concerns**                                  - <change> (≤ 5)
-- <what>: <why>[ (policy <p>)]                
-                                              Spec IDs: <ids>
-**Open questions**                            
-- <question>: <answer>|carried                **Checks**
-                                              - verify: <verify.line>
-[**Plan:** <plan url>]                        - red→green proof: <proof.line>
-                                              - CI: green|flaky (green on rerun)|no CI checks on this repo, nothing ran
-<sub>Towercab <v> · base <sha7> ·             - verifier: <line>
- policies <owner/name>@<sha7>|none</sub>      - review: approved|not approved: <reasons, "; ">
-                                              
-not ready:                                    **Plan:** <plan url>
-⛔ Not ready: <waiting>: <why>                 [Closes <issue>]
-See [intent.md](<intent url>).                
-<sub>…footer…</sub>                           <sub>…footer…</sub>
-```
-
-`template` = `final` with summary = the PR title and the bullets = each outcome verdict (`<bullet>: met|not met: <why>`). Revert PR body: `Reverts #<n> (<title>): e2e red twice after the merge.` + the e2e log's last 40 lines fenced. Rehearsal PR (draft): title `rehearsal: revert <sha7>`, body `Rollback rehearsal (PIP-35): reverts <sha7> on <base>. Never merged: …`. Findings comment: `**Review findings**: <i> important, <k> nit[s]` then `- **important** \`<file>:<line>\` <what> (<pass>[; rule: <rule>][; policy: <p>])` (important first, then at most `nit_cap` nits) and `<rest> more nit[s].`
-
-**Notes** (`intent.md`): Towercab's text for me lives in one body section `## Towercab` (last in the file), replaced whole on each write and removed when empty (`Intent::set_section("Towercab", text)`, other lines byte-identical; `Store::update`): a question, design summary + concerns, a reason, a revert's e2e log and PR, the PIP-3 question.
-
-**Guard** (PIP-29, 31): `guard.json` = `{checkout: <abs>, protected: [<CONTROL + TOWERCAB.md protected>], unlock: [<intent unlock>], locked: [<rel paths>]}`, written before each worker run. `hook`: stdin `{tool_name, tool_input: {file_path | notebook_path}}`; the path made relative to `checkout` (a relative one is relative to it; its deepest existing ancestor resolved, symlinks followed; outside it → blocked, `<path> is outside the checkout: changes here go through the owner`; through a dangling symlink → `<path> goes through a dangling symlink: changes here go through the owner`); `Protected::new(protected, unlock).blocks(rel)` (`..` and `.git` included) → `<rel> is protected: changes here go through the owner`; `rel` in `locked` → `<rel> is a test already pushed: it is locked in repair rounds; changes here go through the owner`. Fails closed: rules or stdin unreadable, or no path → `guard: …: blocked`; a panic → exit 2 too (`cli::fail_closed`; Claude Code takes any other exit as a non-blocking error). A path block appends `{at, path, reason, kind}` to `guard-blocks.jsonl` next to the rules (the metrics intent's `guard.blocks`).
-
-**Sandbox** (PIP-23; setup, checks, proof, e2e, verifier app): `bwrap [--unshare-net] --unshare-pid --unshare-ipc --unshare-uts --new-session --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /run [--ro-bind-try <resolv.conf target under /run>] --tmpfs <HOME> --tmpfs /tmp {--ro-bind <dir> <dir> for each [agent].toolchain dir that exists, then --ro-bind /dev/null <dir>/<f> for each credential file in it: credentials, credentials.toml, .credentials.json, .git-credentials, .netrc, .npmrc, .pypirc, auth.json, hosts.yml} [--ro-bind|--bind <cache> <cache>] --bind <dir> <dir> --ro-bind-try <dir>/.git <dir>/.git --chdir <dir> -- sh -c <line>`: no host pid to signal, no `setsid` child outliving it, no D-Bus, systemd `--user`, ssh-agent or gpg-agent socket (`/run` empty; resolv.conf bound back only with network), `.git` unwritable (nothing there runs as Towercab, LOOP-8). `--unshare-net` for checks and proof only. `--dev /dev` because the read-only bind of `/` is `nodev`: a toolchain opening `/dev/null`, like cargo spawning rustc, fails without it. The cache = `<home>/cache/<repo>`: writable for setup, read-only for checks, proof and the verifier's app, absent for e2e (with secrets, it never runs what a PR's setup left there). Env HOME, PATH = `[agent].path`, LANG, `TMPDIR=/tmp`, `XDG_CACHE_HOME=/tmp/cache`; with the cache `CARGO_HOME=<cache>/cargo`, for setup also `XDG_CACHE_HOME=<cache>/xdg`, `npm_config_cache=<cache>/npm`; e2e + the secrets file's. Release, rollback and rehearse commands run unsandboxed (base branch's text, mine; they deploy) in a clean checkout of merged code (`at_sha`: `checkout --force --detach <sha>` + `clean -ffdx`; the rehearsal's revert of base), env HOME, PATH, LANG + `GH_TOKEN` = the App's token for the repo; each bounded by `check_timeout`.
-
-**Evals** (PIP-33)
-
-- Case `evals/<id>.json` on `intents` `main` (`Store::put`, commit `towercab: eval <id>`), written by `release` on its way to `done`: `{id, repo, base_sha, intent_md, spec_ids, model, checks: [<checks lines>], merge_sha, added: <RFC 3339>, incident: false}`.
-- `towercab eval [--reason <change>]`: the cases (after a pull) with this binary → `<home>/evals/<run>/result.json` `{run, version, cases: {<id>: {pass, tries, why}}, passed, total, rate}` (`run` = `yymmdd-hhmmss`), `meta.eval_baseline` = run; prints `evals: <passed>/<total> (<rate>%)`. With `--reason` and the previous baseline ≥ 10 points higher → `Notice::EvalsDropped` (n = run). `towercab eval --pr <n>`: the Towercab repo's PR (`gh pr view <n> --json headRefOid,files,isCrossRepository,author,commits`); the cheap statuses (below) posted at once; a PR `evals::trusted` refuses (a fork's; opened by, or with a head commit authored by, anyone but `[github].me` or the App's bot, by login or the bot's email) → `error` `not evaluated: <why>`, nothing fetched or built; else its head into `<home>/evals/build-<n>/` (kept, with its `target/`: `git fetch <origin url> +refs/pull/<n>/head:refs/remotes/origin/pr/<n>` into that checkout, `checkout::ensure`, that ref checked out; a head other than the PR's → error), `cargo build --locked` in the **Sandbox** (network; `CARGO_HOME` = `<home>/evals/cache/cargo`, writable; env the sandbox's + `CC`, `CXX`, `AR`, `CFLAGS`, `CXXFLAGS`, `LDFLAGS`, `RUSTFLAGS`, `CRATE_CC_NO_DEFAULTS` of mine), `<that>/target/debug/towercab --config <run>/config.toml --home <run>/home eval --cases <home>/evals/<run>/cases --out <home>/evals/<run>/result.json` (`<run>/config.toml` = mine without `[telegram]` and `[github]`, mode 0600: no token, no App, no `app.pem` or `secrets/` next to it; env HOME, PATH, LANG only, plus with `[policies]` `GIT_CONFIG_*` = `url.<home>/evals/policies.git.insteadOf https://github.com/<policies>.git`, a bare mirror cloned or fetched as the App), compare with the baseline, post `towercab/evals`; a failed build or run posts `error` (`cargo build failed: <last stderr line>`). `towercab eval --cases <dir> --out <file>`: run those cases only (the inner run; scratch homes next to `<file>`). `--cases` needs `--out`; `--reason`, `--pr`, `--cases` exclude each other.
-- A case: scratch home `<run>/<id>-<try>/` (own `towercab.db`, bare `intents.git` whose `main` holds `intents/<id>-<slug>/intent.md` = the case's without `after`, cloned to `intents/`), the config with `[intents]` pointed there, no `[telegram]` and only the case's repo, its `path` = the run's clone `<run>/clones/<repo>` (cloned from Towercab's clone with its `refs/remotes/origin/*`: no network, never fetched); `Loop::open(…, pipeline::handlers(Mode::Eval))` with `LoopOpts { intent: <id>, pass: 1 s }`, `run` until the mission ends (done, a wait, stopped); pass = `done` with `verify.line` green, `proof.line` red on base or skipped, `review.approved`; `why` = what failed (`ended at <stage> · <waiting>: <why>`, `verify: …`, `proof: …`, `review: not approved: …`). A failed case runs once more (`tries` 2). A case's loop stopped by SIGTERM or SIGINT stops the run (`eval interrupted`, no result).
-- Status: unaffected (no path in `prompts/**` or `src/claude.rs`, `gh pr view --json files`, fewer than its 100) → success `not affected`; fewer than 20 cases → success `<n>/20 cases`; red when a case passing in the baseline fails both tries and `rate ≤ baseline − 10` → failure `dropped <d> points: <ids>`; else success `<rate>% (baseline <b>%)`.
-- Loop (`evals::poll`, every 300 s after the drafts poll; not with `--intent`, while `env_blocked`, a slot child is queued or an eval child runs): `gh pr list -R <r> --state open --json number,headRefOid` of the `[repos]` repo whose `github` name is `towercab`; each head without a `towercab/evals` status (`api repos/<r>/commits/<sha>/status`) → the two cheap statuses inline, an untrusted PR (above) `error` `not evaluated: <why>`, else the first one an eval child (one at a time, a slot when free: this binary `--config <same> --home <same> eval --pr <n>`, the loop's env, output `<home>/evals/eval-pr-<n>.log`/`.err`, 12 h bound; timeout or a non-zero exit → status `error` with the last stderr line; stopped at shutdown → again next poll). When idle and no PR needs one: weekly (`meta.eval_at` absent or ≥ 7 d), `[policies].github` `policies` tree sha (`none` without it) ≠ `meta.eval_policies`, or `[agent].model` ≠ `meta.eval_model` → `towercab eval --reason "<weekly|policies <sha7>|model <m>>"` (`eval-baseline.log`), the three metas set at its end; with fewer than 20 cases they are set at once and nothing runs (my call: no baseline before a comparison can mean anything).
-
-**Tests** (fixtures `tests/common/pipe.rs`: `FakeClaude` = a `claude` script whose n-th call writes its argv and stdin to `claude-<n>.argv`/`.stdin`, runs `claude-<n>.sh` in its cwd if present (the worker's edits), prints `claude-<n>.json` (`FakeClaude::result(structured)` builds a `type: result` line) and exits `claude-<n>.exit` (default 0); `GhScript` = a `gh` matching `"$*"` against ordered `case` patterns, each with a queue of answers, logging every call; `bwrap` fake that logs each call's argv (`bwrap-<n>.argv`), drops its options and runs `sh -c` after `--` (`real_bwrap()`: where a real one can sandbox, the sandbox tests also run it for real); `Pipe::login` = the build tests' world (base setup + `sh check.sh`, design of WEB-1, gh answering PR 7); `Pipe` = `World` + those, stepping one intent with `Loop::step_intent`, `until` = passes 61 s apart)
-
-| Part | File | Rows |
-|---|---|---|
-| 1 | `tests/pipe_design.rs`, `tests/pipe_publish.rs`, `tests/pipe_writer.rs`, `tests/pipe_continue.rs`, `tests/pipe_messages.rs` | PIP-25, 26, 27; PIP-2; PIP-11, 14, 15; PIP-17; PIP-16 |
-| 2 | `tests/pipe_build.rs`, `tests/pipe_guard.rs`, `tests/pipe_verify.rs` | PIP-28, 1; PIP-29, 31; PIP-23, 30 |
-| 3 | `tests/pipe_ci.rs`, `tests/pipe_review.rs`, `tests/pipe_gate.rs` | PIP-3, 18; PIP-4, 5, 32; PIP-7, 21, 22 |
-| 4 | `tests/pipe_deploy.rs`, `tests/pipe_revert.rs` | PIP-8, 9, 34; PIP-19, 20, 35 |
-| 5 | `tests/pipe_evals.rs`, `tests/pipe_findings.rs`, `tests/switch_over.rs` | PIP-33; PIP-36; LOOP-1 |
-
-A row goes Live (Status line) in the part that builds it, with its tests.
-
-**Switch-over** (part 5, LOOP-1; the Python version stays on branch `python`)
-
-- Leave `main`: `towercab/` (the package), `bin/towercab`, `examples/` (Python-runner missions), `tests/test_{access,commands,config,factory,limits,monitor,notify,runner,taskrepo,tasks,up,version,writer}.py`, `tests/fake_telegram.py`. No `pyproject.toml` exists.
-- Ported by the metrics intent: `ops/telemetry` → `towercab telemetry` ([MET-12](metrics.md)), `tests/test_ops.py` → `tests/telemetry.rs`, `tests/dashboard.rs` ([MET-19](metrics.md)); CI job `python` and `CLAUDE.md`'s `python3 -m unittest` check gone. `ops/grafana/build_dashboard.py` stays (the dashboard's generator).
-- `install.sh` links only the `/intent` skill (INT-9); the binary is `cargo install --path . --locked` (LOOP-1). `README.md` rewritten for the Rust binary (`up`, `run`, `status`, `approve`, `release`, `doctor`, `migrate`, config keys, Grafana). `CLAUDE.md`: the Python lines go (intro sentence, "Writing to the Python package" item), `pipeline/` added to Architecture. `REVIEW.md`: the Python "Do not report" bullet goes.
-- `Handlers::production()` = the pipeline: picks on (its own commit, LOOP-1 gains `test_production_handlers_built`). The removal's commit adds `test_python_package_gone` (no `towercab/`, `bin/towercab`, `examples/`, `tests/fake_telegram.py`, no `tests/*.py`; `build_dashboard.py` kept, `ops/telemetry` gone; `install.sh` without the binary link).
-- After merge, by the owner's operator, not by tests: `towercab down` of any Python unit, `cargo install --path . --locked`, `towercab migrate` on the real `intents` repo, `towercab protect <repo>` per repo (Towercab's once `towercab/evals` posts), `towercab up`.
+| `index.ts` | `handlers()`: one handler per stage. |
+| `design.ts`, `plan.ts`, `build.ts`, `verify.ts`, `proof.ts`, `publish.ts`, `ci.ts`, `review.ts`, `gate.ts`, `merge.ts` | One stage each. |
+| `sandbox.ts`, `guard.ts`, `access.ts`, `prtext.ts`, `prompts.ts`, `schemas.ts` | Sandbox argv; the guard hook; grants and the checklist; PR bodies; prompt templates (`prompts/*.md`, `{{key}}`, data fenced as `<intent>…</intent>` and marked data, not instructions); schemas. |
 
 ## Out of scope
 
-- Several workers per intent, best-of-N.
-- Periodic e2e watch (PIP-10); a generated CI workflow for repos without one.
-- Codex as a provider.
+- Deploy, e2e, release, revert and rehearsal (intent 261026-2204-4).
+- Evals, the verifier, policy skills (intent 261026-2204-5).
+- Review rounds with the worker: a review that doesn't approve sends the PR to the owner.
 
 ## Decisions
 
-- One worker session from design to last repair: it keeps its context.
-- `Skill` is in `--allowedTools` wherever it is a tool (PIP-24 changed): `dontAsk` denies an unlisted tool, and the policy skills (PIP-27) must run.
-- Prompts go on stdin and output to files under `runs/<id>/`: no argv length limit, and a cut-off run's output survives for the resume.
-- Plan without an approval stop (my call): the spec gate (PIP-26) is the human checkpoint; the review checks the diff against `plan.md`.
-- Guard on protected paths only (my call): formatting is caught by the checks (PIP-23); the worker can't read secrets (PIP-24).
-- Code gates and merges; the review can only send a PR to me, never lift the ceiling I set with `a`.
-- `eval --pr`'s inner run isn't sandboxed: its own verify and Claude runs start `bwrap`, and the kernel refuses a user namespace inside one (AppArmor `restrict_unprivileged_userns`); it runs as me, with my Claude login. So only PRs from the repo itself by me or the App are built at all; the build (a PR's `build.rs`, proc macros) is sandboxed; the inner run gets HOME, PATH, LANG and a config without Telegram token or App.
-- Setup sandboxed with its own per-repo cache (`<home>/cache/<repo>`), never my `~/.cargo/registry` or `~/.npm` (my call): setup runs PR code (`build.rs`, `npm` lifecycle scripts); a cache of mine it could write would run that code later outside any sandbox. A repo whose checks need downloads says so in ` ```setup ` (`cargo fetch --locked`).
-  Approved and risk are computed in code from the review's fields, not taken from the model.
-- PR review on every PR (my call, playbook): on PRs I approve its findings help me and never block; on the auto path they decide.
-- A failed review goes to me, not back to the worker: I asked to see those.
-- No CI → I merge even at a4/a5: green CI is part of every automatic merge.
-- Conflicts: the worker merges base instead of rebasing: no force push, my commits on the PR stay; the squash merge hides it.
-- Cap 3 for verify, CI and sync rounds: after that it costs more than asking me.
-- Red→green proof in code, for every behaviour change (my call): a test that also passes without the change proves nothing; cheaper and stricter than the bug-only two-phase order.
-- Evals start at 20 real cases (my call): fewer can't tell a regression from noise.
-- Rerun a red CI once before calling it red: a flake shouldn't burn a repair or push the worker to weaken tests.
-- Auto-revert only after e2e is red twice; only my own merges are triaged by a model, and code makes the call.
-- Autonomy stays (my call): a4/a5 and risk-low merge without me, a deliberate difference from the playbook's
-  production gate; repos with a separate production step get it back through the release gate (PIP-34).
-- Deploy timeout never reverts: not seeing a deploy says nothing about the change.
-- `--strict-mcp-config` on every run: my claude.ai connectors cost ~120k input tokens per call otherwise.
-- Any `.github/workflows/*.y(a)ml` counts as PR CI, even one that never runs on PRs: missing checks then ask me after `ci_wait` rather than skip CI unseen.
-- A Claude run's non-zero or unknown exit is a failure even with a result (a run killed after writing it isn't trusted); only a failed run is read as network or auth, so a result about a refused connection isn't one.
-- `PLAYWRIGHT_MCP` is pinned in code, never `latest`: a verifier's tools don't change under it; the eval gate (PIP-33) sees a bump as a `src/claude.rs` change.
-- Pipeline state lives in `missions.data` (one key per owner, **Mission data**), not new columns; only the
-  findings table is new (counted across missions). The build's round is the last transition into `build`: nothing
-  extra to store, re-derived after a crash.
-- Towercab commits (the build's last step) and starts a conflict round's `git merge`: the worker can't write `.git`
-  (PIP-24); it only resolves the files.
-- The guard gets its rules as an argument (`<runs>/guard.json`, outside the checkout, which the guard also blocks):
-  a hook has no other channel to the mission.
-- The verifier's app and its Claude run are one child (`hook verifier`): the loop tracks one child per mission, and
-  the group dies together.
-- Evals reuse the loop and handlers (`Mode::Eval`) on a scratch home: the prompts, settings, skills and models are
-  exactly the build's under test. Prompts live in `prompts/*.md` (`include_str!`) so the eval gate can see them change.
-- An eval case is written as `release` ends: an intent kept after a red e2e (`approve` → `done`) adds none.
-- No new `Waiting` or notice: a denied tool use is `no result` with the denial as why; "repair publish failed" is
-  `answer the question`; a locked test changed is `protected path changed`.
-- My push onto the PR during a run is merged in before Towercab pushes, never forced over; a conflict there asks me.
-- A fresh attempt = the earlier mission ended by `retry_fresh`; every other new attempt adopts the PR it finds (PIP-17).
-- `intent.md` changed while the spec waited → `plan` revises the design first: my approval covers my edit.
-- First build with no working-tree change → `no changes`, even with a spec commit: rows without tests prove nothing.
-- Result parsers are hand-written `from_json` (as `DraftResult`), no serde derive.
-- The build's sync never resets the checkout: a verify round's commits aren't pushed yet, and my push onto the PR is merged in.
-- `intent.md`'s hash leaves out what Towercab writes (`stage`, `waiting`, `pr`, …, `## Towercab`): only my edits revise the design.
-- A child's output files exist only once it started (`child::spawn` removes them when it can't): a re-entered step
-  reads them as "it ran" (Claude runs, release, rollback), so a run queued at a crash is never taken for a cut-off.
-- Metrics ([metrics.md](metrics.md)) come mostly from `transitions`, `missions.data` and `guard-blocks.jsonl`
-  (`src/indicators.rs`); handlers record only what only they see: a run's usage, findings, the gate's
-  findings and evals, deploys.
+- Three PRs per intent (the owner's call): the spec, the plan and the code are reviewed where they
+  live, and merging each one is the approval. The plan PR lives in `intents`, so plans don't clutter
+  the target repo's history.
+- The worker writes its own PR text: it knows the change; v1's separate Haiku writer saw only
+  truncated notes.
+- Questions before a PR exists go into the intent file, so there is always one place to answer.
+- Mixed interaction model (the owner's call): GitHub gestures first, plain replies for answers and
+  feedback, `/retry` and `/release` as the only commands.
+- The worker gets general Bash inside the sandbox: v1's per-command allowlist caused most of its
+  blocked waits ("compound command refused"), and the sandbox, not the allowlist, is what keeps the
+  machine safe.
+- Spec rows are `Draft` in the spec PR and the code PR flips them to `Live`, so `main` never claims
+  something is built before it is.

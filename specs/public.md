@@ -1,35 +1,74 @@
 # Public repo
 
-**Status:** Live: PUB-1..6 · **Prefix:** PUB
+**Status:** Draft · **Prefix:** PUB
 
 ## Purpose
 
-What a stranger finds when the repo turns public: a license, a security contact, a README for users and
-no one person's name in what Towercab ships. Checked by plain file reads in `tests/public.rs`.
+What Towercab's public repo shows a visitor: a license, a security policy, a README that explains
+what it is and how to run it, and no personal names in what ships.
 
 ## Requirements
 
-| ID | Requirement | Verified by |
-|---|---|---|
-| PUB-1 | `LICENSE` is the MIT text (first line `MIT License`, a `Copyright (c)` line with year and holder); `Cargo.toml` has `license = "MIT"`; `SECURITY.md` says to report privately through GitHub (Security → Report a vulnerability), not in a public issue, and names the supported version (the latest release or `main`). | test_license_and_security |
-| PUB-2 | `README.md` has, in order, these `## ` sections (titles case-insensitive): what Towercab is (intents in, reviewed PRs out; an orchestrator for Claude Code), **Playbook** (a table mapping each stage of Anthropic's AI-Native SDLC Playbook to a Towercab stage, linking [pipeline.md](pipeline.md) rows), **Requirements** (Linux, systemd, `bwrap`, `gh` ≥ 2.46, the Claude Code CLI, a GitHub App), **Quickstart** (install, the App from `ops/github-app.json`, config, `towercab migrate`, `up`, `ui`), **Safety** (sandbox, guard, gates, autonomy), **Status** (early, single user), **Docs**. Every `towercab` subcommand the Quickstart names exists in the CLI. | test_readme_sections |
-| PUB-3 | The README says it is not affiliated with or endorsed by Anthropic; it names the playbook and Claude Code as plain text, with no logo or image of either (no `<img>` or `![` in the README, no image files besides the repo's own). | test_readme_not_affiliated |
-| PUB-4 | `## Docs` in the README lists every `specs/*.md` that is not marked `Removed` in `specs/README.md`'s table, one relative link each, and links `specs/README.md`; no link in the README points at a missing file. | test_readme_docs_index |
-| PUB-5 | No personal name in what ships: the owner's first name (the literal lives in the test, as a whole word) occurs in none of `README.md`, `Cargo.toml`, `CLAUDE.md`, `TOWERCAB.md`, `prompts/**`, `skills/**`, `src/**`, `ops/**`, `specs/**` (`LICENSE`, `tests/**` and the repo URL `github.com/<login>/towercab` are exempt). The owner is "the owner" in prompts, the guard and publish messages ([PIP-29](pipeline.md)), the `/intent` skill, the CLI `about` and the App manifest `description`; the exact strings are `changes here go through the owner` and `These paths go through the owner`. | test_no_personal_names, test_guard_messages_say_owner |
-| PUB-6 | The PR changes no GitHub setting and no visibility: no `gh repo edit` or `gh api` call, no `public: true` in `ops/github-app.json` (it stays `public: false`, [LOOP](loop.md) row for the manifest). The PR body lists the GitHub description and topics the owner sets: `claude-code`, `anthropic`, `ai-agents`, `agentic-coding`, `sdlc`, `orchestrator`, `autonomous-coding`, `rust`. | test_manifest_stays_private, manual (the PR body lists description and topics; visibility is the owner's after merge) |
+### PUB-1 · License and security policy
+
+The repo is MIT-licensed and says how to report a vulnerability privately.
+
+- `LICENSE` is the MIT text (first line `MIT License`, a `Copyright (c)` line); `package.json` has
+  `"license": "MIT"`. `SECURITY.md` says to report through GitHub's private reporting, not a public
+  issue, and names the supported version (the latest release or `main`).
+- Verified by: `public: license and security policy`
+
+### PUB-2 · README sections
+
+The README explains what Towercab is, what it needs and how to start, in that order.
+
+- `## ` sections, in order: what Towercab is (intents in, reviewed PRs out; an orchestrator for
+  Claude Code), **How it works** (spec, plan and code PRs, linking [pipeline.md](pipeline.md)),
+  **Requirements** (Linux, systemd, Node ≥ 22.18, `bwrap`, `gh` ≥ 2.46, the Claude Code CLI, a GitHub
+  App), **Quickstart** (clone, `npm ci`, the App, config, `towercab up`, `towercab ui`), **Safety**
+  (sandbox, guard, gates, autonomy), **Status** (early, single user), **Docs**. Every `towercab`
+  subcommand the Quickstart names exists.
+- Verified by: `public: README sections`
+
+### PUB-3 · Not affiliated
+
+The README says Towercab is not affiliated with or endorsed by Anthropic.
+
+- It names Claude Code and the playbook as plain text, with no logo or image of either (no `<img>` or
+  `![` in the README).
+- Verified by: `public: README says not affiliated`
+
+### PUB-4 · Docs index
+
+The README's Docs section links every spec that isn't removed.
+
+- One relative link per `specs/*.md` not marked `Removed` in `specs/README.md`, plus
+  `specs/README.md`; no link points at a missing file.
+- Verified by: `public: README docs index`
+
+### PUB-5 · No personal names
+
+Nothing that ships names the owner; prompts and messages say "the owner".
+
+- The owner's first name (the literal lives only in the test) occurs in none of `README.md`,
+  `package.json`, `CLAUDE.md`, `TOWERCAB.md`, `prompts/**`, `skills/**`, `src/**`, `ui/src/**`,
+  `ops/**`, `specs/**` (`LICENSE`, `tests/**` and the repo URL are exempt). The guard says
+  `changes here go through the owner`.
+- Verified by: `public: no personal names`
+
+### PUB-6 · No GitHub settings changed
+
+The code never changes a GitHub setting or visibility.
+
+- No `gh repo edit` and no settings API call in `src/`; `ops/github-app.json` stays `public: false`.
+  Topics the owner sets: `claude-code`, `ai-agents`, `agentic-coding`, `sdlc`, `orchestrator`,
+  `autonomous-coding`, `typescript`.
+- Verified by: `public: the App manifest stays private`
 
 ## Out of scope
 
-- Flipping visibility, setting description and topics (the owner, after merge).
-- Rewriting history (see Decisions).
-- A code of conduct, contribution guide, issue templates, a logo.
-- Renaming `[github].me` or reading it into static messages.
+- Changing the repo's visibility or settings (the owner's).
 
 ## Decisions
 
-- One new area, not rows in `repo.md` or `loop.md`: these are file-content checks of Towercab's own repo, with no runtime behaviour.
-- "the owner" is a literal in the messages, not read from `[github].me`: the guard and publish strings are constants today and need no config in the hook; `me` is a login, not a name. The owner's login stays in the repo URL, which a public repo must show.
-- `LICENSE` is exempt from PUB-5: an MIT notice must carry a copyright holder; its holder is the owner's call.
-- README is checked by structure (sections, links, subcommands), not prose, so wording can improve without a spec change; "not affiliated" and the playbook table are the claims that must stay.
-- Wording about the playbook is factual (stage names, page numbers already used in the specs); no claim of endorsement, certification or compatibility beyond what the specs verify.
-- Tests live in `tests/public.rs` with plain string reads from the crate root (no `set_var`, no network).
+- The public README is for a visitor deciding whether to try Towercab; specs are linked, not copied.

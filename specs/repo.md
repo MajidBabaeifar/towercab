@@ -1,87 +1,132 @@
-# Repo contract
+# Repo files
 
-**Status:** Live · **Prefix:** REPO
+**Status:** Draft · **Prefix:** REPO
 
 ## Purpose
 
-What each target repo tells Towercab about itself, in the playbook's files: how to verify work
-(`CLAUDE.md`), how to review it (`REVIEW.md`), and the Towercab-only rest (`TOWERCAB.md`).
-Lives in the repo, so it changes with the code it describes.
+What Towercab reads from a target repo to know how to build and judge a change there: how to set up
+and check it (`CLAUDE.md`), how to review it (`REVIEW.md`), and Towercab-specific settings
+(`TOWERCAB.md`). These come from the base branch only, so a PR can't change the rules it is judged by.
 
 ## Requirements
 
-| ID | Requirement | Verified by |
-|---|---|---|
-| REPO-1 | Three files at the target repo's root, always read from the base branch, never from the PR or a working tree: `repo::load(clone, base) -> Result<RepoFiles, RepoError>` runs `git ls-tree -z --full-tree refs/remotes/origin/<base> -- CLAUDE.md REVIEW.md TOWERCAB.md` in `clone` (the root of Towercab's own clone, never a mission checkout, whose refs the worker can write; discovery stops there: `GIT_CEILING_DIRECTORIES` = its parent) and `git cat-file blob <oid>` for each regular file (mode `100644`/`100755`); no fetch (the caller fetches). Then the pure `repo::parse(claude, review, towercab: Option<&str>)` (**Grammar**): `CLAUDE.md` with a `## Verifying your work` section (REPO-2), `REVIEW.md` (REPO-4), `TOWERCAB.md` (front matter `max_autonomy: <1-5>` (default 5), `protected: [globs]`, `tests: [globs]` (default [PIP-30](pipeline.md)'s list); a ` ```live ` block, REPO-3). A symlink, directory or submodule in a file's place, or non-UTF-8 bytes → `RepoError::Invalid("<file>: …")`; a `base` `config::is_branch` refuses (`<clone>: bad base "<base>"`), no `origin/<base>`, `clone` not a repo root or a failed `git` → `RepoError::Git("<clone>: <stderr>")`. | test_parse_repo_files, test_towercab_front_matter, test_read_from_base |
-| REPO-2 | `CLAUDE.md` `## Verifying your work` → `Verifying { setup, checks: Vec<String>, fast: Option<Vec<String>>, run: Option<Run> }`: fenced ` ```checks ` (one command per line, the full suite: what CI runs and what runs locally when REPO-9 says so; sandboxed, no network), optional ` ```fast ` (one command per line, the subset run before publish, REPO-9; a line may hold `{tests}` and `{stems}`, REPO-9; empty block → `fast: Some(vec![])`) and optional ` ```setup ` (one command per line, with network, after each clone and before each checks run: dependency fetch, e.g. `cargo fetch`, `npm ci --ignore-scripts`). Optional ` ```run ` → `Run { command, url, port: u16, ui: bool }` (start command, `url: http://localhost:<port>`, `ui: true`) opts the repo into the verifier ([PIP-32](pipeline.md)). Prose around them is for the agent, as in the playbook. | test_checks_block, test_setup_block, test_run_block, test_fast_block |
-| REPO-9 | **Run set** `repo::run_set(v: &Verifying, ci: bool, changed_tests: &[String]) -> Vec<String>` (pure; `ci` = `repo::has_workflows(clone, base)`: `origin/<base>` has `.github/workflows/*.y(a)ml`, the base's never the PR's, a failing `git` counts as none; `Verifying::allowed(ci)` = what the worker may run: setup plus these lines' text up to a placeholder or `$(`; `changed_tests` = files the PR changed against `origin/<base>` that match the `tests` globs ([PIP-30](pipeline.md)), regular files, sorted), used by verify ([PIP-23](pipeline.md)), the proof (PIP-30) and the worker ([PIP-1](pipeline.md)): `ci` false → `checks` (a repo without CI runs everything locally). `ci` true and a ` ```fast ` block → its lines in order; no block → `checks` (the conservative default: nothing is guessed to be slow; Towercab's own and the shared guidance say to add ` ```fast `). In a fast line `{tests}` → the `changed_tests` paths and `{stems}` → their file stems (no directory, no last extension; a file below a subdirectory of `tests/` is a helper and has none; a stem once), each space-separated and shell-quoted, so Rust writes `cargo test --locked $(printf -- '--test %s ' {stems})`, others `pytest {tests}`; a line with a placeholder and no `changed_tests` is skipped, never run bare. The full suite is then CI's job ([PIP-3](pipeline.md)); an empty ` ```fast ` block means no local checks. | test_run_set_default, test_run_set_fast, test_run_set_no_ci, test_run_set_placeholders, test_has_workflows_on_base |
-| REPO-3 | `TOWERCAB.md` ` ```live ` → `Live { deploy, timeout_min, e2e }`: `deploy: env:<name>` or `deploy: url:<url>` (`Deploy::{Env, Url}`; body shows the deployed sha), `timeout: <minutes>` (1–1440, default 15), `e2e: <command>` (required). Missing → `live: None`, merged means done ([PIP-8](pipeline.md)). Optional ` ```release ` → `Release { command, deploy, timeout_min, e2e: Option }` (production gate, [PIP-34](pipeline.md)) and ` ```rollback ` → `Rollback { command, rehearse }` (both required, [PIP-35](pipeline.md)). | test_live_block, test_release_and_rollback_blocks |
-| REPO-4 | `REVIEW.md` (playbook p.38–39) → `Review { text, passes: Vec<Pass { name, what }>, important: Option<String>, nit_cap: u32, do_not_report, red_lines: Vec<String> }`: `## Passes` (one bullet per pass: `name: what`; missing or no bullets → `DEFAULT_PASSES`: Bugs, Security, Compliance with the spec rows and `plan.md`), `## What Important means here`, `## Cap the nits` (its first number = nits shown per review, default 5), `## Do not report`, `## Red lines` (Towercab's addition: bullets naming paths, systems or behaviours whose change makes a PR high blast radius, e.g. `migrations/**`, auth, billing, public API, data deletion). Used by the review ([PIP-4, 5](pipeline.md)) and e2e triage ([PIP-20](pipeline.md)). | test_review_md, test_review_defaults |
-| REPO-5 | No `## Verifying your work` with a non-empty ` ```checks ` block on the base (or no `CLAUDE.md`) → `RepoError::NoVerifyingBlock` (`Display`: `add CLAUDE.md verifying block`), which the loop writes as `waiting: add CLAUDE.md verifying block` (the playbook's feedback loop comes first). `REVIEW.md` and `TOWERCAB.md` are optional: absent → `Review::default()`, `Towercab::default()` (defaults as above). | test_missing_verifying_block |
-| REPO-6 | Towercab's own files: `CLAUDE.md` (≤ 60 lines; also read by every Claude Code session here: commands, conventions, architecture, what Claude gets wrong) with the verifying block: setup `cargo fetch --locked`; checks `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`; fast `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings` (builds everything, tests included), `cargo test --locked $(printf -- '--test %s ' {stems})` (the touched `tests/*.rs`; `tests/common/` files have no stem of their own, so a change there runs only clippy and CI's full suite) (no Python left: the metrics intent ported `ops/`' tests to Rust). `REVIEW.md`: the REPO-4 sections; passes Bugs, Security, Compliance with the spec rows and `plan.md`; red lines `src/machine.rs`, `ops/**`. `TOWERCAB.md`: front matter `max_autonomy: 5`, `protected: [src/machine.rs, ops/bands.yaml]`, `tests: [tests/**]`; no `live`. Code in `src/lib.rs` and its modules (`src/main.rs` only calls `towercab::cli::run`) and tests in `tests/` (no `#[cfg(test)]` in `src/`), so the red→green proof can lay them over base ([PIP-30](pipeline.md)). `test_own_repo_files` checks all of this with plain string reads (REPO-1's parsers come with the repo-files intent). | test_own_repo_files |
-| REPO-7 | `towercab protect <repo>` (run by me, with my `gh` login: `gh` from `PATH` in my environment, Towercab adds no token; `src/repo/protect.rs`). `<repo>` = a `[repos]` name (its `github`, `base`) or `intents` = the intent home (owner/name from `[intents].remote`, base `main`); else exit 1 `unknown repo <repo>`. Reads `gh api 'repos/<o>/<n>/rulesets?includes_parents=false&per_page=100'`, then `gh api --method POST repos/<o>/<n>/rulesets --input -` (or `--method PUT repos/<o>/<n>/rulesets/<id>` if one named `towercab` exists) with `protect::ruleset(&Target, checks)` on stdin: `{name: towercab, target: branch, enforcement: active, bypass_actors: [], conditions: {ref_name: {include: [refs/heads/<base>], exclude: []}}, rules: [{type: pull_request, parameters: {required_approving_review_count: 0, dismiss_stale_reviews_on_push: false, require_code_owner_review: false, require_last_push_approval: false, required_review_thread_resolution: false}}, {type: required_status_checks, parameters: {strict_required_status_checks_policy: false, required_status_checks: [{context: <name>} for each check of the last green run on <base>]}}, {type: non_fast_forward}, {type: deletion}]}`. Checks = the job names (deduplicated, in order) of `gh api 'repos/<o>/<n>/actions/runs?branch=<base>&event=push&status=success&per_page=1'` → `workflow_runs[0].id` → `gh api 'repos/<o>/<n>/actions/runs/<id>/jobs?per_page=100'` → `jobs[].name` (`total_count` above the page → `gh api <path>: more than 100 jobs`); no green run → the status-checks rule is left out. Intent home (`intents`): `non_fast_forward` and `deletion` only, no run lookup, since Towercab pushes there directly ([INT-10](intents.md)). On the Towercab repo (`github` = `<owner>/towercab`, the name ASCII case-insensitive, as GitHub's) the required checks also include `towercab/evals` ([PIP-33](pipeline.md)). Prints what it set (**`protect` output**); the `doctor` warning for a repo without it is [LOOP-15](loop.md)'s (`protect::find_ruleset`). `gh` exits non-zero or prints other JSON → exit 1 `gh api <path>: <stderr, or unexpected output>`. | test_protect_payload, test_protect_intents_repo, test_protect_updates_existing, test_protect_no_green_run, manual (`towercab protect <repo>`; GitHub Settings → Rules → `towercab` shows the printed rules) |
-| REPO-8 | **Protected paths** = control files (`CONTROL`: `CLAUDE.md`, `REVIEW.md`, `TOWERCAB.md`, `.github/**`, `.claude/**`, `.git/**`) + `TOWERCAB.md` `protected` globs. The worker can't write them ([PIP-29](pipeline.md)) unless the intent's `unlock` names them; `.git` (its config and hooks run in Towercab's own git calls there) never. `Protected::new(protected, unlock: &[String]) -> Result<Protected, String>` (`src/repo/protected.rs`, **Globs**): `blocks(rel) -> bool` = a protected glob matches the repo-relative path or one of its parent directories and no `unlock` glob does (an absolute path, a `..` component or `.git` → true). `deny_write(checkout) -> Result<Vec<PathBuf>, String>` for PIP-29's `denyWrite` (a checkout path containing `*`, `?` or `[` → `checkout <p> contains *, ? or [: denyWrite can't name it`, so the run refuses rather than going unprotected): per protected glob its literal path when it has no wildcard, `P` for `P/**`, else every entry under its literal prefix that it matches (walk without following symlinks, `.git` skipped, a matched directory not entered); existing paths only; an `unlock`ed entry dropped, and a directory an `unlock` glob may reach into (its literal prefix equal to, inside or above the directory, or empty) replaced by its children, recursively (`.git` always whole); absolute (`<checkout>/<path>`), sorted, deduplicated, none inside another, none whose repo-relative part contains `*`, `?` or `[` (left out, to the guard and publish). | test_protected_paths, test_deny_write_paths |
+### REPO-1 · Read from the base branch
 
-**Grammar** (`src/repo/markdown.rs`). Every file: UTF-8, a leading BOM dropped, lines split on `\n`, a trailing `\r` dropped. Files are parsed in the order `CLAUDE.md`, `REVIEW.md`, `TOWERCAB.md`; the first error wins and reads `<file>: <where>: <what>` (`RepoError::Invalid`; `<where>` = `line <n>` for fences and sections, `front matter`, the block name, or `## Passes` / `## Cap the nits`, whose number must fit a `u32`).
+Towercab reads `CLAUDE.md`, `REVIEW.md` and `TOWERCAB.md` from the base branch of its own clone,
+never from a PR or a working tree.
 
-- **Fence:** a line starting (after spaces) with 3 or more backticks or tildes opens a block named by the rest of the line, trimmed (a backtick fence's name has no backtick, else the line is prose); the next line that trims to at least as many of the same character closes it (none → `unclosed ```<name> block`). Body = its lines trimmed, minus blank lines and lines starting `#`; an empty body = no block. Other names are prose. Two blocks of a name that counts → `two ```<name> blocks`.
-- **Section:** outside fences, a column-0 `## <title>` line up to the next `# ` or `## ` line; titles match trimmed, closing `#`s after a space dropped, ASCII case-insensitive; text before the first `## ` and unknown sections are prose. A known title twice → `two ## <title> sections`.
-- **Bullet:** outside fences, a CommonMark list item (nesting flattened): up to 3 spaces, then `-`, `*`, `+` or 1–9 digits and `.` or `)`, then a space or tab; continued by the indented non-blank lines after it that aren't items (each trimmed, joined with one space).
-- **Key line** (` ```live `, ` ```release `, ` ```rollback `): `<key>: <value>`, split at the first `:`, both trimmed. Unknown key, no `:`, empty value or a key twice → `TOWERCAB.md: <block>: <reason>`; a required key missing → `<block>: <key> is required`.
-- **`CLAUDE.md`**, inside `## Verifying your work` only: ` ```setup ` → `setup` (none → `[]`), ` ```checks ` → `checks` (none → REPO-5), ` ```run ` → `run`: lines starting `url:` and `ui:` (`true` or `false`, default false), each at most once; every other line is the start command (exactly one: `run: start command missing` / `run: one start command, got <n>`); `url` required, `http://localhost:<port>` or `http://127.0.0.1:<port>` (port 1–65535) with an optional `/<path>`, else `run: url must be http://localhost:<port>`.
-- **`REVIEW.md`:** `Passes`: bullets `<name>: <what>` split at the first `:`, spaces, `*` and `_` trimmed from both ends of each part (`**Bugs**: …` and `**Bugs:** …` alike); an empty part → `## Passes: want "<name>: <what>", got "<bullet>"`; a name twice (case-insensitive) → `pass <name> twice`. `What Important means here`: body trimmed, empty → `None`. `Cap the nits`: first run of ASCII digits (`u32`), none → 5. `Do not report`, `Red lines`: bullet texts as written. `text` = the whole file (given to the review, [PIP-4](pipeline.md)).
-- **`TOWERCAB.md`:** front matter = from the first non-blank line, if it trims to `---`, to the next line that trims to `---` (none → `no closing ---`), a YAML mapping read with `yaml-rust2` (not a mapping → error); none → defaults. A column-0 `max_autonomy`, `protected` or `tests` line followed (after spaces) by `:` outside it and outside fences → `line <n>: <key> outside front matter`. Keys: `max_autonomy` (int 1–5), `protected`, `tests` (a list of globs or one glob string; absent, null or empty → `[]` / `DEFAULT_TESTS` = PIP-30's list). Another key → `unknown key <k>`; a key twice → `<k> twice`; wrong type → `max_autonomy must be an integer 1-5` / `<k> must be a list of globs`. Blocks anywhere after it: ` ```live `: `deploy` (`env:<name>` or `url:<http(s) URL>`, spaces after the second `:` allowed), `timeout` (minutes 1–1440, default 15), `e2e` (required). ` ```release `: `command`, `deploy` (required), `timeout` (default 15), `e2e` (optional). ` ```rollback `: `command`, `rehearse` (required). ` ```release ` or ` ```rollback ` without ` ```live ` is kept (PIP-34 ignores it, `doctor` warns).
-- **Globs** (`protected`, `tests`, `unlock`; `protected::glob`): `globset` with `literal_separator` (`*`, `?`, `[…]` stay inside one path component, `**` spans them), case-sensitive, `\` escapes, `{a,b}` alternation (nested; empty alternates allowed: `x{,.bak}`); relative to the repo root (a leading `./` or `/` and a trailing `/` dropped); `P/**` also matches `P`. Empty, an empty, `.` or `..` component (it would match no path) or a bad glob → `<key>: bad glob "<g>"[: <error>]` (`<g>` as written). Literal prefix = the leading components with no `*`, `?`, `[`, `{`, `\`.
+- `loadRepoFiles(clone, base)`: `git ls-tree -z --full-tree refs/remotes/origin/<base> -- CLAUDE.md
+  REVIEW.md TOWERCAB.md`, then `git cat-file blob <oid>` for each regular file. A symlink, directory
+  or non-UTF-8 file in a file's place → `RepoError.invalid("<file>: …")`; a failed git →
+  `RepoError.git`. Then the pure `parseRepoFiles(claude, review, towercab)` (**Grammar**).
+- `TOWERCAB.md` front matter: `max_autonomy` (1–5, default 5), `protected` (globs), `tests` (globs,
+  default the list in [PIP-30](pipeline.md)). Any other key → `unknown key <k>`.
+- Verified by: `repo: parse the three files`, `repo: read from the base branch only`,
+  `repo: TOWERCAB.md front matter`
 
-**`protect` output** (stdout, exit 0; `rules:` lists the rules sent; line 3 only for a `[repos]` repo without a green run)
+### REPO-2 · The verifying section
 
-```
-<owner>/<name>: <created|updated> ruleset towercab <id> on refs/heads/<base>
-rules: pull_request, required_status_checks (<check>, …), non_fast_forward, deletion
-no green run on <base>: no required status checks
-```
+`CLAUDE.md` tells Towercab how to set up and check the repo, in fenced blocks under
+`## Verifying your work`.
 
-**Code** (all `pub`; tests only in `tests/`)
+- ` ```setup ` (commands with network after each clone and before checks, such as `npm ci`),
+  ` ```checks ` (the full suite, one command per line, run without network), optional ` ```fast `
+  (the subset run before publishing when the repo has CI, REPO-9), optional ` ```screenshots `
+  (REPO-10). Prose around them is for the agent.
+- Verified by: `repo: verifying blocks`
 
-| File | Interface |
-|---|---|
-| `src/repo/mod.rs` | `RepoFiles { claude_md: String, verifying, review, towercab }`; `RepoError::{NoVerifyingBlock, Invalid(String), Git(String)}` (`Display` = the reason); `parse`, `load` (REPO-1). |
-| `src/repo/markdown.rs` | Line, fence, section, bullet and key-line readers (**Grammar**); `sections`, `fences`, `key_lines` take `[&str; N]` and return `[Option<_>; N]`. |
-| `src/repo/verifying.rs` | `Verifying`, `Run`; `Verifying::parse(&str) -> Result<Verifying, RepoError>`. |
-| `src/repo/review.rs` | `Review` (`Default` = no file), `Pass`, `DEFAULT_PASSES: [(&str, &str); 3]` (name, one-line what), `DEFAULT_NIT_CAP = 5`; `Review::parse(&str) -> Result<Review, String>`. |
-| `src/repo/towercab.rs` | `Towercab { max_autonomy: u8, protected, tests: Vec<String>, live: Option<Live>, release: Option<Release>, rollback: Option<Rollback> }` (`Default` = no file), `Live`, `Deploy`, `Release`, `Rollback`, `DEFAULT_TESTS`, `DEFAULT_TIMEOUT_MIN = 15`; `Towercab::parse(&str) -> Result<Towercab, String>`. |
-| `src/repo/protected.rs` | `CONTROL: [&str; 6]`, `glob(&str) -> Result<GlobMatcher, String>`, `Protected` (REPO-8). |
-| `src/repo/protect.rs` | `Target { github, base, intent_home: bool }`, `Target::resolve(&Config, repo) -> Result<Target, String>` (intent home: `https://[<user>@]github.com/<o>/<n>[.git]`, `git@github.com:<o>/<n>[.git]` or `ssh://git@github.com/<o>/<n>[.git]`; else or none: `[intents].remote is not a GitHub repo URL`, the URL never echoed); `ruleset(&Target, checks: Option<&[String]>) -> serde_json::Value`; `find_ruleset(gh, github) -> Result<Option<u64>, String>`; `protect(&Target, gh: &OsStr) -> Result<String, String>` (the output text). |
-| `src/config.rs` | `Config.repos: BTreeMap<String, Result<RepoConfig { name, github, path, base, workers: u8, bash: Vec<String> }, String>>` ([LOOP-1](loop.md)), read through `Config::repo(name) -> Result<&RepoConfig, String>` (absent → `unknown repo <name>`): a bad table fails only what uses that repo, so `add`, `migrate` and `protect intents` (which never read `[repos]`) run with the Python version's `[repos.<name>]` (no `github`); `repos` not a table fails the load. Name `is_repo`, not `intents` (a bad name shown as a quoted TOML key); `github` required, `<owner>/<name>` (each `is_repo`); `path` required, `~/` expanded, then absolute; `base` default `main`, `is_branch`: `[A-Za-z0-9._/-]+`, not `HEAD`, not starting with `-` or ending with `.`, no `..`, each `/` component non-empty, not starting with `.` or ending with `.lock`; `workers` int 1–255, default 1; `bash` list of non-empty strings, default `[]`; other keys ignored. Errors `config: <file>: repos.<name>[.<key>] …` (e.g. `repos.towercab.github is required`). `test_repos_config`, `test_protect_command`, `test_add_command`. |
-| `src/cli.rs` | `towercab [--config <file>] protect <repo>` → `protect::protect(&Target::resolve(…)?, "gh")`; errors → `towercab: <reason>`, exit 1. |
-| `src/intents/git.rs` | `git_command()` made `pub`: `load`'s git calls share its environment (INT-10). |
+### REPO-3 · Live, release and rollback blocks
+
+Removed: the ship stage is parked (intent 261026-2204-4).
+
+### REPO-4 · REVIEW.md
+
+`REVIEW.md` tells the reviewer what to look for in this repo and what counts as important.
+
+- Sections: `## Passes` (bullets `name: what`; none → Bugs, Security, Compliance with the spec rows
+  and the plan), `## What Important means here`, `## Cap the nits` (first number, default 5),
+  `## Do not report`, `## Red lines` (paths or behaviours whose change makes a PR high-risk). The
+  whole text goes to the review ([PIP-4](pipeline.md)).
+- Verified by: `repo: REVIEW.md sections`, `repo: REVIEW.md defaults`
+
+### REPO-5 · No verifying section
+
+A repo without a checks block waits for the owner to add one.
+
+- No `## Verifying your work` with a non-empty ` ```checks ` block on the base →
+  `waiting: add CLAUDE.md verifying block`. `REVIEW.md` and `TOWERCAB.md` are optional.
+- Verified by: `repo: missing verifying block waits`
+
+### REPO-6 · Towercab's own repo files
+
+Towercab's own `CLAUDE.md`, `REVIEW.md` and `TOWERCAB.md` describe its TypeScript codebase.
+
+- `CLAUDE.md` (at most 60 lines: commands, conventions, architecture, what Claude gets wrong) with
+  setup `npm ci`; checks `npm run check`; fast `npm run lint`, `npm run typecheck`,
+  `npx vitest run {tests}`. `REVIEW.md`: passes Bugs, Security, Compliance; red lines
+  `src/machine.ts`. `TOWERCAB.md`: `max_autonomy: 5`, `protected: [src/machine.ts]`,
+  `tests: [tests/**]`.
+- Verified by: `repo: Towercab's own files parse`
+
+### REPO-7 · protect
+
+Removed: never used (no repo had a ruleset); parked as intent 261026-2204-5.
+
+### REPO-8 · Protected paths
+
+Some paths decide how a change is judged, so a worker can write them only when its autonomy or plan
+allows ([AUT-14](autonomy.md)).
+
+- Protected = `CLAUDE.md`, `REVIEW.md`, `TOWERCAB.md`, `.github/**`, `.claude/**`, `.git/**` plus
+  `TOWERCAB.md` `protected`. `.git/**` is never writable.
+- `protectedPaths(protected, granted).blocks(rel)`: true when a protected glob matches the path or a
+  parent directory and no granted glob does; an absolute path, a `..` component or `.git` → true.
+  `denyWrite(checkout)` lists the absolute paths that exist and are blocked, for the sandbox.
+- Verified by: `repo: protected paths block`, `repo: granted paths unblock`,
+  `repo: .git is never writable`
+
+### REPO-9 · Run set
+
+Before publishing, Towercab runs the fast checks when the repo has CI, and the full checks when it
+doesn't.
+
+- `runSet(verifying, hasCi, changedTests)`: no CI → `checks`. CI and a ` ```fast ` block → its lines;
+  CI and no block → `checks`. In a fast line, `{tests}` → the changed test files and `{stems}` → their
+  file stems, space-separated and shell-quoted; a line with a placeholder and no changed tests is
+  skipped. `hasCi` = the base branch has `.github/workflows/*.yml` or `*.yaml`.
+- Verified by: `repo: run set without CI`, `repo: run set with fast`, `repo: placeholders`
+
+### REPO-10 · Screenshots block
+
+A repo with a UI can give Towercab a command that takes screenshots, and the review sees them.
+
+- ` ```screenshots ` under `## Verifying your work`: one command, run after green checks in the
+  sandbox ([PIP-23](pipeline.md)) with `TOWERCAB_SHOTS=<dir>` set; every `*.png` it writes there
+  (at most 20, each ≤ 5 MB) goes to the review ([PIP-49](pipeline.md)). No block → no screenshots.
+- Verified by: `repo: screenshots block`, `pipeline: screenshots reach the review`
+
+**Grammar** (`src/repo/markdown.ts`)
+
+- Every file: UTF-8, a leading BOM dropped, lines split on `\n`, a trailing `\r` dropped. The first
+  error wins and reads `<file>: <where>: <what>`.
+- Fence: a line starting (after spaces) with 3 or more backticks or tildes opens a block named by the
+  rest of the line; the next line of at least as many of the same character closes it (none →
+  `unclosed ```<name> block`). Body = its lines trimmed, minus blank lines and lines starting `#`.
+  Two blocks of one name → `two ```<name> blocks`.
+- Section: outside fences, a column-0 `## <title>` line up to the next `# ` or `## ` line; titles
+  compare trimmed and case-insensitive. A known title twice → `two ## <title> sections`.
+- Bullet: a list item (`-`, `*`, `+`, or digits and `.` or `)`), continued by the indented lines
+  after it.
+- Globs (`protected`, `tests`, `unlock`): `picomatch` with `dot: true`; `*` stays in one path
+  component, `**` spans them; relative to the repo root; `P/**` also matches `P`. A bad glob →
+  `<key>: bad glob "<g>"`.
 
 ## Out of scope
 
-- Secrets in `TOWERCAB.md`. e2e secrets live in `~/.config/towercab/secrets/<repo>.env` ([PIP-9](pipeline.md)).
-- A code check of red-line paths before the review (offered, not chosen): red lines are judged by the review model.
-- Fetching the base: `load` reads `origin/<base>` as it is; the loop fetches (retries per [LOOP-10](loop.md)).
-- Running what the files name (setup, checks, run, live, release, rollback), the guard hook and publish check, the `doctor` warning: their PIP/LOOP rows, which verify those clauses.
+- Live, release and rollback blocks; rulesets (parked).
 
 ## Decisions
 
-- The playbook's files (my call): `CLAUDE.md` is given to every session from the base branch ([PIP-24](pipeline.md)), `REVIEW.md` is the review policy;
-  only what has no playbook home stays in `TOWERCAB.md`. Fenced blocks for what code runs, prose for what a model judges.
-- Read from base: a PR can't change the rules it is judged by.
-- Rulesets apply to Towercab and me alike; I merge in the UI the same way (PR + green CI).
-- Status checks not strict: a PR needn't be up to date with base to merge, so busy repos don't loop
-  through update → CI → review; post-merge CI and e2e catch the rest.
-- `ls-tree` + `cat-file` of `refs/remotes/origin/<base>`, not `git show`: absent vs failed without parsing (localised) stderr, symlinks visible, no tag/branch ambiguity.
-- Symlinked files refused: following `CLAUDE.md → AGENTS.md` would make the target a control file REPO-8 doesn't protect.
-- A malformed present file, an unknown `TOWERCAB.md` key and every duplicate (block, section, key, pass) are `Invalid`, never defaults: a typo must not raise `max_autonomy`, drop a protected glob or a check. Only absent files, sections and blocks default. The loop maps `Invalid` to a `waiting:` (LOOP-14 needs its template) and retries `Git`.
-- An empty block counts as absent: an empty ` ```checks ` verifies nothing, so REPO-5.
-- Headings match case-insensitively, and list items, fences and closing `#`s follow CommonMark: `## Red Lines` or an ordered red-lines list must not silently drop red lines.
-- `e2e` required in ` ```live ` (PIP-9 runs it; only `release`'s is optional, PIP-34); `rollback` needs `rehearse` (the rehearsal, PIP-35). Commands are kept verbatim; a `<sha>` placeholder (PIP-34's example) is substituted by PIP-34/35.
-- `.git` is protected and no `unlock` frees it: a worker writing `.git/config` (`core.fsmonitor`, `core.hooksPath`) or `.git/hooks` would run code in Towercab's later git calls there, outside the sandbox.
-- Globs match per path component, and a match on a directory covers what is under it (as `.gitignore`), so the guard and `denyWrite` agree on directories. `deny_write` uses the prefix only for `P/**`: `src` for `src/*.sql` would lock all of `src`; new files there are caught by publish (PIP-29).
-- `P/**` compiles as `P{,/**}` (inside a group `**` loses its meaning, so `P` stays outside), hence empty alternates are on for every glob, one meaning everywhere. A path containing `*`, `?` or `[` is left out of `deny_write` rather than widened to its parent (which could lock the checkout); the guard and publish still refuse it.
-- `protect`: the last green `push` run on base (schedule and dispatch runs have jobs PRs never report); job names are the check contexts. Rulesets listed with `includes_parents=false` (an org ruleset can't be PUT here), one page of 100. `towercab/evals` only joins an existing checks list. `[repos.intents]` is reserved so `protect intents` means one thing.
-- Required checks nobody posts block every PR, mine too (no bypass): run `protect towercab` only once PIP-33 posts `towercab/evals`; if a push-only workflow (deploy) was the last green run, its jobs are required but PRs never report them: read the printed list.
-- `[repos]` is the slice of [LOOP-1](loop.md) `load` and `protect` need; other keys are ignored while the Python version shares `config.toml` (its `verify`, `remote`), and a table is checked only when its repo is used (the Python `[repos.towercab]` has no `github`).
-- `test_red_lines_in_review_prompt` moved to [PIP-4](pipeline.md), where the prompt is built.
-- Crates: `globset`, `serde_json` (ruleset payload, `gh` output).
+- The base branch is the only source: a PR that edits `CLAUDE.md` can't loosen its own checks.
+- `fast` exists so a repo with CI doesn't run a slow full suite on every round locally; CI stays the
+  gate.
