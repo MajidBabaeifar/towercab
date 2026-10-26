@@ -308,7 +308,8 @@ fn plan(cx: &CmdCx, cmd: &Cmd, row: &CommandRow) -> Result<Plan, String> {
                 )));
             }
             let waits = m.as_ref().is_some_and(|m| m.stage.waits());
-            if !waits && intent.waiting().is_none() && !written() {
+            // A mission still running takes it too: the worker reads `intent.md` next time.
+            if m.is_none() && intent.waiting().is_none() && !written() {
                 return Ok(Plan::Reply(format!("{word}: {id} isn't waiting on you")));
             }
             let at = cx.tick.wall.format("%Y-%m-%d %H:%M").to_string();
@@ -323,7 +324,7 @@ fn plan(cx: &CmdCx, cmd: &Cmd, row: &CommandRow) -> Result<Plan, String> {
                 }
                 s.push_str(&format!("- {at}: {}", crate::outbox::one_line(text)));
                 i.set_section("Answers", &s)?;
-                if !waits {
+                if m.is_none() {
                     i.remove("waiting")?;
                 }
                 Ok(())
@@ -331,7 +332,8 @@ fn plan(cx: &CmdCx, cmd: &Cmd, row: &CommandRow) -> Result<Plan, String> {
             match (write("answer", &add), m) {
                 (Err(e), _) => Plan::Reply(format!("{word}: {e}")),
                 (Ok(()), Some(m)) if waits => on_mission(&m),
-                (Ok(()), _) => Plan::Reply(format!("answered {id}")),
+                (Ok(()), Some(_)) => Plan::Reply(format!("noted for {id}: the worker reads it in intent.md")),
+                (Ok(()), None) => Plan::Reply(format!("answered {id}")),
             }
         }
         (Cmd::Unlock(_, globs), m) => {
