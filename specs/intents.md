@@ -1,6 +1,6 @@
 # Intents
 
-**Status:** Draft · **Prefix:** INT
+**Status:** Live · **Prefix:** INT
 
 ## Purpose
 

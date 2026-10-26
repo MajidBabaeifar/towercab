@@ -1,6 +1,6 @@
 # Priority
 
-**Status:** Draft · **Prefix:** PRI
+**Status:** Live · **Prefix:** PRI
 
 ## Purpose
 

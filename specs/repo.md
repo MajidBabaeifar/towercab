@@ -1,6 +1,6 @@
 # Repo files
 
-**Status:** Draft · **Prefix:** REPO
+**Status:** Live · **Prefix:** REPO
 
 ## Purpose
 
@@ -62,8 +62,8 @@ Towercab's own `CLAUDE.md`, `REVIEW.md` and `TOWERCAB.md` describe its TypeScrip
 
 - `CLAUDE.md` (at most 60 lines: commands, conventions, architecture, what Claude gets wrong) with
   setup `npm ci`; checks `npm run check`; fast `npm run lint`, `npm run typecheck`,
-  `npx vitest run {tests}`. `REVIEW.md`: passes Bugs, Security, Compliance; red lines
-  `src/machine.ts`. `TOWERCAB.md`: `max_autonomy: 5`, `protected: [src/machine.ts]`,
+  `npx vitest run {tests}`; screenshots `npm run test:ui`. `REVIEW.md`: passes Bugs, Security,
+  Compliance; red lines `src/machine.ts`, `src/pipeline/guard.ts` and `src/claude.ts`. `TOWERCAB.md`: `max_autonomy: 5`, `protected: [src/machine.ts]`,
   `tests: [tests/**]`.
 - Verified by: `repo: Towercab's own files parse`
 

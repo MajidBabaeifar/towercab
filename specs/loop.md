@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Draft · **Prefix:** LOOP
+**Status:** Live · **Prefix:** LOOP
 
 ## Purpose
 
@@ -58,7 +58,7 @@ default.
 
 - A slot is a child process that does work (a Claude run, setup, checks, screenshots); git and gh
   calls don't take one. At most `[repos.<r>].workers` (default 1) unfinished missions per repo until
-  merged; later ones wait (`queued behind <id>`). An intent has at most one unfinished mission.
+  merged; later ones wait, shown as queued behind the repo's running intent. An intent has at most one unfinished mission.
 - A free slot goes first to unfinished missions in priority order, then to a new pick, so a PR
   waiting on the owner never stops other repos.
 - Verified by: `loop: picks while others wait`, `loop: one unmerged intent per repo`, `loop: one mission per intent`
@@ -137,8 +137,8 @@ models keep working.
   `resets [at|on] [<Mon> <day>,] <h>[:mm] [am|pm] [(<IANA zone>)]` (needs am/pm, minutes or a date;
   a past clock time → tomorrow; a past date → next year). None → backoff 1, 2, 4 … 60 min.
 - A cooldown per model (`until` = reset + 30 s) is kept in `meta`; the mission keeps its step and
-  re-enters it after `until` with `Continue where you stopped.` A limit wait is never a crash, a
-  repair or a timeout. The first success on a model resets its backoff.
+  re-enters it after `until` with `Continue where you stopped.` (a review starts a fresh session
+  instead, PIP-13). A limit wait is never a crash, a repair or a timeout. The first success on a model resets its backoff.
 - Verified by: `limits: reset formats`, `limits: resume the same step`, `limits: other models run`, `limits: past reset backs off`
 
 ### LOOP-10 · Network and auth failures

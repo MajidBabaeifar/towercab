@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Draft · **Prefix:** PIP
+**Status:** Live · **Prefix:** PIP
 
 ## Purpose
 
@@ -27,7 +27,8 @@ docs, until the repo's checks pass.
   `plan_changed` (markdown, when it departed from the plan, with why); `lower_a`, `lower_why`.
 - Towercab then commits everything as the bot (`git add -A`, message = the design's Conventional
   Commit line) and goes to verify. No diff → `waiting: no changes`. Timeout, budget used up, or no
-  valid result → one continue with `Continue where you stopped.`, then the matching wait.
+  valid result → one continue with `Continue where you stopped.` and the step's full time budget
+  again, then the matching wait.
 - Verified by: `pipeline: build prompt has plan, intent and checks`, `pipeline: build commits as the bot`, `pipeline: no changes waits`, `pipeline: timeout continues once`
 
 ### PIP-2 · Publish

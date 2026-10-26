@@ -1,6 +1,6 @@
 # Autonomy
 
-**Status:** Draft · **Prefix:** AUT
+**Status:** Live · **Prefix:** AUT
 
 ## Purpose
 
