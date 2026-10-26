@@ -21,8 +21,7 @@ never from a PR or a working tree.
   `RepoError.git`. Then the pure `parseRepoFiles(claude, review, towercab)` (**Grammar**).
 - `TOWERCAB.md` front matter: `max_autonomy` (1–5, default 5), `protected` (globs), `tests` (globs,
   default the list in [PIP-30](pipeline.md)). Any other key → `unknown key <k>`.
-- Verified by: `repo: parse the three files`, `repo: read from the base branch only`,
-  `repo: TOWERCAB.md front matter`
+- Verified by: `repo: parse the three files`, `repo: read from the base branch only`, `repo: TOWERCAB.md front matter`
 
 ### REPO-2 · The verifying section
 
@@ -82,8 +81,7 @@ allows ([AUT-14](autonomy.md)).
 - `protectedPaths(protected, granted).blocks(rel)`: true when a protected glob matches the path or a
   parent directory and no granted glob does; an absolute path, a `..` component or `.git` → true.
   `denyWrite(checkout)` lists the absolute paths that exist and are blocked, for the sandbox.
-- Verified by: `repo: protected paths block`, `repo: granted paths unblock`,
-  `repo: .git is never writable`
+- Verified by: `repo: protected paths block`, `repo: granted paths unblock`, `repo: .git is never writable`
 
 ### REPO-9 · Run set
 

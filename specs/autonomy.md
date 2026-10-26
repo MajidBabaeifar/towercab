@@ -131,8 +131,7 @@ code PR then waits for the owner instead of merging.
   Towercab adds them to the mission's grants, records `data.unplanned` (what and why), and resumes
   the worker. The code PR lists them under "Access beyond the plan". At a4 the gate then goes to
   `approval:merge`, why `access beyond the plan`.
-- Verified by: `autonomy: unplanned access at a4 goes to the owner`,
-  `autonomy: unplanned access at a1-a3 is granted`
+- Verified by: `autonomy: unplanned access at a4 goes to the owner`, `autonomy: unplanned access at a1-a3 is granted`
 
 ## Out of scope
 

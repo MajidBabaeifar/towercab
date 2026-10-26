@@ -17,7 +17,7 @@ function rows(file: string): Row[] {
   for (const p of parts) {
     const id = p.split(" ")[0]!;
     const verified = /Verified by:([\s\S]*?)(?:\n\n|\n### |$)/.exec(p)?.[1] ?? "";
-    const tests = [...verified.matchAll(/`([^`]+)`/g)]
+    const tests = [...verified.split(/\bmanual\b/)[0]!.matchAll(/`([^`]+)`/g)]
       .map((m) => m[1]!)
       .filter((t) => !t.startsWith("manual"));
     out.push({ file, id, tests, removed: /\n\s*Removed/.test(p.split("\n").slice(0, 3).join("\n")) });

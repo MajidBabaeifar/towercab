@@ -49,8 +49,7 @@ Every mission moves through one fixed set of stages, and one table decides every
 - Phase (the intent's `stage` field, [INT-5](intents.md)): pick, design, approval:spec → `spec`;
   plan, approval:plan → `plan`; build … merge, approval:merge → `code`; `blocked` keeps the phase it
   came from; `done` → `done`; `stopped` by a closed PR or `drop` → `dropped`.
-- Verified by: `machine: every stage and event pair is defined`, `machine: order`,
-  `machine: continue after an answer`
+- Verified by: `machine: every stage and event pair is defined`, `machine: order`, `machine: continue after an answer`
 
 ### LOOP-4 · How much runs at once
 
@@ -62,8 +61,7 @@ default.
   merged; later ones wait (`queued behind <id>`). An intent has at most one unfinished mission.
 - A free slot goes first to unfinished missions in priority order, then to a new pick, so a PR
   waiting on the owner never stops other repos.
-- Verified by: `loop: picks while others wait`, `loop: one unmerged intent per repo`,
-  `loop: one mission per intent`
+- Verified by: `loop: picks while others wait`, `loop: one unmerged intent per repo`, `loop: one mission per intent`
 
 ### LOOP-5 · Pick
 
@@ -80,8 +78,7 @@ The loop starts the highest-priority intent that can run.
   `waiting: fix repo files`) and makes the checkout.
 - An intent with a `stage` but no unfinished mission and no `waiting` (for example after a crash)
   loses its `stage` and is picked again.
-- Verified by: `pick: order and skips`, `pick: parked waits`, `pick: bad after`, `pick: unknown repo`,
-  `pick: orphaned stage is cleared`
+- Verified by: `pick: order and skips`, `pick: parked waits`, `pick: bad after`, `pick: unknown repo`, `pick: orphaned stage is cleared`
 
 ### LOOP-6 · Durable steps
 
@@ -112,8 +109,7 @@ resumes its own session.
   naming the branch, PRs, `intent.md`, spec IDs and `plan.md`.
 - SIGTERM or SIGINT: SIGTERM to each child's group, SIGKILL after 10 s, `interrupted` for its mission
   (not counted), `meta.running` removed, exit 0.
-- Verified by: `loop: resume after kill`, `loop: missing session starts fresh`,
-  `loop: SIGTERM is not counted`, `loop: three crashes wait for the owner`
+- Verified by: `loop: resume after kill`, `loop: missing session starts fresh`, `loop: SIGTERM is not counted`, `loop: three crashes wait for the owner`
 
 ### LOOP-8 · Clones and checkouts
 
@@ -127,8 +123,7 @@ a checkout's `.git`.
   refs/remotes/origin/<base>`. Every git call there uses `-c core.hooksPath=/dev/null
   -c core.fsmonitor=false`, and Towercab's own git there first checks the `.git/config` holds only
   plain keys. A checkout is kept until the mission is done, stopped or replaced.
-- Verified by: `checkout: kept across steps`, `checkout: has no remote`,
-  `checkout: a planted git config is refused`
+- Verified by: `checkout: kept across steps`, `checkout: has no remote`, `checkout: a planted git config is refused`
 
 ### LOOP-9 · Usage limits
 
@@ -144,8 +139,7 @@ models keep working.
 - A cooldown per model (`until` = reset + 30 s) is kept in `meta`; the mission keeps its step and
   re-enters it after `until` with `Continue where you stopped.` A limit wait is never a crash, a
   repair or a timeout. The first success on a model resets its backoff.
-- Verified by: `limits: reset formats`, `limits: resume the same step`, `limits: other models run`,
-  `limits: past reset backs off`
+- Verified by: `limits: reset formats`, `limits: resume the same step`, `limits: other models run`, `limits: past reset backs off`
 
 ### LOOP-10 · Network and auth failures
 
@@ -159,8 +153,7 @@ A failed network or login call is retried with backoff and never stops the loop.
   shows it under Problems. Calls are bounded: `gh` 120 s, `git` 300 s.
 - A worker's output that shows a broken environment (the sandbox didn't start, `command not found`)
   is that fault, not a question for the owner.
-- Verified by: `faults: classify`, `faults: a blip keeps looping`, `faults: one message after 15
-  minutes`, `faults: a missing tool is a fault`
+- Verified by: `faults: classify`, `faults: a blip keeps looping`, `faults: one message after 15 minutes`, `faults: a missing tool is a fault`
 
 ### LOOP-11 · Stay awake
 
@@ -206,8 +199,7 @@ which intent, with a link.
   intent file). Also: GitHub or Claude unreachable for 15 minutes; a self-update that failed.
 - Never on: done, merges, limits, a PR the owner closed. A queued message whose wait is over is
   dropped.
-- Verified by: `outbox: only actionable messages`, `outbox: every wait has a text`,
-  `outbox: an obsolete message is dropped`
+- Verified by: `outbox: only actionable messages`, `outbox: every wait has a text`, `outbox: an obsolete message is dropped`
 
 ### LOOP-15 · Commands
 
@@ -222,8 +214,7 @@ The CLI covers running the service and the few actions that have no GitHub gestu
   first`. `answer`, `retry`, `drop`, `pause` and `resume` insert a `commands` row the loop applies on
   its next pass; with no loop running the CLI applies it itself.
 - Errors print `towercab: <reason>` and exit 1; bad arguments exit 2.
-- Verified by: `cli: commands`, `cli: second run is refused`, `commands: applied by the loop`,
-  `commands: applied without a loop`
+- Verified by: `cli: commands`, `cli: second run is refused`, `commands: applied by the loop`, `commands: applied without a loop`
 
 ### LOOP-16 · Telegram
 
@@ -254,8 +245,7 @@ into events.
 - Intents repo: the intent file gone → `intent_removed` (stop); `retry: fresh` written → `retry_fresh`;
   `waiting` removed by the owner while blocked → `answered` with no text.
 - A move out of a stage kills that stage's child.
-- Verified by: `events: PR events by priority`, `events: intent events`,
-  `events: owner merge during CI ends done`
+- Verified by: `events: PR events by priority`, `events: intent events`, `events: owner merge during CI ends done`
 
 ### LOOP-19 · GitHub App identity
 
@@ -267,8 +257,7 @@ Towercab acts on GitHub as its own GitHub App, so its work is clearly separate f
   (1 hour, re-minted when under 10 minutes left), passed as `GH_TOKEN` to `gh` and to `git` through a
   credential helper; never to Claude runs.
 - Commits are authored as `towercab[bot] <<id>+towercab[bot]@users.noreply.github.com>`.
-- Verified by: `github: installation token per repo`, `github: git uses the App token`,
-  `github: commits are authored by the bot`, `github: no token in Claude's environment`
+- Verified by: `github: installation token per repo`, `github: git uses the App token`, `github: commits are authored by the bot`, `github: no token in Claude's environment`
 
 ### LOOP-20 · gh 2.46
 
@@ -315,8 +304,7 @@ When Towercab's own `main` moves, the running Towercab updates itself and restar
   code. Fail → `git reset --hard <previous>`, keep running, one message `self-update failed: <why>`.
 - `towercab update` does the same now. `status` and the UI show the running commit and whether it is
   behind `main`. Never moves to an older commit.
-- Verified by: `update: pulls and restarts when idle`, `update: a failed check rolls back`,
-  `update: a dirty checkout is left alone`
+- Verified by: `update: pulls and restarts when idle`, `update: a failed check rolls back`, `update: a dirty checkout is left alone`
 
 ### LOOP-36 · Dev loop
 
