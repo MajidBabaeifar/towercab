@@ -136,7 +136,7 @@ test("pipeline: approval is computed in code", () => {
   );
   // Nits are capped by REVIEW.md.
   const nits = Array.from({ length: 8 }, (_, i) => ({
-    severity: "nit",
+    severity: "nit" as const,
     file: `f${i}`,
     line: null,
     what: `n${i}`,

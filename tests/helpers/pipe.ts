@@ -85,6 +85,11 @@ export class PipeTools extends FakeTools {
     return super.run(cmd, args, opts);
   }
 
+  /** Signals sent to children, by kind. */
+  readonly kills: { kind: string; signal: string }[] = [];
+  /** Kinds of children that ignore SIGTERM (only SIGKILL ends them). */
+  readonly stubborn = new Set<string>();
+
   override spawn(spec: ChildSpec): ChildHandle {
     if (this.dead) throw this.dead();
     const cmd = spec.argv[0]!.split("/").pop()!;
@@ -92,7 +97,15 @@ export class PipeTools extends FakeTools {
     if (route) this.child(cmd, route);
     const h = super.spawn(spec);
     // A fake pid above pid_max: killing its group can never reach a real process.
-    return { ...h, pid: h.pid + PID_OFFSET };
+    return {
+      pid: h.pid + PID_OFFSET,
+      done: h.done,
+      kill: (signal) => {
+        this.kills.push({ kind: spec.kind, signal });
+        if (signal === "SIGTERM" && this.stubborn.has(spec.kind)) return;
+        h.kill(signal);
+      },
+    };
   }
 }
 
@@ -221,9 +234,9 @@ export class Pipe {
     this.gitconfig = join(this.dir("tc-gitconfig-"), "gitconfig");
     writeFileSync(
       this.gitconfig,
-      Object.entries(this.bares)
+      `${Object.entries(this.bares)
         .map(([n, b]) => `[url "${b}"]\n\tinsteadOf = https://github.com/owner/${n}.git\n`)
-        .join("") + "[user]\n\tname = test\n\temail = test@localhost\n[init]\n\tdefaultBranch = main\n",
+        .join("")}[user]\n\tname = test\n\temail = test@localhost\n[init]\n\tdefaultBranch = main\n`,
     );
     process.env.GIT_CONFIG_GLOBAL = this.gitconfig;
     this.fakeGh();

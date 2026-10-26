@@ -4,7 +4,7 @@
 
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { build, happy, ID, intent, intents, TARGET } from "../helpers/flows.ts";
-import { Pipe } from "../helpers/pipe.ts";
+import { type ClaudeReply, Pipe } from "../helpers/pipe.ts";
 
 let p: Pipe;
 
@@ -13,7 +13,7 @@ beforeAll(async () => {
   happy(p);
   let round = 0;
   // The test wants "bye"; the worker keeps writing "hello".
-  p.respond.worker = () => {
+  p.respond.worker = (): ClaudeReply => {
     round++;
     return {
       structured: build(),

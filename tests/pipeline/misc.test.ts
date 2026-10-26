@@ -23,7 +23,11 @@ test("pipeline: no behaviour change skips the spec PR", async () => {
     "SELECT from_stage, to_stage, why FROM transitions WHERE mission = ? ORDER BY id",
     m.id,
   );
-  expect(moves[1]).toEqual({ from_stage: "design", to_stage: "plan", why: "no behaviour change: no spec PR" });
+  expect(moves[1]).toEqual({
+    from_stage: "design",
+    to_stage: "plan",
+    why: "no behaviour change: no spec PR",
+  });
   expect(m.spec_pr).toBeNull();
   expect(p.prs.map((x) => x.repo)).toEqual(["owner/intents"]);
   expect(p.stages(m.id)).not.toContain("approval:spec");
@@ -44,7 +48,11 @@ test("pipeline: no changes waits", () => {
 
 test("pipeline: timeout continues once", async () => {
   const m = p.mission()!;
-  p.queue("worker", () => ({ hang: true }), () => ({ hang: true }));
+  p.queue(
+    "worker",
+    () => ({ hang: true }),
+    () => ({ hang: true }),
+  );
   p.ownerComment(p.prNo("intents", m.plan_pr!), "Please add the greeting anyway.");
   p.clock.advance(61);
   await p.until(() => p.mission()?.waiting === "worker timeout", 20);
@@ -60,6 +68,9 @@ test("pipeline: timeout continues once", async () => {
   expect(runs[1]!.prompt).toBe("Continue where you stopped.");
   expect(runs[1]!.session).toEqual({ mode: "resume", id: m.session });
   // Both runs got the whole budget: the continue's time doesn't count the cut-off run's.
-  const timeouts = p.tools.spawned.filter((s) => s.kind === "worker").slice(1).map((s) => s.timeoutMs);
+  const timeouts = p.tools.spawned
+    .filter((s) => s.kind === "worker")
+    .slice(1)
+    .map((s) => s.timeoutMs);
   expect(timeouts).toEqual([60_000, 60_000]);
 }, 30_000);

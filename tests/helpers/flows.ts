@@ -25,13 +25,21 @@ export const DIR = `intents/${ID}-${SLUG}`;
 
 /** An intent file; `a` null leaves it out. */
 export function intent(
-  o: { a?: number | null; title?: string; repo?: string; extra?: string; body?: string } = {},
+  o: {
+    a?: number | null;
+    title?: string;
+    repo?: string;
+    extra?: string;
+    body?: string;
+    u?: number;
+    i?: number;
+  } = {},
 ): string {
   const a = o.a === undefined ? 5 : o.a;
   return `---
 repo: ${o.repo ?? "web"}
-u: 4
-i: 4
+u: ${o.u ?? 4}
+i: ${o.i ?? 4}
 ${a === null ? "" : `a: ${a}\n`}source: me
 ${o.extra ?? ""}---
 
