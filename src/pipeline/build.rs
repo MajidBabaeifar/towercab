@@ -102,6 +102,12 @@ pub fn prompt(
 pub fn start_merge(cx: &Ctx<'_>, m: &Mission) -> Result<bool, StepError> {
     let repo = cx.repo(m).map_err(StepError::Bug)?.clone();
     let dir = cx.checkout(m);
+    // The clone first: a conflict is with the base as it is on GitHub now, not as last fetched.
+    let auth = cx
+        .identity
+        .auth_for_url(&checkout::origin_url(&cx.exes.git, &repo))
+        .map_err(|e| StepError::Env(crate::env::Fault::Github, e.to_string()))?;
+    checkout::ensure_clone(&cx.exes.git, &repo, Some(&auth)).map_err(pgit::failed)?;
     checkout::refresh_base(&cx.exes.git, &repo.path, &dir, &repo.base).map_err(pgit::failed)?;
     pgit::merge(
         cx,
