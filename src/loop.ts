@@ -744,7 +744,7 @@ export class Loop {
     const m = getMission(this.d.db, row.mission);
     if (!m) return true;
     const [, wait, n] = row.key.split(":");
-    return !m.waiting || !m.waiting.startsWith(wait ?? "") || String(m.continued) !== n;
+    return !m.waiting?.startsWith(wait ?? "") || String(m.continued) !== n;
   }
 
   /** For status and the UI. */
