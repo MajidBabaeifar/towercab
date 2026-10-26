@@ -547,6 +547,76 @@ fn test_verify_check_runs_posted() {
     assert!(proof.contains(&"output[title]=red on base: sh check.sh".to_string()));
 }
 
+/// The login world with a ```fast block, built, verified and proved (a4).
+fn published_fast(ci: bool) -> Pipe {
+    let mut p = Pipe::login_fast(ci);
+    p.plans(2).builds(3);
+    p.step_to(ID, Stage::Publish, 8);
+    p
+}
+
+#[test]
+fn test_verify_run_set() {
+    // With CI the ```fast lines run, `{tests}` the test files the PR added: verify, then the
+    // proof on base (its overlay) with the same lines.
+    let p = published_fast(true);
+    let ran = p.ran();
+    let dir = p.checkout(ID).display().to_string();
+    assert_eq!(
+        ran,
+        [format!("lint {dir}"), format!("lint {dir}-proof")],
+        "{ran:?}"
+    );
+    let d = p.data(ID);
+    assert_eq!(d["verify"]["line"], "green (2 commands, fast)");
+    let log = fs::read_to_string(p.runs(ID).join("verify-1.log")).unwrap();
+    assert!(log.contains("$ sh fast.sh tests/login_test.sh\n"), "{log}");
+    assert!(!log.contains("sh check.sh"), "{log}");
+    // The check run says so in its title.
+    let mut p = p;
+    assert_eq!(p.step(ID), "261001-0900: publish → ci");
+    let runs = p.gh.find("api -X POST repos/me/web/check-runs");
+    let verify = p.gh.argv(runs[0]);
+    assert!(verify.contains(&"output[title]=green (2 commands, fast)".to_string()));
+    // The setup still runs before the checks, in the checkout and the overlay.
+    assert_eq!(p.setups().len(), 3, "{:?}", p.setups());
+}
+
+#[test]
+fn test_verify_fast_skips_full_suite() {
+    // CI on the base: the full ```checks (`echo full`) never run, before publish or in the proof.
+    let p = published_fast(true);
+    assert!(!p.ran().iter().any(|l| l == "full"), "{:?}", p.ran());
+    assert!(
+        !p.bwraps()
+            .iter()
+            .any(|a| a.contains(&"sh check.sh".to_string()))
+    );
+    // No CI on the base: everything runs locally, as before (verify, then the proof).
+    let p = published_fast(false);
+    assert_eq!(p.ran(), ["full", "full"], "{:?}", p.ran());
+    assert_eq!(p.data(ID)["verify"]["line"], "green (2 commands)");
+}
+
+#[test]
+fn test_proof_uses_run_set() {
+    let p = published_fast(true);
+    let d = p.data(ID);
+    // The overlay ran the fast lines: the PR's test (laid over base) fails there.
+    assert_eq!(
+        d["proof"]["line"],
+        "red on base: sh fast.sh tests/login_test.sh"
+    );
+    let log = fs::read_to_string(p.runs(ID).join("proof-1.log")).unwrap();
+    assert!(log.contains("$ sh fast.sh tests/login_test.sh\n"), "{log}");
+    assert!(!log.contains("sh check.sh"), "{log}");
+    assert_eq!(p.ran().len(), 2, "{:?}", p.ran());
+    assert!(p.ran()[1].ends_with("-proof"), "{:?}", p.ran());
+    // CI off: the proof's lines are the full ```checks, as before.
+    let p = published_fast(false);
+    assert_eq!(p.data(ID)["proof"]["line"], "red on base: sh check.sh");
+}
+
 #[test]
 fn test_proof_red_on_base() {
     let p = published();

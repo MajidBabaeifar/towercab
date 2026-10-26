@@ -19,7 +19,7 @@ The repo's commands (run them yourself):
 
 How:
 - First write failing tests: each spec row you added or changed (its `Verified by` names, exactly) and each `Proposed outcome` bullet, as many as the repo allows (none only when the repo has no code).
-- Then implement, compile and run every checks command until all are green; update the docs. Change a spec row only if the build proves the design wrong, and say why in your notes.
+- Then implement, compile and run the commands above (only the fast ones when it says the full suite runs in CI) until all are green; update the docs. Change a spec row only if the build proves the design wrong, and say why in your notes.
 - Shell: run each command alone, exactly as listed above, from the checkout (no `cd`, `&&`, `;` or pipes: a compound command is refused). Change files with Edit and Write, never `sed` or redirects.
 - Rules: {{rules}}
 

@@ -272,6 +272,15 @@ pub fn files(cx: &Ctx<'_>, m: &Mission) -> Result<RepoFiles, Outcome> {
     })
 }
 
+/// Whether the repo has CI on its base branch (REPO-9's `ci`: workflows on `origin/<base>`, never
+/// the PR's). A failing `git` counts as no CI: the run set is then everything.
+pub fn has_ci(cx: &Ctx<'_>, m: &Mission) -> bool {
+    cx.repo(m)
+        .ok()
+        .and_then(|r| repo::has_workflows(&r.path, &r.base).ok())
+        .unwrap_or(false)
+}
+
 /// The `## Towercab` section of the intent's `intent.md` (pipeline.md **Notes**), replaced
 /// whole; empty → removed. A gone intent: nothing.
 pub fn note(cx: &Ctx<'_>, m: &Mission, text: &str) -> Result<(), StepError> {

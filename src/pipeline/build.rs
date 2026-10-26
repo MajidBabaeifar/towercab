@@ -22,8 +22,8 @@ use super::runs::{self, Ended, Failure, Start, worker_session};
 use super::schemas::{DesignResult, PlanResult, WORKER, WorkerResult};
 use super::verify::{LineEnd, Lines, Runner};
 use super::{
-    Mode, Round, continue_what, conventional, files, git as pgit, intent, my_comments, prompts,
-    round, store_failed, wait_note,
+    Mode, Round, continue_what, conventional, files, git as pgit, has_ci, intent, my_comments,
+    prompts, round, store_failed, wait_note,
 };
 
 /// What the build prompt's rules say.
@@ -57,8 +57,10 @@ pub fn commit_message(
     }
 }
 
-/// The base's setup and checks lines, as the build prompt shows them.
-pub fn checks_text(files: &RepoFiles) -> String {
+/// The base's setup and checks lines, as the build prompt shows them: with CI and a
+/// ` ```fast ` block (REPO-9) the fast lines as written, the placeholders explained, the full
+/// suite left to CI.
+pub fn checks_text(files: &RepoFiles, ci: bool) -> String {
     let mut s = String::new();
     if !files.verifying.setup.is_empty() {
         s.push_str("setup (Towercab ran it already; network):\n");
@@ -66,9 +68,22 @@ pub fn checks_text(files: &RepoFiles) -> String {
             s.push_str(&format!("  {l}\n"));
         }
     }
-    s.push_str("checks (in order, all must pass):\n");
-    for l in &files.verifying.checks {
-        s.push_str(&format!("  {l}\n"));
+    match files.verifying.fast.as_ref().filter(|_| ci) {
+        None => {
+            s.push_str("checks (in order, all must pass):\n");
+            for l in &files.verifying.checks {
+                s.push_str(&format!("  {l}\n"));
+            }
+        }
+        Some(fast) => {
+            s.push_str(
+                "fast checks (run only these, in order, all must pass; the full suite runs in CI):\n",
+            );
+            for l in fast {
+                s.push_str(&format!("  {l}\n"));
+            }
+            s.push_str("{tests}: the paths of the test files you added or changed; {stems}: their file names without directory or extension. A line with one of them is skipped when you touched no test.\n");
+        }
     }
     s
 }
@@ -264,8 +279,8 @@ impl Build {
                 let plan =
                     std::fs::read_to_string(cx.store.path().join(&intent.dir).join("plan.md"))
                         .unwrap_or_else(|_| "(no plan.md: plan as you go)".into());
-                prompt(&plan, &intent, &spec_ids(&data), &checks_text(repo_files))
-                    .map_err(StepError::Bug)?
+                let checks = checks_text(repo_files, has_ci(cx, m));
+                prompt(&plan, &intent, &spec_ids(&data), &checks).map_err(StepError::Bug)?
             }
             Round::Verify | Round::Ci => {
                 let rep = data.get("repair").cloned().unwrap_or(Value::Null);
@@ -289,7 +304,7 @@ impl Build {
             Round::Conflict => {
                 let base = cx.repo(m).map_err(StepError::Bug)?.base.clone();
                 let what = merge_text(cx, m)?.unwrap_or_else(|| format!(
-                    "Towercab merged origin/{base} into your branch cleanly. Run every checks command and fix what the merge broke."
+                    "Towercab merged origin/{base} into your branch cleanly. Run the repo's commands as your first prompt gave them and fix what the merge broke."
                 ));
                 prompts::render("round", &[("what", &what)]).map_err(StepError::Bug)?
             }

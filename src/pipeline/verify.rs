@@ -1,5 +1,6 @@
 //! Verify (PIP-23): after each build or repair, in code: the base branch's ` ```setup ` lines
-//! (sandboxed with network and the repo's cache), then its ` ```checks ` lines in order under the sandbox, one child
+//! (sandboxed with network and the repo's cache), then its run set (REPO-9: ` ```checks `, or with CI its
+//! ` ```fast ` lines and the touched tests) in order under the sandbox, one child
 //! per line (steps `setup:<i>`, `check:<i>`). Red → the output to the worker session as a
 //! verify repair (cap 3, then `waiting: checks red`). [`run_lines`] is shared with the proof
 //! (PIP-30).
@@ -13,9 +14,10 @@ use serde_json::{Value, json};
 use crate::handler::{ChildEnd, ChildKind, Ctx, Handler, Outcome, Progress, StepError};
 use crate::machine::Waiting;
 use crate::mission::Mission;
+use crate::repo::{self, RepoFiles};
 
 use super::data::Data;
-use super::{Mode, files, git as pgit, sandbox, wait_note};
+use super::{Mode, files, git as pgit, has_ci, proof, sandbox, wait_note};
 
 /// How much of a red command's output goes to the worker (and `repair.findings`).
 pub const TAIL: usize = 16_000;
@@ -34,6 +36,8 @@ pub fn tail(path: &Path, bytes: usize) -> String {
 pub struct Lines {
     pub setup: Vec<String>,
     pub checks: Vec<String>,
+    /// `checks` is the ` ```fast ` set (REPO-9): the full suite is left to CI.
+    pub fast: bool,
 }
 
 impl Lines {
@@ -48,7 +52,13 @@ impl Lines {
         Lines {
             setup: keep(setup),
             checks: keep(checks),
+            fast: false,
         }
+    }
+
+    /// The `how` of a green run's title: `, fast` when only the fast set ran.
+    pub fn how(&self) -> &'static str {
+        if self.fast { ", fast" } else { "" }
     }
 
     /// The step of global line `k` (1-based): `setup:<i>` or `check:<j>`.
@@ -261,6 +271,27 @@ impl Runner {
     }
 }
 
+/// The lines of a verify or proof run (REPO-9): the base's setup, then its run set: with CI and
+/// a ` ```fast ` block those lines, the touched tests (the PR's test files at `HEAD` of the
+/// checkout, as the proof lays them over base) filled in; else every ` ```checks ` line.
+pub fn run_set_lines(cx: &Ctx<'_>, m: &Mission, f: &RepoFiles) -> Result<Lines, StepError> {
+    let fast = f.verifying.fast.is_some() && has_ci(cx, m);
+    let tests = if fast {
+        let dir = cx.checkout(m);
+        let base = cx.repo(m).map_err(StepError::Bug)?.base.clone();
+        let head = pgit::rev(cx, &dir, "HEAD")?;
+        proof::test_files(cx, &dir, &base, &head, &f.towercab)?
+    } else {
+        Vec::new()
+    };
+    let mut lines = Lines::of(
+        &f.verifying.setup,
+        &repo::run_set(&f.verifying, fast, &tests),
+    );
+    lines.fast = fast;
+    Ok(lines)
+}
+
 /// [`Runner`] of the base's verifying block in `dir` (`Err`: the repo files' wait).
 pub fn run_lines(
     cx: &Ctx<'_>,
@@ -275,7 +306,7 @@ pub fn run_lines(
     Ok(Ok(Runner {
         family,
         dir: dir.to_path_buf(),
-        lines: Lines::of(&f.verifying.setup, &f.verifying.checks),
+        lines: run_set_lines(cx, m, &f)?,
     }))
 }
 
@@ -345,9 +376,10 @@ impl Verify {
             LineEnd::Green(k) => {
                 let head = pgit::rev(cx, &cx.checkout(m), "HEAD")?;
                 let s = if k == 1 { "" } else { "s" };
+                let how = r.lines.how();
                 data.set(
                     "verify",
-                    json!({"head": head, "line": format!("green ({k} command{s})"), "n": r.n(m)}),
+                    json!({"head": head, "line": format!("green ({k} command{s}{how})"), "n": r.n(m)}),
                 );
                 data.set("repair", Value::Null);
                 Ok(Progress::Done(Outcome::ok().with("data", data.text())))
