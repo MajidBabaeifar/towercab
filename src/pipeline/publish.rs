@@ -287,6 +287,19 @@ impl Handler for Publish {
                         );
                         return wait_note(cx, &m, Waiting::ProtectedPathChanged, &why, &note);
                     }
+                    // Nothing new on a head whose CI was red: an empty commit starts a fresh run.
+                    // A rerun replays the workflows as they were; a fix outside the branch (a
+                    // shared workflow, a secret, a service) only reaches a new run (PIP-3).
+                    let dir = cx.checkout(&m);
+                    let data = Data::of(&m);
+                    let ci = data.get("ci");
+                    if let Some(head) = m.head.as_deref()
+                        && ci.and_then(|c| c.get("result")).and_then(Value::as_str) == Some("red")
+                        && ci.and_then(|c| c.get("head")).and_then(Value::as_str) == Some(head)
+                        && pgit::rev(cx, &dir, "HEAD")? == head
+                    {
+                        pgit::commit_empty(cx, &dir, "chore: run CI again")?;
+                    }
                     m = cx.record(&m, "push", &[])?;
                 }
                 "push" => {
