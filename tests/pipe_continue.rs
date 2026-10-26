@@ -752,6 +752,11 @@ fn test_env_failure_is_fault() {
     let (f, why) = towercab::env::classify_run("$ npm ci\nsh: 1: npm: not found\n").unwrap();
     assert_eq!(f.to_string(), "tool:npm");
     assert!(why.contains("npm: not found"));
+    let (f, _) = towercab::env::classify_run(
+        "  = note: /home/me/.local/bin/cc: 12: exec: /home/me/.local/zig-0.16.0/zig: not found",
+    )
+    .unwrap();
+    assert_eq!(f.to_string(), "tool:zig");
     assert!(towercab::env::classify_run("which provider?").is_none());
     assert!(towercab::env::classify_run("src/login.rs: not found in the plan").is_none());
 }

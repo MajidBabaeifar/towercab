@@ -477,11 +477,16 @@ pub fn classify_run(text: &str) -> Option<(Fault, String)> {
         return Some((Fault::Sandbox, l));
     }
     let re = regex::Regex::new(
-        r"(?:\bsh: \d+: ([A-Za-z0-9._+-]+): not found|\b([A-Za-z0-9._+-]+): command not found)",
+        r"(?:\bsh: \d+: ([A-Za-z0-9._+-]+): not found|\b([A-Za-z0-9._+-]+): command not found|: \d+: exec: (?:\S*/)?([A-Za-z0-9._+-]+): not found)",
     )
     .expect("static regex");
     let caps = re.captures(text)?;
-    let exe = caps.get(1).or(caps.get(2))?.as_str().to_string();
+    let exe = caps
+        .get(1)
+        .or(caps.get(2))
+        .or(caps.get(3))?
+        .as_str()
+        .to_string();
     let why = crate::outbox::cut(caps.get(0)?.as_str(), 200);
     Some((Fault::Tool(exe), why))
 }
