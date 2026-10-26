@@ -225,6 +225,8 @@ pub struct Run {
     /// Towercab's own secrets outside `HOME`'s [`SECRETS`] (`--config` elsewhere): the config
     /// file, `app.pem` and `secrets/` next to it, absolute (path, is a directory).
     pub deny_read: Vec<(PathBuf, bool)>,
+    /// The intent's `network` (PIP-24): `sandbox.network.allowedDomains` of a worker run.
+    pub network: Vec<String>,
     /// `[agent].sandbox_unix_sockets`: `allowAllUnixSockets`, with [`HOST_SOCKETS`] hidden.
     pub unix_sockets: bool,
     /// An eval's run (PIP-33): same argv, metrics agent `eval`.
@@ -263,6 +265,7 @@ impl Run {
             deny_write: Vec::new(),
             guard: false,
             deny_read: config_secrets(config),
+            network: Vec::new(),
             unix_sockets: config.agent.sandbox_unix_sockets,
             eval: false,
         }
@@ -523,6 +526,8 @@ pub fn settings(run: &Run, home: &Path, towercab: &Path) -> Value {
         sandbox["network"] = json!({
             "allowedDomains": [format!("localhost:{}", v.port), format!("127.0.0.1:{}", v.port)],
         });
+    } else if !run.network.is_empty() {
+        sandbox["network"] = json!({ "allowedDomains": run.network });
     }
     if run.unix_sockets {
         sandbox["network"]["allowAllUnixSockets"] = json!(true);

@@ -362,7 +362,8 @@ impl Build {
                 &format!(
                     "Question: {q}\n\nAnswer with the UI's box, `answer {id} <text>` on Telegram or \
                      `towercab answer {id} <text>`; protected paths: Unlock in the UI or \
-                     `towercab unlock {id} <glob>`.",
+                     `towercab unlock {id} <glob>`; network: Allow in the UI or \
+                     `towercab allow {id} <domain>`.",
                     id = m.intent.as_deref().unwrap_or_default()
                 ),
             );

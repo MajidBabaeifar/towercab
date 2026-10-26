@@ -10,7 +10,7 @@ use crate::http::{self, TIMEOUT};
 use crate::outbox::{self, Sender};
 
 /// The reply to `help`, `start` and anything [`parse`] refuses.
-pub const HELP: &str = "commands: status · next · approve <id> · answer <id> <text> · unlock <id> <glob> · drop <id> · retry <id> · release <id> · pause · resume";
+pub const HELP: &str = "commands: status · next · approve <id> · answer <id> <text> · unlock <id> <glob> · allow <id> <domain> · drop <id> · retry <id> · release <id> · pause · resume";
 
 /// A message from `getUpdates`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,6 +78,13 @@ pub fn parse(text: &str) -> Result<TgCommand, String> {
             [id, globs @ ..] if !globs.is_empty() => Ok(TgCommand::Cmd(Cmd::Unlock(
                 id.to_string(),
                 globs.iter().map(|g| g.to_string()).collect(),
+            ))),
+            _ => Err(bad()),
+        },
+        "allow" => match args.as_slice() {
+            [id, domains @ ..] if !domains.is_empty() => Ok(TgCommand::Cmd(Cmd::Allow(
+                id.to_string(),
+                domains.iter().map(|d| d.to_string()).collect(),
             ))),
             _ => Err(bad()),
         },

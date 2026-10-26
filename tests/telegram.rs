@@ -503,10 +503,15 @@ fn test_telegram_answer_unlock_drop() {
         ))
     );
     assert_eq!(
+        parse("allow 0901 registry.npmjs.org").unwrap(),
+        TgCommand::Cmd(Cmd::Allow("0901".into(), vec!["registry.npmjs.org".into()]))
+    );
+    assert_eq!(
         parse("drop 0901").unwrap(),
         TgCommand::Cmd(Cmd::Drop("0901".into()))
     );
     assert!(parse("answer 0901").is_err());
     assert!(parse("unlock 0901").is_err());
+    assert!(parse("allow 0901").is_err());
     assert!(towercab::telegram::HELP.contains("answer <id> <text>"));
 }

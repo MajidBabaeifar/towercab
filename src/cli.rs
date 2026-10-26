@@ -86,6 +86,12 @@ enum Command {
         #[arg(required = true, num_args = 1..)]
         globs: Vec<String>,
     },
+    /// Let an intent's worker reach network domains (e.g. registry.npmjs.org), and go on if it waits
+    Allow {
+        id: String,
+        #[arg(required = true, num_args = 1..)]
+        domains: Vec<String>,
+    },
     /// Drop an intent: its mission stops, its folder moves to done/
     Drop { id: String },
     /// Start an intent over as a new attempt
@@ -250,6 +256,9 @@ where
             command(&args.config, &args.home, Cmd::Answer(id, text.join(" ")))
         }
         Command::Unlock { id, globs } => command(&args.config, &args.home, Cmd::Unlock(id, globs)),
+        Command::Allow { id, domains } => {
+            command(&args.config, &args.home, Cmd::Allow(id, domains))
+        }
         Command::Drop { id } => command(&args.config, &args.home, Cmd::Drop(id)),
         Command::Retry { fresh: _, id } => command(&args.config, &args.home, Cmd::RetryFresh(id)),
         Command::Release { id } => command(&args.config, &args.home, Cmd::Release(id)),

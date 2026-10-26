@@ -416,6 +416,7 @@ fn test_wait_inputs_and_context() {
         "data-cmd=\"answer\"",
         "id=\"ans-261025-0901\"",
         "data-cmd=\"unlock\"",
+        "data-cmd=\"allow\"",
         "data-cmd=\"drop\"",
         "data-cmd=\"approve\"",
     ] {
@@ -475,7 +476,15 @@ fn test_wait_inputs_and_context() {
         send(r#"{"cmd":"unlock","arg":"261025-0901","text":".github/workflows/** CLAUDE.md"}"#),
         200
     );
+    assert_eq!(
+        send(r#"{"cmd":"allow","arg":"261025-0901","text":"registry.npmjs.org"}"#),
+        200
+    );
     assert_eq!(send(r#"{"cmd":"drop","arg":"261025-0902"}"#), 200);
+    assert_eq!(
+        send(r#"{"cmd":"allow","arg":"261025-0901","text":"https://evil.example/x"}"#),
+        400
+    );
     assert_eq!(
         send(r#"{"cmd":"answer","arg":"261025-0901","text":"  "}"#),
         400
@@ -500,6 +509,11 @@ fn test_wait_inputs_and_context() {
                 "unlock".into(),
                 "261025-0901".into(),
                 ".github/workflows/**\nCLAUDE.md".into()
+            ),
+            (
+                "allow".into(),
+                "261025-0901".into(),
+                "registry.npmjs.org".into()
             ),
             ("drop".into(), "261025-0902".into(), String::new()),
         ]

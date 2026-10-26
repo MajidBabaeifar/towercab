@@ -1008,6 +1008,13 @@ fn action(ctx: &Ctx, r: &Request) -> Response {
         {
             Cmd::Unlock(arg.into(), globs)
         }
+        (Some("allow"), true)
+            if !globs.is_empty()
+                && globs.len() <= 20
+                && globs.iter().all(|d| commands::domain_ok(d)) =>
+        {
+            Cmd::Allow(arg.into(), globs)
+        }
         (Some("drop"), true) => Cmd::Drop(arg.into()),
         (Some("approve"), true) => Cmd::Approve(arg.into()),
         (Some("retry_fresh"), true) => Cmd::RetryFresh(arg.into()),
@@ -1020,6 +1027,12 @@ fn action(ctx: &Ctx, r: &Request) -> Response {
             return Response::text(
                 400,
                 "unlock: relative paths or globs, no `..`, 1-20 of them",
+            );
+        }
+        (Some("allow"), true) => {
+            return Response::text(
+                400,
+                "allow: lowercase hosts like registry.npmjs.org, 1-20 of them",
             );
         }
         _ => return Response::text(400, "unknown command or argument"),
@@ -1060,9 +1073,9 @@ pre.log{font-size:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all
 select,input{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:2px 4px}
 form.edit{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap}.md p{margin:4px 0}
 li.wait,div.wait{background:var(--card);border-radius:8px;padding:8px 10px;margin:8px 0;list-style:none}.why{white-space:pre-wrap}
-.ctx details{margin:6px 0}.ctx summary{cursor:pointer;color:var(--here)}.answer,.unlock{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.ctx details{margin:6px 0}.ctx summary{cursor:pointer;color:var(--here)}.answer,.unlock,.allow{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
 .answer textarea{flex:1;min-width:220px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px}
-.unlock input{flex:1;min-width:220px}"#;
+.unlock input,.allow input{flex:1;min-width:220px}"#;
 
 const SCRIPT: &str = r#"const T=document.querySelector('meta[name=towercab-token]').content;
 const S=['top','onme','now','finished','next','attention','activity','log'];const BASE=document.title;

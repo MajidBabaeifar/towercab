@@ -32,6 +32,9 @@ pub enum Cmd {
     Answer(String, String),
     /// Globs added to the intent's `unlock` (PIP-29), then as `approve` when it waits.
     Unlock(String, Vec<String>),
+    /// Domains added to the intent's `network` (PIP-24): its worker runs may reach them; then
+    /// as `approve` when it waits.
+    Allow(String, Vec<String>),
     /// The intent dropped (`stage: dropped`): its mission stops (`intent_removed`).
     Drop(String),
 }
@@ -47,6 +50,15 @@ pub fn glob_ok(g: &str) -> bool {
         && !g.split('/').any(|p| p == "..")
         && g.chars()
             .all(|c| c.is_ascii_alphanumeric() || "._/*?-".contains(c))
+}
+
+/// A `network` domain: lowercase host (`*.` prefix allowed), at least one dot, optional
+/// `:port`, at most 253 characters.
+pub fn domain_ok(d: &str) -> bool {
+    static DOMAIN: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(:[0-9]{1,5})?$").expect("domain")
+    });
+    d.len() <= 253 && DOMAIN.is_match(d)
 }
 
 pub const PAUSED: &str = "paused: no picks; merges and reverts hold";
@@ -66,6 +78,7 @@ impl Cmd {
             Cmd::Trust(_) => "trust",
             Cmd::Answer(..) => "answer",
             Cmd::Unlock(..) => "unlock",
+            Cmd::Allow(..) => "allow",
             Cmd::Drop(_) => "drop",
         }
     }
@@ -87,16 +100,17 @@ impl Cmd {
             | Cmd::Trust(a)
             | Cmd::Answer(a, _)
             | Cmd::Unlock(a, _)
+            | Cmd::Allow(a, _)
             | Cmd::Drop(a) => a,
             Cmd::Pause | Cmd::Resume => "",
         }
     }
 
-    /// `commands.text`: an answer, or the unlock globs one per line.
+    /// `commands.text`: an answer, or the unlock globs or allowed domains one per line.
     pub fn text(&self) -> String {
         match self {
             Cmd::Answer(_, t) => t.clone(),
-            Cmd::Unlock(_, g) => g.join("\n"),
+            Cmd::Unlock(_, g) | Cmd::Allow(_, g) => g.join("\n"),
             _ => String::new(),
         }
     }
@@ -112,6 +126,7 @@ impl Cmd {
             "trust" => Cmd::Trust(arg),
             "answer" => Cmd::Answer(arg, row.text.clone()),
             "unlock" => Cmd::Unlock(arg, row.text.lines().map(str::to_string).collect()),
+            "allow" => Cmd::Allow(arg, row.text.lines().map(str::to_string).collect()),
             "drop" => Cmd::Drop(arg),
             other => return Err(format!("commands {}: unknown name {other:?}", row.id)),
         })
@@ -242,6 +257,7 @@ fn plan(cx: &CmdCx, cmd: &Cmd, row: &CommandRow) -> Result<Plan, String> {
         | Cmd::Release(q)
         | Cmd::Answer(q, _)
         | Cmd::Unlock(q, _)
+        | Cmd::Allow(q, _)
         | Cmd::Drop(q) => match resolve(cx, cmd, q) {
             Ok(i) => i,
             Err(e) => return Ok(Plan::Reply(format!("{word}: {e}"))),
@@ -359,6 +375,27 @@ fn plan(cx: &CmdCx, cmd: &Cmd, row: &CommandRow) -> Result<Plan, String> {
                 (Ok(()), _) => Plan::Reply(format!("unlocked {} for {id}", globs.join(", "))),
             }
         }
+        (Cmd::Allow(_, domains), m) => {
+            if domains.is_empty() || domains.len() > 20 || !domains.iter().all(|d| domain_ok(d)) {
+                return Ok(Plan::Reply(format!(
+                    "{word}: domains are lowercase hosts like registry.npmjs.org (`*.` and `:port` allowed), 1-20 of them"
+                )));
+            }
+            let add = |i: &mut Intent| {
+                let mut all: Vec<String> = i.network().to_vec();
+                for d in domains {
+                    if !all.contains(d) {
+                        all.push(d.clone());
+                    }
+                }
+                i.set("network", crate::intents::Value::List(all))
+            };
+            match (write("allow", &add), m) {
+                (Err(e), _) => Plan::Reply(format!("{word}: {e}")),
+                (Ok(()), Some(m)) if m.stage.waits() => on_mission(&m),
+                (Ok(()), _) => Plan::Reply(format!("allowed {} for {id}", domains.join(", "))),
+            }
+        }
         (Cmd::Drop(_), _) => {
             match write("drop", &|i| {
                 i.set("stage", crate::intents::Value::Str("dropped".into()))
@@ -382,14 +419,16 @@ fn on_mission(
     let word = cmd.word();
     let cur = mission::get(tx, id)?;
     let (event, takes) = match cmd {
-        Cmd::Approve(_) | Cmd::Answer(..) | Cmd::Unlock(..) => (Event::Approve, Next::Continue),
+        Cmd::Approve(_) | Cmd::Answer(..) | Cmd::Unlock(..) | Cmd::Allow(..) => {
+            (Event::Approve, Next::Continue)
+        }
         Cmd::RetryFresh(_) => (Event::RetryFresh, Next::Fresh),
         Cmd::Release(_) => (Event::Release, Next::Go(Stage::Release)),
         _ => return Err(format!("{word} isn't a mission's command")),
     };
     if machine::next(cur.stage, event) != takes {
         return Ok(match cmd {
-            Cmd::Approve(_) | Cmd::Answer(..) | Cmd::Unlock(..) => {
+            Cmd::Approve(_) | Cmd::Answer(..) | Cmd::Unlock(..) | Cmd::Allow(..) => {
                 format!("{word}: {intent} isn't waiting on you")
             }
             Cmd::Release(_) => format!("{word}: {intent} isn't waiting for release"),
@@ -418,6 +457,7 @@ fn on_mission(
         Cmd::Approve(_) => format!("approved {intent}"),
         Cmd::Answer(..) => format!("answered {intent}: continuing"),
         Cmd::Unlock(_, g) => format!("unlocked {} for {intent}: continuing", g.join(", ")),
+        Cmd::Allow(_, d) => format!("allowed {} for {intent}: continuing", d.join(", ")),
         Cmd::Release(_) => format!("releasing {intent}"),
         _ => {
             let fresh = mission::unfinished_for(tx, intent)?

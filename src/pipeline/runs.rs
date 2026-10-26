@@ -190,6 +190,9 @@ pub fn start(cx: &Ctx<'_>, m: &Mission, st: Start) -> Result<Progress, StepError
             .cloned()
             .collect();
         run.bash = cx.repo(&m).map_err(StepError::Bug)?.bash.clone();
+        if m.intent.is_some() {
+            run.network = super::intent(cx, &m)?.network().to_vec();
+        }
     }
     let f = run.files();
     let asked = asked_of(&f.prompt);

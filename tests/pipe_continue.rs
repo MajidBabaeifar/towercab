@@ -707,6 +707,36 @@ fn test_unlock_continues() {
 }
 
 #[test]
+fn test_allow_continues() {
+    // The worker can't reach the npm registry: I allow it; its next run's sandbox may.
+    let mut p = asked("can you allow registry.npmjs.org?");
+    let db = p.w.db();
+    let cmd = Cmd::Allow(ID.into(), vec!["registry.npmjs.org".into()]);
+    commands::queue(&db, &cmd, "ui").unwrap();
+    p.until(10, |w| {
+        w.transitions(ID)
+            .iter()
+            .filter(|t| t.2 == "blocked")
+            .count()
+            >= 2
+    });
+    let md = p.w.intent_md(DIR);
+    assert!(md.contains("network: [registry.npmjs.org]"), "{md}");
+    let settings = p.claude.flag(4, "--settings").unwrap();
+    let s: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(settings).unwrap()).unwrap();
+    assert_eq!(
+        s["sandbox"]["network"]["allowedDomains"],
+        json!(["registry.npmjs.org"])
+    );
+    // Refused: not a host.
+    for bad in ["registry", "https://x.org", "x.org/path", "*", "X.ORG"] {
+        assert!(!commands::domain_ok(bad), "{bad}");
+    }
+    assert!(commands::domain_ok("*.npmjs.org") && commands::domain_ok("localhost.dev:8080"));
+}
+
+#[test]
 fn test_drop_stops() {
     let mut p = asked("should I go on?");
     let db = p.w.db();

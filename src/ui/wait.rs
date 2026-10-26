@@ -101,7 +101,7 @@ pub fn context(ctx: &Ctx, m: Option<&Mission>, intent: Option<&Intent>) -> Strin
 }
 
 /// The inputs for a wait on `id`: the stage's buttons, an answer box, an unlock field
-/// (prefilled with the blocked paths), Drop.
+/// (prefilled with the blocked paths), a network allow field, Drop.
 pub fn controls(ctx: &Ctx, m: Option<&Mission>, id: &str) -> String {
     let key = esc(id);
     let mut out = String::from("<div class=\"btns\">");
@@ -130,6 +130,11 @@ pub fn controls(ctx: &Ctx, m: Option<&Mission>, id: &str) -> String {
         "<div class=\"unlock\"><input id=\"unl-{key}\" value=\"{}\" placeholder=\"paths or globs to unlock, e.g. .github/workflows/**\" size=\"40\">\
          <button data-cmd=\"unlock\" data-arg=\"{key}\" data-input=\"unl-{key}\">Unlock and continue</button></div>",
         esc(&prefill)
+    );
+    let _ = write!(
+        out,
+        "<div class=\"allow\"><input id=\"net-{key}\" placeholder=\"domains the worker may reach, e.g. registry.npmjs.org\" size=\"40\">\
+         <button data-cmd=\"allow\" data-arg=\"{key}\" data-input=\"net-{key}\">Allow and continue</button></div>"
     );
     out
 }
