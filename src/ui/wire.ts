@@ -3,7 +3,7 @@
 import { join } from "node:path";
 import type { Config } from "../config.ts";
 import { fixFor } from "../faults.ts";
-import type { GitHub } from "../handlers.ts";
+import { type GitHub, systemClock } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { Intent } from "../intents/types.ts";
 import type { Loop } from "../loop.ts";
@@ -93,4 +93,40 @@ export function startLoopUi(loop: Loop, config: Config, github: GitHub, home: Ho
     distDir: DIST,
     log: (l) => loop.d.log(`ui: ${l}`),
   });
+}
+
+/** UI-2: the page without a loop, read-only, with a banner. */
+export async function serveReadOnly(
+  config: Config,
+  home: Home,
+  db: import("../db.ts").Db,
+  store: import("../intents/types.ts").IntentStore,
+  tools: import("../tools.ts").Tools,
+): Promise<UiServer> {
+  let version = { commit: "unknown", behind: null as number | null };
+  void gitVersion({ tools, checkout: checkoutRoot() }).then((v) => {
+    version = v;
+  });
+  const server = startUi({
+    port: config.ui.port,
+    sources: {
+      db,
+      store,
+      config,
+      clock: systemClock,
+      home,
+      running: false,
+      paused: () => db.meta("paused") === "1",
+      problems: () => [],
+      version: () => version,
+      upNext: () => [],
+      prUrl: (repo, n) => `https://github.com/${repo}/pull/${n}`,
+      intentUrl: (i) => store.url(i),
+    },
+    actions: null,
+    distDir: DIST,
+    log: () => {},
+  });
+  await server.ready;
+  return server;
 }

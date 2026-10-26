@@ -372,10 +372,24 @@ async function run(
       return `merged ${gh}#${n} as ${w.config.github?.me}; Towercab continues on its next read`;
     }
     case "ui": {
-      const url = `http://localhost:${w.config.ui.port}/`;
       if (!w.config.ui.port) throw new Error("ui is off: [ui] port = 0");
-      if (!v["no-open"]) await tools.run("xdg-open", [url], { timeoutMs: 10_000 });
-      return url;
+      const url = `http://localhost:${w.config.ui.port}/`;
+      if (w.home.holder() !== null) {
+        if (!v["no-open"]) await tools.run("xdg-open", [url], { timeoutMs: 10_000 });
+        return url;
+      }
+      // No loop: serve the same page read-only until Ctrl-C (UI-2).
+      const { serveReadOnly } = await import("./ui/wire.ts");
+      const server = await serveReadOnly(w.config, w.home, w.db, await w.store(), tools);
+      const at = server.url() ?? url;
+      process.stdout.write(`${at} (read-only: towercab isn't running)\n`);
+      if (!v["no-open"]) await tools.run("xdg-open", [at], { timeoutMs: 10_000 });
+      await new Promise<void>((done) => {
+        process.once("SIGINT", done);
+        process.once("SIGTERM", done);
+      });
+      await server.stop();
+      return 0;
     }
     default:
       return 0;

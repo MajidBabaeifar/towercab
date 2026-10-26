@@ -1,6 +1,6 @@
 // The command line (LOOP-15).
 
-import { writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { COMMANDS, main } from "../src/cli.ts";
@@ -88,4 +88,22 @@ test("cli: commands", async () => {
   ]) {
     expect(COMMANDS).toContain(c);
   }
+});
+
+test("ui: the ui command", async () => {
+  const t = new FakeTools();
+  const { config, home } = setup();
+  writeFileSync(config, `${readFileSync(config, "utf8")}\n[ui]\nport = 0\n`);
+  expect(await main(["--config", config, "--home", home, "ui", "--no-open"], t)).toBe(1);
+  expect(err).toContain("ui is off: [ui] port = 0");
+  // With a loop holding the home, the command opens its page.
+  const { config: c2, home: h2 } = setup();
+  writeFileSync(c2, `${readFileSync(c2, "utf8")}\n[ui]\nport = 7399\n`);
+  mkdirSync(h2, { recursive: true });
+  writeFileSync(join(h2, "towercab.lock"), `${process.pid}\n`);
+  t.on("xdg-open", () => okResult());
+  out = "";
+  expect(await main(["--config", c2, "--home", h2, "ui"], t)).toBe(0);
+  expect(out.trim()).toBe("http://localhost:7399/");
+  expect(t.lines("xdg-open")).toEqual(["http://localhost:7399/"]);
 });
