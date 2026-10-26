@@ -423,6 +423,19 @@ export class Loop {
       if (o) this.move(m, o);
     }
     const busy = new Set(unfinished(db).map((m) => m.intent));
+    // `retry: fresh` on an intent with no mission: queue it again (LOOP-18).
+    for (const i of listing.open) {
+      if (i.retry !== "fresh" || busy.has(i.id)) continue;
+      try {
+        await this.d.store.update(i.id, "retry", (e) => {
+          e.removeField("retry");
+          e.removeField("stage");
+          e.removeField("waiting");
+        });
+      } catch (e) {
+        this.d.log(`retry ${i.id}: ${(e as Error).message}`);
+      }
+    }
     for (const id of orphans(listing, busy)) {
       try {
         await this.d.store.update(id, "unstage", (e) => e.removeField("stage"));
@@ -620,11 +633,11 @@ export class Loop {
       cur.n++;
       full.set(m.repo, cur);
     }
-    const cooling = new Map<string, number>();
+    const cooling = new Map<string, string>();
     for (const row of db.all<{ key: string }>("SELECT key FROM meta WHERE key LIKE 'cooldown:%'")) {
       const model = row.key.slice("cooldown:".length);
       const until = this.cooldownUntil(model);
-      if (until) cooling.set(model, until);
+      if (until) cooling.set(model, clockTime(until, this.now));
     }
     return {
       cutoff: config.intents.cutoff,
@@ -737,6 +750,15 @@ export class Loop {
   state(): { listing: Listing | null; listingError: string | null } {
     return { listing: this.listing, listingError: this.listingError };
   }
+}
+
+/** `HH:MM` today, else `YYYY-MM-DD HH:MM`, local time. */
+export function clockTime(unix: number, now: number): string {
+  const d = new Date(unix * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const sameDay = new Date(now * 1000).toDateString() === d.toDateString();
+  return sameDay ? hm : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`;
 }
 
 function sleep(ms: number): Promise<void> {
