@@ -1,10 +1,12 @@
 // The `review` stage (PIP-4, PIP-5, PIP-49): a fresh read-only Claude session reviews the code PR
 // against the intent, the plan and REVIEW.md; code decides approval; the verdict is posted.
 
+import { gitEnv, NO_HOOKS } from "../checkout.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import { ok } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import type { Review } from "../repo/files.ts";
+import { check } from "../tools.ts";
 import { coGit, data, ended, intentOf, note, repoFiles, spawnRun } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { parseResult, REVIEW_SCHEMA, type ReviewResult } from "./schemas.ts";
@@ -42,11 +44,17 @@ export function reviewComment(r: ReviewResult, review: Review): string {
   return parts.join("\n\n");
 }
 
+/** The PR diff's `git patch-id --stable` (line numbers and whitespace don't change it); "" for none. */
 async function patchId(cx: Ctx, m: Mission): Promise<string> {
   const repo = cx.repo(m);
   const diff = await coGit(cx, m, ["diff", `refs/remotes/origin/${repo.base}...HEAD`]);
-  const { createHash } = await import("node:crypto");
-  return createHash("sha256").update(diff).digest("hex");
+  if (!diff.trim()) return "";
+  const r = await cx.tools.run("git", [...NO_HOOKS, "patch-id", "--stable"], {
+    cwd: cx.checkout(m),
+    env: gitEnv(cx.checkout(m)),
+    input: diff,
+  });
+  return check(r, "git patch-id").trim().split(/\s+/)[0] ?? "";
 }
 
 export const reviewHandler: Handler = {
