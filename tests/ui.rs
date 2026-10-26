@@ -285,7 +285,7 @@ fn test_actions_queue_commands() {
         r#"{"cmd":"approve","arg":"../x"}"#,
         r#"{"cmd":"approve"}"#,
         r#"{"cmd":"pause","arg":"x"}"#,
-        r#"{"cmd":"drop","arg":"261025-0901"}"#,
+        r#"{"cmd":"nuke","arg":"261025-0901"}"#,
         "not json",
     ] {
         assert_eq!(post(port, &me, &ctx.token, bad).status, 400, "{bad}");

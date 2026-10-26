@@ -251,8 +251,21 @@ pub fn intent_page(ctx: &Ctx, id: &str) -> Result<Response, String> {
             let _ = write!(b, "<p>{}</p>", link(Some(&plan), "plan.md"));
         }
     }
-    if let Some(w) = i.waiting() {
-        let _ = write!(b, "<p class=\"warn\">waiting: {}</p>", esc(w));
+    // A wait (the mission's, else the intent's own): what I decide on and the inputs (UI-20).
+    let waiting_m = missions
+        .iter()
+        .find(|m| m.finished.is_none() && m.stage.waits());
+    if let Some(w) = waiting_m.and_then(|m| m.waiting.as_deref()).or(i.waiting()) {
+        let _ = write!(
+            b,
+            "<div class=\"wait\"><p class=\"warn\"><b>waiting on you: {}</b></p>",
+            esc(w)
+        );
+        b.push_str(&super::wait::context(ctx, waiting_m, Some(i)));
+        if ctx.can_act() && open {
+            b.push_str(&super::wait::controls(ctx, waiting_m, &i.id));
+        }
+        b.push_str("</div>");
     }
     if open {
         b.push_str(&edit_form(i, ctx.can_act()));
@@ -264,6 +277,7 @@ pub fn intent_page(ctx: &Ctx, id: &str) -> Result<Response, String> {
         "Constraints",
         "Open questions",
         "Towercab",
+        "Answers",
     ] {
         if let Some(text) = i.section(title).filter(|t| !t.trim().is_empty()) {
             let _ = write!(
@@ -326,7 +340,7 @@ pub fn intent_page(ctx: &Ctx, id: &str) -> Result<Response, String> {
 }
 
 /// Markdown-ish text: bullets become a list, the rest paragraphs; all escaped.
-fn md(text: &str) -> String {
+pub(crate) fn md(text: &str) -> String {
     let mut out = String::new();
     let mut in_list = false;
     for line in text.lines() {

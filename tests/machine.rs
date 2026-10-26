@@ -323,19 +323,21 @@ fn test_continue_to() {
             "review and merge PR" => Next::Go(Stage::Gate),
             "authorize release" => Next::Go(Stage::Release),
             "e2e red after your merge (two-way)" | "production e2e red" => Next::Go(Stage::Done),
+            "tests don't prove the change" => Next::Go(Stage::Publish),
             "deploy not seen"
             | "revert failed"
             | "add CLAUDE.md verifying block"
             | "fix repo files"
             | "release failed"
             | "CI stuck"
+            | "checks timed out"
             | "no CI checks appeared" => Next::Go(from),
             "crashed at build" => Next::Go(Stage::Build),
             "reverted, refine" | "PR closed" => Next::Fresh,
             _ => Next::Go(Stage::Build),
         }
     };
-    assert_eq!(Waiting::ALL.len(), 30);
+    assert_eq!(Waiting::ALL.len(), 31);
     for w in Waiting::ALL {
         assert_eq!(continue_to(&w, from), want(&w), "{w}");
         // Text round-trips; a parameter is kept.

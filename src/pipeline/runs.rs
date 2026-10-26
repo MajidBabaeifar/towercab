@@ -182,14 +182,16 @@ pub fn start(cx: &Ctx<'_>, m: &Mission, st: Start) -> Result<Progress, StepError
         let round = super::round(cx.db.conn(), &m)?;
         run.deny_write = guard::write_rules(cx, &m, &repo, round)?;
         run.guard = true;
-        run.setup_checks = repo
-            .verifying
-            .setup
-            .iter()
-            .chain(&repo.verifying.checks)
-            .cloned()
-            .collect();
+        // The setup and the run set (REPO-9): with CI and a ```fast block, only those commands.
+        run.setup_checks = repo.verifying.allowed(super::has_ci(cx, &m));
         run.bash = cx.repo(&m).map_err(StepError::Bug)?.bash.clone();
+        if m.intent.is_some() {
+            run.network = super::intent(cx, &m)?.network().to_vec();
+        }
+        let cache = super::sandbox::cache_dir(cx, &m)?.join("worker");
+        std::fs::create_dir_all(&cache)
+            .map_err(|e| StepError::Bug(format!("{}: {e}", cache.display())))?;
+        run.cache = Some(std::path::absolute(&cache).unwrap_or(cache));
     }
     let f = run.files();
     let asked = asked_of(&f.prompt);
@@ -433,6 +435,22 @@ pub fn retry_result(cx: &Ctx<'_>, m: &Mission, f: Failure) -> Result<Progress, S
     st.session = SessionArg::Resume(m.session.clone());
     st.eval = eval;
     start(cx, &m, st)
+}
+
+/// Resumes the session at step `<step>:<suffix>` with prompt `name` (`prompts/<name>.md`):
+/// one more round of the same run, e.g. after a misread refusal (PIP-24).
+pub fn resume(cx: &Ctx<'_>, m: &Mission, suffix: &str, name: &str) -> Result<Progress, StepError> {
+    let (kind, model, _, eval) = recorded(m)?;
+    let mut st = Start::new(
+        kind,
+        &format!("{}:{suffix}", m.step),
+        &model,
+        prompts::render(name, &[]).map_err(StepError::Bug)?,
+    );
+    st.schema = schema_of(kind);
+    st.session = SessionArg::Resume(m.session.clone());
+    st.eval = eval;
+    start(cx, m, st)
 }
 
 /// The session is gone (LOOP-7): a worker kind gets a new uuid and a `New` run with

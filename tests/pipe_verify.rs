@@ -547,6 +547,76 @@ fn test_verify_check_runs_posted() {
     assert!(proof.contains(&"output[title]=red on base: sh check.sh".to_string()));
 }
 
+/// The login world with a ```fast block, built, verified and proved (a4).
+fn published_fast(ci: bool) -> Pipe {
+    let mut p = Pipe::login_fast(ci);
+    p.plans(2).builds(3);
+    p.step_to(ID, Stage::Publish, 8);
+    p
+}
+
+#[test]
+fn test_verify_run_set() {
+    // With CI the ```fast lines run, `{tests}` the test files the PR added: verify, then the
+    // proof on base (its overlay) with the same lines.
+    let p = published_fast(true);
+    let ran = p.ran();
+    let dir = p.checkout(ID).display().to_string();
+    assert_eq!(
+        ran,
+        [format!("lint {dir}"), format!("lint {dir}-proof")],
+        "{ran:?}"
+    );
+    let d = p.data(ID);
+    assert_eq!(d["verify"]["line"], "green (2 commands, fast)");
+    let log = fs::read_to_string(p.runs(ID).join("verify-1.log")).unwrap();
+    assert!(log.contains("$ sh fast.sh tests/login_test.sh\n"), "{log}");
+    assert!(!log.contains("sh check.sh"), "{log}");
+    // The check run says so in its title.
+    let mut p = p;
+    assert_eq!(p.step(ID), "261001-0900: publish → ci");
+    let runs = p.gh.find("api -X POST repos/me/web/check-runs");
+    let verify = p.gh.argv(runs[0]);
+    assert!(verify.contains(&"output[title]=green (2 commands, fast)".to_string()));
+    // The setup still runs before the checks, in the checkout and the overlay.
+    assert_eq!(p.setups().len(), 3, "{:?}", p.setups());
+}
+
+#[test]
+fn test_verify_fast_skips_full_suite() {
+    // CI on the base: the full ```checks (`echo full`) never run, before publish or in the proof.
+    let p = published_fast(true);
+    assert!(!p.ran().iter().any(|l| l == "full"), "{:?}", p.ran());
+    assert!(
+        !p.bwraps()
+            .iter()
+            .any(|a| a.contains(&"sh check.sh".to_string()))
+    );
+    // No CI on the base: everything runs locally, as before (verify, then the proof).
+    let p = published_fast(false);
+    assert_eq!(p.ran(), ["full", "full"], "{:?}", p.ran());
+    assert_eq!(p.data(ID)["verify"]["line"], "green (2 commands)");
+}
+
+#[test]
+fn test_proof_uses_run_set() {
+    let p = published_fast(true);
+    let d = p.data(ID);
+    // The overlay ran the fast lines: the PR's test (laid over base) fails there.
+    assert_eq!(
+        d["proof"]["line"],
+        "red on base: sh fast.sh tests/login_test.sh"
+    );
+    let log = fs::read_to_string(p.runs(ID).join("proof-1.log")).unwrap();
+    assert!(log.contains("$ sh fast.sh tests/login_test.sh\n"), "{log}");
+    assert!(!log.contains("sh check.sh"), "{log}");
+    assert_eq!(p.ran().len(), 2, "{:?}", p.ran());
+    assert!(p.ran()[1].ends_with("-proof"), "{:?}", p.ran());
+    // CI off: the proof's lines are the full ```checks, as before.
+    let p = published_fast(false);
+    assert_eq!(p.data(ID)["proof"]["line"], "red on base: sh check.sh");
+}
+
 #[test]
 fn test_proof_red_on_base() {
     let p = published();
@@ -711,4 +781,58 @@ fn test_proof_setup_failure_not_red() {
     assert_eq!(m.verify_repairs, 0);
     let log = fs::read_to_string(p.runs(ID).join("proof-1.log")).unwrap();
     assert_eq!(log.matches("\nno db\n").count(), 2, "{log}");
+}
+
+#[test]
+fn test_check_timeout_waits() {
+    // A check that hits its time limit isn't sent to the worker: it waits on me, and my approve
+    // reruns verify with twice the time for this intent.
+    let mut p = Pipe::login("a: 4\n");
+    p.w.config.agent.check_timeout = Duration::from_secs(1);
+    p.open_with(Pipe::handlers());
+    p.plans(2);
+    p.claude
+        .script(
+            3,
+            &(writes("src/login.rs", "pub fn login() {}\n")
+                + &writes("tests/login_test.sh", "sleep 30\n")),
+        )
+        .answer(3, &FakeClaude::result(done("Adds login.")));
+    p.step_to(ID, Stage::Blocked, 20);
+    let m = p.mission(ID);
+    assert_eq!(m.waiting.as_deref(), Some("checks timed out"));
+    assert_eq!(m.why.as_deref(), Some("sh check.sh: timed out after 1 min"));
+    assert_eq!(m.verify_repairs, 0);
+    assert_eq!(p.claude.calls(), 3, "no repair run");
+    assert!(
+        p.w.intent_md(common::pipe::LOGIN_DIR)
+            .contains("Approve to rerun verify with 2 min per check")
+    );
+    towercab::commands::queue(
+        &p.w.db(),
+        &towercab::commands::Cmd::Approve(ID.into()),
+        "cli",
+    )
+    .unwrap();
+    let lp = p.lp.as_mut().unwrap();
+    p.w.pass(lp);
+    assert_eq!(p.data(ID)["check_x"], 2);
+    assert_eq!(p.w.stage(ID), Some(Stage::Verify));
+}
+
+#[test]
+fn test_proof_setup_before_tests() {
+    // The PR's tests need the change to even set up (Go: `go mod vendor` with a test importing
+    // a new package). Laid after the setup, they fail the checks on base: proven, not blocked.
+    let mut p = Pipe::login("a: 4\n");
+    let setup = format!(
+        "case \"$PWD\" in *-proof) test ! -e tests/login_test.sh || {{ echo 'no package' >&2; exit 1; }};; esac; echo \"$PWD\" >> '{}'",
+        p.w.root.join("setup.log").display()
+    );
+    p.base("web", &[("CLAUDE.md", &claude_md(&setup))], "setup");
+    p.plans(2).builds(3);
+    p.step_to(ID, Stage::Publish, 10);
+    let line = p.data(ID)["proof"]["line"].clone();
+    assert_eq!(line, "red on base: sh check.sh");
+    assert!(p.mission(ID).waiting.is_none());
 }

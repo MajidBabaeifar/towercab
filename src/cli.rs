@@ -27,7 +27,11 @@ use crate::service;
 use crate::status::{self, Snapshot};
 
 #[derive(Parser, Debug)]
-#[command(name = "towercab", version, about = "Majid's software factory")]
+#[command(
+    name = "towercab",
+    version,
+    about = "Orchestrator for Claude Code: intents in, reviewed PRs out"
+)]
 struct Args {
     /// Config file (default: $TOWERCAB_CONFIG, else ~/.config/towercab/config.toml)
     #[arg(long, global = true, value_name = "FILE")]
@@ -74,6 +78,26 @@ enum Command {
     },
     /// Go on with an intent waiting on you
     Approve { id: String },
+    /// Answer an intent waiting on you, and go on (the worker gets the answer)
+    Answer {
+        id: String,
+        #[arg(required = true, num_args = 1..)]
+        text: Vec<String>,
+    },
+    /// Let an intent's worker change protected paths (globs), and go on if it waits
+    Unlock {
+        id: String,
+        #[arg(required = true, num_args = 1..)]
+        globs: Vec<String>,
+    },
+    /// Let an intent's worker reach network domains (e.g. registry.npmjs.org), and go on if it waits
+    Allow {
+        id: String,
+        #[arg(required = true, num_args = 1..)]
+        domains: Vec<String>,
+    },
+    /// Drop an intent: its mission stops, its folder moves to done/
+    Drop { id: String },
     /// Start an intent over as a new attempt
     Retry {
         #[arg(long, required = true)]
@@ -232,6 +256,14 @@ where
             }
         }
         Command::Approve { id } => command(&args.config, &args.home, Cmd::Approve(id)),
+        Command::Answer { id, text } => {
+            command(&args.config, &args.home, Cmd::Answer(id, text.join(" ")))
+        }
+        Command::Unlock { id, globs } => command(&args.config, &args.home, Cmd::Unlock(id, globs)),
+        Command::Allow { id, domains } => {
+            command(&args.config, &args.home, Cmd::Allow(id, domains))
+        }
+        Command::Drop { id } => command(&args.config, &args.home, Cmd::Drop(id)),
         Command::Retry { fresh: _, id } => command(&args.config, &args.home, Cmd::RetryFresh(id)),
         Command::Release { id } => command(&args.config, &args.home, Cmd::Release(id)),
         Command::Pause => command(&args.config, &args.home, Cmd::Pause),
@@ -371,7 +403,12 @@ fn ui_cmd(
         return Ok(url);
     }
     let home = Home::resolve(home.as_deref())?;
-    let ctx = std::sync::Arc::new(crate::ui::Ctx::new(config, home, exes.clone(), false));
+    let ctx = std::sync::Arc::new(crate::ui::Ctx::new(
+        config,
+        home.clone(),
+        exes.clone(),
+        false,
+    ));
     let server = crate::ui::serve(ctx, port).map_err(|e| format!("ui: {e}"))?;
     println!("{url} (towercab isn't running: read-only; Ctrl-C to stop)");
     open(&url);
@@ -379,8 +416,19 @@ fn ui_cmd(
     for sig in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
         signal_hook::flag::register(sig, stop.clone()).map_err(|e| e.to_string())?;
     }
+    // Once a loop holds this home, its own UI (with actions) takes the port.
+    let mut checked = std::time::Instant::now();
     while !stop.load(std::sync::atomic::Ordering::SeqCst) {
         std::thread::sleep(Duration::from_millis(200));
+        if checked.elapsed() >= Duration::from_secs(2) {
+            checked = std::time::Instant::now();
+            if let Some(pid) = home.holder() {
+                server.stop();
+                return Ok(format!(
+                    "towercab is running (pid {pid}): its UI takes over {url}"
+                ));
+            }
+        }
     }
     server.stop();
     Ok(String::new())

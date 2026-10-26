@@ -96,6 +96,7 @@ anything = true
             path: "/usr/bin:/bin".into(),
             toolchain: vec![home.join(".cargo"), PathBuf::from("/opt/go")],
             sandbox_unix_sockets: true,
+            env: Vec::new(),
         }
     );
     assert_eq!(
@@ -160,6 +161,7 @@ anything = true
                 home.join(".local/bin"),
             ],
             sandbox_unix_sockets: false,
+            env: Vec::new(),
         },
         "path = the loop's PATH, toolchain under ~"
     );

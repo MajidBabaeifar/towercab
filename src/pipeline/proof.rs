@@ -1,6 +1,6 @@
 //! The red→green proof (PIP-30): after a green verify of a behaviour change (`spec_ids` or a
 //! `fix`), the PR's changed test files (from the commit) laid over a checkout of `origin/<base>`
-//! (`work/<id>-<attempt>-proof`) must make the ` ```checks ` red with ` ```setup ` green. Base
+//! (`work/<id>-<attempt>-proof`) must make the run set (REPO-9, as verify's) red with ` ```setup ` green. Base
 //! green, or no test changed → back to the worker as a verify repair; the environment failing
 //! on base (setup red, a timeout, exit 126/127) → rerun once after 60 s, then `waiting: tests
 //! don't prove the change`.
@@ -111,13 +111,20 @@ pub fn overlay(
             head,
         ],
     )?;
-    let files = regular(cx, &dir, head, files)?;
+    lay(cx, &dir, head, files)?;
+    Ok(dir)
+}
+
+/// `files` from commit `head` (already fetched into `dir`) checked out over `dir`: the
+/// regular files only.
+pub fn lay(cx: &Ctx<'_>, dir: &Path, head: &str, files: &[String]) -> Result<(), StepError> {
+    let files = regular(cx, dir, head, files)?;
     if !files.is_empty() {
         let mut args = vec!["--literal-pathspecs", "checkout", "--quiet", head, "--"];
         args.extend(files.iter().map(String::as_str));
-        pgit::run(cx, &dir, &args)?;
+        pgit::run(cx, dir, &args)?;
     }
-    Ok(dir)
+    Ok(())
 }
 
 /// The proof's one rerun after 60 s was used (`proof.retried`).
@@ -143,8 +150,27 @@ impl Proof {
         Proof
     }
 
+    /// With setup lines, the tests are laid over the base after them (PIP-30): a test that
+    /// needs the change fails the checks (proven), not the setup.
     fn runner(cx: &Ctx<'_>, m: &Mission) -> Result<Result<Runner, Outcome>, StepError> {
-        run_lines(cx, m, "proof", &overlay_path(cx, m))
+        Ok(
+            run_lines(cx, m, "proof", &overlay_path(cx, m))?.map(|mut r| {
+                if !r.lines.setup.is_empty() {
+                    r.before_checks = Some((Self::head_of(m), Self::files_of(m)));
+                }
+                r
+            }),
+        )
+    }
+
+    /// The test files to lay at the start: all when there is no setup, else none yet; on a
+    /// re-entry at a check line, all.
+    fn laid_now(r: &Runner, step: &str, files: Vec<String>) -> Vec<String> {
+        if r.lines.setup.is_empty() || step.starts_with("check:") {
+            files
+        } else {
+            Vec::new()
+        }
     }
 
     /// The head the proof started on (`data.proof.from`).
@@ -256,7 +282,8 @@ impl Handler for Proof {
         if r.lines.parse(&m.step).is_some() {
             // A re-entry or the rerun: the overlay as it was, re-made if gone.
             if !checkout::valid(&cx.exes.git, &r.dir) {
-                overlay(cx, m, &Self::head_of(m), &Self::files_of(m))?;
+                let files = Self::laid_now(&r, &m.step, Self::files_of(m));
+                overlay(cx, m, &Self::head_of(m), &files)?;
             }
             return r.spawn(cx, m);
         }
@@ -278,7 +305,7 @@ impl Handler for Proof {
                     .join(format!("verify-{}.log", Data::of(&m).n("verify"))),
             );
         }
-        overlay(cx, m, &head, &tests)?;
+        overlay(cx, m, &head, &Self::laid_now(&r, "", tests.clone()))?;
         let end = r.start(cx, m, "proof", json!({ "files": tests, "from": head }))?;
         let m = crate::mission::get(cx.db.conn(), m.id)?;
         Self::settle(cx, &m, &r, end)

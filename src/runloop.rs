@@ -415,6 +415,13 @@ impl Loop {
         report.woke = self.wake_check(tick)?;
         self.ensure_store();
         report.commands = self.telegram_updates(tick)?;
+        // A command may name an intent written since the last poll (`towercab add`, then
+        // `unlock` at once): re-read the checkout first.
+        if !commands::pending(&self.db)?.is_empty()
+            && let Some(s) = &self.store
+        {
+            self.listing = Some(s.scan());
+        }
         let cx = CmdCx {
             config: &self.config,
             db: &self.db,
@@ -1155,9 +1162,11 @@ impl Loop {
             return Ok("env_blocked");
         }
         let now = tick.unix();
-        let driven: Vec<Mission> = mission::unfinished(self.db.conn())?
+        let unfinished = mission::unfinished(self.db.conn())?;
+        let behind = pick::behind(&unfinished, &self.config);
+        let driven: Vec<Mission> = unfinished
             .into_iter()
-            .filter(|m| m.stage.driven() && !m.held)
+            .filter(|m| m.stage.driven() && !m.held && !behind.contains(&m.id))
             .collect();
         Ok(
             if active > 0 || driven.iter().any(|m| !self.limit_waiting(m, now)) {
@@ -1443,10 +1452,11 @@ impl Loop {
             return Ok(());
         }
         let mut ms = mission::unfinished(self.db.conn())?;
+        let behind = pick::behind(&ms, &self.config);
         ms.sort_by_key(|m| self.rank(m));
         for m in ms {
             let m = mission::get(self.db.conn(), m.id)?;
-            if !self.targets(&m) || !self.due_now(&m, tick) {
+            if !self.targets(&m) || behind.contains(&m.id) || !self.due_now(&m, tick) {
                 continue;
             }
             self.due.remove(&m.id);
@@ -1576,11 +1586,12 @@ impl Loop {
             return Ok(Some(decision));
         };
         let unfinished = mission::unfinished(self.db.conn())?;
+        let behind = pick::behind(&unfinished, &self.config);
         let ahead = !self.slot_free()
             || !self.queued.is_empty()
             || unfinished
                 .iter()
-                .any(|m| self.targets(m) && self.pending(m, tick));
+                .any(|m| self.targets(m) && !behind.contains(&m.id) && self.pending(m, tick));
         if ahead {
             return Ok(Some(decision));
         }
@@ -1777,8 +1788,14 @@ impl Loop {
         {
             return Ok(false);
         }
-        Ok(mission::unfinished(self.db.conn())?.iter().all(|m| {
-            m.step != ENTER && (!m.stage.driven() || m.held || self.limit_waiting(m, tick.unix()))
+        let unfinished = mission::unfinished(self.db.conn())?;
+        let behind = pick::behind(&unfinished, &self.config);
+        Ok(unfinished.iter().all(|m| {
+            m.step != ENTER
+                && (!m.stage.driven()
+                    || m.held
+                    || behind.contains(&m.id)
+                    || self.limit_waiting(m, tick.unix()))
         }))
     }
 
@@ -1802,11 +1819,21 @@ impl Loop {
         }
         let mut wake = self.signals().map_err(|e| format!("signals: {e}"))?;
         // The web UI (UI-1): the service's own, on its own threads; stopped when this returns.
-        let _ui = (self.opts.watch && self.config.ui.port != 0)
-            .then(|| crate::ui::Running::start(&self.config, &self.home, &self.exes))
+        // A port held (a read-only `towercab ui` from while I was down) is retried every 30 s.
+        let serve_ui = self.opts.watch && self.config.ui.port != 0;
+        let mut ui = serve_ui
+            .then(|| crate::ui::Running::start(&self.config, &self.home, &self.exes, true))
             .flatten();
+        let mut ui_tried = Instant::now();
         let mut next = Instant::now();
         loop {
+            if serve_ui && ui.is_none() && ui_tried.elapsed() >= Duration::from_secs(30) {
+                ui = crate::ui::Running::start(&self.config, &self.home, &self.exes, false);
+                ui_tried = Instant::now();
+                if ui.is_some() {
+                    crate::tlog!("towercab: ui: serving on port {} now", self.config.ui.port);
+                }
+            }
             match self.pass(Tick::now()) {
                 Ok(r) if r.stop => break,
                 Ok(PassReport {

@@ -235,6 +235,55 @@ fn test_build_prompt() {
 }
 
 #[test]
+fn test_build_prompt_fast_set() {
+    // CI on the base and a ```fast block: the worker is told to run those lines (placeholders
+    // explained) and that the full suite is CI's; it may run only their commands.
+    let mut p = Pipe::login_fast(true);
+    p.plans(2).builds(3);
+    p.step_to(ID, Stage::Build, 4);
+    assert_eq!(p.step(ID), "261001-0900: build → verify");
+    let stdin = p.claude.stdin(3);
+    assert!(
+        stdin.contains("fast checks (run only these, in order, all must pass; the full suite runs in CI):\n  echo \"lint $PWD\" >> "),
+        "{stdin}"
+    );
+    assert!(stdin.contains("\n  sh fast.sh {tests}\n"), "{stdin}");
+    assert!(stdin.contains("{tests}: the paths of the test files you added or changed"));
+    assert!(!stdin.contains("sh check.sh"), "{stdin}");
+    assert!(!stdin.contains("every checks command"), "{stdin}");
+    let argv = p.claude.argv(3);
+    assert!(argv.contains(&"Bash(sh fast.sh:*)".to_string()), "{argv:?}");
+    assert!(
+        !argv.contains(&"Bash(sh check.sh:*)".to_string()),
+        "{argv:?}"
+    );
+    assert!(
+        argv.iter()
+            .any(|a| a.starts_with("Bash(echo \"lint $PWD\""))
+    );
+    // Without CI the worker runs everything, as before.
+    let mut p = Pipe::login_fast(false);
+    p.plans(2).builds(3);
+    p.step_to(ID, Stage::Build, 4);
+    p.step(ID);
+    let stdin = p.claude.stdin(3);
+    assert!(
+        stdin.contains("checks (in order, all must pass):\n  echo full >> "),
+        "{stdin}"
+    );
+    assert!(!stdin.contains("fast checks"), "{stdin}");
+    let argv = p.claude.argv(3);
+    assert!(
+        argv.contains(&"Bash(sh check.sh:*)".to_string()),
+        "{argv:?}"
+    );
+    assert!(
+        !argv.contains(&"Bash(sh fast.sh:*)".to_string()),
+        "{argv:?}"
+    );
+}
+
+#[test]
 fn test_build_result_schema() {
     let mut p = Pipe::login("a: 4\n");
     p.plans(2);

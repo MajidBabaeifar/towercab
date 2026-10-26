@@ -628,3 +628,270 @@ fn test_open_pr_states() {
     assert_eq!(p.data(ID)["adopted"]["state"], "other repo");
     assert!(p.gh.find("pr view").is_empty());
 }
+
+/// Attempt 1 blocked at build with `q` (a4: no plan review); PR 7 open, read without comments.
+fn asked(q: &str) -> Pipe {
+    let mut p = pipe("a: 4\n");
+    designs(&p, 1, "| WEB-1 | log in | test_login |\n", &["WEB-1"]);
+    p.claude
+        .answer(2, &plan())
+        .answer(3, &blocked(q))
+        .answer(4, &blocked("anything else?"));
+    p.gh.on("pr list *", &[("[]", "", 0)])
+        .on(
+            "pr create *",
+            &[("https://github.com/me/web/pull/7\n", "", 0)],
+        )
+        .on("api -X PATCH *", &[("{}", "", 0)])
+        .on("api --paginate *", &[("[]", "", 0)]);
+    p.step_to(ID, Stage::Blocked, 6);
+    let head = p.mission(ID).head.clone().unwrap();
+    p.gh.on(
+        "pr view 7 *",
+        &[(&json!({"state": "OPEN", "headRefOid": head, "mergeable": "MERGEABLE", "reviews": [], "comments": []}).to_string(), "", 0)],
+    );
+    p
+}
+
+#[test]
+fn test_answer_continues() {
+    let mut p = asked("which provider?");
+    let db = p.w.db();
+    commands::queue(
+        &db,
+        &Cmd::Answer(ID.into(), "Use GitHub, not Google.".into()),
+        "ui",
+    )
+    .unwrap();
+    p.until(10, |w| {
+        w.transitions(ID)
+            .iter()
+            .filter(|t| t.2 == "blocked")
+            .count()
+            >= 2
+    });
+    // The answer is in the intent, and the worker got it with the wait.
+    let md = p.w.intent_md(DIR);
+    assert!(md.contains("## Answers\n"), "{md}");
+    assert!(md.contains(": Use GitHub, not Google."), "{md}");
+    assert!(
+        p.w.transitions(ID)
+            .contains(&("blocked".into(), "approve".into(), "build".into()))
+    );
+    let what = p.claude.stdin(4);
+    assert!(what.contains("Use GitHub, not Google."), "{what}");
+    assert!(what.contains("which provider?"), "{what}");
+}
+
+#[test]
+fn test_unlock_continues() {
+    let mut p = asked("can I change .github/workflows/ci.yml?");
+    let db = p.w.db();
+    let cmd = Cmd::Unlock(ID.into(), vec![".github/workflows/**".into()]);
+    commands::queue(&db, &cmd, "telegram").unwrap();
+    p.until(10, |w| {
+        w.transitions(ID)
+            .iter()
+            .filter(|t| t.2 == "blocked")
+            .count()
+            >= 2
+    });
+    let md = p.w.intent_md(DIR);
+    assert!(
+        md.contains("unlock:") && md.contains(".github/workflows/**"),
+        "{md}"
+    );
+    // Refused: a path out of the checkout.
+    assert!(!commands::glob_ok("../x") && !commands::glob_ok("/etc/passwd"));
+    assert!(commands::glob_ok(".github/workflows/**") && commands::glob_ok("CLAUDE.md"));
+}
+
+#[test]
+fn test_allow_continues() {
+    // The worker can't reach the npm registry: I allow it; its next run's sandbox may.
+    let mut p = asked("can you allow registry.npmjs.org?");
+    let db = p.w.db();
+    let cmd = Cmd::Allow(ID.into(), vec!["registry.npmjs.org".into()]);
+    commands::queue(&db, &cmd, "ui").unwrap();
+    p.until(10, |w| {
+        w.transitions(ID)
+            .iter()
+            .filter(|t| t.2 == "blocked")
+            .count()
+            >= 2
+    });
+    let md = p.w.intent_md(DIR);
+    assert!(md.contains("network: [registry.npmjs.org]"), "{md}");
+    let settings = p.claude.flag(4, "--settings").unwrap();
+    let s: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(settings).unwrap()).unwrap();
+    assert_eq!(
+        s["sandbox"]["network"]["allowedDomains"],
+        json!(["registry.npmjs.org"])
+    );
+    // Its own writable cache, so builds don't hit a read-only ~/.cache.
+    let cache = s["sandbox"]["filesystem"]["allowWrite"][0]
+        .as_str()
+        .unwrap();
+    assert!(cache.ends_with("/cache/web/worker"), "{cache}");
+    assert!(std::path::Path::new(cache).is_dir());
+    // Refused: not a host.
+    for bad in ["registry", "https://x.org", "x.org/path", "*", "X.ORG"] {
+        assert!(!commands::domain_ok(bad), "{bad}");
+    }
+    assert!(commands::domain_ok("*.npmjs.org") && commands::domain_ok("localhost.dev:8080"));
+}
+
+#[test]
+fn test_drop_stops() {
+    let mut p = asked("should I go on?");
+    let db = p.w.db();
+    commands::queue(&db, &Cmd::Drop(ID.into()), "ui").unwrap();
+    p.until(10, |w| w.stage(ID) == Some(Stage::Stopped));
+    assert!(
+        p.intents_file(&format!("intents/{DIR}/intent.md"))
+            .is_none(),
+        "no longer open"
+    );
+    let md = p
+        .intents_file(&format!("done/{DIR}/intent.md"))
+        .expect("moved to done/");
+    assert!(md.contains("stage: dropped"), "{md}");
+}
+
+#[test]
+fn test_env_failure_is_fault() {
+    let mut p = pipe("a: 4\n");
+    designs(&p, 1, "| WEB-1 | log in | test_login |\n", &["WEB-1"]);
+    p.claude.answer(2, &plan()).answer(
+        3,
+        &blocked("Every Bash call fails: apply-seccomp: write /proc/self/setgroups (nested userns is capability-restricted): Permission denied"),
+    );
+    p.gh.on("pr list *", &[("[]", "", 0)])
+        .on(
+            "pr create *",
+            &[("https://github.com/me/web/pull/7\n", "", 0)],
+        )
+        .on("api -X PATCH *", &[("{}", "", 0)]);
+    p.step_to(ID, Stage::Build, 6);
+    for _ in 0..3 {
+        if p.claude.calls() >= 3 {
+            break;
+        }
+        p.step(ID);
+    }
+    let m = p.mission(ID);
+    assert_eq!(m.stage, Stage::Build, "not a wait on me");
+    assert_eq!(m.waiting, None);
+    assert_eq!(m.fault.as_deref(), Some("sandbox"));
+    // A missing program in a setup log: tool:<exe>.
+    let (f, why) = towercab::env::classify_run("$ npm ci\nsh: 1: npm: not found\n").unwrap();
+    assert_eq!(f.to_string(), "tool:npm");
+    assert!(why.contains("npm: not found"));
+    let (f, _) = towercab::env::classify_run(
+        "  = note: /home/me/.local/bin/cc: 12: exec: /home/me/.local/zig-0.16.0/zig: not found",
+    )
+    .unwrap();
+    assert_eq!(f.to_string(), "tool:zig");
+    assert!(towercab::env::classify_run("which provider?").is_none());
+    assert!(towercab::env::classify_run("src/login.rs: not found in the plan").is_none());
+}
+
+#[test]
+fn test_open_question_placeholders() {
+    use towercab::pipeline::schemas::{DesignResult, no_question};
+    for p in ["None.", "none", "- None.", "n/a", "-", "Nothing."] {
+        assert!(no_question(p), "{p}");
+    }
+    assert!(!no_question("Which provider?"));
+    let d = |qs: serde_json::Value| {
+        DesignResult::from_json(&json!({"type": "feat", "scope": "ui", "breaking": false,
+            "spec_ids": [], "concerns": [], "open_questions": qs, "summary": "s"}))
+    };
+    // `- None.` in the intent: zero or one placeholder entry both pass; both/neither never fail.
+    let none = vec!["None.".to_string()];
+    d(json!([])).unwrap().check_questions(&none).unwrap();
+    d(json!([{"question": "None.", "answer": "n/a", "carried": true}]))
+        .unwrap()
+        .check_questions(&none)
+        .unwrap();
+    let real =
+        d(json!([{"question": "Which provider?", "answer": null, "carried": false}])).unwrap();
+    assert!(real.open_questions[0].carried, "neither: left to me");
+    real.check_questions(&["Which provider?".into()]).unwrap();
+    assert!(
+        d(json!([]))
+            .unwrap()
+            .check_questions(&["Which provider?".into()])
+            .is_err()
+    );
+}
+
+#[test]
+fn test_continue_resets_caps() {
+    let mut p = asked("go on?");
+    let db = p.w.db();
+    db.conn()
+        .execute(
+            "UPDATE missions SET sync_rounds = 3, verify_repairs = 3, ci_repairs = 2 WHERE intent = ?1",
+            [ID],
+        )
+        .unwrap();
+    commands::queue(&db, &Cmd::Approve(ID.into()), "ui").unwrap();
+    p.until(10, |w| {
+        w.transitions(ID)
+            .iter()
+            .filter(|t| t.2 == "blocked")
+            .count()
+            >= 2
+    });
+    let m = p.mission(ID);
+    assert_eq!((m.sync_rounds, m.verify_repairs, m.ci_repairs), (0, 0, 0));
+}
+
+#[test]
+fn test_compound_refusal_resumes() {
+    // The worker stops, saying Bash is denied, when only a compound line was refused: Towercab
+    // tells it so once and it goes on; it doesn't wait on me.
+    let mut p = pipe("a: 4\n");
+    designs(&p, 1, "| WEB-1 | log in | test_login |\n", &["WEB-1"]);
+    let mut refused: serde_json::Value = serde_json::from_str(
+        FakeClaude::result(common::pipe::blocked(
+            "Bash is denied; can you run the checks?",
+        ))
+        .trim(),
+    )
+    .unwrap();
+    refused["permission_denials"] = json!([{"tool_name": "Bash", "tool_use_id": "t",
+        "tool_input": {"command": "cat >> tests/x.rs <<'EOF'\nfn x() {}\nEOF\ncargo test"}}]);
+    p.claude
+        .answer(2, &plan())
+        .answer(3, &format!("{refused}\n"))
+        .script(
+            4,
+            &common::pipe::writes("src/login.rs", "pub fn login() {}\n"),
+        )
+        .answer(4, &FakeClaude::result(common::pipe::done("Adds login.")));
+    p.gh.on("pr list *", &[("[]", "", 0)])
+        .on(
+            "pr create *",
+            &[("https://github.com/me/web/pull/7\n", "", 0)],
+        )
+        .on("api -X PATCH *", &[("{}", "", 0)])
+        .on("api --paginate *", &[("[]", "", 0)]);
+    p.step_to(ID, Stage::Verify, 8);
+    assert!(
+        p.claude
+            .stdin(4)
+            .starts_with("Only your compound shell command was refused"),
+        "{}",
+        p.claude.stdin(4)
+    );
+    assert_eq!(p.claude.flag(4, "--resume"), Some(p.mission(ID).session));
+    assert!(p.mission(ID).waiting.is_none());
+    // A plain command refused is a real question: it waits on me.
+    assert!(towercab::pipeline::build::compound("a && b"));
+    assert!(!towercab::pipeline::build::compound(
+        "cargo test --locked --test login"
+    ));
+}

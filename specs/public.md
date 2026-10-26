@@ -1,6 +1,6 @@
 # Public repo
 
-**Status:** Draft · **Prefix:** PUB
+**Status:** Live: PUB-1..6 · **Prefix:** PUB
 
 ## Purpose
 

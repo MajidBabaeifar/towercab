@@ -668,6 +668,8 @@ pub enum Waiting {
     AnswerTheQuestion,
     CiRed,
     ChecksRed,
+    /// A check hit its time limit: `approve` reruns verify with twice the time (PIP-23).
+    ChecksTimedOut,
     TestsDontProve,
     NoCiChecks,
     CiStuck,
@@ -694,7 +696,7 @@ pub enum Waiting {
 }
 
 /// The waits without a parameter, with their text.
-const PLAIN: [(Waiting, &str); 28] = [
+const PLAIN: [(Waiting, &str); 29] = [
     (Waiting::ApproveSpec, "approve spec"),
     (Waiting::ApprovePlan, "approve plan"),
     (Waiting::ReviewAndMergePr, "review and merge PR"),
@@ -702,6 +704,7 @@ const PLAIN: [(Waiting, &str); 28] = [
     (Waiting::AnswerTheQuestion, "answer the question"),
     (Waiting::CiRed, "CI red"),
     (Waiting::ChecksRed, "checks red"),
+    (Waiting::ChecksTimedOut, "checks timed out"),
     (Waiting::TestsDontProve, "tests don't prove the change"),
     (Waiting::NoCiChecks, "no CI checks appeared"),
     (Waiting::CiStuck, "CI stuck"),
@@ -730,7 +733,7 @@ const E2E_RED: &str = "e2e red after your merge";
 
 impl Waiting {
     /// One sample per variant.
-    pub const ALL: [Waiting; 30] = [
+    pub const ALL: [Waiting; 31] = [
         Waiting::ApproveSpec,
         Waiting::ApprovePlan,
         Waiting::ReviewAndMergePr,
@@ -738,6 +741,7 @@ impl Waiting {
         Waiting::AnswerTheQuestion,
         Waiting::CiRed,
         Waiting::ChecksRed,
+        Waiting::ChecksTimedOut,
         Waiting::TestsDontProve,
         Waiting::NoCiChecks,
         Waiting::CiStuck,
@@ -836,6 +840,9 @@ pub fn continue_to(waiting: &Waiting, from: Stage) -> Next {
     match waiting {
         Waiting::ApproveSpec => Next::Go(Stage::Plan),
         Waiting::ApprovePlan => Next::Go(Stage::Build),
+        // I accept the change without a proving test (PIP-30): on to publish; CI and the review
+        // still run. An answer sends the worker back instead (`commands`).
+        Waiting::TestsDontProve => Next::Go(Stage::Publish),
         Waiting::ReviewAndMergePr => Next::Go(Stage::Gate),
         Waiting::AuthorizeRelease => Next::Go(Stage::Release),
         // Kept: merged and live, no rebuild (PIP-20, PIP-34).
@@ -846,13 +853,13 @@ pub fn continue_to(waiting: &Waiting, from: Stage) -> Next {
         | Waiting::FixRepoFiles
         | Waiting::ReleaseFailed
         | Waiting::CiStuck
+        | Waiting::ChecksTimedOut
         | Waiting::NoCiChecks => Next::Go(from),
         Waiting::CrashedAt(s) => Next::Go(*s),
         Waiting::RevertedRefine | Waiting::PrClosed => Next::Fresh,
         Waiting::AnswerTheQuestion
         | Waiting::CiRed
         | Waiting::ChecksRed
-        | Waiting::TestsDontProve
         | Waiting::WorkerTimeout
         | Waiting::WorkerBudget
         | Waiting::NoResult

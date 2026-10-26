@@ -184,7 +184,7 @@ impl Block {
 /// it): the deepest existing ancestor resolved (symlinks followed), the rest kept as written;
 /// outside the checkout → `Err`.
 fn relative(checkout: &Path, path: &str) -> Result<String, String> {
-    let outside = || format!("{path} is outside the checkout: changes here go through Majid");
+    let outside = || format!("{path} is outside the checkout: changes here go through the owner");
     let p = Path::new(path);
     let p = if p.is_absolute() {
         p.to_path_buf()
@@ -204,7 +204,7 @@ fn relative(checkout: &Path, path: &str) -> Result<String, String> {
                 // A write through a dangling symlink lands wherever it points.
                 Err(_) if meta.file_type().is_symlink() => {
                     return Err(format!(
-                        "{path} goes through a dangling symlink: changes here go through Majid"
+                        "{path} goes through a dangling symlink: changes here go through the owner"
                     ));
                 }
                 Err(_) => {}
@@ -244,14 +244,14 @@ pub fn decide(rules: &Rules, rel: &str) -> Result<(), (Block, String)> {
     if protected.blocks(rel) {
         return Err((
             Block::Protected,
-            format!("{rel} is protected: changes here go through Majid"),
+            format!("{rel} is protected: changes here go through the owner"),
         ));
     }
     if rules.locked.iter().any(|l| l == rel) {
         return Err((
             Block::TestLock,
             format!(
-                "{rel} is a test already pushed: it is locked in repair rounds; changes here go through Majid"
+                "{rel} is a test already pushed: it is locked in repair rounds; changes here go through the owner"
             ),
         ));
     }

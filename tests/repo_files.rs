@@ -69,6 +69,15 @@ fn test_own_repo_files() {
             "cargo test --locked",
         ]
     );
+    // The fast subset before publish (REPO-9): format, lint+build, the touched test targets.
+    assert_eq!(
+        fenced(&verifying, "fast"),
+        [
+            "cargo fmt --check",
+            "cargo clippy --all-targets --locked -- -D warnings",
+            "cargo test --locked $(printf -- '--test %s ' {stems})",
+        ]
+    );
 
     let review = read("REVIEW.md");
     for heading in [

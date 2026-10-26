@@ -240,6 +240,33 @@ fn test_cancel_twice_is_red() {
 }
 
 #[test]
+fn test_red_job_log() {
+    // A red job's own log (reusable workflows' jobs are missing from `--log-failed`), up to
+    // its last error: the cleanup after it is left out.
+    let mut p = login();
+    p.gh.on(
+        "api repos/me/web/actions/jobs/110/logs",
+        &[(
+            "T1 Run gitleaks\nT2 leak found: src/key.rs\nT3 ##[error]Process completed with exit code 1.\nT4 Post job cleanup.\n",
+            "",
+            0,
+        )],
+    );
+    p.ci_answers("MERGEABLE", &red(11));
+    at_ci(&mut p);
+    assert_eq!(p.step(ID), "261001-0900: ci → ci");
+    assert_eq!(p.step(ID), "261001-0900: ci → build");
+    let text = std::fs::read_to_string(p.runs(ID).join("ci-1.log")).unwrap();
+    assert_eq!(
+        text,
+        "== job 110 (test) ==\nT1 Run gitleaks\nT2 leak found: src/key.rs\nT3 ##[error]Process completed with exit code 1.\n\n"
+    );
+    assert_eq!(calls(&p, "run view"), 0);
+    let part = towercab::pipeline::ci::failed_part("aaaa\nbbbb\n##[error]x\ncleanup\n", 13);
+    assert_eq!(part, "##[error]x\n", "cut at a line start");
+}
+
+#[test]
 fn test_non_actions_check_not_rerun() {
     let mut p = login();
     let status = json!({"__typename": "StatusContext", "context": "ci/jenkins", "state": "FAILURE",
@@ -343,6 +370,14 @@ fn test_ci_cap() {
             .unwrap()
             .starts_with("⛔ Not ready: CI red: test\n")
     );
+    // My continue gives the red run one fresh rerun (what I fixed may be outside the branch).
+    assert_eq!(p.data(ID)["ci"]["reruns"], json!([11]));
+    let db = p.w.db();
+    towercab::commands::queue(&db, &towercab::commands::Cmd::Approve(ID.into()), "cli").unwrap();
+    let lp = p.lp.as_mut().unwrap();
+    p.w.pass(lp);
+    assert_eq!(p.data(ID)["ci"]["reruns"], json!([]));
+    assert_eq!(p.mission(ID).ci_repairs, 0);
 }
 
 #[test]
@@ -509,4 +544,25 @@ fn test_throttled_is_an_outage() {
     ] {
         assert!(!throttled(e), "{e}");
     }
+}
+
+#[test]
+fn test_red_unchanged_head_gets_fresh_run() {
+    // A CI repair that changes nothing (the fix was outside the branch): publish makes an
+    // empty commit, so CI runs afresh with today's workflows instead of replaying the old run.
+    let mut p = login();
+    p.ci_answers("MERGEABLE", &red(11));
+    p.claude.answer(
+        4,
+        &common::pipe::FakeClaude::result(common::pipe::done("Nothing to change here.")),
+    );
+    at_ci(&mut p);
+    let first = p.mission(ID).head.unwrap();
+    assert_eq!(p.step(ID), "261001-0900: ci → ci", "the rerun");
+    assert_eq!(p.step(ID), "261001-0900: ci → build", "red twice");
+    p.step_to(ID, Stage::Ci, 8);
+    let m = p.mission(ID);
+    assert_ne!(m.head.as_deref(), Some(first.as_str()), "a new head");
+    let log = p.origin_log("web", LOGIN_BRANCH);
+    assert_eq!(log[0].0, "chore: run CI again");
 }

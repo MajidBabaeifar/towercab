@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use common::{git, write};
 use tempfile::TempDir;
-use towercab::repo::{RepoError, load};
+use towercab::repo::{RepoError, has_workflows, load};
 
 const CLAUDE: &str = "# Repo\n\n## Verifying your work\n\n```checks\nmake test\n```\n";
 const REVIEW: &str = "## Red lines\n\n- auth\n";
@@ -79,6 +79,37 @@ fn invalid(clone: &Path) -> String {
         Err(RepoError::Invalid(e)) => e,
         other => panic!("want Invalid, got {other:?}"),
     }
+}
+
+#[test]
+fn test_has_workflows_on_base() {
+    let r = Repo::new();
+    assert_eq!(has_workflows(&r.clone, "main"), Ok(false));
+    // A workflow on a branch (the PR) is not the base's.
+    git(&r.me, &["checkout", "--quiet", "-b", "pr"]);
+    write(&r.me, ".github/workflows/ci.yml", "on: push\n");
+    r.push("towercab/1-x", "add ci");
+    r.fetch();
+    assert_eq!(has_workflows(&r.clone, "main"), Ok(false));
+    // `.yml` and `.yaml` count; other files do not.
+    git(&r.me, &["checkout", "--quiet", "main"]);
+    write(&r.me, ".github/workflows/README.md", "no\n");
+    r.push("main", "readme only");
+    r.fetch();
+    assert_eq!(has_workflows(&r.clone, "main"), Ok(false));
+    write(&r.me, ".github/workflows/build.yaml", "on: push\n");
+    r.push("main", "yaml");
+    r.fetch();
+    assert_eq!(has_workflows(&r.clone, "main"), Ok(true));
+    // No such base, or a bad one: the git error, as `load` says it.
+    assert!(matches!(
+        has_workflows(&r.clone, "nope"),
+        Err(RepoError::Git(_))
+    ));
+    assert!(matches!(
+        has_workflows(&r.clone, "bad..base"),
+        Err(RepoError::Git(e)) if e.contains("bad base")
+    ));
 }
 
 #[test]

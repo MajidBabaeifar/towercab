@@ -28,6 +28,37 @@ pub enum Cmd {
     Pause,
     Resume,
     Trust(String),
+    /// My answer to a wait: written to the intent's `## Answers`, then as `approve`.
+    Answer(String, String),
+    /// Globs added to the intent's `unlock` (PIP-29), then as `approve` when it waits.
+    Unlock(String, Vec<String>),
+    /// Domains added to the intent's `network` (PIP-24): its worker runs may reach them; then
+    /// as `approve` when it waits.
+    Allow(String, Vec<String>),
+    /// The intent dropped (`stage: dropped`): its mission stops (`intent_removed`).
+    Drop(String),
+}
+
+/// An answer's most characters.
+pub const ANSWER_MAX: usize = 2000;
+
+/// An unlock glob: relative, no `..`, at most 200 characters of `[A-Za-z0-9._/*?-]`.
+pub fn glob_ok(g: &str) -> bool {
+    !g.is_empty()
+        && g.len() <= 200
+        && !g.starts_with('/')
+        && !g.split('/').any(|p| p == "..")
+        && g.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._/*?-".contains(c))
+}
+
+/// A `network` domain: lowercase host (`*.` prefix allowed), at least one dot, optional
+/// `:port`, at most 253 characters.
+pub fn domain_ok(d: &str) -> bool {
+    static DOMAIN: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(:[0-9]{1,5})?$").expect("domain")
+    });
+    d.len() <= 253 && DOMAIN.is_match(d)
 }
 
 pub const PAUSED: &str = "paused: no picks; merges and reverts hold";
@@ -45,6 +76,10 @@ impl Cmd {
             Cmd::Pause => "pause",
             Cmd::Resume => "resume",
             Cmd::Trust(_) => "trust",
+            Cmd::Answer(..) => "answer",
+            Cmd::Unlock(..) => "unlock",
+            Cmd::Allow(..) => "allow",
+            Cmd::Drop(_) => "drop",
         }
     }
 
@@ -59,8 +94,24 @@ impl Cmd {
     /// `commands.arg`: the intent id or repo, else empty.
     pub fn arg(&self) -> &str {
         match self {
-            Cmd::Approve(a) | Cmd::RetryFresh(a) | Cmd::Release(a) | Cmd::Trust(a) => a,
+            Cmd::Approve(a)
+            | Cmd::RetryFresh(a)
+            | Cmd::Release(a)
+            | Cmd::Trust(a)
+            | Cmd::Answer(a, _)
+            | Cmd::Unlock(a, _)
+            | Cmd::Allow(a, _)
+            | Cmd::Drop(a) => a,
             Cmd::Pause | Cmd::Resume => "",
+        }
+    }
+
+    /// `commands.text`: an answer, or the unlock globs or allowed domains one per line.
+    pub fn text(&self) -> String {
+        match self {
+            Cmd::Answer(_, t) => t.clone(),
+            Cmd::Unlock(_, g) | Cmd::Allow(_, g) => g.join("\n"),
+            _ => String::new(),
         }
     }
 
@@ -73,6 +124,10 @@ impl Cmd {
             "pause" => Cmd::Pause,
             "resume" => Cmd::Resume,
             "trust" => Cmd::Trust(arg),
+            "answer" => Cmd::Answer(arg, row.text.clone()),
+            "unlock" => Cmd::Unlock(arg, row.text.lines().map(str::to_string).collect()),
+            "allow" => Cmd::Allow(arg, row.text.lines().map(str::to_string).collect()),
+            "drop" => Cmd::Drop(arg),
             other => return Err(format!("commands {}: unknown name {other:?}", row.id)),
         })
     }
@@ -95,8 +150,8 @@ pub fn insert(
     now: f64,
 ) -> Result<i64, String> {
     conn.execute(
-        "INSERT INTO commands (name, arg, source, update_id, created) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![cmd.name(), cmd.arg(), source, update_id, now],
+        "INSERT INTO commands (name, arg, text, source, update_id, created) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![cmd.name(), cmd.arg(), cmd.text(), source, update_id, now],
     )
     .map_err(sql)?;
     Ok(conn.last_insert_rowid())
@@ -197,7 +252,13 @@ fn plan(cx: &CmdCx, cmd: &Cmd, row: &CommandRow) -> Result<Plan, String> {
         Cmd::Pause => return Ok(Plan::Pause),
         Cmd::Resume => return Ok(Plan::Resume),
         Cmd::Trust(repo) => return Ok(Plan::Trust(repo.clone())),
-        Cmd::Approve(q) | Cmd::RetryFresh(q) | Cmd::Release(q) => match resolve(cx, cmd, q) {
+        Cmd::Approve(q)
+        | Cmd::RetryFresh(q)
+        | Cmd::Release(q)
+        | Cmd::Answer(q, _)
+        | Cmd::Unlock(q, _)
+        | Cmd::Allow(q, _)
+        | Cmd::Drop(q) => match resolve(cx, cmd, q) {
             Ok(i) => i,
             Err(e) => return Ok(Plan::Reply(format!("{word}: {e}"))),
         },
@@ -255,6 +316,102 @@ fn plan(cx: &CmdCx, cmd: &Cmd, row: &CommandRow) -> Result<Plan, String> {
         }
         (Cmd::Release(_), Some(m)) if m.stage == Stage::ApprovalRelease => on_mission(&m),
         (Cmd::Release(_), _) => Plan::Reply(format!("{word}: {id} isn't waiting for release")),
+        (Cmd::Answer(_, text), m) => {
+            let text = text.trim();
+            if text.is_empty() || text.chars().count() > ANSWER_MAX {
+                return Ok(Plan::Reply(format!(
+                    "{word}: an answer is 1-{ANSWER_MAX} characters"
+                )));
+            }
+            let waits = m.as_ref().is_some_and(|m| m.stage.waits());
+            // A mission still running takes it too: the worker reads `intent.md` next time.
+            if m.is_none() && intent.waiting().is_none() && !written() {
+                return Ok(Plan::Reply(format!("{word}: {id} isn't waiting on you")));
+            }
+            let at = cx.tick.wall.format("%Y-%m-%d %H:%M").to_string();
+            let add = |i: &mut Intent| {
+                let mut s = i
+                    .section("Answers")
+                    .unwrap_or_default()
+                    .trim_end()
+                    .to_string();
+                if !s.is_empty() {
+                    s.push('\n');
+                }
+                s.push_str(&format!("- {at}: {}", crate::outbox::one_line(text)));
+                i.set_section("Answers", &s)?;
+                if m.is_none() {
+                    i.remove("waiting")?;
+                }
+                Ok(())
+            };
+            match (write("answer", &add), m) {
+                (Err(e), _) => Plan::Reply(format!("{word}: {e}")),
+                (Ok(()), Some(m)) if waits => on_mission(&m),
+                (Ok(()), Some(_)) => {
+                    Plan::Reply(format!("noted for {id}: the worker reads it in intent.md"))
+                }
+                (Ok(()), None) => Plan::Reply(format!("answered {id}")),
+            }
+        }
+        (Cmd::Unlock(_, globs), m) => {
+            if globs.is_empty() || globs.len() > 20 || !globs.iter().all(|g| glob_ok(g)) {
+                return Ok(Plan::Reply(format!(
+                    "{word}: globs are relative paths (no `..`), 1-20 of them"
+                )));
+            }
+            let add = |i: &mut Intent| {
+                let mut all: Vec<String> = i.unlock().to_vec();
+                for g in globs {
+                    if !all.contains(g) {
+                        all.push(g.clone());
+                    }
+                }
+                i.set("unlock", crate::intents::Value::List(all))
+            };
+            match (write("unlock", &add), m) {
+                (Err(e), _) => Plan::Reply(format!("{word}: {e}")),
+                (Ok(()), Some(m)) if m.stage.waits() => on_mission(&m),
+                (Ok(()), Some(_)) => Plan::Reply(format!(
+                    "unlocked {} for {id}: from its worker's next run",
+                    globs.join(", ")
+                )),
+                (Ok(()), None) => Plan::Reply(format!("unlocked {} for {id}", globs.join(", "))),
+            }
+        }
+        (Cmd::Allow(_, domains), m) => {
+            if domains.is_empty() || domains.len() > 20 || !domains.iter().all(|d| domain_ok(d)) {
+                return Ok(Plan::Reply(format!(
+                    "{word}: domains are lowercase hosts like registry.npmjs.org (`*.` and `:port` allowed), 1-20 of them"
+                )));
+            }
+            let add = |i: &mut Intent| {
+                let mut all: Vec<String> = i.network().to_vec();
+                for d in domains {
+                    if !all.contains(d) {
+                        all.push(d.clone());
+                    }
+                }
+                i.set("network", crate::intents::Value::List(all))
+            };
+            match (write("allow", &add), m) {
+                (Err(e), _) => Plan::Reply(format!("{word}: {e}")),
+                (Ok(()), Some(m)) if m.stage.waits() => on_mission(&m),
+                (Ok(()), Some(_)) => Plan::Reply(format!(
+                    "allowed {} for {id}: from its worker's next run",
+                    domains.join(", ")
+                )),
+                (Ok(()), None) => Plan::Reply(format!("allowed {} for {id}", domains.join(", "))),
+            }
+        }
+        (Cmd::Drop(_), _) => {
+            match write("drop", &|i| {
+                i.set("stage", crate::intents::Value::Str("dropped".into()))
+            }) {
+                Ok(()) => Plan::Reply(format!("dropped {id}")),
+                Err(e) => Plan::Reply(format!("{word}: {e}")),
+            }
+        }
         (Cmd::Pause | Cmd::Resume | Cmd::Trust(_), _) => unreachable!("planned above"),
     })
 }
@@ -270,22 +427,65 @@ fn on_mission(
     let word = cmd.word();
     let cur = mission::get(tx, id)?;
     let (event, takes) = match cmd {
-        Cmd::Approve(_) => (Event::Approve, Next::Continue),
+        Cmd::Approve(_) | Cmd::Answer(..) | Cmd::Unlock(..) | Cmd::Allow(..) => {
+            (Event::Approve, Next::Continue)
+        }
         Cmd::RetryFresh(_) => (Event::RetryFresh, Next::Fresh),
         Cmd::Release(_) => (Event::Release, Next::Go(Stage::Release)),
         _ => return Err(format!("{word} isn't a mission's command")),
     };
     if machine::next(cur.stage, event) != takes {
         return Ok(match cmd {
-            Cmd::Approve(_) => format!("{word}: {intent} isn't waiting on you"),
+            Cmd::Approve(_) | Cmd::Answer(..) | Cmd::Unlock(..) | Cmd::Allow(..) => {
+                format!("{word}: {intent} isn't waiting on you")
+            }
             Cmd::Release(_) => format!("{word}: {intent} isn't waiting for release"),
             _ if cur.kind == Kind::Revert => format!("{word}: {intent} is reverting"),
             _ => format!("{word}: {intent} is at {}", cur.stage),
         });
     }
-    machine::apply_tx(tx, ax, &cur, &Outcome::event(event), None)?;
+    // An answer is guidance for the worker: back to build even where `approve` goes on.
+    let given = match (cmd, cur.waiting.as_deref()) {
+        (Cmd::Answer(..), Some(w)) if w == machine::Waiting::TestsDontProve.text() => {
+            Some(Next::Go(Stage::Build))
+        }
+        _ => None,
+    };
+    // My continue gives the loop's caps a fresh budget (conflict rounds, repairs): they stop
+    // runaway loops without me, not the work I asked for.
+    let mut o = Outcome::event(event);
+    if event == Event::Approve {
+        o = o
+            .with("sync_rounds", 0i64)
+            .with("verify_repairs", 0i64)
+            .with("ci_repairs", 0i64);
+        // A red run already rerun gets one fresh rerun: what I fixed may be outside the
+        // branch (a shared workflow, a secret, a flaky service), and its head may not move.
+        let mut data = crate::pipeline::data::Data::of(&cur);
+        if let Some(ci) = data
+            .get("ci")
+            .filter(|c| c.get("reruns").is_some())
+            .cloned()
+        {
+            let mut ci = ci;
+            ci["reruns"] = serde_json::json!([]);
+            data.set("ci", ci);
+        }
+        // `checks timed out`: this intent's checks get twice the time (PIP-23).
+        if cur.waiting == Some(machine::Waiting::ChecksTimedOut.text()) {
+            let x = data.u64("check_x").unwrap_or(1);
+            data.set("check_x", (x * 2).min(64));
+        }
+        if data.text() != crate::pipeline::data::Data::of(&cur).text() {
+            o = o.with("data", data.text());
+        }
+    }
+    machine::apply_tx(tx, ax, &cur, &o, given)?;
     Ok(match cmd {
         Cmd::Approve(_) => format!("approved {intent}"),
+        Cmd::Answer(..) => format!("answered {intent}: continuing"),
+        Cmd::Unlock(_, g) => format!("unlocked {} for {intent}: continuing", g.join(", ")),
+        Cmd::Allow(_, d) => format!("allowed {} for {intent}: continuing", d.join(", ")),
         Cmd::Release(_) => format!("releasing {intent}"),
         _ => {
             let fresh = mission::unfinished_for(tx, intent)?

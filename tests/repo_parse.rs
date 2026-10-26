@@ -7,6 +7,7 @@ use towercab::repo::review::{DEFAULT_NIT_CAP, DEFAULT_PASSES};
 use towercab::repo::towercab::{DEFAULT_TESTS, DEFAULT_TIMEOUT_MIN};
 use towercab::repo::{
     Deploy, Live, Pass, Release, RepoError, Review, Rollback, Run, Towercab, Verifying, parse,
+    run_set,
 };
 
 /// A `CLAUDE.md` whose verifying section is `section`.
@@ -47,6 +48,7 @@ fn test_parse_repo_files() {
         Verifying {
             setup: strings(&["cargo fetch"]),
             checks: strings(&["cargo test"]),
+            fast: None,
             run: Some(Run {
                 command: "npm start".into(),
                 url: "http://localhost:3000".into(),
@@ -304,6 +306,108 @@ fn test_towercab_front_matter() {
     }
     // A YAML error names the front matter.
     assert!(err("---\nprotected: [a\n---\n").starts_with("TOWERCAB.md: front matter: "));
+}
+
+/// A verifying block with checks `a`, `b` and a ```fast block of `fast` (None: no block).
+fn with_fast(fast: Option<&[&str]>) -> Verifying {
+    let block = fast.map_or(String::new(), |f| {
+        format!("```fast\n{}\n```\n", f.join("\n"))
+    });
+    verifying(&format!("```checks\na\nb\n```\n\n{block}")).unwrap()
+}
+
+#[test]
+fn test_fast_block() {
+    // Lines trimmed, blank and `#` lines dropped, order kept; the block is optional.
+    let v = verifying("```checks\nmake test\n```\n\n  ```fast\n  make lint\n\n# subset\n make unit {tests}\n  ```\n")
+        .unwrap();
+    assert_eq!(v.checks, ["make test"]);
+    assert_eq!(v.fast, Some(strings(&["make lint", "make unit {tests}"])));
+    assert_eq!(verifying(CHECKS).unwrap().fast, None);
+    // An empty block is a block: no local checks. It does not stand in for ```checks.
+    let v = verifying(&format!("{CHECKS}```fast\n# nothing is fast\n```\n")).unwrap();
+    assert_eq!(v.fast, Some(Vec::new()));
+    assert_eq!(
+        Verifying::parse("## Verifying your work\n\n```fast\nmake lint\n```\n"),
+        Err(RepoError::NoVerifyingBlock)
+    );
+    // Two non-empty blocks are an error like for the others; the heading's section only.
+    assert_eq!(
+        invalid(verifying(&format!(
+            "{CHECKS}```fast\na\n```\n```fast\nb\n```\n"
+        ))),
+        "CLAUDE.md: line 17: two ```fast blocks"
+    );
+    let text = format!("```fast\nprose\n```\n\n{}", claude(CHECKS));
+    assert_eq!(Verifying::parse(&text).unwrap().fast, None);
+}
+
+#[test]
+fn test_run_set_default() {
+    // No ```fast block: everything, with or without CI, whatever tests changed.
+    let v = with_fast(None);
+    let tests = strings(&["tests/a.rs"]);
+    assert_eq!(run_set(&v, true, &tests), ["a", "b"]);
+    assert_eq!(run_set(&v, true, &[]), ["a", "b"]);
+    assert_eq!(run_set(&v, false, &tests), ["a", "b"]);
+}
+
+#[test]
+fn test_run_set_no_ci() {
+    // A repo without CI runs everything locally, fast block or not.
+    let v = with_fast(Some(&["lint {tests}"]));
+    assert_eq!(run_set(&v, false, &strings(&["tests/a.rs"])), ["a", "b"]);
+    assert_eq!(run_set(&v, false, &[]), ["a", "b"]);
+}
+
+#[test]
+fn test_run_set_fast() {
+    // With CI the ```fast lines in order; the full suite is CI's.
+    let v = with_fast(Some(&["fmt", "lint", "build"]));
+    assert_eq!(run_set(&v, true, &[]), ["fmt", "lint", "build"]);
+    assert_eq!(
+        run_set(&v, true, &strings(&["tests/a.rs"])),
+        ["fmt", "lint", "build"]
+    );
+    // An empty block: no local checks at all.
+    let v = verifying(&format!("{CHECKS}```fast\n#\n```\n")).unwrap();
+    assert!(run_set(&v, true, &[]).is_empty());
+}
+
+#[test]
+fn test_run_set_placeholders() {
+    let v = with_fast(Some(&[
+        "fmt",
+        "pytest {tests}",
+        "cargo test $(printf -- '--test %s ' {stems})",
+        "both {tests} and {stems}",
+    ]));
+    let tests = strings(&["tests/login.rs", "tests/api/it.rs", "tests/with space.rs"]);
+    assert_eq!(
+        run_set(&v, true, &tests),
+        [
+            "fmt",
+            "pytest tests/login.rs tests/api/it.rs 'tests/with space.rs'",
+            // A stem is the file name without directory or extension; a file below a
+            // subdirectory of `tests/` (helpers, not a test target) has none.
+            "cargo test $(printf -- '--test %s ' login 'with space')",
+            "both tests/login.rs tests/api/it.rs 'tests/with space.rs' and login 'with space'",
+        ]
+    );
+    // A quote in a name is escaped, a duplicate stem once.
+    let tests = strings(&["tests/it's.rs", "tests/x.sh", "tests/x.py"]);
+    assert_eq!(
+        run_set(&v, true, &tests)[2],
+        "cargo test $(printf -- '--test %s ' 'it'\\''s' x)"
+    );
+    // No touched test: a line with a placeholder is skipped, never run bare.
+    assert_eq!(run_set(&v, true, &[]), ["fmt"]);
+    // Only helpers below `tests/<dir>/`: {tests} has them, {stems} none.
+    let tests = strings(&["tests/common/mod.rs"]);
+    assert_eq!(
+        run_set(&v, true, &tests),
+        ["fmt", "pytest tests/common/mod.rs"]
+    );
 }
 
 #[test]
