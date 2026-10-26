@@ -292,13 +292,8 @@ export class Loop {
       const fresh = update(
         this.d.db,
         m.id,
-        {
-          child_pid: null,
-          child_kind: null,
-          child_since: null,
-          child_model: null,
-          step_secs: m.step_secs + runMs / 1000,
-        },
+        // `child_model` stays while `finish` reads the run (a limit cools the model that ran).
+        { child_pid: null, child_kind: null, child_since: null, step_secs: m.step_secs + runMs / 1000 },
         this.now,
       );
       const end: ChildEnd = {
@@ -312,6 +307,7 @@ export class Loop {
       if (!h) continue;
       // A Claude run that ended without a network or auth failure: Claude is reachable.
       await this.drive(fresh, () => h.finish(this.ctx(), fresh, end), r.spec.model !== undefined);
+      if (!this.children.has(id)) update(this.d.db, id, { child_model: null }, this.now);
     }
   }
 
