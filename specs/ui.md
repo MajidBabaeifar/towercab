@@ -1,71 +1,228 @@
 # UI
 
-**Status:** Live: UI-1..19, UI-27 · **Prefix:** UI
+**Status:** Draft · **Prefix:** UI
 
 ## Purpose
 
-A local web page that shows what Towercab is doing right now and lets me act on it:
-the same facts as `status`, `next` and the logs, and the same commands as the CLI.
+A local web page for the person running Towercab. It answers four questions in this order: what
+needs me, what is stuck, what is moving, and what it costs. It shows the few things that matter in
+plain words, offers only the action each situation needs, and leaves the full detail one click away.
 
 ## Requirements
 
-| ID | Requirement | Verified by |
-|---|---|---|
-| UI-1 | **Served by the loop:** `run --watch` (the service, [LOOP-2](loop.md)) starts `ui::Running::start` (→ `ui::serve`) on its own threads at `127.0.0.1:<[ui] port>` (`Config.ui: UiConfig { port }`, int 0–65535, default 7311; 0 = off); never another address. A bind failure is logged `towercab: ui: <error> (retried every 30 s)` once and the loop goes on, retrying the bind every 30 s (`towercab: ui: serving on port <p> now`); when `run` returns, dropping `Running` stops and joins it. The loop thread never waits on the UI. | test_ui_config, test_ui_binds_localhost_only, test_loop_serves_ui, test_ui_yields_to_loop |
-| UI-2 | **`towercab ui [--no-open]`:** port 0 → exit 1 `ui is off: [ui] port = 0`. A Towercab UI answers on the port (`GET /api/ping` → `towercab <version>`, 2 s) → prints `http://127.0.0.1:<port>/` and opens it (`Exes::xdg_open`, failure ignored), exit 0. Else it serves read-only in the foreground (prints the URL, opens it) until SIGTERM/SIGINT, exit 0, or until a loop holds the home (`Home::holder`, checked every 2 s) → prints `towercab is running (pid <n>): its UI takes over <url>`, exit 0; the port taken by something else → exit 1 `ui: 127.0.0.1:<port>: <error>`. | test_ui_command, test_ui_yields_to_loop |
-| UI-3 | **HTTP** (`src/ui/wire.rs`): std `TcpListener`, HTTP/1.1, `GET` and `POST` only (else 405), `Connection: close`; request line + headers ≤ 8 KiB (431), body only by `Content-Length` ≤ 4 KiB (413; `Transfer-Encoding` → 411); 5 s per read and write, 10 s per request (`ServeOpts.timeout`); 4 workers fed by a queue of 16 (full → the connection is dropped); a panic → 500; stop shuts live connections down and joins every thread. | test_http_limits, test_slow_client_doesnt_block |
-| UI-4 | **Security:** `Host` must be `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>` (else 421: DNS rebinding). `POST` also needs `Origin` = `http://<Host>` (403) and `X-Towercab-Token` = the per-process token (32 random bytes, hex; in the page's `<meta name="towercab-token">`; compared in constant time; 403). No CORS headers. Every response: `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, CSP `default-src 'none'` (+ the page's inline style and script by `sha256-` hash, `connect-src 'self'`). Text shown is HTML-escaped; links only `http(s)://`. | test_host_origin_token_checked |
-| UI-5 | **No secrets:** nothing from `[telegram]`, `app.pem`, `secrets/` or tokens is rendered; every log or file text passes `ui::redact` (the bot token and `/bot<token>` → `<token>`, `gh[pousr]_…`/`github_pat_…` → `<token>`, a PEM private key → `<private key>`, each `[repos]` e2e secret value → `[redacted]` as [PIP-9](pipeline.md)). | test_log_and_redaction |
-| UI-6 | **Actions** = the CLI's commands, nothing more: `POST /api/cmd` `{cmd: approve\|retry_fresh\|release\|pause\|resume\|trust (and answer, [UI-21](ui.md)), arg}` (`arg` `[A-Za-z0-9._-]{1,64}` for approve, retry_fresh, release, trust; none for pause, resume; else 400) → a `commands` row, source `ui` (`commands::queue`), applied by the loop ([LOOP-15](loop.md)); the reply = its `result` within 6 s (`Ctx.reply_wait`), else `null` (`{id, result}`; the page then shows it from `commands` in the state). No loop holds the home (`Home::holder`) → 409 `towercab isn't running: towercab up`, no row. | test_actions_queue_commands |
-| UI-7 | **State** `GET /api/state` (`ui::state`, **State**) from SQLite (own connection per worker; WAL) and the intents checkout (`intents::store::scan`, never a pull or write), plus `html`: each section rendered. | test_state_json |
-| UI-8 | **Page** `GET /` (`ui::page`): server-rendered, no external resources, readable in light and dark (`prefers-color-scheme`), usable at 360 px. Sections in order: top bar, Waiting on you (with buttons), Now (children, every unfinished mission on its sequence's strip, waits), Recently finished (UI-19), Next, Attention (cooling models, faults, caps and freezes, failed drafts, dismissed alerts, review due, an unreadable intents checkout), Activity (the last 50 transitions, the last 10 messages: sent, pending or dropped), Log. Pause/Resume in the top bar. One inline script polls `/api/state` every 3 s and swaps each section's `html`; buttons POST `/api/cmd` (retry and release confirm first). | test_page_has_key_facts |
-| UI-9 | **Mission** `GET /m/<mission id>` : label, repo, kind, stage, attempt, waiting/why, PR link, cost and agent time, every transition, and its run files (`runs/<label>/`, regular files only, name, size, time; newest first). | test_mission_page |
-| UI-10 | **Run files** `GET /m/<id>/runs/<name>`: `name` `[A-Za-z0-9._-]+`, not starting with `.`, not `*.raw`; a regular file directly in the mission's runs dir (no symlink: `symlink_metadata`, canonical parent = the runs dir); text (no NUL); the last 512 KiB, redacted; `text/plain; charset=utf-8`, CSP `sandbox`. Else 404. | test_run_files_path_checked |
-| UI-11 | **Log:** the last 200 lines of `journalctl --user -u towercab -n 200 -o short-iso --no-pager` (`Exes::journalctl`, `child::output`, 5 s; cached 10 s), redacted; lines matching `error\|failed\|panic\|unexpected` (any case) flagged. None or a failure → one line saying so. | test_log_and_redaction |
-| UI-12 | **Links:** a `[repos]` repo's name links to `https://github.com/<github>`; an intent's ID to its `intent.md` on the `intents` remote's `main` (`https://github.com/<owner>/<repo>/blob/main/<dir>/intent.md`; only for a `https://github.com/` remote); its title to `/i/<id>`. Every page has the nav: Overview, Intents, Repos, Grafana (`http://localhost:3000`). | test_links_and_intents_list |
-| UI-13 | **Intents** `GET /intents`: every open intent in PRI-4 order (id, repo, title, p, u i a · model, state: `running: <stage>`, `waiting on you: <waiting>`, `waiting: <waiting>`, `parked`, `queued`), then up to 100 done ones (stage, PR, finished day); unreadable intent files listed with their reason. | test_links_and_intents_list |
-| UI-14 | **Edits** `POST /api/intent` (Origin, token and a running loop as UI-4/UI-6): `{op: save, id, u, i, a, model}` (u, i 1–5; a 1–5 or empty = none; model `opus\|sonnet\|haiku` or empty = default), `{op: drop, id}` (refused with a running mission: 409), `{op: add, repo (in [repos]), title (1–200 chars), u, i, a}` → `{ok, reply}`. Every edit goes through `intents::edit::IntentWriter` (`edit(id, &Edit)`, `add(NewIntent)`); today `GitWriter` (`Store::update`/`add` as the App: pull, line-level `Intent::set`/`remove`, commit `towercab: rescore\|model\|drop <id>`, push), so a database store can replace it (intent 261025-1900). `edit::apply(&mut Intent, &Edit)` is pure. | test_intent_edits_apply, test_intent_api |
-| UI-15 | **Intent page** `GET /i/<id>` (open or done): title, links (file, repo, PR, `plan.md` when it exists), p and u/i/a/model, `waiting`, the edit form (open ones, with a loop), the Problem, Proposed outcome, Affected, Constraints, Open questions and Towercab sections (escaped; `- ` lines as a list), and every attempt (mission, attempt, stage, cost, updated). | test_intent_page |
-| UI-16 | **Repos** `GET /repos`: per `[repos]` repo: GitHub link, base, clone present, `CLAUDE.md` checks (`repo::load` on its clone: `ok: <n> check line(s)` or the error), GitHub App installed (`Identity::token`), `towercab` ruleset (`find_ruleset`, my `gh`), cap or freeze (with `trust <repo>`). The GitHub checks are kept 5 min; `?fresh` reads again. | test_repos_panel |
-| UI-17 | **Cost and limits:** the top bar shows `spend today $x · 7 d $y` (Prometheus at `[metrics].prometheus`: `sum(sum_over_time(towercab_cost_usd…[1d|7d]))`, 2 s, kept 60 s; left out when it doesn't answer); a cooling model shows `cooling until <time> (usage limit, in <left>)`. | test_tab_count_and_log_scroll |
-| UI-18 | **Tab and log:** the tab title is `(<n>) <page>` while n things wait on me (`on_me_count` in the state); the log shows the newest lines at the bottom and stays there on each poll unless I've scrolled up. | test_tab_count_and_log_scroll |
-| UI-19 | **Recently finished** (overview, after Now): the last 10 missions with `finished` set, newest first: title (to `/i/<id>`), ID, repo, how it ended (`done · merged by <who>`, `stopped · <waiting>`), PR link, `details` (`/m/<id>`), how long ago. | test_recently_finished |
-| UI-20 | Removed: built as UI-27 (wait detail and context) (the self-sufficient fix, 2026-10-26). | — |
-| UI-21 | Removed: built as UI-27 and LOOP-15 `answer` (the self-sufficient fix, 2026-10-26). | — |
-| UI-22 | Removed: built as LOOP-15 `answer` (the `## Answers` section); shown in the intent page's sections (the self-sufficient fix, 2026-10-26). | — |
-| UI-23 | **Stage history** (`ui::history`, pure over rows: `history(&Mission, &[Transition], &[RunFile]) -> Vec<StageVisit>`): from `transitions`, each visit of a stage of the mission's sequence: entered (`at` of the transition into it), left (the next transition's `at`; none while current), duration, how it ended (`event`, `why`, escaped) and the mission's attempt. A stage visited again (retry, repair) lists every visit, newest last; a stage never reached has none. Read only: no new table, column or write. | test_stage_history_visits |
-| UI-24 | **Stage PR:** a visit shows the PR the mission had when the visit ended (or has now, if current), derived without a new column: `pr`/`pr_url` of the mission row, the revert PR of a `revert` mission by its own row; state from stored facts only, never a GitHub call by the UI: `merged` (`merge_sha` set, with the merge time = `at` of the transition that left `merge`), `open` (mission unfinished), `closed` (finished, no `merge_sha`); a visit that ended before any PR existed shows none. The link is `http(s)://` only (UI-4). | test_stage_history_pr |
-| UI-25 | **Strip details:** every stage on a strip (overview, mission page) is a `<details>`/`<summary>`, so a tap or click opens its history (UI-23/24) and keyboard works; no hover-only content, no external or new script (UI-4 CSP). The visit's run files link to `/m/<id>/runs/<name>` (UI-10), chosen by the stage's kinds and the visit's `n` numbers (`build.txt`, `<kind>-<n>.json`, `verify-<n>.log`, …); the stage a mission is in stays open across the 3 s poll (the section swap keeps `open` states by `data-stage`). Done and merged stages keep their PR link. Usable at 360 px. | test_strip_details, test_strip_survives_poll |
-| UI-26 | **Past attempts and all PRs:** the strip of the mission page has an attempt switcher (links `/m/<id>`, one per attempt of the intent, newest first; past ones show their strip read-only from their transitions). The intent page ([UI-15](ui.md)) gets `Pull requests`: every PR the intent ever had, one row per mission (attempt) and stage kind (spec, build, revert): attempt, stage, PR link, state (UI-24), opened (`pushed_at`) and merged time, ordered by attempt then time. | test_attempts_on_strip, test_intent_prs |
-| UI-27 | **Every wait resolvable here** (`ui::wait`): on the overview, the mission page and the intent page, a wait shows what I decide on next to its inputs: `approve spec` → the spec PR, or "No spec change, so no PR" with Towercab's notes; `approve plan` → `plan.md` rendered; else the PR; the full `why`; the paths the guard refused (`guard-blocks.jsonl`, relative to the checkout); Towercab's notes (`## Towercab`). Inputs: the stage's buttons, Drop, an answer box (`Answer and continue` → `answer`), an unlock field prefilled with the refused paths (`Unlock and continue` → `unlock`), a network field (`Allow and continue` → `allow`). `POST /api/cmd` takes `answer` (text 1–2000), `unlock` (globs split on spaces or commas, `glob_ok`), `allow` (domains, `domain_ok`), `drop`. A section isn't swapped on a poll while I type in it. | test_wait_inputs_and_context |
+### UI-1 · Served by the loop
 
-**State** (`/api/state`)
+The running loop serves the page on localhost, and the page never stops the loop.
 
-```
-version, pid (the loop's | null), running, paused, env_blocked, actions (= running and not `towercab ui`'s own), on_me_count, now
-on_me     [{intent, repo, title, action (message line 1), pr_url}]
-missions  [{id, intent, repo, title, kind, stage, step, waiting, why, pr_url}]
-next      the intent the picker would take | null;  skipped [{intent, reason}]
-log       [{text, error}]
-html      {top, onme, now, next, attention, activity, log}: each section rendered (escaped) in Rust
-```
+- `run --watch` starts the HTTP server (`src/ui/server.ts`, `node:http`) on `127.0.0.1:<[ui] port>`
+  (default 7311; 0 = off). A port in use is logged once and retried every 30 s. The server serves the
+  built UI (`ui/dist/`) and the API (UI-65); the loop never waits on it.
+- Verified by: `ui: binds localhost only`, `ui: loop serves the page`
+
+### UI-2 · towercab ui
+
+`towercab ui` opens the page in the browser.
+
+- Opens `http://localhost:<port>/` with `xdg-open` (`--no-open` prints the URL). Port 0 → exit 1
+  `ui is off: [ui] port = 0`. No loop running → the CLI serves the same page itself, read-only,
+  with a banner saying Towercab isn't running.
+- Verified by: `ui: the ui command`
+
+### UI-3 · HTTP details
+
+Removed: replaced by UI-1 and UI-65.
+
+### UI-4 · Security
+
+Only the owner's own browser on this machine can read the page or act through it.
+
+- `Host` must be `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>` (else 421). `POST` also
+  needs `Origin` = `http://<Host>` (403) and `X-Towercab-Token` = a per-process random token (32
+  bytes, hex, in the page's `<meta name="towercab-token">`; compared in constant time; 403). No CORS.
+  Every response: `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+  no-referrer`, `X-Frame-Options: DENY`, a CSP of `default-src 'self'` with no inline script.
+- Nothing secret is ever sent: no tokens, no Telegram settings, no key paths; log lines are redacted
+  (`ghs_…`, `ghp_…`, `github_pat_…`, bot tokens, `Bearer …`).
+- Verified by: `ui: host, origin and token are checked`, `ui: secrets are redacted`
+
+### UI-5 to UI-27 · v1 page
+
+Removed: replaced by the v2 design below (UI-55 to UI-71). UI-1, 2 and 4 are kept and updated.
+
+### UI-55 · Stack
+
+The page is a small Preact app built by Vite and served as static files.
+
+- `ui/` (Vite root): `index.html`, `src/main.tsx`, pages, components and one stylesheet with CSS
+  variables. `npm run build:ui` → `ui/dist/`; `npm run dev:ui` serves it with hot reload and proxies
+  `/api` to the running loop. No external resources (fonts, scripts, images) at runtime.
+- Verified by: `ui: the built page has no external resources`
+
+### UI-56 · One vocabulary for states
+
+Every page uses the same few states, with the same words, colours and icons.
+
+- `Needs you`, `Working`, `Waiting on CI`, `Queued`, `Cooling down` (usage limit, with the reset
+  time), `Paused`, `Stalled` (no move for longer than its stage allows: 2 × the stage's timeout, or
+  2 hours for CI), `Up next`, `Parked`, `Done`, `Dropped`. Derived once on the server
+  (`src/ui/state.ts`, `stateOf(mission, now)`) and sent with each item.
+- Steps are named in plain words: "Writing the spec", "Waiting for your spec review", "Planning",
+  "Building", "Running checks", "Proving the tests", "Opening the PR", "Waiting for CI", "Reviewing",
+  "Merging".
+- Verified by: `ui: one state per mission`, `ui: steps in plain words`
+
+### UI-57 · Top bar
+
+The top bar says at a glance whether Towercab is healthy and how much needs the owner.
+
+- Health (`Running`, `Paused`, `Problem`, `Not running`), counts (`2 need you · 1 working · 3
+  queued`), spend today (and of `daily_budget_usd` when set, [MET-29](metrics.md)), the running
+  version and whether it is behind `main`, and Pause/Resume. The tab title starts `(<n>)` while n
+  things need the owner.
+- Verified by: `ui: top bar shows health and counts`
+
+### UI-58 · Needs you
+
+Each thing waiting on the owner is one card that says what is asked, why, and offers only the
+actions that answer it.
+
+- Card: the intent's title and repo; the ask (LOOP-14 **Waits**); a short brief (the question's
+  context and recommendation, the gate's reason, or the review's summary, at most a few lines, the
+  rest behind "More"); the PR link. Actions by kind: approve spec, plan or code → "Merge spec PR",
+  "Merge plan PR" (with the access list visible), "Merge PR"; a question or other blocked wait → a
+  reply box ("Send reply"); always, in a menu: "Start over" (`/retry`) and "Drop" (with a confirm).
+- Ordered oldest wait first. Empty → "Nothing needs you."
+- Verified by: `ui: needs-you card shows only its actions`, `ui: empty states are true`
+
+### UI-59 · Working and queued
+
+Moving intents show their progress through spec, plan and code, the step they are on, and how long
+and how much so far.
+
+- A row per unfinished mission not waiting on the owner: title, repo, a three-part progress (Spec,
+  Plan, Code; done, current, to do, or skipped when there was no spec change), the step in plain
+  words, time in step, cost so far, model. `Queued` rows say what they wait behind.
+- Verified by: `ui: working row shows phase and step`
+
+### UI-60 · Problems
+
+Problems appear only when there are some, each with what to do about it.
+
+- Stalled missions; the same check failing in two rounds; a mission costing over 3 × the median of
+  the last 20; GitHub or Claude unreachable ([LOOP-10](loop.md)); a self-update that failed; intent
+  files that can't be read. Nothing wrong → the section isn't shown.
+- Verified by: `ui: problems only when there are some`
+
+### UI-61 · Up next
+
+The overview shows what Towercab will start next and why the others wait.
+
+- The top 5 of the picker's list ([PRI-5](priority.md)) with priority and, for each skipped one, the
+  reason in plain words (paused, repo busy with <id>, model cooling down until <time>, parked).
+- Verified by: `ui: up next explains skips`
+
+### UI-62 · Intent page
+
+One page per intent shows its whole story: the three PRs, the current state, what happened when,
+and the intent itself.
+
+- `/i/<id>`: title, repo, scores; the current state sentence; the three PRs (spec, plan, code) with
+  state (open, merged, closed, not needed) and links; the needs-you card when it waits (UI-58); a
+  timeline of moves in plain words with times and durations; cost and agent time per attempt; the
+  intent's sections and `## Answers`, rendered; links to run files (logs, prompts, results) of each
+  step.
+- Verified by: `ui: intent page shows the three PRs`, `ui: timeline in plain words`
+
+### UI-63 · Queue page
+
+A queue page shows, per repo, what runs, what waits behind it, and what is parked.
+
+- `/queue`: one lane per `[repos]` repo: the running intent, then the waiting ones in pick order with
+  position and reason; then parked intents; then the last 10 done. Read-only.
+- Verified by: `ui: queue lanes by repo`
+
+### UI-64 · Activity page
+
+An activity page lists what happened, newest first, filterable by intent, repo, kind and time.
+
+- `/activity`: moves (from `transitions`) and loop log lines, each naming the intent by title. Kinds:
+  moves, waits, errors. Filters live in the URL (`?intent=&repo=&kind=&since=`). 100 at a time, "Show
+  more".
+- Verified by: `ui: activity filters in the URL`
+
+### UI-65 · API
+
+The page talks to the loop through a small JSON API.
+
+- `GET /api/state` (the overview's data, with a `version` that changes when anything shown changes),
+  `GET /api/intents/<id>`, `GET /api/queue`, `GET /api/activity?…`, `GET /api/runs/<id>/<file>`
+  (names `[A-Za-z0-9._-]+`, files under `runs/<id>/` only, text, at most 2 MB), `GET /api/events`
+  (Server-Sent Events: `version` on each change), `POST /api/actions` `{action, intent, text?}`.
+- Verified by: `ui: API shapes`, `ui: run files stay inside runs`
+
+### UI-66 · Actions
+
+A button in the page does exactly what the owner would do on GitHub or in the CLI.
+
+- `merge` → `gh pr merge --squash` as the owner on the PR the intent waits on ([LOOP-38](loop.md));
+  `reply` → a PR comment as the owner (no PR yet → `answer`); `retry` → a `/retry` comment (no PR →
+  the `retry` command); `drop` → closes the current PR as the owner (no PR → `drop`); `pause`,
+  `resume` → commands. The reply says what happened in one sentence, or the error.
+- Verified by: `ui: actions go through GitHub as the owner`, `ui: actions without a PR use commands`
+
+### UI-67 · Live without losing input
+
+The page updates on its own and never throws away what the owner is doing.
+
+- The page listens to `/api/events` and refetches on a new `version` (polling every 5 s when the
+  stream drops). Typed text, open menus and expanded sections survive an update; "Updated <n> s ago"
+  shows freshness.
+- Verified by: `ui: update keeps typed text`
+
+### UI-68 · Look and feel
+
+The page is calm, readable and usable on a phone.
+
+- Light and dark (`prefers-color-scheme`), system font stack, a type scale of 4 sizes, an 8 px
+  spacing grid, contrast at least WCAG AA, state colours always paired with an icon or word, visible
+  keyboard focus, usable at 360 px wide. No raw commands, field names or IDs as primary text (IDs
+  appear small, next to titles).
+- Verified by: `ui: screenshots light, dark and mobile`
+
+### UI-69 · Screenshot tests
+
+Every page is rendered in a real browser in tests, and the screenshots are kept.
+
+- `npm run test:ui` (Playwright, Chromium) starts the server on a fixture home with intents in every
+  state and saves `ui/screenshots/<page>-<light|dark|mobile>.png` (CI uploads them, PIP-12). The
+  same run is Towercab's own ` ```screenshots ` block ([REPO-10](repo.md)).
+- Verified by: `ui: screenshots light, dark and mobile`
+
+### UI-70 · Empty states
+
+Every section says something true when it is empty.
+
+- "Nothing needs you." "Nothing is running." "Nothing queued: add an intent to the intents repo."
+  "No problems." Never an empty box.
+- Verified by: `ui: empty states are true`
+
+### UI-71 · Words
+
+Every text on the page is plain language a person can act on.
+
+- Times are relative ("12 min ago") with the exact time on hover; costs in dollars with 2 decimals;
+  durations as `1 h 05 min`. Errors say what failed and what to do.
+- Verified by: `ui: times, costs and durations`
 
 ## Out of scope
 
-- Access from another machine (Tailscale, a reverse proxy), logins, TLS.
-- New powers beyond `commands` and the intent edits of UI-14: editing config or the database directly.
-- Playbook indicators: the Grafana dashboard has them (metrics.md); the UI links to it.
+- Editing intents in the page: the owner edits them in the intents repo or with `/intent`.
+- Remote access: the page is for this machine only.
 
 ## Decisions
 
-- The loop serves it (always there while `towercab up`); `towercab ui` covers a stopped loop with the same page, actions off.
-- Hand-rolled HTTP over `tiny_http`: two methods, `Connection: close`, no chunked bodies: ~200 lines with no new crate, and the limits and checks above are needed either way.
-- Rendered once, in Rust: `/api/state` carries each section's HTML; the script only swaps it in. One escaper, no second template in JS.
-- Actions need a running loop: a row queued for a loop that isn't coming would apply days later, surprising.
-- Polling, not push: 3 s is fast enough to watch, and stays within `Connection: close`.
-- An answer is a command like the rest (same powers as CLI and Telegram), never a direct intent write by the UI: the loop applies it, so crash recovery and the one-writer rule hold.
-- Answers are stored in `intent.md`'s `## Answers` (INT-14), not only in `missions.data`: a fresh attempt, a lost session and a reset database keep them, and I can read or fix them in the file. Cost: the text is pushed to the `intents` repo (private); don't put secrets in an answer.
-- Stage history is derived, not stored: `transitions` already has every entry, exit, event and why, and `missions` has one row per attempt with its PR fields (revert PRs are their own missions). A `transitions.pr` column would need a migration and a backfill for old rows and still couldn't say "merged" later. Cost: a PR a mission replaced within one attempt (if its `pr` is ever overwritten) is not seen; if that case is real, record `data.prs` in the stage that opens it in a follow-up.
-- PR state is what Towercab recorded, not what GitHub says now: the UI makes no GitHub calls on the poll; a PR closed by hand on GitHub shows `open` until the mission finishes.
-- `<details>` instead of hover or script: works on a phone, passes the no-external-script rule and the CSP hash with no new code in the page script.
-- Only `answer the question` takes an answer; for `checks red`, `no result` … an answer has nothing to resume from, so those keep Approve (the worker continues with the reason) and "Retry fresh".
+- Designed from the operator's jobs, not from the data: v1 listed every field it had; v2 shows what
+  needs a decision first and hides the rest one click away.
+- Actions act on GitHub as the owner, so the PR history stays the one record of who decided what.
+- Preact and Vite: a real component model and hot reload make the UI quick to iterate, at a few KB.
+- Screenshots in every test run: a UI nobody looks at drifts; the review and CI now see it.

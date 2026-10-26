@@ -1,32 +1,51 @@
 # Specs
 
-The **intent home is the source**. A spec is written or changed when an intent is picked up,
-not ahead of it.
+These files say what Towercab does. They are the source of truth: the code follows them, and a
+behaviour change starts here.
 
-1. An intent arrives in `intents` ([intents.md](intents.md)).
-2. Design (Towercab's `design` stage, [PIP-25](pipeline.md)): add or change the requirement rows it touches
-   in that area's spec, first commit of the PR. New area → copy `_template.md`.
-3. One requirement = one testable line. IDs never reused; dropped → `Removed`.
-   `Verified by` = test name, command, or `manual` (say what to look at).
-4. Spec rows are the PR's first commit (step 2); code and tests follow in the same PR, squash-merged into one commit. PR body lists the IDs.
+## How a spec changes
 
-Short but technical: interfaces, fields, formulas, limits. ~30 lines per spec.
-`Draft` = agreed, not built; `Verified by` then names the planned check.
-Status line: `Live: <IDs>` lists the built rows (comma-separated, ranges as `INT-9..13`, up to the next ` · `);
-a bare `Live` = every row; otherwise none. Each live row's `test_*` names must exist as `fn` (`tests/spec_refs.rs`, [PIP-12](pipeline.md)).
+1. An intent arrives in the `intents` repo ([intents.md](intents.md)).
+2. Towercab's design step (or a person) changes the requirements the intent touches, in that area's
+   file. A new area starts from [_template.md](_template.md).
+3. The change ships as three pull requests: the spec, then the plan, then the code
+   ([pipeline.md](pipeline.md)). The code PR marks the rows it built as live.
+
+## How a requirement is written
+
+Each requirement is a `### <ID> · <name>` heading, one plain sentence a person can follow, then the
+technical detail under it and how it is verified:
+
+```markdown
+### PRI-3 · Priority score
+
+An intent's priority is twice its importance plus its urgency.
+
+- `priority(u, i) = 2 * i + u`, 3–15; missing scores count as 3.
+- Verified by: `priority: score is 2i + u`
+```
+
+- IDs are never reused. A dropped requirement keeps its heading and says `Removed: <why>`.
+- `Verified by` names tests (their exact `test(...)` titles in `tests/`), a command, or `manual` with
+  what to look at.
+- **Status line:** `Draft` = agreed, not built. `Live: <IDs>` lists the built requirements
+  (comma-separated, ranges as `INT-9..13`); a bare `Live` means all of them. Every test a live row
+  names must exist (`specs: every live row names tests that exist`).
+
+## Areas
 
 | Spec | Prefix | Covers |
 |---|---|---|
-| [priority.md](priority.md) | PRI | Scores, order, cutoff, review |
-| [autonomy.md](autonomy.md) | AUT | Where an intent waits for me |
+| [intents.md](intents.md) | INT | Intent files, IDs, the intents repo, lifecycle fields, generated views |
+| [priority.md](priority.md) | PRI | Scores, order, cutoff, dropping |
+| [autonomy.md](autonomy.md) | AUT | Where an intent waits for the owner, and what access a worker gets |
+| [loop.md](loop.md) | LOOP | The program: service, state machine, crash recovery, limits, commands, messages, updates |
+| [pipeline.md](pipeline.md) | PIP | Spec, plan and code PRs; build, verify, proof, CI, review, gate, merge; GitHub interactions; writing |
+| [repo.md](repo.md) | REPO | What Towercab reads from a target repo: `CLAUDE.md`, `REVIEW.md`, `TOWERCAB.md`; protected paths |
+| [ui.md](ui.md) | UI | The local web page for the person running Towercab |
+| [metrics.md](metrics.md) | MET | Cost and time per intent, spend per day |
+| [public.md](public.md) | PUB | What the public repo shows: license, security policy, README, no personal names |
+| [maintain.md](maintain.md) | MNT | Removed: parked as intent 261026-2204-2 |
 | [scheduler.md](scheduler.md) | SCH | Removed: superseded by loop.md |
-| [maintain.md](maintain.md) | MNT | Bands on Towercab's own metrics, tiers, diagnosis → intent, lessons |
-| [intents.md](intents.md) | INT | Intent files, routes in (me, issues, monitoring), acceptance, lifecycle |
 | [tasks.md](tasks.md) | TSK | Removed: superseded by intents.md |
-| [metrics.md](metrics.md) | MET | Playbook indicators, OTLP metrics and events, Claude Code telemetry, Grafana dashboard |
 | [runner.md](runner.md) | RUN | Removed: superseded by loop.md |
-| [ui.md](ui.md) | UI | Local web page: state, actions, mission pages, run files, log |
-| [pipeline.md](pipeline.md) | PIP | Design, spec gate, plan, build, verify, red→green proof, publish, CI, verifier, PR review, gate, merge, deploy, e2e, release, revert, rehearsal, evals |
-| [public.md](public.md) | PUB | What a public repo shows: license, security policy, user README, docs index, no personal names |
-| [loop.md](loop.md) | LOOP | Rust runner: service, state machine, crash recovery, limits, status, Telegram, commands |
-| [repo.md](repo.md) | REPO | `CLAUDE.md` verifying block (setup, checks, run), `REVIEW.md` (passes, red lines), `TOWERCAB.md` (max_autonomy, protected, tests, live, release, rollback); protected paths; `protect` |
