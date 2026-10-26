@@ -322,8 +322,8 @@ One SQLite file holds what the loop must not forget: missions, their moves, comm
 - `node:sqlite`, WAL, `synchronous=FULL`, `busy_timeout=5000`; migrations by `PRAGMA user_version`.
   Tables in **Schema**: `missions`, `transitions`, `commands`, `outbox`, and a key-value `meta`
   (running pid, paused, cooldowns, bot identity, last pass). `tx(fn)` = one `BEGIN IMMEDIATE`.
-- v2 starts a new `towercab.db`; v1's is left in place, unused.
-- Verified by: `db: schema matches the spec`, `db: migrations run in order`
+- v2 starts a new `towercab.db`; a v1 one at that path is moved aside to `towercab.v1.db`, unused.
+- Verified by: `db: schema matches the spec`, `db: migrations run in order`, `db: a v1 database is moved aside`
 
 ### LOOP-38 · Acting as the owner
 

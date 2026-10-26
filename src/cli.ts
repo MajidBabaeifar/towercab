@@ -89,7 +89,7 @@ interface World {
 function world(flags: { config?: string; home?: string }, tools: Tools): World {
   const config = loadConfig(configPath(flags.config));
   const home = Home.resolve(flags.home);
-  const db = new Db(home.db);
+  const db = Db.openHome(home.db);
   const github = config.github ? createGitHub({ config, tools, db, keyPath: appKeyPath(config) }) : null;
   let store: Promise<IntentStore> | null = null;
   return {

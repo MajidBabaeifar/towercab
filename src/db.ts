@@ -1,5 +1,6 @@
 // The database (LOOP-37): one SQLite file, four tables and a key-value meta.
 
+import { existsSync, renameSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 
 export type SqlValue = SQLInputValue;
@@ -44,6 +45,24 @@ export class Db {
       "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
     );
     this.migrate();
+  }
+
+  /**
+   * Open the home's database; a v1 (Rust) one at the same path (it has `repo_caps`) is moved aside to
+   * `towercab.v1.db` first and left unused (LOOP-37).
+   */
+  static openHome(path: string): Db {
+    if (existsSync(path)) {
+      const probe = new DatabaseSync(path);
+      const v1 = probe.prepare("SELECT 1 FROM sqlite_master WHERE name = 'repo_caps'").get() !== undefined;
+      probe.close();
+      if (v1) {
+        const aside = path.replace(/\.db$/, ".v1.db");
+        for (const ext of ["", "-wal", "-shm"])
+          if (existsSync(path + ext)) renameSync(path + ext, aside + ext);
+      }
+    }
+    return new Db(path);
   }
 
   static memory(): Db {

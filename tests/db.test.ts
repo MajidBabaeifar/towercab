@@ -28,3 +28,14 @@ test("db: migrations run in order", () => {
   again.close();
   expect(() => new Db(path)).toThrow(/newer than this Towercab/);
 });
+
+test("db: a v1 database is moved aside", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const path = join(tempDir(), "towercab.db");
+  const v1 = new DatabaseSync(path);
+  v1.exec("CREATE TABLE repo_caps (repo TEXT); PRAGMA user_version = 5;");
+  v1.close();
+  const db = Db.openHome(path);
+  expect(db.version()).toBe(MIGRATIONS.length);
+  expect(readFileSync(path.replace(".db", ".v1.db")).length).toBeGreaterThan(0);
+});
