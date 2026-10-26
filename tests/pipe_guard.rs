@@ -74,6 +74,23 @@ fn blocks(p: &Pipe) -> Vec<Value> {
         .collect()
 }
 
+/// PUB-5: the guard's and publish's refusals name "the owner", never a person.
+#[test]
+fn test_guard_messages_say_owner() {
+    let guard_src = common::read("src/pipeline/guard.rs");
+    let publish_src = common::read("src/pipeline/publish.rs");
+    assert_eq!(
+        guard_src
+            .matches("changes here go through the owner")
+            .count(),
+        4
+    );
+    assert!(publish_src.contains("These paths go through the owner"));
+    for src in [&guard_src, &publish_src] {
+        assert!(!src.contains("go through Majid"));
+    }
+}
+
 #[test]
 fn test_guard_blocks_protected_write() {
     let mut p = guarded();
@@ -109,7 +126,7 @@ fn test_guard_blocks_protected_write() {
     assert_eq!(rules.unlock, ["docs/**"]);
     assert!(rules.locked.is_empty());
     // Blocked: protected, outside, through `..` or a symlink; allowed: the rest, unlocked docs.
-    let protected = |rel: &str| format!("{rel} is protected: changes here go through Majid");
+    let protected = |rel: &str| format!("{rel} is protected: changes here go through the owner");
     std::os::unix::fs::symlink("../.github", checkout.join("src/gh")).unwrap();
     for (tool, path, want) in [
         (
@@ -150,7 +167,7 @@ fn test_guard_blocks_protected_write() {
         (
             "Write",
             "/etc/passwd".into(),
-            Err("/etc/passwd is outside the checkout: changes here go through Majid".into()),
+            Err("/etc/passwd is outside the checkout: changes here go through the owner".into()),
         ),
         (
             "Edit",
@@ -370,7 +387,7 @@ fn test_guard_hook_cli() {
         ),
         (
             Some(2),
-            "CLAUDE.md is protected: changes here go through Majid\n".into()
+            "CLAUDE.md is protected: changes here go through the owner\n".into()
         )
     );
     let (code, err) = hook_cli(
@@ -453,7 +470,7 @@ fn test_lock_blocks_test_edit_in_repair() {
     let err = guard::hook(&input("Edit", &test), &rules_file).unwrap_err();
     assert_eq!(
         err,
-        "tests/login_test.sh is a test already pushed: it is locked in repair rounds; changes here go through Majid"
+        "tests/login_test.sh is a test already pushed: it is locked in repair rounds; changes here go through the owner"
     );
     assert_eq!(blocks(&p).last().unwrap()["kind"], "test_lock");
     // A new test is fine.
@@ -595,7 +612,7 @@ fn test_guard_blocks_dangling_symlink() {
     assert_eq!(
         guard::hook(&input("Write", &path), &file),
         Err(format!(
-            "{path} goes through a dangling symlink: changes here go through Majid"
+            "{path} goes through a dangling symlink: changes here go through the owner"
         ))
     );
 }

@@ -1,6 +1,6 @@
 # Towercab
 
-Majid's software factory: intents in the `intents` repo → Claude Code builds them → PRs.
+The owner's software factory: intents in the `intents` repo → Claude Code builds them → PRs.
 One Rust crate at the root; the Python version lives on branch `python`.
 
 ## Commands

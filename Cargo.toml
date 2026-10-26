@@ -2,7 +2,8 @@
 name = "towercab"
 version = "0.3.0"
 edition = "2024"
-description = "Majid's software factory: intents in, merged PRs out"
+description = "Orchestrator for Claude Code: intents in, reviewed PRs out"
+license = "MIT"
 publish = false
 
 [dependencies]
