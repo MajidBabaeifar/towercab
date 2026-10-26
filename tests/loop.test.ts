@@ -2,7 +2,7 @@
 // faked per test so each test controls what a stage does.
 
 import { join } from "node:path";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { insertCommand } from "../src/commands.ts";
 import { fixFor } from "../src/faults.ts";
 import type { PrState } from "../src/github/prs.ts";
@@ -467,11 +467,33 @@ test("loop: idle", async () => {
   expect(r).toMatchObject({ idle: true, picked: null, stop: false });
   expect(p.db.all("SELECT * FROM outbox")).toEqual([]);
   expect(p.tools.spawned).toEqual([]);
-  // Without --watch, `run` ends once nothing is runnable; with it the pass just reports idle.
+  // Without --watch, `run` ends once nothing is runnable.
   const t = Date.now();
   expect(await p.loop.run()).toBe(0);
   expect(Date.now() - t).toBeLessThan(PASS_MS);
   expect(p.db.meta("running")).toBeNull();
+  // With --watch it keeps passing every 5 s, quietly, until stopped.
+  const w = new Pipe(TARGET, { "README.md": "intents\n" });
+  await w.start({}, { watch: true });
+  vi.useFakeTimers({ toFake: ["setTimeout"] });
+  try {
+    let ended: number | null = null;
+    const passes = vi.spyOn(w.loop, "pass");
+    void w.loop.run().then((code) => {
+      ended = code;
+    });
+    for (let i = 0; i < 4; i++) {
+      await vi.waitFor(() => expect(passes).toHaveBeenCalledTimes(i + 1), { timeout: 5000 });
+      await vi.advanceTimersByTimeAsync(PASS_MS);
+    }
+    expect(ended).toBeNull();
+    expect(w.db.all("SELECT * FROM outbox")).toEqual([]);
+    w.loop.stop(0);
+    await vi.advanceTimersByTimeAsync(PASS_MS);
+    await vi.waitFor(() => expect(ended).toBe(0), { timeout: 5000 });
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("commands: applied by the loop", async () => {
