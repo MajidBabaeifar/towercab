@@ -790,3 +790,21 @@ fn test_open_question_placeholders() {
             .is_err()
     );
 }
+
+#[test]
+fn test_continue_resets_caps() {
+    let mut p = asked("go on?");
+    let db = p.w.db();
+    db.conn()
+        .execute(
+            "UPDATE missions SET sync_rounds = 3, verify_repairs = 3, ci_repairs = 2 WHERE intent = ?1",
+            [ID],
+        )
+        .unwrap();
+    commands::queue(&db, &Cmd::Approve(ID.into()), "ui").unwrap();
+    p.until(10, |w| {
+        w.transitions(ID).iter().filter(|t| t.2 == "blocked").count() >= 2
+    });
+    let m = p.mission(ID);
+    assert_eq!((m.sync_rounds, m.verify_repairs, m.ci_repairs), (0, 0, 0));
+}

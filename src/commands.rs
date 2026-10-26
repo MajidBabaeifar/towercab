@@ -404,7 +404,16 @@ fn on_mission(
         }
         _ => None,
     };
-    machine::apply_tx(tx, ax, &cur, &Outcome::event(event), given)?;
+    // My continue gives the loop's caps a fresh budget (conflict rounds, repairs): they stop
+    // runaway loops without me, not the work I asked for.
+    let mut o = Outcome::event(event);
+    if event == Event::Approve {
+        o = o
+            .with("sync_rounds", 0i64)
+            .with("verify_repairs", 0i64)
+            .with("ci_repairs", 0i64);
+    }
+    machine::apply_tx(tx, ax, &cur, &o, given)?;
     Ok(match cmd {
         Cmd::Approve(_) => format!("approved {intent}"),
         Cmd::Answer(..) => format!("answered {intent}: continuing"),
