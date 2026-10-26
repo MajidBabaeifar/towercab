@@ -819,3 +819,20 @@ fn test_check_timeout_waits() {
     assert_eq!(p.data(ID)["check_x"], 2);
     assert_eq!(p.w.stage(ID), Some(Stage::Verify));
 }
+
+#[test]
+fn test_proof_setup_before_tests() {
+    // The PR's tests need the change to even set up (Go: `go mod vendor` with a test importing
+    // a new package). Laid after the setup, they fail the checks on base: proven, not blocked.
+    let mut p = Pipe::login("a: 4\n");
+    let setup = format!(
+        "case \"$PWD\" in *-proof) test ! -e tests/login_test.sh || {{ echo 'no package' >&2; exit 1; }};; esac; echo \"$PWD\" >> '{}'",
+        p.w.root.join("setup.log").display()
+    );
+    p.base("web", &[("CLAUDE.md", &claude_md(&setup))], "setup");
+    p.plans(2).builds(3);
+    p.step_to(ID, Stage::Publish, 10);
+    let line = p.data(ID)["proof"]["line"].clone();
+    assert_eq!(line, "red on base: sh check.sh");
+    assert!(p.mission(ID).waiting.is_none());
+}

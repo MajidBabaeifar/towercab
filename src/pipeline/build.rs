@@ -181,6 +181,7 @@ impl Build {
             family: "setup",
             dir: cx.checkout(m),
             lines: Lines::of(&files.verifying.setup, &[]),
+            before_checks: None,
         }
     }
 
