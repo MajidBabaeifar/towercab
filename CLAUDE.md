@@ -1,60 +1,61 @@
 # Towercab
 
-The owner's software factory: intents in the `intents` repo → Claude Code builds them → PRs.
-One Rust crate at the root; the Python version lives on branch `python`.
+The owner's software factory: intents in the `intents` repo → Claude Code builds them → reviewed PRs.
+TypeScript on Node ≥ 22.18, run straight from this checkout (no build step for the program).
+v1 (Rust) lives on branch `rust`.
 
 ## Commands
 
-- `cargo test --locked`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo fmt`
-  (a zig `cc`: `CRATE_CC_NO_DEFAULTS=1`; Towercab's workers get it from `[agent].env`, never prefix `export`)
-- `cargo run -- add "towercab: <title>" u3 i4` · `migrate` · `review` · `--home /tmp/tc run [--watch]` · `status` · `doctor`
-- Before pushing run the `fast` checks below and `cargo test --locked --test <file>` for the tests you touched; CI runs the full suite.
+- `npm run check` = lint (Biome) + typecheck (`tsc`) + all tests (Vitest); `npm run format` fixes style.
+- `npx vitest run tests/<file>` for one file; `npm run test:ui` builds the UI and takes Playwright screenshots.
+- `bin/towercab --home /tmp/tc run --watch` runs a loop on a scratch home; `towercab restart` reloads the service.
+- `npm run dev:ui` serves the UI with hot reload against the running loop.
 
 ## Conventions
 
-- `specs/*.md` are the truth. Behaviour changes start with a spec row; update the row, its `Verified by` and the Status line (`Live: …`) in the same commit as the code.
-- Every `test_*` named by a Live row exists as `fn test_…` (`tests/spec_refs.rs`, PIP-12).
-- Logic in `src/lib.rs` modules, all `pub`; `src/main.rs` only calls `towercab::cli::run`.
-- Tests only in `tests/*.rs` (no `#[cfg(test)]` in `src/`); shared fixtures in `tests/common/`.
-- Tests are hermetic: temp dirs, local bare git repos, fake `gh`/`claude` on `PATH`. Never the network, GitHub or `~/.local/share/towercab`.
-- Errors are `String`s that read as the reason; no `anyhow`, no async. Git through the `git` CLI. Conventional Commits, small commits.
+- `specs/*.md` are the truth. A behaviour change starts with a spec row; update the row, its
+  `Verified by` and the Status line in the same commit as the code. Test titles = `Verified by` names.
+- Erasable TypeScript only (no `enum`, `namespace`, parameter properties); relative imports end in `.ts`.
+- External programs only through `Tools` (`src/tools.ts`); tests pass `FakeTools` (`tests/helpers/`).
+- Tests are hermetic: temp dirs, local bare git repos, fakes for `gh`/`claude`/`bwrap`. Never the network,
+  GitHub or `~/.local/share/towercab`. No real sleeps: inject a `TestClock`.
+- Errors are `Error`s whose message reads as the reason. Conventional Commits, small commits.
+- Text a person reads (PR bodies, comments, questions, UI) follows `prompts/writing.md`.
 
 ## Architecture
 
-- `src/cli.rs`: clap; errors → `towercab: <reason>`, exit 1; bad arguments 2. `config.rs`: **Config**.
-- The loop (file → interface: loop.md **Code**): `runloop.rs` (5 s pass), `machine.rs` (the one state machine,
-  a red line), `mission.rs`, `handler.rs` (`Handler`, `Ctx::record`; `production()` = the pipeline), `pick.rs`, `checkout.rs`,
-  `events.rs`, `child.rs`, `limits.rs`, `env.rs`, `awake.rs`, `home.rs`, `db.rs` (`Db::tx` = one `BEGIN IMMEDIATE`),
-  `commands.rs`, `outbox.rs`, `telegram.rs` (`http.rs`), `status.rs`, `doctor.rs`, `service.rs`, `exes.rs`; subsets: `github`, `claude`.
-- `src/priority.rs`: PRI order, `pick_order`, `review_due`; `src/review.rs`: `towercab review`. `src/autonomy.rs`: AUT cap, gate, spec gate, `lower_a`.
-- `src/intents/`: the intent home: `intent.rs` (parse, line-level `set`), `id.rs`, `store.rs` (`Store`: list/get/add/update; pull → write → commit → push, replay), `views.rs`, `git.rs`, `migrate.rs`.
-- `src/repo/`: repo files from `origin/<base>` (`load`), `protected.rs`, `protect`. `src/maintain/`: bands, pure detection (maintain.md **Code**). `src/ui/` (ui.md): the loop's web page; `wire.rs` HTTP, `mod.rs` routes, state, actions → `commands`.
-- `src/pipeline/` (pipeline.md **Code**): a handler per stage, state in `missions.data`, Claude runs (`runs.rs`), `evals.rs`, `findings.rs`; `prompts/*.md`; `src/writer.rs` (PR text). Tests: `tests/pipe_*.rs`, `common/pipe.rs`.
-- `src/metrics.rs` (metrics.md **Code**): `METRICS`, a per-thread buffer, `Sink` (OTLP, spool); `indicators.rs` (where each metric comes from: `machine::apply`/`enter`, handlers); `telemetry.rs`. Tests: a dead endpoint (`common::NO_METRICS`).
+- `src/cli.ts` → `src/loop.ts` (the 5 s pass). `src/machine.ts` is the one state machine: only `apply`
+  moves a mission, in one `Db.tx`. `src/handlers.ts`: the `Handler`/`Ctx` contract.
+- `src/pipeline/`: one handler per stage (design → plan → build → verify → proof → publish → ci →
+  review → gate → merge), plus sandbox, guard, access, PR text, prompts (`prompts/*.md`).
+- `src/intents/`: the intent files and the store (git sync). `src/github/`: App identity, `gh`, PR reads,
+  owner events, stage comments. `src/repo/`: `CLAUDE.md`/`REVIEW.md`/`TOWERCAB.md` of target repos.
+- `src/ui/`: server, API and view model; `ui/`: the Preact app (Vite).
 
 ## Things Claude gets wrong here
 
-- Editing `TODO.md`/`DONE.md` in `intents`: they are generated; edit `intent.md` files.
-- Re-serialising front matter: write with `Intent::set`/`remove` so other lines stay byte-identical.
-- Adding a test name to a spec row without the `fn`, or marking a row Live before it is built.
-- `std::env::set_var` in a test binary that has other tests: give it its own `tests/*.rs`.
-- One change's writes outside one `Db::tx`; in a test, the binary without `common::towercab` + `--home` or a `Loop` without `common::fake_exes`/`World::exes` (fixtures: `tests/common/world.rs`, HTTP `http.rs`).
-- Moving a mission anywhere but `machine::apply`, or a side effect before its `Ctx::record`.
+- Moving a mission anywhere but `machine.apply`, or a side effect before its `ctx.record`.
+- Re-serialising intent front matter: edit with `setField`/`removeField` so other lines stay byte-identical.
+- Adding a test title to a spec row without the test, or marking a row Live before it is built.
+- Awaiting inside `Db.tx` (it is synchronous on purpose).
+- Calling `child_process` directly instead of `Tools`.
 
 ## Verifying your work
 
 ```setup
-cargo fetch --locked
+npm ci
 ```
 
 ```checks
-cargo fmt --check
-cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked
+npm run check
 ```
 
 ```fast
-cargo fmt --check
-cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked $(printf -- '--test %s ' {stems})
+npm run lint
+npm run typecheck
+npx vitest run {tests}
+```
+
+```screenshots
+npm run test:ui
 ```

@@ -1,1 +1,0 @@
-Only your compound shell command was refused, not Bash: the allowed commands run one at a time, exactly as listed, from the checkout (no `cd`, `&&`, `;`, pipes, redirects or heredocs). Write and change files with Edit and Write, then run each check command alone. Go on with the work; ask only if a single listed command is refused.
