@@ -3,19 +3,22 @@
 // merges them for real, a fake `claude` driven by scripts, a `bwrap` that runs the line with `sh`.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseConfig } from "../../src/config.ts";
 import { Db } from "../../src/db.ts";
-import type { GitHub } from "../../src/handlers.ts";
+import type { GitHub, Handlers } from "../../src/handlers.ts";
 import { Home } from "../../src/home.ts";
 import { openStore } from "../../src/intents/store.ts";
 import type { IntentStore } from "../../src/intents/types.ts";
-import { Loop } from "../../src/loop.ts";
+import { Loop, type LoopDeps } from "../../src/loop.ts";
+import type { Stage } from "../../src/machine.ts";
+import { getMission, type Mission } from "../../src/mission.ts";
 import { handlers } from "../../src/pipeline/index.ts";
-import type { ChildExit, ChildSpec, RunOpts, RunResult } from "../../src/tools.ts";
+import type { ChildExit, ChildHandle, ChildSpec, RunOpts, RunResult } from "../../src/tools.ts";
 import { FakeTools, failResult, okResult } from "./tools.ts";
-import { bareRepo, git, TestClock, tempDir } from "./world.ts";
+import { git, TestClock, tempDir } from "./world.ts";
 
 export interface FakePr {
   number: number;
@@ -28,33 +31,119 @@ export interface FakePr {
   mergeCommit: string | null;
   comments: { id: string; author: string; body: string; at: string }[];
   reviews: { author: string; state: string; body: string; at: string; commit: string }[];
+  /** `statusCheckRollup` for the PR's current head. */
+  checks: (pr: FakePr, head: string) => unknown[];
+  mergeable: string;
+  /** `mergeStateStatus` answers, one per read that asks for it; then `CLEAN`. */
+  mergeStates: string[];
 }
 
-export type ClaudeScript = (
-  spec: ChildSpec,
-  prompt: string,
-) => { structured: unknown; edits?: Record<string, string>; cost?: number };
+/** What a fake Claude run does. */
+export interface ClaudeReply {
+  structured?: unknown;
+  /** Files written into the run's cwd (path → text; null deletes). */
+  edits?: Record<string, string | null>;
+  /** `total_cost_usd` (the session's running total on a resume). Default 0.5. */
+  cost?: number;
+  durationMs?: number;
+  /** Written to stderr. */
+  stderr?: string;
+  code?: number;
+  isError?: boolean;
+  result?: string;
+  subtype?: string;
+  /** Print no result line at all. */
+  noResult?: boolean;
+  /** Never end on its own (killed by a timeout or a move). */
+  hang?: boolean;
+}
+
+export type ClaudeScript = (spec: ChildSpec, prompt: string) => ClaudeReply;
+
+export interface ClaudeCall {
+  kind: string;
+  prompt: string;
+  argv: string[];
+  /** `--session-id <id>` → new, `--resume <id>` → resume. */
+  session: { mode: "new" | "resume" | "none"; id: string };
+  model: string;
+  cwd: string;
+  /** The run's `--settings` file, parsed. */
+  settings: Record<string, unknown>;
+}
+
+const PID_OFFSET = 9_000_000;
+
+/** FakeTools whose children route by command and whose pids no real process has. */
+export class PipeTools extends FakeTools {
+  readonly routes = new Map<string, (spec: ChildSpec) => ChildExit | Promise<ChildExit>>();
+  /** After a simulated crash every call fails (the process is gone). */
+  dead: (() => Error) | null = null;
+
+  override async run(cmd: string, args: string[], opts: RunOpts = {}): Promise<RunResult> {
+    if (this.dead) throw this.dead();
+    return super.run(cmd, args, opts);
+  }
+
+  override spawn(spec: ChildSpec): ChildHandle {
+    if (this.dead) throw this.dead();
+    const cmd = spec.argv[0]!.split("/").pop()!;
+    const route = this.routes.get(cmd);
+    if (route) this.child(cmd, route);
+    const h = super.spawn(spec);
+    // A fake pid above pid_max: killing its group can never reach a real process.
+    return { ...h, pid: h.pid + PID_OFFSET };
+  }
+}
+
+export interface StartOpts {
+  handlers?: Handlers;
+  readPr?: LoopDeps["readPr"];
+  /** Wrap the store the loop uses (crash tests). */
+  wrapStore?: (s: IntentStore) => IntentStore;
+  watch?: boolean;
+  intent?: string;
+  sender?: LoopDeps["sender"];
+}
 
 export class Pipe {
-  readonly tools = new FakeTools();
+  readonly tools = new PipeTools();
   readonly clock = new TestClock();
   readonly home: Home;
   readonly db: Db;
   readonly bares: Record<string, string> = {};
   readonly prs: FakePr[] = [];
-  readonly claudeCalls: { kind: string; prompt: string; argv: string[] }[] = [];
+  readonly claudeCalls: ClaudeCall[] = [];
+  /** Sandboxed runs (`bwrap`): kind, argv and where. */
+  readonly sandboxRuns: { kind: string; argv: string[]; cwd: string }[] = [];
+  /** `gh run rerun` run IDs. */
+  readonly reruns: number[] = [];
+  /** Every log line the loop wrote. */
+  readonly logs: string[] = [];
+  /** Per-kind answers used when the queue is empty. */
+  readonly respond: Partial<Record<string, ClaudeScript>> = {};
+  /** Overrides a sandbox run; return null to run it with `sh`. */
+  sandbox: ((spec: ChildSpec) => ChildExit | null) | null = null;
   store!: IntentStore;
+  rawStore!: IntentStore;
   loop!: Loop;
   private nextPr = 1;
+  private nextComment = 1;
   private claude: ClaudeScript[] = [];
+  private startOpts: StartOpts = {};
+  private extra: Record<string, unknown> = {};
   readonly gitconfig: string;
+  /** Kept across tests (a flow shared by several tests): its own folder, removed by `cleanup()`. */
+  private root: string | null;
+  private savedGitConfig = process.env.GIT_CONFIG_GLOBAL;
 
-  constructor(target: Record<string, string>, intents: Record<string, string>) {
-    this.home = new Home(tempDir("tc-home-"));
+  constructor(target: Record<string, string>, intents: Record<string, string>, o: { keep?: boolean } = {}) {
+    this.root = o.keep ? mkdtempSync(join(tmpdir(), "tc-pipe-")) : null;
+    this.home = new Home(this.dir("tc-home-"));
     this.db = Db.memory();
-    this.bares.web = bareRepo(target);
-    this.bares.intents = bareRepo(intents);
-    this.gitconfig = join(tempDir("tc-gitconfig-"), "gitconfig");
+    this.bares.web = this.bareRepo(target);
+    this.bares.intents = this.bareRepo(intents);
+    this.gitconfig = join(this.dir("tc-gitconfig-"), "gitconfig");
     writeFileSync(
       this.gitconfig,
       Object.entries(this.bares)
@@ -63,58 +152,104 @@ export class Pipe {
     );
     process.env.GIT_CONFIG_GLOBAL = this.gitconfig;
     this.fakeGh();
-    this.fakeBwrap();
-    this.tools.child("systemd-inhibit", () => new Promise<ChildExit>(() => {}));
-    for (let i = 0; i < 50; i++) this.tools.child("claude", (spec) => this.runClaude(spec));
+    this.tools.routes.set("bwrap", (spec) => this.runSandbox(spec));
+    this.tools.routes.set("claude", (spec) => this.runClaude(spec));
+    this.tools.routes.set("systemd-inhibit", () => new Promise<ChildExit>(() => {}));
+  }
+
+  /** A fresh folder: under the kept root, else removed after the test. */
+  dir(prefix: string): string {
+    return this.root ? mkdtempSync(join(this.root, prefix)) : tempDir(prefix);
+  }
+
+  /** Remove a kept world and restore the git config. */
+  cleanup(): void {
+    if (this.savedGitConfig === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = this.savedGitConfig;
+    if (this.root) rmSync(this.root, { recursive: true, force: true });
+  }
+
+  /** A bare repo seeded with `files` on main. */
+  bareRepo(files: Record<string, string>): string {
+    const root = this.dir("tc-remote-");
+    const bare = join(root, "origin.git");
+    const work = join(root, "seed");
+    git(root, "init", "-q", "--bare", "-b", "main", bare);
+    mkdirSync(work);
+    git(work, "init", "-q", "-b", "main");
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(work, path)), { recursive: true });
+      writeFileSync(join(work, path), text);
+    }
+    git(work, "add", "-A");
+    git(work, "commit", "-q", "--allow-empty", "-m", "seed");
+    git(work, "push", "-q", bare, "main");
+    return bare;
   }
 
   config(extra: Record<string, unknown> = {}) {
+    const { agent, ...rest } = extra as { agent?: Record<string, unknown> };
     return parseConfig(
       {
         intents: { remote: "https://github.com/owner/intents.git", cutoff: 1 },
         github: { app_id: 1, me: "owner" },
-        agent: { ci_grace: 0, ci_poll: 5, toolchain: [] },
         repos: { web: { github: "owner/web" } },
-        ...extra,
+        ...rest,
+        agent: { ci_grace: 0, ci_poll: 5, toolchain: [], ...(agent ?? {}) },
       },
       join(this.home.root, "config.toml"),
     );
   }
 
   github(): GitHub {
-    const run = (args: string[], opts?: RunOpts) => this.tools.run("gh", args, opts);
     return {
       me: "owner",
-      gh: (_repo, args, opts) => run(args, opts),
-      owner: (args, opts) => run(["--as-owner", ...args], opts),
+      gh: (_repo, args, opts) => this.tools.run("gh", args, opts),
+      owner: (args, opts) => this.tools.run("gh", ["--as-owner", ...args], opts),
       gitAuth: async () => ({ args: [], env: {} }),
       bot: async () => ({ login: "towercab[bot]", id: 9, email: "9+towercab[bot]@users.noreply.github.com" }),
     };
   }
 
-  async start(extra: Record<string, unknown> = {}): Promise<Loop> {
+  async start(extra: Record<string, unknown> = {}, opts: StartOpts = {}): Promise<Loop> {
+    this.extra = extra;
+    this.startOpts = opts;
     const config = this.config(extra);
-    this.store = await openStore({
+    this.rawStore = await openStore({
       remote: config.intents.remote,
       path: this.home.intents,
       tools: this.tools,
       cutoff: 1,
     });
-    this.loop = new Loop(
+    this.store = opts.wrapStore ? opts.wrapStore(this.rawStore) : this.rawStore;
+    this.loop = this.newLoop();
+    await this.loop.open();
+    return this.loop;
+  }
+
+  private newLoop(): Loop {
+    const o = this.startOpts;
+    return new Loop(
       {
-        config,
+        config: this.config(this.extra),
         home: this.home,
         db: this.db,
         tools: this.tools,
         clock: this.clock,
         store: this.store,
         github: this.github(),
-        handlers: handlers(),
-        log: () => {},
-        sender: null,
+        handlers: o.handlers ?? handlers(),
+        log: (l) => this.logs.push(l),
+        sender: o.sender ?? null,
+        ...(o.readPr ? { readPr: o.readPr } : {}),
       },
-      { watch: true },
+      { watch: o.watch ?? true, ...(o.intent ? { intent: o.intent } : {}) },
     );
+  }
+
+  /** A restart: a new loop on the same database, home and repos (the old one is dropped as is). */
+  async reopen(): Promise<Loop> {
+    this.loop = this.newLoop();
     await this.loop.open();
     return this.loop;
   }
@@ -135,8 +270,53 @@ export class Pipe {
     return -1;
   }
 
+  /** Passes until the newest mission is at `stage` (its entry effects done); throws after `max`. */
+  async untilStage(stage: Stage, max = 60): Promise<Mission> {
+    const n = await this.until(() => {
+      const m = this.mission();
+      return m?.stage === stage && m.step !== "enter";
+    }, max);
+    if (n < 0) {
+      const m = this.mission();
+      throw new Error(
+        `never reached ${stage}: at ${m?.stage}/${m?.step} waiting ${m?.waiting} why ${m?.why}\n${this.moves()}`,
+      );
+    }
+    return this.mission()!;
+  }
+
+  /** The newest mission (or mission `id`). */
+  mission(id?: number): Mission | undefined {
+    if (id !== undefined) return getMission(this.db, id);
+    return this.db.get<Mission>("SELECT * FROM missions ORDER BY id DESC LIMIT 1");
+  }
+
+  /** The moves so far, one per line (for failure messages). */
+  moves(): string {
+    return this.db
+      .all<{ mission: number; from_stage: string; event: string; to_stage: string; why: string | null }>(
+        "SELECT mission, from_stage, event, to_stage, why FROM transitions ORDER BY id",
+      )
+      .map((t) => `${t.mission}: ${t.from_stage} → ${t.to_stage} (${t.event}${t.why ? `: ${t.why}` : ""})`)
+      .join("\n");
+  }
+
+  /** The stages one mission entered, in order (from its moves). */
+  stages(mission: number): string[] {
+    return this.db
+      .all<{ to_stage: string }>("SELECT to_stage FROM transitions WHERE mission = ? ORDER BY id", mission)
+      .map((t) => t.to_stage);
+  }
+
   pr(head: string): FakePr | undefined {
     return this.prs.find((p) => p.head === head);
+  }
+
+  /** A PR by repo name (`web`, `intents`) and number. */
+  prNo(repo: string, n: number): FakePr {
+    const p = this.prs.find((x) => x.repo === `owner/${repo}` && x.number === n);
+    if (!p) throw new Error(`no PR ${repo}#${n}`);
+    return p;
   }
 
   /** A file on a branch of a bare repo. */
@@ -144,11 +324,78 @@ export class Pipe {
     return git(this.bares[repo]!, "show", `${ref}:${path}`);
   }
 
-  private runClaude(spec: ChildSpec): ChildExit {
+  /** The current time as GitHub prints it. */
+  at(): string {
+    return new Date(this.clock.now() * 1000).toISOString();
+  }
+
+  /** The owner comments on a PR. */
+  ownerComment(p: FakePr, body: string): void {
+    p.comments.push({ id: `c${this.nextComment++}`, author: "owner", body, at: this.at() });
+  }
+
+  /** The owner submits a review on the PR's current head. */
+  ownerReview(p: FakePr, state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED", body: string): void {
+    p.reviews.push({ author: "owner", state, body, at: this.at(), commit: this.headSha(p.repo, p.head) });
+  }
+
+  /** Commit files on a branch of a bare repo (the owner pushing). */
+  pushTo(repo: string, branch: string, files: Record<string, string | null>, msg = "owner edit"): void {
+    const work = join(this.dir("tc-push-"), "w");
+    git(dirname(work), "clone", "-q", "-b", branch, this.bares[repo]!, work);
+    for (const [path, text] of Object.entries(files)) {
+      if (text === null) rmSync(join(work, path), { force: true });
+      else {
+        mkdirSync(dirname(join(work, path)), { recursive: true });
+        writeFileSync(join(work, path), text);
+      }
+    }
+    git(work, "add", "-A");
+    git(work, "commit", "-q", "-m", msg);
+    git(work, "push", "-q", "origin", branch);
+  }
+
+  private runSandbox(spec: ChildSpec): ChildExit {
+    this.sandboxRuns.push({ kind: spec.kind, argv: spec.argv, cwd: spec.cwd });
+    const over = this.sandbox?.(spec);
+    if (over) return over;
+    const at = spec.argv.indexOf("--");
+    const [cmd, ...args] = spec.argv.slice(at + 1);
+    const r = spawnSync(cmd!, args, {
+      cwd: spec.cwd,
+      encoding: "utf8",
+      env: { ...process.env, ...spec.env, HOME: process.env.HOME },
+    });
+    writeFileSync(spec.stdout, r.stdout ?? "");
+    writeFileSync(spec.stderr, r.stderr ?? "");
+    return { code: r.status, signal: null };
+  }
+
+  private runClaude(spec: ChildSpec): ChildExit | Promise<ChildExit> {
     const prompt = readFileSync(spec.stdin!, "utf8");
     const kind = spec.kind;
-    this.claudeCalls.push({ kind, prompt, argv: spec.argv });
-    const s = this.claude.shift();
+    const flag = (f: string) => {
+      const i = spec.argv.indexOf(f);
+      return i >= 0 ? spec.argv[i + 1]! : null;
+    };
+    const sid = flag("--session-id");
+    const rid = flag("--resume");
+    let settings: Record<string, unknown> = {};
+    try {
+      settings = JSON.parse(readFileSync(flag("--settings")!, "utf8")) as Record<string, unknown>;
+    } catch {
+      // No settings file.
+    }
+    this.claudeCalls.push({
+      kind,
+      prompt,
+      argv: spec.argv,
+      session: sid ? { mode: "new", id: sid } : rid ? { mode: "resume", id: rid } : { mode: "none", id: "" },
+      model: flag("--model") ?? "",
+      cwd: spec.cwd,
+      settings,
+    });
+    const s = this.claude.shift() ?? this.respond[kind];
     if (!s) {
       writeFileSync(spec.stdout, "");
       writeFileSync(spec.stderr, "no claude script left\n");
@@ -156,42 +403,35 @@ export class Pipe {
     }
     const r = s(spec, prompt);
     for (const [path, text] of Object.entries(r.edits ?? {})) {
+      if (text === null) {
+        rmSync(join(spec.cwd, path), { force: true });
+        continue;
+      }
       mkdirSync(dirname(join(spec.cwd, path)), { recursive: true });
       writeFileSync(join(spec.cwd, path), text);
     }
+    writeFileSync(spec.stderr, r.stderr ?? "");
+    if (r.hang) {
+      writeFileSync(spec.stdout, "");
+      return new Promise<ChildExit>(() => {});
+    }
     writeFileSync(
       spec.stdout,
-      `${JSON.stringify({
-        type: "result",
-        subtype: "success",
-        is_error: false,
-        result: "done",
-        session_id: "s-1",
-        total_cost_usd: r.cost ?? 0.5,
-        duration_ms: 60_000,
-        structured_output: r.structured,
-        permission_denials: [],
-      })}\n`,
+      r.noResult
+        ? ""
+        : `${JSON.stringify({
+            type: "result",
+            subtype: r.subtype ?? "success",
+            is_error: r.isError ?? false,
+            result: r.result ?? "done",
+            session_id: sid ?? rid ?? "s-1",
+            total_cost_usd: r.cost ?? 0.5,
+            duration_ms: r.durationMs ?? 60_000,
+            structured_output: r.structured ?? null,
+            permission_denials: [],
+          })}\n`,
     );
-    writeFileSync(spec.stderr, "");
-    return { code: 0, signal: null };
-  }
-
-  private fakeBwrap(): void {
-    for (let i = 0; i < 100; i++) {
-      this.tools.child("bwrap", (spec) => {
-        const at = spec.argv.indexOf("--");
-        const [cmd, ...args] = spec.argv.slice(at + 1);
-        const r = spawnSync(cmd!, args, {
-          cwd: spec.cwd,
-          encoding: "utf8",
-          env: { ...process.env, ...spec.env, HOME: process.env.HOME },
-        });
-        writeFileSync(spec.stdout, r.stdout ?? "");
-        writeFileSync(spec.stderr, r.stderr ?? "");
-        return { code: r.status, signal: null };
-      });
-    }
+    return { code: r.code ?? 0, signal: null };
   }
 
   private repoOf(args: string[]): string {
@@ -203,13 +443,14 @@ export class Pipe {
     return this.bares[github.split("/")[1]!]!;
   }
 
-  private headSha(github: string, branch: string): string {
+  headSha(github: string, branch: string): string {
     return git(this.bareOf(github), "rev-parse", `refs/heads/${branch}`).trim();
   }
 
-  /** Squash-merge a PR in its bare repo, as GitHub would. */
+  /** Squash-merge a PR in its bare repo, as GitHub would (the owner's merge button). */
   mergePr(p: FakePr): void {
-    const work = join(tempDir("tc-merge-"), "w");
+    if (p.state !== "OPEN") throw new Error(`PR ${p.number} is ${p.state.toLowerCase()}`);
+    const work = join(this.dir("tc-merge-"), "w");
     git(dirname(work), "clone", "-q", this.bareOf(p.repo), work);
     git(work, "merge", "--squash", `origin/${p.head}`);
     git(work, "commit", "-q", "--allow-empty", "-m", `${p.title} (#${p.number})`);
@@ -218,10 +459,19 @@ export class Pipe {
     p.mergeCommit = git(work, "rev-parse", "HEAD").trim();
   }
 
+  /** GitHub's "update branch": merge the base into the PR's head. */
+  private updateBranch(p: FakePr): void {
+    const work = join(this.dir("tc-update-"), "w");
+    git(dirname(work), "clone", "-q", "-b", p.head, this.bareOf(p.repo), work);
+    git(work, "merge", "-q", "--no-edit", "origin/main");
+    git(work, "push", "-q", "origin", p.head);
+  }
+
   private fakeGh(): void {
     const json = (v: unknown) => okResult(JSON.stringify(v));
     this.tools.on("gh", (raw, opts) => {
-      const args = raw[0] === "--as-owner" ? raw.slice(1) : raw;
+      const asOwner = raw[0] === "--as-owner";
+      const args = asOwner ? raw.slice(1) : raw;
       const repo = this.repoOf(args);
       const flag = (f: string) => {
         const i = args.indexOf(f);
@@ -233,10 +483,13 @@ export class Pipe {
         return json(p ? [{ number: p.number }] : []);
       }
       if (a === "pr" && b === "create") {
+        const head = flag("--head");
+        if (this.prs.some((x) => x.repo === repo && x.head === head && x.state === "OPEN"))
+          return failResult(`a pull request for branch "${head}" into branch "main" already exists`);
         const p: FakePr = {
           number: this.nextPr++,
           repo,
-          head: flag("--head"),
+          head,
           base: flag("--base"),
           title: flag("--title"),
           body: opts.input ?? "",
@@ -244,22 +497,33 @@ export class Pipe {
           mergeCommit: null,
           comments: [],
           reviews: [],
+          checks: () => [],
+          mergeable: "MERGEABLE",
+          mergeStates: [],
         };
         this.prs.push(p);
         return okResult(`https://github.com/${repo}/pull/${p.number}\n`);
       }
+      if (a === "run" && b === "rerun") {
+        this.reruns.push(Number(args[2]));
+        return okResult();
+      }
+      if (a === "run" && b === "view") return okResult(`run ${args[2]}: Error: a test failed\n`);
       const n = Number(args[2]);
       const p = this.prs.find((x) => x.repo === repo && x.number === n);
       if (a === "pr" && b === "view" && p) {
         const fields = flag("--json").split(",");
+        const head = this.headSha(p.repo, p.head);
         const all: Record<string, unknown> = {
           state: p.state,
           mergedAt: p.state === "MERGED" ? "2026-10-26T12:00:00Z" : null,
           mergeCommit: p.mergeCommit ? { oid: p.mergeCommit } : null,
-          headRefOid: this.headSha(p.repo, p.head),
-          mergeable: "MERGEABLE",
-          mergeStateStatus: "CLEAN",
-          statusCheckRollup: [],
+          headRefOid: head,
+          mergeable: p.mergeable,
+          mergeStateStatus: fields.includes("mergeStateStatus")
+            ? (p.mergeStates.shift() ?? "CLEAN")
+            : "CLEAN",
+          statusCheckRollup: fields.includes("statusCheckRollup") ? p.checks(p, head) : [],
           isDraft: false,
           body: p.body,
           reviews: p.reviews.map((r) => ({
@@ -279,15 +543,19 @@ export class Pipe {
         return json(Object.fromEntries(fields.map((f) => [f, all[f]])));
       }
       if (a === "pr" && b === "merge" && p) {
+        if (p.state !== "OPEN") return failResult(`Pull request #${p.number} was already merged or closed`);
+        const match = flag("--match-head-commit");
+        if (match && match !== this.headSha(p.repo, p.head))
+          return failResult("Head branch was modified. Review and try the merge again.");
         this.mergePr(p);
         return okResult();
       }
       if (a === "pr" && b === "comment" && p) {
         p.comments.push({
-          id: `c${p.comments.length + 1}`,
-          author: "towercab[bot]",
+          id: `c${this.nextComment++}`,
+          author: asOwner ? "owner" : "towercab[bot]",
           body: opts.input ?? "",
-          at: "2026-10-26T12:00:00Z",
+          at: this.at(),
         });
         return okResult();
       }
@@ -297,20 +565,32 @@ export class Pipe {
       }
       if (a === "api") {
         const path = args.find((x) => x.startsWith("repos/")) ?? "";
-        const m = /^repos\/([^/]+\/[^/]+)\/(pulls|issues)\/(\d+)(\/comments)?/.exec(path);
-        if (m && m[4]) {
-          const pr = this.prs.find((x) => x.repo === m[1] && x.number === Number(m[3]));
+        const edit = /^repos\/([^/]+\/[^/]+)\/issues\/comments\/(\d+)$/.exec(path);
+        if (edit) {
+          for (const pr of this.prs.filter((x) => x.repo === edit[1])) {
+            const c = pr.comments.find((x) => x.id === `c${edit[2]}`);
+            if (c) c.body = (JSON.parse(opts.input ?? "{}") as { body: string }).body;
+          }
+          return okResult("{}");
+        }
+        const m = /^repos\/([^/]+\/[^/]+)\/(pulls|issues)\/(\d+)(\/comments|\/update-branch)?/.exec(path);
+        const pr = m ? this.prs.find((x) => x.repo === m[1] && x.number === Number(m[3])) : undefined;
+        if (m?.[4] === "/update-branch" && pr) {
+          this.updateBranch(pr);
+          return okResult("{}");
+        }
+        if (m?.[4] === "/comments") {
           if (m[2] === "pulls") return okResult("[]");
           return json(
             (pr?.comments ?? []).map((c) => ({
               id: Number(c.id.slice(1)),
               body: c.body,
               user: { login: c.author },
+              created_at: c.at,
             })),
           );
         }
         if (m && args.includes("PATCH")) {
-          const pr = this.prs.find((x) => x.repo === m[1] && x.number === Number(m[3]));
           if (pr) pr.body = opts.input ?? pr.body;
           return okResult("{}");
         }
@@ -322,8 +602,8 @@ export class Pipe {
   }
 }
 
-export function result(structured: unknown, edits?: Record<string, string>): ClaudeScript {
-  return () => ({ structured, edits });
+export function result(structured: unknown, edits?: Record<string, string | null>): ClaudeScript {
+  return () => ({ structured, ...(edits ? { edits } : {}) });
 }
 
 export function runSh(cwd: string, line: string): RunResult {
