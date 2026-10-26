@@ -332,7 +332,9 @@ fn plan(cx: &CmdCx, cmd: &Cmd, row: &CommandRow) -> Result<Plan, String> {
             match (write("answer", &add), m) {
                 (Err(e), _) => Plan::Reply(format!("{word}: {e}")),
                 (Ok(()), Some(m)) if waits => on_mission(&m),
-                (Ok(()), Some(_)) => Plan::Reply(format!("noted for {id}: the worker reads it in intent.md")),
+                (Ok(()), Some(_)) => {
+                    Plan::Reply(format!("noted for {id}: the worker reads it in intent.md"))
+                }
                 (Ok(()), None) => Plan::Reply(format!("answered {id}")),
             }
         }
@@ -395,7 +397,14 @@ fn on_mission(
             _ => format!("{word}: {intent} is at {}", cur.stage),
         });
     }
-    machine::apply_tx(tx, ax, &cur, &Outcome::event(event), None)?;
+    // An answer is guidance for the worker: back to build even where `approve` goes on.
+    let given = match (cmd, cur.waiting.as_deref()) {
+        (Cmd::Answer(..), Some(w)) if w == machine::Waiting::TestsDontProve.text() => {
+            Some(Next::Go(Stage::Build))
+        }
+        _ => None,
+    };
+    machine::apply_tx(tx, ax, &cur, &Outcome::event(event), given)?;
     Ok(match cmd {
         Cmd::Approve(_) => format!("approved {intent}"),
         Cmd::Answer(..) => format!("answered {intent}: continuing"),
