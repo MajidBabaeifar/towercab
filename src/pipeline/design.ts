@@ -115,21 +115,29 @@ export const designHandler: Handler = {
   },
 };
 
-/** Commit the spec change; no change → straight to plan. */
+/** Commit the spec change; no change → straight to plan. Edits outside specs/ are dropped. */
 async function commit(cx: Ctx, m: Mission): Promise<Progress> {
   const changed = (await coGit(cx, m, ["status", "--porcelain", "--", "specs"])).trim();
   const d = data(m);
   if (!changed) {
+    await dropOthers(cx, m);
     if (!m.spec_pr) return { done: ok({ why: "no behaviour change: no spec PR" }) };
     return gateStep(cx, cx.record(m, "gate"));
   }
   const intent = await intentOf(cx, m);
   await coGit(cx, m, ["add", "-A", "--", "specs"]);
   await coGit(cx, m, [...(await botAuthor(cx)), "commit", "--quiet", "-m", `docs(specs): ${intent.title}`]);
+  await dropOthers(cx, m);
   const specBranch = `${m.branch}-spec`;
   const head = await pushBranch(cx, m, m.branch, specBranch);
   void d;
   return openPr(cx, cx.record(m, "pr", { head }, { specBranch }));
+}
+
+/** The design may edit only specs/ (PIP-25): anything else it left in the checkout is discarded. */
+async function dropOthers(cx: Ctx, m: Mission): Promise<void> {
+  await coGit(cx, m, ["reset", "--hard", "--quiet"]);
+  await coGit(cx, m, ["clean", "-fdq"]);
 }
 
 async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
