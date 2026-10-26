@@ -882,6 +882,7 @@ fn test_spec_merge_approves() {
     p.plans(2);
     p.step_to(ID, Stage::ApprovalSpec, 3);
     let pr = p.mission(ID).pr.expect("the design's PR");
+    let spec_url = p.mission(ID).pr_url.expect("the design's PR url");
     // I merge the spec PR instead of `approve`: that is the approval (PIP-17).
     p.w.prs.set(
         pr,
@@ -900,6 +901,11 @@ fn test_spec_merge_approves() {
         m.stage
     );
     assert_eq!(m.pr, None, "the build opens a new PR");
+    // The spec PR stays known to the stage history (UI-24).
+    let data: serde_json::Value = serde_json::from_str(&m.data).unwrap();
+    assert_eq!(data["spec_pr"]["url"], spec_url.as_str());
+    assert_eq!(data["spec_pr"]["pr"], pr);
+    assert!(data["spec_pr"]["merged_at"].as_f64().is_some());
     assert_eq!((m.merged_by, m.merge_sha), (None, None));
     assert!(p.w.transitions(ID).contains(&(
         "approval:spec".into(),

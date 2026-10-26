@@ -402,3 +402,241 @@ fn test_recently_finished() {
     assert!(page.contains("Recently finished"), "{page}");
     server.stop();
 }
+
+/// Moves of a mission: (at, from, event, to, why).
+fn moves(db: &Db, id: i64, rows: &[(f64, &str, &str, &str, &str)]) {
+    for (at, from, event, to, why) in rows {
+        db.conn()
+            .execute(
+                "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![id, at, from, event, to, why],
+            )
+            .unwrap();
+    }
+}
+
+const T0: f64 = 1_700_000_000.0;
+const PATH: [&str; 6] = ["pick", "design", "plan", "build", "publish", "ci"];
+
+/// The login mission, at `ci` with a build PR, after the moves of `PATH`.
+fn at_ci(db: &Db, home: &Home, id: i64, pr_url: &str) {
+    db.conn()
+        .execute(
+            "UPDATE missions SET stage = 'ci', from_stage = NULL, waiting = NULL, pr = 6, pr_url = ?2, \
+             created = ?3 WHERE id = ?1",
+            rusqlite::params![id, pr_url, T0],
+        )
+        .unwrap();
+    let rows: Vec<_> = PATH
+        .windows(2)
+        .enumerate()
+        .map(|(i, w)| {
+            let why = if w[0] == "design" {
+                "a <b>x</b> why"
+            } else {
+                ""
+            };
+            (T0 + 100.0 * (i as f64 + 1.0), w[0], "ok", w[1], why)
+        })
+        .collect();
+    moves(db, id, &rows);
+    let runs = home.runs("261025-0901");
+    std::fs::create_dir_all(&runs).unwrap();
+    for f in ["build.txt", "ci-1.log", "unrelated.txt"] {
+        std::fs::write(runs.join(f), "x").unwrap();
+    }
+}
+
+#[test]
+fn test_strip_details() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ctx, _fake, server, home, mid) = start(tmp.path());
+    let db = Db::open(&home.db()).unwrap();
+    at_ci(&db, &home, mid, "https://github.com/me/web/pull/6");
+    let s = ui::state(&ctx).unwrap();
+    let now = s["html"]["now"].as_str().unwrap().to_string();
+    let (_, mpage) = get(server.port, &format!("/m/{mid}"));
+    for (what, html) in [("overview", &now), ("mission page", &mpage)] {
+        assert_eq!(html.matches("<details").count(), 16, "{what}: {html}");
+        for want in [
+            "data-stage=\"design\"",
+            "data-stage=\"ci\" open",
+            "<summary class=\"done\">design</summary>",
+            "ended by <code>ok</code>",
+            "a &lt;b&gt;x&lt;/b&gt; why",
+            "took 1m",
+            "pull/6",
+            "not reached",
+            &format!("href=\"/m/{mid}/runs/build.txt\""),
+            &format!("href=\"/m/{mid}/runs/ci-1.log\""),
+        ] {
+            assert!(html.contains(want), "{what}: {want}: {html}");
+        }
+        assert!(!html.contains("data-stage=\"build\" open"), "{what}");
+        // The mission page's own Run files list shows every file; the strip only a stage's.
+        let strip = html.split("<h2>Moves").next().unwrap();
+        assert!(!strip.contains("runs/unrelated.txt"), "{what}");
+        assert!(!html.contains("onmouseover"), "{what}");
+    }
+    // A merged mission keeps its PR on the stages it passed.
+    db.conn()
+        .execute(
+            "UPDATE missions SET stage = 'done', finished = ?2, merge_sha = 'abc' WHERE id = ?1",
+            rusqlite::params![mid, T0 + 900.0],
+        )
+        .unwrap();
+    moves(
+        &db,
+        mid,
+        &[
+            (T0 + 700.0, "ci", "ok", "merge", ""),
+            (T0 + 800.0, "merge", "ok", "done", ""),
+        ],
+    );
+    let (_, mpage) = get(server.port, &format!("/m/{mid}"));
+    assert!(mpage.contains("· merged "), "{mpage}");
+    // Only http(s) PR links.
+    db.conn()
+        .execute(
+            "UPDATE missions SET pr_url = 'javascript:alert(1)' WHERE id = ?1",
+            [mid],
+        )
+        .unwrap();
+    let (_, mpage) = get(server.port, &format!("/m/{mid}"));
+    assert!(!mpage.contains("javascript:"), "{mpage}");
+    // No external script.
+    let (_, page) = get(server.port, "/");
+    assert!(!page.contains("<script src"));
+    server.stop();
+}
+
+#[test]
+fn test_strip_survives_poll() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ctx, _fake, server, home, mid) = start(tmp.path());
+    let db = Db::open(&home.db()).unwrap();
+    at_ci(&db, &home, mid, "https://github.com/me/web/pull/6");
+    // The section is the same on each poll, and the page script puts back what I opened.
+    let a = ui::state(&ctx).unwrap()["html"]["now"].clone();
+    let b = ui::state(&ctx).unwrap()["html"]["now"].clone();
+    assert_eq!(a, b);
+    let (_, page) = get(server.port, "/");
+    for want in [
+        "summary",
+        "dataset.stage",
+        "const OPEN={}",
+        "function keepOpen(",
+        "keepOpen(e)",
+    ] {
+        assert!(page.contains(want), "{want}");
+    }
+    server.stop();
+}
+
+#[test]
+fn test_attempts_on_strip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_ctx, _fake, server, home, old) = start(tmp.path());
+    let db = Db::open(&home.db()).unwrap();
+    moves(
+        &db,
+        old,
+        &[(T0, "design", "stop", "stopped", "why-of-attempt-one")],
+    );
+    db.conn()
+        .execute(
+            "UPDATE missions SET stage = 'stopped', finished = ?2 WHERE id = ?1",
+            rusqlite::params![old, T0],
+        )
+        .unwrap();
+    let new = mission::insert(
+        db.conn(),
+        &NewMission {
+            intent: "261025-0901".into(),
+            slug: "login".into(),
+            repo: "web".into(),
+            model: "opus".into(),
+            a: None,
+            min_attempt: 1,
+        },
+        Tick::now(),
+    )
+    .unwrap();
+    assert_eq!(new.attempt, 2);
+    let (_, p_new) = get(server.port, &format!("/m/{}", new.id));
+    assert!(
+        p_new.contains(&format!("href=\"/m/{old}\">attempt 1")),
+        "{p_new}"
+    );
+    assert!(p_new.contains("<b>attempt 2</b>"), "{p_new}");
+    assert!(!p_new.contains("why-of-attempt-one"), "its own moves only");
+    let (_, p_old) = get(server.port, &format!("/m/{old}"));
+    assert!(
+        p_old.contains(&format!("href=\"/m/{}\">attempt 2", new.id)),
+        "{p_old}"
+    );
+    assert!(p_old.contains("<b>attempt 1</b>"), "{p_old}");
+    assert!(p_old.contains("why-of-attempt-one"), "{p_old}");
+    assert!(p_old.matches("<details").count() >= 16);
+    server.stop();
+}
+
+#[test]
+fn test_intent_prs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_ctx, _fake, server, home, a1) = start(tmp.path());
+    let db = Db::open(&home.db()).unwrap();
+    let spec = r#"{"spec_pr": {"pr": 5, "url": "https://github.com/me/web/pull/5", "merged_at": 1700000250.0}}"#;
+    db.conn()
+        .execute(
+            "UPDATE missions SET stage = 'stopped', finished = 1, data = ?2 WHERE id = ?1",
+            rusqlite::params![a1, spec],
+        )
+        .unwrap();
+    let add = |set: &str| -> i64 {
+        let m = mission::insert(
+            db.conn(),
+            &NewMission {
+                intent: "261025-0901".into(),
+                slug: "login".into(),
+                repo: "web".into(),
+                model: "opus".into(),
+                a: None,
+                min_attempt: 1,
+            },
+            Tick::now(),
+        )
+        .unwrap();
+        db.conn()
+            .execute(&format!("UPDATE missions SET {set} WHERE id = ?1"), [m.id])
+            .unwrap();
+        m.id
+    };
+    let a2 = add(
+        "stage = 'done', finished = 2, pr_url = 'https://github.com/me/web/pull/6', merge_sha = 'abc'",
+    );
+    moves(&db, a2, &[(T0 + 800.0, "merge", "ok", "deploy", "")]);
+    add(
+        "kind = 'revert', stage = 'revert_ci', data = '{\"revert\": {\"pr\": 9, \"url\": \"https://github.com/me/web/pull/9\"}}'",
+    );
+    let (code, page) = get(server.port, "/i/261025-0901");
+    assert_eq!(code, 200);
+    let pos = |s: &str| page.find(s).unwrap_or_else(|| panic!("{s}: {page}"));
+    assert!(page.contains("Pull requests"));
+    let (p5, p6, p9) = (pos("pull/5\""), pos("pull/6\""), pos("pull/9\""));
+    assert!(p5 < p6 && p6 < p9, "by attempt");
+    let table = &page[page.find("Pull requests").unwrap()..];
+    for want in [
+        "<td>design</td>",
+        "<td>publish</td>",
+        "<td>revert</td>",
+        "<td>merged</td>",
+        "<td>open</td>",
+    ] {
+        assert!(table.contains(want), "{want}: {table}");
+    }
+    let shown = towercab::runloop::shown_time(T0 + 800.0, chrono::Local::now().fixed_offset());
+    assert!(table.contains(&shown), "merge time {shown}: {table}");
+    server.stop();
+}

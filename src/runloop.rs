@@ -1327,7 +1327,17 @@ impl Loop {
             let mut o = Outcome::event(ev);
             if ev == Event::PrMerged && m.stage == Stage::ApprovalSpec {
                 // My merge of the spec PR = approve spec (PIP-17): the build goes on in a new PR.
+                // The spec PR is kept in `data.spec_pr` for the stage history (UI-24).
+                let mut data = pipeline::data::Data::of(&m);
+                data.set(
+                    "spec_pr",
+                    serde_json::json!({
+                        "pr": m.pr, "url": m.pr_url, "pushed_at": m.pushed_at,
+                        "merged_at": tick.unix(),
+                    }),
+                );
                 o = Outcome::event(Event::Approve)
+                    .with("data", data.text())
                     .with("pr", rusqlite::types::Value::Null)
                     .with("pr_url", rusqlite::types::Value::Null)
                     .with("head", rusqlite::types::Value::Null)

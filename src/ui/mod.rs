@@ -1,6 +1,7 @@
 //! The local web UI ([UI](../specs/ui.md)): what Towercab is doing now, and the CLI's commands
 //! as buttons. Served by the loop on its own threads (UI-1) or by `towercab ui` (UI-2).
 
+pub mod history;
 pub mod pages;
 pub mod wire;
 
@@ -364,7 +365,7 @@ pub fn state(ctx: &Ctx) -> Result<Value, String> {
     );
     html.insert(
         "now".into(),
-        now_html(&snap, &missions, &title, &lk, &tick).into(),
+        now_html(&db, &snap, &missions, &title, &lk, &tick).into(),
     );
     html.insert("finished".into(), finished_html(&db, &lk, &tick)?.into());
     html.insert("next".into(), next_html(&decision, &listing, &lk).into());
@@ -445,13 +446,163 @@ impl Links<'_> {
     }
 }
 
-struct Transition {
-    mission: i64,
-    at: f64,
-    from: String,
-    event: String,
-    to: String,
-    why: Option<String>,
+/// A `transitions` row.
+#[derive(Debug, Clone)]
+pub struct Transition {
+    pub mission: i64,
+    pub at: f64,
+    pub from: String,
+    pub event: String,
+    pub to: String,
+    pub why: Option<String>,
+}
+
+/// Every transition of a mission, oldest first.
+pub fn transitions_of(db: &Db, mission: i64) -> Result<Vec<Transition>, String> {
+    let mut q = db
+        .conn()
+        .prepare("SELECT mission, at, from_stage, event, to_stage, why FROM transitions WHERE mission = ?1 ORDER BY id")
+        .map_err(sql)?;
+    q.query_map([mission], |r| {
+        Ok(Transition {
+            mission: r.get(0)?,
+            at: r.get(1)?,
+            from: r.get(2)?,
+            event: r.get(3)?,
+            to: r.get(4)?,
+            why: r.get(5)?,
+        })
+    })
+    .map_err(sql)?
+    .collect::<Result<_, _>>()
+    .map_err(sql)
+}
+
+/// The regular files of a mission's runs dir (name, size, mtime), newest first (UI-9).
+fn run_files(ctx: &Ctx, m: &Mission) -> Vec<(String, u64, f64)> {
+    let mut files: Vec<(String, u64, f64)> = std::fs::read_dir(runs_dir(ctx, m))
+        .map(|rd| {
+            rd.filter_map(Result::ok)
+                .filter_map(|e| {
+                    let md = e.metadata().ok()?;
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    (md.is_file() && name_ok(&name)).then(|| {
+                        let t = md
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map_or(0.0, |d| d.as_secs_f64());
+                        (name, md.len(), t)
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort_by(|a, b| b.2.total_cmp(&a.2));
+    files
+}
+
+/// Visits shown per stage (the newest).
+const VISITS_SHOWN: usize = 10;
+
+/// One mission's strip (UI-25): every stage of its sequence a `<details>` whose body is that
+/// stage's history (UI-23, UI-24); the stage it is in is open.
+fn strip_html(ctx: &Ctx, db: &Db, m: &Mission, tick: &Tick) -> String {
+    let seq = sequence(m.kind);
+    let at = if seq.contains(&m.stage) {
+        Some(m.stage)
+    } else {
+        m.from_stage
+    };
+    let pos = at.and_then(|a| seq.iter().position(|s| *s == a));
+    let ts = transitions_of(db, m.id).unwrap_or_default();
+    let files: Vec<history::RunFile> = run_files(ctx, m)
+        .into_iter()
+        .map(|(name, _, _)| history::RunFile { name })
+        .collect();
+    let visits = history::history(m, &ts, &files);
+    let mut out = String::from("<div class=\"strip\">");
+    for (i, st) in seq.iter().enumerate() {
+        let class = match pos {
+            Some(p) if i < p => "done",
+            Some(p) if i == p => {
+                if m.stage.waits() {
+                    "wait"
+                } else {
+                    "here"
+                }
+            }
+            _ => "todo",
+        };
+        let open = if pos == Some(i) { " open" } else { "" };
+        let _ = write!(
+            out,
+            "<details data-m=\"{}\" data-stage=\"{}\"{open}><summary class=\"{class}\">{}</summary><div class=\"visits\">",
+            m.id,
+            esc(st.as_str()),
+            esc(st.as_str())
+        );
+        let mine: Vec<&history::StageVisit> =
+            visits.iter().filter(|v| v.stage == st.as_str()).collect();
+        if mine.is_empty() {
+            out.push_str("<p class=\"dim\">not reached</p>");
+        }
+        let skip = mine.len().saturating_sub(VISITS_SHOWN);
+        for v in &mine[skip..] {
+            visit_html(&mut out, m, v, tick);
+        }
+        out.push_str("</div></details>");
+    }
+    out.push_str("</div>");
+    out
+}
+
+fn visit_html(out: &mut String, m: &Mission, v: &history::StageVisit, tick: &Tick) {
+    let _ = write!(
+        out,
+        "<p>attempt {} · entered {}",
+        v.attempt,
+        esc(&when(v.entered, tick))
+    );
+    match v.left {
+        Some(l) => {
+            let _ = write!(
+                out,
+                " · left {} · took {} · ended by <code>{}</code>",
+                esc(&when(l, tick)),
+                dur(v.secs(l) as i64),
+                esc(v.event.as_deref().unwrap_or(""))
+            );
+            if let Some(w) = v.why.as_deref().filter(|w| !w.is_empty()) {
+                let _ = write!(out, " <span class=\"dim\">{}</span>", esc(w));
+            }
+        }
+        None => {
+            let _ = write!(out, " · here for {}", dur(v.secs(tick.unix()) as i64));
+        }
+    }
+    if let Some(pr) = &v.pr {
+        let l = link(Some(pr.url.as_str()), "PR");
+        if !l.is_empty() {
+            let _ = write!(out, "<br>{l} · {}", pr.state.as_str());
+            if let Some(at) = pr.merged_at {
+                let _ = write!(out, " {}", esc(&when(at, tick)));
+            }
+        }
+    }
+    if !v.files.is_empty() {
+        out.push_str("<br>");
+        for f in v.files.iter().filter(|f| name_ok(f)) {
+            let _ = write!(
+                out,
+                "<a href=\"/m/{}/runs/{}\">{}</a> ",
+                m.id,
+                esc(f),
+                esc(f)
+            );
+        }
+    }
+    out.push_str("</p>");
 }
 
 fn recent_transitions(db: &Db, n: i64) -> Result<Vec<Transition>, String> {
@@ -600,6 +751,7 @@ fn on_me_html(s: &Snapshot, missions: &[Mission], actions: bool, lk: &Links) -> 
 }
 
 fn now_html(
+    db: &Db,
     s: &Snapshot,
     missions: &[Mission],
     title: &dyn Fn(&Mission) -> String,
@@ -629,16 +781,9 @@ fn now_html(
         out.push_str("</ul>");
     }
     for m in missions {
-        let seq = sequence(m.kind);
-        let at = if seq.contains(&m.stage) {
-            Some(m.stage)
-        } else {
-            m.from_stage
-        };
-        let pos = at.and_then(|a| seq.iter().position(|s| *s == a));
         let _ = write!(
             out,
-            "<div class=\"mission\"><a href=\"/m/{}\"><b>{}</b></a> <span class=\"dim\">{} · {} · attempt {}</span><div class=\"strip\">",
+            "<div class=\"mission\"><a href=\"/m/{}\"><b>{}</b></a> <span class=\"dim\">{} · {} · attempt {}</span>",
             m.id,
             esc(&title(m)),
             m.intent
@@ -647,21 +792,7 @@ fn now_html(
             lk.repo(&m.repo),
             m.attempt
         );
-        for (i, st) in seq.iter().enumerate() {
-            let class = match pos {
-                Some(p) if i < p => "done",
-                Some(p) if i == p => {
-                    if m.stage.waits() {
-                        "wait"
-                    } else {
-                        "here"
-                    }
-                }
-                _ => "todo",
-            };
-            let _ = write!(out, "<span class=\"{class}\">{}</span>", esc(st.as_str()));
-        }
-        out.push_str("</div>");
+        out.push_str(&strip_html(lk.ctx, db, m, tick));
         let mut notes = Vec::new();
         if m.stage.waits() {
             notes.push(format!(
@@ -1031,7 +1162,8 @@ h2{font-size:15px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)
 section{border-top:1px solid var(--line)}ul{padding-left:18px}li{margin:6px 0}
 .dim{color:var(--dim)}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}a{color:var(--here)}
 .mission{background:var(--card);border-radius:8px;padding:8px 10px;margin:8px 0}
-.strip{display:flex;flex-wrap:wrap;gap:3px;margin:6px 0}.strip span{font-size:12px;padding:1px 6px;border-radius:4px;border:1px solid var(--line)}
+.strip{display:flex;flex-wrap:wrap;gap:3px;margin:6px 0}.strip summary{font-size:12px;padding:1px 6px;border-radius:4px;border:1px solid var(--line);cursor:pointer;list-style:none}
+.strip summary::-webkit-details-marker{display:none}.strip details[open]{flex-basis:100%}.visits{font-size:12px;margin:4px 0 4px 8px}.visits p{margin:3px 0}
 .strip .done{color:var(--dim)}.strip .here{background:var(--here);color:var(--bg);border-color:var(--here)}.strip .wait{background:var(--warn);color:var(--bg);border-color:var(--warn)}.strip .todo{opacity:.45}
 .btns{margin-top:6px}button{font:inherit;padding:4px 12px;margin-right:6px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
 table{border-collapse:collapse;width:100%;font-size:13px}td,th{text-align:left;padding:3px 6px;border-bottom:1px solid var(--line);vertical-align:top}
@@ -1047,9 +1179,11 @@ function show(t){const r=document.getElementById('reply');r.textContent=t;r.styl
 function logEl(){return document.querySelector('#log pre')}
 function atBottom(e){return e.scrollHeight-e.scrollTop-e.clientHeight<24}
 function bottom(){const l=logEl();if(l)l.scrollTop=l.scrollHeight}
+const OPEN={};
+function keepOpen(e){for(const d of e.querySelectorAll('details[data-stage]')){const k=d.dataset.m+':'+d.dataset.stage;if(k in OPEN)d.open=OPEN[k]}}
 async function poll(){try{const r=await fetch('/api/state',{cache:'no-store'});if(!r.ok)throw new Error(r.status);const s=await r.json();
 const l=logEl();const stick=!l||atBottom(l);
-for(const k of S){const e=document.getElementById(k);if(e&&e.innerHTML!==s.html[k])e.innerHTML=s.html[k]}
+for(const k of S){const e=document.getElementById(k);if(e&&e.innerHTML!==s.html[k]){e.innerHTML=s.html[k];keepOpen(e)}}
 if(stick)bottom();document.title=(s.on_me_count?'('+s.on_me_count+') ':'')+BASE;
 const c=document.getElementById('ctl');if(c){c.hidden=!s.actions;document.getElementById('pause').hidden=s.paused;document.getElementById('resume').hidden=!s.paused}}
 catch(e){const t=document.getElementById('top');if(t)t.textContent='Towercab UI: no answer ('+e.message+')'}}
@@ -1060,7 +1194,8 @@ const t=r.ok?((await r.json()).result||'queued: applied on the loop\'s next pass
 async function intent(f,op){const b={op};for(const el of f.elements){if(el.name)b[el.name]=el.value}if(f.dataset.id)b.id=f.dataset.id;
 if(op==='drop'&&!confirm('drop '+b.id+'?'))return;
 const r=await post('/api/intent',b);const j=r.ok?await r.json():null;show(j?j.reply:await r.text());if(j&&j.ok)setTimeout(()=>location.reload(),900)}
-document.addEventListener('click',e=>{const b=e.target.closest('button[data-cmd]');if(b){cmd(b.dataset.cmd,b.dataset.arg);return}
+document.addEventListener('click',e=>{const sm=e.target.closest('summary');if(sm&&sm.parentElement.dataset.stage){const d=sm.parentElement;OPEN[d.dataset.m+':'+d.dataset.stage]=!d.open}
+const b=e.target.closest('button[data-cmd]');if(b){cmd(b.dataset.cmd,b.dataset.arg);return}
 const o=e.target.closest('button[data-op]');if(o){e.preventDefault();intent(o.closest('form'),o.dataset.op)}});
 document.addEventListener('submit',e=>e.preventDefault());
 bottom();poll();setInterval(poll,3000);"#;
@@ -1181,24 +1316,28 @@ fn mission_page(ctx: &Ctx, db: &Db, m: &Mission) -> Result<Response, String> {
         m.cost_usd,
         ago(tick.unix() - m.agent_secs, &tick)
     );
-    let mut q = db
-        .conn()
-        .prepare("SELECT mission, at, from_stage, event, to_stage, why FROM transitions WHERE mission = ?1 ORDER BY id")
-        .map_err(sql)?;
-    let ts: Vec<Transition> = q
-        .query_map([m.id], |r| {
-            Ok(Transition {
-                mission: r.get(0)?,
-                at: r.get(1)?,
-                from: r.get(2)?,
-                event: r.get(3)?,
-                to: r.get(4)?,
-                why: r.get(5)?,
-            })
-        })
-        .map_err(sql)?
-        .collect::<Result<_, _>>()
-        .map_err(sql)?;
+    b.push_str("<h2>Pipeline</h2>");
+    if let Some(id) = &m.intent {
+        let mut all = mission::for_intent(db.conn(), id)?;
+        all.reverse();
+        if all.len() > 1 {
+            b.push_str("<p class=\"dim\">attempts: ");
+            let links: Vec<String> = all
+                .iter()
+                .map(|a| {
+                    if a.id == m.id {
+                        format!("<b>attempt {}</b>", a.attempt)
+                    } else {
+                        format!("<a href=\"/m/{}\">attempt {}</a>", a.id, a.attempt)
+                    }
+                })
+                .collect();
+            b.push_str(&links.join(" · "));
+            b.push_str("</p>");
+        }
+    }
+    b.push_str(&strip_html(ctx, db, m, &tick));
+    let ts = transitions_of(db, m.id)?;
     b.push_str("<h2>Moves</h2><table><tr><th>when</th><th>move</th><th>why</th></tr>");
     for t in &ts {
         let _ = write!(
@@ -1212,25 +1351,7 @@ fn mission_page(ctx: &Ctx, db: &Db, m: &Mission) -> Result<Response, String> {
         );
     }
     b.push_str("</table><h2>Run files</h2><ul>");
-    let mut files: Vec<(String, u64, f64)> = std::fs::read_dir(runs_dir(ctx, m))
-        .map(|rd| {
-            rd.filter_map(Result::ok)
-                .filter_map(|e| {
-                    let md = e.metadata().ok()?;
-                    let name = e.file_name().to_string_lossy().into_owned();
-                    (md.is_file() && name_ok(&name)).then(|| {
-                        let t = md
-                            .modified()
-                            .ok()
-                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                            .map_or(0.0, |d| d.as_secs_f64());
-                        (name, md.len(), t)
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    files.sort_by(|a, b| b.2.total_cmp(&a.2));
+    let files = run_files(ctx, m);
     for (name, size, t) in &files {
         let _ = write!(
             b,

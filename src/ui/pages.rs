@@ -293,6 +293,35 @@ pub fn intent_page(ctx: &Ctx, id: &str) -> Result<Response, String> {
         }
         b.push_str("</table>");
     }
+    b.push_str("<h2>Pull requests</h2>");
+    let with_moves = missions
+        .iter()
+        .map(|m| Ok((m.clone(), super::transitions_of(&db, m.id)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    let prs = super::history::intent_prs(&with_moves);
+    if prs.is_empty() {
+        b.push_str("<p class=\"dim\">None yet.</p>");
+    } else {
+        b.push_str("<table><tr><th>attempt</th><th>stage</th><th>PR</th><th>state</th><th>opened</th><th>merged</th></tr>");
+        let when = |at: Option<f64>| at.map_or(String::new(), |a| esc(&super::when(a, &tick)));
+        for r in &prs {
+            let _ = write!(
+                b,
+                "<tr><td><a href=\"/m/{}\">{}</a></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                r.mission,
+                r.attempt,
+                esc(&r.stage),
+                link(
+                    Some(r.url.as_str()),
+                    &format!("#{}", r.url.rsplit('/').next().unwrap_or("PR"))
+                ),
+                r.state.as_str(),
+                when(r.opened),
+                when(r.merged_at)
+            );
+        }
+        b.push_str("</table>");
+    }
     Ok(page_shell(ctx, &format!("{} · Towercab", i.id), &b, true))
 }
 
