@@ -3,15 +3,15 @@
 // merges them for real, a fake `claude` driven by scripts, a `bwrap` that runs the line with `sh`.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseConfig } from "../../src/config.ts";
 import { Db } from "../../src/db.ts";
 import type { GitHub, Handlers } from "../../src/handlers.ts";
 import { Home } from "../../src/home.ts";
-import { openStore } from "../../src/intents/store.ts";
-import type { IntentStore } from "../../src/intents/types.ts";
+import { findOpen, openStore } from "../../src/intents/store.ts";
+import type { Intent, IntentEdit, IntentStore, Listing, NewIntent } from "../../src/intents/types.ts";
 import { Loop, type LoopDeps } from "../../src/loop.ts";
 import type { Stage } from "../../src/machine.ts";
 import { getMission, type Mission } from "../../src/mission.ts";
@@ -93,6 +93,78 @@ export class PipeTools extends FakeTools {
     const h = super.spawn(spec);
     // A fake pid above pid_max: killing its group can never reach a real process.
     return { ...h, pid: h.pid + PID_OFFSET };
+  }
+}
+
+/**
+ * The real store, with its reads remembered until the intents repo's `main` moves or the store
+ * writes: every read of the real one syncs (about six git calls), which made flows slow.
+ */
+export class CachedStore implements IntentStore {
+  private readonly s: IntentStore;
+  private readonly bare: string;
+  private key = "";
+  private writes = 0;
+  private listed: Listing | null = null;
+  private files = new Map<string, string | null>();
+  private marks = new Map<string, boolean>();
+
+  constructor(s: IntentStore, bare: string) {
+    this.s = s;
+    this.bare = bare;
+  }
+
+  /** `main` of the bare repo (a loose ref, else packed), and the writes made. */
+  private fresh(): void {
+    const loose = join(this.bare, "refs/heads/main");
+    const main = existsSync(loose)
+      ? readFileSync(loose, "utf8")
+      : (/^(\S+) refs\/heads\/main$/m.exec(readFileSync(join(this.bare, "packed-refs"), "utf8"))?.[1] ?? "");
+    const key = `${main.trim()} ${this.writes}`;
+    if (key === this.key) return;
+    this.key = key;
+    this.listed = null;
+    this.files.clear();
+    this.marks.clear();
+  }
+
+  async list(): Promise<Listing> {
+    this.fresh();
+    this.listed ??= await this.s.list();
+    return this.listed;
+  }
+  async get(idOrSuffix: string): Promise<Intent> {
+    return findOpen(await this.list(), idOrSuffix);
+  }
+  async add(n: NewIntent, now: Date): Promise<Intent> {
+    try {
+      return await this.s.add(n, now);
+    } finally {
+      this.writes++;
+    }
+  }
+  async update(id: string, what: string, fn: (e: IntentEdit) => void, mark?: string): Promise<Intent> {
+    try {
+      return await this.s.update(id, what, fn, mark);
+    } finally {
+      this.writes++;
+    }
+  }
+  async hasMark(mark: string): Promise<boolean> {
+    this.fresh();
+    if (!this.marks.has(mark)) this.marks.set(mark, await this.s.hasMark(mark));
+    return this.marks.get(mark)!;
+  }
+  async readFile(path: string): Promise<string | null> {
+    this.fresh();
+    if (!this.files.has(path)) this.files.set(path, await this.s.readFile(path));
+    return this.files.get(path)!;
+  }
+  github(): string | null {
+    return this.s.github();
+  }
+  url(i: Intent): string | null {
+    return this.s.url(i);
   }
 }
 
@@ -221,7 +293,8 @@ export class Pipe {
       tools: this.tools,
       cutoff: 1,
     });
-    this.store = opts.wrapStore ? opts.wrapStore(this.rawStore) : this.rawStore;
+    const cached = new CachedStore(this.rawStore, this.bares.intents!);
+    this.store = opts.wrapStore ? opts.wrapStore(cached) : cached;
     this.loop = this.newLoop();
     await this.loop.open();
     return this.loop;
