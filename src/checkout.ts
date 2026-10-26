@@ -18,7 +18,7 @@ export interface GitAuth {
 /** The environment of Towercab's own git calls. */
 export function gitEnv(dir: string, extra: Record<string, string> = {}): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const k of ["HOME", "PATH", "LANG", "SSH_AUTH_SOCK", "TMPDIR"]) {
+  for (const k of ["HOME", "PATH", "LANG", "SSH_AUTH_SOCK", "TMPDIR", "GIT_CONFIG_GLOBAL"]) {
     const v = process.env[k];
     if (v !== undefined) env[k] = v;
   }
