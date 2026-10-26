@@ -459,6 +459,19 @@ fn on_mission(
             .with("sync_rounds", 0i64)
             .with("verify_repairs", 0i64)
             .with("ci_repairs", 0i64);
+        // A red run already rerun gets one fresh rerun: what I fixed may be outside the
+        // branch (a shared workflow, a secret, a flaky service), and its head may not move.
+        let mut data = crate::pipeline::data::Data::of(&cur);
+        if let Some(ci) = data
+            .get("ci")
+            .filter(|c| c.get("reruns").is_some())
+            .cloned()
+        {
+            let mut ci = ci;
+            ci["reruns"] = serde_json::json!([]);
+            data.set("ci", ci);
+            o = o.with("data", data.text());
+        }
     }
     machine::apply_tx(tx, ax, &cur, &o, given)?;
     Ok(match cmd {
