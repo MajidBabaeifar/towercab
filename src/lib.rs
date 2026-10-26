@@ -1,4 +1,4 @@
-//! Towercab: Majid's software factory (Rust rewrite).
+//! Towercab: an orchestrator for Claude Code (Rust rewrite).
 //!
 //! Every module is `pub` so its tests live in `tests/` (REPO-6).
 

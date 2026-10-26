@@ -1,11 +1,11 @@
 ---
 name: intent
-description: Capture a new intent for Towercab with Majid - ask what an analyst would, write intents/<id>-<slug>/intent.md from the template, propose u/i scores and commit it to main of the intents repo. Use when Majid types /intent or asks to add, capture or file an intent.
+description: Capture a new intent for Towercab with the owner - ask what an analyst would, write intents/<id>-<slug>/intent.md from the template, propose u/i scores and commit it to main of the intents repo. Use when the owner types /intent or asks to add, capture or file an intent.
 ---
 
 # /intent
 
-Turn what Majid describes into one intent file on `main` of his `intents` repo. On `main` means
+Turn what the owner describes into one intent file on `main` of their `intents` repo. On `main` means
 accepted: Towercab may pick it up as soon as it lands, so get it right before committing.
 Rules: Towercab's `specs/intents.md` (INT-2, INT-3, INT-9) and `specs/priority.md`.
 
@@ -16,7 +16,7 @@ on claude.ai, the current local time). It becomes `started:` and the ID.
 
 ## 2. Ask like an analyst
 
-Let Majid describe the problem in his words. Then ask, a few questions at a time, only
+Let the owner describe the problem in their words. Then ask, a few questions at a time, only
 what you can't infer:
 
 - **Scope**: which repo, which part; what is explicitly not included.
@@ -25,7 +25,7 @@ what you can't infer:
 - **What success looks like**: observable outcomes a reviewer can check one by one.
 - **Open questions**: what is still undecided.
 
-A thin intent is fine when he wants one: only `repo` and the title are required.
+A thin intent is fine when they want one: only `repo` and the title are required.
 
 ## 3. Write the template
 
@@ -41,7 +41,7 @@ started: <conversation start, RFC 3339 with offset, e.g. 2026-10-21T09:05:00+02:
 # Intent: <title>
 
 ## Problem
-<why this matters, in his words>
+<why this matters, in their words>
 
 ## Proposed outcome
 - <one checkable outcome per bullet; the PR review checks each one>
@@ -58,9 +58,9 @@ started: <conversation start, RFC 3339 with offset, e.g. 2026-10-21T09:05:00+02:
   | u | someday | this quarter | this month | this week | now / blocking |
   | i | nice to have | small gain | real value | core to a goal | goal depends on it |
 
-- Leave `a` out unless Majid gives it (autonomy is his call).
-- Optional keys only when he asks: `after: [<ids>]`, `model`, `review`, `unlock: [<globs>]`.
-- Show him the whole file; apply his corrections; commit only after his yes.
+- Leave `a` out unless the owner gives it (autonomy is their call).
+- Optional keys only when they ask: `after: [<ids>]`, `model`, `review`, `unlock: [<globs>]`.
+- Show them the whole file; apply their corrections; commit only after their yes.
 
 ## 4. ID and folder
 
@@ -99,4 +99,4 @@ On claude.ai: use the GitHub connector to create `intents/<id>-<slug>/intent.md`
 `intents` repo with the commit message `docs(intents): add <id> <title>`; list `intents/`, `done/`
 and `done/legacy.md` first for the ID check.
 
-Finish by telling Majid the ID and the file's path.
+Finish by telling the owner the ID and the file's path.
