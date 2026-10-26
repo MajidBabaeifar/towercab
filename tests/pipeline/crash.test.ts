@@ -9,15 +9,17 @@ import { expect, test } from "vitest";
 import type { SqlValue } from "../../src/db.ts";
 import type { IntentStore } from "../../src/intents/types.ts";
 import type { RunOpts } from "../../src/tools.ts";
-import { happy, ID, intent, intents, SLUG, TARGET } from "../helpers/flows.ts";
-import { Pipe } from "../helpers/pipe.ts";
+import { build, happy, ID, intent, intents, SLUG, TARGET } from "../helpers/flows.ts";
+import { type ClaudeReply, Pipe } from "../helpers/pipe.ts";
 import { git } from "../helpers/world.ts";
 
 class Crash extends Error {}
 
-test("loop: a crash at every durable write still ends done once", async () => {
-  const p = new Pipe(TARGET, intents(intent({ a: 5 })));
-  happy(p);
+/**
+ * Run `p`'s flow to done, dying after the first write of each kind at each stage and step and
+ * restarting; `between` acts for the owner between passes. Returns where it died.
+ */
+async function crashing(p: Pipe, between: () => void = () => {}): Promise<string[]> {
   const seen = new Set<string>();
   const points: string[] = [];
   let dead = false;
@@ -157,6 +159,7 @@ test("loop: a crash at every durable write still ends done once", async () => {
   };
   while (!finished() && passes < 600) {
     passes++;
+    between();
     try {
       await p.loop.pass();
     } catch (e) {
@@ -167,18 +170,13 @@ test("loop: a crash at every durable write still ends done once", async () => {
   }
 
   expect(finished(), `${p.moves()}\n\ncrashed after:\n${points.join("\n")}`).toBe(true);
-  // Every kind of write crashed at least once, at many points of the flow.
-  const kinds = new Set(points.map((s) => s.split(" @ ")[0]!));
-  for (const k of ["tx insert", "run update", "git push", "gh pr create", "gh pr merge", "store", "gh api"])
-    expect(
-      [...kinds].some((x) => x.startsWith(k)),
-      k,
-    ).toBe(true);
-  expect(points.length).toBeGreaterThan(40);
+  return points;
+}
 
-  const m = p.mission()!;
+/** The moves' intent writes each landed once, and the intent is done after one attempt. */
+function writtenOnce(p: Pipe): void {
   expect(p.db.all("SELECT id FROM missions")).toHaveLength(1);
-  expect(m.attempt).toBe(1);
+  expect(p.mission()!.attempt).toBe(1);
   // Each PR opened once and merged once; the spec landed first.
   expect(p.prs.map((x) => [x.repo, x.title, x.state])).toEqual([
     ["owner/web", "docs(specs): Show a greeting", "MERGED"],
@@ -201,4 +199,58 @@ test("loop: a crash at every durable write still ends done once", async () => {
   expect(git(p.bares.intents!, "show", `main:done/${ID}-${SLUG}/plan.md`)).toContain(
     "# Plan: Show a greeting",
   );
+}
+
+test("loop: a crash at every durable write still ends done once", async () => {
+  // a5: Towercab merges all three PRs itself.
+  const p = new Pipe(TARGET, intents(intent({ a: 5 })));
+  happy(p);
+  const points = await crashing(p);
+  // Every kind of write crashed at least once, at many points of the flow.
+  const kinds = new Set(points.map((s) => s.split(" @ ")[0]!));
+  for (const k of ["tx insert", "run update", "git push", "gh pr create", "gh pr merge", "store", "gh api"])
+    expect(
+      [...kinds].some((x) => x.startsWith(k)),
+      k,
+    ).toBe(true);
+  expect(points.length).toBeGreaterThan(100);
+  writtenOnce(p);
+
+  // a2: the owner merges each PR, and the first build's checks fail once.
+  const q = new Pipe(TARGET, intents(intent({ a: 2 })));
+  happy(q);
+  q.respond.worker = (): ClaudeReply => {
+    const repairing = Boolean(JSON.parse(q.mission()!.data).repair);
+    return {
+      structured: build(),
+      edits: repairing
+        ? { "greeting.txt": "hello\n" }
+        : { "greeting.txt": "bye\n", "tests/greeting.sh": "grep -q hello greeting.txt\n" },
+    };
+  };
+  const owner = () => {
+    const m = q.mission();
+    if (!m?.stage.startsWith("approval:") || m.step !== "") return;
+    const [repo, n] =
+      m.stage === "approval:spec"
+        ? ["web", m.spec_pr]
+        : m.stage === "approval:plan"
+          ? ["intents", m.plan_pr]
+          : ["web", m.pr];
+    const pr = q.prNo(repo!, n!);
+    if (pr.state === "OPEN") q.mergePr(pr);
+  };
+  const more = await crashing(q, owner);
+  expect(more.length).toBeGreaterThan(100);
+  writtenOnce(q);
+  const m = q.mission()!;
+  expect(q.stages(m.id).filter((s) => s.startsWith("approval:"))).toEqual([
+    "approval:spec",
+    "approval:plan",
+    "approval:merge",
+  ]);
+  expect(q.db.all("SELECT from_stage FROM transitions WHERE event = 'red'")).toEqual([
+    { from_stage: "verify" },
+  ]);
+  expect(q.show("web", "main", "greeting.txt")).toBe("hello\n");
 }, 120_000);
