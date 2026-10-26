@@ -10,7 +10,7 @@ use crate::env::{self, Fault};
 use crate::handler::{ChildEnd, Ctx, Handler, Outcome, Progress, StepError};
 use crate::intents::{Listing, Stage as Playbook};
 use crate::limits;
-use crate::machine::{self, Stage, Waiting};
+use crate::machine::{self, Waiting};
 use crate::mission::{self, Mission};
 use crate::priority::{self, pick_order};
 use crate::repo::{self, RepoError};
@@ -244,7 +244,9 @@ pub fn state(db: &Db, config: &Config, built: bool, tick: Tick) -> Result<PickSt
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut active = BTreeSet::new();
     for m in mission::unfinished(conn)? {
-        if m.stage != Stage::Blocked {
+        // A repo's intents run one after another: a mission holds its repo, waits on me
+        // included, until its PR is merged; the next then starts from that `main`.
+        if m.merge_sha.is_none() {
             *counts.entry(m.repo.clone()).or_default() += 1;
         }
         active.extend(m.intent);

@@ -803,7 +803,11 @@ fn test_continue_resets_caps() {
         .unwrap();
     commands::queue(&db, &Cmd::Approve(ID.into()), "ui").unwrap();
     p.until(10, |w| {
-        w.transitions(ID).iter().filter(|t| t.2 == "blocked").count() >= 2
+        w.transitions(ID)
+            .iter()
+            .filter(|t| t.2 == "blocked")
+            .count()
+            >= 2
     });
     let m = p.mission(ID);
     assert_eq!((m.sync_rounds, m.verify_repairs, m.ci_repairs), (0, 0, 0));

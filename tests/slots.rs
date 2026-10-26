@@ -108,8 +108,8 @@ fn test_pick_while_others_wait() {
 
 #[test]
 fn test_repo_slot() {
-    // workers 1: a second intent in the repo waits while one is unfinished; blocked doesn't
-    // count, approval:* does.
+    // workers 1: a second intent in the repo waits while one is unfinished, blocked and
+    // approval:* included (LOOP-4: one after another).
     let mut w = World::new(
         &[
             intent_file("261001-0900-a", "web", "u: 5\ni: 5\n", "A"),
@@ -147,7 +147,7 @@ fn test_repo_slot() {
             .collect::<Vec<_>>(),
         [format!("{B} repo web full (1/1)")]
     );
-    // I approve; A asks a question (blocked): B runs.
+    // I approve; A asks a question (blocked): B still waits.
     w.intents.push_mine(
         &[(
             "intents/261001-0900-a/intent.md",
@@ -160,8 +160,15 @@ fn test_repo_slot() {
         "approve",
     );
     w.until(&mut lp, 6, |w| w.stage(A) == Some(Stage::Blocked));
-    w.until(&mut lp, 4, |w| !w.missions(B).is_empty());
-    assert_eq!(w.stage(A), Some(Stage::Blocked));
+    for _ in 0..3 {
+        w.pass(&mut lp);
+    }
+    assert!(w.missions(B).is_empty(), "blocked holds web's one worker");
+    // A is removed (stopped): B runs.
+    w.intents
+        .push_mine(&[("intents/261001-0900-a/intent.md", None)], "remove");
+    w.until(&mut lp, 6, |w| !w.missions(B).is_empty());
+    assert_eq!(w.stage(A), Some(Stage::Stopped));
     lp.shutdown().unwrap();
     drop(lp);
 

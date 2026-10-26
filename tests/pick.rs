@@ -599,8 +599,8 @@ fn test_pick_skips() {
         Decision::default()
     );
 
-    // The loop's state: paused (meta), frozen (repo_caps), full (unfinished per repo, blocked
-    // not counted), cooling (cooldowns), built (Handlers).
+    // The loop's state: paused (meta), frozen (repo_caps), full (unfinished per repo until
+    // merged, blocked included), cooling (cooldowns), built (Handlers).
     let w = World::new(
         &[intent_file("261001-0900-web", "web", "", "Web")],
         &["web", "api"],
@@ -615,14 +615,20 @@ fn test_pick_skips() {
                VALUES ('claude', 'opus', 9999999999, 1, 'limit', 0), ('claude', 'haiku', 1, 1, 'old', 0);
              INSERT INTO missions (intent, repo, stage, model, session, checkout, created, updated)
                VALUES ('261001-0901', 'web', 'ci', 'opus', 's', 'work/x', 0, 0),
-                      ('261001-0902', 'api', 'blocked', 'opus', 's', 'work/y', 0, 0);",
+                      ('261001-0902', 'api', 'blocked', 'opus', 's', 'work/y', 0, 0);
+             INSERT INTO missions (intent, repo, stage, model, session, checkout, merge_sha, created, updated)
+               VALUES ('261001-0903', 'web', 'deploy', 'opus', 's', 'work/z', 'abc', 0, 0);",
         )
         .unwrap();
     let s = lp.pick_state(w.clock).unwrap();
     assert!(s.paused);
     assert!(!s.built, "production handlers: picks off");
     assert_eq!(s.frozen, BTreeSet::from(["api".to_string()]));
-    assert_eq!(s.full, BTreeMap::from([("web".to_string(), (1, 1))]));
+    assert_eq!(
+        s.full,
+        BTreeMap::from([("api".to_string(), (1, 1)), ("web".to_string(), (1, 1))]),
+        "merged (0903) doesn't hold web"
+    );
     assert_eq!(s.cooling.keys().collect::<Vec<_>>(), ["opus"]);
     assert_eq!(
         s.repos,
