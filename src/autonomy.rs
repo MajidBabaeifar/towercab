@@ -76,6 +76,15 @@ pub fn spec_gate(a: Option<u8>, cap: u8, concerns: bool) -> bool {
         }
 }
 
+/// The plan stops for my review (AUT-12, the playbook's plan mode): effective `a` ≤ 3, or no
+/// `a` in a repo capped at ≤ 3 (where I merge anyway).
+pub fn plan_gate(a: Option<u8>, cap: u8) -> bool {
+    match a {
+        Some(a) => a <= CAPPED,
+        None => cap <= CAPPED,
+    }
+}
+
 /// The PR at the gate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrKind {

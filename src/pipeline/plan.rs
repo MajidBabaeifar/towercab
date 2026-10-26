@@ -14,7 +14,11 @@ use super::data::Data;
 use super::design::{intent_hash, pr_title, spec_commit};
 use super::runs::{self, Ended, Failure, Start, worker_session};
 use super::schemas::{DESIGN, DesignResult, PLAN, PlanResult};
-use super::{Mode, git as pgit, intent, intent_url, prompts, publish, store_failed};
+use super::{
+    Mode, files, git as pgit, intent, intent_url, prompts, publish, store_failed, wait_note,
+};
+use crate::autonomy::{self, RepoState};
+use crate::machine::Waiting;
 
 /// `plan.md`: the intent's title and spec IDs, then `## Files that change`, `## Order of work`,
 /// `## Risks`, `## Proof`; a rewrite after a departure says why.
@@ -256,6 +260,31 @@ impl Plan {
         let m = cx.record(m, "plan:write", &[("data", data.text().into())])?;
         if m.pr.is_some() && !self.eval() {
             crate::writer::patch(cx, &m, &crate::writer::initial_of(&m));
+        }
+        // Plan review (AUT-12): a1–a3 stop here for my approval before any code.
+        if !self.eval() {
+            let repo_files = match files(cx, &m) {
+                Ok(f) => f,
+                Err(o) => return Ok(Progress::Done(o)),
+            };
+            let intent = intent(cx, &m)?;
+            let cap = RepoState::read(cx.db.conn(), &m.repo, &repo_files.towercab)?.cap();
+            let a = autonomy::effective(m.a_at_pick, intent.a(), cap);
+            if autonomy::plan_gate(a, cap) {
+                let why = match a {
+                    Some(a) => format!("a{a}"),
+                    None => format!("no a, repo cap {cap}"),
+                };
+                let url = data
+                    .get("plan_url")
+                    .and_then(Value::as_str)
+                    .unwrap_or("plan.md")
+                    .to_string();
+                let note = format!(
+                    "Plan written: {url}. Approve it to build, or comment on the PR to change it."
+                );
+                return wait_note(cx, &m, Waiting::ApprovePlan, &why, &note);
+            }
         }
         Ok(Progress::Done(Outcome::ok().with("data", data.text())))
     }

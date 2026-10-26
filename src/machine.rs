@@ -661,6 +661,8 @@ impl Door {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Waiting {
     ApproveSpec,
+    /// After `plan` at a1–a3 (AUT-12): `approve` → build.
+    ApprovePlan,
     ReviewAndMergePr,
     AuthorizeRelease,
     AnswerTheQuestion,
@@ -692,8 +694,9 @@ pub enum Waiting {
 }
 
 /// The waits without a parameter, with their text.
-const PLAIN: [(Waiting, &str); 27] = [
+const PLAIN: [(Waiting, &str); 28] = [
     (Waiting::ApproveSpec, "approve spec"),
+    (Waiting::ApprovePlan, "approve plan"),
     (Waiting::ReviewAndMergePr, "review and merge PR"),
     (Waiting::AuthorizeRelease, "authorize release"),
     (Waiting::AnswerTheQuestion, "answer the question"),
@@ -727,8 +730,9 @@ const E2E_RED: &str = "e2e red after your merge";
 
 impl Waiting {
     /// One sample per variant.
-    pub const ALL: [Waiting; 29] = [
+    pub const ALL: [Waiting; 30] = [
         Waiting::ApproveSpec,
+        Waiting::ApprovePlan,
         Waiting::ReviewAndMergePr,
         Waiting::AuthorizeRelease,
         Waiting::AnswerTheQuestion,
@@ -831,6 +835,7 @@ impl fmt::Display for Waiting {
 pub fn continue_to(waiting: &Waiting, from: Stage) -> Next {
     match waiting {
         Waiting::ApproveSpec => Next::Go(Stage::Plan),
+        Waiting::ApprovePlan => Next::Go(Stage::Build),
         Waiting::ReviewAndMergePr => Next::Go(Stage::Gate),
         Waiting::AuthorizeRelease => Next::Go(Stage::Release),
         // Kept: merged and live, no rebuild (PIP-20, PIP-34).

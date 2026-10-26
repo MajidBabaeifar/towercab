@@ -389,3 +389,40 @@ fn test_setup_before_build() {
     let subject = common::git(&p.checkout(ID), &["log", "-1", "--format=%s"]);
     assert_eq!(subject.trim(), "feat(auth): address checks red");
 }
+
+#[test]
+fn test_plan_review() {
+    // a3: after the plan, it waits for my approval before any code (AUT-12).
+    let mut p = Pipe::login("a: 3\n");
+    p.approve_plans = false;
+    p.plans(2);
+    p.step_to(ID, Stage::Plan, 3);
+    assert_eq!(p.step(ID), "261001-0900: plan → blocked · approve plan");
+    assert_eq!(p.claude.calls(), 2, "no build run yet");
+    let m = p.mission(ID);
+    assert_eq!(m.waiting.as_deref(), Some("approve plan"));
+    assert_eq!(m.why.as_deref(), Some("a3"));
+    assert!(intent_md(&p).contains("Plan written:"), "{}", intent_md(&p));
+    // One message, its first line the action.
+    let rows = p.w.outbox();
+    assert!(
+        rows.iter()
+            .any(|r| r.1 == "approve_plan" && r.3.starts_with("approve plan: approve 261001-0900")),
+        "{rows:?}"
+    );
+    // Approved: the first build, with the build prompt (not a continue).
+    p.approve_plans = true;
+    p.builds_tested(3);
+    p.step_to(ID, Stage::Verify, 4);
+    assert!(
+        p.claude.stdin(3).starts_with("Build the intent below now"),
+        "{}",
+        p.claude.stdin(3)
+    );
+    // a4: no stop.
+    let mut q = Pipe::login("a: 4\n");
+    q.approve_plans = false;
+    q.plans(2);
+    q.step_to(ID, Stage::Plan, 3);
+    assert_eq!(q.step(ID), "261001-0900: plan → build");
+}

@@ -385,6 +385,9 @@ pub struct Pipe {
     pub gh: GhScript,
     pub exes: Exes,
     pub lp: Option<Loop>,
+    /// Approve a1–a3 plan reviews (AUT-12) as I would, so tests of later stages go on;
+    /// `false` to test the review itself.
+    pub approve_plans: bool,
 }
 
 impl Pipe {
@@ -409,6 +412,7 @@ impl Pipe {
             gh,
             exes,
             lp: None,
+            approve_plans: true,
         }
     }
 
@@ -449,6 +453,10 @@ impl Pipe {
             if self.w.stage(id) == Some(stage) {
                 return;
             }
+            if self.plan_review_due(id, stage) {
+                self.approve_plan(id);
+                continue;
+            }
             let line = self.step(id);
             eprintln!("{line}");
         }
@@ -463,8 +471,40 @@ impl Pipe {
         while !done(&self.w) {
             assert!(std::time::Instant::now() < end, "not reached in {secs} s");
             std::thread::sleep(Duration::from_millis(30));
+            if self.approve_plans {
+                let db = self.w.db();
+                let ids: Vec<String> = towercab::mission::unfinished(db.conn())
+                    .unwrap()
+                    .into_iter()
+                    .filter(|m| m.waiting.as_deref() == Some("approve plan"))
+                    .filter_map(|m| m.intent)
+                    .collect();
+                for id in ids {
+                    towercab::commands::queue(&db, &towercab::commands::Cmd::Approve(id), "cli")
+                        .unwrap();
+                }
+            }
             self.w.pass(lp);
         }
+    }
+
+    /// The intent's mission waits for its plan review and `stage` lies past it.
+    fn plan_review_due(&self, id: &str, stage: towercab::machine::Stage) -> bool {
+        self.approve_plans
+            && stage != towercab::machine::Stage::Blocked
+            && self.w.missions(id).last().is_some_and(|m| {
+                m.stage == towercab::machine::Stage::Blocked
+                    && m.waiting.as_deref() == Some("approve plan")
+            })
+    }
+
+    /// My `approve` of the plan, applied by the loop's next pass (AUT-12).
+    pub fn approve_plan(&mut self, id: &str) {
+        let db = self.w.db();
+        towercab::commands::queue(&db, &towercab::commands::Cmd::Approve(id.into()), "cli")
+            .unwrap();
+        let lp = self.lp.as_mut().expect("the loop is open");
+        self.w.pass(lp);
     }
 
     pub fn mission(&self, id: &str) -> Mission {
