@@ -225,6 +225,9 @@ pub struct Run {
     /// Towercab's own secrets outside `HOME`'s [`SECRETS`] (`--config` elsewhere): the config
     /// file, `app.pem` and `secrets/` next to it, absolute (path, is a directory).
     pub deny_read: Vec<(PathBuf, bool)>,
+    /// A worker run's writable cache (`<home>/cache/<repo>/worker`, absolute): `XDG_CACHE_HOME`
+    /// and `npm_config_cache` under it, and `sandbox.filesystem.allowWrite` (PIP-24).
+    pub cache: Option<PathBuf>,
     /// The intent's `network` (PIP-24): `sandbox.network.allowedDomains` of a worker run.
     pub network: Vec<String>,
     /// `[agent].sandbox_unix_sockets`: `allowAllUnixSockets`, with [`HOST_SOCKETS`] hidden.
@@ -265,6 +268,7 @@ impl Run {
             deny_write: Vec::new(),
             guard: false,
             deny_read: config_secrets(config),
+            cache: None,
             network: Vec::new(),
             unix_sockets: config.agent.sandbox_unix_sockets,
             eval: false,
@@ -522,6 +526,9 @@ pub fn settings(run: &Run, home: &Path, towercab: &Path) -> Value {
             "denyWrite": paths(&write),
         },
     });
+    if let Some(c) = &run.cache {
+        sandbox["filesystem"]["allowWrite"] = json!([c.to_string_lossy()]);
+    }
     if let (RunKind::Verifier, Some(v)) = (run.kind, &run.verifier) {
         sandbox["network"] = json!({
             "allowedDomains": [format!("localhost:{}", v.port), format!("127.0.0.1:{}", v.port)],
@@ -605,7 +612,16 @@ pub fn env(config: &Config) -> Vec<(OsString, OsString)> {
     e
 }
 
-/// The child (LOOP-12): the argv, cwd, [`env`], prompt on stdin, stdout and stderr to its
+/// A worker's cache variables under `dir`: `XDG_CACHE_HOME` (Go's build cache, zig, pip and
+/// most tools follow it) and `npm_config_cache`, so builds don't hit a read-only `~/.cache`.
+pub fn cache_env(dir: &Path) -> Vec<(OsString, OsString)> {
+    vec![
+        ("XDG_CACHE_HOME".into(), dir.join("xdg").into()),
+        ("npm_config_cache".into(), dir.join("npm").into()),
+    ]
+}
+
+/// The child (LOOP-12): the argv, cwd, [`env`] (a worker's [`cache_env`] first), prompt on stdin, stdout and stderr to its
 /// files, its kind's timeout, a slot for all but the writer.
 pub fn spec(run: &Run, config: &Config, exes: &Exes) -> ChildSpec {
     let f = run.files();
@@ -613,7 +629,15 @@ pub fn spec(run: &Run, config: &Config, exes: &Exes) -> ChildSpec {
         kind: ChildKind::Claude,
         argv: argv(run, exes),
         cwd: run.cwd.clone(),
-        env: env(config),
+        env: {
+            let mut e = env(config);
+            // First, so `[agent].env` (last) can still override them.
+            e.splice(
+                0..0,
+                run.cache.as_deref().map(cache_env).unwrap_or_default(),
+            );
+            e
+        },
         stdin: Some(f.prompt),
         stdout: f.stdout,
         stderr: f.stderr,

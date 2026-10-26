@@ -55,8 +55,11 @@ fn test_pick_while_others_wait() {
     // B: picked, waiting on me.
     w.wait_for(&mut lp, 20, |w, _| w.stage(B) == Some(Stage::ApprovalSpec));
     // C: picked while A polls and B waits; its build holds the one slot.
+    // (its child has written where it runs: the fake writes that just after it starts)
     w.wait_for(&mut lp, 20, |w, lp| {
-        w.stage(C) == Some(Stage::Build) && lp.running().len() == 1
+        w.stage(C) == Some(Stage::Build)
+            && lp.running().len() == 1
+            && w.child_cwd(C, Stage::Build).is_some()
     });
     assert_eq!(lp.slots_used(), 1);
     let c = w.mission(C);

@@ -121,6 +121,8 @@ pub enum LineEnd {
     CheckRed {
         line: String,
         why: String,
+        /// It hit `check_timeout` (× `data.check_x`).
+        timed_out: bool,
         env: bool,
         again: bool,
         k: usize,
@@ -216,7 +218,7 @@ impl Runner {
             return self.spawn(cx, &m).map(LineEnd::Next);
         }
         let why = if end.timed_out {
-            let mins = cx.config.agent.check_timeout.as_secs().div_ceil(60);
+            let mins = sandbox::check_timeout(cx, m).as_secs().div_ceil(60);
             format!("{line}: timed out after {mins} min")
         } else {
             match code {
@@ -231,6 +233,7 @@ impl Runner {
             LineEnd::CheckRed {
                 line,
                 why,
+                timed_out: end.timed_out,
                 env: end.timed_out || matches!(code, Some(126 | 127)),
                 again,
                 k,
@@ -363,6 +366,19 @@ impl Verify {
                     &findings,
                     &r.log(cx, m),
                 )
+            }
+            // Not the worker's to repair: I give it more time (`approve`: twice as long).
+            LineEnd::CheckRed {
+                why,
+                timed_out: true,
+                ..
+            } => {
+                let m = cx.record(m, &m.step, &[("data", data.text().into())])?;
+                let next = sandbox::check_timeout(cx, &m).as_secs().div_ceil(60) * 2;
+                let note = format!(
+                    "{why}. A slow machine or a cold build, not something the worker can fix. Approve to rerun verify with {next} min per check for this intent, or raise `[agent].check_timeout`."
+                );
+                wait_note(cx, &m, Waiting::ChecksTimedOut, &why, &note)
             }
             LineEnd::CheckRed { line, why, k, .. } => {
                 let findings = format!("$ {line}\n{}\n{why}", r.output(cx, m, k));
