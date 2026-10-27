@@ -3,6 +3,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
+import { loadAgent } from "../src/agents.ts";
 import {
   type ClaudeRun,
   claudeArgv,
@@ -197,6 +198,28 @@ test("claude: worker argv", () => {
   expect(s.sandbox.filesystem.allowWrite).toEqual([join(root, "cache")]);
   // Never the repo's own settings: none are loaded, and only Towercab's hook is set.
   expect(spec.argv[spec.argv.indexOf("--setting-sources") + 1]).toBe("");
+});
+
+test("claude: argv comes from the agent file", () => {
+  for (const [kind, agent] of [
+    ["design", "design"],
+    ["plan", "plan"],
+    ["worker", "worker"],
+    ["worker", "repair"],
+    ["review", "review"],
+    ["score", "score"],
+  ] as const) {
+    const a = loadAgent(agent);
+    const argv = claudeArgv(run(kind, { agent }));
+    expect(argv[argv.indexOf("--tools") + 1], agent).toBe(a.tools.join(","));
+    const at = argv.indexOf("--allowedTools");
+    const end = argv.indexOf("--disallowedTools");
+    expect(at < 0 ? [] : argv.slice(at + 1, end), agent).toEqual(a.allow);
+  }
+  // A repair round has the worker's kind (its run files) but its own file.
+  expect(claudeArgv(run("worker", { agent: "repair" }))).toContain(
+    "/h/runs/261001-0900/settings-worker.json",
+  );
 });
 
 test("claude: review argv", () => {

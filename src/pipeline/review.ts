@@ -9,15 +9,7 @@ import type { Review } from "../repo/files.ts";
 import { check } from "../tools.ts";
 import { coGit, data, ended, intentOf, note, repoFiles, spawnRun } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
-import { parseResult, REVIEW_SCHEMA, type ReviewResult } from "./schemas.ts";
-
-const STRONGER: Record<string, string> = { haiku: "sonnet", sonnet: "opus", opus: "opus" };
-
-export function reviewModel(cx: Ctx, worker: string, intentReview: string | null): string {
-  if (intentReview) return intentReview;
-  if (cx.config.agent.reviewModel) return cx.config.agent.reviewModel;
-  return STRONGER[worker] ?? worker;
-}
+import { parseResult, type ReviewResult } from "./schemas.ts";
 
 /** PIP-5: approved = the reviewer's yes ∧ every outcome met ∧ no weakened test ∧ plan followed ∧ no important finding. */
 export function approvedOf(r: ReviewResult): boolean {
@@ -88,9 +80,7 @@ export const reviewHandler: Handler = {
       kind: "review",
       step: "review",
       prompt,
-      schema: REVIEW_SCHEMA,
-      session: "fresh",
-      model: reviewModel(cx, m.model, intent.review),
+      agent: "review",
       files,
       intent,
     });

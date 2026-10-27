@@ -1,3 +1,13 @@
+---
+tools: [Read, Glob, Grep, Bash]
+allow: [Read, Glob, Grep, "Bash(git log:*)", "Bash(git diff:*)", "Bash(git show:*)", "Bash(ls:*)"]
+sandbox: strict
+model: mission
+session: resume
+timeout_min: 60
+max_cost_usd: 10
+schema: plan
+---
 The spec for this intent is settled. Now plan the build. You only read in this step: don't change
 any file. The owner reviews your plan before anything is built, so write it for them.
 

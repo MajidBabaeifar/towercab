@@ -32,7 +32,7 @@ import {
 import { lockedTests } from "./guard.ts";
 import { writePlanToMain } from "./plan.ts";
 import { fence, intentData, render } from "./prompts.ts";
-import { type Access, BUILD_SCHEMA, parseResult } from "./schemas.ts";
+import { type Access, parseResult } from "./schemas.ts";
 
 const merge = (a: Access | undefined, b: Access): Access => ({
   domains: [
@@ -72,7 +72,7 @@ async function workerPrompt(cx: Ctx, m: Mission): Promise<string> {
   }
   const plan = (await cx.store.readFile(`${intent.dir}/plan.md`)) ?? d.plan?.md ?? "(no plan)";
   const hasCi = true;
-  return render("build", {
+  return render("worker", {
     plan: fence(plan, "plan"),
     intent: intentData(intent.text),
     spec_ids: d.design?.specIds.join(", ") || "none (no behaviour change)",
@@ -97,9 +97,7 @@ async function spawnWorker(cx: Ctx, m: Mission, prompt?: string): Promise<Progre
       kind: "worker",
       step: "worker",
       prompt: prompt ?? (await workerPrompt(cx, m)),
-      schema: BUILD_SCHEMA,
-      session: "worker",
-      model: m.model,
+      agent: d.repair || (d.build && d.answer) ? "repair" : "worker",
       files,
       intent,
       guard: {

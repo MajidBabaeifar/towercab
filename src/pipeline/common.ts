@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { type Agent, type AgentName, agentBudgetUsd, loadAgent } from "../agents.ts";
 import { effectiveA } from "../autonomy.ts";
 import { git, gitSane } from "../checkout.ts";
 import { type ClaudeRun, freshContext, parseRun, prepareRun, type RunEnd, type RunKind } from "../claude.ts";
@@ -20,7 +21,7 @@ import { checkoutRoot } from "../service.ts";
 import { check } from "../tools.ts";
 import { grantsFor, parseAccess } from "./access.ts";
 import { cacheEnv } from "./sandbox.ts";
-import type { Access, JsonSchema, Question } from "./schemas.ts";
+import { type Access, type Question, SCHEMAS } from "./schemas.ts";
 
 /** `missions.data`, as the pipeline uses it. */
 export interface PipeData {
@@ -148,16 +149,30 @@ export function currentN(m: Mission, kind: string): number {
 
 export interface RunPlan {
   kind: RunKind;
+  /** Whose `agents/<agent>.md` configures it: model, session, limits, schema (PIP-72). */
+  agent: AgentName;
   /** The recorded step name while this run is out. */
   step: string;
   prompt: string;
-  schema: JsonSchema | null;
-  /** The worker session (`m.session`), or a fresh one per run (review). */
-  session: "worker" | "fresh";
-  model: string;
   files: RepoFiles;
   intent: Intent;
   guard?: ClaudeRun["guardRules"];
+}
+
+const STRONGER: Record<string, string> = { haiku: "sonnet", sonnet: "opus", opus: "opus" };
+
+/** The review model: the intent's, else `[agent].review_model`, else one step stronger than the worker. */
+export function reviewModel(cx: Ctx, worker: string, intentReview: string | null): string {
+  if (intentReview) return intentReview;
+  if (cx.config.agent.reviewModel) return cx.config.agent.reviewModel;
+  return STRONGER[worker] ?? worker;
+}
+
+/** The model the agent's file asks for (PIP-71 `model`). */
+function modelOf(cx: Ctx, m: Mission, agent: Agent, intent: Intent): string {
+  if (agent.model === "review") return reviewModel(cx, m.model, intent.review);
+  if (agent.model === "agent") return cx.config.agent.model;
+  return m.model;
 }
 
 /** Record the step, then spawn a Claude run (LOOP-6, LOOP-7, PIP-13, PIP-24). */
@@ -167,14 +182,18 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
   const cache = cx.home.cache(repo.name);
   const reentered = m.step === p.step;
   const { n, data: nd } = reentered ? { n: currentN(m, p.kind), data: {} } : nextN(m, p.kind);
+  const agent = loadAgent(p.agent);
+  // `resume`: the mission's session, started by its first run; `new`: a session of its own per run.
+  const onWorkerSession = agent.session === "resume";
   let session: ClaudeRun["session"];
-  if (p.session === "fresh") session = { mode: "new", id: crypto.randomUUID() };
+  if (agent.session === "none") session = { mode: "none", id: "" };
+  else if (!onWorkerSession) session = { mode: "new", id: crypto.randomUUID() };
   else session = { mode: m.session_used ? "resume" : "new", id: m.session };
-  const fresh = cx.record(m, p.step, p.session === "worker" ? { session_used: 1 } : {}, nd);
+  const fresh = cx.record(m, p.step, onWorkerSession ? { session_used: 1 } : {}, nd);
   let prompt = reentered && resumePrompt ? resumePrompt : p.prompt;
   // A re-entered step on a new worker session: the old one was gone (LOOP-7), so the new one is
   // told where the work is, then given the step's task.
-  if (reentered && p.session === "worker" && session.mode === "new") {
+  if (reentered && onWorkerSession && session.mode === "new") {
     const pr = currentPr(cx, m, repo);
     const plan = m.plan_pr && cx.store.github() ? prUrl(cx.store.github()!, m.plan_pr) : null;
     prompt = `${freshContext(
@@ -187,14 +206,15 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
   }
   const run: ClaudeRun = {
     kind: p.kind,
-    model: p.model,
+    agent: p.agent,
+    model: modelOf(cx, m, agent, p.intent),
     cwd: cx.checkout(fresh),
     runsDir: runs,
     n,
     prompt,
-    schema: p.schema,
+    schema: agent.schema ? SCHEMAS[agent.schema] : null,
     session,
-    budgetUsd: p.kind === "review" ? null : cx.config.agent.maxBudgetUsd,
+    budgetUsd: agentBudgetUsd(agent, cx.config),
     claudeMd: p.files.claudeMd,
     grants:
       p.kind === "worker"

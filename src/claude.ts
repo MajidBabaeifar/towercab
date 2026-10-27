@@ -1,4 +1,4 @@
-// Claude runs (PIP-24, PIP-13, PIP-39, pipeline.md **Claude runs**): the files, argv, settings and
+// Claude runs (PIP-24, PIP-13, PIP-39, PIP-72; what each may do is in `agents/<name>.md`): the files, argv, settings and
 // environment of every `claude -p` Towercab starts, and what its result says.
 //
 // No user, project or local settings load (`--setting-sources ""`): a hook in the repo's
@@ -9,6 +9,7 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { type AgentName, agentTimeoutMin, loadAgent } from "./agents.ts";
 import { appKeyPath, type Config } from "./config.ts";
 import { classifyFailure } from "./faults.ts";
 import { type Limit, limitOf } from "./limits.ts";
@@ -103,12 +104,11 @@ export type RunKind = "design" | "plan" | "worker" | "review" | "score";
 
 export const RUN_KINDS: RunKind[] = ["design", "plan", "worker", "review", "score"];
 
-/** The scoring run of a GitHub issue (INT-22) is short: it never gets a build's hour. */
-export const SCORE_TIMEOUT_MIN = 5;
-
 /** One `claude -p` run. */
 export interface ClaudeRun {
   kind: RunKind;
+  /** Whose file (`agents/<agent>.md`, PIP-70) configures the run: the kind's, but a repair round is the worker's kind. */
+  agent?: AgentName;
   model: string;
   /** The mission checkout. */
   cwd: string;
@@ -136,33 +136,6 @@ export interface ClaudeRun {
   cache?: string | null;
   config: Config;
 }
-
-/** The fixed parts of a kind (the **Claude runs** table). */
-export const KINDS: Record<RunKind, { tools: string; allowed: string[] }> = {
-  design: { tools: "Read,Glob,Grep,Edit,Write", allowed: ["Read", "Glob", "Grep", "Edit(specs/**)"] },
-  plan: {
-    tools: "Read,Glob,Grep,Bash",
-    allowed: [
-      "Read",
-      "Glob",
-      "Grep",
-      "Bash(git log:*)",
-      "Bash(git diff:*)",
-      "Bash(git show:*)",
-      "Bash(ls:*)",
-    ],
-  },
-  worker: {
-    tools: "Read,Edit,Write,Glob,Grep,Bash,WebFetch",
-    allowed: ["Read", "Edit", "Write", "Glob", "Grep", "Bash"],
-  },
-  review: {
-    tools: "Read,Glob,Grep,Bash",
-    allowed: ["Read", "Glob", "Grep", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"],
-  },
-  // No tools at all (INT-22): the issue text is untrusted, so the run can only answer.
-  score: { tools: "", allowed: [] },
-};
 
 /** A run's files under `runsDir`. */
 export function runFiles(run: Pick<ClaudeRun, "kind" | "n" | "runsDir">): {
@@ -206,7 +179,7 @@ export function configSecrets(config: Config): string[] {
 /** The argv (PIP-24's order); the prompt goes on stdin. */
 export function claudeArgv(run: ClaudeRun): string[] {
   const f = runFiles(run);
-  const k = KINDS[run.kind];
+  const k = loadAgent(run.agent ?? run.kind);
   const a = [
     "claude",
     "-p",
@@ -224,9 +197,9 @@ export function claudeArgv(run: ClaudeRun): string[] {
     "--model",
     run.model,
     "--tools",
-    k.tools,
+    k.tools.join(","),
     // An empty list would make `--allowedTools` swallow `--disallowedTools` as its value.
-    ...(k.allowed.length ? ["--allowedTools", ...k.allowed] : []),
+    ...(k.allow.length ? ["--allowedTools", ...k.allow] : []),
     "--disallowedTools",
     ...disallowed(run.config),
     ...othersInHome(run).flatMap((p) => [
@@ -323,12 +296,7 @@ export function prepareRun(run: ClaudeRun, o: { towercabExe: string; home: strin
   writeFileSync(f.prompt, run.prompt);
   writeFileSync(f.system, systemText(run.claudeMd));
   writeFileSync(f.settings, JSON.stringify(claudeSettings(run, o), null, 2));
-  const minutes =
-    run.kind === "score"
-      ? SCORE_TIMEOUT_MIN
-      : run.kind === "review"
-        ? run.config.agent.reviewTimeoutMin
-        : run.config.agent.buildTimeoutMin;
+  const minutes = agentTimeoutMin(loadAgent(run.agent ?? run.kind), run.config);
   return {
     kind: run.kind,
     argv: claudeArgv(run),
@@ -505,7 +473,7 @@ export function fatalDenial(d: unknown, home: string): string | null {
 }
 
 /**
- * What a run's stdout, stderr and exit say (pipeline.md **Claude runs**), first match: session gone,
+ * What a run's stdout, stderr and exit say (PIP-24), first match: session gone,
  * a usage limit (LOOP-9), network or auth (LOOP-10), budget used up, a denied push or secret read, no
  * valid result, another failure, else ok. `exit` null: killed or lost.
  */

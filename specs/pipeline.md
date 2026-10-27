@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..79 · **Prefix:** PIP
 
 ## Purpose
 
@@ -17,7 +17,7 @@ The worker builds the plan in the mission's checkout: failing tests first, then 
 docs, until the repo's checks pass.
 
 - Resumes the worker session ([PIP-13](pipeline.md)) on the intent's model, after the repo's
-  ` ```setup ` ran in the checkout. The prompt (`prompts/build.md`) gives `plan.md`, `intent.md` (with
+  ` ```setup ` ran in the checkout. The prompt (`agents/worker.md`) gives `plan.md`, `intent.md` (with
   `## Answers`), the spec IDs, the run set ([REPO-9](repo.md)), the access granted
   ([AUT-14](autonomy.md)) and the writing guide (PIP-39). The worker writes a failing test for each
   spec row's `Verified by` and each `Proposed outcome` bullet, implements, runs the checks itself,
@@ -226,7 +226,7 @@ Every Claude run is headless, sandboxed, and gets only the tools and access its 
   `~/.password-store`, `~/.docker`, `~/.kube`, `~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials*`,
   `~/.config/rclone`; and Towercab's home outside this mission (other checkouts, run files and caches,
   the clones, the intents checkout, the database and log).
-- Tools by kind: **Claude runs** table. Disallowed for every run: `Bash(git push:*)`,
+- Tools by agent: **Agents** table. Disallowed for every run: `Bash(git push:*)`,
   `Bash(git remote:*)`, `Bash(git config:*)`, `Bash(gh:*)`, `Bash(ssh:*)`, `Bash(sudo:*)`, `Read` of
   each secret path. A denied push or secret read fails the step.
 - Verified by: `claude: worker argv`, `claude: review argv`, `claude: settings by autonomy`, `claude: result parse`, `claude: no token in env`, `claude: other missions are unreadable`
@@ -529,8 +529,8 @@ An agent file's front matter says which tools the agent has, what it may do with
 
 - Keys, all required: `tools` (list; empty list means `--tools ""`), `allow` (list of permission rules,
   each `Tool` or `Tool(pattern)`), `sandbox` (`strict` or `none`; see PIP-78), `model`
-  (`mission`, `review` or `agent`: which configured model it takes, as the **Claude runs** table's Model
-  column does today), `session` (`new`, `resume` or `none`), `timeout_min` (integer), `max_cost_usd`
+  (`mission`, `review` or `agent`: which configured model it takes, as the Model column of the old
+  **Claude runs** table did), `session` (`new`, `resume` or `none`), `timeout_min` (integer), `max_cost_usd`
   (number or `null`; `[agent]` config can only lower it) and `schema` (a name in `schemas.ts`, or
   `null` for none).
 - Unknown keys, a missing key or a wrong type fail the load with an error naming the file and the key.
@@ -586,7 +586,7 @@ The pull request that builds this carries a written audit of every Claude run To
 
 The spec lists every agent in one table, with what it is for and what it may touch, linking to its file.
 
-- Replaces the **Claude runs** table below when the agents are built. Columns: Agent (link to
+- Replaces the former **Claude runs** table. Columns: Agent (link to
   `agents/<name>.md`), Purpose, May touch (tools and the paths or commands allowed), Session, Model.
 - One row per agent in PIP-70's list; a test fails when a file has no row or a row has no file.
 - Verified by: `agents: spec table lists every agent`
@@ -595,7 +595,7 @@ The spec lists every agent in one table, with what it is for and what it may tou
 
 Moving the settings into files makes no agent more powerful than it is today.
 
-- For every agent, the tools and `allow` rules are a subset of today's (the **Claude runs** table).
+- For every agent, the tools and `allow` rules are a subset of today's (the former **Claude runs** table).
   `repair` takes the worker's set or less. A narrowing is allowed and is named in the code PR.
 - A test holds the table's values for each agent as a ceiling and fails when a file goes beyond it.
 - Verified by: `agents: no agent has more than the previous table allowed`
@@ -613,15 +613,21 @@ An agent file can only narrow what a run may do; the sandbox, the guard and the 
 
 Reserved for this intent (agent files); not used.
 
-**Claude runs** (`src/claude.ts`; until PIP-70..78 are built, then replaced by PIP-76's table)
+- Verified by: manual (nothing to check: no behaviour)
 
-| Kind | `--tools` | Allowed | Session | Model |
+**Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
+
+| Agent | Purpose | May touch | Session | Model |
 |---|---|---|---|---|
-| design | `Read,Glob,Grep,Edit,Write` | Read, Glob, Grep, `Edit(specs/**)` | new (`--session-id`) | mission |
-| plan | `Read,Glob,Grep,Bash` | Read, Glob, Grep, `Bash(git log:*)`, `Bash(git diff:*)`, `Bash(git show:*)`, `Bash(ls:*)` | resume | mission |
-| worker | `Read,Edit,Write,Glob,Grep,Bash,WebFetch` | Read, Edit, Write, Glob, Grep, Bash (sandboxed), WebFetch for granted domains | resume | mission |
-| review | `Read,Glob,Grep,Bash` | Read, Glob, Grep, `Bash(git diff:*)`, `Bash(git log:*)`, `Bash(git show:*)` | new per run | review model |
-| score | none (`--tools ""`) | nothing ([INT-22](intents.md)); run outside any mission, in an empty folder | none | `agent.model` |
+| [design](../agents/design.md) | Turns the intent into spec changes and the spec PR's text. | Read, Glob, Grep; Edit only under `specs/**`; Write. | mission's | mission |
+| [plan](../agents/plan.md) | Plans the build; reads only. | Read, Glob, Grep; Bash for `git log`, `git diff`, `git show`, `ls`. | mission's | mission |
+| [worker](../agents/worker.md) | Writes tests and code, and the code PR's text. | Read, Edit, Write, Glob, Grep, Bash in the sandbox; WebFetch for granted domains; protected paths per the grants. | mission's | mission |
+| [repair](../agents/repair.md) | Fixes red checks, a conflict, a review finding or an owner's answer in the worker's session. | The worker's tools and permissions, no more. | mission's | mission |
+| [review](../agents/review.md) | Reviews the code PR against the intent, plan and `REVIEW.md`; reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
+| [score](../agents/score.md) | Turns a GitHub issue into a scored intent ([INT-22](intents.md)); runs outside any mission in an empty folder. | Nothing: no tools. | none | `[agent].model` |
+
+Each file's front matter also holds the time and cost limits and the result schema (PIP-71). `repair`
+runs under the worker's run kind, so its run files and counters are the worker's.
 
 Result: the last stdout line that is a JSON object with `type: "result"`: `is_error`, `result`,
 `session_id`, `total_cost_usd`, `duration_ms`, `structured_output`, `permission_denials`. A failed
@@ -651,7 +657,7 @@ score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outc
 |---|---|
 | `index.ts` | `handlers()`: one handler per stage. |
 | `design.ts`, `plan.ts`, `build.ts`, `verify.ts`, `proof.ts`, `publish.ts`, `ci.ts`, `review.ts`, `gate.ts`, `merge.ts` | One stage each. |
-| `sandbox.ts`, `guard.ts`, `access.ts`, `prtext.ts`, `prompts.ts`, `schemas.ts` | Sandbox argv; the guard hook; grants and the checklist; PR bodies; prompt templates (`prompts/*.md`, `{{key}}`, data fenced as `<intent>…</intent>` and marked data, not instructions); schemas. |
+| `sandbox.ts`, `guard.ts`, `access.ts`, `prtext.ts`, `prompts.ts`, `schemas.ts` | Sandbox argv; the guard hook; grants and the checklist; PR bodies; prompt templates (the body of `agents/*.md`, `{{key}}`, data fenced as `<intent>…</intent>` and marked data, not instructions); schemas. |
 
 ## Out of scope
 

@@ -1,15 +1,23 @@
-// Prompt templates (`prompts/*.md`, `{{key}}`), with data fenced so it can't close its own fence.
+// Prompt templates: the body of `agents/<name>.md` (`{{key}}`), with data fenced so it can't close its
+// own fence.
 
-import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { type AgentName, loadAgent } from "../agents.ts";
 
-export const PROMPTS_DIR = resolve(dirname(new URL(import.meta.url).pathname), "..", "..", "prompts");
+/** What each agent's handler gives its prompt (PIP-73 checks the files against it). */
+export const AGENT_VARS: Record<AgentName, string[]> = {
+  design: ["intent", "earlier", "reserved"],
+  plan: ["intent", "spec_ids", "checks"],
+  worker: ["plan", "intent", "spec_ids", "checks", "access"],
+  repair: ["what", "details"],
+  review: ["intent", "spec_ids", "plan", "review_md", "ci", "screenshots", "diff_cmd"],
+  score: ["issue"],
+};
 
-/** A template filled with `vars`; an unknown `{{key}}` is a bug, a missing var an empty string. */
-export function render(name: string, vars: Record<string, string>, dir = PROMPTS_DIR): string {
-  const text = readFileSync(join(dir, `${name}.md`), "utf8");
+/** An agent's prompt filled with `vars`; an unknown `{{key}}` is a bug, a missing var an empty string. */
+export function render(name: AgentName, vars: Record<string, string>, dir?: string): string {
+  const text = loadAgent(name, dir).prompt;
   return text.replace(/\{\{(\w+)\}\}/g, (_, key: string) => {
-    if (!(key in vars)) throw new Error(`bug: prompts/${name}.md uses {{${key}}} but it wasn't given`);
+    if (!(key in vars)) throw new Error(`bug: agents/${name}.md uses {{${key}}} but it wasn't given`);
     return vars[key]!;
   });
 }
