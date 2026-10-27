@@ -88,6 +88,7 @@ author. Version 1 (Rust) is on branch `rust`.
 
 ## Docs
 
+- [docs/features.md](docs/features.md): how Towercab works, step by step, and its features
 - [specs/README.md](specs/README.md): how the specs work
 - [specs/intents.md](specs/intents.md): intent files and the intents repo
 - [specs/priority.md](specs/priority.md): scores and order
