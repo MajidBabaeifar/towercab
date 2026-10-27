@@ -67,6 +67,13 @@ test("a2 story: /retry on the spec PR starts attempt 2", async () => {
   expect(calls("design")[2]!.session.mode).toBe("new");
 }, 30_000);
 
+test("pipeline: a fresh attempt closes the old PRs", () => {
+  const [old, now] = p.prs.filter((x) => x.repo === "owner/web");
+  expect(old!.state).toBe("CLOSED");
+  expect(old!.comments.at(-1)!.body).toMatch(/started this intent over \(attempt 2\)/);
+  expect(now!.state).toBe("OPEN");
+});
+
 test("pipeline: feedback revises the plan", async () => {
   p.mergePr(p.prNo("web", p.mission()!.spec_pr!));
   p.script(
