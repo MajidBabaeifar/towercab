@@ -1219,6 +1219,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     answers: intent?.sections.get("Answers")?.trim() || null,
     runs: runFiles(src.home, realId),
     file: intent ? src.intentUrl(intent) : null,
+    issue: intent?.issue ?? null,
   };
   return { version: versionOf(body, dbMark(src.db)), ...body };
 }

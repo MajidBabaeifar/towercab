@@ -307,6 +307,12 @@ test("ui: intent page shows the three PRs", async () => {
   expect(await intentPage(f.sources, "999999-0000-1")).toBeNull();
 });
 
+test("ui: the intent page links its issue", async () => {
+  const f = fixture();
+  expect((await intentPage(f.sources, IDS.upnext))!.issue).toBe("https://github.com/acme/blog/issues/12");
+  expect((await intentPage(f.sources, IDS.plan))!.issue).toBeNull();
+});
+
 test("ui: timeline in plain words", async () => {
   const f = fixture();
   const page = (await intentPage(f.sources, IDS.plan))!;

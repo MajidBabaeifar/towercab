@@ -174,8 +174,8 @@ The machine doesn't sleep while Towercab is actively working.
 Every 5 seconds the loop does one pass: read inputs, move missions, start work, send messages.
 
 - Order: signals; wake check; apply `commands`; finished children → their handler; entry effects
-  due; child timeouts; due polls (intents every 60 s when `main` moved, PRs every 60 s, CI every
-  `ci_poll`); step due missions; pick; self-update check (LOOP-35); outbox; inhibitor.
+  due; child timeouts; due polls (intents every 60 s when `main` moved, PRs every 60 s, GitHub issues every
+  300 s, [INT-21](intents.md), CI every `ci_poll`); step due missions; pick; self-update check (LOOP-35); outbox; inhibitor.
 - Children (`src/child.ts`): own process group, env cleared then set, stdin from a file or
   `/dev/null`, stdout and stderr to files in `runs/<id>/`; a timeout (the step's budget minus the run
   time already spent) sends SIGTERM to the group, SIGKILL 10 s later.
@@ -347,6 +347,7 @@ GitHub shows they were the owner's.
 |---|---|---|
 | `intents.remote`, `intents.path` | URL; path (`~/` expanded) | required; `<home>/intents` |
 | `intents.cutoff` | int 1–15 | 7 |
+| `intents.issue_a` | int 1–5 | 3 |
 | `agent.model`, `agent.review_model` | model name | `opus`; one step above the worker's |
 | `agent.parallel` | int 1–16 | 1 |
 | `agent.build_timeout`, `review_timeout`, `check_timeout` | minutes 1–1440 | 60, 15, 10 |

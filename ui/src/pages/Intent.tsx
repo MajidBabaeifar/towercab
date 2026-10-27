@@ -50,6 +50,14 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
           <p class="meta">
             {data.repo} · <Id id={data.id} />
             {data.scores ? ` · ${data.scores}` : ""}
+            {data.issue ? (
+              <>
+                {" · "}
+                <a href={data.issue} target="_blank" rel="noopener noreferrer">
+                  GitHub issue <External size={12} />
+                </a>
+              </>
+            ) : null}
           </p>
         </div>
         <StateChip state={data.state} />

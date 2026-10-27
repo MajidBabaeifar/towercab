@@ -87,6 +87,7 @@ function intent(o: Partial<Intent> = {}): Intent {
     model: null,
     review: null,
     source: null,
+    issue: null,
     started: null,
     unlock: [],
     network: [],

@@ -66,6 +66,33 @@ test("pipeline: code PR body sections", () => {
   );
 });
 
+const withIssue = (url: string | null) =>
+  codeBody({
+    worker,
+    intentTitle: "Log in with a magic link",
+    intentProblem: null,
+    checks: null,
+    unplanned: [],
+    specIds: [],
+    links,
+    reviewDetails: null,
+    footer: { intentUrl: links.intentUrl, costUsd: 1, secs: 60 },
+    issue: { url, repo: "o/web" },
+  });
+
+test("prtext: a same-repo issue gets Fixes", () => {
+  expect(withIssue("https://github.com/o/web/issues/12")).toContain("\nFixes #12\n");
+  // GitHub repo names are case-insensitive.
+  expect(withIssue("https://github.com/O/Web/issues/12")).toContain("\nFixes #12\n");
+  expect(withIssue(null)).not.toContain("Fixes");
+});
+
+test("prtext: another repo's issue is only linked", () => {
+  const body = withIssue("https://github.com/o/api/issues/12");
+  expect(body).not.toContain("Fixes");
+  expect(body).toContain("https://github.com/o/api/issues/12");
+});
+
 test("pipeline: body without worker text", () => {
   const body = codeBody({
     worker: null,

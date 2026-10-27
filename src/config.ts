@@ -33,7 +33,7 @@ export interface RepoConfig {
 
 export interface Config {
   file: string;
-  intents: { remote: string; path: string | null; cutoff: number };
+  intents: { remote: string; path: string | null; cutoff: number; issueA: number };
   agent: {
     model: string;
     reviewModel: string | null;
@@ -107,6 +107,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string): Config 
       remote: r.str(intents, "intents", "remote", ""),
       path: r.optPath(intents, "intents", "path"),
       cutoff: r.int(intents, "intents", "cutoff", 7, 1, 15),
+      issueA: r.int(intents, "intents", "issue_a", 3, 1, 5),
     },
     agent: {
       model: r.word(agent, "agent", "model", "opus"),
