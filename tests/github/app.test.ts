@@ -80,8 +80,8 @@ describe("github app", () => {
       expect(r.headers.Accept).toBe("application/vnd.github+json");
     }
     expect(api.requests.filter((r) => r.method === "POST").map((r) => JSON.parse(r.body))).toEqual([
-      { repositories: ["a"] },
-      { repositories: ["b"] },
+      {},
+      {},
     ]);
 
     // Cached while 10 minutes or more remain (any case of owner/name); re-minted under that.

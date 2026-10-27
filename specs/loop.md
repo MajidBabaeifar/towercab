@@ -255,9 +255,11 @@ Towercab acts on GitHub as its own GitHub App, so its work is clearly separate f
 
 - App from `ops/github-app.json` (contents, pull requests, issues, checks, statuses, workflows,
   actions: write; metadata: read), installed on `intents` and each `[repos]` repo. Key `app.pem` next
-  to the config (refused if readable by group or others). RS256 JWT → installation token per repo
-  (1 hour, re-minted when under 10 minutes left), passed as `GH_TOKEN` to `gh` and to `git` through a
-  credential helper; never to Claude runs.
+  to the config (refused if readable by group or others). RS256 JWT → an installation token, cached
+  per repo (1 hour, re-minted when under 10 minutes left), passed as `GH_TOKEN` to `gh` and to `git`
+  through a credential helper; never to Claude runs. The token covers the installation's repos, not
+  just one: since 2026-10-27 GitHub's git answers 404 to a token scoped with `repositories` or
+  `repository_ids` on a private repo, while the REST API accepts it.
 - Commits are authored as `towercab[bot] <<id>+towercab[bot]@users.noreply.github.com>`.
 - Verified by: `github: installation token per repo`, `github: git uses the App token`, `github: commits are authored by the bot`, `github: no token in Claude's environment`
 
