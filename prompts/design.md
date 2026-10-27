@@ -16,7 +16,10 @@ What to do:
 2. Add or change the requirements the intent needs in `specs/<area>.md`. A new area starts from
    `specs/_template.md` when there is one. Follow the repo's spec format. Each requirement is one
    plain sentence a person can follow, then the technical detail and the test titles that will verify
-   it. Mark new requirements as Draft (not built yet). {{reserved}}
+   it. Mark new requirements as Draft (not built yet) in the file's Status line, so nothing claims
+   they are built: a bare `Live` becomes `Live: <prefix>-<first>..<last ID before yours>`, and an
+   existing `Live: …` list stays as it is, without your new IDs. The code PR adds them when it builds
+   them. {{reserved}}
 3. Never reuse a requirement ID. A dropped requirement keeps its heading and says why it was removed.
 4. If the intent changes no behaviour (a refactor, docs, CI only), change nothing and return an empty
    `spec_ids` list.
