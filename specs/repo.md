@@ -1,6 +1,6 @@
 # Repo files
 
-**Status:** Live: REPO-1..10 · **Prefix:** REPO
+**Status:** Live · **Prefix:** REPO
 
 ## Purpose
 

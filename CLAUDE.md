@@ -43,8 +43,8 @@ TypeScript on Node ≥ 22.18, run straight from this checkout (no build step). v
 
 ```setup
 npm ci
+npx playwright install chromium
 ```
-
 ```checks
 npm run check
 ```
