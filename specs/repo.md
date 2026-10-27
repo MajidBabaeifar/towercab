@@ -1,6 +1,6 @@
 # Repo files
 
-**Status:** Live · **Prefix:** REPO
+**Status:** Live: REPO-1..10 · **Prefix:** REPO
 
 ## Purpose
 
@@ -61,7 +61,7 @@ A repo without a checks block waits for the owner to add one.
 Towercab's own `CLAUDE.md`, `REVIEW.md` and `TOWERCAB.md` describe its TypeScript codebase.
 
 - `CLAUDE.md` (at most 60 lines: commands, conventions, architecture, what Claude gets wrong) with
-  setup `npm ci`; checks `npm run check`; fast `npm run lint`, `npm run typecheck`,
+  setup `npm ci` and the browser install of [REPO-11](#repo-11--playwright-browser-in-setup); checks `npm run check`; fast `npm run lint`, `npm run typecheck`,
   `npx vitest run {tests}`; screenshots `npm run test:ui`. `REVIEW.md`: passes Bugs, Security,
   Compliance; red lines `src/machine.ts`, `src/pipeline/guard.ts` and `src/claude.ts`. `TOWERCAB.md`: `max_autonomy: 5`, `protected: [src/machine.ts]`,
   `tests: [tests/**]`.
@@ -102,6 +102,20 @@ A repo with a UI can give Towercab a command that takes screenshots, and the rev
   sandbox ([PIP-23](pipeline.md)) with `TOWERCAB_SHOTS=<dir>` set; every `*.png` it writes there
   (at most 20, each ≤ 5 MB) goes to the review ([PIP-49](pipeline.md)). No block → no screenshots.
 - Verified by: `repo: screenshots block`, `pipeline: screenshots reach the review`
+
+### REPO-11 · Playwright browser in setup
+
+Towercab's own setup installs Playwright's headless Chromium into the mission's build cache, so the
+screenshots command runs in every mission.
+
+- Towercab's `CLAUDE.md` ` ```setup ` block is `npm ci` then `npx playwright install chromium`. The
+  browser lands under `XDG_CACHE_HOME` (`<cache>/xdg/ms-playwright`, [LOOP-34](loop.md)), where the
+  later screenshots run finds it; a second mission finds it already there and downloads nothing.
+- Setup runs with network ([PIP-23](pipeline.md)), so it can reach `cdn.playwright.dev` without a
+  change to `[agent].network` or the repo's allowed domains. No default domain is added.
+- With the browser installed, the screenshots log of a new mission shows `npm run test:ui` passing
+  with no browser-missing error, and the review gets the screenshots ([REPO-10](#repo-10--screenshots-block)).
+- Verified by: `repo: Towercab's own files parse`, `repo: Towercab's setup installs the Playwright browser`
 
 **Grammar** (`src/repo/markdown.ts`)
 
