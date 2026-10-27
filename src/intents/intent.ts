@@ -199,6 +199,28 @@ function fenceOf(line: string): string | null {
   return t.startsWith("```") ? "`" : t.startsWith("~~~") ? "~" : null;
 }
 
+/** The 1-based body line where a fence is opened and never closed, or null (INT-30). */
+function unclosedFence(body: string): number | null {
+  let fence: string | null = null;
+  let opened = 0;
+  let n = 0;
+  for (const line of linesOf(body)) {
+    n++;
+    const f = fenceOf(eolStripped(line));
+    if (!f) continue;
+    if (fence === null) {
+      fence = f;
+      opened = n;
+    } else if (fence === f) fence = null;
+  }
+  return fence === null ? null : opened;
+}
+
+function checkFences(text: string, bodyLine: number): void {
+  const n = unclosedFence(text);
+  if (n !== null) throw new Error(`unclosed code fence at line ${bodyLine + n - 1}`);
+}
+
 interface Span {
   title: string;
   start: number;
@@ -259,6 +281,13 @@ export class IntentFile implements IntentEdit {
     const title = titleOf(body);
     if (!title) throw new Error("no title: the body needs a `# ` line");
     this.titleText = title;
+    checkFences(body, this.bodyLine);
+  }
+
+  /** The 1-based file line where the body starts. */
+  private get bodyLine(): number {
+    const head = this.open + this.segments.map((s) => s.text).join("") + this.close;
+    return (head.match(/\n/g)?.length ?? 0) + 1;
   }
 
   /** Parse an `intent.md`; the error's message is the reason shown under Can't read (INT-11). */
@@ -370,6 +399,7 @@ export class IntentFile implements IntentEdit {
     if (answers !== null) body = appendSection(body, "Answers", answers, this.eol);
     const t = titleOf(body);
     if (!t) throw new Error("no title: the body needs a `# ` line");
+    checkFences(body, this.bodyLine);
     this.body = body;
     this.titleText = t;
   }

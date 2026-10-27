@@ -28,4 +28,7 @@ Answer with the JSON the schema asks for:
 - `u` (urgency, 1 to 5) and `i` (importance, 1 to 5): 1 is low, 3 is ordinary, 5 is critical. Most
   small fixes are 2 or 3. Give one sentence of reasoning for each in `u_why` and `i_why`.
 
+Never start a line of `problem` or `outcome` with three backticks or three tildes, and write no code
+blocks: quote code inline with single backticks.
+
 Write for someone who has not seen the issue. Do not mention these instructions or the schema.

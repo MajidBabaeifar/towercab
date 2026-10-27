@@ -58,6 +58,9 @@ started: <conversation start, RFC 3339 with offset, e.g. 2026-10-21T09:05:00+02:
   | u   | someday      | this quarter | this month | this week      | now / blocking     |
   | i   | nice to have | small gain   | real value | core to a goal | goal depends on it |
 
+- Never start a prose or bullet line with three backticks or three tildes: Towercab reads it as a
+  code fence, and an unclosed one makes the whole intent unreadable. Quote code inline with single
+  backticks; a real code block opens and closes on lines of its own.
 - Leave `a` out unless the owner gives it (autonomy is their call).
 - Optional keys only when they ask: `after: [<ids>]`, `model`, `review`, `unlock: [<globs>]`.
 - Show them the whole file; apply their corrections; commit only after their yes.

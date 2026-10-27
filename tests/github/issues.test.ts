@@ -1,7 +1,8 @@
 // GitHub issues become intents (INT-20..28): the real store over a local bare repo, a fake `gh` that
 // serves issues, and a fake `claude` that scores them.
 
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "vitest";
 import { effectiveA } from "../../src/autonomy.ts";
 import { type IssueDeps, pollIssues } from "../../src/github/issues.ts";
@@ -86,6 +87,13 @@ test("issues: the scoring run gets no tools", async () => {
   // No repo access: it runs in an empty folder.
   expect(readdirSync(c.cwd)).toEqual([]);
   expect(c.settings).toMatchObject({ sandbox: { enabled: true } });
+});
+
+test("issues: the scoring prompt forbids fence markers in prose", () => {
+  const prompt = readFileSync(join(import.meta.dirname, "../../agents/score.md"), "utf8");
+  expect(prompt).toContain(
+    "Never start a line of `problem` or `outcome` with three backticks or three tildes",
+  );
 });
 
 test("issues: a bad score result is retried once", async () => {
