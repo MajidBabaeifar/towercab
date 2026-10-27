@@ -138,6 +138,34 @@ test("intents: a thin intent is valid", () => {
   expect(parseIntent("﻿---\nrepo: x\n---\n# BOM\n").title).toBe("BOM");
 });
 
+const BROKEN = (mark: string) =>
+  `---\nrepo: x\n---\n\n# Intent: t\n\n## Problem\nIt breaks.\n\n## Proposed outcome\n- one\n${mark}not closed\n- two\n\n## Open questions\n- q?\n`;
+
+test("intents: an unclosed code fence makes the intent unreadable", () => {
+  expect(() => parseIntent(BROKEN("```"))).toThrow("unclosed code fence");
+  expect(() => parseIntent(BROKEN("~~~"))).toThrow("unclosed code fence");
+  // A fence closed by a different character stays open.
+  expect(() => parseIntent(`${BROKEN("```")}~~~\n`)).toThrow("unclosed code fence");
+  // A note or answer can't break the file either.
+  const f = IntentFile.parse("---\nrepo: x\n---\n# t\n\n## Problem\nok\n");
+  expect(() => f.setSection("Towercab", "```\nnever closed")).toThrow("unclosed code fence");
+  expect(f.render()).toBe("---\nrepo: x\n---\n# t\n\n## Problem\nok\n");
+});
+
+test("intents: the unreadable reason names the line", () => {
+  expect(() => parseIntent(BROKEN("```"))).toThrow("unclosed code fence at line 12");
+  expect(() => parseIntent(BROKEN("~~~"))).toThrow("unclosed code fence at line 12");
+});
+
+test("intents: a body that parses reads the same", () => {
+  const text = `---\nrepo: x\n---\n# Intent: t\n\n## Problem\nUse \`code\` inline.\n\n\`\`\`\n## Towercab\n\`\`\`\n\n~~~\nsome\n~~~\n\n## Open questions\n- q?\n`;
+  const i = parseIntent(text);
+  expect([...i.sections.keys()]).toEqual(["Problem", "Open questions"]);
+  expect(i.sections.get("Open questions")).toBe("- q?");
+  expect(i.sections.get("Problem")).toContain("## Towercab");
+  expect(parseIntent("---\nrepo: x\n---\n# Plain title\n").sections.size).toBe(0);
+});
+
 test("intents: parse then write is byte-identical", () => {
   const odd =
     "---\nrepo: towercab   # trailing comment\nu:    4\n# comment between keys\n\n" +

@@ -383,12 +383,15 @@ test("intents: an unpushed commit is recovered", async () => {
 
 test("intents: a bad file is reported, not touched", async () => {
   const bad = "---\nrepo: towercab\nu: 9\n---\n\n# Intent: Bad score\n";
+  const fenced =
+    "---\nrepo: towercab\n---\n\n# Intent: Fence\n\n## Problem\n- a\n```oops\n\n## Open questions\n- q?\n";
   const w = await world({
     "intents/261020-0721-good/intent.md": intentMd("towercab", "", "Good"),
     "intents/261020-0800-bad/intent.md": bad,
     "intents/261020-0900-a/intent.md": intentMd("towercab", "", "Dup A"),
     "done/261020-0900-b/intent.md": intentMd("towercab", "stage: done\n", "Dup B"),
     "intents/261019-1900-fine/intent.md": intentMd("towercab", "", "Fine"),
+    "intents/261020-1000-fence/intent.md": fenced,
   });
   const l = await w.store.list();
   expect(ids(l.open)).toEqual(["261019-1900", "261020-0721"]);
@@ -400,9 +403,14 @@ test("intents: a bad file is reported, not touched", async () => {
       .file("TODO.md")
       .endsWith(
         "## Can't read\n\n- done/261020-0900-b: duplicate id\n" +
-          "- intents/261020-0800-bad/intent.md: u must be an integer 1-5\n- intents/261020-0900-a: duplicate id\n",
+          "- intents/261020-0800-bad/intent.md: u must be an integer 1-5\n- intents/261020-0900-a: duplicate id\n" +
+          "- intents/261020-1000-fence/intent.md: unclosed code fence at line 9\n",
       ),
   ).toBe(true);
+  expect(w.file("intents/261020-1000-fence/intent.md")).toBe(fenced);
+  await expect(w.store.get("1000")).rejects.toThrow(
+    "intents/261020-1000-fence/intent.md: unclosed code fence at line 9",
+  );
   expect(w.file("DONE.md")).not.toContain("Dup B");
   expect(w.file("intents/261020-0800-bad/intent.md")).toBe(bad);
   const reason = new RefusedError("intents/261020-0800-bad/intent.md: u must be an integer 1-5");

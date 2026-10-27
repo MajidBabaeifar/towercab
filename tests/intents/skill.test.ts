@@ -5,6 +5,11 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 import { parse } from "yaml";
 
+test("intents: the skill forbids fence markers in prose", () => {
+  const skill = readFileSync(join(import.meta.dirname, "../../skills/intent/SKILL.md"), "utf8");
+  expect(skill).toContain("Never start a prose or bullet line with three backticks or three tildes");
+});
+
 test("intents: the skill names every section", () => {
   const skill = readFileSync(join(import.meta.dirname, "../../skills/intent/SKILL.md"), "utf8");
   expect(skill.startsWith("---\n")).toBe(true);
