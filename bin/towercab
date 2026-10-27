@@ -1,0 +1,4 @@
+#!/bin/sh
+# Towercab runs straight from this checkout: Node strips the types, no build step (LOOP-1, LOOP-36).
+here="$(dirname "$(readlink -f "$0")")"
+exec node --disable-warning=ExperimentalWarning "$here/../src/cli.ts" "$@"

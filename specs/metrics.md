@@ -1,6 +1,6 @@
 # Metrics
 
-**Status:** Draft · **Prefix:** MET
+**Status:** Live · **Prefix:** MET
 
 ## Purpose
 

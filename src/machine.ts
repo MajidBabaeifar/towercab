@@ -1,0 +1,440 @@
+// The one state machine (LOOP-3, **Transitions**, **Waits**). Only `apply` moves a mission.
+// A red line (REVIEW.md): a wrong move here merges, stops or loses work silently.
+
+import type { Db, SqlValue } from "./db.ts";
+import { COLUMNS, dataOf, getMission, insertMission, type Mission } from "./mission.ts";
+
+export const ORDER = [
+  "pick",
+  "design",
+  "plan",
+  "build",
+  "verify",
+  "proof",
+  "publish",
+  "ci",
+  "review",
+  "gate",
+  "merge",
+  "done",
+] as const;
+export const WAIT_STAGES = ["approval:spec", "approval:plan", "approval:merge", "blocked"] as const;
+
+export type WorkStage = (typeof ORDER)[number];
+export type WaitStage = (typeof WAIT_STAGES)[number];
+export type Stage = WorkStage | WaitStage | "stopped";
+
+export const STAGES: Stage[] = [...ORDER, ...WAIT_STAGES, "stopped"];
+
+export const EVENTS = [
+  "ok",
+  "red",
+  "timeout",
+  "bad_result",
+  "interrupted",
+  "limit",
+  "wait",
+  "env_fail",
+  "crash",
+  "spec_merged",
+  "plan_merged",
+  "code_merged",
+  "closed",
+  "feedback",
+  "answered",
+  "conflict",
+  "head_moved",
+  "intent_removed",
+  "retry_fresh",
+  "resume",
+] as const;
+export type Event = (typeof EVENTS)[number];
+
+export type Next =
+  | { kind: "go"; to: Stage }
+  | { kind: "wait" }
+  | { kind: "again" }
+  | { kind: "cool" }
+  | { kind: "backoff" }
+  | { kind: "recover" }
+  | { kind: "stop" }
+  | { kind: "continue" }
+  | { kind: "fresh" }
+  | { kind: "ignore" }
+  | { kind: "unexpected" };
+
+const go = (to: Stage): Next => ({ kind: "go", to });
+const K = (kind: Exclude<Next["kind"], "go">): Next => ({ kind }) as Next;
+
+export function isWait(s: Stage): s is WaitStage {
+  return (WAIT_STAGES as readonly string[]).includes(s);
+}
+
+export function isWorking(s: Stage): boolean {
+  return (ORDER as readonly string[]).includes(s) && s !== "done";
+}
+
+export function finished(s: Stage): boolean {
+  return s === "done" || s === "stopped";
+}
+
+/** Position in ORDER (waits and stopped: -1). */
+export function orderIndex(s: Stage): number {
+  return (ORDER as readonly string[]).indexOf(s);
+}
+
+const between = (s: Stage, a: WorkStage, b: WorkStage) =>
+  orderIndex(s) >= orderIndex(a) && orderIndex(s) <= orderIndex(b);
+
+/**
+ * The transition table. `from` is the stage a wait was entered from (blocked uses it for
+ * `spec_merged`/`plan_merged`).
+ */
+export function next(stage: Stage, event: Event, from: Stage | null = null): Next {
+  if (finished(stage)) return K("ignore");
+  const wait = isWait(stage);
+  switch (event) {
+    case "ok":
+      if (wait) return K("unexpected");
+      return go(ORDER[orderIndex(stage) + 1]!);
+    case "red":
+      if (stage === "verify" || stage === "proof" || stage === "ci") return go("build");
+      return K("unexpected");
+    case "timeout":
+    case "bad_result":
+    case "interrupted":
+      return wait ? K("ignore") : K("again");
+    case "limit":
+      return wait ? K("unexpected") : K("cool");
+    case "wait":
+      return K("wait");
+    case "env_fail":
+      return K("backoff");
+    case "crash":
+      return wait ? K("ignore") : K("recover");
+    case "spec_merged":
+      if (stage === "design" || stage === "approval:spec") return go("plan");
+      if (stage === "blocked" && from === "design") return go("plan");
+      return K("ignore");
+    case "plan_merged":
+      if (stage === "plan" || stage === "approval:plan") return go("build");
+      if (stage === "blocked" && from === "plan") return go("build");
+      return K("ignore");
+    case "code_merged":
+      if (stage === "approval:merge" || stage === "blocked") return go("done");
+      if (between(stage, "build", "merge")) return go("done");
+      return K("ignore");
+    case "closed":
+    case "intent_removed":
+      return K("stop");
+    case "feedback":
+      if (stage === "approval:spec") return go("design");
+      if (stage === "approval:plan") return go("plan");
+      if (stage === "approval:merge") return go("build");
+      if (stage === "blocked") return K("continue");
+      if (between(stage, "verify", "merge")) return go("build");
+      return K("ignore");
+    case "answered":
+      return stage === "blocked" ? K("continue") : K("ignore");
+    case "conflict":
+      if (stage === "approval:merge" || stage === "blocked") return go("build");
+      if (between(stage, "ci", "merge")) return go("build");
+      return K("ignore");
+    case "head_moved":
+      if (stage === "approval:merge") return go("ci");
+      if (between(stage, "review", "merge")) return go("ci");
+      return K("ignore");
+    case "retry_fresh":
+      return K("fresh");
+    case "resume":
+      return stage === "merge" ? K("again") : K("ignore");
+  }
+}
+
+/** **Waits**: the `waiting:` text's key → its stage and the ask (message line 1, the UI's card). */
+export const WAITS: Record<string, { stage: WaitStage; ask: string }> = {
+  "approve spec": { stage: "approval:spec", ask: "Review and merge the spec PR." },
+  "approve plan": {
+    stage: "approval:plan",
+    ask: "Review the plan and its access list, then merge the plan PR.",
+  },
+  "review and merge PR": { stage: "approval:merge", ask: "Review and merge the code PR." },
+  "answer the question": { stage: "blocked", ask: "Towercab has a question for you." },
+  "checks red": { stage: "blocked", ask: "The checks still fail after 2 repair rounds." },
+  "tests don't prove the change": { stage: "blocked", ask: "No test fails without the change." },
+  "CI red": { stage: "blocked", ask: "CI still fails after 2 repair rounds." },
+  "CI stuck": { stage: "blocked", ask: "CI didn't finish in time." },
+  "worker timeout": { stage: "blocked", ask: "The worker stopped before finishing." },
+  "worker budget": { stage: "blocked", ask: "The worker stopped before finishing." },
+  "no result": { stage: "blocked", ask: "The worker stopped before finishing." },
+  "no changes": { stage: "blocked", ask: "The worker made no changes." },
+  "crashed at": { stage: "blocked", ask: "Towercab crashed three times at this step." },
+  "merge failed": { stage: "blocked", ask: "GitHub refused the merge." },
+  "add CLAUDE.md verifying block": {
+    stage: "blocked",
+    ask: "The repo needs a verifying section in CLAUDE.md.",
+  },
+  "fix repo files": { stage: "blocked", ask: "A repo file doesn't parse." },
+  "unknown repo": {
+    stage: "blocked",
+    ask: "The intent names a repo or dependency Towercab doesn't know.",
+  },
+  "bad after:": {
+    stage: "blocked",
+    ask: "The intent names a repo or dependency Towercab doesn't know.",
+  },
+};
+
+/** The WAITS key of a `waiting:` text (`crashed at build` → `crashed at`). */
+export function waitKey(waiting: string): string {
+  if (waiting.startsWith("crashed at")) return "crashed at";
+  if (waiting.startsWith("bad after:")) return "bad after:";
+  return waiting;
+}
+
+export function waitInfo(waiting: string): { stage: WaitStage; ask: string } {
+  const w = WAITS[waitKey(waiting)];
+  if (!w) throw new Error(`bug: unknown wait "${waiting}"`);
+  return w;
+}
+
+/** Where a blocked mission goes on `continue` (an answer, feedback, `waiting` removed). */
+export function continueTo(waiting: string | null, from: Stage | null): Stage {
+  if (waiting?.startsWith("crashed at ")) {
+    const s = waiting.slice("crashed at ".length) as Stage;
+    if (STAGES.includes(s)) return s;
+  }
+  if (waiting === "CI stuck") return "ci";
+  if (waiting === "merge failed") return "gate";
+  if (from === "pick" || from === "design" || from === "plan") return from;
+  return "build";
+}
+
+/** The intent's `stage` field (INT-5): the phase a person cares about. */
+export function phaseOf(stage: Stage, from: Stage | null): "spec" | "plan" | "code" | "done" | "dropped" {
+  const s = stage === "blocked" && from ? from : stage;
+  if (s === "done") return "done";
+  if (s === "stopped") return "dropped";
+  if (s === "pick" || s === "design" || s === "approval:spec") return "spec";
+  if (s === "plan" || s === "approval:plan") return "plan";
+  return "code";
+}
+
+/** What a handler (or an event source) reports. */
+export interface Outcome {
+  event: Event;
+  /** For `wait`: the `waiting:` text. */
+  waiting?: string;
+  why?: string;
+  /** For `limit`: the cooling model and until when (unix s). */
+  limit?: { model: string; until: number; backoffs: number; text: string };
+  /** For `answered`/`feedback`: the owner's text, kept for the next worker prompt. */
+  text?: string;
+  /** Mission columns to set in the same transaction. */
+  set?: Record<string, SqlValue>;
+  /** Keys to merge into `missions.data` in the same transaction. */
+  data?: Record<string, unknown>;
+}
+
+export const ok = (o: Partial<Outcome> = {}): Outcome => ({ event: "ok", ...o });
+export const red = (why: string, o: Partial<Outcome> = {}): Outcome => ({ event: "red", why, ...o });
+export const wait = (waiting: string, why?: string, o: Partial<Outcome> = {}): Outcome => ({
+  event: "wait",
+  waiting,
+  why,
+  ...o,
+});
+
+/** Who/what a message is about (title and link come from the intent). */
+export interface Subject {
+  title: string;
+  repo: string;
+  link: string | null;
+}
+
+export interface ApplyCtx {
+  db: Db;
+  now: number;
+  subject: (m: Mission) => Subject;
+  /** LOOP-10's backoff after `retries` failures, seconds. */
+  backoff?: (retries: number) => number;
+  log?: (line: string) => void;
+}
+
+export const CRASH_LIMIT = 3;
+
+export function envBackoff(retries: number): number {
+  return [30, 60, 120, 240, 300][Math.min(retries, 4)]!;
+}
+
+/** The text of a wait's message (LOOP-14): the ask, title and repo, why, link. */
+export function waitMessage(waiting: string, s: Subject, why: string | null): string {
+  const lines = [waitInfo(waiting).ask, `${s.title} (${s.repo})`];
+  if (why) lines.push(oneLine(why, 300));
+  if (s.link) lines.push(s.link);
+  return lines.join("\n").slice(0, 4000);
+}
+
+export function oneLine(s: string, max: number): string {
+  const l = s.replace(/\s+/g, " ").trim();
+  return l.length > max ? `${l.slice(0, max - 1)}…` : l;
+}
+
+/**
+ * Move a mission (LOOP-6): one transaction writes its new stage, `step = 'enter'`, the outcome's
+ * columns, a `transitions` row and, for a wait, its outbox row. Returns the fresh row (for `fresh`,
+ * the new attempt's). A mission no longer at `m.stage` is left alone.
+ */
+export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
+  const { db, now } = cx;
+  return db.tx(() => {
+    const cur = getMission(db, m.id);
+    if (!cur || cur.stage !== m.stage) return cur ?? m;
+    let n = next(cur.stage, o.event, cur.from_stage);
+    if (n.kind === "unexpected") {
+      cx.log?.(`unexpected ${o.event} at ${cur.stage}`);
+      n = isWait(cur.stage) ? { kind: "ignore" } : { kind: "recover" };
+    }
+    const set: Record<string, SqlValue> = { ...(o.set ?? {}) };
+    for (const c of Object.keys(set)) if (!COLUMNS.has(c)) throw new Error(`bug: column ${c} can't be set`);
+    let data = dataOf(cur);
+    if (o.data) data = { ...data, ...o.data };
+
+    const move = (to: Stage, extra: Record<string, SqlValue>, why: string | null) => {
+      const leavingWait = isWait(cur.stage) && to !== cur.stage;
+      const cols: Record<string, SqlValue> = {
+        ...set,
+        stage: to,
+        step: "enter",
+        busy: 0,
+        retries: 0,
+        retry_at: null,
+        limit_model: null,
+        why,
+        ...extra,
+      };
+      if (to !== cur.stage) cols.step_secs = 0;
+      if (leavingWait) cols.continued = cur.continued + 1;
+      if (!isWait(to)) {
+        cols.waiting = null;
+        cols.from_stage = null;
+      }
+      if (finished(to)) cols.finished = now;
+      write(cols);
+      db.run(
+        "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) VALUES (?, ?, ?, ?, ?, ?)",
+        cur.id,
+        now,
+        cur.stage,
+        o.event,
+        to,
+        why,
+      );
+      cx.log?.(`${cur.intent} ${cur.stage} → ${to} (${o.event}${why ? `: ${oneLine(why, 120)}` : ""})`);
+    };
+    const write = (cols: Record<string, SqlValue>) => {
+      cols.data = JSON.stringify(data);
+      const keys = Object.keys(cols);
+      db.run(
+        `UPDATE missions SET ${keys.map((k) => `${k} = ?`).join(", ")}, updated = ? WHERE id = ?`,
+        ...keys.map((k) => cols[k]!),
+        now,
+        cur.id,
+      );
+    };
+    const toWait = (waiting: string, why: string | null) => {
+      const info = waitInfo(waiting);
+      const fromStage = isWait(cur.stage) ? cur.from_stage : cur.stage;
+      // A new wait from inside a wait still counts as a new message.
+      const continued = isWait(cur.stage) ? cur.continued + 1 : cur.continued;
+      move(info.stage, { waiting, from_stage: fromStage, continued }, why);
+      const key = `${cur.id}:${waitKey(waiting)}:${continued}`;
+      db.run(
+        "INSERT OR IGNORE INTO outbox (key, mission, text, created) VALUES (?, ?, ?, ?)",
+        key,
+        cur.id,
+        waitMessage(waiting, cx.subject(cur), why),
+        now,
+      );
+    };
+
+    switch (n.kind) {
+      case "go":
+        if (o.text) data.answer = o.text;
+        move(n.to, {}, o.why ?? null);
+        break;
+      case "wait":
+        if (!o.waiting) throw new Error("bug: wait without a waiting text");
+        toWait(o.waiting, o.why ?? null);
+        break;
+      case "again":
+        write({ ...set, step: cur.step === "enter" ? "enter" : cur.step, busy: 0 });
+        break;
+      case "cool": {
+        if (!o.limit) throw new Error("bug: limit without a limit");
+        const { model, until, backoffs, text } = o.limit;
+        db.run(
+          "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+          `cooldown:${model}`,
+          JSON.stringify({ until, backoffs, text, since: now }),
+        );
+        write({ ...set, limit_model: model, busy: 0 });
+        break;
+      }
+      case "backoff": {
+        const retries = cur.retries + 1;
+        const after = (cx.backoff ?? envBackoff)(cur.retries);
+        write({ ...set, retries, retry_at: now + after, busy: 0, why: o.why ?? cur.why });
+        break;
+      }
+      case "recover": {
+        const unclean = cur.unclean + 1;
+        if (unclean >= CRASH_LIMIT) {
+          set.unclean = 0;
+          toWait(`crashed at ${cur.stage}`, o.why ?? null);
+        } else {
+          write({ ...set, unclean, busy: 0 });
+        }
+        break;
+      }
+      case "stop": {
+        if (o.event === "closed") data.dropped = true;
+        move("stopped", {}, o.why ?? (o.event === "closed" ? "PR closed" : "intent removed"));
+        break;
+      }
+      case "continue": {
+        const to = continueTo(cur.waiting, cur.from_stage);
+        if (o.text) data.answer = o.text;
+        move(to, { repairs: 0, ci_repairs: 0, unclean: 0 }, o.why ?? null);
+        break;
+      }
+      case "fresh": {
+        move("stopped", {}, `replaced by attempt ${cur.attempt + 1}`);
+        const slug = slugOf(cur);
+        return insertMission(
+          db,
+          {
+            intent: cur.intent,
+            slug,
+            repo: cur.repo,
+            model: cur.model,
+            a: cur.a_at_pick,
+            minAttempt: cur.attempt + 1,
+          },
+          now,
+        );
+      }
+      case "ignore":
+        break;
+    }
+    return getMission(db, cur.id)!;
+  });
+}
+
+/** The slug part of `towercab/<id>-<slug>[-<attempt>]`. */
+export function slugOf(m: Mission): string {
+  let s = m.branch.replace(/^towercab\//, "");
+  if (s.startsWith(`${m.intent}-`)) s = s.slice(m.intent.length + 1);
+  if (m.attempt >= 2 && s.endsWith(`-${m.attempt}`)) s = s.slice(0, -`-${m.attempt}`.length);
+  return s;
+}

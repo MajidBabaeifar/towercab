@@ -1,0 +1,1415 @@
+// What the page shows, derived on the server (UI-56 to UI-64, UI-70, UI-71; MET-29, MET-30). Pure
+// functions over the database, the intent listing and what the loop knows; I/O only in the loaders.
+
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import type { Config } from "../config.ts";
+import type { Db } from "../db.ts";
+import type { Clock } from "../handlers.ts";
+import type { Home } from "../home.ts";
+import type { Intent, IntentStore, Listing } from "../intents/types.ts";
+import { finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
+import { dataOf, forIntent, type Mission } from "../mission.ts";
+import type {
+  Access,
+  ActivityItem,
+  ActivityKind,
+  ActivityPage,
+  AttemptView,
+  Card,
+  CardKind,
+  IntentPage,
+  Lane,
+  Overview,
+  Phase,
+  PrLink,
+  ProblemView,
+  PrState,
+  PrView,
+  Question,
+  QueueItem,
+  QueuePage,
+  Row,
+  RunGroupView,
+  SpendView,
+  StateView,
+  StepTimeView,
+  TimelineItem,
+  TopBar,
+  UpNextView,
+  When,
+} from "./view.ts";
+
+/** A problem the loop knows about (LOOP-10 health, a failed self-update, the daily budget). */
+export interface Problem {
+  title: string;
+  detail?: string;
+  fix: string;
+  since?: number;
+  intent?: string;
+}
+
+/** Why the picker skips an intent (LOOP-5), worded by the page. */
+export type Skip =
+  | { kind: "paused" }
+  | { kind: "repo-busy"; intent: string }
+  | { kind: "cooling"; model: string; until: number }
+  | { kind: "parked" }
+  | { kind: "unreachable"; what: string }
+  | { kind: "after"; intent: string }
+  | { kind: "other"; text: string };
+
+/** One entry of the picker's whole list (PRI-5), in pick order. */
+export interface UpNext {
+  intent: string;
+  priority: number;
+  skip: Skip | null;
+}
+
+export interface LogLine {
+  at: number;
+  text: string;
+}
+
+/** Everything the page reads; the loop provides it (the CLI too, read-only, UI-2). */
+export interface UiSources {
+  db: Db;
+  store: IntentStore;
+  config: Config;
+  clock: Clock;
+  home: Home;
+  running: boolean;
+  paused(): boolean;
+  problems(): Problem[];
+  version(): { commit: string; behind: number | null };
+  /** The picker's whole list; the overview shows the first 5. */
+  upNext(): UpNext[];
+  /** A PR's URL; `repo` is `owner/name`. */
+  prUrl(repo: string, n: number): string;
+  intentUrl(intent: Intent): string | null;
+  /** Recent loop log lines; without it, the first lines of `towercab.log`'s entries. */
+  logs?(): LogLine[];
+}
+
+export interface Transition {
+  id: number;
+  mission: number;
+  at: number;
+  from_stage: Stage;
+  event: string;
+  to_stage: Stage;
+  why: string | null;
+}
+
+const DAY = 86_400;
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** `45 s`, `12 min`, `1 h 05 min`, `2 d 3 h`. */
+export function duration(secs: number): string {
+  const s = Math.max(0, Math.round(secs));
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} h ${pad(m % 60)} min`;
+  return `${Math.floor(h / 24)} d ${h % 24} h`;
+}
+
+/** `$1.23`. */
+export function money(usd: number): string {
+  return `$${(Math.round(Math.max(0, usd) * 100) / 100).toFixed(2)}`;
+}
+
+/** `14:05` local. */
+export function clock(at: number): string {
+  const d = new Date(at * 1000);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** `Mon 26 Oct 2026, 14:05:09` local, for hover. */
+export function exactTime(at: number): string {
+  const d = new Date(at * 1000);
+  return `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${clock(at)}:${pad(d.getSeconds())}`;
+}
+
+/** `YYYY-MM-DD` local. */
+export function localDate(at: number): string {
+  const d = new Date(at * 1000);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function dayOffset(at: number, now: number): number {
+  const a = new Date(at * 1000);
+  const b = new Date(now * 1000);
+  const da = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
+  const db = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
+  return Math.round((db - da) / (DAY * 1000));
+}
+
+function dateWords(at: number, now: number): string {
+  const d = new Date(at * 1000);
+  const year = new Date(now * 1000).getFullYear() === d.getFullYear() ? "" : ` ${d.getFullYear()}`;
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}${year}`;
+}
+
+/** Relative words: `just now`, `12 min ago`, `3 h ago`, `yesterday 14:05`, `Mon 14:05`, `12 Oct`. */
+export function ago(at: number, now: number): string {
+  const diff = now - at;
+  if (diff < -30) return until(at, now);
+  if (diff < 45) return "just now";
+  if (diff < 3600) return `${Math.max(1, Math.round(diff / 60))} min ago`;
+  const days = dayOffset(at, now);
+  if (days === 0) return `${Math.floor(diff / 3600)} h ago`;
+  if (days === 1) return `yesterday ${clock(at)}`;
+  if (days < 7) return `${WEEKDAYS[new Date(at * 1000).getDay()]} ${clock(at)}`;
+  return dateWords(at, now);
+}
+
+/** Future words: `in 12 min`, `at 14:05`, `tomorrow 09:00`, `12 Oct`. */
+export function until(at: number, now: number): string {
+  const diff = at - now;
+  if (diff <= 30) return "now";
+  if (diff < 3600) return `in ${Math.max(1, Math.round(diff / 60))} min`;
+  const days = -dayOffset(at, now);
+  if (days === 0) return `at ${clock(at)}`;
+  if (days === 1) return `tomorrow ${clock(at)}`;
+  return dateWords(at, now);
+}
+
+/** `14:05` today, `Mon 14:05` within a week, else `12 Oct`. */
+export function shortTime(at: number, now: number): string {
+  const days = dayOffset(at, now);
+  if (days === 0) return clock(at);
+  if (days > 0 && days < 7) return `${WEEKDAYS[new Date(at * 1000).getDay()]} ${clock(at)}`;
+  return dateWords(at, now);
+}
+
+export function when(at: number, now: number): When {
+  return { at, rel: ago(at, now), exact: exactTime(at), short: shortTime(at, now) };
+}
+
+/** PRI-3: `2i + u`, missing scores count as 3. */
+export function priority(u: number | null, i: number | null): number {
+  return 2 * (i ?? 3) + (u ?? 3);
+}
+
+/** `Opus`, `Sonnet`, or the name as given. */
+export function modelName(model: string): string {
+  for (const m of ["opus", "sonnet", "haiku"])
+    if (model.toLowerCase().includes(m)) return m[0]!.toUpperCase() + m.slice(1);
+  return model;
+}
+
+const STEP_WORDS: Record<Stage, string> = {
+  pick: "Starting",
+  design: "Writing the spec",
+  "approval:spec": "Waiting for your spec review",
+  plan: "Planning",
+  "approval:plan": "Waiting for your plan review",
+  build: "Building",
+  verify: "Running checks",
+  proof: "Proving the tests",
+  publish: "Opening the PR",
+  ci: "Waiting for CI",
+  review: "Reviewing",
+  gate: "Deciding",
+  merge: "Merging",
+  "approval:merge": "Waiting for your code review",
+  blocked: "Waiting for your answer",
+  done: "Done",
+  stopped: "Dropped",
+};
+
+/** UI-56: a stage in plain words. */
+export function stepWords(stage: Stage): string {
+  return STEP_WORDS[stage] ?? stage;
+}
+
+const LABELS: Record<StateView["key"], StateView["label"]> = {
+  needs: "Needs you",
+  working: "Working",
+  ci: "Waiting on CI",
+  queued: "Queued",
+  cooling: "Cooling down",
+  paused: "Paused",
+  stalled: "Stalled",
+  upnext: "Up next",
+  parked: "Parked",
+  done: "Done",
+  dropped: "Dropped",
+};
+
+export function state(key: StateView["key"], note: string | null = null): StateView {
+  return { key, label: LABELS[key], note };
+}
+
+export interface StateOpts {
+  /** When the mission entered its stage (its last move); default `updated`. */
+  enteredAt?: number;
+  /** The cooling model's `until` (unix s). */
+  cooldownUntil?: number | null;
+  config?: Config;
+}
+
+/** How long a stage may go without a move before it counts as stalled: 2 × its timeout, CI 2 h. */
+export function stallAfter(stage: Stage, config?: Config): number {
+  const a = config?.agent;
+  const build = (a?.buildTimeoutMin ?? 60) * 60;
+  const review = (a?.reviewTimeoutMin ?? 15) * 60;
+  const check = (a?.checkTimeoutMin ?? 10) * 60;
+  if (stage === "ci") return 2 * 3600;
+  if (stage === "design" || stage === "plan" || stage === "build") return 2 * build;
+  if (stage === "review" || stage === "gate") return 2 * review;
+  return 2 * check;
+}
+
+const CARD_NOTES: Partial<Record<Stage, string>> = {
+  "approval:spec": "Spec review",
+  "approval:plan": "Plan review",
+  "approval:merge": "Code review",
+};
+
+/** UI-56: the one state of a mission. */
+export function stateOf(m: Mission, now: number, o: StateOpts = {}): StateView {
+  if (m.stage === "stopped") return state("dropped");
+  if (m.stage === "done") return state("done");
+  if (isWait(m.stage)) {
+    const note = CARD_NOTES[m.stage] ?? (m.waiting === "answer the question" ? "Question" : "Blocked");
+    return state("needs", note);
+  }
+  if (m.held) return state("paused", `before ${stepWords(m.stage).toLowerCase()}`);
+  if (m.limit_model) {
+    const u = o.cooldownUntil;
+    return state("cooling", u ? `until ${clock(u)}` : null);
+  }
+  const since = now - (o.enteredAt ?? m.updated);
+  if (since > stallAfter(m.stage, o.config)) return state("stalled", `for ${duration(since)}`);
+  if (m.stage === "ci") return state("ci");
+  return state("working");
+}
+
+function skipState(s: Skip | null, parked: boolean): StateView {
+  if (!s) return parked ? state("parked") : state("upnext");
+  if (s.kind === "parked") return state("parked");
+  if (s.kind === "paused") return state("paused");
+  if (s.kind === "cooling") return state("cooling", `until ${clock(s.until)}`);
+  return state("queued");
+}
+
+interface Snap {
+  now: number;
+  listing: Listing | null;
+  listError: string | null;
+  intents: Map<string, Intent>;
+  missions: Mission[];
+  entered: Map<number, number>;
+  cooldowns: Map<string, number>;
+  paused: boolean;
+}
+
+async function snapshot(src: UiSources): Promise<Snap> {
+  const now = src.clock.now();
+  let listing: Listing | null = null;
+  let listError: string | null = null;
+  try {
+    listing = await src.store.list();
+  } catch (e) {
+    listError = (e as Error).message;
+  }
+  const intents = new Map<string, Intent>();
+  for (const i of [...(listing?.done ?? []), ...(listing?.open ?? [])]) intents.set(i.id, i);
+  const missions = src.db.all<Mission>(
+    "SELECT * FROM missions WHERE stage NOT IN ('done','stopped') ORDER BY id",
+  );
+  const entered = new Map<number, number>();
+  for (const r of src.db.all<{ mission: number; at: number }>(
+    "SELECT mission, MAX(at) AS at FROM transitions WHERE mission IN (SELECT id FROM missions WHERE stage NOT IN ('done','stopped')) GROUP BY mission",
+  )) {
+    entered.set(r.mission, r.at);
+  }
+  const cooldowns = new Map<string, number>();
+  for (const r of src.db.all<{ key: string; value: string }>(
+    "SELECT key, value FROM meta WHERE key LIKE 'cooldown:%'",
+  )) {
+    try {
+      const v = JSON.parse(r.value) as { until?: unknown };
+      if (typeof v.until === "number") cooldowns.set(r.key.slice("cooldown:".length), v.until);
+    } catch {
+      // A bad row shows no reset time.
+    }
+  }
+  return { now, listing, listError, intents, missions, entered, cooldowns, paused: src.paused() };
+}
+
+const titleOf = (s: Snap, id: string) => s.intents.get(id)?.title ?? id;
+
+function missionState(s: Snap, m: Mission, src: UiSources): StateView {
+  return stateOf(m, s.now, {
+    enteredAt: s.entered.get(m.id) ?? m.created,
+    cooldownUntil: m.limit_model ? (s.cooldowns.get(m.limit_model) ?? null) : null,
+    config: src.config,
+  });
+}
+
+type MissionData = {
+  question?: Question;
+  access?: Access;
+  brief?: string;
+  review?: { summary?: string };
+  runs?: { at: number; cost: number }[];
+};
+
+function repoGithub(src: UiSources, repo: string): string | null {
+  return src.config.repos.get(repo)?.github ?? null;
+}
+
+/** The PR a mission's phase is on: spec and code PRs in the repo, the plan PR in the intents repo. */
+export function currentPr(
+  m: Mission,
+  config: Config,
+  intentsGithub: string | null,
+): { github: string; number: number; label: string } | null {
+  const phase = phaseOf(m.stage, m.from_stage);
+  const repo = config.repos.get(m.repo)?.github ?? null;
+  if (phase === "spec" && m.spec_pr && repo) return { github: repo, number: m.spec_pr, label: "spec PR" };
+  if (phase === "plan" && m.plan_pr && intentsGithub) {
+    return { github: intentsGithub, number: m.plan_pr, label: "plan PR" };
+  }
+  if (phase === "code" && m.pr && repo) return { github: repo, number: m.pr, label: "code PR" };
+  return null;
+}
+
+function prLink(src: UiSources, m: Mission): PrLink | null {
+  const pr = currentPr(m, src.config, src.store.github());
+  if (!pr) return null;
+  const label = pr.label.charAt(0).toUpperCase() + pr.label.slice(1);
+  return { number: pr.number, url: src.prUrl(pr.github, pr.number), label: `${label} #${pr.number}` };
+}
+
+function cardKind(m: Mission): CardKind {
+  if (m.stage === "approval:spec") return "spec";
+  if (m.stage === "approval:plan") return "plan";
+  if (m.stage === "approval:merge") return "code";
+  return m.waiting === "answer the question" ? "question" : "blocked";
+}
+
+const MERGE_LABELS: Partial<Record<CardKind, string>> = {
+  spec: "Merge spec PR",
+  plan: "Merge plan PR",
+  code: "Merge PR",
+};
+
+const KIND_LABELS: Record<CardKind, string> = {
+  spec: "Spec review",
+  plan: "Plan review",
+  code: "Code review",
+  question: "Question",
+  blocked: "Blocked",
+};
+
+function askOf(waiting: string | null): string {
+  if (!waiting) return "Towercab needs you.";
+  try {
+    return waitInfo(waiting).ask;
+  } catch {
+    return "Towercab needs you.";
+  }
+}
+
+/** UI-58: the card for a mission waiting on the owner. */
+export function missionCard(
+  src: UiSources,
+  m: Mission,
+  intent: Intent | undefined,
+  since: number | null,
+  now: number,
+): Card {
+  const kind = cardKind(m);
+  const d = dataOf<MissionData>(m);
+  const pr = prLink(src, m);
+  const approval = kind === "spec" || kind === "plan" || kind === "code";
+  const note = intent?.sections.get("Towercab")?.trim() || null;
+  let brief = d.brief ?? null;
+  if (kind === "code") brief = d.review?.summary ?? brief;
+  if (!brief && !approval && !d.question && !pr) brief = note;
+  const actions: Card["actions"] = approval
+    ? pr
+      ? ["merge", "retry", "drop"]
+      : ["retry", "drop"]
+    : ["reply", "retry", "drop"];
+  return {
+    intent: m.intent,
+    title: intent?.title ?? m.intent,
+    repo: m.repo,
+    kind,
+    kindLabel: KIND_LABELS[kind],
+    ask: askOf(m.waiting),
+    since: since === null ? null : when(since, now),
+    brief,
+    why: m.why && m.why !== brief ? m.why : null,
+    question: d.question ?? null,
+    access: kind === "plan" ? (d.access ?? { domains: [], paths: [] }) : null,
+    pr,
+    actions,
+    mergeLabel: approval && pr ? MERGE_LABELS[kind]! : null,
+  };
+}
+
+/** UI-58: a wait written only on the intent (unknown repo, bad after:). */
+export function intentCard(i: Intent): Card {
+  const w = i.waiting ?? "";
+  let why: string | null = null;
+  if (w === "unknown repo") {
+    why = `Its repo “${i.repo}” isn't one Towercab knows. Add the repo to the config, or change the intent's repo.`;
+  } else if (w.startsWith("bad after:")) {
+    why = `It waits for ${w.slice("bad after:".length).trim() || "an intent"}, which Towercab can't find or is dropped. Fix its after list.`;
+  }
+  return {
+    intent: i.id,
+    title: i.title,
+    repo: i.repo,
+    kind: "blocked",
+    kindLabel: "Blocked",
+    ask: askOf(w),
+    since: null,
+    brief: i.sections.get("Towercab")?.trim() || null,
+    why,
+    question: null,
+    access: null,
+    pr: null,
+    actions: ["reply", "drop"],
+    mergeLabel: null,
+  };
+}
+
+function phases(m: Mission): Phase[] {
+  const p = phaseOf(m.stage, m.from_stage);
+  const at = p === "spec" ? 0 : p === "plan" ? 1 : p === "code" ? 2 : 3;
+  const status = (idx: number, had: boolean): Phase["status"] => {
+    if (idx < at) return idx === 0 && !had ? "skipped" : "done";
+    return idx === at ? "current" : "todo";
+  };
+  return [
+    { label: "Spec", status: status(0, m.spec_pr !== null) },
+    { label: "Plan", status: status(1, true) },
+    { label: "Code", status: status(2, true) },
+  ];
+}
+
+/** UI-59: a moving mission's row. */
+export function missionRow(src: UiSources, s: Snap, m: Mission): Row {
+  const entered = s.entered.get(m.id) ?? m.created;
+  return {
+    intent: m.intent,
+    title: titleOf(s, m.intent),
+    repo: m.repo,
+    state: missionState(s, m, src),
+    phases: phases(m),
+    step: stepWords(m.stage),
+    inStep: duration(s.now - entered),
+    cost: money(m.cost_usd),
+    model: modelName(m.child_model ?? m.model),
+    behind: null,
+  };
+}
+
+/** UI-61: why an intent doesn't start now. */
+export function skipWords(skip: Skip | null, titles: (id: string) => string, now: number): string | null {
+  if (!skip) return null;
+  switch (skip.kind) {
+    case "paused":
+      return "New work starts when you resume.";
+    case "repo-busy":
+      return `Waits behind “${titles(skip.intent)}”.`;
+    case "cooling":
+      return `${modelName(skip.model)} is cooling down after a usage limit; it can start ${until(skip.until, now)}.`;
+    case "parked":
+      return "Raise its urgency or importance to run it.";
+    case "unreachable":
+      return `${skip.what} can't be reached; it starts once it can.`;
+    case "after":
+      return `Waits for “${titles(skip.intent)}” to be done.`;
+    case "other":
+      return skip.text;
+  }
+}
+
+function queuedRow(s: Snap, u: UpNext): Row {
+  const i = s.intents.get(u.intent);
+  return {
+    intent: u.intent,
+    title: i?.title ?? u.intent,
+    repo: i?.repo ?? "",
+    state: skipState(u.skip, false),
+    phases: [
+      { label: "Spec", status: "todo" },
+      { label: "Plan", status: "todo" },
+      { label: "Code", status: "todo" },
+    ],
+    step: "Not started",
+    inStep: "",
+    cost: money(0),
+    model: modelName(i?.model ?? ""),
+    behind: skipWords(u.skip, (id) => titleOf(s, id), s.now) ?? "Starts when a slot is free.",
+  };
+}
+
+const median = (xs: number[]) => {
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+};
+
+function problemsOf(src: UiSources, s: Snap, todaySpend: number): ProblemView[] {
+  const out: ProblemView[] = [];
+  for (const [n, p] of src.problems().entries()) {
+    out.push({
+      key: `loop:${n}`,
+      title: p.title,
+      detail: p.detail ?? (p.since ? `Since ${ago(p.since, s.now)}.` : null),
+      fix: p.fix,
+      intent: p.intent ?? null,
+      tone: "error",
+      code: false,
+    });
+  }
+  const budget = src.config.agent.dailyBudgetUsd;
+  if (budget !== null && todaySpend >= budget && !out.some((p) => /budget/i.test(p.title))) {
+    out.push({
+      key: "budget",
+      title: `Today's budget is used up: ${money(todaySpend)} of ${money(budget)}.`,
+      detail: null,
+      fix: "New work starts again at midnight. Raise the daily budget in the config to go on now.",
+      intent: null,
+      tone: "warn",
+      code: false,
+    });
+  }
+  if (s.listError) {
+    out.push({
+      key: "intents",
+      title: "Towercab can't read the intents repo.",
+      detail: s.listError,
+      fix: "Check that the intents checkout exists and can be pulled.",
+      intent: null,
+      tone: "error",
+      code: true,
+    });
+  }
+  for (const m of s.missions) {
+    const st = missionState(s, m, src);
+    if (st.key === "stalled") {
+      out.push({
+        key: `stalled:${m.id}`,
+        title: `“${titleOf(s, m.intent)}” has not moved for ${duration(s.now - (s.entered.get(m.id) ?? m.created))}.`,
+        detail: `It is at ${stepWords(m.stage).toLowerCase()}, which usually takes less than ${duration(stallAfter(m.stage, src.config) / 2)}.`,
+        fix: "Open it to see its last step and logs, or start it over.",
+        intent: m.intent,
+        tone: "error",
+        code: false,
+      });
+    }
+  }
+  if (s.missions.length > 0) {
+    const ids = s.missions.map((m) => m.id);
+    const reds = src.db.all<{ mission: number; why: string | null }>(
+      `SELECT mission, why FROM transitions WHERE event = 'red' AND mission IN (${ids.map(() => "?").join(",")}) ORDER BY id`,
+      ...ids,
+    );
+    const last = new Map<number, (string | null)[]>();
+    for (const r of reds) last.set(r.mission, [...(last.get(r.mission) ?? []), r.why].slice(-2));
+    for (const m of s.missions) {
+      const two = last.get(m.id);
+      if (two?.length === 2 && two[0] && two[0] === two[1]) {
+        out.push({
+          key: `repeat:${m.id}`,
+          title: `The same check failed twice on “${titleOf(s, m.intent)}”.`,
+          detail: two[0],
+          fix: "Look at the check's log on its page; reply with a hint or start it over.",
+          intent: m.intent,
+          tone: "warn",
+          code: true,
+        });
+      }
+    }
+  }
+  const costs = src.db
+    .all<{ cost_usd: number }>("SELECT cost_usd FROM missions WHERE stage = 'done' ORDER BY id DESC LIMIT 20")
+    .map((r) => r.cost_usd);
+  if (costs.length >= 3) {
+    const med = median(costs);
+    for (const m of s.missions) {
+      if (med > 0 && m.cost_usd > 3 * med) {
+        out.push({
+          key: `cost:${m.id}`,
+          title: `“${titleOf(s, m.intent)}” has cost ${money(m.cost_usd)}, over 3 × the usual ${money(med)}.`,
+          detail: null,
+          fix: "Check that it isn't going in circles; drop it or narrow the intent if so.",
+          intent: m.intent,
+          tone: "warn",
+          code: false,
+        });
+      }
+    }
+  }
+  for (const u of s.listing?.unreadable ?? []) {
+    out.push({
+      key: `unreadable:${u.path}`,
+      title: `An intent file can't be read: ${u.path}`,
+      detail: u.reason,
+      fix: "Fix the file in the intents repo; Towercab reads it again within a minute.",
+      intent: null,
+      tone: "warn",
+      code: false,
+    });
+  }
+  return out;
+}
+
+export interface Spend {
+  today: number;
+  week: number;
+  /** The last 7 local days, oldest first, today last. */
+  days: { date: string; cost: number }[];
+}
+
+/** MET-29: run costs (`data.runs`) summed by local day: today and the last 7 days. */
+export function spend(db: Db, now: number): Spend {
+  const byDay = new Map<string, number>();
+  for (const r of db.all<{ data: string }>("SELECT data FROM missions WHERE updated >= ?", now - 8 * DAY)) {
+    let runs: unknown;
+    try {
+      runs = (JSON.parse(r.data) as { runs?: unknown }).runs;
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(runs)) continue;
+    for (const run of runs as { at?: unknown; cost?: unknown }[]) {
+      if (typeof run?.at !== "number" || typeof run.cost !== "number" || run.at > now) continue;
+      const k = localDate(run.at);
+      byDay.set(k, (byDay.get(k) ?? 0) + run.cost);
+    }
+  }
+  const days: Spend["days"] = [];
+  const t = new Date(now * 1000);
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(t.getFullYear(), t.getMonth(), t.getDate() - i, 12);
+    const k = localDate(d.getTime() / 1000);
+    days.push({ date: k, cost: byDay.get(k) ?? 0 });
+  }
+  return { today: days[6]!.cost, week: days.reduce((a, d) => a + d.cost, 0), days };
+}
+
+/** MET-29: the daily budget is set and today's spend reached it. */
+export function budgetReached(db: Db, config: Config, now: number): boolean {
+  const b = config.agent.dailyBudgetUsd;
+  return b !== null && spend(db, now).today >= b;
+}
+
+function spendView(sp: Spend, budget: number | null): SpendView {
+  return {
+    today: money(sp.today),
+    week: money(sp.week),
+    budget: budget === null ? null : money(budget),
+    todayUsd: sp.today,
+    budgetUsd: budget,
+    days: sp.days.map((d) => {
+      const at = new Date(`${d.date}T12:00:00`).getTime() / 1000;
+      return {
+        date: d.date,
+        label: WEEKDAYS[new Date(at * 1000).getDay()]!,
+        cost: d.cost,
+        text: money(d.cost),
+      };
+    }),
+  };
+}
+
+export interface StepTime {
+  stage: Stage;
+  words: string;
+  secs: number;
+  /** Waiting on the owner, not Towercab's own time. */
+  owner: boolean;
+}
+
+/**
+ * MET-30: the gaps between a mission's consecutive moves, grouped by stage (first seen first). `start`
+ * (the mission's `created`) adds the time before the first move; `now` the time in the current stage.
+ */
+export function stepTimes(
+  ts: Pick<Transition, "at" | "from_stage" | "to_stage">[],
+  o: { start?: number; now?: number } = {},
+): { steps: StepTime[]; towercab: number; owner: number } {
+  const sorted = [...ts].sort((a, b) => a.at - b.at);
+  const segs: [Stage, number][] = [];
+  if (sorted.length && o.start !== undefined) segs.push([sorted[0]!.from_stage, sorted[0]!.at - o.start]);
+  for (let i = 0; i < sorted.length; i++) {
+    const t = sorted[i]!;
+    const next = sorted[i + 1];
+    if (next) segs.push([t.to_stage, next.at - t.at]);
+    else if (o.now !== undefined && !finished(t.to_stage)) segs.push([t.to_stage, o.now - t.at]);
+  }
+  const steps: StepTime[] = [];
+  let towercab = 0;
+  let owner = 0;
+  for (const [stage, secs] of segs) {
+    if (secs < 0) continue;
+    let s = steps.find((x) => x.stage === stage);
+    if (!s) {
+      s = { stage, words: stepWords(stage), secs: 0, owner: isWait(stage) };
+      steps.push(s);
+    }
+    s.secs += secs;
+    if (s.owner) owner += secs;
+    else towercab += secs;
+  }
+  return { steps, towercab, owner };
+}
+
+function healthOf(
+  src: UiSources,
+  problems: ProblemView[],
+  paused: boolean,
+): { health: TopBar["health"]; note: string } {
+  if (!src.running)
+    return {
+      health: "Not running",
+      note: "Towercab isn't running, so nothing moves. Start it with towercab up.",
+    };
+  if (problems.some((p) => p.tone === "error"))
+    return { health: "Problem", note: "Something needs a look: see Problems." };
+  if (paused) return { health: "Paused", note: "Nothing new starts until you resume." };
+  return { health: "Running", note: "Towercab is running." };
+}
+
+function versionText(v: { commit: string; behind: number | null }): TopBar["version"] {
+  const behind =
+    v.behind === null
+      ? null
+      : v.behind === 0
+        ? "up to date"
+        : `${v.behind} commit${v.behind === 1 ? "" : "s"} behind main`;
+  return { commit: v.commit.slice(0, 7), behind };
+}
+
+/** A short hash of what is shown, so the page knows when to refetch (UI-65, UI-67). */
+export function versionOf(value: unknown, extra = ""): string {
+  return createHash("sha1").update(JSON.stringify(value)).update(extra).digest("hex").slice(0, 12);
+}
+
+function dbMark(db: Db): string {
+  const t = db.get<{ n: number | null }>("SELECT MAX(id) AS n FROM transitions")?.n ?? 0;
+  const c = db.get<{ n: number | null }>("SELECT MAX(id) AS n FROM commands")?.n ?? 0;
+  const u = db.get<{ n: number | null }>("SELECT MAX(updated) AS n FROM missions")?.n ?? 0;
+  return `${t}:${c}:${u}`;
+}
+
+/** The overview's data (`GET /api/state`). */
+export async function overview(src: UiSources): Promise<Overview> {
+  const s = await snapshot(src);
+  const sp = spend(src.db, s.now);
+  const needs: (Card & { order: number })[] = [];
+  const working: Row[] = [];
+  for (const m of s.missions) {
+    if (isWait(m.stage)) {
+      const since = s.entered.get(m.id) ?? m.created;
+      needs.push({ ...missionCard(src, m, s.intents.get(m.intent), since, s.now), order: since });
+    } else {
+      working.push(missionRow(src, s, m));
+    }
+  }
+  const withMission = new Set(s.missions.map((m) => m.intent));
+  for (const i of s.listing?.open ?? []) {
+    if (i.waiting && !withMission.has(i.id))
+      needs.push({ ...intentCard(i), order: Number.POSITIVE_INFINITY });
+  }
+  needs.sort((a, b) => a.order - b.order);
+  const list = src.upNext().filter((u) => !withMission.has(u.intent));
+  const queued = list.filter((u) => u.skip?.kind !== "parked").map((u) => queuedRow(s, u));
+  const upNext: UpNextView[] = list.slice(0, 5).map((u) => {
+    const i = s.intents.get(u.intent);
+    return {
+      intent: u.intent,
+      title: i?.title ?? u.intent,
+      repo: i?.repo ?? "",
+      priority: u.priority,
+      state: skipState(u.skip, false),
+      reason: skipWords(u.skip, (id) => titleOf(s, id), s.now),
+    };
+  });
+  const problems = problemsOf(src, s, sp.today);
+  const { health, note } = healthOf(src, problems, s.paused);
+  const counts = [
+    `${needs.length} need${needs.length === 1 ? "s" : ""} you`,
+    `${working.length} working`,
+    `${queued.length} queued`,
+  ];
+  const budget = src.config.agent.dailyBudgetUsd;
+  const top: TopBar = {
+    health,
+    healthNote: note,
+    needs: needs.length,
+    working: working.length,
+    queued: queued.length,
+    countsText: counts.join(" · "),
+    spendToday: money(sp.today),
+    budget: budget === null ? null : `of ${money(budget)}`,
+    overBudget: budget !== null && sp.today >= budget,
+    version: versionText(src.version()),
+    paused: s.paused,
+    readOnly: !src.running,
+    banner: src.running ? null : "Towercab isn't running: this page is read-only. Start it with towercab up.",
+  };
+  const body = {
+    top,
+    needs: needs.map(({ order: _, ...c }) => c),
+    problems,
+    working,
+    queued,
+    upNext,
+    spend: spendView(sp, budget),
+  };
+  return { version: versionOf(body, `${dbMark(src.db)}:${s.listing?.head ?? ""}`), ...body };
+}
+
+const prNumber = (url: string | null) => {
+  const m = url ? /\/pull\/(\d+)/.exec(url) : null;
+  return m ? Number(m[1]) : null;
+};
+
+/** The phase a mission reached, looking through `stopped` to where it stopped. */
+function reachedPhase(m: Mission, ts: Transition[]): ReturnType<typeof phaseOf> {
+  if (m.stage !== "stopped") return phaseOf(m.stage, m.from_stage);
+  const last = ts.filter((t) => t.mission === m.id && t.to_stage === "stopped").pop();
+  return last ? phaseOf(last.from_stage, null) : "spec";
+}
+
+function prViews(src: UiSources, i: Intent | null, m: Mission | null, ts: Transition[]): PrView[] {
+  const repo = m ? repoGithub(src, m.repo) : i ? repoGithub(src, i.repo) : null;
+  const intentsRepo = src.store.github();
+  const phase = m ? reachedPhase(m, ts) : i?.done ? "done" : "spec";
+  const dropped = m?.stage === "stopped" || i?.stage === "dropped";
+  const order = ["spec", "plan", "code", "done"];
+  const at = order.indexOf(phase === "dropped" ? "spec" : phase);
+  const one = (
+    label: PrView["label"],
+    idx: number,
+    num: number | null,
+    field: string | null,
+    gh: string | null,
+  ): PrView => {
+    const n = num ?? prNumber(field);
+    const url = n !== null && gh ? src.prUrl(gh, n) : field;
+    let st: PrState;
+    if (n !== null || field) {
+      if (at > idx || phase === "done") st = "merged";
+      else if (dropped) st = "closed";
+      else st = "open";
+    } else if (at > idx || phase === "done" || dropped) st = "not needed";
+    else st = "not yet";
+    return { label, state: st, number: n, url: url ?? null };
+  };
+  return [
+    one("Spec", 0, m?.spec_pr ?? null, i?.specPr ?? null, repo),
+    one("Plan", 1, m?.plan_pr ?? null, i?.planPr ?? null, intentsRepo),
+    one("Code", 2, m?.pr ?? null, i?.pr ?? null, repo),
+  ];
+}
+
+const ENTER_WORDS: Partial<Record<Stage, string>> = {
+  pick: "Picked up",
+  design: "Started writing the spec",
+  plan: "Started planning",
+  build: "Started building",
+  verify: "Running the checks",
+  proof: "Proving the tests fail without the change",
+  publish: "Opening the PR",
+  ci: "Waiting for CI",
+  review: "Reviewing the change",
+  gate: "Deciding whether it can merge",
+  merge: "Merging",
+  "approval:spec": "Asked you to review the spec PR",
+  "approval:plan": "Asked you to review the plan",
+  "approval:merge": "Asked you to review and merge the code PR",
+  blocked: "Stopped and asked you",
+  done: "Done: the code PR is merged",
+};
+
+/** UI-62: one move in plain words. */
+export function moveWords(t: Pick<Transition, "from_stage" | "event" | "to_stage" | "why">): string {
+  const to = t.to_stage;
+  const from = stepWords(t.from_stage).toLowerCase();
+  switch (t.event) {
+    case "red":
+      return `${stepWords(t.from_stage)} failed; back to building`;
+    case "spec_merged":
+      return "Spec PR merged; planning starts";
+    case "plan_merged":
+      return "Plan PR merged; building starts";
+    case "code_merged":
+      return "Code PR merged: done";
+    case "closed":
+      return "Dropped: the PR was closed";
+    case "intent_removed":
+      return "Dropped: the intent file was removed";
+    case "feedback":
+      return `Your feedback sent it back to ${stepWords(to).toLowerCase()}`;
+    case "answered":
+      return `You answered; back to ${stepWords(to).toLowerCase()}`;
+    case "conflict":
+      return "The PR has a conflict; rebuilding";
+    case "head_moved":
+      return "The PR changed; waiting for CI again";
+    case "retry_fresh":
+      return "Starting over with a fresh attempt";
+    case "timeout":
+      return `${stepWords(t.from_stage)} timed out`;
+    case "crash":
+      return `Towercab crashed while ${from}`;
+  }
+  if (to === "stopped") return t.why?.startsWith("replaced by") ? "Replaced by a fresh attempt" : "Dropped";
+  return ENTER_WORDS[to] ?? `Moved to ${stepWords(to).toLowerCase()}`;
+}
+
+const ERROR_EVENTS = new Set(["red", "crash", "timeout", "bad_result", "env_fail"]);
+
+function moveKind(t: Pick<Transition, "event" | "to_stage">): ActivityKind {
+  if (isWait(t.to_stage)) return "wait";
+  if (ERROR_EVENTS.has(t.event)) return "error";
+  return "move";
+}
+
+const STEP_PREFIX: Record<string, string> = {
+  design: "Writing the spec",
+  plan: "Planning",
+  build: "Building",
+  worker: "Building",
+  verify: "Running checks",
+  checks: "Running checks",
+  proof: "Proving the tests",
+  setup: "Setting up",
+  publish: "Opening the PR",
+  ci: "CI",
+  review: "Reviewing",
+  gate: "Deciding",
+  merge: "Merging",
+};
+
+export const RUN_NAME = /^[A-Za-z0-9._-]+$/;
+
+function size(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** UI-62: the run files of an intent, grouped by step. */
+export function runFiles(home: Home, id: string): RunGroupView[] {
+  if (!RUN_NAME.test(id) || id === "." || id === "..") return [];
+  const dir = join(home.root, "runs", id);
+  let names: string[];
+  try {
+    names = readdirSync(dir).sort();
+  } catch {
+    return [];
+  }
+  const groups = new Map<string, RunGroupView>();
+  for (const name of names) {
+    if (!RUN_NAME.test(name) || name.startsWith(".")) continue;
+    let st: ReturnType<typeof statSync>;
+    try {
+      st = statSync(join(dir, name));
+    } catch {
+      continue;
+    }
+    if (!st.isFile() || /\.(png|jpe?g|gif|webp)$/i.test(name)) continue;
+    const prefix = name.split(/[-.]/)[0]!.toLowerCase();
+    const step = STEP_PREFIX[prefix] ?? prefix.charAt(0).toUpperCase() + prefix.slice(1);
+    const round = /-(\d+)/.exec(name)?.[1];
+    const kind = /prompt/i.test(name)
+      ? "Prompt"
+      : /result|\.json$/i.test(name)
+        ? "Result"
+        : /\.(log|txt|out|err)$/i.test(name)
+          ? "Log"
+          : "File";
+    const g = groups.get(step) ?? { step, files: [] };
+    g.files.push({
+      name,
+      label: round ? `${kind}, round ${round}` : kind,
+      size: size(Number(st.size)),
+      url: `/api/runs/${encodeURIComponent(id)}/${encodeURIComponent(name)}`,
+    });
+    groups.set(step, g);
+  }
+  return [...groups.values()];
+}
+
+function sentenceOf(
+  st: StateView,
+  m: Mission | null,
+  inStep: string,
+  i: Intent | null,
+  reason: string | null,
+  now: number,
+): string {
+  switch (st.key) {
+    case "needs":
+      return m ? `${stepWords(m.stage)} for ${inStep}.` : "Waiting for you.";
+    case "working":
+      return `${stepWords(m!.stage)} for ${inStep}.`;
+    case "ci":
+      return `Waiting for CI for ${inStep}.`;
+    case "cooling":
+      return `${modelName(m!.limit_model ?? m!.model)} hit its usage limit; it goes on ${st.note ?? "after the reset"}.`;
+    case "stalled":
+      return `Stuck at ${stepWords(m!.stage).toLowerCase()}: no move ${st.note}.`;
+    case "paused":
+      return m ? `Paused ${st.note}; it goes on when you resume.` : (reason ?? "Paused.");
+    case "done": {
+      const at = m?.finished ?? null;
+      return `Done${at ? ` ${ago(at, now)}` : ""}${i?.cost !== null && i?.cost !== undefined ? `; it cost ${money(i.cost)}` : ""}.`;
+    }
+    case "dropped":
+      return `Dropped${m?.finished ? ` ${ago(m.finished, now)}` : ""}.`;
+    case "parked":
+      return "Parked: below the cutoff. Raise its urgency or importance to run it.";
+    case "upnext":
+      return "Starts as soon as a slot is free.";
+    default:
+      return reason ?? "Waiting to start.";
+  }
+}
+
+/** The intent page's data (`GET /api/intents/<id>`); null when there is no such intent. */
+export async function intentPage(src: UiSources, id: string): Promise<IntentPage | null> {
+  const s = await snapshot(src);
+  let intent: Intent | null = s.intents.get(id) ?? null;
+  if (!intent) {
+    try {
+      intent = await src.store.get(id);
+    } catch {
+      intent = null;
+    }
+  }
+  const realId = intent?.id ?? id;
+  const missions = forIntent(src.db, realId);
+  if (!intent && missions.length === 0) return null;
+  const ids = missions.map((m) => m.id);
+  const ts = ids.length
+    ? src.db.all<Transition>(
+        `SELECT * FROM transitions WHERE mission IN (${ids.map(() => "?").join(",")}) ORDER BY at, id`,
+        ...ids,
+      )
+    : [];
+  const live = missions.find((m) => !finished(m.stage)) ?? null;
+  const last = live ?? missions[missions.length - 1] ?? null;
+  const lastMove = (m: Mission) => ts.filter((t) => t.mission === m.id).pop()?.at ?? m.created;
+  const entry = src.upNext().find((u) => u.intent === realId) ?? null;
+  const titles = (x: string) => titleOf(s, x);
+  let st: StateView;
+  let reason: string | null = null;
+  if (live) {
+    st = stateOf(live, s.now, {
+      enteredAt: lastMove(live),
+      cooldownUntil: live.limit_model ? (s.cooldowns.get(live.limit_model) ?? null) : null,
+      config: src.config,
+    });
+  } else if (intent?.done) {
+    st = s.listing?.droppedIds.has(realId) || intent.stage === "dropped" ? state("dropped") : state("done");
+  } else if (intent?.waiting) {
+    st = state("needs", "Blocked");
+  } else if (entry) {
+    st = skipState(entry.skip, false);
+    reason = skipWords(entry.skip, titles, s.now);
+  } else if (intent && priority(intent.u, intent.i) < src.config.intents.cutoff) {
+    st = state("parked");
+  } else if (last) {
+    st = stateOf(last, s.now);
+  } else {
+    st = state("queued");
+  }
+  const card =
+    live && isWait(live.stage)
+      ? missionCard(src, live, intent ?? undefined, lastMove(live), s.now)
+      : !live && intent?.waiting && !intent.done
+        ? intentCard(intent)
+        : null;
+  const timeline: TimelineItem[] = [];
+  for (const m of missions) {
+    timeline.push({
+      at: when(m.created, s.now),
+      text:
+        m.attempt > 1
+          ? `Attempt ${m.attempt} started (${modelName(m.model)})`
+          : `Picked up (${modelName(m.model)})`,
+      why: null,
+      lasted: null,
+      tone: "move",
+    });
+    const mts = ts.filter((t) => t.mission === m.id);
+    mts.forEach((t, n) => {
+      const next = mts[n + 1];
+      const kind = moveKind(t);
+      timeline.push({
+        at: when(t.at, s.now),
+        text: moveWords(t),
+        why: t.to_stage === "stopped" ? null : t.why,
+        lasted: next ? duration(next.at - t.at) : null,
+        tone: t.to_stage === "done" ? "done" : kind === "log" ? "move" : kind,
+      });
+    });
+  }
+  const totals = new Map<Stage, StepTimeView>();
+  let towercab = 0;
+  let owner = 0;
+  for (const m of missions) {
+    const r = stepTimes(
+      ts.filter((t) => t.mission === m.id),
+      { start: m.created, now: finished(m.stage) ? undefined : s.now },
+    );
+    towercab += r.towercab;
+    owner += r.owner;
+    for (const x of r.steps) {
+      const v = totals.get(x.stage) ?? { step: x.words, time: "", secs: 0, owner: x.owner };
+      v.secs += x.secs;
+      totals.set(x.stage, v);
+    }
+  }
+  const steps = [...totals.values()].map((v) => ({ ...v, time: duration(v.secs) }));
+  const attempts: AttemptView[] = missions.map((m) => ({
+    attempt: m.attempt,
+    state: stateOf(m, s.now, { enteredAt: lastMove(m), config: src.config }),
+    cost: money(m.cost_usd),
+    agentTime: duration(m.agent_secs),
+    started: when(m.created, s.now),
+  }));
+  const sections: { title: string; text: string }[] = [];
+  for (const [title, text] of intent?.sections ?? []) {
+    if (title !== "Answers" && text.trim()) sections.push({ title, text });
+  }
+  const scores = intent
+    ? `Priority ${priority(intent.u, intent.i)} · urgency ${intent.u ?? 3}, importance ${intent.i ?? 3}${intent.a !== null ? `, autonomy ${intent.a}` : ""}`
+    : "";
+  const body: Omit<IntentPage, "version"> = {
+    id: realId,
+    title: intent?.title ?? realId,
+    repo: intent?.repo ?? last?.repo ?? "",
+    scores,
+    state: st,
+    sentence: sentenceOf(
+      st,
+      live ?? last,
+      live ? duration(s.now - lastMove(live)) : "",
+      intent,
+      reason,
+      s.now,
+    ),
+    prs: prViews(src, intent, last, ts),
+    card,
+    timeline,
+    times: { steps, towercab: duration(towercab), owner: duration(owner) },
+    attempts,
+    sections,
+    answers: intent?.sections.get("Answers")?.trim() || null,
+    runs: runFiles(src.home, realId),
+    file: intent ? src.intentUrl(intent) : null,
+  };
+  return { version: versionOf(body, dbMark(src.db)), ...body };
+}
+
+/** The queue page's data (`GET /api/queue`): one lane per repo. */
+export async function queue(src: UiSources): Promise<QueuePage> {
+  const s = await snapshot(src);
+  const list = src.upNext();
+  const titles = (x: string) => titleOf(s, x);
+  const repos = [...src.config.repos.keys()];
+  for (const m of s.missions) if (!repos.includes(m.repo)) repos.push(m.repo);
+  const lanes: Lane[] = repos.map((repo) => {
+    const running = s.missions.filter((m) => m.repo === repo).map((m) => missionRow(src, s, m));
+    const mine = list.filter(
+      (u) => s.intents.get(u.intent)?.repo === repo && !running.some((r) => r.intent === u.intent),
+    );
+    const item = (u: UpNext, position: number | null): QueueItem => ({
+      intent: u.intent,
+      title: titles(u.intent),
+      position,
+      state: skipState(u.skip, false),
+      reason: skipWords(u.skip, titles, s.now),
+      when: null,
+      cost: null,
+    });
+    const waiting = mine.filter((u) => u.skip?.kind !== "parked").map((u, n) => item(u, n + 1));
+    const parked = mine.filter((u) => u.skip?.kind === "parked").map((u) => item(u, null));
+    const dropped = s.listing?.droppedIds ?? new Set<string>();
+    const done: QueueItem[] = (s.listing?.done ?? [])
+      .filter((i) => i.repo === repo)
+      .slice(0, 10)
+      .map((i) => {
+        const at = i.finished ? Date.parse(i.finished) / 1000 : Number.NaN;
+        return {
+          intent: i.id,
+          title: i.title,
+          position: null,
+          state: dropped.has(i.id) || i.stage === "dropped" ? state("dropped") : state("done"),
+          reason: null,
+          when: Number.isFinite(at) ? when(at, s.now) : null,
+          cost: i.cost !== null ? money(i.cost) : null,
+        };
+      });
+    return { repo, github: src.config.repos.get(repo)?.github ?? "", running, waiting, parked, done };
+  });
+  return { version: versionOf(lanes, dbMark(src.db)), lanes };
+}
+
+export interface ActivityFilters {
+  intent?: string;
+  repo?: string;
+  /** `moves`, `waits` or `errors`. */
+  kind?: string;
+  /** `1h`, `24h`, `7d`, `30d`, or unix seconds. */
+  since?: string;
+  offset?: number;
+  limit?: number;
+}
+
+const KIND_FILTER: Record<string, ActivityKind> = { moves: "move", waits: "wait", errors: "error" };
+
+export function sinceOf(since: string | undefined, now: number): number | null {
+  if (!since) return null;
+  const m = /^(\d+)([hd])$/.exec(since);
+  if (m) return now - Number(m[1]) * (m[2] === "h" ? 3600 : DAY);
+  const n = Number(since);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function logLines(src: UiSources): LogLine[] {
+  if (src.logs) return src.logs();
+  let text: string;
+  try {
+    text = readFileSync(src.home.logFile, "utf8");
+  } catch {
+    return [];
+  }
+  const out: LogLine[] = [];
+  for (const block of text.split(/^--- /m).slice(1)) {
+    const nl = block.indexOf("\n");
+    const at = Date.parse(block.slice(0, nl).trim()) / 1000;
+    const first =
+      block
+        .slice(nl + 1)
+        .split("\n")
+        .find((l) => l.trim()) ?? "";
+    if (Number.isFinite(at) && first) out.push({ at, text: first.trim() });
+  }
+  return out;
+}
+
+const MOVE_LOG = /^\S+ \S+ → \S+ \(/;
+const ERROR_LOG = /error|fail|panic|unexpected|refused|timed out|unreachable|can't|cannot/i;
+const ID_IN_LOG = /\b(\d{6}-\d{4}-\d+)\b/;
+
+/** The activity page's data (`GET /api/activity?intent=&repo=&kind=&since=`), newest first. */
+export async function activity(src: UiSources, f: ActivityFilters = {}): Promise<ActivityPage> {
+  const s = await snapshot(src);
+  const since = sinceOf(f.since, s.now);
+  const limit = Math.min(Math.max(f.limit ?? 100, 1), 500);
+  const offset = Math.max(f.offset ?? 0, 0);
+  const want = f.kind ? (KIND_FILTER[f.kind] ?? null) : null;
+  const where: string[] = [];
+  const params: (string | number)[] = [];
+  if (f.intent) {
+    where.push("m.intent = ?");
+    params.push(f.intent);
+  }
+  if (f.repo) {
+    where.push("m.repo = ?");
+    params.push(f.repo);
+  }
+  if (since !== null) {
+    where.push("t.at >= ?");
+    params.push(since);
+  }
+  const rows = src.db.all<Transition & { intent: string; repo: string }>(
+    `SELECT t.*, m.intent AS intent, m.repo AS repo FROM transitions t JOIN missions m ON m.id = t.mission
+     ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY t.at DESC, t.id DESC LIMIT 5000`,
+    ...params,
+  );
+  const items: ActivityItem[] = rows.map((t) => ({
+    key: `t${t.id}`,
+    at: when(t.at, s.now),
+    time: clock(t.at),
+    day: dayWords(t.at, s.now),
+    kind: moveKind(t),
+    intent: t.intent,
+    title: titleOf(s, t.intent),
+    repo: t.repo,
+    text: moveWords(t),
+    detail: t.to_stage === "stopped" ? null : t.why,
+  }));
+  const intentRepo = (id: string) => s.intents.get(id)?.repo ?? null;
+  logLines(src).forEach((l, n) => {
+    if (MOVE_LOG.test(l.text)) return;
+    const id = ID_IN_LOG.exec(l.text)?.[1] ?? null;
+    if (f.intent && id !== f.intent) return;
+    if (f.repo && (!id || intentRepo(id) !== f.repo)) return;
+    if (since !== null && l.at < since) return;
+    items.push({
+      key: `l${n}:${l.at}`,
+      at: when(l.at, s.now),
+      time: clock(l.at),
+      day: dayWords(l.at, s.now),
+      kind: ERROR_LOG.test(l.text) ? "error" : "log",
+      intent: id,
+      title: id ? titleOf(s, id) : null,
+      repo: id ? intentRepo(id) : null,
+      text: id ? l.text.replace(id, "").replace(/^[\s:·-]+/, "") : l.text,
+      detail: null,
+    });
+  });
+  const kept = items.filter((x) => !want || x.kind === want).sort((a, b) => b.at.at - a.at.at);
+  const intents = new Map<string, string>();
+  for (const r of src.db.all<{ intent: string }>("SELECT DISTINCT intent FROM missions ORDER BY id DESC")) {
+    intents.set(r.intent, titleOf(s, r.intent));
+  }
+  const page = kept.slice(offset, offset + limit);
+  const body = {
+    items: page,
+    more: kept.length > offset + limit,
+    intents: [...intents].map(([id, title]) => ({ id, title })),
+    repos: [...src.config.repos.keys()],
+  };
+  return { version: versionOf(body), ...body };
+}
+
+/** `Today`, `Yesterday`, `Mon 19 Oct`. */
+export function dayWords(at: number, now: number): string {
+  const days = dayOffset(at, now);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  const d = new Date(at * 1000);
+  return `${WEEKDAYS[d.getDay()]} ${dateWords(at, now)}`;
+}
+
+const SECRET_PATTERNS: RegExp[] = [
+  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g,
+  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g,
+  /\b(bot)?\d{6,12}:[A-Za-z0-9_-]{30,}\b/g,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+];
+
+/** Text with tokens, bot tokens, bearer headers and private keys taken out (UI-4). */
+export function redact(text: string, config?: Config): string {
+  let out = text;
+  const bot = config?.telegram?.botToken;
+  if (bot && bot.length >= 6) out = out.split(bot).join("<token>");
+  for (const re of SECRET_PATTERNS)
+    out = out.replace(re, (m) => (m.startsWith("-----") ? "<private key>" : "<token>"));
+  return out;
+}

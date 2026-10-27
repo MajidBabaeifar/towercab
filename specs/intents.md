@@ -1,6 +1,6 @@
 # Intents
 
-**Status:** Draft · **Prefix:** INT
+**Status:** Live · **Prefix:** INT
 
 ## Purpose
 
@@ -45,8 +45,7 @@ An intent file is YAML front matter followed by a Markdown body with a title and
 - `towercab add "<repo>: <title>" [uN] [iN] [aN]` writes a thin intent: `repo`, the scores given,
   `source: me`, `started` (now, local offset), a blank line and `# Intent: <title>`; it prints
   `<id> intents/<id>-<slug>/intent.md`.
-- Verified by: `intents: parse a full intent`, `intents: a thin intent is valid`,
-  `intents: add writes a thin intent`
+- Verified by: `intents: parse a full intent`, `intents: a thin intent is valid`, `intents: add writes a thin intent`
 
 ### INT-3 · IDs and slugs
 
@@ -59,8 +58,7 @@ An intent's ID is its creation time to the minute, and its slug comes from the t
   digit gets an `n` prefix. The slug is fixed at creation.
 - Commands accept any unique suffix of an open intent's ID: an exact match first, else the one ID
   ending with it; none → `no open intent matches <s>`; several → `<s> matches <n> intents: <ids>`.
-- Verified by: `intents: IDs are never reused`, `intents: a unique suffix resolves`,
-  `intents: slug rules`
+- Verified by: `intents: IDs are never reused`, `intents: a unique suffix resolves`, `intents: slug rules`
 
 ### INT-4 · Accepted means on main
 
@@ -116,8 +114,7 @@ A Claude Code skill helps the owner write a good intent through a short conversa
   `~/.claude/skills/intent`. Claude asks what an analyst would (scope, users, constraints, what
   success looks like), writes the template (INT-2), proposes `u` and `i`, leaves `a` out unless the
   owner gives it, and commits `docs(intents): add <id> <title>` to `main`.
-- Verified by: `intents: the skill names every section`, manual (run `/intent` in a new session: a
-  folder lands on `main`)
+- Verified by: `intents: the skill names every section`, manual (run `/intent` in a new session: a folder lands on `main`)
 
 ### INT-10 · Syncing with GitHub
 
@@ -132,9 +129,7 @@ Towercab pulls before every read and pushes every write, and never overwrites th
   push; at most 3 retries, then `push failed 4 times: <stderr>`. Nothing changed → no commit.
 - Git runs with `GIT_TERMINAL_PROMPT=0`, no hooks, and the bot's name and email when the App
   identity is set ([LOOP-19](loop.md)).
-- Verified by: `intents: concurrent edits are both kept`, `intents: parse then write is
-  byte-identical`, `intents: a rejected push replays the change`, `intents: an unpushed commit is
-  recovered`
+- Verified by: `intents: concurrent edits are both kept`, `intents: parse then write is byte-identical`, `intents: a rejected push replays the change`, `intents: an unpushed commit is recovered`
 
 ### INT-11 · Files that can't be read
 

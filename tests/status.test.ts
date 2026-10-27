@@ -1,0 +1,66 @@
+import { expect, test } from "vitest";
+import { Db } from "../src/db.ts";
+import { apply } from "../src/machine.ts";
+import { insertMission } from "../src/mission.ts";
+import { decide, nextText } from "../src/pick.ts";
+import { renderStatus } from "../src/status.ts";
+import { at, listing } from "./intents/fixtures.ts";
+
+test("status: shows each section", () => {
+  const db = Db.memory();
+  const now = 1_793_000_000;
+  const cx = { db, now, subject: () => ({ title: "t", repo: "web", link: null }) };
+  let a = db.tx(() =>
+    insertMission(db, { intent: "261026-1000", slug: "a", repo: "web", model: "opus", a: 3 }, now),
+  );
+  a = apply(cx, a, { event: "ok" });
+  apply(cx, a, { event: "wait", waiting: "approve spec" });
+  let b = db.tx(() =>
+    insertMission(db, { intent: "261026-1100", slug: "b", repo: "api", model: "opus", a: 3 }, now),
+  );
+  for (let i = 0; i < 7; i++) b = apply(cx, b, { event: "ok" });
+  db.setMeta("cooldown:sonnet", JSON.stringify({ until: now + 3600 }));
+  const l = listing([
+    at("intents/261026-1000-log-in", "", "web", "Log in"),
+    at("intents/261026-1100-rate-limits", "", "api", "Rate limits"),
+  ]);
+  const text = renderStatus({
+    db,
+    listing: l,
+    listingError: null,
+    running: 4242,
+    version: "1.0.0",
+    now,
+    problems: [{ kind: "github", since: now - 1000, error: "connection refused" }],
+    next: "next: nothing can run now",
+    prLink: () => "https://github.com/o/web/pull/7",
+    queued: new Set(),
+  });
+  expect(text).toContain("towercab 1.0.0 · running (pid 4242) · problems");
+  expect(text).toContain(
+    "waiting on you:\n- 261026-1000 web: Log in · Review and merge the spec PR. https://github.com/o/web/pull/7",
+  );
+  expect(text).toContain("waiting on CI:\n- 261026-1100 api: Rate limits");
+  expect(text).toContain("cooling down: sonnet until");
+  expect(text).toContain("problem: github: connection refused");
+  expect(text.trim().split("\n").pop()).toBe("next: nothing can run now");
+});
+
+test("status: next explains skips", () => {
+  const l = listing([
+    at("intents/261026-1000-log-in", "u: 5\ni: 5\n", "web", "Log in"),
+    at("intents/261026-1100-unknown", "u: 4\ni: 5\n", "nope", "Unknown"),
+  ]);
+  const d = decide(l, {
+    cutoff: 7,
+    paused: false,
+    blocked: null,
+    repos: new Set(["web"]),
+    full: new Map([["web", { n: 1, workers: 1 }]]),
+    cooling: new Map(),
+    active: new Set(),
+    defaultModel: "opus",
+  });
+  const text = nextText(d, l, 7);
+  expect(text).toMatch(/skipped: 261026-1000 web: Log in · /);
+});

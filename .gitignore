@@ -1,5 +1,7 @@
+node_modules/
+/ui/dist/
+/ui/screenshots/
+/test-results/
+/playwright-report/
 .towercab/
 .towercab-*/
-__pycache__/
-*.pyc
-/target

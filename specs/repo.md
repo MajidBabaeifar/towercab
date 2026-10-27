@@ -1,6 +1,6 @@
 # Repo files
 
-**Status:** Draft · **Prefix:** REPO
+**Status:** Live · **Prefix:** REPO
 
 ## Purpose
 
@@ -21,8 +21,7 @@ never from a PR or a working tree.
   `RepoError.git`. Then the pure `parseRepoFiles(claude, review, towercab)` (**Grammar**).
 - `TOWERCAB.md` front matter: `max_autonomy` (1–5, default 5), `protected` (globs), `tests` (globs,
   default the list in [PIP-30](pipeline.md)). Any other key → `unknown key <k>`.
-- Verified by: `repo: parse the three files`, `repo: read from the base branch only`,
-  `repo: TOWERCAB.md front matter`
+- Verified by: `repo: parse the three files`, `repo: read from the base branch only`, `repo: TOWERCAB.md front matter`
 
 ### REPO-2 · The verifying section
 
@@ -63,8 +62,8 @@ Towercab's own `CLAUDE.md`, `REVIEW.md` and `TOWERCAB.md` describe its TypeScrip
 
 - `CLAUDE.md` (at most 60 lines: commands, conventions, architecture, what Claude gets wrong) with
   setup `npm ci`; checks `npm run check`; fast `npm run lint`, `npm run typecheck`,
-  `npx vitest run {tests}`. `REVIEW.md`: passes Bugs, Security, Compliance; red lines
-  `src/machine.ts`. `TOWERCAB.md`: `max_autonomy: 5`, `protected: [src/machine.ts]`,
+  `npx vitest run {tests}`; screenshots `npm run test:ui`. `REVIEW.md`: passes Bugs, Security,
+  Compliance; red lines `src/machine.ts`, `src/pipeline/guard.ts` and `src/claude.ts`. `TOWERCAB.md`: `max_autonomy: 5`, `protected: [src/machine.ts]`,
   `tests: [tests/**]`.
 - Verified by: `repo: Towercab's own files parse`
 
@@ -82,8 +81,7 @@ allows ([AUT-14](autonomy.md)).
 - `protectedPaths(protected, granted).blocks(rel)`: true when a protected glob matches the path or a
   parent directory and no granted glob does; an absolute path, a `..` component or `.git` → true.
   `denyWrite(checkout)` lists the absolute paths that exist and are blocked, for the sandbox.
-- Verified by: `repo: protected paths block`, `repo: granted paths unblock`,
-  `repo: .git is never writable`
+- Verified by: `repo: protected paths block`, `repo: granted paths unblock`, `repo: .git is never writable`
 
 ### REPO-9 · Run set
 

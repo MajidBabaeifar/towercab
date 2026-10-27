@@ -1,0 +1,144 @@
+// PR texts (PIP-46, PIP-48, PIP-52): the worker writes what a person reads; code adds only facts it
+// owns (links, check results, the footer).
+
+export interface Footer {
+  intentUrl: string | null;
+  costUsd: number;
+  secs: number;
+}
+
+export function footer(f: Footer): string {
+  const h = Math.floor(f.secs / 3600);
+  const m = Math.floor((f.secs % 3600) / 60);
+  const intent = f.intentUrl ? `[intent](${f.intentUrl})` : "intent";
+  return `<sub>Built by Towercab · ${intent} · $${f.costUsd.toFixed(2)} · ${h}h${String(m).padStart(2, "0")}m</sub>`;
+}
+
+export interface Links {
+  intentUrl: string | null;
+  specPrUrl: string | null;
+  planPrUrl: string | null;
+}
+
+/** The "this change's other PRs" line (PIP-52). */
+export function linkLine(l: Links): string {
+  const parts: string[] = [];
+  if (l.intentUrl) parts.push(`[intent](${l.intentUrl})`);
+  if (l.specPrUrl) parts.push(`[spec PR](${l.specPrUrl})`);
+  if (l.planPrUrl) parts.push(`[plan PR](${l.planPrUrl})`);
+  return parts.length ? `Part of this change: ${parts.join(" · ")}.` : "";
+}
+
+/** The spec PR's body: the worker's text, then the links. */
+export function specBody(workerText: string, specIds: string[], l: Links): string {
+  return [workerText.trim(), specIds.length ? `**Spec IDs:** ${specIds.join(", ")}` : "", linkLine(l)]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+export interface Access {
+  domains: { domain: string; why: string }[];
+  paths: { glob: string; why: string }[];
+}
+
+/** The plan PR's body: the approach's first paragraph, what access it asks for, the links. */
+export function planBody(planMd: string, access: Access, l: Links): string {
+  const approach =
+    section(planMd, "Approach")
+      .split(/\n\s*\n/)[0]
+      ?.trim() ?? "";
+  const asks = [
+    ...access.domains.map((d) => `network access to ${d.domain}`),
+    ...access.paths.map((p) => `writing ${p.glob}`),
+  ];
+  return [
+    approach,
+    asks.length
+      ? `**Access asked for:** ${asks.join(", ")}. Untick any line in the plan's Access section to refuse it before merging.`
+      : "**Access asked for:** nothing beyond the defaults.",
+    "Merging this PR approves the plan, and the build starts.",
+    linkLine(l),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/** `plan.md` (PIP-46): title, IDs, the worker's sections, then the access checklist. */
+export function planFile(
+  title: string,
+  intentId: string,
+  specIds: string[],
+  planMd: string,
+  accessMd: string,
+): string {
+  const ids = specIds.length ? `Spec IDs: ${specIds.join(", ")}.` : "No spec change.";
+  return `# Plan: ${title}\n\nIntent ${intentId}. ${ids}\n\n${planMd.trim()}\n\n${accessMd.trim()}\n`;
+}
+
+export interface Checks {
+  verify: string;
+  proof: string;
+  ci: string;
+  review: string;
+}
+
+export interface CodeBody {
+  /** The worker's Markdown (What this does / Why / What to check / Changes), or null. */
+  worker: string | null;
+  intentTitle: string;
+  intentProblem: string | null;
+  checks: Checks | null;
+  unplanned: { what: string; why: string }[];
+  specIds: string[];
+  links: Links;
+  reviewDetails: string | null;
+  footer: Footer;
+}
+
+/** The code PR's body (PIP-48). */
+export function codeBody(b: CodeBody): string {
+  const parts: string[] = [];
+  if (b.worker?.trim()) parts.push(b.worker.trim());
+  else {
+    parts.push(`## What this does\n\n${b.intentTitle}.`);
+    if (b.intentProblem) parts.push(`## Why\n\n${b.intentProblem.trim()}`);
+  }
+  if (b.checks) {
+    parts.push(
+      [
+        "## Checks",
+        "",
+        `- Local checks: ${b.checks.verify}`,
+        `- Test proof: ${b.checks.proof}`,
+        `- CI: ${b.checks.ci}`,
+        `- Review: ${b.checks.review}`,
+      ].join("\n"),
+    );
+  }
+  if (b.unplanned.length) {
+    parts.push(
+      ["## Access beyond the plan", "", ...b.unplanned.map((u) => `- ${u.what}: ${u.why}`)].join("\n"),
+    );
+  }
+  const meta = [b.specIds.length ? `**Spec IDs:** ${b.specIds.join(", ")}` : "", linkLine(b.links)]
+    .filter(Boolean)
+    .join("\n\n");
+  if (meta) parts.push(meta);
+  if (b.reviewDetails?.trim()) {
+    parts.push(`<details><summary>Review details</summary>\n\n${b.reviewDetails.trim()}\n\n</details>`);
+  }
+  parts.push(footer(b.footer));
+  return parts.join("\n\n");
+}
+
+/** The body of `## <title>` in a Markdown text, trimmed ("" when absent). */
+export function section(md: string, title: string): string {
+  const lines = md.split("\n");
+  const start = lines.findIndex((l) => l.trim().toLowerCase() === `## ${title.toLowerCase()}`);
+  if (start < 0) return "";
+  const end = lines.findIndex((l, i) => i > start && /^#{1,2} /.test(l));
+  return lines
+    .slice(start + 1, end < 0 ? undefined : end)
+    .join("\n")
+    .trim();
+}

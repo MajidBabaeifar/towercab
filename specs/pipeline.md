@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Draft · **Prefix:** PIP
+**Status:** Live · **Prefix:** PIP
 
 ## Purpose
 
@@ -27,9 +27,9 @@ docs, until the repo's checks pass.
   `plan_changed` (markdown, when it departed from the plan, with why); `lower_a`, `lower_why`.
 - Towercab then commits everything as the bot (`git add -A`, message = the design's Conventional
   Commit line) and goes to verify. No diff → `waiting: no changes`. Timeout, budget used up, or no
-  valid result → one continue with `Continue where you stopped.`, then the matching wait.
-- Verified by: `pipeline: build prompt has plan, intent and checks`, `pipeline: build commits as the
-  bot`, `pipeline: no changes waits`, `pipeline: timeout continues once`
+  valid result → one continue with `Continue where you stopped.` and the step's full time budget
+  again, then the matching wait.
+- Verified by: `pipeline: build prompt has plan, intent and checks`, `pipeline: build commits as the bot`, `pipeline: no changes waits`, `pipeline: timeout continues once`
 
 ### PIP-2 · Publish
 
@@ -40,7 +40,10 @@ push.
   `gh pr create` (ready for review, not a draft), title = the design's Conventional Commit line, body
   = PIP-48; `missions.pr`, `head`, `pushed_at` recorded first. A push refused other than as
   non-fast-forward, or rejected 3 times → `waiting: answer the question` with the reason.
-- Verified by: `pipeline: first publish opens the code PR`, `pipeline: later rounds only push`
+- Never a force-push: commits someone else pushed to the PR branch (the owner) are merged into the
+  checkout first, at the start of each later build round and before each push; a conflict there is a
+  conflict round. Such a PR is marked as having someone else's commits (PIP-7).
+- Verified by: `pipeline: first publish opens the code PR`, `pipeline: later rounds only push`, `pipeline: the owner's commits on the PR are kept`
 
 ### PIP-3 · CI
 
@@ -53,8 +56,7 @@ Towercab waits for the PR's checks and sorts them into pass, fail and pending in
   `ci_grace` → green with `no CI on this repo`. Pending past `ci_wait` → `waiting: CI stuck`.
 - Red → a repair round in `build` with the failing jobs' log tails (at most 2, `ci_repairs`), then
   `waiting: CI red`.
-- Verified by: `pipeline: CI buckets`, `pipeline: no checks counts as green`, `pipeline: CI red
-  repairs twice then waits`
+- Verified by: `pipeline: CI buckets`, `pipeline: no checks counts as green`, `pipeline: CI red repairs twice then waits`
 
 ### PIP-4 · Review
 
@@ -65,8 +67,7 @@ repo's `REVIEW.md`, and posts what it found on the PR.
   the intent's `review`, else `[agent].review_model`, else one step above the worker (haiku → sonnet →
   opus; opus stays). Given intent, spec IDs, `plan.md`, the PR diff, the CI result, `REVIEW.md` and
   the screenshots (PIP-49). Its verdict is posted as a Review comment (PIP-42).
-- Verified by: `pipeline: review on every PR`, `pipeline: review reused for an unchanged diff`,
-  `pipeline: review comment is posted`
+- Verified by: `pipeline: review on every PR`, `pipeline: review reused for an unchanged diff`, `pipeline: review comment is posted`
 
 ### PIP-5 · Review verdict
 
@@ -89,8 +90,9 @@ After the review, code decides whether Towercab merges the code PR or the owner 
 
 - Effective `a` and caps from [AUT-8, 13](autonomy.md). First match wins → `approval:merge`
   (`waiting: review and merge PR`, why): CI not green; review not approved; access beyond the plan at
-  a4 (AUT-15); proof missing (PIP-30); effective `a` ≤ 3; no `a` and not low-risk (AUT-9). Else →
-  `merge`. The PR body's Checks section is updated first (PIP-48).
+  a4 (AUT-15); proof missing (PIP-30); effective `a` ≤ 3; no `a` and not low-risk (AUT-9); someone
+  else's commits on the PR (PIP-2); the build departed from the approved plan, below a5 (PIP-28).
+  Else → `merge`. The PR body's Checks section is updated first (PIP-48).
 - Verified by: `pipeline: gate table`
 
 ### PIP-8 · Deploy
@@ -186,8 +188,7 @@ Towercab merges in code, only on the head that passed the gate.
   in `build`. `BLOCKED`/`UNSTABLE` → read again after `ci_poll` (the third time → `approval:merge`).
   Refused otherwise → `waiting: merge failed`. While paused, a mission entering `merge` holds until
   `resume`.
-- Verified by: `pipeline: merge on the gated head`, `pipeline: behind updates the branch`,
-  `pipeline: dirty is a conflict round`
+- Verified by: `pipeline: merge on the gated head`, `pipeline: behind updates the branch`, `pipeline: dirty is a conflict round`
 
 ### PIP-23 · Verify
 
@@ -204,8 +205,7 @@ back to the worker.
   --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /run --tmpfs <HOME> --tmpfs /tmp`,
   the toolchain dirs read-only with credential files masked, the repo cache (LOOP-34), `--bind
   <checkout>` with its `.git` read-only, `--chdir <checkout>`, `sh -c <line>`.
-- Verified by: `pipeline: verify runs setup then checks`, `pipeline: verify red repairs then waits`,
-  `pipeline: sandbox argv`
+- Verified by: `pipeline: verify runs setup then checks`, `pipeline: verify red repairs then waits`, `pipeline: sandbox argv`
 
 ### PIP-24 · Claude runs
 
@@ -222,12 +222,14 @@ Every Claude run is headless, sandboxed, and gets only the tools and access its 
   cache}, network {allowedDomains: the granted domains}}`, `permissions.allow: WebFetch(domain:<d>)`
   per granted domain (`WebFetch(domain:*)` at a5), the guard hook for workers (PIP-29). Secret paths:
   `~/.ssh`, `~/.config/gh`, `~/.aws`, `~/.gnupg`, `~/.config/towercab`, `~/.claude/.credentials.json`,
-  `~/.netrc`, `~/.git-credentials`.
+  `~/.netrc`, `~/.git-credentials`, `~/.config/sops`, `~/.config/restic`, `~/.config/age`,
+  `~/.password-store`, `~/.docker`, `~/.kube`, `~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials*`,
+  `~/.config/rclone`; and Towercab's home outside this mission (other checkouts, run files and caches,
+  the clones, the intents checkout, the database and log).
 - Tools by kind: **Claude runs** table. Disallowed for every run: `Bash(git push:*)`,
   `Bash(git remote:*)`, `Bash(git config:*)`, `Bash(gh:*)`, `Bash(ssh:*)`, `Bash(sudo:*)`, `Read` of
   each secret path. A denied push or secret read fails the step.
-- Verified by: `claude: worker argv`, `claude: review argv`, `claude: settings by autonomy`,
-  `claude: result parse`, `claude: no token in env`
+- Verified by: `claude: worker argv`, `claude: review argv`, `claude: settings by autonomy`, `claude: result parse`, `claude: no token in env`, `claude: other missions are unreadable`
 
 ### PIP-25 · Design
 
@@ -244,8 +246,7 @@ The worker's first run turns the intent into spec changes, and Towercab opens th
   change (`spec_ids` empty, no diff) → no spec PR; on to plan.
 - The owner's review comments on the spec PR → a design revision in the same session, a new commit
   on the same PR.
-- Verified by: `pipeline: design edits only specs`, `pipeline: spec PR is opened`,
-  `pipeline: no behaviour change skips the spec PR`, `pipeline: feedback revises the spec`
+- Verified by: `pipeline: design edits only specs`, `pipeline: spec PR is opened`, `pipeline: no behaviour change skips the spec PR`, `pipeline: feedback revises the spec`
 
 ### PIP-26 · Spec approval
 
@@ -268,9 +269,9 @@ The worker plans the build, read-only, and Towercab opens the plan as a PR on th
 - The owner's comments on the plan PR → a plan revision, a new commit on the same PR. Merged → the
   grants are read from the merged `plan.md` (PIP-47) and the build starts.
 - A build that departs from the plan returns `plan_changed`; Towercab commits it to `plan.md` on
-  `main` of the intents repo (`towercab: plan changed <id>`) and says so in the code PR.
-- Verified by: `pipeline: plan PR is opened on intents`, `pipeline: feedback revises the plan`,
-  `pipeline: merged plan grants its ticked access`
+  `main` of the intents repo (`towercab: plan changed <id>`), keeping the merged Access section, and the
+  gate sends the PR to the owner below a5. A revised plan PR keeps the boxes the owner unticked.
+- Verified by: `pipeline: plan PR is opened on intents`, `pipeline: feedback revises the plan`, `pipeline: merged plan grants its ticked access`
 
 ### PIP-29 · Guard
 
@@ -283,8 +284,7 @@ A hook stops the worker from writing paths it hasn't been granted, and tells it 
   ends `if you need it, finish what you can and return status access with this path and why`. It
   fails closed (unreadable rules, no path, an error → exit 2).
 - Publish also refuses a diff that touches a protected path that isn't granted.
-- Verified by: `guard: blocks a protected path`, `guard: allows a granted path`,
-  `guard: blocks outside the checkout`, `guard: fails closed`
+- Verified by: `guard: blocks a protected path`, `guard: allows a granted path`, `guard: blocks outside the checkout`, `guard: fails closed`
 
 ### PIP-30 · Red→green proof
 
@@ -297,8 +297,7 @@ Towercab checks that the PR's tests fail without the change, so the tests prove 
   that fails without the change; after the repairs → `waiting: tests don't prove the change`. After
   the owner answers, a proof that still fails to prove → publish with `data.unproven` (the gate then
   sends the PR to the owner, PIP-7).
-- Verified by: `pipeline: proof red on base proves`, `pipeline: green on base repairs`,
-  `pipeline: unproven goes to the owner`
+- Verified by: `pipeline: proof red on base proves`, `pipeline: green on base repairs`, `pipeline: unproven goes to the owner`
 
 ### PIP-31 · Test lock in repair rounds
 
@@ -367,8 +366,7 @@ recommendation.
   what follows from it), `recommendation`. Towercab renders it as a Question comment (PIP-42) on the
   intent's current PR, or, with no PR yet, in the intent's `## Towercab` section; `waiting: answer the
   question`.
-- Verified by: `pipeline: question comment has context, options, recommendation`,
-  `pipeline: question without a PR goes to the intent`
+- Verified by: `pipeline: question comment has context, options, recommendation`, `pipeline: question without a PR goes to the intent`
 
 ### PIP-42 · Stage comments
 
@@ -391,8 +389,7 @@ steers.
   Request changes, or a comment, → `feedback` with its text (or `answered` while blocked). A comment
   that is exactly `/retry` → `retry_fresh`. Edited checkboxes in an open plan PR are read when it
   merges.
-- Verified by: `events: merge, close, review and comment`, `events: approve review merges`,
-  `events: retry command`
+- Verified by: `events: merge, close, review and comment`, `events: approve review merges`, `events: retry command`
 
 ### PIP-44 · Only the owner acts
 
@@ -458,8 +455,9 @@ For a repo with a screenshots command, the review sees the UI as it now looks.
 
 When the owner doesn't need to approve the spec, Towercab merges the spec PR once its checks pass.
 
-- Spec gate open ([AUT-11](autonomy.md)) → wait for the spec PR's CI (PIP-3 rules, no repairs: red →
-  `waiting: approve spec` with why `CI red on the spec PR`), then `gh pr merge --squash`.
+- Spec gate open ([AUT-11](autonomy.md)) → wait for the spec PR's CI on the head Towercab pushed
+  (PIP-3 rules, no repairs: red, a conflict or someone else's push → `waiting: approve spec` with the
+  reason), then `gh pr merge --squash --match-head-commit <head>`.
 - Verified by: `pipeline: spec PR merged when the gate is open`
 
 ### PIP-51 · Towercab merges the plan PR at a5

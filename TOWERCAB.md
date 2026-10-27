@@ -1,15 +1,15 @@
 ---
 max_autonomy: 5
-protected: [src/machine.rs, ops/bands.yaml]
+protected: [src/machine.ts]
 tests: [tests/**]
 ---
 
 # Towercab on Towercab
 
-What Towercab needs to know about its own repo that has no playbook home (REPO-1).
+What Towercab needs to know about its own repo (REPO-1, REPO-6).
 
 - `max_autonomy: 5`: Towercab may merge its own PRs when the gate allows.
-- `protected`: the state machine and the bands Towercab is judged by; the worker can't write
-  them unless an intent's `unlock` names them (REPO-8).
+- `protected`: the state machine; a worker can't write it unless the plan grants it (REPO-8).
 - `tests`: the red→green proof lays these over the base branch (PIP-30).
-- No `live` block: Towercab runs on the owner's machine; merged means done until it deploys itself.
+- Towercab runs on the owner's machine from this checkout and updates itself after a merge
+  (LOOP-35).
