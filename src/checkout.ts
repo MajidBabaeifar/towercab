@@ -154,29 +154,16 @@ export async function createCheckout(
   renameSync(tmp, checkout);
 }
 
-/** A checkout with a valid HEAD. */
-export async function validCheckout(tools: Tools, checkout: string): Promise<boolean> {
-  if (!existsSync(join(checkout, ".git"))) return false;
-  try {
-    await git(tools, checkout, ["rev-parse", "--verify", "--quiet", "HEAD"]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Keep a valid checkout, else make it again. Returns true when it was made. */
-export async function ensureCheckout(
+/** A fresh checkout at `checkout`, replacing whatever is there: pick's, before any work (LOOP-8). */
+export async function freshCheckout(
   tools: Tools,
   clone: string,
   checkout: string,
   base: string,
   branch: string,
-): Promise<boolean> {
-  if (await validCheckout(tools, checkout)) return false;
-  rmSync(checkout, { recursive: true, force: true });
+): Promise<void> {
+  removeCheckout(checkout);
   await createCheckout(tools, clone, checkout, base, branch);
-  return true;
 }
 
 export function removeCheckout(checkout: string): void {

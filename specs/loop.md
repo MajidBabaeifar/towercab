@@ -122,8 +122,10 @@ a checkout's `.git`.
   --no-checkout <clone>`, origin removed, base fetched by path, `git checkout -B <branch>
   refs/remotes/origin/<base>`. Every git call there uses `-c core.hooksPath=/dev/null
   -c core.fsmonitor=false`, and Towercab's own git there first checks the `.git/config` holds only
-  plain keys. A checkout is kept until the mission is done, stopped or replaced.
-- Verified by: `checkout: kept across steps`, `checkout: has no remote`, `checkout: a planted git config is refused`
+  plain keys. `pick` always makes it fresh, replacing whatever is at that path (a crashed pick's, or
+  an older Towercab's with the same `<id>-<attempt>`); later stages keep it until the mission is done,
+  stopped or replaced.
+- Verified by: `checkout: kept across steps`, `checkout: pick replaces a leftover`, `checkout: has no remote`, `checkout: a planted git config is refused`
 
 ### LOOP-9 · Usage limits
 
