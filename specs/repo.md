@@ -126,5 +126,7 @@ A repo with a UI can give Towercab a command that takes screenshots, and the rev
 ## Decisions
 
 - The base branch is the only source: a PR that edits `CLAUDE.md` can't loosen its own checks.
+  One exception: when the owner granted the PR the right to change `CLAUDE.md`, the red→green proof
+  runs that PR's checks block ([PIP-54](pipeline.md)); verify and CI still use the base's.
 - `fast` exists so a repo with CI doesn't run a slow full suite on every round locally; CI stays the
   gate.

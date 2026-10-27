@@ -293,7 +293,7 @@ Towercab checks that the PR's tests fail without the change, so the tests prove 
 - After green verify, when the design changed spec rows or its `type` is `fix`: a checkout of
   `origin/<base>` with the PR's changed test files laid over it (globs: `TOWERCAB.md` `tests`, default
   `tests/**`, `test/**`, `**/__tests__/**`, `**/*_test.*`, `**/test_*.*`, `**/*.test.*`,
-  `**/*.spec.*`) runs setup, then the run set. Red = proven. Green → a repair round asking for a test
+  `**/*.spec.*`) runs setup, then the run set (from the PR's `CLAUDE.md` when PIP-54 applies). Red = proven. Green → a repair round asking for a test
   that fails without the change; after the repairs → `waiting: tests don't prove the change`. After
   the owner answers, a proof that still fails to prove → publish with `data.unproven` (the gate then
   sends the PR to the owner, PIP-7).
@@ -485,6 +485,23 @@ PRs wait for review.
   are closed as the App (`gh pr close --comment`, saying the intent started over); merged or closed
   ones are left. A failure is retried next pass (LOOP-6).
 - Verified by: `pipeline: a fresh attempt closes the old PRs`
+
+### PIP-54 · Proof runs the PR's checks block when it changes it
+
+When the owner let the PR change `CLAUDE.md`, the proof runs the checks that file now lists, so a test
+added to the checks block can prove the change.
+
+- Applies when the PR's diff against the base changes `CLAUDE.md` and that path is granted
+  ([REPO-8](repo.md), [AUT-14](autonomy.md)). Publish already refuses an ungranted change, so the
+  base's block is used otherwise.
+- Then the proof's run set (REPO-9, `runSet`) is built from the `## Verifying your work` section of
+  `CLAUDE.md` at the PR's head, not the base's. `setup` still comes from the base and runs on the bare
+  base before the tests are laid (PIP-30). Only `CLAUDE.md` is read from the head; `REVIEW.md` and
+  `TOWERCAB.md` stay the base's.
+- The PR's `CLAUDE.md` is not laid into the proof checkout; only its parsed blocks are used. If it
+  doesn't parse or has no non-empty `checks` block, the base's block is used and the proof's log says so.
+- Verify (PIP-23) and CI keep the base's block.
+- Verified by: `pipeline: proof uses the PR's checks block when CLAUDE.md is granted`, `pipeline: proof keeps the base's checks block when CLAUDE.md is not granted`, `pipeline: proof falls back to the base's checks block when the PR's does not parse`
 
 **Claude runs** (`src/claude.ts`)
 
