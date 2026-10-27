@@ -1,6 +1,6 @@
 # Intents
 
-**Status:** Live · **Prefix:** INT
+**Status:** Live: INT-1..29 · **Prefix:** INT
 
 ## Purpose
 
@@ -275,6 +275,30 @@ The UI's intent page links to the issue an intent came from.
 - The intent view model carries `issue` (the URL, or none); the page shows it as a link next to the
   source.
 - Verified by: `ui: the intent page links its issue`
+
+### INT-30 · A body that doesn't parse is unreadable
+
+An intent whose body is not valid Markdown is listed as unreadable with the reason and the line, instead of having its sections read as empty.
+
+- Parsing an intent (INT-2) also parses its body (`markdown::items` equivalent); a failure makes the
+  file unreadable (INT-11) with the reason and the 1-based line in the file, for example
+  `intents/<dir>/intent.md: unclosed code fence at line 18`. The line is where the fence opened.
+- It shows in `status`, `next` and the UI's Intents page like any other unreadable file (INT-11), and
+  `get`, `update` and the design step's open-question check ([PIP-25](pipeline.md)) fail with that
+  reason, never with a count against empty sections.
+- Section reads (`## Problem`, `## Proposed outcome` bullets, `## Open questions`) no longer return
+  an empty list on a parse failure.
+- Intents that parse today read the same: bodies with balanced fences, or none, are unchanged.
+- Verified by: `intents: an unclosed code fence makes the intent unreadable`, `intents: the unreadable reason names the line`, `intents: a body that parses reads the same`, `pipeline: a broken body fails design with its reason`
+
+### INT-31 · Drafts avoid fence markers
+
+The `/intent` skill and the issue scorer write bodies that cannot be read as an unclosed code fence.
+
+- `skills/intent/SKILL.md` and the scoring prompt (INT-22) tell the writer never to start a prose or
+  bullet line with three backticks or three tildes; inline code uses single backticks, and a real code
+  block is opened and closed on lines of its own.
+- Verified by: `intents: the skill forbids fence markers in prose`, `issues: the scoring prompt forbids fence markers in prose`
 
 ## Out of scope
 
