@@ -148,7 +148,8 @@ models keep working.
 A failed network or login call is retried with backoff and never stops the loop.
 
 - `classifyFailure(stderr)`: network (DNS, refused, reset, timeout, TLS, HTTP 5xx) or auth (HTTP 401,
-  `Bad credentials`, Claude's `/login`). A step that hits one retries after 30, 60, 120, 240, then
+  `Bad credentials`, Claude's `/login`, git's `remote: Repository not found`, which is how GitHub
+  refuses a token on a private repo). Every git and `gh` failure in the pipeline goes through it. A step that hits one retries after 30, 60, 120, 240, then
   300 s; a Claude run resumes its session.
 - Health (in memory): per kind `github`, `claude`, `tool:<exe>`, `sandbox`, open from the first
   failure to the next success. Open for 15 minutes → picks pause, one message names the fix, the UI
@@ -255,9 +256,11 @@ Towercab acts on GitHub as its own GitHub App, so its work is clearly separate f
 
 - App from `ops/github-app.json` (contents, pull requests, issues, checks, statuses, workflows,
   actions: write; metadata: read), installed on `intents` and each `[repos]` repo. Key `app.pem` next
-  to the config (refused if readable by group or others). RS256 JWT → installation token per repo
-  (1 hour, re-minted when under 10 minutes left), passed as `GH_TOKEN` to `gh` and to `git` through a
-  credential helper; never to Claude runs.
+  to the config (refused if readable by group or others). RS256 JWT → an installation token, cached
+  per repo (1 hour, re-minted when under 10 minutes left), passed as `GH_TOKEN` to `gh` and to `git`
+  through a credential helper; never to Claude runs. The token covers the installation's repos, not
+  just one: since 2026-10-27 GitHub's git answers 404 to a token scoped with `repositories` or
+  `repository_ids` on a private repo, while the REST API accepts it.
 - Commits are authored as `towercab[bot] <<id>+towercab[bot]@users.noreply.github.com>`.
 - Verified by: `github: installation token per repo`, `github: git uses the App token`, `github: commits are authored by the bot`, `github: no token in Claude's environment`
 

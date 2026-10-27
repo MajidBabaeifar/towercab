@@ -8,7 +8,7 @@ import { effectiveA } from "../autonomy.ts";
 import { git, gitSane } from "../checkout.ts";
 import { type ClaudeRun, freshContext, parseRun, prepareRun, type RunEnd, type RunKind } from "../claude.ts";
 import { clonePath, type RepoConfig } from "../config.ts";
-import { classifyRun } from "../faults.ts";
+import { classifyFailure, classifyRun } from "../faults.ts";
 import { type Step, upsertStageComment } from "../github/comments.ts";
 import { type ChildEnd, type Ctx, EnvError, type Progress } from "../handlers.ts";
 import type { Intent } from "../intents/types.ts";
@@ -378,9 +378,7 @@ export async function pushBranch(
 /** A failed git or gh call: network or auth failures become an `EnvError` (LOOP-10). */
 export function asEnv(e: unknown): Error {
   const msg = (e as Error).message;
-  return /could not resolve|connection|timed out|unable to access|HTTP 5\d\d|Bad credentials|401/i.test(msg)
-    ? new EnvError("github", msg)
-    : (e as Error);
+  return classifyFailure(msg) || /unable to access/i.test(msg) ? new EnvError("github", msg) : (e as Error);
 }
 
 /** `gh` as the App for the mission's repo, checked. */

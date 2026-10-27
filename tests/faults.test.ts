@@ -36,6 +36,7 @@ test("faults: classify", () => {
     ["fatal: Authentication failed for 'https://github.com/me/web.git/'", "auth"],
     ["Invalid API key · Please run /login", "auth"],
     ["OAuth token has expired", "auth"],
+    ["remote: Repository not found.\nfatal: repository 'https://github.com/me/web.git/' not found", "auth"],
     ["fatal: not a git repository (or any of the parent directories): .git", null],
     ["GraphQL: Could not resolve to a PullRequest with the number of 9.", null],
     ["HTTP 404: Not Found", null],

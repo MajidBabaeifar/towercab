@@ -141,7 +141,8 @@ export class App {
   /**
    * A 1-hour installation token for `github` (`owner/name`): cached, re-minted when under 10
    * minutes remain. `GET /repos/<github>/installation` → `POST /app/installations/<id>/access_tokens`
-   * `{repositories: [<name>]}`; a cached installation GitHub refuses is looked up again once.
+   * `{}`, the installation's repos (GitHub's git refuses repo-scoped tokens, LOOP-19); a cached
+   * installation GitHub refuses is looked up again once.
    */
   token(github: string): Promise<string> {
     const key = github.toLowerCase();
@@ -156,7 +157,6 @@ export class App {
 
   private async mint(github: string, key: string): Promise<string> {
     const auth = `Bearer ${this.jwt()}`;
-    const name = github.split("/")[1] ?? github;
     let cached = this.installs.has(key);
     for (;;) {
       let install = this.installs.get(key);
@@ -171,9 +171,7 @@ export class App {
         this.installs.set(key, id);
       }
       const what = `POST /app/installations/${install}/access_tokens`;
-      const r = await this.call(what, "POST", `/app/installations/${install}/access_tokens`, auth, {
-        repositories: [name],
-      });
+      const r = await this.call(what, "POST", `/app/installations/${install}/access_tokens`, auth, {});
       let v: unknown;
       try {
         v = json(this.ok(what, r));
