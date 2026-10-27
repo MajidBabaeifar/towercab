@@ -79,10 +79,7 @@ describe("github app", () => {
       expect(verifyJwt(r.headers.Authorization!.replace(/^Bearer /, ""), pub).iss).toBe(77);
       expect(r.headers.Accept).toBe("application/vnd.github+json");
     }
-    expect(api.requests.filter((r) => r.method === "POST").map((r) => JSON.parse(r.body))).toEqual([
-      {},
-      {},
-    ]);
+    expect(api.requests.filter((r) => r.method === "POST").map((r) => JSON.parse(r.body))).toEqual([{}, {}]);
 
     // Cached while 10 minutes or more remain (any case of owner/name); re-minted under that.
     clock.advance(49 * 60);

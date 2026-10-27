@@ -378,9 +378,7 @@ export async function pushBranch(
 /** A failed git or gh call: network or auth failures become an `EnvError` (LOOP-10). */
 export function asEnv(e: unknown): Error {
   const msg = (e as Error).message;
-  return classifyFailure(msg) || /unable to access/i.test(msg)
-    ? new EnvError("github", msg)
-    : (e as Error);
+  return classifyFailure(msg) || /unable to access/i.test(msg) ? new EnvError("github", msg) : (e as Error);
 }
 
 /** `gh` as the App for the mission's repo, checked. */
