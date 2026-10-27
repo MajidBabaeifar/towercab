@@ -5,14 +5,15 @@
 export const BLOCK_AFTER = 900;
 
 const AUTH =
-  /\bhttp(?:\/[0-9.]+)?:? 401\b|\b401 unauthorized|status(?: code)?:? 401\b|returned error: 401\b|bad credentials|authentication failed|\/login\b|invalid api key|oauth token (?:has )?expired/i;
+  /\bhttp(?:\/[0-9.]+)?:? 401\b|\b401 unauthorized|status(?: code)?:? 401\b|returned error: 401\b|bad credentials|authentication failed|\/login\b|invalid api key|oauth token (?:has )?expired|remote: repository not found/i;
 
 const NETWORK =
   /could not resolve (?:host|proxy)|name resolution|name or service not known|no address associated|connection (?:refused|reset|timed out|closed)|network is unreachable|no route to host|timed? ?out\b|tls handshake|handshake (?:failed|failure)|ssl certificate problem|certificate verify failed|ssl_(?:connect|read|write|error)|ssl routines|tls connection|ssl connection|unexpected eof|early eof|\bhttp(?:\/[0-9.]+)?:? 5[0-9]{2}\b|\b5[0-9]{2} (?:internal server error|bad gateway|service unavailable|gateway time-?out)|status(?: code)?:? 5[0-9]{2}\b|returned error: 5[0-9]{2}\b|api error: 5[0-9]{2}|error connecting|failed to connect to|could(?: not|n't) connect to server|econn(?:refused|reset)|etimedout|enotfound|eai_again|fetch failed|socket hang up/i;
 
 /**
  * A failed call's class by its stderr (git, gh, the GitHub API, Telegram, `claude`): network (DNS,
- * refused, reset, timeout, TLS, HTTP 5xx) or auth (HTTP 401, `Bad credentials`, `/login`); anything
+ * refused, reset, timeout, TLS, HTTP 5xx) or auth (HTTP 401, `Bad credentials`, `/login`, git's
+ * `Repository not found`: GitHub's answer to a token it won't take on a private repo); anything
  * else is the call's own failure.
  */
 export function classifyFailure(stderr: string): "network" | "auth" | null {
