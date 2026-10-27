@@ -240,7 +240,8 @@ The worker's first run turns the intent into spec changes, and Towercab opens th
   `breaking`, `spec_ids`, `concerns` (`what`, `why`), `open_questions` (each answered or left to the
   owner), `pr` (the spec PR's text: what changes in behaviour and why, for a reader who wasn't
   there).
-- Spec rows added here are `Draft`. Towercab commits `docs(specs): <title>` on
+- Spec rows added here are `Draft`: kept out of the file's Status line (a bare `Live` becomes
+  `Live: <prefix>-<first>..<last built>`), so the repo's spec check stays green. Towercab commits `docs(specs): <title>` on
   `towercab/<id>-<slug>-spec`, pushes, and opens the spec PR (title `docs(specs): <title>`). Then the
   spec gate ([AUT-11](autonomy.md)): the owner (`approval:spec`) or Towercab (PIP-50). No behaviour
   change (`spec_ids` empty, no diff) → no spec PR; on to plan.
