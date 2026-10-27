@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..53 · **Prefix:** PIP
+**Status:** Live · **Prefix:** PIP
 
 ## Purpose
 
@@ -502,7 +502,11 @@ added to the checks block can prove the change.
 - The PR's `CLAUDE.md` is not laid into the proof checkout; only its parsed blocks are used. If it
   doesn't parse or has no non-empty `checks` block, the base's block is used and the proof's log says so.
 - Verify (PIP-23) and CI keep the base's block.
-- Verified by: `pipeline: proof uses the PR's checks block when CLAUDE.md is granted`, `pipeline: proof keeps the base's checks block when CLAUDE.md is not granted`, `pipeline: proof falls back to the base's checks block when the PR's does not parse`
+- When the PR's block is used, red on base is not enough: the same lines then run on the PR's head, in
+  the mission's checkout without network, and must pass (log `proof-head.log`). Red there → a repair
+  round (counted with verify's, at most 2), then `waiting: checks red`; never the unproven path, so an
+  always-failing line can't count as proven.
+- Verified by: `pipeline: proof uses the PR's checks block when CLAUDE.md is granted`, `pipeline: proof keeps the base's checks block when CLAUDE.md is not granted`, `pipeline: proof falls back to the base's checks block when the PR's does not parse`, `pipeline: proof needs the PR's checks block green on head`
 
 **Claude runs** (`src/claude.ts`)
 

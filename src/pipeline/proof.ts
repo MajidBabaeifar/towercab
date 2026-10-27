@@ -1,16 +1,21 @@
 // The red→green proof (PIP-30): the PR's changed test files, laid over base, must fail; then the tests
 // prove the change. Green on base → a repair round asking for a proving test; after the repairs the
 // owner decides; after the owner answers, an unproven change goes on, flagged for the gate.
+// When the PR changes `CLAUDE.md` and may (PIP-54), its checks block is the one that runs, and it must
+// also pass on the PR's head.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createCheckout, git, removeCheckout } from "../checkout.ts";
-import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
+import { classifyRun } from "../faults.ts";
+import { type ChildEnd, type Ctx, EnvError, type Handler, type Progress } from "../handlers.ts";
 import { ok, red, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
-import { hasCi, runSet } from "../repo/runset.ts";
+import { parseVerifying, type RepoFiles, type Verifying } from "../repo/files.ts";
+import { CONTROL, Protected } from "../repo/protected.ts";
+import { hasCi, quote, runSet } from "../repo/runset.ts";
 import { logPath, sandboxSpec } from "./checks.ts";
-import { cloneOf, coGit, data, repoFiles, tail } from "./common.ts";
+import { cloneOf, coGit, data, grants, intentOf, repoFiles, tail } from "./common.ts";
 import { changedTests, MAX_REPAIRS } from "./verify.ts";
 
 const proofDir = (cx: Ctx, m: Mission) => `${cx.checkout(m)}-proof`;
@@ -50,6 +55,7 @@ export const proofHandler: Handler = {
         }),
       };
     }
+    if (m.step === "head") return head(cx, m);
     return lay(cx, m, tests);
   },
 
@@ -58,9 +64,14 @@ export const proofHandler: Handler = {
       const files = await repoFiles(cx, m);
       return lay(cx, m, await changedTests(cx, m, files.towercab.tests));
     }
+    if (m.step === "head") return headEnd(cx, m, end);
     removeCheckout(proofDir(cx, m));
-    if (end.code !== 0 || end.timedOut)
+    if (end.code !== 0 || end.timedOut) {
+      // Red on base. The PR's own checks block must also pass on the branch, or a line that always fails
+      // would count as proof (PIP-54).
+      if (data(m).proofLines?.fromPr) return head(cx, cx.record(m, "head"));
       return { done: ok({ why: "the new tests fail without the change", data: { proof: "proven" } }) };
+    }
     return notProven(
       cx,
       m,
@@ -80,19 +91,105 @@ async function lay(cx: Ctx, m: Mission, tests: string[]): Promise<Progress> {
     writeFileSync(join(dir, t), text);
   }
   const files = await repoFiles(cx, m);
+  const checks = await proofChecks(cx, m, files);
   const ci = await hasCi(cx.tools, cloneOf(cx, m), cx.repo(m).base);
-  const lines = runSet(files.verifying, ci, tests);
+  const lines = runSet(checks.verifying, ci, tests);
   void git;
-  const fresh = cx.record(m, "checks");
+  // A note on why the PR's block wasn't used goes first, so the log says so.
+  const script = checks.note ? [`echo ${quote(checks.note)}`, ...lines] : lines;
+  const fresh = cx.record(m, "checks", {}, { proofLines: { lines, fromPr: checks.fromPr } });
   return {
     spawn: sandboxSpec(cx, fresh, {
       kind: "proof",
-      lines,
+      lines: script,
       dir,
       network: false,
       cacheWritable: false,
       log: logPath(cx, fresh, "proof.log"),
+      timeoutMs: cx.config.agent.checkTimeoutMin * 60_000 * Math.max(1, script.length),
+    }),
+  };
+}
+
+/**
+ * The checks the proof runs (PIP-54): the PR's `CLAUDE.md` block when the PR changes that file and the
+ * worker may write it (publish's own test), else the base's. A PR file that doesn't parse, or isn't a
+ * regular file, falls back to the base's, with a note for the log. Only the parsed block is used; the
+ * file itself is never laid into the proof checkout.
+ */
+async function proofChecks(
+  cx: Ctx,
+  m: Mission,
+  files: RepoFiles,
+): Promise<{ verifying: Verifying; fromPr: boolean; note: string | null }> {
+  const base = { verifying: files.verifying, fromPr: false, note: null };
+  const changed = (
+    await coGit(cx, m, ["diff", "--name-only", `refs/remotes/origin/${cx.repo(m).base}...HEAD`])
+  ).split("\n");
+  if (!changed.includes("CLAUDE.md")) return base;
+  const g = grants(m, await intentOf(cx, m), files, cx);
+  if (new Protected([...CONTROL, ...files.towercab.protected], g.paths).blocks("CLAUDE.md")) return base;
+  const mode = (await coGit(cx, m, ["ls-tree", "HEAD", "--", "CLAUDE.md"])).split(/\s/)[0];
+  const fallback = (why: string) => ({
+    ...base,
+    note: `CLAUDE.md in the PR doesn't parse (${why}); using the base's checks`,
+  });
+  if (mode !== "100644" && mode !== "100755") return fallback("it is not a regular file");
+  try {
+    return {
+      verifying: parseVerifying(await coGit(cx, m, ["show", "HEAD:CLAUDE.md"])),
+      fromPr: true,
+      note: null,
+    };
+  } catch (e) {
+    return fallback((e as Error).message);
+  }
+}
+
+/** The PR's checks block on the PR's head, in the mission's checkout, which verify already set up. */
+function head(cx: Ctx, m: Mission): Progress {
+  const lines = data(m).proofLines?.lines ?? [];
+  return {
+    spawn: sandboxSpec(cx, m, {
+      kind: "proof-head",
+      lines,
+      dir: cx.checkout(m),
+      network: false,
+      cacheWritable: false,
+      log: logPath(cx, m, "proof-head.log"),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000 * Math.max(1, lines.length),
+    }),
+  };
+}
+
+/**
+ * Green on head → proven. Red → a repair round, then `checks red` as verify does: an owner's "go on"
+ * never sends a failing block through as unproven.
+ */
+function headEnd(cx: Ctx, m: Mission, end: ChildEnd): Progress {
+  if (end.code === 0 && !end.timedOut) {
+    return {
+      done: ok({
+        why: "the new tests fail without the change and the checks pass with it",
+        data: { proof: "proven" },
+      }),
+    };
+  }
+  const log = `${read(end.stdout)}${read(end.stderr)}`;
+  const env = classifyRun(log);
+  if (env) throw new EnvError(env.kind, env.why);
+  const what = "The checks block your change adds to CLAUDE.md fails on your branch.";
+  if (m.repairs >= MAX_REPAIRS) return { done: wait("checks red", what) };
+  return {
+    done: red("the PR's checks block fails on the branch", {
+      set: { repairs: m.repairs + 1 },
+      data: {
+        repair: {
+          what: `${what} Make it pass: fix the code or the block, and keep the test that proves the change.`,
+          details: tail(log),
+          kind: "proof",
+        },
+      },
     }),
   };
 }

@@ -53,6 +53,8 @@ export interface PipeData {
   shots?: string[];
   proof?: "proven" | "none needed" | "not proven";
   proofWaited?: boolean;
+  /** The lines the proof ran on base, and whether they are the PR's checks block (PIP-54). */
+  proofLines?: { lines: string[]; fromPr: boolean };
   unproven?: boolean;
   ci?: { result: "green" | "none" | "pending"; reruns?: Record<string, boolean>; since?: number };
   review?: {
