@@ -18,6 +18,8 @@ export interface Intent {
   model: string | null;
   review: string | null;
   source: string | null;
+  /** The GitHub issue this intent came from (INT-23). */
+  issue: string | null;
   started: string | null;
   unlock: string[];
   network: string[];
@@ -66,6 +68,14 @@ export interface NewIntent {
   u?: number;
   i?: number;
   a?: number;
+  /** Written as `source` (default `me`). */
+  source?: string;
+  /** More front-matter lines, written after `source` (`issue`, INT-23). */
+  fields?: Record<string, string>;
+  /** Markdown after the title (`## Problem`, …). */
+  body?: string;
+  /** A commit trailer that `hasMark` finds (INT-12). */
+  mark?: string;
 }
 
 /** One change to an intent through the store (INT-5's field writes, sections, answers). */

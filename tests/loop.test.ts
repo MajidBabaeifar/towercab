@@ -118,6 +118,56 @@ test("loop: picks while others wait", async () => {
   expect(byIntent(p, B)[0]!.stage).toBe("approval:plan");
 });
 
+const listCalls = (p: Pipe) => p.issueCalls.filter((c) => c.startsWith("issue list")).length;
+
+test("issues: the poll runs every 5 minutes", async () => {
+  const p = new Pipe(TARGET, {});
+  await p.start({}, { handlers: {} });
+  await p.loop.issuesIdle();
+  // On start.
+  expect(listCalls(p)).toBe(1);
+  for (const [seconds, calls] of [
+    [0, 1],
+    [299, 1],
+    [1, 2],
+    [299, 2],
+    [1, 3],
+  ] as const) {
+    p.clock.advance(seconds);
+    await p.loop.pass();
+    await p.loop.issuesIdle();
+    expect(listCalls(p)).toBe(calls);
+  }
+});
+
+test("issues: a gh failure is a github fault", async () => {
+  const p = new Pipe(TARGET, {});
+  p.queue("score", () => ({
+    structured: { u: 3, u_why: "a", i: 3, i_why: "b", title: "Other repo", problem: "p", outcome: ["o"] },
+  }));
+  p.issueFail = (args) => (args.includes("owner/web") && args[1] === "list" ? "HTTP 502: bad gateway" : null);
+  p.issue({ repo: "owner/api" });
+  const repos = { web: { github: "owner/web" }, api: { github: "owner/api" } };
+  await p.start({ repos }, { handlers: {} });
+  await p.loop.issuesIdle();
+  const fault = p.loop.health.open().find((f) => f.kind === "github");
+  expect(fault?.error).toContain("owner/web");
+  expect(fault?.error).toContain("HTTP 502");
+  // The other repo was still read, and its issue queued.
+  expect((await p.store.list()).open.map((i) => i.repo)).toEqual(["api"]);
+  // The 60 s intents poll works, yet does not hide the failing issue poll.
+  p.clock.advance(61);
+  await p.loop.pass();
+  await p.loop.issuesIdle();
+  expect(p.loop.health.open().map((f) => f.kind)).toEqual(["github"]);
+  // The next successful issue poll closes it.
+  p.issueFail = null;
+  p.clock.advance(300);
+  await p.loop.pass();
+  await p.loop.issuesIdle();
+  expect(p.loop.health.open()).toEqual([]);
+});
+
 test("loop: one unmerged intent per repo", async () => {
   const p = new Pipe(TARGET, files({ id: A, u: 5, i: 5 }, { id: B }));
   await p.start({}, { handlers: fake(() => ({ done: wait("review and merge PR") })) });
@@ -406,12 +456,14 @@ test("loop: cadence", async () => {
     },
   );
   const t0 = p.clock.now();
-  expect(lists).toBe(1);
+  // On start: the intents poll, and the issue poll's own read of the intents (INT-21).
+  await p.loop.issuesIdle();
+  expect(lists).toBe(2);
   // Three minutes of 5-second passes.
   for (let i = 0; i < 36; i++) await pass(p, 5);
   const at = (ts: number[]) => ts.map((t) => t - t0);
   // Intents every 60 s; the PR every 60 s from its first read; the stage at its own poll (30 s).
-  expect(lists).toBe(1 + 2);
+  expect(lists).toBe(2 + 2);
   expect(at(reads)).toEqual([10, 70, 130]);
   expect(at(steps)).toEqual([10, 40, 70, 100, 130, 160]);
 });

@@ -38,6 +38,17 @@ export interface FakePr {
   mergeStates: string[];
 }
 
+export interface FakeIssue {
+  repo: string;
+  number: number;
+  author: string;
+  labels: string[];
+  state: "OPEN" | "CLOSED";
+  title: string;
+  body: string;
+  comments: string[];
+}
+
 /** What a fake Claude run does. */
 export interface ClaudeReply {
   structured?: unknown;
@@ -562,6 +573,64 @@ export class Pipe {
     this.updates.push(git(work, "rev-parse", "HEAD").trim());
   }
 
+  /** A GitHub issue the fake `gh` serves (`issue list|view|comment|edit`, `label create`). */
+  readonly issues: FakeIssue[] = [];
+  /** Every `gh issue …` / `gh label …` call, as one line. */
+  readonly issueCalls: string[] = [];
+  /** Return a reason to make that issue call fail. */
+  issueFail: ((args: string[]) => string | null) | null = null;
+
+  /** Add an issue to `owner/web` (or `repo`), open, by the owner, with no labels. */
+  issue(o: Partial<FakeIssue> = {}): FakeIssue {
+    const repo = o.repo ?? "owner/web";
+    const it: FakeIssue = {
+      repo,
+      number: this.issues.filter((x) => x.repo === repo).length + 1,
+      author: "owner",
+      labels: [],
+      state: "OPEN",
+      title: "The page greets nobody",
+      body: "Visitors see an empty page.",
+      comments: [],
+      ...o,
+    };
+    this.issues.push(it);
+    return it;
+  }
+
+  private issueGh(args: string[], opts: RunOpts): RunResult {
+    this.issueCalls.push(args.join(" "));
+    const bad = this.issueFail?.(args);
+    if (bad) return failResult(bad);
+    const json = (v: unknown) => okResult(JSON.stringify(v));
+    const repo = this.repoOf(args);
+    const flag = (f: string) => args[args.indexOf(f) + 1] ?? "";
+    const [a, b] = args;
+    if (a === "label") return okResult();
+    const labels = (it: FakeIssue) => it.labels.map((name) => ({ name }));
+    if (b === "list") {
+      return json(
+        this.issues
+          .filter((i) => i.repo === repo)
+          .map((i) => ({
+            number: i.number,
+            url: `https://github.com/${repo}/issues/${i.number}`,
+            state: i.state,
+            author: { login: i.author },
+            labels: labels(i),
+          })),
+      );
+    }
+    const it = this.issues.find((x) => x.repo === repo && x.number === Number(args[2]));
+    if (!it) return failResult(`issue ${args[2]} not found`);
+    if (b === "view") {
+      return json({ title: it.title, body: it.body, author: { login: it.author }, labels: labels(it) });
+    }
+    if (b === "comment") it.comments.push(opts.input ?? "");
+    if (b === "edit" && args.includes("--add-label")) it.labels.push(flag("--add-label"));
+    return okResult();
+  }
+
   private fakeGh(): void {
     const json = (v: unknown) => okResult(JSON.stringify(v));
     this.tools.on("gh", (raw, opts) => {
@@ -573,6 +642,7 @@ export class Pipe {
         return i >= 0 ? args[i + 1]! : "";
       };
       const [a, b] = args;
+      if (a === "issue" || a === "label") return this.issueGh(args, opts);
       if (a === "pr" && b === "list") {
         const p = this.prs.find((x) => x.repo === repo && x.head === flag("--head") && x.state === "OPEN");
         return json(p ? [{ number: p.number }] : []);

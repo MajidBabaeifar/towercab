@@ -83,11 +83,23 @@ export const REVIEW_SCHEMA = object({
   summary: S,
 });
 
+/** The scoring of a GitHub issue (INT-22). */
+export const SCORE_SCHEMA = object({
+  u: { type: "integer", minimum: 1, maximum: 5 },
+  u_why: S,
+  i: { type: "integer", minimum: 1, maximum: 5 },
+  i_why: S,
+  title: S,
+  problem: S,
+  outcome: list(S),
+});
+
 export const SCHEMAS = {
   design: DESIGN_SCHEMA,
   plan: PLAN_SCHEMA,
   build: BUILD_SCHEMA,
   review: REVIEW_SCHEMA,
+  score: SCORE_SCHEMA,
 };
 
 export interface Access {
@@ -139,11 +151,22 @@ export interface ReviewResult {
   summary: string;
 }
 
+export interface ScoreResult {
+  u: number;
+  u_why: string;
+  i: number;
+  i_why: string;
+  title: string;
+  problem: string;
+  outcome: string[];
+}
+
 export interface Results {
   design: DesignResult;
   plan: PlanResult;
   build: BuildResult;
   review: ReviewResult;
+  score: ScoreResult;
 }
 
 /** Why `value` doesn't fit `schema` (the subset these schemas use), or null when it does. */

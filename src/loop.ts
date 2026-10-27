@@ -9,6 +9,7 @@ import type { Config } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
 import { fixFor, Health } from "./faults.ts";
 import { approveRequested, intentEvents, prEvents, releaseRequested } from "./github/events.ts";
+import { pollIssues } from "./github/issues.ts";
 import { closeIfOpen, type PrState, readPr } from "./github/prs.ts";
 import { type ChildEnd, type Clock, type Ctx, EnvError, type GitHub, type Handlers } from "./handlers.ts";
 import type { Home } from "./home.ts";
@@ -36,6 +37,8 @@ export const PASS_MS = 5_000;
 const PR_POLL_S = 60;
 const INTENTS_POLL_S = 60;
 const UPDATE_POLL_S = 60;
+/** INT-21: GitHub issues are listed every 5 minutes. */
+export const ISSUES_POLL_S = 300;
 
 export interface LoopDeps {
   config: Config;
@@ -88,6 +91,10 @@ export class Loop {
   private listing: Listing | null = null;
   private listingError: string | null = null;
   private lastIntentsPoll = 0;
+  private lastIssuesPoll = 0;
+  private issuesRun: Promise<void> | null = null;
+  /** Why the last issue poll failed (INT-21); while set, the other GitHub reads don't close the fault. */
+  private issuesError: string | null = null;
   private lastPrPoll = new Map<number, number>();
   private lastUpdate = 0;
   private last: { wall: number; mono: number } | null = null;
@@ -146,10 +153,12 @@ export class Loop {
     }
     db.setMeta("running", `${process.pid} ${Math.floor(this.now)}`);
     await this.pollIntents(true);
+    this.startIssues(true);
   }
 
   /** Clean exit: children get SIGTERM, then SIGKILL; their missions are `interrupted`. */
   async shutdown(): Promise<void> {
+    await this.issuesIdle();
     for (const [id, r] of this.children) {
       r.handle.kill("SIGTERM");
       const done = await Promise.race([
@@ -237,6 +246,7 @@ export class Loop {
       this.pollAt.clear();
       this.lastPrPoll.clear();
       this.lastIntentsPoll = 0;
+      this.lastIssuesPoll = 0;
       this.d.log("woke from suspend; polling everything before any timeout");
     }
     this.last = nowPoint;
@@ -257,6 +267,7 @@ export class Loop {
     await this.enterDue();
     this.enforceTimeouts();
     await this.pollIntents(false);
+    this.startIssues(false);
     await this.pollPrs();
     await this.stepDue(!report.woke);
     if (!paused(db) && !this.health.blocked(this.now) && !budgetReached(db, this.d.config, this.now)) {
@@ -422,7 +433,7 @@ export class Loop {
     try {
       this.listing = await this.d.store.list();
       this.listingError = null;
-      this.health.ok("github");
+      this.githubOk();
     } catch (e) {
       this.listingError = (e as Error).message;
       this.health.fail("github", this.listingError, this.now);
@@ -461,6 +472,49 @@ export class Loop {
     }
   }
 
+  /** A GitHub read worked; the fault closes unless the issue poll is still failing (INT-21). */
+  private githubOk(): void {
+    if (this.issuesError === null) this.health.ok("github");
+  }
+
+  /** Resolves when no issue poll is running (tests and shutdown wait for it). */
+  async issuesIdle(): Promise<void> {
+    while (this.issuesRun) await this.issuesRun;
+  }
+
+  /**
+   * INT-21: the GitHub issue poll, every 300 s of the loop's clock and on start. It runs on its own
+   * (scoring takes minutes) and never more than once at a time.
+   */
+  private startIssues(force: boolean): void {
+    if (this.issuesRun || !this.d.config.github) return;
+    if (!force && this.now - this.lastIssuesPoll < ISSUES_POLL_S) return;
+    this.lastIssuesPoll = this.now;
+    const run = pollIssues({
+      config: this.d.config,
+      home: this.d.home,
+      tools: this.d.tools,
+      clock: this.d.clock,
+      store: this.d.store,
+      github: this.d.github,
+      log: this.d.log,
+      busy: () => new Set(unfinished(this.d.db).map((m) => m.intent)),
+    }).then(
+      () => {
+        this.issuesError = null;
+        if (this.listingError === null) this.health.ok("github");
+      },
+      (e: Error) => {
+        this.issuesError = e.message;
+        this.health.fail("github", e.message, this.now);
+        this.d.log(`reading GitHub issues failed: ${e.message}`);
+      },
+    );
+    this.issuesRun = run.finally(() => {
+      this.issuesRun = null;
+    });
+  }
+
   /** PR reads (LOOP-18, PIP-21): every 60 s per mission with a PR. */
   private async pollPrs(): Promise<void> {
     const read = this.d.readPr ?? ((repo: string, n: number) => readPr(this.d.github, repo, n));
@@ -476,7 +530,7 @@ export class Loop {
         if (m.spec_pr) prs.spec = await read(repo.github, m.spec_pr);
         if (m.plan_pr && intentsRepo) prs.plan = await read(intentsRepo, m.plan_pr);
         if (m.pr) prs.code = await read(repo.github, m.pr);
-        this.health.ok("github");
+        this.githubOk();
         const approve = approveRequested(m, prs, this.d.github.me);
         if (approve !== null) {
           const target = approve === m.plan_pr ? intentsRepo! : repo.github;

@@ -93,6 +93,20 @@ export interface CodeBody {
   links: Links;
   reviewDetails: string | null;
   footer: Footer;
+  /** The intent's `issue:` and the PR's repo (`owner/name`), for INT-27. */
+  issue?: { url: string | null; repo: string };
+}
+
+/**
+ * INT-27: `Fixes #<n>` for an issue in the PR's own repo, which closes it on merge; an issue
+ * anywhere else is only linked, since `Fixes` would not close it.
+ */
+export function issueLine(issue: { url: string | null; repo: string } | undefined): string {
+  const url = issue?.url;
+  if (!issue || !url) return "";
+  const m = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/issues\/(\d+)$/.exec(url);
+  if (m && m[1]!.toLowerCase() === issue.repo.toLowerCase()) return `Fixes #${m[2]}`;
+  return `From the issue: ${url}`;
 }
 
 /** The code PR's body (PIP-48). */
@@ -120,7 +134,11 @@ export function codeBody(b: CodeBody): string {
       ["## Access beyond the plan", "", ...b.unplanned.map((u) => `- ${u.what}: ${u.why}`)].join("\n"),
     );
   }
-  const meta = [b.specIds.length ? `**Spec IDs:** ${b.specIds.join(", ")}` : "", linkLine(b.links)]
+  const meta = [
+    b.specIds.length ? `**Spec IDs:** ${b.specIds.join(", ")}` : "",
+    issueLine(b.issue),
+    linkLine(b.links),
+  ]
     .filter(Boolean)
     .join("\n\n");
   if (meta) parts.push(meta);

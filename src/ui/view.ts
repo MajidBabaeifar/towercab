@@ -242,6 +242,8 @@ export interface IntentPage {
   answers: string | null;
   runs: RunGroupView[];
   file: string | null;
+  /** The GitHub issue the intent came from (INT-29), or null. */
+  issue: string | null;
 }
 
 export interface QueueItem {

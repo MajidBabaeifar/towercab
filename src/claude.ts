@@ -99,9 +99,12 @@ const TOKENS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTER
 /** The writing guide (PIP-39), appended to every run's system file. */
 export const WRITING_GUIDE = fileURLToPath(new URL("../prompts/writing.md", import.meta.url));
 
-export type RunKind = "design" | "plan" | "worker" | "review";
+export type RunKind = "design" | "plan" | "worker" | "review" | "score";
 
-export const RUN_KINDS: RunKind[] = ["design", "plan", "worker", "review"];
+export const RUN_KINDS: RunKind[] = ["design", "plan", "worker", "review", "score"];
+
+/** The scoring run of a GitHub issue (INT-22) is short: it never gets a build's hour. */
+export const SCORE_TIMEOUT_MIN = 5;
 
 /** One `claude -p` run. */
 export interface ClaudeRun {
@@ -157,6 +160,8 @@ export const KINDS: Record<RunKind, { tools: string; allowed: string[] }> = {
     tools: "Read,Glob,Grep,Bash",
     allowed: ["Read", "Glob", "Grep", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"],
   },
+  // No tools at all (INT-22): the issue text is untrusted, so the run can only answer.
+  score: { tools: "", allowed: [] },
 };
 
 /** A run's files under `runsDir`. */
@@ -220,8 +225,8 @@ export function claudeArgv(run: ClaudeRun): string[] {
     run.model,
     "--tools",
     k.tools,
-    "--allowedTools",
-    ...k.allowed,
+    // An empty list would make `--allowedTools` swallow `--disallowedTools` as its value.
+    ...(k.allowed.length ? ["--allowedTools", ...k.allowed] : []),
     "--disallowedTools",
     ...disallowed(run.config),
     ...othersInHome(run).flatMap((p) => [
@@ -319,7 +324,11 @@ export function prepareRun(run: ClaudeRun, o: { towercabExe: string; home: strin
   writeFileSync(f.system, systemText(run.claudeMd));
   writeFileSync(f.settings, JSON.stringify(claudeSettings(run, o), null, 2));
   const minutes =
-    run.kind === "review" ? run.config.agent.reviewTimeoutMin : run.config.agent.buildTimeoutMin;
+    run.kind === "score"
+      ? SCORE_TIMEOUT_MIN
+      : run.kind === "review"
+        ? run.config.agent.reviewTimeoutMin
+        : run.config.agent.buildTimeoutMin;
   return {
     kind: run.kind,
     argv: claudeArgv(run),

@@ -547,8 +547,13 @@ export class GitStore implements IntentStore {
       if (!Number.isInteger(v) || v < 1 || v > 5) throw new RefusedError(`${key} must be an integer 1-5`);
       fm += `${key}: ${v}\n`;
     }
-    fm += `source: me\nstarted: ${localTime(now)}\n`;
-    const text = `---\n${fm}---\n\n# Intent: ${title}\n`;
+    fm += `source: ${formatValue("source", n.source ?? "me")}\n`;
+    for (const [key, value] of Object.entries(n.fields ?? {})) {
+      if (!/^[a-z_]+$/.test(key) || /[\r\n]/.test(value)) throw new RefusedError(`bad field ${key}`);
+      fm += `${key}: ${formatValue(key, value)}\n`;
+    }
+    fm += `started: ${localTime(now)}\n`;
+    const text = `---\n${fm}---\n\n# Intent: ${title}\n${n.body?.trim() ? `\n${n.body.trim()}\n` : ""}`;
     try {
       IntentFile.parse(text);
     } catch (e) {
@@ -561,7 +566,7 @@ export class GitStore implements IntentStore {
       this.writeFile(`${dir}/intent.md`, text);
       const f = IntentFile.parse(text);
       [f.id, f.slug, f.dir] = [id, slug, dir];
-      return { msg: `towercab: add ${id}`, out: f.intent };
+      return { msg: `towercab: add ${id}${n.mark ? `\n\n${n.mark}` : ""}`, out: f.intent };
     });
   }
 

@@ -103,6 +103,7 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
       },
       reviewDetails: null,
       footer: { intentUrl: cx.store.url(intent), costUsd: m.cost_usd, secs: m.agent_secs },
+      issue: { url: intent.issue, repo: repo.github },
     });
     const url = await gh(
       cx,

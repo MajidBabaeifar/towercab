@@ -516,6 +516,7 @@ added to the checks block can prove the change.
 | plan | `Read,Glob,Grep,Bash` | Read, Glob, Grep, `Bash(git log:*)`, `Bash(git diff:*)`, `Bash(git show:*)`, `Bash(ls:*)` | resume | mission |
 | worker | `Read,Edit,Write,Glob,Grep,Bash,WebFetch` | Read, Edit, Write, Glob, Grep, Bash (sandboxed), WebFetch for granted domains | resume | mission |
 | review | `Read,Glob,Grep,Bash` | Read, Glob, Grep, `Bash(git diff:*)`, `Bash(git log:*)`, `Bash(git show:*)` | new per run | review model |
+| score | none (`--tools ""`) | nothing ([INT-22](intents.md)); run outside any mission, in an empty folder | none | `agent.model` |
 
 Result: the last stdout line that is a JSON object with `type: "result"`: `is_error`, `result`,
 `session_id`, `total_cost_usd`, `duration_ms`, `structured_output`, `permission_denials`. A failed
@@ -536,6 +537,7 @@ build    {status: "done"|"blocked"|"access", pr: S?, notes: S,
 review   {approved: bool, outcomes: [{bullet, met: bool, why}], tests_weakened: {value: bool, where},
           plan_followed: {value: bool, where}, findings: [{severity, file, line: int?, what}],
           door: "one-way"|"two-way", red_lines: [{line, file}], summary: S}
+score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outcome: [S]}
 ```
 
 **Code** (`src/pipeline/`; tests `tests/pipeline/*.test.ts`)

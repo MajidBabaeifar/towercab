@@ -32,7 +32,12 @@ test("config: loads defaults", () => {
     },
     "/x/config.toml",
   );
-  expect(c.intents).toEqual({ remote: "https://github.com/me/intents.git", path: null, cutoff: 7 });
+  expect(c.intents).toEqual({
+    remote: "https://github.com/me/intents.git",
+    path: null,
+    cutoff: 7,
+    issueA: 3,
+  });
   expect(c.agent).toEqual({
     model: "opus",
     reviewModel: null,
@@ -80,7 +85,7 @@ test("config: loads defaults", () => {
     { tasks: { remote: "r", path: "~/intents", cutoff: 9 }, agent: { toolchain: ["~/bin", "/opt/x"] } },
     "/x/config.toml",
   );
-  expect(t.intents).toEqual({ remote: "r", path: join(homedir(), "intents"), cutoff: 9 });
+  expect(t.intents).toEqual({ remote: "r", path: join(homedir(), "intents"), cutoff: 9, issueA: 3 });
   expect(t.agent.toolchain).toEqual([join(homedir(), "bin"), "/opt/x"]);
   expect(parseConfig({ tasks: { remote: "old" }, intents: { remote: "new" } }, "f").intents.remote).toBe(
     "new",
@@ -103,6 +108,7 @@ test("config: bad values name the key", async () => {
   };
   const cases: [string, string][] = [
     ["[intents]\ncutoff = 0", "intents.cutoff must be an integer 1-15"],
+    ["[intents]\nissue_a = 6", "intents.issue_a must be an integer 1-5"],
     ["[agent]\nparallel = 17", "agent.parallel must be an integer 1-16"],
     ['[agent]\nbuild_timeout = "60"', "agent.build_timeout must be an integer 1-1440"],
     ["[agent]\nreview_timeout = 1441", "agent.review_timeout must be an integer 1-1440"],
