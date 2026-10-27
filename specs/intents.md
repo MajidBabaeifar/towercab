@@ -1,6 +1,6 @@
 # Intents
 
-**Status:** Live · **Prefix:** INT
+**Status:** Live: INT-1..15 · **Prefix:** INT
 
 ## Purpose
 
@@ -100,7 +100,7 @@ file alone.
 
 ### INT-7 · Intents drafted from issues
 
-Removed: not used in v1 (no drafts were ever made). Parked as intent 261026-2204-3.
+Removed: not used in v1 (no drafts were ever made). Issues now go straight onto the queue (INT-20..29).
 
 ### INT-8 · Other machine routes
 
@@ -172,10 +172,115 @@ the intent file so the history stays in the intents repo.
   every later worker prompt includes the section.
 - Verified by: `intents: answers are appended`, `intents: the Towercab note is replaced whole`
 
+### INT-20 · Which issues are read
+
+Towercab reads an open issue only if the owner wrote it or labelled it `towercab`; every other issue is ignored unread.
+
+- Watched: the open issues of every `[repos]` repo. Eligible: `author.login == [github].me`, or the
+  label `towercab` is on the issue. Issues by anyone else without that label are never read: their
+  title, body and labels reach no Claude run, no log and no file.
+- Pull requests are not issues and are skipped.
+- Verified by: `issues: the owner's issue is eligible`, `issues: a towercab label makes another author's issue eligible`, `issues: an unlabelled issue by someone else is never read`
+
+### INT-21 · The issue poll
+
+The loop looks for new eligible issues every 5 minutes.
+
+- `src/github/issues.ts` lists each repo with `gh issue list --state open --json …` as the App, from
+  the loop (`src/loop.ts`) at most once per 5 minutes of the loop's clock (also on start).
+- A GitHub failure is a `github` fault like any other ([LOOP-10](loop.md)): the poll is retried on
+  the next pass and nothing is written for the issues it did not reach. One repo failing does not
+  stop the others.
+- Verified by: `issues: the poll runs every 5 minutes`, `issues: a gh failure is a github fault`
+
+### INT-22 · Scoring an issue
+
+A short Claude run with no tools reads the issue and proposes its scores, title and sections.
+
+- Input: only the issue's title, body and labels. No tools, no repo access, no other context.
+- Output, checked against a JSON schema: `u` and `i` (1–5) each with one sentence of reasoning, a
+  clear `title`, and the `problem` and `outcome` texts (the Problem section and the Proposed outcome
+  bullets, INT-2).
+- A result that fails the schema is retried once. If the retry also fails, Towercab comments on the
+  issue asking the owner to write the intent by hand, adds the label `towercab:failed`, and does not
+  poll that issue again until the label is removed.
+- Verified by: `issues: the scoring run gets no tools`, `issues: a bad score result is retried once`, `issues: two bad results ask the owner to write it by hand`
+
+### INT-23 · Writing the intent from an issue
+
+Towercab turns a scored issue into an accepted intent in one store commit, with no pull request first.
+
+- One `Store.add` ([INT-12](#int-12--the-store)) writes `repo`, `u`, `i`, `a` (INT-24), `source: issue`,
+  `issue: <issue URL>`, `started`, then the title, `## Problem` and `## Proposed outcome`. The two
+  reasoning sentences go in the body under `## Towercab` and are not shown as a question.
+- The issue is the owner's request, so the intent is on `main` at once (INT-4 holds: the commit is
+  pushed to `main`). Lowering `u`/`i` or closing the issue (INT-28) is how the owner says no.
+- A mark trailer (`issue:<url>`, [INT-12](#int-12--the-store)) keeps a step re-run after a crash from
+  writing twice.
+- Verified by: `issues: an issue becomes one intent commit`, `issues: a crash before the comment does not write twice`
+
+### INT-24 · Autonomy of an issue intent
+
+An issue intent starts at a3, and the owner changes that with an `a1`..`a5` label on the issue.
+
+- `a` = the issue's `a1`..`a5` label if exactly one is present, else `[intents].issue_a` (default 3;
+  1–5). Several `a` labels → the lowest.
+- Because `source` is `issue`, the effective autonomy is at most 4 whatever the label says
+  ([AUT-13](autonomy.md)); a5 is kept for the owner's own intents.
+- Verified by: `issues: a3 by default`, `issues: an a-label sets the autonomy`, `issues: a5 label stays at a4`
+
+### INT-25 · Telling the issue it is queued
+
+Towercab comments once on the issue to say it is queued, and labels it so it is not read again.
+
+- The comment gives the intent's link, `u` and `i` with their reasons, and its place in the queue
+  ([PRI-4](priority.md)). Then the label `towercab:queued` is added. Written in the
+  [writing guide](../prompts/writing.md)'s style, with no internal vocabulary.
+- One comment per issue: an issue that already has `towercab:queued` is not commented again, and a
+  failed comment is retried without a second intent (INT-26).
+- Verified by: `issues: the queued comment names scores and place`, `issues: an issue is commented once`
+
+### INT-26 · One intent per issue, ever
+
+Each issue becomes at most one intent, even after that intent is done or dropped.
+
+- Dedupe on the `issue:` field across open intents, `done/` and dropped ones. A match skips the issue.
+  Removing the label `towercab:queued` does not make a new intent.
+- An unreadable intent file (INT-11) whose text holds the issue's URL still counts.
+- Verified by: `issues: a done intent blocks its issue`, `issues: a dropped intent blocks its issue`
+
+### INT-27 · The code PR closes the issue
+
+Merging the code PR closes the issue it came from.
+
+- When `issue:` points to an issue in the same repo as the code PR, the PR body (`src/pipeline/prtext.ts`)
+  has the line `Fixes #<n>`. An issue in another repo is linked by URL only, without `Fixes`.
+- Verified by: `prtext: a same-repo issue gets Fixes`, `prtext: another repo's issue is only linked`
+
+### INT-28 · Closing the issue drops the intent
+
+If the owner closes the issue before Towercab starts the intent, the intent is dropped with a note.
+
+- Each poll (INT-21) looks up the issue of every intent that has an `issue:` and no `stage` yet. If it
+  is closed, the intent is dropped ([PRI-9](priority.md)) with the note `issue closed`, and the
+  `towercab:queued` label stays.
+- Once the intent has started, closing the issue changes nothing; the code PR's `Fixes` line (INT-27)
+  or the owner decides.
+- Verified by: `issues: closing the issue drops an unstarted intent`, `issues: a started intent ignores a closed issue`
+
+### INT-29 · The issue on the intent page
+
+The UI's intent page links to the issue an intent came from.
+
+- The intent view model carries `issue` (the URL, or none); the page shows it as a link next to the
+  source.
+- Verified by: `ui: the intent page links its issue`
+
 ## Out of scope
 
 - Other stores (Notion, Jira).
-- Intents drafted from GitHub issues or monitoring alerts (parked, INT-7).
+- Intents drafted from monitoring alerts.
+- Issues by other people without the `towercab` label (INT-20).
 
 ## Decisions
 
