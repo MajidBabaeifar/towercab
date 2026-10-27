@@ -476,6 +476,16 @@ any of them.
   links both (PIP-48). The intent records each URL ([INT-5](intents.md)).
 - Verified by: `pipeline: PRs link to each other`
 
+### PIP-53 · A fresh attempt closes the old one's PRs
+
+When an intent starts over, the replaced attempt's open PRs are closed, so only the new attempt's
+PRs wait for review.
+
+- Entering `stopped` with a newer attempt (`retry_fresh`, `/retry`): its open spec, plan and code PRs
+  are closed as the App (`gh pr close --comment`, saying the intent started over); merged or closed
+  ones are left. A failure is retried next pass (LOOP-6).
+- Verified by: `pipeline: a fresh attempt closes the old PRs`
+
 **Claude runs** (`src/claude.ts`)
 
 | Kind | `--tools` | Allowed | Session | Model |

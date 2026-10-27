@@ -1,6 +1,6 @@
 // The `pick` stage (LOOP-5, LOOP-8): fetch Towercab's clone, load the repo files, make the checkout.
 
-import { ensureCheckout, ensureClone, git } from "../checkout.ts";
+import { ensureClone, freshCheckout, git } from "../checkout.ts";
 import { type Ctx, EnvError, type Handler, type Progress } from "../handlers.ts";
 import { ok } from "../machine.ts";
 import type { Mission } from "../mission.ts";
@@ -23,7 +23,7 @@ export const pickHandler: Handler = {
       throw e;
     }
     const base = (await git(cx.tools, clone, ["rev-parse", `refs/remotes/origin/${repo.base}`])).trim();
-    await ensureCheckout(cx.tools, clone, cx.checkout(m), repo.base, m.branch);
+    await freshCheckout(cx.tools, clone, cx.checkout(m), repo.base, m.branch);
     return { done: ok({ set: { base_sha: base } }) };
   },
   async finish() {

@@ -399,7 +399,7 @@ export function startUi(o: UiOptions): UiServer {
     const addr = server.address();
     bound = typeof addr === "object" && addr ? addr.port : o.port;
     logged.clear();
-    o.log(`ui: http://localhost:${bound}/`);
+    o.log(`http://localhost:${bound}/`);
     resolveReady(bound);
   });
   server.on("error", (e: NodeJS.ErrnoException) => {

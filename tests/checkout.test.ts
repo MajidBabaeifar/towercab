@@ -1,7 +1,7 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { cacheEnv, createCheckout, ensureCheckout, git, gitSane, refreshBase } from "../src/checkout.ts";
+import { cacheEnv, createCheckout, freshCheckout, git, gitSane, refreshBase } from "../src/checkout.ts";
 import { clonePath } from "../src/config.ts";
 import { realTools } from "../src/tools.ts";
 import { bareRepo, pushFiles, tempDir, testConfig, git as tgit } from "./helpers/world.ts";
@@ -18,16 +18,28 @@ test("checkout: kept across steps", async () => {
   const bare = bareRepo({ "README.md": "hi\n" });
   const clone = await cloneOf(bare);
   const co = join(tempDir(), "work", "261026-1000-1");
-  expect(await ensureCheckout(tools, clone, co, "main", "towercab/261026-1000-x")).toBe(true);
+  await freshCheckout(tools, clone, co, "main", "towercab/261026-1000-x");
   writeFileSync(join(co, "new.txt"), "work in progress\n");
-  expect(await ensureCheckout(tools, clone, co, "main", "towercab/261026-1000-x")).toBe(false);
-  expect(existsSync(join(co, "new.txt"))).toBe(true);
   expect((await git(tools, co, ["rev-parse", "--abbrev-ref", "HEAD"])).trim()).toBe("towercab/261026-1000-x");
   // Base moves on the remote: refreshing brings it in by path.
   pushFiles(bare, { "b.txt": "b\n" });
   await git(tools, clone, ["fetch", "-q", "origin"]);
   await refreshBase(tools, clone, co, "main");
   expect(await git(tools, co, ["show", "refs/remotes/origin/main:b.txt"])).toBe("b\n");
+});
+
+test("checkout: pick replaces a leftover", async () => {
+  const bare = bareRepo({ "README.md": "old\n" });
+  const clone = await cloneOf(bare);
+  const co = join(tempDir(), "work", "261026-1000-1");
+  // An older Towercab left a checkout with the same <id>-<attempt>, on a base since moved.
+  await createCheckout(tools, clone, co, "main", "towercab/261026-1000-x");
+  writeFileSync(join(co, "stale.txt"), "v1's work\n");
+  pushFiles(bare, { "README.md": "new\n" });
+  await git(tools, clone, ["fetch", "-q", "origin"]);
+  await freshCheckout(tools, clone, co, "main", "towercab/261026-1000-x");
+  expect(existsSync(join(co, "stale.txt"))).toBe(false);
+  expect(await git(tools, co, ["show", "HEAD:README.md"])).toBe("new\n");
 });
 
 test("checkout: has no remote", async () => {

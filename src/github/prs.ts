@@ -162,3 +162,13 @@ function idOf(v: unknown): string {
 function login(v: unknown): string {
   return isObj(v) ? str(v.login) : "";
 }
+
+/** Close an open PR as the App with a comment saying why (PIP-53); a closed or merged one is left. */
+export async function closeIfOpen(gh: GitHub, repo: string, n: number, why: string): Promise<void> {
+  const view = check(
+    await gh.gh(repo, ["pr", "view", String(n), "-R", repo, "--json", "state"]),
+    "gh pr view",
+  );
+  if ((JSON.parse(view) as { state: string }).state !== "OPEN") return;
+  check(await gh.gh(repo, ["pr", "close", String(n), "-R", repo, "--comment", why]), "gh pr close");
+}

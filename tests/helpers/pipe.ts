@@ -655,7 +655,18 @@ export class Pipe {
         return okResult();
       }
       if (a === "pr" && (b === "ready" || b === "close")) {
-        if (p && b === "close") p.state = "CLOSED";
+        if (p && b === "close") {
+          p.state = "CLOSED";
+          const why = args[args.indexOf("--comment") + 1];
+          if (args.includes("--comment") && why) {
+            p.comments.push({
+              id: `c${this.nextComment++}`,
+              author: "towercab[bot]",
+              body: why,
+              at: this.at(),
+            });
+          }
+        }
         return okResult();
       }
       if (a === "api") {

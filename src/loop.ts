@@ -9,7 +9,7 @@ import type { Config } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
 import { fixFor, Health } from "./faults.ts";
 import { approveRequested, intentEvents, prEvents, releaseRequested } from "./github/events.ts";
-import { type PrState, readPr } from "./github/prs.ts";
+import { closeIfOpen, type PrState, readPr } from "./github/prs.ts";
 import { type ChildEnd, type Clock, type Ctx, EnvError, type GitHub, type Handlers } from "./handlers.ts";
 import type { Home } from "./home.ts";
 import type { Intent, IntentStore, Listing } from "./intents/types.ts";
@@ -380,10 +380,23 @@ export class Loop {
         );
       }
     }
+    if (replaced) await this.closeReplaced(m);
     if (finished(m.stage)) removeCheckout(this.d.home.abs(m.checkout));
     const set: Record<string, SqlValue> = { step: "" };
     if (m.stage === "merge" && paused(db)) set.held = 1;
     update(db, m.id, set, this.now);
+  }
+
+  /** PIP-53: a replaced attempt's open PRs are closed, so only the new attempt's wait for review. */
+  private async closeReplaced(m: Mission): Promise<void> {
+    const repo = this.d.config.repos.get(m.repo);
+    const why = `Towercab started this intent over (attempt ${m.attempt + 1}), so this PR is closed. The new attempt opens its own.`;
+    const prs: [string | null | undefined, number | null][] = [
+      [repo?.github, m.spec_pr],
+      [this.d.store.github(), m.plan_pr],
+      [repo?.github, m.pr],
+    ];
+    for (const [github, n] of prs) if (github && n) await closeIfOpen(this.d.github, github, n, why);
   }
 
   private enforceTimeouts(): void {
