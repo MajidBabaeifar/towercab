@@ -1,6 +1,7 @@
-// The overview (UI-57 to UI-61): what needs me, what is stuck, what is moving, what it costs.
+// The overview (UI-57 to UI-61, UI-78): what needs me, what is stuck, what is moving, what it costs.
 
 import type { Overview as Data } from "../../../src/ui/view.ts";
+import { Airspace } from "../Airspace.tsx";
 import { Empty, NeedsCard, ProblemItem, Section, SpendCard, UpNextList, WorkRow } from "../components.tsx";
 import { Check, ListIcon, Moon } from "../icons.tsx";
 import { Link } from "../router.tsx";
@@ -11,7 +12,7 @@ function headline(n: number): string {
 }
 
 export function OverviewPage({ data }: { data: Data }) {
-  const { top, needs, problems, working, upNext, spend } = data;
+  const { top, needs, problems, working, upNext, spend, airspace } = data;
   const oldest = needs.find((c) => c.since)?.since;
   return (
     <main class="page overview" id="main">
@@ -43,6 +44,7 @@ export function OverviewPage({ data }: { data: Data }) {
           ) : null}
         </ul>
       </section>
+      <Airspace data={airspace} />
       <div class="cols">
         <div class="col-main">
           {needs.length ? (

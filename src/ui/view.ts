@@ -168,6 +168,48 @@ export interface SpendView {
   days: SpendDay[];
 }
 
+/** UI-78: the airspace's stations, in line order. */
+export type StationKey =
+  | "parked"
+  | "queue"
+  | "gate"
+  | "spec"
+  | "spec-review"
+  | "plan"
+  | "plan-review"
+  | "code"
+  | "ci"
+  | "code-review"
+  | "landed";
+
+/** UI-78: one open intent on the airspace line. */
+export interface Plane {
+  intent: string;
+  title: string;
+  repo: string;
+  state: StateView;
+  station: StationKey;
+  /** Two short lines for its card (UI-80). */
+  lines: [string, string];
+  phases: Phase[];
+}
+
+export interface AirspaceView {
+  planes: Plane[];
+  landed: {
+    count: number;
+    cost: string;
+    agentTime: string;
+    /** Newest first. */
+    recent: { intent: string; title: string; repo: string }[];
+  };
+  counts: { parked: number; queued: number; flying: number; needs: number; landed: number };
+  /** "6 in flight · 3 need you · 1 landed today". */
+  countsText: string;
+  /** One sentence for screen readers. */
+  summary: string;
+}
+
 export interface Overview {
   version: string;
   top: TopBar;
@@ -177,6 +219,7 @@ export interface Overview {
   queued: Row[];
   upNext: UpNextView[];
   spend: SpendView;
+  airspace: AirspaceView;
 }
 
 export type PrState = "open" | "merged" | "closed" | "not needed" | "not yet";

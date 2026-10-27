@@ -225,6 +225,7 @@ export const IDS = {
   done2: "261024-1405-1",
   done3: "261021-1600-1",
   done4: "261020-0830-1",
+  landed: "261026-0640-1",
   dropped: "261022-1010-1",
 } as const;
 
@@ -440,6 +441,17 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
   ];
   const iso = (t: number) => new Date(t * 1000).toISOString();
   store.done = [
+    makeIntent({
+      id: IDS.landed,
+      title: "Readable CI job names",
+      repo: "blog",
+      done: true,
+      stage: "done",
+      cost: 1.9,
+      agentTime: 1500,
+      attempts: 1,
+      finished: iso(now - 5 * HOUR),
+    }),
     makeIntent({
       id: IDS.done2,
       title: "Paginate the orders API",

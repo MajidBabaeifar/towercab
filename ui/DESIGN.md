@@ -19,8 +19,9 @@ you." Everything else is one click away (the intent page), never on the overview
 ## Hierarchy per page
 
 - **Top bar** (every page): logo, health pill, counts, spend today, Pause/Resume. Nav tabs below.
-- **Overview**: headline and stat pills → needs-you cards → problems → working → (side) up next
-  (the queue, each with why it waits), spend, version. Phone: one column in that order.
+- **Overview**: headline and stat pills → airspace strip (full width, hideable) → needs-you cards →
+  problems → working → (side) up next (the queue, each with why it waits), spend, version. Phone:
+  one column in that order, the strip running top to bottom.
 - **Intent**: title + state sentence → the three PRs → needs-you card (when waiting) → timeline and
   time per step → cost per attempt → the intent's own text → run files.
 - **Queue**: one lane per repo: running, waiting (numbered, with reason), parked, recently done.
@@ -56,8 +57,41 @@ Reviewing, Deciding, Merging, Waiting for your code review, Waiting for your ans
   desktop), 12 px radius, 1 px border, no heavy shadows.
 - Content max 1120 px; overview is 2 columns (main 1fr, side 320 px) above 960 px, else one.
 - Colours as CSS variables, light and dark (`prefers-color-scheme`), text ≥ 4.5:1, chips ≥ 4.5:1.
-- Focus: 2 px accent ring with offset on every control. Motion: only the spinner, off with
-  `prefers-reduced-motion`.
+- Focus: 2 px accent ring with offset on every control. Motion: only the spinner and inside the
+  airspace strip, all of it off with `prefers-reduced-motion`.
+
+## Airspace
+
+The overview's one playful element: a metro line where every open intent is a tiny plane at its
+station, so the whole situation reads in one glance. It is a glance, not a list: the cards and rows
+below still carry the detail.
+
+```
+twr://airspace                                     6 in flight · 3 need you · 1 landed today
+                       ✈        ✈·       ✈!      ✈·       ✈        ⟲        ✈·      ✈✈
+  ✈ ✈ ✈ ✈ ─ ✈next ── □ ─ ◇ ─ □ ─ ◇ ─ □ ─ ci ─ ◇ ─ ■
+ ⋯✈⋯✈⋯     00 gate   01 spec  you  02 plan  you  03 code  ci   you   landed
+```
+
+| State         | Motion (in place)              | Mark     |
+| ------------- | ------------------------------ | -------- |
+| Working       | bobs 2 px, square ping         |          |
+| Waiting on CI | loops around the `ci` station  |          |
+| Needs you     | beacon blinks above it         | beacon   |
+| Cooling down  | still                          | `*`      |
+| Stalled       | jitters 1 px                   | `!`      |
+| Up next       | label blinks                   | `next`   |
+| Queued        | still                          |          |
+| Parked        | dim, a `z` drifts up           | `z`      |
+| Landed        | still, stacked in the block    |          |
+
+- Look: minimal futurism. Faint dot grid, hairline track, mono labels with numbered stops, light
+  packets flowing gate → landed. No glow, gradients, blur or shadows. Own tokens (`--air-*`) for a
+  near-white panel in light and a near-black one in dark; planes use the state colours.
+- Card: under the plane, corner brackets and a stem in the state colour, one scanline as it opens;
+  ID · repo · state, title, two brief lines, spec · plan · code, "Open intent ›".
+- Drawn at real pixels (11 px mono labels at any width); 190 px tall; below 560 px vertical.
+- "Hide airspace" collapses it to one line; remembered per browser.
 
 ## Words
 

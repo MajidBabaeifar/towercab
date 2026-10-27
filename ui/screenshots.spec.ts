@@ -1,4 +1,4 @@
-// UI-55, UI-67, UI-68, UI-69: every page in light, dark and on a phone, saved for review, with its key
+// UI-55, UI-67, UI-68, UI-69, UI-79 to UI-81: every page in light, dark and on a phone, saved for review, with its key
 // content checked; the page loads nothing from outside and keeps typed text across an update.
 
 import { mkdirSync } from "node:fs";
@@ -19,6 +19,7 @@ const PAGES = [
       "Problems",
       "Working",
       "Up next",
+      "Airspace",
     ],
   },
   {
@@ -143,4 +144,92 @@ test("ui: empty page says so", async ({ browser }) => {
     await server.stop();
     fixture.cleanup();
   }
+});
+
+// The hit area: the plane itself loops, so it is never still enough to point at.
+const CI_PLANE = '.air-target[aria-label^="Faster checkout page"] .air-hit';
+
+test("ui: airspace card opens under a plane", async ({ browser }) => {
+  for (const scheme of ["light", "dark"] as const) {
+    const ctx = await browser.newContext({ colorScheme: scheme, viewport: { width: 1280, height: 900 } });
+    const page = await ctx.newPage();
+    await page.goto("/");
+    await settle(page);
+    const plane = page.locator(CI_PLANE);
+    await plane.hover();
+    const card = page.locator(".air-card");
+    await expect(card).toBeVisible();
+    await expect(card).toContainText("Faster checkout page");
+    await expect(card).toContainText("waiting on ci");
+    await expect(card).toContainText("Waiting for CI");
+    const open = card.getByRole("link", { name: "Open intent ›" });
+    await expect(open).toHaveAttribute("href", "/i/261026-1105-1");
+    const p = (await plane.boundingBox())!;
+    const c = (await card.boundingBox())!;
+    expect(c.y).toBeGreaterThan(p.y + p.height);
+    const air = (await page.locator(".air").boundingBox())!;
+    await page.screenshot({
+      path: join(SHOTS, `airspace-card-${scheme}.png`),
+      clip: { x: air.x - 8, y: air.y - 8, width: air.width + 16, height: air.height + 200 },
+    });
+    // Moving onto the card keeps it open; its link opens the intent.
+    await card.hover();
+    await page.waitForTimeout(400);
+    await expect(card).toBeVisible();
+    await open.click();
+    await expect(page).toHaveURL(/\/i\/261026-1105-1$/);
+    await ctx.close();
+  }
+  // Keyboard: focus opens the card, Escape closes it.
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto("/");
+  await settle(page);
+  await page.locator(CI_PLANE).locator("xpath=..").focus();
+  await expect(page.locator(".air-card")).toContainText("Faster checkout page");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".air-card")).toHaveCount(0);
+  // The landed block sums today.
+  await page.locator('.air-target[aria-label$="landed today"] .air-hit').hover();
+  await expect(page.locator(".air-card")).toContainText("landed today");
+  await ctx.close();
+});
+
+test("ui: airspace can be hidden", async ({ page }) => {
+  await page.goto("/");
+  await settle(page);
+  await expect(page.locator(".air")).toBeVisible();
+  await page.getByRole("button", { name: "Hide airspace" }).click();
+  await expect(page.locator(".air")).toHaveCount(0);
+  await expect(page.locator(".air-collapsed")).toContainText("in flight");
+  await page.reload();
+  await settle(page);
+  await expect(page.locator(".air")).toHaveCount(0);
+  await page.getByRole("button", { name: "Show airspace" }).click();
+  await expect(page.locator(".air")).toBeVisible();
+  await page.reload();
+  await settle(page);
+  await expect(page.locator(".air")).toBeVisible();
+});
+
+test("ui: airspace motion stops with reduced motion", async ({ browser }) => {
+  const animated = async (reducedMotion: "reduce" | "no-preference") => {
+    const ctx = await browser.newContext({ reducedMotion });
+    const page = await ctx.newPage();
+    await page.goto("/");
+    await settle(page);
+    await page.locator(CI_PLANE).hover();
+    await expect(page.locator(".air-card")).toBeVisible();
+    const found = await page.$$eval(".air-section *", (els) =>
+      els.flatMap((e) => {
+        const s = getComputedStyle(e);
+        const moving = s.animationName !== "none" || Number.parseFloat(s.transitionDuration) > 0;
+        return moving ? [e.getAttribute("class") ?? e.tagName] : [];
+      }),
+    );
+    await ctx.close();
+    return found;
+  };
+  expect(await animated("no-preference")).not.toEqual([]);
+  expect(await animated("reduce")).toEqual([]);
 });
