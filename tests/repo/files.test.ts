@@ -363,12 +363,23 @@ test("repo: Towercab's own files parse", () => {
   const read = (f: string) => readFileSync(f, "utf8");
   const own = parseRepoFiles(read("CLAUDE.md"), read("REVIEW.md"), read("TOWERCAB.md"));
   expect(own.claudeMd.split("\n").length).toBeLessThanOrEqual(61);
-  expect(own.verifying.setup).toEqual(["npm ci"]);
+  expect(own.verifying.setup).toEqual(["npm ci", "npx playwright install chromium"]);
   expect(own.verifying.checks).toEqual(["npm run check"]);
   expect(own.verifying.fast).toEqual(["npm run lint", "npm run typecheck", "npx vitest run {tests}"]);
   expect(own.review.passes.map((p) => p.name)).toEqual(["Bugs", "Security", "Compliance"]);
   expect(own.review.redLines.some((l) => l.includes("src/machine.ts"))).toBe(true);
   expect(own.towercab).toEqual({ maxAutonomy: 5, protected: ["src/machine.ts"], tests: ["tests/**"] });
+});
+
+test("repo: Towercab's setup installs the Playwright browser", () => {
+  const own = parseRepoFiles(
+    readFileSync("CLAUDE.md", "utf8"),
+    readFileSync("REVIEW.md", "utf8"),
+    readFileSync("TOWERCAB.md", "utf8"),
+  );
+  expect(own.verifying.setup.at(-1)).toBe("npx playwright install chromium");
+  expect(own.verifying.screenshots).toBe("npm run test:ui");
+  expect(own.claudeMd.split("\n").length).toBeLessThanOrEqual(61);
 });
 
 test("repo: CI is read from the base branch", async () => {
