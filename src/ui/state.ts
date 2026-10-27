@@ -1,4 +1,4 @@
-// What the page shows, derived on the server (UI-56 to UI-64, UI-70, UI-71; MET-29, MET-30). Pure
+// What the page shows, derived on the server (UI-56 to UI-64, UI-70, UI-71, UI-78; MET-29, MET-30). Pure
 // functions over the database, the intent listing and what the loop knows; I/O only in the loaders.
 
 import { createHash } from "node:crypto";
@@ -16,6 +16,7 @@ import type {
   ActivityItem,
   ActivityKind,
   ActivityPage,
+  AirspaceView,
   AttemptView,
   Card,
   CardKind,
@@ -23,6 +24,7 @@ import type {
   Lane,
   Overview,
   Phase,
+  Plane,
   PrLink,
   ProblemView,
   PrState,
@@ -34,6 +36,7 @@ import type {
   RunGroupView,
   SpendView,
   StateView,
+  StationKey,
   StepTimeView,
   TimelineItem,
   TopBar,
@@ -558,6 +561,124 @@ function queuedRow(s: Snap, u: UpNext): Row {
   };
 }
 
+/** UI-78: where a mission's plane sits on the airspace line. */
+export function stationOf(m: Pick<Mission, "stage" | "from_stage">): StationKey {
+  if (m.stage === "approval:spec") return "spec-review";
+  if (m.stage === "approval:plan") return "plan-review";
+  if (m.stage === "approval:merge") return "code-review";
+  if (m.stage === "ci") return "ci";
+  const p = phaseOf(m.stage, m.from_stage);
+  return p === "spec" || p === "plan" ? p : "code";
+}
+
+const STATIONS: StationKey[] = [
+  "parked",
+  "queue",
+  "gate",
+  "spec",
+  "spec-review",
+  "plan",
+  "plan-review",
+  "code",
+  "ci",
+  "code-review",
+  "landed",
+];
+
+const NOT_STARTED: Phase[] = [
+  { label: "Spec", status: "todo" },
+  { label: "Plan", status: "todo" },
+  { label: "Code", status: "todo" },
+];
+
+/** UI-78: every open intent as a plane at its station, and what landed today. */
+function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): AirspaceView {
+  const planes: Plane[] = [];
+  const seen = new Set<string>();
+  for (const m of s.missions) {
+    const row = missionRow(src, s, m);
+    const waited = duration(s.now - (s.entered.get(m.id) ?? m.created));
+    planes.push({
+      intent: m.intent,
+      title: row.title,
+      repo: m.repo,
+      state: row.state,
+      station: stationOf(m),
+      lines: isWait(m.stage)
+        ? [askOf(m.waiting), `Waiting ${waited} · ${row.cost}`]
+        : [`${row.step} · ${row.inStep}`, `${row.cost} · ${row.model}`],
+      phases: row.phases,
+    });
+    seen.add(m.intent);
+  }
+  for (const i of s.listing?.open ?? []) {
+    if (!i.waiting || seen.has(i.id)) continue;
+    planes.push({
+      intent: i.id,
+      title: i.title,
+      repo: i.repo,
+      state: state("needs", "Blocked"),
+      station: "gate",
+      lines: [askOf(i.waiting), "Not started"],
+      phases: NOT_STARTED,
+    });
+    seen.add(i.id);
+  }
+  let place = 0;
+  for (const u of list) {
+    if (seen.has(u.intent)) continue;
+    const i = s.intents.get(u.intent);
+    const parked = u.skip?.kind === "parked";
+    const why = skipWords(u.skip, (id) => titleOf(s, id), s.now);
+    if (!parked) place++;
+    planes.push({
+      intent: u.intent,
+      title: i?.title ?? u.intent,
+      repo: i?.repo ?? "",
+      state: parked ? state("parked") : skipState(u.skip, false),
+      station: parked ? "parked" : u.skip ? "queue" : "gate",
+      lines: parked
+        ? [`Priority ${u.priority} · below the cutoff`, why ?? ""]
+        : [`#${place} in line · priority ${u.priority}`, why ?? "Starts when a slot is free."],
+      phases: NOT_STARTED,
+    });
+  }
+  planes.sort((a, b) => STATIONS.indexOf(a.station) - STATIONS.indexOf(b.station));
+
+  const today = localDate(s.now);
+  const dropped = s.listing?.droppedIds ?? new Set<string>();
+  const finishedAt = (i: Intent) => (i.finished ? Date.parse(i.finished) / 1000 : Number.NaN);
+  const landed = (s.listing?.done ?? [])
+    .filter((i) => i.stage === "done" && !dropped.has(i.id))
+    .filter((i) => Number.isFinite(finishedAt(i)) && localDate(finishedAt(i)) === today)
+    .sort((a, b) => finishedAt(b) - finishedAt(a));
+
+  const count = (k: StationKey[]) =>
+    planes.filter((p) => k.includes(p.station) && p.state.key !== "needs").length;
+  const counts = {
+    parked: count(["parked"]),
+    queued: count(["queue", "gate"]),
+    flying: s.missions.filter((m) => !isWait(m.stage)).length,
+    needs,
+    landed: landed.length,
+  };
+  const needWord = `need${needs === 1 ? "s" : ""} you`;
+  return {
+    planes,
+    landed: {
+      count: landed.length,
+      cost: money(landed.reduce((t, i) => t + (i.cost ?? 0), 0)),
+      agentTime: duration(landed.reduce((t, i) => t + (i.agentTime ?? 0), 0)),
+      recent: landed.slice(0, 3).map((i) => ({ intent: i.id, title: i.title, repo: i.repo })),
+    },
+    counts,
+    countsText: `${counts.flying} in flight · ${needs} ${needWord} · ${counts.landed} landed today`,
+    summary:
+      `Airspace: ${counts.parked} parked, ${counts.queued} queued, ${counts.flying} in flight, ` +
+      `${needs} ${needWord}, ${counts.landed} landed today.`,
+  };
+}
+
 const median = (xs: number[]) => {
   const s = [...xs].sort((a, b) => a - b);
   const mid = Math.floor(s.length / 2);
@@ -873,6 +994,7 @@ export async function overview(src: UiSources): Promise<Overview> {
     queued,
     upNext,
     spend: spendView(sp, budget),
+    airspace: airspaceOf(src, s, list, needs.length),
   };
   return { version: versionOf(body, `${dbMark(src.db)}:${s.listing?.head ?? ""}`), ...body };
 }

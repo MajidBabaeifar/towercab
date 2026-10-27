@@ -193,6 +193,7 @@ test("ui: API shapes", async () => {
   };
   const state = await json("/api/state");
   expect(Object.keys(state.body).sort()).toEqual([
+    "airspace",
     "needs",
     "problems",
     "queued",

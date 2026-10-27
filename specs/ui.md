@@ -214,6 +214,84 @@ Every text on the page is plain language a person can act on.
   durations as `1 h 05 min`. Errors say what failed and what to do.
 - Verified by: `ui: times, costs and durations`
 
+### UI-72 to UI-77
+
+Reserved for the stage map on the intent page (intent 261027-1147).
+
+### UI-78 · Airspace
+
+The overview shows every open intent as a tiny plane on one metro line, at the station it is at now,
+so the whole situation fits in one glance.
+
+- A full-width strip under the headline, above the cards. Stations, left to right: parked (a dashed
+  siding), queue, `00 gate`, `01 spec`, `you` (spec review), `02 plan`, `you` (plan review),
+  `03 code`, `ci`, `you` (code review), `landed` (today). Review stations are diamonds, the others
+  squares. A header line reads `twr://airspace` and the counts: in flight, need you, landed today.
+- Where a plane sits: a wait for a review at its review station; a question or block at its phase's
+  station; CI at `ci`; any other step at its phase's station (spec, plan or code); an intent that
+  waits on the owner without a mission at the gate; the picker's list (UI-61) without a skip at the
+  gate, with a skip in the queue in pick order, parked on the siding; done intents finished today
+  (local date) in the landed block. Dropped intents aren't shown.
+- The server builds it once (`airspace` in `GET /api/state`, `src/ui/state.ts`): each plane's
+  intent, title, repo, state (UI-56), station, two brief lines and phases; the landed summary
+  (count, cost, agent time, the latest titles) and the counts.
+- Verified by: `ui: airspace places each intent at its station`
+
+### UI-79 · Motion in place
+
+Planes that are active move a little where they stand, each state in its own way, and every motion
+stops for people who ask for less motion.
+
+- Colour is the state's colour (UI-56); the motion tells states apart without it: Working bobs 2 px
+  with a square ping; Waiting on CI loops around its station; Needs you blinks a beacon; Cooling
+  down is still with a frost mark `*`; Stalled jitters 1 px with `!`; Up next blinks `next`; Queued
+  stands still; Parked is dim and drifts a `z`. Light packets flow along the line from gate to
+  landed. A plane that changes station glides there (0.6 s) on the next update.
+- CSS animations on `transform` and `opacity` only, no script loop. With `prefers-reduced-motion`
+  nothing animates and moves are instant. Nothing flashes more than 3 times a second.
+- Verified by: `ui: airspace motion stops with reduced motion`
+
+### UI-80 · Plane card
+
+Pointing at a plane opens a small radar-style card under it with a short brief and a way into the
+intent.
+
+- Hover, keyboard focus or a tap opens it: ID and repo, the state, the title, two brief lines (step
+  and time in step, then cost and model; or the ask and how long it has waited; or the place in
+  line, or why it's parked), a spec · plan · code strip, and "Open intent ›" to `/i/<id>`. Corner
+  brackets and a stem in the state's colour; one scanline sweep as it unfolds.
+- The landed block's card sums today (count, cost, agent time, latest titles) and links to
+  `/activity?since=24h`; a `+n` marker's card lists the planes it hides, each a link.
+- The card stays open while the pointer is on the plane or the card, closes 0.25 s after it leaves
+  both or on Escape, never runs past the strip's sides, and opens upward when it would run off the
+  bottom of the screen. A click on a plane whose card is open goes to the intent; on touch the first
+  tap opens the card.
+- Verified by: `ui: airspace card opens under a plane`
+
+### UI-81 · Show or hide
+
+The owner can hide the strip, and the page remembers it.
+
+- "Hide airspace" in the strip's header collapses it to the header and the counts in one line;
+  "Show airspace" brings it back. Kept in this browser (`localStorage` key `towercab.airspace`),
+  shown by default; survives reloads and live updates.
+- Verified by: `ui: airspace can be hidden`
+
+### UI-82 · Fits the page
+
+The strip reads well in light and dark, on a wide screen and on a phone, and with crowded stations.
+
+- Its own colour tokens for light (a near-white panel) and dark (a near-black panel); minimal
+  futuristic look: faint dot grid, hairline track, mono labels; no glow, gradient or shadow.
+- Drawn at the strip's real width (1 SVG unit = 1 px, so text stays 11 px): 190 px tall, steps
+  spaced evenly. Below 560 px wide it runs top to bottom with planes pointing down.
+- A step station shows up to 3 planes (2 and `+n` beyond), the queue and the siding up to 4 and 3,
+  the landed block up to 6 (more only in its count).
+- Planes are links named "title, state, place"; the strip says its counts in one sentence for
+  screen readers.
+- Verified by: `ui: airspace caps crowded stations`, `ui: airspace runs top to bottom on a phone`,
+  `ui: screenshots light, dark and mobile`
+
 ## Out of scope
 
 - Editing intents in the page: the owner edits them in the intents repo or with `/intent`.

@@ -421,3 +421,50 @@ test("ui: a fresh database has an overview", async () => {
   const o = await overview(f.sources);
   expect(o.version).toMatch(/^[0-9a-f]{12}$/);
 });
+
+test("ui: airspace places each intent at its station", async () => {
+  const f = fixture();
+  const a = (await overview(f.sources)).airspace;
+  const at = Object.fromEntries(a.planes.map((p) => [p.intent, [p.station, p.state.label]]));
+  expect(at).toEqual({
+    [IDS.parked2]: ["parked", "Parked"],
+    [IDS.parked1]: ["parked", "Parked"],
+    [IDS.queued]: ["queue", "Queued"],
+    [IDS.queued2]: ["queue", "Queued"],
+    [IDS.crm]: ["gate", "Needs you"],
+    [IDS.upnext]: ["gate", "Up next"],
+    [IDS.plan]: ["plan-review", "Needs you"],
+    [IDS.question]: ["code", "Needs you"],
+    [IDS.building]: ["code", "Working"],
+    [IDS.cooling]: ["code", "Cooling down"],
+    [IDS.stalled]: ["code", "Stalled"],
+    [IDS.ci]: ["ci", "Waiting on CI"],
+    [IDS.code]: ["code-review", "Needs you"],
+  });
+  // In line order, so Tab follows the line.
+  expect(a.planes[0]!.station).toBe("parked");
+  expect(a.planes.at(-1)!.station).toBe("code-review");
+  const ci = a.planes.find((p) => p.intent === IDS.ci)!;
+  expect(ci.lines).toEqual(["Waiting for CI · 4 min", "$1.36 · Opus"]);
+  expect(a.planes.find((p) => p.intent === IDS.queued)!.lines).toEqual([
+    "#2 in line · priority 10",
+    "Waits behind “Export invoices as CSV”.",
+  ]);
+  // Done today only: not yesterday's, not the dropped one.
+  expect(a.landed).toEqual({
+    count: 2,
+    cost: "$6.70",
+    agentTime: "1 h 13 min",
+    recent: [
+      { intent: IDS.landed, title: "Readable CI job names", repo: "blog" },
+      { intent: IDS.done2, title: "Paginate the orders API", repo: "api" },
+    ],
+  });
+  expect(a.counts).toEqual({ parked: 2, queued: 3, flying: 4, needs: 4, landed: 2 });
+  expect(a.countsText).toBe("4 in flight · 4 need you · 2 landed today");
+  expect(a.summary).toBe("Airspace: 2 parked, 3 queued, 4 in flight, 4 need you, 2 landed today.");
+
+  const empty = (await overview(fixture({ empty: true }).sources)).airspace;
+  expect(empty.planes).toEqual([]);
+  expect(empty.landed.count).toBe(0);
+});
