@@ -150,6 +150,8 @@ export interface UpNextView {
   state: StateView;
   /** Why it doesn't start now, in words; null when it is next. */
   reason: string | null;
+  /** The "Start now" button is offered (UI-101). */
+  canStart: boolean;
 }
 
 export interface SpendDay {
@@ -192,6 +194,8 @@ export interface Plane {
   /** Two short lines for its card (UI-80). */
   lines: [string, string];
   phases: Phase[];
+  /** The "Start now" button is offered (UI-101). */
+  canStart: boolean;
 }
 
 export interface AirspaceView {
@@ -274,6 +278,8 @@ export interface IntentPage {
   repo: string;
   /** "Priority 11 · urgency 3, importance 4". */
   scores: string;
+  /** The "Start now" button is offered (UI-101). */
+  canStart: boolean;
   state: StateView;
   sentence: string;
   prs: PrView[];
@@ -302,6 +308,8 @@ export interface QueueItem {
 export interface Lane {
   repo: string;
   github: string;
+  /** "1 of 3 ahead": intents before build against `[repos.<r>].ahead` (UI-100). */
+  ahead: string;
   running: Row[];
   waiting: QueueItem[];
   parked: QueueItem[];

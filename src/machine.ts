@@ -169,6 +169,10 @@ export const WAITS: Record<string, { stage: WaitStage; ask: string }> = {
   "no result": { stage: "blocked", ask: "The worker stopped before finishing." },
   "no changes": { stage: "blocked", ask: "The worker made no changes." },
   "crashed at": { stage: "blocked", ask: "Towercab crashed three times at this step." },
+  "spec conflict": {
+    stage: "blocked",
+    ask: "The spec PR conflicts with main and Towercab could not resolve it.",
+  },
   "merge failed": { stage: "blocked", ask: "GitHub refused the merge." },
   "add CLAUDE.md verifying block": {
     stage: "blocked",

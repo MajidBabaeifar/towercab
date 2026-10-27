@@ -42,6 +42,7 @@ export const COMMANDS = [
   "answer",
   "retry",
   "drop",
+  "start",
   "approve",
   "pause",
   "resume",
@@ -60,6 +61,7 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   answer <id> <text>              answer a question (when there is no PR to reply on)
   approve <id>                    merge the PR the intent waits on, as you
   retry <id> | drop <id>
+  start <id>                      begin that intent's design now, even when the repo is full
   pause | resume
   ui [--no-open]                  open the web page
   doctor [--quick]                what is missing
@@ -324,6 +326,10 @@ async function run(
         now: Date.now() / 1000,
         problems: JSON.parse(w.db.meta("health") ?? "[]"),
         next: next.split("\n")[0]!,
+        waits: next
+          .split("\n")
+          .filter((l) => / intents ahead \(start /.test(l))
+          .map((l) => l.replace(/^skipped: /, "")),
         prLink: (m) => dummy.subject(m).link,
         queued: dummy.queued(),
       });
@@ -346,6 +352,9 @@ async function run(
     case "drop":
       need(1, "<id>");
       return submit(w, "drop", args[0]);
+    case "start":
+      need(1, "<id>");
+      return submit(w, "start", args[0]);
     case "pause":
       return submit(w, "pause");
     case "resume":

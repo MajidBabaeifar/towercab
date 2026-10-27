@@ -73,7 +73,15 @@ test("config: loads defaults", () => {
     "developer.mozilla.org",
   ]);
   const web = c.repos.get("web")!;
-  expect(web).toEqual({ name: "web", github: "me/web", path: "", base: "main", workers: 1, env: {} });
+  expect(web).toEqual({
+    name: "web",
+    github: "me/web",
+    path: "",
+    base: "main",
+    workers: 1,
+    ahead: 3,
+    env: {},
+  });
   expect(clonePath(web, "/h")).toBe("/h/repos/web");
   expect(c.github).toEqual({ appId: 7, me: "me", apiBase: "https://api.github.com" });
   expect(c.telegram).toBeNull();
@@ -178,4 +186,21 @@ test("home: layout", () => {
   expect(statSync(join(h.root, "runs/261026-1000")).isDirectory()).toBe(true);
   expect(h.cache("web")).toBe(join(h.root, "cache/web"));
   expect(statSync(join(h.root, "cache/web")).isDirectory()).toBe(true);
+});
+
+test("config: ahead default and range", () => {
+  const parse = (ahead?: number) =>
+    parseConfig(
+      {
+        intents: { remote: "r" },
+        repos: { web: { github: "me/web", ...(ahead === undefined ? {} : { ahead }) } },
+      },
+      "c.toml",
+    );
+  expect(parse().repos.get("web")?.ahead).toBe(3);
+  expect(parse(1).repos.get("web")?.ahead).toBe(1);
+  expect(parse(16).repos.get("web")?.ahead).toBe(16);
+  for (const bad of [0, 17]) {
+    expect(parse(bad).badRepos.get("web")).toBe("config: c.toml: repos.web.ahead must be an integer 1-16");
+  }
 });

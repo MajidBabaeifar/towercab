@@ -14,8 +14,10 @@ export interface PickState {
   blocked: string | null;
   /** `[repos]` names. */
   repos: Set<string>;
-  /** Repos at `workers` (LOOP-4): unfinished unmerged missions and the limit. */
-  full: Map<string, { n: number; workers: number }>;
+  /** Repos with `ahead` intents ahead of build (LOOP-60): how many, and the limit. */
+  full: Map<string, { n: number; ahead: number }>;
+  /** Intents the owner started with `start` (LOOP-63): they go over the limit, first. */
+  started?: Set<string>;
   /** Models cooling down (LOOP-9) → until, as shown (`15:30`). */
   cooling: Map<string, string>;
   /** Intents with an unfinished mission: never picked again (LOOP-4). */
@@ -71,7 +73,10 @@ export function decide(listing: Listing, state: PickState): Decision {
     d.writes.push({ id, waiting: "bad after:", why: ids.join(", ") });
     d.skipped.push({ id, reason: `bad after: ${ids.join(", ")}` });
   }
-  for (const i of pickOrder(listing, state.cutoff)) {
+  const started = state.started ?? new Set<string>();
+  const order = pickOrder(listing, state.cutoff);
+  const queue = [...order.filter((i) => started.has(i.id)), ...order.filter((i) => !started.has(i.id))];
+  for (const i of queue) {
     if (state.active.has(i.id)) continue;
     // Parked intents wait for the owner: listed, never picked, nothing written.
     const p = priorityOf(i);
@@ -85,14 +90,14 @@ export function decide(listing: Listing, state: PickState): Decision {
       continue;
     }
     const model = i.model ?? state.defaultModel;
-    const full = state.full.get(i.repo);
+    const full = started.has(i.id) ? undefined : state.full.get(i.repo);
     const until = state.cooling.get(model);
     const reason = state.paused
       ? "paused"
       : state.blocked !== null
         ? state.blocked
         : full
-          ? `repo ${i.repo} full (${full.n}/${full.workers})`
+          ? `repo has ${full.n} intents ahead (start ${i.id} to go now)`
           : until !== undefined
             ? `${model} cooling until ${until}`
             : null;

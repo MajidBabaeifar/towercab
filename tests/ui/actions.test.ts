@@ -114,3 +114,14 @@ test("ui: actions without a PR use commands", async () => {
   const created = w.db.all<{ created: number }>("SELECT created FROM commands");
   expect(created.every((c) => c.created === w.clock.now())).toBe(true);
 });
+
+test("ui: start action uses the start command", async () => {
+  const w = world();
+  w.add("busy", "design");
+  expect(await w.actions.start("new")).toBe(
+    "Starting its design on the next pass, even if the repo is full.",
+  );
+  await expect(w.actions.start("busy")).rejects.toThrow("It has already started.");
+  expect(w.commands()).toEqual([{ name: "start", arg: "new", text: "", source: "ui" }]);
+  expect(w.calls).toEqual([]);
+});

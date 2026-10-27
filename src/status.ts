@@ -4,6 +4,7 @@ import type { Db } from "./db.ts";
 import type { Listing } from "./intents/types.ts";
 import { isWait, isWorking, waitInfo } from "./machine.ts";
 import { type Mission, unfinished } from "./mission.ts";
+import { isBuilding } from "./slots.ts";
 
 export interface Problem {
   kind: string;
@@ -21,6 +22,8 @@ export interface StatusInput {
   problems: Problem[];
   /** The first line of `next`. */
   next: string;
+  /** Intents the picker skipped because their repo has its `ahead` intents (LOOP-64), as `next` words them. */
+  waits?: string[];
   prLink(m: Mission): string | null;
   queued: Set<number>;
 }
@@ -69,7 +72,7 @@ export function renderStatus(s: StatusInput): string {
     const model = m.child_model ? ` · ${m.child_model}` : "";
     lines.push(`- ${title(m)} · ${STEP[m.stage] ?? m.stage}${model} · since ${time(m.updated, s.now)}`);
   }
-  const onMe = ms.filter((m) => isWait(m.stage));
+  const onMe = ms.filter((m) => isWait(m.stage) && !s.queued.has(m.id));
   if (onMe.length) {
     lines.push("waiting on you:");
     for (const m of onMe) {
@@ -87,8 +90,12 @@ export function renderStatus(s: StatusInput): string {
   const queued = ms.filter((m) => s.queued.has(m.id));
   if (queued.length) {
     lines.push("queued:");
-    for (const m of queued) lines.push(`- ${title(m)} · behind another intent in ${m.repo}`);
+    for (const m of queued) {
+      const holder = ms.find((x) => x.repo === m.repo && isBuilding(x));
+      lines.push(`- ${title(m)} · ready to build${holder ? `, behind ${holder.intent}` : ""}`);
+    }
   }
+  for (const w of s.waits ?? []) lines.push(`waiting: ${w}`);
   for (const row of s.db.all<{ key: string; value: string }>(
     "SELECT key, value FROM meta WHERE key LIKE 'cooldown:%'",
   )) {

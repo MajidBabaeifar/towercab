@@ -25,10 +25,20 @@ import {
   phaseOf,
   type Subject,
 } from "./machine.ts";
-import { dataOf, getMission, insertMission, label, type Mission, unfinished, update } from "./mission.ts";
+import {
+  dataOf,
+  getMission,
+  insertMission,
+  label,
+  type Mission,
+  patchData,
+  unfinished,
+  update,
+} from "./mission.ts";
 import { sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState } from "./pick.ts";
 import { checkoutRoot } from "./service.ts";
+import { aheadIn, bestReady, buildingIn, isReady } from "./slots.ts";
 import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
 import { budgetReached } from "./ui/state.ts";
 import { checkUpdate, RESTART_CODE } from "./update.ts";
@@ -269,6 +279,7 @@ export class Loop {
     await this.pollIntents(false);
     this.startIssues(false);
     await this.pollPrs();
+    this.releaseReady();
     await this.stepDue(!report.woke);
     if (!paused(db) && !this.health.blocked(this.now) && !budgetReached(db, this.d.config, this.now)) {
       report.picked = await this.pick();
@@ -665,27 +676,54 @@ export class Loop {
 
   move(m: Mission, o: Outcome): Mission {
     this.pollAt.delete(m.id);
+    if (o.event === "plan_merged" && this.slotTaken(m)) return this.markReady(m);
     const out = apply(this.applyCtx(), m, o);
     if (out.stage !== m.stage || out.id !== m.id) this.lastPrPoll.delete(m.id);
     return out;
+  }
+
+  /** LOOP-61: a plan-approved mission can't start building while the repo's slot is taken or others wait. */
+  private slotTaken(m: Mission): boolean {
+    if (phaseOf(m.stage, m.from_stage) !== "plan") return false;
+    const ms = unfinished(this.d.db);
+    const workers = this.d.config.repos.get(m.repo)?.workers ?? 1;
+    if (buildingIn(ms, m.repo).length >= workers) return true;
+    return ms.some((x) => x.id !== m.id && x.repo === m.repo && isReady(x));
+  }
+
+  /** Remember (once) that the plan is approved and the mission waits for the build slot. */
+  private markReady(m: Mission): Mission {
+    const cur = getMission(this.d.db, m.id) ?? m;
+    const fresh = isReady(cur) ? cur : patchData(this.d.db, cur, { ready: this.now }, this.now);
+    return update(this.d.db, fresh.id, { busy: 0 }, this.now);
+  }
+
+  /** LOOP-61: each repo with a free build slot starts its best ready mission. */
+  private releaseReady(): void {
+    for (const repo of this.d.config.repos.keys()) {
+      const workers = this.d.config.repos.get(repo)?.workers ?? 1;
+      for (;;) {
+        const ms = unfinished(this.d.db);
+        if (buildingIn(ms, repo).length >= workers) break;
+        const m = bestReady(ms, repo, this.listing);
+        if (!m) break;
+        this.pollAt.delete(m.id);
+        apply(this.applyCtx(), m, { event: "plan_merged", why: "the build slot is free" });
+      }
+    }
   }
 
   slotsUsed(): number {
     return [...this.children.values()].filter((r) => r.spec.slot && !r.exit).length;
   }
 
-  /** Missions past their repo's first `workers` unmerged ones (LOOP-4). */
+  /** Plan-approved missions waiting for their repo's build slot (LOOP-61). */
   queued(): Set<number> {
-    const out = new Set<number>();
-    const perRepo = new Map<string, number>();
-    for (const m of unfinished(this.d.db)) {
-      if (m.merge_sha) continue;
-      const n = (perRepo.get(m.repo) ?? 0) + 1;
-      perRepo.set(m.repo, n);
-      const workers = this.d.config.repos.get(m.repo)?.workers ?? 1;
-      if (n > workers) out.add(m.id);
-    }
-    return out;
+    return new Set(
+      unfinished(this.d.db)
+        .filter(isReady)
+        .map((m) => m.id),
+    );
   }
 
   cooldownUntil(model: string): number | null {
@@ -705,15 +743,16 @@ export class Loop {
 
   pickState(): PickState {
     const { db, config } = this.d;
-    const busy = new Map<string, { n: number; workers: number }>();
-    for (const m of unfinished(db)) {
-      if (m.merge_sha) continue;
-      const cur = busy.get(m.repo) ?? { n: 0, workers: config.repos.get(m.repo)?.workers ?? 1 };
-      cur.n++;
-      busy.set(m.repo, cur);
+    // Only repos with `ahead` intents ahead of build are full (LOOP-60).
+    const ms = unfinished(db);
+    const full = new Map<string, { n: number; ahead: number }>();
+    for (const [name, repo] of config.repos) {
+      const n = aheadIn(ms, name).length;
+      if (n >= repo.ahead) full.set(name, { n, ahead: repo.ahead });
     }
-    // Only repos at their `workers` are full (LOOP-4).
-    const full = new Map([...busy].filter(([, c]) => c.n >= c.workers));
+    const started = new Set(
+      db.all<{ key: string }>("SELECT key FROM meta WHERE key LIKE 'start:%'").map((r) => r.key.slice(6)),
+    );
     const cooling = new Map<string, string>();
     for (const row of db.all<{ key: string }>("SELECT key FROM meta WHERE key LIKE 'cooldown:%'")) {
       const model = row.key.slice("cooldown:".length);
@@ -726,6 +765,7 @@ export class Loop {
       blocked: this.health.blocked(this.now) ? (this.health.open()[0]?.kind ?? "problem") : null,
       repos: new Set(config.repos.keys()),
       full,
+      started,
       cooling,
       active: new Set(unfinished(db).map((m) => m.intent)),
       defaultModel: config.agent.model,
@@ -765,8 +805,9 @@ export class Loop {
     }
     const pick = decision.pick;
     if (!pick) return null;
-    const m = this.d.db.tx(() =>
-      insertMission(
+    const m = this.d.db.tx(() => {
+      this.d.db.delMeta(`start:${pick.id}`);
+      return insertMission(
         this.d.db,
         {
           intent: pick.id,
@@ -776,8 +817,8 @@ export class Loop {
           a: pick.a,
         },
         this.now,
-      ),
-    );
+      );
+    });
     this.d.log(`picked ${pick.id} (${pick.repo}): ${pick.title}`);
     return m.intent;
   }

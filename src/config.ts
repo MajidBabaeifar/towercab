@@ -28,6 +28,8 @@ export interface RepoConfig {
   path: string;
   base: string;
   workers: number;
+  /** Intents that may be ahead of build at once (LOOP-60). */
+  ahead: number;
   env: Record<string, string>;
 }
 
@@ -175,6 +177,7 @@ function parseRepo(r: Reader, name: string, raw: unknown): RepoConfig {
     path: r.optPath(t, key, "path") ?? "",
     base,
     workers: r.int(t, key, "workers", 1, 1, 16),
+    ahead: r.int(t, key, "ahead", 3, 1, 16),
     env: r.env(t, key, "env"),
   };
 }

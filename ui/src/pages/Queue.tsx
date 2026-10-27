@@ -42,6 +42,7 @@ export function QueuePage({ data }: { data: Data }) {
               <header class="lane-head">
                 <h2>{l.repo}</h2>
                 {l.github ? <span class="meta mono">{l.github}</span> : null}
+                <span class="meta">{l.ahead}</span>
               </header>
               <div class="lane-group">
                 <h3>In progress</h3>

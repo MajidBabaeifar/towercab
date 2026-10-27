@@ -2,7 +2,7 @@
 // the intent's own text and its run files.
 
 import type { IntentPage as Data, PrView } from "../../../src/ui/view.ts";
-import { Id, NeedsCard, Section, StateChip, Time } from "../components.tsx";
+import { Id, NeedsCard, Section, StartButton, StateChip, Time } from "../components.tsx";
 import { ChevronLeft, External, FileText, PullRequest } from "../icons.tsx";
 import { Markdown } from "../md.tsx";
 import { Link } from "../router.tsx";
@@ -63,6 +63,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
         <StateChip state={data.state} />
       </header>
       <p class="sentence">{data.sentence}</p>
+      {data.canStart ? <StartButton intent={data.id} /> : null}
       <section class="prs" aria-label="Pull requests">
         {data.prs.map((p) => (
           <PrTile key={p.label} pr={p} />

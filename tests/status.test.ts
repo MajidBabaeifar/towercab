@@ -56,11 +56,48 @@ test("status: next explains skips", () => {
     paused: false,
     blocked: null,
     repos: new Set(["web"]),
-    full: new Map([["web", { n: 1, workers: 1 }]]),
+    full: new Map([["web", { n: 1, ahead: 1 }]]),
     cooling: new Map(),
     active: new Set(),
     defaultModel: "opus",
   });
   const text = nextText(d, l, 7);
   expect(text).toMatch(/skipped: 261026-1000 web: Log in · /);
+});
+
+test("status: ready to build and ahead limit are shown", () => {
+  const db = Db.memory();
+  const now = 1_793_000_000;
+  const cx = { db, now, subject: () => ({ title: "t", repo: "web", link: null }) };
+  const add = (id: string) =>
+    db.tx(() => insertMission(db, { intent: id, slug: "x", repo: "web", model: "opus", a: 3 }, now));
+  // A is building; B's plan is approved and waits for the build slot.
+  let a = add("261026-1000");
+  for (let i = 0; i < 3; i++) a = apply(cx, a, { event: "ok" });
+  let b = add("261026-1100");
+  for (let i = 0; i < 2; i++) b = apply(cx, b, { event: "ok" });
+  b = apply(cx, b, { event: "wait", waiting: "approve plan" });
+  db.run("UPDATE missions SET data = ? WHERE id = ?", JSON.stringify({ ready: now }), b.id);
+  const l = listing([
+    at("intents/261026-1000-log-in", "", "web", "Log in"),
+    at("intents/261026-1100-rate-limits", "", "web", "Rate limits"),
+  ]);
+  const text = renderStatus({
+    db,
+    listing: l,
+    listingError: null,
+    running: 1,
+    version: "1",
+    now,
+    problems: [],
+    next: "next: nothing can run now",
+    waits: ["261026-1200 web: Docs · repo has 3 intents ahead (start 261026-1200 to go now)"],
+    prLink: () => null,
+    queued: new Set([b.id]),
+  });
+  expect(text).toContain("queued:\n- 261026-1100 web: Rate limits · ready to build, behind 261026-1000");
+  expect(text).toContain(
+    "waiting: 261026-1200 web: Docs · repo has 3 intents ahead (start 261026-1200 to go now)",
+  );
+  expect(text).not.toContain("waiting on you");
 });

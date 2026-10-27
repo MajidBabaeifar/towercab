@@ -123,3 +123,12 @@ describe("machine", () => {
     expect([f.stage, f.waiting]).toEqual(["blocked", "crashed at pick"]);
   });
 });
+
+test("machine: plan merged while the slot is taken waits", () => {
+  // The table still sends a merged plan to build; the loop holds the move while the repo builds
+  // (LOOP-61), so the mission stays where it waits and no wait message is sent.
+  expect(next("approval:plan", "plan_merged")).toEqual({ kind: "go", to: "build" });
+  expect(next("plan", "plan_merged")).toEqual({ kind: "go", to: "build" });
+  expect(next("blocked", "plan_merged", "plan")).toEqual({ kind: "go", to: "build" });
+  expect(waitInfo("spec conflict").stage).toBe("blocked");
+});

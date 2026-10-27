@@ -30,9 +30,11 @@ test("pick: order and skips", () => {
   expect(d.pick?.id).toBe("261002-0900");
   expect(d.skipped).toEqual([]);
   // A full repo: same priority → the oldest ID.
-  const full = decide(l, state(["web", "api"], { full: new Map([["web", { n: 1, workers: 1 }]]) }));
+  const full = decide(l, state(["web", "api"], { full: new Map([["web", { n: 1, ahead: 1 }]]) }));
   expect(full.pick?.id).toBe("261000-0900");
-  expect(full.skipped).toEqual([{ id: "261002-0900", reason: "repo web full (1/1)" }]);
+  expect(full.skipped).toEqual([
+    { id: "261002-0900", reason: "repo has 1 intents ahead (start 261002-0900 to go now)" },
+  ]);
   // An intent with an unfinished mission is never picked again.
   expect(decide(l, state(["web", "api"], { active: new Set(["261002-0900"]) })).pick?.id).toBe("261000-0900");
 
@@ -75,10 +77,10 @@ test("pick: parked waits", () => {
   ]);
   expect(decide(l, state(["web", "api"])).pick?.id).toBe("261005-0900");
   // The important one skipped (its repo full): the parked one still waits, listed why.
-  const d = decide(l, state(["web", "api"], { full: new Map([["api", { n: 1, workers: 1 }]]) }));
+  const d = decide(l, state(["web", "api"], { full: new Map([["api", { n: 1, ahead: 1 }]]) }));
   expect(d.pick).toBeNull();
   expect(d.skipped).toEqual([
-    { id: "261005-0900", reason: "repo api full (1/1)" },
+    { id: "261005-0900", reason: "repo has 1 intents ahead (start 261005-0900 to go now)" },
     { id: "260901-0900", reason: "parked (p5 < 7): raise u or i to run it" },
   ]);
   expect(nextText(d, l, 7)).toContain(
@@ -171,4 +173,17 @@ test("pick: orphaned stage is cleared", () => {
   expect(decide(l, state(["web"])).pick?.id).toBe("261001-0904");
   const cleared = listing([at("intents/261001-0900-orphan", "", "web")]);
   expect(decide(cleared, state(["web"])).pick?.id).toBe("261001-0900");
+});
+
+test("pick: start goes first and over the ahead limit", () => {
+  const l = listing([
+    at("intents/261002-0900-big", "u: 5\ni: 5\n", "web", "Big"),
+    at("intents/261001-0900-small", "u: 3\ni: 3\n", "web", "Small"),
+  ]);
+  const full = new Map([["web", { n: 3, ahead: 3 }]]);
+  expect(decide(l, state(["web"], { full })).pick).toBeNull();
+  const d = decide(l, state(["web"], { full, started: new Set(["261001-0900"]) }));
+  expect(d.pick?.id).toBe("261001-0900");
+  // Other skips still apply to a started intent.
+  expect(decide(l, state(["web"], { paused: true, started: new Set(["261001-0900"]) })).pick).toBeNull();
 });

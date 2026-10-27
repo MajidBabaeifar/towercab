@@ -224,7 +224,7 @@ test("ui: working row shows phase and step", async () => {
   expect(cool.state.label).toBe("Cooling down");
   expect(cool.model).toBe("Sonnet");
   expect(o.queued.find((r) => r.intent === IDS.queued)?.behind).toBe(
-    "Waits behind “Export invoices as CSV”.",
+    "3 intents are already ahead of build in this repo; it starts when one has a place free, or when you start it.",
   );
 });
 
@@ -252,7 +252,7 @@ test("ui: up next explains skips", async () => {
   const f = fixture();
   f.state.upNext = [
     { intent: IDS.upnext, priority: 11, skip: null },
-    { intent: IDS.queued, priority: 10, skip: { kind: "repo-busy", intent: IDS.question } },
+    { intent: IDS.queued, priority: 10, skip: { kind: "ahead", n: 3, limit: 3 } },
     {
       intent: IDS.queued2,
       priority: 9,
@@ -264,7 +264,10 @@ test("ui: up next explains skips", async () => {
   const u = (await overview(f.sources)).upNext;
   expect(u.map((x) => [x.state.label, x.reason])).toEqual([
     ["Up next", null],
-    ["Queued", "Waits behind “Export invoices as CSV”."],
+    [
+      "Queued",
+      "3 intents are already ahead of build in this repo; it starts when one has a place free, or when you start it.",
+    ],
     ["Cooling down", "Sonnet is cooling down after a usage limit; it can start in 47 min."],
     ["Parked", "Raise its urgency or importance to run it."],
     ["Queued", "Waits for “Sign in with GitHub” to be done."],
@@ -353,7 +356,11 @@ test("ui: queue lanes by repo", async () => {
   expect(web.github).toBe("acme/web");
   expect(web.running.map((r) => r.intent)).toEqual([IDS.question, IDS.ci]);
   expect(web.waiting.map((w) => [w.position, w.title, w.reason])).toEqual([
-    [1, "Dark mode for the settings page", "Waits behind “Export invoices as CSV”."],
+    [
+      1,
+      "Dark mode for the settings page",
+      "3 intents are already ahead of build in this repo; it starts when one has a place free, or when you start it.",
+    ],
   ]);
   expect(web.parked.map((w) => w.title)).toEqual(["Try a new chart library"]);
   expect(web.done.map((w) => [w.title, w.state.label, w.cost])).toEqual([
@@ -448,7 +455,7 @@ test("ui: airspace places each intent at its station", async () => {
   expect(ci.lines).toEqual(["Waiting for CI · 4 min", "$1.36 · Opus"]);
   expect(a.planes.find((p) => p.intent === IDS.queued)!.lines).toEqual([
     "#2 in line · priority 10",
-    "Waits behind “Export invoices as CSV”.",
+    "3 intents are already ahead of build in this repo; it starts when one has a place free, or when you start it.",
   ]);
   // Done today only: not yesterday's, not the dropped one.
   expect(a.landed).toEqual({
@@ -467,4 +474,66 @@ test("ui: airspace places each intent at its station", async () => {
   const empty = (await overview(fixture({ empty: true }).sources)).airspace;
   expect(empty.planes).toEqual([]);
   expect(empty.landed.count).toBe(0);
+});
+
+/** Mark an existing mission plan-approved and waiting for the build slot (LOOP-61). */
+function makeReady(f: Fixture, id: string) {
+  f.sources.db.run(
+    "UPDATE missions SET data = ? WHERE intent = ? AND stage NOT IN ('done','stopped')",
+    JSON.stringify({ ready: 1 }),
+    id,
+  );
+}
+
+test("ui: ready to build shows behind the running intent", async () => {
+  const f = fixture();
+  const before = await overview(f.sources);
+  expect(before.needs.some((c) => c.intent === IDS.plan)).toBe(true);
+  makeReady(f, IDS.plan);
+  const o = await overview(f.sources);
+  expect(o.needs.some((c) => c.intent === IDS.plan)).toBe(false);
+  const row = o.queued.find((r) => r.intent === IDS.plan)!;
+  expect(row.state).toMatchObject({ key: "queued", label: "Queued" });
+  expect(row.step).toBe("Ready to build");
+  expect(row.behind).toMatch(
+    /^Ready to build, behind “.+”\.$|^Ready to build; it starts on the next pass\.$/,
+  );
+  expect(o.working.some((r) => r.intent === IDS.plan)).toBe(false);
+  expect(o.airspace.planes.find((p) => p.intent === IDS.plan)).toMatchObject({ station: "code" });
+  // The intent page doesn't ask the owner for anything.
+  const page = (await intentPage(f.sources, IDS.plan))!;
+  expect(page.card).toBeNull();
+  expect(page.state.label).toBe("Queued");
+});
+
+test("ui: queue lane shows ahead count", async () => {
+  const f = fixture();
+  const lane = async (repo: string) => (await queue(f.sources)).lanes.find((l) => l.repo === repo)!;
+  const before = await lane("api");
+  expect(before.ahead).toMatch(/^\d+ of 3 ahead$/);
+  const n = Number(before.ahead.split(" ")[0]);
+  expect(n).toBeGreaterThan(0);
+  makeReady(f, IDS.plan);
+  const after = await lane("api");
+  expect(after.ahead).toBe(`${n - 1} of 3 ahead`);
+  // The slot's holder first, then the plan-approved intent, then those ahead.
+  const order = after.running.map((r) => r.intent);
+  expect(order.indexOf(IDS.plan)).toBeGreaterThan(-1);
+  expect(after.running.filter((r) => r.behind !== null).map((r) => r.intent)).toEqual([IDS.plan]);
+});
+
+test("ui: start now appears only for an unstarted intent", async () => {
+  const f = fixture();
+  const o = await overview(f.sources);
+  expect(o.upNext.find((u) => u.intent === IDS.upnext)!.canStart).toBe(true);
+  expect(o.upNext.find((u) => u.intent === IDS.queued)!.canStart).toBe(true);
+  expect(o.upNext.find((u) => u.intent === IDS.parked2)!.canStart).toBe(false);
+  expect(o.airspace.planes.find((p) => p.intent === IDS.upnext)!.canStart).toBe(true);
+  expect(o.airspace.planes.find((p) => p.intent === IDS.plan)!.canStart).toBe(false);
+  expect((await intentPage(f.sources, IDS.upnext))!.canStart).toBe(true);
+  expect((await intentPage(f.sources, IDS.plan))!.canStart).toBe(false);
+  expect((await intentPage(f.sources, IDS.parked2))!.canStart).toBe(false);
+  f.state.running = false;
+  expect((await intentPage(f.sources, IDS.upnext))!.canStart).toBe(false);
+  expect((await overview(f.sources)).upNext[0]!.canStart).toBe(false);
 });

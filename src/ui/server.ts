@@ -76,7 +76,7 @@ const TYPES: Record<string, string> = {
 };
 
 const PAGES = /^\/(?:queue|activity|i\/[A-Za-z0-9._-]+)?\/?$/;
-const ACTIONS = new Set(["merge", "reply", "retry", "drop", "pause", "resume"]);
+const ACTIONS = new Set(["merge", "reply", "retry", "drop", "start", "pause", "resume"]);
 const INTENT_ID = /^[A-Za-z0-9._-]{1,100}$/;
 
 const NOT_BUILT = `<!doctype html>
@@ -280,9 +280,11 @@ export function startUi(o: UiOptions): UiServer {
               ? await a.retry(intent)
               : action === "drop"
                 ? await a.drop(intent)
-                : action === "pause"
-                  ? await a.pause()
-                  : await a.resume();
+                : action === "start"
+                  ? await a.start(intent)
+                  : action === "pause"
+                    ? await a.pause()
+                    : await a.resume();
       reply = { ok: true, message };
     } catch (e) {
       reply = { ok: false, message: (e as Error).message };

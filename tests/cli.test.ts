@@ -79,6 +79,7 @@ test("cli: commands", async () => {
     "answer",
     "retry",
     "drop",
+    "start",
     "approve",
     "pause",
     "resume",
@@ -106,4 +107,22 @@ test("ui: the ui command", async () => {
   expect(await main(["--config", c2, "--home", h2, "ui"], t)).toBe(0);
   expect(out.trim()).toBe("http://localhost:7399/");
   expect(t.lines("xdg-open")).toEqual(["http://localhost:7399/"]);
+});
+
+test("cli: start", async () => {
+  const t = new FakeTools();
+  const { config, home } = setup();
+  const g = ["--config", config, "--home", home];
+  expect(await main([...g, "add", "web: Log in with a magic link"], t)).toBe(0);
+  const id = /^(\d{6}-\d{4}) /m.exec(out)?.[1] ?? "";
+  out = "";
+  expect(await main([...g, "start", id], t)).toBe(0);
+  expect(out).toContain(`starting ${id}`);
+  // A second start is refused the same way.
+  out = "";
+  expect(await main([...g, "start", id], t)).toBe(0);
+  expect(out).toContain(`${id} has already started`);
+  expect(await main([...g, "start"], t)).toBe(2);
+  expect(await main([...g, "start", "000000-0000"], t)).toBe(0);
+  expect(out).toMatch(/start: /);
 });

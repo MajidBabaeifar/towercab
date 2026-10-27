@@ -13,6 +13,7 @@ function plane(intent: string, station: StationKey): Plane {
     station,
     lines: ["Building · 1 min", "$0.10 · Opus"],
     phases: [],
+    canStart: false,
   };
 }
 

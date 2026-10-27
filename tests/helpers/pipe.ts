@@ -444,6 +444,42 @@ export class Pipe {
     p.reviews.push({ author: "owner", state, body, at: this.at(), commit: this.headSha(p.repo, p.head) });
   }
 
+  /**
+   * Another open PR of `repo`: a new branch off `main` with `files` committed, and its PR. With
+   * `branch: false` only the PR exists (its branch can't be read).
+   */
+  openOtherPr(repo: string, head: string, files: Record<string, string>, branch = true): FakePr {
+    if (branch) {
+      const work = join(this.dir("tc-other-"), "w");
+      git(dirname(work), "clone", "-q", this.bares[repo]!, work);
+      git(work, "checkout", "-q", "-b", head);
+      for (const [path, text] of Object.entries(files)) {
+        mkdirSync(dirname(join(work, path)), { recursive: true });
+        writeFileSync(join(work, path), text);
+      }
+      git(work, "add", "-A");
+      git(work, "commit", "-q", "-m", "docs(specs): other");
+      git(work, "push", "-q", "origin", head);
+    }
+    const pr: FakePr = {
+      number: this.nextPr++,
+      repo: `owner/${repo}`,
+      head,
+      base: "main",
+      title: "docs(specs): other",
+      body: "",
+      state: "OPEN",
+      mergeCommit: null,
+      comments: [],
+      reviews: [],
+      checks: () => [],
+      mergeable: "MERGEABLE",
+      mergeStates: [],
+    };
+    this.prs.push(pr);
+    return pr;
+  }
+
   /** Commit files on a branch of a bare repo (the owner pushing). */
   pushTo(repo: string, branch: string, files: Record<string, string | null>, msg = "owner edit"): void {
     const work = join(this.dir("tc-push-"), "w");
@@ -643,6 +679,13 @@ export class Pipe {
       };
       const [a, b] = args;
       if (a === "issue" || a === "label") return this.issueGh(args, opts);
+      if (a === "pr" && b === "list" && !args.includes("--head")) {
+        return json(
+          this.prs
+            .filter((x) => x.repo === repo && x.state === "OPEN")
+            .map((x) => ({ number: x.number, headRefName: x.head })),
+        );
+      }
       if (a === "pr" && b === "list") {
         const p = this.prs.find((x) => x.repo === repo && x.head === flag("--head") && x.state === "OPEN");
         return json(p ? [{ number: p.number }] : []);

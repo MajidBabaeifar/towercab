@@ -14,6 +14,7 @@ export interface UiActions {
   reply(intent: string, text: string): Promise<string>;
   retry(intent: string): Promise<string>;
   drop(intent: string): Promise<string>;
+  start(intent: string): Promise<string>;
   pause(): Promise<string>;
   resume(): Promise<string>;
 }
@@ -107,6 +108,12 @@ export function createActions(d: ActionDeps): UiActions {
       }
       command("drop", intent);
       return "Towercab drops it on its next pass.";
+    },
+
+    async start(intent) {
+      if (unfinishedFor(d.db, intent)) throw new Error("It has already started.");
+      command("start", intent);
+      return "Starting its design on the next pass, even if the repo is full.";
     },
 
     async pause() {
