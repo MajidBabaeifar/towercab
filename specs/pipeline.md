@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live · **Prefix:** PIP
+**Status:** Live: PIP-1..54 · **Prefix:** PIP
 
 ## Purpose
 
@@ -508,7 +508,112 @@ added to the checks block can prove the change.
   always-failing line can't count as proven.
 - Verified by: `pipeline: proof uses the PR's checks block when CLAUDE.md is granted`, `pipeline: proof keeps the base's checks block when CLAUDE.md is not granted`, `pipeline: proof falls back to the base's checks block when the PR's does not parse`, `pipeline: proof needs the PR's checks block green on head`
 
-**Claude runs** (`src/claude.ts`)
+### PIP-70 · One file per agent
+
+Each kind of Claude run Towercab starts is configured by one file, `agents/<name>.md`, and nowhere else.
+
+- Agents: `design`, `plan`, `worker`, `repair`, `review`, `score`. The file name is the agent's name.
+- The front matter holds what the run is allowed and limited to (PIP-71); the body is the prompt
+  template (`{{key}}`, PIP-39 fences as today). `prompts/<stage>.md` is replaced by these bodies;
+  `prompts/writing.md` stays, since it is not an agent.
+- `src/claude.ts`, `src/pipeline/prompts.ts`, `src/pipeline/schemas.ts` and the stage handlers read the
+  agent file; the `KINDS` table, the per-kind timeout constants and the per-kind model choice in code are
+  removed. The result schemas stay in `schemas.ts`, found by the name the file gives.
+- Agent files ship with Towercab and are read from its checkout. A target repo cannot override one; it
+  still adds `CLAUDE.md` and `REVIEW.md` as today (REPO-1, REPO-2).
+- Verified by: `agents: every agent has a file`, `agents: claude.ts has no per-kind table`
+
+### PIP-71 · Agent front matter
+
+An agent file's front matter says which tools the agent has, what it may do without asking, and how long and how much it may run.
+
+- Keys, all required: `tools` (list; empty list means `--tools ""`), `allow` (list of permission rules,
+  each `Tool` or `Tool(pattern)`), `sandbox` (`strict` or `none`; see PIP-78), `model`
+  (`mission`, `review` or `agent`: which configured model it takes, as the **Claude runs** table's Model
+  column does today), `session` (`new`, `resume` or `none`), `timeout_min` (integer), `max_cost_usd`
+  (number or `null`; `[agent]` config can only lower it) and `schema` (a name in `schemas.ts`, or
+  `null` for none).
+- Unknown keys, a missing key or a wrong type fail the load with an error naming the file and the key.
+- The values equal today's behaviour except where PIP-77 names a narrowing. `[agent]` settings (model,
+  limits) still apply on top, as the lower of the two for limits.
+- Verified by: `agents: front matter parses`, `agents: unknown or missing key is refused`, `agents: config can lower a limit but not raise it`
+
+### PIP-72 · Runs are built from the agent file
+
+The command line of a Claude run comes from the agent's file, so the file is the whole truth about what that run may do.
+
+- `claudeArgv` takes `--tools`, the allowed rules, the session mode, the budget and the schema from the
+  agent; the timeout of the run is its `timeout_min`. The disallowed list (PIP-24) is added to every
+  agent and is not in the file.
+- Handlers start a run by agent name; none passes tools, permissions or a timeout of its own.
+- Verified by: `claude: worker argv`, `claude: review argv`, `claude: argv comes from the agent file`
+
+### PIP-73 · Every agent file is checked
+
+A test reads every file in `agents/` and fails when one is wrong, so the files and the code cannot drift apart.
+
+- For each file: the front matter parses (PIP-71); every `tools` entry is a Claude Code tool name and
+  every `allow` rule parses and names a tool the agent has; the `schema` exists in `schemas.ts`; the
+  prompt renders with the variables its handler provides, and a `{{key}}` outside that set fails.
+- Every name in the agent list (PIP-70) has a file, and every file is in the list.
+- No `allow` rule matches a command the disallowed list (PIP-24) forbids.
+- Verified by: `agents: tools and permissions parse`, `agents: schema exists`, `agents: prompt fills without an unknown placeholder`, `agents: allow does not overlap disallowed`
+
+### PIP-74 · Repair and score have their own agents
+
+The repair run and the issue scorer each get their own file, so their role is written down instead of borrowed from the worker.
+
+- `agents/repair.md`: the prompt of a repair round (red checks, a merge conflict, a review fix), the
+  worker's result schema and `session: resume`, so it continues the mission's session (PIP-13). Its
+  tools are the worker's (no gain, PIP-77).
+- `agents/score.md`: the issue scorer (INT-22), no tools, `session: none`, `timeout_min: 5`.
+- The PR text is part of the build result, written by the worker. It stays in `worker.md` as its own
+  section of the prompt rather than a separate run; PIP-75 records this.
+- Verified by: `agents: repair continues the worker session`, `agents: score has no tools`
+
+### PIP-75 · The audit
+
+The pull request that builds this carries a written audit of every Claude run Towercab starts, so the owner can see what changed and what is still open.
+
+- For each agent: its prompt, tools, permissions, schema, model, session, time and cost limit as they were
+  before and after.
+- Gaps found are listed: a run without its own prompt, a permission broader than its stage needs, a
+  schema field no code reads, a limit that lived only in code. Each is fixed in the same PR or named as
+  left open, with the reason.
+- Verified by: manual (the code PR's description lists the audit)
+
+### PIP-76 · Agents table
+
+The spec lists every agent in one table, with what it is for and what it may touch, linking to its file.
+
+- Replaces the **Claude runs** table below when the agents are built. Columns: Agent (link to
+  `agents/<name>.md`), Purpose, May touch (tools and the paths or commands allowed), Session, Model.
+- One row per agent in PIP-70's list; a test fails when a file has no row or a row has no file.
+- Verified by: `agents: spec table lists every agent`
+
+### PIP-77 · No agent gains a permission
+
+Moving the settings into files makes no agent more powerful than it is today.
+
+- For every agent, the tools and `allow` rules are a subset of today's (the **Claude runs** table).
+  `repair` takes the worker's set or less. A narrowing is allowed and is named in the code PR.
+- A test holds the table's values for each agent as a ceiling and fails when a file goes beyond it.
+- Verified by: `agents: no agent has more than the previous table allowed`
+
+### PIP-78 · Agent files do not loosen the guard or the sandbox
+
+An agent file can only narrow what a run may do; the sandbox, the guard and the protected paths are checked separately and the file cannot switch them off.
+
+- `sandbox` is `strict` for every agent that has `Bash`, `Edit` or `Write`; `none` is accepted only for an
+  agent with no tools. The sandbox settings (PIP-24), the worker's guard (PIP-29) and the protected
+  paths (REPO-8) are built in code from the mission, not from the file.
+- Verified by: `agents: a tool-using agent cannot disable the sandbox`, `claude: settings by autonomy`
+
+### PIP-79 · Reserved
+
+Reserved for this intent (agent files); not used.
+
+**Claude runs** (`src/claude.ts`; until PIP-70..78 are built, then replaced by PIP-76's table)
 
 | Kind | `--tools` | Allowed | Session | Model |
 |---|---|---|---|---|
