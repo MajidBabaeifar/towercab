@@ -615,6 +615,32 @@ Reserved for this intent (agent files); not used.
 
 - Verified by: manual (nothing to check: no behaviour)
 
+### PIP-80 · Designs do not take the same IDs
+
+Each design is told which requirement IDs other unmerged spec PRs of the repo already add, and must not use them.
+
+- Before a design or a design revision runs, Towercab lists the repo's open spec PRs
+  (`towercab/*-spec` branches of other intents), reads each diff against `main` and collects the
+  `### <ID> ·` headings they add. The prompt gets them as data: "IDs already taken by other open
+  spec PRs: …". The design must pick IDs outside that list and outside `main`, and still only from the
+  IDs the intent reserves.
+- A PR that cannot be read is skipped and logged, not a failure. No other open spec PR → the list is
+  empty and the prompt says so.
+- Verified by: `pipeline: design is told the IDs other spec PRs add`, `pipeline: an unreadable spec PR does not stop the design`
+
+### PIP-81 · A spec PR that conflicts with main is revised
+
+When the spec PR no longer merges into `main`, the design resolves the conflict in a revision, like a red check on the spec PR.
+
+- While the spec waits for approval ([AUT-11](autonomy.md)), a spec PR GitHub reports as conflicting
+  (typically a Status line another spec PR changed) sends the mission back to design in the same
+  session. Towercab merges `main` into the branch, the design edits only `specs/**` to resolve the
+  markers and keep both sides' rows, and Towercab commits and pushes on the same PR. The prompt names
+  the conflicted files and the IDs other open spec PRs add (PIP-80).
+- At most 2 conflict revisions per spec PR; after that the mission waits for the owner
+  (`waiting: spec conflict`). A conflict outside `specs/**` is not edited: the same wait.
+- Verified by: `pipeline: a conflicting spec PR is revised`, `pipeline: a spec conflict that stays waits for the owner`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |

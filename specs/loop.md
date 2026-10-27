@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live · **Prefix:** LOOP
+**Status:** Live: LOOP-1..38 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -341,6 +341,66 @@ GitHub shows they were the owner's.
   `answer` appends to the intent's `## Answers` ([INT-15](intents.md)) and continues it.
 - Verified by: `owner: approve merges as the owner`, `owner: answer without a PR`
 
+### LOOP-60 · Intents ahead of build
+
+A repo can have up to 3 intents being designed, planned or waiting for approval at the same time, so one intent's wait for the owner no longer stops the next one.
+
+- New setting `[repos.<r>].ahead`, int 1–16, default 3. An intent is *ahead* while its mission is at
+  `pick`, `design`, `approval:spec`, `plan` or `approval:plan`, or is `blocked` in the spec or plan
+  phase. A mission that is building or later, or whose plan is approved and waits for the build slot
+  (LOOP-61), is not ahead.
+- `decide` skips an intent of a repo that already has `ahead` intents ahead (`waiting: repo has <n>
+  intents ahead`, shown in plain words by UI-61), except one started with `start` (LOOP-63). Free
+  places go to intents in the picker's order ([PRI-5](priority.md)).
+- A higher-priority intent that arrives while the repo is full waits for a free place; no running or
+  waiting design is stopped, paused or dropped for it.
+- This replaces the "one unmerged intent per repo" limit of LOOP-4 for the work before build; the
+  `workers` limit moves to LOOP-61. `[agent].parallel` still caps all Claude runs and checks (LOOP-4):
+  with 1, a design run queues behind other runs.
+- Verified by: `loop: up to ahead intents per repo are designed at once`, `loop: a higher priority arrival does not stop a design`, `config: ahead default and range`
+
+### LOOP-61 · Build slot
+
+Only one intent per repo builds at a time, and when the slot is free it goes to the highest-priority intent whose plan is approved.
+
+- `[repos.<r>].workers` (default 1) now counts missions from `build` through `merge` (including
+  `approval:merge` and `blocked` in the code phase). When the plan PR is merged and the repo already
+  has `workers` such missions, the mission does not start `build`: it waits as *ready to build*, with
+  no message to the owner and its intent `stage` still `plan`.
+- Each pass, for each repo with a free slot, the ready mission with the highest priority starts
+  `build` (ties: the one approved first). A ready mission never takes the slot from a running build.
+- A ready mission is not ahead (LOOP-60), so its place goes to the next intent. `drop`, `retry` and a
+  closed plan PR work on it as at `approval:plan`.
+- Verified by: `loop: one intent builds at a time per repo`, `loop: the free build slot goes to the highest priority plan-approved intent`, `loop: a ready intent does not count as ahead`, `machine: plan merged while the slot is taken waits`
+
+### LOOP-62 · Starting past the limit
+
+Not used: kept free; `start` is LOOP-63.
+
+- Verified by: manual (nothing to check: no behaviour)
+
+### LOOP-63 · start
+
+`towercab start <intent>` begins that intent's design now, even when the repo already has 3 intents ahead.
+
+- Inserts a `start` row in `commands` (LOOP-15; applied by the loop, or by the CLI with no loop). The
+  intent is then picked as if the repo had a free place: it goes over `ahead` and nothing running is
+  stopped. Other skips still apply: parked, paused, unknown repo, bad `after`, cooling down, GitHub
+  or Claude unreachable (LOOP-5, LOOP-9, LOOP-10).
+- Errors (`towercab: <reason>`, exit 1): unknown intent; `<id> has already started`; `<id> is done or
+  dropped`. A second `start` on the same intent is refused the same way.
+- `start` only moves design forward. It does not skip the build slot: an intent with an approved plan
+  still waits its turn by priority (LOOP-61).
+- Verified by: `cli: start`, `loop: start goes over the ahead limit`, `loop: start does not skip the build slot`, `commands: start is refused for a started intent`
+
+### LOOP-64 · status and next show the wait
+
+`status` and `next` say when an intent waits for a place or for the build slot.
+
+- A skipped intent reads `waiting: repo has <n> intents ahead (start <id> to go now)`; a ready mission
+  reads `ready to build, behind <id>`.
+- Verified by: `status: ready to build and ahead limit are shown`
+
 **Config** (`src/config.ts`)
 
 | Key | Type, range | Default |
@@ -359,6 +419,7 @@ GitHub shows they were the owner's.
 | `agent.network` | list of domains | AUT-14's default list |
 | `agent.sandbox_unix_sockets` | bool | false |
 | `repos.<r>.github`, `path`, `base`, `workers`, `env` | `owner/name`; path; branch; int 1–16; table | required; `<home>/repos/<r>`; `main`; 1; `{}` |
+| `repos.<r>.ahead` (LOOP-60, not built yet) | int 1–16 | 3 |
 | `github.app_id`, `github.me`, `github.api_base` | int; login; URL | required; required; `https://api.github.com` |
 | `telegram.bot_token`, `telegram.chat_id`, `telegram.api_base` | strings; URL | none (no Telegram); `https://api.telegram.org` |
 | `ui.port` | int 0–65535 (0 = off) | 7311 |

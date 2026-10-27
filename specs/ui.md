@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live · **Prefix:** UI
+**Status:** Live: UI-1..82 · **Prefix:** UI
 
 ## Purpose
 
@@ -291,6 +291,46 @@ The strip reads well in light and dark, on a wide screen and on a phone, and wit
   screen readers.
 - Verified by: `ui: airspace caps crowded stations`, `ui: airspace runs top to bottom on a phone`,
   `ui: screenshots light, dark and mobile`
+
+### UI-100 · Ready to build
+
+An intent whose plan is approved but waits for the build slot shows as ready to build, behind the intent that holds the slot.
+
+- State `Queued` with the sentence "Ready to build, behind <title>" (UI-56, UI-59); on the queue
+  page (UI-63) each repo lane lists the running intent, then ready intents in build order, then the
+  intents ahead of build (with a count `n of <ahead> ahead`), then waiting ones with the reason
+  "repo has <n> intents ahead". On the airspace (UI-78) a ready plane sits at `03 code`.
+- Verified by: `ui: ready to build shows behind the running intent`, `ui: queue lane shows ahead count`
+
+### UI-101 · Start button
+
+The owner can start an intent's design now from the page.
+
+- "Start now" on the intent page (UI-62), on its Up next row (UI-61) and in the plane card (UI-80),
+  only for an intent that has no mission yet and is not parked. It does what `towercab start` does
+  (LOOP-63), including going over the limit. The reply says in one sentence that design started, or
+  the error.
+- Verified by: `ui: start now appears only for an unstarted intent`
+
+### UI-102 · Start action
+
+The API has a `start` action for the button.
+
+- `POST /api/actions` accepts `{action: "start", intent}` (UI-65, UI-66) and inserts the `start`
+  command (LOOP-63); an unknown or started intent → the command's error text.
+- Verified by: `ui: start action uses the start command`
+
+### UI-103 · Reserved
+
+Reserved for this intent; not used.
+
+- Verified by: manual (nothing to check: no behaviour)
+
+### UI-104 · Reserved
+
+Reserved for this intent; not used.
+
+- Verified by: manual (nothing to check: no behaviour)
 
 ## Out of scope
 
