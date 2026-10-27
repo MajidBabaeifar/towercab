@@ -23,7 +23,7 @@ import {
 } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { specBody } from "./prtext.ts";
-import { DESIGN_SCHEMA, parseResult } from "./schemas.ts";
+import { parseResult } from "./schemas.ts";
 
 /** The intent's reserved spec IDs (`spec IDs: …` in `## Proposed outcome`), as a prompt sentence. */
 export function reservedLine(outcome: string): string {
@@ -68,9 +68,7 @@ export const designHandler: Handler = {
             kind: "design",
             step: "design",
             prompt: p,
-            schema: DESIGN_SCHEMA,
-            session: "worker",
-            model: m.model,
+            agent: "design",
             files,
             intent,
           },

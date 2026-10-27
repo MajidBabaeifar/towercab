@@ -27,7 +27,7 @@ import {
 } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { planBody, planFile, section } from "./prtext.ts";
-import { PLAN_SCHEMA, parseResult } from "./schemas.ts";
+import { parseResult } from "./schemas.ts";
 
 /** The clone the plan branches are pushed from (re-cloned when broken). */
 async function plansClone(
@@ -150,9 +150,7 @@ export const planHandler: Handler = {
             kind: "plan",
             step: "plan",
             prompt,
-            schema: PLAN_SCHEMA,
-            session: "worker",
-            model: m.model,
+            agent: "plan",
             files,
             intent,
           },

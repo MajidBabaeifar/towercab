@@ -77,6 +77,7 @@ test("public: no personal names", () => {
     "package.json",
     "CLAUDE.md",
     "TOWERCAB.md",
+    ...walk("agents"),
     ...walk("prompts"),
     ...walk("skills"),
     ...walk("src"),

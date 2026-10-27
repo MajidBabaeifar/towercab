@@ -26,7 +26,7 @@ TypeScript on Node ≥ 22.18, run straight from this checkout (no build step). v
 - `src/cli.ts` → `src/loop.ts` (the 5 s pass). `src/machine.ts` is the one state machine: only `apply`
   moves a mission, in one `Db.tx`. `src/handlers.ts`: the `Handler`/`Ctx` contract.
 - `src/pipeline/`: one handler per stage (design → plan → build → verify → proof → publish → ci →
-  review → gate → merge), plus sandbox, guard, access, PR text, prompts (`prompts/*.md`).
+  review → gate → merge), plus sandbox, guard, access, PR text, prompts (`agents/*.md`).
 - `src/intents/`: the intent files and the store (git sync). `src/github/`: App identity, `gh`, PR reads,
   owner events, stage comments. `src/repo/`: `CLAUDE.md`/`REVIEW.md`/`TOWERCAB.md` of target repos.
 - `src/ui/`: server, API and view model; `ui/`: the Preact app (Vite).

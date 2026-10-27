@@ -1,3 +1,13 @@
+---
+tools: [Read, Glob, Grep, Edit, Write]
+allow: [Read, Glob, Grep, "Edit(specs/**)"]
+sandbox: strict
+model: mission
+session: resume
+timeout_min: 60
+max_cost_usd: 10
+schema: design
+---
 You are starting work on an intent the owner wrote. In this first step you design the change: you
 decide which requirements it adds or changes, and write them into the repo's specs. You write no
 code yet. A separate step plans the build, and a later one builds it.

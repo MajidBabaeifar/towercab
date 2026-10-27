@@ -1,3 +1,13 @@
+---
+tools: [Read, Edit, Write, Glob, Grep, Bash, WebFetch]
+allow: [Read, Edit, Write, Glob, Grep, Bash]
+sandbox: strict
+model: mission
+session: resume
+timeout_min: 60
+max_cost_usd: 10
+schema: build
+---
 {{what}}
 
 {{details}}

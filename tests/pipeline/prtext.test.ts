@@ -167,7 +167,7 @@ test("prompts: templates fill every key", () => {
     what: "w",
     details: "d",
   };
-  for (const name of ["design", "plan", "build", "review", "repair"]) {
+  for (const name of ["design", "plan", "worker", "review", "repair"] as const) {
     const text = render(name, vars);
     expect(text, name).not.toMatch(/\{\{\w+\}\}/);
   }

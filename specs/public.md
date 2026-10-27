@@ -51,7 +51,7 @@ The README's Docs section links every spec that isn't removed.
 Nothing that ships names the owner; prompts and messages say "the owner".
 
 - The owner's first name (the literal lives only in the test) occurs in none of `README.md`,
-  `package.json`, `CLAUDE.md`, `TOWERCAB.md`, `prompts/**`, `skills/**`, `src/**`, `ui/src/**`,
+  `package.json`, `CLAUDE.md`, `TOWERCAB.md`, `agents/**`, `prompts/**`, `skills/**`, `src/**`, `ui/src/**`,
   `ops/**`, `specs/**` (`LICENSE`, `tests/**` and the repo URL are exempt). The guard says
   `changes here go through the owner`.
 - Verified by: `public: no personal names`

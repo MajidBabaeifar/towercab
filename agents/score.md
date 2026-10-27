@@ -1,3 +1,13 @@
+---
+tools: []
+allow: []
+sandbox: none
+model: agent
+session: none
+timeout_min: 5
+max_cost_usd: 1
+schema: score
+---
 You turn a GitHub issue into a short description of work for a software team. You have no tools and
 no repo: you only read the issue below and answer.
 

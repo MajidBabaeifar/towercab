@@ -1,3 +1,13 @@
+---
+tools: [Read, Glob, Grep, Bash]
+allow: [Read, Glob, Grep, "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"]
+sandbox: strict
+model: review
+session: new
+timeout_min: 15
+max_cost_usd: null
+schema: review
+---
 Review the pull request below as a careful senior engineer on this repo. You only read: don't
 change any file. Your verdict decides whether the change can merge without the owner, and your
 summary is what the owner reads first, so be specific and fair.

@@ -6,14 +6,15 @@
 import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type ClaudeRun, parseRun, prepareRun, SCORE_TIMEOUT_MIN } from "../claude.ts";
+import { agentBudgetUsd, loadAgent } from "../agents.ts";
+import { type ClaudeRun, parseRun, prepareRun } from "../claude.ts";
 import type { Config, RepoConfig } from "../config.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { Intent, IntentStore, Listing } from "../intents/types.ts";
 import { oneLine } from "../machine.ts";
 import { fence, render } from "../pipeline/prompts.ts";
-import { parseResult, SCORE_SCHEMA, type ScoreResult } from "../pipeline/schemas.ts";
+import { parseResult, SCHEMAS, type ScoreResult } from "../pipeline/schemas.ts";
 import { isParked, pickOrder } from "../priority.ts";
 import { checkoutRoot } from "../service.ts";
 import { check, type Tools } from "../tools.ts";
@@ -121,16 +122,18 @@ async function scoreOnce(d: IssueDeps, text: string): Promise<Scored> {
   const cwd = join(runsDir, "empty");
   mkdirSync(cwd, { recursive: true });
   const n = readdirSync(runsDir).filter((f) => /^score-\d+\.prompt$/.test(f)).length + 1;
+  const agent = loadAgent("score");
   const run: ClaudeRun = {
     kind: "score",
     model: d.config.agent.model,
     cwd,
     runsDir,
     n,
-    prompt: render("issue-score", { issue: fence(text, "issue") }),
-    schema: SCORE_SCHEMA,
+    prompt: render("score", { issue: fence(text, "issue") }),
+    agent: "score",
+    schema: SCHEMAS[agent.schema!],
     session: { mode: "none", id: "" },
-    budgetUsd: 1,
+    budgetUsd: agentBudgetUsd(agent, d.config),
     claudeMd: "",
     grants: { domains: [], paths: [], open: false },
     cacheEnv: {},
@@ -146,7 +149,7 @@ async function scoreOnce(d: IssueDeps, text: string): Promise<Scored> {
   const end = await Promise.race([
     handle.done,
     new Promise<"timeout">((r) => {
-      timer = setTimeout(() => r("timeout"), (SCORE_TIMEOUT_MIN * 60 + 10) * 1000);
+      timer = setTimeout(() => r("timeout"), (agent.timeoutMin * 60 + 10) * 1000);
       timer.unref();
     }),
   ]);
