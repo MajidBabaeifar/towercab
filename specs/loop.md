@@ -131,7 +131,10 @@ a checkout's `.git`.
   plain keys. `pick` always makes it fresh, replacing whatever is at that path (a crashed pick's, or
   an older Towercab's with the same `<id>-<attempt>`); later stages keep it until the mission is done,
   stopped or replaced.
-- Verified by: `checkout: kept across steps`, `checkout: pick replaces a leftover`, `checkout: has no remote`, `checkout: a planted git config is refused`
+- The checkout is Towercab's alone: each build round first runs `git reset --hard` and `git clean -fd`,
+  so a file another program left there (an untracked file, an edit) can't block the checkout of base
+  or ride into the PR. Ignored files, such as caches, stay.
+- Verified by: `checkout: kept across steps`, `checkout: pick replaces a leftover`, `checkout: has no remote`, `checkout: a planted git config is refused`, `pipeline: a build round starts from a clean checkout`
 
 ### LOOP-9 · Usage limits
 
