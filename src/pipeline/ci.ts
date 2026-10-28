@@ -128,6 +128,18 @@ export async function ciState(
   return bucket(checksOf(v.statusCheckRollup), pushedAt, cx.clock.now(), cx.config.agent.ciGrace);
 }
 
+/**
+ * PIP-83: the failing jobs' log tails when the PR's checks on its current head are red, else null.
+ * Unlike `ciState` a conflict or a moved head hides nothing: the checks are read as they stand.
+ */
+export async function redLog(cx: Ctx, github: string, pr: number, pushedAt: number): Promise<string | null> {
+  const v = JSON.parse(
+    await gh(cx, github, ["pr", "view", String(pr), "-R", github, "--json", "statusCheckRollup"]),
+  ) as { statusCheckRollup: unknown };
+  const b = bucket(checksOf(v.statusCheckRollup), pushedAt, cx.clock.now(), cx.config.agent.ciGrace);
+  return b.kind === "red" ? failedLog(cx, github, b.checks) : null;
+}
+
 /** The failed jobs' log, cut to what matters (`gh run view --log-failed`). */
 async function failedLog(cx: Ctx, github: string, checks: Check[]): Promise<string> {
   const runs = [...new Set(checks.map((c) => c.run).filter((r): r is number => r !== null))];

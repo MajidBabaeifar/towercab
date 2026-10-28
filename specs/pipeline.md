@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..81, PIP-85..89 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..89 · **Prefix:** PIP
 
 ## Purpose
 
@@ -248,7 +248,8 @@ The worker's first run turns the intent into spec changes, and Towercab opens th
   spec gate ([AUT-11](autonomy.md)): the owner (`approval:spec`) or Towercab (PIP-50). No behaviour
   change (`spec_ids` empty, no diff) → no spec PR; on to plan.
 - The owner's review comments on the spec PR → a design revision in the same session, a new commit
-  on the same PR.
+  on the same PR. Red checks on the spec PR start one too (PIP-82), and every revision sees their
+  logs (PIP-83).
 - Verified by: `pipeline: design edits only specs`, `pipeline: spec PR is opened`, `pipeline: no behaviour change skips the spec PR`, `pipeline: feedback revises the spec`
 
 ### PIP-26 · Spec approval
@@ -459,8 +460,10 @@ For a repo with a screenshots command, the review sees the UI as it now looks.
 When the owner doesn't need to approve the spec, Towercab merges the spec PR once its checks pass.
 
 - Spec gate open ([AUT-11](autonomy.md)) → wait for the spec PR's CI on the head Towercab pushed
-  (PIP-3 rules, no repairs: red, a conflict or someone else's push → `waiting: approve spec` with the
-  reason), then `gh pr merge --squash --match-head-commit <head>`.
+  (PIP-3 rules, no repairs: a red that survives the rerun and one revision (PIP-82), a conflict or
+  someone else's push → `waiting: approve spec` with the reason), then
+  `gh pr merge --squash --match-head-commit <head>`. The same checks come first when the gate is
+  closed (PIP-82).
 - Verified by: `pipeline: spec PR merged when the gate is open`
 
 ### PIP-51 · Towercab merges the plan PR at a5
@@ -647,18 +650,20 @@ When the spec PR no longer merges into `main`, the design resolves the conflict 
 
 When the checks on the spec PR stay red after the rerun, the design revises the spec once by itself, so the owner never has to review a red spec PR.
 
-- Applies while the spec waits for approval (`approval:spec`) and while Towercab waits to merge it
+- Applies to every spec PR before it goes to the owner (`approval:spec`) or to Towercab's merge
   (PIP-50). Towercab reads the spec PR's checks as PIP-3 does, on the head it pushed, with the
   first-red rerun of PIP-18 first. A check that is still red after that rerun sends the mission back
   to design in the same session, as if the owner had commented. The revision is a new commit on the
-  same PR (PIP-25).
+  same PR (PIP-25), and its checks are read the same way.
 - The prompt is the one PIP-83 describes; nothing in the owner's name is posted.
 - At most 1 red revision per spec PR (counted separately from the conflict revisions of
   PIP-81). If the PR is still red after it, or the revision changes nothing, the mission waits for the
   owner (`waiting: approve spec`) and the reason says which checks are red. A red spec PR does not
   count as ready to merge: Towercab does not merge it (PIP-50) and the owner is not asked to approve it
   before the revision has run.
-- A cancelled or pending check is not red. No checks on the repo → nothing to revise.
+- A cancelled check is rerun once like a red one; if it stays cancelled the owner is asked
+  (`waiting: approve spec`, the reason names it) without a revision. Checks pending past `ci_wait`
+  also → `waiting: approve spec` with that reason. No checks on the repo → nothing to revise.
 - Verified by: `pipeline: a red spec PR is revised once`, `pipeline: a red spec PR that stays red waits for the owner`, `pipeline: a red spec PR waiting for approval is revised first`
 
 ### PIP-83 · Design revisions see the failing logs

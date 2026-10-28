@@ -216,6 +216,10 @@ export class Pipe {
   readonly sandboxRuns: { kind: string; argv: string[]; cwd: string }[] = [];
   /** `gh run rerun` run IDs. */
   readonly reruns: number[] = [];
+  /** `statusCheckRollup` of every PR Towercab opens from now on (default: no checks). */
+  newPrChecks: FakePr["checks"] = () => [];
+  /** `gh run view` fails, as for a log GitHub no longer has. */
+  runViewFails = false;
   /** Heads GitHub's "update branch" made. */
   readonly updates: string[] = [];
   /** Branches deleted through `gh api -X DELETE …/git/refs/heads/…`, as `<repo> <branch>`. */
@@ -723,7 +727,7 @@ export class Pipe {
           mergeCommit: null,
           comments: [],
           reviews: [],
-          checks: () => [],
+          checks: (pr, head) => this.newPrChecks(pr, head),
           mergeable: "MERGEABLE",
           mergeStates: [],
         };
@@ -734,7 +738,10 @@ export class Pipe {
         this.reruns.push(Number(args[2]));
         return okResult();
       }
-      if (a === "run" && b === "view") return okResult(`run ${args[2]}: Error: a test failed\n`);
+      if (a === "run" && b === "view") {
+        if (this.runViewFails) return failResult("HTTP 410: the logs have expired");
+        return okResult(`run ${args[2]}: Error: a test failed\n`);
+      }
       const n = Number(args[2]);
       const p = this.prs.find((x) => x.repo === repo && x.number === n);
       if (a === "pr" && b === "view" && p) {

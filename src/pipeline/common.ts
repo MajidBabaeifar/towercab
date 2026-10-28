@@ -38,6 +38,12 @@ export interface PipeData {
   specConflicts?: number;
   /** The next design run first merges base into the spec branch (PIP-81). */
   mergeMain?: boolean;
+  /** Spec-PR revisions made for red checks (PIP-82). */
+  specRedRevisions?: number;
+  /** The next design run is the revision for red checks, not an owner's comment (PIP-82). */
+  specRed?: boolean;
+  /** Heads of the spec PR whose red checks were rerun (PIP-18). */
+  specReruns?: Record<string, boolean>;
   plan?: { md: string; access: Access };
   /** The merged plan's ticked access. */
   granted?: Access;
