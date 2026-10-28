@@ -55,6 +55,8 @@ export interface PipeData {
   /** Head at the end of the last non-repair round (PIP-31). */
   lockHead?: string;
   build?: { pr: string | null; notes: string; planChanged: string | null };
+  /** The step whose child really started (LOOP-4); a step re-entered without it never ran. */
+  launched?: string;
   /** Runs per kind, for file names. */
   n?: Record<string, number>;
   /** `<kind>`: a cut-off run gets one continue (PIP-1). */
@@ -195,6 +197,8 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
   const runs = cx.runs(m);
   const cache = cx.home.cache(repo.name);
   const reentered = m.step === p.step;
+  // Only a run that really started is resumed: one that waited for a slot never saw its prompt.
+  const resumed = reentered && data(m).launched === p.step;
   const { n, data: nd } = reentered ? { n: currentN(m, p.kind), data: {} } : nextN(m, p.kind);
   const agent = loadAgent(p.agent);
   // `resume`: the mission's session, started by its first run; `new`: a session of its own per run.
@@ -203,11 +207,11 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
   if (agent.session === "none") session = { mode: "none", id: "" };
   else if (!onWorkerSession) session = { mode: "new", id: crypto.randomUUID() };
   else session = { mode: m.session_used ? "resume" : "new", id: m.session };
-  const fresh = cx.record(m, p.step, onWorkerSession ? { session_used: 1 } : {}, nd);
-  let prompt = reentered && resumePrompt ? resumePrompt : p.prompt;
-  // A re-entered step on a new worker session: the old one was gone (LOOP-7), so the new one is
+  const fresh = cx.record(m, p.step, {}, nd);
+  let prompt = resumed && resumePrompt ? resumePrompt : p.prompt;
+  // A resumed step on a new worker session: the old one was gone (LOOP-7), so the new one is
   // told where the work is, then given the step's task.
-  if (reentered && onWorkerSession && session.mode === "new") {
+  if (resumed && onWorkerSession && session.mode === "new") {
     const pr = currentPr(cx, m, repo);
     const plan = m.plan_pr && cx.store.github() ? prUrl(cx.store.github()!, m.plan_pr) : null;
     prompt = `${freshContext(
@@ -241,6 +245,8 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
   };
   return {
     spawn: prepareRun(run, { towercabExe: join(checkoutRoot(), "bin", "towercab"), home: homedir() }),
+    // The session exists once its first run starts, not when the run is asked for.
+    launched: onWorkerSession ? { session_used: 1 } : {},
   };
 }
 
