@@ -78,6 +78,10 @@ export interface PipeData {
   /** Merge asked GitHub to update the branch: the next moved head is that, not someone else's. */
   updatedBranch?: boolean;
   dropped?: boolean;
+  /** Pushes GitHub refused as non-fast-forward, in a row (PIP-85). */
+  pushRefusals?: number;
+  /** The code branch was pushed once: no leftover check any more (PIP-86). */
+  pushed?: boolean;
   /** The question the owner is asked (the UI's card). */
   question?: Question;
   /** The plan's access list (the UI's plan card). */
@@ -370,6 +374,52 @@ export async function botAuthor(cx: Ctx): Promise<string[]> {
   return ["-c", `user.name=${bot.login}`, "-c", `user.email=${bot.email}`, "-c", "commit.gpgsign=false"];
 }
 
+/** GitHub refused a push because the branch has commits Towercab doesn't (PIP-85); never a crash. */
+export class PushRefused extends Error {
+  readonly branch: string;
+  constructor(branch: string, message: string) {
+    super(message);
+    this.branch = branch;
+  }
+}
+
+/** Pushes refused as non-fast-forward before the mission asks the owner. */
+export const PUSH_TRIES = 3;
+
+/** A refused push: try again next pass, and after `PUSH_TRIES` refusals ask the owner (PIP-85). */
+export async function refusedPush(cx: Ctx, m: Mission, e: PushRefused): Promise<Progress> {
+  const n = (data(m).pushRefusals ?? 0) + 1;
+  if (n < PUSH_TRIES) {
+    cx.record(m, m.step, {}, { pushRefusals: n });
+    return { poll: 5 };
+  }
+  const o = await ask(cx, m, branchInTheWay(e.branch));
+  return { done: { ...o, data: { ...o.data, pushRefusals: 0 } } };
+}
+
+/** The owner's question when `branch` holds commits Towercab can't build on (PIP-85, PIP-86). */
+export function branchInTheWay(branch: string, pr?: { number: number; url: string }): Question {
+  const where = pr ? ` Its open PR is ${pr.url}, which Towercab did not open.` : "";
+  return {
+    context: `Towercab can't push \`${branch}\`: GitHub already has commits on that branch that Towercab doesn't, and Towercab never overwrites commits.${where}`,
+    question: `What should happen to \`${branch}\` on GitHub?`,
+    options: [
+      {
+        option: "Delete the branch on GitHub, then reply here",
+        // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
+        then: "Towercab builds once more and pushes a fresh branch of that name. Anything on the old branch is lost.",
+      },
+      {
+        option: "Start the intent over with Retry on the page, or `/retry` on its spec PR",
+        // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
+        then: "The new attempt uses a new branch name, and the old branch stays as it is.",
+      },
+    ],
+    recommendation:
+      "Start over if the commits might be someone's work; delete the branch if you know it is only an old attempt.",
+  };
+}
+
 /** Push `branch` of the checkout to GitHub through Towercab's clone (LOOP-8). */
 export async function pushBranch(
   cx: Ctx,
@@ -396,7 +446,11 @@ export async function pushBranch(
       auth,
     );
   } catch (e) {
-    throw asEnv(e);
+    const err = asEnv(e);
+    if (!(err instanceof EnvError) && /non-fast-forward|fetch first/i.test(err.message)) {
+      throw new PushRefused(remoteBranch, err.message);
+    }
+    throw err;
   }
   return (await git(cx.tools, clone, ["rev-parse", `refs/heads/${remoteBranch}`])).trim();
 }

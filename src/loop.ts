@@ -8,6 +8,7 @@ import { applyPending, paused } from "./commands.ts";
 import type { Config } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
 import { fixFor, Health } from "./faults.ts";
+import { retireBranch } from "./github/branches.ts";
 import { approveRequested, intentEvents, prEvents, releaseRequested } from "./github/events.ts";
 import { pollIssues } from "./github/issues.ts";
 import { closeIfOpen, type PrState, readPr } from "./github/prs.ts";
@@ -403,22 +404,56 @@ export class Loop {
       }
     }
     if (replaced) await this.closeReplaced(m);
+    else if (m.stage === "stopped") await this.retireStopped(m);
     if (finished(m.stage)) removeCheckout(this.d.home.abs(m.checkout));
     const set: Record<string, SqlValue> = { step: "" };
     if (m.stage === "merge" && paused(db)) set.held = 1;
     update(db, m.id, set, this.now);
   }
 
-  /** PIP-53: a replaced attempt's open PRs are closed, so only the new attempt's wait for review. */
-  private async closeReplaced(m: Mission): Promise<void> {
+  /** The mission's spec, plan and code PRs, with the repo each lives in. */
+  private missionPrs(m: Mission): [string, number][] {
     const repo = this.d.config.repos.get(m.repo);
-    const why = `Towercab started this intent over (attempt ${m.attempt + 1}), so this PR is closed. The new attempt opens its own.`;
     const prs: [string | null | undefined, number | null][] = [
       [repo?.github, m.spec_pr],
       [this.d.store.github(), m.plan_pr],
       [repo?.github, m.pr],
     ];
-    for (const [github, n] of prs) if (github && n) await closeIfOpen(this.d.github, github, n, why);
+    return prs.filter((p): p is [string, number] => Boolean(p[0] && p[1]));
+  }
+
+  /**
+   * PIP-53, PIP-87: a replaced attempt's open PRs are closed, so only the new attempt's wait for
+   * review, and their branches are deleted. A failure leaves the step at `enter`: retried next pass.
+   */
+  private async closeReplaced(m: Mission): Promise<void> {
+    const why = `Towercab started this intent over (attempt ${m.attempt + 1}), so this PR is closed. The new attempt opens its own.`;
+    await this.closeAndRetire(m, why);
+  }
+
+  /**
+   * A mission that stopped without a replacement: after the owner closed a PR (PIP-88) the branches of
+   * its closed PRs are deleted; after the intent was dropped or removed (PIP-87) its open PRs are
+   * closed first.
+   */
+  private async retireStopped(m: Mission): Promise<void> {
+    const last = this.d.db.get<{ event: string }>(
+      "SELECT event FROM transitions WHERE mission = ? ORDER BY id DESC LIMIT 1",
+      m.id,
+    );
+    if (last?.event === "closed") await this.closeAndRetire(m, null);
+    else if (last?.event === "intent_removed") {
+      await this.closeAndRetire(m, "Towercab closed this PR because the intent was dropped.");
+    }
+  }
+
+  private async closeAndRetire(m: Mission, why: string | null): Promise<void> {
+    const prs = this.missionPrs(m);
+    if (why) for (const [github, n] of prs) await closeIfOpen(this.d.github, github, n, why);
+    for (const [github, n] of prs) {
+      const gone = await retireBranch(this.d.github, github, n, this.d.store.github());
+      if (gone) this.d.log(`${label(m)}: deleted branch ${gone} of ${github}#${n}`);
+    }
   }
 
   private enforceTimeouts(): void {

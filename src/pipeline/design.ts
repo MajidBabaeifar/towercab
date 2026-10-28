@@ -16,8 +16,10 @@ import {
   ended,
   gh,
   intentOf,
+  PushRefused,
   prUrl,
   pushBranch,
+  refusedPush,
   repoFiles,
   spawnRun,
 } from "./common.ts";
@@ -234,8 +236,14 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
 /** Push the spec commit to `<branch>-spec`, then open or update the spec PR. */
 async function pushSpec(cx: Ctx, m: Mission): Promise<Progress> {
   const specBranch = `${m.branch}-spec`;
-  const head = await pushBranch(cx, m, m.branch, specBranch);
-  return openPr(cx, cx.record(m, "pr", { head, pushed_at: cx.clock.now() }, { specBranch }));
+  let head: string;
+  try {
+    head = await pushBranch(cx, m, m.branch, specBranch);
+  } catch (e) {
+    if (e instanceof PushRefused) return refusedPush(cx, m, e);
+    throw e;
+  }
+  return openPr(cx, cx.record(m, "pr", { head, pushed_at: cx.clock.now() }, { specBranch, pushRefusals: 0 }));
 }
 
 /** The design may edit only specs/ (PIP-25): anything else it left in the checkout is discarded. */
