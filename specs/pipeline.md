@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..81 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..81, PIP-85..89 · **Prefix:** PIP
 
 ## Purpose
 
@@ -486,7 +486,7 @@ PRs wait for review.
 
 - Entering `stopped` with a newer attempt (`retry_fresh`, `/retry`): its open spec, plan and code PRs
   are closed as the App (`gh pr close --comment`, saying the intent started over); merged or closed
-  ones are left. A failure is retried next pass (LOOP-6).
+  ones are left. Their branches are deleted too (PIP-87). A failure is retried next pass (LOOP-6).
 - Verified by: `pipeline: a fresh attempt closes the old PRs`
 
 ### PIP-54 · Proof runs the PR's checks block when it changes it
@@ -683,8 +683,9 @@ When GitHub refuses a push because it already has commits on the branch that Tow
   (LOOP-6) does not count it. It counts as a refused push instead: after 3 refusals the mission is
   `waiting: answer the question`.
 - The question follows the writing guide (PIP-39): it names the branch, says GitHub already has commits
-  on it that Towercab doesn't, and offers what the owner can do (delete the branch on GitHub, or tell
-  Towercab to use another name). Never a force-push (PIP-2).
+  on it that Towercab doesn't, and offers what the owner can do: delete the branch on GitHub and reply,
+  or start the intent over (Retry; the new attempt's branch has a new name). Never a force-push (PIP-2).
+- The same goes for the spec branch's push. Each refusal is retried on the next pass; the third asks.
 - Verified by: `pipeline: a refused push waits with the reason`, `pipeline: a refused push is not counted as a crash`
 
 ### PIP-86 · A leftover branch is replaced only when it is Towercab's own
@@ -693,34 +694,38 @@ Before a mission's first push, Towercab checks whether the branch already exists
 
 - Check: `towercab/<id>-<slug>` on GitHub (`git ls-remote`) and the PRs with that head (`gh pr list
   --head`, all states). No branch → push as today.
-- The branch exists and every PR on it is closed or merged or was opened by the Towercab App, and at
-  least one is open: Towercab closes each open one with a comment saying the intent started over,
-  deletes the branch (PIP-89), then pushes. An earlier attempt or a v1 PR is the usual case.
+- The branch exists, at least one PR on it was opened by the Towercab App, and no open PR on it is
+  anyone else's: Towercab closes each open one with a comment saying the intent started over, deletes
+  the branch (PIP-89), then pushes. An earlier attempt or a v1 PR is the usual case; a branch whose App
+  PRs are all closed is replaced the same way.
 - The branch exists and an open PR was opened by anyone else, or there are commits on the branch and
   no PR of the App's at all: nothing is closed or deleted, and the mission is `waiting: answer the
-  question`. The ask names the branch and the PR if any, and offers: delete the branch on GitHub, or
-  say to use another name. Towercab does not pick the next free name `-<n>` by itself, since the
-  commits may be someone's work.
-- Not done again once the first push has succeeded; later rounds only push (PIP-2).
+  question`. The ask names the branch and the foreign PR if any, and offers: delete the branch on
+  GitHub and reply, or start the intent over (Retry). Towercab does not pick the next free name
+  `-<n>` by itself, since the commits may be someone's work.
+- A branch whose head is the commit about to be pushed (a push that finished before a crash) is not in
+  the way. Not checked again once the first push has succeeded; later rounds only push (PIP-2).
 - Verified by: `pipeline: a leftover App PR is closed and replaced`, `pipeline: someone else's branch is left alone`, `pipeline: a leftover branch with commits but no PR waits`
 
 ### PIP-87 · A PR Towercab closes loses its branch
 
 When Towercab itself closes a PR, it deletes that PR's branch on GitHub too.
 
-- Applies to the closing in PIP-53 (`/retry` replacing an attempt: spec, plan and code PRs), to
-  `drop` closing the current PR (the `drop` command, [PRI-9](priority.md)) and to PIP-86. Merged PRs are not touched; the repo setting
-  deletes their branches (PIP-89).
-- Deleted after the close, subject to the guards in PIP-89. A branch shared with a newer attempt's open
-  PR is kept.
+- Applies to the closing in PIP-53 (`/retry` replacing an attempt: spec, plan and code PRs), to a
+  mission stopped by `drop` or because its intent was removed ([PRI-9](priority.md); its open PRs are
+  closed first, with a comment saying the intent was dropped), and to PIP-86. Merged PRs are not
+  touched; the repo setting deletes their branches (PIP-89).
+- Done on entering `stopped`, after the close, subject to the guards in PIP-89. A branch that another
+  open PR still uses as its head (a newer attempt) is kept.
 - Verified by: `pipeline: retry deletes the old attempt's branches`, `pipeline: drop deletes the PR's branch`
 
 ### PIP-88 · A PR the owner closes loses its branch
 
 When a mission stops because the owner closed its PR, Towercab deletes that PR's branch.
 
-- Entering `stopped` through `machine.apply` because a PR was closed without merge (PIP-43: the
-  `closed` event, the intent is dropped) records the deletion of that PR's branch, then makes it.
+- `machine.apply` moves the mission to `stopped` on the `closed` event (PIP-43: a PR closed without
+  merge, the intent is dropped). That move is the record; the entry step of `stopped` then deletes the
+  branches of the mission's closed PRs.
 - Subject to the guards in PIP-89.
 - Verified by: `pipeline: a PR the owner closes loses its branch`
 
@@ -728,11 +733,13 @@ When a mission stops because the owner closed its PR, Towercab deletes that PR's
 
 Towercab deletes only branches it made for a PR it opened, and tries again if GitHub fails.
 
-- Deleted only if the branch starts with `towercab/`, its PR was opened by the Towercab App, and the PR
-  is closed or Towercab is closing it. A branch with an open PR from anyone else, or outside
-  `towercab/`, is never deleted. A branch already gone counts as done.
-- The deletion is a side effect: `ctx.record` first, then `gh api -X DELETE
-  repos/<repo>/git/refs/heads/<branch>`; a failure is retried next pass (LOOP-6).
+- Deleted only if the branch starts with `towercab/` (or `plan/` in the intents repo, where the plan
+  PRs' branches live), its PR was opened by the Towercab App, and the PR is closed without merge. A
+  branch with an open PR from anyone else, or outside those names, is never deleted. A branch already
+  gone counts as done.
+- The deletion is a side effect: the move to `stopped` (or, for PIP-86, `ctx.record`) is stored first,
+  then `gh api -X DELETE repos/<repo>/git/refs/heads/<branch>`. A failure leaves the entry step due, so
+  the next pass retries it (LOOP-6).
 - Merged branches stay the job of the repo setting `delete_branch_on_merge` (`apply-settings`); Towercab
   does not delete them.
 - Verified by: `pipeline: a branch outside towercab/ is never deleted`, `pipeline: a failed branch delete is retried`, `pipeline: a merged PR's branch is left to the repo setting`

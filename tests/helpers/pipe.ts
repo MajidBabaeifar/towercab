@@ -28,6 +28,8 @@ export interface FakePr {
   title: string;
   body: string;
   state: "OPEN" | "MERGED" | "CLOSED";
+  /** Who opened it; Towercab's PRs are the App's. */
+  author: string;
   mergeCommit: string | null;
   comments: { id: string; author: string; body: string; at: string }[];
   reviews: { author: string; state: string; body: string; at: string; commit: string }[];
@@ -216,6 +218,10 @@ export class Pipe {
   readonly reruns: number[] = [];
   /** Heads GitHub's "update branch" made. */
   readonly updates: string[] = [];
+  /** Branches deleted through `gh api -X DELETE …/git/refs/heads/…`, as `<repo> <branch>`. */
+  readonly deleted: string[] = [];
+  /** Return a reason to make a branch delete fail (once per `true` call it returns). */
+  deleteFail: ((repo: string, branch: string) => string | null) | null = null;
   /** Every log line the loop wrote. */
   readonly logs: string[] = [];
   /** Per-kind answers used when the queue is empty. */
@@ -448,7 +454,13 @@ export class Pipe {
    * Another open PR of `repo`: a new branch off `main` with `files` committed, and its PR. With
    * `branch: false` only the PR exists (its branch can't be read).
    */
-  openOtherPr(repo: string, head: string, files: Record<string, string>, branch = true): FakePr {
+  openOtherPr(
+    repo: string,
+    head: string,
+    files: Record<string, string>,
+    branch = true,
+    author = "towercab[bot]",
+  ): FakePr {
     if (branch) {
       const work = join(this.dir("tc-other-"), "w");
       git(dirname(work), "clone", "-q", this.bares[repo]!, work);
@@ -469,6 +481,7 @@ export class Pipe {
       title: "docs(specs): other",
       body: "",
       state: "OPEN",
+      author,
       mergeCommit: null,
       comments: [],
       reviews: [],
@@ -687,8 +700,12 @@ export class Pipe {
         );
       }
       if (a === "pr" && b === "list") {
-        const p = this.prs.find((x) => x.repo === repo && x.head === flag("--head") && x.state === "OPEN");
-        return json(p ? [{ number: p.number }] : []);
+        const all = flag("--state") === "all";
+        return json(
+          this.prs
+            .filter((x) => x.repo === repo && x.head === flag("--head") && (all || x.state === "OPEN"))
+            .map((x) => ({ number: x.number, state: x.state, author: { login: x.author } })),
+        );
       }
       if (a === "pr" && b === "create") {
         const head = flag("--head");
@@ -702,6 +719,7 @@ export class Pipe {
           title: flag("--title"),
           body: opts.input ?? "",
           state: "OPEN",
+          author: "towercab[bot]",
           mergeCommit: null,
           comments: [],
           reviews: [],
@@ -721,7 +739,12 @@ export class Pipe {
       const p = this.prs.find((x) => x.repo === repo && x.number === n);
       if (a === "pr" && b === "view" && p) {
         const fields = flag("--json").split(",");
-        const head = this.headSha(p.repo, p.head);
+        let head = "";
+        try {
+          head = this.headSha(p.repo, p.head);
+        } catch {
+          // The branch was deleted: a closed PR keeps no head to read.
+        }
         const all: Record<string, unknown> = {
           state: p.state,
           mergedAt: p.state === "MERGED" ? "2026-10-26T12:00:00Z" : null,
@@ -733,6 +756,9 @@ export class Pipe {
             : "CLEAN",
           statusCheckRollup: fields.includes("statusCheckRollup") ? p.checks(p, head) : [],
           isDraft: false,
+          author: { login: p.author },
+          headRefName: p.head,
+          isCrossRepository: false,
           body: p.body,
           reviews: p.reviews.map((r) => ({
             author: { login: r.author },
@@ -784,6 +810,18 @@ export class Pipe {
       }
       if (a === "api") {
         const path = args.find((x) => x.startsWith("repos/")) ?? "";
+        const del = /^repos\/([^/]+\/[^/]+)\/git\/refs\/heads\/(.+)$/.exec(path);
+        if (del && args.includes("DELETE")) {
+          const bad = this.deleteFail?.(del[1]!, del[2]!);
+          if (bad) return failResult(bad);
+          try {
+            git(this.bareOf(del[1]!), "update-ref", "-d", `refs/heads/${del[2]}`);
+          } catch {
+            return failResult("gh: Reference does not exist (HTTP 422)");
+          }
+          this.deleted.push(`${del[1]} ${del[2]}`);
+          return okResult();
+        }
         const edit = /^repos\/([^/]+\/[^/]+)\/issues\/comments\/(\d+)$/.exec(path);
         if (edit) {
           for (const pr of this.prs.filter((x) => x.repo === edit[1])) {
