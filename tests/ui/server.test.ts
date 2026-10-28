@@ -242,6 +242,8 @@ test("ui: API shapes", async () => {
   const empty = await post(port, ui.token, { action: "reply", intent: IDS.question, text: " " });
   expect(empty.status).toBe(422);
   expect(JSON.parse(empty.body)).toEqual({ ok: false, message: "Write a reply first." });
+  expect((await post(port, ui.token, { action: "start", intent: IDS.upnext })).status).toBe(200);
+  expect(f.calls.at(-1)).toEqual({ action: "start", intent: IDS.upnext });
   expect((await post(port, ui.token, { action: "explode", intent: IDS.plan })).status).toBe(400);
   expect((await post(port, ui.token, { action: "merge", intent: "../x" })).status).toBe(400);
   expect(

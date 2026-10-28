@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..38 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..38, LOOP-60..64 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -53,22 +53,23 @@ Every mission moves through one fixed set of stages, and one table decides every
 
 ### LOOP-4 · How much runs at once
 
-At most `[agent].parallel` Claude runs or checks at a time, and one unmerged intent per repo by
-default.
+At most `[agent].parallel` Claude runs or checks at a time; per repo, `ahead` intents before build
+(LOOP-60) and `workers` in build (LOOP-61).
 
 - A slot is a child process that does work (a Claude run, setup, checks, screenshots); git and gh
-  calls don't take one. At most `[repos.<r>].workers` (default 1) unfinished missions per repo until
-  merged; later ones wait, shown as queued behind the repo's running intent. An intent has at most one unfinished mission.
+  calls don't take one. Per repo, at most `[repos.<r>].ahead` (default 3) intents are ahead of build and
+  at most `[repos.<r>].workers` (default 1) build through merge; the rest wait (LOOP-60, LOOP-61).
+  An intent has at most one unfinished mission.
 - A free slot goes first to unfinished missions in priority order, then to a new pick, so a PR
   waiting on the owner never stops other repos.
-- Verified by: `loop: picks while others wait`, `loop: one unmerged intent per repo`, `loop: one mission per intent`
+- Verified by: `loop: picks while others wait`, `loop: one intent builds at a time per repo`, `loop: one mission per intent`
 
 ### LOOP-5 · Pick
 
 The loop starts the highest-priority intent that can run.
 
 - `decide(listing, state)` (pure, also behind `next`): the picker's list ([PRI-5](priority.md)),
-  skipping: parked, paused, a repo full (LOOP-4), the model cooling down (LOOP-9), GitHub or Claude
+  skipping: parked, paused, a repo with `ahead` intents ahead (LOOP-60), the model cooling down (LOOP-9), GitHub or Claude
   unreachable (LOOP-10). An intent whose repo isn't in `[repos]` gets `waiting: unknown repo`; one
   whose `after` names an unknown, dropped or cyclic intent gets `waiting: bad after:`.
 - Picked → one transaction inserts the mission: `attempt` = last + 1, a new session uuid, `model` =
@@ -209,12 +210,12 @@ which intent, with a link.
 The CLI covers running the service and the few actions that have no GitHub gesture.
 
 - `up`, `down`, `restart`, `logs` (LOOP-2); `run [--watch] [--intent <id>]`; `status`, `next`
-  (LOOP-13); `add` ([INT-2](intents.md)); `answer <id> <text>` (LOOP-38); `retry <id>` (a fresh
+  (LOOP-13); `add` ([INT-2](intents.md)); `answer <id> <text>` (LOOP-38); `start <id>` (LOOP-63); `retry <id>` (a fresh
   attempt); `drop <id>` ([PRI-9](priority.md)); `approve <id>` (merges the PR the intent waits on, as
   the owner, LOOP-38); `pause`, `resume`; `ui` (opens the page); `doctor`; `update` (LOOP-35);
   `hook guard <rules>` (internal, [PIP-29](pipeline.md)); `--version`.
 - One loop per home: a lock file; a second `run` → `towercab is running (pid N): towercab down
-  first`. `answer`, `retry`, `drop`, `pause` and `resume` insert a `commands` row the loop applies on
+  first`. `answer`, `retry`, `drop`, `start`, `pause` and `resume` insert a `commands` row the loop applies on
   its next pass; with no loop running the CLI applies it itself.
 - Errors print `towercab: <reason>` and exit 1; bad arguments exit 2.
 - Verified by: `cli: commands`, `cli: second run is refused`, `commands: applied by the loop`, `commands: applied without a loop`
@@ -387,8 +388,9 @@ Not used: kept free; `start` is LOOP-63.
   intent is then picked as if the repo had a free place: it goes over `ahead` and nothing running is
   stopped. Other skips still apply: parked, paused, unknown repo, bad `after`, cooling down, GitHub
   or Claude unreachable (LOOP-5, LOOP-9, LOOP-10).
-- Errors (`towercab: <reason>`, exit 1): unknown intent; `<id> has already started`; `<id> is done or
-  dropped`. A second `start` on the same intent is refused the same way.
+- Refused with a reply of `start: <reason>` (the CLI prints it): the intent is unknown, `<id> has
+  already started` (it has a mission, or an earlier `start` is still waiting for its pass), or `<id> is
+  done or dropped`. A started intent is picked before others, so it begins on the next pass.
 - `start` only moves design forward. It does not skip the build slot: an intent with an approved plan
   still waits its turn by priority (LOOP-61).
 - Verified by: `cli: start`, `loop: start goes over the ahead limit`, `loop: start does not skip the build slot`, `commands: start is refused for a started intent`
@@ -419,7 +421,7 @@ Not used: kept free; `start` is LOOP-63.
 | `agent.network` | list of domains | AUT-14's default list |
 | `agent.sandbox_unix_sockets` | bool | false |
 | `repos.<r>.github`, `path`, `base`, `workers`, `env` | `owner/name`; path; branch; int 1–16; table | required; `<home>/repos/<r>`; `main`; 1; `{}` |
-| `repos.<r>.ahead` (LOOP-60, not built yet) | int 1–16 | 3 |
+| `repos.<r>.ahead` | int 1–16 | 3 |
 | `github.app_id`, `github.me`, `github.api_base` | int; login; URL | required; required; `https://api.github.com` |
 | `telegram.bot_token`, `telegram.chat_id`, `telegram.api_base` | strings; URL | none (no Telegram); `https://api.telegram.org` |
 | `ui.port` | int 0–65535 (0 = off) | 7311 |
@@ -449,7 +451,7 @@ CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT 
 CREATE TABLE transitions (id INTEGER PRIMARY KEY, mission INTEGER NOT NULL REFERENCES missions(id),
   at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT);
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume')),
+  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start')),
   arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
   created REAL NOT NULL, applied_at REAL, result TEXT);
 CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, created REAL NOT NULL,
@@ -501,6 +503,7 @@ like a crash; `–` = ignored)
 | `worker timeout`, `worker budget`, `no result` | blocked | The worker stopped before finishing. |
 | `no changes` | blocked | The worker made no changes. |
 | `crashed at <stage>` | blocked | Towercab crashed three times at this step. |
+| `spec conflict` | blocked | The spec PR conflicts with main and Towercab could not resolve it. |
 | `merge failed` | blocked | GitHub refused the merge. |
 | `add CLAUDE.md verifying block` | blocked | The repo needs a verifying section in CLAUDE.md. |
 | `fix repo files` | blocked | A repo file doesn't parse. |

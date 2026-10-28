@@ -3,7 +3,7 @@
 
 import type { Intent } from "../intents/types.ts";
 import { finished, type Outcome } from "../machine.ts";
-import type { Mission } from "../mission.ts";
+import { dataOf, type Mission } from "../mission.ts";
 import type { PrState } from "./prs.ts";
 
 export type PrKind = "spec" | "plan" | "code";
@@ -37,6 +37,11 @@ export function currentPr(m: Mission): { kind: PrKind; number: number } | null {
   }
   return null;
 }
+
+/** PIP-81: conflict revisions per spec PR before the owner is asked. */
+export const SPEC_CONFLICT_REVISIONS = 2;
+export const SPEC_CONFLICT_TEXT =
+  "The spec PR conflicts with the base branch: another spec change merged first. Resolve the conflict in the specs and keep the rows of both sides.";
 
 /** The comment that starts over (PIP-45). */
 export const RETRY = "/retry";
@@ -134,6 +139,19 @@ export function prEvents(m: Mission, prs: Prs, me: string, botLogin: string): Ou
   }
   const retries = fresh.filter((s) => s.text === RETRY);
   if (retries.length > 0) return { event: "retry_fresh", set: { feedback_seen: latest(retries) } };
+
+  // PIP-81: an open spec PR that no longer merges into base gets a design revision, at most twice.
+  const spec = prs.spec;
+  if (spec?.state === "OPEN" && m.stage === "approval:spec" && spec.mergeable === "CONFLICTING") {
+    const done = dataOf<{ specConflicts?: number }>(m).specConflicts ?? 0;
+    if (done >= SPEC_CONFLICT_REVISIONS)
+      return { event: "wait", waiting: "spec conflict", why: "the spec PR still conflicts with its base" };
+    return {
+      event: "feedback",
+      text: SPEC_CONFLICT_TEXT,
+      data: { answer: SPEC_CONFLICT_TEXT, specConflicts: done + 1, mergeMain: true },
+    };
+  }
 
   const code = prs.code;
   if (code?.state === "OPEN" && m.pr !== null) {

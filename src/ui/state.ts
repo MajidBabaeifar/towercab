@@ -11,6 +11,7 @@ import type { Home } from "../home.ts";
 import type { Intent, IntentStore, Listing } from "../intents/types.ts";
 import { finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
 import { dataOf, forIntent, type Mission } from "../mission.ts";
+import { aheadIn, isAhead, isBuilding, isReady } from "../slots.ts";
 import type {
   Access,
   ActivityItem,
@@ -56,7 +57,7 @@ export interface Problem {
 /** Why the picker skips an intent (LOOP-5), worded by the page. */
 export type Skip =
   | { kind: "paused" }
-  | { kind: "repo-busy"; intent: string }
+  | { kind: "ahead"; n: number; limit: number }
   | { kind: "cooling"; model: string; until: number }
   | { kind: "parked" }
   | { kind: "unreachable"; what: string }
@@ -280,6 +281,7 @@ const CARD_NOTES: Partial<Record<Stage, string>> = {
 export function stateOf(m: Mission, now: number, o: StateOpts = {}): StateView {
   if (m.stage === "stopped") return state("dropped");
   if (m.stage === "done") return state("done");
+  if (isReady(m)) return state("queued", "ready to build");
   if (isWait(m.stage)) {
     const note = CARD_NOTES[m.stage] ?? (m.waiting === "answer the question" ? "Question" : "Blocked");
     return state("needs", note);
@@ -506,17 +508,23 @@ function phases(m: Mission): Phase[] {
 /** UI-59: a moving mission's row. */
 export function missionRow(src: UiSources, s: Snap, m: Mission): Row {
   const entered = s.entered.get(m.id) ?? m.created;
+  const ready = isReady(m);
+  const holder = s.missions.find((x) => x.repo === m.repo && isBuilding(x));
   return {
     intent: m.intent,
     title: titleOf(s, m.intent),
     repo: m.repo,
     state: missionState(s, m, src),
     phases: phases(m),
-    step: stepWords(m.stage),
+    step: ready ? "Ready to build" : stepWords(m.stage),
     inStep: duration(s.now - entered),
     cost: money(m.cost_usd),
     model: modelName(m.child_model ?? m.model),
-    behind: null,
+    behind: ready
+      ? holder
+        ? `Ready to build, behind “${titleOf(s, holder.intent)}”.`
+        : "Ready to build; it starts on the next pass."
+      : null,
   };
 }
 
@@ -526,8 +534,8 @@ export function skipWords(skip: Skip | null, titles: (id: string) => string, now
   switch (skip.kind) {
     case "paused":
       return "New work starts when you resume.";
-    case "repo-busy":
-      return `Waits behind “${titles(skip.intent)}”.`;
+    case "ahead":
+      return `${skip.n} intents are already ahead of build in this repo; it starts when one has a place free, or when you start it.`;
     case "cooling":
       return `${modelName(skip.model)} is cooling down after a usage limit; it can start ${until(skip.until, now)}.`;
     case "parked":
@@ -603,10 +611,13 @@ function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): Air
       title: row.title,
       repo: m.repo,
       state: row.state,
-      station: stationOf(m),
-      lines: isWait(m.stage)
-        ? [askOf(m.waiting), `Waiting ${waited} · ${row.cost}`]
-        : [`${row.step} · ${row.inStep}`, `${row.cost} · ${row.model}`],
+      station: isReady(m) ? "code" : stationOf(m),
+      canStart: false,
+      lines: isReady(m)
+        ? [row.behind ?? "Ready to build", `${row.cost} · ${row.model}`]
+        : isWait(m.stage)
+          ? [askOf(m.waiting), `Waiting ${waited} · ${row.cost}`]
+          : [`${row.step} · ${row.inStep}`, `${row.cost} · ${row.model}`],
       phases: row.phases,
     });
     seen.add(m.intent);
@@ -620,6 +631,7 @@ function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): Air
       state: state("needs", "Blocked"),
       station: "gate",
       lines: [askOf(i.waiting), "Not started"],
+      canStart: false,
       phases: NOT_STARTED,
     });
     seen.add(i.id);
@@ -640,6 +652,7 @@ function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): Air
       lines: parked
         ? [`Priority ${u.priority} · below the cutoff`, why ?? ""]
         : [`#${place} in line · priority ${u.priority}`, why ?? "Starts when a slot is free."],
+      canStart: src.running && !parked,
       phases: NOT_STARTED,
     });
   }
@@ -936,8 +949,11 @@ export async function overview(src: UiSources): Promise<Overview> {
   const sp = spend(src.db, s.now);
   const needs: (Card & { order: number })[] = [];
   const working: Row[] = [];
+  const ready: Row[] = [];
   for (const m of s.missions) {
-    if (isWait(m.stage)) {
+    if (isReady(m)) {
+      ready.push(missionRow(src, s, m));
+    } else if (isWait(m.stage)) {
       const since = s.entered.get(m.id) ?? m.created;
       needs.push({ ...missionCard(src, m, s.intents.get(m.intent), since, s.now), order: since });
     } else {
@@ -951,7 +967,7 @@ export async function overview(src: UiSources): Promise<Overview> {
   }
   needs.sort((a, b) => a.order - b.order);
   const list = src.upNext().filter((u) => !withMission.has(u.intent));
-  const queued = list.filter((u) => u.skip?.kind !== "parked").map((u) => queuedRow(s, u));
+  const queued = [...ready, ...list.filter((u) => u.skip?.kind !== "parked").map((u) => queuedRow(s, u))];
   const upNext: UpNextView[] = list.slice(0, 5).map((u) => {
     const i = s.intents.get(u.intent);
     return {
@@ -961,6 +977,7 @@ export async function overview(src: UiSources): Promise<Overview> {
       priority: u.priority,
       state: skipState(u.skip, false),
       reason: skipWords(u.skip, (id) => titleOf(s, id), s.now),
+      canStart: src.running && u.skip?.kind !== "parked",
     };
   });
   const problems = problemsOf(src, s, sp.today);
@@ -1233,6 +1250,14 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
   const last = live ?? missions[missions.length - 1] ?? null;
   const lastMove = (m: Mission) => ts.filter((t) => t.mission === m.id).pop()?.at ?? m.created;
   const entry = src.upNext().find((u) => u.intent === realId) ?? null;
+  const canStart =
+    src.running &&
+    !live &&
+    !!intent &&
+    !intent.done &&
+    !intent.waiting &&
+    entry?.skip?.kind !== "parked" &&
+    entry !== null;
   const titles = (x: string) => titleOf(s, x);
   let st: StateView;
   let reason: string | null = null;
@@ -1257,7 +1282,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     st = state("queued");
   }
   const card =
-    live && isWait(live.stage)
+    live && isWait(live.stage) && !isReady(live)
       ? missionCard(src, live, intent ?? undefined, lastMove(live), s.now)
       : !live && intent?.waiting && !intent.done
         ? intentCard(intent)
@@ -1323,6 +1348,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     title: intent?.title ?? realId,
     repo: intent?.repo ?? last?.repo ?? "",
     scores,
+    canStart,
     state: st,
     sentence: sentenceOf(
       st,
@@ -1354,7 +1380,14 @@ export async function queue(src: UiSources): Promise<QueuePage> {
   const repos = [...src.config.repos.keys()];
   for (const m of s.missions) if (!repos.includes(m.repo)) repos.push(m.repo);
   const lanes: Lane[] = repos.map((repo) => {
-    const running = s.missions.filter((m) => m.repo === repo).map((m) => missionRow(src, s, m));
+    // The build slot's holder first, then plan-approved intents in build order, then those ahead.
+    const rank = (m: Mission) => (isReady(m) ? 1 : isAhead(m) ? 2 : 0);
+    const running = s.missions
+      .filter((m) => m.repo === repo)
+      .sort((a, b) => rank(a) - rank(b) || a.id - b.id)
+      .map((m) => missionRow(src, s, m));
+    const limit = src.config.repos.get(repo)?.ahead ?? 3;
+    const aheadN = aheadIn(s.missions, repo).length;
     const mine = list.filter(
       (u) => s.intents.get(u.intent)?.repo === repo && !running.some((r) => r.intent === u.intent),
     );
@@ -1385,7 +1418,15 @@ export async function queue(src: UiSources): Promise<QueuePage> {
           cost: i.cost !== null ? money(i.cost) : null,
         };
       });
-    return { repo, github: src.config.repos.get(repo)?.github ?? "", running, waiting, parked, done };
+    return {
+      repo,
+      github: src.config.repos.get(repo)?.github ?? "",
+      ahead: `${aheadN} of ${limit} ahead`,
+      running,
+      waiting,
+      parked,
+      done,
+    };
   });
   return { version: versionOf(lanes, dbMark(src.db)), lanes };
 }

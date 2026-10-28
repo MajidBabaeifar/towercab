@@ -7,7 +7,6 @@ import { type GitHub, systemClock } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { Intent } from "../intents/types.ts";
 import type { Loop } from "../loop.ts";
-import { unfinished } from "../mission.ts";
 import { isParked, pickOrder, priorityOf } from "../priority.ts";
 import { checkoutRoot } from "../service.ts";
 import { version as gitVersion } from "../update.ts";
@@ -23,7 +22,6 @@ export function upNextOf(loop: Loop): UpNext[] {
   if (!listing) return [];
   const config = loop.d.config;
   const state = loop.pickState();
-  const ms = unfinished(loop.d.db);
   const doneIds = listing.doneIds;
   return pickOrder(listing, 1)
     .filter((i) => !state.active.has(i.id))
@@ -37,8 +35,7 @@ export function upNextOf(loop: Loop): UpNext[] {
       else if (blocker) skip = { kind: "after", intent: blocker };
       else {
         const full = state.full.get(i.repo);
-        const busy = ms.find((m) => m.repo === i.repo && !m.merge_sha);
-        if (full && full.n >= full.workers && busy) skip = { kind: "repo-busy", intent: busy.intent };
+        if (full && !state.started?.has(i.id)) skip = { kind: "ahead", n: full.n, limit: full.ahead };
         const model = i.model ?? config.agent.model;
         const until = loop.cooldownUntil(model);
         if (!skip && until) skip = { kind: "cooling", model, until };

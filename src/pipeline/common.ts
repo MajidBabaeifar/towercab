@@ -34,6 +34,10 @@ export interface PipeData {
     pr: string;
   };
   specBranch?: string;
+  /** Spec-PR revisions made for a conflict with base (PIP-81). */
+  specConflicts?: number;
+  /** The next design run first merges base into the spec branch (PIP-81). */
+  mergeMain?: boolean;
   plan?: { md: string; access: Access };
   /** The merged plan's ticked access. */
   granted?: Access;

@@ -262,8 +262,8 @@ export function buildFixture(o: { now?: number; root?: string; empty?: boolean }
       ? []
       : [
           { intent: IDS.upnext, priority: 11, skip: null },
-          { intent: IDS.queued, priority: 10, skip: { kind: "repo-busy", intent: IDS.question } },
-          { intent: IDS.queued2, priority: 9, skip: { kind: "repo-busy", intent: IDS.code } },
+          { intent: IDS.queued, priority: 10, skip: { kind: "ahead", n: 3, limit: 3 } },
+          { intent: IDS.queued2, priority: 9, skip: { kind: "ahead", n: 3, limit: 3 } },
           { intent: IDS.parked2, priority: 6, skip: { kind: "parked" } },
           { intent: IDS.parked1, priority: 5, skip: { kind: "parked" } },
         ]) as UpNext[],
@@ -320,6 +320,10 @@ export function buildFixture(o: { now?: number; root?: string; empty?: boolean }
     async drop(intent) {
       calls.push({ action: "drop", intent });
       return "Towercab drops it on its next pass.";
+    },
+    async start(intent) {
+      calls.push({ action: "start", intent });
+      return "Starting its design on the next pass, even if the repo is full.";
     },
     async pause() {
       calls.push({ action: "pause" });

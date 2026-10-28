@@ -1,4 +1,4 @@
-// Commands (LOOP-15): answer, retry, drop, pause, resume. The CLI and the UI insert a `commands` row;
+// Commands (LOOP-15): answer, retry, drop, pause, resume, start. The CLI and the UI insert a `commands` row;
 // the loop applies it on its next pass, or the CLI applies it itself when no loop runs.
 
 import type { Db } from "./db.ts";
@@ -6,7 +6,7 @@ import type { IntentStore } from "./intents/types.ts";
 import { type ApplyCtx, apply } from "./machine.ts";
 import { type Mission, unfinishedFor } from "./mission.ts";
 
-export type CommandName = "answer" | "retry" | "drop" | "pause" | "resume";
+export type CommandName = "answer" | "retry" | "drop" | "pause" | "resume" | "start";
 
 export interface CommandRow {
   id: number;
@@ -111,6 +111,15 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
         return `answered ${intent.id}; it continues`;
       }
       return m ? `noted for ${intent.id}: the worker gets it with its next run` : `answered ${intent.id}`;
+    }
+    case "start": {
+      const intent = await store.get(row.arg);
+      if (intent.stage === "dropped") throw new Error(`${intent.id} is done or dropped`);
+      if (unfinishedFor(db, intent.id) || db.meta(`start:${intent.id}`) !== null) {
+        throw new Error(`${intent.id} has already started`);
+      }
+      db.setMeta(`start:${intent.id}`, "1");
+      return `starting ${intent.id}: its design begins on the next pass, over the limit if need be`;
     }
     case "retry": {
       const intent = await store.get(row.arg);

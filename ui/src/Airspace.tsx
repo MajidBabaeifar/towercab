@@ -5,6 +5,7 @@ import type { JSX } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { AirspaceView, Phase, Plane, StateKey } from "../../src/ui/view.ts";
 import { type Item, layoutAirspace } from "./airspace-layout.ts";
+import { StartButton } from "./components.tsx";
 import { Link, navigate } from "./router.tsx";
 
 const PLANE =
@@ -146,6 +147,7 @@ function Card({
         <div>▸ {p.lines[0]}</div>
         {p.lines[1] ? <div>▸ {p.lines[1]}</div> : null}
         <div>▸ {phaseText(p.phases)}</div>
+        {p.canStart ? <StartButton intent={p.intent} /> : null}
         <Link class="air-go" href={`/i/${p.intent}`}>
           Open intent ›
         </Link>

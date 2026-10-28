@@ -460,6 +460,29 @@ export function ProblemItem({ p }: { p: ProblemView }) {
   );
 }
 
+/** UI-101: begin an intent's design now, over the repo's limit. */
+export function StartButton({ intent }: { intent: string }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ActionReply | null>(null);
+  const go = async () => {
+    setBusy(true);
+    setResult(await act("start", intent));
+    setBusy(false);
+  };
+  return (
+    <span class="start-now">
+      <button type="button" class="btn" disabled={busy} onClick={go}>
+        Start now
+      </button>
+      {result ? (
+        <span class={result.ok ? "meta" : "meta error"} role="status">
+          {result.message}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 export function UpNextList({ items, start = 1 }: { items: UpNextView[]; start?: number }) {
   return (
     <ol class="upnext">
@@ -477,6 +500,7 @@ export function UpNextList({ items, start = 1 }: { items: UpNextView[]; start?: 
               </span>
             </span>
             {u.reason ? <span class="up-reason">{u.reason}</span> : null}
+            {u.canStart ? <StartButton intent={u.intent} /> : null}
           </div>
         </li>
       ))}
