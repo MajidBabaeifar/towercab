@@ -45,7 +45,11 @@ export interface ChildEnd extends ChildExit {
 
 export type Progress =
   | { done: Outcome }
-  | { spawn: ChildSpec }
+  /**
+   * Run this child. `launched`: columns set only once it really starts; a spawn that waits for a free
+   * slot (LOOP-4) is asked for again later, as if it had never been made.
+   */
+  | { spawn: ChildSpec; launched?: Record<string, SqlValue> }
   /** Come back after this many seconds (CI, a PR read). */
   | { poll: number };
 

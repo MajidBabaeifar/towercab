@@ -19,8 +19,10 @@ import { PASS_MS } from "../src/loop.ts";
 import { ORDER, ok, wait } from "../src/machine.ts";
 import { insertMission, type Mission, unfinished } from "../src/mission.ts";
 import { decide } from "../src/pick.ts";
+import { intentOf, repoFiles, spawnRun } from "../src/pipeline/common.ts";
+import { handlers as realHandlers } from "../src/pipeline/index.ts";
 import type { ChildExit, ChildSpec } from "../src/tools.ts";
-import { intent, TARGET } from "./helpers/flows.ts";
+import { DESIGN, intent, reply, SPEC, TARGET } from "./helpers/flows.ts";
 import { Pipe } from "./helpers/pipe.ts";
 import { pushFiles } from "./helpers/world.ts";
 
@@ -116,6 +118,47 @@ test("loop: picks while others wait", async () => {
   await new Promise((r) => setTimeout(r, 5));
   expect((await pass(p)).picked).toBe(C);
   expect(byIntent(p, B)[0]!.stage).toBe("approval:plan");
+});
+
+test("loop: a run that waits for a slot keeps its prompt", async () => {
+  const p = new Pipe(TARGET, files({ id: A, u: 5, i: 5 }, { id: B }));
+  const b = childOf(p, "work");
+  let go = false;
+  const design: Handler = {
+    async step(cx, m) {
+      if (m.intent === B) return { spawn: b.spec };
+      if (!go) return { poll: 30 };
+      const plan = { kind: "design", agent: "design", step: "design", prompt: "Write the spec." } as const;
+      return spawnRun(
+        cx,
+        m,
+        { ...plan, files: await repoFiles(cx, m), intent: await intentOf(cx, m) },
+        "Continue where you stopped.",
+      );
+    },
+    finish: async () => ({ done: wait("approve spec") }),
+  };
+  p.queue("design", reply(DESIGN, SPEC));
+  await p.start(
+    {},
+    { handlers: { ...fake(() => ({ done: wait("approve spec") })), pick: realHandlers().pick, design } },
+  );
+  const a = () => byIntent(p, A)[0]!;
+  // A is picked and waits; B is picked and its run takes the only slot.
+  while (byIntent(p, B)[0]?.child_kind !== "work") await pass(p);
+  go = true;
+  // A's run is asked for while the slot is taken: it waits, so nothing of it has started.
+  await pass(p);
+  expect([a().step, a().session_used, a().child_pid]).toEqual(["design", 0, null]);
+  expect(p.claudeCalls).toEqual([]);
+  b.end();
+  await new Promise((r) => setTimeout(r, 5));
+  await p.until(() => p.claudeCalls.length === 1);
+  // When the slot frees, the run starts with its own prompt on a new session, not as a resume.
+  const [run] = p.claudeCalls;
+  expect(run!.prompt).toBe("Write the spec.");
+  expect(run!.session).toEqual({ mode: "new", id: a().session });
+  expect(a().session_used).toBe(1);
 });
 
 const listCalls = (p: Pipe) => p.issueCalls.filter((c) => c.startsWith("issue list")).length;

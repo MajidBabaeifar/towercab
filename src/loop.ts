@@ -240,8 +240,15 @@ export class Loop {
             cols.step_secs = 0;
           }
           let fresh = update(d.db, m.id, cols, this.now);
-          if (data)
-            fresh = update(d.db, m.id, { data: JSON.stringify({ ...dataOf(fresh), ...data }) }, this.now);
+          // A new step hasn't launched anything yet (LOOP-4).
+          const launched = step !== m.step ? { launched: undefined } : {};
+          if (data || step !== m.step)
+            fresh = update(
+              d.db,
+              m.id,
+              { data: JSON.stringify({ ...dataOf(fresh), ...data, ...launched }) },
+              this.now,
+            );
           return fresh;
         }),
     };
@@ -698,11 +705,13 @@ export class Loop {
         this.d.db,
         m.id,
         {
+          ...(p.launched ?? {}),
           busy: 1,
           child_pid: handle.pid,
           child_kind: spec.kind,
           child_since: this.now,
           child_model: spec.model ?? null,
+          data: JSON.stringify({ ...dataOf(cur), launched: cur.step }),
         },
         this.now,
       );

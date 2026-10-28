@@ -62,7 +62,12 @@ At most `[agent].parallel` Claude runs or checks at a time; per repo, `ahead` in
   An intent has at most one unfinished mission.
 - A free slot goes first to unfinished missions in priority order, then to a new pick, so a PR
   waiting on the owner never stops other repos.
-- Verified by: `loop: picks while others wait`, `loop: one intent builds at a time per repo`, `loop: one mission per intent`
+- A run asked for while every slot is taken waits and is asked for again; it starts later with its
+  own prompt, as if new. Only a run that really started (`data.launched` = its step, set when the
+  child starts, cleared by a new step or stage) resumes with `Continue where you stopped.`
+  (LOOP-7), and a session counts as used (`session_used`) only once a
+  run of it has started.
+- Verified by: `loop: picks while others wait`, `loop: one intent builds at a time per repo`, `loop: one mission per intent`, `loop: a run that waits for a slot keeps its prompt`
 
 ### LOOP-5 · Pick
 
