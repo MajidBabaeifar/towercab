@@ -210,12 +210,17 @@ function notProven(cx: Ctx, m: Mission, why: string): Progress {
       done: wait("tests don't prove the change", why.split("\n")[0], { data: { proofWaited: true } }),
     };
   }
+  // What the proof ran, so the worker can tell a test that passes on base from one base never runs.
+  const lines = d.proofLines?.lines ?? [];
+  const ran = lines.length
+    ? ` The proof copies only your changed test files onto the base branch and runs the base's checks there:\n\n${lines.map((l) => `    ${l}`).join("\n")}\n\nChanges to how tests run (a script, CI, a file you may not write) aren't used, so these commands must already run your test. If they can't, return status blocked with a question for the owner.`
+    : "";
   return {
     done: red("no test fails without the change", {
       set: { repairs: m.repairs + 1 },
       data: {
         repair: {
-          what: "No test fails without your change. Add or change a test that fails on the base branch and passes with the change; don't weaken existing tests.",
+          what: `No test fails without your change. Add or change a test that fails on the base branch and passes with the change; don't weaken existing tests.${ran}`,
           details: why,
           kind: "proof",
         },

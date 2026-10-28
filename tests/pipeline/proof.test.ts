@@ -39,7 +39,12 @@ test("pipeline: green on base repairs", async () => {
   ]);
   const repairs = p.claudeCalls.filter((c) => c.kind === "worker").slice(1);
   expect(repairs).toHaveLength(2);
-  for (const r of repairs) expect(r.prompt).toMatch(/^No test fails without your change\./);
+  for (const r of repairs) {
+    expect(r.prompt).toMatch(/^No test fails without your change\./);
+    // It says what the proof ran on base, and what to do when those commands can't run the test.
+    expect(r.prompt).toContain("runs the base's checks there:\n\n    sh -c 'for t in tests/*.sh;");
+    expect(r.prompt).toContain("return status blocked with a question for the owner.");
+  }
   // The proof laid the PR's own tests over base: base has no greeting.txt, yet they passed.
   const proofs = p.sandboxRuns.filter((r) => r.kind === "proof");
   expect(proofs).toHaveLength(3);
