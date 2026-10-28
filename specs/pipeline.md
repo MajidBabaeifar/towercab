@@ -643,6 +643,38 @@ When the spec PR no longer merges into `main`, the design resolves the conflict 
   (`waiting: spec conflict`). A conflict outside `specs/**` is not edited: the same wait.
 - Verified by: `pipeline: a conflicting spec PR is revised`, `pipeline: a spec conflict that stays waits for the owner`
 
+### PIP-82 · A red spec PR is revised once
+
+When the checks on the spec PR stay red after the rerun, the design revises the spec once by itself, so the owner never has to review a red spec PR.
+
+- Applies while the spec waits for approval (`approval:spec`) and while Towercab waits to merge it
+  (PIP-50). Towercab reads the spec PR's checks as PIP-3 does, on the head it pushed, with the
+  first-red rerun of PIP-18 first. A check that is still red after that rerun sends the mission back
+  to design in the same session, as if the owner had commented. The revision is a new commit on the
+  same PR (PIP-25).
+- The prompt is the one PIP-83 describes; nothing in the owner's name is posted.
+- At most 1 red revision per spec PR (counted separately from the conflict revisions of
+  PIP-81). If the PR is still red after it, or the revision changes nothing, the mission waits for the
+  owner (`waiting: approve spec`) and the reason says which checks are red. A red spec PR does not
+  count as ready to merge: Towercab does not merge it (PIP-50) and the owner is not asked to approve it
+  before the revision has run.
+- A cancelled or pending check is not red. No checks on the repo → nothing to revise.
+- Verified by: `pipeline: a red spec PR is revised once`, `pipeline: a red spec PR that stays red waits for the owner`, `pipeline: a red spec PR waiting for approval is revised first`
+
+### PIP-83 · Design revisions see the failing logs
+
+Every design revision on a spec PR whose checks are red gets the tails of the failing jobs' logs in its prompt, because the design session has no shell to read them.
+
+- Applies to a revision started by the red checks (PIP-82), by the owner's comment (PIP-25), or by a
+  conflict (PIP-81), whenever the spec PR's checks on its current head are red. The log tails are
+  fetched the way PIP-3 does for a code PR and passed as fenced data (PIP-39), with each job's name.
+- Green, pending or absent checks → the prompt has no log section. A log that cannot be fetched is
+  noted in the prompt as unavailable; it does not stop the revision.
+- A revision that started from a comment and finds nothing wrong in the spec but sees a red log is
+  told to fix whatever in `specs/**` makes the check fail, or to say in `concerns` that the cause lies
+  outside `specs/**`.
+- Verified by: `pipeline: a design revision gets the failing logs`, `pipeline: a design revision without red checks has no log section`, `pipeline: an unreadable log does not stop the revision`
+
 ### PIP-85 · A refused push is a question, not a crash
 
 When GitHub refuses a push because it already has commits on the branch that Towercab doesn't, the mission asks the owner instead of counting a crash.
