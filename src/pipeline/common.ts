@@ -52,6 +52,8 @@ export interface PipeData {
   answer?: string;
   /** Why the next build round runs: a repair's what and details. */
   repair?: { what: string; details: string; kind: "verify" | "proof" | "ci" | "conflict" };
+  /** HEAD when the current build round began (PIP-1). */
+  roundFrom?: string;
   /** Head at the end of the last non-repair round (PIP-31). */
   lockHead?: string;
   build?: { pr: string | null; notes: string; planChanged: string | null };
