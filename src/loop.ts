@@ -1,7 +1,7 @@
 // The loop (LOOP-4..7, 11, 12, 17, 18): one pass every 5 s. Reads inputs, moves missions, starts
 // work, sends messages. Single-threaded: children run detached and are reaped on the next pass.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync, statSync } from "node:fs";
 import { Inhibitor, woke } from "./awake.ts";
 import { removeCheckout } from "./checkout.ts";
 import { applyPending, paused } from "./commands.ts";
@@ -230,7 +230,7 @@ export class Loop {
         return r;
       },
       checkout: (m) => d.home.abs(m.checkout),
-      runs: (m) => d.home.runs(m.intent),
+      runs: (m, stage) => d.home.runs(m.intent, stage),
       record: (m, step, set = {}, data) =>
         d.db.tx(() => {
           const cols: Record<string, SqlValue> = { ...set, step };
@@ -329,6 +329,7 @@ export class Loop {
         { child_pid: null, child_kind: null, child_since: null, step_secs: m.step_secs + runMs / 1000 },
         this.now,
       );
+      dropIfEmpty(r.spec.stderr);
       const end: ChildEnd = {
         ...r.exit,
         timedOut: r.timedOut,
@@ -952,5 +953,14 @@ export function readText(path: string): string {
     return readFileSync(path, "utf8");
   } catch {
     return "";
+  }
+}
+
+/** An empty error file says nothing: remove it when its child ends (LOOP-40). */
+function dropIfEmpty(path: string): void {
+  try {
+    if (statSync(path).size === 0) rmSync(path);
+  } catch {
+    // Already gone or never made.
   }
 }

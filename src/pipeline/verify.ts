@@ -60,7 +60,7 @@ export const verifyHandler: Handler = {
           dir: cx.checkout(fresh),
           network: true,
           cacheWritable: true,
-          log: logPath(cx, fresh, `verify-${n}-setup.log`),
+          log: logPath(cx, fresh, "verify", `verify-${n}-setup.log`),
           timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
         }),
       };
@@ -95,7 +95,7 @@ export const verifyHandler: Handler = {
     if (m.step === "shots") {
       const dir = join(cx.checkout(m), ".towercab-shots");
       const n = data(m).n?.verify ?? 1;
-      const keep = join(cx.runs(m), `shots-${n}`);
+      const keep = join(cx.runs(m, "verify"), `shots-${n}`);
       const kept: string[] = [];
       if (existsSync(dir)) {
         mkdirSync(keep, { recursive: true });
@@ -128,7 +128,7 @@ async function checks(cx: Ctx, m: Mission): Promise<Progress> {
       dir: cx.checkout(m),
       network: false,
       cacheWritable: false,
-      log: logPath(cx, m, `verify-${n}.log`),
+      log: logPath(cx, m, "verify", `verify-${n}.log`),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000 * Math.max(1, lines.length),
     }),
   };
@@ -147,7 +147,7 @@ async function shots(cx: Ctx, m: Mission): Promise<Progress> {
       dir: cx.checkout(m),
       network: false,
       cacheWritable: false,
-      log: logPath(cx, m, `shots-${n}.log`),
+      log: logPath(cx, m, "verify", `shots-${n}.log`),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
       extraEnv: { TOWERCAB_SHOTS: dir },
     }),
