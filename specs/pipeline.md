@@ -39,7 +39,8 @@ push.
 - Push `towercab/<id>-<slug>` from Towercab's clone (fetched from the checkout by path). First time:
   `gh pr create` (ready for review, not a draft), title = the design's Conventional Commit line, body
   = PIP-48; `missions.pr`, `head`, `pushed_at` recorded first. A push refused other than as
-  non-fast-forward, or rejected 3 times → `waiting: answer the question` with the reason.
+  non-fast-forward, or rejected 3 times → `waiting: answer the question` with the reason (a
+  non-fast-forward refusal: PIP-85; a branch left over from before the first push: PIP-86).
 - Never a force-push: commits someone else pushed to the PR branch (the owner) are merged into the
   checkout first, at the start of each later build round and before each push; a conflict there is a
   conflict round. Such a PR is marked as having someone else's commits (PIP-7).
@@ -640,6 +641,68 @@ When the spec PR no longer merges into `main`, the design resolves the conflict 
 - At most 2 conflict revisions per spec PR; after that the mission waits for the owner
   (`waiting: spec conflict`). A conflict outside `specs/**` is not edited: the same wait.
 - Verified by: `pipeline: a conflicting spec PR is revised`, `pipeline: a spec conflict that stays waits for the owner`
+
+### PIP-85 · A refused push is a question, not a crash
+
+When GitHub refuses a push because it already has commits on the branch that Towercab doesn't, the mission asks the owner instead of counting a crash.
+
+- A push rejected as non-fast-forward is thrown as a typed error, not a plain one, so the crash counter
+  (LOOP-6) does not count it. It counts as a refused push instead: after 3 refusals the mission is
+  `waiting: answer the question`.
+- The question follows the writing guide (PIP-39): it names the branch, says GitHub already has commits
+  on it that Towercab doesn't, and offers what the owner can do (delete the branch on GitHub, or tell
+  Towercab to use another name). Never a force-push (PIP-2).
+- Verified by: `pipeline: a refused push waits with the reason`, `pipeline: a refused push is not counted as a crash`
+
+### PIP-86 · A leftover branch is replaced only when it is Towercab's own
+
+Before a mission's first push, Towercab checks whether the branch already exists on GitHub and clears it away only when an earlier Towercab PR is all that is on it.
+
+- Check: `towercab/<id>-<slug>` on GitHub (`git ls-remote`) and the PRs with that head (`gh pr list
+  --head`, all states). No branch → push as today.
+- The branch exists and every PR on it is closed or merged or was opened by the Towercab App, and at
+  least one is open: Towercab closes each open one with a comment saying the intent started over,
+  deletes the branch (PIP-89), then pushes. An earlier attempt or a v1 PR is the usual case.
+- The branch exists and an open PR was opened by anyone else, or there are commits on the branch and
+  no PR of the App's at all: nothing is closed or deleted, and the mission is `waiting: answer the
+  question`. The ask names the branch and the PR if any, and offers: delete the branch on GitHub, or
+  say to use another name. Towercab does not pick the next free name `-<n>` by itself, since the
+  commits may be someone's work.
+- Not done again once the first push has succeeded; later rounds only push (PIP-2).
+- Verified by: `pipeline: a leftover App PR is closed and replaced`, `pipeline: someone else's branch is left alone`, `pipeline: a leftover branch with commits but no PR waits`
+
+### PIP-87 · A PR Towercab closes loses its branch
+
+When Towercab itself closes a PR, it deletes that PR's branch on GitHub too.
+
+- Applies to the closing in PIP-53 (`/retry` replacing an attempt: spec, plan and code PRs), to
+  `drop` closing the current PR (the `drop` command, [PRI-9](priority.md)) and to PIP-86. Merged PRs are not touched; the repo setting
+  deletes their branches (PIP-89).
+- Deleted after the close, subject to the guards in PIP-89. A branch shared with a newer attempt's open
+  PR is kept.
+- Verified by: `pipeline: retry deletes the old attempt's branches`, `pipeline: drop deletes the PR's branch`
+
+### PIP-88 · A PR the owner closes loses its branch
+
+When a mission stops because the owner closed its PR, Towercab deletes that PR's branch.
+
+- Entering `stopped` through `machine.apply` because a PR was closed without merge (PIP-43: the
+  `closed` event, the intent is dropped) records the deletion of that PR's branch, then makes it.
+- Subject to the guards in PIP-89.
+- Verified by: `pipeline: a PR the owner closes loses its branch`
+
+### PIP-89 · Branch deletion is guarded and retried
+
+Towercab deletes only branches it made for a PR it opened, and tries again if GitHub fails.
+
+- Deleted only if the branch starts with `towercab/`, its PR was opened by the Towercab App, and the PR
+  is closed or Towercab is closing it. A branch with an open PR from anyone else, or outside
+  `towercab/`, is never deleted. A branch already gone counts as done.
+- The deletion is a side effect: `ctx.record` first, then `gh api -X DELETE
+  repos/<repo>/git/refs/heads/<branch>`; a failure is retried next pass (LOOP-6).
+- Merged branches stay the job of the repo setting `delete_branch_on_merge` (`apply-settings`); Towercab
+  does not delete them.
+- Verified by: `pipeline: a branch outside towercab/ is never deleted`, `pipeline: a failed branch delete is retried`, `pipeline: a merged PR's branch is left to the repo setting`
 
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
