@@ -116,6 +116,10 @@ export const buildHandler: Handler = {
     const d = data(m);
     switch (m.step) {
       case "": {
+        // The checkout is Towercab's: what another program left in it (an untracked file, an edit)
+        // can't block the checkout below or ride into the PR. Ignored files, such as caches, stay (LOOP-8).
+        await coGit(cx, m, ["reset", "--quiet", "--hard"]);
+        await coGit(cx, m, ["clean", "-fdq"]);
         // The first round starts from base, which now holds the merged spec; read the plan's grants.
         if (!d.build && !d.lockHead) {
           const repo = cx.repo(m);
