@@ -298,7 +298,8 @@ Towercab checks that the PR's tests fail without the change, so the tests prove 
   `origin/<base>` with the PR's changed test files laid over it (globs: `TOWERCAB.md` `tests`, default
   `tests/**`, `test/**`, `**/__tests__/**`, `**/*_test.*`, `**/test_*.*`, `**/*.test.*`,
   `**/*.spec.*`) runs setup, then the run set (from the PR's `CLAUDE.md` when PIP-54 applies). Red = proven. Green → a repair round asking for a test
-  that fails without the change; after the repairs → `waiting: tests don't prove the change`. After
+  that fails without the change, naming the commands the proof ran on base and saying that a change
+  to how tests run isn't used there, so a worker that can't wire its test into them asks the owner; after the repairs → `waiting: tests don't prove the change`. After
   the owner answers, a proof that still fails to prove → publish with `data.unproven` (the gate then
   sends the PR to the owner, PIP-7).
 - Verified by: `pipeline: proof red on base proves`, `pipeline: green on base repairs`, `pipeline: unproven goes to the owner`
