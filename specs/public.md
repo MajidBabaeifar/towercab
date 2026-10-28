@@ -32,10 +32,14 @@ The README explains what Towercab is, what it needs and how to start, in that or
 
 ### PUB-3 · Not affiliated
 
-The README says Towercab is not affiliated with or endorsed by Anthropic.
+The README says Towercab is not affiliated with or endorsed by Anthropic, and shows only Towercab's
+own images.
 
-- It names Claude Code and the playbook as plain text, with no logo or image of either (no `<img>` or
-  `![` in the README).
+- It names Claude Code and the playbook as plain text, with no logo or image of either. Every image
+  in the README (`<img src>`, `<source srcset>` or `![]()`) is Towercab's logo
+  (`ui/public/favicon.svg`), a screenshot in `docs/assets/` (cropped from the fixture shots of
+  `npm run test:ui`, so no real data), a `img.shields.io` badge or this repo's own Actions badge.
+  Every local image exists.
 - Verified by: `public: README says not affiliated`
 
 ### PUB-4 · Docs index
