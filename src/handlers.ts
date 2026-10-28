@@ -68,8 +68,8 @@ export interface Ctx {
   repo(m: Mission): RepoConfig;
   /** Absolute checkout path. */
   checkout(m: Mission): string;
-  /** `runs/<intent>/`, created. */
-  runs(m: Mission): string;
+  /** `runs/<intent>/`, or with a stage `runs/<intent>/<stage>/` (LOOP-39), created. */
+  runs(m: Mission, stage?: string): string;
   /**
    * LOOP-6: store the step and the IDs it will use before the side effect it guards, in one
    * transaction; returns the fresh row. A new step resets `unclean` and `retries`.

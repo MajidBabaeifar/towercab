@@ -207,17 +207,7 @@ test("ui: API shapes", async () => {
   const intent = await json(`/api/intents/${IDS.plan}`);
   expect(intent.body).toMatchObject({ id: IDS.plan, title: "Rate-limit the public API" });
   expect(Object.keys(intent.body)).toEqual(
-    expect.arrayContaining([
-      "prs",
-      "card",
-      "timeline",
-      "times",
-      "attempts",
-      "sections",
-      "answers",
-      "runs",
-      "file",
-    ]),
+    expect.arrayContaining(["prs", "card", "timeline", "attempts", "sections", "answers", "file"]),
   );
   const missing = await json("/api/intents/999999-0000-9");
   expect(missing.status).toBe(404);
@@ -313,6 +303,27 @@ test("ui: run files stay inside runs", async () => {
   expect((await call(port, { path: "/api/runs/../secret.txt" })).status).toBe(404);
   expect((await call(port, { path: "/api/runs/..%2F/secret.txt" })).status).toBe(404);
   expect((await call(port, { path: `/api/runs/${IDS.plan}/../../secret.txt` })).status).toBe(404);
+  // The stage folders (LOOP-41): `<stage>/<file>` is served, and the same checks hold inside them.
+  const stage = join(runs, "build");
+  mkdirSync(stage, { recursive: true });
+  writeFileSync(join(stage, "worker-1.prompt"), "# Build\n");
+  symlinkSync(join(f.home.root, "secret.txt"), join(stage, "link.txt"));
+  const inStage = await call(port, { path: `/api/runs/${IDS.plan}/build/worker-1.prompt` });
+  expect([inStage.status, inStage.body]).toEqual([200, "# Build\n"]);
+  for (const bad of [
+    "build/link.txt",
+    "build/nope.txt",
+    "build/..%2Fsecret.txt",
+    "build/..",
+    "..%2Fbuild/worker-1.prompt",
+    "../build/worker-1.prompt",
+    "build/.hidden",
+  ]) {
+    expect((await call(port, { path: `/api/runs/${IDS.plan}/${bad}` })).status, bad).toBe(404);
+  }
+  // A folder is not a file, and a path three deep is not a run file.
+  expect((await call(port, { path: `/api/runs/${IDS.plan}/build` })).status).toBe(404);
+  expect((await call(port, { path: `/api/runs/${IDS.plan}/build/a/worker-1.prompt` })).status).toBe(404);
   const big = await call(port, { path: `/api/runs/${IDS.plan}/big.log` });
   expect(big.status).toBe(200);
   expect(big.body.length).toBeLessThan(2 * 1024 * 1024 + 200);

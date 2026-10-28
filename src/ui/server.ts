@@ -190,11 +190,11 @@ export function startUi(o: UiOptions): UiServer {
     }
   };
 
-  const runFile = (res: ServerResponse, id: string, name: string) => {
-    const bad = (s: string) => !RUN_NAME.test(s) || s.startsWith(".");
-    if (bad(id) || bad(name)) return json(res, 404, { error: "No such run file." });
+  const runFile = (res: ServerResponse, id: string, parts: string[]) => {
+    const bad = (s: string) => !RUN_NAME.test(s) || s.startsWith(".") || s === "..";
+    if (bad(id) || parts.some(bad)) return json(res, 404, { error: "No such run file." });
     const dir = join(o.sources.home.root, "runs", id);
-    const file = join(dir, name);
+    const file = join(dir, ...parts);
     try {
       const st = lstatSync(file);
       if (!st.isFile()) return json(res, 404, { error: "No such run file." });
@@ -342,17 +342,18 @@ export function startUi(o: UiOptions): UiServer {
       const page = INTENT_ID.test(id) ? await intentPage(src, id) : null;
       return page ? json(res, 200, page) : json(res, 404, { error: `There is no intent ${id}.` });
     }
-    m = /^\/api\/runs\/([^/]+)\/([^/]+)$/.exec(path);
+    // `<file>` of the flat layout, or `<stage>/<file>` (LOOP-41).
+    m = /^\/api\/runs\/([^/]+)\/([^/]+)(?:\/([^/]+))?$/.exec(path);
     if (m) {
       let id: string;
-      let name: string;
+      let parts: string[];
       try {
         id = decodeURIComponent(m[1]!);
-        name = decodeURIComponent(m[2]!);
+        parts = [m[2]!, m[3]].filter((x): x is string => x !== undefined).map(decodeURIComponent);
       } catch {
         return json(res, 404, { error: "No such run file." });
       }
-      return runFile(res, id, name);
+      return runFile(res, id, parts);
     }
     if (path.startsWith("/api/")) return json(res, 404, { error: "Not found." });
     if (PAGES.test(path)) return send(res, 200, "text/html; charset=utf-8", indexHtml());

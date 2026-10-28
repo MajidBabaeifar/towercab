@@ -50,6 +50,7 @@ export function sandboxSpec(cx: Ctx, m: Mission, r: SandboxRun): ChildSpec {
   };
 }
 
-export function logPath(cx: Ctx, m: Mission, name: string): string {
-  return join(cx.runs(m), name);
+/** A log in the stage's folder (LOOP-39). */
+export function logPath(cx: Ctx, m: Mission, stage: string, name: string): string {
+  return join(cx.runs(m, stage), name);
 }

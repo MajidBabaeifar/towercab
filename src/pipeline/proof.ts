@@ -50,7 +50,7 @@ export const proofHandler: Handler = {
           dir,
           network: true,
           cacheWritable: true,
-          log: logPath(cx, fresh, "proof-setup.log"),
+          log: logPath(cx, fresh, "proof", "proof-setup.log"),
           timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
         }),
       };
@@ -105,7 +105,7 @@ async function lay(cx: Ctx, m: Mission, tests: string[]): Promise<Progress> {
       dir,
       network: false,
       cacheWritable: false,
-      log: logPath(cx, fresh, "proof.log"),
+      log: logPath(cx, fresh, "proof", "proof.log"),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000 * Math.max(1, script.length),
     }),
   };
@@ -156,7 +156,7 @@ function head(cx: Ctx, m: Mission): Progress {
       dir: cx.checkout(m),
       network: false,
       cacheWritable: false,
-      log: logPath(cx, m, "proof-head.log"),
+      log: logPath(cx, m, "proof", "proof-head.log"),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000 * Math.max(1, lines.length),
     }),
   };

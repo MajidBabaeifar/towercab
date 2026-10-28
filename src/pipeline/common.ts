@@ -193,6 +193,15 @@ function modelOf(cx: Ctx, m: Mission, agent: Agent, intent: Intent): string {
   return m.model;
 }
 
+/** The stage folder a Claude run's files go to (LOOP-39). */
+const STAGE_OF_KIND: Record<RunKind, string> = {
+  design: "design",
+  plan: "plan",
+  worker: "build",
+  review: "review",
+  score: "design",
+};
+
 /** Record the step, then spawn a Claude run (LOOP-6, LOOP-7, PIP-13, PIP-24). */
 export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string): Progress {
   const repo = cx.repo(m);
@@ -230,6 +239,7 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
     model: modelOf(cx, m, agent, p.intent),
     cwd: cx.checkout(fresh),
     runsDir: runs,
+    stage: STAGE_OF_KIND[p.kind],
     n,
     prompt,
     schema: agent.schema ? SCHEMAS[agent.schema] : null,

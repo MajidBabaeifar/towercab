@@ -246,7 +246,7 @@ async function setupOrWorker(cx: Ctx, m: Mission): Promise<Progress> {
       dir: cx.checkout(m),
       network: true,
       cacheWritable: true,
-      log: logPath(cx, m, "build-setup.log"),
+      log: logPath(cx, m, "build", "build-setup.log"),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
     }),
   };

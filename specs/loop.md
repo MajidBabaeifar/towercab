@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..38, LOOP-60..64 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..64 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -365,8 +365,8 @@ Every file a mission writes is kept in a folder named for the stage that wrote i
 
 A later round never replaces an earlier round's files, and an empty error file is not left behind.
 
-- A file written more than once in a stage carries the round in its name (`prompt-2`,
-  `result-2.json`, `check-2.log`, `shots-2/`). Round 1 may also carry its number. Empty `.err` files
+- A file written more than once in a stage carries the round in its name
+  (`worker-2.prompt`, `worker-2.json`, `verify-2.log`, `shots-2/`); the first round carries its number too. Empty `.err` files
   are removed when the child ends.
 - Verified by: `runs: rounds keep separate files`, `runs: empty error files are removed`
 

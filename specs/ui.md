@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..71, UI-78..82, UI-100..104 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..104 · **Prefix:** UI
 
 ## Purpose
 
@@ -219,20 +219,22 @@ Every text on the page is plain language a person can act on.
 
 The server works out the path an intent took once, as an ordered list of stage visits, so the page only draws it.
 
-- `GET /api/intents/<id>` returns `visits` (`src/ui/state.ts`), per attempt, from the mission's moves
-  and the stage folders (LOOP-39): in order, each visit has `stage`, `round` (1 for the first time
+- `GET /api/intents/<id>` returns, in each attempt's `map` (`src/ui/state.ts`), `visits`, `stages`
+  (every stage with its outcome, time, rounds and files), `open` and the two totals, from the
+  mission's moves and the stage folders (LOOP-39): in order, each visit has `stage`, `round` (1 for the first time
   in that stage), `start`, `end` (none while it runs), `outcome` (`passed`, `red`, `sent back`,
   `waiting on you`, `working now`, `skipped`), `reason` (the plain-words reason it moved on, or why
-  it was skipped), `returnTo` (the stage it went back to, if any) and `files`.
+  it was skipped), `returnTo` and `returnLabel` (the stage it went back to and why, if it did) and `files`.
 - The stages, in pipeline order, with their plain names (UI-56): Writing the spec (`design`), Your
   spec review, Planning (`plan`), Your plan review, Building (`build`), Running checks (`verify`),
   Proving the tests (`proof`), Opening the PR (`publish`), CI (`ci`), Reviewing (`review`), Deciding
-  (`gate`), Merging (`merge`), Your code review. Waits on the owner (the three reviews and
+  (`gate`), Your code review, Merging (`merge`). Waits on the owner (the three reviews and
   questions) are visits too. A stage that was never reached has no visit and is listed as `not reached`.
 - Time per stage and the two totals (Towercab working, waiting on you) are sums of the visits.
 - Each file has `stage`, `round`, a plain `kind` ("Prompt sent", "Claude's answer", "Check output",
   "Errors", "Screenshots", or "Details" for Claude settings, system prompt and guard file), `name`,
-  size and time. Empty files are left out.
+  size and time. Empty files are left out. A folder of screenshots is one entry ("Screenshots", with
+  the image count) that is not opened as text.
 - Verified by: `ui: visits follow the real path`, `ui: visits count rounds and returns`, `ui: visits skip empty files`
 
 ### UI-73 · Stage map

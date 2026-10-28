@@ -1,6 +1,7 @@
 // The pass (LOOP-4, 7, 9, 10, 12, 15, 17): the real loop, store and database, with stage handlers
 // faked per test so each test controls what a stage does.
 
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import { insertCommand } from "../src/commands.ts";
@@ -118,6 +119,41 @@ test("loop: picks while others wait", async () => {
   await new Promise((r) => setTimeout(r, 5));
   expect((await pass(p)).picked).toBe(C);
   expect(byIntent(p, B)[0]!.stage).toBe("approval:plan");
+});
+
+test("runs: empty error files are removed", async () => {
+  const p = new Pipe(TARGET, files({ id: A }));
+  const b = childOf(p, "work");
+  const stage = p.home.runs(A, "build");
+  const empty = join(stage, "worker-1.err");
+  const said = join(stage, "worker-2.err");
+  let seen = "";
+  await p.start(
+    {},
+    {
+      handlers: fake(
+        (m) => {
+          if (m.stage === "pick") return { done: ok() };
+          b.spec.stderr = empty;
+          writeFileSync(empty, "");
+          writeFileSync(said, "a warning\n");
+          return { spawn: b.spec };
+        },
+        () => {
+          seen = existsSync(empty) ? "kept" : "gone";
+          return { done: wait("approve spec") };
+        },
+      ),
+    },
+  );
+  for (let i = 0; i < 3; i++) await pass(p, 5);
+  b.end();
+  await new Promise((r) => setTimeout(r, 5));
+  await pass(p, 5);
+  expect(seen).toBe("gone");
+  expect(existsSync(empty)).toBe(false);
+  // A file with something in it is kept.
+  expect(existsSync(said)).toBe(true);
 });
 
 test("loop: a run that waits for a slot keeps its prompt", async () => {

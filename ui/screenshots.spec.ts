@@ -25,7 +25,12 @@ const PAGES = [
   {
     name: "intent",
     path: "/i/261025-0910-1",
-    expect: ["Rate-limit the public API", "Spec", "Plan", "Code", "Timeline", "Merge plan PR"],
+    expect: ["Rate-limit the public API", "Spec", "Plan", "Code", "All moves", "Merge plan PR"],
+  },
+  {
+    name: "stages",
+    path: "/i/261024-1130-1?stage=verify&file=verify%2Fverify-1.log",
+    expect: ["Running checks", "Round 2", "Check output", "Showing the last 200 of", "2 failing"],
   },
   {
     name: "question",
