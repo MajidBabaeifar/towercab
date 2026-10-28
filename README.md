@@ -127,7 +127,7 @@ web page shows what needs you, what is stuck, what is moving and what it costs
 
 ## Safety
 
-| | |
+| Layer | What it does |
 | --- | --- |
 | **Sandbox** | Every check and every Claude Code run is sandboxed: no access to your keys, tokens or other repos, and a worker reaches only the network domains it is granted. |
 | **Guard** | A hook stops the worker from writing protected files (CI, `CLAUDE.md`, `REVIEW.md`, `TOWERCAB.md`, and paths you list) unless its plan grants them, and from editing tests it already pushed during repairs. |
