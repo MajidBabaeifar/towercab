@@ -200,6 +200,15 @@ function bodyOf(s: ScoreResult): string {
     .join("\n")
     .trim();
   const outcome = s.outcome.map(plain).filter(Boolean);
+  const affected = plain(s.affected);
+  const constraints = s.constraints.map(plain).filter(Boolean);
+  const questions = s.open_questions.map(plain).filter(Boolean);
+  // INT-32: a section only when the issue said something for it.
+  const more = [
+    ...(affected ? ["## Affected users and systems", "", affected, ""] : []),
+    ...(constraints.length ? ["## Constraints", "", ...constraints.map((c) => `- ${c}`), ""] : []),
+    ...(questions.length ? ["## Open questions", "", ...questions.map((q) => `- ${q}`), ""] : []),
+  ];
   return [
     "## Problem",
     "",
@@ -209,6 +218,7 @@ function bodyOf(s: ScoreResult): string {
     "",
     ...(outcome.length ? outcome : ["The issue is resolved."]).map((o) => `- ${o}`),
     "",
+    ...more,
     "## Towercab",
     "",
     `- Urgency ${s.u} of 5: ${plain(s.u_why)}`,

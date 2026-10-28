@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import {
+  DEFAULT_DO_NOT_REPORT,
   DEFAULT_PASSES,
   DEFAULT_TESTS,
   defaultReview,
@@ -200,13 +201,29 @@ test("repo: REVIEW.md defaults", () => {
   const d = defaultReview();
   expect(d.passes.map((p) => p.name)).toEqual(["Bugs", "Security", "Compliance"]);
   expect(d.passes).toEqual(DEFAULT_PASSES);
-  expect([d.nitCap, d.important, d.doNotReport, d.redLines, d.text]).toEqual([5, null, [], [], ""]);
+  expect([d.nitCap, d.important, d.doNotReport, d.redLines, d.text]).toEqual([
+    5,
+    null,
+    DEFAULT_DO_NOT_REPORT,
+    [],
+    "",
+  ]);
   // Missing sections, Passes without bullets, a cap without a number → defaults.
   const text =
     "# Review\n\n## Passes\n\nThe usual ones.\n\n## Cap the nits\n\nA few.\n\n## What Important means here\n\n\n";
   expect(parseReview(text)).toEqual({ ...defaultReview(), text });
   expect(parseReview("Just prose.\n").passes).toEqual(DEFAULT_PASSES);
   expect(parseReview("## Cap the nits\n\n0\n").nitCap).toBe(0);
+});
+
+test("repo: REVIEW.md do-not-report defaults", () => {
+  expect(DEFAULT_DO_NOT_REPORT.join("\n")).toMatch(/linguist-generated/);
+  expect(DEFAULT_DO_NOT_REPORT.join("\n")).toMatch(/[Ll]ockfiles/);
+  expect(DEFAULT_DO_NOT_REPORT.join("\n")).toMatch(/formatter or linter/);
+  // No section, or one without bullets → the defaults; a section with bullets replaces them.
+  expect(parseReview("## Passes\n\n- Bugs: wrong results\n").doNotReport).toEqual(DEFAULT_DO_NOT_REPORT);
+  expect(parseReview("## Do not report\n\nNothing special.\n").doNotReport).toEqual(DEFAULT_DO_NOT_REPORT);
+  expect(parseReview("## Do not report\n\n- Docs.\n").doNotReport).toEqual(["Docs."]);
 });
 
 test("repo: TOWERCAB.md front matter", () => {

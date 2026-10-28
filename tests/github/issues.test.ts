@@ -18,6 +18,9 @@ const SCORE = {
   title: "Show a greeting",
   problem: "The page greets nobody.",
   outcome: ["The page says hello"],
+  affected: "",
+  constraints: [],
+  open_questions: [],
 };
 const scored =
   (o: Record<string, unknown> = {}) =>
@@ -94,6 +97,44 @@ test("issues: the scoring prompt forbids fence markers in prose", () => {
   expect(prompt).toContain(
     "Never start a line of `problem` or `outcome` with three backticks or three tildes",
   );
+});
+
+test("issues: the intent keeps affected, constraints and open questions", async () => {
+  const { p, poll } = await world();
+  p.queue(
+    "score",
+    scored({
+      affected: "Visitors of the home page.",
+      constraints: ["No new dependency", "## Keep the old URL"],
+      open_questions: ["Should the greeting be translated?"],
+    }),
+  );
+  p.issue();
+  await poll();
+  const i = (await intents(p)).open[0]!;
+  expect([...i.sections.keys()]).toEqual([
+    "Problem",
+    "Proposed outcome",
+    "Affected users and systems",
+    "Constraints",
+    "Open questions",
+    "Towercab",
+  ]);
+  expect(i.sections.get("Affected users and systems")).toBe("Visitors of the home page.");
+  // Model text cannot open a section or a list of its own.
+  expect(i.sections.get("Constraints")).toBe("- No new dependency\n- Keep the old URL");
+  expect(i.sections.get("Open questions")).toBe("- Should the greeting be translated?");
+  const prompt = readFileSync(join(import.meta.dirname, "../../agents/score.md"), "utf8");
+  expect(prompt).toContain("never invent");
+});
+
+test("issues: empty sections are left out", async () => {
+  const { p, poll } = await world();
+  p.queue("score", scored({ affected: "  ", constraints: ["", " "], open_questions: [] }));
+  p.issue();
+  await poll();
+  const i = (await intents(p)).open[0]!;
+  expect([...i.sections.keys()]).toEqual(["Problem", "Proposed outcome", "Towercab"]);
 });
 
 test("issues: a bad score result is retried once", async () => {

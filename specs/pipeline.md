@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..81 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..81, PIP-90..92 · **Prefix:** PIP
 
 ## Purpose
 
@@ -416,7 +416,8 @@ Two short commands cover what a GitHub action can't express.
 The plan explains the approach before the steps, so the owner can judge it in a minute.
 
 - `plan.md`: `# Plan: <title>`, a line with the intent and spec IDs, then the worker's markdown:
-  `## Approach` (what will be built and why this way), `## Steps` (in order; failing tests first),
+  `## Approach` (what will be built and why this way), `## Files that change` (PIP-91), `## Steps`
+  (in order; failing tests first),
   `## Risks`, `## How to check it`; then Towercab's `## Access` (PIP-47).
 - Verified by: `pipeline: plan.md sections`
 
@@ -746,8 +747,8 @@ a bug, a security problem or a departure from the spec and plan.
   `## Passes` writes it, or one of the defaults `Bugs`, `Security`, `Compliance`
   ([REPO-4](repo.md)). `agents/review.md` asks for it. A name outside that list is kept as written,
   not refused.
-- The Review comment (PIP-42) shows the pass next to each finding's severity. Approval (PIP-5) and
-  the nit cap do not change.
+- The Review comment (PIP-42) shows each finding as `` - <pass> · `<file>:<line>`: <what> `` under its
+  severity's heading. Approval (PIP-5) and the nit cap do not change.
 - Verified by: `pipeline: review findings name their pass`, `pipeline: review comment shows each finding's pass`
 
 ### PIP-91 · The plan names the files that change
@@ -806,9 +807,10 @@ build    {status: "done"|"blocked"|"access", pr: S?, notes: S,
           access: {domains: [{domain, why}], paths: [{glob, why}]}?,
           plan_changed: S?, lower_a: int?, lower_why: S?}
 review   {approved: bool, outcomes: [{bullet, met: bool, why}], tests_weakened: {value: bool, where},
-          plan_followed: {value: bool, where}, findings: [{severity, file, line: int?, what}],
+          plan_followed: {value: bool, where}, findings: [{severity, pass, file, line: int?, what}],
           door: "one-way"|"two-way", red_lines: [{line, file}], summary: S}
-score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outcome: [S]}
+score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outcome: [S],
+          affected: S, constraints: [S], open_questions: [S]}
 ```
 
 **Code** (`src/pipeline/`; tests `tests/pipeline/*.test.ts`)
