@@ -643,7 +643,6 @@ When the spec PR no longer merges into `main`, the design resolves the conflict 
   (`waiting: spec conflict`). A conflict outside `specs/**` is not edited: the same wait.
 - Verified by: `pipeline: a conflicting spec PR is revised`, `pipeline: a spec conflict that stays waits for the owner`
 
-<<<<<<< HEAD
 ### PIP-82 · A red spec PR is revised once
 
 When the checks on the spec PR stay red after the rerun, the design revises the spec once by itself, so the owner never has to review a red spec PR.
@@ -675,7 +674,7 @@ Every design revision on a spec PR whose checks are red gets the tails of the fa
   told to fix whatever in `specs/**` makes the check fail, or to say in `concerns` that the cause lies
   outside `specs/**`.
 - Verified by: `pipeline: a design revision gets the failing logs`, `pipeline: a design revision without red checks has no log section`, `pipeline: an unreadable log does not stop the revision`
-=======
+
 ### PIP-85 · A refused push is a question, not a crash
 
 When GitHub refuses a push because it already has commits on the branch that Towercab doesn't, the mission asks the owner instead of counting a crash.
@@ -737,7 +736,6 @@ Towercab deletes only branches it made for a PR it opened, and tries again if Gi
 - Merged branches stay the job of the repo setting `delete_branch_on_merge` (`apply-settings`); Towercab
   does not delete them.
 - Verified by: `pipeline: a branch outside towercab/ is never deleted`, `pipeline: a failed branch delete is retried`, `pipeline: a merged PR's branch is left to the repo setting`
->>>>>>> refs/remotes/origin/main
 
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
