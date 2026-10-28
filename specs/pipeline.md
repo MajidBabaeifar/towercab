@@ -197,7 +197,7 @@ back to the worker.
 
 - ` ```setup ` (base branch's) runs first, with network and the repo cache writable; non-zero → once
   more after 60 s, then red. The run set ([REPO-9](repo.md)) runs in order without network, each
-  bounded by `check_timeout`. Logs: `runs/<id>/verify-<n>.log` (`$ <command>` before each output).
+  bounded by `check_timeout`. Logs: `runs/<id>/verify-<n>.log` (`$ <command>` before each output); under LOOP-39 they move to `runs/<id>/verify/check-<n>.log`.
 - Red → a repair round in `build` with the log tail (at most 2 for verify and proof together,
   `repairs`), then `waiting: checks red`. A log that shows a missing tool or a sandbox failure is a
   fault ([LOOP-10](loop.md)), not a repair.
@@ -212,7 +212,8 @@ back to the worker.
 Every Claude run is headless, sandboxed, and gets only the tools and access its job needs.
 
 - `claude -p --output-format json --permission-mode dontAsk --strict-mcp-config --setting-sources ""
-  --append-system-prompt-file <runs>/system-<kind>.md --settings <runs>/settings-<kind>.json --model
+  --append-system-prompt-file <runs>/system-<kind>.md --settings <runs>/settings-<kind>.json (both
+  move into the stage folder under LOOP-39) --model
   <m> --tools <list> [--allowedTools …] [--disallowedTools …] [--session-id|--resume <uuid>]
   [--max-budget-usd <n>] [--json-schema <schema>]`, the prompt on stdin. The system file = the base
   branch's `CLAUDE.md` + the writing guide (PIP-39). Env: HOME, PATH, LANG, the repo cache's

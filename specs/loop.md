@@ -342,6 +342,45 @@ GitHub shows they were the owner's.
   `answer` appends to the intent's `## Answers` ([INT-15](intents.md)) and continues it.
 - Verified by: `owner: approve merges as the owner`, `owner: answer without a PR`
 
+### LOOP-39 · Run files by stage
+
+Every file a mission writes is kept in a folder named for the stage that wrote it.
+
+- `runs/<id>/<stage>/` with `<stage>` one of `design`, `plan`, `build`, `verify`, `proof`, `publish`,
+  `ci`, `review`, `gate`, `merge`. Everything the stage writes goes there: prompts, Claude's answers,
+  stdout and stderr, the Claude settings and system prompt, the guard file, setup and check logs,
+  screenshots. Build keeps its worker files and its setup log together. This replaces the flat
+  `runs/<id>/` of LOOP-1 and LOOP-12 (children write their stdout and stderr into the stage folder).
+- Verified by: `runs: files land in the stage folder`
+
+### LOOP-40 · Rounds keep their number
+
+A later round never replaces an earlier round's files, and an empty error file is not left behind.
+
+- A file written more than once in a stage carries the round in its name (`prompt-2`,
+  `result-2.json`, `check-2.log`, `shots-2/`). Round 1 may also carry its number. Empty `.err` files
+  are removed when the child ends.
+- Verified by: `runs: rounds keep separate files`, `runs: empty error files are removed`
+
+### LOOP-41 · Readers use the stage folders
+
+Everything that reads run files finds them in the stage folders.
+
+- Repair prompts (log tails), the review (logs and screenshots) and the run file API (UI-65, which
+  accepts `<stage>/<file>`) read from `runs/<id>/<stage>/`. The API still refuses a path outside
+  `runs/<id>/`: no `..`, no symlink out, text only, at most 2 MB.
+- Verified by: `runs: repair prompt reads the stage log`, `runs: review reads logs and shots from stage folders`, `ui: run files stay inside runs`
+
+### LOOP-42 · Old runs still show
+
+Runs written before the stage folders keep working, with no migration.
+
+- Files in the flat `runs/<id>/` are assigned to a stage by the old name prefixes (`worker-*` and
+  `build-setup.log` → build, `verify-*` → verify, `shots-*` → verify, `settings-*`, `system-*` and
+  `guard.json` → the stage of their Claude kind, and so on). Nothing is moved, so a running mission
+  is never disturbed. A name that matches no stage is listed under "Other".
+- Verified by: `runs: flat runs are assigned to stages by prefix`, `ui: flat runs get a map`
+
 ### LOOP-60 · Intents ahead of build
 
 A repo can have up to 3 intents being designed, planned or waiting for approval at the same time, so one intent's wait for the owner no longer stops the next one.

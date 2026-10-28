@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..104 · **Prefix:** UI
+**Status:** Live: UI-1..71, UI-78..82, UI-100..104 · **Prefix:** UI
 
 ## Purpose
 
@@ -130,7 +130,7 @@ and the intent itself.
   state (open, merged, closed, not needed) and links; the needs-you card when it waits (UI-58); a
   timeline of moves in plain words with times and durations; cost and agent time per attempt; the
   intent's sections and `## Answers`, rendered; links to run files (logs, prompts, results) of each
-  step.
+  step. The stage map (UI-73..77) takes over the time per step and the run files.
 - Verified by: `ui: intent page shows the three PRs`, `ui: timeline in plain words`
 
 ### UI-63 · Queue page
@@ -156,7 +156,8 @@ The page talks to the loop through a small JSON API.
 
 - `GET /api/state` (the overview's data, with a `version` that changes when anything shown changes),
   `GET /api/intents/<id>`, `GET /api/queue`, `GET /api/activity?…`, `GET /api/runs/<id>/<file>`
-  (names `[A-Za-z0-9._-]+`, files under `runs/<id>/` only, text, at most 2 MB), `GET /api/events`
+  (`<file>` or `<stage>/<file>`, names `[A-Za-z0-9._-]+`, files under `runs/<id>/` only, no symlinks
+  out, text, at most 2 MB), `GET /api/events`
   (Server-Sent Events: `version` on each change), `POST /api/actions` `{action, intent, text?}`.
 - Verified by: `ui: API shapes`, `ui: run files stay inside runs`
 
@@ -214,9 +215,90 @@ Every text on the page is plain language a person can act on.
   durations as `1 h 05 min`. Errors say what failed and what to do.
 - Verified by: `ui: times, costs and durations`
 
-### UI-72 to UI-77
+### UI-72 · Stage visits
 
-Reserved for the stage map on the intent page (intent 261027-1147).
+The server works out the path an intent took once, as an ordered list of stage visits, so the page only draws it.
+
+- `GET /api/intents/<id>` returns `visits` (`src/ui/state.ts`), per attempt, from the mission's moves
+  and the stage folders (LOOP-39): in order, each visit has `stage`, `round` (1 for the first time
+  in that stage), `start`, `end` (none while it runs), `outcome` (`passed`, `red`, `sent back`,
+  `waiting on you`, `working now`, `skipped`), `reason` (the plain-words reason it moved on, or why
+  it was skipped), `returnTo` (the stage it went back to, if any) and `files`.
+- The stages, in pipeline order, with their plain names (UI-56): Writing the spec (`design`), Your
+  spec review, Planning (`plan`), Your plan review, Building (`build`), Running checks (`verify`),
+  Proving the tests (`proof`), Opening the PR (`publish`), CI (`ci`), Reviewing (`review`), Deciding
+  (`gate`), Merging (`merge`), Your code review. Waits on the owner (the three reviews and
+  questions) are visits too. A stage that was never reached has no visit and is listed as `not reached`.
+- Time per stage and the two totals (Towercab working, waiting on you) are sums of the visits.
+- Each file has `stage`, `round`, a plain `kind` ("Prompt sent", "Claude's answer", "Check output",
+  "Errors", "Screenshots", or "Details" for Claude settings, system prompt and guard file), `name`,
+  size and time. Empty files are left out.
+- Verified by: `ui: visits follow the real path`, `ui: visits count rounds and returns`, `ui: visits skip empty files`
+
+### UI-73 · Stage map
+
+The intent page shows one diagram of the path the intent took through the pipeline, from picked up to merged or to where it is now.
+
+- Placed right under the three PRs and the needs-you card (UI-62). One node per stage in pipeline
+  order, in the plain names of UI-72. A node shows its outcome as an icon plus a word (passed, red,
+  sent back, waiting on you, working now, not reached, skipped) and its total time (UI-71).
+- The current stage has `aria-current="step"`, the state chip and, while working, the spinner. Stages
+  not reached are hollow and quiet. A skipped stage says "skipped" and why (for example "no tests
+  changed"). Waits on the owner use the "Needs you" colour (UI-56).
+- Under the map: time Towercab worked and time spent waiting on you.
+- Look and feel follows UI-68 and `ui/DESIGN.md`, which gets the map in the intent page's hierarchy.
+  The map is HTML, CSS and inline SVG in Preact, with no new dependency or external resource (UI-55).
+- Verified by: `ui: stage map shows every stage and its outcome`, `ui: stage map marks the current and skipped stages`
+
+### UI-74 · Rounds and returns
+
+The map shows the real path: a stage that ran several times shows each round, and every step back is drawn with its reason.
+
+- A stage with more than one visit shows numbered rounds inside its node (round 1, 2, 3).
+- Each move back (checks red → building, CI red → building, review asked for changes, the owner
+  asked for a new spec) draws a return link between the two nodes, labelled in plain words, for
+  example "checks failed: 2 tests red". The link is also text for screen readers: "sent back to
+  Building: checks failed".
+- Verified by: `ui: map shows rounds and return links`
+
+### UI-75 · Stage files
+
+Choosing a stage opens its files right under the map, grouped by round, and a file opens inline.
+
+- A click, tap or Enter/Space on a node opens the panel; the panel lists the stage's files by round
+  with plain kind names, sizes and relative times (UI-71). "Details" (Claude settings, system
+  prompt, guard file) is folded.
+- Opening a file shows it in a monospace viewer: the last 200 lines first, "Show all" (up to the
+  API's 2 MB) and "Open raw" in a new tab; JSON is pretty-printed.
+- The panel opens by default on the stage waiting on the owner, else the last red one, else the
+  current one, else the last stage. The open stage, round and file are in the URL
+  (`/i/<id>?stage=verify&file=…`), so the link can be shared and survives reload.
+- Live updates (UI-67) move the map and append files without closing the open stage or file or
+  moving the reader's scroll position.
+- Verified by: `ui: stage panel opens the stage that matters`, `ui: stage and file are in the URL`, `ui: log viewer shows the last 200 lines`, `ui: update keeps the open log`
+
+### UI-76 · Attempts, and what the map replaces
+
+When an intent had several attempts, the map follows the attempt picked, and it takes the place of the old time and file sections.
+
+- With more than one attempt a switcher above the map picks one (the latest by default); the map,
+  totals and files follow it, and the choice is in the URL.
+- The map replaces the "Time per step" card and the "Run files" section of UI-62. The timeline stays,
+  folded under the map as "All moves", with exact times.
+- Verified by: `ui: attempt switcher drives the map`, `ui: intent page has no step-time or run-files section`
+
+### UI-77 · Map on a phone and without sight
+
+The map works at 360 px wide and by keyboard and screen reader, and moves no more than the spinner.
+
+- On desktop it runs left to right and wraps to a second row, never scrolling sideways. At 360 px it
+  is a vertical stepper and a stage's files open inline beneath it (accordion).
+- It is an ordered list of stages, each a button with `aria-expanded` and its outcome and time in its
+  accessible name; arrow keys move between stages; return links are text (UI-74). No motion beyond the
+  existing spinner, and none with `prefers-reduced-motion`.
+- The UI fixture has an intent with a repair loop, a skipped stage, a wait on the owner and two
+  attempts; the screenshot tests (UI-69) capture the map with a log open in light, dark and mobile.
+- Verified by: `ui: stage map is keyboard and screen reader friendly`, `ui: screenshots light, dark and mobile`
 
 ### UI-78 · Airspace
 
