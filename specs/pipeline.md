@@ -26,10 +26,14 @@ docs, until the repo's checks pass.
   PIP-41) or `access` (with what and why, [AUT-15](autonomy.md)); `pr` (the code PR's text, PIP-48);
   `plan_changed` (markdown, when it departed from the plan, with why); `lower_a`, `lower_why`.
 - Towercab then commits everything as the bot (`git add -A`, message = the design's Conventional
-  Commit line) and goes to verify. No diff → `waiting: no changes`. Timeout, budget used up, or no
+  Commit line) and goes to verify. No diff → `waiting: no changes`. A repair round (not a conflict)
+  that adds nothing to the branch and carries no words from the owner also → `waiting: no changes`,
+  why `The repair round changed nothing.` plus the worker's notes, so the same red check never runs
+  again unchanged; with the owner's words it goes on, and after a CI repair that head's red is rerun
+  once more (PIP-18). Timeout, budget used up, or no
   valid result → one continue with `Continue where you stopped.` and the step's full time budget
   again, then the matching wait.
-- Verified by: `pipeline: build prompt has plan, intent and checks`, `pipeline: build commits as the bot`, `pipeline: no changes waits`, `pipeline: timeout continues once`
+- Verified by: `pipeline: build prompt has plan, intent and checks`, `pipeline: build commits as the bot`, `pipeline: no changes waits`, `pipeline: a repair that changes nothing waits`, `pipeline: after an answer an unchanged head gets CI again`, `pipeline: timeout continues once`
 
 ### PIP-2 · Publish
 
