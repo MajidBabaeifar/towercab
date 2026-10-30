@@ -233,7 +233,8 @@ export interface Overview {
 export type PrState = "open" | "merged" | "closed" | "not needed" | "not yet";
 
 export interface PrView {
-  label: "Spec" | "Plan" | "Code";
+  /** UI-124: a shipping change also has "Fix 1", "Fix 2" and "Revert". */
+  label: "Spec" | "Plan" | "Code" | `Fix ${number}` | "Revert";
   state: PrState;
   number: number | null;
   url: string | null;
@@ -263,6 +264,10 @@ export type StageId =
   | "gate"
   | "merge"
   | "code_review"
+  | "deploy"
+  | "e2e"
+  | "rollback"
+  | "revert"
   | "answer"
   | "other";
 

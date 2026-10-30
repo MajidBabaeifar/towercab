@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..104, UI-120..122 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..104, UI-120..124 · **Prefix:** UI
 
 ## Purpose
 
@@ -228,7 +228,7 @@ The server works out the path an intent took once, as an ordered list of stage v
 - The stages, in pipeline order, with their plain names (UI-56): Writing the spec (`design`), Your
   spec review, Planning (`plan`), Your plan review, Building (`build`), Running checks (`verify`),
   Proving the tests (`proof`), Opening the PR (`publish`), CI (`ci`), Reviewing (`review`), Deciding
-  (`gate`), Your code review, Merging (`merge`). Waits on the owner (the three reviews and
+  (`gate`), Your code review, Merging (`merge`), then the ship stages of UI-123. Waits on the owner (the three reviews and
   questions) are visits too. A stage that was never reached has no visit and is listed as `not reached`.
 - Time per stage and the two totals (Towercab working, waiting on you) are sums of the visits.
 - Each file has `stage`, `round`, a plain `kind` ("Prompt sent", "Claude's answer", "Check output",
@@ -541,6 +541,31 @@ The intent page links the last e2e log, so the owner sees why a change was rolle
 - The intent page (UI-62) shows "e2e log" linking the newest `runs/<intent>/e2e/*.log`, served
   redacted ([SHIP-2](ship.md)), when there is one.
 - Verified by: `ui: e2e log link`
+
+### UI-123 · Ship stages in the stage map
+
+The stage map follows a change after its merge, so the owner sees the deploy, the e2e run and any rollback in the path.
+
+- After Merging, the map has Deploying (`deploy`), e2e tests (`e2e`), Rolling back (`rollback`) and
+  Reverting (`revert`) ([SHIP-1](ship.md)). They are listed only when the attempt visited them, so a repo
+  without a `live` block sees the map it always had.
+- Merging → Deploying is a pass, not a step back. A red deploy or e2e run is `red` with a return link to
+  Rolling back, labelled with its reason ("e2e tests failed: e2e suite drill failed twice …"). A
+  rollback that is back on the last good version is `passed`, with a return link to Building labelled
+  "fix round: back on 2d6ad8c; fix 1 of 2".
+- e2e logs written while rolling back (the smoke suites) belong to Rolling back; the others to e2e tests.
+- Verified by: `ui: stage map shows the ship stages`, `ui: stage map without a live repo has no ship stages`
+
+### UI-124 · Every code PR
+
+The intent page lists every code PR of a shipping change, so the PR that was rolled back stays one click away.
+
+- A fix round ([SHIP-11](ship.md)) remembers the code PR it replaces in the mission's `ship.prs`. The
+  page shows the first code PR as "Code", each later one as "Fix 1", "Fix 2", and the revert PR
+  ([SHIP-12](ship.md)) as "Revert". Earlier ones are `merged`.
+- A code PR is `merged` once the mission is past Merging (deploy, e2e, rollback or revert), not only when
+  the intent is done.
+- Verified by: `ui: every code PR of a shipping change`
 
 ## Out of scope
 

@@ -197,6 +197,10 @@ describe("ship: red, rollback, fix forward", () => {
       (x) => x.repo === "owner/web" && x.head.startsWith(`towercab/${ID}`) && !x.head.endsWith("-spec"),
     );
     expect(code.map((x) => x.state)).toEqual(expect.arrayContaining(["MERGED", "MERGED"]));
+    // The replaced PR stays on record, so the intent page still lists it (UI-124).
+    const first = code.find((x) => !x.head.endsWith("-fix1"))!;
+    expect((dataOf(m) as { ship?: { prs?: number[] } }).ship!.prs).toEqual([first.number]);
+    expect(m.pr).not.toBe(first.number);
     const fix = p.claudeCalls.filter((c) => c.kind === "worker").at(-1)!;
     expect(fix.prompt).toContain("the e2e suite `greet` failed twice");
     expect(fix.prompt).toContain("no hello on the page");

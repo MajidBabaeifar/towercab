@@ -428,7 +428,14 @@ function fixRound(m: Mission, sc: ShipCx, ship: ShipData, target: string): Outco
     data: {
       ...clear,
       repair: { kind: "e2e", what, details: red.suite === "deploy" ? "" : red.log },
-      ship: { ...ship, fixes: n, e2e: undefined, since: undefined, requested: undefined },
+      ship: {
+        ...ship,
+        fixes: n,
+        e2e: undefined,
+        since: undefined,
+        requested: undefined,
+        prs: m.pr !== null ? [...(ship.prs ?? []), m.pr] : ship.prs,
+      },
     },
   });
 }

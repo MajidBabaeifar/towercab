@@ -16,6 +16,7 @@ import {
   moveWords,
   overview,
   queue,
+  stageMap,
   stateOf,
   stepWords,
   until,
@@ -683,4 +684,115 @@ test("ui: e2e log link", async () => {
   utimesSync(join(dir, "1-greet.log"), 1000, 1000);
   writeFileSync(join(dir, "2-greet.log"), "red again");
   expect(e2eLogOf(root, "261030-0001")).toBe("/api/runs/261030-0001/e2e/2-greet.log");
+});
+
+// The drill's real path (UI-123): merge, deploy, e2e red, rollback, a fix round, then green.
+function shipMoves(): Parameters<typeof stageMap>[1] {
+  const at = (min: number) => NOW - 60 * 60 + min * 60;
+  const t = (min: number, from: Stage, event: string, to: Stage, why: string | null = null) => ({
+    at: at(min),
+    from_stage: from,
+    event,
+    to_stage: to,
+    why,
+  });
+  return [
+    t(0, "pick", "ok", "build"),
+    t(2, "build", "ok", "merge"),
+    t(3, "merge", "code_merged", "deploy"),
+    t(5, "deploy", "ok", "e2e", "9955016 is live"),
+    t(6, "e2e", "red", "rollback", "e2e suite drill failed twice against https://tracker.apersonal.app"),
+    t(7, "rollback", "ok", "build", "back on 2d6ad8c; fix 1 of 2"),
+    t(9, "build", "ok", "merge"),
+    t(10, "merge", "code_merged", "deploy"),
+    t(12, "deploy", "ok", "e2e", "1b16bc4 is live"),
+    t(13, "e2e", "ok", "done", "e2e green on 1b16bc4"),
+  ];
+}
+
+test("ui: stage map shows the ship stages", () => {
+  const at = (min: number) => NOW - 60 * 60 + min * 60;
+  const file = (name: string, min: number) => ({
+    node: "e2e" as const,
+    rel: `e2e/${name}`,
+    name,
+    bytes: 9,
+    mtime: at(min),
+  });
+  const map = stageMap(
+    { attempt: 1, created: at(0), stage: "done" },
+    shipMoves(),
+    [file("3-drill.log", 6), file("5-smoke.log", 6.5), file("9-drill.log", 12.5)],
+    NOW,
+  );
+  const by = (id: string) => map.stages.find((s) => s.id === id)!;
+  // The ship stages follow Merging, in plain words.
+  expect(map.stages.map((s) => s.name).slice(-4)).toEqual([
+    "Merging",
+    "Deploying",
+    "e2e tests",
+    "Rolling back",
+  ]);
+  // Merging passed both times: going on to the deploy is not a step back.
+  expect(by("merge").visits.map((v) => v.outcome)).toEqual(["passed", "passed"]);
+  // The red e2e run rolls back, with its reason; the rollback passed and started a fix round.
+  expect(by("e2e").visits[0]).toMatchObject({
+    outcome: "red",
+    returnTo: "rollback",
+    returnLabel: "e2e tests failed: e2e suite drill failed twice against https://tracker.apersonal.app",
+  });
+  expect(by("e2e").outcome).toBe("passed");
+  expect(by("rollback").visits[0]).toMatchObject({
+    outcome: "passed",
+    returnTo: "build",
+    returnLabel: "fix round: back on 2d6ad8c; fix 1 of 2",
+  });
+  expect(by("deploy").visits.map((v) => v.outcome)).toEqual(["passed", "passed"]);
+  // The smoke log written while rolling back belongs to the rollback.
+  expect(by("rollback").files.map((f) => f.name)).toEqual(["5-smoke.log"]);
+  expect(by("e2e").visits.map((v) => v.files.map((f) => f.name))).toEqual([["3-drill.log"], ["9-drill.log"]]);
+  expect(map.open).toBe("e2e");
+});
+
+test("ui: stage map without a live repo has no ship stages", () => {
+  const map = stageMap(
+    { attempt: 1, created: NOW - 600, stage: "done" },
+    [
+      { at: NOW - 500, from_stage: "build", event: "ok", to_stage: "merge", why: null },
+      { at: NOW - 400, from_stage: "merge", event: "merged", to_stage: "done", why: null },
+    ],
+    [],
+    NOW,
+  );
+  expect(map.stages.map((s) => s.id)).not.toContain("deploy");
+  expect(map.stages.map((s) => s.id)).not.toContain("rollback");
+  expect(map.stages.find((s) => s.id === "merge")!.outcome).toBe("passed");
+});
+
+test("ui: every code PR of a shipping change", async () => {
+  const f = fixture();
+  const ship = (stage: Stage, ship: unknown) =>
+    f.db.run(
+      "UPDATE missions SET stage = ?, pr = 17, data = ? WHERE id = (SELECT max(id) FROM missions WHERE intent = ?)",
+      stage,
+      JSON.stringify({ ship }),
+      IDS.code,
+    );
+  ship("e2e", { merges: ["a", "b"], fixes: 1, prs: [16] });
+  const prs = (await intentPage(f.sources, IDS.code))!.prs;
+  // The rolled-back PR stays listed, and the fix is merged once it is past Merging.
+  expect(prs.slice(2).map((p) => [p.label, p.state, p.number])).toEqual([
+    ["Code", "merged", 16],
+    ["Fix 1", "merged", 17],
+  ]);
+  expect(prs[2]!.url).toMatch(/\/pull\/16$/);
+  // A revert PR shows as its own tile, open until its commit is on main.
+  ship("revert", { merges: ["a", "b", "c"], fixes: 2, prs: [16, 17], revert: { pr: 19, sha: null } });
+  const later = (await intentPage(f.sources, IDS.code))!.prs;
+  expect(later.slice(2).map((p) => [p.label, p.state, p.number])).toEqual([
+    ["Code", "merged", 16],
+    ["Fix 1", "merged", 17],
+    ["Fix 2", "merged", 17],
+    ["Revert", "open", 19],
+  ]);
 });
