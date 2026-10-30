@@ -463,6 +463,56 @@ If the mission has not moved on 5 minutes after the action, the card says so and
   Times follow UI-71.
 - Verified by: `ui: done note turns into a stuck message after 5 minutes`
 
+### UI-109 · Ground stop
+
+While the loop is paused, the airspace says so in its header and on the strip, and offers Resume.
+
+- Owner pause (`meta.paused`, LOOP-15): the `twr://airspace` header reads `GROUND STOP · paused since
+  <time> by you` (time per UI-71; `GROUND STOP · paused` when there is no pause time, UI-111). The strip
+  gets a calm amber hatched band. A Resume button sits in the header next to that text and does what
+  the Resume action does (UI-66, `resume` command); the reply shows as for other actions.
+- Health pause (a health block is open, LOOP-10): the header names the service and the reason, such
+  as `GROUND STOP · can't reach GitHub`, from the same problem the Problems block shows (UI-60). No
+  Resume button, because resuming would not help. If the owner has also paused, the owner's header
+  and button show.
+- `airspace` in `GET /api/state` (UI-78) carries `stop`: `null`, `{kind: "owner", since}` (`since` is
+  null without a pause time) or `{kind: "health", service, reason}`. The text follows `prompts/writing.md`.
+- Hiding the airspace (UI-81) keeps the one-line header with `GROUND STOP` in it, and Resume where it applies.
+- Verified by: `ui: airspace shows a ground stop when paused`, `ui: airspace names the service when health pauses`
+
+### UI-110 · Held planes
+
+During a ground stop, the stations that feed new work are dimmed and marked held, while planes already flying keep moving.
+
+- Parked, queue and `00 gate` stations are dimmed and carry a small `held` mark. A plane past the gate
+  (spec, plan, code, ci and the review stations) is drawn and moves as usual, because pause lets
+  running work finish. A plane waiting at merge shows a `held` tag, because merges wait
+  until resume (PIP-22: a mission entering `merge` holds while paused); its card (UI-80) says
+  "Held until you resume" (owner pause) or "Held until <service> is reachable again" (health pause).
+- Marks and the band are static: with `prefers-reduced-motion` nothing new moves (UI-79), and the
+  band and marks add no motion in any case. The held marks are also text for screen readers (UI-82),
+  and the strip's sentence says the loop is paused or why it is stopped.
+- Looks right in light and dark, on a wide screen and on a phone (UI-82).
+- Verified by: `ui: airspace dims held stations and tags a plane waiting at merge`, `ui: ground stop adds no motion with reduced motion`, `ui: screenshots light, dark and mobile`
+
+### UI-111 · Pause time
+
+The loop remembers when the owner paused it, so the page can say since when even after a restart.
+
+- Applying the `pause` command also stores `meta.paused_at` (ISO time, the loop's clock) in the same
+  transaction that sets `meta.paused`; applying `resume` deletes both. Pausing when already paused
+  keeps the first `paused_at`. Nothing else about the commands changes (LOOP-15).
+- A pause without `paused_at` (made before this) gives `since: null` in UI-109.
+- Verified by: `commands: pause stores the time and resume clears it`, `ui: an older pause shows paused without a time`
+
+### UI-112 · Tab title
+
+While the loop is paused, the browser tab title starts with `⏸`, so the owner notices it from another tab.
+
+- The title is `⏸ ` before the usual title for an owner pause and for a health pause; it goes back
+  when the stop ends, on the next live update (UI-67).
+- Verified by: `ui: tab title starts with a pause mark while paused`
+
 ## Out of scope
 
 - Editing intents in the page: the owner edits them in the intents repo or with `/intent`.
