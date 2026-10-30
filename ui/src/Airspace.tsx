@@ -36,10 +36,25 @@ const PHASE_MARK: Record<Phase["status"], string> = { done: "■", current: "◧
 const phaseText = (ps: Phase[]) =>
   ps.map((p) => `${p.label.toLowerCase()} ${PHASE_MARK[p.status]}`).join("  ");
 
+/** UI-125: a plane going back flies the other way, in the stalled colour. */
+const goingBack = (p: Plane) => p.ship !== undefined && p.ship.kind !== "fix";
+const planeTone = (p: Plane) => (goingBack(p) ? tone("stalled") : tone(p.state.key));
+
+/** UI-125: the rollback's `↩`, or a fix round's `fix 1/2`, beside the plane (above it sit the `+n` markers). */
+function ShipMark({ plane }: { plane: Plane }) {
+  if (!plane.ship) return null;
+  return (
+    <text class="air-mark air-ship" x="10" y="3">
+      {plane.ship.mark}
+    </text>
+  );
+}
+
 /** One plane and its state's in-place motion (UI-79). */
 function Glyph({ plane, heading, index }: { plane: Plane; heading: number; index: number }) {
   const k = plane.state.key;
-  const body = <path d={PLANE} transform={heading ? `rotate(${heading})` : undefined} />;
+  const turn = goingBack(plane) ? heading + 180 : heading;
+  const body = <path d={PLANE} transform={turn ? `rotate(${turn})` : undefined} />;
   if (k === "ci")
     return (
       <>
@@ -392,12 +407,13 @@ export function Airspace({ data }: { data: AirspaceView }) {
                   <g
                     key={it.key}
                     class="air-pos"
-                    style={{ transform: `translate(${it.x}px, ${it.y}px)`, ...tone(p.state.key) }}
+                    style={{ transform: `translate(${it.x}px, ${it.y}px)`, ...planeTone(p) }}
                   >
                     {target(
                       it,
                       <>
                         <Glyph plane={p} heading={it.heading} index={n} />
+                        <ShipMark plane={p} />
                         <rect class="air-hit" x="-12" y="-12" width="24" height="24" />
                       </>,
                       `${p.title}, ${p.state.label}, ${placeWords[p.station]}`,

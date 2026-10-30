@@ -1,7 +1,8 @@
 // Shared pieces of pipeline flows: a target repo, intent files and Claude's usual answers, so each
 // test only states what differs from the happy path.
 
-import type { ClaudeReply, ClaudeScript, Pipe } from "./pipe.ts";
+import type { Mission } from "../../src/mission.ts";
+import { type ClaudeReply, type ClaudeScript, LOW_RISK, type Pipe } from "./pipe.ts";
 
 export const CLAUDE_MD = `# Web
 
@@ -58,7 +59,16 @@ export function intents(text: string = intent(), dir = DIR): Record<string, stri
   return { [`${dir}/intent.md`]: text };
 }
 
+/** PIP-106: every fake agent answer carries a plain brief by default. */
+export const DESIGN_BRIEF = "Visitors will see a friendly hello on the page. Nothing needs deciding.";
+export const PLAN_BRIEF = "The build adds the hello and a test for it; it needs no access beyond the repo.";
+export const BUILD_BRIEF = "Visitors now see a hello on the page.";
+export const REVIEW_BRIEF = "The change does what was asked and is safe to ship.";
+
 export const DESIGN = {
+  title: "Show a greeting",
+  subject: "show a greeting",
+  brief: DESIGN_BRIEF,
   type: "feat",
   scope: "",
   breaking: false,
@@ -71,7 +81,7 @@ export const SPEC = { "specs/web.md": "# Web\n\n### WEB-1 · Greeting\n\nThe pag
 
 export const PLAN_MD =
   "## Approach\n\nAdd a greeting file.\n\n## Steps\n\n1. Test\n2. Code\n\n## Risks\n\nNone.\n\n## How to check it\n\nRun the tests.";
-export const PLAN = { plan: PLAN_MD, access: { domains: [], paths: [] }, e2e: null };
+export const PLAN = { brief: PLAN_BRIEF, plan: PLAN_MD, access: { domains: [], paths: [] }, e2e: null };
 
 export const WORKER_PR =
   "## What this does\n\nThe page says hello.\n\n## Why\n\nVisitors saw nothing.\n\n## What to check before merging\n\nNothing special.\n\n## Changes\n\n- A greeting";
@@ -79,6 +89,7 @@ export const WORKER_PR =
 export function build(o: Record<string, unknown> = {}) {
   return {
     status: "done",
+    brief: BUILD_BRIEF,
     pr: WORKER_PR,
     notes: "added greeting",
     question: null,
@@ -92,6 +103,7 @@ export function build(o: Record<string, unknown> = {}) {
 export const CODE = { "greeting.txt": "hello\n", "tests/greeting.sh": "test -f greeting.txt\n" };
 
 export const REVIEW = {
+  brief: REVIEW_BRIEF,
   approved: true,
   outcomes: [{ bullet: "The page says hello", met: true, why: "greeting.txt" }],
   tests_weakened: { value: false, where: "" },
@@ -132,4 +144,23 @@ export function checkRun(
     startedAt: startedAt ?? "2026-10-26T12:00:00Z",
     detailsUrl: `https://github.com/owner/web/actions/runs/${run}/job/1`,
   };
+}
+
+/** A risk agent's answer (PIP-96): the default low risk with `o` over it. */
+export function risk(o: Record<string, unknown> = {}) {
+  return { ...LOW_RISK, ...o };
+}
+
+/** The owner merges whatever PR a mission waits on. */
+export function ownerMerges(p: Pipe): void {
+  for (const m of p.db.all<Mission>("SELECT * FROM missions WHERE stage LIKE 'approval:%' AND step = ''")) {
+    const [repo, n] =
+      m.stage === "approval:spec"
+        ? ["web", m.spec_pr]
+        : m.stage === "approval:plan"
+          ? ["intents", m.plan_pr]
+          : ["web", m.pr];
+    const pr = p.prNo(repo!, n!);
+    if (pr.state === "OPEN") p.mergePr(pr);
+  }
 }

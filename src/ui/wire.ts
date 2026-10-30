@@ -2,12 +2,14 @@
 
 import { join } from "node:path";
 import type { Config } from "../config.ts";
+import type { Db } from "../db.ts";
 import { fixFor } from "../faults.ts";
 import { type GitHub, systemClock } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { Intent } from "../intents/types.ts";
 import type { Loop } from "../loop.ts";
 import { isParked, pickOrder, priorityOf } from "../priority.ts";
+import { addFailures, beginAddRepo } from "../repos.ts";
 import { checkoutRoot } from "../service.ts";
 import { version as gitVersion } from "../update.ts";
 import { createActions } from "./actions.ts";
@@ -58,7 +60,18 @@ export function problemsOf(loop: Loop): Problem[] {
       fix: "Nothing new starts until midnight. Raise [agent].daily_budget_usd to go on today.",
     });
   }
+  out.push(...addProblems(loop.d.db));
   return out;
+}
+
+/** UI-130: a repo added from the page whose clone failed, until it is added again. */
+export function addProblems(db: Db): Problem[] {
+  return addFailures(db).map((f) => ({
+    title: `Towercab couldn't add the repo ${f.name} (${f.github})`,
+    detail: f.why,
+    fix: "Fix what the message says, then add the repo again from the Repos page or with towercab repo add.",
+    since: f.at,
+  }));
 }
 
 export function sourcesOf(loop: Loop, home: Home): UiSources {
@@ -86,7 +99,35 @@ export function startLoopUi(loop: Loop, config: Config, github: GitHub, home: Ho
   return startUi({
     port: config.ui.port,
     sources: sourcesOf(loop, home),
-    actions: createActions({ db: loop.d.db, store: loop.d.store, config, clock: loop.d.clock, github }),
+    actions: createActions({
+      db: loop.d.db,
+      store: loop.d.store,
+      config,
+      clock: loop.d.clock,
+      github,
+      // UI-130: answer once the checks pass; the clone runs on, and the page's live update shows the
+      // repo (or, on failure, a problem) when it ends.
+      addRepo: async (gh, name) => {
+        const p = await beginAddRepo(
+          {
+            db: loop.d.db,
+            config,
+            tools: loop.d.tools,
+            github,
+            home: home.root,
+            now: loop.now,
+            source: "ui",
+          },
+          gh,
+          name,
+        );
+        p.done.then(
+          (r) => loop.d.log(`added repo ${r.name} (${r.github})`),
+          (e: Error) => loop.d.log(`adding repo ${p.repo.name} failed: ${e.message}`),
+        );
+        return p.repo;
+      },
+    }),
     distDir: DIST,
     log: (l) => loop.d.log(`ui: ${l}`),
   });

@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..95 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..111 · **Prefix:** PIP
 
 ## Purpose
 
@@ -71,7 +71,8 @@ repo's `REVIEW.md`, and posts what it found on the PR.
 - After green CI, again on each new head (reused when the diff's `git patch-id` is unchanged). Model:
   the intent's `review`, else `[agent].review_model`, else one step above the worker (haiku → sonnet →
   opus; opus stays). Given intent, spec IDs, `plan.md`, the PR diff, the CI result, `REVIEW.md` and
-  the screenshots (PIP-49). Its verdict is posted as a Review comment (PIP-42).
+  the screenshots (PIP-49). Its verdict is posted as a Review comment (PIP-42). One that doesn't
+  approve goes back to build first (PIP-98); then the risk agent assesses the diff (PIP-96).
 - Verified by: `pipeline: review on every PR`, `pipeline: review reused for an unchanged diff`, `pipeline: review comment is posted`
 
 ### PIP-5 · Review verdict
@@ -94,11 +95,13 @@ Removed: in v1 already.
 After the review, code decides whether Towercab merges the code PR or the owner does.
 
 - Effective `a` and caps from [AUT-8, 13](autonomy.md). First match wins → `approval:merge`
-  (`waiting: review and merge PR`, why): CI not green; review not approved; access beyond the plan at
-  a4 (AUT-15); proof missing (PIP-30); effective `a` ≤ 3; no `a` and not low-risk (AUT-9); someone
-  else's commits on the PR (PIP-2); the build departed from the approved plan, below a5 (PIP-28); in a
-  repo with a `live` block, no e2e test for the change ([SHIP-8](ship.md)). Else → `merge`. The PR
-  body's Checks section is updated first (PIP-48). Before any of it, while another change in the repo
+  (`waiting: review and merge PR`, why, worded plainly per PIP-110): CI not green; review not
+  approved (or didn't finish); access beyond the plan at a4 (AUT-15); proof missing (PIP-30);
+  effective `a` ≤ 3; a risk that waits at this `a` ([AUT-18](autonomy.md), the code's risk of the
+  reviewed diff, none → AUT-19); someone else's commits on the PR (PIP-2); the build departed from
+  the approved plan, below a5 (PIP-28); in a repo with a `live` block, no e2e test for the change
+  ([SHIP-8](ship.md)). Else → `merge`. The PR
+  body's Checks and Risk sections are updated first (PIP-48, PIP-99). Before any of it, while another change in the repo
   ships, the gate holds ([SHIP-14](ship.md)).
 - Verified by: `pipeline: gate table`
 
@@ -252,8 +255,9 @@ The worker's first run turns the intent into spec changes, and Towercab opens th
   there).
 - Spec rows added here are `Draft`: kept out of the file's Status line (a bare `Live` becomes
   `Live: <prefix>-<first>..<last built>`), so the repo's spec check stays green. Towercab commits `docs(specs): <title>` on
-  `towercab/<id>-<slug>-spec`, pushes, and opens the spec PR (title `docs(specs): <title>`). Then the
-  spec gate ([AUT-11](autonomy.md)): the owner (`approval:spec`) or Towercab (PIP-50). No behaviour
+  `towercab/<id>-<slug>-spec`, pushes, and opens the spec PR (title `docs(specs): <title>`). Once its
+  checks pass, the risk agent and second reviewer read it (PIP-96, PIP-97), then the spec gate
+  ([AUT-11](autonomy.md)): the owner (`approval:spec`) or Towercab (PIP-50). No behaviour
   change (`spec_ids` empty, no diff) → no spec PR; on to plan.
 - The owner's review comments on the spec PR → a design revision in the same session, a new commit
   on the same PR. Red checks on the spec PR start one too (PIP-82), and every revision sees their
@@ -276,8 +280,8 @@ The worker plans the build, read-only, and Towercab opens the plan as a PR on th
   (markdown, PIP-46) and `access` (`domains` and `paths`, each with `why`).
 - Towercab writes `intents/<id>-<slug>/plan.md` (PIP-46) on branch `plan/<id>-<slug>` of the intents
   repo, pushes, and opens the plan PR (title `docs(plan): <title>`, body: the approach in a few
-  sentences and the access asked for). Then the plan gate ([AUT-12](autonomy.md)): the owner
-  (`approval:plan`) or Towercab (PIP-51).
+  sentences and the access asked for). Then the risk agent reads it (PIP-96), and the plan gate
+  ([AUT-12](autonomy.md)): the owner (`approval:plan`) or Towercab (PIP-51).
 - The owner's comments on the plan PR → a plan revision, a new commit on the same PR. Merged → the
   grants are read from the merged `plan.md` (PIP-47) and the build starts.
 - A build that departs from the plan returns `plan_changed`; Towercab commits it to `plan.md` on
@@ -447,8 +451,8 @@ it gets.
 The code PR opens with what it does, why, and what to check before merging, in plain words; the
 technical detail follows.
 
-- Body: the worker's `pr` markdown (sections `## What this does`, `## Why`, `## What to check before
-  merging`, `## Changes`); then Towercab's `## Checks` (one line each: verify, proof, CI, review, in
+- Body: `## In plain words` and the risk first (PIP-108); then the worker's `pr` markdown (sections
+  `## What this does`, `## Why`, `## What to check before merging`, `## Changes`); then Towercab's `## Checks` (one line each: verify, proof, CI, review, in
   plain words), `## Access beyond the plan` (when any), links to the spec PR and the plan PR, the spec
   IDs, the review's details in a `<details>` block, and the footer `<sub>Built by Towercab · intent ·
   $<cost> · <h>h<mm>m</sub>`. Updated at the gate. Without a worker text: the intent's title and
@@ -476,12 +480,14 @@ When the owner doesn't need to approve the spec, Towercab merges the spec PR onc
   closed (PIP-82).
 - Verified by: `pipeline: spec PR merged when the gate is open`
 
-### PIP-51 · Towercab merges the plan PR at a5
+### PIP-51 · Towercab merges the plan PR at a4 and a5
 
-At a5 Towercab merges its own plan PR and starts building.
+At a4 and a5, when the plan's risk lets it go ahead, Towercab merges its own plan PR and starts
+building.
 
-- Plan gate open ([AUT-12](autonomy.md)) → `gh pr merge --squash` on the intents repo as the App.
-- Verified by: `pipeline: plan PR merged at a5`
+- Plan gate open ([AUT-12](autonomy.md), [AUT-18](autonomy.md)) → `gh pr merge --squash` on the
+  intents repo as the App, why `a<n>, <level> risk: Towercab approved its own plan`.
+- Verified by: `pipeline: plan PR merged at a5`, `autonomy: every stage runs at every level`
 
 ### PIP-52 · A change's three PRs link to each other
 
@@ -841,6 +847,163 @@ the worker, because it is not a code problem.
   screenshots and e2e get the cache writable. Deleting that row takes the permission back.
 - Verified by: `pipeline: a read-only cache write asks the owner`, `pipeline: allowing cache writes reruns the checks writable`, `pipeline: refusing cache writes waits checks red`, `checks: read-only cache path`
 
+### PIP-96 · An independent risk agent at each gate
+
+Before each gate decides, a separate read-only agent that didn't write the change judges its risk
+([AUT-16](autonomy.md)).
+
+- `agents/risk.md`: tools and permissions as the review's, `session: new` (never the mission's
+  session), the review model, schema `risk`. Run kind `risk`, step `risk` of the stage it judges; its
+  files go to that stage's folder (`design/`, `plan/`, `review/`, as `risk-<n>.*`).
+- Spec: in `design`, after the spec PR's checks are green or absent, given the spec diff
+  (`git diff <base>...HEAD -- specs`), the design's concerns and the open questions it left to the
+  owner. Plan: in `plan`, after the plan PR is opened, given the plan and the access it asks for. Code:
+  in `review`, after a review that approves or has used its fix rounds (PIP-98), given the diff, the CI
+  and proof results and the review's summary; the review's `door` and red lines feed the floor
+  ([AUT-17](autonomy.md)). A review that didn't finish gets no risk run (the gate holds anyway).
+- Each assessment is kept with what it judged (`riskOf.<gate>` = `riskKey`: the spec PR's head plus a
+  hash of the owner's answers on it (PIP-97), a hash of the plan and its access, the diff's `git
+  patch-id`) and is reused while that is unchanged; a new spec head, answer, plan or diff gets a new
+  run. Its cost counts like the review's, on a session of its own (MET-28).
+- Verified by: `pipeline: risk is assessed at each gate`, `pipeline: review reused for an unchanged diff`
+
+### PIP-97 · A second reviewer reads the spec
+
+At the spec gate the risk agent is also a second reviewer: when it finds the spec clear, with nothing
+the owner must decide, the spec moves on (subject to its risk); open points go to the owner.
+
+- Its `open_points` (`point`, `why`) at the spec gate: the decisions the owner must make before the
+  spec is built, taken from the design's concerns and open questions or found in the spec. Any → the
+  spec gate waits ([AUT-11](autonomy.md), why `The spec leaves <n> questions for you to settle before
+  it is built.`, `one question` for one; PIP-110), the points are in
+  the spec PR's body under `## Open points for you` and on the card. None → the risk decides. At the
+  plan and code gates the list is empty.
+- The owner's answers on the spec PR (the feedback that starts a design revision, not Towercab's own
+  conflict or red-check revisions) are kept in `data.specAnswers` and given to the next spec risk run
+  as decided, not to be raised again. They are part of the spec's risk key, so an answer gets a new
+  check even when the revision changes nothing in the spec.
+- Verified by: `pipeline: open points send the spec to the owner`, `pipeline: an answered open point lets the spec go on`
+
+### PIP-98 · Review findings go back to the builder first
+
+A code review that doesn't approve sends its findings back to the worker, for up to 2 fix rounds,
+before the change waits for the owner.
+
+- Review not approved (PIP-5) and `reviewFixes` < 2 → event `red` from `review` to `build` (why `the
+  review didn't approve: fix round <n> of 2`) with `repair` kind `review`: the Review comment as the
+  details, in `<review>` tags, run by `agents/repair.md` in the worker's session (tests locked as in
+  PIP-31). The new diff gets a new review. After 2 fix rounds the gate holds as before (`review not
+  approved`). A fix round that changes nothing waits `no changes`. `reviewFixes` starts over on a ship
+  fix round ([SHIP-11](ship.md)).
+- Verified by: `pipeline: a review that doesn't approve gets two fix rounds`, `pipeline: a review fix round that lands goes on`
+
+### PIP-99 · The risk in the PR texts
+
+Each of the three PRs says how risky the change is, in plain words.
+
+- Once assessed, the spec, plan and code PR bodies carry `## Risk: <level>` with the three answers
+  in plain words (`riskWords`, [AUT-20](autonomy.md)), the agent's summary and, when the floor raised
+  it, why. The spec PR's body also lists `## Open points for you` (PIP-97). The spec and plan PR bodies
+  are rewritten after the risk run; the code PR's at the gate (PIP-48). A risk run that didn't finish
+  says so.
+- Verified by: `pipeline: risk is assessed at each gate`, `pipeline: gate table`
+
+### PIP-100 · Agents that only read can't write the checkout
+
+An agent without Edit or Write can't change the checkout through its shell either.
+
+- `claudeSettings`: for an agent whose `tools` have neither `Edit` nor `Write` (today `plan`,
+  `review`, `risk`), the checkout itself is in the sandbox's `denyWrite`, besides its `.git`. Their
+  allowed `Bash(git diff:*)`, `git log` and `git show` accept `--output=<file>`, so text planted in a
+  diff could otherwise make them write files; the sandbox, not a pattern on the command, stops it.
+- Verified by: `claude: read-only agents can't write the checkout`, `claude: review argv`
+
+### PIP-106 · Two kinds of text
+
+Every agent that writes for the owner writes two kinds of text: a plain brief that someone who doesn't
+code understands, and the technical text agents and reviewers work from, kept as before.
+
+- The `design`, `plan`, `build` (worker and repair) and `review` results have a required `brief`
+  (string): two to four sentences on what changes for the people who use the product, what the owner
+  is asked to decide or do, and the risk in everyday words, with no file names, functions, flags,
+  field names, spec IDs or step names. The risk agent's `summary` is its plain brief. Each agent's
+  prompt asks for it, and the writing guide (`prompts/writing.md`, PIP-39) has a section "Two kinds of
+  text": who reads which, plain brief first, technical detail second, and a brief that stands on its
+  own.
+- Verified by: `schemas: every result a person reads has a plain brief`, `prompts: every agent that writes for the owner asks for a plain brief`
+
+### PIP-107 · Briefs are kept with the mission
+
+Towercab keeps each stage's plain brief beside its technical text, so cards and pages can lead with it.
+
+- `missions.data`: `design.brief` and `design.title` (INT-34), `plan.brief`, `build.brief` (the
+  worker's latest, a repair round's included), `review.brief`, and `brief` for the question being
+  asked (`ask(cx, m, q, waiting, brief)`: the worker's brief when it is blocked; none clears an
+  earlier one). Any wait that asks no question of its own (`apply`) drops `question` and `brief`, so an
+  answered question never comes back on a later card. A question posted on a PR or in the intent opens
+  with `**In plain words:** <brief>`, and so does the Review comment; the review's `details` (the
+  card's and the PR's technical text) stay without it.
+- Verified by: `ui: the card leads with the plain brief, the technical text folded`, `pipeline: every PR body opens in plain words`, `machine: an answered question doesn't come back on a later wait`
+
+### PIP-108 · PR bodies open in plain words
+
+The spec, plan and code PRs start with what the change means in plain words, with the risk and what
+the owner decides beside it; the technical text is folded under "Details".
+
+- `plainMd(brief)` = `## In plain words\n\n<brief>` ("" without a brief); `detailsMd` folds the
+  technical part as `<details><summary>Details</summary>…</details>`. Spec PR: the brief, the open
+  points and the risk (PIP-99), then, folded, the design's `pr` text and the spec IDs; the links stay
+  open. Plan PR: the brief and the risk, the approach folded, then the access asked for, the merge line
+  and the links. Code PR (PIP-48): the worker's brief, the risk and the access beyond the plan open;
+  folded, the worker's sections, the checks and the review details; then the IDs, the issue line, the
+  links and the footer open. Without a brief (a run from before briefs) nothing is folded and the
+  bodies read as before.
+- Verified by: `pipeline: every PR body opens in plain words`, `pipeline: PR text comes from the worker`
+
+### PIP-109 · The design names the intent
+
+The design also returns the intent's title as a plain user story, which Towercab uses for intents the
+owner didn't write.
+
+- `design.title`: one plain sentence of about 6 to 14 words, no period, naming the product and what
+  someone can do or see once it's done ([INT-33](intents.md)). Kept in `data.design.title`; applied
+  as [INT-34](intents.md) says. The owner's own intents keep their title whatever it returns.
+- Verified by: `pipeline: an intent from elsewhere takes a plain title at pick`, `pipeline: the owner's titles are never renamed`, `pipeline: a title that breaks the naming rule is not used`
+
+### PIP-110 · Asks and reasons say what the owner decides
+
+What a card or message asks, and why it waits, says in plain words what the owner needs to decide or
+do, not what Towercab did.
+
+- The asks of **Waits** ([LOOP-14](loop.md)) name the decision or the step ("Decide if this change
+  can go live: merge the PR to ship it, or comment what to fix."); their keys don't change, since
+  intent files store them.
+- The reasons an approval waits are plain sentences: the gate's (`GATE_WHY` in `src/autonomy.ts`,
+  `GATE_HOLD` in `src/pipeline/gate.ts`), the risk's (`riskWhy`: `It is <level> risk, and at autonomy
+  a<n> only low-risk changes go ahead without you.`; none → `The risk check didn't finish, so you
+  decide whether it goes ahead.`), the spec's open points (`openPointsWhy`), the spec PR's checks and
+  conflicts (each says what to do: comment so Towercab revises it, re-run the checks, or merge it
+  anyway), and GitHub's refusal to merge (`mergeStateWhy`: behind, dirty, blocked, unstable, draft and
+  any other state, each with the step that clears it). A blocked wait's reason stays what Towercab saw
+  (a check's name, an error line, prefixed `Still failing after 2 fix attempts:` when the repairs ran
+  out) and is shown as technical text (UI-126); the `checks red` ask names no count, since the owner
+  refusing cache writes (PIP-95) reaches it too.
+- The message of an intent-only wait (`unknown repo`, `bad after:`) opens with its ask from **Waits**.
+- Verified by: `machine: every ask says what the owner decides, as the spec's table does`, `pipeline: gate table`, `autonomy: gate table`, `pipeline: open points send the spec to the owner`, `ui: the card leads with the plain brief, the technical text folded`, `pipeline: GitHub's merge state in plain words`, `pipeline: a red spec PR that stays red waits for the owner`, `loop: a repo added while running is picked up`
+
+### PIP-111 · PR titles and commits stay short
+
+PR titles and commit messages name the change in a few words, as the owner's rule asks, even when the
+intent's title is a long user story.
+
+- The design also returns `subject`: two to six words, Conventional Commit description style
+  (lowercase, no period, no product name). `subjectOf` cleans it like a title (INT-36) to at most 60
+  characters and lowers its first letter; it titles the spec PR and its commit (`docs(specs):
+  <subject>`), the plan PR and its commit (`docs(plan): <subject>`), and the code PR, its commits and
+  the squash merge (`<type>(<scope>)!: <subject>`). Without one, or when it cleans to nothing, the
+  intent's title as before.
+- Verified by: `pipeline: PR titles use the design's short subject`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
@@ -850,7 +1013,9 @@ the worker, because it is not a code problem.
 | [worker](../agents/worker.md) | Writes tests and code, and the code PR's text. | Read, Edit, Write, Glob, Grep, Bash in the sandbox; WebFetch for granted domains; protected paths per the grants. | mission's | mission |
 | [repair](../agents/repair.md) | Fixes red checks, a conflict, a review finding or an owner's answer in the worker's session. | The worker's tools and permissions, no more. | mission's | mission |
 | [review](../agents/review.md) | Reviews the code PR against the intent, plan and `REVIEW.md`; reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
+| [risk](../agents/risk.md) | Judges the risk of the spec, plan and code at their gates, and reviews the spec a second time (PIP-96, PIP-97); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [score](../agents/score.md) | Turns a GitHub issue into a scored intent ([INT-22](intents.md)); runs outside any mission in an empty folder. | Nothing: no tools. | none | `[agent].model` |
+| [features](../agents/features.md) | Writes a repo's live features from its README and specs ([INT-39](intents.md)); runs outside any mission in a fresh checkout of base. | Read, Glob, Grep in the sandbox; no network. | none | `[agent].model` |
 
 Each file's front matter also holds the time and cost limits and the result schema (PIP-71). `repair`
 runs under the worker's run kind, so its run files and counters are the worker's.
@@ -864,16 +1029,19 @@ run is, first match: session gone, a usage limit ([LOOP-9](loop.md)), a network 
 optional)
 
 ```
-design   {type, scope, breaking: bool, spec_ids: [S], concerns: [{what, why}],
+design   {title: S, subject: S, brief: S, type, scope, breaking: bool, spec_ids: [S], concerns: [{what, why}],
           open_questions: [{question, answer: S?}], pr: S}
-plan     {plan: S, access: {domains: [{domain, why}], paths: [{glob, why}]}}
-build    {status: "done"|"blocked"|"access", pr: S?, notes: S,
+plan     {brief: S, plan: S, access: {domains: [{domain, why}], paths: [{glob, why}]}, e2e}
+build    {status: "done"|"blocked"|"access", brief: S, pr: S?, notes: S,
           question: {context, question, options: [{option, then}], recommendation}?,
           access: {domains: [{domain, why}], paths: [{glob, why}]}?,
           plan_changed: S?, lower_a: int?, lower_why: S?}
-review   {approved: bool, outcomes: [{bullet, met: bool, why}], tests_weakened: {value: bool, where},
+review   {brief: S, approved: bool, outcomes: [{bullet, met: bool, why}], tests_weakened: {value: bool, where},
           plan_followed: {value: bool, where}, findings: [{severity, pass, file, line: int?, what}],
           door: "one-way"|"two-way", red_lines: [{line, file}], summary: S}
+risk     {blast_radius: {size: "small"|"medium"|"large", who}, door: {kind: "two-way"|"one-way", why},
+          certainty: {level: "high"|"medium"|"low", why}, level: "low"|"medium"|"high", summary: S,
+          open_points: [{point, why}]}
 score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outcome: [S],
           affected: S, constraints: [S], open_questions: [S]}
 ```
@@ -884,6 +1052,7 @@ score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outc
 |---|---|
 | `index.ts` | `handlers()`: one handler per stage. |
 | `design.ts`, `plan.ts`, `build.ts`, `verify.ts`, `proof.ts`, `publish.ts`, `ci.ts`, `review.ts`, `gate.ts`, `merge.ts` | One stage each. |
+| `risk.ts` | The risk agent's runs at the three gates (PIP-96); the level, floor and words are in `src/risk.ts`. |
 | `sandbox.ts`, `guard.ts`, `access.ts`, `prtext.ts`, `prompts.ts`, `schemas.ts` | Sandbox argv; the guard hook; grants and the checklist; PR bodies; prompt templates (the body of `agents/*.md`, `{{key}}`, data fenced as `<intent>…</intent>` and marked data, not instructions); schemas. |
 
 ## Out of scope
@@ -891,7 +1060,6 @@ score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outc
 - After the merge, deploy, e2e, rollback and revert are the ship stage ([ship.md](ship.md)); a release
   gate and rollback rehearsals stay out.
 - Evals, the verifier, policy skills (intent 261026-2204-5).
-- Review rounds with the worker: a review that doesn't approve sends the PR to the owner.
 
 ## Decisions
 

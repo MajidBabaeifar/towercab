@@ -121,7 +121,7 @@ test("pipeline: proof needs the PR's checks block green on head", async () => {
   const m = await p.untilStage("blocked");
   expect([m.waiting, m.why], p.moves()).toEqual([
     "checks red",
-    "The checks block your change adds to CLAUDE.md fails on your branch.",
+    "Still failing after 2 fix attempts: The checks block your change adds to CLAUDE.md fails on your branch.",
   ]);
   // The owner's "go on" can't wave a failing block through: no unproven flag, no data.proofWaited.
   expect(m.data).not.toContain("proofWaited");

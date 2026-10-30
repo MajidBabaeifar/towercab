@@ -88,6 +88,22 @@ export interface PrLink {
   label: string;
 }
 
+/** AUT-20: a change's risk in plain words. */
+export interface RiskView {
+  level: "low" | "medium" | "high";
+  /** "Medium risk". */
+  label: string;
+  /** Which PR it was judged on: "spec", "plan" or "code". */
+  gate: "spec" | "plan" | "code";
+  /** Who it could affect, if it can be undone, how sure we are: one plain line each. */
+  blast: string;
+  door: string;
+  certainty: string;
+  summary: string;
+  /** Why the floor raised the level (AUT-17), or null. */
+  raised: string | null;
+}
+
 /** UI-58: one wait on the owner. */
 export interface Card {
   intent: string;
@@ -96,17 +112,26 @@ export interface Card {
   kind: CardKind;
   /** "Plan review", "Question", "Blocked". */
   kindLabel: string;
+  /** What the owner decides or does, in plain words (LOOP-14 **Waits**). */
   ask: string;
   since: When | null;
-  /** Markdown: the review summary, the gate's reason, Towercab's note. */
+  /** UI-126: Markdown, the plain brief of what it waits on (no code words); Towercab's note as a fallback. */
   brief: string | null;
-  /** The reason Towercab gave, one paragraph. */
+  /** The plain reason it waits for the owner, one paragraph; a blocked wait's technical reason is in `details`. */
   why: string | null;
+  /** UI-126: Markdown, the technical text agents feed on (concerns, findings, logs), folded under "Details". */
+  details: string | null;
   question: Question | null;
   access: Access | null;
   pr: PrLink | null;
   actions: ActionKey[];
   mergeLabel: string | null;
+  /** UI-131: the intent's repo is unknown: its short name and a guess at `owner/name` ("" = none). */
+  addRepo: { name: string; github: string } | null;
+  /** AUT-20: the risk of what it waits on; null when none was judged (or the check didn't finish). */
+  risk?: RiskView | null;
+  /** PIP-97: the spec's open points for the owner (spec cards only). */
+  openPoints?: { point: string; why: string }[];
 }
 
 export type PhaseStatus = "done" | "current" | "todo" | "skipped";
@@ -198,6 +223,8 @@ export interface Plane {
   phases: Phase[];
   /** The "Start now" button is offered (UI-101). */
   canStart: boolean;
+  /** UI-125: rolling back, reverting, or in a fix round; absent otherwise. */
+  ship?: { kind: "rollback" | "revert" | "fix"; mark: string };
 }
 
 export interface AirspaceView {
@@ -210,7 +237,7 @@ export interface AirspaceView {
     recent: { intent: string; title: string; repo: string }[];
   };
   counts: { parked: number; queued: number; flying: number; needs: number; landed: number };
-  /** UI-120: a plane sits at a ship station, so `04 deploy` and `05 e2e` are drawn. */
+  /** UI-120: a plane sits at a ship station, or a mission entered `deploy` in the last 7 days. */
   ship: boolean;
   /** "6 in flight · 3 need you · 1 landed today". */
   countsText: string;
@@ -378,6 +405,12 @@ export interface IntentPage {
   issue: string | null;
   /** UI-122: the newest e2e log (`/api/runs/<id>/e2e/<file>`), or null. */
   e2eLog: string | null;
+  /** AUT-20: the latest risk of the current attempt, when no card shows it. */
+  risk?: RiskView | null;
+  /** UI-127: the latest plain brief (what changes for users), when no card shows one. */
+  brief?: string | null;
+  /** UI-127: the latest technical text behind that brief, folded under "Details". */
+  details?: string | null;
 }
 
 export interface QueueItem {
@@ -396,6 +429,9 @@ export interface Lane {
   /** "1 of 3 ahead": intents before build against `[repos.<r>].ahead` (UI-100). */
   ahead: string;
   running: Row[];
+  /** Queued in pick order, numbered: nothing but their turn holds them (UI-63). */
+  upNext: QueueItem[];
+  /** Queued but held by something else (a dependency, a usage limit, a service), with the reason. */
   waiting: QueueItem[];
   parked: QueueItem[];
   done: QueueItem[];
@@ -404,6 +440,132 @@ export interface Lane {
 export interface QueuePage {
   version: string;
   lanes: Lane[];
+}
+
+/** UI-140: one repo chip of the Repos tab. */
+export interface RepoChip {
+  repo: string;
+  /** Open intents: in progress, up next, waiting and parked. */
+  open: number;
+  /** Of them, waiting on the owner. */
+  needs: number;
+}
+
+/** UI-143: one line of a repo's feature list. */
+export interface FeatureView {
+  text: string;
+  /** The intent the line is for, linked on the page; null for the owner's or the backfill's lines. */
+  intent: string | null;
+}
+
+/** UI-143, UI-144: a repo's feature list, grouped, and where its backfill stands. */
+export interface FeaturesView {
+  inProgress: FeatureView[];
+  live: FeatureView[];
+  /** The file's planned lines, then queued intents that have no line (INT-40). */
+  planned: FeatureView[];
+  /** `features/<repo>.md` on GitHub, or null. */
+  url: string | null;
+  /** The backfill (INT-39): never asked, asked, running, done or failed. */
+  run: "never" | "due" | "running" | "done" | "failed";
+  /** One sentence on where the backfill stands; null when there is nothing to say. */
+  note: string | null;
+  /** "Refresh from the repo" is offered: Towercab runs and the repo is in the config. */
+  canRefresh: boolean;
+}
+
+/** UI-141: one repo's page. */
+export interface RepoView {
+  repo: string;
+  github: string;
+  /** "1 of 3 ahead" (UI-100). */
+  ahead: string;
+  features: FeaturesView;
+  inProgress: Row[];
+  upNext: QueueItem[];
+  waiting: QueueItem[];
+  parked: QueueItem[];
+  /** The last 10 done or dropped (UI-63), shown folded. */
+  done: QueueItem[];
+  spend: RepoSpendView;
+}
+
+/** UI-142: one repo on the All overview. */
+export interface RepoSummary {
+  repo: string;
+  github: string;
+  inProgress: number;
+  needs: number;
+  upNext: number;
+  waiting: number;
+  parked: number;
+  spend: RepoSpendView;
+}
+
+/** `GET /api/repos[?repo=<name>]`. */
+export interface ReposPage {
+  version: string;
+  chips: RepoChip[];
+  /** The chosen repo, or null for All. */
+  selected: string | null;
+  /** The chosen repo's page; null on All. */
+  repo: RepoView | null;
+  /** All: one summary per repo; empty when a repo is chosen. */
+  all: RepoSummary[];
+  /** The totals over every repo (UI-137). */
+  spend: RepoSpendView;
+  /** What went wrong: the intents repo can't be read, or the asked-for repo doesn't exist. */
+  error: string | null;
+}
+
+/** UI-137: what Towercab spent on one repo (or on all of them). */
+export interface RepoSpendView {
+  today: string;
+  week: string;
+  all: string;
+  todayUsd: number;
+  weekUsd: number;
+  allUsd: number;
+}
+
+/** UI-133: the board's columns, the airspace stations from the queue on, then done. */
+export type BoardColumnKey = Exclude<StationKey, "parked" | "landed"> | "done";
+
+export interface BoardColumn {
+  key: BoardColumnKey;
+  label: string;
+  /** Cards in this column over all repos; 0 draws it narrow (UI-136). */
+  count: number;
+}
+
+export interface BoardCard {
+  intent: string;
+  title: string;
+  state: StateView;
+  /** UI-125: rolling back, reverting, or in a fix round; absent otherwise. */
+  ship?: { kind: "rollback" | "revert" | "fix"; mark: string };
+}
+
+/** UI-133: one repo's row. */
+export interface BoardRepo {
+  /** "" for intents the listing doesn't know (the "unknown repo" lane). */
+  repo: string;
+  github: string;
+  open: number;
+  done: number;
+  spend: RepoSpendView;
+  /** Cards per column, in column order; columns without cards are absent. */
+  cells: Partial<Record<BoardColumnKey, BoardCard[]>>;
+}
+
+export interface BoardPage {
+  version: string;
+  columns: BoardColumn[];
+  repos: BoardRepo[];
+  /** UI-137: the totals over every repo. */
+  spend: RepoSpendView;
+  /** The intents repo can't be read: what went wrong, shown above the board. */
+  error: string | null;
 }
 
 export type ActivityKind = "move" | "wait" | "error" | "log";

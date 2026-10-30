@@ -34,7 +34,8 @@ test("pipeline: access checklist round-trips", () => {
   // Each level says what it grants.
   expect(levelSentence(2)).toContain("you merge the code PR yourself");
   expect(levelSentence(5)).toContain("open network");
-  expect(levelSentence(null)).toContain("no autonomy level");
+  expect(levelSentence(5)).toContain("unless its risk is high");
+  expect(levelSentence(4)).toContain("when its risk is low");
   // Nothing asked: a line says so, and nothing is granted.
   const none = renderAccess({ domains: [], paths: [] }, 3);
   expect(none).toContain("Nothing beyond what the level grants.");

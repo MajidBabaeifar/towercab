@@ -12,6 +12,7 @@ import {
   ID,
   intent,
   intents,
+  PLAN_BRIEF,
   PLAN_MD,
   reply,
   SLUG,
@@ -49,7 +50,7 @@ test("pipeline: feedback revises the spec", async () => {
   expect(p.prs.filter((x) => x.repo === "owner/web")).toHaveLength(1);
   expect(m.spec_pr).toBe(pr.number);
   expect(git(p.bares.web!, "log", "--format=%s", `${before}..${pr.head}`).trim()).toBe(
-    "docs(specs): Show a greeting",
+    "docs(specs): show a greeting",
   );
   expect(p.show("web", pr.head, "specs/web.md")).toContain("An empty page says hello too.");
   expect(p.stages(m.id)).toEqual(["design", "approval:spec", "design", "approval:spec"]);
@@ -85,6 +86,7 @@ test("pipeline: feedback revises the plan", async () => {
   p.mergePr(p.prNo("web", p.mission()!.spec_pr!));
   p.script(
     reply({
+      brief: PLAN_BRIEF,
       plan: PLAN_MD,
       access: { domains: [{ domain: "example.com", why: "the greeting text" }], paths: [] },
       e2e: null,
@@ -97,6 +99,7 @@ test("pipeline: feedback revises the plan", async () => {
   p.ownerReview(pr, "CHANGES_REQUESTED", "Also fetch the translations.");
   p.script(
     reply({
+      brief: PLAN_BRIEF,
       plan: PLAN_MD.replace("Add a greeting file.", "Add a greeting file and its translations."),
       access: {
         domains: [
@@ -173,7 +176,7 @@ test("autonomy: unplanned access at a1-a3 is granted", async () => {
   });
   const m = await p.untilStage("approval:merge");
   // The owner merges at a2 anyway; the PR says what was granted beyond the plan.
-  expect(m.why).toBe("autonomy a2: the owner merges");
+  expect(m.why).toBe("At autonomy a2 you merge every change yourself.");
   const body = p.prNo("web", m.pr!).body;
   expect(body).toContain("## Access beyond the plan\n\n- network access to fonts.example.org: a web font");
 }, 30_000);
@@ -192,7 +195,8 @@ test("metrics: totals at done", async () => {
   const secs = rows.reduce((s, r) => s + r.agent_secs, 0);
   // Attempt 1: one design session ($0.50); attempt 2: the worker session and the review ($1.00).
   expect(cost).toBeCloseTo(1.5, 6);
-  expect(secs).toBe(60 * p.claudeCalls.length);
+  // The fake risk agent takes no time.
+  expect(secs).toBe(60 * p.claudeCalls.filter((c) => c.kind !== "risk").length);
   const done = p.show("intents", "main", `done/${ID}-${SLUG}/intent.md`);
   expect(done).toContain("stage: done");
   expect(done).toContain(`cost: 1.50\nagent_time: ${secs}\nattempts: 2`);

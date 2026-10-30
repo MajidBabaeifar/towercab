@@ -167,6 +167,7 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
   if (!n) {
     const body = codeBody({
       worker: d.build?.pr ?? null,
+      brief: d.build?.brief ?? "",
       intentTitle: intent.title,
       intentProblem: intent.sections.get("Problem") ?? null,
       checks: null,

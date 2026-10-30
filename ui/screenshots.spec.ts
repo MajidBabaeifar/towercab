@@ -37,7 +37,32 @@ const PAGES = [
     path: "/i/261026-0815-2",
     expect: ["Export invoices as CSV", "Towercab recommends", "Send reply"],
   },
-  { name: "queue", path: "/queue", expect: ["Queue", "In progress", "Waiting", "Parked", "Recently done"] },
+  {
+    name: "board",
+    path: "/board",
+    expect: ["Board", "Your plan review", "Faster checkout page", "Readable CI job names", "all time"],
+  },
+  { name: "repos", path: "/repos", expect: ["Repos", "All", "in progress", "all time", "Add a repo"] },
+  {
+    name: "repo",
+    path: "/repos?repo=web",
+    expect: [
+      "What people can do",
+      "People can export their invoices as a CSV file.",
+      "Live",
+      "Planned",
+      "In progress",
+      "Up next",
+      "Waiting",
+      "Waits for “Faster checkout page” to be done.",
+      "Parked",
+      "Recently done",
+      "Spend",
+      "Refresh from the repo",
+    ],
+  },
+  // UI-140: the old address shows the same page.
+  { name: "queue", path: "/queue", expect: ["Repos", "All"] },
   { name: "activity", path: "/activity", expect: ["Activity", "Today", "Moves", "Errors"] },
 ] as const;
 
@@ -110,6 +135,42 @@ test("ui: update keeps typed text", async ({ page }) => {
   await expect(box).toHaveValue("One totals row per currency, please.");
 });
 
+test("ui: the card shows its brief first and folds the details", async ({ browser }) => {
+  mkdirSync(SHOTS, { recursive: true });
+  for (const m of [MODES[0], MODES[1], MODES[2]]) {
+    const ctx = await browser.newContext({ colorScheme: m.scheme, viewport: m.viewport });
+    const page = await ctx.newPage();
+    await page.goto("/");
+    await settle(page);
+    // UI-126: the plan card leads with its plain brief; the technical plan is folded under Details.
+    const card = page.locator('[data-intent="261025-0910-1"]');
+    const brief = card.locator(".brief");
+    const details = card.locator("details.details-fold");
+    await expect(brief).toContainText("No single customer can slow the API down");
+    await expect(details).not.toHaveAttribute("open", "");
+    await expect(card.getByText("token-bucket limiter")).toBeHidden();
+    const order = await card.evaluate((el) => {
+      const b = el.querySelector(".brief");
+      const d = el.querySelector("details.details-fold");
+      return b && d ? b.compareDocumentPosition(d) & Node.DOCUMENT_POSITION_FOLLOWING : 0;
+    });
+    expect(order).toBeTruthy();
+    await card.screenshot({ path: join(SHOTS, `card-brief-${m.mode}.png`) });
+    // Opening Details shows the technical text.
+    await details.locator("summary").click();
+    await expect(card.getByText(/token-bucket limiter/)).toBeVisible();
+    // UI-126: it stays open across a live refetch (pausing changes the page, so it refetches).
+    await page.getByRole("button", { name: "Pause" }).click();
+    await expect(page.getByRole("button", { name: "Resume" })).toBeVisible();
+    await expect(details).toHaveAttribute("open", "");
+    await page.getByRole("button", { name: "Resume" }).click();
+    await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+    await expect(details).toHaveAttribute("open", "");
+    if (m.mode === "dark") await card.screenshot({ path: join(SHOTS, "card-brief-open-dark.png") });
+    await ctx.close();
+  }
+});
+
 test("ui: activity filters in the URL", async ({ page }) => {
   await page.goto("/activity");
   await settle(page);
@@ -149,6 +210,67 @@ test("ui: empty page says so", async ({ browser }) => {
     await server.stop();
     fixture.cleanup();
   }
+});
+
+test("ui: board folds a repo and remembers it", async ({ browser }) => {
+  for (const m of [MODES[0], MODES[2]]) {
+    const ctx = await browser.newContext({ colorScheme: m.scheme, viewport: m.viewport });
+    const page = await ctx.newPage();
+    await page.goto("/board");
+    await settle(page);
+    const toggle = page.locator(".board-toggle:visible", { hasText: "web" });
+    const card = page.locator("a.board-card:visible", { hasText: "Faster checkout page" });
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(card).toHaveAttribute("href", "/i/261026-1105-1");
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(card).toHaveCount(0);
+    // Other repos stay open; the fold survives a reload.
+    await expect(page.locator("a.board-card:visible", { hasText: "Rate-limit the public API" })).toHaveCount(
+      1,
+    );
+    await page.reload();
+    await settle(page);
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(card).toHaveCount(0);
+    if (m.mode === "light") {
+      // At 1280 px every column fits; narrower, only the board scrolls sideways, and its column headers
+      // stay on top while it scrolls down.
+      const board = page.locator(".board");
+      const sizes = () => board.evaluate((e) => ({ scroll: e.scrollWidth, client: e.clientWidth }));
+      const wide = await sizes();
+      expect(wide.scroll).toBeLessThanOrEqual(wide.client);
+      await page.setViewportSize({ width: 960, height: 900 });
+      const narrow = await sizes();
+      expect(narrow.scroll).toBeGreaterThan(narrow.client);
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+      ).toBeLessThanOrEqual(0);
+      await board.evaluate((e) => e.scrollTo(e.scrollWidth, e.scrollHeight));
+      const head = (await page.locator(".board-col-head").first().boundingBox())!;
+      const box = (await board.boundingBox())!;
+      expect(Math.abs(head.y - box.y)).toBeLessThanOrEqual(2);
+    }
+    await toggle.click();
+    await expect(card).toHaveCount(1);
+    await ctx.close();
+  }
+  // Without storage the board still folds, until the page reloads.
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(() => {
+    Object.defineProperty(window, "localStorage", {
+      get() {
+        throw new Error("storage is off");
+      },
+    });
+  });
+  const page = await ctx.newPage();
+  await page.goto("/board");
+  await settle(page);
+  const toggle = page.locator(".board-toggle:visible", { hasText: "web" });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await ctx.close();
 });
 
 // The hit area: the plane itself loops, so it is never still enough to point at.

@@ -115,7 +115,8 @@ In an opted-in repo, a change comes with end-to-end tests for what it adds.
   or says why none is needed (`e2e: {tests, none_why}`). The review agent is told to check that the
   e2e tests cover the new behaviour.
 - Gate ([PIP-7](pipeline.md)): a live repo, no changed file under a suite's `tests` globs and no
-  `none_why` in the plan → `approval:merge` "no e2e test for the change". A fix round (SHIP-11) is
+  `none_why` in the plan → `approval:merge` "The change has no test that runs against the live app."
+  A fix round (SHIP-11) is
   exempt: the suite that failed checks the fix once it ships.
 - e2e test files need the live app, so they don't count as the change's tests in the red→green proof
   ([PIP-30](pipeline.md)).

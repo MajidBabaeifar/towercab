@@ -71,7 +71,9 @@ test("pipeline: a read-only cache write asks the owner", () => {
     "SELECT text FROM outbox WHERE key LIKE ?",
     `${m.id}:allow check writes:%`,
   );
-  expect(msg?.text).toMatch(/^The checks need to write to the build cache\.\n/);
+  expect(msg?.text).toMatch(
+    /^Decide if the tests may write to this machine's shared build cache: reply allow or no\.\n/,
+  );
 });
 
 test("pipeline: allowing cache writes reruns the checks writable", async () => {
@@ -95,7 +97,9 @@ test("pipeline: refusing cache writes waits checks red", async () => {
     await q.until(() => q.mission()?.waiting === "checks red");
     const m = q.mission()!;
     expect([m.stage, m.waiting], q.moves()).toEqual(["blocked", "checks red"]);
-    expect(m.why).toBe("You didn't allow the checks of web to write to its build cache, so they can't run.");
+    expect(m.why).toMatch(
+      /^You didn't allow the checks of web to write to its build cache, so they can't run\. Make them write inside the checkout/,
+    );
     expect(q.db.meta("checks-write:web")).toBeNull();
     expect(workers(q)).toHaveLength(1);
   } finally {

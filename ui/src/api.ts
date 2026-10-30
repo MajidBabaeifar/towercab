@@ -18,12 +18,26 @@ export async function getJson<T>(path: string): Promise<T> {
   return body as T;
 }
 
-export async function act(action: string, intent?: string, text?: string): Promise<ActionReply> {
+export function act(action: string, intent?: string, text?: string): Promise<ActionReply> {
+  return post({ action, intent, text });
+}
+
+/** UI-130, UI-131: add `owner/name` as a repo, under `name` when given. */
+export function addRepo(github: string, name?: string): Promise<ActionReply> {
+  return post({ action: "addRepo", github, name });
+}
+
+/** UI-144: read the repo again for its feature list. */
+export function refreshFeatures(repo: string): Promise<ActionReply> {
+  return post({ action: "features", repo });
+}
+
+async function post(req: Record<string, string | undefined>): Promise<ActionReply> {
   try {
     const r = await fetch("/api/actions", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Towercab-Token": token },
-      body: JSON.stringify({ action, intent, text }),
+      body: JSON.stringify(req),
     });
     const body = (await r.json().catch(() => null)) as ActionReply | null;
     return body ?? { ok: false, message: `Towercab answered ${r.status}.` };

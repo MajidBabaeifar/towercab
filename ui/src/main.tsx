@@ -3,23 +3,26 @@
 import { type JSX, render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type {
+  BoardPage as BoardData,
   IntentPage as IntentData,
   Overview,
-  QueuePage as QueueData,
+  ReposPage as ReposData,
   TopBar as Top,
 } from "../../src/ui/view.ts";
 import { act, useLive } from "./api.ts";
 import { ErrorNote, Freshness, Skeleton } from "./components.tsx";
 import { Alert, Logo, Pause, Play } from "./icons.tsx";
 import { ActivityPage } from "./pages/Activity.tsx";
+import { BoardPage } from "./pages/Board.tsx";
 import { IntentPage } from "./pages/Intent.tsx";
 import { OverviewPage } from "./pages/Overview.tsx";
-import { QueuePage } from "./pages/Queue.tsx";
+import { ReposPage } from "./pages/Repos.tsx";
 import { Link, usePath } from "./router.tsx";
 
 const TABS = [
   ["/", "Overview"],
-  ["/queue", "Queue"],
+  ["/board", "Board"],
+  ["/repos", "Repos"],
   ["/activity", "Activity"],
 ] as const;
 
@@ -60,7 +63,9 @@ function PauseButton({ top }: { top: Top }) {
 }
 
 function TopBar({ top, path }: { top: Top | null; path: string }) {
-  const section = path.startsWith("/queue") ? "/queue" : path.startsWith("/activity") ? "/activity" : "/";
+  // `/queue` is the Repos tab's old name (UI-140): old links land there.
+  const at = path === "/queue" || path.startsWith("/queue/") ? "/repos" : path;
+  const section = ["/board", "/repos", "/activity"].find((p) => at === p || at.startsWith(`${p}/`)) ?? "/";
   return (
     <header class="topbar">
       <div class="topbar-inner">
@@ -134,10 +139,17 @@ function IntentRoute({ id, readOnly, onTitle }: { id: string; readOnly: boolean;
   return <IntentPage data={live.data} readOnly={readOnly} />;
 }
 
-function QueueRoute() {
-  const live = useLive<QueueData>("/api/queue");
+function ReposRoute({ search, readOnly }: { search: string; readOnly: boolean }) {
+  const repo = new URLSearchParams(search).get("repo");
+  const live = useLive<ReposData>(`/api/repos${repo ? `?repo=${encodeURIComponent(repo)}` : ""}`);
   if (live.error && !live.data) return <ErrorNote text={live.error} />;
-  return live.data ? <QueuePage data={live.data} /> : <Skeleton />;
+  return live.data ? <ReposPage data={live.data} readOnly={readOnly} /> : <Skeleton />;
+}
+
+function BoardRoute() {
+  const live = useLive<BoardData>("/api/board");
+  if (live.error && !live.data) return <ErrorNote text={live.error} />;
+  return live.data ? <BoardPage data={live.data} /> : <Skeleton />;
 }
 
 function App() {
@@ -151,11 +163,13 @@ function App() {
   useEffect(() => {
     const page = intent
       ? intentTitle
-      : pathname!.startsWith("/queue")
-        ? "Queue"
-        : pathname!.startsWith("/activity")
-          ? "Activity"
-          : null;
+      : pathname!.startsWith("/board")
+        ? "Board"
+        : pathname!.startsWith("/repos") || pathname!.startsWith("/queue")
+          ? "Repos"
+          : pathname!.startsWith("/activity")
+            ? "Activity"
+            : null;
     document.title = `${n ? `(${n}) ` : ""}Towercab${page ? ` · ${page}` : ""}`;
   }, [n, pathname, intent, intentTitle]);
   let page: JSX.Element;
@@ -168,7 +182,9 @@ function App() {
         onTitle={setIntentTitle}
       />
     );
-  } else if (pathname === "/queue") page = <QueueRoute />;
+  } else if (pathname === "/board") page = <BoardRoute />;
+  else if (pathname === "/repos" || pathname === "/queue")
+    page = <ReposRoute search={search} readOnly={top?.readOnly ?? true} />;
   else if (pathname === "/activity") page = <ActivityPage search={search} />;
   else if (state.error && !state.data) page = <ErrorNote text={state.error} />;
   else page = state.data ? <OverviewPage data={state.data} /> : <Skeleton />;

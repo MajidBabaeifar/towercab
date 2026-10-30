@@ -404,6 +404,26 @@ export class IntentFile implements IntentEdit {
     this.titleText = t;
   }
 
+  /**
+   * INT-34: rename the intent: only the title line (the first `# ` line) changes, keeping its
+   * `Intent: ` prefix and line ending; every other line stays byte-identical.
+   */
+  setTitle(title: string): void {
+    const t = title.trim();
+    if (!t || /[\r\n]/.test(title)) throw new Error("the title must be one non-empty line");
+    const lines = linesOf(this.body);
+    const n = lines.findIndex((l) => l.startsWith("# "));
+    if (n < 0) throw new Error("no title: the body needs a `# ` line");
+    const old = lines[n]!;
+    const eol = old.endsWith("\r\n") ? "\r\n" : old.endsWith("\n") ? "\n" : "";
+    const prefix = old.slice(2).trimStart().startsWith("Intent:") ? "Intent: " : "";
+    lines[n] = `# ${prefix}${t}${eol}`;
+    const body = lines.join("");
+    checkFences(body, this.bodyLine);
+    this.body = body;
+    this.titleText = titleOf(body)!;
+  }
+
   /** Append `- <YYYY-MM-DD HH:MM>: <text>` to `## Answers` (last). */
   addAnswer(text: string, at: Date): void {
     const t = oneLine(text);

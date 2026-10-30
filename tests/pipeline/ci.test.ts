@@ -81,7 +81,7 @@ test("pipeline: later rounds only push", () => {
 });
 
 test("pipeline: one session from design to repairs", () => {
-  const worker = p.claudeCalls.filter((c) => c.kind !== "review");
+  const worker = p.claudeCalls.filter((c) => c.kind !== "review" && c.kind !== "risk");
   expect(worker.map((c) => c.kind)).toEqual(["design", "plan", "worker", "worker", "worker"]);
   const id = m.session;
   expect(worker[0]!.session).toEqual({ mode: "new", id });

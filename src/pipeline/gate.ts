@@ -1,13 +1,49 @@
-// The `gate` (PIP-7, AUT-3, AUT-4, AUT-9, AUT-15) and `merge` (PIP-22) stages, in code only.
+// The `gate` (PIP-7, AUT-3, AUT-4, AUT-15, AUT-18) and `merge` (PIP-22) stages, in code only.
 
 import { gate } from "../autonomy.ts";
 import type { Ctx, Handler } from "../handlers.ts";
 import { ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
+import { type Risk, riskMd } from "../risk.ts";
 import { data, effectiveOf, gh, intentOf, prUrl, repoFiles } from "./common.ts";
 import { type Checks, codeBody } from "./prtext.ts";
 import { HOLD_SECS, holder } from "./ship.ts";
 import { changedTests } from "./verify.ts";
+
+/** PIP-110: why the PR waits for the owner beyond the gate table, in plain sentences. */
+export const GATE_HOLD = {
+  foreign: "Someone else added commits to the PR, so Towercab won't merge it on its own.",
+  planChanged: "The build changed course from the plan you approved.",
+  noE2e: "The change has no test that runs against the live app.",
+} as const;
+
+/**
+ * PIP-110: why GitHub won't merge the PR, from its `mergeStateStatus`, as what the owner can do about
+ * it. Any state not listed gets a general line that still names it.
+ */
+export function mergeStateWhy(status: string): string {
+  switch (status.toUpperCase()) {
+    case "BLOCKED":
+      return "GitHub won't merge it yet: a required check or review is missing. Check the PR's merge box on GitHub, then merge it yourself.";
+    case "UNSTABLE":
+      return "GitHub won't merge it yet: some checks fail or haven't finished. Look at the failing checks, then merge it or comment what to fix.";
+    case "BEHIND":
+      return "The PR is behind its base branch. Update the branch on GitHub, then merge it.";
+    case "DIRTY":
+      return "The PR clashes with changes on its base branch. Resolve the clash on GitHub, or comment so Towercab fixes it.";
+    case "DRAFT":
+      return "The PR is still a draft. Mark it ready for review on GitHub, then merge it.";
+    default:
+      return `GitHub won't merge it yet (it says "${status.toLowerCase()}"). Check the PR's merge box on GitHub, then merge it yourself.`;
+  }
+}
+
+/** The code's risk (AUT-16) when it is of the reviewed diff; null when none finished for it. */
+export function codeRisk(m: Mission): Risk | null {
+  const d = data(m);
+  if (!d.review || d.riskOf?.code !== d.review.patchId) return null;
+  return d.risk?.code ?? null;
+}
 
 export function checksLine(m: Mission): Checks {
   const d = data(m);
@@ -35,6 +71,7 @@ async function updateBody(cx: Ctx, m: Mission): Promise<void> {
   const d = data(m);
   const body = codeBody({
     worker: d.build?.pr ?? null,
+    brief: d.build?.brief ?? "",
     intentTitle: intent.title,
     intentProblem: intent.sections.get("Problem") ?? null,
     checks: checksLine(m),
@@ -49,6 +86,7 @@ async function updateBody(cx: Ctx, m: Mission): Promise<void> {
       planPrUrl: m.plan_pr && cx.store.github() ? prUrl(cx.store.github()!, m.plan_pr) : null,
     },
     reviewDetails: d.review?.details ?? null,
+    risk: d.review ? riskMd(codeRisk(m)) : "",
     footer: { intentUrl: cx.store.url(intent), costUsd: m.cost_usd, secs: m.agent_secs },
     issue: { url: intent.issue, repo: repo.github },
   });
@@ -79,20 +117,18 @@ export const gateHandler: Handler = {
     await updateBody(cx, m);
     const g = gate({
       a: effectiveOf(m, intent, files),
-      cap: files.towercab.maxAutonomy,
       ciGreen: d.ci?.result === "green" || d.ci?.result === "none",
-      review: d.review
-        ? { approved: d.review.approved, door: d.review.door, redLines: d.review.redLines }
-        : null,
+      review: d.review ? { approved: d.review.approved } : null,
       unplanned,
       proven: !d.unproven,
+      risk: codeRisk(m)?.level ?? null,
     });
     if (!g.merge) return { done: wait("review and merge PR", g.why) };
     // Beyond the gate table: work Towercab didn't check itself goes to the owner.
     const a = effectiveOf(m, intent, files);
-    if (d.foreignHead) return { done: wait("review and merge PR", "someone else pushed commits to the PR") };
+    if (d.foreignHead) return { done: wait("review and merge PR", GATE_HOLD.foreign) };
     if (d.build?.planChanged && a !== 5) {
-      return { done: wait("review and merge PR", "the build departed from the approved plan") };
+      return { done: wait("review and merge PR", GATE_HOLD.planChanged) };
     }
     // SHIP-8: in a live repo a change brings an e2e test, or its plan says why it needs none.
     const live = files.towercab.live;
@@ -102,7 +138,7 @@ export const gateHandler: Handler = {
         m,
         live.suites.flatMap((s) => s.tests),
       );
-      if (e2e.length === 0) return { done: wait("review and merge PR", "no e2e test for the change") };
+      if (e2e.length === 0) return { done: wait("review and merge PR", GATE_HOLD.noE2e) };
     }
     return { done: ok({ set: { head: m.head } }) };
   },
@@ -187,7 +223,7 @@ export const mergeHandler: Handler = {
         const tries = (d.mergeTries ?? 0) + 1;
         if (tries >= MAX_BLOCKED_READS)
           return {
-            done: wait("review and merge PR", `GitHub says the PR is ${v.mergeStateStatus.toLowerCase()}`),
+            done: wait("review and merge PR", mergeStateWhy(v.mergeStateStatus)),
           };
         cx.record(m, m.step, {}, { mergeTries: tries });
         return { poll: cx.config.agent.ciPoll };

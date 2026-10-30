@@ -37,7 +37,10 @@ const workers = () => p.claudeCalls.filter((c) => c.kind === "worker");
 
 test("pipeline: verify red repairs then waits", async () => {
   const m = await p.untilStage("blocked");
-  expect([m.waiting, m.why], p.moves()).toEqual(["checks red", "The checks failed."]);
+  expect([m.waiting, m.why], p.moves()).toEqual([
+    "checks red",
+    "Still failing after 2 fix attempts: The checks failed.",
+  ]);
   expect(workers()).toHaveLength(3);
   const reds = p.db.all<{ from_stage: string; to_stage: string }>(
     "SELECT from_stage, to_stage FROM transitions WHERE event = 'red' ORDER BY id",
@@ -112,7 +115,7 @@ test("pipeline: question comment has context, options, recommendation", async ()
     `${after.id}:answer the question:%`,
   );
   expect(msg?.text).toMatch(
-    /^Towercab has a question for you\.\nShow a greeting \(web\)\nShould the page say hello or bye\?\nhttps:\/\/github\.com\/owner\/intents\/pull\/\d+$/,
+    /^Answer a question so the work can go on: pick an option or write your own\.\nShow a greeting \(web\)\nShould the page say hello or bye\?\nhttps:\/\/github\.com\/owner\/intents\/pull\/\d+$/,
   );
   void ID;
 }, 30_000);

@@ -34,7 +34,13 @@ const ACCESS = object({
   paths: list(object({ glob: S, why: S })),
 });
 
+/** PIP-106: the plain brief beside the technical text, for a reader who doesn't code. */
+const BRIEF: JsonSchema = S;
+
 export const DESIGN_SCHEMA = object({
+  title: S,
+  subject: S,
+  brief: BRIEF,
   type: { type: "string", enum: TYPES },
   scope: S,
   breaking: BOOL,
@@ -47,7 +53,7 @@ export const DESIGN_SCHEMA = object({
 /** SHIP-8: the e2e tests a change in a live repo adds, or why it needs none; null elsewhere. */
 const E2E = nullable(object({ tests: list(S), none_why: S }));
 
-export const PLAN_SCHEMA = object({ plan: S, access: ACCESS, e2e: E2E });
+export const PLAN_SCHEMA = object({ brief: BRIEF, plan: S, access: ACCESS, e2e: E2E });
 
 export const QUESTION = object({
   context: S,
@@ -59,6 +65,7 @@ export const QUESTION = object({
 
 export const BUILD_SCHEMA = object({
   status: { type: "string", enum: ["done", "blocked", "access"] },
+  brief: BRIEF,
   pr: S_NULL,
   notes: S,
   question: nullable(QUESTION),
@@ -69,6 +76,7 @@ export const BUILD_SCHEMA = object({
 });
 
 export const REVIEW_SCHEMA = object({
+  brief: BRIEF,
   approved: BOOL,
   outcomes: list(object({ bullet: S, met: BOOL, why: S })),
   tests_weakened: object({ value: BOOL, where: S }),
@@ -87,6 +95,16 @@ export const REVIEW_SCHEMA = object({
   summary: S,
 });
 
+/** The risk agent's assessment at a gate (PIP-96, AUT-16) and the spec's second review (PIP-97). */
+export const RISK_SCHEMA = object({
+  blast_radius: object({ size: { type: "string", enum: ["small", "medium", "large"] }, who: S }),
+  door: object({ kind: { type: "string", enum: ["two-way", "one-way"] }, why: S }),
+  certainty: object({ level: { type: "string", enum: ["high", "medium", "low"] }, why: S }),
+  level: { type: "string", enum: ["low", "medium", "high"] },
+  summary: S,
+  open_points: list(object({ point: S, why: S })),
+});
+
 /** The scoring of a GitHub issue (INT-22). */
 export const SCORE_SCHEMA = object({
   u: { type: "integer", minimum: 1, maximum: 5 },
@@ -101,12 +119,17 @@ export const SCORE_SCHEMA = object({
   open_questions: list(S),
 });
 
+/** INT-39: a repo's live features, as short business sentences. */
+export const FEATURES_SCHEMA = object({ features: list(S) });
+
 export const SCHEMAS = {
   design: DESIGN_SCHEMA,
   plan: PLAN_SCHEMA,
   build: BUILD_SCHEMA,
   review: REVIEW_SCHEMA,
+  risk: RISK_SCHEMA,
   score: SCORE_SCHEMA,
+  features: FEATURES_SCHEMA,
 };
 
 export interface Access {
@@ -115,6 +138,12 @@ export interface Access {
 }
 
 export interface DesignResult {
+  /** INT-33, INT-34: the intent's title as a plain user story; used only for intents the owner didn't write. */
+  title: string;
+  /** PIP-111: the change in a few words, Conventional Commit description style, for PR titles and commits. */
+  subject: string;
+  /** PIP-106: what changes for users and what the owner decides, in plain words. */
+  brief: string;
   type: string;
   scope: string;
   breaking: boolean;
@@ -125,6 +154,8 @@ export interface DesignResult {
 }
 
 export interface PlanResult {
+  /** PIP-106: what the build will do and what approving it allows, in plain words. */
+  brief: string;
   plan: string;
   access: Access;
   e2e: { tests: string[]; none_why: string } | null;
@@ -139,6 +170,8 @@ export interface Question {
 
 export interface BuildResult {
   status: "done" | "blocked" | "access";
+  /** PIP-106: what changed for users, or what the owner is asked, in plain words. */
+  brief: string;
   pr: string | null;
   notes: string;
   question: Question | null;
@@ -149,6 +182,8 @@ export interface BuildResult {
 }
 
 export interface ReviewResult {
+  /** PIP-106: the verdict and what it means for the owner's decision, in plain words. */
+  brief: string;
   approved: boolean;
   outcomes: { bullet: string; met: boolean; why: string }[];
   tests_weakened: { value: boolean; where: string };
@@ -164,6 +199,19 @@ export interface ReviewResult {
   door: "one-way" | "two-way";
   red_lines: { line: string; file: string }[];
   summary: string;
+}
+
+export interface RiskResult {
+  /** Who or what is affected if it goes wrong. */
+  blast_radius: { size: "small" | "medium" | "large"; who: string };
+  /** Hard to undo (`one-way`: data, migrations, public interfaces, deletions) or easy (`two-way`). */
+  door: { kind: "two-way" | "one-way"; why: string };
+  /** How sure we are it behaves as expected once deployed. */
+  certainty: { level: "high" | "medium" | "low"; why: string };
+  level: "low" | "medium" | "high";
+  summary: string;
+  /** PIP-97: what the owner must decide before the spec is built; empty at the plan and code gates. */
+  open_points: { point: string; why: string }[];
 }
 
 export interface ScoreResult {
@@ -185,7 +233,9 @@ export interface Results {
   plan: PlanResult;
   build: BuildResult;
   review: ReviewResult;
+  risk: RiskResult;
   score: ScoreResult;
+  features: { features: string[] };
 }
 
 /** Why `value` doesn't fit `schema` (the subset these schemas use), or null when it does. */

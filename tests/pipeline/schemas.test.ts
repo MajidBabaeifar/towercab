@@ -16,6 +16,7 @@ function objects(s: unknown, out: JsonSchema[] = []): JsonSchema[] {
 
 const BUILD = {
   status: "blocked",
+  brief: "The agent needs you to pick how totals work.",
   pr: null,
   notes: "stuck",
   question: {
@@ -54,6 +55,9 @@ test("schemas: closed objects, every key required", () => {
   expect(parseResult("build", { ...BUILD, status: "maybe" }).ok).toBe(false);
   expect(
     validate(SCHEMAS.design, {
+      title: "Web shows a greeting",
+      subject: "greeting",
+      brief: "b",
       type: "feat",
       scope: "",
       breaking: false,
@@ -65,6 +69,7 @@ test("schemas: closed objects, every key required", () => {
   ).toBe("result.spec_ids[0] must match ^[A-Z]+-[0-9]+$");
   expect(
     parseResult("review", {
+      brief: "b",
       approved: true,
       outcomes: [{ bullet: "b", met: true, why: "w" }],
       tests_weakened: { value: false, where: "" },
@@ -76,9 +81,27 @@ test("schemas: closed objects, every key required", () => {
     }).ok,
   ).toBe(true);
   expect(
-    parseResult("plan", { plan: "p", access: { domains: [], paths: [{ glob: "x" }] }, e2e: null }),
+    parseResult("plan", {
+      brief: "b",
+      plan: "p",
+      access: { domains: [], paths: [{ glob: "x" }] },
+      e2e: null,
+    }),
   ).toEqual({
     ok: false,
     why: "result.access.paths[0].why is missing",
   });
+});
+
+test("schemas: every result a person reads has a plain brief", () => {
+  // PIP-106: the design, plan, worker (and repair) and review results each carry `brief`, required.
+  for (const kind of ["design", "plan", "build", "review"] as const) {
+    const s = SCHEMAS[kind] as { properties: Record<string, JsonSchema>; required: string[] };
+    expect(s.properties.brief, kind).toEqual({ type: "string" });
+    expect(s.required, kind).toContain("brief");
+  }
+  // INT-34: the design also names the intent.
+  expect((SCHEMAS.design as { required: string[] }).required).toContain("title");
+  const { brief: _, ...noBrief } = BUILD;
+  expect(parseResult("build", noBrief)).toEqual({ ok: false, why: "result.brief is missing" });
 });

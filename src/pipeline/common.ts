@@ -12,11 +12,13 @@ import { clonePath, type RepoConfig } from "../config.ts";
 import { classifyFailure, classifyRun } from "../faults.ts";
 import { type Step, upsertStageComment } from "../github/comments.ts";
 import { type ChildEnd, type Ctx, EnvError, type Progress } from "../handlers.ts";
+import { plainLine, SUBJECT_MAX } from "../intents/naming.ts";
 import type { Intent } from "../intents/types.ts";
 import { cooldown } from "../limits.ts";
 import { type Outcome, wait } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
 import { loadRepoFiles, RepoError, type RepoFiles } from "../repo/files.ts";
+import type { Risk } from "../risk.ts";
 import { checkoutRoot } from "../service.ts";
 import { check } from "../tools.ts";
 import { grantsFor, parseAccess } from "./access.ts";
@@ -54,7 +56,15 @@ export interface PipeData {
     breaking: boolean;
     specIds: string[];
     concerns: { what: string; why: string }[];
+    /** The intent's open questions the design left to the owner (PIP-97 reads them). */
+    open?: string[];
     pr: string;
+    /** PIP-106: the design's plain brief. */
+    brief?: string;
+    /** INT-34: the plain title it proposed. */
+    title?: string;
+    /** PIP-111: the change in a few words, for PR titles and commits. */
+    subject?: string;
   };
   specBranch?: string;
   /** Spec-PR revisions made for a conflict with base (PIP-81). */
@@ -67,21 +77,42 @@ export interface PipeData {
   specRed?: boolean;
   /** Heads of the spec PR whose red checks were rerun (PIP-18). */
   specReruns?: Record<string, boolean>;
-  plan?: { md: string; access: Access; e2e?: { tests: string[]; none_why: string } | null };
+  plan?: {
+    md: string;
+    access: Access;
+    e2e?: { tests: string[]; none_why: string } | null;
+    /** PIP-106: the plan's plain brief. */
+    brief?: string;
+  };
   /** The merged plan's ticked access. */
   granted?: Access;
   unplanned?: Access;
   /** The owner's last words for the worker (an answer, feedback). */
   answer?: string;
   /** Why the next build round runs: a repair's what and details. */
-  repair?: { what: string; details: string; kind: "verify" | "proof" | "ci" | "conflict" | "e2e" };
+  repair?: {
+    what: string;
+    details: string;
+    kind: "verify" | "proof" | "ci" | "conflict" | "e2e" | "review";
+  };
+  /** Review fix rounds sent back to build (PIP-98). */
+  reviewFixes?: number;
+  /** The risk agent's assessment per gate (PIP-96, AUT-16); null = the run didn't finish. */
+  risk?: { spec?: Risk | null; plan?: Risk | null; code?: Risk | null };
+  /** What each gate's assessment was of (`Risk.of`), kept also when the run didn't finish. */
+  riskOf?: { spec?: string; plan?: string; code?: string };
+  /** PIP-97: the owner's answers on the spec PR, for the second reviewer; part of the spec's risk key. */
+  specAnswers?: string[];
+  /** AUT-21: the next step runs the gate's risk check again instead of the stage's run. */
+  recheck?: boolean;
   /** The ship stage's state (SHIP-7..12). */
   ship?: ShipData;
   /** HEAD when the current build round began (PIP-1). */
   roundFrom?: string;
   /** Head at the end of the last non-repair round (PIP-31). */
   lockHead?: string;
-  build?: { pr: string | null; notes: string; planChanged: string | null };
+  /** `brief`: the worker's plain brief of what changed (PIP-106). */
+  build?: { pr: string | null; notes: string; planChanged: string | null; brief?: string };
   /** The step whose child really started (LOOP-4); a step re-entered without it never ran. */
   launched?: string;
   /** Runs per kind, for file names. */
@@ -104,6 +135,8 @@ export interface PipeData {
     summary: string;
     details: string;
     patchId: string;
+    /** PIP-106: the review's plain brief. */
+    brief?: string;
   } | null;
   /** Session cost already counted (MET-28). */
   sessionCost?: Record<string, number>;
@@ -119,6 +152,8 @@ export interface PipeData {
   pushed?: boolean;
   /** The question the owner is asked (the UI's card). */
   question?: Question;
+  /** PIP-106: the plain brief of the question the owner is asked, when its asker wrote one. */
+  brief?: string;
   /** Verify asked whether the checks may write to the repo cache (PIP-95); the answer decides. */
   cacheAsk?: boolean;
   /** The plan's access list (the UI's plan card). */
@@ -164,7 +199,7 @@ export function repoFilesWait(e: unknown): Outcome | null {
   return null;
 }
 
-export function effectiveOf(m: Mission, intent: Intent, files: RepoFiles): number | null {
+export function effectiveOf(m: Mission, intent: Intent, files: RepoFiles): number {
   return effectiveA(m.a_at_pick, intent.a, files.towercab.maxAutonomy, intent.source);
 }
 
@@ -202,6 +237,8 @@ export interface RunPlan {
   files: RepoFiles;
   intent: Intent;
   guard?: ClaudeRun["guardRules"];
+  /** The stage folder of its files when the kind runs in more than one stage (LOOP-39). */
+  stage?: string;
 }
 
 const STRONGER: Record<string, string> = { haiku: "sonnet", sonnet: "opus", opus: "opus" };
@@ -226,7 +263,10 @@ const STAGE_OF_KIND: Record<RunKind, string> = {
   plan: "plan",
   worker: "build",
   review: "review",
+  // The risk agent runs at three gates; its handler names the stage folder (PIP-96).
+  risk: "review",
   score: "design",
+  features: "design",
 };
 
 /** Record the step, then spawn a Claude run (LOOP-6, LOOP-7, PIP-13, PIP-24). */
@@ -266,7 +306,7 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
     model: modelOf(cx, m, agent, p.intent),
     cwd: cx.checkout(fresh),
     runsDir: runs,
-    stage: STAGE_OF_KIND[p.kind],
+    stage: p.stage ?? STAGE_OF_KIND[p.kind],
     n,
     prompt,
     schema: agent.schema ? SCHEMAS[agent.schema] : null,
@@ -346,7 +386,8 @@ export function ended<T>(
       }
       // The first success on a model ends its cooldown and resets its backoff (LOOP-9).
       cx.db.delMeta(`cooldown:${model}`);
-      const sessionKey = kind === "review" ? `review:${e.result.sessionId}` : m.session;
+      // The review and the risk agent run in sessions of their own (PIP-4, PIP-96).
+      const sessionKey = kind === "review" || kind === "risk" ? `${kind}:${e.result.sessionId}` : m.session;
       const before = d.sessionCost?.[sessionKey] ?? 0;
       const delta = Math.max(0, e.result.costUsd - before);
       const now = cx.clock.now();
@@ -535,25 +576,30 @@ export function currentPr(cx: Ctx, m: Mission, repo: RepoConfig): { github: stri
   return null;
 }
 
-/** A question in Markdown (PIP-41). */
-export function questionMd(q: Question): string {
+/** A question in Markdown (PIP-41), led by its plain brief when it has one (PIP-106). */
+export function questionMd(q: Question, brief = ""): string {
   const opts = q.options.map((o) => `- **${o.option}**: ${o.then}`).join("\n");
-  return `${q.context.trim()}\n\n**${q.question.trim()}**\n\n${opts}\n\n**Recommendation:** ${q.recommendation.trim()}\n\nReply to this comment to answer; Towercab continues with your reply.`;
+  const plain = brief.trim() ? `**In plain words:** ${brief.trim()}\n\n` : "";
+  return `${plain}${q.context.trim()}\n\n**${q.question.trim()}**\n\n${opts}\n\n**Recommendation:** ${q.recommendation.trim()}\n\nReply to this comment to answer; Towercab continues with your reply.`;
 }
 
-/** Ask the owner: a Question comment on the current PR, or the intent's `## Towercab` (PIP-41). */
+/**
+ * Ask the owner: a Question comment on the current PR, or the intent's `## Towercab` (PIP-41). The
+ * asker's plain brief, if any, is kept for the card (PIP-106); none clears an earlier one.
+ */
 export async function ask(
   cx: Ctx,
   m: Mission,
   q: Question,
   waiting = "answer the question",
+  brief = "",
 ): Promise<Outcome> {
   const repo = cx.repo(m);
   const pr = currentPr(cx, m, repo);
-  const body = questionMd(q);
+  const body = questionMd(q, brief);
   if (pr) await upsertStageComment(cx.github, pr.github, pr.n, "Question", m.continued + 1, body);
   else await cx.store.update(m.intent, "question", (e) => e.setSection("Towercab", body));
-  return wait(waiting, q.question, { data: { question: q } });
+  return wait(waiting, q.question, { data: { question: q, brief: brief.trim() || undefined } });
 }
 
 /** A stage comment on the current PR, never failing the step. */
@@ -573,12 +619,21 @@ export async function grantedFromPlan(cx: Ctx, intent: Intent): Promise<Access> 
   return md ? parseAccess(md) : { domains: [], paths: [] };
 }
 
+/**
+ * PIP-111: the change in a few words for PR titles and commits: the design's `subject`, cleaned to a
+ * plain line; without one (a design from before subjects, or one that cleans to nothing), the intent's
+ * title as before.
+ */
+export function subjectOf(m: Mission, intent: Intent): string {
+  return lowerFirst(plainLine(data(m).design?.subject ?? "", SUBJECT_MAX) || intent.title);
+}
+
 /** The Conventional Commit line of the change (from the design; a plain `feat` without one). */
 export function commitTitle(m: Mission, intent: Intent): string {
   const d = data(m).design;
   const type = d?.type || "feat";
   const scope = d?.scope ? `(${d.scope})` : "";
-  return `${type}${scope}${d?.breaking ? "!" : ""}: ${lowerFirst(intent.title)}`;
+  return `${type}${scope}${d?.breaking ? "!" : ""}: ${subjectOf(m, intent)}`;
 }
 
 function lowerFirst(s: string): string {

@@ -86,6 +86,19 @@ export interface ClaudeReply {
 
 export type ClaudeScript = (spec: ChildSpec, prompt: string) => ClaudeReply;
 
+/** The risk agent's default answer (PIP-96): low risk, no open points. */
+export const LOW_RISK = {
+  blast_radius: { size: "small", who: "Visitors of the page." },
+  door: { kind: "two-way", why: "Reverting the change puts everything back." },
+  certainty: { level: "high", why: "A test covers the greeting." },
+  level: "low",
+  summary: "A small, tested change that is easy to undo.",
+  open_points: [],
+};
+
+/** Kinds `script` never answers: they answer from `queue(kind)` or `respond` only. */
+const UNSCRIPTED = new Set(["risk"]);
+
 export interface ClaudeCall {
   kind: string;
   prompt: string;
@@ -194,6 +207,20 @@ export class CachedStore implements IntentStore {
     if (!this.marks.has(mark)) this.marks.set(mark, await this.s.hasMark(mark));
     return this.marks.get(mark)!;
   }
+  async editFeatures(
+    repo: string,
+    what: string,
+    fn: (text: string | null) => string | null,
+  ): Promise<boolean> {
+    try {
+      return await this.s.editFeatures(repo, what, fn);
+    } finally {
+      this.writes++;
+    }
+  }
+  localFeatures(repo: string): Promise<string | null> {
+    return this.s.localFeatures(repo);
+  }
   async readFile(path: string): Promise<string | null> {
     this.fresh();
     if (!this.files.has(path)) this.files.set(path, await this.s.readFile(path));
@@ -241,8 +268,13 @@ export class Pipe {
   deleteFail: ((repo: string, branch: string) => string | null) | null = null;
   /** Every log line the loop wrote. */
   readonly logs: string[] = [];
-  /** Per-kind answers used when the queue is empty. */
-  readonly respond: Partial<Record<string, ClaudeScript>> = {};
+  /**
+   * Per-kind answers used when the queue is empty. The risk agent answers low risk with no open points
+   * and no cost unless a test says otherwise, so flows that don't care about it keep their meaning.
+   */
+  readonly respond: Partial<Record<string, ClaudeScript>> = {
+    risk: () => ({ structured: LOW_RISK, cost: 0, durationMs: 0 }),
+  };
   /** Overrides a sandbox run; return null to run it with `sh`. */
   sandbox: ((spec: ChildSpec) => ChildExit | null) | null = null;
   /** GitHub Deployments, oldest first (SHIP-4). */
@@ -387,7 +419,7 @@ export class Pipe {
     return this.loop;
   }
 
-  /** Queue the next Claude runs' answers, in order, whatever their kind. */
+  /** Queue the next Claude runs' answers, in order, whatever their kind (but the risk agent's). */
   script(...s: ClaudeScript[]): void {
     this.claude.push(...s);
   }
@@ -576,7 +608,10 @@ export class Pipe {
       cwd: spec.cwd,
       settings,
     });
-    const s = this.queues.get(kind)?.shift() ?? this.claude.shift() ?? this.respond[kind];
+    const s =
+      this.queues.get(kind)?.shift() ??
+      (UNSCRIPTED.has(kind) ? undefined : this.claude.shift()) ??
+      this.respond[kind];
     if (!s) {
       writeFileSync(spec.stdout, "");
       writeFileSync(spec.stderr, "no claude script left\n");

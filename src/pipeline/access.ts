@@ -11,22 +11,19 @@ export interface Grants {
   open: boolean;
 }
 
-/** What the level grants without asking, in one sentence for the owner (AUT-14). */
-export function levelSentence(a: number | null): string {
-  if (a === null) {
-    return "This intent has no autonomy level, so the worker gets only the default package registries and docs plus the boxes ticked here, and Towercab merges the code itself only if the review finds it low-risk.";
-  }
+/** What the level grants without asking, in one sentence for the owner (AUT-14, AUT-18). */
+export function levelSentence(a: number): string {
   if (a <= 3) {
     return `At a${a} you merge the code PR yourself, so the worker can reach the default package registries and docs plus the boxes ticked here, may change protected files (the PR lists them), and gets anything else it asks for while building.`;
   }
   if (a === 4) {
-    return "At a4 the worker can reach the default package registries and docs plus the boxes ticked here, and may change only the protected paths ticked here; if it needs more while building, it gets it, but you merge the code PR.";
+    return "At a4 the worker can reach the default package registries and docs plus the boxes ticked here, and may change only the protected paths ticked here; if it needs more while building, it gets it, but you merge the code PR. Otherwise Towercab merges the code PR itself when its risk is low.";
   }
-  return "At a5 the worker has open network and may change protected files, and Towercab merges the code PR once every check passes.";
+  return "At a5 the worker has open network and may change protected files, and Towercab merges the code PR once every check passes, unless its risk is high.";
 }
 
 /** The plan's `## Access` section: the level's sentence, then one ticked line per domain and path. */
-export function renderAccess(access: Access, a: number | null): string {
+export function renderAccess(access: Access, a: number): string {
   const out = ["## Access", "", levelSentence(a), ""];
   const why = (w: string) => (w.trim() ? ` (${oneLine(w)})` : "");
   for (const d of access.domains) out.push(`- [x] network: ${d.domain}${why(d.why)}`);
@@ -65,7 +62,7 @@ export function parseAccess(planMd: string): Access {
 /** Inputs of `grantsFor`. */
 export interface GrantInput {
   /** Effective `a` (`effectiveA`). */
-  a: number | null;
+  a: number;
   /** The intent's `source` (a5 needs `me`, AUT-13). */
   source: string | null;
   /** The merged plan's ticked access, or null before a plan. */

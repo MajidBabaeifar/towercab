@@ -3,6 +3,7 @@
 
 import { afterAll, beforeAll, expect, test } from "vitest";
 import type { Mission } from "../../src/mission.ts";
+import { mergeStateWhy } from "../../src/pipeline/gate.ts";
 import { build, happy, ID, intent, intents, reply, SLUG, TARGET } from "../helpers/flows.ts";
 import { Pipe } from "../helpers/pipe.ts";
 import { git } from "../helpers/world.ts";
@@ -104,6 +105,26 @@ test("pipeline: review reused for an unchanged diff", () => {
   // round, the change is different: a new review, its own round.
   expect(reviews.map((t) => t.why)).toEqual([null, "the diff is unchanged: the review stands", null]);
   expect(p.claudeCalls.filter((c) => c.kind === "review")).toHaveLength(2);
+  // The risk check stands with it (PIP-96): one at the spec, one at the plan, one per reviewed diff.
+  expect(p.claudeCalls.filter((c) => c.kind === "risk")).toHaveLength(4);
   const comments = p.prNo("web", m.pr!).comments.map((c) => c.body.split("\n")[0]);
   expect(comments).toEqual(["<!-- towercab:review:1 -->", "<!-- towercab:review:2 -->"]);
+});
+
+test("pipeline: GitHub's merge state in plain words", () => {
+  // PIP-110: each state says what the owner can do, never GitHub's bare word.
+  expect(mergeStateWhy("BLOCKED")).toMatch(
+    /^GitHub won't merge it yet: a required check or review is missing\./,
+  );
+  expect(mergeStateWhy("UNSTABLE")).toMatch(
+    /some checks fail or haven't finished\. Look at the failing checks/,
+  );
+  expect(mergeStateWhy("BEHIND")).toBe(
+    "The PR is behind its base branch. Update the branch on GitHub, then merge it.",
+  );
+  expect(mergeStateWhy("DIRTY")).toMatch(/^The PR clashes with changes on its base branch\./);
+  expect(mergeStateWhy("DRAFT")).toMatch(/still a draft/);
+  expect(mergeStateWhy("HAS_HOOKS")).toMatch(
+    /^GitHub won't merge it yet \(it says "has_hooks"\)\. Check the PR's merge box/,
+  );
 });

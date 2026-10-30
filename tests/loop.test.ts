@@ -17,7 +17,7 @@ import {
 } from "../src/handlers.ts";
 import type { IntentStore } from "../src/intents/types.ts";
 import { PASS_MS } from "../src/loop.ts";
-import { ORDER, ok, wait } from "../src/machine.ts";
+import { ORDER, ok, WAITS, wait } from "../src/machine.ts";
 import { insertMission, type Mission, unfinished } from "../src/mission.ts";
 import { decide } from "../src/pick.ts";
 import { intentOf, repoFiles, spawnRun } from "../src/pipeline/common.ts";
@@ -507,7 +507,7 @@ test("loop: three crashes wait for the owner", async () => {
   expect([m.stage, m.waiting, m.from_stage]).toEqual(["blocked", "crashed at design", "design"]);
   expect(p.logs.filter((l) => l.includes("didn't exit cleanly"))).toHaveLength(3);
   const msg = p.db.get<{ text: string }>("SELECT text FROM outbox WHERE mission = ?", m.id)!.text;
-  expect(msg.split("\n")[0]).toBe("Towercab crashed three times at this step.");
+  expect(msg.split("\n")[0]).toBe(WAITS["crashed at"]!.ask);
 });
 
 test("limits: other models run", async () => {
@@ -824,4 +824,61 @@ test("commands: applied by the loop", async () => {
   expect(byIntent(p, A).map((m) => m.stage)).toEqual(["stopped", "stopped"]);
   expect((await p.store.list()).done.find((i) => i.id === A)?.stage).toBe("dropped");
   expect(p.db.all("SELECT id FROM commands WHERE applied_at IS NULL")).toEqual([]);
+});
+
+test("loop: a repo added while running is picked up", async () => {
+  const p = new Pipe(TARGET, files({ id: A, repo: "api" }));
+  await p.start({}, { handlers: staged });
+  // The repo is unknown: the intent waits and nothing is picked.
+  expect((await pass(p)).picked).toBeNull();
+  expect((await p.store.get(A)).waiting).toBe("unknown repo");
+  // PIP-110: its message opens with the plain ask of its wait.
+  const msg = p.db.get<{ text: string }>("SELECT text FROM outbox WHERE key LIKE ?", `intent:${A}:%`)!;
+  expect(msg.text.split("\n")[0]).toBe(WAITS["unknown repo"]!.ask);
+  // `towercab repo add` in another process writes the row; the loop sees it on its next pass.
+  p.db.run(
+    "INSERT INTO repos (name, github, base, source, added) VALUES ('api', 'owner/api', 'main', 'cli', ?)",
+    p.clock.now(),
+  );
+  const config = p.loop.d.config;
+  const map = config.repos;
+  expect((await pass(p)).picked).toBe(A);
+  expect(config.repos).toBe(map);
+  expect(config.repos.get("api")).toMatchObject({ github: "owner/api", base: "main", workers: 1, ahead: 3 });
+  expect((await p.store.get(A)).waiting).toBeNull();
+  expect(p.logs).toContain(`${A}: its repo api is known now; queued again`);
+  // Removed again: gone from the Map on the next pass.
+  p.db.run("DELETE FROM repos WHERE name = 'api'");
+  await pass(p);
+  expect(config.repos.has("api")).toBe(false);
+  expect(config.repos.has("web")).toBe(true);
+});
+
+test("loop: a repo removed during a pass is not picked", async () => {
+  const p = new Pipe(TARGET, files({ id: A, repo: "api" }));
+  let removeOnRead = false;
+  await p.start(
+    { repos: REPOS },
+    {
+      handlers: staged,
+      // `towercab repo remove` lands while the pass waits on the intents read, after its repo sync.
+      wrapStore: (s) => {
+        const w = Object.create(s) as IntentStore;
+        w.list = () => {
+          if (removeOnRead) p.db.run("DELETE FROM repos WHERE name = 'api'");
+          return s.list();
+        };
+        return w;
+      },
+    },
+  );
+  removeOnRead = true;
+  expect((await pass(p)).picked).toBeNull();
+  expect(byIntent(p, A)).toEqual([]);
+  expect(p.logs).toContain(`${A}: its repo api was just removed; not picked`);
+  // The next pass knows it is gone: the intent waits for an unknown repo.
+  removeOnRead = false;
+  await pass(p);
+  expect(byIntent(p, A)).toEqual([]);
+  expect((await p.store.get(A)).waiting).toBe("unknown repo");
 });

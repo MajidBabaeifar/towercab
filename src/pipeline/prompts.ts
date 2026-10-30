@@ -10,7 +10,9 @@ export const AGENT_VARS: Record<AgentName, string[]> = {
   worker: ["plan", "intent", "spec_ids", "checks", "access"],
   repair: ["what", "details"],
   review: ["intent", "spec_ids", "plan", "review_md", "ci", "screenshots", "diff_cmd", "e2e"],
-  score: ["issue"],
+  risk: ["gate", "intent", "change", "context", "open_points"],
+  score: ["issue", "product"],
+  features: ["repo", "current", "listed"],
 };
 
 /** An agent's prompt filled with `vars`; an unknown `{{key}}` is a bug, a missing var an empty string. */

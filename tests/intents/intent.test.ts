@@ -281,6 +281,26 @@ test("intents: lifecycle fields keep other lines", () => {
   expect(l.render()).toBe(before);
 });
 
+test("intents: a rename changes only the title line", () => {
+  const f = IntentFile.parse(FULL);
+  f.setTitle("  Towercab keeps intents in git and reads them from any machine  ");
+  expect(f.render()).toBe(
+    FULL.replace(
+      "# Intent: Rust crate and intent store\n",
+      "# Intent: Towercab keeps intents in git and reads them from any machine\n",
+    ),
+  );
+  expect(f.intent.title).toBe("Towercab keeps intents in git and reads them from any machine");
+  // No `Intent: ` prefix stays without one; CRLF line endings are kept.
+  const crlf = "---\r\nrepo: web\r\n---\r\n\r\n# Fix it\r\n\r\n## Problem\r\n\r\nslow\r\n";
+  const g = IntentFile.parse(crlf);
+  g.setTitle("Web pages load in under a second");
+  expect(g.render()).toBe(crlf.replace("# Fix it\r\n", "# Web pages load in under a second\r\n"));
+  // A title must be one line.
+  expect(() => g.setTitle("")).toThrow("the title must be one non-empty line");
+  expect(() => g.setTitle("a\nb")).toThrow("the title must be one non-empty line");
+});
+
 test("intents: the Towercab note is replaced whole", () => {
   const text = "---\r\nrepo: web\r\n---\r\n\r\n# Intent: X\r\n\r\n## Problem\r\n\r\nslow\r\n";
   const f = IntentFile.parse(text);

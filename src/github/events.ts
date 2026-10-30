@@ -4,6 +4,7 @@
 import type { Intent } from "../intents/types.ts";
 import { finished, type Outcome } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
+import { recheck } from "../risk.ts";
 import type { PrState } from "./prs.ts";
 
 export type PrKind = "spec" | "plan" | "code";
@@ -138,7 +139,12 @@ export function prEvents(m: Mission, prs: Prs, me: string, botLogin: string): Ou
     };
   }
   const retries = fresh.filter((s) => s.text === RETRY);
-  if (retries.length > 0) return { event: "retry_fresh", set: { feedback_seen: latest(retries) } };
+  if (retries.length > 0) {
+    // AUT-21: a gate waiting on a risk check that didn't finish runs the check again.
+    const again = recheck(m);
+    if (again) return { ...again, set: { feedback_seen: latest(retries) } };
+    return { event: "retry_fresh", set: { feedback_seen: latest(retries) } };
+  }
 
   // PIP-81: an open spec PR that no longer merges into base gets a design revision, at most twice.
   const spec = prs.spec;
@@ -155,7 +161,14 @@ export function prEvents(m: Mission, prs: Prs, me: string, botLogin: string): Ou
 
   const code = prs.code;
   if (code?.state === "OPEN" && m.pr !== null) {
-    if (code.mergeable === "CONFLICTING") return { event: "conflict" };
+    // LOOP-18: the same conflict repair CI gives, so the build merges the base first instead of
+    // building on the old base again (a round that would conflict forever).
+    if (code.mergeable === "CONFLICTING")
+      return {
+        event: "conflict",
+        why: "the PR conflicts with its base",
+        data: { repair: { what: "The PR conflicts with its base branch.", details: "", kind: "conflict" } },
+      };
     if (m.head && code.head && code.head !== m.head) return { event: "head_moved" };
   }
   return null;

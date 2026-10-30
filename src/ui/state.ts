@@ -11,6 +11,9 @@ import type { Home } from "../home.ts";
 import type { Intent, IntentStore, Listing } from "../intents/types.ts";
 import { finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
 import { dataOf, forIntent, type Mission } from "../mission.ts";
+import { section } from "../pipeline/prtext.ts";
+import { usualOwner } from "../repos.ts";
+import { currentRisk, type RiskGate, riskWords } from "../risk.ts";
 import { aheadIn, isAhead, isBuilding, isReady } from "../slots.ts";
 import type {
   Access,
@@ -33,6 +36,7 @@ import type {
   Question,
   QueueItem,
   QueuePage,
+  RiskView,
   Row,
   SpendView,
   StageFileView,
@@ -323,7 +327,7 @@ function skipState(s: Skip | null, parked: boolean): StateView {
   return state("queued");
 }
 
-interface Snap {
+export interface Snap {
   now: number;
   listing: Listing | null;
   listError: string | null;
@@ -334,7 +338,7 @@ interface Snap {
   paused: boolean;
 }
 
-async function snapshot(src: UiSources): Promise<Snap> {
+export async function snapshot(src: UiSources): Promise<Snap> {
   const now = src.clock.now();
   let listing: Listing | null = null;
   let listError: string | null = null;
@@ -381,10 +385,96 @@ function missionState(s: Snap, m: Mission, src: UiSources): StateView {
 type MissionData = {
   question?: Question;
   access?: Access;
+  /** The plain brief of the question asked (PIP-106). */
   brief?: string;
-  review?: { summary?: string };
+  design?: { brief?: string; pr?: string; concerns?: { what: string; why: string }[]; open?: string[] };
+  plan?: { brief?: string; md?: string };
+  build?: { brief?: string; notes?: string };
+  review?: { summary?: string; brief?: string; details?: string } | null;
   runs?: { at: number; cost: number }[];
 };
+
+const nonEmpty = (s: string | null | undefined): string | null => (s?.trim() ? s.trim() : null);
+const joinMd = (parts: (string | null | undefined)[]): string | null =>
+  nonEmpty(parts.filter((p) => p?.trim()).join("\n\n"));
+
+/** UI-126: the design's technical text: its spec summary, concerns and the questions it left open. */
+function designDetails(d: MissionData): string | null {
+  const concerns = d.design?.concerns ?? [];
+  const open = d.design?.open ?? [];
+  return joinMd([
+    d.design?.pr,
+    concerns.length
+      ? `**Concerns the design raised**\n\n${concerns.map((c) => `- ${c.what}: ${c.why}`).join("\n")}`
+      : null,
+    open.length ? `**Questions it left to you**\n\n${open.map((q) => `- ${q}`).join("\n")}` : null,
+  ]);
+}
+
+/** UI-126: the plan's technical text: its approach and risks. */
+function planDetails(d: MissionData): string | null {
+  const md = d.plan?.md ?? "";
+  const approach = section(md, "Approach");
+  const risks = section(md, "Risks");
+  return joinMd([approach, risks ? `**Risks**\n\n${risks}` : null]);
+}
+
+/**
+ * UI-126, UI-127: the plain brief and the technical text of what a mission waits on (or, for the
+ * intent page, its latest stage): code → the review's brief (else the worker's), the review's
+ * findings; plan → the plan's brief, its approach; spec → the design's brief, its concerns; a question
+ * → the asker's brief, the question's context.
+ */
+export function textsOf(
+  m: Mission,
+  kind: CardKind,
+  legacy = false,
+): { brief: string | null; details: string | null } {
+  const d = dataOf<MissionData>(m);
+  switch (kind) {
+    case "code": {
+      const brief = nonEmpty(d.review?.brief) ?? nonEmpty(d.build?.brief);
+      // Before briefs existed the review's summary led the card; it stays the card's fallback (UI-126),
+      // never the intent page's, which calls its brief plain (UI-127).
+      if (!brief) return { brief: legacy ? nonEmpty(d.review?.summary) : null, details: null };
+      return { brief, details: nonEmpty(d.review?.details) ?? nonEmpty(d.review?.summary) };
+    }
+    case "plan":
+      return { brief: nonEmpty(d.plan?.brief), details: planDetails(d) };
+    case "spec":
+      return { brief: nonEmpty(d.design?.brief), details: designDetails(d) };
+    case "question": {
+      const brief = nonEmpty(d.brief);
+      return { brief, details: brief ? nonEmpty(d.question?.context) : null };
+    }
+    default:
+      return { brief: null, details: null };
+  }
+}
+
+/**
+ * AUT-20: the risk judged at `gate`, else the latest one (code, plan, spec), in plain words; only an
+ * assessment of the current spec head, plan or diff counts (PIP-96).
+ */
+export function riskView(m: Mission, gate: RiskGate | null = null): RiskView | null {
+  const order: RiskGate[] = gate ? [gate] : ["code", "plan", "spec"];
+  for (const g of order) {
+    const r = currentRisk(m, g);
+    if (!r) continue;
+    const w = riskWords(r);
+    return {
+      level: r.level,
+      label: w.label,
+      gate: g,
+      blast: w.blast,
+      door: w.door,
+      certainty: w.certainty,
+      summary: r.summary,
+      raised: r.raised,
+    };
+  }
+  return null;
+}
 
 function repoGithub(src: UiSources, repo: string): string | null {
   return src.config.repos.get(repo)?.github ?? null;
@@ -459,15 +549,25 @@ export function missionCard(
   const pr = prLink(src, m);
   const approval = kind === "spec" || kind === "plan" || kind === "code";
   const note = intent?.sections.get("Towercab")?.trim() || null;
-  let brief = d.brief ?? null;
-  if (kind === "code") brief = d.review?.summary ?? brief;
+  const texts = textsOf(m, kind, true);
+  let brief = texts.brief;
   if (!brief && !approval && !d.question && !pr) brief = note;
+  // UI-126: an approval's reason is the plain gate reason; a blocked wait's reason is what Towercab
+  // saw (a check's name, an error line): technical, so it folds under Details.
+  const why = m.why && m.why !== brief ? m.why : null;
+  const shownWhy = approval ? why : null;
+  const details = joinMd([approval || why === d.question?.question ? null : why, texts.details]);
   const actions: Card["actions"] = approval
     ? pr
       ? ["merge", "retry", "drop"]
       : ["retry", "drop"]
     : ["reply", "retry", "drop"];
+  const gate = kind === "spec" || kind === "plan" ? kind : kind === "code" ? "code" : null;
+  const risk = riskView(m, gate);
+  const points = kind === "spec" ? (currentRisk(m, "spec")?.openPoints ?? []) : [];
   return {
+    ...(risk ? { risk } : {}),
+    ...(points.length ? { openPoints: points } : {}),
     intent: m.intent,
     title: intent?.title ?? m.intent,
     repo: m.repo,
@@ -476,21 +576,28 @@ export function missionCard(
     ask: askOf(m.waiting),
     since: since === null ? null : when(since, now),
     brief,
-    why: m.why && m.why !== brief ? m.why : null,
+    why: shownWhy,
+    details,
     question: d.question ?? null,
     access: kind === "plan" ? (d.access ?? { domains: [], paths: [] }) : null,
     pr,
     actions,
     mergeLabel: approval && pr ? MERGE_LABELS[kind]! : null,
+    addRepo: null,
   };
 }
 
-/** UI-58: a wait written only on the intent (unknown repo, bad after:). */
-export function intentCard(i: Intent): Card {
+/** UI-58: a wait written only on the intent (unknown repo, bad after:); UI-131: "Add this repo". */
+export function intentCard(i: Intent, config: Config): Card {
   const w = i.waiting ?? "";
   let why: string | null = null;
-  if (w === "unknown repo") {
-    why = `Its repo “${i.repo}” isn't one Towercab knows. Add the repo to the config, or change the intent's repo.`;
+  let addRepo: Card["addRepo"] = null;
+  if (w === "unknown repo" && config.repos.has(i.repo)) {
+    why = `Towercab knows its repo “${i.repo}” now and queues it again within a minute.`;
+  } else if (w === "unknown repo") {
+    why = `Its repo “${i.repo}” isn't one Towercab knows yet. Check the GitHub repo below and press Add this repo, or change the intent's repo.`;
+    const owner = usualOwner(config);
+    addRepo = { name: i.repo, github: owner ? `${owner}/${i.repo}` : "" };
   } else if (w.startsWith("bad after:")) {
     why = `It waits for ${w.slice("bad after:".length).trim() || "an intent"}, which Towercab can't find or is dropped. Fix its after list.`;
   }
@@ -504,11 +611,13 @@ export function intentCard(i: Intent): Card {
     since: null,
     brief: i.sections.get("Towercab")?.trim() || null,
     why,
+    details: null,
     question: null,
     access: null,
     pr: null,
     actions: ["reply", "drop"],
     mergeLabel: null,
+    addRepo,
   };
 }
 
@@ -604,6 +713,22 @@ export function stationOf(m: Pick<Mission, "stage" | "from_stage">): StationKey 
   return p === "spec" || p === "plan" ? p : "code";
 }
 
+/** UI-125: a plane rolling back or reverting, or one in a fix round. */
+export function shipMark(m: Pick<Mission, "stage" | "from_stage" | "data">): Plane["ship"] {
+  const at = m.stage === "blocked" && m.from_stage ? m.from_stage : m.stage;
+  if (at === "rollback" || at === "revert") return { kind: at, mark: "↩" };
+  const fixes = dataOf<{ ship?: { fixes?: number } }>(m as Mission).ship?.fixes ?? 0;
+  return fixes > 0 && !finished(m.stage) ? { kind: "fix", mark: `fix ${fixes}/2` } : undefined;
+}
+
+/** UI-125: the first card line of a plane going back: which suite went red, and where it goes. */
+function backWords(m: Mission): string | null {
+  const ship = dataOf<{ ship?: { red?: { suite: string }; target?: string } }>(m).ship;
+  return ship?.red && ship.target ? `${ship.red.suite} red · back to ${ship.target.slice(0, 7)}` : null;
+}
+
+const SHIP_WEEK = 7 * 86_400;
+
 const STATIONS: StationKey[] = [
   "parked",
   "queue",
@@ -627,12 +752,14 @@ const NOT_STARTED: Phase[] = [
 ];
 
 /** UI-78: every open intent as a plane at its station, and what landed today. */
-function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): AirspaceView {
+export function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): AirspaceView {
   const planes: Plane[] = [];
   const seen = new Set<string>();
   for (const m of s.missions) {
     const row = missionRow(src, s, m);
     const waited = duration(s.now - (s.entered.get(m.id) ?? m.created));
+    const mark = shipMark(m);
+    const back = mark && mark.kind !== "fix" ? backWords(m) : null;
     planes.push({
       intent: m.intent,
       title: row.title,
@@ -644,8 +771,9 @@ function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): Air
         ? [row.behind ?? "Ready to build", `${row.cost} · ${row.model}`]
         : isWait(m.stage)
           ? [askOf(m.waiting), `Waiting ${waited} · ${row.cost}`]
-          : [`${row.step} · ${row.inStep}`, `${row.cost} · ${row.model}`],
+          : [back ?? `${row.step} · ${row.inStep}`, `${row.cost} · ${row.model}`],
       phases: row.phases,
+      ...(mark ? { ship: mark } : {}),
     });
     seen.add(m.intent);
   }
@@ -712,7 +840,12 @@ function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): Air
       recent: landed.slice(0, 3).map((i) => ({ intent: i.id, title: i.title, repo: i.repo })),
     },
     counts,
-    ship: planes.some((p) => p.station === "deploy" || p.station === "e2e"),
+    ship:
+      planes.some((p) => p.station === "deploy" || p.station === "e2e") ||
+      src.db.get(
+        "SELECT 1 FROM transitions WHERE to_stage = 'deploy' AND at > ? LIMIT 1",
+        s.now - SHIP_WEEK,
+      ) !== undefined,
     countsText: `${counts.flying} in flight · ${needs} ${needWord} · ${counts.landed} landed today`,
     summary:
       `Airspace: ${counts.parked} parked, ${counts.queued} queued, ${counts.flying} in flight, ` +
@@ -964,11 +1097,21 @@ export function versionOf(value: unknown, extra = ""): string {
   return createHash("sha1").update(JSON.stringify(value)).update(extra).digest("hex").slice(0, 12);
 }
 
-function dbMark(db: Db): string {
+export function dbMark(db: Db): string {
   const t = db.get<{ n: number | null }>("SELECT MAX(id) AS n FROM transitions")?.n ?? 0;
   const c = db.get<{ n: number | null }>("SELECT MAX(id) AS n FROM commands")?.n ?? 0;
   const u = db.get<{ n: number | null }>("SELECT MAX(updated) AS n FROM missions")?.n ?? 0;
-  return `${t}:${c}:${u}`;
+  // A repo added, removed or changed (LOOP-68) shows without anything else moving.
+  const r =
+    db.get<{ r: string | null }>(
+      "SELECT group_concat(name || ' ' || base || ' ' || workers || ' ' || ahead, ',') AS r FROM repos",
+    )?.r ?? "";
+  // A feature-list backfill asked for, started, done or failed (UI-144) shows on open pages too.
+  const f =
+    db.get<{ f: string | null }>(
+      "SELECT group_concat(key || '=' || value, ',') AS f FROM meta WHERE key LIKE 'features:%'",
+    )?.f ?? "";
+  return `${t}:${c}:${u}:${r}:${f}`;
 }
 
 /** The overview's data (`GET /api/state`). */
@@ -991,7 +1134,7 @@ export async function overview(src: UiSources): Promise<Overview> {
   const withMission = new Set(s.missions.map((m) => m.intent));
   for (const i of s.listing?.open ?? []) {
     if (i.waiting && !withMission.has(i.id))
-      needs.push({ ...intentCard(i), order: Number.POSITIVE_INFINITY });
+      needs.push({ ...intentCard(i, src.config), order: Number.POSITIVE_INFINITY });
   }
   needs.sort((a, b) => a.order - b.order);
   const list = src.upNext().filter((u) => !withMission.has(u.intent));
@@ -1248,7 +1391,7 @@ function kindOf(name: string): { kind: string; details: boolean } {
   if (/^(settings|system)-|^guard\.json$/.test(name)) return { kind: "Details", details: true };
   if (/\.prompt$/.test(name)) return { kind: "Prompt sent", details: false };
   if (/\.err$/.test(name)) return { kind: "Errors", details: false };
-  if (/^(worker|design|plan|review|score)-\d+\.json$/.test(name))
+  if (/^(worker|design|plan|review|risk|score)-\d+\.json$/.test(name))
     return { kind: "Claude's answer", details: false };
   if (/\.log$/.test(name)) return { kind: "Check output", details: false };
   return { kind: "File", details: false };
@@ -1608,7 +1751,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     live && isWait(live.stage) && !isReady(live)
       ? missionCard(src, live, intent ?? undefined, lastMove(live), s.now)
       : !live && intent?.waiting && !intent.done
-        ? intentCard(intent)
+        ? intentCard(intent, src.config)
         : null;
   const timeline: TimelineItem[] = [];
   for (const m of missions) {
@@ -1687,6 +1830,19 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     issue: intent?.issue ?? null,
     e2eLog: e2eLogOf(src.home.root, id),
   };
+  // AUT-20: the latest risk, when no card already shows it.
+  const risk = !card && last ? riskView(last) : null;
+  if (risk) body.risk = risk;
+  // UI-127: the latest plain brief (code, else plan, else spec), when no card already leads with one.
+  if (!card && last) {
+    for (const kind of ["code", "plan", "spec"] as const) {
+      const t = textsOf(last, kind);
+      if (!t.brief) continue;
+      body.brief = t.brief;
+      body.details = t.details;
+      break;
+    }
+  }
   return { version: versionOf(body, dbMark(src.db)), ...body };
 }
 
@@ -1706,14 +1862,23 @@ export function e2eLogOf(root: string, id: string): string | null {
   return best ? `/api/runs/${encodeURIComponent(id)}/e2e/${encodeURIComponent(best.name)}` : null;
 }
 
-/** The queue page's data (`GET /api/queue`): one lane per repo. */
+/** UI-63: a queued intent is up next unless something other than its turn holds it. */
+const HELD = new Set(["after", "cooling", "unreachable", "other"]);
+
+/** The queue's data (`GET /api/queue`, UI-63): one lane per repo. */
 export async function queue(src: UiSources): Promise<QueuePage> {
   const s = await snapshot(src);
+  const lanes = lanesOf(src, s);
+  return { version: versionOf(lanes, dbMark(src.db)), lanes };
+}
+
+/** UI-63: one lane per `[repos]` repo, then any other repo a mission names. */
+export function lanesOf(src: UiSources, s: Snap): Lane[] {
   const list = src.upNext();
   const titles = (x: string) => titleOf(s, x);
   const repos = [...src.config.repos.keys()];
   for (const m of s.missions) if (!repos.includes(m.repo)) repos.push(m.repo);
-  const lanes: Lane[] = repos.map((repo) => {
+  return repos.map((repo): Lane => {
     // The build slot's holder first, then plan-approved intents in build order, then those ahead.
     const rank = (m: Mission) => (isReady(m) ? 1 : isAhead(m) ? 2 : 0);
     const running = s.missions
@@ -1734,7 +1899,9 @@ export async function queue(src: UiSources): Promise<QueuePage> {
       when: null,
       cost: null,
     });
-    const waiting = mine.filter((u) => u.skip?.kind !== "parked").map((u, n) => item(u, n + 1));
+    const queued = mine.filter((u) => u.skip?.kind !== "parked");
+    const upNext = queued.filter((u) => !HELD.has(u.skip?.kind ?? "")).map((u, n) => item(u, n + 1));
+    const waiting = queued.filter((u) => HELD.has(u.skip?.kind ?? "")).map((u) => item(u, null));
     const parked = mine.filter((u) => u.skip?.kind === "parked").map((u) => item(u, null));
     const dropped = s.listing?.droppedIds ?? new Set<string>();
     const done: QueueItem[] = (s.listing?.done ?? [])
@@ -1757,12 +1924,12 @@ export async function queue(src: UiSources): Promise<QueuePage> {
       github: src.config.repos.get(repo)?.github ?? "",
       ahead: `${aheadN} of ${limit} ahead`,
       running,
+      upNext,
       waiting,
       parked,
       done,
     };
   });
-  return { version: versionOf(lanes, dbMark(src.db)), lanes };
 }
 
 export interface ActivityFilters {

@@ -140,7 +140,12 @@ describe("events", () => {
       set: { feedback_seen: "2026-10-15T11:30:00Z" },
     });
     code.comments.shift();
-    expect(prEvents(m, { code }, ME, BOT)).toEqual({ event: "conflict" });
+    // A conflict asks the build to merge the base first, as CI's conflict does.
+    expect(prEvents(m, { code }, ME, BOT)).toEqual({
+      event: "conflict",
+      why: "the PR conflicts with its base",
+      data: { repair: { what: "The PR conflicts with its base branch.", details: "", kind: "conflict" } },
+    });
     code.mergeable = "UNKNOWN";
     expect(prEvents(m, { code }, ME, BOT)).toEqual({ event: "head_moved" });
     code.head = "h1";

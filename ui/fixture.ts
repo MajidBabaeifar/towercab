@@ -96,8 +96,16 @@ export class MemStore implements IntentStore {
   async hasMark(): Promise<boolean> {
     return false;
   }
-  async readFile(): Promise<string | null> {
-    return null;
+  /** Files by path (the feature lists, INT-37). */
+  files = new Map<string, string>();
+  async readFile(path: string): Promise<string | null> {
+    return this.files.get(path) ?? null;
+  }
+  async localFeatures(repo: string): Promise<string | null> {
+    return this.files.get(`features/${repo}.md`) ?? null;
+  }
+  async editFeatures(): Promise<boolean> {
+    throw new Error("the fixture store is read-only");
   }
   github(): string | null {
     return this.repo;
@@ -139,7 +147,10 @@ function addMission(db: Db, now: number, s: MissionSpec): number {
     const at =
       created +
       ((k + 0.5) / n) * Math.min(s.created, s.created - (s.moves[s.moves.length - 1]?.[0] ?? 0) + 60);
-    runs.push({ at: Math.min(at, now - 30), cost: Math.round((s.cost / n) * 100) / 100 });
+    // Rounded to cents; the last run takes the remainder, so the runs add up to the mission's cost.
+    const before = runs.reduce((t, r) => t + r.cost, 0);
+    const cost = k === n - 1 ? s.cost - before : s.cost / n;
+    runs.push({ at: Math.min(at, now - 30), cost: Math.round(cost * 100) / 100 });
   }
   const finished =
     s.stage === "done" || s.stage === "stopped" ? now - (s.moves[s.moves.length - 1]?.[0] ?? 0) : null;
@@ -193,6 +204,9 @@ export interface FakeActionCall {
   action: string;
   intent?: string;
   text?: string;
+  github?: string;
+  name?: string;
+  repo?: string;
 }
 
 export interface Fixture {
@@ -219,6 +233,7 @@ export const IDS = {
   upnext: "261026-0905-1",
   queued: "261025-1610-2",
   queued2: "261025-1720-1",
+  held: "261025-1745-1",
   parked1: "261020-1015-1",
   parked2: "261019-0940-2",
   done1: "261023-0915-1",
@@ -264,6 +279,7 @@ export function buildFixture(o: { now?: number; root?: string; empty?: boolean }
           { intent: IDS.upnext, priority: 11, skip: null },
           { intent: IDS.queued, priority: 10, skip: { kind: "ahead", n: 3, limit: 3 } },
           { intent: IDS.queued2, priority: 9, skip: { kind: "ahead", n: 3, limit: 3 } },
+          { intent: IDS.held, priority: 8, skip: { kind: "after", intent: IDS.ci } },
           { intent: IDS.parked2, priority: 6, skip: { kind: "parked" } },
           { intent: IDS.parked1, priority: 5, skip: { kind: "parked" } },
         ]) as UpNext[],
@@ -334,6 +350,16 @@ export function buildFixture(o: { now?: number; root?: string; empty?: boolean }
       calls.push({ action: "resume" });
       state.paused = false;
       return "Resumed: Towercab picks up work again.";
+    },
+    async addRepo(github, name) {
+      calls.push({ action: "addRepo", github, ...(name ? { name } : {}) });
+      const short = name ?? github.split("/")[1] ?? github;
+      return `Adding ${short} (${github}, base main): Towercab is cloning it now. It shows on the Repos page when done, and its intents start from then on.`;
+    },
+
+    async features(repo) {
+      calls.push({ action: "features", repo });
+      return "Towercab reads the repo's README and specs and rewrites its live features within a few minutes.";
     },
   };
 
@@ -440,6 +466,14 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
     }),
     makeIntent({ id: IDS.queued, title: "Dark mode for the settings page", repo: "web", u: 2, i: 4 }),
     makeIntent({ id: IDS.queued2, title: "Translate the docs into German", repo: "docs", u: 3, i: 3 }),
+    makeIntent({
+      id: IDS.held,
+      title: "Gift cards at checkout",
+      repo: "web",
+      u: 2,
+      i: 3,
+      after: [IDS.ci],
+    }),
     makeIntent({ id: IDS.parked1, title: "Try a new chart library", repo: "web", u: 1, i: 2 }),
     makeIntent({ id: IDS.parked2, title: "Move CI to self-hosted runners", repo: "infra", u: 2, i: 2 }),
   ];
@@ -539,8 +573,12 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
       [2 * HOUR + 10 * MIN, "plan", "wait", "approval:plan"],
     ],
     data: {
-      brief:
-        "The plan adds a token-bucket limiter in front of the public routes, keyed by API key, with limits read from `config/limits.toml` so they can change without a deploy. Over the limit the API answers **429** with `Retry-After`.\n\nIt touches the router, adds one middleware and a test suite that drives 700 requests through a fake clock. Nothing changes for internal routes.\n\nThe plan keeps counters in memory per process; with two API processes a key could get up to twice its limit. The spec allows that for now.",
+      // PIP-106: the plain brief leads the card; the plan's technical text folds under Details.
+      plan: {
+        brief:
+          "No single customer can slow the API down for everyone any more: each key gets up to 600 requests a minute, and you can raise a key's limit without a release. Merging lets the build start and lets it read two outside sites and write the new limits file. The risk is small: with two servers a key could briefly get twice its limit.",
+        md: "## Approach\n\nThe plan adds a token-bucket limiter in front of the public routes, keyed by API key, with limits read from `config/limits.toml` so they can change without a deploy. Over the limit the API answers **429** with `Retry-After`.\n\nIt touches the router, adds one middleware and a test suite that drives 700 requests through a fake clock. Nothing changes for internal routes.\n\n## Steps\n\n1. Tests\n2. Middleware\n\n## Risks\n\nThe plan keeps counters in memory per process; with two API processes a key could get up to twice its limit. The spec allows that for now.",
+      },
       access: {
         domains: [
           { domain: "redis.io", why: "Read the client's docs for the token bucket script" },
@@ -576,6 +614,9 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
     ],
     plan: 28,
     data: {
+      // PIP-106: the worker's plain brief of its question; the question's context folds under Details.
+      brief:
+        "Accountants will be able to download the invoices they filter as a spreadsheet. Before it is finished, decide what the totals line shows when the invoices are in different currencies.",
       question: {
         context:
           "I'm adding the CSV export. Invoices in the same filter can be in different currencies (EUR, USD, GBP), and your earlier answer says to use the customer's own currency. The totals row at the bottom of the CSV can't add up amounts in different currencies.",
@@ -655,8 +696,28 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
     ],
     data: {
       review: {
+        brief:
+          "New users get a five-minute path from install to their first deploy, and the old reference moved to a page of its own. The review approves it. The one thing to weigh: the guide now expects a newer version of Node than before.",
         summary:
           "The guide now starts with a five-minute path: install, create a project, deploy. Each step has a command and what you should see after it. The old reference material moved to its own page, linked at the end.\n\nAll links resolve, the code samples run in CI, and the screenshots are new. One thing to check: the guide now assumes Node 22; the old one said 18.",
+        details:
+          "The guide now starts with a five-minute path: install, create a project, deploy. All links resolve, the code samples run in CI, and the screenshots are new.\n\n**Smaller things**\n\n- Bugs · `docs/getting-started.md:12`: the guide assumes Node 22; the old one said 18.",
+        patchId: "x",
+      },
+      riskOf: { code: "x" },
+      // AUT-20: the code's risk, shown on its card.
+      risk: {
+        code: {
+          level: "medium",
+          said: "low",
+          raised: "Raised from low to medium: it could affect many people or systems.",
+          blast: { size: "large", who: "Everyone who starts with the docs." },
+          door: { kind: "two-way", why: "Reverting the PR brings the old guide back." },
+          certainty: { level: "high", why: "Every link and code sample is checked in CI." },
+          summary: "A wrong step would stop new users early, but a revert undoes it at once.",
+          openPoints: [],
+          of: "x",
+        },
       },
     },
   });
@@ -687,6 +748,13 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
       [12 * MIN, "build", "ok", "verify"],
       [11 * MIN, "verify", "red", "build", "2 tests failing in offline.test.ts"],
     ],
+    // UI-127: the intent page leads with the plan's plain brief; its approach folds under Details.
+    data: {
+      plan: {
+        brief: "Readers can save articles and read them without a connection.",
+        md: "## Approach\n\nA service worker caches saved articles in IndexedDB and syncs read marks when the connection returns.\n\n## Steps\n\n1. Tests\n2. Worker",
+      },
+    },
   });
   addMission(db, now, {
     intent: IDS.ci,
@@ -729,6 +797,25 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
     "cooldown:sonnet",
     JSON.stringify({ until: now + 47 * MIN, backoffs: 0, text: "limit", since: now - 20 * MIN }),
   );
+  // The web repo's feature list (INT-37): read from the repo three days ago, with two intents since.
+  store.files.set(
+    "features/web.md",
+    [
+      "# web: what people can do",
+      "",
+      "- [live] Visitors can browse the product catalogue and search it by name.",
+      "- [live] People can sign in with their email address or their GitHub account.",
+      "- [live] Shoppers can pay by card and get a receipt by email.",
+      "- [live] People can see their past orders and download each invoice as a PDF.",
+      "- [live] Admins can change prices without a deploy.",
+      `- [live] People can sign in with GitHub. <!-- intent ${IDS.done1} -->`,
+      `- [in progress] People can export their invoices as a CSV file. <!-- intent ${IDS.question} -->`,
+      `- [in progress] Shoppers get through checkout in fewer steps. <!-- intent ${IDS.ci} -->`,
+      "- [planned] Shoppers can save a basket and finish it on another device.",
+      "",
+    ].join("\n"),
+  );
+  db.setMeta("features:web", JSON.stringify({ state: "done", at: now - 3 * DAY, n: 5, cost: 0.41 }));
   addMission(db, now, {
     intent: IDS.stalled,
     repo: "infra",

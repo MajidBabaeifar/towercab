@@ -2,7 +2,7 @@
 // the folded list of moves, cost and the intent's own text.
 
 import type { IntentPage as Data, PrView } from "../../../src/ui/view.ts";
-import { Id, NeedsCard, Section, StartButton, StateChip, Time } from "../components.tsx";
+import { Details, Id, NeedsCard, RiskBlock, Section, StartButton, StateChip, Time } from "../components.tsx";
 import { ChevronLeft, External, PullRequest } from "../icons.tsx";
 import { Markdown } from "../md.tsx";
 import { Link } from "../router.tsx";
@@ -106,6 +106,14 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
         ))}
       </section>
       {data.card ? <NeedsCard card={data.card} readOnly={readOnly} linkTitle={false} /> : null}
+      {data.brief ? (
+        <section class="card pad plain-brief" aria-label="In plain words">
+          <p class="access-head">In plain words</p>
+          <Markdown text={data.brief} />
+          {data.details ? <Details id={`page:${data.id}`} text={data.details} /> : null}
+        </section>
+      ) : null}
+      {data.risk ? <RiskBlock risk={data.risk} /> : null}
       <Section title="How it went" class="path">
         {data.attempts.length ? <StageMap id={data.id} attempts={data.attempts} moves={moves} /> : moves}
       </Section>

@@ -45,7 +45,7 @@ test("autonomy: unplanned access at a4 goes to the owner", async () => {
   expect([m.stage, m.waiting, m.why], p.moves()).toEqual([
     "approval:merge",
     "review and merge PR",
-    "access beyond the plan",
+    "The agent needed access the approved plan didn't grant.",
   ]);
   // Granted at once: the worker resumed with it, and the guard now lets it write the path.
   const [ask, resumed] = p.claudeCalls.filter((c) => c.kind === "worker");

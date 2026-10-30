@@ -54,9 +54,17 @@ export interface Config {
     network: string[];
     sandboxUnixSockets: boolean;
   };
+  /**
+   * The repos Towercab works on. Filled from the file by `parseConfig`, then from the database by
+   * `loadRepos` (LOOP-65); the same Map all along, so a repo added at runtime is seen everywhere.
+   */
   repos: Map<string, RepoConfig>;
+  /** The file's valid `[repos.<name>]` tables, imported into the database once (LOOP-65). */
+  fileRepos: Map<string, RepoConfig>;
   /** Repo tables that failed to validate: name → reason. They fail only what uses that repo. */
   badRepos: Map<string, string>;
+  /** Repo tables Towercab ignores because the repo is in its database: name → what to do (LOOP-65). */
+  ignoredRepos: Map<string, string>;
   github: { appId: number; me: string; apiBase: string } | null;
   telegram: { botToken: string; chatId: string; apiBase: string } | null;
   ui: { port: number };
@@ -130,7 +138,9 @@ export function parseConfig(raw: Record<string, unknown>, file: string): Config 
       sandboxUnixSockets: r.bool(agent, "agent", "sandbox_unix_sockets", false),
     },
     repos: new Map(),
+    fileRepos: new Map(),
     badRepos: new Map(),
+    ignoredRepos: new Map(),
     github: github && {
       appId: r.int(github, "github", "app_id", 0, 1, Number.MAX_SAFE_INTEGER),
       me: r.login(github, "github", "me"),
@@ -154,7 +164,9 @@ export function parseConfig(raw: Record<string, unknown>, file: string): Config 
   }
   for (const [name, table] of Object.entries((repos ?? {}) as Record<string, unknown>)) {
     try {
-      config.repos.set(name, parseRepo(r, name, table));
+      const repo = parseRepo(r, name, table);
+      config.fileRepos.set(name, repo);
+      config.repos.set(name, repo);
     } catch (e) {
       config.badRepos.set(name, (e as Error).message);
     }
@@ -209,7 +221,7 @@ export function checkLoop(config: Config): void {
   if (!config.intents.remote) throw new ConfigError(`config: ${config.file}: intents.remote is required`);
   if (config.repos.size === 0) {
     const bad = [...config.badRepos.values()][0];
-    throw new ConfigError(bad ?? `config: ${config.file}: no [repos.<name>] table`);
+    throw new ConfigError(bad ?? "no repos yet: add one with towercab repo add <owner/name>");
   }
 }
 

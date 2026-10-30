@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { Db } from "../../src/db.ts";
-import type { Stage } from "../../src/machine.ts";
+import { type Stage, WAITS } from "../../src/machine.ts";
 import type { Mission } from "../../src/mission.ts";
 import {
   activity,
@@ -12,13 +12,16 @@ import {
   duration,
   exactTime,
   intentPage,
+  missionCard,
   money,
   moveWords,
   overview,
   queue,
+  riskView,
   stageMap,
   stateOf,
   stepWords,
+  textsOf,
   until,
 } from "../../src/ui/state.ts";
 import { buildFixture, type Fixture, IDS } from "../../ui/fixture.ts";
@@ -140,11 +143,11 @@ test("ui: top bar shows health and counts", async () => {
     health: "Problem",
     needs: 4,
     working: 4,
-    queued: 3,
+    queued: 4,
     paused: false,
     readOnly: false,
   });
-  expect(o.top.countsText).toBe("4 need you · 4 working · 3 queued");
+  expect(o.top.countsText).toBe("4 need you · 4 working · 4 queued");
   expect(o.top.spendToday).toMatch(/^\$\d+\.\d\d$/);
   expect(o.top.budget).toBe("of $40.00");
   expect(o.top.version).toEqual({ commit: "3f9c2ab", behind: "up to date" });
@@ -171,7 +174,7 @@ test("ui: needs-you card shows only its actions", async () => {
   const plan = card(IDS.plan);
   expect(plan.actions).toEqual(["merge", "retry", "drop"]);
   expect(plan.mergeLabel).toBe("Merge plan PR");
-  expect(plan.ask).toBe("Review the plan and its access list, then merge the plan PR.");
+  expect(plan.ask).toBe(WAITS["approve plan"]!.ask);
   expect(plan.access?.domains.map((d) => d.domain)).toEqual(["redis.io", "registry.npmjs.org"]);
   expect(plan.pr).toEqual({
     number: 31,
@@ -190,6 +193,171 @@ test("ui: needs-you card shows only its actions", async () => {
   const crm = card(IDS.crm);
   expect(crm.actions).toEqual(["reply", "drop"]);
   expect(crm.why).toMatch(/crm/);
+});
+
+test("ui: unknown repo card offers to add the repo", async () => {
+  const f = fixture();
+  const crm = async () => (await overview(f.sources)).needs.find((c) => c.intent === IDS.crm)!;
+  const card = await crm();
+  // The intent's repo is the short name; owner/name is prefilled with the owner the repos share.
+  expect(card.addRepo).toEqual({ name: "crm", github: "acme/crm" });
+  expect(card.why).toBe(
+    "Its repo “crm” isn't one Towercab knows yet. Check the GitHub repo below and press Add this repo, or change the intent's repo.",
+  );
+  expect((await intentPage(f.sources, IDS.crm))!.card?.addRepo).toEqual({ name: "crm", github: "acme/crm" });
+  // Other cards never offer it.
+  expect((await overview(f.sources)).needs.filter((c) => c.addRepo)).toHaveLength(1);
+  // Once the repo is known, the card says the wait clears on its own.
+  f.sources.config.repos.set("crm", {
+    ...f.sources.config.repos.get("web")!,
+    name: "crm",
+    github: "acme/crm",
+  });
+  const known = await crm();
+  expect(known.addRepo).toBeNull();
+  expect(known.why).toBe("Towercab knows its repo “crm” now and queues it again within a minute.");
+  // No repos to go by: the field starts empty.
+  f.sources.config.repos.clear();
+  expect((await crm()).addRepo).toEqual({ name: "crm", github: "" });
+});
+
+test("ui: the card shows the risk", async () => {
+  const f = fixture();
+  const o = await overview(f.sources);
+  const code = o.needs.find((c) => c.intent === IDS.code)!;
+  expect(code.risk).toEqual({
+    level: "medium",
+    label: "Medium risk",
+    gate: "code",
+    blast: "Affects many: Everyone who starts with the docs.",
+    door: "Easy to undo: Reverting the PR brings the old guide back.",
+    certainty: "Sure it works once live: Every link and code sample is checked in CI.",
+    summary: "A wrong step would stop new users early, but a revert undoes it at once.",
+    raised: "Raised from low to medium: it could affect many people or systems.",
+  });
+  // A card waits on one gate: the plan card shows no code risk, and none was judged on its plan.
+  expect(o.needs.find((c) => c.intent === IDS.plan)!.risk).toBeUndefined();
+  // The intent page shows it in the card, not twice.
+  const page = (await intentPage(f.sources, IDS.code))!;
+  expect(page.card?.risk?.label).toBe("Medium risk");
+  expect(page.risk).toBeUndefined();
+  // Spec cards list the second reviewer's open points (PIP-97); the latest risk shows without a card.
+  const m = mission({
+    stage: "approval:spec",
+    waiting: "approve spec",
+    head: "abc",
+    data: JSON.stringify({
+      riskOf: { spec: "abc" },
+      risk: {
+        spec: {
+          level: "low",
+          said: "low",
+          raised: null,
+          blast: { size: "small", who: "Readers of the docs." },
+          door: { kind: "two-way", why: "A revert undoes it." },
+          certainty: { level: "high", why: "Docs only." },
+          summary: "Small.",
+          openPoints: [{ point: "Keep the old URL?", why: "Bookmarks break." }],
+          of: "x",
+        },
+      },
+    }),
+  });
+  const card = missionCard(f.sources, m, undefined, null, NOW);
+  expect(card.openPoints).toEqual([{ point: "Keep the old URL?", why: "Bookmarks break." }]);
+  expect(card.risk?.gate).toBe("spec");
+  expect(riskView({ ...m, stage: "build" })?.label).toBe("Low risk");
+  // A risk of an older head (a revision since) shows nothing, nor its open points.
+  const stale = missionCard(f.sources, { ...m, head: "def" }, undefined, null, NOW);
+  expect([stale.risk, stale.openPoints]).toEqual([undefined, undefined]);
+  expect(riskView({ ...m, head: "def", stage: "build" })).toBeNull();
+});
+
+test("ui: the card leads with the plain brief, the technical text folded", async () => {
+  const f = fixture();
+  const o = await overview(f.sources);
+  const card = (id: string) => o.needs.find((c) => c.intent === id)!;
+  // Plan: the plan's plain brief leads; its approach and risks are the details.
+  const plan = card(IDS.plan);
+  expect(plan.brief).toMatch(/^No single customer can slow the API down/);
+  expect(plan.brief).not.toMatch(/token-bucket|`/);
+  expect(plan.details).toMatch(/token-bucket limiter/);
+  expect(plan.details).toMatch(/\*\*Risks\*\*\n\nThe plan keeps counters in memory/);
+  // Code: the review's plain brief leads; its findings are the details.
+  const code = card(IDS.code);
+  expect(code.brief).toMatch(/^New users get a five-minute path/);
+  expect(code.details).toMatch(/docs\/getting-started\.md:12/);
+  // Question: the asker's brief leads; the question's context moves into the details.
+  const q = card(IDS.question);
+  expect(q.brief).toMatch(/^Accountants will be able to download/);
+  expect(q.details).toContain(q.question!.context);
+  // A blocked wait: the plain ask shows, Towercab's technical reason folds into the details.
+  const blocked = mission({
+    stage: "blocked",
+    from_stage: "verify",
+    waiting: "checks red",
+    why: "npm test: 2 failing",
+  });
+  const b = missionCard(f.sources, blocked, undefined, null, NOW);
+  expect(b.ask).toBe(WAITS["checks red"]!.ask);
+  expect(b.why).toBeNull();
+  expect(b.details).toBe("npm test: 2 failing");
+  // Spec: the design's brief leads; its spec text and concerns are the details.
+  const spec = missionCard(
+    f.sources,
+    mission({
+      stage: "approval:spec",
+      waiting: "approve spec",
+      why: "The spec leaves one question for you to settle before it is built.",
+      data: JSON.stringify({
+        design: {
+          brief: "Readers find the guide in one place.",
+          pr: "Adds DOC-4.",
+          concerns: [{ what: "Old URL", why: "Bookmarks break." }],
+          open: ["Keep the old URL?"],
+        },
+      }),
+    }),
+    undefined,
+    null,
+    NOW,
+  );
+  expect(spec.brief).toBe("Readers find the guide in one place.");
+  expect(spec.why).toBe("The spec leaves one question for you to settle before it is built.");
+  expect(spec.details).toBe(
+    "Adds DOC-4.\n\n**Concerns the design raised**\n\n- Old URL: Bookmarks break.\n\n**Questions it left to you**\n\n- Keep the old URL?",
+  );
+  // A mission from before briefs: the review's summary still leads, nothing folded.
+  const old = missionCard(
+    f.sources,
+    mission({
+      stage: "approval:merge",
+      waiting: "review and merge PR",
+      data: JSON.stringify({ review: { summary: "Approve: small." } }),
+    }),
+    undefined,
+    null,
+    NOW,
+  );
+  expect([old.brief, old.details]).toEqual(["Approve: small.", null]);
+});
+
+test("ui: the intent page leads with the plain brief", async () => {
+  const f = fixture();
+  // With a card, the card carries the brief; the page doesn't repeat it.
+  const waiting = (await intentPage(f.sources, IDS.code))!;
+  expect(waiting.card?.brief).toMatch(/^New users get a five-minute path/);
+  expect(waiting.brief).toBeUndefined();
+  // Without one, the latest brief (code, else plan, else spec) leads, its technical text folded.
+  const done = (await intentPage(f.sources, IDS.building))!;
+  expect(done.card).toBeNull();
+  expect(done.brief).toBe("Readers can save articles and read them without a connection.");
+  expect(done.details).toMatch(/service worker/);
+  // A review from before briefs: its summary is technical, so only the card falls back to it; the page
+  // never calls it plain.
+  const old = mission({ data: JSON.stringify({ review: { summary: "Approve: `x.ts` is fine." } }) });
+  expect(textsOf(old, "code")).toEqual({ brief: null, details: null });
+  expect(textsOf(old, "code", true).brief).toBe("Approve: `x.ts` is fine.");
 });
 
 test("ui: empty states are true", async () => {
@@ -357,12 +525,16 @@ test("ui: queue lanes by repo", async () => {
   const web = q.lanes[0]!;
   expect(web.github).toBe("acme/web");
   expect(web.running.map((r) => r.intent)).toEqual([IDS.question, IDS.ci]);
-  expect(web.waiting.map((w) => [w.position, w.title, w.reason])).toEqual([
+  // Up next: only its turn holds it, numbered. Waiting: held by something else, with the reason.
+  expect(web.upNext.map((w) => [w.position, w.title, w.reason])).toEqual([
     [
       1,
       "Dark mode for the settings page",
       "3 intents are already ahead of build in this repo; it starts when one has a place free, or when you start it.",
     ],
+  ]);
+  expect(web.waiting.map((w) => [w.position, w.title, w.reason])).toEqual([
+    [null, "Gift cards at checkout", "Waits for “Faster checkout page” to be done."],
   ]);
   expect(web.parked.map((w) => w.title)).toEqual(["Try a new chart library"]);
   expect(web.done.map((w) => [w.title, w.state.label, w.cost])).toEqual([
@@ -371,7 +543,7 @@ test("ui: queue lanes by repo", async () => {
   ]);
   const blog = q.lanes[5]!;
   expect(blog.running).toEqual([]);
-  expect(blog.waiting[0]).toMatchObject({
+  expect(blog.upNext[0]).toMatchObject({
     title: "Add an RSS feed to the blog",
     state: { label: "Up next" },
     reason: null,
@@ -440,6 +612,7 @@ test("ui: airspace places each intent at its station", async () => {
     [IDS.parked1]: ["parked", "Parked"],
     [IDS.queued]: ["queue", "Queued"],
     [IDS.queued2]: ["queue", "Queued"],
+    [IDS.held]: ["queue", "Queued"],
     [IDS.crm]: ["gate", "Needs you"],
     [IDS.upnext]: ["gate", "Up next"],
     [IDS.plan]: ["plan-review", "Needs you"],
@@ -469,9 +642,9 @@ test("ui: airspace places each intent at its station", async () => {
       { intent: IDS.done2, title: "Paginate the orders API", repo: "api" },
     ],
   });
-  expect(a.counts).toEqual({ parked: 2, queued: 3, flying: 4, needs: 4, landed: 2 });
+  expect(a.counts).toEqual({ parked: 2, queued: 4, flying: 4, needs: 4, landed: 2 });
   expect(a.countsText).toBe("4 in flight · 4 need you · 2 landed today");
-  expect(a.summary).toBe("Airspace: 2 parked, 3 queued, 4 in flight, 4 need you, 2 landed today.");
+  expect(a.summary).toBe("Airspace: 2 parked, 4 queued, 4 in flight, 4 need you, 2 landed today.");
 
   const empty = (await overview(fixture({ empty: true }).sources)).airspace;
   expect(empty.planes).toEqual([]);
@@ -795,4 +968,56 @@ test("ui: every code PR of a shipping change", async () => {
     ["Fix 2", "merged", 17],
     ["Revert", "open", 19],
   ]);
+});
+
+test("ui: ship stations stay for a week after a deploy", async () => {
+  const f = fixture();
+  expect((await overview(f.sources)).airspace.ship).toBe(false);
+  const id = f.db.get<{ id: number }>("SELECT max(id) AS id FROM missions WHERE intent = ?", IDS.code)!.id;
+  const deployed = (ago: number) =>
+    f.db.run(
+      "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) VALUES (?, ?, 'merge', 'code_merged', 'deploy', null)",
+      id,
+      NOW - ago,
+    );
+  // Eight days ago is too old; two days ago keeps the stations on the line with no plane there.
+  deployed(8 * 86_400);
+  expect((await overview(f.sources)).airspace.ship).toBe(false);
+  deployed(2 * 86_400);
+  const a = (await overview(f.sources)).airspace;
+  expect(a.ship).toBe(true);
+  expect(a.planes.some((p) => p.station === "deploy" || p.station === "e2e")).toBe(false);
+});
+
+test("ui: rollback and fix planes are marked", async () => {
+  const { shipMark } = await import("../../src/ui/state.ts");
+  const m = (stage: Stage, data: unknown = {}, from_stage: Stage | null = null) =>
+    ({ stage, from_stage, data: JSON.stringify(data) }) as unknown as Mission;
+  expect(shipMark(m("rollback"))).toEqual({ kind: "rollback", mark: "↩" });
+  expect(shipMark(m("blocked", {}, "revert"))).toEqual({ kind: "revert", mark: "↩" });
+  expect(shipMark(m("build", { ship: { merges: ["a"], fixes: 1 } }))).toEqual({
+    kind: "fix",
+    mark: "fix 1/2",
+  });
+  expect(shipMark(m("e2e", { ship: { merges: ["a", "b"], fixes: 2 } }))).toEqual({
+    kind: "fix",
+    mark: "fix 2/2",
+  });
+  // Ordinary work and a finished mission carry no mark.
+  expect(shipMark(m("build"))).toBeUndefined();
+  expect(shipMark(m("deploy", { ship: { merges: ["a"], fixes: 0 } }))).toBeUndefined();
+  expect(shipMark(m("done", { ship: { merges: ["a"], fixes: 1 } }))).toBeUndefined();
+  // On the airspace, a rolling-back plane's card says which suite went red and where it goes back to.
+  const f = fixture();
+  f.db.run(
+    "UPDATE missions SET stage = 'rollback', data = ? WHERE id = (SELECT max(id) FROM missions WHERE intent = ?)",
+    JSON.stringify({
+      ship: { merges: ["a"], fixes: 0, red: { suite: "drill", log: "", path: "" }, target: "2d6ad8c4" },
+    }),
+    IDS.code,
+  );
+  const plane = (await overview(f.sources)).airspace.planes.find((p) => p.intent === IDS.code)!;
+  expect(plane).toMatchObject({ station: "deploy", ship: { kind: "rollback", mark: "↩" } });
+  expect(plane.lines[0]).toBe("drill red · back to 2d6ad8c");
+  expect((await overview(f.sources)).airspace.planes.filter((p) => p.ship)).toHaveLength(1);
 });

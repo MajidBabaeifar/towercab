@@ -26,7 +26,12 @@ you." Everything else is one click away (the intent page), never on the overview
   path taken, rounds and steps back, totals, the open stage's files and log, then "All moves" folded)
   → cost per attempt → the intent's own text. Phone: the map is a vertical stepper and a stage's files
   open inside it.
-- **Queue**: one lane per repo: running, waiting (numbered, with reason), parked, recently done.
+- **Board**: the airspace's stations as columns (queue → done in the last 7 days), one folding row per repo with
+  its spend (today, 7 days, all time); a card is a title and its state chip. Only the board scrolls
+  sideways; column headers stick. Phone: one section per repo, cards under the station names.
+- **Repos**: a row of repo chips (with counts) picks one repo, kept in the URL. Its page: what people
+  can do (In progress, Live, Planned) → In progress → Up next (numbered) → Waiting (with the reason) →
+  Parked (folded) → Spend. With no repo chosen ("All"): one short card per repo, then "Add a repo".
 - **Activity**: filter bar (intent, repo, kind, since; in the URL) → list grouped by day.
 
 ## State vocabulary
@@ -107,7 +112,7 @@ Overview, desktop:
 ```
 +--------------------------------------------------------------------------------------+
 | [◎] Towercab   ● Running    2 need you · 1 working · 3 queued     $4.12 today  [Pause] |
-|  Overview   Queue   Activity                                                         |
+|  Overview   Board   Repos   Activity                                                 |
 +--------------------------------------------------------------------------------------+
 | 2 things need you                                    | UP NEXT                       |
 | Updated 3 s ago                                      | 1 Add dark mode      web  11  |
@@ -132,7 +137,7 @@ Overview, phone (375 px):
 +-----------------------------+
 | [◎] Towercab  ● Running [⏸] |
 | 2 need you · $4.12 today    |
-| Overview  Queue  Activity   |
+| Overview Board Repos Activ… |
 +-----------------------------+
 | 2 things need you           |
 | [card, full width]          |
@@ -169,4 +174,4 @@ outcome (passed, red, sent back, waiting on you, working now, skipped, not reach
 in the "Needs you" amber, unreached stages dashed). The open stage and file live in the URL. No motion
 beyond the spinner.
 
-Queue and Activity: one card per repo lane / one list grouped by day, same chips and rows.
+Repos and Activity: one repo at a time / one list grouped by day, same chips and rows.

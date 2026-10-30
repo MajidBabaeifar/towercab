@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import {
   apply,
@@ -35,7 +36,12 @@ describe("machine", () => {
       ["verify", "red", "→ build"],
       ["proof", "red", "→ build"],
       ["ci", "red", "→ build"],
-      ["review", "red", "unexpected"],
+      ["review", "red", "→ build"],
+      ["gate", "red", "unexpected"],
+      ["approval:spec", "recheck", "→ design"],
+      ["approval:plan", "recheck", "→ plan"],
+      ["approval:merge", "recheck", "→ review"],
+      ["blocked", "recheck", "ignore"],
       ["approval:spec", "ok", "unexpected"],
       ["build", "timeout", "again"],
       ["approval:merge", "timeout", "ignore"],
@@ -125,6 +131,33 @@ describe("machine", () => {
   });
 });
 
+test("machine: an answered question doesn't come back on a later wait", () => {
+  const db = testDb();
+  const subject = () => ({ title: "Log in", repo: "web", link: null });
+  let m: Mission = db.tx(() =>
+    insertMission(db, { intent: "261026-1000", slug: "log-in", repo: "web", model: "opus", a: 3 }, 1),
+  );
+  const cx = { db, now: 10, subject };
+  for (let i = 0; i < 3; i++) m = apply(cx, m, { event: "ok" });
+  expect(m.stage).toBe("build");
+  const question = { context: "c", question: "Hello or bye?", options: [], recommendation: "hello" };
+  m = apply(cx, m, {
+    event: "wait",
+    waiting: "answer the question",
+    data: { question, brief: "Pick a word." },
+  });
+  expect(dataOf(m)).toMatchObject({ question, brief: "Pick a word." });
+  m = apply(cx, m, { event: "answered", text: "hello" });
+  // PIP-107: the next wait asks no question of its own, so the old one and its brief are gone.
+  m = apply(cx, m, {
+    event: "wait",
+    waiting: "answer the question",
+    why: "the worker tried something it may not",
+  });
+  expect(dataOf(m).question).toBeUndefined();
+  expect(dataOf(m).brief).toBeUndefined();
+});
+
 test("machine: plan merged while the slot is taken waits", () => {
   // The table still sends a merged plan to build; the loop holds the move while the repo builds
   // (LOOP-61), so the mission stays where it waits and no wait message is sent.
@@ -166,6 +199,21 @@ test("machine: ship transitions", () => {
   }
   expect(waitInfo("rolled back, revise").stage).toBe("blocked");
   expect(waitInfo("rollback failed").ask).toBe(
-    "Rolling back failed. Nothing more merges in this repo until you fix it.",
+    "Taking the broken change back out failed, so nothing more goes live in this repo until you fix it.",
   );
+});
+
+test("machine: every ask says what the owner decides, as the spec's table does", () => {
+  // PIP-110: LOOP's table of asks is the code's, row for row; the keys stay as intent files store them.
+  const table = readFileSync("specs/loop.md", "utf8").split("**Waits** (`waiting:`")[1]!;
+  const rows = new Map<string, string>();
+  for (const m of table.matchAll(/^\| `([^`]+)` \| [^|]+ \| (.+) \|$/gm)) {
+    if (m[1] !== "waiting:") rows.set(m[1]!.replace(" <stage>", ""), m[2]!);
+  }
+  expect([...rows.keys()].sort()).toEqual(Object.keys(WAITS).sort());
+  for (const [key, w] of Object.entries(WAITS)) {
+    expect(rows.get(key), key).toBe(w.ask);
+    // Plain words: no step names or Towercab's own vocabulary.
+    expect(w.ask, key).not.toMatch(/\b(repair rounds?|worker|verify|proof|gate|approval)\b/);
+  }
 });

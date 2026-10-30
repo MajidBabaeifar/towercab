@@ -63,7 +63,7 @@ test(
       // One revision only; then the owner is asked, and the reason names the red check.
       expect(designs(p)).toHaveLength(2);
       expect(m.waiting).toBe("approve spec");
-      expect(m.why).toContain("still red");
+      expect(m.why).toContain("still fail after one revision");
       expect(m.why).toContain("spec-check");
       expect(p.prNo("web", m.spec_pr!).state).toBe("OPEN");
       expect(p.tools.lines("gh").some((l) => l.startsWith("pr merge"))).toBe(false);

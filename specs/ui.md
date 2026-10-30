@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..104, UI-120..124 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..104, UI-120..128, UI-130..131, UI-133..137, UI-140..145 · **Prefix:** UI
 
 ## Purpose
 
@@ -86,9 +86,9 @@ The top bar says at a glance whether Towercab is healthy and how much needs the 
 Each thing waiting on the owner is one card that says what is asked, why, and offers only the
 actions that answer it.
 
-- Card: the intent's title and repo; the ask (LOOP-14 **Waits**); a short brief (the question's
-  context and recommendation, the gate's reason, or the review's summary, at most a few lines, the
-  rest behind "More"); the PR link. Actions by kind: approve spec, plan or code → "Merge spec PR",
+- Card: the intent's title and repo; the ask (LOOP-14 **Waits**); the plain reason and a short plain brief
+  (UI-126: at most a few lines, the rest behind "More"; the technical text under "Details"); the PR
+  link. Actions by kind: approve spec, plan or code → "Merge spec PR",
   "Merge plan PR" (with the access list visible), "Merge PR"; a question or other blocked wait → a
   reply box ("Send reply"); always, in a menu: "Start over" (`/retry`) and "Drop" (with a confirm).
 - Ordered oldest wait first. Empty → "Nothing needs you."
@@ -133,12 +133,16 @@ and the intent itself.
   step. The stage map (UI-73..77) takes over the time per step and the run files.
 - Verified by: `ui: intent page shows the three PRs`, `ui: timeline in plain words`
 
-### UI-63 · Queue page
+### UI-63 · Queue per repo
 
-A queue page shows, per repo, what runs, what waits behind it, and what is parked.
+Per repo, Towercab says what runs, what is up next, what waits on something else and why, and what is
+parked.
 
-- `/queue`: one lane per `[repos]` repo: the running intent, then the waiting ones in pick order with
-  position and reason; then parked intents; then the last 10 done. Read-only.
+- `lanesOf()` (`GET /api/queue`): one lane per `[repos]` repo, then any other repo a mission names:
+  its missions (the build slot's holder first); "up next": queued intents nothing but their turn holds
+  (none, a full repo, Pause), numbered in pick order; "waiting": those held by a dependency, a usage
+  limit, an unreachable service or another reason, with the reason (UI-61); parked ones; the last 10
+  done. The Repos page (UI-140) shows it. Read-only.
 - Verified by: `ui: queue lanes by repo`
 
 ### UI-64 · Activity page
@@ -155,10 +159,11 @@ An activity page lists what happened, newest first, filterable by intent, repo, 
 The page talks to the loop through a small JSON API.
 
 - `GET /api/state` (the overview's data, with a `version` that changes when anything shown changes),
-  `GET /api/intents/<id>`, `GET /api/queue`, `GET /api/activity?…`, `GET /api/runs/<id>/<file>`
+  `GET /api/intents/<id>`, `GET /api/queue`, `GET /api/repos`, `GET /api/activity?…`, `GET /api/runs/<id>/<file>`
   (`<file>` or `<stage>/<file>`, names `[A-Za-z0-9._-]+`, files under `runs/<id>/` only, no symlinks
   out, text, at most 2 MB), `GET /api/events`
-  (Server-Sent Events: `version` on each change), `POST /api/actions` `{action, intent, text?}`.
+  (Server-Sent Events: `version` on each change), `POST /api/actions` `{action, intent, text?}`
+  (`addRepo` takes `{action, github, name?}` instead, UI-130).
 - Verified by: `ui: API shapes`, `ui: run files stay inside runs`
 
 ### UI-66 · Actions
@@ -380,9 +385,9 @@ The strip reads well in light and dark, on a wide screen and on a phone, and wit
 
 An intent whose plan is approved but waits for the build slot shows as ready to build, behind the intent that holds the slot.
 
-- State `Queued` with the sentence "Ready to build, behind <title>" (UI-56, UI-59); on the queue
-  page (UI-63) each repo lane lists the running intent, then ready intents in build order, then the
-  intents ahead of build (with a count `n of <ahead> ahead`), then waiting ones with the reason
+- State `Queued` with the sentence "Ready to build, behind <title>" (UI-56, UI-59); on a repo's
+  page (UI-63, UI-141) "In progress" lists the running intent, then ready intents in build order, then
+  the intents ahead of build (with a count `n of <ahead> ahead`), then the queued ones with the reason
   "repo has <n> intents ahead". On the airspace (UI-78) a ready plane sits at `03 code`.
 - Verified by: `ui: ready to build shows behind the running intent`, `ui: queue lane shows ahead count`
 
@@ -520,9 +525,10 @@ The airspace shows a change after its merge, until it is live and tested.
 - Two stations sit between the code review's `you` and `landed`: `04 deploy` and `05 e2e` (squares).
   A plane at `deploy` or `rollback`, or waiting after one, sits at `04 deploy`; at `e2e` or `revert`,
   or waiting after one, at `05 e2e`; a plane in a fix round sits at its phase's station as usual. The
-  two stations are drawn only while a plane sits at one, so a Towercab without a live repo sees the
-  line it always had.
-- Verified by: `ui: ship stations`
+  two stations are drawn while a plane sits at one, and for 7 days after any mission entered `deploy`,
+  so the line keeps one shape while a repo ships; a Towercab without a live repo sees the line it
+  always had.
+- Verified by: `ui: ship stations`, `ui: ship stations stay for a week after a deploy`
 
 ### UI-121 · Ship states
 
@@ -566,6 +572,216 @@ The intent page lists every code PR of a shipping change, so the PR that was rol
 - A code PR is `merged` once the mission is past Merging (deploy, e2e, rollback or revert), not only when
   the intent is done.
 - Verified by: `ui: every code PR of a shipping change`
+
+### UI-125 · Rollbacks and fix rounds in the airspace
+
+The airspace tells a plane that is rolling back or fixing a live failure apart from ordinary work.
+
+- A plane at `rollback` or `revert`, or waiting after one, flies backwards in the stalled colour with a
+  `↩` mark. Its card's first line says which suite went red and which version it goes back to
+  ("drill red · back to 2d6ad8c"); without a red suite it says "Rolling back" or "Reverting".
+- A plane in a fix round ([SHIP-11](ship.md)) carries a `fix n/2` mark at its station.
+- The marks come from the plane's `ship` field (`{ kind: "rollback" | "revert" | "fix", mark }`), absent
+  for every other plane.
+- Verified by: `ui: rollback and fix planes are marked`
+
+### UI-126 · Cards lead with the plain brief
+
+A needs-you card says, in plain words, what is asked, why and what the change means for its users;
+the technical text stays one click away under "Details".
+
+- Order: the intent's title; the ask (LOOP-14 **Waits**, [PIP-110](pipeline.md)); for an approval,
+  the plain reason it waits; the plain brief (`Card.brief`, [PIP-107](pipeline.md): spec → the
+  design's, plan → the plan's, code → the review's, else the worker's, question → the asker's; a
+  blocked wait without a PR → Towercab's note); the risk block (AUT-20) and the open points with it;
+  then the question's options, the access list, the reply box and the actions.
+- `Card.details` (Markdown) folds under a "Details" toggle, closed at first and kept open across
+  updates: spec → the design's PR text, its concerns and the questions it left open; plan → the
+  plan's approach and risks; code → the review's findings; a question with a brief → its context
+  (shown in the open otherwise); a blocked wait → the reason Towercab saw (a check's name, an error
+  line).
+- A mission from before briefs keeps the old card: the review's summary leads, nothing folded. Only
+  the card falls back to it; the intent page never shows it as plain (UI-127).
+- Verified by: `ui: the card leads with the plain brief, the technical text folded`, `ui: the card shows its brief first and folds the details`
+
+### UI-127 · The intent page leads with the plain brief
+
+The intent page puts the latest plain brief first, with its technical text folded.
+
+- With a needs-you card, the card carries it (UI-126). Without one, `IntentPage.brief` is the latest
+  plain brief of the newest attempt (code, else plan, else spec) under "In plain words", with
+  `IntentPage.details` folded under "Details" and the risk block beside it.
+- Verified by: `ui: the intent page leads with the plain brief`
+
+### UI-128 · Screenshot of the plain card
+
+The screenshots show a needs-you card with its plain brief first and its Details folded.
+
+- `npm run test:ui` saves `card-brief-<mode>.png` of the plan card and checks that the brief comes
+  before the "Details" toggle, which is closed, that opening it shows the technical text, and that
+  it stays open across a live refetch; it also saves the opened card as `card-brief-open-dark.png`.
+- Verified by: `ui: the card shows its brief first and folds the details`
+
+### UI-130 · Add a repo from the page
+
+The owner adds a repo from the page by typing only its `owner/name`.
+
+- The Repos page's All view (UI-142) ends with an "Add repo" form: one field (`owner/name`) and an
+  "Add repo" button; not shown when the page is read-only (UI-2). It posts `{action: "addRepo", github, name?}` to
+  `/api/actions`, which runs LOOP-66's `repo add` in the loop (`source` `ui`).
+- The request ends once LOOP-66's checks pass (the server's 15 s request limit stays; a clone can take
+  longer): the reply is `Adding <name> (<owner/name>, base <base>): Towercab is cloning it now. It shows
+  on the Repos page when done, and its intents start from then on.`, or the refusal's reason (LOOP-66)
+  shown on the form. The clone goes on in the loop; the page's live update shows the new repo when it is
+  stored (the page's version covers the `repos` table). A clone or store that fails becomes a problem
+  (UI-60), `Towercab couldn't add the repo <name> (<owner/name>)` with the reason, until the repo is
+  added again (`meta.repo-add-failed:<name>`). "No repos yet." when there are none.
+- Verified by: `ui: add repo action adds the repo and says so`, `ui: add repo goes through the actions API`, `repos: a failed add from the page is reported`
+
+### UI-131 · Add this repo on the unknown-repo card
+
+An intent that waits because its repo is unknown offers to add that repo right on its card.
+
+- The `unknown repo` card (UI-58) says `Its repo “<name>” isn't one Towercab knows yet. Check the
+  GitHub repo below and press Add this repo, or change the intent's repo.` and carries
+  `addRepo: {name, github}`: the intent's repo as the short name, and `owner/name` prefilled with the
+  owner most known repos share (`""` when there are none). The page shows the field and an "Add this
+  repo" button, which adds the repo under that short name (UI-130).
+- Once the repo is known, the card says `Towercab knows its repo “<name>” now and queues it again
+  within a minute.` and offers no button; the loop clears the wait (LOOP-68).
+- Verified by: `ui: unknown repo card offers to add the repo`
+
+### UI-133 · Board tab
+
+A Board tab shows every intent as a card on a grid, one column per station and one row per repo, so the
+owner sees at a glance where each repo's work stands.
+
+- `/board`, a top tab after Overview. Columns, left to right, in the airspace's words: Queue, Gate,
+  Spec, Your spec review, Plan, Your plan review, Code, CI, Your code review, Deploy, e2e, Done. Deploy
+  and e2e are there exactly when the airspace draws its ship stations (UI-120). Rows: one per `[repos]`
+  repo in config order, then any other repo an intent names or that has spend (UI-137), then "Unknown
+  repo" for intents the listing doesn't know; a row without cards says so in one line.
+- A card shows the intent's title and its state chip (UI-56), and links to the intent page (UI-62).
+- The server builds it (`GET /api/board`, `board()` in `src/ui/board.ts`): `columns` (key, label,
+  count), `repos` (repo, GitHub name, open and done counts, spend of UI-137, the cards per column), the
+  spend totals and `error`. The page updates live like the others (UI-67).
+- When the intents repo can't be read, the page says so above the board (the reason, and that only
+  started intents are shown) instead of showing empty rows as if nothing were there.
+- Verified by: `ui: board columns follow the airspace`, `ui: board says when the intents repo can't be read`,
+  `ui: screenshots light, dark and mobile`
+
+### UI-134 · Where a card sits
+
+A card sits in the column of its plane on the airspace, so the board and the airspace never disagree.
+
+- Open intents take the station of their airspace plane (UI-78, UI-100, UI-120), built by the same
+  code; a plane whose intent the listing doesn't know sits in the "Unknown repo" row. Parked intents
+  sit in Queue below the queued ones, with their Parked chip. Done holds the intents done in the last
+  7 local days (the same days as the spend of UI-137), newest first, saying when; dropped intents
+  aren't shown. A row header counts its open intents and those done in the last 7 days.
+- Verified by: `ui: board columns follow the airspace`, `ui: board shows what was done in the last 7 days`
+
+### UI-135 · Fold a repo
+
+Each repo row folds to its header with one toggle, and the page remembers it in this browser.
+
+- The toggle is a button on the row header with `aria-expanded`. Folded repos are kept in
+  `localStorage` under `towercab.board.folded` (a JSON list of repo names); every read and write is
+  wrapped in `try`/`catch`, so without storage a row still folds until the page reloads.
+- Verified by: `ui: board folds a repo and remembers it`
+
+### UI-136 · Board fits many repos and a phone
+
+The board stays usable with many repos and intents, and on a phone.
+
+- Only the board scrolls sideways, never the page. Column headers stick to the top of the board and
+  repo names to its left while it scrolls. A column with cards is at least 144 px wide and one without
+  cards in any repo 64 px, so a board with seven busy columns fits a 1280 px screen without scrolling;
+  a wider one scrolls inside the board.
+- At 720 px wide or less the board is one column: a section per repo listing its cards under the station
+  names, stations without cards left out. Light and dark like the rest of the page (UI-68).
+- Verified by: `ui: screenshots light, dark and mobile`, `ui: board folds a repo and remembers it`
+
+### UI-137 · Spend per repo
+
+Towercab keeps what it spent on each repo today, in the last 7 days and in all time, with the totals,
+and shows it on each board row.
+
+- Today and 7 days sum the runs' costs by local day, over the same days as MET-29 (`data.runs`); all
+  time sums `missions.cost_usd` (MET-28) over every mission of the repo, finished, dropped or open.
+  The totals are the sums over all repos, so today's total equals the top bar's spend today.
+- The board's repo header reads "$1.20 today · $8.40 7 days · $52.10 all time", and the board's
+  heading the totals. Every repo that cost something has a row, so the rows add up to the totals.
+- `spendByRepo(db, now)` and `repoSpend(src, repo)` in `src/ui/spend.ts` compute it, for pages to share.
+  All time is one `SUM(cost_usd) … GROUP BY repo`; only missions updated in the last 8 days have their
+  runs read.
+- Verified by: `ui: spend per repo today, 7 days and all time`
+
+### UI-140 · Repos tab
+
+A Repos tab, where the Queue tab was, shows one repo at a time, picked from a row of chips.
+
+- `/repos`, the third top tab. `/queue` (its old name) shows the same page, so old links work. A chip
+  per repo (the queue's lanes, UI-63) with its open intents (in progress, up next, waiting, parked)
+  and a dot when one waits on the owner, after an "All" chip with the total. The chosen repo is in
+  the URL, `/repos?repo=<name>`, so it can be linked; an unknown name shows All and says so.
+- Data: `GET /api/repos[?repo=<name>]`, `repos()` in `src/ui/repos.ts`: `chips`, `selected`, `repo`
+  (UI-141) or `all` (UI-142), the spend totals and `error`. The page updates live like the others.
+- Verified by: `ui: repos chips and the All view`, `ui: repos API and refresh go through the server`, `ui: screenshots light, dark and mobile`
+
+### UI-141 · A repo's page
+
+A repo's page says what people can do with it, then what Towercab is doing in it and what that
+cost, in a few short sections instead of one long list.
+
+- In order: the repo's name, GitHub name and "n of m ahead" (UI-100); "What people can do" (UI-143);
+  "In progress" (its missions as work rows, UI-59, owner waits included); "Up next" (numbered, in pick
+  order); "Waiting" (each with its reason in words, UI-61; only when there is one); "Parked" (folded
+  by default, only when there is one); "Recently done" (UI-63's last 10 done or dropped, folded, only
+  when there is one); "Spend" (today, 7 days, all time, UI-137).
+- Verified by: `ui: a repo page shows its features, work and spend`, `ui: screenshots light, dark and mobile`
+
+### UI-142 · All repos
+
+With no repo chosen, the page shows one short card per repo, not one long list.
+
+- A card per repo: its name, GitHub name, counts in words (in progress, needing the owner, up next,
+  waiting, parked; the zero ones of the last three left out) and its spend; it links to the repo's
+  page. The "Add repo" form (UI-130) ends the All view.
+- Verified by: `ui: repos chips and the All view`, `ui: screenshots light, dark and mobile`
+
+### UI-143 · Feature list on the page
+
+The repo's page leads with its feature list, grouped as In progress, Live and Planned.
+
+- From `features/<repo>.md` as the local checkout has it (INT-37's `localFeatures`, no pull) and
+  INT-40's planned intents. A line Towercab added for an intent links to the intent's page. "Edit the list" links to the file on GitHub when it exists.
+  Nothing listed → "No features listed yet."
+- Verified by: `ui: a repo page shows its features, work and spend`, `ui: screenshots light, dark and mobile`
+
+### UI-144 · Reading the list from the repo
+
+The first time a repo's page is shown, Towercab asks once for its list to be read from the repo, and
+the page offers to read it again.
+
+- `GET /api/repos?repo=<name>` for a configured repo whose run (INT-39) was never asked for and whose
+  file has no line of its own asks for it through the `features` action, only while Towercab runs;
+  the All view and later looks never ask again. Under the list, one sentence says where it stands:
+  asked, reading, `Last read from the repo <when>: <n> live features.`, or the failure and its reason.
+- "Refresh from the repo" (shown while Towercab runs, unless a run is asked for or running) posts
+  `{action: "features", repo}`; the reply says the list is rewritten within a few minutes, or that a
+  run is already on its way.
+- The backfill's state is part of the page's version (`dbMark` reads the `features:%` meta rows), so an
+  open page shows a run asked for, started, done or failed without anything else moving.
+- Verified by: `ui: the first look asks for the backfill once`, `ui: features action asks the loop once`, `ui: repos API and refresh go through the server`, `ui: a backfill's state changes the page's version`
+
+### UI-145 · Repos on a phone
+
+The Repos page works at phone width and in light and dark, like the rest of the page.
+
+- Chips wrap onto more lines; the All view is one column at 720 px or less; nothing scrolls sideways
+  (UI-68).
+- Verified by: `ui: screenshots light, dark and mobile`
 
 ## Out of scope
 

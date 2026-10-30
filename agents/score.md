@@ -21,7 +21,12 @@ it is part of describing the problem.
 
 Answer with the JSON the schema asks for:
 
-- `title`: one line, under 80 characters, saying what should change. Not a sentence about the issue.
+- `title`: the work's title as a user story, so the owner knows what it is when switching in cold:
+  one plain sentence of about 6 to 14 words, under 100 characters, no period at the end. Name the
+  product ({{product}}), then what someone can do or see once it's done, and for whom. No file names,
+  functions, flags or jargon: a friend who doesn't code should understand it. Not a sentence about
+  the issue ("Fix bug in export" is wrong; "{{product}} exports invoices with the right totals" is
+  right).
 - `problem`: what is wrong or missing today and who it affects, in two to five plain sentences.
 - `outcome`: the behaviour that should be true when this is done, as 1 to 5 short bullets without a
   leading dash. Each bullet is something a reviewer can check.

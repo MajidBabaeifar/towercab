@@ -88,7 +88,7 @@ test("ui: binds localhost only", async () => {
 
 test("ui: loop serves the page", async () => {
   const { ui, port } = await serve();
-  for (const path of ["/", "/queue", "/activity", `/i/${IDS.plan}`]) {
+  for (const path of ["/", "/board", "/queue", "/activity", `/i/${IDS.plan}`]) {
     const r = await call(port, { path });
     expect(r.status, path).toBe(200);
     expect(r.headers["content-type"]).toBe("text/html; charset=utf-8");
@@ -214,6 +214,8 @@ test("ui: API shapes", async () => {
   expect(missing.body.error).toBe("There is no intent 999999-0000-9.");
   const queue = await json("/api/queue");
   expect((queue.body.lanes as unknown[]).length).toBe(6);
+  const board = await json("/api/board");
+  expect(Object.keys(board.body).sort()).toEqual(["columns", "error", "repos", "spend", "version"]);
   const act = await json(`/api/activity?intent=${IDS.plan}&kind=waits`);
   expect(act.body).toMatchObject({ more: false });
   expect((act.body.items as { kind: string }[]).map((i) => i.kind)).toEqual(["wait", "wait"]);
@@ -329,4 +331,24 @@ test("ui: run files stay inside runs", async () => {
   expect(big.body.length).toBeLessThan(2 * 1024 * 1024 + 200);
   expect(big.body.endsWith("END")).toBe(true);
   expect(big.body).toMatch(/^… the first \d+ KB are cut/);
+});
+
+test("ui: add repo goes through the actions API", async () => {
+  const { f, ui, port } = await serve();
+  // {action: "addRepo", github, name?}: no intent needed.
+  const r = await post(port, ui.token, { action: "addRepo", github: "acme/crm", name: "crm" });
+  expect(r.status).toBe(200);
+  expect(JSON.parse(r.body)).toEqual({
+    ok: true,
+    message:
+      "Adding crm (acme/crm, base main): Towercab is cloning it now. It shows on the Repos page when done, and its intents start from then on.",
+  });
+  expect(f.calls.at(-1)).toEqual({ action: "addRepo", github: "acme/crm", name: "crm" });
+  expect((await post(port, ui.token, { action: "addRepo", github: "acme/shop" })).status).toBe(200);
+  expect(f.calls.at(-1)).toEqual({ action: "addRepo", github: "acme/shop" });
+  // Read-only: refused with the reason.
+  const ro = await serve({ actions: null });
+  const refused = await post(ro.port, ro.ui.token, { action: "addRepo", github: "acme/crm" });
+  expect(refused.status).toBe(409);
+  expect(JSON.parse(refused.body).message).toMatch(/read-only/);
 });

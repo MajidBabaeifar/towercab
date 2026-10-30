@@ -14,8 +14,11 @@ import {
 } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, resolve, sep } from "node:path";
+import { isRepoName } from "../intents/features.ts";
 import type { IntentStore, Listing } from "../intents/types.ts";
 import type { UiActions } from "./actions.ts";
+import { board } from "./board.ts";
+import { repos } from "./repos.ts";
 import { activity, intentPage, overview, queue, RUN_NAME, redact, type UiSources } from "./state.ts";
 import type { ActionReply } from "./view.ts";
 
@@ -75,8 +78,18 @@ const TYPES: Record<string, string> = {
   ".webmanifest": "application/manifest+json",
 };
 
-const PAGES = /^\/(?:queue|activity|i\/[A-Za-z0-9._-]+)?\/?$/;
-const ACTIONS = new Set(["merge", "reply", "retry", "drop", "start", "pause", "resume"]);
+const PAGES = /^\/(?:board|repos|queue|activity|i\/[A-Za-z0-9._-]+)?\/?$/;
+const ACTIONS = new Set([
+  "merge",
+  "reply",
+  "retry",
+  "drop",
+  "start",
+  "pause",
+  "resume",
+  "addRepo",
+  "features",
+]);
 const INTENT_ID = /^[A-Za-z0-9._-]{1,100}$/;
 
 const NOT_BUILT = `<!doctype html>
@@ -105,6 +118,8 @@ function cachingStore(store: IntentStore, ttlMs: number): IntentStore & { invali
     update: (x, what, fn, mark) => store.update(x, what, fn, mark),
     hasMark: (m) => store.hasMark(m),
     readFile: (p) => store.readFile(p),
+    editFeatures: (repo, what, fn) => store.editFeatures(repo, what, fn),
+    localFeatures: (repo) => store.localFeatures(repo),
     github: () => store.github(),
     url: (i) => store.url(i),
     invalidate() {
@@ -250,7 +265,14 @@ export function startUi(o: UiOptions): UiServer {
     } catch {
       return json(res, 413, { ok: false, message: "The request is too large." });
     }
-    let body: { action?: unknown; intent?: unknown; text?: unknown };
+    let body: {
+      action?: unknown;
+      intent?: unknown;
+      text?: unknown;
+      github?: unknown;
+      name?: unknown;
+      repo?: unknown;
+    };
     try {
       body = JSON.parse(raw) as typeof body;
     } catch {
@@ -258,10 +280,13 @@ export function startUi(o: UiOptions): UiServer {
     }
     const action = typeof body.action === "string" ? body.action : "";
     const intent = typeof body.intent === "string" ? body.intent : "";
+    const repo = typeof body.repo === "string" ? body.repo : "";
     if (!ACTIONS.has(action)) return json(res, 400, { ok: false, message: `Unknown action “${action}”.` });
-    const needsIntent = action !== "pause" && action !== "resume";
+    const needsIntent = !["pause", "resume", "addRepo", "features"].includes(action);
     if (needsIntent && !INTENT_ID.test(intent))
       return json(res, 400, { ok: false, message: "Which intent?" });
+    if (action === "features" && !isRepoName(repo))
+      return json(res, 400, { ok: false, message: "Which repo?" });
     if (!o.actions) {
       return json(res, 409, {
         ok: false,
@@ -284,7 +309,14 @@ export function startUi(o: UiOptions): UiServer {
                   ? await a.start(intent)
                   : action === "pause"
                     ? await a.pause()
-                    : await a.resume();
+                    : action === "addRepo"
+                      ? await a.addRepo(
+                          typeof body.github === "string" ? body.github : "",
+                          typeof body.name === "string" && body.name ? body.name : undefined,
+                        )
+                      : action === "features"
+                        ? await a.features(repo)
+                        : await a.resume();
       reply = { ok: true, message };
     } catch (e) {
       reply = { ok: false, message: (e as Error).message };
@@ -320,6 +352,14 @@ export function startUi(o: UiOptions): UiServer {
     }
     if (path === "/api/state") return json(res, 200, await overview(src));
     if (path === "/api/queue") return json(res, 200, await queue(src));
+    if (path === "/api/board") return json(res, 200, await board(src));
+    if (path === "/api/repos") {
+      const a = o.actions;
+      // UI-144: a repo's first look asks once for its backfill, while Towercab runs.
+      const ask = a && src.running ? (r: string) => a.features(r) : undefined;
+      const page = await repos(src, url.searchParams.get("repo") || null, { ask });
+      return json(res, 200, page);
+    }
     if (path === "/api/events") return events(req, res);
     if (path === "/api/activity") {
       const q = url.searchParams;
