@@ -1,0 +1,15 @@
+name: Feature request
+description: Suggest a change to what Towercab does
+body:
+  - type: textarea
+    attributes:
+      label: Problem
+      description: What is hard or missing today, and who it affects.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Proposed outcome
+      description: What should be true once this is done.
+    validations:
+      required: true

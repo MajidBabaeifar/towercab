@@ -1,9 +1,10 @@
-// What the public repo shows (PUB-1..8, PUB-13..17) and Towercab's own CI (PIP-12).
+// What the public repo shows (PUB-1..8, PUB-13..21) and Towercab's own CI (PIP-12).
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { expect, test } from "vitest";
+import { parse as parseYaml } from "yaml";
 import { parseConfig } from "../src/config.ts";
 
 const read = (p: string) => readFileSync(p, "utf8");
@@ -217,4 +218,76 @@ test("public: CI workflow runs the checks", () => {
   expect(ci).toMatch(/npm run test:ui/);
   expect(ci).toMatch(/upload-artifact/);
   for (const job of ci.split("\n  ").filter((l) => /^[a-z-]+:\n/.test(l))) expect(job).toMatch(/name: /);
+});
+
+type FormItem = {
+  type: string;
+  attributes?: { label?: string; description?: string; render?: string };
+  validations?: { required?: boolean };
+};
+
+function form(file: string): { labels?: unknown; body: FormItem[]; name: string; description: string } {
+  const f = parseYaml(read(`.github/ISSUE_TEMPLATE/${file}`));
+  expect(f.name).toBeTruthy();
+  expect(f.description).toBeTruthy();
+  for (const item of f.body as FormItem[]) {
+    expect(item.type).toBeTruthy();
+    if (item.type === "input" || item.type === "textarea") expect(item.attributes?.label).toBeTruthy();
+    if (item.validations) expect(typeof item.validations.required).toBe("boolean");
+  }
+  expect(JSON.stringify(f.labels ?? [])).not.toMatch(/towercab/i);
+  return f;
+}
+
+const field = (items: FormItem[], re: RegExp) => items.find((i) => re.test(i.attributes?.label ?? ""));
+
+test("public: bug report form asks for the versions and logs", () => {
+  const { body } = form("bug_report.yml");
+  for (const re of [
+    /what happened/i,
+    /expected/i,
+    /towercab.*(commit|version)/i,
+    /^OS/i,
+    /node/i,
+    /\bgh\b/i,
+    /claude code/i,
+  ]) {
+    const item = field(body, re);
+    expect(item, String(re)).toBeDefined();
+    expect(item?.validations?.required, String(re)).toBe(true);
+  }
+  const logs = field(body, /log/i);
+  expect(logs?.type).toBe("textarea");
+  expect(logs?.validations?.required).not.toBe(true);
+  expect(logs?.attributes?.render).toBe("shell");
+  expect(logs?.attributes?.description).toMatch(/remove[^.]*(secret|token)/i);
+});
+
+test("public: feature request form has problem and outcome", () => {
+  const { body } = form("feature_request.yml");
+  for (const label of ["Problem", "Proposed outcome"]) {
+    const item = body.find((i) => i.attributes?.label === label);
+    expect(item?.type, label).toBe("textarea");
+    expect(item?.validations?.required, label).toBe(true);
+  }
+});
+
+test("public: issue chooser blocks blank issues and points to the security policy", () => {
+  const c = parseYaml(read(".github/ISSUE_TEMPLATE/config.yml"));
+  expect(c.blank_issues_enabled).toBe(false);
+  expect(c.contact_links).toHaveLength(1);
+  expect(c.contact_links[0].name).toMatch(/vulnerab/i);
+  expect(c.contact_links[0].url).toMatch(/\/SECURITY\.md$/);
+  expect(existsSync("SECURITY.md")).toBe(true);
+});
+
+test("public: pull request template sections", () => {
+  const t = read(".github/pull_request_template.md");
+  const heads = [...t.matchAll(/^## (.+)$/gm)].map((m) => m[1]!.toLowerCase());
+  expect(heads).toHaveLength(4);
+  expect(heads[0]).toMatch(/what.*why/);
+  expect(heads[1]).toMatch(/spec/);
+  expect(heads[2]).toMatch(/checked/);
+  expect(heads[3]).toMatch(/screenshot/);
+  expect(t).toContain("npm run check");
 });
