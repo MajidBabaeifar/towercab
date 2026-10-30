@@ -604,6 +604,22 @@ export function stationOf(m: Pick<Mission, "stage" | "from_stage">): StationKey 
   return p === "spec" || p === "plan" ? p : "code";
 }
 
+/** UI-125: a plane rolling back or reverting, or one in a fix round. */
+export function shipMark(m: Pick<Mission, "stage" | "from_stage" | "data">): Plane["ship"] {
+  const at = m.stage === "blocked" && m.from_stage ? m.from_stage : m.stage;
+  if (at === "rollback" || at === "revert") return { kind: at, mark: "↩" };
+  const fixes = dataOf<{ ship?: { fixes?: number } }>(m as Mission).ship?.fixes ?? 0;
+  return fixes > 0 && !finished(m.stage) ? { kind: "fix", mark: `fix ${fixes}/2` } : undefined;
+}
+
+/** UI-125: the first card line of a plane going back: which suite went red, and where it goes. */
+function backWords(m: Mission): string | null {
+  const ship = dataOf<{ ship?: { red?: { suite: string }; target?: string } }>(m).ship;
+  return ship?.red && ship.target ? `${ship.red.suite} red · back to ${ship.target.slice(0, 7)}` : null;
+}
+
+const SHIP_WEEK = 7 * 86_400;
+
 const STATIONS: StationKey[] = [
   "parked",
   "queue",
@@ -633,6 +649,8 @@ function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): Air
   for (const m of s.missions) {
     const row = missionRow(src, s, m);
     const waited = duration(s.now - (s.entered.get(m.id) ?? m.created));
+    const mark = shipMark(m);
+    const back = mark && mark.kind !== "fix" ? backWords(m) : null;
     planes.push({
       intent: m.intent,
       title: row.title,
@@ -644,8 +662,9 @@ function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): Air
         ? [row.behind ?? "Ready to build", `${row.cost} · ${row.model}`]
         : isWait(m.stage)
           ? [askOf(m.waiting), `Waiting ${waited} · ${row.cost}`]
-          : [`${row.step} · ${row.inStep}`, `${row.cost} · ${row.model}`],
+          : [back ?? `${row.step} · ${row.inStep}`, `${row.cost} · ${row.model}`],
       phases: row.phases,
+      ...(mark ? { ship: mark } : {}),
     });
     seen.add(m.intent);
   }
@@ -712,7 +731,12 @@ function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): Air
       recent: landed.slice(0, 3).map((i) => ({ intent: i.id, title: i.title, repo: i.repo })),
     },
     counts,
-    ship: planes.some((p) => p.station === "deploy" || p.station === "e2e"),
+    ship:
+      planes.some((p) => p.station === "deploy" || p.station === "e2e") ||
+      src.db.get(
+        "SELECT 1 FROM transitions WHERE to_stage = 'deploy' AND at > ? LIMIT 1",
+        s.now - SHIP_WEEK,
+      ) !== undefined,
     countsText: `${counts.flying} in flight · ${needs} ${needWord} · ${counts.landed} landed today`,
     summary:
       `Airspace: ${counts.parked} parked, ${counts.queued} queued, ${counts.flying} in flight, ` +

@@ -2883,6 +2883,12 @@ a.pr-tile:hover {
   fill: var(--c);
 }
 
+/* UI-125: the rollback's arrow or a fix round's count, above the plane. */
+.air-ship {
+  font-size: 9px;
+  font-weight: 600;
+}
+
 .air-zz {
   fill: var(--air-label);
   animation: air-zz 2.6s ease-out infinite;

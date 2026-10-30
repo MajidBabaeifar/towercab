@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..104, UI-120..124 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..104, UI-120..125 · **Prefix:** UI
 
 ## Purpose
 
@@ -520,9 +520,10 @@ The airspace shows a change after its merge, until it is live and tested.
 - Two stations sit between the code review's `you` and `landed`: `04 deploy` and `05 e2e` (squares).
   A plane at `deploy` or `rollback`, or waiting after one, sits at `04 deploy`; at `e2e` or `revert`,
   or waiting after one, at `05 e2e`; a plane in a fix round sits at its phase's station as usual. The
-  two stations are drawn only while a plane sits at one, so a Towercab without a live repo sees the
-  line it always had.
-- Verified by: `ui: ship stations`
+  two stations are drawn while a plane sits at one, and for 7 days after any mission entered `deploy`,
+  so the line keeps one shape while a repo ships; a Towercab without a live repo sees the line it
+  always had.
+- Verified by: `ui: ship stations`, `ui: ship stations stay for a week after a deploy`
 
 ### UI-121 · Ship states
 
@@ -566,6 +567,18 @@ The intent page lists every code PR of a shipping change, so the PR that was rol
 - A code PR is `merged` once the mission is past Merging (deploy, e2e, rollback or revert), not only when
   the intent is done.
 - Verified by: `ui: every code PR of a shipping change`
+
+### UI-125 · Rollbacks and fix rounds in the airspace
+
+The airspace tells a plane that is rolling back or fixing a live failure apart from ordinary work.
+
+- A plane at `rollback` or `revert`, or waiting after one, flies backwards in the stalled colour with a
+  `↩` mark. Its card's first line says which suite went red and which version it goes back to
+  ("drill red · back to 2d6ad8c"); without a red suite it says "Rolling back" or "Reverting".
+- A plane in a fix round ([SHIP-11](ship.md)) carries a `fix n/2` mark at its station.
+- The marks come from the plane's `ship` field (`{ kind: "rollback" | "revert" | "fix", mark }`), absent
+  for every other plane.
+- Verified by: `ui: rollback and fix planes are marked`
 
 ## Out of scope
 

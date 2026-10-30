@@ -796,3 +796,55 @@ test("ui: every code PR of a shipping change", async () => {
     ["Revert", "open", 19],
   ]);
 });
+
+test("ui: ship stations stay for a week after a deploy", async () => {
+  const f = fixture();
+  expect((await overview(f.sources)).airspace.ship).toBe(false);
+  const id = f.db.get<{ id: number }>("SELECT max(id) AS id FROM missions WHERE intent = ?", IDS.code)!.id;
+  const deployed = (ago: number) =>
+    f.db.run(
+      "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) VALUES (?, ?, 'merge', 'code_merged', 'deploy', null)",
+      id,
+      NOW - ago,
+    );
+  // Eight days ago is too old; two days ago keeps the stations on the line with no plane there.
+  deployed(8 * 86_400);
+  expect((await overview(f.sources)).airspace.ship).toBe(false);
+  deployed(2 * 86_400);
+  const a = (await overview(f.sources)).airspace;
+  expect(a.ship).toBe(true);
+  expect(a.planes.some((p) => p.station === "deploy" || p.station === "e2e")).toBe(false);
+});
+
+test("ui: rollback and fix planes are marked", async () => {
+  const { shipMark } = await import("../../src/ui/state.ts");
+  const m = (stage: Stage, data: unknown = {}, from_stage: Stage | null = null) =>
+    ({ stage, from_stage, data: JSON.stringify(data) }) as unknown as Mission;
+  expect(shipMark(m("rollback"))).toEqual({ kind: "rollback", mark: "↩" });
+  expect(shipMark(m("blocked", {}, "revert"))).toEqual({ kind: "revert", mark: "↩" });
+  expect(shipMark(m("build", { ship: { merges: ["a"], fixes: 1 } }))).toEqual({
+    kind: "fix",
+    mark: "fix 1/2",
+  });
+  expect(shipMark(m("e2e", { ship: { merges: ["a", "b"], fixes: 2 } }))).toEqual({
+    kind: "fix",
+    mark: "fix 2/2",
+  });
+  // Ordinary work and a finished mission carry no mark.
+  expect(shipMark(m("build"))).toBeUndefined();
+  expect(shipMark(m("deploy", { ship: { merges: ["a"], fixes: 0 } }))).toBeUndefined();
+  expect(shipMark(m("done", { ship: { merges: ["a"], fixes: 1 } }))).toBeUndefined();
+  // On the airspace, a rolling-back plane's card says which suite went red and where it goes back to.
+  const f = fixture();
+  f.db.run(
+    "UPDATE missions SET stage = 'rollback', data = ? WHERE id = (SELECT max(id) FROM missions WHERE intent = ?)",
+    JSON.stringify({
+      ship: { merges: ["a"], fixes: 0, red: { suite: "drill", log: "", path: "" }, target: "2d6ad8c4" },
+    }),
+    IDS.code,
+  );
+  const plane = (await overview(f.sources)).airspace.planes.find((p) => p.intent === IDS.code)!;
+  expect(plane).toMatchObject({ station: "deploy", ship: { kind: "rollback", mark: "↩" } });
+  expect(plane.lines[0]).toBe("drill red · back to 2d6ad8c");
+  expect((await overview(f.sources)).airspace.planes.filter((p) => p.ship)).toHaveLength(1);
+});
