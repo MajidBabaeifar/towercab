@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..89, PIP-92..99 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..89, PIP-92..100 · **Prefix:** PIP
 
 ## Purpose
 
@@ -860,9 +860,10 @@ Before each gate decides, a separate read-only agent that didn't write the chang
   in `review`, after a review that approves or has used its fix rounds (PIP-98), given the diff, the CI
   and proof results and the review's summary; the review's `door` and red lines feed the floor
   ([AUT-17](autonomy.md)). A review that didn't finish gets no risk run (the gate holds anyway).
-- Each assessment is kept with what it judged (`riskOf`: the spec PR's head, a hash of the plan and
-  its access, the diff's `git patch-id`) and is reused while that is unchanged; a new spec head, plan or
-  diff gets a new run. Its cost counts like the review's, on a session of its own (MET-28).
+- Each assessment is kept with what it judged (`riskOf.<gate>` = `riskKey`: the spec PR's head plus a
+  hash of the owner's answers on it (PIP-97), a hash of the plan and its access, the diff's `git
+  patch-id`) and is reused while that is unchanged; a new spec head, answer, plan or diff gets a new
+  run. Its cost counts like the review's, on a session of its own (MET-28).
 - Verified by: `pipeline: risk is assessed at each gate`, `pipeline: review reused for an unchanged diff`
 
 ### PIP-97 · A second reviewer reads the spec
@@ -875,7 +876,11 @@ the owner must decide, the spec moves on (subject to its risk); open points go t
   spec gate waits ([AUT-11](autonomy.md), why `<n> open points for you to decide`), the points are in
   the spec PR's body under `## Open points for you` and on the card. None → the risk decides. At the
   plan and code gates the list is empty.
-- Verified by: `pipeline: open points send the spec to the owner`
+- The owner's answers on the spec PR (the feedback that starts a design revision, not Towercab's own
+  conflict or red-check revisions) are kept in `data.specAnswers` and given to the next spec risk run
+  as decided, not to be raised again. They are part of the spec's risk key, so an answer gets a new
+  check even when the revision changes nothing in the spec.
+- Verified by: `pipeline: open points send the spec to the owner`, `pipeline: an answered open point lets the spec go on`
 
 ### PIP-98 · Review findings go back to the builder first
 
@@ -900,6 +905,16 @@ Each of the three PRs says how risky the change is, in plain words.
   are rewritten after the risk run; the code PR's at the gate (PIP-48). A risk run that didn't finish
   says so.
 - Verified by: `pipeline: risk is assessed at each gate`, `pipeline: gate table`
+
+### PIP-100 · Agents that only read can't write the checkout
+
+An agent without Edit or Write can't change the checkout through its shell either.
+
+- `claudeSettings`: for an agent whose `tools` have neither `Edit` nor `Write` (today `plan`,
+  `review`, `risk`), the checkout itself is in the sandbox's `denyWrite`, besides its `.git`. Their
+  allowed `Bash(git diff:*)`, `git log` and `git show` accept `--output=<file>`, so text planted in a
+  diff could otherwise make them write files; the sandbox, not a pattern on the command, stops it.
+- Verified by: `claude: read-only agents can't write the checkout`, `claude: review argv`
 
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 

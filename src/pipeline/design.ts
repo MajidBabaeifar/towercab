@@ -7,7 +7,7 @@ import { git, refreshBase } from "../checkout.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
-import { openPointsMd, type Risk, riskMd } from "../risk.ts";
+import { currentRisk, openPointsMd, type Risk, riskMd } from "../risk.ts";
 import { ciState, redLog } from "./ci.ts";
 import {
   asEnv,
@@ -28,7 +28,7 @@ import {
 } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { specBody } from "./prtext.ts";
-import { endRisk, riskFor, spawnRisk, withRisk } from "./risk.ts";
+import { endRisk, spawnRisk } from "./risk.ts";
 import { parseResult } from "./schemas.ts";
 
 /** The intent's reserved spec IDs (`spec IDs: …` in `## Proposed outcome`), as a prompt sentence. */
@@ -194,6 +194,8 @@ async function designRun(cx: Ctx, m: Mission): Promise<Progress> {
 export const designHandler: Handler = {
   async step(cx, m) {
     const d = data(m);
+    // AUT-21: the owner's retry of a risk check that didn't finish: the checks, then the check again.
+    if (m.step === "" && d.recheck) return specCi(cx, cx.record(m, "spec_ci", {}, { recheck: undefined }));
     switch (m.step) {
       case "":
       case "design":
@@ -216,15 +218,19 @@ export const designHandler: Handler = {
 
   async finish(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
     if (m.step === "risk") {
-      const e = endRisk(cx, m, end, m.head ?? "");
+      const e = endRisk(cx, m, end, "spec");
       if ("progress" in e) return e.progress;
-      const fresh = cx.record(m, "spec_ci", {}, { ...e.data, ...withRisk(m, "spec", e.risk, m.head ?? "") });
+      const fresh = cx.record(m, "spec_ci", {}, e.data);
       await patchBody(cx, fresh);
       return decide(cx, fresh);
     }
     const r = ended(cx, m, "design", end, (v) => parseResult("design", v));
     if (!r.ok) return r.progress;
     const v = r.value;
+    const d = data(m);
+    // PIP-97: the owner's answers on the spec PR, kept for the second reviewer (not Towercab's own
+    // conflict or red-check revisions).
+    const owner = d.answer && !d.mergeMain && !d.specRed ? d.answer : null;
     const fresh = cx.record(
       m,
       "commit",
@@ -242,6 +248,7 @@ export const designHandler: Handler = {
         answer: undefined,
         mergeMain: undefined,
         specRed: undefined,
+        ...(owner ? { specAnswers: [...(d.specAnswers ?? []), owner] } : {}),
       },
     );
     return commit(cx, fresh);
@@ -292,7 +299,7 @@ async function dropOthers(cx: Ctx, m: Mission): Promise<void> {
 async function bodyOf(cx: Ctx, m: Mission): Promise<string> {
   const d = data(m);
   const intent = await intentOf(cx, m);
-  const risk = riskFor(m, "spec", m.head ?? "");
+  const risk = currentRisk(m, "spec");
   return specBody(
     d.design?.pr ?? "",
     d.design?.specIds ?? [],
@@ -400,7 +407,7 @@ async function ownerWait(cx: Ctx, m: Mission, risk: Risk | null): Promise<Outcom
  * then the spec gate (AUT-11): the owner, or Towercab's merge (PIP-50).
  */
 async function decide(cx: Ctx, m: Mission): Promise<Progress> {
-  const risk = riskFor(m, "spec", m.head ?? "");
+  const risk = currentRisk(m, "spec");
   if (risk === undefined) return spawnRisk(cx, m, "spec");
   const owner = await ownerWait(cx, m, risk);
   if (owner) return { done: owner };

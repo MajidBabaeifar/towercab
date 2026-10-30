@@ -238,6 +238,10 @@ export function claudeSettings(
   ];
   if (run.config.agent.sandboxUnixSockets) denyRead.push(...HOST_SOCKETS);
   const denyWrite = [join(resolve(run.cwd), ".git")];
+  // PIP-100: an agent without Edit or Write only reads, so its Bash can't write the checkout either
+  // (`git diff --output=<file>` from text planted in a diff).
+  const agent = loadAgent(run.agent ?? run.kind);
+  if (!agent.tools.some((t) => t === "Edit" || t === "Write")) denyWrite.unshift(resolve(run.cwd));
   if (run.guardRules) {
     const g = run.guardRules;
     for (const p of new Protected(g.protected, g.granted).denyWrite(g.checkout)) {

@@ -5,6 +5,7 @@ import type { Db } from "./db.ts";
 import type { IntentStore } from "./intents/types.ts";
 import { type ApplyCtx, apply } from "./machine.ts";
 import { type Mission, unfinishedFor } from "./mission.ts";
+import { recheck } from "./risk.ts";
 
 export type CommandName = "answer" | "retry" | "drop" | "pause" | "resume" | "start";
 
@@ -125,6 +126,11 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       const intent = await store.get(row.arg);
       const m = unfinishedFor(db, intent.id);
       if (m) {
+        const again = recheck(m);
+        if (again) {
+          apply(cx.applyCtx, m, again);
+          return `running the risk check of ${intent.id} again`;
+        }
         const fresh = apply(cx.applyCtx, m, { event: "retry_fresh" });
         return `fresh attempt ${fresh.attempt} for ${intent.id}`;
       }

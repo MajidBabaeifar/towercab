@@ -667,7 +667,9 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
       review: {
         summary:
           "The guide now starts with a five-minute path: install, create a project, deploy. Each step has a command and what you should see after it. The old reference material moved to its own page, linked at the end.\n\nAll links resolve, the code samples run in CI, and the screenshots are new. One thing to check: the guide now assumes Node 22; the old one said 18.",
+        patchId: "x",
       },
+      riskOf: { code: "x" },
       // AUT-20: the code's risk, shown on its card.
       risk: {
         code: {

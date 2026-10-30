@@ -8,11 +8,12 @@ import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import { ok, red } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { DEFAULT_DO_NOT_REPORT, type Review } from "../repo/files.ts";
+import { currentRisk } from "../risk.ts";
 import { e2eText } from "../ship/live.ts";
 import { check } from "../tools.ts";
 import { coGit, data, ended, intentOf, note, repoFiles, spawnRun } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
-import { endRisk, riskFor, spawnRisk, withRisk } from "./risk.ts";
+import { endRisk, spawnRisk } from "./risk.ts";
 import { parseResult, type ReviewResult } from "./schemas.ts";
 
 /** PIP-98: fix rounds a review that doesn't approve gets before the gate holds for the owner. */
@@ -77,7 +78,7 @@ export const reviewHandler: Handler = {
     const d = data(m);
     const pid = await patchId(cx, m);
     if (d.review && d.review.patchId === pid) {
-      if (riskFor(m, "code", pid) === undefined) return spawnRisk(cx, m, "code");
+      if (currentRisk(m, "code") === undefined) return spawnRisk(cx, m, "code");
       return { done: ok({ why: "the diff is unchanged: the review stands" }) };
     }
     const intent = await intentOf(cx, m);
@@ -111,11 +112,10 @@ export const reviewHandler: Handler = {
 
   async finish(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
     if (m.step === "risk") {
-      const pid = await patchId(cx, m);
       const rv = data(m).review;
-      const e = endRisk(cx, m, end, pid, rv ? { door: rv.door, redLines: rv.redLines } : null);
+      const e = endRisk(cx, m, end, "code", { review: rv ? { door: rv.door, redLines: rv.redLines } : null });
       if ("progress" in e) return e.progress;
-      return { done: ok({ data: { ...e.data, ...withRisk(m, "code", e.risk, pid) } }) };
+      return { done: ok({ data: e.data }) };
     }
     const r = ended(cx, m, "review", end, (v) => parseResult("review", v));
     if (!r.ok) {

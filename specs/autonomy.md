@@ -167,7 +167,11 @@ The answers set a lowest level that the agent's own judgment can raise but never
   ([PIP-5](pipeline.md)) counts too: its `door: one-way` is a one-way door, and a touched red line of
   `REVIEW.md` makes the level high. The kept level is the higher of the agent's and the floor;
   `raised` says why when the floor won (`Raised from low to medium: it is hard to undo.`).
-- Verified by: `risk: the floor raises the level`
+- A plan that asks for access beyond the defaults is at least medium: any protected path, or any
+  domain not in `[agent].network`. Merging a plan grants its ticked access (AUT-14), so at a4 a person
+  sees every grant before it is made; at a5 medium still goes ahead, as before. This raises the level
+  without counting toward the "two or more" rule.
+- Verified by: `risk: the floor raises the level`, `autonomy: a4 plan asking for protected paths waits`
 
 ### AUT-18 · Risk decides the gates at a4 and a5
 
@@ -205,8 +209,23 @@ The level and the three answers, in plain words, are in each PR Towercab opens a
   live: <why>`. PR bodies get a `## Risk: <level>` section ([PIP-99](pipeline.md)). The needs-you
   card shows a risk chip and the three lines for the gate it waits at (spec card → the spec's risk,
   plan → the plan's, code → the code's; other cards the latest), and a spec card lists the open
-  points; the intent page shows the latest risk when no card is shown.
+  points; the intent page shows the latest risk when no card is shown. Only an assessment of the
+  current change shows (`currentRisk`: `riskOf.<gate>` equals `riskKey`, [PIP-96](pipeline.md)), so a
+  revised spec, plan or diff never shows an older risk or older open points.
 - Verified by: `risk: plain words for the owner`, `ui: the card shows the risk`
+
+### AUT-21 · A retry runs a risk check that didn't finish again
+
+When a gate waits only because its risk check didn't finish, the owner's retry runs that check again
+in the same attempt instead of starting over.
+
+- `recheck(m)`: at `approval:spec`, `approval:plan` or `approval:merge` whose current assessment is
+  `null` (AUT-19), a `/retry` on the waiting PR, Retry on its card (which posts `/retry`) or `towercab
+  retry` gives the event `recheck` instead of `retry_fresh`. It clears `risk.<gate>` and
+  `riskOf.<gate>` and moves back: spec → `design`, plan → `plan` (both with `data.recheck`, so they
+  run the gate's checks and risk check, not a new design or plan), code → `review` (the review
+  stands, the risk check runs). Any other retry starts a fresh attempt as before ([LOOP-15](loop.md)).
+- Verified by: `pipeline: a retry runs a risk check that didn't finish again`, `machine: every stage and event pair is defined`
 
 ## Out of scope
 

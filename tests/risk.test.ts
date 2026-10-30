@@ -37,8 +37,8 @@ test("risk: the floor raises the level", () => {
     ).level,
   ).toBe("low");
   // At the code gate the review counts: its one-way door, and a touched red line makes it high.
-  expect(riskFloor(answer(), { door: "one-way", redLines: false }).level).toBe("medium");
-  expect(riskFloor(answer(), { door: "two-way", redLines: true }).level).toBe("high");
+  expect(riskFloor(answer(), { review: { door: "one-way", redLines: false } }).level).toBe("medium");
+  expect(riskFloor(answer(), { review: { door: "two-way", redLines: true } }).level).toBe("high");
   // The agent's low is raised and says why; its high is never lowered.
   const r = riskOf(answer({ door: oneWay }), "x");
   expect([r.level, r.said]).toEqual(["medium", "low"]);

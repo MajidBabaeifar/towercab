@@ -640,6 +640,7 @@ like a crash; `–` = ignored)
 | head_moved | review … merge → ci; else – | – | – | → ci | – |
 | intent_removed | → stopped | → stopped | → stopped | → stopped | → stopped |
 | retry_fresh | fresh | fresh | fresh | fresh | fresh |
+| recheck ([AUT-21](autonomy.md)) | – | → design | → plan | → review | – |
 | resume | merge (held) → again; else – | – | – | – | – |
 
 - again = re-enter the step; cool = wait for the model's cooldown (LOOP-9); backoff = LOOP-10;

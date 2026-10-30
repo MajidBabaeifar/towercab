@@ -12,7 +12,7 @@ import type { Intent, IntentStore, Listing } from "../intents/types.ts";
 import { finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
 import { dataOf, forIntent, type Mission } from "../mission.ts";
 import { usualOwner } from "../repos.ts";
-import { type Risk, type RiskGate, riskWords } from "../risk.ts";
+import { currentRisk, type RiskGate, riskWords } from "../risk.ts";
 import { aheadIn, isAhead, isBuilding, isReady } from "../slots.ts";
 import type {
   Access,
@@ -387,15 +387,16 @@ type MissionData = {
   brief?: string;
   review?: { summary?: string };
   runs?: { at: number; cost: number }[];
-  risk?: Partial<Record<RiskGate, Risk | null>>;
 };
 
-/** AUT-20: the risk judged at `gate`, else the latest one (code, plan, spec), in plain words. */
+/**
+ * AUT-20: the risk judged at `gate`, else the latest one (code, plan, spec), in plain words; only an
+ * assessment of the current spec head, plan or diff counts (PIP-96).
+ */
 export function riskView(m: Mission, gate: RiskGate | null = null): RiskView | null {
-  const risks = dataOf<MissionData>(m).risk ?? {};
   const order: RiskGate[] = gate ? [gate] : ["code", "plan", "spec"];
   for (const g of order) {
-    const r = risks[g];
+    const r = currentRisk(m, g);
     if (!r) continue;
     const w = riskWords(r);
     return {
@@ -495,7 +496,7 @@ export function missionCard(
     : ["reply", "retry", "drop"];
   const gate = kind === "spec" || kind === "plan" ? kind : kind === "code" ? "code" : null;
   const risk = riskView(m, gate);
-  const points = kind === "spec" ? (d.risk?.spec?.openPoints ?? []) : [];
+  const points = kind === "spec" ? (currentRisk(m, "spec")?.openPoints ?? []) : [];
   return {
     ...(risk ? { risk } : {}),
     ...(points.length ? { openPoints: points } : {}),

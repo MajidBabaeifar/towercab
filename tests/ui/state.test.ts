@@ -244,7 +244,9 @@ test("ui: the card shows the risk", async () => {
   const m = mission({
     stage: "approval:spec",
     waiting: "approve spec",
+    head: "abc",
     data: JSON.stringify({
+      riskOf: { spec: "abc" },
       risk: {
         spec: {
           level: "low",
@@ -264,6 +266,10 @@ test("ui: the card shows the risk", async () => {
   expect(card.openPoints).toEqual([{ point: "Keep the old URL?", why: "Bookmarks break." }]);
   expect(card.risk?.gate).toBe("spec");
   expect(riskView({ ...m, stage: "build" })?.label).toBe("Low risk");
+  // A risk of an older head (a revision since) shows nothing, nor its open points.
+  const stale = missionCard(f.sources, { ...m, head: "def" }, undefined, null, NOW);
+  expect([stale.risk, stale.openPoints]).toEqual([undefined, undefined]);
+  expect(riskView({ ...m, head: "def", stage: "build" })).toBeNull();
 });
 
 test("ui: empty states are true", async () => {

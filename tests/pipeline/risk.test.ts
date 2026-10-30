@@ -1,12 +1,12 @@
 // The risk agent at each gate (PIP-96, PIP-97, PIP-99) and the gates it moves (AUT-9, AUT-11, AUT-12,
-// AUT-18, AUT-19), through the real pipeline.
+// AUT-17..19, AUT-21), through the real pipeline.
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import type { Mission } from "../../src/mission.ts";
 import type { PipeData } from "../../src/pipeline/common.ts";
-import { DESIGN, happy, intent, intents, ownerMerges, reply, risk, TARGET } from "../helpers/flows.ts";
+import { DESIGN, happy, intent, intents, ownerMerges, PLAN, reply, risk, TARGET } from "../helpers/flows.ts";
 import { Pipe } from "../helpers/pipe.ts";
 
 const data = (m: Mission) => JSON.parse(m.data) as PipeData;
@@ -164,4 +164,72 @@ test("pipeline: an intent without a runs as a5", async () => {
   // The plan says what a5 grants.
   expect(p.prs[1]!.title).toMatch(/^docs\(plan\)/);
   expect(p.show("intents", "main", "intents/261026-1000-show-a-greeting/plan.md")).toContain("At a5");
+}, 30_000);
+
+test("autonomy: a4 plan asking for protected paths waits", async () => {
+  const p = new Pipe(TARGET, intents(intent({ a: 4 })));
+  happy(p);
+  // The risk agent says low; the access the plan asks for makes it medium (AUT-17).
+  p.respond.plan = reply({
+    ...PLAN,
+    access: { domains: [], paths: [{ glob: ".github/workflows/ci.yml", why: "the new job" }] },
+  });
+  await p.start();
+  const m = await p.untilStage("approval:plan");
+  expect(waits(p, m.id)).toEqual([
+    ["approval:plan", "medium risk: at a4 only low risk goes ahead without you"],
+  ]);
+  const r = data(m).risk?.plan;
+  expect([r?.said, r?.level]).toEqual(["low", "medium"]);
+  expect(r?.raised).toBe(
+    "Raised from low to medium: the plan asks for access beyond the defaults (path: .github/workflows/ci.yml).",
+  );
+  expect(p.prNo("intents", m.plan_pr!).body).toContain("## Risk: medium");
+}, 30_000);
+
+test("pipeline: an answered open point lets the spec go on", async () => {
+  const p = new Pipe(TARGET, intents(intent({ a: 5 })));
+  happy(p);
+  p.queue(
+    "risk",
+    reply(
+      risk({ open_points: [{ point: "Greet in the visitor's language?", why: "The copy depends on it." }] }),
+    ),
+  );
+  await p.start();
+  const m = await p.untilStage("approval:spec");
+  // The owner answers on the spec PR; the design changes nothing, and the second reviewer sees the answer.
+  p.ownerComment(p.prNo("web", m.spec_pr!), "English only for now.");
+  await p.until(() => p.mission()?.stage === "done");
+  const done = p.mission()!;
+  expect(done.stage, p.moves()).toBe("done");
+  expect(waits(p, done.id)).toEqual([["approval:spec", "1 open point for you to decide"]]);
+  expect(data(done).specAnswers).toEqual(["English only for now."]);
+  const second = p.claudeCalls.filter((c) => c.kind === "risk")[1]!;
+  expect(second.prompt).toContain("The owner already decided these on the spec PR");
+  expect(second.prompt).toContain("English only for now.");
+}, 30_000);
+
+test("pipeline: a retry runs a risk check that didn't finish again", async () => {
+  const p = new Pipe(TARGET, intents(intent({ a: 5 })));
+  happy(p);
+  p.queue(
+    "risk",
+    () => ({ noResult: true }),
+    () => ({ noResult: true }),
+  );
+  await p.start();
+  const m = await p.untilStage("approval:spec");
+  expect(m.why).toBe("the risk assessment didn't finish");
+  p.ownerComment(p.prNo("web", m.spec_pr!), "/retry");
+  await p.until(() => p.mission()?.stage === "done");
+  const done = p.mission()!;
+  expect(done.stage, p.moves()).toBe("done");
+  // The same attempt: the check ran again, the design didn't.
+  expect([done.id, done.attempt]).toEqual([m.id, 1]);
+  expect(p.claudeCalls.filter((c) => c.kind === "design")).toHaveLength(1);
+  expect(p.moves()).toContain(
+    "approval:spec → design (recheck: the owner asked for the spec risk check again)",
+  );
+  expect(data(done).risk?.spec?.level).toBe("low");
 }, 30_000);

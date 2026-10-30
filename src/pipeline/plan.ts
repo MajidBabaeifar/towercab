@@ -11,7 +11,7 @@ import type { Intent } from "../intents/types.ts";
 import { wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { runSet } from "../repo/runset.ts";
-import { riskMd } from "../risk.ts";
+import { currentRisk, riskMd } from "../risk.ts";
 import { e2eText } from "../ship/live.ts";
 import { renderAccess } from "./access.ts";
 import {
@@ -29,7 +29,7 @@ import {
 } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { planBody, planFile, section } from "./prtext.ts";
-import { endRisk, planKey, riskFor, spawnRisk, withRisk } from "./risk.ts";
+import { endRisk, extraAccess, spawnRisk } from "./risk.ts";
 import { parseResult } from "./schemas.ts";
 
 /** The clone the plan branches are pushed from (re-cloned when broken). */
@@ -131,6 +131,9 @@ export function keepUnticked(newAccess: string, oldPlan: string): string {
 
 export const planHandler: Handler = {
   async step(cx, m) {
+    // AUT-21: the owner's retry of a risk check that didn't finish: the check again, not a new plan.
+    if (m.step === "" && data(m).recheck)
+      return gateStep(cx, cx.record(m, "gate", {}, { recheck: undefined }));
     switch (m.step) {
       case "":
       case "plan": {
@@ -176,9 +179,10 @@ export const planHandler: Handler = {
 
   async finish(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
     if (m.step === "risk") {
-      const e = endRisk(cx, m, end, planKey(m));
+      // AUT-17: a plan that asks for access beyond the defaults is at least medium.
+      const e = endRisk(cx, m, end, "plan", { access: extraAccess(cx, m) });
       if ("progress" in e) return e.progress;
-      const fresh = cx.record(m, "gate", {}, { ...e.data, ...withRisk(m, "plan", e.risk, planKey(m)) });
+      const fresh = cx.record(m, "gate", {}, e.data);
       await patchBody(cx, fresh);
       return gateStep(cx, fresh);
     }
@@ -241,7 +245,7 @@ async function bodyOf(cx: Ctx, m: Mission): Promise<string> {
       specPrUrl: m.spec_pr ? prUrl(repo.github, m.spec_pr) : null,
       planPrUrl: null,
     },
-    riskMd(riskFor(m, "plan", planKey(m))),
+    riskMd(currentRisk(m, "plan")),
   );
 }
 
@@ -312,7 +316,7 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
 
 /** The risk agent first, once per plan (PIP-96); then the plan gate (AUT-12): the owner or Towercab (PIP-51). */
 async function gateStep(cx: Ctx, m: Mission): Promise<Progress> {
-  const risk = riskFor(m, "plan", planKey(m));
+  const risk = currentRisk(m, "plan");
   if (risk === undefined) return spawnRisk(cx, m, "plan");
   const intent = await intentOf(cx, m);
   const files = await repoFiles(cx, m);

@@ -88,6 +88,10 @@ export interface PipeData {
   risk?: { spec?: Risk | null; plan?: Risk | null; code?: Risk | null };
   /** What each gate's assessment was of (`Risk.of`), kept also when the run didn't finish. */
   riskOf?: { spec?: string; plan?: string; code?: string };
+  /** PIP-97: the owner's answers on the spec PR, for the second reviewer; part of the spec's risk key. */
+  specAnswers?: string[];
+  /** AUT-21: the next step runs the gate's risk check again instead of the stage's run. */
+  recheck?: boolean;
   /** The ship stage's state (SHIP-7..12). */
   ship?: ShipData;
   /** HEAD when the current build round began (PIP-1). */

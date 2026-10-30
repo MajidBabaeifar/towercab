@@ -244,7 +244,7 @@ test("claude: review argv", () => {
   const cwd = join(root, "work", "261001-0900-1");
   const spec = prepareRun({ ...r, runsDir: join(root, "runs", "261001-0900"), cwd, cache: null }, O);
   expect(spec.timeoutMs).toBe(15 * 60_000);
-  // No guard for the review: no hook, only its .git unwritable, no network.
+  // No guard for the review: no hook, the checkout unwritable (PIP-100), no network.
   const s = JSON.parse(readFileSync(join(root, "runs", "261001-0900", "settings-review.json"), "utf8"));
   expect(s.hooks).toBeUndefined();
   expect(s.sandbox).toEqual({
@@ -285,9 +285,23 @@ test("claude: review argv", () => {
           "towercab.log",
         ].map((f) => join(root, f)),
       ],
-      denyWrite: [join(cwd, ".git")],
+      denyWrite: [cwd, join(cwd, ".git")],
     },
   });
+});
+
+test("claude: read-only agents can't write the checkout", () => {
+  // `git diff --output=<file>` passes `Bash(git diff:*)`: the sandbox, not the rule, stops it.
+  const root = tempDir();
+  const cwd = join(root, "work", "261001-0900-1");
+  const denied = (agent: "plan" | "review" | "risk" | "worker" | "design" | "repair") => {
+    const kind = agent === "repair" ? "worker" : agent;
+    const r = { ...run(kind, { session: { mode: "new", id: U }, budgetUsd: null }), agent, cwd, cache: null };
+    const s = claudeSettings(r, O) as { sandbox: { filesystem: { denyWrite: string[] } } };
+    return s.sandbox.filesystem.denyWrite.includes(cwd);
+  };
+  for (const a of ["plan", "review", "risk"] as const) expect(denied(a), a).toBe(true);
+  for (const a of ["worker", "design", "repair"] as const) expect(denied(a), a).toBe(false);
 });
 
 test("claude: settings by autonomy", () => {
