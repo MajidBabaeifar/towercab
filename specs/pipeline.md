@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..89, PIP-92..95 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..95 · **Prefix:** PIP
 
 ## Purpose
 
@@ -773,7 +773,7 @@ Towercab's CI ends in one job, `All required checks passed`, that is green only 
 
 Towercab's repo opens a release PR from its Conventional Commits, tags and publishes a release when it is merged, and gets dependency update PRs.
 
-- `release.yml` runs release-please on pushes to `main`, with `release-please-config.json` (`release-type: node`) and `.release-please-manifest.json` starting at the current `package.json` version (`1.0.0`), all from the org templates; actions pinned by SHA, `permissions: {}` at the top with the grants on the job.
+- `release.yml` runs release-please on pushes to `main`, with `release-please-config.json` (`release-type: node`) and `.release-please-manifest.json` starting at the current `package.json` version (`1.0.0`), all from the org templates; the job calls the org's shared release workflow, with `permissions: {}` at the top and the grants on the job.
 - `renovate.json` is `{"extends": ["github>MajidBabaeifar/ci"]}`, which holds the 3-day release age.
 - Creating the release PR needs the repo setting that lets Actions create PRs, which `apply-settings` sets.
 - Verified by: `public: release-please files are present and consistent`, `public: renovate extends the org config`

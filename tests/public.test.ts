@@ -1,4 +1,4 @@
-// What the public repo shows (PUB-1..8, PUB-13..21) and Towercab's own CI (PIP-12).
+// What the public repo shows (PUB-1..8, PUB-13..21), Towercab's own CI (PIP-12, PIP-90) and its releases (PIP-91).
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
@@ -8,6 +8,9 @@ import { parse as parseYaml } from "yaml";
 import { parseConfig } from "../src/config.ts";
 
 const read = (p: string) => readFileSync(p, "utf8");
+// biome-ignore lint/suspicious/noExplicitAny: workflow files are checked by shape, not typed
+const workflow = (p: string): any => parseYaml(read(p));
+type Job = { name?: string; permissions?: object; uses?: string; steps?: { uses?: string }[] };
 
 function walk(dir: string, out: string[] = []): string[] {
   if (!existsSync(dir)) return out;
@@ -217,7 +220,55 @@ test("public: CI workflow runs the checks", () => {
   expect(ci).toMatch(/name: "Playwright: UI screenshots"/);
   expect(ci).toMatch(/npm run test:ui/);
   expect(ci).toMatch(/upload-artifact/);
-  for (const job of ci.split("\n  ").filter((l) => /^[a-z-]+:\n/.test(l))) expect(job).toMatch(/name: /);
+  const jobs: Record<string, Job> = workflow(".github/workflows/ci.yml").jobs;
+  for (const [id, job] of Object.entries(jobs)) expect(job.name, `job ${id} sets name`).toBeTruthy();
+});
+
+test("public: CI workflow has one required aggregate job", () => {
+  const ci = workflow(".github/workflows/ci.yml");
+  expect(Object.keys(ci.on).sort()).toEqual(["pull_request", "push", "workflow_dispatch"]);
+  expect(ci.on.push.branches).toEqual(["main"]);
+  expect(ci.jobs.checks.uses).toBe("MajidBabaeifar/ci/.github/workflows/checks.yml@main");
+  expect(ci.jobs.sast.uses).toBe("MajidBabaeifar/ci/.github/workflows/sast.yml@main");
+  const ok = ci.jobs["ci-ok"];
+  expect(ok.name).toBe("All required checks passed");
+  expect(ok.if).toBe("always()");
+  const others = Object.keys(ci.jobs).filter((id) => id !== "ci-ok");
+  expect([...ok.needs].sort()).toEqual(others.sort());
+  const script = ok.steps.map((s: { run?: string }) => s.run ?? "").join("\n");
+  expect(script).toMatch(/success\|skipped/);
+  expect(script).toMatch(/exit 1/);
+});
+
+test("public: CI workflow pins actions by SHA and grants permissions per job", () => {
+  for (const file of [".github/workflows/ci.yml", ".github/workflows/release.yml"]) {
+    const wf = workflow(file);
+    expect(wf.permissions, `${file} top-level permissions`).toEqual({});
+    for (const [id, job] of Object.entries(wf.jobs as Record<string, Job>)) {
+      expect(job.permissions, `${file} job ${id} permissions`).toBeDefined();
+      const uses = [job.uses, ...(job.steps ?? []).map((s: { uses?: string }) => s.uses)].filter(
+        (u): u is string => typeof u === "string",
+      );
+      for (const u of uses) {
+        if (u.startsWith("MajidBabaeifar/ci/")) continue;
+        expect(u, `${file} job ${id}`).toMatch(/@[0-9a-f]{40}$/);
+      }
+    }
+  }
+});
+
+test("public: release-please files are present and consistent", () => {
+  const config = JSON.parse(read("release-please-config.json"));
+  expect(config.packages["."]["release-type"]).toBe("node");
+  const manifest = JSON.parse(read(".release-please-manifest.json"));
+  expect(manifest["."]).toBe(JSON.parse(read("package.json")).version);
+  const release = workflow(".github/workflows/release.yml");
+  expect(release.on.push.branches).toEqual(["main"]);
+  expect(release.jobs.release.uses).toBe("MajidBabaeifar/ci/.github/workflows/release.yml@main");
+});
+
+test("public: renovate extends the org config", () => {
+  expect(JSON.parse(read("renovate.json"))).toEqual({ extends: ["github>MajidBabaeifar/ci"] });
 });
 
 type FormItem = {
