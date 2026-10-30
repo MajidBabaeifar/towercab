@@ -40,6 +40,19 @@ export interface FakePr {
   mergeStates: string[];
 }
 
+/** A GitHub Deployment the fake `gh api` serves (SHIP-4). */
+export interface FakeDeployment {
+  id: number;
+  repo: string;
+  sha: string;
+  environment: string;
+  task: string;
+  payload: unknown;
+  created_at: string;
+  /** Oldest first. */
+  statuses: { state: string; description: string }[];
+}
+
 export interface FakeIssue {
   repo: string;
   number: number;
@@ -232,6 +245,16 @@ export class Pipe {
   readonly respond: Partial<Record<string, ClaudeScript>> = {};
   /** Overrides a sandbox run; return null to run it with `sh`. */
   sandbox: ((spec: ChildSpec) => ChildExit | null) | null = null;
+  /** GitHub Deployments, oldest first (SHIP-4). */
+  readonly deployments: FakeDeployment[] = [];
+  /**
+   * The platform: what a deploy of `sha` ends as, after a merge to main (task `deploy`) or a
+   * `deploy:rollback` request; null records nothing. Default none: no repo deploys.
+   */
+  platform:
+    | ((sha: string, task: string, repo: string) => { state: string; description?: string } | null)
+    | null = null;
+  private nextDeployment = 100;
   store!: IntentStore;
   rawStore!: IntentStore;
   loop!: Loop;
@@ -615,6 +638,25 @@ export class Pipe {
     git(work, "push", "-q", "origin", "HEAD:main");
     p.state = "MERGED";
     p.mergeCommit = git(work, "rev-parse", "HEAD").trim();
+    this.deploy(p.repo, p.mergeCommit, "deploy", null);
+  }
+
+  /** The platform deploys `sha` (SHIP-4): a Deployment with the status `platform` gives. */
+  deploy(repo: string, sha: string, task: string, payload: unknown, id?: number): FakeDeployment | null {
+    const end = this.platform?.(sha, task, repo);
+    if (!end && id === undefined) return null;
+    const d: FakeDeployment = {
+      id: id ?? this.nextDeployment++,
+      repo,
+      sha,
+      environment: "production",
+      task,
+      payload,
+      created_at: this.at(),
+      statuses: end ? [{ state: end.state, description: end.description ?? "" }] : [],
+    };
+    this.deployments.push(d);
+    return d;
   }
 
   /** GitHub's "update branch": merge the base into the PR's head. */
@@ -817,6 +859,28 @@ export class Pipe {
       }
       if (a === "api") {
         const path = args.find((x) => x.startsWith("repos/")) ?? "";
+        const dep = /^repos\/([^/]+\/[^/?]+)\/deployments(?:\/(\d+)\/statuses)?(?:\?(.*))?$/.exec(path);
+        if (dep) {
+          const [, r, id, query] = dep;
+          const q = new URLSearchParams(query ?? "");
+          const newest = <T>(xs: T[]) => [...xs].reverse();
+          if (id) {
+            const d = this.deployments.find((x) => x.id === Number(id));
+            return json(newest(d?.statuses ?? []).slice(0, Number(q.get("per_page") ?? 30)));
+          }
+          if (args.includes("POST")) {
+            const body = JSON.parse(opts.input ?? "{}") as { ref: string; task: string; payload: unknown };
+            const made = this.deploy(r!, body.ref, body.task, body.payload, this.nextDeployment++)!;
+            return json({ id: made.id });
+          }
+          return json(
+            newest(this.deployments)
+              .filter((x) => x.repo === r && x.environment === (q.get("environment") ?? x.environment))
+              .filter((x) => !q.get("sha") || x.sha === q.get("sha"))
+              .slice(0, Number(q.get("per_page") ?? 30))
+              .map(({ id, sha, task, payload, created_at }) => ({ id, sha, task, payload, created_at })),
+          );
+        }
         const del = /^repos\/([^/]+\/[^/]+)\/git\/refs\/heads\/(.+)$/.exec(path);
         if (del && args.includes("DELETE")) {
           const bad = this.deleteFail?.(del[1]!, del[2]!);
