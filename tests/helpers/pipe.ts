@@ -207,6 +207,17 @@ export class CachedStore implements IntentStore {
     if (!this.marks.has(mark)) this.marks.set(mark, await this.s.hasMark(mark));
     return this.marks.get(mark)!;
   }
+  async editFeatures(
+    repo: string,
+    what: string,
+    fn: (text: string | null) => string | null,
+  ): Promise<boolean> {
+    try {
+      return await this.s.editFeatures(repo, what, fn);
+    } finally {
+      this.writes++;
+    }
+  }
   async readFile(path: string): Promise<string | null> {
     this.fresh();
     if (!this.files.has(path)) this.files.set(path, await this.s.readFile(path));

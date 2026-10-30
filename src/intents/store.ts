@@ -21,6 +21,7 @@ import { alive } from "../home.ts";
 import { emit } from "../log.ts";
 import { cmpIntents } from "../priority.ts";
 import { GIT_TIMEOUT_MS, type RunResult, type Tools } from "../tools.ts";
+import { featuresPath, isRepoName } from "./features.ts";
 import { cmpIds, dirId, isId, newId, resolve, slugOf, splitDir } from "./id.ts";
 import { formatValue, IntentFile, localTime } from "./intent.ts";
 import {
@@ -602,6 +603,29 @@ export class GitStore implements IntentStore {
         f.dir = to;
       }
       return { msg: `towercab: ${what} ${f.id}${mark ? `\n\n${mark}` : ""}`, out: f.intent };
+    });
+  }
+
+  async editFeatures(
+    repo: string,
+    what: string,
+    fn: (text: string | null) => string | null,
+  ): Promise<boolean> {
+    if (!isRepoName(repo)) throw new RefusedError(`${repo}: not a repo name`);
+    const rel = featuresPath(repo);
+    return this.write(async () => {
+      if (symlinkIn(this.path, rel)) throw new RefusedError(`${rel}: symlink`);
+      let text: string | null = null;
+      try {
+        text = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(join(this.path, rel)));
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT") throw new RefusedError(`${rel}: ${code ?? "not UTF-8"}`);
+      }
+      const next = fn(text);
+      if (next === null || next === text) return { msg: null, out: false };
+      this.writeFile(rel, next);
+      return { msg: `towercab: features ${repo} ${what}`, out: true };
     });
   }
 

@@ -111,6 +111,9 @@ export const SCORE_SCHEMA = object({
   open_questions: list(S),
 });
 
+/** INT-39: a repo's live features, as short business sentences. */
+export const FEATURES_SCHEMA = object({ features: list(S) });
+
 export const SCHEMAS = {
   design: DESIGN_SCHEMA,
   plan: PLAN_SCHEMA,
@@ -118,6 +121,7 @@ export const SCHEMAS = {
   review: REVIEW_SCHEMA,
   risk: RISK_SCHEMA,
   score: SCORE_SCHEMA,
+  features: FEATURES_SCHEMA,
 };
 
 export interface Access {
@@ -211,6 +215,7 @@ export interface Results {
   review: ReviewResult;
   risk: RiskResult;
   score: ScoreResult;
+  features: { features: string[] };
 }
 
 /** Why `value` doesn't fit `schema` (the subset these schemas use), or null when it does. */

@@ -56,6 +56,7 @@ const BEFORE: Record<string, { tools: string; allowed: string[] }> = {
     allowed: ["Read", "Glob", "Grep", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"],
   },
   score: { tools: "", allowed: [] },
+  features: { tools: "Read,Glob,Grep", allowed: ["Read", "Glob", "Grep"] },
 };
 BEFORE.repair = BEFORE.worker!;
 // PIP-96: the risk agent reads exactly as the review does, no more.
