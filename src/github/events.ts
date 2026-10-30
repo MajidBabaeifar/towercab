@@ -161,7 +161,14 @@ export function prEvents(m: Mission, prs: Prs, me: string, botLogin: string): Ou
 
   const code = prs.code;
   if (code?.state === "OPEN" && m.pr !== null) {
-    if (code.mergeable === "CONFLICTING") return { event: "conflict" };
+    // LOOP-18: the same conflict repair CI gives, so the build merges the base first instead of
+    // building on the old base again (a round that would conflict forever).
+    if (code.mergeable === "CONFLICTING")
+      return {
+        event: "conflict",
+        why: "the PR conflicts with its base",
+        data: { repair: { what: "The PR conflicts with its base branch.", details: "", kind: "conflict" } },
+      };
     if (m.head && code.head && code.head !== m.head) return { event: "head_moved" };
   }
   return null;
