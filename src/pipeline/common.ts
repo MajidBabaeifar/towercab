@@ -24,6 +24,27 @@ import { cacheEnv } from "./sandbox.ts";
 import { type Access, type Question, SCHEMAS } from "./schemas.ts";
 
 /** `missions.data`, as the pipeline uses it. */
+export interface ShipData {
+  /** The intent's merge commits, oldest first. */
+  merges: string[];
+  /** When the current wait for a deploy began (unix s). */
+  since?: number;
+  /** Fix rounds after a rollback (SHIP-11). */
+  fixes: number;
+  /** The e2e run: suite names in order, the one running, its tries. */
+  e2e?: { order: string[]; i: number; tries: number };
+  /** The version a rollback goes back to. */
+  target?: string;
+  /** The rollback Deployment Towercab asked for (github adapter). */
+  requested?: number;
+  /** Smoke suites still to run after a rollback or revert. */
+  smoke?: string[];
+  /** The last red suite and its redacted log (tail). */
+  red?: { suite: string; log: string; path: string };
+  /** The revert PR (SHIP-12). */
+  revert?: { branch: string; pr: number | null; head: string | null; sha: string | null };
+}
+
 export interface PipeData {
   design?: {
     type: string;
@@ -51,7 +72,9 @@ export interface PipeData {
   /** The owner's last words for the worker (an answer, feedback). */
   answer?: string;
   /** Why the next build round runs: a repair's what and details. */
-  repair?: { what: string; details: string; kind: "verify" | "proof" | "ci" | "conflict" };
+  repair?: { what: string; details: string; kind: "verify" | "proof" | "ci" | "conflict" | "e2e" };
+  /** The ship stage's state (SHIP-7..12). */
+  ship?: ShipData;
   /** HEAD when the current build round began (PIP-1). */
   roundFrom?: string;
   /** Head at the end of the last non-repair round (PIP-31). */
