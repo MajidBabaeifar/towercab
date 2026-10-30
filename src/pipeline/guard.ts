@@ -235,6 +235,39 @@ export async function lockedTests(
 }
 
 /**
+ * PIP-31: the paths among `paths` whose content at `HEAD` is the base branch's (`baseRef`): a change
+ * that came in by merging the base (a conflict round), not one the worker made.
+ */
+export async function sameAsBase(
+  tools: Tools,
+  checkout: string,
+  baseRef: string,
+  paths: string[],
+): Promise<string[]> {
+  const same: string[] = [];
+  for (const p of paths) {
+    const r = await tools.run(
+      "git",
+      [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.fsmonitor=false",
+        "diff",
+        "--quiet",
+        baseRef,
+        "HEAD",
+        "--",
+        p,
+      ],
+      { cwd: checkout, timeoutMs: 300_000 },
+    );
+    if (r.code === 0) same.push(p);
+  }
+  return same;
+}
+
+/**
  * What publish refuses (PIP-29, PIP-31): a changed path (since the merge base) that `protected`
  * blocks, and a locked test modified or deleted since the pushed head. Empty = fine.
  */
