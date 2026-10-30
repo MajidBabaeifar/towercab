@@ -42,6 +42,8 @@ autonomy level you give each intent.
 It follows the structure of Anthropic's AI-Native SDLC Playbook. Towercab is not affiliated with or
 endorsed by Anthropic.
 
+The website is [towercab.com](https://towercab.com).
+
 ## How it works
 
 Every intent becomes three pull requests, and merging each one is your approval
@@ -111,7 +113,8 @@ web page shows what needs you, what is stuck, what is moving and what it costs
 
 2. Register the GitHub App from `ops/github-app.json`, install it on your intents repo and every
    repo Towercab should work in, and save its private key as `~/.config/towercab/app.pem` (mode 600).
-3. Write `~/.config/towercab/config.toml`:
+3. Copy [config.example.toml](config.example.toml) to `~/.config/towercab/config.toml` and replace its
+   placeholders (it lists every setting with a comment). The smallest working file is:
 
    ```toml
    [intents]
@@ -159,5 +162,8 @@ author. Version 1 (Rust) is on branch `rust`.
 | [specs/ui.md](specs/ui.md) | The local web page |
 | [specs/metrics.md](specs/metrics.md) | Cost and time |
 | [specs/public.md](specs/public.md) | What this repo shows |
+
+Want to help? Read [CONTRIBUTING.md](CONTRIBUTING.md); everyone taking part follows the
+[code of conduct](CODE_OF_CONDUCT.md).
 
 <p align="center"><sub>MIT licensed · <a href="SECURITY.md">Report a vulnerability</a></sub></p>
