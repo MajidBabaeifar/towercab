@@ -1,6 +1,7 @@
 // The queue (UI-63): per repo, what runs, what waits behind it, what is parked, what was done.
 
 import type { QueuePage as Data, QueueItem } from "../../../src/ui/view.ts";
+import { AddRepoForm } from "../AddRepo.tsx";
 import { StateChip, Time, WorkRow } from "../components.tsx";
 import { Link } from "../router.tsx";
 
@@ -26,7 +27,7 @@ function Item({ item }: { item: QueueItem }) {
   );
 }
 
-export function QueuePage({ data }: { data: Data }) {
+export function QueuePage({ data, readOnly = true }: { data: Data; readOnly?: boolean }) {
   return (
     <main class="page queue" id="main">
       <section class="hero hero-small">
@@ -34,7 +35,7 @@ export function QueuePage({ data }: { data: Data }) {
         <p class="hero-sub">Per repo: what runs now, what waits behind it, and what was done lately.</p>
       </section>
       {data.lanes.length === 0 ? (
-        <p class="empty-line">No repos in the config yet.</p>
+        <p class="empty-line">No repos yet.{readOnly ? "" : " Add one below."}</p>
       ) : (
         <div class="lanes">
           {data.lanes.map((l) => (
@@ -89,6 +90,14 @@ export function QueuePage({ data }: { data: Data }) {
             </section>
           ))}
         </div>
+      )}
+      {readOnly ? null : (
+        <section class="card pad add-repo-card" aria-labelledby="add-repo-head">
+          <header class="lane-head">
+            <h2 id="add-repo-head">Add a repo</h2>
+          </header>
+          <AddRepoForm />
+        </section>
       )}
     </main>
   );

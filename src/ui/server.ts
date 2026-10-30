@@ -77,7 +77,7 @@ const TYPES: Record<string, string> = {
 };
 
 const PAGES = /^\/(?:board|queue|activity|i\/[A-Za-z0-9._-]+)?\/?$/;
-const ACTIONS = new Set(["merge", "reply", "retry", "drop", "start", "pause", "resume"]);
+const ACTIONS = new Set(["merge", "reply", "retry", "drop", "start", "pause", "resume", "addRepo"]);
 const INTENT_ID = /^[A-Za-z0-9._-]{1,100}$/;
 
 const NOT_BUILT = `<!doctype html>
@@ -251,7 +251,7 @@ export function startUi(o: UiOptions): UiServer {
     } catch {
       return json(res, 413, { ok: false, message: "The request is too large." });
     }
-    let body: { action?: unknown; intent?: unknown; text?: unknown };
+    let body: { action?: unknown; intent?: unknown; text?: unknown; github?: unknown; name?: unknown };
     try {
       body = JSON.parse(raw) as typeof body;
     } catch {
@@ -260,7 +260,7 @@ export function startUi(o: UiOptions): UiServer {
     const action = typeof body.action === "string" ? body.action : "";
     const intent = typeof body.intent === "string" ? body.intent : "";
     if (!ACTIONS.has(action)) return json(res, 400, { ok: false, message: `Unknown action “${action}”.` });
-    const needsIntent = action !== "pause" && action !== "resume";
+    const needsIntent = action !== "pause" && action !== "resume" && action !== "addRepo";
     if (needsIntent && !INTENT_ID.test(intent))
       return json(res, 400, { ok: false, message: "Which intent?" });
     if (!o.actions) {
@@ -285,7 +285,12 @@ export function startUi(o: UiOptions): UiServer {
                   ? await a.start(intent)
                   : action === "pause"
                     ? await a.pause()
-                    : await a.resume();
+                    : action === "addRepo"
+                      ? await a.addRepo(
+                          typeof body.github === "string" ? body.github : "",
+                          typeof body.name === "string" && body.name ? body.name : undefined,
+                        )
+                      : await a.resume();
       reply = { ok: true, message };
     } catch (e) {
       reply = { ok: false, message: (e as Error).message };

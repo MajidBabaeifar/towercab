@@ -192,6 +192,32 @@ test("ui: needs-you card shows only its actions", async () => {
   expect(crm.why).toMatch(/crm/);
 });
 
+test("ui: unknown repo card offers to add the repo", async () => {
+  const f = fixture();
+  const crm = async () => (await overview(f.sources)).needs.find((c) => c.intent === IDS.crm)!;
+  const card = await crm();
+  // The intent's repo is the short name; owner/name is prefilled with the owner the repos share.
+  expect(card.addRepo).toEqual({ name: "crm", github: "acme/crm" });
+  expect(card.why).toBe(
+    "Its repo “crm” isn't one Towercab knows yet. Check the GitHub repo below and press Add this repo, or change the intent's repo.",
+  );
+  expect((await intentPage(f.sources, IDS.crm))!.card?.addRepo).toEqual({ name: "crm", github: "acme/crm" });
+  // Other cards never offer it.
+  expect((await overview(f.sources)).needs.filter((c) => c.addRepo)).toHaveLength(1);
+  // Once the repo is known, the card says the wait clears on its own.
+  f.sources.config.repos.set("crm", {
+    ...f.sources.config.repos.get("web")!,
+    name: "crm",
+    github: "acme/crm",
+  });
+  const known = await crm();
+  expect(known.addRepo).toBeNull();
+  expect(known.why).toBe("Towercab knows its repo “crm” now and queues it again within a minute.");
+  // No repos to go by: the field starts empty.
+  f.sources.config.repos.clear();
+  expect((await crm()).addRepo).toEqual({ name: "crm", github: "" });
+});
+
 test("ui: empty states are true", async () => {
   const e = fixture({ empty: true });
   const o = await overview(e.sources);

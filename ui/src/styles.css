@@ -3392,4 +3392,42 @@ a.pr-tile:hover {
     margin-left: auto;
     min-height: 44px;
   }
+/* Add a repo (UI-130, UI-131) */
+
+.add-repo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+.add-repo label {
+  font-weight: 500;
+}
+
+.add-repo-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+
+.add-repo input {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-family: var(--mono);
+}
+
+.add-repo input:focus-visible {
+  outline-offset: 0;
+  border-color: var(--focus);
+}
+
+.add-repo-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin-top: var(--s3);
 }

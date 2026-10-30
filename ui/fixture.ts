@@ -196,6 +196,8 @@ export interface FakeActionCall {
   action: string;
   intent?: string;
   text?: string;
+  github?: string;
+  name?: string;
 }
 
 export interface Fixture {
@@ -337,6 +339,11 @@ export function buildFixture(o: { now?: number; root?: string; empty?: boolean }
       calls.push({ action: "resume" });
       state.paused = false;
       return "Resumed: Towercab picks up work again.";
+    },
+    async addRepo(github, name) {
+      calls.push({ action: "addRepo", github, ...(name ? { name } : {}) });
+      const short = name ?? github.split("/")[1] ?? github;
+      return `Added ${short} (${github}, base main). Its intents can start on the next pass.`;
     },
   };
 

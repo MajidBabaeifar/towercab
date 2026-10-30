@@ -125,3 +125,42 @@ test("ui: start action uses the start command", async () => {
   expect(w.commands()).toEqual([{ name: "start", arg: "new", text: "", source: "ui" }]);
   expect(w.calls).toEqual([]);
 });
+
+test("ui: add repo action adds the repo and says so", async () => {
+  const db = Db.memory();
+  const config = testConfig();
+  const github = { owner: async () => ({ code: 0, stdout: "", stderr: "", timedOut: false }) };
+  const added: [string, string | undefined][] = [];
+  const actions = createActions({
+    db,
+    store: new MemStore(),
+    config,
+    clock: new TestClock(),
+    github,
+    addRepo: async (gh, name) => {
+      added.push([gh, name]);
+      if (gh === "acme/secret") {
+        throw new Error("Towercab can't reach acme/secret: the GitHub App isn't installed on acme/secret");
+      }
+      return { name: name ?? "shop", github: gh, path: "", base: "trunk", workers: 1, ahead: 3, env: {} };
+    },
+  });
+  expect(await actions.addRepo("acme/crm", "crm")).toBe(
+    "Added crm (acme/crm, base trunk). Its intents can start on the next pass.",
+  );
+  expect(await actions.addRepo("acme/shop")).toBe(
+    "Added shop (acme/shop, base trunk). Its intents can start on the next pass.",
+  );
+  // The refusal is the reason, as the page shows it.
+  await expect(actions.addRepo("acme/secret")).rejects.toThrow(
+    "Towercab can't reach acme/secret: the GitHub App isn't installed on acme/secret",
+  );
+  expect(added).toEqual([
+    ["acme/crm", "crm"],
+    ["acme/shop", undefined],
+    ["acme/secret", undefined],
+  ]);
+  // Without the loop's adder, it is refused.
+  const ro = createActions({ db, store: new MemStore(), config, clock: new TestClock(), github });
+  await expect(ro.addRepo("acme/crm")).rejects.toThrow("Towercab isn't running, so it can't add a repo now.");
+});

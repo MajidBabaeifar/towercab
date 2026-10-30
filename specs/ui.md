@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..104, UI-120..125, UI-133..137 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..104, UI-120..125, UI-130..131, UI-133..137 · **Prefix:** UI
 
 ## Purpose
 
@@ -137,8 +137,9 @@ and the intent itself.
 
 A queue page shows, per repo, what runs, what waits behind it, and what is parked.
 
-- `/queue`: one lane per `[repos]` repo: the running intent, then the waiting ones in pick order with
-  position and reason; then parked intents; then the last 10 done. Read-only.
+- `/queue`: one lane per repo ([LOOP-65](loop.md)): the running intent, then the waiting ones in pick
+  order with position and reason; then parked intents; then the last 10 done. The lanes are read-only;
+  the page ends with the Add repo form (UI-130).
 - Verified by: `ui: queue lanes by repo`
 
 ### UI-64 · Activity page
@@ -158,7 +159,8 @@ The page talks to the loop through a small JSON API.
   `GET /api/intents/<id>`, `GET /api/queue`, `GET /api/activity?…`, `GET /api/runs/<id>/<file>`
   (`<file>` or `<stage>/<file>`, names `[A-Za-z0-9._-]+`, files under `runs/<id>/` only, no symlinks
   out, text, at most 2 MB), `GET /api/events`
-  (Server-Sent Events: `version` on each change), `POST /api/actions` `{action, intent, text?}`.
+  (Server-Sent Events: `version` on each change), `POST /api/actions` `{action, intent, text?}`
+  (`addRepo` takes `{action, github, name?}` instead, UI-130).
 - Verified by: `ui: API shapes`, `ui: run files stay inside runs`
 
 ### UI-66 · Actions
@@ -579,6 +581,30 @@ The airspace tells a plane that is rolling back or fixing a live failure apart f
 - The marks come from the plane's `ship` field (`{ kind: "rollback" | "revert" | "fix", mark }`), absent
   for every other plane.
 - Verified by: `ui: rollback and fix planes are marked`
+
+### UI-130 · Add a repo from the page
+
+The owner adds a repo from the page by typing only its `owner/name`.
+
+- The Queue page ends with an "Add repo" form: one field (`owner/name`) and an "Add repo" button; not
+  shown when the page is read-only (UI-2). It posts `{action: "addRepo", github, name?}` to
+  `/api/actions`, which runs LOOP-66's `repo add` in the loop (`source` `ui`). The reply is one
+  sentence: `Added <name> (<owner/name>, base <base>). Its intents can start on the next pass.`, or the
+  refusal's reason (LOOP-66) shown on the form. "No repos yet." when there are none.
+- Verified by: `ui: add repo action adds the repo and says so`, `ui: add repo goes through the actions API`
+
+### UI-131 · Add this repo on the unknown-repo card
+
+An intent that waits because its repo is unknown offers to add that repo right on its card.
+
+- The `unknown repo` card (UI-58) says `Its repo “<name>” isn't one Towercab knows yet. Check the
+  GitHub repo below and press Add this repo, or change the intent's repo.` and carries
+  `addRepo: {name, github}`: the intent's repo as the short name, and `owner/name` prefilled with the
+  owner most known repos share (`""` when there are none). The page shows the field and an "Add this
+  repo" button, which adds the repo under that short name (UI-130).
+- Once the repo is known, the card says `Towercab knows its repo “<name>” now and queues it again
+  within a minute.` and offers no button; the loop clears the wait (LOOP-68).
+- Verified by: `ui: unknown repo card offers to add the repo`
 
 ### UI-133 · Board tab
 

@@ -8,6 +8,7 @@ import type { Home } from "../home.ts";
 import type { Intent } from "../intents/types.ts";
 import type { Loop } from "../loop.ts";
 import { isParked, pickOrder, priorityOf } from "../priority.ts";
+import { addRepo } from "../repos.ts";
 import { checkoutRoot } from "../service.ts";
 import { version as gitVersion } from "../update.ts";
 import { createActions } from "./actions.ts";
@@ -86,7 +87,27 @@ export function startLoopUi(loop: Loop, config: Config, github: GitHub, home: Ho
   return startUi({
     port: config.ui.port,
     sources: sourcesOf(loop, home),
-    actions: createActions({ db: loop.d.db, store: loop.d.store, config, clock: loop.d.clock, github }),
+    actions: createActions({
+      db: loop.d.db,
+      store: loop.d.store,
+      config,
+      clock: loop.d.clock,
+      github,
+      addRepo: (gh, name) =>
+        addRepo(
+          {
+            db: loop.d.db,
+            config,
+            tools: loop.d.tools,
+            github,
+            home: home.root,
+            now: loop.now,
+            source: "ui",
+          },
+          gh,
+          name,
+        ),
+    }),
     distDir: DIST,
     log: (l) => loop.d.log(`ui: ${l}`),
   });

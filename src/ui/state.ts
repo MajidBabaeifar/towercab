@@ -11,6 +11,7 @@ import type { Home } from "../home.ts";
 import type { Intent, IntentStore, Listing } from "../intents/types.ts";
 import { finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
 import { dataOf, forIntent, type Mission } from "../mission.ts";
+import { usualOwner } from "../repos.ts";
 import { aheadIn, isAhead, isBuilding, isReady } from "../slots.ts";
 import type {
   Access,
@@ -482,15 +483,21 @@ export function missionCard(
     pr,
     actions,
     mergeLabel: approval && pr ? MERGE_LABELS[kind]! : null,
+    addRepo: null,
   };
 }
 
-/** UI-58: a wait written only on the intent (unknown repo, bad after:). */
-export function intentCard(i: Intent): Card {
+/** UI-58: a wait written only on the intent (unknown repo, bad after:); UI-131: "Add this repo". */
+export function intentCard(i: Intent, config: Config): Card {
   const w = i.waiting ?? "";
   let why: string | null = null;
-  if (w === "unknown repo") {
-    why = `Its repo “${i.repo}” isn't one Towercab knows. Add the repo to the config, or change the intent's repo.`;
+  let addRepo: Card["addRepo"] = null;
+  if (w === "unknown repo" && config.repos.has(i.repo)) {
+    why = `Towercab knows its repo “${i.repo}” now and queues it again within a minute.`;
+  } else if (w === "unknown repo") {
+    why = `Its repo “${i.repo}” isn't one Towercab knows yet. Check the GitHub repo below and press Add this repo, or change the intent's repo.`;
+    const owner = usualOwner(config);
+    addRepo = { name: i.repo, github: owner ? `${owner}/${i.repo}` : "" };
   } else if (w.startsWith("bad after:")) {
     why = `It waits for ${w.slice("bad after:".length).trim() || "an intent"}, which Towercab can't find or is dropped. Fix its after list.`;
   }
@@ -509,6 +516,7 @@ export function intentCard(i: Intent): Card {
     pr: null,
     actions: ["reply", "drop"],
     mergeLabel: null,
+    addRepo,
   };
 }
 
@@ -1015,7 +1023,7 @@ export async function overview(src: UiSources): Promise<Overview> {
   const withMission = new Set(s.missions.map((m) => m.intent));
   for (const i of s.listing?.open ?? []) {
     if (i.waiting && !withMission.has(i.id))
-      needs.push({ ...intentCard(i), order: Number.POSITIVE_INFINITY });
+      needs.push({ ...intentCard(i, src.config), order: Number.POSITIVE_INFINITY });
   }
   needs.sort((a, b) => a.order - b.order);
   const list = src.upNext().filter((u) => !withMission.has(u.intent));
@@ -1632,7 +1640,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     live && isWait(live.stage) && !isReady(live)
       ? missionCard(src, live, intent ?? undefined, lastMove(live), s.now)
       : !live && intent?.waiting && !intent.done
-        ? intentCard(intent)
+        ? intentCard(intent, src.config)
         : null;
   const timeline: TimelineItem[] = [];
   for (const m of missions) {

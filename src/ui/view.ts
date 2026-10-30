@@ -107,6 +107,8 @@ export interface Card {
   pr: PrLink | null;
   actions: ActionKey[];
   mergeLabel: string | null;
+  /** UI-131: the intent's repo is unknown: its short name and a guess at `owner/name` ("" = none). */
+  addRepo: { name: string; github: string } | null;
 }
 
 export type PhaseStatus = "done" | "current" | "todo" | "skipped";
