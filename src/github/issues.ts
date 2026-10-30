@@ -11,6 +11,7 @@ import { type ClaudeRun, parseRun, prepareRun } from "../claude.ts";
 import type { Config, RepoConfig } from "../config.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { Home } from "../home.ts";
+import { plainLine, TITLE_MAX } from "../intents/naming.ts";
 import type { Intent, IntentStore, Listing } from "../intents/types.ts";
 import { oneLine } from "../machine.ts";
 import { fence, render } from "../pipeline/prompts.ts";
@@ -362,7 +363,7 @@ async function pollIssue(
   const added = await d.store.add(
     {
       repo: repo.name,
-      title: plain(s.title).slice(0, 120) || `GitHub issue #${issue.number}`,
+      title: plainLine(s.title, TITLE_MAX) || `GitHub issue #${issue.number}`,
       u: s.u,
       i: s.i,
       a: autonomyFrom(names(view.labels), d.config.intents.issueA),

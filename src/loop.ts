@@ -36,6 +36,7 @@ import {
   type Outcome,
   phaseOf,
   type Subject,
+  waitInfo,
 } from "./machine.ts";
 import {
   dataOf,
@@ -982,7 +983,7 @@ export class Loop {
         this.d.db.run(
           "INSERT OR IGNORE INTO outbox (key, mission, text, created) VALUES (?, NULL, ?, ?)",
           `intent:${w.id}:${w.waiting}:${w.why}`,
-          `The intent names a repo or dependency Towercab doesn't know.\n${i?.title ?? w.id} (${i?.repo ?? "?"})\n${w.why}${i && this.d.store.url(i) ? `\n${this.d.store.url(i)}` : ""}`,
+          `${waitInfo(w.waiting).ask}\n${i?.title ?? w.id} (${i?.repo ?? "?"})\n${w.why}${i && this.d.store.url(i) ? `\n${this.d.store.url(i)}` : ""}`,
           this.now,
         );
       } catch (e) {

@@ -92,7 +92,7 @@ test("pipeline: spec PR is opened", () => {
     repo: "owner/web",
     head: `towercab/${ID}-${SLUG}-spec`,
     base: "main",
-    title: "docs(specs): Show a greeting",
+    title: "docs(specs): show a greeting",
   });
   expect(spec().body).toContain("The page will greet visitors.");
   expect(spec().body).toContain("**Spec IDs:** WEB-1");
@@ -124,7 +124,7 @@ test("pipeline: plan PR is opened on intents", () => {
     repo: "owner/intents",
     head: `plan/${ID}-${SLUG}`,
     base: "main",
-    title: "docs(plan): Show a greeting",
+    title: "docs(plan): show a greeting",
   });
   expect(plan().body).toContain("Add a greeting file.");
   expect(plan().body).toContain("**Access asked for:** nothing beyond the defaults.");

@@ -21,6 +21,7 @@ import {
   stageMap,
   stateOf,
   stepWords,
+  textsOf,
   until,
 } from "../../src/ui/state.ts";
 import { buildFixture, type Fixture, IDS } from "../../ui/fixture.ts";
@@ -352,6 +353,11 @@ test("ui: the intent page leads with the plain brief", async () => {
   expect(done.card).toBeNull();
   expect(done.brief).toBe("Readers can save articles and read them without a connection.");
   expect(done.details).toMatch(/service worker/);
+  // A review from before briefs: its summary is technical, so only the card falls back to it; the page
+  // never calls it plain.
+  const old = mission({ data: JSON.stringify({ review: { summary: "Approve: `x.ts` is fine." } }) });
+  expect(textsOf(old, "code")).toEqual({ brief: null, details: null });
+  expect(textsOf(old, "code", true).brief).toBe("Approve: `x.ts` is fine.");
 });
 
 test("ui: empty states are true", async () => {

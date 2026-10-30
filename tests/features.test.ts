@@ -10,6 +10,7 @@ import {
   featuresHeader,
   parseFeatures,
   removeFeature,
+  renameFeature,
   replaceLive,
   setFeature,
 } from "../src/intents/features.ts";
@@ -70,6 +71,29 @@ test("features: done marks the line live, keeping the owner's wording", () => {
   expect(setFeature(OWN, "web", { intent: ID, title: "Say hello", status: "live" })).toContain(
     `- [live] Say hello <!-- intent ${ID} -->`,
   );
+});
+
+test("features: a renamed intent's line takes the new title", () => {
+  const text = [
+    "# web",
+    "",
+    "* [In Progress]   Fix greeting bug  <!-- intent 261026-1000 -->\r",
+    "- [live] Fix greeting bug <!-- intent 261026-0900 -->",
+    "- [planned] Owner's own line",
+    "",
+  ].join("\n");
+  // INT-36: only the text of the intent's line changes; its marker, status word, spacing and tag stay.
+  expect(renameFeature(text, "261026-1000", "Fix greeting bug", "Web greets every visitor by name")).toBe(
+    text.replace(
+      "Fix greeting bug  <!-- intent 261026-1000",
+      "Web greets every visitor by name  <!-- intent 261026-1000",
+    ),
+  );
+  // The owner reworded the line: their words stay. No line, no file, or the same title: nothing to do.
+  expect(renameFeature(text, "261026-1000", "Something else", "Web greets every visitor by name")).toBeNull();
+  expect(renameFeature(text, "261026-1100", "Fix greeting bug", "New title for the web page")).toBeNull();
+  expect(renameFeature(null, "261026-1000", "a", "b")).toBeNull();
+  expect(renameFeature(text, "261026-1000", "Fix greeting bug", "Fix greeting bug")).toBeNull();
 });
 
 test("features: a dropped intent's line is removed", () => {

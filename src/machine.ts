@@ -202,7 +202,7 @@ export const WAITS: Record<string, { stage: WaitStage; ask: string }> = {
   },
   "checks red": {
     stage: "blocked",
-    ask: "The tests still fail after two fix attempts. Reply with a hint on what to change, or start over.",
+    ask: "The tests can't pass without your help. Reply with what to change, or start over.",
   },
   "allow check writes": {
     stage: "blocked",
@@ -439,6 +439,9 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
     };
     const toWait = (waiting: string, why: string | null) => {
       const info = waitInfo(waiting);
+      // PIP-107: a wait that asks no question of its own drops an earlier one and its brief, so a card
+      // never shows a question that was already answered.
+      if (!o.data?.question) data = { ...data, question: undefined, brief: undefined };
       const fromStage = isWait(cur.stage) ? cur.from_stage : cur.stage;
       // A new wait from inside a wait still counts as a new message.
       const continued = isWait(cur.stage) ? cur.continued + 1 : cur.continued;

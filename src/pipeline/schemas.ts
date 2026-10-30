@@ -39,6 +39,7 @@ const BRIEF: JsonSchema = S;
 
 export const DESIGN_SCHEMA = object({
   title: S,
+  subject: S,
   brief: BRIEF,
   type: { type: "string", enum: TYPES },
   scope: S,
@@ -139,6 +140,8 @@ export interface Access {
 export interface DesignResult {
   /** INT-33, INT-34: the intent's title as a plain user story; used only for intents the owner didn't write. */
   title: string;
+  /** PIP-111: the change in a few words, Conventional Commit description style, for PR titles and commits. */
+  subject: string;
   /** PIP-106: what changes for users and what the owner decides, in plain words. */
   brief: string;
   type: string;

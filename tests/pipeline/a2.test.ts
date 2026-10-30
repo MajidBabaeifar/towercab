@@ -50,7 +50,7 @@ test("pipeline: feedback revises the spec", async () => {
   expect(p.prs.filter((x) => x.repo === "owner/web")).toHaveLength(1);
   expect(m.spec_pr).toBe(pr.number);
   expect(git(p.bares.web!, "log", "--format=%s", `${before}..${pr.head}`).trim()).toBe(
-    "docs(specs): Show a greeting",
+    "docs(specs): show a greeting",
   );
   expect(p.show("web", pr.head, "specs/web.md")).toContain("An empty page says hello too.");
   expect(p.stages(m.id)).toEqual(["design", "approval:spec", "design", "approval:spec"]);

@@ -67,6 +67,7 @@ export const REVIEW_BRIEF = "The change does what was asked and is safe to ship.
 
 export const DESIGN = {
   title: "Show a greeting",
+  subject: "show a greeting",
   brief: DESIGN_BRIEF,
   type: "feat",
   scope: "",

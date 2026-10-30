@@ -832,6 +832,9 @@ test("loop: a repo added while running is picked up", async () => {
   // The repo is unknown: the intent waits and nothing is picked.
   expect((await pass(p)).picked).toBeNull();
   expect((await p.store.get(A)).waiting).toBe("unknown repo");
+  // PIP-110: its message opens with the plain ask of its wait.
+  const msg = p.db.get<{ text: string }>("SELECT text FROM outbox WHERE key LIKE ?", `intent:${A}:%`)!;
+  expect(msg.text.split("\n")[0]).toBe(WAITS["unknown repo"]!.ask);
   // `towercab repo add` in another process writes the row; the loop sees it on its next pass.
   p.db.run(
     "INSERT INTO repos (name, github, base, source, added) VALUES ('api', 'owner/api', 'main', 'cli', ?)",

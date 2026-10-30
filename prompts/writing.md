@@ -28,8 +28,9 @@ Everything you write for the owner comes in two kinds, and you keep them apart.
   asks. It may name files, functions and spec IDs.
 
 Plain brief first, technical detail second. Towercab shows the brief at the top of cards, the intent
-page and pull requests, and folds the technical text under "Details", so the brief must stand on its
-own: never "see below", never a term the technical text defines.
+page and pull requests, keeps the risk and what the owner decides beside it, and folds the rest (your
+PR description, spec text, plan, findings) under "Details", so the brief must stand on its own: never
+"see below", never a term the technical text defines.
 
 ## Lead with the outcome
 

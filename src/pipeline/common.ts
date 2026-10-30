@@ -12,6 +12,7 @@ import { clonePath, type RepoConfig } from "../config.ts";
 import { classifyFailure, classifyRun } from "../faults.ts";
 import { type Step, upsertStageComment } from "../github/comments.ts";
 import { type ChildEnd, type Ctx, EnvError, type Progress } from "../handlers.ts";
+import { plainLine, SUBJECT_MAX } from "../intents/naming.ts";
 import type { Intent } from "../intents/types.ts";
 import { cooldown } from "../limits.ts";
 import { type Outcome, wait } from "../machine.ts";
@@ -62,6 +63,8 @@ export interface PipeData {
     brief?: string;
     /** INT-34: the plain title it proposed. */
     title?: string;
+    /** PIP-111: the change in a few words, for PR titles and commits. */
+    subject?: string;
   };
   specBranch?: string;
   /** Spec-PR revisions made for a conflict with base (PIP-81). */
@@ -616,12 +619,21 @@ export async function grantedFromPlan(cx: Ctx, intent: Intent): Promise<Access> 
   return md ? parseAccess(md) : { domains: [], paths: [] };
 }
 
+/**
+ * PIP-111: the change in a few words for PR titles and commits: the design's `subject`, cleaned to a
+ * plain line; without one (a design from before subjects, or one that cleans to nothing), the intent's
+ * title as before.
+ */
+export function subjectOf(m: Mission, intent: Intent): string {
+  return lowerFirst(plainLine(data(m).design?.subject ?? "", SUBJECT_MAX) || intent.title);
+}
+
 /** The Conventional Commit line of the change (from the design; a plain `feat` without one). */
 export function commitTitle(m: Mission, intent: Intent): string {
   const d = data(m).design;
   const type = d?.type || "feat";
   const scope = d?.scope ? `(${d.scope})` : "";
-  return `${type}${scope}${d?.breaking ? "!" : ""}: ${lowerFirst(intent.title)}`;
+  return `${type}${scope}${d?.breaking ? "!" : ""}: ${subjectOf(m, intent)}`;
 }
 
 function lowerFirst(s: string): string {

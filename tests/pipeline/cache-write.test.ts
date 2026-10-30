@@ -97,7 +97,9 @@ test("pipeline: refusing cache writes waits checks red", async () => {
     await q.until(() => q.mission()?.waiting === "checks red");
     const m = q.mission()!;
     expect([m.stage, m.waiting], q.moves()).toEqual(["blocked", "checks red"]);
-    expect(m.why).toBe("You didn't allow the checks of web to write to its build cache, so they can't run.");
+    expect(m.why).toMatch(
+      /^You didn't allow the checks of web to write to its build cache, so they can't run\. Make them write inside the checkout/,
+    );
     expect(q.db.meta("checks-write:web")).toBeNull();
     expect(workers(q)).toHaveLength(1);
   } finally {

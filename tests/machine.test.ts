@@ -131,6 +131,33 @@ describe("machine", () => {
   });
 });
 
+test("machine: an answered question doesn't come back on a later wait", () => {
+  const db = testDb();
+  const subject = () => ({ title: "Log in", repo: "web", link: null });
+  let m: Mission = db.tx(() =>
+    insertMission(db, { intent: "261026-1000", slug: "log-in", repo: "web", model: "opus", a: 3 }, 1),
+  );
+  const cx = { db, now: 10, subject };
+  for (let i = 0; i < 3; i++) m = apply(cx, m, { event: "ok" });
+  expect(m.stage).toBe("build");
+  const question = { context: "c", question: "Hello or bye?", options: [], recommendation: "hello" };
+  m = apply(cx, m, {
+    event: "wait",
+    waiting: "answer the question",
+    data: { question, brief: "Pick a word." },
+  });
+  expect(dataOf(m)).toMatchObject({ question, brief: "Pick a word." });
+  m = apply(cx, m, { event: "answered", text: "hello" });
+  // PIP-107: the next wait asks no question of its own, so the old one and its brief are gone.
+  m = apply(cx, m, {
+    event: "wait",
+    waiting: "answer the question",
+    why: "the worker tried something it may not",
+  });
+  expect(dataOf(m).question).toBeUndefined();
+  expect(dataOf(m).brief).toBeUndefined();
+});
+
 test("machine: plan merged while the slot is taken waits", () => {
   // The table still sends a merged plan to build; the loop holds the move while the repo builds
   // (LOOP-61), so the mission stays where it waits and no wait message is sent.

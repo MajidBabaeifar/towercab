@@ -159,6 +159,14 @@ test("ui: the card shows its brief first and folds the details", async ({ browse
     // Opening Details shows the technical text.
     await details.locator("summary").click();
     await expect(card.getByText(/token-bucket limiter/)).toBeVisible();
+    // UI-126: it stays open across a live refetch (pausing changes the page, so it refetches).
+    await page.getByRole("button", { name: "Pause" }).click();
+    await expect(page.getByRole("button", { name: "Resume" })).toBeVisible();
+    await expect(details).toHaveAttribute("open", "");
+    await page.getByRole("button", { name: "Resume" }).click();
+    await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+    await expect(details).toHaveAttribute("open", "");
+    if (m.mode === "dark") await card.screenshot({ path: join(SHOTS, "card-brief-open-dark.png") });
     await ctx.close();
   }
 });

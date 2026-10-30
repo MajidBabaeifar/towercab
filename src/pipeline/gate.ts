@@ -17,6 +17,27 @@ export const GATE_HOLD = {
   noE2e: "The change has no test that runs against the live app.",
 } as const;
 
+/**
+ * PIP-110: why GitHub won't merge the PR, from its `mergeStateStatus`, as what the owner can do about
+ * it. Any state not listed gets a general line that still names it.
+ */
+export function mergeStateWhy(status: string): string {
+  switch (status.toUpperCase()) {
+    case "BLOCKED":
+      return "GitHub won't merge it yet: a required check or review is missing. Check the PR's merge box on GitHub, then merge it yourself.";
+    case "UNSTABLE":
+      return "GitHub won't merge it yet: some checks fail or haven't finished. Look at the failing checks, then merge it or comment what to fix.";
+    case "BEHIND":
+      return "The PR is behind its base branch. Update the branch on GitHub, then merge it.";
+    case "DIRTY":
+      return "The PR clashes with changes on its base branch. Resolve the clash on GitHub, or comment so Towercab fixes it.";
+    case "DRAFT":
+      return "The PR is still a draft. Mark it ready for review on GitHub, then merge it.";
+    default:
+      return `GitHub won't merge it yet (it says "${status.toLowerCase()}"). Check the PR's merge box on GitHub, then merge it yourself.`;
+  }
+}
+
 /** The code's risk (AUT-16) when it is of the reviewed diff; null when none finished for it. */
 export function codeRisk(m: Mission): Risk | null {
   const d = data(m);
@@ -202,10 +223,7 @@ export const mergeHandler: Handler = {
         const tries = (d.mergeTries ?? 0) + 1;
         if (tries >= MAX_BLOCKED_READS)
           return {
-            done: wait(
-              "review and merge PR",
-              `GitHub won't merge the PR yet: it says the PR is ${v.mergeStateStatus.toLowerCase()}.`,
-            ),
+            done: wait("review and merge PR", mergeStateWhy(v.mergeStateStatus)),
           };
         cx.record(m, m.step, {}, { mergeTries: tries });
         return { poll: cx.config.agent.ciPoll };

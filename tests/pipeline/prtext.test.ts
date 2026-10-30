@@ -159,10 +159,23 @@ test("pipeline: PRs link to each other", () => {
   expect(plan).toContain("[spec PR]");
 });
 
+const WITHOUT_BRIEF = {
+  worker: null,
+  intentTitle: "Log in with a magic link",
+  intentProblem: null,
+  checks: null,
+  unplanned: [],
+  specIds: [],
+  links,
+  reviewDetails: null,
+  footer: { intentUrl: null, costUsd: 1, secs: 60 },
+};
+
 test("pipeline: every PR body opens in plain words", () => {
   const brief = "People can log in from a link in their email, without a password.";
   const risk = "## Risk: low\n\nSmall.";
-  // Spec: the brief, then the open points and the risk beside it, then the design's technical text.
+  const fold = (s: string) => `<details><summary>Details</summary>\n\n${s}\n\n</details>`;
+  // Spec: the brief, the open points and the risk open; the design's technical text folded.
   const spec = specBody(
     "Adds WEB-3.",
     ["WEB-3"],
@@ -170,36 +183,48 @@ test("pipeline: every PR body opens in plain words", () => {
     ["## Open points for you\n\n- Expiry?", risk],
     brief,
   );
-  expect(spec).toMatch(
-    /^## In plain words\n\nPeople can log in .*\n\n## Open points for you\n\n- Expiry\?\n\n## Risk: low\n\nSmall\.\n\nAdds WEB-3\./,
+  expect(spec).toBe(
+    [
+      `## In plain words\n\n${brief}`,
+      "## Open points for you\n\n- Expiry?",
+      risk,
+      fold("Adds WEB-3.\n\n**Spec IDs:** WEB-3"),
+      linkLine(links),
+    ].join("\n\n"),
   );
-  // Plan: the brief and the risk, then the approach and the access.
+  // Plan: the brief and the risk open, the approach folded, the access it asks for open.
   const plan = planBody("## Approach\n\nA signed token.", { domains: [], paths: [] }, links, risk, brief);
   expect(plan).toMatch(
-    /^## In plain words\n\nPeople can log in .*\n\n## Risk: low\n\nSmall\.\n\nA signed token\./,
+    /^## In plain words\n\nPeople can log in .*\n\n## Risk: low\n\nSmall\.\n\n<details><summary>Details<\/summary>\n\nA signed token\.\n\n<\/details>\n\n\*\*Access asked for:\*\* nothing/,
   );
-  // Code: the brief and the risk, then the worker's sections.
+  // Code: the brief, the risk and access beyond the plan open; the worker's text, checks and review folded.
   const code = codeBody({
     worker,
     brief,
     intentTitle: "Log in with a magic link",
     intentProblem: null,
-    checks: null,
-    unplanned: [],
-    specIds: [],
+    checks: { verify: "passed", proof: "proven", ci: "green", review: "approved" },
+    unplanned: [{ what: "network access to api.postmarkapp.com", why: "send the email" }],
+    specIds: ["WEB-3"],
     links,
-    reviewDetails: null,
+    reviewDetails: "All outcomes met.",
     risk,
     footer: { intentUrl: null, costUsd: 1, secs: 60 },
   });
-  expect([...code.matchAll(/^## (.+)$/gm)].map((m) => m[1]).slice(0, 3)).toEqual([
+  const open = code.replace(/<details><summary>Details<\/summary>[\s\S]*?\n\n<\/details>\n\n<\/details>/, "");
+  expect([...open.matchAll(/^## (.+)$/gm)].map((m) => m[1])).toEqual([
     "In plain words",
     "Risk: low",
-    "What this does",
+    "Access beyond the plan",
   ]);
-  // No brief (a run from before briefs): no empty section.
+  const folded = code.slice(code.indexOf("<details><summary>Details</summary>"));
+  for (const part of ["## What this does", "## Checks", "<summary>Review details</summary>"])
+    expect(folded.indexOf(part), part).toBeGreaterThan(0);
+  expect(open).toContain("**Spec IDs:** WEB-3");
+  // No brief (a run from before briefs): no empty section, nothing folded.
   expect(specBody("Adds WEB-3.", [], links)).toMatch(/^Adds WEB-3\./);
   expect(planBody("## Approach\n\nA.", { domains: [], paths: [] }, links)).toMatch(/^A\./);
+  expect(codeBody({ ...WITHOUT_BRIEF, worker })).not.toContain("<summary>Details</summary>");
 });
 
 test("prompts: templates fill every key", () => {

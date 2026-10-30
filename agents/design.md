@@ -43,6 +43,9 @@ Then return the JSON result:
   someone can do or see once it's done, and for whom if it isn't the owner. No file names, functions,
   flags or jargon. Towercab uses it only when the intent's `source` isn't `me`; for the owner's own
   intents, return the title as it is.
+- `subject`: the change in as few words as possible (two to six), as a Conventional Commit
+  description: lowercase, imperative or a noun phrase, no period, no product name ("magic link login",
+  "retry failed exports"). It titles the pull requests and the commit.
 - `brief`: the plain brief (see "Two kinds of text"): two to four sentences for an owner who doesn't
   code, saying what will be different for the people who use the product once this is built, what
   the owner is asked to decide about this spec (or that nothing needs deciding), and the risk in

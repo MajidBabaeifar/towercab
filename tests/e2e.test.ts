@@ -34,6 +34,7 @@ Visitors see nothing.
 const design = result(
   {
     title: "Show a greeting",
+    subject: "show a greeting",
     brief: "Visitors will see a hello.",
     type: "feat",
     scope: "",
@@ -113,8 +114,8 @@ test("e2e: an a5 intent goes from pick to done", async () => {
   ]);
   // Three PRs, all merged; the spec landed first.
   expect(p.prs.map((x) => [x.repo, x.title, x.state])).toEqual([
-    ["owner/web", "docs(specs): Show a greeting", "MERGED"],
-    ["owner/intents", "docs(plan): Show a greeting", "MERGED"],
+    ["owner/web", "docs(specs): show a greeting", "MERGED"],
+    ["owner/intents", "docs(plan): show a greeting", "MERGED"],
     ["owner/web", "feat: show a greeting", "MERGED"],
   ]);
   expect(p.show("web", "main", "specs/web.md")).toContain("WEB-1");

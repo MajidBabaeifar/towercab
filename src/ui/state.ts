@@ -425,13 +425,18 @@ function planDetails(d: MissionData): string | null {
  * findings; plan → the plan's brief, its approach; spec → the design's brief, its concerns; a question
  * → the asker's brief, the question's context.
  */
-export function textsOf(m: Mission, kind: CardKind): { brief: string | null; details: string | null } {
+export function textsOf(
+  m: Mission,
+  kind: CardKind,
+  legacy = false,
+): { brief: string | null; details: string | null } {
   const d = dataOf<MissionData>(m);
   switch (kind) {
     case "code": {
       const brief = nonEmpty(d.review?.brief) ?? nonEmpty(d.build?.brief);
-      // Before briefs existed the review's summary led the card; it stays the fallback.
-      if (!brief) return { brief: nonEmpty(d.review?.summary), details: null };
+      // Before briefs existed the review's summary led the card; it stays the card's fallback (UI-126),
+      // never the intent page's, which calls its brief plain (UI-127).
+      if (!brief) return { brief: legacy ? nonEmpty(d.review?.summary) : null, details: null };
       return { brief, details: nonEmpty(d.review?.details) ?? nonEmpty(d.review?.summary) };
     }
     case "plan":
@@ -544,7 +549,7 @@ export function missionCard(
   const pr = prLink(src, m);
   const approval = kind === "spec" || kind === "plan" || kind === "code";
   const note = intent?.sections.get("Towercab")?.trim() || null;
-  const texts = textsOf(m, kind);
+  const texts = textsOf(m, kind, true);
   let brief = texts.brief;
   if (!brief && !approval && !d.question && !pr) brief = note;
   // UI-126: an approval's reason is the plain gate reason; a blocked wait's reason is what Towercab

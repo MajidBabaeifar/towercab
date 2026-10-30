@@ -660,7 +660,7 @@ are stored in intent files and never change; each ask says plainly what the owne
 | `approve plan` | approval:plan | Decide if it should be built this way, with the access it asks for: merge the plan PR to start, or comment what to change. |
 | `review and merge PR` | approval:merge | Decide if this change can go live: merge the PR to ship it, or comment what to fix. |
 | `answer the question` | blocked | Answer a question so the work can go on: pick an option or write your own. |
-| `checks red` | blocked | The tests still fail after two fix attempts. Reply with a hint on what to change, or start over. |
+| `checks red` | blocked | The tests can't pass without your help. Reply with what to change, or start over. |
 | `allow check writes` | blocked | Decide if the tests may write to this machine's shared build cache: reply allow or no. |
 | `tests don't prove the change` | blocked | No test shows the change works. Reply with what a test should check, or say go on to continue without one. |
 | `CI red` | blocked | GitHub's checks still fail after two fix attempts. Reply with a hint on what to change, or start over. |

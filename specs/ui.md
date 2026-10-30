@@ -600,8 +600,9 @@ the technical text stays one click away under "Details".
   plan's approach and risks; code → the review's findings; a question with a brief → its context
   (shown in the open otherwise); a blocked wait → the reason Towercab saw (a check's name, an error
   line).
-- A mission from before briefs keeps the old card: the review's summary leads, nothing folded.
-- Verified by: `ui: the card leads with the plain brief, the technical text folded`
+- A mission from before briefs keeps the old card: the review's summary leads, nothing folded. Only
+  the card falls back to it; the intent page never shows it as plain (UI-127).
+- Verified by: `ui: the card leads with the plain brief, the technical text folded`, `ui: the card shows its brief first and folds the details`
 
 ### UI-127 · The intent page leads with the plain brief
 
@@ -617,7 +618,8 @@ The intent page puts the latest plain brief first, with its technical text folde
 The screenshots show a needs-you card with its plain brief first and its Details folded.
 
 - `npm run test:ui` saves `card-brief-<mode>.png` of the plan card and checks that the brief comes
-  before the "Details" toggle, which is closed, and that opening it shows the technical text.
+  before the "Details" toggle, which is closed, that opening it shows the technical text, and that
+  it stays open across a live refetch; it also saves the opened card as `card-brief-open-dark.png`.
 - Verified by: `ui: the card shows its brief first and folds the details`
 
 ### UI-130 · Add a repo from the page

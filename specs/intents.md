@@ -337,10 +337,11 @@ keeps the old one; the owner's own titles are never changed.
 - The design returns `title` ([PIP-109](pipeline.md)). When the intent's `source` is set and isn't
   `me`, the title differs, and the intent has no `## Original title` yet, Towercab writes in one store
   commit (`towercab: rename <id>`): the old title as `## Original title` (`setSection`), and the new
-  one (a trailing period dropped, at most 120 characters) on the title line (`setTitle`: only the
-  first `# ` line changes, its `Intent: ` prefix and line ending kept; every other line stays
-  byte-identical). It runs before the spec is committed, so the spec PR and its commit carry the new
-  title; a replay after a crash renames nothing twice. A failed write is only logged.
+  one, cleaned and checked as INT-36 says, on the title line (`setTitle`: only the first `# ` line
+  changes, its `Intent: ` prefix and line ending kept; every other line stays byte-identical). Its
+  feature-list line follows (INT-36). It runs before the spec is committed; a replay after a crash
+  renames nothing twice, and finishes the feature line if that was cut off. A failed write is only
+  logged.
 - `source: me` or no `source`: the title is never changed.
 - Verified by: `pipeline: an intent from elsewhere takes a plain title at pick`, `pipeline: the owner's titles are never renamed`, `intents: a rename changes only the title line`
 
@@ -349,10 +350,28 @@ keeps the old one; the owner's own titles are never changed.
 The intents Towercab writes itself follow the naming rule.
 
 - Issue intake (INT-22, INT-23): `agents/score.md` asks for the title as a user story by INT-33,
-  naming the product (`{{product}}`, the repo's short name), under 100 characters; the store keeps at
-  most 120. No other writer in Towercab creates intents; standards reviews and findings that arrive
-  as intent PRs follow the README's rule, and INT-34 renames them at pick if they don't.
+  naming the product (`{{product}}`, the repo's short name), under 100 characters; the title is
+  cleaned as INT-36 says (`plainLine`, at most 100). No other writer in Towercab creates intents;
+  standards reviews and findings that arrive as intent PRs follow the README's rule, and INT-34
+  renames them at pick if they don't.
 - Verified by: `issues: the scorer names the work as a user story about the product`
+
+### INT-36 · An agent's title is cleaned and checked before it is used
+
+A title an agent writes can't carry markup, mentions or hidden characters into the intent, PRs,
+commits or messages, and one that breaks the naming rule isn't used; a rename also updates the
+intent's line in the repo's feature list.
+
+- `plainLine(s, max)` (`src/intents/naming.ts`): printable characters only; HTML comments removed;
+  no `<`, `>` or backticks; no `@` before a name; no leading `#`, `-`, `*` or `@`; one line, no
+  trailing period; cut at a word boundary to `max` (100 for titles). `titleProblem` refuses fewer
+  than 4 or more than 20 words: the rename is skipped with the log line `<id>: kept its title: the
+  design's (<why>) doesn't follow the naming rule`.
+- The renamed intent's line in `features/<repo>.md` (the one tagged `<!-- intent <id> -->`) takes the
+  new title through `editFeatures` (`renameFeature`), when its text is still the old title as Towercab
+  wrote it; its marker, status word, spacing and tag, and every other line, stay byte-identical. A line
+  the owner reworded keeps their words. A failure is only logged.
+- Verified by: `naming: agent text becomes one plain line`, `naming: a title outside the naming rule's length is refused`, `pipeline: a design title is cleaned before it renames`, `pipeline: a title that breaks the naming rule is not used`, `pipeline: a renamed intent's feature line takes the new title`, `features: a renamed intent's line takes the new title`
 
 ### INT-37 · A feature list per repo
 

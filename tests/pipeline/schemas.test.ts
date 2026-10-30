@@ -56,6 +56,7 @@ test("schemas: closed objects, every key required", () => {
   expect(
     validate(SCHEMAS.design, {
       title: "Web shows a greeting",
+      subject: "greeting",
       brief: "b",
       type: "feat",
       scope: "",

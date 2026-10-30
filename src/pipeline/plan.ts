@@ -26,6 +26,7 @@ import {
   prUrl,
   repoFiles,
   spawnRun,
+  subjectOf,
 } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { planBody, planFile, section } from "./prtext.ts";
@@ -227,7 +228,7 @@ async function push(cx: Ctx, m: Mission): Promise<Progress> {
     branch,
     "origin/main",
     { [`${intent.dir}/plan.md`]: md },
-    `docs(plan): ${intent.title}`,
+    `docs(plan): ${subjectOf(m, intent)}`,
   );
   return openPr(cx, cx.record(m, "pr"));
 }
@@ -301,7 +302,7 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
           "--head",
           branch,
           "--title",
-          `docs(plan): ${intent.title}`,
+          `docs(plan): ${subjectOf(m, intent)}`,
           "--body-file",
           "-",
         ],

@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..89, PIP-92..100, PIP-106..110 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..89, PIP-92..100, PIP-106..111 · **Prefix:** PIP
 
 ## Purpose
 
@@ -939,21 +939,25 @@ Towercab keeps each stage's plain brief beside its technical text, so cards and 
 - `missions.data`: `design.brief` and `design.title` (INT-34), `plan.brief`, `build.brief` (the
   worker's latest, a repair round's included), `review.brief`, and `brief` for the question being
   asked (`ask(cx, m, q, waiting, brief)`: the worker's brief when it is blocked; none clears an
-  earlier one). A question posted on a PR or in the intent opens with `**In plain words:** <brief>`,
-  and so does the Review comment; the review's `details` (the card's and the PR's technical text) stay
-  without it.
-- Verified by: `ui: the card leads with the plain brief, the technical text folded`, `pipeline: every PR body opens in plain words`
+  earlier one). Any wait that asks no question of its own (`apply`) drops `question` and `brief`, so an
+  answered question never comes back on a later card. A question posted on a PR or in the intent opens
+  with `**In plain words:** <brief>`, and so does the Review comment; the review's `details` (the
+  card's and the PR's technical text) stay without it.
+- Verified by: `ui: the card leads with the plain brief, the technical text folded`, `pipeline: every PR body opens in plain words`, `machine: an answered question doesn't come back on a later wait`
 
 ### PIP-108 · PR bodies open in plain words
 
-The spec, plan and code PRs start with what the change means in plain words, and the risk beside it,
-before the technical text.
+The spec, plan and code PRs start with what the change means in plain words, with the risk and what
+the owner decides beside it; the technical text is folded under "Details".
 
-- `plainMd(brief)` = `## In plain words\n\n<brief>` ("" without a brief). Spec PR: the brief, the
-  open points and the risk (PIP-99), then the design's `pr` text, the spec IDs and the links. Plan
-  PR: the brief and the risk, then the approach, the access asked for and the links. Code PR (PIP-48):
-  the worker's brief and the risk, then the worker's sections, the checks, the access beyond the
-  plan, the IDs and links, the review details and the footer.
+- `plainMd(brief)` = `## In plain words\n\n<brief>` ("" without a brief); `detailsMd` folds the
+  technical part as `<details><summary>Details</summary>…</details>`. Spec PR: the brief, the open
+  points and the risk (PIP-99), then, folded, the design's `pr` text and the spec IDs; the links stay
+  open. Plan PR: the brief and the risk, the approach folded, then the access asked for, the merge line
+  and the links. Code PR (PIP-48): the worker's brief, the risk and the access beyond the plan open;
+  folded, the worker's sections, the checks and the review details; then the IDs, the issue line, the
+  links and the footer open. Without a brief (a run from before briefs) nothing is folded and the
+  bodies read as before.
 - Verified by: `pipeline: every PR body opens in plain words`, `pipeline: PR text comes from the worker`
 
 ### PIP-109 · The design names the intent
@@ -964,7 +968,7 @@ owner didn't write.
 - `design.title`: one plain sentence of about 6 to 14 words, no period, naming the product and what
   someone can do or see once it's done ([INT-33](intents.md)). Kept in `data.design.title`; applied
   as [INT-34](intents.md) says. The owner's own intents keep their title whatever it returns.
-- Verified by: `pipeline: an intent from elsewhere takes a plain title at pick`, `pipeline: the owner's titles are never renamed`
+- Verified by: `pipeline: an intent from elsewhere takes a plain title at pick`, `pipeline: the owner's titles are never renamed`, `pipeline: a title that breaks the naming rule is not used`
 
 ### PIP-110 · Asks and reasons say what the owner decides
 
@@ -977,10 +981,28 @@ do, not what Towercab did.
 - The reasons an approval waits are plain sentences: the gate's (`GATE_WHY` in `src/autonomy.ts`,
   `GATE_HOLD` in `src/pipeline/gate.ts`), the risk's (`riskWhy`: `It is <level> risk, and at autonomy
   a<n> only low-risk changes go ahead without you.`; none → `The risk check didn't finish, so you
-  decide whether it goes ahead.`), the spec's open points (`openPointsWhy`) and the spec PR's checks.
-  A blocked wait's reason stays what Towercab saw (a check's name, an error line) and is shown as
-  technical text (UI-126).
-- Verified by: `machine: every ask says what the owner decides, as the spec's table does`, `pipeline: gate table`, `autonomy: gate table`, `pipeline: open points send the spec to the owner`, `ui: the card leads with the plain brief, the technical text folded`
+  decide whether it goes ahead.`), the spec's open points (`openPointsWhy`), the spec PR's checks and
+  conflicts (each says what to do: comment so Towercab revises it, re-run the checks, or merge it
+  anyway), and GitHub's refusal to merge (`mergeStateWhy`: behind, dirty, blocked, unstable, draft and
+  any other state, each with the step that clears it). A blocked wait's reason stays what Towercab saw
+  (a check's name, an error line, prefixed `Still failing after 2 fix attempts:` when the repairs ran
+  out) and is shown as technical text (UI-126); the `checks red` ask names no count, since the owner
+  refusing cache writes (PIP-95) reaches it too.
+- The message of an intent-only wait (`unknown repo`, `bad after:`) opens with its ask from **Waits**.
+- Verified by: `machine: every ask says what the owner decides, as the spec's table does`, `pipeline: gate table`, `autonomy: gate table`, `pipeline: open points send the spec to the owner`, `ui: the card leads with the plain brief, the technical text folded`, `pipeline: GitHub's merge state in plain words`, `pipeline: a red spec PR that stays red waits for the owner`, `loop: a repo added while running is picked up`
+
+### PIP-111 · PR titles and commits stay short
+
+PR titles and commit messages name the change in a few words, as the owner's rule asks, even when the
+intent's title is a long user story.
+
+- The design also returns `subject`: two to six words, Conventional Commit description style
+  (lowercase, no period, no product name). `subjectOf` cleans it like a title (INT-36) to at most 60
+  characters and lowers its first letter; it titles the spec PR and its commit (`docs(specs):
+  <subject>`), the plan PR and its commit (`docs(plan): <subject>`), and the code PR, its commits and
+  the squash merge (`<type>(<scope>)!: <subject>`). Without one, or when it cleans to nothing, the
+  intent's title as before.
+- Verified by: `pipeline: PR titles use the design's short subject`
 
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
@@ -1007,7 +1029,7 @@ run is, first match: session gone, a usage limit ([LOOP-9](loop.md)), a network 
 optional)
 
 ```
-design   {title: S, brief: S, type, scope, breaking: bool, spec_ids: [S], concerns: [{what, why}],
+design   {title: S, subject: S, brief: S, type, scope, breaking: bool, spec_ids: [S], concerns: [{what, why}],
           open_questions: [{question, answer: S?}], pr: S}
 plan     {brief: S, plan: S, access: {domains: [{domain, why}], paths: [{glob, why}]}, e2e}
 build    {status: "done"|"blocked"|"access", brief: S, pr: S?, notes: S,
