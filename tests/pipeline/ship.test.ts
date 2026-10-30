@@ -6,7 +6,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileS
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { dataOf, type Mission } from "../../src/mission.ts";
-import { build, happy, ID, intent, intents, reply, TARGET } from "../helpers/flows.ts";
+import { build, checkRun, happy, ID, intent, intents, reply, TARGET } from "../helpers/flows.ts";
 import { type ClaudeReply, Pipe } from "../helpers/pipe.ts";
 import { failResult, okResult } from "../helpers/tools.ts";
 import { git } from "../helpers/world.ts";
@@ -208,6 +208,20 @@ describe("ship: red, rollback, fix forward", () => {
   });
 });
 
+/** A worker whose every round changes the greeting (with a test that proves it) but never says hello. */
+function neverHello(p: Pipe): void {
+  let round = 0;
+  p.respond.worker = () => {
+    round++;
+    const edits: Record<string, string> = {
+      "greeting.txt": `${Array.from({ length: round }, (_, i) => `hullo ${i + 1}`).join("\n")}\n`,
+      [`tests/greeting-${round}.sh`]: `grep -q "hullo ${round}" greeting.txt\n`,
+    };
+    if (round === 1) edits["e2e/greet.sh"] = GREET_E2E;
+    return { structured: build(), edits };
+  };
+}
+
 describe("ship: two fixes then revert", () => {
   let p: Pipe;
   let m: Mission;
@@ -215,17 +229,7 @@ describe("ship: two fixes then revert", () => {
   beforeAll(async () => {
     p = world();
     p.platform = () => ({ state: "success" });
-    let round = 0;
-    // Each round changes the greeting (with a test that proves it) but never says hello.
-    p.respond.worker = () => {
-      round++;
-      const edits: Record<string, string> = {
-        "greeting.txt": `${Array.from({ length: round }, (_, i) => `hullo ${i + 1}`).join("\n")}\n`,
-        [`tests/greeting-${round}.sh`]: `grep -q "hullo ${round}" greeting.txt\n`,
-      };
-      if (round === 1) edits["e2e/greet.sh"] = GREET_E2E;
-      return { structured: build(), edits };
-    };
+    neverHello(p);
     await p.start();
     m = await p.untilStage("blocked", 200);
   }, 180_000);
@@ -248,6 +252,32 @@ describe("ship: two fixes then revert", () => {
     expect(() => p.show("web", "main", "greeting.txt")).toThrow();
     expect(p.show("web", "main", "e2e/greet.sh")).toBe("true\n");
     expect(m.why).toContain(`greet failed against ${URL}`);
+  });
+});
+
+describe("ship: a revert whose CI is red", () => {
+  let p: Pipe;
+  let m: Mission;
+
+  beforeAll(async () => {
+    p = world();
+    p.platform = () => ({ state: "success" });
+    neverHello(p);
+    p.newPrChecks = (pr) => (pr.title.startsWith("Revert:") ? [checkRun("test", "FAILURE")] : []);
+    await p.start();
+    m = await p.untilStage("blocked", 200);
+  }, 180_000);
+
+  afterAll(() => p.cleanup());
+
+  test("ship: a red revert freezes the repo", () => {
+    expect([m.waiting, m.why], JSON.stringify(moves(p))).toEqual([
+      "rollback failed",
+      "the revert PR's CI is red",
+    ]);
+    expect(p.prs.find((x) => x.title === "Revert: Show a greeting")?.state).toBe("OPEN");
+    // main still has the change: nothing merged without green CI.
+    expect(p.show("web", "main", "greeting.txt")).toContain("hullo 3");
   });
 });
 
