@@ -12,7 +12,14 @@ test("db: schema matches the spec", () => {
   const tables = db.all<{ name: string }>(
     "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
   );
-  expect(tables.map((t) => t.name)).toEqual(["commands", "meta", "missions", "outbox", "transitions"]);
+  expect(tables.map((t) => t.name)).toEqual([
+    "commands",
+    "meta",
+    "missions",
+    "outbox",
+    "repos",
+    "transitions",
+  ]);
 });
 
 test("db: migrations run in order", () => {

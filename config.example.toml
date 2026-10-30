@@ -73,7 +73,9 @@ port = 7311
 # Whether Towercab updates itself when its main branch moves.
 auto = true
 
-# One table per repo Towercab works in; the name after repos. is yours to choose.
+# One table per repo Towercab works in; the name after repos. is yours to choose. Towercab imports
+# these tables into its database once, on its first start, and ignores them after that: add repos
+# later with `towercab repo add owner/name` or from the page.
 [repos.web]
 # The repo on GitHub, as owner/name.
 github = "you/web"

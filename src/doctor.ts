@@ -80,6 +80,8 @@ export async function doctor(o: {
     );
   }
   for (const [name, why] of config.badRepos) lines.push(`${name}: ${why}`);
+  // LOOP-65: a table for a repo in the database is ignored; it can go.
+  for (const [name, why] of config.ignoredRepos) lines.push(`${name}: ${why}`);
   lines.push(
     `telegram: ${config.telegram ? `chat ${config.telegram.chatId}` : "not configured (no messages)"}`,
   );

@@ -24,6 +24,7 @@ import { decide, nextText } from "./pick.ts";
 import { guardMain } from "./pipeline/guard.ts";
 import { handlers } from "./pipeline/index.ts";
 import { parseScores } from "./priority.ts";
+import { addRepo, loadRepos, removeRepo, repoList } from "./repos.ts";
 import { checkoutRoot, down, logsArgv, restart, up } from "./service.ts";
 import { renderStatus } from "./status.ts";
 import { Telegram } from "./telegram.ts";
@@ -49,6 +50,7 @@ export const COMMANDS = [
   "ui",
   "doctor",
   "update",
+  "repo",
   "hook",
 ] as const;
 
@@ -63,6 +65,7 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   retry <id> | drop <id>
   start <id>                      begin that intent's design now, even when the repo is full
   pause | resume
+  repo add <owner/name> [--name <short>] | repo remove <name> | repo list
   ui [--no-open]                  open the web page
   doctor [--quick]                what is missing
   update                          update this checkout to the latest main now
@@ -92,6 +95,7 @@ function world(flags: { config?: string; home?: string }, tools: Tools): World {
   const config = loadConfig(configPath(flags.config));
   const home = Home.resolve(flags.home);
   const db = Db.openHome(home.db);
+  loadRepos(config, db, Date.now() / 1000);
   const github = config.github ? createGitHub({ config, tools, db, keyPath: appKeyPath(config) }) : null;
   let store: Promise<IntentStore> | null = null;
   return {
@@ -162,6 +166,7 @@ export async function main(argv: string[], tools: Tools = realTools()): Promise<
         intent: { type: "string" },
         "no-open": { type: "boolean" },
         quick: { type: "boolean" },
+        name: { type: "string" },
       },
     });
   } catch (e) {
@@ -214,7 +219,7 @@ async function run(
       return guardMain([args[1]]);
     }
     case "up":
-      checkLoop(loadConfig(configPath(flags.config)));
+      checkLoop(world(flags, tools).config);
       return up(tools);
     case "down":
       return down(tools);
@@ -380,6 +385,8 @@ async function run(
       await ownerApprove(w.github, gh, n);
       return `merged ${gh}#${n} as ${w.config.github?.me}; Towercab continues on its next read`;
     }
+    case "repo":
+      return repo(w, args, v.name as string | undefined);
     case "ui": {
       if (!w.config.ui.port) throw new Error("ui is off: [ui] port = 0");
       const url = `http://localhost:${w.config.ui.port}/`;
@@ -403,6 +410,34 @@ async function run(
     default:
       return 0;
   }
+}
+
+/** `repo add | remove | list` (LOOP-66, LOOP-67); a running loop sees the change on its next pass. */
+async function repo(w: World, args: string[], name: string | undefined): Promise<string> {
+  const [sub, arg] = args;
+  if (sub === "list" && args.length === 1) return repoList(w.db, w.home.root);
+  if (sub === "remove" && arg && args.length === 2) {
+    const r = removeRepo(w.db, w.config, arg);
+    return `removed ${r.name} (${r.github}); its clone stays on disk`;
+  }
+  if (sub === "add" && arg && args.length === 2) {
+    if (!w.github) throw new Error(`repo add needs [github] in ${w.config.file} (app_id, me)`);
+    const r = await addRepo(
+      {
+        db: w.db,
+        config: w.config,
+        tools: w.tools,
+        github: w.github,
+        home: w.home.root,
+        now: Date.now() / 1000,
+        source: "cli",
+      },
+      arg,
+      name,
+    );
+    return `added ${r.name}: ${r.github}, base ${r.base}, cloned`;
+  }
+  throw new UsageError("repo add <owner/name> [--name <short>] | repo remove <name> | repo list");
 }
 
 /** Serve the UI from the running loop (UI-1); the page never stops the loop. */

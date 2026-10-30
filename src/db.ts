@@ -1,10 +1,15 @@
-// The database (LOOP-37): one SQLite file, four tables and a key-value meta.
+// The database (LOOP-37): one SQLite file, five tables and a key-value meta.
 
 import { existsSync, renameSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 
 export type SqlValue = SQLInputValue;
 export type Row = Record<string, SqlValue>;
+
+/** The repos Towercab works on (LOOP-65); `env` is a JSON object, `path` '' = `<home>/repos/<name>`. */
+const REPOS = `CREATE TABLE repos (name TEXT PRIMARY KEY, github TEXT NOT NULL, path TEXT NOT NULL DEFAULT '',
+  base TEXT NOT NULL, workers INTEGER NOT NULL DEFAULT 1, ahead INTEGER NOT NULL DEFAULT 3,
+  env TEXT NOT NULL DEFAULT '{}', source TEXT NOT NULL, added REAL NOT NULL);`;
 
 /** LOOP-37 **Schema**, as written in specs/loop.md (a test compares them). */
 export const SCHEMA = `CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -30,11 +35,12 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY,
   arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
   created REAL NOT NULL, applied_at REAL, result TEXT);
 CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, created REAL NOT NULL,
-  sent_at REAL, tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0);`;
+  sent_at REAL, tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0);
+${REPOS}`;
 
 /** Migration i takes `user_version` from i to i+1. Later changes append. */
 export const MIGRATIONS: string[] = [
-  SCHEMA.replace("'resume','start'", "'resume'"),
+  SCHEMA.replace("'resume','start'", "'resume'").replace(`\n${REPOS}`, ""),
   // 2: `start` joins the commands (LOOP-63); the CHECK can't be altered, so the table is rebuilt.
   `CREATE TABLE commands_new (id INTEGER PRIMARY KEY,
   name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start')),
@@ -43,6 +49,8 @@ export const MIGRATIONS: string[] = [
 INSERT INTO commands_new SELECT id, name, arg, text, source, created, applied_at, result FROM commands;
 DROP TABLE commands;
 ALTER TABLE commands_new RENAME TO commands;`,
+  // 3: repos move from config.toml into the database (LOOP-65).
+  REPOS,
 ];
 
 export class Db {

@@ -34,10 +34,12 @@ import {
   type Mission,
   patchData,
   unfinished,
+  unfinishedFor,
   update,
 } from "./mission.ts";
 import { sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState } from "./pick.ts";
+import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
 import { aheadIn, bestReady, buildingIn, isReady } from "./slots.ts";
 import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
@@ -163,6 +165,7 @@ export class Loop {
       }
     }
     db.setMeta("running", `${process.pid} ${Math.floor(this.now)}`);
+    loadRepos(this.d.config, db, this.now);
     await this.pollIntents(true);
     this.startIssues(true);
   }
@@ -270,6 +273,8 @@ export class Loop {
     this.last = nowPoint;
     db.setMeta("last_pass", String(Math.floor(this.now)));
     db.setMeta("health", JSON.stringify(this.health.open()));
+    // LOOP-68: repos added or removed since the last pass (by the CLI or the page).
+    syncRepos(this.d.config, db);
 
     // Commands from the CLI and the UI.
     for (const c of await applyPending({
@@ -285,6 +290,7 @@ export class Loop {
     await this.enterDue();
     this.enforceTimeouts();
     await this.pollIntents(false);
+    await this.requeueKnownRepos();
     this.startIssues(false);
     await this.pollPrs();
     this.releaseReady();
@@ -524,6 +530,29 @@ export class Loop {
         this.d.log(`unstage ${id}: ${(e as Error).message}`);
       }
     }
+  }
+
+  /**
+   * LOOP-68: an intent that waits for an unknown repo is queued again once the repo is known, and
+   * the intents are read again so this pass can pick it.
+   */
+  private async requeueKnownRepos(): Promise<void> {
+    const repos = this.d.config.repos;
+    const known = (this.listing?.open ?? []).filter(
+      (i) => i.waiting === "unknown repo" && repos.has(i.repo) && !unfinishedFor(this.d.db, i.id),
+    );
+    if (known.length === 0) return;
+    for (const i of known) {
+      try {
+        await this.d.store.update(i.id, "repo known", (e) => {
+          if (e.intent.waiting === "unknown repo") e.removeField("waiting");
+        });
+        this.d.log(`${i.id}: its repo ${i.repo} is known now; queued again`);
+      } catch (e) {
+        this.d.log(`${i.id}: ${(e as Error).message}`);
+      }
+    }
+    await this.pollIntents(true);
   }
 
   /** A GitHub read worked; the fault closes unless the issue poll is still failing (INT-21). */

@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..64 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..68 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -24,7 +24,7 @@ and its settings in one TOML file.
 - Config: `~/.config/towercab/config.toml` (`--config`, `TOWERCAB_CONFIG`), parsed with `smol-toml`.
   Sections and defaults in **Config**. Unknown keys are ignored. A wrong type or range →
   `config: <file>: <section>.<key> <what>`, exit 1. `run` and `up` also need `[github]` and at least
-  one valid `[repos.*]`.
+  one repo (LOOP-65).
 - Verified by: `config: loads defaults`, `config: bad values name the key`, `home: layout`
 
 ### LOOP-2 · Service
@@ -76,7 +76,7 @@ The loop starts the highest-priority intent that can run.
 
 - `decide(listing, state)` (pure, also behind `next`): the picker's list ([PRI-5](priority.md)),
   skipping: parked, paused, a repo with `ahead` intents ahead (LOOP-60), the model cooling down (LOOP-9), GitHub or Claude
-  unreachable (LOOP-10). An intent whose repo isn't in `[repos]` gets `waiting: unknown repo`; one
+  unreachable (LOOP-10). An intent whose repo Towercab doesn't know (LOOP-65) gets `waiting: unknown repo`; one
   whose `after` names an unknown, dropped or cyclic intent gets `waiting: bad after:`.
 - Picked → one transaction inserts the mission: `attempt` = last + 1, a new session uuid, `model` =
   the intent's `model` or `[agent].model`, `a_at_pick`, checkout `work/<id>-<attempt>`, branch
@@ -123,7 +123,7 @@ resumes its own session.
 Towercab keeps its own clone of each repo and a separate checkout per mission, and runs nothing from
 a checkout's `.git`.
 
-- Clone: `[repos.<r>].path` (default `<home>/repos/<r>`), cloned from `https://github.com/<github>.git`
+- Clone: the repo's `path` (LOOP-65; default `<home>/repos/<r>`), cloned from `https://github.com/<github>.git`
   when missing; only fetched into and pushed from.
 - Checkout `work/<id>-<attempt>`: made in a `.tmp` folder and renamed into place; `git clone
   --no-checkout <clone>`, origin removed, base fetched by path, `git checkout -B <branch>
@@ -221,7 +221,8 @@ The CLI covers running the service and the few actions that have no GitHub gestu
 - `up`, `down`, `restart`, `logs` (LOOP-2); `run [--watch] [--intent <id>]`; `status`, `next`
   (LOOP-13); `add` ([INT-2](intents.md)); `answer <id> <text>` (LOOP-38); `start <id>` (LOOP-63); `retry <id>` (a fresh
   attempt); `drop <id>` ([PRI-9](priority.md)); `approve <id>` (merges the PR the intent waits on, as
-  the owner, LOOP-38); `pause`, `resume`; `ui` (opens the page); `doctor`; `update` (LOOP-35);
+  the owner, LOOP-38); `pause`, `resume`; `repo add | remove | list` (LOOP-66, LOOP-67); `ui` (opens
+  the page); `doctor`; `update` (LOOP-35);
   `hook guard <rules>` (internal, [PIP-29](pipeline.md)); `--version`.
 - One loop per home: a lock file; a second `run` → `towercab is running (pid N): towercab down
   first`. `answer`, `retry`, `drop`, `start`, `pause` and `resume` insert a `commands` row the loop applies on
@@ -333,10 +334,10 @@ A code change to Towercab runs on the owner's machine within seconds.
 
 ### LOOP-37 · Database
 
-One SQLite file holds what the loop must not forget: missions, their moves, commands and messages.
+One SQLite file holds what the loop must not forget: missions, their moves, commands, messages and repos.
 
 - `node:sqlite`, WAL, `synchronous=FULL`, `busy_timeout=5000`; migrations by `PRAGMA user_version`.
-  Tables in **Schema**: `missions`, `transitions`, `commands`, `outbox`, and a key-value `meta`
+  Tables in **Schema**: `missions`, `transitions`, `commands`, `outbox`, `repos` (LOOP-65), and a key-value `meta`
   (running pid, paused, cooldowns, bot identity, last pass). `tx(fn)` = one `BEGIN IMMEDIATE`.
 - v2 starts a new `towercab.db`; a v1 one at that path is moved aside to `towercab.v1.db`, unused.
 - Verified by: `db: schema matches the spec`, `db: migrations run in order`, `db: a v1 database is moved aside`
@@ -452,6 +453,66 @@ Not used: kept free; `start` is LOOP-63.
   reads `ready to build, behind <id>`.
 - Verified by: `status: ready to build and ahead limit are shown`
 
+### LOOP-65 · Repos live in the database
+
+The repos Towercab works on are kept in its database, so they can be added and removed while it
+runs; the config file's repo tables are only read once, to bring them in.
+
+- Table `repos` in **Schema**: `name` (the short name intents use), `github` (`owner/name`), `path`
+  (`''` = `<home>/repos/<name>`), `base`, `workers`, `ahead`, `env` (a JSON object), `source`
+  (`config`, `cli` or `ui`), `added`.
+- On start (every CLI command that reads the home, and the loop's startup), each valid
+  `[repos.<name>]` table is imported once: unless `meta.repo-imported:<name>` is set, it is set and the
+  table becomes a row (a name already in the table is left as it is). A table is never imported
+  again, so a repo removed with `repo remove` stays removed.
+- `Config.repos` (the Map the rest of the code reads) is then filled from the table, and stays the same
+  Map object afterwards. A table whose repo is in the database, or was imported and removed, is ignored;
+  `doctor` names each one: `<name>: [repos.<name>] in <file> is ignored: the repo is in Towercab's
+  database now (towercab repo list). Delete the table.` (or `…the repo was removed with towercab repo
+  remove. Delete the table.`). A table that fails to validate and has no row still fails only what uses
+  it, as before.
+- Verified by: `repos: config tables are imported once`, `repos: doctor says which config tables to delete`, `db: schema matches the spec`
+
+### LOOP-66 · repo add
+
+`towercab repo add <owner/name>` adds a repo with nothing else to fill in: Towercab checks it can reach
+it, takes its default branch and clones it.
+
+- `repo add <owner/name> [--name <short>]`: the short name defaults to the repo part of `owner/name` (a
+  `https://github.com/` prefix or `.git` suffix is dropped). It must be a repo name (INT-2) and not
+  `intents`.
+- Towercab's GitHub App must reach the repo: `gh api repos/<owner/name> --jq .default_branch` as the App
+  (LOOP-19). Its answer is `base`; `workers` 1, `ahead` 3, `env` empty, `path` `''`. The repo is cloned
+  as in LOOP-8 into `<home>/repos/<name>`; a folder there that holds a clone of another repo is refused.
+  Only then is the row stored (`source` `cli`, or `ui` from the page, UI-130).
+- Refusals are the reason, printed `towercab: <reason>` with exit 1: `<text> isn't a GitHub repo: write
+  it as owner/name`; `<name> is already a repo (<github>)`; `<owner/name> is already added as <name>`;
+  `Towercab can't reach <owner/name>: <why>` (the App isn't installed on it, GitHub's refusal, no
+  `app.pem`); `Towercab couldn't clone <owner/name>: <why>`.
+- Verified by: `repos: add checks GitHub, reads the base and clones`, `repos: add refuses an unreachable repo`, `repos: add refuses a duplicate`, `cli: repo commands`
+
+### LOOP-67 · repo remove and repo list
+
+The owner can list the repos and remove one nothing is working on.
+
+- `repo list`: one line per repo, `<name>: <owner/name> · base <base> · <n> worker(s) · ahead <n> ·
+  <clone path>`, by name; none → `no repos yet: add one with towercab repo add <owner/name>`.
+- `repo remove <name>` deletes the row in one transaction with the check that no unfinished mission
+  uses the repo; refused with `<name> still has unfinished intents (<ids>): let them finish or drop them
+  first`, or `<name> isn't a repo Towercab knows (towercab repo list)`. The clone stays on disk.
+- Verified by: `repos: remove refuses while an intent is unfinished`, `cli: repo commands`
+
+### LOOP-68 · The running loop sees repo changes
+
+A repo added or removed while Towercab runs counts from its next pass, without a restart, and the
+intents that waited for it start.
+
+- Each pass first makes `Config.repos` equal the `repos` table, changing only the entries that differ
+  (`repo add` from the CLI is another process; the page adds in the loop's own).
+- An intent with `waiting: unknown repo`, no unfinished mission, and a repo that is now known loses its
+  `waiting`; the intents are read again in the same pass, so it can be picked at once.
+- Verified by: `loop: a repo added while running is picked up`
+
 **Config** (`src/config.ts`)
 
 | Key | Type, range | Default |
@@ -471,6 +532,8 @@ Not used: kept free; `start` is LOOP-63.
 | `agent.sandbox_unix_sockets` | bool | false |
 | `repos.<r>.github`, `path`, `base`, `workers`, `env` | `owner/name`; path; branch; int 1–16; table | required; `<home>/repos/<r>`; `main`; 1; `{}` |
 | `repos.<r>.ahead` | int 1–16 | 3 |
+
+`[repos.<r>]` tables are imported into the database once (LOOP-65) and ignored after that.
 | `github.app_id`, `github.me`, `github.api_base` | int; login; URL | required; required; `https://api.github.com` |
 | `telegram.bot_token`, `telegram.chat_id`, `telegram.api_base` | strings; URL | none (no Telegram); `https://api.telegram.org` |
 | `ui.port` | int 0–65535 (0 = off) | 7311 |
@@ -505,6 +568,9 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY,
   created REAL NOT NULL, applied_at REAL, result TEXT);
 CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, created REAL NOT NULL,
   sent_at REAL, tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0);
+CREATE TABLE repos (name TEXT PRIMARY KEY, github TEXT NOT NULL, path TEXT NOT NULL DEFAULT '',
+  base TEXT NOT NULL, workers INTEGER NOT NULL DEFAULT 1, ahead INTEGER NOT NULL DEFAULT 3,
+  env TEXT NOT NULL DEFAULT '{}', source TEXT NOT NULL, added REAL NOT NULL);
 ```
 
 **Transitions** (`next(stage, event)`; "next" = the next stage of the order; `U` = unexpected, counted
@@ -611,6 +677,11 @@ WantedBy=default.target
   edit is live after a restart.
 - One SQLite file, four tables plus `meta` (the owner's call): crash recovery needs a mission's step
   and its message written together; everything else is derived from GitHub and the intents repo.
+- Repos in the database, not the config (the owner's call, 2026-10-30): adding a repo takes only
+  `owner/name`, from the page or the CLI, and needs no restart. Config tables are imported once, so the
+  database is the one record; a table imported once is never read again, so a removal sticks.
+- The running loop re-reads the `repos` table every pass rather than being told: `repo add` from the CLI
+  is another process, and one small read every 5 s is simpler than a signal.
 - Code drives, Claude judges: limits, restarts and polling need code; Claude runs only design, plan,
   build and review.
 - Single process, one pass at a time: children run detached and are reaped by events, so polls keep
