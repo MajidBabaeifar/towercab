@@ -6,10 +6,10 @@ import { type AgentName, loadAgent } from "../agents.ts";
 /** What each agent's handler gives its prompt (PIP-73 checks the files against it). */
 export const AGENT_VARS: Record<AgentName, string[]> = {
   design: ["intent", "earlier", "reserved"],
-  plan: ["intent", "spec_ids", "checks"],
+  plan: ["intent", "spec_ids", "checks", "e2e"],
   worker: ["plan", "intent", "spec_ids", "checks", "access"],
   repair: ["what", "details"],
-  review: ["intent", "spec_ids", "plan", "review_md", "ci", "screenshots", "diff_cmd"],
+  review: ["intent", "spec_ids", "plan", "review_md", "ci", "screenshots", "diff_cmd", "e2e"],
   score: ["issue"],
 };
 

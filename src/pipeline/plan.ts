@@ -11,6 +11,7 @@ import type { Intent } from "../intents/types.ts";
 import { wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { runSet } from "../repo/runset.ts";
+import { e2eText } from "../ship/live.ts";
 import { renderAccess } from "./access.ts";
 import {
   asEnv,
@@ -142,6 +143,7 @@ export const planHandler: Handler = {
             intent: intentData(intent.text),
             spec_ids: d.design?.specIds.join(", ") || "none (no behaviour change)",
             checks: runSet(files.verifying, true, []).join("\n") || files.verifying.checks.join("\n"),
+            e2e: e2eText(files.towercab.live, "plan"),
           }) + feedback;
         return spawnRun(
           cx,
@@ -177,7 +179,11 @@ export const planHandler: Handler = {
         m,
         "push",
         {},
-        { plan: { md: r.value.plan, access: r.value.access }, access: r.value.access, answer: undefined },
+        {
+          plan: { md: r.value.plan, access: r.value.access, e2e: r.value.e2e ?? null },
+          access: r.value.access,
+          answer: undefined,
+        },
       ),
     );
   },

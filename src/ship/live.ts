@@ -138,3 +138,22 @@ export function suiteOrder(live: Live, changed: string[]): Suite[] {
   const second = live.suites.filter((s) => !first.includes(s) && hits(s.paths));
   return [...first, ...second, ...live.suites.filter((s) => !first.includes(s) && !second.includes(s))];
 }
+
+/** What the plan and review agents are told about the repo's e2e suites (SHIP-8). */
+export function e2eText(live: Live | null, agent: "plan" | "review"): string {
+  if (!live) return agent === "plan" ? "This repo has no e2e suites: return `e2e` as null." : "";
+  const suites = live.suites.map(
+    (s) => `- \`${s.name}\`: tests in ${s.tests.map((g) => `\`${g}\``).join(", ")}`,
+  );
+  const head = `After each merge, Towercab runs this repo's e2e suites against the live app at ${live.url}:\n${suites.join("\n")}`;
+  if (agent === "plan")
+    return `${head}\n\nPlan the e2e tests the change adds under those globs and list them in \`e2e.tests\`. When the change has nothing a user of the app could see, leave \`tests\` empty and say why in \`e2e.none_why\`.`;
+  return `${head}\n\nCheck that the change adds e2e tests under those globs that cover its new behaviour, unless the plan says why none is needed. A missing or weak e2e test is an important finding.`;
+}
+
+/** Test files minus e2e tests: those need the live app, so the proof and fast checks skip them (SHIP-8). */
+export function withoutE2e(paths: string[], live: Live | null): string[] {
+  if (!live) return paths;
+  const ms = live.suites.flatMap((s) => s.tests).map((g) => glob(g));
+  return paths.filter((p) => !ms.some((match) => match(p)));
+}

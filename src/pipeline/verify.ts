@@ -9,6 +9,7 @@ import { ok, red, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { glob } from "../repo/protected.ts";
 import { hasCi, runSet } from "../repo/runset.ts";
+import { withoutE2e } from "../ship/live.ts";
 import { logPath, sandboxSpec } from "./checks.ts";
 import { cloneOf, coGit, data, nextN, repoFiles, tail } from "./common.ts";
 
@@ -35,7 +36,11 @@ export async function changedTests(cx: Ctx, m: Mission, tests: string[]): Promis
 export async function runLines(cx: Ctx, m: Mission): Promise<string[]> {
   const files = await repoFiles(cx, m);
   const ci = await hasCi(cx.tools, cloneOf(cx, m), cx.repo(m).base);
-  return runSet(files.verifying, ci, await changedTests(cx, m, files.towercab.tests));
+  return runSet(
+    files.verifying,
+    ci,
+    withoutE2e(await changedTests(cx, m, files.towercab.tests), files.towercab.live),
+  );
 }
 
 function read(p: string): string {

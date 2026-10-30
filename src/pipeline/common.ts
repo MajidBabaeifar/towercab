@@ -65,7 +65,7 @@ export interface PipeData {
   specRed?: boolean;
   /** Heads of the spec PR whose red checks were rerun (PIP-18). */
   specReruns?: Record<string, boolean>;
-  plan?: { md: string; access: Access };
+  plan?: { md: string; access: Access; e2e?: { tests: string[]; none_why: string } | null };
   /** The merged plan's ticked access. */
   granted?: Access;
   unplanned?: Access;

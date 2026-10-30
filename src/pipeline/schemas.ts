@@ -44,7 +44,10 @@ export const DESIGN_SCHEMA = object({
   pr: S,
 });
 
-export const PLAN_SCHEMA = object({ plan: S, access: ACCESS });
+/** SHIP-8: the e2e tests a change in a live repo adds, or why it needs none; null elsewhere. */
+const E2E = nullable(object({ tests: list(S), none_why: S }));
+
+export const PLAN_SCHEMA = object({ plan: S, access: ACCESS, e2e: E2E });
 
 export const QUESTION = object({
   context: S,
@@ -124,6 +127,7 @@ export interface DesignResult {
 export interface PlanResult {
   plan: string;
   access: Access;
+  e2e: { tests: string[]; none_why: string } | null;
 }
 
 export interface Question {
