@@ -196,6 +196,17 @@ const isDone = (p: Progress | SuitesDone): p is SuitesDone => "green" in p;
 
 export const deployHandler: Handler = {
   async step(cx, m) {
+    // The live block is read from base, which now holds the merge and anything merged before it:
+    // fetch first, or a block added since the clone's last fetch is missed (SHIP-7).
+    if (m.step === "") {
+      const repo = cx.repo(m);
+      await git(
+        cx.tools,
+        cloneOf(cx, m),
+        ["fetch", "--quiet", "origin"],
+        await cx.github.gitAuth(repo.github),
+      );
+    }
     const sc = await shipCx(cx, m);
     if (sc === null) return { done: { event: "skip" } };
     if ("done" in sc) return sc;

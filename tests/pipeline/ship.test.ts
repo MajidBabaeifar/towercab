@@ -6,7 +6,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileS
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { dataOf, type Mission } from "../../src/mission.ts";
-import { build, checkRun, happy, ID, intent, intents, reply, TARGET } from "../helpers/flows.ts";
+import { build, checkRun, happy, ID, intent, intents, REVIEW, reply, TARGET } from "../helpers/flows.ts";
 import { type ClaudeReply, Pipe } from "../helpers/pipe.ts";
 import { failResult, okResult } from "../helpers/tools.ts";
 import { git } from "../helpers/world.ts";
@@ -464,5 +464,34 @@ describe("ship: without a live block", () => {
     ]);
     expect(p.tools.lines("gh").filter((l) => l.includes("/deployments"))).toEqual([]);
     expect(p.sandboxRuns.filter((r) => r.kind.startsWith("e2e"))).toEqual([]);
+  });
+});
+
+describe("ship: a live block merged while the change was built", () => {
+  let p: Pipe;
+  let m: Mission;
+
+  beforeAll(async () => {
+    // The repo opts in only after the change passed review, the way tracker did.
+    p = world(TARGET);
+    p.respond.review = () => {
+      p.pushTo("web", "main", {
+        "TOWERCAB.md": LIVE,
+        "e2e/smoke.sh": SHIP_TARGET["e2e/smoke.sh"]!,
+        "e2e/greet.sh": "true\n",
+      });
+      return { structured: REVIEW };
+    };
+    await p.start();
+    await p.until(() => ["deploy", "done"].includes(p.mission()?.stage ?? ""));
+    await p.until(() => false, 2);
+    m = p.mission()!;
+  }, 60_000);
+
+  afterAll(() => p.cleanup());
+
+  test("ship: a live block merged meanwhile counts", () => {
+    expect(`${m.stage}/${m.step}`, JSON.stringify(moves(p))).toBe("deploy/wait");
+    expect(moves(p).some((x) => x.event === "skip")).toBe(false);
   });
 });
