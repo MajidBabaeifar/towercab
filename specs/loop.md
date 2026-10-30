@@ -257,7 +257,7 @@ into events.
 - Intents repo: the intent file gone → `intent_removed` (stop); `retry: fresh` written → `retry_fresh`;
   `waiting` removed by the owner while blocked → `answered` with no text.
 - A move out of a stage kills that stage's child.
-- Verified by: `events: PR events by priority`, `events: intent events`, `events: owner merge during CI ends done`
+- Verified by: `events: PR events by priority`, `events: intent events`, `events: owner merge during CI ships`
 
 ### LOOP-19 · GitHub App identity
 

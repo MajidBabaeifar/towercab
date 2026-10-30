@@ -16,15 +16,19 @@ export const ORDER = [
   "review",
   "gate",
   "merge",
+  "deploy",
+  "e2e",
   "done",
 ] as const;
+/** SHIP-6: working stages outside the order. */
+export const SHIP_EXTRA = ["rollback", "revert"] as const;
 export const WAIT_STAGES = ["approval:spec", "approval:plan", "approval:merge", "blocked"] as const;
 
-export type WorkStage = (typeof ORDER)[number];
+export type WorkStage = (typeof ORDER)[number] | (typeof SHIP_EXTRA)[number];
 export type WaitStage = (typeof WAIT_STAGES)[number];
 export type Stage = WorkStage | WaitStage | "stopped";
 
-export const STAGES: Stage[] = [...ORDER, ...WAIT_STAGES, "stopped"];
+export const STAGES: Stage[] = [...ORDER, ...SHIP_EXTRA, ...WAIT_STAGES, "stopped"];
 
 export const EVENTS = [
   "ok",
@@ -47,6 +51,8 @@ export const EVENTS = [
   "intent_removed",
   "retry_fresh",
   "resume",
+  "skip",
+  "revert",
 ] as const;
 export type Event = (typeof EVENTS)[number];
 
@@ -71,7 +77,11 @@ export function isWait(s: Stage): s is WaitStage {
 }
 
 export function isWorking(s: Stage): boolean {
-  return (ORDER as readonly string[]).includes(s) && s !== "done";
+  return ((ORDER as readonly string[]).includes(s) && s !== "done") || isShipExtra(s);
+}
+
+function isShipExtra(s: Stage): boolean {
+  return (SHIP_EXTRA as readonly string[]).includes(s);
 }
 
 export function finished(s: Stage): boolean {
@@ -95,11 +105,17 @@ export function next(stage: Stage, event: Event, from: Stage | null = null): Nex
   const wait = isWait(stage);
   switch (event) {
     case "ok":
-      if (wait) return K("unexpected");
+      if (wait || stage === "revert") return K("unexpected");
+      if (stage === "rollback") return go("build");
       return go(ORDER[orderIndex(stage) + 1]!);
     case "red":
       if (stage === "verify" || stage === "proof" || stage === "ci") return go("build");
+      if (stage === "deploy" || stage === "e2e") return go("rollback");
       return K("unexpected");
+    case "skip":
+      return stage === "deploy" ? go("done") : K("unexpected");
+    case "revert":
+      return stage === "rollback" ? go("revert") : K("unexpected");
     case "timeout":
     case "bad_result":
     case "interrupted":
@@ -121,8 +137,8 @@ export function next(stage: Stage, event: Event, from: Stage | null = null): Nex
       if (stage === "blocked" && from === "plan") return go("build");
       return K("ignore");
     case "code_merged":
-      if (stage === "approval:merge" || stage === "blocked") return go("done");
-      if (between(stage, "build", "merge")) return go("done");
+      if (stage === "approval:merge" || stage === "blocked") return go("deploy");
+      if (between(stage, "build", "merge")) return go("deploy");
       return K("ignore");
     case "closed":
     case "intent_removed":
@@ -187,6 +203,14 @@ export const WAITS: Record<string, { stage: WaitStage; ask: string }> = {
     stage: "blocked",
     ask: "The intent names a repo or dependency Towercab doesn't know.",
   },
+  "rolled back, revise": {
+    stage: "blocked",
+    ask: "The change broke the live app, two fixes didn't hold, and it was reverted. Revise the intent, then /retry.",
+  },
+  "rollback failed": {
+    stage: "blocked",
+    ask: "Rolling back failed. Nothing more merges in this repo until you fix it.",
+  },
 };
 
 /** The WAITS key of a `waiting:` text (`crashed at build` → `crashed at`). */
@@ -238,6 +262,8 @@ export interface Outcome {
   set?: Record<string, SqlValue>;
   /** Keys to merge into `missions.data` in the same transaction. */
   data?: Record<string, unknown>;
+  /** `meta` rows to write in the same transaction (SHIP-9's last good version). */
+  meta?: Record<string, string>;
 }
 
 export const ok = (o: Partial<Outcome> = {}): Outcome => ({ event: "ok", ...o });
@@ -364,6 +390,7 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
       );
     };
 
+    if (o.meta && n.kind === "go") for (const [k, v] of Object.entries(o.meta)) db.setMeta(k, v);
     switch (n.kind) {
       case "go":
         if (o.text) data.answer = o.text;

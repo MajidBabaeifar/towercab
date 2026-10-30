@@ -65,6 +65,7 @@ export const COLUMNS = new Set([
   "spec_pr",
   "plan_pr",
   "pr",
+  "branch",
   "pushed_at",
   "feedback_seen",
   "merged_by",
