@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..38, LOOP-60..64 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..64 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -62,7 +62,12 @@ At most `[agent].parallel` Claude runs or checks at a time; per repo, `ahead` in
   An intent has at most one unfinished mission.
 - A free slot goes first to unfinished missions in priority order, then to a new pick, so a PR
   waiting on the owner never stops other repos.
-- Verified by: `loop: picks while others wait`, `loop: one intent builds at a time per repo`, `loop: one mission per intent`
+- A run asked for while every slot is taken waits and is asked for again; it starts later with its
+  own prompt, as if new. Only a run that really started (`data.launched` = its step, set when the
+  child starts, cleared by a new step or stage) resumes with `Continue where you stopped.`
+  (LOOP-7), and a session counts as used (`session_used`) only once a
+  run of it has started.
+- Verified by: `loop: picks while others wait`, `loop: one intent builds at a time per repo`, `loop: one mission per intent`, `loop: a run that waits for a slot keeps its prompt`
 
 ### LOOP-5 · Pick
 
@@ -126,7 +131,10 @@ a checkout's `.git`.
   plain keys. `pick` always makes it fresh, replacing whatever is at that path (a crashed pick's, or
   an older Towercab's with the same `<id>-<attempt>`); later stages keep it until the mission is done,
   stopped or replaced.
-- Verified by: `checkout: kept across steps`, `checkout: pick replaces a leftover`, `checkout: has no remote`, `checkout: a planted git config is refused`
+- The checkout is Towercab's alone: each build round first runs `git reset --hard` and `git clean -fd`,
+  so a file another program left there (an untracked file, an edit) can't block the checkout of base
+  or ride into the PR. Ignored files, such as caches, stay.
+- Verified by: `checkout: kept across steps`, `checkout: pick replaces a leftover`, `checkout: has no remote`, `checkout: a planted git config is refused`, `pipeline: a build round starts from a clean checkout`
 
 ### LOOP-9 · Usage limits
 
@@ -357,8 +365,8 @@ Every file a mission writes is kept in a folder named for the stage that wrote i
 
 A later round never replaces an earlier round's files, and an empty error file is not left behind.
 
-- A file written more than once in a stage carries the round in its name (`prompt-2`,
-  `result-2.json`, `check-2.log`, `shots-2/`). Round 1 may also carry its number. Empty `.err` files
+- A file written more than once in a stage carries the round in its name
+  (`worker-2.prompt`, `worker-2.json`, `verify-2.log`, `shots-2/`); the first round carries its number too. Empty `.err` files
   are removed when the child ends.
 - Verified by: `runs: rounds keep separate files`, `runs: empty error files are removed`
 

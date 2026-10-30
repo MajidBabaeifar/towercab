@@ -112,8 +112,10 @@ export interface ClaudeRun {
   model: string;
   /** The mission checkout. */
   cwd: string;
-  /** `<home>/runs/<intent>/`: the run's files. */
+  /** `<home>/runs/<intent>/`: the mission's run files. */
   runsDir: string;
+  /** The stage folder under `runsDir` that holds this run's files (LOOP-39); none → `runsDir` itself. */
+  stage?: string;
   /** Its number among this kind's runs: `<kind>-<n>.*`. */
   n: number;
   /** On stdin. */
@@ -137,21 +139,27 @@ export interface ClaudeRun {
   config: Config;
 }
 
-/** A run's files under `runsDir`. */
-export function runFiles(run: Pick<ClaudeRun, "kind" | "n" | "runsDir">): {
+/** The folder of a run's files (LOOP-39): `runs/<id>/<stage>/`. */
+export function runDir(run: Pick<ClaudeRun, "runsDir" | "stage">): string {
+  return run.stage ? join(run.runsDir, run.stage) : run.runsDir;
+}
+
+/** A run's files under its stage folder; the round is in the name (LOOP-40). */
+export function runFiles(run: Pick<ClaudeRun, "kind" | "n" | "runsDir" | "stage">): {
   prompt: string;
   stdout: string;
   stderr: string;
   settings: string;
   system: string;
 } {
-  const base = join(run.runsDir, `${run.kind}-${run.n}`);
+  const dir = runDir(run);
+  const base = join(dir, `${run.kind}-${run.n}`);
   return {
     prompt: `${base}.prompt`,
     stdout: `${base}.json`,
     stderr: `${base}.err`,
-    settings: join(run.runsDir, `settings-${run.kind}.json`),
-    system: join(run.runsDir, `system-${run.kind}.md`),
+    settings: join(dir, `settings-${run.kind}.json`),
+    system: join(dir, `system-${run.kind}.md`),
   };
 }
 
@@ -257,7 +265,7 @@ export function claudeSettings(
   if (run.grants.open) allow.push("WebFetch(domain:*)");
   if (allow.length) s.permissions = { allow };
   if (run.guardRules) {
-    const command = `${shellQuote(o.towercabExe)} hook guard ${shellQuote(join(run.runsDir, "guard.json"))}`;
+    const command = `${shellQuote(o.towercabExe)} hook guard ${shellQuote(join(runDir(run), "guard.json"))}`;
     s.hooks = {
       PreToolUse: [{ matcher: "Edit|Write|NotebookEdit", hooks: [{ type: "command", command }] }],
     };
@@ -291,8 +299,8 @@ export function systemText(claudeMd: string): string {
  */
 export function prepareRun(run: ClaudeRun, o: { towercabExe: string; home: string }): ChildSpec {
   const f = runFiles(run);
-  mkdirSync(run.runsDir, { recursive: true });
-  if (run.guardRules) writeGuardRules(run.runsDir, run.guardRules);
+  mkdirSync(runDir(run), { recursive: true });
+  if (run.guardRules) writeGuardRules(runDir(run), run.guardRules);
   writeFileSync(f.prompt, run.prompt);
   writeFileSync(f.system, systemText(run.claudeMd));
   writeFileSync(f.settings, JSON.stringify(claudeSettings(run, o), null, 2));

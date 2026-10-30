@@ -151,7 +151,7 @@ export interface ReviewResult {
   plan_followed: { value: boolean; where: string };
   findings: {
     severity: "important" | "nit";
-    /** The REVIEW.md pass that found it (PIP-90). */
+    /** The REVIEW.md pass that found it (PIP-92). */
     pass: string;
     file: string;
     line: number | null;

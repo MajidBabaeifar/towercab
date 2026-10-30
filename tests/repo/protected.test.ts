@@ -12,7 +12,15 @@ function write(root: string, rel: string): void {
 }
 
 test("repo: protected paths block", () => {
-  expect(CONTROL).toEqual(["CLAUDE.md", "REVIEW.md", "TOWERCAB.md", ".github/**", ".claude/**", ".git/**"]);
+  expect(CONTROL).toEqual([
+    "CLAUDE.md",
+    "AGENTS.md",
+    "REVIEW.md",
+    "TOWERCAB.md",
+    ".github/**",
+    ".claude/**",
+    ".git/**",
+  ]);
   const p = new Protected(
     ["src/machine.ts", "migrations/**", "db/*.sql", "./ops/", "/docs/{api,auth}/**", "v?.txt", "[ab].lock"],
     [],

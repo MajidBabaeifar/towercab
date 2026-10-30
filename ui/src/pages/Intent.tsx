@@ -1,11 +1,12 @@
-// One intent's whole story (UI-62, MET-30): state, the three PRs, the timeline, time per step, cost,
-// the intent's own text and its run files.
+// One intent's whole story (UI-62): state, the three PRs, the stage map with its logs (UI-73 to UI-77),
+// the folded list of moves, cost and the intent's own text.
 
 import type { IntentPage as Data, PrView } from "../../../src/ui/view.ts";
 import { Id, NeedsCard, Section, StartButton, StateChip, Time } from "../components.tsx";
-import { ChevronLeft, External, FileText, PullRequest } from "../icons.tsx";
+import { ChevronLeft, External, PullRequest } from "../icons.tsx";
 import { Markdown } from "../md.tsx";
 import { Link } from "../router.tsx";
+import { StageMap } from "../StageMap.tsx";
 
 const PR_WORDS: Record<PrView["state"], string> = {
   open: "Open",
@@ -37,7 +38,34 @@ function PrTile({ pr }: { pr: PrView }) {
 }
 
 export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }) {
-  const max = Math.max(...data.times.steps.map((s) => s.secs), 1);
+  const moves = (
+    <details class="moves">
+      <summary>
+        All moves <span class="count">{data.timeline.length}</span>
+      </summary>
+      {data.timeline.length ? (
+        <ol class="timeline">
+          {data.timeline.map((t, n) => (
+            <li key={n} class={`tl tl-${t.tone}`}>
+              <span class="tl-time">
+                <Time when={t.at} short />
+              </span>
+              <span class="tl-dot" aria-hidden="true" />
+              <div class="tl-body">
+                <p class="tl-text">{t.text}</p>
+                {t.why ? <p class="tl-why">{t.why}</p> : null}
+              </div>
+              <span class="tl-lasted meta">
+                {t.lasted ? `for ${t.lasted}` : n === data.timeline.length - 1 ? "now" : ""}
+              </span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p class="empty-line">Nothing has happened yet: it hasn't been picked up.</p>
+      )}
+    </details>
+  );
   return (
     <main class="page intent" id="main">
       <Link class="back" href="/">
@@ -70,31 +98,11 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
         ))}
       </section>
       {data.card ? <NeedsCard card={data.card} readOnly={readOnly} linkTitle={false} /> : null}
+      <Section title="How it went" class="path">
+        {data.attempts.length ? <StageMap id={data.id} attempts={data.attempts} moves={moves} /> : moves}
+      </Section>
       <div class="cols">
         <div class="col-main">
-          <Section title="Timeline" count={data.timeline.length}>
-            {data.timeline.length ? (
-              <ol class="timeline">
-                {data.timeline.map((t, n) => (
-                  <li key={n} class={`tl tl-${t.tone}`}>
-                    <span class="tl-time">
-                      <Time when={t.at} short />
-                    </span>
-                    <span class="tl-dot" aria-hidden="true" />
-                    <div class="tl-body">
-                      <p class="tl-text">{t.text}</p>
-                      {t.why ? <p class="tl-why">{t.why}</p> : null}
-                    </div>
-                    <span class="tl-lasted meta">
-                      {t.lasted ? `for ${t.lasted}` : n === data.timeline.length - 1 ? "now" : ""}
-                    </span>
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p class="empty-line">Nothing has happened yet: it hasn't been picked up.</p>
-            )}
-          </Section>
           {data.sections.length || data.answers ? (
             <Section
               title="The intent"
@@ -124,34 +132,6 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
           ) : null}
         </div>
         <aside class="col-side">
-          {data.times.steps.length ? (
-            <Section title="Time per step">
-              <div class="card pad">
-                <ul class="steps">
-                  {data.times.steps.map((s) => (
-                    <li key={s.step} class={s.owner ? "owner" : undefined}>
-                      <span class="step-name">{s.step}</span>
-                      <span class="step-time num">{s.time}</span>
-                      <svg class="step-bar" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true">
-                        <rect class="step-track" width="100" height="4" rx="2" />
-                        <rect class="step-fill" width={Math.max(2, (s.secs / max) * 100)} height="4" rx="2" />
-                      </svg>
-                    </li>
-                  ))}
-                </ul>
-                <dl class="steps-total">
-                  <div>
-                    <dt>Towercab working</dt>
-                    <dd class="num">{data.times.towercab}</dd>
-                  </div>
-                  <div>
-                    <dt>Waiting on you</dt>
-                    <dd class="num">{data.times.owner}</dd>
-                  </div>
-                </dl>
-              </div>
-            </Section>
-          ) : null}
           {data.attempts.length ? (
             <Section title="Cost">
               <div class="card pad">
@@ -169,28 +149,6 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
                     </li>
                   ))}
                 </ul>
-              </div>
-            </Section>
-          ) : null}
-          {data.runs.length ? (
-            <Section title="Run files">
-              <div class="card pad runs">
-                {data.runs.map((g) => (
-                  <div key={g.step} class="run-group">
-                    <h3>{g.step}</h3>
-                    <ul>
-                      {g.files.map((f) => (
-                        <li key={f.name}>
-                          <a href={f.url} target="_blank" rel="noopener noreferrer" title={f.name}>
-                            <FileText size={14} />
-                            {f.label}
-                          </a>
-                          <span class="meta">{f.size}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
               </div>
             </Section>
           ) : null}

@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..71, UI-78..82, UI-100..104 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..104 · **Prefix:** UI
 
 ## Purpose
 
@@ -219,20 +219,22 @@ Every text on the page is plain language a person can act on.
 
 The server works out the path an intent took once, as an ordered list of stage visits, so the page only draws it.
 
-- `GET /api/intents/<id>` returns `visits` (`src/ui/state.ts`), per attempt, from the mission's moves
-  and the stage folders (LOOP-39): in order, each visit has `stage`, `round` (1 for the first time
+- `GET /api/intents/<id>` returns, in each attempt's `map` (`src/ui/state.ts`), `visits`, `stages`
+  (every stage with its outcome, time, rounds and files), `open` and the two totals, from the
+  mission's moves and the stage folders (LOOP-39): in order, each visit has `stage`, `round` (1 for the first time
   in that stage), `start`, `end` (none while it runs), `outcome` (`passed`, `red`, `sent back`,
   `waiting on you`, `working now`, `skipped`), `reason` (the plain-words reason it moved on, or why
-  it was skipped), `returnTo` (the stage it went back to, if any) and `files`.
+  it was skipped), `returnTo` and `returnLabel` (the stage it went back to and why, if it did) and `files`.
 - The stages, in pipeline order, with their plain names (UI-56): Writing the spec (`design`), Your
   spec review, Planning (`plan`), Your plan review, Building (`build`), Running checks (`verify`),
   Proving the tests (`proof`), Opening the PR (`publish`), CI (`ci`), Reviewing (`review`), Deciding
-  (`gate`), Merging (`merge`), Your code review. Waits on the owner (the three reviews and
+  (`gate`), Your code review, Merging (`merge`). Waits on the owner (the three reviews and
   questions) are visits too. A stage that was never reached has no visit and is listed as `not reached`.
 - Time per stage and the two totals (Towercab working, waiting on you) are sums of the visits.
 - Each file has `stage`, `round`, a plain `kind` ("Prompt sent", "Claude's answer", "Check output",
   "Errors", "Screenshots", or "Details" for Claude settings, system prompt and guard file), `name`,
-  size and time. Empty files are left out.
+  size and time. Empty files are left out. A folder of screenshots is one entry ("Screenshots", with
+  the image count) that is not opened as text.
 - Verified by: `ui: visits follow the real path`, `ui: visits count rounds and returns`, `ui: visits skip empty files`
 
 ### UI-73 · Stage map
@@ -413,6 +415,53 @@ Reserved for this intent; not used.
 Reserved for this intent; not used.
 
 - Verified by: manual (nothing to check: no behaviour)
+
+### UI-105 · Done by you, shown everywhere
+
+After the owner merges, drops or starts over from the page, every view shows that action as done, with no button for it, until the loop moves the mission on.
+
+- A successful `merge`, `drop` or `retry` action on a PR (UI-66) stores a note on the mission: the
+  action, the PR number and the time. The note is display only: it never moves the mission (only
+  `machine.apply` does, after GitHub confirms) and it is removed when the mission leaves
+  that wait (any move out of the approval stage, or a new attempt).
+- While the note exists the needs-you card (UI-58) on the overview and on the intent page (UI-62),
+  and the plane card (UI-80), replace the actions with a line: "Merged by you · Towercab moves on
+  within a minute", "Dropped by you · …" or "Started over by you · …". The note comes from the API
+  (UI-65), so a reload or a second tab shows the same card. The count of things that need you
+  (UI-57) still counts the mission until it moves on.
+- A reply or an action that failed stores no note.
+- Verified by: `ui: merged by you survives a reload`, `ui: drop and start over show as done`, `ui: done note never moves the mission`
+
+### UI-106 · Check the PR at once
+
+A successful merge, drop or start over asks the loop to look at that PR immediately, so the mission usually moves on within seconds.
+
+- After GitHub accepts the action, the action asks the loop (a `commands` row, LOOP-15, as other page
+  actions do) to poll that PR on its next pass instead of waiting for the 60 s PR poll (LOOP-12).
+  The poll reads GitHub as usual and `machine.apply` moves the mission only on what GitHub reports.
+  If the request is lost, the normal 60 s poll still moves it.
+- Verified by: `ui: a successful merge asks for an immediate poll`, `ui: a failed merge asks for no poll`
+
+### UI-107 · Merge checks the PR first
+
+Merging a PR that is already merged does nothing on GitHub and says so, with no error.
+
+- Before `gh pr merge`, the `merge` action reads the PR's state as the owner. `MERGED` → no
+  `gh pr merge` call; it stores the note (UI-105), asks for the poll (UI-106) and replies "Already
+  merged; Towercab is moving on." `CLOSED` without merge → error "The <label> #<n> is closed, so
+  there is nothing to merge." Otherwise it merges as before (UI-66). A second merge request while the
+  note exists takes the same already-merged path and never calls `gh pr merge`.
+- Verified by: `ui: merging a merged PR does not call gh pr merge`, `ui: merging a closed PR says so`, `ui: a second merge request never calls gh merge`
+
+### UI-108 · Slow to move on
+
+If the mission has not moved on 5 minutes after the action, the card says so and links to the PR.
+
+- The "moves on within a minute" line (UI-105) applies for the first 5 minutes after the note's
+  time. After that the card says "Merged by you <n> min ago, but Towercab has not moved on yet" (and
+  likewise for drop and start over) with a link to the PR, and still shows no action button for it.
+  Times follow UI-71.
+- Verified by: `ui: done note turns into a stuck message after 5 minutes`
 
 ## Out of scope
 

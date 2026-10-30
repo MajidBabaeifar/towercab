@@ -72,7 +72,7 @@ web page shows what needs you, what is stuck, what is moving and what it costs
 
 - **Sandbox:** every check and every Claude Code run is sandboxed: no access to your keys, tokens or
   other repos; a worker reaches only the network domains it is granted.
-- **Guard:** a hook stops the worker from writing protected files (CI, `CLAUDE.md`, `REVIEW.md`,
+- **Guard:** a hook stops the worker from writing protected files (CI, `CLAUDE.md`, `AGENTS.md`, `REVIEW.md`,
   `TOWERCAB.md`, and paths you list) unless its plan grants them, and from editing tests it already
   pushed during repairs.
 - **Gates:** code, not a model, decides whether a PR may merge: green CI, an approving review, and a

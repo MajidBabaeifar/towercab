@@ -42,6 +42,7 @@ test("guard: blocks a protected path", () => {
   // Control files are always in the rules file.
   expect(JSON.parse(readFileSync(w.rules, "utf8")).protected).toEqual([
     "CLAUDE.md",
+    "AGENTS.md",
     "REVIEW.md",
     "TOWERCAB.md",
     ".github/**",

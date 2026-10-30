@@ -238,9 +238,11 @@ test("pipeline: verify runs setup then checks", () => {
   const [, setup, checks] = p.sandboxRuns.filter((r) => r.cwd.endsWith(`${ID}-1`));
   expect(setup!.argv).not.toContain("--unshare-net");
   expect(checks!.argv).toContain("--unshare-net");
-  const log = readFileSync(join(p.home.runs(ID), "verify-1.log"), "utf8");
+  const log = readFileSync(join(p.home.runs(ID, "verify"), "verify-1.log"), "utf8");
   expect(log).toBe("$ sh -c 'for t in tests/*.sh; do sh \"$t\" || exit 1; done'\n");
-  expect(readFileSync(join(p.home.runs(ID), "verify-1-setup.log"), "utf8")).toMatch(/^\$ sh -c 'echo set up/);
+  expect(readFileSync(join(p.home.runs(ID, "verify"), "verify-1-setup.log"), "utf8")).toMatch(
+    /^\$ sh -c 'echo set up/,
+  );
 });
 
 test("pipeline: proof red on base proves", () => {
@@ -249,16 +251,29 @@ test("pipeline: proof red on base proves", () => {
   expect(proof).toHaveLength(1);
   expect(proof[0]!.cwd).toMatch(/-proof$/);
   expect(existsSync(proof[0]!.cwd)).toBe(false);
-  expect(readFileSync(join(p.home.runs(ID), "proof.log"), "utf8")).toContain("$ ");
+  expect(readFileSync(join(p.home.runs(ID, "proof"), "proof.log"), "utf8")).toContain("$ ");
   expect(code().body).toContain("- Test proof: the new tests fail without the change");
   expect(p.stages(m.id)).toContain("publish");
 });
 
 test("pipeline: screenshots reach the review", () => {
-  const shot = join(p.home.runs(ID), "shots-1", "home.png");
+  const shot = join(p.home.runs(ID, "verify"), "shots-1", "home.png");
   expect(readFileSync(shot, "utf8")).toBe("png");
   expect(call("review").prompt).toContain(`- ${shot}`);
   expect(p.sandboxRuns.find((r) => r.kind === "shots")!.argv).toContain("--unshare-net");
+});
+
+test("runs: review reads logs and shots from stage folders", () => {
+  const runs = join(p.home.root, "runs", ID);
+  const shot = join(runs, "verify", "shots-1", "home.png");
+  // The review is told the screenshot's place in the verify folder, and the check log is there too.
+  expect(call("review").prompt).toContain(`- ${shot}`);
+  expect(existsSync(join(runs, "verify", "verify-1.log"))).toBe(true);
+  expect(existsSync(join(runs, "verify-1.log"))).toBe(false);
+  expect(existsSync(join(runs, "shots-1"))).toBe(false);
+  // Each Claude run's files sit in its own stage's folder.
+  expect(existsSync(join(runs, "review", "settings-review.json"))).toBe(true);
+  expect(existsSync(join(runs, "build", "guard.json"))).toBe(true);
 });
 
 test("pipeline: merge on the gated head", () => {
