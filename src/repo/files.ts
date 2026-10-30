@@ -4,6 +4,7 @@
 import { dirname, resolve } from "node:path";
 import YAML from "yaml";
 import { isBranch } from "../config.ts";
+import { type Live, parseLive } from "../ship/live.ts";
 import type { Tools } from "../tools.ts";
 import { bullets, fences, items, lines, sections, text } from "./markdown.ts";
 import { glob } from "./protected.ts";
@@ -51,6 +52,8 @@ export interface TowercabFile {
   protected: string[];
   /** Test file globs (PIP-30), as written. */
   tests: string[];
+  /** The ship stage's block (SHIP-1), or null: merged means done. */
+  live: Live | null;
 }
 
 export interface RepoFiles {
@@ -127,7 +130,7 @@ export function defaultReview(): Review {
 }
 
 export function defaultTowercab(): TowercabFile {
-  return { maxAutonomy: 5, protected: [], tests: [...DEFAULT_TESTS] };
+  return { maxAutonomy: 5, protected: [], tests: [...DEFAULT_TESTS], live: null };
 }
 
 /**
@@ -228,7 +231,7 @@ function parsePasses(bs: string[]): Pass[] {
   return out;
 }
 
-const KEYS = ["max_autonomy", "protected", "tests"];
+const KEYS = ["max_autonomy", "protected", "tests", "live"];
 const KEY = /^([A-Za-z_][A-Za-z0-9_-]*):(?:[ \t]|$)/;
 
 /** `TOWERCAB.md` → its front matter; anything after it is prose. */
@@ -279,6 +282,8 @@ function frontMatter(ls: string[], t: TowercabFile): void {
         throw new Error("max_autonomy must be an integer 1-5");
       }
       t.maxAutonomy = val;
+    } else if (k === "live") {
+      t.live = parseLive(val);
     } else {
       const gs = globList(k, val);
       if (k === "protected") t.protected = gs;
