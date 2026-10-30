@@ -41,6 +41,7 @@ An intent's priority is twice its importance plus its urgency.
 | [autonomy.md](autonomy.md) | AUT | Where an intent waits for the owner, and what access a worker gets |
 | [loop.md](loop.md) | LOOP | The program: service, state machine, crash recovery, limits, commands, messages, updates |
 | [pipeline.md](pipeline.md) | PIP | Spec, plan and code PRs; build, verify, proof, CI, review, gate, merge; GitHub interactions; writing |
+| [ship.md](ship.md) | SHIP | After the merge: wait for the deploy, run e2e against the live app, roll back and fix forward |
 | [repo.md](repo.md) | REPO | What Towercab reads from a target repo: `CLAUDE.md`, `REVIEW.md`, `TOWERCAB.md`; protected paths |
 | [ui.md](ui.md) | UI | The local web page for the person running Towercab |
 | [metrics.md](metrics.md) | MET | Cost and time per intent, spend per day |

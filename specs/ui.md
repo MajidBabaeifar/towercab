@@ -513,6 +513,34 @@ While the loop is paused, the browser tab title starts with `⏸`, so the owner 
   when the stop ends, on the next live update (UI-67).
 - Verified by: `ui: tab title starts with a pause mark while paused`
 
+### UI-120 · Ship stations
+
+The airspace shows a change after its merge, until it is live and tested.
+
+- In repos with a `live` block ([SHIP-1](ship.md)), two stations sit between the code review's `you`
+  and `landed`: `04 deploy` and `05 e2e` (squares). A plane at `deploy` or `rollback` sits at
+  `04 deploy`, at `e2e` or `revert` at `05 e2e`; a plane in a fix round sits at its phase's station as
+  usual. The stations are drawn once any repo has a `live` block.
+- Verified by: `ui: ship stations`
+
+### UI-121 · Ship states
+
+The intent's state says in words where a shipping change is.
+
+- `deploy`: "waiting for the deploy"; `e2e`: "running e2e"; `rollback`: "rolling back"; `revert`:
+  "reverting"; a build round after a rollback: "fixing (n of 2)"; a mission held at the gate by
+  [SHIP-14](ship.md): "repo on hold". `rolled back, revise` and `rollback failed` are needs-you cards
+  with their asks.
+- Verified by: `ui: ship states`
+
+### UI-122 · e2e log on the intent page
+
+The intent page links the last e2e log, so the owner sees why a change was rolled back.
+
+- The intent page (UI-62) shows "e2e log" linking the newest `runs/<intent>/e2e/*.log`, served
+  redacted ([SHIP-2](ship.md)), when there is one.
+- Verified by: `ui: e2e log link`
+
 ## Out of scope
 
 - Editing intents in the page: the owner edits them in the intents repo or with `/intent`.
