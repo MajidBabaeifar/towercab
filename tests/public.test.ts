@@ -51,7 +51,17 @@ test("public: README sections", () => {
 test("public: README says not affiliated", () => {
   const readme = read("README.md");
   expect(readme).toMatch(/not affiliated with or\s+endorsed by Anthropic/);
-  expect(readme).not.toMatch(/<img|!\[/);
+  const images = [
+    ...readme.matchAll(/<img[^>]*\ssrc="([^"]+)"|<source[^>]*\ssrcset="([^"]+)"|!\[[^\]]*\]\(([^)]+)\)/g),
+  ];
+  expect(images.length).toBeGreaterThan(0);
+  for (const m of images) {
+    const src = (m[1] ?? m[2] ?? m[3])!;
+    expect(src).toMatch(
+      /^(ui\/public\/favicon\.svg|docs\/assets\/[a-z-]+\.png|https:\/\/img\.shields\.io\/|https:\/\/github\.com\/MajidBabaeifar\/towercab\/actions\/)/,
+    );
+    if (!src.startsWith("https:")) expect(existsSync(src), src).toBe(true);
+  }
 });
 
 test("public: README docs index", () => {

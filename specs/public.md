@@ -33,11 +33,13 @@ The README explains what Towercab is, what it needs and how to start, in that or
 
 ### PUB-3 · Not affiliated
 
-The README says Towercab is not affiliated with or endorsed by Anthropic.
+The README says Towercab is not affiliated with or endorsed by Anthropic, and shows only Towercab's
+own images.
 
 - It names Claude Code and the playbook as plain text, with no Anthropic or Claude logo or image.
-  The one image allowed is the screenshot of Towercab's own UI (PUB-13): the README has no `<img>`
-  and exactly one `![`, which points into `docs/`.
+  Every image in the README (`<img src>`, `<source srcset>` or `![]()`) is Towercab's logo
+  (`ui/public/favicon.svg`), a screenshot of its own UI in `docs/assets/` (PUB-13), a
+  `img.shields.io` badge or this repo's own Actions badge. Every local image exists.
 - Verified by: `public: README says not affiliated`
 
 ### PUB-4 · Docs index
@@ -124,11 +126,12 @@ The PR lists personal data in commit metadata and files, so the owner can decide
 
 ### PUB-13 · README screenshot and website
 
-The README shows one picture of Towercab's own web page and links to its website in the first section.
+The README shows pictures of Towercab's own web page and links to its website in the first section.
 
-- `docs/` holds one image, a copy of a screenshot from the UI tests (`ui/screenshots/`), so it shows the
-  real page. The README embeds it once with `![`, in the first section before `## How it works`, with
-  alt text, and the file it points to exists.
+- `docs/assets/` holds screenshots of Towercab's own page in light and dark, cropped from the UI tests'
+  fixture shots (`npm run test:ui`), so they show the real page and no real data. The README shows the
+  overview before `## How it works`, as a `<picture>` that follows the reader's colour scheme, with alt
+  text on every image, and every file it points to exists.
 - The README's first section links to `https://towercab.com`. The link is not checked online: it may
   go live before the site does.
 - Verified by: `public: README shows the screenshot and website`
@@ -178,3 +181,6 @@ The new public files obey the no-personal-names rule.
 ## Decisions
 
 - The public README is for a visitor deciding whether to try Towercab; specs are linked, not copied.
+- The README keeps Towercab's logo and its light and dark screenshots (the owner's call, 2026-10-30):
+  PUB-3 and PUB-13 first allowed a single `![` screenshot, then were widened to the README the owner
+  built by hand.

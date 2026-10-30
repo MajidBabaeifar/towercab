@@ -444,6 +444,9 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
     makeIntent({ id: IDS.parked2, title: "Move CI to self-hosted runners", repo: "infra", u: 2, i: 2 }),
   ];
   const iso = (t: number) => new Date(t * 1000).toISOString();
+  // One landing today at any hour: 5 h ago, or halfway since local midnight when that is sooner.
+  const midnight = new Date(now * 1000).setHours(0, 0, 0, 0) / 1000;
+  const landedToday = now - Math.min(5 * HOUR, (now - midnight) / 2);
   store.done = [
     makeIntent({
       id: IDS.landed,
@@ -454,7 +457,7 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
       cost: 1.9,
       agentTime: 1500,
       attempts: 1,
-      finished: iso(now - 5 * HOUR),
+      finished: iso(landedToday),
     }),
     makeIntent({
       id: IDS.done2,
