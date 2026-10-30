@@ -1,12 +1,11 @@
 // The board (UI-133 to UI-137): every intent as a card, one column per airspace station and one row per
-// repo. Cards take their column from the airspace's planes, so the two never disagree.
+// repo. Cards take their column from the airspace's planes, so the two never disagree; a plane whose
+// intent can't be found (no repo) goes to an "unknown repo" lane, last.
 
 import type { Intent } from "../intents/types.ts";
-import { repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
-import { ago, airspaceOf, dbMark, snapshot, state, type UiSources, versionOf } from "./state.ts";
+import { lastSevenDays, repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
+import { ago, airspaceOf, dbMark, localDate, snapshot, state, type UiSources, versionOf } from "./state.ts";
 import type { BoardCard, BoardColumn, BoardColumnKey, BoardPage, BoardRepo } from "./view.ts";
-
-const WEEK = 7 * 86_400;
 
 const COLUMNS: { key: BoardColumnKey; label: string }[] = [
   { key: "queue", label: "Queue" },
@@ -34,7 +33,6 @@ export async function board(src: UiSources): Promise<BoardPage> {
   const cells = new Map<string, Partial<Record<BoardColumnKey, BoardCard[]>>>();
   const counts = new Map<string, { open: number; done: number }>();
   const put = (repo: string, key: BoardColumnKey, card: BoardCard, done: boolean) => {
-    if (!repo) return;
     if (!repos.includes(repo)) repos.push(repo);
     let row = cells.get(repo);
     if (!row) {
@@ -71,11 +69,13 @@ export async function board(src: UiSources): Promise<BoardPage> {
 
   const dropped = s.listing?.droppedIds ?? new Set<string>();
   const finishedAt = (i: Intent) => (i.finished ? Date.parse(i.finished) / 1000 : Number.NaN);
+  // The same 7 local days as the spend (UI-137).
+  const week = lastSevenDays(s.now);
   const done = (s.listing?.done ?? [])
     .filter((i) => i.stage === "done" && !dropped.has(i.id))
     .filter((i) => {
       const at = finishedAt(i);
-      return Number.isFinite(at) && at > s.now - WEEK && at <= s.now;
+      return Number.isFinite(at) && at <= s.now && week.has(localDate(at));
     })
     .sort((a, b) => finishedAt(b) - finishedAt(a));
   for (const i of done) {
@@ -89,6 +89,10 @@ export async function board(src: UiSources): Promise<BoardPage> {
 
   const shown = COLUMNS.filter((c) => air.ship || (c.key !== "deploy" && c.key !== "e2e"));
   const spend = spendByRepo(src.db, s.now);
+  // Every repo that cost something has a row, so the rows add up to the totals.
+  for (const repo of spend.keys()) if (!repos.includes(repo)) repos.push(repo);
+  const unknown = repos.indexOf("");
+  if (unknown >= 0) repos.push(...repos.splice(unknown, 1));
   const rows: BoardRepo[] = repos.map((repo) => ({
     repo,
     github: src.config.repos.get(repo)?.github ?? "",
@@ -101,6 +105,13 @@ export async function board(src: UiSources): Promise<BoardPage> {
     ...c,
     count: rows.reduce((n, r) => n + (r.cells[c.key]?.length ?? 0), 0),
   }));
-  const body = { columns, repos: rows, spend: repoSpendView(spendTotals(spend)) };
+  const body = {
+    columns,
+    repos: rows,
+    spend: repoSpendView(spendTotals(spend)),
+    error: s.listError
+      ? `Towercab can't read the intents repo, so the board shows only intents that have started. ${s.listError}`
+      : null,
+  };
   return { version: versionOf(body, dbMark(src.db)), ...body };
 }

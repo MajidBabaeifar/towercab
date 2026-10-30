@@ -3188,7 +3188,7 @@ a.pr-tile:hover {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--s1);
-  padding: 12px 12px 10px;
+  padding: 12px 10px 10px;
   background: var(--surface-2);
   border-bottom: 1px solid var(--line);
   color: var(--text-2);
@@ -3203,6 +3203,7 @@ a.pr-tile:hover {
 
 .board-col-head.narrow {
   flex-direction: column;
+  padding-inline: 8px;
   gap: var(--s-half);
   color: var(--text-3);
   font-weight: 500;
@@ -3271,7 +3272,7 @@ a.pr-tile:hover {
   gap: var(--s1);
   min-width: 0;
   margin: 0;
-  padding: 6px var(--s1) var(--s2);
+  padding: 6px 6px var(--s2);
   list-style: none;
 }
 
@@ -3298,7 +3299,7 @@ a.pr-tile:hover {
   display: flex;
   flex-direction: column;
   gap: var(--s1);
-  padding: 10px 12px;
+  padding: var(--s1) 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface);
@@ -3341,6 +3342,7 @@ a.pr-tile:hover {
   display: none;
 }
 
+/* UI-136: 720 px wide or less. */
 @media (max-width: 720px) {
   .board {
     display: none;

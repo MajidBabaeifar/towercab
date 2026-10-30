@@ -438,6 +438,7 @@ export interface BoardCard {
 
 /** UI-133: one repo's row. */
 export interface BoardRepo {
+  /** "" for intents the listing doesn't know (the "unknown repo" lane). */
   repo: string;
   github: string;
   open: number;
@@ -453,6 +454,8 @@ export interface BoardPage {
   repos: BoardRepo[];
   /** UI-137: the totals over every repo. */
   spend: RepoSpendView;
+  /** The intents repo can't be read: what went wrong, shown above the board. */
+  error: string | null;
 }
 
 export type ActivityKind = "move" | "wait" | "error" | "log";

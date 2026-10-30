@@ -1,5 +1,5 @@
 // The board (UI-133 to UI-137): one column per airspace station, one row per repo; each row folds, and
-// the folded rows are remembered in this browser. Below 720 px it is one list per repo instead.
+// the folded rows are remembered in this browser. At 720 px wide or less it is one list per repo instead.
 
 import type { JSX } from "preact";
 import { useState } from "preact/hooks";
@@ -10,7 +10,7 @@ import type {
   BoardPage as Data,
   RepoSpendView,
 } from "../../../src/ui/view.ts";
-import { StateChip } from "../components.tsx";
+import { ErrorNote, StateChip } from "../components.tsx";
 import { ChevronDown } from "../icons.tsx";
 import { Link } from "../router.tsx";
 
@@ -57,6 +57,9 @@ function Card({ card }: { card: BoardCard }) {
   );
 }
 
+/** The lane of intents the listing doesn't know has no repo name. */
+const repoName = (repo: string) => repo || "Unknown repo";
+
 function LaneHead({ repo, folded, onToggle }: { repo: BoardRepo; folded: boolean; onToggle(): void }) {
   return (
     <div class="board-lane-inner">
@@ -65,24 +68,25 @@ function LaneHead({ repo, folded, onToggle }: { repo: BoardRepo; folded: boolean
           type="button"
           class="board-toggle"
           aria-expanded={!folded}
-          title={folded ? `Show ${repo.repo}` : `Fold ${repo.repo}`}
+          title={folded ? `Show ${repoName(repo.repo)}` : `Fold ${repoName(repo.repo)}`}
           onClick={onToggle}
         >
           <ChevronDown size={16} class="board-chev" />
-          <span>{repo.repo}</span>
+          <span>{repoName(repo.repo)}</span>
         </button>
       </h2>
       <span class="meta">
         {repo.github ? <span class="mono">{repo.github} · </span> : null}
-        {repo.open} open · {repo.done} done this week
+        {repo.open} open · {repo.done} done in the last 7 days
       </span>
       <SpendLine spend={repo.spend} />
     </div>
   );
 }
 
-const FULL = 208;
-const NARROW = 88;
+// Narrow enough that ten columns, three of them empty, fit a 1280 px screen.
+const FULL = 144;
+const NARROW = 64;
 
 const EMPTY_LANE = "Nothing open, and nothing done in the last 7 days.";
 
@@ -131,7 +135,10 @@ function Grid({ data, folded, toggle }: { data: Data; folded: Set<string>; toggl
 function Cell({ repo, column }: { repo: BoardRepo; column: BoardColumn }) {
   const cards = repo.cells[column.key] ?? [];
   return (
-    <ul class={`board-cell${column.count ? "" : " narrow"}`} aria-label={`${repo.repo}, ${column.label}`}>
+    <ul
+      class={`board-cell${column.count ? "" : " narrow"}`}
+      aria-label={`${repoName(repo.repo)}, ${column.label}`}
+    >
       {cards.map((c) => (
         <Card key={c.intent} card={c} />
       ))}
@@ -147,13 +154,13 @@ function List({ data, folded, toggle }: { data: Data; folded: Set<string>; toggl
         const isFolded = folded.has(r.repo);
         const columns = data.columns.filter((c) => r.cells[c.key]?.length);
         return (
-          <section key={r.repo} class="card board-section" aria-label={`Repo ${r.repo}`}>
+          <section key={r.repo} class="card board-section" aria-label={`Repo ${repoName(r.repo)}`}>
             <LaneHead repo={r} folded={isFolded} onToggle={() => toggle(r.repo)} />
             {isFolded ? null : columns.length ? (
               columns.map((c) => (
                 <div key={c.key} class="board-station">
                   <h3>{c.label}</h3>
-                  <ul class="board-cell" aria-label={`${r.repo}, ${c.label}`}>
+                  <ul class="board-cell" aria-label={`${repoName(r.repo)}, ${c.label}`}>
                     {(r.cells[c.key] ?? []).map((card) => (
                       <Card key={card.intent} card={card} />
                     ))}
@@ -188,9 +195,12 @@ export function BoardPage({ data }: { data: Data }) {
           Spent <SpendLine spend={data.spend} />
         </p>
       </section>
+      {data.error ? <ErrorNote text={data.error} /> : null}
       {data.repos.length === 0 ? (
-        <p class="empty-line">No repos in the config yet.</p>
-      ) : (
+        data.error ? null : (
+          <p class="empty-line">No repos in the config yet.</p>
+        )
+      ) : data.error && data.repos.every((r) => r.open + r.done === 0) ? null : (
         <>
           <Grid data={data} folded={folded} toggle={toggle} />
           <List data={data} folded={folded} toggle={toggle} />

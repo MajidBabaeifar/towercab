@@ -13,8 +13,8 @@ export interface RepoSpend {
   all: number;
 }
 
-/** MET-29's window: the last 7 local days, today included. */
-function weekDays(now: number): Set<string> {
+/** MET-29's window: the last 7 local days, today included (the board's Done column uses it too). */
+export function lastSevenDays(now: number): Set<string> {
   const t = new Date(now * 1000);
   const out = new Set<string>();
   for (let i = 0; i < 7; i++) {
@@ -23,22 +23,32 @@ function weekDays(now: number): Set<string> {
   return out;
 }
 
-/** UI-137: what each repo cost today, in the last 7 days and in all time. */
+/**
+ * UI-137: what each repo cost today, in the last 7 days and in all time, in the order repos first had a
+ * mission. A repo that never cost anything is absent.
+ */
 export function spendByRepo(db: Db, now: number): Map<string, RepoSpend> {
   const out = new Map<string, RepoSpend>();
-  const week = weekDays(now);
-  const today = localDate(now);
-  for (const r of db.all<{ repo: string; cost_usd: number; data: string; updated: number }>(
-    "SELECT repo, cost_usd, data, updated FROM missions ORDER BY id",
-  )) {
-    let s = out.get(r.repo);
+  const of = (repo: string) => {
+    let s = out.get(repo);
     if (!s) {
       s = { today: 0, week: 0, all: 0 };
-      out.set(r.repo, s);
+      out.set(repo, s);
     }
-    s.all += r.cost_usd;
-    // Runs are kept 30 days; only missions that moved in the window can have runs in it.
-    if (r.updated < now - 8 * DAY) continue;
+    return s;
+  };
+  for (const r of db.all<{ repo: string; total: number }>(
+    "SELECT repo, SUM(cost_usd) AS total FROM missions GROUP BY repo HAVING SUM(cost_usd) > 0 ORDER BY MIN(id)",
+  )) {
+    of(r.repo).all = r.total;
+  }
+  const week = lastSevenDays(now);
+  const today = localDate(now);
+  // Runs are kept 30 days; only missions that moved in the window can have runs in it.
+  for (const r of db.all<{ repo: string; data: string }>(
+    "SELECT repo, data FROM missions WHERE updated >= ? ORDER BY id",
+    now - 8 * DAY,
+  )) {
     let runs: unknown;
     try {
       runs = (JSON.parse(r.data) as { runs?: unknown }).runs;
@@ -49,7 +59,9 @@ export function spendByRepo(db: Db, now: number): Map<string, RepoSpend> {
     for (const run of runs as { at?: unknown; cost?: unknown }[]) {
       if (typeof run?.at !== "number" || typeof run.cost !== "number" || run.at > now) continue;
       const day = localDate(run.at);
-      if (week.has(day)) s.week += run.cost;
+      if (!week.has(day)) continue;
+      const s = of(r.repo);
+      s.week += run.cost;
       if (day === today) s.today += run.cost;
     }
   }
@@ -79,7 +91,7 @@ export function repoSpendView(s: RepoSpend | undefined): RepoSpendView {
   };
 }
 
-/** UI-137: one repo's spend, for any page that shows a repo. */
+/** UI-137: one repo's spend, for pages to share. */
 export function repoSpend(src: Pick<UiSources, "db" | "clock">, repo: string): RepoSpendView {
   return repoSpendView(spendByRepo(src.db, src.clock.now()).get(repo));
 }
