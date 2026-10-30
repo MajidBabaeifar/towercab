@@ -149,6 +149,7 @@ author. Version 1 (Rust) is on branch `rust`.
 | [specs/autonomy.md](specs/autonomy.md) | Gates and access |
 | [specs/loop.md](specs/loop.md) | The program |
 | [specs/pipeline.md](specs/pipeline.md) | From intent to merged PR |
+| [specs/ship.md](specs/ship.md) | After the merge: deploy, e2e, rollback |
 | [specs/repo.md](specs/repo.md) | What Towercab reads from a target repo |
 | [specs/ui.md](specs/ui.md) | The local web page |
 | [specs/metrics.md](specs/metrics.md) | Cost and time |
