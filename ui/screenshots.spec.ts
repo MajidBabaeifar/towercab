@@ -37,6 +37,11 @@ const PAGES = [
     path: "/i/261026-0815-2",
     expect: ["Export invoices as CSV", "Towercab recommends", "Send reply"],
   },
+  {
+    name: "board",
+    path: "/board",
+    expect: ["Board", "Your plan review", "Faster checkout page", "Readable CI job names", "all time"],
+  },
   { name: "queue", path: "/queue", expect: ["Queue", "In progress", "Waiting", "Parked", "Recently done"] },
   { name: "activity", path: "/activity", expect: ["Activity", "Today", "Moves", "Errors"] },
 ] as const;
@@ -149,6 +154,59 @@ test("ui: empty page says so", async ({ browser }) => {
     await server.stop();
     fixture.cleanup();
   }
+});
+
+test("ui: board folds a repo and remembers it", async ({ browser }) => {
+  for (const m of [MODES[0], MODES[2]]) {
+    const ctx = await browser.newContext({ colorScheme: m.scheme, viewport: m.viewport });
+    const page = await ctx.newPage();
+    await page.goto("/board");
+    await settle(page);
+    const toggle = page.locator(".board-toggle:visible", { hasText: "web" });
+    const card = page.locator("a.board-card:visible", { hasText: "Faster checkout page" });
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(card).toHaveAttribute("href", "/i/261026-1105-1");
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(card).toHaveCount(0);
+    // Other repos stay open; the fold survives a reload.
+    await expect(page.locator("a.board-card:visible", { hasText: "Rate-limit the public API" })).toHaveCount(
+      1,
+    );
+    await page.reload();
+    await settle(page);
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(card).toHaveCount(0);
+    if (m.mode === "light") {
+      // Only the board scrolls sideways, and its column headers stay on top while it scrolls down.
+      const board = page.locator(".board");
+      const sizes = await board.evaluate((e) => ({ scroll: e.scrollWidth, client: e.clientWidth }));
+      expect(sizes.scroll).toBeGreaterThan(sizes.client);
+      await board.evaluate((e) => e.scrollTo(e.scrollWidth, e.scrollHeight));
+      const head = (await page.locator(".board-col-head").first().boundingBox())!;
+      const box = (await board.boundingBox())!;
+      expect(Math.abs(head.y - box.y)).toBeLessThanOrEqual(2);
+    }
+    await toggle.click();
+    await expect(card).toHaveCount(1);
+    await ctx.close();
+  }
+  // Without storage the board still folds, until the page reloads.
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(() => {
+    Object.defineProperty(window, "localStorage", {
+      get() {
+        throw new Error("storage is off");
+      },
+    });
+  });
+  const page = await ctx.newPage();
+  await page.goto("/board");
+  await settle(page);
+  const toggle = page.locator(".board-toggle:visible", { hasText: "web" });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await ctx.close();
 });
 
 // The hit area: the plane itself loops, so it is never still enough to point at.

@@ -88,7 +88,7 @@ test("ui: binds localhost only", async () => {
 
 test("ui: loop serves the page", async () => {
   const { ui, port } = await serve();
-  for (const path of ["/", "/queue", "/activity", `/i/${IDS.plan}`]) {
+  for (const path of ["/", "/board", "/queue", "/activity", `/i/${IDS.plan}`]) {
     const r = await call(port, { path });
     expect(r.status, path).toBe(200);
     expect(r.headers["content-type"]).toBe("text/html; charset=utf-8");
@@ -214,6 +214,8 @@ test("ui: API shapes", async () => {
   expect(missing.body.error).toBe("There is no intent 999999-0000-9.");
   const queue = await json("/api/queue");
   expect((queue.body.lanes as unknown[]).length).toBe(6);
+  const board = await json("/api/board");
+  expect(Object.keys(board.body).sort()).toEqual(["columns", "repos", "spend", "version"]);
   const act = await json(`/api/activity?intent=${IDS.plan}&kind=waits`);
   expect(act.body).toMatchObject({ more: false });
   expect((act.body.items as { kind: string }[]).map((i) => i.kind)).toEqual(["wait", "wait"]);

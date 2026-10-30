@@ -323,7 +323,7 @@ function skipState(s: Skip | null, parked: boolean): StateView {
   return state("queued");
 }
 
-interface Snap {
+export interface Snap {
   now: number;
   listing: Listing | null;
   listError: string | null;
@@ -334,7 +334,7 @@ interface Snap {
   paused: boolean;
 }
 
-async function snapshot(src: UiSources): Promise<Snap> {
+export async function snapshot(src: UiSources): Promise<Snap> {
   const now = src.clock.now();
   let listing: Listing | null = null;
   let listError: string | null = null;
@@ -643,7 +643,7 @@ const NOT_STARTED: Phase[] = [
 ];
 
 /** UI-78: every open intent as a plane at its station, and what landed today. */
-function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): AirspaceView {
+export function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): AirspaceView {
   const planes: Plane[] = [];
   const seen = new Set<string>();
   for (const m of s.missions) {
@@ -988,7 +988,7 @@ export function versionOf(value: unknown, extra = ""): string {
   return createHash("sha1").update(JSON.stringify(value)).update(extra).digest("hex").slice(0, 12);
 }
 
-function dbMark(db: Db): string {
+export function dbMark(db: Db): string {
   const t = db.get<{ n: number | null }>("SELECT MAX(id) AS n FROM transitions")?.n ?? 0;
   const c = db.get<{ n: number | null }>("SELECT MAX(id) AS n FROM commands")?.n ?? 0;
   const u = db.get<{ n: number | null }>("SELECT MAX(updated) AS n FROM missions")?.n ?? 0;
