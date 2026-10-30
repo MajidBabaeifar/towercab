@@ -180,6 +180,7 @@ export const WAITS: Record<string, { stage: WaitStage; ask: string }> = {
   "review and merge PR": { stage: "approval:merge", ask: "Review and merge the code PR." },
   "answer the question": { stage: "blocked", ask: "Towercab has a question for you." },
   "checks red": { stage: "blocked", ask: "The checks still fail after 2 repair rounds." },
+  "allow check writes": { stage: "blocked", ask: "The checks need to write to the build cache." },
   "tests don't prove the change": { stage: "blocked", ask: "No test fails without the change." },
   "CI red": { stage: "blocked", ask: "CI still fails after 2 repair rounds." },
   "CI stuck": { stage: "blocked", ask: "CI didn't finish in time." },
@@ -237,6 +238,8 @@ export function continueTo(waiting: string | null, from: Stage | null): Stage {
   }
   if (waiting === "CI stuck") return "ci";
   if (waiting === "merge failed") return "gate";
+  // PIP-95: the answer is read where the question was asked.
+  if (waiting === "allow check writes" && from) return from;
   if (from === "pick" || from === "design" || from === "plan") return from;
   return "build";
 }

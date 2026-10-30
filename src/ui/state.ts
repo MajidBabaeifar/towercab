@@ -301,7 +301,7 @@ export function stateOf(m: Mission, now: number, o: StateOpts = {}): StateView {
   if (m.stage === "done") return state("done");
   if (isReady(m)) return state("queued", "ready to build");
   if (isWait(m.stage)) {
-    const note = CARD_NOTES[m.stage] ?? (m.waiting === "answer the question" ? "Question" : "Blocked");
+    const note = CARD_NOTES[m.stage] ?? (isQuestion(m.waiting) ? "Question" : "Blocked");
     return state("needs", note);
   }
   if (m.held) return state("paused", `before ${stepWords(m.stage).toLowerCase()}`);
@@ -413,11 +413,14 @@ function prLink(src: UiSources, m: Mission): PrLink | null {
   return { number: pr.number, url: src.prUrl(pr.github, pr.number), label: `${label} #${pr.number}` };
 }
 
+/** Waits that ask the owner a question with options (PIP-41, PIP-95). */
+const isQuestion = (w: string | null) => w === "answer the question" || w === "allow check writes";
+
 function cardKind(m: Mission): CardKind {
   if (m.stage === "approval:spec") return "spec";
   if (m.stage === "approval:plan") return "plan";
   if (m.stage === "approval:merge") return "code";
-  return m.waiting === "answer the question" ? "question" : "blocked";
+  return isQuestion(m.waiting) ? "question" : "blocked";
 }
 
 const MERGE_LABELS: Partial<Record<CardKind, string>> = {

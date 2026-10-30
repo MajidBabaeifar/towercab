@@ -117,6 +117,8 @@ export interface PipeData {
   pushed?: boolean;
   /** The question the owner is asked (the UI's card). */
   question?: Question;
+  /** Verify asked whether the checks may write to the repo cache (PIP-95); the answer decides. */
+  cacheAsk?: boolean;
   /** The plan's access list (the UI's plan card). */
   access?: Access;
   /** Each run's time and cost, 30 days (MET-29). */
@@ -538,13 +540,18 @@ export function questionMd(q: Question): string {
 }
 
 /** Ask the owner: a Question comment on the current PR, or the intent's `## Towercab` (PIP-41). */
-export async function ask(cx: Ctx, m: Mission, q: Question): Promise<Outcome> {
+export async function ask(
+  cx: Ctx,
+  m: Mission,
+  q: Question,
+  waiting = "answer the question",
+): Promise<Outcome> {
   const repo = cx.repo(m);
   const pr = currentPr(cx, m, repo);
   const body = questionMd(q);
   if (pr) await upsertStageComment(cx.github, pr.github, pr.n, "Question", m.continued + 1, body);
   else await cx.store.update(m.intent, "question", (e) => e.setSection("Towercab", body));
-  return wait("answer the question", q.question, { data: { question: q } });
+  return wait(waiting, q.question, { data: { question: q } });
 }
 
 /** A stage comment on the current PR, never failing the step. */

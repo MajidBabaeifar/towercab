@@ -12,7 +12,7 @@ import type { Mission } from "../mission.ts";
 import { type Adapter, adapterOf, RollbackRefused, shipEnv } from "../ship/adapter.ts";
 import { type Live, smokeSuites, suiteOrder } from "../ship/live.ts";
 import { readSecrets, type Secrets, secretsPath } from "../ship/secrets.ts";
-import { logPath, sandboxSpec } from "./checks.ts";
+import { checksMayWrite, logPath, sandboxSpec } from "./checks.ts";
 import { ciState } from "./ci.ts";
 import {
   botAuthor,
@@ -126,7 +126,7 @@ async function nextSuite(cx: Ctx, m: Mission, sc: ShipCx): Promise<Progress> {
       lines: [suite.command],
       dir: cx.checkout(at),
       network: true,
-      cacheWritable: false,
+      cacheWritable: checksMayWrite(cx, at),
       log: logPath(cx, at, "e2e", `${n}-${suite.name}.log`),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
       extraEnv: shipEnv(sc, sha),

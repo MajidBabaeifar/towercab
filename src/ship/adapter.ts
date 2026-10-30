@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { git } from "../checkout.ts";
 import { type Ctx, EnvError } from "../handlers.ts";
 import type { Mission } from "../mission.ts";
+import { checksMayWrite } from "../pipeline/checks.ts";
 import { gh } from "../pipeline/common.ts";
 import { cacheEnv, sandboxArgv, sandboxEnv } from "../pipeline/sandbox.ts";
 import type { RunResult } from "../tools.ts";
@@ -187,7 +188,7 @@ async function runCommand(e: AdapterEnv, line: string, extra: Record<string, str
     toolchain: e.cx.config.agent.toolchain,
     cache,
     network: true,
-    cacheWritable: false,
+    cacheWritable: checksMayWrite(e.cx, e.m),
     line,
   });
   const sha = (await e.cx.tools.run("git", ["-C", e.dir, "rev-parse", "HEAD"])).stdout.trim();

@@ -1,5 +1,6 @@
 // The `verify` stage (PIP-23, PIP-49): the repo's setup (with network) and run set (without), in the
 // sandbox; a red goes back to the worker (2 repairs with proof), then waits. Green → screenshots.
+// Checks that fail only because they couldn't write to the repo cache ask the owner (PIP-95).
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -10,8 +11,16 @@ import type { Mission } from "../mission.ts";
 import { glob } from "../repo/protected.ts";
 import { hasCi, runSet } from "../repo/runset.ts";
 import { withoutE2e } from "../ship/live.ts";
-import { logPath, sandboxSpec } from "./checks.ts";
-import { cloneOf, coGit, data, nextN, repoFiles, tail } from "./common.ts";
+import {
+  allowsCacheWrite,
+  cacheWriteQuestion,
+  checksMayWrite,
+  checksWriteKey,
+  logPath,
+  readOnlyCachePath,
+  sandboxSpec,
+} from "./checks.ts";
+import { ask, cloneOf, coGit, data, nextN, repoFiles, tail } from "./common.ts";
 
 export const MAX_REPAIRS = 2;
 export const MAX_SHOTS = 20;
@@ -54,6 +63,22 @@ function read(p: string): string {
 export const verifyHandler: Handler = {
   async step(cx, m) {
     const files = await repoFiles(cx, m);
+    // PIP-95: the owner answered whether the checks may write to the repo cache.
+    if (data(m).cacheAsk) {
+      const repo = cx.repo(m).name;
+      const allowed = allowsCacheWrite(data(m).answer);
+      m = cx.record(m, m.step, {}, { cacheAsk: undefined, answer: undefined });
+      if (!allowed) {
+        return {
+          done: wait(
+            "checks red",
+            `You didn't allow the checks of ${repo} to write to its build cache, so they can't run.`,
+          ),
+        };
+      }
+      cx.db.setMeta(checksWriteKey(repo), "1");
+      cx.log(`${m.intent}: the checks of ${repo} may now write to its build cache`);
+    }
     const { n, data: nd } = nextN(m, "verify");
     if (m.step === "" || m.step === "setup") {
       const fresh = cx.record(m, "setup", {}, nd);
@@ -88,6 +113,13 @@ export const verifyHandler: Handler = {
     if (m.step === "checks") {
       if (end.timedOut) return failed(cx, m, "The checks timed out.", log);
       if (end.code !== 0) {
+        const cache = cx.home.cache(cx.repo(m).name);
+        const ro = checksMayWrite(cx, m) ? null : readOnlyCachePath(log, cache);
+        if (ro) {
+          // PIP-95: not the code's fault, so no repair round; the owner decides.
+          const o = await ask(cx, m, cacheWriteQuestion(cx.repo(m).name, cache, ro), "allow check writes");
+          return { done: { ...o, data: { ...o.data, cacheAsk: true, answer: undefined } } };
+        }
         const env = classifyRun(log);
         if (env) throw new EnvError(env.kind, env.why);
         return failed(cx, m, "The checks failed.", log);
@@ -132,7 +164,7 @@ async function checks(cx: Ctx, m: Mission): Promise<Progress> {
       lines,
       dir: cx.checkout(m),
       network: false,
-      cacheWritable: false,
+      cacheWritable: checksMayWrite(cx, m),
       log: logPath(cx, m, "verify", `verify-${n}.log`),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000 * Math.max(1, lines.length),
     }),
@@ -151,7 +183,7 @@ async function shots(cx: Ctx, m: Mission): Promise<Progress> {
       lines: [files.verifying.screenshots!],
       dir: cx.checkout(m),
       network: false,
-      cacheWritable: false,
+      cacheWritable: checksMayWrite(cx, m),
       log: logPath(cx, m, "verify", `shots-${n}.log`),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
       extraEnv: { TOWERCAB_SHOTS: dir },

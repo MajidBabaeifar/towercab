@@ -15,7 +15,7 @@ import { parseVerifying, type RepoFiles, type Verifying } from "../repo/files.ts
 import { CONTROL, Protected } from "../repo/protected.ts";
 import { hasCi, quote, runSet } from "../repo/runset.ts";
 import { withoutE2e } from "../ship/live.ts";
-import { logPath, sandboxSpec } from "./checks.ts";
+import { checksMayWrite, logPath, sandboxSpec } from "./checks.ts";
 import { cloneOf, coGit, data, grants, intentOf, repoFiles, tail } from "./common.ts";
 import { changedTests, MAX_REPAIRS } from "./verify.ts";
 
@@ -105,7 +105,7 @@ async function lay(cx: Ctx, m: Mission, tests: string[]): Promise<Progress> {
       lines: script,
       dir,
       network: false,
-      cacheWritable: false,
+      cacheWritable: checksMayWrite(cx, fresh),
       log: logPath(cx, fresh, "proof", "proof.log"),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000 * Math.max(1, script.length),
     }),
@@ -156,7 +156,7 @@ function head(cx: Ctx, m: Mission): Progress {
       lines,
       dir: cx.checkout(m),
       network: false,
-      cacheWritable: false,
+      cacheWritable: checksMayWrite(cx, m),
       log: logPath(cx, m, "proof", "proof-head.log"),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000 * Math.max(1, lines.length),
     }),
