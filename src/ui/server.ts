@@ -16,6 +16,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { extname, join, resolve, sep } from "node:path";
 import type { IntentStore, Listing } from "../intents/types.ts";
 import type { UiActions } from "./actions.ts";
+import { board } from "./board.ts";
 import { activity, intentPage, overview, queue, RUN_NAME, redact, type UiSources } from "./state.ts";
 import type { ActionReply } from "./view.ts";
 
@@ -75,7 +76,7 @@ const TYPES: Record<string, string> = {
   ".webmanifest": "application/manifest+json",
 };
 
-const PAGES = /^\/(?:queue|activity|i\/[A-Za-z0-9._-]+)?\/?$/;
+const PAGES = /^\/(?:board|queue|activity|i\/[A-Za-z0-9._-]+)?\/?$/;
 const ACTIONS = new Set(["merge", "reply", "retry", "drop", "start", "pause", "resume"]);
 const INTENT_ID = /^[A-Za-z0-9._-]{1,100}$/;
 
@@ -320,6 +321,7 @@ export function startUi(o: UiOptions): UiServer {
     }
     if (path === "/api/state") return json(res, 200, await overview(src));
     if (path === "/api/queue") return json(res, 200, await queue(src));
+    if (path === "/api/board") return json(res, 200, await board(src));
     if (path === "/api/events") return events(req, res);
     if (path === "/api/activity") {
       const q = url.searchParams;

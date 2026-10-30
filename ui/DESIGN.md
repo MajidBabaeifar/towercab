@@ -26,6 +26,9 @@ you." Everything else is one click away (the intent page), never on the overview
   path taken, rounds and steps back, totals, the open stage's files and log, then "All moves" folded)
   → cost per attempt → the intent's own text. Phone: the map is a vertical stepper and a stage's files
   open inside it.
+- **Board**: the airspace's stations as columns (queue → done in the last 7 days), one folding row per repo with
+  its spend (today, 7 days, all time); a card is a title and its state chip. Only the board scrolls
+  sideways; column headers stick. Phone: one section per repo, cards under the station names.
 - **Queue**: one lane per repo: running, waiting (numbered, with reason), parked, recently done.
 - **Activity**: filter bar (intent, repo, kind, since; in the URL) → list grouped by day.
 

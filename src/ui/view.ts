@@ -408,6 +408,56 @@ export interface QueuePage {
   lanes: Lane[];
 }
 
+/** UI-137: what Towercab spent on one repo (or on all of them). */
+export interface RepoSpendView {
+  today: string;
+  week: string;
+  all: string;
+  todayUsd: number;
+  weekUsd: number;
+  allUsd: number;
+}
+
+/** UI-133: the board's columns, the airspace stations from the queue on, then done. */
+export type BoardColumnKey = Exclude<StationKey, "parked" | "landed"> | "done";
+
+export interface BoardColumn {
+  key: BoardColumnKey;
+  label: string;
+  /** Cards in this column over all repos; 0 draws it narrow (UI-136). */
+  count: number;
+}
+
+export interface BoardCard {
+  intent: string;
+  title: string;
+  state: StateView;
+  /** UI-125: rolling back, reverting, or in a fix round; absent otherwise. */
+  ship?: { kind: "rollback" | "revert" | "fix"; mark: string };
+}
+
+/** UI-133: one repo's row. */
+export interface BoardRepo {
+  /** "" for intents the listing doesn't know (the "unknown repo" lane). */
+  repo: string;
+  github: string;
+  open: number;
+  done: number;
+  spend: RepoSpendView;
+  /** Cards per column, in column order; columns without cards are absent. */
+  cells: Partial<Record<BoardColumnKey, BoardCard[]>>;
+}
+
+export interface BoardPage {
+  version: string;
+  columns: BoardColumn[];
+  repos: BoardRepo[];
+  /** UI-137: the totals over every repo. */
+  spend: RepoSpendView;
+  /** The intents repo can't be read: what went wrong, shown above the board. */
+  error: string | null;
+}
+
 export type ActivityKind = "move" | "wait" | "error" | "log";
 
 export interface ActivityItem {

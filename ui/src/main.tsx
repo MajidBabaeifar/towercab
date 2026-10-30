@@ -3,6 +3,7 @@
 import { type JSX, render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type {
+  BoardPage as BoardData,
   IntentPage as IntentData,
   Overview,
   QueuePage as QueueData,
@@ -12,6 +13,7 @@ import { act, useLive } from "./api.ts";
 import { ErrorNote, Freshness, Skeleton } from "./components.tsx";
 import { Alert, Logo, Pause, Play } from "./icons.tsx";
 import { ActivityPage } from "./pages/Activity.tsx";
+import { BoardPage } from "./pages/Board.tsx";
 import { IntentPage } from "./pages/Intent.tsx";
 import { OverviewPage } from "./pages/Overview.tsx";
 import { QueuePage } from "./pages/Queue.tsx";
@@ -19,6 +21,7 @@ import { Link, usePath } from "./router.tsx";
 
 const TABS = [
   ["/", "Overview"],
+  ["/board", "Board"],
   ["/queue", "Queue"],
   ["/activity", "Activity"],
 ] as const;
@@ -60,7 +63,8 @@ function PauseButton({ top }: { top: Top }) {
 }
 
 function TopBar({ top, path }: { top: Top | null; path: string }) {
-  const section = path.startsWith("/queue") ? "/queue" : path.startsWith("/activity") ? "/activity" : "/";
+  const section =
+    ["/board", "/queue", "/activity"].find((p) => path === p || path.startsWith(`${p}/`)) ?? "/";
   return (
     <header class="topbar">
       <div class="topbar-inner">
@@ -140,6 +144,12 @@ function QueueRoute() {
   return live.data ? <QueuePage data={live.data} /> : <Skeleton />;
 }
 
+function BoardRoute() {
+  const live = useLive<BoardData>("/api/board");
+  if (live.error && !live.data) return <ErrorNote text={live.error} />;
+  return live.data ? <BoardPage data={live.data} /> : <Skeleton />;
+}
+
 function App() {
   const path = usePath();
   const [pathname, search = ""] = path.split("?");
@@ -151,11 +161,13 @@ function App() {
   useEffect(() => {
     const page = intent
       ? intentTitle
-      : pathname!.startsWith("/queue")
-        ? "Queue"
-        : pathname!.startsWith("/activity")
-          ? "Activity"
-          : null;
+      : pathname!.startsWith("/board")
+        ? "Board"
+        : pathname!.startsWith("/queue")
+          ? "Queue"
+          : pathname!.startsWith("/activity")
+            ? "Activity"
+            : null;
     document.title = `${n ? `(${n}) ` : ""}Towercab${page ? ` · ${page}` : ""}`;
   }, [n, pathname, intent, intentTitle]);
   let page: JSX.Element;
@@ -168,7 +180,8 @@ function App() {
         onTitle={setIntentTitle}
       />
     );
-  } else if (pathname === "/queue") page = <QueueRoute />;
+  } else if (pathname === "/board") page = <BoardRoute />;
+  else if (pathname === "/queue") page = <QueueRoute />;
   else if (pathname === "/activity") page = <ActivityPage search={search} />;
   else if (state.error && !state.data) page = <ErrorNote text={state.error} />;
   else page = state.data ? <OverviewPage data={state.data} /> : <Skeleton />;

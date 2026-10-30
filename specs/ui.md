@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..104, UI-120..125 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..104, UI-120..125, UI-133..137 · **Prefix:** UI
 
 ## Purpose
 
@@ -579,6 +579,72 @@ The airspace tells a plane that is rolling back or fixing a live failure apart f
 - The marks come from the plane's `ship` field (`{ kind: "rollback" | "revert" | "fix", mark }`), absent
   for every other plane.
 - Verified by: `ui: rollback and fix planes are marked`
+
+### UI-133 · Board tab
+
+A Board tab shows every intent as a card on a grid, one column per station and one row per repo, so the
+owner sees at a glance where each repo's work stands.
+
+- `/board`, a top tab after Overview. Columns, left to right, in the airspace's words: Queue, Gate,
+  Spec, Your spec review, Plan, Your plan review, Code, CI, Your code review, Deploy, e2e, Done. Deploy
+  and e2e are there exactly when the airspace draws its ship stations (UI-120). Rows: one per `[repos]`
+  repo in config order, then any other repo an intent names or that has spend (UI-137), then "Unknown
+  repo" for intents the listing doesn't know; a row without cards says so in one line.
+- A card shows the intent's title and its state chip (UI-56), and links to the intent page (UI-62).
+- The server builds it (`GET /api/board`, `board()` in `src/ui/board.ts`): `columns` (key, label,
+  count), `repos` (repo, GitHub name, open and done counts, spend of UI-137, the cards per column), the
+  spend totals and `error`. The page updates live like the others (UI-67).
+- When the intents repo can't be read, the page says so above the board (the reason, and that only
+  started intents are shown) instead of showing empty rows as if nothing were there.
+- Verified by: `ui: board columns follow the airspace`, `ui: board says when the intents repo can't be read`,
+  `ui: screenshots light, dark and mobile`
+
+### UI-134 · Where a card sits
+
+A card sits in the column of its plane on the airspace, so the board and the airspace never disagree.
+
+- Open intents take the station of their airspace plane (UI-78, UI-100, UI-120), built by the same
+  code; a plane whose intent the listing doesn't know sits in the "Unknown repo" row. Parked intents
+  sit in Queue below the queued ones, with their Parked chip. Done holds the intents done in the last
+  7 local days (the same days as the spend of UI-137), newest first, saying when; dropped intents
+  aren't shown. A row header counts its open intents and those done in the last 7 days.
+- Verified by: `ui: board columns follow the airspace`, `ui: board shows what was done in the last 7 days`
+
+### UI-135 · Fold a repo
+
+Each repo row folds to its header with one toggle, and the page remembers it in this browser.
+
+- The toggle is a button on the row header with `aria-expanded`. Folded repos are kept in
+  `localStorage` under `towercab.board.folded` (a JSON list of repo names); every read and write is
+  wrapped in `try`/`catch`, so without storage a row still folds until the page reloads.
+- Verified by: `ui: board folds a repo and remembers it`
+
+### UI-136 · Board fits many repos and a phone
+
+The board stays usable with many repos and intents, and on a phone.
+
+- Only the board scrolls sideways, never the page. Column headers stick to the top of the board and
+  repo names to its left while it scrolls. A column with cards is at least 144 px wide and one without
+  cards in any repo 64 px, so a board with seven busy columns fits a 1280 px screen without scrolling;
+  a wider one scrolls inside the board.
+- At 720 px wide or less the board is one column: a section per repo listing its cards under the station
+  names, stations without cards left out. Light and dark like the rest of the page (UI-68).
+- Verified by: `ui: screenshots light, dark and mobile`, `ui: board folds a repo and remembers it`
+
+### UI-137 · Spend per repo
+
+Towercab keeps what it spent on each repo today, in the last 7 days and in all time, with the totals,
+and shows it on each board row.
+
+- Today and 7 days sum the runs' costs by local day, over the same days as MET-29 (`data.runs`); all
+  time sums `missions.cost_usd` (MET-28) over every mission of the repo, finished, dropped or open.
+  The totals are the sums over all repos, so today's total equals the top bar's spend today.
+- The board's repo header reads "$1.20 today · $8.40 7 days · $52.10 all time", and the board's
+  heading the totals. Every repo that cost something has a row, so the rows add up to the totals.
+- `spendByRepo(db, now)` and `repoSpend(src, repo)` in `src/ui/spend.ts` compute it, for pages to share.
+  All time is one `SUM(cost_usd) … GROUP BY repo`; only missions updated in the last 8 days have their
+  runs read.
+- Verified by: `ui: spend per repo today, 7 days and all time`
 
 ## Out of scope
 

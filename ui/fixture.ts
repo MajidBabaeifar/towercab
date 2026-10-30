@@ -139,7 +139,10 @@ function addMission(db: Db, now: number, s: MissionSpec): number {
     const at =
       created +
       ((k + 0.5) / n) * Math.min(s.created, s.created - (s.moves[s.moves.length - 1]?.[0] ?? 0) + 60);
-    runs.push({ at: Math.min(at, now - 30), cost: Math.round((s.cost / n) * 100) / 100 });
+    // Rounded to cents; the last run takes the remainder, so the runs add up to the mission's cost.
+    const before = runs.reduce((t, r) => t + r.cost, 0);
+    const cost = k === n - 1 ? s.cost - before : s.cost / n;
+    runs.push({ at: Math.min(at, now - 30), cost: Math.round(cost * 100) / 100 });
   }
   const finished =
     s.stage === "done" || s.stage === "stopped" ? now - (s.moves[s.moves.length - 1]?.[0] ?? 0) : null;
