@@ -42,7 +42,10 @@ test("pipeline: a review that doesn't approve gets two fix rounds", async () => 
   );
   await p.start();
   const m = await p.untilStage("approval:merge");
-  expect([m.waiting, m.why]).toEqual(["review and merge PR", "review not approved"]);
+  expect([m.waiting, m.why]).toEqual([
+    "review and merge PR",
+    "The independent code review didn't approve it, even after fix rounds.",
+  ]);
   expect(fromReview(p, m.id)).toEqual([
     ["build", "the review didn't approve: fix round 1 of 2"],
     ["build", "the review didn't approve: fix round 2 of 2"],

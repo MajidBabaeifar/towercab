@@ -5,9 +5,11 @@
 import { riskWhy, specGate } from "../autonomy.ts";
 import { git, refreshBase } from "../checkout.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
+import { renameFeature } from "../intents/features.ts";
+import { plainLine, TITLE_MAX, titleProblem } from "../intents/naming.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
-import { currentRisk, openPointsMd, type Risk, riskMd } from "../risk.ts";
+import { currentRisk, openPointsMd, openPointsWhy, type Risk, riskMd } from "../risk.ts";
 import { ciState, redLog } from "./ci.ts";
 import {
   asEnv,
@@ -25,6 +27,7 @@ import {
   refusedPush,
   repoFiles,
   spawnRun,
+  subjectOf,
 } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { specBody } from "./prtext.ts";
@@ -244,6 +247,9 @@ export const designHandler: Handler = {
           concerns: v.concerns,
           open: v.open_questions.filter((q) => q.answer === null).map((q) => q.question),
           pr: v.pr,
+          brief: v.brief,
+          title: v.title,
+          subject: v.subject,
         },
         answer: undefined,
         mergeMain: undefined,
@@ -255,8 +261,57 @@ export const designHandler: Handler = {
   },
 };
 
+/** INT-34: where a renamed intent keeps the title it came with. */
+export const ORIGINAL_TITLE = "Original title";
+
+/** The owner's own intents (`source: me`, or none): their titles are never changed (INT-34). */
+export function ownersIntent(source: string | null): boolean {
+  return source === null || source.trim() === "" || source.trim() === "me";
+}
+
+/**
+ * INT-34, INT-36: an intent the owner didn't write takes the design's plain title, once: the old title
+ * goes to `## Original title`, only the title line changes, and its line in the repo's feature list
+ * follows. A title that cleans to something breaking the naming rule is skipped with a log line.
+ * Idempotent, so a replay after a crash renames nothing twice; a failed write is only logged.
+ */
+async function rename(cx: Ctx, m: Mission): Promise<void> {
+  const intent = await intentOf(cx, m);
+  if (ownersIntent(intent.source)) return;
+  const original = intent.sections.get(ORIGINAL_TITLE)?.trim();
+  if (original) return renameFeatureLine(cx, m, original, intent.title);
+  const title = plainLine(data(m).design?.title ?? "", TITLE_MAX);
+  if (!title || title === intent.title) return;
+  const problem = titleProblem(title);
+  if (problem) {
+    cx.log(`${m.intent}: kept its title: the design's (${problem}) doesn't follow the naming rule`);
+    return;
+  }
+  try {
+    await cx.store.update(m.intent, "rename", (e) => {
+      if (e.intent.sections.has(ORIGINAL_TITLE)) return;
+      e.setSection(ORIGINAL_TITLE, e.intent.title);
+      e.setTitle(title);
+    });
+  } catch (e) {
+    cx.log(`${m.intent}: couldn't rename the intent: ${(e as Error).message}`);
+    return;
+  }
+  await renameFeatureLine(cx, m, intent.title, title);
+}
+
+/** INT-36: the renamed intent's line in `features/<repo>.md` takes the new title; a failure is only logged. */
+async function renameFeatureLine(cx: Ctx, m: Mission, from: string, to: string): Promise<void> {
+  try {
+    await cx.store.editFeatures(m.repo, `rename ${m.intent}`, (t) => renameFeature(t, m.intent, from, to));
+  } catch (e) {
+    cx.log(`${m.intent}: the feature list of ${m.repo} kept the old title: ${(e as Error).message}`);
+  }
+}
+
 /** Commit the spec change; no change → straight to plan. Edits outside specs/ are dropped. */
 async function commit(cx: Ctx, m: Mission): Promise<Progress> {
+  await rename(cx, m);
   const changed = (await coGit(cx, m, ["status", "--porcelain", "--", "specs"])).trim();
   if (!changed) {
     await dropOthers(cx, m);
@@ -271,7 +326,13 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
   }
   const intent = await intentOf(cx, m);
   await coGit(cx, m, ["add", "-A", "--", "specs"]);
-  await coGit(cx, m, [...(await botAuthor(cx)), "commit", "--quiet", "-m", `docs(specs): ${intent.title}`]);
+  await coGit(cx, m, [
+    ...(await botAuthor(cx)),
+    "commit",
+    "--quiet",
+    "-m",
+    `docs(specs): ${subjectOf(m, intent)}`,
+  ]);
   await dropOthers(cx, m);
   return pushSpec(cx, m);
 }
@@ -295,7 +356,10 @@ async function dropOthers(cx: Ctx, m: Mission): Promise<void> {
   await coGit(cx, m, ["clean", "-fdq"]);
 }
 
-/** The spec PR's body (PIP-25), with the risk and open points once assessed (PIP-99). */
+/**
+ * The spec PR's body (PIP-25): the plain brief (PIP-108), the open points and the risk once assessed
+ * (PIP-99), then the design's text.
+ */
 async function bodyOf(cx: Ctx, m: Mission): Promise<string> {
   const d = data(m);
   const intent = await intentOf(cx, m);
@@ -305,6 +369,7 @@ async function bodyOf(cx: Ctx, m: Mission): Promise<string> {
     d.design?.specIds ?? [],
     { intentUrl: cx.store.url(intent), specPrUrl: null, planPrUrl: null },
     [openPointsMd(risk), riskMd(risk)],
+    d.design?.brief ?? "",
   );
 }
 
@@ -358,7 +423,7 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
           "--head",
           d.specBranch!,
           "--title",
-          `docs(specs): ${intent.title}`,
+          `docs(specs): ${subjectOf(m, intent)}`,
           "--body-file",
           "-",
         ],
@@ -395,7 +460,7 @@ async function ownerWait(cx: Ctx, m: Mission, risk: Risk | null): Promise<Outcom
   const points = risk?.openPoints ?? [];
   if (!specGate(a, points.length, risk?.level ?? null)) return null;
   const why = points.length
-    ? `${points.length} open point${points.length > 1 ? "s" : ""} for you to decide`
+    ? openPointsWhy(points.length)
     : a <= 2
       ? undefined
       : riskWhy(a, risk?.level ?? null);
@@ -447,13 +512,25 @@ async function specCi(cx: Ctx, m: Mission): Promise<Progress> {
       return {
         done: wait(
           "approve spec",
-          `the spec PR's checks didn't finish in ${Math.round(cx.config.agent.ciWait / 60)} min`,
+          `The spec PR's automatic checks didn't finish within ${Math.round(cx.config.agent.ciWait / 60)} minutes. Check that they run on GitHub, then merge the spec if it reads right.`,
         ),
       };
     return { poll: cx.config.agent.ciPoll };
   }
-  if (s.kind === "moved") return { done: wait("approve spec", "someone else pushed to the spec PR") };
-  if (s.kind === "conflict") return { done: wait("approve spec", "the spec PR conflicts with its base") };
+  if (s.kind === "moved")
+    return {
+      done: wait(
+        "approve spec",
+        "Someone else changed the spec PR. Check their change, then merge it or comment what to change.",
+      ),
+    };
+  if (s.kind === "conflict")
+    return {
+      done: wait(
+        "approve spec",
+        "The spec clashes with changes merged since it was written. Comment on the spec PR so Towercab revises it, or resolve the clash there and merge.",
+      ),
+    };
   if (s.kind === "red" || s.kind === "cancel") {
     const reruns = d.specReruns ?? {};
     const head = m.head ?? "";
@@ -467,10 +544,20 @@ async function specCi(cx: Ctx, m: Mission): Promise<Progress> {
     const names = s.checks.map((c) => c.name).join(", ");
     // A cancelled run has no failing log to fix.
     if (s.kind === "cancel")
-      return { done: wait("approve spec", `the spec PR's checks were cancelled: ${names}`) };
+      return {
+        done: wait(
+          "approve spec",
+          `The spec PR's automatic checks were cancelled (${names}). Re-run them on GitHub, or merge the spec if it reads right.`,
+        ),
+      };
     const done = d.specRedRevisions ?? 0;
     if (done >= SPEC_RED_REVISIONS)
-      return { done: wait("approve spec", `the spec PR's checks are still red after a revision: ${names}`) };
+      return {
+        done: wait(
+          "approve spec",
+          `The spec PR's automatic checks still fail after one revision (${names}). Comment on the spec PR what to change, or merge it if the failure doesn't matter.`,
+        ),
+      };
     // The step stays `spec_ci` until the run starts: a run is only a "continue" when it re-enters `design`.
     return designRun(cx, cx.record(m, m.step, {}, { specRed: true, specRedRevisions: done + 1 }));
   }

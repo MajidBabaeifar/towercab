@@ -162,6 +162,13 @@ export function openPointsMd(r: Risk | null | undefined): string {
   return `## Open points for you\n\n${points.map((p) => `- ${p.point.trim()} ${p.why.trim()}`.trim()).join("\n")}`;
 }
 
+/** PIP-110: why a spec with open points waits, as what the owner decides. */
+export function openPointsWhy(n: number): string {
+  return n === 1
+    ? "The spec leaves one question for you to settle before it is built."
+    : `The spec leaves ${n} questions for you to settle before it is built.`;
+}
+
 const GATE_OF_WAIT: Partial<Record<string, RiskGate>> = {
   "approval:spec": "spec",
   "approval:plan": "plan",

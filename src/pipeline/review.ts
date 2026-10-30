@@ -130,7 +130,9 @@ export const reviewHandler: Handler = {
     const approved = approvedOf(v);
     const body = reviewComment(v, files.review);
     const round = data(m).n?.review ?? 1;
-    await note(cx, m, "Review", round, body);
+    // PIP-108: the comment a person reads opens with the plain brief.
+    const plain = v.brief.trim() ? `**In plain words:** ${v.brief.trim()}\n\n` : "";
+    await note(cx, m, "Review", round, plain + body);
     const pid = await patchId(cx, m);
     const review = {
       approved,
@@ -139,6 +141,7 @@ export const reviewHandler: Handler = {
       summary: v.summary,
       details: body,
       patchId: pid,
+      brief: v.brief,
     };
     const fixes = data(m).reviewFixes ?? 0;
     if (!approved && fixes < MAX_REVIEW_FIXES) {

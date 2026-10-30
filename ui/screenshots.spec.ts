@@ -135,6 +135,42 @@ test("ui: update keeps typed text", async ({ page }) => {
   await expect(box).toHaveValue("One totals row per currency, please.");
 });
 
+test("ui: the card shows its brief first and folds the details", async ({ browser }) => {
+  mkdirSync(SHOTS, { recursive: true });
+  for (const m of [MODES[0], MODES[1], MODES[2]]) {
+    const ctx = await browser.newContext({ colorScheme: m.scheme, viewport: m.viewport });
+    const page = await ctx.newPage();
+    await page.goto("/");
+    await settle(page);
+    // UI-126: the plan card leads with its plain brief; the technical plan is folded under Details.
+    const card = page.locator('[data-intent="261025-0910-1"]');
+    const brief = card.locator(".brief");
+    const details = card.locator("details.details-fold");
+    await expect(brief).toContainText("No single customer can slow the API down");
+    await expect(details).not.toHaveAttribute("open", "");
+    await expect(card.getByText("token-bucket limiter")).toBeHidden();
+    const order = await card.evaluate((el) => {
+      const b = el.querySelector(".brief");
+      const d = el.querySelector("details.details-fold");
+      return b && d ? b.compareDocumentPosition(d) & Node.DOCUMENT_POSITION_FOLLOWING : 0;
+    });
+    expect(order).toBeTruthy();
+    await card.screenshot({ path: join(SHOTS, `card-brief-${m.mode}.png`) });
+    // Opening Details shows the technical text.
+    await details.locator("summary").click();
+    await expect(card.getByText(/token-bucket limiter/)).toBeVisible();
+    // UI-126: it stays open across a live refetch (pausing changes the page, so it refetches).
+    await page.getByRole("button", { name: "Pause" }).click();
+    await expect(page.getByRole("button", { name: "Resume" })).toBeVisible();
+    await expect(details).toHaveAttribute("open", "");
+    await page.getByRole("button", { name: "Resume" }).click();
+    await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+    await expect(details).toHaveAttribute("open", "");
+    if (m.mode === "dark") await card.screenshot({ path: join(SHOTS, "card-brief-open-dark.png") });
+    await ctx.close();
+  }
+});
+
 test("ui: activity filters in the URL", async ({ page }) => {
   await page.goto("/activity");
   await settle(page);

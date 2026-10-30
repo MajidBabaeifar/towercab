@@ -101,23 +101,48 @@ test("pipeline: gate table", async () => {
   };
   const unplanned = { domains: [{ domain: "x.org", why: "w" }], paths: [] };
   const rows: [string, number | null, Record<string, unknown>, string | null][] = [
-    [ID, 5, { ...green, ci: { result: "pending" } }, "CI not green"],
-    [ID, 5, { ...green, review: review({ approved: false }) }, "review not approved"],
-    [ID, 5, { ...green, review: null }, "review not approved"],
-    [ID, 4, { ...green, unplanned }, "access beyond the plan"],
+    [ID, 5, { ...green, ci: { result: "pending" } }, "GitHub's automatic checks haven't passed."],
+    [
+      ID,
+      5,
+      { ...green, review: review({ approved: false }) },
+      "The independent code review didn't approve it, even after fix rounds.",
+    ],
+    [ID, 5, { ...green, review: null }, "The independent code review didn't finish."],
+    [ID, 4, { ...green, unplanned }, "The agent needed access the approved plan didn't grant."],
     [ID, 5, { ...green, unplanned }, null],
-    [ID, 5, { ...green, unproven: true }, "no test fails without the change"],
-    [ID, 3, { ...green, ci: { result: "none" } }, "autonomy a3: the owner merges"],
-    [ID, 1, green, "autonomy a1: the owner merges"],
+    [ID, 5, { ...green, unproven: true }, "No test shows that the change works: none fails without it."],
+    [ID, 3, { ...green, ci: { result: "none" } }, "At autonomy a3 you merge every change yourself."],
+    [ID, 1, green, "At autonomy a1 you merge every change yourself."],
     // No `a` counts as a5 (AUT-9): medium risk goes ahead, high waits (AUT-18).
     [NO_A, null, green, null],
     [NO_A, null, { ...green, ...risk("medium") }, null],
-    [NO_A, null, { ...green, ...risk("high") }, "high risk: at a5 low and medium risk go ahead without you"],
+    [
+      NO_A,
+      null,
+      { ...green, ...risk("high") },
+      "It is high risk, and at autonomy a5 low- and medium-risk changes go ahead without you.",
+    ],
     [NO_A, null, { ...green, unplanned }, null],
-    [ID, 4, { ...green, ...risk("medium") }, "medium risk: at a4 only low risk goes ahead without you"],
+    [
+      ID,
+      4,
+      { ...green, ...risk("medium") },
+      "It is medium risk, and at autonomy a4 only low-risk changes go ahead without you.",
+    ],
     // An assessment of another diff, or none, is no assessment (AUT-19).
-    [ID, 5, { ...green, ...risk("low", "older") }, "the risk assessment didn't finish"],
-    [ID, 5, { ...green, risk: { code: null }, riskOf: { code: "x" } }, "the risk assessment didn't finish"],
+    [
+      ID,
+      5,
+      { ...green, ...risk("low", "older") },
+      "The risk check didn't finish, so you decide whether it goes ahead.",
+    ],
+    [
+      ID,
+      5,
+      { ...green, risk: { code: null }, riskOf: { code: "x" } },
+      "The risk check didn't finish, so you decide whether it goes ahead.",
+    ],
     [ID, 4, { ...green, ci: { result: "none" } }, null],
     [ID, 5, green, null],
   ];

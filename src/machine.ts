@@ -178,50 +178,99 @@ export function next(stage: Stage, event: Event, from: Stage | null = null): Nex
   }
 }
 
-/** **Waits**: the `waiting:` text's key → its stage and the ask (message line 1, the UI's card). */
+/**
+ * **Waits**: the `waiting:` text's key → its stage and the ask (message line 1, the UI's card). The
+ * keys are stored in intent files and never change; the asks say plainly what the owner decides or
+ * does (PIP-110).
+ */
 export const WAITS: Record<string, { stage: WaitStage; ask: string }> = {
-  "approve spec": { stage: "approval:spec", ask: "Review and merge the spec PR." },
+  "approve spec": {
+    stage: "approval:spec",
+    ask: "Decide if this is the right change to build: merge the spec PR to go ahead, or comment what to change.",
+  },
   "approve plan": {
     stage: "approval:plan",
-    ask: "Review the plan and its access list, then merge the plan PR.",
+    ask: "Decide if it should be built this way, with the access it asks for: merge the plan PR to start, or comment what to change.",
   },
-  "review and merge PR": { stage: "approval:merge", ask: "Review and merge the code PR." },
-  "answer the question": { stage: "blocked", ask: "Towercab has a question for you." },
-  "checks red": { stage: "blocked", ask: "The checks still fail after 2 repair rounds." },
-  "allow check writes": { stage: "blocked", ask: "The checks need to write to the build cache." },
-  "tests don't prove the change": { stage: "blocked", ask: "No test fails without the change." },
-  "CI red": { stage: "blocked", ask: "CI still fails after 2 repair rounds." },
-  "CI stuck": { stage: "blocked", ask: "CI didn't finish in time." },
-  "worker timeout": { stage: "blocked", ask: "The worker stopped before finishing." },
-  "worker budget": { stage: "blocked", ask: "The worker stopped before finishing." },
-  "no result": { stage: "blocked", ask: "The worker stopped before finishing." },
-  "no changes": { stage: "blocked", ask: "The worker made no changes." },
-  "crashed at": { stage: "blocked", ask: "Towercab crashed three times at this step." },
+  "review and merge PR": {
+    stage: "approval:merge",
+    ask: "Decide if this change can go live: merge the PR to ship it, or comment what to fix.",
+  },
+  "answer the question": {
+    stage: "blocked",
+    ask: "Answer a question so the work can go on: pick an option or write your own.",
+  },
+  "checks red": {
+    stage: "blocked",
+    ask: "The tests can't pass without your help. Reply with what to change, or start over.",
+  },
+  "allow check writes": {
+    stage: "blocked",
+    ask: "Decide if the tests may write to this machine's shared build cache: reply allow or no.",
+  },
+  "tests don't prove the change": {
+    stage: "blocked",
+    ask: "No test shows the change works. Reply with what a test should check, or say go on to continue without one.",
+  },
+  "CI red": {
+    stage: "blocked",
+    ask: "GitHub's checks still fail after two fix attempts. Reply with a hint on what to change, or start over.",
+  },
+  "CI stuck": {
+    stage: "blocked",
+    ask: "GitHub's checks didn't finish in time. Make sure they run, then reply so Towercab looks again.",
+  },
+  "worker timeout": {
+    stage: "blocked",
+    ask: "The agent ran out of time before finishing. Reply to let it carry on, or start over.",
+  },
+  "worker budget": {
+    stage: "blocked",
+    ask: "The agent used up its budget before finishing. Reply to let it carry on, or start over.",
+  },
+  "no result": {
+    stage: "blocked",
+    ask: "The agent stopped without a usable answer. Reply to let it carry on, or start over.",
+  },
+  "no changes": {
+    stage: "blocked",
+    ask: "The agent finished without changing anything. Reply with what it should do, or drop the intent if nothing is needed.",
+  },
+  "crashed at": {
+    stage: "blocked",
+    ask: "Towercab failed three times at the same step. Reply to try again once the cause is fixed, or start over.",
+  },
   "spec conflict": {
     stage: "blocked",
-    ask: "The spec PR conflicts with main and Towercab could not resolve it.",
+    ask: "The spec clashes with other changes and Towercab couldn't combine them. Resolve it in the spec PR, then reply.",
   },
-  "merge failed": { stage: "blocked", ask: "GitHub refused the merge." },
+  "merge failed": {
+    stage: "blocked",
+    ask: "GitHub refused to merge the change. Fix what GitHub objects to, then reply to try again.",
+  },
   "add CLAUDE.md verifying block": {
     stage: "blocked",
-    ask: "The repo needs a verifying section in CLAUDE.md.",
+    ask: "Towercab doesn't know how to test this repo yet. Add a verifying section to its CLAUDE.md, then reply.",
   },
-  "fix repo files": { stage: "blocked", ask: "A repo file doesn't parse." },
+  "fix repo files": {
+    stage: "blocked",
+    ask: "One of the repo's files for Towercab can't be read. Fix it, then reply.",
+  },
   "unknown repo": {
     stage: "blocked",
-    ask: "The intent names a repo or dependency Towercab doesn't know.",
+    ask: "Tell Towercab which repo this is for: add the repo, or fix the repo name in the intent.",
   },
   "bad after:": {
     stage: "blocked",
-    ask: "The intent names a repo or dependency Towercab doesn't know.",
+    ask: "Fix what this intent waits for: Towercab can't find one of the intents it names, or it was dropped.",
   },
   "rolled back, revise": {
     stage: "blocked",
-    ask: "The change broke the live app, two fixes didn't hold, and it was reverted. Revise the intent, then /retry.",
+    ask: "The change broke the live app, two fixes didn't hold, and it was taken back out. Revise the intent, then start over (/retry).",
   },
   "rollback failed": {
     stage: "blocked",
-    ask: "Rolling back failed. Nothing more merges in this repo until you fix it.",
+    ask: "Taking the broken change back out failed, so nothing more goes live in this repo until you fix it.",
   },
 };
 
@@ -390,6 +439,9 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
     };
     const toWait = (waiting: string, why: string | null) => {
       const info = waitInfo(waiting);
+      // PIP-107: a wait that asks no question of its own drops an earlier one and its brief, so a card
+      // never shows a question that was already answered.
+      if (!o.data?.question) data = { ...data, question: undefined, brief: undefined };
       const fromStage = isWait(cur.stage) ? cur.from_stage : cur.stage;
       // A new wait from inside a wait still counts as a new message.
       const continued = isWait(cur.stage) ? cur.continued + 1 : cur.continued;

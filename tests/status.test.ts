@@ -38,7 +38,7 @@ test("status: shows each section", () => {
   });
   expect(text).toContain("towercab 1.0.0 · running (pid 4242) · problems");
   expect(text).toContain(
-    "waiting on you:\n- 261026-1000 web: Log in · Review and merge the spec PR. https://github.com/o/web/pull/7",
+    "waiting on you:\n- 261026-1000 web: Log in · Decide if this is the right change to build: merge the spec PR to go ahead, or comment what to change. https://github.com/o/web/pull/7",
   );
   expect(text).toContain("waiting on CI:\n- 261026-1100 api: Rate limits");
   expect(text).toContain("cooling down: sonnet until");

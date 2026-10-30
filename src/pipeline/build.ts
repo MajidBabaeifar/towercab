@@ -221,7 +221,8 @@ export const buildHandler: Handler = {
         });
       }
     }
-    if (v.status === "blocked" && v.question) return { done: await ask(cx, m, v.question) };
+    if (v.status === "blocked" && v.question)
+      return { done: await ask(cx, m, v.question, "answer the question", v.brief) };
     if (v.status === "access" && v.access) {
       const unplanned = merge(data(m).unplanned, v.access);
       const fresh = cx.record(m, "access", {}, { unplanned });
@@ -232,7 +233,12 @@ export const buildHandler: Handler = {
     }
     return commit(
       cx,
-      cx.record(m, "commit", {}, { build: { pr: v.pr, notes: v.notes, planChanged: v.plan_changed } }),
+      cx.record(
+        m,
+        "commit",
+        {},
+        { build: { pr: v.pr, notes: v.notes, planChanged: v.plan_changed, brief: v.brief } },
+      ),
     );
   },
 };

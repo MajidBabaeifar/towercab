@@ -573,8 +573,12 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
       [2 * HOUR + 10 * MIN, "plan", "wait", "approval:plan"],
     ],
     data: {
-      brief:
-        "The plan adds a token-bucket limiter in front of the public routes, keyed by API key, with limits read from `config/limits.toml` so they can change without a deploy. Over the limit the API answers **429** with `Retry-After`.\n\nIt touches the router, adds one middleware and a test suite that drives 700 requests through a fake clock. Nothing changes for internal routes.\n\nThe plan keeps counters in memory per process; with two API processes a key could get up to twice its limit. The spec allows that for now.",
+      // PIP-106: the plain brief leads the card; the plan's technical text folds under Details.
+      plan: {
+        brief:
+          "No single customer can slow the API down for everyone any more: each key gets up to 600 requests a minute, and you can raise a key's limit without a release. Merging lets the build start and lets it read two outside sites and write the new limits file. The risk is small: with two servers a key could briefly get twice its limit.",
+        md: "## Approach\n\nThe plan adds a token-bucket limiter in front of the public routes, keyed by API key, with limits read from `config/limits.toml` so they can change without a deploy. Over the limit the API answers **429** with `Retry-After`.\n\nIt touches the router, adds one middleware and a test suite that drives 700 requests through a fake clock. Nothing changes for internal routes.\n\n## Steps\n\n1. Tests\n2. Middleware\n\n## Risks\n\nThe plan keeps counters in memory per process; with two API processes a key could get up to twice its limit. The spec allows that for now.",
+      },
       access: {
         domains: [
           { domain: "redis.io", why: "Read the client's docs for the token bucket script" },
@@ -610,6 +614,9 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
     ],
     plan: 28,
     data: {
+      // PIP-106: the worker's plain brief of its question; the question's context folds under Details.
+      brief:
+        "Accountants will be able to download the invoices they filter as a spreadsheet. Before it is finished, decide what the totals line shows when the invoices are in different currencies.",
       question: {
         context:
           "I'm adding the CSV export. Invoices in the same filter can be in different currencies (EUR, USD, GBP), and your earlier answer says to use the customer's own currency. The totals row at the bottom of the CSV can't add up amounts in different currencies.",
@@ -689,8 +696,12 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
     ],
     data: {
       review: {
+        brief:
+          "New users get a five-minute path from install to their first deploy, and the old reference moved to a page of its own. The review approves it. The one thing to weigh: the guide now expects a newer version of Node than before.",
         summary:
           "The guide now starts with a five-minute path: install, create a project, deploy. Each step has a command and what you should see after it. The old reference material moved to its own page, linked at the end.\n\nAll links resolve, the code samples run in CI, and the screenshots are new. One thing to check: the guide now assumes Node 22; the old one said 18.",
+        details:
+          "The guide now starts with a five-minute path: install, create a project, deploy. All links resolve, the code samples run in CI, and the screenshots are new.\n\n**Smaller things**\n\n- Bugs · `docs/getting-started.md:12`: the guide assumes Node 22; the old one said 18.",
         patchId: "x",
       },
       riskOf: { code: "x" },
@@ -737,6 +748,13 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
       [12 * MIN, "build", "ok", "verify"],
       [11 * MIN, "verify", "red", "build", "2 tests failing in offline.test.ts"],
     ],
+    // UI-127: the intent page leads with the plan's plain brief; its approach folds under Details.
+    data: {
+      plan: {
+        brief: "Readers can save articles and read them without a connection.",
+        md: "## Approach\n\nA service worker caches saved articles in IndexedDB and syncs read marks when the connection returns.\n\n## Steps\n\n1. Tests\n2. Worker",
+      },
+    },
   });
   addMission(db, now, {
     intent: IDS.ci,

@@ -143,6 +143,25 @@ export function setFeature(
   return joined(lines);
 }
 
+/**
+ * INT-36: the line of a renamed intent takes its new title, when its text is still the old title as
+ * Towercab wrote it (the owner's own wording stays); its marker, status word and tag, and every other
+ * line, stay byte-identical. Null when nothing changes.
+ */
+export function renameFeature(text: string | null, intent: string, from: string, to: string): string | null {
+  if (text === null) return null;
+  const old = cleanSentence(from);
+  const title = cleanSentence(to);
+  if (!old || !title || old === title) return null;
+  const lines = text.split("\n");
+  const at = lines.findIndex((l) => parseLine(l.replace(/\r$/, ""))?.intent === intent);
+  if (at < 0) return null;
+  const m = /^(\s*[-*]\s+\[[^\]]+\]\s+)(.*?)(\s*<!--\s*intent\s+\S+\s*-->\s*\r?)$/.exec(lines[at]!);
+  if (!m || m[2]!.trim() !== old) return null;
+  lines[at] = `${m[1]}${title}${m[3]}`;
+  return lines.join("\n");
+}
+
 /** INT-38: the line of `intent` removed; null when there is none. */
 export function removeFeature(text: string | null, intent: string): string | null {
   if (text === null) return null;

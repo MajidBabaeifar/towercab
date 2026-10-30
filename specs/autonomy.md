@@ -89,7 +89,8 @@ pass.
 
 - `specGate(a, openPoints, risk)`: effective `a` ≤ 2, any open point ([PIP-97](pipeline.md)), or
   `riskWaits(a, risk)` (AUT-18, with a3 counting like a4) → the owner merges the spec PR
-  (`approval:spec`, why: `<n> open points for you to decide`, or the risk's reason). Else Towercab
+  (`approval:spec`, why: `The spec leaves <n> questions for you to settle before it is built.`, or
+  the risk's reason; PIP-110). Else Towercab
   merges it after its CI is green or absent ([PIP-50](pipeline.md)). The design's own concerns no
   longer stop the spec on their own: the second reviewer reads them and keeps the ones the owner must
   decide as open points.
@@ -140,7 +141,7 @@ code PR then waits for the owner instead of merging.
 - The worker returns `status: access` with the domains or paths and why ([PIP-1](pipeline.md)).
   Towercab adds them to the mission's grants, records `data.unplanned` (what and why), and resumes
   the worker. The code PR lists them under "Access beyond the plan". At a4 the gate then goes to
-  `approval:merge`, why `access beyond the plan`.
+  `approval:merge`, why `The agent needed access the approved plan didn't grant.`
 - Verified by: `autonomy: unplanned access at a4 goes to the owner`, `autonomy: unplanned access at a1-a3 is granted`
 
 ### AUT-16 · Every change gets a risk level
@@ -186,8 +187,8 @@ high risk waits. This holds at the spec, plan and merge gates alike.
 | a5 | owner on high | owner on high | owner on high |
 
 - `riskWaits(a, level)`: a5 → `high`; below → `medium` or `high`. The wait's why says it:
-  `medium risk: at a4 only low risk goes ahead without you`, `high risk: at a5 low and medium risk go
-  ahead without you`. CI, the review, the proof and the access rules (AUT-14, AUT-15) still hold first
+  `It is medium risk, and at autonomy a4 only low-risk changes go ahead without you.`, `It is high
+  risk, and at autonomy a5 low- and medium-risk changes go ahead without you.` CI, the review, the proof and the access rules (AUT-14, AUT-15) still hold first
   at the merge gate ([PIP-7](pipeline.md)).
 - Verified by: `autonomy: risk decides the gates at a4 and a5`, `autonomy: a4 medium risk waits at spec, plan and merge`, `autonomy: a5 high risk waits for the owner`
 
@@ -196,8 +197,8 @@ high risk waits. This holds at the spec, plan and merge gates alike.
 When the risk check can't give an answer, the owner decides.
 
 - A risk run that fails after its one continue ([PIP-1](pipeline.md)) is kept as `null` for the
-  thing it was to assess; the gate then waits for the owner at every level (why: `the risk assessment
-  didn't finish`). An assessment of an older spec head, plan or diff counts as none.
+  thing it was to assess; the gate then waits for the owner at every level (why: `The risk check
+  didn't finish, so you decide whether it goes ahead.`). An assessment of an older spec head, plan or diff counts as none.
 - Verified by: `autonomy: no risk assessment goes to the owner`, `pipeline: a risk check that doesn't finish leaves the gate to the owner`
 
 ### AUT-20 · The owner sees the risk

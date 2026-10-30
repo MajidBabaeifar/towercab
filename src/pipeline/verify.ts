@@ -72,7 +72,7 @@ export const verifyHandler: Handler = {
         return {
           done: wait(
             "checks red",
-            `You didn't allow the checks of ${repo} to write to its build cache, so they can't run.`,
+            `You didn't allow the checks of ${repo} to write to its build cache, so they can't run. Make them write inside the checkout (for example through the repo's env in Towercab's config), then reply.`,
           ),
         };
       }
@@ -194,7 +194,8 @@ async function shots(cx: Ctx, m: Mission): Promise<Progress> {
 /** A red verify: a repair round, or after the repairs `checks red`. */
 function failed(cx: Ctx, m: Mission, what: string, log: string): Progress {
   void cx;
-  if (m.repairs >= MAX_REPAIRS) return { done: wait("checks red", what) };
+  if (m.repairs >= MAX_REPAIRS)
+    return { done: wait("checks red", `Still failing after ${MAX_REPAIRS} fix attempts: ${what}`) };
   return {
     done: red(what, {
       set: { repairs: m.repairs + 1 },

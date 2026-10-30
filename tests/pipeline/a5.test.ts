@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import type { Mission } from "../../src/mission.ts";
 import {
+  BUILD_BRIEF,
   build,
   CODE,
   DESIGN,
@@ -91,7 +92,7 @@ test("pipeline: spec PR is opened", () => {
     repo: "owner/web",
     head: `towercab/${ID}-${SLUG}-spec`,
     base: "main",
-    title: "docs(specs): Show a greeting",
+    title: "docs(specs): show a greeting",
   });
   expect(spec().body).toContain("The page will greet visitors.");
   expect(spec().body).toContain("**Spec IDs:** WEB-1");
@@ -123,7 +124,7 @@ test("pipeline: plan PR is opened on intents", () => {
     repo: "owner/intents",
     head: `plan/${ID}-${SLUG}`,
     base: "main",
-    title: "docs(plan): Show a greeting",
+    title: "docs(plan): show a greeting",
   });
   expect(plan().body).toContain("Add a greeting file.");
   expect(plan().body).toContain("**Access asked for:** nothing beyond the defaults.");
@@ -188,14 +189,19 @@ test("pipeline: first publish opens the code PR", () => {
 });
 
 test("pipeline: PR text comes from the worker", () => {
-  expect(code().body.startsWith(WORKER_PR)).toBe(true);
+  // PIP-108: the worker's plain brief and the risk lead; the worker's technical text follows.
+  const body = code().body;
+  expect(body.startsWith(`## In plain words\n\n${BUILD_BRIEF}\n\n## Risk: low`)).toBe(true);
+  const at = body.indexOf(WORKER_PR);
+  expect(at).toBeGreaterThan(0);
   // Code adds only its own facts after it: checks, links, IDs, the review, the footer.
-  const rest = code().body.slice(WORKER_PR.length);
+  const rest = body.slice(at + WORKER_PR.length);
   expect(rest).toContain("## Checks");
   expect(rest).toContain("**Spec IDs:** WEB-1");
   expect(rest).toContain("Part of this change:");
   expect(rest).toMatch(/<sub>Built by Towercab · .* · \$1\.80 · 0h01m<\/sub>$/);
-  expect(spec().body.startsWith(DESIGN.pr)).toBe(true);
+  expect(spec().body.startsWith(`## In plain words\n\n${DESIGN.brief}`)).toBe(true);
+  expect(spec().body).toContain(DESIGN.pr);
 });
 
 test("pipeline: review on every PR", () => {

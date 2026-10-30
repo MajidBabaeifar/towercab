@@ -40,7 +40,9 @@ Then give the `level`: `low` (small, easy to undo, well covered), `high` (a wron
 people or can't be taken back, or we can't tell if it works), else `medium`. Towercab raises the level
 when the answers call for it, never lowers it.
 
-`summary`: two or three plain sentences for the owner: what could go wrong and how likely it is.
+`summary`: your plain brief (see "Two kinds of text"): two or three sentences for an owner who
+doesn't code, saying what could go wrong for the people who use the product and how likely it is. No
+file names, functions or step names.
 
 {{open_points}}
 

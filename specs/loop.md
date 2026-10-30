@@ -650,28 +650,34 @@ like a crash; `–` = ignored)
   plan, else `build` with the answer in the prompt.
 - Every move out of a wait adds 1 to `continued`, so the next wait sends a new message.
 
-**Waits** (`waiting:` text → stage; the ask is line 1 of the message and the UI's card)
+**Waits** (`waiting:` text → stage; the ask is line 1 of the message and the UI's card). The keys
+are stored in intent files and never change; each ask says plainly what the owner decides or does
+([PIP-110](pipeline.md)).
 
 | `waiting:` | Stage | The ask |
 |---|---|---|
-| `approve spec` | approval:spec | Review and merge the spec PR. |
-| `approve plan` | approval:plan | Review the plan and its access list, then merge the plan PR. |
-| `review and merge PR` | approval:merge | Review and merge the code PR. |
-| `answer the question` | blocked | Towercab has a question for you. |
-| `checks red` | blocked | The checks still fail after 2 repair rounds. |
-| `tests don't prove the change` | blocked | No test fails without the change. |
-| `CI red` | blocked | CI still fails after 2 repair rounds. |
-| `CI stuck` | blocked | CI didn't finish in time. |
-| `worker timeout`, `worker budget`, `no result` | blocked | The worker stopped before finishing. |
-| `no changes` | blocked | The worker made no changes. |
-| `crashed at <stage>` | blocked | Towercab crashed three times at this step. |
-| `spec conflict` | blocked | The spec PR conflicts with main and Towercab could not resolve it. |
-| `merge failed` | blocked | GitHub refused the merge. |
-| `add CLAUDE.md verifying block` | blocked | The repo needs a verifying section in CLAUDE.md. |
-| `fix repo files` | blocked | A repo file doesn't parse. |
-| `unknown repo`, `bad after:` | (intent only) | The intent names a repo or dependency Towercab doesn't know. |
-| `rolled back, revise` | blocked | The change broke the live app, two fixes didn't hold, and it was reverted. Revise the intent, then /retry. |
-| `rollback failed` | blocked | Rolling back failed. Nothing more merges in this repo until you fix it. |
+| `approve spec` | approval:spec | Decide if this is the right change to build: merge the spec PR to go ahead, or comment what to change. |
+| `approve plan` | approval:plan | Decide if it should be built this way, with the access it asks for: merge the plan PR to start, or comment what to change. |
+| `review and merge PR` | approval:merge | Decide if this change can go live: merge the PR to ship it, or comment what to fix. |
+| `answer the question` | blocked | Answer a question so the work can go on: pick an option or write your own. |
+| `checks red` | blocked | The tests can't pass without your help. Reply with what to change, or start over. |
+| `allow check writes` | blocked | Decide if the tests may write to this machine's shared build cache: reply allow or no. |
+| `tests don't prove the change` | blocked | No test shows the change works. Reply with what a test should check, or say go on to continue without one. |
+| `CI red` | blocked | GitHub's checks still fail after two fix attempts. Reply with a hint on what to change, or start over. |
+| `CI stuck` | blocked | GitHub's checks didn't finish in time. Make sure they run, then reply so Towercab looks again. |
+| `worker timeout` | blocked | The agent ran out of time before finishing. Reply to let it carry on, or start over. |
+| `worker budget` | blocked | The agent used up its budget before finishing. Reply to let it carry on, or start over. |
+| `no result` | blocked | The agent stopped without a usable answer. Reply to let it carry on, or start over. |
+| `no changes` | blocked | The agent finished without changing anything. Reply with what it should do, or drop the intent if nothing is needed. |
+| `crashed at <stage>` | blocked | Towercab failed three times at the same step. Reply to try again once the cause is fixed, or start over. |
+| `spec conflict` | blocked | The spec clashes with other changes and Towercab couldn't combine them. Resolve it in the spec PR, then reply. |
+| `merge failed` | blocked | GitHub refused to merge the change. Fix what GitHub objects to, then reply to try again. |
+| `add CLAUDE.md verifying block` | blocked | Towercab doesn't know how to test this repo yet. Add a verifying section to its CLAUDE.md, then reply. |
+| `fix repo files` | blocked | One of the repo's files for Towercab can't be read. Fix it, then reply. |
+| `unknown repo` | (intent only) | Tell Towercab which repo this is for: add the repo, or fix the repo name in the intent. |
+| `bad after:` | (intent only) | Fix what this intent waits for: Towercab can't find one of the intents it names, or it was dropped. |
+| `rolled back, revise` | blocked | The change broke the live app, two fixes didn't hold, and it was taken back out. Revise the intent, then start over (/retry). |
+| `rollback failed` | blocked | Taking the broken change back out failed, so nothing more goes live in this repo until you fix it. |
 
 Every blocked wait continues on a reply on the intent's current PR, `towercab answer`, or removing
 `waiting:` from the intent; `/retry` starts over; closing the PR drops the intent.

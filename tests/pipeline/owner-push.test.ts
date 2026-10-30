@@ -44,7 +44,10 @@ test("pipeline: the owner's commits on the PR are kept", () => {
     p.tools.lines("git").some((l) => l.includes("push") && l.includes("--force") && l.includes("towercab/")),
   ).toBe(false);
   // At a5 Towercab would merge on its own; with the owner's commits on the PR, the owner decides.
-  expect([m.stage, m.why]).toEqual(["approval:merge", "someone else pushed commits to the PR"]);
+  expect([m.stage, m.why]).toEqual([
+    "approval:merge",
+    "Someone else added commits to the PR, so Towercab won't merge it on its own.",
+  ]);
 });
 
 test("claude: other missions are unreadable", () => {

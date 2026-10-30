@@ -186,8 +186,8 @@ function writtenOnce(p: Pipe): void {
   expect(p.mission()!.attempt).toBe(1);
   // Each PR opened once and merged once; the spec landed first.
   expect(p.prs.map((x) => [x.repo, x.title, x.state])).toEqual([
-    ["owner/web", "docs(specs): Show a greeting", "MERGED"],
-    ["owner/intents", "docs(plan): Show a greeting", "MERGED"],
+    ["owner/web", "docs(specs): show a greeting", "MERGED"],
+    ["owner/intents", "docs(plan): show a greeting", "MERGED"],
     ["owner/web", "feat: show a greeting", "MERGED"],
   ]);
   const log = git(p.bares.web!, "log", "--format=%s", "main");

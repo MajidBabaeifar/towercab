@@ -37,6 +37,30 @@ import { Link } from "./router.tsx";
 const drafts = new Map<string, string>();
 const results = new Map<string, ActionReply>();
 const expanded = new Set<string>();
+/** UI-126: the "Details" folds a viewer opened, by key, so a refetch keeps them open. */
+const detailsOpen = new Set<string>();
+
+/** UI-126, UI-127: the technical text, folded under "Details" until asked for. */
+export function Details({ id, text }: { id: string; text: string }) {
+  const [open, setOpen] = useState(detailsOpen.has(id));
+  return (
+    <details
+      class="details-fold"
+      open={open}
+      onToggle={(e) => {
+        const now = (e.currentTarget as HTMLDetailsElement).open;
+        if (now) detailsOpen.add(id);
+        else detailsOpen.delete(id);
+        setOpen(now);
+      }}
+    >
+      <summary>Details</summary>
+      <div class="details-body">
+        <Markdown text={text} />
+      </div>
+    </details>
+  );
+}
 
 export function StateChip({ state, small }: { state: StateView; small?: boolean }) {
   return (
@@ -208,7 +232,8 @@ export function NeedsCard({
     if (action === "drop") setConfirm(false);
   };
   const can = (a: string) => !readOnly && card.actions.includes(a as Card["actions"][number]);
-  const long = (card.brief?.length ?? 0) > 320;
+  // A plain brief is two to four sentences (PIP-106): shown whole up to about that, folded beyond.
+  const long = (card.brief?.length ?? 0) > 480;
   const toggle = () => {
     if (open) expanded.delete(key);
     else expanded.add(key);
@@ -285,9 +310,32 @@ export function NeedsCard({
       ) : null}
       <p class="ask">{card.ask}</p>
       {card.why ? <p class="why">{card.why}</p> : null}
+      {card.brief ? (
+        <div class={`brief${long && !open ? " clamped" : ""}`}>
+          <Markdown text={card.brief} />
+          {long ? (
+            <button type="button" class="link-btn" aria-expanded={open} onClick={toggle}>
+              {open ? "Less" : "More"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {card.risk ? <RiskBlock risk={card.risk} /> : null}
+      {card.openPoints?.length ? (
+        <div class="access">
+          <p class="access-head">Open points for you to decide</p>
+          <ul class="points">
+            {card.openPoints.map((p) => (
+              <li key={p.point}>
+                {p.point} <span class="access-why">{p.why}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {q ? (
         <div class="question">
-          <p class="q-context">{q.context}</p>
+          {card.brief ? null : <p class="q-context">{q.context}</p>}
           <p class="q-text">{q.question}</p>
           <ul class="options">
             {q.options.map((o) => {
@@ -319,29 +367,6 @@ export function NeedsCard({
           </p>
         </div>
       ) : null}
-      {card.brief ? (
-        <div class={`brief${long && !open ? " clamped" : ""}`}>
-          <Markdown text={card.brief} />
-          {long ? (
-            <button type="button" class="link-btn" aria-expanded={open} onClick={toggle}>
-              {open ? "Less" : "More"}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      {card.openPoints?.length ? (
-        <div class="access">
-          <p class="access-head">Open points for you to decide</p>
-          <ul class="points">
-            {card.openPoints.map((p) => (
-              <li key={p.point}>
-                {p.point} <span class="access-why">{p.why}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {card.risk ? <RiskBlock risk={card.risk} /> : null}
       {card.access ? (
         <div class="access">
           <p class="access-head">What the worker may reach beyond the repo</p>
@@ -368,6 +393,7 @@ export function NeedsCard({
       {card.addRepo && !readOnly ? (
         <AddRepoForm name={card.addRepo.name} initial={card.addRepo.github} />
       ) : null}
+      {card.details ? <Details id={`card:${key}`} text={card.details} /> : null}
       {can("reply") ? (
         <form
           class="reply"

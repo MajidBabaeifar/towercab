@@ -26,6 +26,7 @@ import {
   prUrl,
   repoFiles,
   spawnRun,
+  subjectOf,
 } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { planBody, planFile, section } from "./prtext.ts";
@@ -195,7 +196,7 @@ export const planHandler: Handler = {
         "push",
         {},
         {
-          plan: { md: r.value.plan, access: r.value.access, e2e: r.value.e2e ?? null },
+          plan: { md: r.value.plan, access: r.value.access, e2e: r.value.e2e ?? null, brief: r.value.brief },
           access: r.value.access,
           answer: undefined,
         },
@@ -227,12 +228,12 @@ async function push(cx: Ctx, m: Mission): Promise<Progress> {
     branch,
     "origin/main",
     { [`${intent.dir}/plan.md`]: md },
-    `docs(plan): ${intent.title}`,
+    `docs(plan): ${subjectOf(m, intent)}`,
   );
   return openPr(cx, cx.record(m, "pr"));
 }
 
-/** The plan PR's body (PIP-28), with the risk once assessed (PIP-99). */
+/** The plan PR's body (PIP-28): the plain brief (PIP-108), the risk once assessed (PIP-99), the plan. */
 async function bodyOf(cx: Ctx, m: Mission): Promise<string> {
   const intent = await intentOf(cx, m);
   const repo = cx.repo(m);
@@ -246,6 +247,7 @@ async function bodyOf(cx: Ctx, m: Mission): Promise<string> {
       planPrUrl: null,
     },
     riskMd(currentRisk(m, "plan")),
+    d.plan!.brief ?? "",
   );
 }
 
@@ -300,7 +302,7 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
           "--head",
           branch,
           "--title",
-          `docs(plan): ${intent.title}`,
+          `docs(plan): ${subjectOf(m, intent)}`,
           "--body-file",
           "-",
         ],

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { Db } from "../../src/db.ts";
-import type { Stage } from "../../src/machine.ts";
+import { type Stage, WAITS } from "../../src/machine.ts";
 import type { Mission } from "../../src/mission.ts";
 import {
   activity,
@@ -21,6 +21,7 @@ import {
   stageMap,
   stateOf,
   stepWords,
+  textsOf,
   until,
 } from "../../src/ui/state.ts";
 import { buildFixture, type Fixture, IDS } from "../../ui/fixture.ts";
@@ -173,7 +174,7 @@ test("ui: needs-you card shows only its actions", async () => {
   const plan = card(IDS.plan);
   expect(plan.actions).toEqual(["merge", "retry", "drop"]);
   expect(plan.mergeLabel).toBe("Merge plan PR");
-  expect(plan.ask).toBe("Review the plan and its access list, then merge the plan PR.");
+  expect(plan.ask).toBe(WAITS["approve plan"]!.ask);
   expect(plan.access?.domains.map((d) => d.domain)).toEqual(["redis.io", "registry.npmjs.org"]);
   expect(plan.pr).toEqual({
     number: 31,
@@ -270,6 +271,93 @@ test("ui: the card shows the risk", async () => {
   const stale = missionCard(f.sources, { ...m, head: "def" }, undefined, null, NOW);
   expect([stale.risk, stale.openPoints]).toEqual([undefined, undefined]);
   expect(riskView({ ...m, head: "def", stage: "build" })).toBeNull();
+});
+
+test("ui: the card leads with the plain brief, the technical text folded", async () => {
+  const f = fixture();
+  const o = await overview(f.sources);
+  const card = (id: string) => o.needs.find((c) => c.intent === id)!;
+  // Plan: the plan's plain brief leads; its approach and risks are the details.
+  const plan = card(IDS.plan);
+  expect(plan.brief).toMatch(/^No single customer can slow the API down/);
+  expect(plan.brief).not.toMatch(/token-bucket|`/);
+  expect(plan.details).toMatch(/token-bucket limiter/);
+  expect(plan.details).toMatch(/\*\*Risks\*\*\n\nThe plan keeps counters in memory/);
+  // Code: the review's plain brief leads; its findings are the details.
+  const code = card(IDS.code);
+  expect(code.brief).toMatch(/^New users get a five-minute path/);
+  expect(code.details).toMatch(/docs\/getting-started\.md:12/);
+  // Question: the asker's brief leads; the question's context moves into the details.
+  const q = card(IDS.question);
+  expect(q.brief).toMatch(/^Accountants will be able to download/);
+  expect(q.details).toContain(q.question!.context);
+  // A blocked wait: the plain ask shows, Towercab's technical reason folds into the details.
+  const blocked = mission({
+    stage: "blocked",
+    from_stage: "verify",
+    waiting: "checks red",
+    why: "npm test: 2 failing",
+  });
+  const b = missionCard(f.sources, blocked, undefined, null, NOW);
+  expect(b.ask).toBe(WAITS["checks red"]!.ask);
+  expect(b.why).toBeNull();
+  expect(b.details).toBe("npm test: 2 failing");
+  // Spec: the design's brief leads; its spec text and concerns are the details.
+  const spec = missionCard(
+    f.sources,
+    mission({
+      stage: "approval:spec",
+      waiting: "approve spec",
+      why: "The spec leaves one question for you to settle before it is built.",
+      data: JSON.stringify({
+        design: {
+          brief: "Readers find the guide in one place.",
+          pr: "Adds DOC-4.",
+          concerns: [{ what: "Old URL", why: "Bookmarks break." }],
+          open: ["Keep the old URL?"],
+        },
+      }),
+    }),
+    undefined,
+    null,
+    NOW,
+  );
+  expect(spec.brief).toBe("Readers find the guide in one place.");
+  expect(spec.why).toBe("The spec leaves one question for you to settle before it is built.");
+  expect(spec.details).toBe(
+    "Adds DOC-4.\n\n**Concerns the design raised**\n\n- Old URL: Bookmarks break.\n\n**Questions it left to you**\n\n- Keep the old URL?",
+  );
+  // A mission from before briefs: the review's summary still leads, nothing folded.
+  const old = missionCard(
+    f.sources,
+    mission({
+      stage: "approval:merge",
+      waiting: "review and merge PR",
+      data: JSON.stringify({ review: { summary: "Approve: small." } }),
+    }),
+    undefined,
+    null,
+    NOW,
+  );
+  expect([old.brief, old.details]).toEqual(["Approve: small.", null]);
+});
+
+test("ui: the intent page leads with the plain brief", async () => {
+  const f = fixture();
+  // With a card, the card carries the brief; the page doesn't repeat it.
+  const waiting = (await intentPage(f.sources, IDS.code))!;
+  expect(waiting.card?.brief).toMatch(/^New users get a five-minute path/);
+  expect(waiting.brief).toBeUndefined();
+  // Without one, the latest brief (code, else plan, else spec) leads, its technical text folded.
+  const done = (await intentPage(f.sources, IDS.building))!;
+  expect(done.card).toBeNull();
+  expect(done.brief).toBe("Readers can save articles and read them without a connection.");
+  expect(done.details).toMatch(/service worker/);
+  // A review from before briefs: its summary is technical, so only the card falls back to it; the page
+  // never calls it plain.
+  const old = mission({ data: JSON.stringify({ review: { summary: "Approve: `x.ts` is fine." } }) });
+  expect(textsOf(old, "code")).toEqual({ brief: null, details: null });
+  expect(textsOf(old, "code", true).brief).toBe("Approve: `x.ts` is fine.");
 });
 
 test("ui: empty states are true", async () => {

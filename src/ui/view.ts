@@ -112,12 +112,15 @@ export interface Card {
   kind: CardKind;
   /** "Plan review", "Question", "Blocked". */
   kindLabel: string;
+  /** What the owner decides or does, in plain words (LOOP-14 **Waits**). */
   ask: string;
   since: When | null;
-  /** Markdown: the review summary, the gate's reason, Towercab's note. */
+  /** UI-126: Markdown, the plain brief of what it waits on (no code words); Towercab's note as a fallback. */
   brief: string | null;
-  /** The reason Towercab gave, one paragraph. */
+  /** The plain reason it waits for the owner, one paragraph; a blocked wait's technical reason is in `details`. */
   why: string | null;
+  /** UI-126: Markdown, the technical text agents feed on (concerns, findings, logs), folded under "Details". */
+  details: string | null;
   question: Question | null;
   access: Access | null;
   pr: PrLink | null;
@@ -404,6 +407,10 @@ export interface IntentPage {
   e2eLog: string | null;
   /** AUT-20: the latest risk of the current attempt, when no card shows it. */
   risk?: RiskView | null;
+  /** UI-127: the latest plain brief (what changes for users), when no card shows one. */
+  brief?: string | null;
+  /** UI-127: the latest technical text behind that brief, folded under "Details". */
+  details?: string | null;
 }
 
 export interface QueueItem {

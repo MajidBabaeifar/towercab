@@ -86,6 +86,8 @@ export interface IntentEdit {
   setSection(title: string, text: string): void;
   /** Append `- <time>: <text>` to `## Answers`. */
   addAnswer(text: string, at: Date): void;
+  /** Replace the title line only (INT-34). */
+  setTitle(title: string): void;
   readonly intent: Intent;
 }
 

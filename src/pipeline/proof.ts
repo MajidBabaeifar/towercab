@@ -180,7 +180,8 @@ function headEnd(cx: Ctx, m: Mission, end: ChildEnd): Progress {
   const env = classifyRun(log);
   if (env) throw new EnvError(env.kind, env.why);
   const what = "The checks block your change adds to CLAUDE.md fails on your branch.";
-  if (m.repairs >= MAX_REPAIRS) return { done: wait("checks red", what) };
+  if (m.repairs >= MAX_REPAIRS)
+    return { done: wait("checks red", `Still failing after ${MAX_REPAIRS} fix attempts: ${what}`) };
   return {
     done: red("the PR's checks block fails on the branch", {
       set: { repairs: m.repairs + 1 },
