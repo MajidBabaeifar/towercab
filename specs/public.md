@@ -5,7 +5,8 @@
 ## Purpose
 
 What Towercab's public repo shows a visitor: a license, a security policy, a README that explains
-what it is and how to run it, and no personal names in what ships.
+what it is and how to run it, a screenshot, contributing and conduct guides, an example config, and no
+personal names in what ships.
 
 ## Requirements
 
@@ -34,8 +35,9 @@ The README explains what Towercab is, what it needs and how to start, in that or
 
 The README says Towercab is not affiliated with or endorsed by Anthropic.
 
-- It names Claude Code and the playbook as plain text, with no logo or image of either (no `<img>` or
-  `![` in the README).
+- It names Claude Code and the playbook as plain text, with no Anthropic or Claude logo or image.
+  The one image allowed is the screenshot of Towercab's own UI (PUB-13): the README has no `<img>`
+  and exactly one `![`, which points into `docs/`.
 - Verified by: `public: README says not affiliated`
 
 ### PUB-4 · Docs index
@@ -119,6 +121,54 @@ The PR lists personal data in commit metadata and files, so the owner can decide
   addresses and home paths (`/home/<user>`, `/Users/<user>`). The PR lists them by kind, count and
   example commit or file, without removing anything.
 - Verified by: manual: the PR section on personal data.
+
+### PUB-13 · README screenshot and website
+
+The README shows one picture of Towercab's own web page and links to its website in the first section.
+
+- `docs/` holds one image, a copy of a screenshot from the UI tests (`ui/screenshots/`), so it shows the
+  real page. The README embeds it once with `![`, in the first section before `## How it works`, with
+  alt text, and the file it points to exists.
+- The README's first section links to `https://towercab.com`. The link is not checked online: it may
+  go live before the site does.
+- Verified by: `public: README shows the screenshot and website`
+
+### PUB-14 · Contributing guide
+
+`CONTRIBUTING.md` tells a newcomer how to propose a change the way Towercab's own work is done.
+
+- It says: change the specs first (links `specs/README.md`), run `npm ci` and `npm run check`, use
+  Conventional Commits, keep PRs small, keep tests hermetic (no network, no real GitHub), and report
+  security issues through `SECURITY.md`, not issues (links it). The README links `CONTRIBUTING.md`.
+- Verified by: `public: contributing guide`
+
+### PUB-15 · Code of conduct
+
+The repo has a code of conduct, the Contributor Covenant 2.1, and reports go to a private channel.
+
+- `CODE_OF_CONDUCT.md` is the Contributor Covenant 2.1 text (it names version 2.1). The enforcement
+  section sends reports to GitHub's private reporting (the repo's Security tab) and contains no
+  email address. The README or `CONTRIBUTING.md` links it.
+- Verified by: `public: code of conduct`
+
+### PUB-16 · Example config
+
+`config.example.toml` at the root shows every setting with a placeholder, and the Quickstart points to it.
+
+- It replaces a `.env.example`, which does not exist: Towercab reads `~/.config/towercab/config.toml`
+  (or `TOWERCAB_CONFIG`), and the only environment variables are `TOWERCAB_HOME` and `TOWERCAB_CONFIG`.
+- It parses with `parseConfig` without error, sets every key `src/config.ts` reads (each with a
+  one-line `#` comment), and holds only placeholders (such as `your-login`, `owner/repo`), no real
+  login, id, key or path of the owner. The README Quickstart names `config.example.toml`.
+- Verified by: `public: example config`
+
+### PUB-17 · New files carry no personal names
+
+The new public files obey the no-personal-names rule.
+
+- PUB-5's file list also covers `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `config.example.toml` and
+  `docs/**` (text files).
+- Verified by: `public: no personal names`
 
 ## Out of scope
 
