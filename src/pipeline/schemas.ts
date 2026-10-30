@@ -204,6 +204,7 @@ export function validate(schema: JsonSchema, value: unknown, at = "result"): str
   if (
     typeof value === "string" &&
     typeof schema.pattern === "string" &&
+    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- patterns come from Towercab's own schemas in this file, never from input
     !new RegExp(schema.pattern).test(value)
   ) {
     return `${at} must match ${schema.pattern}`;
