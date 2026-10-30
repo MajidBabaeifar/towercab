@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..89, PIP-92..94 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..89, PIP-92..95 · **Prefix:** PIP
 
 ## Purpose
 
@@ -208,6 +208,8 @@ back to the worker.
 - Red → a repair round in `build` with the log tail (at most 2 for verify and proof together,
   `repairs`), then `waiting: checks red`. A log that shows a missing tool or a sandbox failure is a
   fault ([LOOP-10](loop.md)), not a repair.
+  A log that shows the checks could not write to the repo cache is a question for the owner
+  (PIP-95), not a repair.
 - **Sandbox**: `bwrap [--unshare-net] --unshare-pid --unshare-ipc --unshare-uts --new-session
   --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /run --tmpfs <HOME> --tmpfs /tmp`,
   the toolchain dirs read-only with credential files masked, the repo cache (LOOP-34), `--bind
@@ -813,6 +815,31 @@ bound.
 - A review that uses up its budget ends as any run that does (PIP-24, budget used up): the mission
   waits for the owner, with the reason. This narrows the review's limits; it gains nothing (PIP-77).
 - Verified by: `agents: review has a cost cap`
+
+### PIP-95 · Checks that must write to the build cache ask first
+
+When the checks fail only because they could not write to the repo's build cache, Towercab explains
+what happened and asks the owner whether the checks may write there. It does not send the failure to
+the worker, because it is not a code problem.
+
+- The checks, the proof, the screenshots and e2e run with the repo cache (LOOP-34) read-only, so they
+  cannot change what setup and the worker built there. Some tools cannot run that way: cargo keeps its
+  build output and its lock under `CARGO_TARGET_DIR=<cache>/target`, so `cargo clippy` stops at once.
+- Detection, in verify: a red checks log with a read-only error (`Read-only file system`, `os error
+  30`, `Errno 30` or `EROFS`) that names a path under `<home>/cache/<repo>/`, on that line or the 3
+  lines before it. A read-only error on any other path stays a red as before.
+- The mission waits `allow check writes` (stage `blocked`) and asks a question (PIP-41: on the
+  current PR, else in the intent file). Its context names the command, the path, why the cache is
+  read-only and that the code is not at fault. The options: `Allow` (Towercab remembers it for the
+  repo and runs the checks again; later missions of the repo do not ask) and `Don't allow` (the
+  mission waits `checks red`, and the owner can make the checks write inside the checkout, for example
+  `CARGO_TARGET_DIR` under `[repos.<r>].env`, then reply, or drop the intent). It recommends allowing,
+  since setup and the worker already write there.
+- An answer that starts with `allow`, `yes` or `ok` (any case) allows; any other answer does not. The
+  answer continues the mission at the stage that asked, not at `build`.
+- An allowed repo has the `meta` row `checks-write:<repo>` = `1`; from then on its checks, proof,
+  screenshots and e2e get the cache writable. Deleting that row takes the permission back.
+- Verified by: `pipeline: a read-only cache write asks the owner`, `pipeline: allowing cache writes reruns the checks writable`, `pipeline: refusing cache writes waits checks red`, `checks: read-only cache path`
 
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 

@@ -301,7 +301,8 @@ Removed: in v1 already; now LOOP-38.
 Each repo has one build cache that every mission reuses, so a new mission doesn't compile from
 scratch.
 
-- `<home>/cache/<repo>/`: writable for setup, the worker and checks of that repo. Env for those runs:
+- `<home>/cache/<repo>/`: writable for setup and the worker of that repo; read-only for its checks,
+  proof, screenshots and e2e unless the owner allowed them to write ([PIP-95](pipeline.md)). Env for those runs:
   `XDG_CACHE_HOME=<cache>/xdg`, `npm_config_cache=<cache>/npm`, `CARGO_HOME=<cache>/cargo`,
   `CARGO_TARGET_DIR=<cache>/target`, `GOCACHE=<cache>/go`, `PIP_CACHE_DIR=<cache>/pip`, then
   `[agent].env` and `[repos.<r>].env`. With one worker per repo (LOOP-4) two missions never share it
