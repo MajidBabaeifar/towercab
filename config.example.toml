@@ -1,0 +1,91 @@
+# Towercab config. Copy this file to ~/.config/towercab/config.toml and replace the placeholders.
+# Towercab reads this file, not environment variables (only TOWERCAB_HOME and TOWERCAB_CONFIG exist).
+# Most settings are shown with their default; delete any you do not need.
+
+[intents]
+# Git remote of your intents repo.
+remote = "https://github.com/you/intents.git"
+# Where to keep the local clone of the intents repo (absolute, or starting with ~/).
+path = "~/intents"
+# Lowest priority score (1-15) an intent needs to be picked up.
+cutoff = 7
+# Autonomy level (1-5) of an intent filed as a GitHub issue without an a1..a5 label.
+issue_a = 3
+
+[agent]
+# Claude model for the work.
+model = "opus"
+# Claude model for the reviews (one step above the worker's when left out).
+review_model = "sonnet"
+# How many workers run at once (1-16).
+parallel = 1
+# Minutes a build may run (1-1440).
+build_timeout = 60
+# Minutes a review may run (1-1440).
+review_timeout = 15
+# Minutes a local check run may take (1-1440).
+check_timeout = 10
+# Most dollars one Claude run may cost.
+max_budget_usd = 10
+# Most dollars to spend per day across all intents (leave out for no limit).
+daily_budget_usd = 50
+# Seconds between looks at a pull request's CI (5-3600).
+ci_poll = 30
+# Seconds after a push in which older CI checks are ignored (0-3600).
+ci_grace = 120
+# Seconds CI may stay pending before the intent waits on it (60-86400).
+ci_wait = 1800
+# PATH for sandboxed commands.
+path = "/usr/local/bin:/usr/bin:/bin"
+# Absolute directories (or ~/...) with your tools, such as claude, added to PATH.
+toolchain = ["~/.local/bin"]
+# Network domains a worker may reach by default.
+network = ["registry.npmjs.org", "*.npmjs.org", "github.com", "*.github.com", "*.githubusercontent.com"]
+# Whether the sandbox may use Unix sockets.
+sandbox_unix_sockets = false
+
+[agent.env]
+# Environment variables passed to every worker (name = "value").
+EXAMPLE_VARIABLE = "placeholder"
+
+[github]
+# Id of your GitHub App, from its settings page.
+app_id = 123456
+# Your GitHub login.
+me = "your-login"
+# GitHub API address (change it only for GitHub Enterprise).
+api_base = "https://api.github.com"
+
+# Delete this table if you do not use Telegram. Both bot_token and chat_id are then required.
+[telegram]
+# Token of your Telegram bot, from BotFather.
+bot_token = "123456:replace-me"
+# Id of the chat that gets the messages.
+chat_id = "123456789"
+# Telegram API address.
+api_base = "https://api.telegram.org"
+
+[ui]
+# Port of the local web page (0 turns it off).
+port = 7311
+
+[update]
+# Whether Towercab updates itself when its main branch moves.
+auto = true
+
+# One table per repo Towercab works in; the name after repos. is yours to choose.
+[repos.web]
+# The repo on GitHub, as owner/name.
+github = "you/web"
+# Where to keep the local clone (absolute, or starting with ~/).
+path = "~/towercab-repos/web"
+# The branch pull requests target.
+base = "main"
+# How many workers may build in this repo at once (1-16).
+workers = 1
+# How many intents may be ahead of the build step at once (1-16).
+ahead = 3
+
+[repos.web.env]
+# Environment variables passed to workers in this repo (name = "value").
+EXAMPLE_VARIABLE = "placeholder"
