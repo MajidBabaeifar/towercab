@@ -75,7 +75,7 @@ test("autonomy: a4 medium risk waits at spec, plan and merge", async () => {
   });
   const m = p.mission()!;
   expect(m.stage, p.moves()).toBe("done");
-  const why = "medium risk: at a4 only low risk goes ahead without you";
+  const why = "It is medium risk, and at autonomy a4 only low-risk changes go ahead without you.";
   expect(waits(p, m.id)).toEqual([
     ["approval:spec", why],
     ["approval:plan", why],
@@ -97,7 +97,10 @@ test("autonomy: a5 high risk waits for the owner", async () => {
   await p.start();
   const m = await p.untilStage("approval:merge");
   expect(waits(p, m.id)).toEqual([
-    ["approval:merge", "high risk: at a5 low and medium risk go ahead without you"],
+    [
+      "approval:merge",
+      "It is high risk, and at autonomy a5 low- and medium-risk changes go ahead without you.",
+    ],
   ]);
   expect(p.prNo("web", m.pr!).body).toContain("## Risk: high");
 }, 30_000);
@@ -122,7 +125,10 @@ test("pipeline: open points send the spec to the owner", async () => {
   );
   await p.start();
   const m = await p.untilStage("approval:spec");
-  expect([m.waiting, m.why]).toEqual(["approve spec", "1 open point for you to decide"]);
+  expect([m.waiting, m.why]).toEqual([
+    "approve spec",
+    "The spec leaves one question for you to settle before it is built.",
+  ]);
   const spec = p.prNo("web", m.spec_pr!);
   expect(spec.state).toBe("OPEN");
   expect(spec.body).toContain(
@@ -148,7 +154,10 @@ test("pipeline: a risk check that doesn't finish leaves the gate to the owner", 
   );
   await p.start();
   const m = await p.untilStage("approval:spec");
-  expect([m.waiting, m.why]).toEqual(["approve spec", "the risk assessment didn't finish"]);
+  expect([m.waiting, m.why]).toEqual([
+    "approve spec",
+    "The risk check didn't finish, so you decide whether it goes ahead.",
+  ]);
   expect(data(m).risk?.spec).toBeNull();
   expect(p.prNo("web", m.spec_pr!).body).toContain("The risk check didn't finish");
 }, 30_000);
@@ -177,7 +186,7 @@ test("autonomy: a4 plan asking for protected paths waits", async () => {
   await p.start();
   const m = await p.untilStage("approval:plan");
   expect(waits(p, m.id)).toEqual([
-    ["approval:plan", "medium risk: at a4 only low risk goes ahead without you"],
+    ["approval:plan", "It is medium risk, and at autonomy a4 only low-risk changes go ahead without you."],
   ]);
   const r = data(m).risk?.plan;
   expect([r?.said, r?.level]).toEqual(["low", "medium"]);
@@ -203,7 +212,9 @@ test("pipeline: an answered open point lets the spec go on", async () => {
   await p.until(() => p.mission()?.stage === "done");
   const done = p.mission()!;
   expect(done.stage, p.moves()).toBe("done");
-  expect(waits(p, done.id)).toEqual([["approval:spec", "1 open point for you to decide"]]);
+  expect(waits(p, done.id)).toEqual([
+    ["approval:spec", "The spec leaves one question for you to settle before it is built."],
+  ]);
   expect(data(done).specAnswers).toEqual(["English only for now."]);
   const second = p.claudeCalls.filter((c) => c.kind === "risk")[1]!;
   expect(second.prompt).toContain("The owner already decided these on the spec PR");
@@ -220,7 +231,7 @@ test("pipeline: a retry runs a risk check that didn't finish again", async () =>
   );
   await p.start();
   const m = await p.untilStage("approval:spec");
-  expect(m.why).toBe("the risk assessment didn't finish");
+  expect(m.why).toBe("The risk check didn't finish, so you decide whether it goes ahead.");
   p.ownerComment(p.prNo("web", m.spec_pr!), "/retry");
   await p.until(() => p.mission()?.stage === "done");
   const done = p.mission()!;

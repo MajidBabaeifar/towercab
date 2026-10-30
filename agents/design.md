@@ -38,6 +38,15 @@ What to do:
 
 Then return the JSON result:
 
+- `title`: the intent's title as a user story, so the owner knows what it is when switching in cold:
+  one plain sentence of about 6 to 14 words, no period at the end, naming the product, then what
+  someone can do or see once it's done, and for whom if it isn't the owner. No file names, functions,
+  flags or jargon. Towercab uses it only when the intent's `source` isn't `me`; for the owner's own
+  intents, return the title as it is.
+- `brief`: the plain brief (see "Two kinds of text"): two to four sentences for an owner who doesn't
+  code, saying what will be different for the people who use the product once this is built, what
+  the owner is asked to decide about this spec (or that nothing needs deciding), and the risk in
+  everyday words.
 - `type`, `scope`, `breaking`: the Conventional Commit of the whole change (`feat`, `fix`, `perf`,
   `refactor`, `docs`, `test`, `build`, `ci`, `chore`; scope may be empty).
 - `spec_ids`: every requirement you added or changed.

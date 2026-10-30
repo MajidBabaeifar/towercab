@@ -117,7 +117,7 @@ type Scored =
   | { kind: "later"; why: string };
 
 /** INT-22: one tool-less run over the issue's title, body and labels. */
-async function scoreOnce(d: IssueDeps, text: string): Promise<Scored> {
+async function scoreOnce(d: IssueDeps, text: string, product: string): Promise<Scored> {
   const runsDir = d.home.runs("issues");
   const cwd = join(runsDir, "empty");
   mkdirSync(cwd, { recursive: true });
@@ -129,7 +129,7 @@ async function scoreOnce(d: IssueDeps, text: string): Promise<Scored> {
     cwd,
     runsDir,
     n,
-    prompt: render("score", { issue: fence(text, "issue") }),
+    prompt: render("score", { issue: fence(text, "issue"), product }),
     agent: "score",
     schema: SCHEMAS[agent.schema!],
     session: { mode: "none", id: "" },
@@ -180,9 +180,9 @@ async function scoreOnce(d: IssueDeps, text: string): Promise<Scored> {
 }
 
 /** A bad result is retried once (INT-22). */
-async function score(d: IssueDeps, text: string): Promise<Scored> {
-  const first = await scoreOnce(d, text);
-  return first.kind === "bad" ? scoreOnce(d, text) : first;
+async function score(d: IssueDeps, text: string, product: string): Promise<Scored> {
+  const first = await scoreOnce(d, text, product);
+  return first.kind === "bad" ? scoreOnce(d, text, product) : first;
 }
 
 /** One line, no leading list marker or heading. */
@@ -341,7 +341,7 @@ async function pollIssue(
   // The labels may have changed since the list.
   if (!isEligible(view, d.github.me)) return;
 
-  const scored = await score(d, issueText(view));
+  const scored = await score(d, issueText(view), repo.name);
   if (scored.kind === "later") {
     d.log(`${issue.url}: not scored, trying again later: ${scored.why}`);
     return;

@@ -10,6 +10,13 @@ import { type Checks, codeBody } from "./prtext.ts";
 import { HOLD_SECS, holder } from "./ship.ts";
 import { changedTests } from "./verify.ts";
 
+/** PIP-110: why the PR waits for the owner beyond the gate table, in plain sentences. */
+export const GATE_HOLD = {
+  foreign: "Someone else added commits to the PR, so Towercab won't merge it on its own.",
+  planChanged: "The build changed course from the plan you approved.",
+  noE2e: "The change has no test that runs against the live app.",
+} as const;
+
 /** The code's risk (AUT-16) when it is of the reviewed diff; null when none finished for it. */
 export function codeRisk(m: Mission): Risk | null {
   const d = data(m);
@@ -43,6 +50,7 @@ async function updateBody(cx: Ctx, m: Mission): Promise<void> {
   const d = data(m);
   const body = codeBody({
     worker: d.build?.pr ?? null,
+    brief: d.build?.brief ?? "",
     intentTitle: intent.title,
     intentProblem: intent.sections.get("Problem") ?? null,
     checks: checksLine(m),
@@ -97,9 +105,9 @@ export const gateHandler: Handler = {
     if (!g.merge) return { done: wait("review and merge PR", g.why) };
     // Beyond the gate table: work Towercab didn't check itself goes to the owner.
     const a = effectiveOf(m, intent, files);
-    if (d.foreignHead) return { done: wait("review and merge PR", "someone else pushed commits to the PR") };
+    if (d.foreignHead) return { done: wait("review and merge PR", GATE_HOLD.foreign) };
     if (d.build?.planChanged && a !== 5) {
-      return { done: wait("review and merge PR", "the build departed from the approved plan") };
+      return { done: wait("review and merge PR", GATE_HOLD.planChanged) };
     }
     // SHIP-8: in a live repo a change brings an e2e test, or its plan says why it needs none.
     const live = files.towercab.live;
@@ -109,7 +117,7 @@ export const gateHandler: Handler = {
         m,
         live.suites.flatMap((s) => s.tests),
       );
-      if (e2e.length === 0) return { done: wait("review and merge PR", "no e2e test for the change") };
+      if (e2e.length === 0) return { done: wait("review and merge PR", GATE_HOLD.noE2e) };
     }
     return { done: ok({ set: { head: m.head } }) };
   },
@@ -194,7 +202,10 @@ export const mergeHandler: Handler = {
         const tries = (d.mergeTries ?? 0) + 1;
         if (tries >= MAX_BLOCKED_READS)
           return {
-            done: wait("review and merge PR", `GitHub says the PR is ${v.mergeStateStatus.toLowerCase()}`),
+            done: wait(
+              "review and merge PR",
+              `GitHub won't merge the PR yet: it says the PR is ${v.mergeStateStatus.toLowerCase()}.`,
+            ),
           };
         cx.record(m, m.step, {}, { mergeTries: tries });
         return { poll: cx.config.agent.ciPoll };

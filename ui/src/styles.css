@@ -891,7 +891,23 @@ code {
 
 .brief {
   position: relative;
+  color: var(--text);
+}
+
+/* UI-126: the technical text, folded under "Details". */
+.details-body {
+  margin-top: var(--s1);
+  padding: 12px var(--s2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
   color: var(--text-2);
+  font-size: var(--t-sm);
+}
+
+.plain-brief {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
 }
 
 .brief.clamped .md {
@@ -2262,14 +2278,16 @@ a.pr-tile:hover {
 }
 
 .smap-details summary,
-.moves summary {
+.moves summary,
+.details-fold summary {
   cursor: pointer;
   color: var(--text-2);
   font-size: var(--t-sm);
 }
 
 .smap-details summary:focus-visible,
-.moves summary:focus-visible {
+.moves summary:focus-visible,
+.details-fold summary:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }

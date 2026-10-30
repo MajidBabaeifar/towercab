@@ -11,6 +11,7 @@ import type { Home } from "../home.ts";
 import type { Intent, IntentStore, Listing } from "../intents/types.ts";
 import { finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
 import { dataOf, forIntent, type Mission } from "../mission.ts";
+import { section } from "../pipeline/prtext.ts";
 import { usualOwner } from "../repos.ts";
 import { currentRisk, type RiskGate, riskWords } from "../risk.ts";
 import { aheadIn, isAhead, isBuilding, isReady } from "../slots.ts";
@@ -384,10 +385,67 @@ function missionState(s: Snap, m: Mission, src: UiSources): StateView {
 type MissionData = {
   question?: Question;
   access?: Access;
+  /** The plain brief of the question asked (PIP-106). */
   brief?: string;
-  review?: { summary?: string };
+  design?: { brief?: string; pr?: string; concerns?: { what: string; why: string }[]; open?: string[] };
+  plan?: { brief?: string; md?: string };
+  build?: { brief?: string; notes?: string };
+  review?: { summary?: string; brief?: string; details?: string } | null;
   runs?: { at: number; cost: number }[];
 };
+
+const nonEmpty = (s: string | null | undefined): string | null => (s?.trim() ? s.trim() : null);
+const joinMd = (parts: (string | null | undefined)[]): string | null =>
+  nonEmpty(parts.filter((p) => p?.trim()).join("\n\n"));
+
+/** UI-126: the design's technical text: its spec summary, concerns and the questions it left open. */
+function designDetails(d: MissionData): string | null {
+  const concerns = d.design?.concerns ?? [];
+  const open = d.design?.open ?? [];
+  return joinMd([
+    d.design?.pr,
+    concerns.length
+      ? `**Concerns the design raised**\n\n${concerns.map((c) => `- ${c.what}: ${c.why}`).join("\n")}`
+      : null,
+    open.length ? `**Questions it left to you**\n\n${open.map((q) => `- ${q}`).join("\n")}` : null,
+  ]);
+}
+
+/** UI-126: the plan's technical text: its approach and risks. */
+function planDetails(d: MissionData): string | null {
+  const md = d.plan?.md ?? "";
+  const approach = section(md, "Approach");
+  const risks = section(md, "Risks");
+  return joinMd([approach, risks ? `**Risks**\n\n${risks}` : null]);
+}
+
+/**
+ * UI-126, UI-127: the plain brief and the technical text of what a mission waits on (or, for the
+ * intent page, its latest stage): code → the review's brief (else the worker's), the review's
+ * findings; plan → the plan's brief, its approach; spec → the design's brief, its concerns; a question
+ * → the asker's brief, the question's context.
+ */
+export function textsOf(m: Mission, kind: CardKind): { brief: string | null; details: string | null } {
+  const d = dataOf<MissionData>(m);
+  switch (kind) {
+    case "code": {
+      const brief = nonEmpty(d.review?.brief) ?? nonEmpty(d.build?.brief);
+      // Before briefs existed the review's summary led the card; it stays the fallback.
+      if (!brief) return { brief: nonEmpty(d.review?.summary), details: null };
+      return { brief, details: nonEmpty(d.review?.details) ?? nonEmpty(d.review?.summary) };
+    }
+    case "plan":
+      return { brief: nonEmpty(d.plan?.brief), details: planDetails(d) };
+    case "spec":
+      return { brief: nonEmpty(d.design?.brief), details: designDetails(d) };
+    case "question": {
+      const brief = nonEmpty(d.brief);
+      return { brief, details: brief ? nonEmpty(d.question?.context) : null };
+    }
+    default:
+      return { brief: null, details: null };
+  }
+}
 
 /**
  * AUT-20: the risk judged at `gate`, else the latest one (code, plan, spec), in plain words; only an
@@ -486,9 +544,14 @@ export function missionCard(
   const pr = prLink(src, m);
   const approval = kind === "spec" || kind === "plan" || kind === "code";
   const note = intent?.sections.get("Towercab")?.trim() || null;
-  let brief = d.brief ?? null;
-  if (kind === "code") brief = d.review?.summary ?? brief;
+  const texts = textsOf(m, kind);
+  let brief = texts.brief;
   if (!brief && !approval && !d.question && !pr) brief = note;
+  // UI-126: an approval's reason is the plain gate reason; a blocked wait's reason is what Towercab
+  // saw (a check's name, an error line): technical, so it folds under Details.
+  const why = m.why && m.why !== brief ? m.why : null;
+  const shownWhy = approval ? why : null;
+  const details = joinMd([approval || why === d.question?.question ? null : why, texts.details]);
   const actions: Card["actions"] = approval
     ? pr
       ? ["merge", "retry", "drop"]
@@ -508,7 +571,8 @@ export function missionCard(
     ask: askOf(m.waiting),
     since: since === null ? null : when(since, now),
     brief,
-    why: m.why && m.why !== brief ? m.why : null,
+    why: shownWhy,
+    details,
     question: d.question ?? null,
     access: kind === "plan" ? (d.access ?? { domains: [], paths: [] }) : null,
     pr,
@@ -542,6 +606,7 @@ export function intentCard(i: Intent, config: Config): Card {
     since: null,
     brief: i.sections.get("Towercab")?.trim() || null,
     why,
+    details: null,
     question: null,
     access: null,
     pr: null,
@@ -1763,6 +1828,16 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
   // AUT-20: the latest risk, when no card already shows it.
   const risk = !card && last ? riskView(last) : null;
   if (risk) body.risk = risk;
+  // UI-127: the latest plain brief (code, else plan, else spec), when no card already leads with one.
+  if (!card && last) {
+    for (const kind of ["code", "plan", "spec"] as const) {
+      const t = textsOf(last, kind);
+      if (!t.brief) continue;
+      body.brief = t.brief;
+      body.details = t.details;
+      break;
+    }
+  }
   return { version: versionOf(body, dbMark(src.db)), ...body };
 }
 

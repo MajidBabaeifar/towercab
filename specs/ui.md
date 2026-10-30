@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..104, UI-120..125, UI-130..131, UI-133..137, UI-140..145 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..104, UI-120..128, UI-130..131, UI-133..137, UI-140..145 · **Prefix:** UI
 
 ## Purpose
 
@@ -86,9 +86,9 @@ The top bar says at a glance whether Towercab is healthy and how much needs the 
 Each thing waiting on the owner is one card that says what is asked, why, and offers only the
 actions that answer it.
 
-- Card: the intent's title and repo; the ask (LOOP-14 **Waits**); a short brief (the question's
-  context and recommendation, the gate's reason, or the review's summary, at most a few lines, the
-  rest behind "More"); the PR link. Actions by kind: approve spec, plan or code → "Merge spec PR",
+- Card: the intent's title and repo; the ask (LOOP-14 **Waits**); the plain reason and a short plain brief
+  (UI-126: at most a few lines, the rest behind "More"; the technical text under "Details"); the PR
+  link. Actions by kind: approve spec, plan or code → "Merge spec PR",
   "Merge plan PR" (with the access list visible), "Merge PR"; a question or other blocked wait → a
   reply box ("Send reply"); always, in a menu: "Start over" (`/retry`) and "Drop" (with a confirm).
 - Ordered oldest wait first. Empty → "Nothing needs you."
@@ -584,6 +584,41 @@ The airspace tells a plane that is rolling back or fixing a live failure apart f
 - The marks come from the plane's `ship` field (`{ kind: "rollback" | "revert" | "fix", mark }`), absent
   for every other plane.
 - Verified by: `ui: rollback and fix planes are marked`
+
+### UI-126 · Cards lead with the plain brief
+
+A needs-you card says, in plain words, what is asked, why and what the change means for its users;
+the technical text stays one click away under "Details".
+
+- Order: the intent's title; the ask (LOOP-14 **Waits**, [PIP-110](pipeline.md)); for an approval,
+  the plain reason it waits; the plain brief (`Card.brief`, [PIP-107](pipeline.md): spec → the
+  design's, plan → the plan's, code → the review's, else the worker's, question → the asker's; a
+  blocked wait without a PR → Towercab's note); the risk block (AUT-20) and the open points with it;
+  then the question's options, the access list, the reply box and the actions.
+- `Card.details` (Markdown) folds under a "Details" toggle, closed at first and kept open across
+  updates: spec → the design's PR text, its concerns and the questions it left open; plan → the
+  plan's approach and risks; code → the review's findings; a question with a brief → its context
+  (shown in the open otherwise); a blocked wait → the reason Towercab saw (a check's name, an error
+  line).
+- A mission from before briefs keeps the old card: the review's summary leads, nothing folded.
+- Verified by: `ui: the card leads with the plain brief, the technical text folded`
+
+### UI-127 · The intent page leads with the plain brief
+
+The intent page puts the latest plain brief first, with its technical text folded.
+
+- With a needs-you card, the card carries it (UI-126). Without one, `IntentPage.brief` is the latest
+  plain brief of the newest attempt (code, else plan, else spec) under "In plain words", with
+  `IntentPage.details` folded under "Details" and the risk block beside it.
+- Verified by: `ui: the intent page leads with the plain brief`
+
+### UI-128 · Screenshot of the plain card
+
+The screenshots show a needs-you card with its plain brief first and its Details folded.
+
+- `npm run test:ui` saves `card-brief-<mode>.png` of the plan card and checks that the brief comes
+  before the "Details" toggle, which is closed, and that opening it shows the technical text.
+- Verified by: `ui: the card shows its brief first and folds the details`
 
 ### UI-130 · Add a repo from the page
 

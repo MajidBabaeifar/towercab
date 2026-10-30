@@ -159,6 +159,49 @@ test("pipeline: PRs link to each other", () => {
   expect(plan).toContain("[spec PR]");
 });
 
+test("pipeline: every PR body opens in plain words", () => {
+  const brief = "People can log in from a link in their email, without a password.";
+  const risk = "## Risk: low\n\nSmall.";
+  // Spec: the brief, then the open points and the risk beside it, then the design's technical text.
+  const spec = specBody(
+    "Adds WEB-3.",
+    ["WEB-3"],
+    links,
+    ["## Open points for you\n\n- Expiry?", risk],
+    brief,
+  );
+  expect(spec).toMatch(
+    /^## In plain words\n\nPeople can log in .*\n\n## Open points for you\n\n- Expiry\?\n\n## Risk: low\n\nSmall\.\n\nAdds WEB-3\./,
+  );
+  // Plan: the brief and the risk, then the approach and the access.
+  const plan = planBody("## Approach\n\nA signed token.", { domains: [], paths: [] }, links, risk, brief);
+  expect(plan).toMatch(
+    /^## In plain words\n\nPeople can log in .*\n\n## Risk: low\n\nSmall\.\n\nA signed token\./,
+  );
+  // Code: the brief and the risk, then the worker's sections.
+  const code = codeBody({
+    worker,
+    brief,
+    intentTitle: "Log in with a magic link",
+    intentProblem: null,
+    checks: null,
+    unplanned: [],
+    specIds: [],
+    links,
+    reviewDetails: null,
+    risk,
+    footer: { intentUrl: null, costUsd: 1, secs: 60 },
+  });
+  expect([...code.matchAll(/^## (.+)$/gm)].map((m) => m[1]).slice(0, 3)).toEqual([
+    "In plain words",
+    "Risk: low",
+    "What this does",
+  ]);
+  // No brief (a run from before briefs): no empty section.
+  expect(specBody("Adds WEB-3.", [], links)).toMatch(/^Adds WEB-3\./);
+  expect(planBody("## Approach\n\nA.", { domains: [], paths: [] }, links)).toMatch(/^A\./);
+});
+
 test("prompts: templates fill every key", () => {
   const vars = {
     intent: "x",
@@ -169,6 +212,7 @@ test("prompts: templates fill every key", () => {
     plan: "p",
     access: "none",
     review_md: "",
+    product: "web",
     ci: "green",
     screenshots: "",
     diff_cmd: "git diff",

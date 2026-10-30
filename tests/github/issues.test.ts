@@ -92,6 +92,21 @@ test("issues: the scoring run gets no tools", async () => {
   expect(c.settings).toMatchObject({ sandbox: { enabled: true } });
 });
 
+test("issues: the scorer names the work as a user story about the product", async () => {
+  const { p, poll } = await world();
+  p.queue("score", scored({ title: "Web greets every visitor when the page opens" }));
+  p.issue({ title: "Greeting is missing", body: "Nothing shows.", labels: ["bug"] });
+  await poll();
+  // INT-35: the prompt gives the product (the repo's name) and the naming rule; its title is the intent's.
+  const c = p.claudeCalls[0]!;
+  expect(c.prompt).toContain("the work's title as a user story");
+  expect(c.prompt).toMatch(/Name the\s+product \(web\)/);
+  expect(c.prompt).toMatch(/No file names,\s+functions, flags or jargon/);
+  expect((await intents(p)).open.map((i) => i.title)).toEqual([
+    "Web greets every visitor when the page opens",
+  ]);
+});
+
 test("issues: the scoring prompt forbids fence markers in prose", () => {
   const prompt = readFileSync(join(import.meta.dirname, "../../agents/score.md"), "utf8");
   expect(prompt).toContain(

@@ -41,11 +41,11 @@ export function riskWaits(a: number, risk: RiskLevel | null): boolean {
   return a >= 5 ? risk === "high" : risk !== "low";
 }
 
-/** Why a change waits for its risk, in one plain line (AUT-18, AUT-19). */
+/** Why a change waits for its risk, in one plain sentence (AUT-18, AUT-19, PIP-110). */
 export function riskWhy(a: number, risk: RiskLevel | null): string {
-  if (risk === null) return "the risk assessment didn't finish";
-  const goes = a >= 5 ? "low and medium risk go" : "only low risk goes";
-  return `${risk} risk: at a${a} ${goes} ahead without you`;
+  if (risk === null) return "The risk check didn't finish, so you decide whether it goes ahead.";
+  const goes = a >= 5 ? "low- and medium-risk changes go" : "only low-risk changes go";
+  return `It is ${risk} risk, and at autonomy a${a} ${goes} ahead without you.`;
 }
 
 /**
@@ -83,6 +83,15 @@ export interface GateInput {
   risk: RiskLevel | null;
 }
 
+/** PIP-110: why the gate leaves the merge to the owner, in plain sentences. */
+export const GATE_WHY = {
+  ci: "GitHub's automatic checks haven't passed.",
+  noReview: "The independent code review didn't finish.",
+  review: "The independent code review didn't approve it, even after fix rounds.",
+  access: "The agent needed access the approved plan didn't grant.",
+  proof: "No test shows that the change works: none fails without it.",
+} as const;
+
 /**
  * The gate (AUT-3, AUT-4, AUT-18, PIP-7), first match → the owner merges, with why: CI not green;
  * review not approved; access beyond the plan at a4; proof missing; effective `a` ≤ 3; a risk that
@@ -90,11 +99,12 @@ export interface GateInput {
  */
 export function gate(g: GateInput): { merge: true } | { merge: false; why: string } {
   const hold = (why: string) => ({ merge: false as const, why });
-  if (!g.ciGreen) return hold("CI not green");
-  if (!g.review?.approved) return hold("review not approved");
-  if (g.unplanned && g.a === 4) return hold("access beyond the plan");
-  if (!g.proven) return hold("no test fails without the change");
-  if (g.a <= OWNER_MERGES) return hold(`autonomy a${g.a}: the owner merges`);
+  if (!g.ciGreen) return hold(GATE_WHY.ci);
+  if (!g.review) return hold(GATE_WHY.noReview);
+  if (!g.review.approved) return hold(GATE_WHY.review);
+  if (g.unplanned && g.a === 4) return hold(GATE_WHY.access);
+  if (!g.proven) return hold(GATE_WHY.proof);
+  if (g.a <= OWNER_MERGES) return hold(`At autonomy a${g.a} you merge every change yourself.`);
   if (riskWaits(g.a, g.risk)) return hold(riskWhy(g.a, g.risk));
   return { merge: true };
 }

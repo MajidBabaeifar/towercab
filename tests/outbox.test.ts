@@ -69,7 +69,7 @@ describe("outbox", () => {
     expect(await sendDue(s.db, s.sender, 100)).toEqual({ sent: 1, dropped: 0, failed: null });
     expect(await sendDue(s.db, s.sender, 200)).toEqual({ sent: 0, dropped: 0, failed: null });
     expect(s.sent).toEqual([
-      "Review and merge the spec PR.\nShip it (web)\nhttps://github.com/me/web/pull/7",
+      "Decide if this is the right change to build: merge the spec PR to go ahead, or comment what to change.\nShip it (web)\nhttps://github.com/me/web/pull/7",
     ]);
     // The same wait again after feedback is a new message.
     s.move({ event: "feedback", text: "split it" });
@@ -128,7 +128,7 @@ describe("outbox", () => {
     r.at("gate");
     r.move(wait("review and merge PR"));
     expect(await sendDue(r.db, r.sender, 130)).toEqual({ sent: 1, dropped: 1, failed: null });
-    expect(r.sent[0]).toMatch(/^Review and merge the code PR\./);
+    expect(r.sent[0]).toMatch(/^Decide if this change can go live: merge the PR/);
     // Another wait now, or a finished or missing mission: obsolete.
     const stale = (key: string, mission: number): OutboxRow => ({
       key,

@@ -58,6 +58,10 @@ export interface PipeData {
     /** The intent's open questions the design left to the owner (PIP-97 reads them). */
     open?: string[];
     pr: string;
+    /** PIP-106: the design's plain brief. */
+    brief?: string;
+    /** INT-34: the plain title it proposed. */
+    title?: string;
   };
   specBranch?: string;
   /** Spec-PR revisions made for a conflict with base (PIP-81). */
@@ -70,7 +74,13 @@ export interface PipeData {
   specRed?: boolean;
   /** Heads of the spec PR whose red checks were rerun (PIP-18). */
   specReruns?: Record<string, boolean>;
-  plan?: { md: string; access: Access; e2e?: { tests: string[]; none_why: string } | null };
+  plan?: {
+    md: string;
+    access: Access;
+    e2e?: { tests: string[]; none_why: string } | null;
+    /** PIP-106: the plan's plain brief. */
+    brief?: string;
+  };
   /** The merged plan's ticked access. */
   granted?: Access;
   unplanned?: Access;
@@ -98,7 +108,8 @@ export interface PipeData {
   roundFrom?: string;
   /** Head at the end of the last non-repair round (PIP-31). */
   lockHead?: string;
-  build?: { pr: string | null; notes: string; planChanged: string | null };
+  /** `brief`: the worker's plain brief of what changed (PIP-106). */
+  build?: { pr: string | null; notes: string; planChanged: string | null; brief?: string };
   /** The step whose child really started (LOOP-4); a step re-entered without it never ran. */
   launched?: string;
   /** Runs per kind, for file names. */
@@ -121,6 +132,8 @@ export interface PipeData {
     summary: string;
     details: string;
     patchId: string;
+    /** PIP-106: the review's plain brief. */
+    brief?: string;
   } | null;
   /** Session cost already counted (MET-28). */
   sessionCost?: Record<string, number>;
@@ -136,6 +149,8 @@ export interface PipeData {
   pushed?: boolean;
   /** The question the owner is asked (the UI's card). */
   question?: Question;
+  /** PIP-106: the plain brief of the question the owner is asked, when its asker wrote one. */
+  brief?: string;
   /** Verify asked whether the checks may write to the repo cache (PIP-95); the answer decides. */
   cacheAsk?: boolean;
   /** The plan's access list (the UI's plan card). */
@@ -558,25 +573,30 @@ export function currentPr(cx: Ctx, m: Mission, repo: RepoConfig): { github: stri
   return null;
 }
 
-/** A question in Markdown (PIP-41). */
-export function questionMd(q: Question): string {
+/** A question in Markdown (PIP-41), led by its plain brief when it has one (PIP-106). */
+export function questionMd(q: Question, brief = ""): string {
   const opts = q.options.map((o) => `- **${o.option}**: ${o.then}`).join("\n");
-  return `${q.context.trim()}\n\n**${q.question.trim()}**\n\n${opts}\n\n**Recommendation:** ${q.recommendation.trim()}\n\nReply to this comment to answer; Towercab continues with your reply.`;
+  const plain = brief.trim() ? `**In plain words:** ${brief.trim()}\n\n` : "";
+  return `${plain}${q.context.trim()}\n\n**${q.question.trim()}**\n\n${opts}\n\n**Recommendation:** ${q.recommendation.trim()}\n\nReply to this comment to answer; Towercab continues with your reply.`;
 }
 
-/** Ask the owner: a Question comment on the current PR, or the intent's `## Towercab` (PIP-41). */
+/**
+ * Ask the owner: a Question comment on the current PR, or the intent's `## Towercab` (PIP-41). The
+ * asker's plain brief, if any, is kept for the card (PIP-106); none clears an earlier one.
+ */
 export async function ask(
   cx: Ctx,
   m: Mission,
   q: Question,
   waiting = "answer the question",
+  brief = "",
 ): Promise<Outcome> {
   const repo = cx.repo(m);
   const pr = currentPr(cx, m, repo);
-  const body = questionMd(q);
+  const body = questionMd(q, brief);
   if (pr) await upsertStageComment(cx.github, pr.github, pr.n, "Question", m.continued + 1, body);
   else await cx.store.update(m.intent, "question", (e) => e.setSection("Towercab", body));
-  return wait(waiting, q.question, { data: { question: q } });
+  return wait(waiting, q.question, { data: { question: q, brief: brief.trim() || undefined } });
 }
 
 /** A stage comment on the current PR, never failing the step. */

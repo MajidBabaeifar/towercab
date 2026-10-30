@@ -3,6 +3,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
+import { loadAgent } from "../src/agents.ts";
 import { prepareRun, RUN_KINDS, WRITING_GUIDE } from "../src/claude.ts";
 import { tempDir, testConfig } from "./helpers/world.ts";
 
@@ -65,4 +66,22 @@ test("prompts: writing guide is in every run", () => {
     { towercabExe: "towercab", home: "/home/me" },
   );
   expect(readFileSync(spec.argv[spec.argv.indexOf("--append-system-prompt-file") + 1]!, "utf8")).toBe(guide);
+});
+
+test("prompts: every agent that writes for the owner asks for a plain brief", () => {
+  const guide = readFileSync(WRITING_GUIDE, "utf8");
+  // PIP-106: the guide says who reads which kind of text, and that the plain brief comes first.
+  expect(guide).toContain("## Two kinds of text");
+  expect(guide).toContain("Plain brief first, technical detail second.");
+  expect(guide).toMatch(/No file names, functions, flags/);
+  // Each agent whose result has `brief` asks for it and points at the guide's section; the risk
+  // agent's `summary` is its plain brief.
+  for (const name of ["design", "plan", "worker", "review"] as const) {
+    expect(loadAgent(name).prompt, name).toMatch(/`brief`[\s\S]*Two kinds of text/);
+  }
+  expect(loadAgent("repair").prompt).toContain("a `brief`");
+  expect(loadAgent("risk").prompt).toMatch(/`summary`: your plain brief \(see "Two kinds of text"\)/);
+  // INT-33: the agents that name intents follow the naming rule.
+  expect(loadAgent("design").prompt).toMatch(/`title`: the intent's title as a user story/);
+  expect(loadAgent("score").prompt).toMatch(/`title`: the work's title as a user story/);
 });

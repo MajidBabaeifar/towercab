@@ -38,6 +38,9 @@ What to do:
 
 Return the JSON result:
 
+- `brief`: the plain brief (see "Two kinds of text"): two to four sentences for an owner who doesn't
+  code, saying what the build will change for the people who use the product, what merging the plan
+  allows (in particular any access beyond the repo, said in everyday words), and what could go wrong.
 - `plan`: Markdown with exactly these sections:
   - `## Approach`: what you will build and why this way, in a short paragraph or two. Name the
     alternative you rejected if there was a real one.

@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..89, PIP-92..100 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..89, PIP-92..100, PIP-106..110 · **Prefix:** PIP
 
 ## Purpose
 
@@ -95,11 +95,12 @@ Removed: in v1 already.
 After the review, code decides whether Towercab merges the code PR or the owner does.
 
 - Effective `a` and caps from [AUT-8, 13](autonomy.md). First match wins → `approval:merge`
-  (`waiting: review and merge PR`, why): CI not green; review not approved; access beyond the plan at
-  a4 (AUT-15); proof missing (PIP-30); effective `a` ≤ 3; a risk that waits at this `a`
-  ([AUT-18](autonomy.md), the code's risk of the reviewed diff, none → AUT-19); someone else's
-  commits on the PR (PIP-2); the build departed from the approved plan, below a5 (PIP-28); in a
-  repo with a `live` block, no e2e test for the change ([SHIP-8](ship.md)). Else → `merge`. The PR
+  (`waiting: review and merge PR`, why, worded plainly per PIP-110): CI not green; review not
+  approved (or didn't finish); access beyond the plan at a4 (AUT-15); proof missing (PIP-30);
+  effective `a` ≤ 3; a risk that waits at this `a` ([AUT-18](autonomy.md), the code's risk of the
+  reviewed diff, none → AUT-19); someone else's commits on the PR (PIP-2); the build departed from
+  the approved plan, below a5 (PIP-28); in a repo with a `live` block, no e2e test for the change
+  ([SHIP-8](ship.md)). Else → `merge`. The PR
   body's Checks and Risk sections are updated first (PIP-48, PIP-99). Before any of it, while another change in the repo
   ships, the gate holds ([SHIP-14](ship.md)).
 - Verified by: `pipeline: gate table`
@@ -450,8 +451,8 @@ it gets.
 The code PR opens with what it does, why, and what to check before merging, in plain words; the
 technical detail follows.
 
-- Body: the worker's `pr` markdown (sections `## What this does`, `## Why`, `## What to check before
-  merging`, `## Changes`); then Towercab's `## Checks` (one line each: verify, proof, CI, review, in
+- Body: `## In plain words` and the risk first (PIP-108); then the worker's `pr` markdown (sections
+  `## What this does`, `## Why`, `## What to check before merging`, `## Changes`); then Towercab's `## Checks` (one line each: verify, proof, CI, review, in
   plain words), `## Access beyond the plan` (when any), links to the spec PR and the plan PR, the spec
   IDs, the review's details in a `<details>` block, and the footer `<sub>Built by Towercab · intent ·
   $<cost> · <h>h<mm>m</sub>`. Updated at the gate. Without a worker text: the intent's title and
@@ -873,7 +874,8 @@ the owner must decide, the spec moves on (subject to its risk); open points go t
 
 - Its `open_points` (`point`, `why`) at the spec gate: the decisions the owner must make before the
   spec is built, taken from the design's concerns and open questions or found in the spec. Any → the
-  spec gate waits ([AUT-11](autonomy.md), why `<n> open points for you to decide`), the points are in
+  spec gate waits ([AUT-11](autonomy.md), why `The spec leaves <n> questions for you to settle before
+  it is built.`, `one question` for one; PIP-110), the points are in
   the spec PR's body under `## Open points for you` and on the card. None → the risk decides. At the
   plan and code gates the list is empty.
 - The owner's answers on the spec PR (the feedback that starts a design revision, not Towercab's own
@@ -916,6 +918,70 @@ An agent without Edit or Write can't change the checkout through its shell eithe
   diff could otherwise make them write files; the sandbox, not a pattern on the command, stops it.
 - Verified by: `claude: read-only agents can't write the checkout`, `claude: review argv`
 
+### PIP-106 · Two kinds of text
+
+Every agent that writes for the owner writes two kinds of text: a plain brief that someone who doesn't
+code understands, and the technical text agents and reviewers work from, kept as before.
+
+- The `design`, `plan`, `build` (worker and repair) and `review` results have a required `brief`
+  (string): two to four sentences on what changes for the people who use the product, what the owner
+  is asked to decide or do, and the risk in everyday words, with no file names, functions, flags,
+  field names, spec IDs or step names. The risk agent's `summary` is its plain brief. Each agent's
+  prompt asks for it, and the writing guide (`prompts/writing.md`, PIP-39) has a section "Two kinds of
+  text": who reads which, plain brief first, technical detail second, and a brief that stands on its
+  own.
+- Verified by: `schemas: every result a person reads has a plain brief`, `prompts: every agent that writes for the owner asks for a plain brief`
+
+### PIP-107 · Briefs are kept with the mission
+
+Towercab keeps each stage's plain brief beside its technical text, so cards and pages can lead with it.
+
+- `missions.data`: `design.brief` and `design.title` (INT-34), `plan.brief`, `build.brief` (the
+  worker's latest, a repair round's included), `review.brief`, and `brief` for the question being
+  asked (`ask(cx, m, q, waiting, brief)`: the worker's brief when it is blocked; none clears an
+  earlier one). A question posted on a PR or in the intent opens with `**In plain words:** <brief>`,
+  and so does the Review comment; the review's `details` (the card's and the PR's technical text) stay
+  without it.
+- Verified by: `ui: the card leads with the plain brief, the technical text folded`, `pipeline: every PR body opens in plain words`
+
+### PIP-108 · PR bodies open in plain words
+
+The spec, plan and code PRs start with what the change means in plain words, and the risk beside it,
+before the technical text.
+
+- `plainMd(brief)` = `## In plain words\n\n<brief>` ("" without a brief). Spec PR: the brief, the
+  open points and the risk (PIP-99), then the design's `pr` text, the spec IDs and the links. Plan
+  PR: the brief and the risk, then the approach, the access asked for and the links. Code PR (PIP-48):
+  the worker's brief and the risk, then the worker's sections, the checks, the access beyond the
+  plan, the IDs and links, the review details and the footer.
+- Verified by: `pipeline: every PR body opens in plain words`, `pipeline: PR text comes from the worker`
+
+### PIP-109 · The design names the intent
+
+The design also returns the intent's title as a plain user story, which Towercab uses for intents the
+owner didn't write.
+
+- `design.title`: one plain sentence of about 6 to 14 words, no period, naming the product and what
+  someone can do or see once it's done ([INT-33](intents.md)). Kept in `data.design.title`; applied
+  as [INT-34](intents.md) says. The owner's own intents keep their title whatever it returns.
+- Verified by: `pipeline: an intent from elsewhere takes a plain title at pick`, `pipeline: the owner's titles are never renamed`
+
+### PIP-110 · Asks and reasons say what the owner decides
+
+What a card or message asks, and why it waits, says in plain words what the owner needs to decide or
+do, not what Towercab did.
+
+- The asks of **Waits** ([LOOP-14](loop.md)) name the decision or the step ("Decide if this change
+  can go live: merge the PR to ship it, or comment what to fix."); their keys don't change, since
+  intent files store them.
+- The reasons an approval waits are plain sentences: the gate's (`GATE_WHY` in `src/autonomy.ts`,
+  `GATE_HOLD` in `src/pipeline/gate.ts`), the risk's (`riskWhy`: `It is <level> risk, and at autonomy
+  a<n> only low-risk changes go ahead without you.`; none → `The risk check didn't finish, so you
+  decide whether it goes ahead.`), the spec's open points (`openPointsWhy`) and the spec PR's checks.
+  A blocked wait's reason stays what Towercab saw (a check's name, an error line) and is shown as
+  technical text (UI-126).
+- Verified by: `machine: every ask says what the owner decides, as the spec's table does`, `pipeline: gate table`, `autonomy: gate table`, `pipeline: open points send the spec to the owner`, `ui: the card leads with the plain brief, the technical text folded`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
@@ -941,14 +1007,14 @@ run is, first match: session gone, a usage limit ([LOOP-9](loop.md)), a network 
 optional)
 
 ```
-design   {type, scope, breaking: bool, spec_ids: [S], concerns: [{what, why}],
+design   {title: S, brief: S, type, scope, breaking: bool, spec_ids: [S], concerns: [{what, why}],
           open_questions: [{question, answer: S?}], pr: S}
-plan     {plan: S, access: {domains: [{domain, why}], paths: [{glob, why}]}}
-build    {status: "done"|"blocked"|"access", pr: S?, notes: S,
+plan     {brief: S, plan: S, access: {domains: [{domain, why}], paths: [{glob, why}]}, e2e}
+build    {status: "done"|"blocked"|"access", brief: S, pr: S?, notes: S,
           question: {context, question, options: [{option, then}], recommendation}?,
           access: {domains: [{domain, why}], paths: [{glob, why}]}?,
           plan_changed: S?, lower_a: int?, lower_why: S?}
-review   {approved: bool, outcomes: [{bullet, met: bool, why}], tests_weakened: {value: bool, where},
+review   {brief: S, approved: bool, outcomes: [{bullet, met: bool, why}], tests_weakened: {value: bool, where},
           plan_followed: {value: bool, where}, findings: [{severity, pass, file, line: int?, what}],
           door: "one-way"|"two-way", red_lines: [{line, file}], summary: S}
 risk     {blast_radius: {size: "small"|"medium"|"large", who}, door: {kind: "two-way"|"one-way", why},

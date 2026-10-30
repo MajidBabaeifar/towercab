@@ -34,7 +34,12 @@ const ACCESS = object({
   paths: list(object({ glob: S, why: S })),
 });
 
+/** PIP-106: the plain brief beside the technical text, for a reader who doesn't code. */
+const BRIEF: JsonSchema = S;
+
 export const DESIGN_SCHEMA = object({
+  title: S,
+  brief: BRIEF,
   type: { type: "string", enum: TYPES },
   scope: S,
   breaking: BOOL,
@@ -47,7 +52,7 @@ export const DESIGN_SCHEMA = object({
 /** SHIP-8: the e2e tests a change in a live repo adds, or why it needs none; null elsewhere. */
 const E2E = nullable(object({ tests: list(S), none_why: S }));
 
-export const PLAN_SCHEMA = object({ plan: S, access: ACCESS, e2e: E2E });
+export const PLAN_SCHEMA = object({ brief: BRIEF, plan: S, access: ACCESS, e2e: E2E });
 
 export const QUESTION = object({
   context: S,
@@ -59,6 +64,7 @@ export const QUESTION = object({
 
 export const BUILD_SCHEMA = object({
   status: { type: "string", enum: ["done", "blocked", "access"] },
+  brief: BRIEF,
   pr: S_NULL,
   notes: S,
   question: nullable(QUESTION),
@@ -69,6 +75,7 @@ export const BUILD_SCHEMA = object({
 });
 
 export const REVIEW_SCHEMA = object({
+  brief: BRIEF,
   approved: BOOL,
   outcomes: list(object({ bullet: S, met: BOOL, why: S })),
   tests_weakened: object({ value: BOOL, where: S }),
@@ -130,6 +137,10 @@ export interface Access {
 }
 
 export interface DesignResult {
+  /** INT-33, INT-34: the intent's title as a plain user story; used only for intents the owner didn't write. */
+  title: string;
+  /** PIP-106: what changes for users and what the owner decides, in plain words. */
+  brief: string;
   type: string;
   scope: string;
   breaking: boolean;
@@ -140,6 +151,8 @@ export interface DesignResult {
 }
 
 export interface PlanResult {
+  /** PIP-106: what the build will do and what approving it allows, in plain words. */
+  brief: string;
   plan: string;
   access: Access;
   e2e: { tests: string[]; none_why: string } | null;
@@ -154,6 +167,8 @@ export interface Question {
 
 export interface BuildResult {
   status: "done" | "blocked" | "access";
+  /** PIP-106: what changed for users, or what the owner is asked, in plain words. */
+  brief: string;
   pr: string | null;
   notes: string;
   question: Question | null;
@@ -164,6 +179,8 @@ export interface BuildResult {
 }
 
 export interface ReviewResult {
+  /** PIP-106: the verdict and what it means for the owner's decision, in plain words. */
+  brief: string;
   approved: boolean;
   outcomes: { bullet: string; met: boolean; why: string }[];
   tests_weakened: { value: boolean; where: string };

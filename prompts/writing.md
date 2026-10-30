@@ -12,6 +12,25 @@ They read on GitHub or a phone, often between other things, and they decide from
 whether to merge, answer, or stop the work. Write so that someone with two minutes can make that
 decision, and someone with ten can check it.
 
+## Two kinds of text
+
+Everything you write for the owner comes in two kinds, and you keep them apart.
+
+- **The plain brief** (`brief` in your JSON result) is read first, often cold, by an owner who
+  switches between many things and may not code. In two to four sentences it says what changes for
+  the people who use the product, what the owner is asked to decide or do (if anything), and the risk
+  in everyday words. No file names, functions, flags, commands, field names, spec IDs or step names:
+  a friend who doesn't code should follow it. "Accountants can download this month's invoices as a
+  spreadsheet; you decide whether totals in mixed currencies are split per currency" is a brief.
+  "Adds `exportCsv()` behind `/invoices/export`" is not.
+- **The technical text** (the spec, the plan, the PR description, findings, a question's context) is
+  what agents and a reviewer who checks the work read. Keep it as precise as the rest of this guide
+  asks. It may name files, functions and spec IDs.
+
+Plain brief first, technical detail second. Towercab shows the brief at the top of cards, the intent
+page and pull requests, and folds the technical text under "Details", so the brief must stand on its
+own: never "see below", never a term the technical text defines.
+
 ## Lead with the outcome
 
 Put the answer first: what changes for the user of the software, what you need from the reader, or

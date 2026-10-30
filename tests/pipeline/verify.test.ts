@@ -112,7 +112,7 @@ test("pipeline: question comment has context, options, recommendation", async ()
     `${after.id}:answer the question:%`,
   );
   expect(msg?.text).toMatch(
-    /^Towercab has a question for you\.\nShow a greeting \(web\)\nShould the page say hello or bye\?\nhttps:\/\/github\.com\/owner\/intents\/pull\/\d+$/,
+    /^Answer a question so the work can go on: pick an option or write your own\.\nShow a greeting \(web\)\nShould the page say hello or bye\?\nhttps:\/\/github\.com\/owner\/intents\/pull\/\d+$/,
   );
   void ID;
 }, 30_000);

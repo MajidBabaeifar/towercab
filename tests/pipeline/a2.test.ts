@@ -12,6 +12,7 @@ import {
   ID,
   intent,
   intents,
+  PLAN_BRIEF,
   PLAN_MD,
   reply,
   SLUG,
@@ -85,6 +86,7 @@ test("pipeline: feedback revises the plan", async () => {
   p.mergePr(p.prNo("web", p.mission()!.spec_pr!));
   p.script(
     reply({
+      brief: PLAN_BRIEF,
       plan: PLAN_MD,
       access: { domains: [{ domain: "example.com", why: "the greeting text" }], paths: [] },
       e2e: null,
@@ -97,6 +99,7 @@ test("pipeline: feedback revises the plan", async () => {
   p.ownerReview(pr, "CHANGES_REQUESTED", "Also fetch the translations.");
   p.script(
     reply({
+      brief: PLAN_BRIEF,
       plan: PLAN_MD.replace("Add a greeting file.", "Add a greeting file and its translations."),
       access: {
         domains: [
@@ -173,7 +176,7 @@ test("autonomy: unplanned access at a1-a3 is granted", async () => {
   });
   const m = await p.untilStage("approval:merge");
   // The owner merges at a2 anyway; the PR says what was granted beyond the plan.
-  expect(m.why).toBe("autonomy a2: the owner merges");
+  expect(m.why).toBe("At autonomy a2 you merge every change yourself.");
   const body = p.prNo("web", m.pr!).body;
   expect(body).toContain("## Access beyond the plan\n\n- network access to fonts.example.org: a web font");
 }, 30_000);

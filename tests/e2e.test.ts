@@ -33,6 +33,8 @@ Visitors see nothing.
 
 const design = result(
   {
+    title: "Show a greeting",
+    brief: "Visitors will see a hello.",
     type: "feat",
     scope: "",
     breaking: false,
@@ -44,6 +46,7 @@ const design = result(
   { "specs/web.md": "# Web\n\n### WEB-1 · Greeting\n\nThe page says hello.\n" },
 );
 const plan = result({
+  brief: "The build adds the hello.",
   plan: "## Approach\n\nAdd a greeting file.\n\n## Steps\n\n1. Test\n2. Code\n\n## Risks\n\nNone.\n\n## How to check it\n\nRun the tests.",
   access: { domains: [], paths: [] },
   e2e: null,
@@ -51,6 +54,7 @@ const plan = result({
 const build = result(
   {
     status: "done",
+    brief: "Visitors now see a hello.",
     pr: "## What this does\n\nThe page says hello.\n\n## Why\n\nVisitors saw nothing.\n\n## What to check before merging\n\nNothing special.\n\n## Changes\n\n- A greeting",
     notes: "added greeting",
     question: null,
@@ -62,6 +66,7 @@ const build = result(
   { "greeting.txt": "hello\n", "tests/greeting.sh": "test -f greeting.txt\n" },
 );
 const review = result({
+  brief: "It does what was asked.",
   approved: true,
   outcomes: [{ bullet: "The page says hello", met: true, why: "greeting.txt" }],
   tests_weakened: { value: false, where: "" },
@@ -119,7 +124,9 @@ test("e2e: an a5 intent goes from pick to done", async () => {
   expect(planMd).toContain("## Access");
   // The code PR reads like a person wrote it, then Towercab's facts.
   const code = p.prs[2]!;
-  expect(code.body).toMatch(/^## What this does\n\nThe page says hello\./);
+  // PIP-108: the plain brief first, then the worker's technical text.
+  expect(code.body).toMatch(/^## In plain words\n\nVisitors now see a hello\.\n\n## Risk: low/);
+  expect(code.body).toContain("## What this does\n\nThe page says hello.");
   expect(code.body).toContain("- Test proof: the new tests fail without the change");
   expect(code.comments.some((c) => c.body.includes("<!-- towercab:review:1 -->"))).toBe(true);
   // The intent is done, with its cost, in done/.

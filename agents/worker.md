@@ -46,6 +46,10 @@ How to work:
 Return the JSON result:
 
 - `status`: `done`, `blocked` or `access`.
+- `brief`: the plain brief (see "Two kinds of text"), two to four sentences for an owner who doesn't
+  code. When done: what is now different for the people who use the product, and anything the owner
+  should know before it goes live. When blocked: what you need the owner to decide, and what follows
+  from each choice, in everyday words. When asking for access: what you need to reach and why.
 - `pr`: when done, the code pull request's description in Markdown, for the owner who wasn't there:
   `## What this does` (two or three sentences on the effect, in everyday words), `## Why` (the problem
   it solves), `## What to check before merging` (the few things worth a human look, or "Nothing

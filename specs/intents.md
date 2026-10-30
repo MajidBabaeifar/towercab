@@ -41,7 +41,8 @@ An intent file is YAML front matter followed by a Markdown body with a title and
   (`# Intent: <title>`, the `Intent: ` prefix optional). Sections: `## Problem`,
   `## Proposed outcome` (bullets; the review checks each one, [PIP-5](pipeline.md)),
   `## Affected users and systems`, `## Constraints`, `## Open questions`, and Towercab's
-  `## Towercab` and `## Answers` (INT-15). Only `repo` and the title are required.
+  `## Towercab`, `## Answers` (INT-15) and `## Original title` (INT-34). Only `repo` and the title are
+  required.
 - `towercab add "<repo>: <title>" [uN] [iN] [aN]` writes a thin intent: `repo`, the scores given,
   `source: me`, `started` (now, local offset), a blank line and `# Intent: <title>`; it prints
   `<id> intents/<id>-<slug>/intent.md`.
@@ -313,6 +314,45 @@ drafted from it keeps that in its own section, so the design starts from everyth
   after `## Proposed outcome`, each only when it has content. The design answers the open questions
   as for any intent ([PIP-25](pipeline.md)).
 - Verified by: `issues: the intent keeps affected, constraints and open questions`, `issues: empty sections are left out`
+
+### INT-33 · Naming an intent
+
+An intent's title is a plain user story, so the owner knows which product it is about and what
+changes for its users when switching in cold, without opening the file.
+
+- The rule, as the intents repo's README states it ("Naming an intent"): one plain sentence of about
+  6 to 14 words, no period at the end; it names the product, then what someone can do or see once it
+  is done, and for whom if it isn't the owner; no file names, functions, flags, stage names or
+  jargon. "Towercab tells me on Telegram when it is stuck or broken", not "Self-monitoring in
+  Towercab v2".
+- The owner names their own intents. Anything else that writes an intent (an issue, a review, an
+  agent's finding) names it by this rule, and Towercab renames it at pick when it doesn't (INT-34).
+- Verified by: `prompts: every agent that writes for the owner asks for a plain brief`
+
+### INT-34 · Intents from elsewhere are renamed at pick
+
+When Towercab picks up an intent the owner didn't write, it gives it a plain title by INT-33 and
+keeps the old one; the owner's own titles are never changed.
+
+- The design returns `title` ([PIP-109](pipeline.md)). When the intent's `source` is set and isn't
+  `me`, the title differs, and the intent has no `## Original title` yet, Towercab writes in one store
+  commit (`towercab: rename <id>`): the old title as `## Original title` (`setSection`), and the new
+  one (a trailing period dropped, at most 120 characters) on the title line (`setTitle`: only the
+  first `# ` line changes, its `Intent: ` prefix and line ending kept; every other line stays
+  byte-identical). It runs before the spec is committed, so the spec PR and its commit carry the new
+  title; a replay after a crash renames nothing twice. A failed write is only logged.
+- `source: me` or no `source`: the title is never changed.
+- Verified by: `pipeline: an intent from elsewhere takes a plain title at pick`, `pipeline: the owner's titles are never renamed`, `intents: a rename changes only the title line`
+
+### INT-35 · Towercab writes intents with plain titles
+
+The intents Towercab writes itself follow the naming rule.
+
+- Issue intake (INT-22, INT-23): `agents/score.md` asks for the title as a user story by INT-33,
+  naming the product (`{{product}}`, the repo's short name), under 100 characters; the store keeps at
+  most 120. No other writer in Towercab creates intents; standards reviews and findings that arrive
+  as intent PRs follow the README's rule, and INT-34 renames them at pick if they don't.
+- Verified by: `issues: the scorer names the work as a user story about the product`
 
 ### INT-37 · A feature list per repo
 

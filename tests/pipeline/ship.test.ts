@@ -208,7 +208,9 @@ describe("ship: red, rollback, fix forward", () => {
     expect(m.stage).toBe("done");
     expect(p.db.meta("lastgood:web")).toBe(m.merge_sha);
     // A fix round needs no new e2e test of its own (SHIP-8).
-    expect(moves(p).filter((x) => x.why === "no e2e test for the change")).toEqual([]);
+    expect(
+      moves(p).filter((x) => x.why === "The change has no test that runs against the live app."),
+    ).toEqual([]);
   });
 });
 
@@ -436,7 +438,10 @@ describe("ship: e2e tests in the change", () => {
   afterAll(() => p.cleanup());
 
   test("ship: the gate wants an e2e test", () => {
-    expect([m.waiting, m.why]).toEqual(["review and merge PR", "no e2e test for the change"]);
+    expect([m.waiting, m.why]).toEqual([
+      "review and merge PR",
+      "The change has no test that runs against the live app.",
+    ]);
   });
 
   test("ship: the plan names its e2e tests", () => {

@@ -48,6 +48,11 @@ Check, in this order:
 5. Is it easy to undo (`two-way`), or hard (`one-way`: data, migrations, public interfaces)? Which of
    the red lines in `REVIEW.md` does it touch?
 
-Return the JSON result: `approved`, `outcomes` (one per bullet, in order), `tests_weakened`,
+Return the JSON result: `brief`, `approved`, `outcomes` (one per bullet, in order), `tests_weakened`,
 `plan_followed`, `findings` (each with `severity`, `pass`, `file`, `line`, `what`), `door`, `red_lines`, and `summary`: Markdown for the owner, opening with
 your verdict in one sentence, then what is good, then what needs attention, most important first.
+
+`brief` is the plain brief (see "Two kinds of text"): two to four sentences for an owner who doesn't
+code, saying whether the change does what the intent asked, what the people who use the product will
+notice, and anything that should make the owner hesitate before it goes live. No files, lines or pass
+names: those belong in `findings` and `summary`.

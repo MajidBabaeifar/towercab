@@ -7,7 +7,7 @@ import { git, refreshBase } from "../checkout.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
-import { currentRisk, openPointsMd, type Risk, riskMd } from "../risk.ts";
+import { currentRisk, openPointsMd, openPointsWhy, type Risk, riskMd } from "../risk.ts";
 import { ciState, redLog } from "./ci.ts";
 import {
   asEnv,
@@ -244,6 +244,8 @@ export const designHandler: Handler = {
           concerns: v.concerns,
           open: v.open_questions.filter((q) => q.answer === null).map((q) => q.question),
           pr: v.pr,
+          brief: v.brief,
+          title: v.title,
         },
         answer: undefined,
         mergeMain: undefined,
@@ -255,8 +257,38 @@ export const designHandler: Handler = {
   },
 };
 
+/** INT-34: where a renamed intent keeps the title it came with. */
+export const ORIGINAL_TITLE = "Original title";
+
+/** The owner's own intents (`source: me`, or none): their titles are never changed (INT-34). */
+export function ownersIntent(source: string | null): boolean {
+  return source === null || source.trim() === "" || source.trim() === "me";
+}
+
+/**
+ * INT-34: an intent the owner didn't write takes the design's plain title, once: the old title goes
+ * to `## Original title` and only the title line changes. Idempotent, so a replay after a crash
+ * renames nothing twice; a failed write is only logged.
+ */
+async function rename(cx: Ctx, m: Mission): Promise<void> {
+  const title = data(m).design?.title?.replace(/\s+/g, " ").trim().replace(/\.$/, "") ?? "";
+  const intent = await intentOf(cx, m);
+  if (!title || ownersIntent(intent.source) || title === intent.title) return;
+  if (intent.sections.has(ORIGINAL_TITLE)) return;
+  try {
+    await cx.store.update(m.intent, "rename", (e) => {
+      if (e.intent.sections.has(ORIGINAL_TITLE)) return;
+      e.setSection(ORIGINAL_TITLE, e.intent.title);
+      e.setTitle(title.slice(0, 120));
+    });
+  } catch (e) {
+    cx.log(`${m.intent}: couldn't rename the intent: ${(e as Error).message}`);
+  }
+}
+
 /** Commit the spec change; no change → straight to plan. Edits outside specs/ are dropped. */
 async function commit(cx: Ctx, m: Mission): Promise<Progress> {
+  await rename(cx, m);
   const changed = (await coGit(cx, m, ["status", "--porcelain", "--", "specs"])).trim();
   if (!changed) {
     await dropOthers(cx, m);
@@ -295,7 +327,10 @@ async function dropOthers(cx: Ctx, m: Mission): Promise<void> {
   await coGit(cx, m, ["clean", "-fdq"]);
 }
 
-/** The spec PR's body (PIP-25), with the risk and open points once assessed (PIP-99). */
+/**
+ * The spec PR's body (PIP-25): the plain brief (PIP-108), the open points and the risk once assessed
+ * (PIP-99), then the design's text.
+ */
 async function bodyOf(cx: Ctx, m: Mission): Promise<string> {
   const d = data(m);
   const intent = await intentOf(cx, m);
@@ -305,6 +340,7 @@ async function bodyOf(cx: Ctx, m: Mission): Promise<string> {
     d.design?.specIds ?? [],
     { intentUrl: cx.store.url(intent), specPrUrl: null, planPrUrl: null },
     [openPointsMd(risk), riskMd(risk)],
+    d.design?.brief ?? "",
   );
 }
 
@@ -395,7 +431,7 @@ async function ownerWait(cx: Ctx, m: Mission, risk: Risk | null): Promise<Outcom
   const points = risk?.openPoints ?? [];
   if (!specGate(a, points.length, risk?.level ?? null)) return null;
   const why = points.length
-    ? `${points.length} open point${points.length > 1 ? "s" : ""} for you to decide`
+    ? openPointsWhy(points.length)
     : a <= 2
       ? undefined
       : riskWhy(a, risk?.level ?? null);
@@ -447,13 +483,17 @@ async function specCi(cx: Ctx, m: Mission): Promise<Progress> {
       return {
         done: wait(
           "approve spec",
-          `the spec PR's checks didn't finish in ${Math.round(cx.config.agent.ciWait / 60)} min`,
+          `The spec PR's automatic checks didn't finish within ${Math.round(cx.config.agent.ciWait / 60)} minutes, so Towercab can't tell whether it is sound.`,
         ),
       };
     return { poll: cx.config.agent.ciPoll };
   }
-  if (s.kind === "moved") return { done: wait("approve spec", "someone else pushed to the spec PR") };
-  if (s.kind === "conflict") return { done: wait("approve spec", "the spec PR conflicts with its base") };
+  if (s.kind === "moved")
+    return {
+      done: wait("approve spec", "Someone else changed the spec PR, so Towercab leaves the decision to you."),
+    };
+  if (s.kind === "conflict")
+    return { done: wait("approve spec", "The spec clashes with changes made since it was written.") };
   if (s.kind === "red" || s.kind === "cancel") {
     const reruns = d.specReruns ?? {};
     const head = m.head ?? "";
@@ -467,10 +507,15 @@ async function specCi(cx: Ctx, m: Mission): Promise<Progress> {
     const names = s.checks.map((c) => c.name).join(", ");
     // A cancelled run has no failing log to fix.
     if (s.kind === "cancel")
-      return { done: wait("approve spec", `the spec PR's checks were cancelled: ${names}`) };
+      return { done: wait("approve spec", `The spec PR's automatic checks were cancelled (${names}).`) };
     const done = d.specRedRevisions ?? 0;
     if (done >= SPEC_RED_REVISIONS)
-      return { done: wait("approve spec", `the spec PR's checks are still red after a revision: ${names}`) };
+      return {
+        done: wait(
+          "approve spec",
+          `The spec PR's automatic checks still fail after one revision (${names}).`,
+        ),
+      };
     // The step stays `spec_ci` until the run starts: a run is only a "continue" when it re-enters `design`.
     return designRun(cx, cx.record(m, m.step, {}, { specRed: true, specRedRevisions: done + 1 }));
   }

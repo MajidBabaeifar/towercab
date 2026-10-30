@@ -57,7 +57,7 @@ test("pipeline: unproven goes to the owner", async () => {
   p.ownerComment(p.prNo("intents", m.plan_pr!), "Fine, the change is too small to test. Go on.");
   p.clock.advance(61);
   const at = await p.untilStage("approval:merge");
-  expect(at.why).toBe("no test fails without the change");
+  expect(at.why).toBe("No test shows that the change works: none fails without it.");
   expect(at.waiting).toBe("review and merge PR");
   expect(JSON.parse(at.data)).toMatchObject({ unproven: true, proof: "not proven" });
   // Checks, CI and the review all passed; only the proof sends it to the owner.

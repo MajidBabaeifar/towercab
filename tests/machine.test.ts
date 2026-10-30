@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import {
   apply,
@@ -171,6 +172,21 @@ test("machine: ship transitions", () => {
   }
   expect(waitInfo("rolled back, revise").stage).toBe("blocked");
   expect(waitInfo("rollback failed").ask).toBe(
-    "Rolling back failed. Nothing more merges in this repo until you fix it.",
+    "Taking the broken change back out failed, so nothing more goes live in this repo until you fix it.",
   );
+});
+
+test("machine: every ask says what the owner decides, as the spec's table does", () => {
+  // PIP-110: LOOP's table of asks is the code's, row for row; the keys stay as intent files store them.
+  const table = readFileSync("specs/loop.md", "utf8").split("**Waits** (`waiting:`")[1]!;
+  const rows = new Map<string, string>();
+  for (const m of table.matchAll(/^\| `([^`]+)` \| [^|]+ \| (.+) \|$/gm)) {
+    if (m[1] !== "waiting:") rows.set(m[1]!.replace(" <stage>", ""), m[2]!);
+  }
+  expect([...rows.keys()].sort()).toEqual(Object.keys(WAITS).sort());
+  for (const [key, w] of Object.entries(WAITS)) {
+    expect(rows.get(key), key).toBe(w.ask);
+    // Plain words: no step names or Towercab's own vocabulary.
+    expect(w.ask, key).not.toMatch(/\b(repair rounds?|worker|verify|proof|gate|approval)\b/);
+  }
 });

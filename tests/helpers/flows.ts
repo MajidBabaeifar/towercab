@@ -59,7 +59,15 @@ export function intents(text: string = intent(), dir = DIR): Record<string, stri
   return { [`${dir}/intent.md`]: text };
 }
 
+/** PIP-106: every fake agent answer carries a plain brief by default. */
+export const DESIGN_BRIEF = "Visitors will see a friendly hello on the page. Nothing needs deciding.";
+export const PLAN_BRIEF = "The build adds the hello and a test for it; it needs no access beyond the repo.";
+export const BUILD_BRIEF = "Visitors now see a hello on the page.";
+export const REVIEW_BRIEF = "The change does what was asked and is safe to ship.";
+
 export const DESIGN = {
+  title: "Show a greeting",
+  brief: DESIGN_BRIEF,
   type: "feat",
   scope: "",
   breaking: false,
@@ -72,7 +80,7 @@ export const SPEC = { "specs/web.md": "# Web\n\n### WEB-1 · Greeting\n\nThe pag
 
 export const PLAN_MD =
   "## Approach\n\nAdd a greeting file.\n\n## Steps\n\n1. Test\n2. Code\n\n## Risks\n\nNone.\n\n## How to check it\n\nRun the tests.";
-export const PLAN = { plan: PLAN_MD, access: { domains: [], paths: [] }, e2e: null };
+export const PLAN = { brief: PLAN_BRIEF, plan: PLAN_MD, access: { domains: [], paths: [] }, e2e: null };
 
 export const WORKER_PR =
   "## What this does\n\nThe page says hello.\n\n## Why\n\nVisitors saw nothing.\n\n## What to check before merging\n\nNothing special.\n\n## Changes\n\n- A greeting";
@@ -80,6 +88,7 @@ export const WORKER_PR =
 export function build(o: Record<string, unknown> = {}) {
   return {
     status: "done",
+    brief: BUILD_BRIEF,
     pr: WORKER_PR,
     notes: "added greeting",
     question: null,
@@ -93,6 +102,7 @@ export function build(o: Record<string, unknown> = {}) {
 export const CODE = { "greeting.txt": "hello\n", "tests/greeting.sh": "test -f greeting.txt\n" };
 
 export const REVIEW = {
+  brief: REVIEW_BRIEF,
   approved: true,
   outcomes: [{ bullet: "The page says hello", met: true, why: "greeting.txt" }],
   tests_weakened: { value: false, where: "" },

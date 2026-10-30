@@ -71,7 +71,9 @@ test("pipeline: a read-only cache write asks the owner", () => {
     "SELECT text FROM outbox WHERE key LIKE ?",
     `${m.id}:allow check writes:%`,
   );
-  expect(msg?.text).toMatch(/^The checks need to write to the build cache\.\n/);
+  expect(msg?.text).toMatch(
+    /^Decide if the tests may write to this machine's shared build cache: reply allow or no\.\n/,
+  );
 });
 
 test("pipeline: allowing cache writes reruns the checks writable", async () => {

@@ -30,7 +30,10 @@ test("autonomy: gate table", () => {
   expect(decide({ a: 5 })).toEqual({ merge: true });
   // a1–a3: the owner merges, even with everything green and low risk (AUT-3).
   for (const a of [1, 2, 3])
-    expect(decide({ a })).toEqual({ merge: false, why: `autonomy a${a}: the owner merges` });
+    expect(decide({ a })).toEqual({
+      merge: false,
+      why: `At autonomy a${a} you merge every change yourself.`,
+    });
   // First match wins, in PIP-7's order.
   const all: Partial<GateInput> = {
     a: 3,
@@ -40,26 +43,32 @@ test("autonomy: gate table", () => {
     proven: false,
     risk: "high",
   };
-  expect(decide(all)).toEqual({ merge: false, why: "CI not green" });
-  expect(decide({ ...all, ciGreen: true })).toEqual({ merge: false, why: "review not approved" });
+  expect(decide(all)).toEqual({ merge: false, why: "GitHub's automatic checks haven't passed." });
+  expect(decide({ ...all, ciGreen: true })).toEqual({
+    merge: false,
+    why: "The independent code review didn't approve it, even after fix rounds.",
+  });
   expect(decide({ ...all, ciGreen: true, review: null })).toEqual({
     merge: false,
-    why: "review not approved",
+    why: "The independent code review didn't finish.",
   });
   expect(decide({ ...all, a: 4, ciGreen: true, review: approved })).toEqual({
     merge: false,
-    why: "access beyond the plan",
+    why: "The agent needed access the approved plan didn't grant.",
   });
   // Unplanned access holds only at a4: at a1–a3 the owner merges anyway, a5 needs none.
   expect(decide({ ...all, ciGreen: true, review: approved })).toEqual({
     merge: false,
-    why: "no test fails without the change",
+    why: "No test shows that the change works: none fails without it.",
   });
   expect(decide({ unplanned: true, a: 5 })).toEqual({ merge: true });
-  expect(decide({ proven: false })).toEqual({ merge: false, why: "no test fails without the change" });
+  expect(decide({ proven: false })).toEqual({
+    merge: false,
+    why: "No test shows that the change works: none fails without it.",
+  });
   expect(decide({ ...all, ciGreen: true, review: approved, unplanned: false, proven: true })).toEqual({
     merge: false,
-    why: "autonomy a3: the owner merges",
+    why: "At autonomy a3 you merge every change yourself.",
   });
 });
 
@@ -74,12 +83,12 @@ test("autonomy: risk decides the gates at a4 and a5", () => {
   // The code gate.
   expect(decide({ risk: "medium" })).toEqual({
     merge: false,
-    why: "medium risk: at a4 only low risk goes ahead without you",
+    why: "It is medium risk, and at autonomy a4 only low-risk changes go ahead without you.",
   });
   expect(decide({ a: 5, risk: "medium" })).toEqual({ merge: true });
   expect(decide({ a: 5, risk: "high" })).toEqual({
     merge: false,
-    why: "high risk: at a5 low and medium risk go ahead without you",
+    why: "It is high risk, and at autonomy a5 low- and medium-risk changes go ahead without you.",
   });
   // The plan gate: a1–a3 always the owner; a4 and a5 by risk.
   for (const a of [1, 2, 3]) expect(planGate(a, "low")).toBe(true);
@@ -91,7 +100,10 @@ test("autonomy: risk decides the gates at a4 and a5", () => {
 
 test("autonomy: no risk assessment goes to the owner", () => {
   expect(riskWaits(5, null)).toBe(true);
-  expect(decide({ a: 5, risk: null })).toEqual({ merge: false, why: "the risk assessment didn't finish" });
+  expect(decide({ a: 5, risk: null })).toEqual({
+    merge: false,
+    why: "The risk check didn't finish, so you decide whether it goes ahead.",
+  });
   expect(planGate(5, null)).toBe(true);
   expect(specGate(5, 0, null)).toBe(true);
 });

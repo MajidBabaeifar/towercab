@@ -17,7 +17,7 @@ import {
 } from "../src/handlers.ts";
 import type { IntentStore } from "../src/intents/types.ts";
 import { PASS_MS } from "../src/loop.ts";
-import { ORDER, ok, wait } from "../src/machine.ts";
+import { ORDER, ok, WAITS, wait } from "../src/machine.ts";
 import { insertMission, type Mission, unfinished } from "../src/mission.ts";
 import { decide } from "../src/pick.ts";
 import { intentOf, repoFiles, spawnRun } from "../src/pipeline/common.ts";
@@ -507,7 +507,7 @@ test("loop: three crashes wait for the owner", async () => {
   expect([m.stage, m.waiting, m.from_stage]).toEqual(["blocked", "crashed at design", "design"]);
   expect(p.logs.filter((l) => l.includes("didn't exit cleanly"))).toHaveLength(3);
   const msg = p.db.get<{ text: string }>("SELECT text FROM outbox WHERE mission = ?", m.id)!.text;
-  expect(msg.split("\n")[0]).toBe("Towercab crashed three times at this step.");
+  expect(msg.split("\n")[0]).toBe(WAITS["crashed at"]!.ask);
 });
 
 test("limits: other models run", async () => {
