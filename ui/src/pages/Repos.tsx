@@ -16,7 +16,7 @@ import type {
 } from "../../../src/ui/view.ts";
 import { AddRepoForm } from "../AddRepo.tsx";
 import { refreshFeatures } from "../api.ts";
-import { ErrorNote, StateChip, WorkRow } from "../components.tsx";
+import { ErrorNote, StateChip, Time, WorkRow } from "../components.tsx";
 import { Alert, Check, External } from "../icons.tsx";
 import { Link } from "../router.tsx";
 
@@ -59,6 +59,13 @@ function Item({ item }: { item: QueueItem }) {
           {item.title}
         </Link>
         {item.reason ? <span class="up-reason">{item.reason}</span> : null}
+        {item.when || item.cost ? (
+          <span class="meta">
+            {item.when ? <Time when={item.when} /> : null}
+            {item.when && item.cost ? " · " : ""}
+            {item.cost ? <span class="num">{item.cost}</span> : null}
+          </span>
+        ) : null}
       </div>
       <StateChip state={item.state} small />
     </li>
@@ -212,6 +219,21 @@ function Repo({ r }: { r: RepoView }) {
           </summary>
           <ul class="q-list">
             {r.parked.map((i) => (
+              <Item key={i.intent} item={i} />
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {r.done.length ? (
+        <details class="repo-group repo-parked">
+          <summary>
+            <h2>
+              Recently done <span class="num meta">{r.done.length}</span>
+            </h2>
+            <span class="meta">The last ones done or dropped, newest first.</span>
+          </summary>
+          <ul class="q-list">
+            {r.done.map((i) => (
               <Item key={i.intent} item={i} />
             ))}
           </ul>

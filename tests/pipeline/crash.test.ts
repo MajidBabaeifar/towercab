@@ -106,6 +106,7 @@ async function crashing(p: Pipe, between: () => void = () => {}): Promise<string
       alive();
       return s.readFile(path);
     },
+    localFeatures: (repo) => s.localFeatures(repo),
     editFeatures: async (repo, w, fn) => {
       alive();
       const out = await s.editFeatures(repo, w, fn);

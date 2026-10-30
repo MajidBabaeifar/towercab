@@ -99,6 +99,11 @@ export function symlinkIn(root: string, rel: string): boolean {
   return false;
 }
 
+/** Why a text file can't be read: its errno code, or "not UTF-8" for bytes that don't decode. */
+function textError(code: string | undefined): string {
+  return !code || code === "ERR_ENCODING_INVALID_ENCODED_DATA" ? "not UTF-8" : code;
+}
+
 /** IDs written as a whole word in `done/legacy.md`. */
 export function legacyIds(text: string): Set<string> {
   return new Set(text.split(/\s+/).filter(isId));
@@ -620,7 +625,7 @@ export class GitStore implements IntentStore {
         text = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(join(this.path, rel)));
       } catch (e) {
         const code = (e as NodeJS.ErrnoException).code;
-        if (code !== "ENOENT") throw new RefusedError(`${rel}: ${code ?? "not UTF-8"}`);
+        if (code !== "ENOENT") throw new RefusedError(`${rel}: ${textError(code)}`);
       }
       const next = fn(text);
       if (next === null || next === text) return { msg: null, out: false };
@@ -652,6 +657,19 @@ export class GitStore implements IntentStore {
         throw new RefusedError(`${path}: ${(e as Error).message}`);
       }
     });
+  }
+
+  async localFeatures(repo: string): Promise<string | null> {
+    if (!isRepoName(repo)) throw new RefusedError(`${repo}: not a repo name`);
+    const rel = featuresPath(repo);
+    if (symlinkIn(this.path, rel)) throw new RefusedError(`${rel}: symlink`);
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(join(this.path, rel)));
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return null;
+      throw new RefusedError(`${rel}: ${textError(code)}`);
+    }
   }
 
   github(): string | null {

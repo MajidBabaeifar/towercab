@@ -1,10 +1,10 @@
 // A repo's feature list (INT-37..40): the file format and its line edits, the loop keeping it in step
 // with missions, and the backfill run. The real store over local bare repos, a fake `claude`.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { askFeatures, featuresRun } from "../src/features.ts";
+import { askFeatures, cleanAnswer, featuresRun, mergeBackfill, setFeaturesRun } from "../src/features.ts";
 import {
   cleanSentence,
   featuresHeader,
@@ -14,6 +14,7 @@ import {
   setFeature,
 } from "../src/intents/features.ts";
 import { RefusedError } from "../src/intents/types.ts";
+import type { LoopDeps } from "../src/loop.ts";
 import { happy, ID, intent, intents, TARGET } from "./helpers/flows.ts";
 import { Pipe } from "./helpers/pipe.ts";
 import { git } from "./helpers/world.ts";
@@ -178,6 +179,7 @@ test("features: the backfill reads the repo read-only and writes the live lines"
   expect(c.argv).toContain("--json-schema");
   expect(c.settings).toMatchObject({ sandbox: { enabled: true } });
   expect(c.prompt).toContain("<current>\n(none yet)\n</current>");
+  expect(c.prompt).toContain("<listed>\n(none)\n</listed>");
   expect(p.show("intents", "main", "features/web.md")).toContain(
     "- [live] Visitors can browse the shop.\n- [live] People can pay by card.\n",
   );
@@ -203,4 +205,102 @@ test("features: a bad backfill answer is recorded, not written", async () => {
   await p.loop.pass();
   await p.loop.featuresIdle();
   expect(featuresRun(p.db, "web")!.state).toBe("done");
+});
+
+test("features: the backfill is shown what intents already listed and doesn't repeat it", async () => {
+  const list = `- [live] Visitors can read the menu.\n- [live] People can say hello. <!-- intent ${ID} -->\n`;
+  const p = pipe(TARGET, { ...intents(), "features/web.md": list });
+  await p.start({}, { handlers: {} });
+  p.queue("features", () => ({
+    structured: { features: ["People can say hello.", "Visitors can read the menu.", "People can order."] },
+  }));
+  askFeatures(p.db, "web", p.clock.now());
+  await p.loop.pass();
+  await p.loop.featuresIdle();
+  const c = p.claudeCalls.find((x) => x.kind === "features")!;
+  expect(c.prompt).toContain("<current>\n- Visitors can read the menu.\n</current>");
+  expect(c.prompt).toContain("<listed>\n- People can say hello.\n</listed>");
+  expect(p.show("intents", "main", "features/web.md")).toBe(
+    `- [live] Visitors can read the menu.\n- [live] People can order.\n- [live] People can say hello. <!-- intent ${ID} -->\n`,
+  );
+});
+
+test("features: lines the owner adds during a backfill are kept", () => {
+  const sent = ["Visitors can read the menu."];
+  const now = "- [live] Visitors can read the menu.\n- [live] Admins can close the shop early.\n";
+  expect(mergeBackfill(now, "web", sent, ["Visitors can read the menu.", "People can order."])).toBe(
+    "- [live] Visitors can read the menu.\n- [live] People can order.\n- [live] Admins can close the shop early.\n",
+  );
+  // Nothing added meanwhile: the answer replaces what was shown.
+  expect(mergeBackfill("- [live] Visitors can read the menu.\n", "web", sent, ["People can order."])).toBe(
+    "- [live] People can order.\n",
+  );
+  expect(cleanAnswer(["- A", "a", "B", " "], ["b"])).toEqual(["A"]);
+});
+
+/** Lets the loop's background job run until `done`, or a few hundred turns of the event loop. */
+async function settle(done: () => boolean): Promise<void> {
+  for (let i = 0; i < 500 && !done(); i++) await new Promise((r) => setImmediate(r));
+}
+
+test("features: a backfill stopped by a shutdown is asked for again", async () => {
+  const p = pipe(TARGET, intents());
+  await p.start({}, { handlers: {} });
+  p.queue("features", () => ({ hang: true }));
+  askFeatures(p.db, "web", p.clock.now());
+  await p.loop.pass();
+  await settle(() => p.claudeCalls.some((c) => c.kind === "features"));
+  expect(featuresRun(p.db, "web")!.state).toBe("running");
+  await p.loop.shutdown();
+  expect(featuresRun(p.db, "web")!.state).toBe("due");
+  expect(p.tools.kills).toContainEqual({ kind: "features", signal: "SIGKILL" });
+  expect(existsSync(p.home.abs("work/features-web"))).toBe(false);
+});
+
+test("features: a backfill that runs out of time fails", async () => {
+  const p = pipe(TARGET, intents());
+  await p.start({}, { handlers: {} });
+  let fire: (() => void) | null = null;
+  (p.loop.d as LoopDeps).featuresDeadline = () =>
+    new Promise<void>((r) => {
+      fire = r;
+    });
+  p.queue("features", () => ({ hang: true }));
+  askFeatures(p.db, "web", p.clock.now());
+  const r = await p.loop.pass();
+  // A running backfill keeps the loop busy: `run` without --watch doesn't stop under it.
+  expect(r.idle).toBe(false);
+  await settle(() => fire !== null);
+  fire!();
+  await p.loop.featuresIdle();
+  expect(featuresRun(p.db, "web")).toMatchObject({
+    state: "failed",
+    why: "the run took longer than its time limit",
+  });
+});
+
+test("features: a backfill left running is asked for again on start", async () => {
+  const p = pipe(TARGET, intents());
+  await p.start({}, { handlers: {} });
+  setFeaturesRun(p.db, "web", { state: "running", at: p.clock.now() });
+  setFeaturesRun(p.db, "api", { state: "failed", at: p.clock.now(), why: "x" });
+  await p.reopen();
+  expect(featuresRun(p.db, "web")!.state).toBe("due");
+  expect(featuresRun(p.db, "api")!.state).toBe("failed");
+});
+
+test("features: an unreadable feature list doesn't hold a mission", async () => {
+  const p = pipe(TARGET, intents(intent({ a: 5 })));
+  const root = p.dir("tc-bad-");
+  const work = join(root, "w");
+  git(root, "clone", "-q", p.bares.intents!, work);
+  mkdirSync(join(work, "features"));
+  writeFileSync(join(work, "features", "web.md"), Buffer.from([0x2d, 0x20, 0xff, 0xfe, 0x0a]));
+  git(work, "add", "-A");
+  git(work, "commit", "-q", "-m", "bad bytes");
+  git(work, "push", "-q", "origin", "main");
+  happy(p);
+  await p.start();
+  await p.untilStage("design");
+  expect(p.logs.join("\n")).toContain("the feature list of web wasn't changed: features/web.md: not UTF-8");
 });

@@ -478,6 +478,8 @@ export interface RepoView {
   upNext: QueueItem[];
   waiting: QueueItem[];
   parked: QueueItem[];
+  /** The last 10 done or dropped (UI-63), shown folded. */
+  done: QueueItem[];
   spend: RepoSpendView;
 }
 

@@ -71,6 +71,7 @@ async function repoView(
     upNext: lane.upNext,
     waiting: lane.waiting,
     parked: lane.parked,
+    done: lane.done,
     spend: repoSpendView(spend),
   };
 }
@@ -88,7 +89,7 @@ export async function featuresView(
   let text: string | null = null;
   let readError: string | null = null;
   try {
-    text = await src.store.readFile(path);
+    text = await src.store.localFeatures(lane.repo);
   } catch (e) {
     readError = (e as Error).message;
   }

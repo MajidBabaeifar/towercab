@@ -700,7 +700,8 @@ cost, in a few short sections instead of one long list.
 - In order: the repo's name, GitHub name and "n of m ahead" (UI-100); "What people can do" (UI-143);
   "In progress" (its missions as work rows, UI-59, owner waits included); "Up next" (numbered, in pick
   order); "Waiting" (each with its reason in words, UI-61; only when there is one); "Parked" (folded
-  by default, only when there is one); "Spend" (today, 7 days, all time, UI-137).
+  by default, only when there is one); "Recently done" (UI-63's last 10 done or dropped, folded, only
+  when there is one); "Spend" (today, 7 days, all time, UI-137).
 - Verified by: `ui: a repo page shows its features, work and spend`, `ui: screenshots light, dark and mobile`
 
 ### UI-142 · All repos
@@ -716,8 +717,8 @@ With no repo chosen, the page shows one short card per repo, not one long list.
 
 The repo's page leads with its feature list, grouped as In progress, Live and Planned.
 
-- From `features/<repo>.md` (INT-37) and INT-40's planned intents. A line Towercab added for an
-  intent links to the intent's page. "Edit the list" links to the file on GitHub when it exists.
+- From `features/<repo>.md` as the local checkout has it (INT-37's `localFeatures`, no pull) and
+  INT-40's planned intents. A line Towercab added for an intent links to the intent's page. "Edit the list" links to the file on GitHub when it exists.
   Nothing listed → "No features listed yet."
 - Verified by: `ui: a repo page shows its features, work and spend`, `ui: screenshots light, dark and mobile`
 
@@ -733,7 +734,9 @@ the page offers to read it again.
 - "Refresh from the repo" (shown while Towercab runs, unless a run is asked for or running) posts
   `{action: "features", repo}`; the reply says the list is rewritten within a few minutes, or that a
   run is already on its way.
-- Verified by: `ui: the first look asks for the backfill once`, `ui: features action asks the loop once`, `ui: repos API and refresh go through the server`
+- The backfill's state is part of the page's version (`dbMark` reads the `features:%` meta rows), so an
+  open page shows a run asked for, started, done or failed without anything else moving.
+- Verified by: `ui: the first look asks for the backfill once`, `ui: features action asks the loop once`, `ui: repos API and refresh go through the server`, `ui: a backfill's state changes the page's version`
 
 ### UI-145 · Repos on a phone
 

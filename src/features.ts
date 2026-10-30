@@ -97,6 +97,8 @@ export interface FeaturesDeps {
   userHome?: string;
   /** Resolves when Towercab stops: the run is killed and the backfill throws `StoppedError`. */
   stop?: Promise<void>;
+  /** Resolves when the run's time is up (default a real timer; tests resolve it themselves). */
+  deadline?: (ms: number) => Promise<void>;
 }
 
 /** Why a backfill failed, with what its run cost when it got that far. */
@@ -120,28 +122,89 @@ const read = (p: string) => {
 };
 
 /**
- * INT-39: one backfill of `repoName`'s feature list. Resolves with the sentences written and the run's
- * cost; a failure throws a `BackfillError` whose message is the reason.
+ * INT-39, first half, awaited inside the loop's pass: fetch Towercab's clone and make a fresh checkout of
+ * the base branch. In the pass, so it never fetches the clone while a mission's step does. Returns the
+ * checkout; a failure throws a `BackfillError` and leaves nothing behind.
  */
+export async function prepareBackfill(d: FeaturesDeps, repoName: string): Promise<string> {
+  const repo = d.config.repos.get(repoName);
+  if (!repo) throw new BackfillError(`${repoName} isn't a repo Towercab knows`);
+  const clone = clonePath(repo, d.home.root);
+  const checkout = d.home.abs(join("work", `features-${repoName}`));
+  try {
+    await ensureClone(d.tools, clone, repo, await d.github.gitAuth(repo.github));
+    await freshCheckout(d.tools, clone, checkout, repo.base, "towercab/features");
+  } catch (e) {
+    removeCheckout(checkout);
+    throw new BackfillError(`fetching ${repo.github} failed: ${(e as Error).message}`);
+  }
+  return checkout;
+}
+
+const untaggedLive = (text: string | null) =>
+  parseFeatures(text)
+    .filter((f) => f.status === "live" && f.intent === null)
+    .map((f) => f.text);
+
+/** The model's sentences, cleaned to one line each, without repeats or what is already listed. */
+export function cleanAnswer(answer: string[], listed: string[]): string[] {
+  const seen = new Set(listed.map((l) => l.toLowerCase()));
+  const out: string[] = [];
+  for (const s of answer) {
+    const c = cleanSentence(s);
+    if (!c || seen.has(c.toLowerCase())) continue;
+    seen.add(c.toLowerCase());
+    out.push(c);
+  }
+  return out.slice(0, MAX_FEATURES);
+}
+
+/**
+ * INT-39: the backfill's sentences merged with what the file has now: live lines without an intent that
+ * the owner added while the run went on (not among those it was shown) are kept after them.
+ */
+export function mergeBackfill(
+  text: string | null,
+  repo: string,
+  sent: string[],
+  kept: string[],
+): string | null {
+  const shown = new Set(sent.map((l) => l.toLowerCase()));
+  const have = new Set(kept.map((l) => l.toLowerCase()));
+  const added = untaggedLive(text).filter((l) => !shown.has(l.toLowerCase()) && !have.has(l.toLowerCase()));
+  return replaceLive(text, repo, [...kept, ...added]);
+}
+
+/** A timer that doesn't keep the process alive. */
+function realDeadline(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms).unref());
+}
+
+/** Both halves at once (tests and a manual run). */
 export async function backfillFeatures(
   d: FeaturesDeps,
   repoName: string,
 ): Promise<{ n: number; cost: number }> {
-  const repo = d.config.repos.get(repoName);
-  if (!repo) throw new BackfillError(`${repoName} isn't a repo Towercab knows`);
-  const clone = clonePath(repo, d.home.root);
+  return runBackfill(d, repoName, await prepareBackfill(d, repoName));
+}
+
+/**
+ * INT-39, second half, on its own: the read-only run in `checkout` (removed afterwards), its answer
+ * checked and written. Resolves with the sentences written and the run's cost; a failure throws a
+ * `BackfillError` whose message is the reason, a stop a `StoppedError`.
+ */
+export async function runBackfill(
+  d: FeaturesDeps,
+  repoName: string,
+  checkout: string,
+): Promise<{ n: number; cost: number }> {
   try {
-    await ensureClone(d.tools, clone, repo, await d.github.gitAuth(repo.github));
-  } catch (e) {
-    throw new BackfillError(`fetching ${repo.github} failed: ${(e as Error).message}`);
-  }
-  const checkout = d.home.abs(join("work", `features-${repoName}`));
-  await freshCheckout(d.tools, clone, checkout, repo.base, "towercab/features");
-  try {
-    const current = await d.store.readFile(featuresPath(repoName));
-    const live = parseFeatures(current)
-      .filter((f) => f.status === "live" && f.intent === null)
-      .map((f) => `- ${f.text}`);
+    const current = await d.store.localFeatures(repoName);
+    const sent = untaggedLive(current);
+    const tagged = parseFeatures(current)
+      .filter((f) => f.status === "live" && f.intent !== null)
+      .map((f) => f.text);
+    const lines = (l: string[], none: string) => (l.length ? l.map((x) => `- ${x}`).join("\n") : none);
     const runsDir = d.home.runs("features", repoName);
     const n = readdirSync(runsDir).filter((f) => /^features-\d+\.prompt$/.test(f)).length + 1;
     const agent = loadAgent("features");
@@ -154,7 +217,8 @@ export async function backfillFeatures(
       n,
       prompt: render("features", {
         repo: repoName,
-        current: fence(live.length ? live.join("\n") : "(none yet)", "current"),
+        current: fence(lines(sent, "(none yet)"), "current"),
+        listed: fence(lines(tagged, "(none)"), "listed"),
       }),
       schema: SCHEMAS.features,
       session: { mode: "none", id: "" },
@@ -170,16 +234,12 @@ export async function backfillFeatures(
       slot: false,
     };
     const handle = d.tools.spawn(spec);
-    let timer: NodeJS.Timeout | undefined;
+    const deadline = (d.deadline ?? realDeadline)((agentTimeoutMin(agent, d.config) * 60 + 10) * 1000);
     const end = await Promise.race([
       handle.done,
-      new Promise<"timeout">((r) => {
-        timer = setTimeout(() => r("timeout"), (agentTimeoutMin(agent, d.config) * 60 + 10) * 1000);
-        timer.unref();
-      }),
+      deadline.then(() => "timeout" as const),
       ...(d.stop ? [d.stop.then(() => "stopped" as const)] : []),
     ]);
-    clearTimeout(timer);
     if (end === "stopped") {
       handle.kill("SIGKILL");
       throw new StoppedError("Towercab stopped");
@@ -198,17 +258,9 @@ export async function backfillFeatures(
     // The model's answer is data: checked against the schema, then each sentence cleaned to one line.
     const parsed = parseResult("features", r.result.structuredOutput);
     if (!parsed.ok) throw new BackfillError(`its answer doesn't fit the schema: ${parsed.why}`, cost);
-    const seen = new Set<string>();
-    const sentences: string[] = [];
-    for (const s of parsed.value.features) {
-      const c = cleanSentence(s);
-      if (!c || seen.has(c.toLowerCase())) continue;
-      seen.add(c.toLowerCase());
-      sentences.push(c);
-    }
-    if (!sentences.length) throw new BackfillError("its answer has no usable sentence", cost);
-    const kept = sentences.slice(0, MAX_FEATURES);
-    await d.store.editFeatures(repoName, "backfill", (t) => replaceLive(t, repoName, kept));
+    const kept = cleanAnswer(parsed.value.features, tagged);
+    if (!kept.length) throw new BackfillError("its answer has no usable sentence", cost);
+    await d.store.editFeatures(repoName, "backfill", (t) => mergeBackfill(t, repoName, sent, kept));
     return { n: kept.length, cost };
   } finally {
     removeCheckout(checkout);

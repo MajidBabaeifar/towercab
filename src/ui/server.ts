@@ -119,6 +119,7 @@ function cachingStore(store: IntentStore, ttlMs: number): IntentStore & { invali
     hasMark: (m) => store.hasMark(m),
     readFile: (p) => store.readFile(p),
     editFeatures: (repo, what, fn) => store.editFeatures(repo, what, fn),
+    localFeatures: (repo) => store.localFeatures(repo),
     github: () => store.github(),
     url: (i) => store.url(i),
     invalidate() {

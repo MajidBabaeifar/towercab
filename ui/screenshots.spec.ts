@@ -56,6 +56,7 @@ const PAGES = [
       "Waiting",
       "Waits for “Faster checkout page” to be done.",
       "Parked",
+      "Recently done",
       "Spend",
       "Refresh from the repo",
     ],

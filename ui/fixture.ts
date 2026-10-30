@@ -101,6 +101,9 @@ export class MemStore implements IntentStore {
   async readFile(path: string): Promise<string | null> {
     return this.files.get(path) ?? null;
   }
+  async localFeatures(repo: string): Promise<string | null> {
+    return this.files.get(`features/${repo}.md`) ?? null;
+  }
   async editFeatures(): Promise<boolean> {
     throw new Error("the fixture store is read-only");
   }

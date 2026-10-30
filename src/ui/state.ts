@@ -1036,7 +1036,12 @@ export function dbMark(db: Db): string {
     db.get<{ r: string | null }>(
       "SELECT group_concat(name || ' ' || base || ' ' || workers || ' ' || ahead, ',') AS r FROM repos",
     )?.r ?? "";
-  return `${t}:${c}:${u}:${r}`;
+  // A feature-list backfill asked for, started, done or failed (UI-144) shows on open pages too.
+  const f =
+    db.get<{ f: string | null }>(
+      "SELECT group_concat(key || '=' || value, ',') AS f FROM meta WHERE key LIKE 'features:%'",
+    )?.f ?? "";
+  return `${t}:${c}:${u}:${r}:${f}`;
 }
 
 /** The overview's data (`GET /api/state`). */

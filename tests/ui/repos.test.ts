@@ -3,10 +3,11 @@
 
 import { afterEach, expect, test } from "vitest";
 import { Db } from "../../src/db.ts";
-import { askFeatures, featuresRun } from "../../src/features.ts";
+import { askFeatures, featuresRun, setFeaturesRun } from "../../src/features.ts";
 import { createActions } from "../../src/ui/actions.ts";
 import { repos } from "../../src/ui/repos.ts";
 import { startUi } from "../../src/ui/server.ts";
+import { ago, dbMark, overview } from "../../src/ui/state.ts";
 import { buildFixture, type Fixture, IDS, MemStore } from "../../ui/fixture.ts";
 import { TestClock, tempDir, testConfig } from "../helpers/world.ts";
 import { call, post } from "./http.ts";
@@ -58,6 +59,8 @@ test("ui: a repo page shows its features, work and spend", async () => {
     ["Gift cards at checkout", "Waits for “Faster checkout page” to be done."],
   ]);
   expect(r.parked.map((x) => x.title)).toEqual(["Try a new chart library"]);
+  // UI-63's last done ones, folded on the page.
+  expect(r.done.map((x) => x.state.label)).toEqual(["Done", "Done"]);
   const fv = r.features;
   expect(fv.inProgress.map((x) => [x.text, x.intent])).toEqual([
     ["People can export their invoices as a CSV file.", IDS.question],
@@ -73,7 +76,8 @@ test("ui: a repo page shows its features, work and spend", async () => {
   ]);
   expect(fv.url).toBe("https://github.com/acme/intents/blob/main/features/web.md");
   expect(fv.run).toBe("done");
-  expect(fv.note).toBe("Last read from the repo on Fri 23:00: 5 live features.");
+  // Three days back, in words that depend on the local zone (and on a DST change in between).
+  expect(fv.note).toBe(`Last read from the repo on ${ago(NOW - 3 * 86_400, NOW)}: 5 live features.`);
   expect(fv.canRefresh).toBe(true);
   expect(r.spend.today).toMatch(/^\$\d+\.\d\d$/);
 });
@@ -100,6 +104,17 @@ test("ui: the first look asks for the backfill once", async () => {
   const docs = (await repos(f.sources, "docs")).repo!.features;
   expect(docs.run).toBe("never");
   expect(docs.note).toBe("Towercab writes this list from the repo's README and specs once it runs.");
+});
+
+test("ui: a backfill's state changes the page's version", async () => {
+  const f = fixture();
+  const before = dbMark(f.db);
+  const v = (await overview(f.sources)).version;
+  askFeatures(f.db, "api", NOW);
+  expect(dbMark(f.db)).not.toBe(before);
+  setFeaturesRun(f.db, "api", { state: "failed", at: NOW, why: "no README" });
+  const after = (await overview(f.sources)).version;
+  expect(after).not.toBe(v);
 });
 
 test("ui: features action asks the loop once", async () => {

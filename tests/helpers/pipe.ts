@@ -218,6 +218,9 @@ export class CachedStore implements IntentStore {
       this.writes++;
     }
   }
+  localFeatures(repo: string): Promise<string | null> {
+    return this.s.localFeatures(repo);
+  }
   async readFile(path: string): Promise<string | null> {
     this.fresh();
     if (!this.files.has(path)) this.files.set(path, await this.s.readFile(path));

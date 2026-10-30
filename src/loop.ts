@@ -10,9 +10,11 @@ import type { Db, SqlValue } from "./db.ts";
 import { fixFor, Health } from "./faults.ts";
 import {
   BackfillError,
-  backfillFeatures,
   dueFeatures,
+  type FeaturesDeps,
+  prepareBackfill,
   recoverFeatures,
+  runBackfill,
   StoppedError,
   setFeaturesRun,
 } from "./features.ts";
@@ -78,6 +80,8 @@ export interface LoopDeps {
   readPr?: (repo: string, n: number) => Promise<PrState>;
   /** Self-update (LOOP-35); off in tests. */
   selfUpdate?: boolean;
+  /** INT-39: when a backfill run's time is up (default a real timer; tests resolve it themselves). */
+  featuresDeadline?: (ms: number) => Promise<void>;
 }
 
 export interface LoopOpts {
@@ -312,7 +316,7 @@ export class Loop {
     await this.stepDue(!report.woke);
     if (!paused(db) && !this.health.blocked(this.now) && !budgetReached(db, this.d.config, this.now)) {
       report.picked = await this.pick();
-      this.startFeatures();
+      await this.startFeatures();
     }
     await this.selfUpdate();
     await this.sendMessages();
@@ -321,7 +325,8 @@ export class Loop {
     this.inhibitor.update(driven ? `${driven.intent} ${driven.stage}` : null, clock.mono());
 
     const live = unfinished(db).filter((m) => isWorking(m.stage) && !this.cooling(m));
-    report.idle = this.children.size === 0 && live.length === 0 && report.picked === null;
+    report.idle =
+      this.children.size === 0 && this.featuresJob === null && live.length === 0 && report.picked === null;
     if (this.targetId) {
       const m = db.get<Mission>(
         "SELECT * FROM missions WHERE intent = ? ORDER BY id DESC LIMIT 1",
@@ -654,7 +659,7 @@ export class Loop {
    * INT-39: the oldest asked-for backfill of a feature list, one at a time, on its own (it takes
    * minutes). Only when new work may start: not paused, no blocking problem, under the budget.
    */
-  private startFeatures(): void {
+  private async startFeatures(): Promise<void> {
     if (this.featuresJob) return;
     const db = this.d.db;
     const repo = dueFeatures(db)[0];
@@ -664,19 +669,27 @@ export class Loop {
     const stopped = new Promise<void>((r) => {
       stop = r;
     });
+    const deps: FeaturesDeps = {
+      config: this.d.config,
+      home: this.d.home,
+      tools: this.d.tools,
+      clock: this.d.clock,
+      store: this.d.store,
+      github: this.d.github,
+      stop: stopped,
+      ...(this.d.featuresDeadline ? { deadline: this.d.featuresDeadline } : {}),
+    };
+    // The clone's fetch and the checkout happen in the pass, never beside a mission's git step.
+    let checkout: string;
+    try {
+      checkout = await prepareBackfill(deps, repo);
+    } catch (e) {
+      setFeaturesRun(db, repo, { state: "failed", at: this.now, why: (e as Error).message, cost: 0 });
+      this.d.log(`feature list of ${repo}: reading the repo failed: ${(e as Error).message}`);
+      return;
+    }
     this.featuresStop = stop;
-    const run = backfillFeatures(
-      {
-        config: this.d.config,
-        home: this.d.home,
-        tools: this.d.tools,
-        clock: this.d.clock,
-        store: this.d.store,
-        github: this.d.github,
-        stop: stopped,
-      },
-      repo,
-    ).then(
+    const run = runBackfill(deps, repo, checkout).then(
       (r) => {
         setFeaturesRun(db, repo, { state: "done", at: this.now, n: r.n, cost: r.cost });
         this.d.log(`feature list of ${repo}: ${r.n} live features read from the repo`);
@@ -1009,7 +1022,7 @@ export class Loop {
     const r = await checkUpdate({
       tools: this.d.tools,
       checkout: checkoutRoot(),
-      idle: () => this.children.size === 0,
+      idle: () => this.children.size === 0 && this.featuresJob === null,
     });
     if (r.kind === "updated") {
       this.d.log(`updated ${r.from} → ${r.to}; restarting`);
