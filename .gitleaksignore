@@ -1,0 +1,2 @@
+# One fingerprint (commit:file:rule:line) per false positive, each with a comment above saying why.
+# None so far: the full-history scan found no findings.
