@@ -11,6 +11,7 @@ import {
   lockedTests,
   publishRefusals,
   runGuardHook,
+  sameAsBase,
   writeGuardRules,
 } from "../../src/pipeline/guard.ts";
 import { DEFAULT_TESTS } from "../../src/repo/files.ts";
@@ -188,4 +189,32 @@ test("pipeline: repair can't edit pushed tests", async () => {
   expect(publishRefusals(["src/main.ts"], prot, [{ status: "A", path: "tests/n.test.ts" }], locked)).toEqual(
     [],
   );
+});
+
+test("pipeline: a merge of the base may change pushed tests", async () => {
+  // A branch pushed with tests/a.test.ts; the base then changes that test, and a conflict round merges it.
+  const repo = join(tempDir(), "co");
+  mkdirSync(join(repo, "tests"), { recursive: true });
+  git(repo, "init", "-q", "-b", "main");
+  writeFileSync(join(repo, "tests/a.test.ts"), "a1");
+  writeFileSync(join(repo, "tests/b.test.ts"), "b1");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", "base");
+  git(repo, "checkout", "-q", "-b", "towercab/x");
+  writeFileSync(join(repo, "src.ts"), "x");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", "build");
+  git(repo, "checkout", "-q", "main");
+  writeFileSync(join(repo, "tests/a.test.ts"), "a2");
+  git(repo, "commit", "-q", "-am", "main changes a test");
+  git(repo, "checkout", "-q", "towercab/x");
+  git(repo, "merge", "-q", "--no-edit", "main");
+  // The worker also edits b, which the base never touched.
+  writeFileSync(join(repo, "tests/b.test.ts"), "b-weakened");
+  git(repo, "commit", "-q", "-am", "repair");
+  const tools = new FakeTools();
+  // a reads as on main: it came with the merge. b doesn't: the worker changed it.
+  expect(await sameAsBase(tools, repo, "main", ["tests/a.test.ts", "tests/b.test.ts"])).toEqual([
+    "tests/a.test.ts",
+  ]);
 });

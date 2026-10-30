@@ -27,7 +27,7 @@ import {
   repoFiles,
   takeRemote,
 } from "./common.ts";
-import { lockedTests, publishRefusals } from "./guard.ts";
+import { lockedTests, publishRefusals, sameAsBase } from "./guard.ts";
 import { codeBody } from "./prtext.ts";
 
 export const publishHandler: Handler = {
@@ -51,10 +51,13 @@ export const publishHandler: Handler = {
           })
       : [];
     const locked = await lockedTests(cx.tools, cx.checkout(m), d.lockHead ?? null, files.towercab.tests);
+    // PIP-31: a locked test that now reads as on the base came in with a merge of the base, not from the worker.
+    const touched = sinceHead.filter((c) => locked.includes(c.path)).map((c) => c.path);
+    const fromBase = await sameAsBase(cx.tools, cx.checkout(m), `refs/remotes/origin/${repo.base}`, touched);
     const bad = publishRefusals(
       changed,
       new Protected([...CONTROL, ...files.towercab.protected], g.paths),
-      sinceHead,
+      sinceHead.filter((c) => !fromBase.includes(c.path)),
       locked,
     );
     if (bad.length)
