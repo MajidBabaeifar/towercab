@@ -232,7 +232,8 @@ export function NeedsCard({
     if (action === "drop") setConfirm(false);
   };
   const can = (a: string) => !readOnly && card.actions.includes(a as Card["actions"][number]);
-  const long = (card.brief?.length ?? 0) > 320;
+  // A plain brief is two to four sentences (PIP-106): shown whole up to about that, folded beyond.
+  const long = (card.brief?.length ?? 0) > 480;
   const toggle = () => {
     if (open) expanded.delete(key);
     else expanded.add(key);
