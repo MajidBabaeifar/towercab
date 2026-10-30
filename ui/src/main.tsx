@@ -138,10 +138,10 @@ function IntentRoute({ id, readOnly, onTitle }: { id: string; readOnly: boolean;
   return <IntentPage data={live.data} readOnly={readOnly} />;
 }
 
-function QueueRoute() {
+function QueueRoute({ readOnly }: { readOnly: boolean }) {
   const live = useLive<QueueData>("/api/queue");
   if (live.error && !live.data) return <ErrorNote text={live.error} />;
-  return live.data ? <QueuePage data={live.data} /> : <Skeleton />;
+  return live.data ? <QueuePage data={live.data} readOnly={readOnly} /> : <Skeleton />;
 }
 
 function BoardRoute() {
@@ -181,7 +181,7 @@ function App() {
       />
     );
   } else if (pathname === "/board") page = <BoardRoute />;
-  else if (pathname === "/queue") page = <QueueRoute />;
+  else if (pathname === "/queue") page = <QueueRoute readOnly={top?.readOnly ?? true} />;
   else if (pathname === "/activity") page = <ActivityPage search={search} />;
   else if (state.error && !state.data) page = <ErrorNote text={state.error} />;
   else page = state.data ? <OverviewPage data={state.data} /> : <Skeleton />;

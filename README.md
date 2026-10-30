@@ -123,13 +123,12 @@ web page shows what needs you, what is stuck, what is moving and what it costs
    [github]
    app_id = 123456
    me = "<your login>"
-
-   [repos.web]
-   github = "<you>/web"
    ```
 
-4. Check the setup with `bin/towercab doctor`, then start the service with `bin/towercab up` and open
-   the page with `bin/towercab ui`.
+4. Check the setup with `bin/towercab doctor`, add a repo with `bin/towercab repo add <you>/web` (it
+   checks the App can reach it, takes its default branch and clones it), then start the service with
+   `bin/towercab up` and open the page with `bin/towercab ui`. More repos can be added later from the
+   page or with `repo add`, without a restart.
 5. Add an intent with `bin/towercab add "web: Log in with a magic link" u3 i4`, or with the `/intent`
    Claude Code skill (`./install.sh` links it).
 

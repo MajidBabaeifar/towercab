@@ -332,3 +332,23 @@ test("ui: run files stay inside runs", async () => {
   expect(big.body.endsWith("END")).toBe(true);
   expect(big.body).toMatch(/^… the first \d+ KB are cut/);
 });
+
+test("ui: add repo goes through the actions API", async () => {
+  const { f, ui, port } = await serve();
+  // {action: "addRepo", github, name?}: no intent needed.
+  const r = await post(port, ui.token, { action: "addRepo", github: "acme/crm", name: "crm" });
+  expect(r.status).toBe(200);
+  expect(JSON.parse(r.body)).toEqual({
+    ok: true,
+    message:
+      "Adding crm (acme/crm, base main): Towercab is cloning it now. It shows on the Queue page when done, and its intents start from then on.",
+  });
+  expect(f.calls.at(-1)).toEqual({ action: "addRepo", github: "acme/crm", name: "crm" });
+  expect((await post(port, ui.token, { action: "addRepo", github: "acme/shop" })).status).toBe(200);
+  expect(f.calls.at(-1)).toEqual({ action: "addRepo", github: "acme/shop" });
+  // Read-only: refused with the reason.
+  const ro = await serve({ actions: null });
+  const refused = await post(ro.port, ro.ui.token, { action: "addRepo", github: "acme/crm" });
+  expect(refused.status).toBe(409);
+  expect(JSON.parse(refused.body).message).toMatch(/read-only/);
+});

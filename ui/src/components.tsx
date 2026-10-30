@@ -15,6 +15,7 @@ import type {
   UpNextView,
   When,
 } from "../../src/ui/view.ts";
+import { AddRepoForm } from "./AddRepo.tsx";
 import { act, useFreshness } from "./api.ts";
 import {
   Alert,
@@ -329,6 +330,9 @@ export function NeedsCard({
             </ul>
           )}
         </div>
+      ) : null}
+      {card.addRepo && !readOnly ? (
+        <AddRepoForm name={card.addRepo.name} initial={card.addRepo.github} />
       ) : null}
       {can("reply") ? (
         <form

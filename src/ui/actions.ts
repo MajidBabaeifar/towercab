@@ -1,7 +1,7 @@
 // The page's buttons (UI-66): each does what the owner would do on GitHub (as the owner, LOOP-38) or
 // in the CLI (a `commands` row the loop applies, LOOP-15).
 
-import type { Config } from "../config.ts";
+import type { Config, RepoConfig } from "../config.ts";
 import type { Db } from "../db.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { IntentStore } from "../intents/types.ts";
@@ -17,6 +17,8 @@ export interface UiActions {
   start(intent: string): Promise<string>;
   pause(): Promise<string>;
   resume(): Promise<string>;
+  /** UI-130: add `owner/name` as a repo (`name` = its short name, default the repo part). */
+  addRepo(github: string, name?: string): Promise<string>;
 }
 
 export interface ActionDeps {
@@ -25,6 +27,11 @@ export interface ActionDeps {
   config: Config;
   clock: Clock;
   github: Pick<GitHub, "owner">;
+  /**
+   * LOOP-66's checks, bound to the loop's database, config, tools and home: resolves with the repo once
+   * they pass, while the clone goes on (UI-130); null: refused.
+   */
+  addRepo?: ((github: string, name?: string) => Promise<RepoConfig>) | null;
 }
 
 export const MAX_REPLY = 20_000;
@@ -124,6 +131,12 @@ export function createActions(d: ActionDeps): UiActions {
     async resume() {
       command("resume");
       return "Resumed: Towercab picks up work again.";
+    },
+
+    async addRepo(github, name) {
+      if (!d.addRepo) throw new Error("Towercab isn't running, so it can't add a repo now.");
+      const r = await d.addRepo(github, name);
+      return `Adding ${r.name} (${r.github}, base ${r.base}): Towercab is cloning it now. It shows on the Queue page when done, and its intents start from then on.`;
     },
   };
 }

@@ -34,10 +34,12 @@ import {
   type Mission,
   patchData,
   unfinished,
+  unfinishedFor,
   update,
 } from "./mission.ts";
 import { sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState } from "./pick.ts";
+import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
 import { aheadIn, bestReady, buildingIn, isReady } from "./slots.ts";
 import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
@@ -163,6 +165,7 @@ export class Loop {
       }
     }
     db.setMeta("running", `${process.pid} ${Math.floor(this.now)}`);
+    loadRepos(this.d.config, db, this.now);
     await this.pollIntents(true);
     this.startIssues(true);
   }
@@ -270,6 +273,8 @@ export class Loop {
     this.last = nowPoint;
     db.setMeta("last_pass", String(Math.floor(this.now)));
     db.setMeta("health", JSON.stringify(this.health.open()));
+    // LOOP-68: repos added or removed since the last pass (by the CLI or the page).
+    syncRepos(this.d.config, db);
 
     // Commands from the CLI and the UI.
     for (const c of await applyPending({
@@ -285,6 +290,7 @@ export class Loop {
     await this.enterDue();
     this.enforceTimeouts();
     await this.pollIntents(false);
+    await this.requeueKnownRepos();
     this.startIssues(false);
     await this.pollPrs();
     this.releaseReady();
@@ -524,6 +530,30 @@ export class Loop {
         this.d.log(`unstage ${id}: ${(e as Error).message}`);
       }
     }
+  }
+
+  /**
+   * LOOP-68: an intent that waits for an unknown repo is queued again once the repo is known, and
+   * the intents are read again so this pass can pick it.
+   */
+  private async requeueKnownRepos(): Promise<void> {
+    const repos = this.d.config.repos;
+    const known = (this.listing?.open ?? []).filter(
+      (i) => i.waiting === "unknown repo" && repos.has(i.repo) && !unfinishedFor(this.d.db, i.id),
+    );
+    let queued = 0;
+    for (const i of known) {
+      try {
+        await this.d.store.update(i.id, "repo known", (e) => {
+          if (e.intent.waiting === "unknown repo") e.removeField("waiting");
+        });
+        queued++;
+        this.d.log(`${i.id}: its repo ${i.repo} is known now; queued again`);
+      } catch (e) {
+        this.d.log(`${i.id}: ${(e as Error).message}`);
+      }
+    }
+    if (queued > 0) await this.pollIntents(true);
   }
 
   /** A GitHub read worked; the fault closes unless the issue poll is still failing (INT-21). */
@@ -851,6 +881,8 @@ export class Loop {
     const pick = decision.pick;
     if (!pick) return null;
     const m = this.d.db.tx(() => {
+      // LOOP-68: the repo may have been removed since this pass read the repos (another process).
+      if (!this.d.db.get("SELECT 1 FROM repos WHERE name = ?", pick.repo)) return null;
       this.d.db.delMeta(`start:${pick.id}`);
       return insertMission(
         this.d.db,
@@ -864,6 +896,10 @@ export class Loop {
         this.now,
       );
     });
+    if (!m) {
+      this.d.log(`${pick.id}: its repo ${pick.repo} was just removed; not picked`);
+      return null;
+    }
     this.d.log(`picked ${pick.id} (${pick.repo}): ${pick.title}`);
     return m.intent;
   }
