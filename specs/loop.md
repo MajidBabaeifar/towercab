@@ -622,7 +622,7 @@ like a crash; `–` = ignored)
 | Event | Working stages | approval:spec | approval:plan | approval:merge | blocked |
 |---|---|---|---|---|---|
 | ok | next (e2e → done; rollback → build; revert U) | U | U | U | U |
-| red | verify, proof, ci → build; deploy, e2e → rollback; else U | U | U | U | U |
+| red | verify, proof, ci, review → build; deploy, e2e → rollback; else U | U | U | U | U |
 | skip | deploy → done; else U | U | U | U | U |
 | revert | rollback → revert; else U | U | U | U | U |
 | timeout, bad_result, interrupted | again | – | – | – | – |

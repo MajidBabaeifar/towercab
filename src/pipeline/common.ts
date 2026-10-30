@@ -17,6 +17,7 @@ import { cooldown } from "../limits.ts";
 import { type Outcome, wait } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
 import { loadRepoFiles, RepoError, type RepoFiles } from "../repo/files.ts";
+import type { Risk } from "../risk.ts";
 import { checkoutRoot } from "../service.ts";
 import { check } from "../tools.ts";
 import { grantsFor, parseAccess } from "./access.ts";
@@ -54,6 +55,8 @@ export interface PipeData {
     breaking: boolean;
     specIds: string[];
     concerns: { what: string; why: string }[];
+    /** The intent's open questions the design left to the owner (PIP-97 reads them). */
+    open?: string[];
     pr: string;
   };
   specBranch?: string;
@@ -74,7 +77,17 @@ export interface PipeData {
   /** The owner's last words for the worker (an answer, feedback). */
   answer?: string;
   /** Why the next build round runs: a repair's what and details. */
-  repair?: { what: string; details: string; kind: "verify" | "proof" | "ci" | "conflict" | "e2e" };
+  repair?: {
+    what: string;
+    details: string;
+    kind: "verify" | "proof" | "ci" | "conflict" | "e2e" | "review";
+  };
+  /** Review fix rounds sent back to build (PIP-98). */
+  reviewFixes?: number;
+  /** The risk agent's assessment per gate (PIP-96, AUT-16); null = the run didn't finish. */
+  risk?: { spec?: Risk | null; plan?: Risk | null; code?: Risk | null };
+  /** What each gate's assessment was of (`Risk.of`), kept also when the run didn't finish. */
+  riskOf?: { spec?: string; plan?: string; code?: string };
   /** The ship stage's state (SHIP-7..12). */
   ship?: ShipData;
   /** HEAD when the current build round began (PIP-1). */
@@ -164,7 +177,7 @@ export function repoFilesWait(e: unknown): Outcome | null {
   return null;
 }
 
-export function effectiveOf(m: Mission, intent: Intent, files: RepoFiles): number | null {
+export function effectiveOf(m: Mission, intent: Intent, files: RepoFiles): number {
   return effectiveA(m.a_at_pick, intent.a, files.towercab.maxAutonomy, intent.source);
 }
 
@@ -202,6 +215,8 @@ export interface RunPlan {
   files: RepoFiles;
   intent: Intent;
   guard?: ClaudeRun["guardRules"];
+  /** The stage folder of its files when the kind runs in more than one stage (LOOP-39). */
+  stage?: string;
 }
 
 const STRONGER: Record<string, string> = { haiku: "sonnet", sonnet: "opus", opus: "opus" };
@@ -226,6 +241,8 @@ const STAGE_OF_KIND: Record<RunKind, string> = {
   plan: "plan",
   worker: "build",
   review: "review",
+  // The risk agent runs at three gates; its handler names the stage folder (PIP-96).
+  risk: "review",
   score: "design",
 };
 
@@ -266,7 +283,7 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
     model: modelOf(cx, m, agent, p.intent),
     cwd: cx.checkout(fresh),
     runsDir: runs,
-    stage: STAGE_OF_KIND[p.kind],
+    stage: p.stage ?? STAGE_OF_KIND[p.kind],
     n,
     prompt,
     schema: agent.schema ? SCHEMAS[agent.schema] : null,
@@ -346,7 +363,8 @@ export function ended<T>(
       }
       // The first success on a model ends its cooldown and resets its backoff (LOOP-9).
       cx.db.delMeta(`cooldown:${model}`);
-      const sessionKey = kind === "review" ? `review:${e.result.sessionId}` : m.session;
+      // The review and the risk agent run in sessions of their own (PIP-4, PIP-96).
+      const sessionKey = kind === "review" || kind === "risk" ? `${kind}:${e.result.sessionId}` : m.session;
       const before = d.sessionCost?.[sessionKey] ?? 0;
       const delta = Math.max(0, e.result.costUsd - before);
       const now = cx.clock.now();

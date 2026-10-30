@@ -1,16 +1,17 @@
-// The `plan` stage (PIP-28, PIP-46, PIP-47, PIP-51, AUT-12): the worker plans read-only; Towercab
-// opens the plan as a PR on the intents repo (from its own clone `<home>/plans`, never the store's
-// checkout of main), and either waits for the owner or merges it at a5.
+// The `plan` stage (PIP-28, PIP-46, PIP-47, PIP-51, PIP-96, AUT-12): the worker plans read-only;
+// Towercab opens the plan as a PR on the intents repo (from its own clone `<home>/plans`, never the
+// store's checkout of main), has the risk agent assess it, and either waits for the owner or merges it.
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { planGate } from "../autonomy.ts";
+import { planGate, riskWhy } from "../autonomy.ts";
 import { git } from "../checkout.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import type { Intent } from "../intents/types.ts";
 import { wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { runSet } from "../repo/runset.ts";
+import { riskMd } from "../risk.ts";
 import { e2eText } from "../ship/live.ts";
 import { renderAccess } from "./access.ts";
 import {
@@ -28,6 +29,7 @@ import {
 } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { planBody, planFile, section } from "./prtext.ts";
+import { endRisk, planKey, riskFor, spawnRisk, withRisk } from "./risk.ts";
 import { parseResult } from "./schemas.ts";
 
 /** The clone the plan branches are pushed from (re-cloned when broken). */
@@ -165,12 +167,21 @@ export const planHandler: Handler = {
         return openPr(cx, m);
       case "gate":
         return gateStep(cx, m);
+      case "risk":
+        return spawnRisk(cx, m, "plan");
       default:
         return { done: { event: "bad_result", why: `unknown plan step ${m.step}` } };
     }
   },
 
   async finish(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
+    if (m.step === "risk") {
+      const e = endRisk(cx, m, end, planKey(m));
+      if ("progress" in e) return e.progress;
+      const fresh = cx.record(m, "gate", {}, { ...e.data, ...withRisk(m, "plan", e.risk, planKey(m)) });
+      await patchBody(cx, fresh);
+      return gateStep(cx, fresh);
+    }
     const r = ended(cx, m, "plan", end, (v) => parseResult("plan", v));
     if (!r.ok) return r.progress;
     return push(
@@ -217,16 +228,42 @@ async function push(cx: Ctx, m: Mission): Promise<Progress> {
   return openPr(cx, cx.record(m, "pr"));
 }
 
+/** The plan PR's body (PIP-28), with the risk once assessed (PIP-99). */
+async function bodyOf(cx: Ctx, m: Mission): Promise<string> {
+  const intent = await intentOf(cx, m);
+  const repo = cx.repo(m);
+  const d = data(m);
+  return planBody(
+    d.plan!.md,
+    d.plan!.access,
+    {
+      intentUrl: cx.store.url(intent),
+      specPrUrl: m.spec_pr ? prUrl(repo.github, m.spec_pr) : null,
+      planPrUrl: null,
+    },
+    riskMd(riskFor(m, "plan", planKey(m))),
+  );
+}
+
+/** Rewrite the plan PR's body after the risk check (PIP-99); a failure is only logged. */
+async function patchBody(cx: Ctx, m: Mission): Promise<void> {
+  const github = cx.store.github()!;
+  try {
+    await gh(
+      cx,
+      github,
+      ["api", "-X", "PATCH", `repos/${github}/pulls/${m.plan_pr}`, "-F", "body=@-"],
+      await bodyOf(cx, m),
+    );
+  } catch (e) {
+    cx.log(`${m.intent}: couldn't update the plan PR text: ${(e as Error).message}`);
+  }
+}
+
 async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
   const intent = await intentOf(cx, m);
   const github = cx.store.github()!;
-  const repo = cx.repo(m);
-  const d = data(m);
-  const body = planBody(d.plan!.md, d.plan!.access, {
-    intentUrl: cx.store.url(intent),
-    specPrUrl: m.spec_pr ? prUrl(repo.github, m.spec_pr) : null,
-    planPrUrl: null,
-  });
+  const body = await bodyOf(cx, m);
   const branch = planBranch(intent);
   let n = m.plan_pr;
   if (!n) {
@@ -273,15 +310,20 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
   return gateStep(cx, cx.record(m, "gate", { plan_pr: n }));
 }
 
+/** The risk agent first, once per plan (PIP-96); then the plan gate (AUT-12): the owner or Towercab (PIP-51). */
 async function gateStep(cx: Ctx, m: Mission): Promise<Progress> {
+  const risk = riskFor(m, "plan", planKey(m));
+  if (risk === undefined) return spawnRisk(cx, m, "plan");
   const intent = await intentOf(cx, m);
   const files = await repoFiles(cx, m);
-  if (planGate(effectiveOf(m, intent, files), files.towercab.maxAutonomy, intent.source)) {
-    return { done: wait("approve plan") };
+  const a = effectiveOf(m, intent, files);
+  const level = risk?.level ?? null;
+  if (planGate(a, level)) {
+    return { done: wait("approve plan", a <= 3 ? undefined : riskWhy(a, level)) };
   }
   const github = cx.store.github()!;
   await gh(cx, github, ["pr", "merge", String(m.plan_pr), "-R", github, "--squash"]);
-  return { done: { event: "plan_merged", why: "a5: Towercab approved its own plan" } };
+  return { done: { event: "plan_merged", why: `a${a}, ${level} risk: Towercab approved its own plan` } };
 }
 
 /** On entering build from a merged plan: read the ticked access (PIP-47). */

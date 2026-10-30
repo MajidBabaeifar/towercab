@@ -104,6 +104,8 @@ test("pipeline: review reused for an unchanged diff", () => {
   // round, the change is different: a new review, its own round.
   expect(reviews.map((t) => t.why)).toEqual([null, "the diff is unchanged: the review stands", null]);
   expect(p.claudeCalls.filter((c) => c.kind === "review")).toHaveLength(2);
+  // The risk check stands with it (PIP-96): one at the spec, one at the plan, one per reviewed diff.
+  expect(p.claudeCalls.filter((c) => c.kind === "risk")).toHaveLength(4);
   const comments = p.prNo("web", m.pr!).comments.map((c) => c.body.split("\n")[0]);
   expect(comments).toEqual(["<!-- towercab:review:1 -->", "<!-- towercab:review:2 -->"]);
 });

@@ -73,12 +73,31 @@ const review = (o: Partial<{ approved: boolean; door: string; redLines: boolean 
   ...o,
 });
 
+/** A kept code risk (AUT-16) at `level`, of the reviewed diff `x`. */
+const risk = (level: string, of = "x") => ({
+  risk: {
+    code: {
+      level,
+      said: level,
+      raised: null,
+      blast: { size: "small", who: "Visitors." },
+      door: { kind: "two-way", why: "A revert undoes it." },
+      certainty: { level: "high", why: "Tested." },
+      summary: "Small.",
+      openPoints: [],
+      of: "x",
+    },
+  },
+  riskOf: { code: of },
+});
+
 test("pipeline: gate table", async () => {
   const green = {
     ci: { result: "green" },
     review: review(),
     proof: "proven",
     verify: { result: "green", log: "" },
+    ...risk("low"),
   };
   const unplanned = { domains: [{ domain: "x.org", why: "w" }], paths: [] };
   const rows: [string, number | null, Record<string, unknown>, string | null][] = [
@@ -90,20 +109,15 @@ test("pipeline: gate table", async () => {
     [ID, 5, { ...green, unproven: true }, "no test fails without the change"],
     [ID, 3, { ...green, ci: { result: "none" } }, "autonomy a3: the owner merges"],
     [ID, 1, green, "autonomy a1: the owner merges"],
+    // No `a` counts as a5 (AUT-9): medium risk goes ahead, high waits (AUT-18).
     [NO_A, null, green, null],
-    [
-      NO_A,
-      null,
-      { ...green, review: review({ door: "one-way" }) },
-      "no autonomy set and the change isn't low-risk",
-    ],
-    [
-      NO_A,
-      null,
-      { ...green, review: review({ redLines: true }) },
-      "no autonomy set and the change isn't low-risk",
-    ],
-    [NO_A, null, { ...green, unplanned }, "access beyond the plan"],
+    [NO_A, null, { ...green, ...risk("medium") }, null],
+    [NO_A, null, { ...green, ...risk("high") }, "high risk: at a5 low and medium risk go ahead without you"],
+    [NO_A, null, { ...green, unplanned }, null],
+    [ID, 4, { ...green, ...risk("medium") }, "medium risk: at a4 only low risk goes ahead without you"],
+    // An assessment of another diff, or none, is no assessment (AUT-19).
+    [ID, 5, { ...green, ...risk("low", "older") }, "the risk assessment didn't finish"],
+    [ID, 5, { ...green, risk: { code: null }, riskOf: { code: "x" } }, "the risk assessment didn't finish"],
     [ID, 4, { ...green, ci: { result: "none" } }, null],
     [ID, 5, green, null],
   ];
@@ -119,6 +133,9 @@ test("pipeline: gate table", async () => {
   // The PR's Checks section is written before the decision.
   expect(pr.body).toContain("## Checks");
   expect(pr.body).toContain("- Review: approved");
+  // And its risk, in plain words (PIP-99).
+  expect(pr.body).toContain("## Risk: low");
+  expect(pr.body).toContain("Easy to undo: A revert undoes it.");
 });
 
 test("pipeline: approval is computed in code", () => {

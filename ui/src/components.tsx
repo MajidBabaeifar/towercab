@@ -9,6 +9,7 @@ import type {
   Card,
   Phase,
   ProblemView,
+  RiskView,
   Row,
   SpendView,
   StateView,
@@ -52,6 +53,26 @@ export function Time({ when, short }: { when: When; short?: boolean }) {
     <time dateTime={new Date(when.at * 1000).toISOString()} title={when.exact}>
       {short ? when.short : when.rel}
     </time>
+  );
+}
+
+const RISK_AT = { spec: "the spec", plan: "the plan", code: "the code" };
+
+/** AUT-20: a risk chip and the three answers in plain words. */
+export function RiskBlock({ risk }: { risk: RiskView }) {
+  return (
+    <div class="risk">
+      <p class="risk-head">
+        <span class={`chip chip-sm risk-${risk.level}`}>{risk.label}</span>
+        <span class="meta">judged on {RISK_AT[risk.gate]} by an agent that didn't write it</span>
+      </p>
+      <ul>
+        <li>{risk.blast}</li>
+        <li>{risk.door}</li>
+        <li>{risk.certainty}</li>
+      </ul>
+      {risk.raised ? <p class="meta">{risk.raised}</p> : null}
+    </div>
   );
 }
 
@@ -308,6 +329,19 @@ export function NeedsCard({
           ) : null}
         </div>
       ) : null}
+      {card.openPoints?.length ? (
+        <div class="access">
+          <p class="access-head">Open points for you to decide</p>
+          <ul class="points">
+            {card.openPoints.map((p) => (
+              <li key={p.point}>
+                {p.point} <span class="access-why">{p.why}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {card.risk ? <RiskBlock risk={card.risk} /> : null}
       {card.access ? (
         <div class="access">
           <p class="access-head">What the worker may reach beyond the repo</p>

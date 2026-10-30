@@ -668,6 +668,20 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
         summary:
           "The guide now starts with a five-minute path: install, create a project, deploy. Each step has a command and what you should see after it. The old reference material moved to its own page, linked at the end.\n\nAll links resolve, the code samples run in CI, and the screenshots are new. One thing to check: the guide now assumes Node 22; the old one said 18.",
       },
+      // AUT-20: the code's risk, shown on its card.
+      risk: {
+        code: {
+          level: "medium",
+          said: "low",
+          raised: "Raised from low to medium: it could affect many people or systems.",
+          blast: { size: "large", who: "Everyone who starts with the docs." },
+          door: { kind: "two-way", why: "Reverting the PR brings the old guide back." },
+          certainty: { level: "high", why: "Every link and code sample is checked in CI." },
+          summary: "A wrong step would stop new users early, but a revert undoes it at once.",
+          openPoints: [],
+          of: "x",
+        },
+      },
     },
   });
   addMission(db, now, {

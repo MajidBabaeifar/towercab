@@ -23,7 +23,7 @@ Every intent has an urgency `u` and an importance `i` from 1 to 5, and optionall
 
 A missing urgency or importance counts as 3; a missing autonomy stays missing.
 
-- Applied on read, never written. No `a` has its own gate rule ([AUT-9](autonomy.md)).
+- Applied on read, never written. No `a` counts as a5 ([AUT-9](autonomy.md)).
 - Verified by: `priority: missing scores count as 3`
 
 ### PRI-3 · Priority score

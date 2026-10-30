@@ -88,6 +88,22 @@ export interface PrLink {
   label: string;
 }
 
+/** AUT-20: a change's risk in plain words. */
+export interface RiskView {
+  level: "low" | "medium" | "high";
+  /** "Medium risk". */
+  label: string;
+  /** Which PR it was judged on: "spec", "plan" or "code". */
+  gate: "spec" | "plan" | "code";
+  /** Who it could affect, if it can be undone, how sure we are: one plain line each. */
+  blast: string;
+  door: string;
+  certainty: string;
+  summary: string;
+  /** Why the floor raised the level (AUT-17), or null. */
+  raised: string | null;
+}
+
 /** UI-58: one wait on the owner. */
 export interface Card {
   intent: string;
@@ -109,6 +125,10 @@ export interface Card {
   mergeLabel: string | null;
   /** UI-131: the intent's repo is unknown: its short name and a guess at `owner/name` ("" = none). */
   addRepo: { name: string; github: string } | null;
+  /** AUT-20: the risk of what it waits on; null when none was judged (or the check didn't finish). */
+  risk?: RiskView | null;
+  /** PIP-97: the spec's open points for the owner (spec cards only). */
+  openPoints?: { point: string; why: string }[];
 }
 
 export type PhaseStatus = "done" | "current" | "todo" | "skipped";
@@ -382,6 +402,8 @@ export interface IntentPage {
   issue: string | null;
   /** UI-122: the newest e2e log (`/api/runs/<id>/e2e/<file>`), or null. */
   e2eLog: string | null;
+  /** AUT-20: the latest risk of the current attempt, when no card shows it. */
+  risk?: RiskView | null;
 }
 
 export interface QueueItem {
