@@ -5,7 +5,7 @@ import { gitEnv, NO_HOOKS } from "../checkout.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import { ok } from "../machine.ts";
 import type { Mission } from "../mission.ts";
-import type { Review } from "../repo/files.ts";
+import { DEFAULT_DO_NOT_REPORT, type Review } from "../repo/files.ts";
 import { check } from "../tools.ts";
 import { coGit, data, ended, intentOf, note, repoFiles, spawnRun } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
@@ -26,13 +26,24 @@ export function approvedOf(r: ReviewResult): boolean {
 export function reviewComment(r: ReviewResult, review: Review): string {
   const important = r.findings.filter((f) => f.severity === "important");
   const nits = r.findings.filter((f) => f.severity === "nit").slice(0, review.nitCap);
-  const at = (f: ReviewResult["findings"][number]) => `\`${f.file}${f.line ? `:${f.line}` : ""}\``;
+  const line = (f: ReviewResult["findings"][number]) =>
+    `- ${f.pass} · \`${f.file}${f.line ? `:${f.line}` : ""}\`: ${f.what}`;
   const parts = [r.summary.trim()];
-  if (important.length)
-    parts.push(`**Needs attention**\n\n${important.map((f) => `- ${at(f)}: ${f.what}`).join("\n")}`);
-  if (nits.length) parts.push(`**Smaller things**\n\n${nits.map((f) => `- ${at(f)}: ${f.what}`).join("\n")}`);
+  if (important.length) parts.push(`**Needs attention**\n\n${important.map(line).join("\n")}`);
+  if (nits.length) parts.push(`**Smaller things**\n\n${nits.map(line).join("\n")}`);
   const outcomes = r.outcomes.map((o) => `- ${o.met ? "Met" : "Not met"}: ${o.bullet} (${o.why})`).join("\n");
   if (outcomes) parts.push(`<details><summary>Outcomes</summary>\n\n${outcomes}\n\n</details>`);
+  return parts.join("\n\n");
+}
+
+/** What the review reads as the repo's policy: `REVIEW.md` or the default passes, plus REPO-12's defaults when it sets nothing to leave out. */
+export function reviewPolicy(review: Review): string {
+  const parts = [review.text.trim() || "(no REVIEW.md: use the default passes Bugs, Security, Compliance)"];
+  if (review.doNotReport.join("\n") === DEFAULT_DO_NOT_REPORT.join("\n")) {
+    parts.push(
+      `Do not report (Towercab's defaults):\n${DEFAULT_DO_NOT_REPORT.map((d) => `- ${d}`).join("\n")}`,
+    );
+  }
   return parts.join("\n\n");
 }
 
@@ -66,10 +77,7 @@ export const reviewHandler: Handler = {
       intent: intentData(intent.text),
       spec_ids: d.design?.specIds.join(", ") || "none",
       plan: fence(plan, "plan"),
-      review_md: fence(
-        files.review.text || "(no REVIEW.md: use the default passes Bugs, Security, Compliance)",
-        "review_md",
-      ),
+      review_md: fence(reviewPolicy(files.review), "review_md"),
       ci: d.ci?.result === "none" ? "no CI on this repo" : "green",
       screenshots: shots,
       diff_cmd: `git diff refs/remotes/origin/${repo.base}...HEAD`,

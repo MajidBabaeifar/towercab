@@ -5,7 +5,7 @@ sandbox: strict
 model: review
 session: new
 timeout_min: 15
-max_cost_usd: null
+max_cost_usd: 3
 schema: review
 ---
 Review the pull request below as a careful senior engineer on this repo. You only read: don't
@@ -39,12 +39,13 @@ Check, in this order:
 
 1. Each `Proposed outcome` bullet: is it met by the change? Say how you know.
 2. Each pass in `REVIEW.md`, reporting findings with severity `important` or `nit` as that file
-   defines them, at the file and line.
+   defines them, at the file and line, each with the `pass` that found it (its name as `REVIEW.md`
+   writes it). Leave out what it says not to report.
 3. Were any tests weakened, deleted or skipped to make the checks pass?
 4. Does the change follow the plan? Where it doesn't, is the difference explained?
 5. Is it easy to undo (`two-way`), or hard (`one-way`: data, migrations, public interfaces)? Which of
    the red lines in `REVIEW.md` does it touch?
 
 Return the JSON result: `approved`, `outcomes` (one per bullet, in order), `tests_weakened`,
-`plan_followed`, `findings`, `door`, `red_lines`, and `summary`: Markdown for the owner, opening with
+`plan_followed`, `findings` (each with `severity`, `pass`, `file`, `line`, `what`), `door`, `red_lines`, and `summary`: Markdown for the owner, opening with
 your verdict in one sentence, then what is good, then what needs attention, most important first.

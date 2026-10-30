@@ -205,6 +205,14 @@ test("agents: score has no tools", () => {
   expect(s.timeoutMin).toBe(5);
 });
 
+test("agents: review has a cost cap", () => {
+  const r = loadAgent("review");
+  expect(r.maxCostUsd).toBe(3);
+  // `[agent].max_budget_usd` can only lower it.
+  expect(agentBudgetUsd(r, { ...testConfig(), agent: { ...testConfig().agent, maxBudgetUsd: 2 } })).toBe(2);
+  expect(agentBudgetUsd(r, { ...testConfig(), agent: { ...testConfig().agent, maxBudgetUsd: 10 } })).toBe(3);
+});
+
 test("agents: spec table lists every agent", () => {
   const spec = readFileSync(join(AGENTS_DIR, "..", "specs", "pipeline.md"), "utf8");
   const linked = [...spec.matchAll(/^\|\s*\[[^\]]+\]\(\.\.\/agents\/(\w+)\.md\)/gm)].map((m) => m[1]!).sort();

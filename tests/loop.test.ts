@@ -222,7 +222,18 @@ test("issues: the poll runs every 5 minutes", async () => {
 test("issues: a gh failure is a github fault", async () => {
   const p = new Pipe(TARGET, {});
   p.queue("score", () => ({
-    structured: { u: 3, u_why: "a", i: 3, i_why: "b", title: "Other repo", problem: "p", outcome: ["o"] },
+    structured: {
+      u: 3,
+      u_why: "a",
+      i: 3,
+      i_why: "b",
+      title: "Other repo",
+      problem: "p",
+      outcome: ["o"],
+      affected: "",
+      constraints: [],
+      open_questions: [],
+    },
   }));
   p.issueFail = (args) => (args.includes("owner/web") && args[1] === "list" ? "HTTP 502: bad gateway" : null);
   p.issue({ repo: "owner/api" });

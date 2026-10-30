@@ -1,6 +1,6 @@
 # Repo files
 
-**Status:** Live: REPO-1..11 · **Prefix:** REPO
+**Status:** Live · **Prefix:** REPO
 
 ## Purpose
 
@@ -125,7 +125,8 @@ repo's checks already enforce, so it spends no findings on what CI catches anywa
 - No `REVIEW.md`, or one without `## Do not report` ([REPO-4](#repo-4--reviewmd)) → the review
   prompt ([PIP-4](pipeline.md)) gets these defaults: files `.gitattributes` marks
   `linguist-generated`, lockfiles, and formatting or lint issues a formatter or linter in the repo's
-  checks would catch. A `## Do not report` section replaces the defaults.
+  checks would catch. A `## Do not report` section with bullets replaces the defaults; one without
+  bullets keeps them, as `## Passes` does.
 - Verified by: `repo: REVIEW.md do-not-report defaults`, `pipeline: review prompt has the do-not-report defaults`
 
 **Grammar** (`src/repo/markdown.ts`)
