@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..89 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..89, PIP-92..94 · **Prefix:** PIP
 
 ## Purpose
 
@@ -422,7 +422,8 @@ Two short commands cover what a GitHub action can't express.
 The plan explains the approach before the steps, so the owner can judge it in a minute.
 
 - `plan.md`: `# Plan: <title>`, a line with the intent and spec IDs, then the worker's markdown:
-  `## Approach` (what will be built and why this way), `## Steps` (in order; failing tests first),
+  `## Approach` (what will be built and why this way), `## Files that change` (PIP-91), `## Steps`
+  (in order; failing tests first),
   `## Risks`, `## How to check it`; then Towercab's `## Access` (PIP-47).
 - Verified by: `pipeline: plan.md sections`
 
@@ -773,6 +774,44 @@ Towercab's repo opens a release PR from its Conventional Commits, tags and publi
 - Creating the release PR needs the repo setting that lets Actions create PRs, which `apply-settings` sets.
 - Verified by: `public: release-please files are present and consistent`, `public: renovate extends the org config`
 
+### PIP-92 · Review findings name their pass
+
+Each finding the review reports says which pass found it, so the owner sees at a glance whether it is
+a bug, a security problem or a departure from the spec and plan.
+
+- **Schemas** `review`: each item of `findings` gains `pass` (string), the pass's name as `REVIEW.md`
+  `## Passes` writes it, or one of the defaults `Bugs`, `Security`, `Compliance`
+  ([REPO-4](repo.md)). `agents/review.md` asks for it. A name outside that list is kept as written,
+  not refused.
+- The Review comment (PIP-42) shows each finding as `` - <pass> · `<file>:<line>`: <what> `` under its
+  severity's heading. Approval (PIP-5) and the nit cap do not change.
+- Verified by: `pipeline: review findings name their pass`, `pipeline: review comment shows each finding's pass`
+
+### PIP-93 · The plan names the files that change
+
+The plan lists the files the build will add, change or delete, so the owner sees how far the change
+reaches before approving it, and someone who wasn't in the session could build from the plan alone.
+
+- `plan.md` (PIP-46) gets `## Files that change` between `## Approach` and `## Steps`: one bullet
+  per path, `` `<path>` (new|changed|deleted): <what changes> ``, tests included. A glob may stand
+  for many similar files (generated screenshots, fixtures).
+- `agents/plan.md` asks for the section and states the bar: the plan is complete enough for another
+  engineer to build it without the session's context.
+- A build that touches a file the plan didn't list is not refused; the review's `plan_followed`
+  (PIP-5) judges it as today.
+- Verified by: `pipeline: plan names the files that change`
+
+### PIP-94 · The review has a cost cap
+
+A review run stops at $3, as every other run has a limit, so a runaway review cannot spend without
+bound.
+
+- `agents/review.md`: `max_cost_usd: 3` (was `null`). `[agent].max_budget_usd` can only lower it
+  (PIP-71). The 9 reviews run so far cost $0.23 to $1.18 each, so $3 leaves room for a large diff.
+- A review that uses up its budget ends as any run that does (PIP-24, budget used up): the mission
+  waits for the owner, with the reason. This narrows the review's limits; it gains nothing (PIP-77).
+- Verified by: `agents: review has a cost cap`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
@@ -804,9 +843,10 @@ build    {status: "done"|"blocked"|"access", pr: S?, notes: S,
           access: {domains: [{domain, why}], paths: [{glob, why}]}?,
           plan_changed: S?, lower_a: int?, lower_why: S?}
 review   {approved: bool, outcomes: [{bullet, met: bool, why}], tests_weakened: {value: bool, where},
-          plan_followed: {value: bool, where}, findings: [{severity, file, line: int?, what}],
+          plan_followed: {value: bool, where}, findings: [{severity, pass, file, line: int?, what}],
           door: "one-way"|"two-way", red_lines: [{line, file}], summary: S}
-score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outcome: [S]}
+score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outcome: [S],
+          affected: S, constraints: [S], open_questions: [S]}
 ```
 
 **Code** (`src/pipeline/`; tests `tests/pipeline/*.test.ts`)
@@ -838,3 +878,12 @@ score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outc
   machine safe.
 - Spec rows are `Draft` in the spec PR and the code PR flips them to `Live`, so `main` never claims
   something is built before it is.
+- The agent files were compared with Anthropic's AI-Native SDLC Playbook (2026-10-28). Taken: findings
+  name their pass (PIP-92), the plan names its files (PIP-93), the review gets a cost cap (PIP-94), the
+  scorer fills the intent's other sections ([INT-32](intents.md)), and the review skips what the
+  checks already enforce ([REPO-12](repo.md)). Not taken: a narrow Bash allowlist (the decision
+  above); denying `.env*` and `secrets/` inside the checkout, because the checkout is a fresh clone
+  that never holds a real secret and the secret paths outside it are already denied (PIP-24); and the
+  target repo's own skills and subagents, which `--setting-sources ""` keeps out so a repo cannot
+  change what an agent may do (PIP-70). The verifier, evals and policy skills stay parked in intent
+  261026-2204-5.

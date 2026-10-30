@@ -117,6 +117,18 @@ screenshots command runs in every mission.
   with no browser-missing error, and the review gets the screenshots ([REPO-10](#repo-10--screenshots-block)).
 - Verified by: `repo: Towercab's own files parse`, `repo: Towercab's setup installs the Playwright browser`
 
+### REPO-12 · What the review leaves out by default
+
+Without a `## Do not report` section, the review still skips generated files and the style the
+repo's checks already enforce, so it spends no findings on what CI catches anyway.
+
+- No `REVIEW.md`, or one without `## Do not report` ([REPO-4](#repo-4--reviewmd)) → the review
+  prompt ([PIP-4](pipeline.md)) gets these defaults: files `.gitattributes` marks
+  `linguist-generated`, lockfiles, and formatting or lint issues a formatter or linter in the repo's
+  checks would catch. A `## Do not report` section with bullets replaces the defaults; one without
+  bullets keeps them, as `## Passes` does.
+- Verified by: `repo: REVIEW.md do-not-report defaults`, `pipeline: review prompt has the do-not-report defaults`
+
 **Grammar** (`src/repo/markdown.ts`)
 
 - Every file: UTF-8, a leading BOM dropped, lines split on `\n`, a trailing `\r` dropped. The first

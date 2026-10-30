@@ -44,7 +44,7 @@ An intent's priority is twice its importance plus its urgency.
 | [repo.md](repo.md) | REPO | What Towercab reads from a target repo: `CLAUDE.md`, `REVIEW.md`, `TOWERCAB.md`; protected paths |
 | [ui.md](ui.md) | UI | The local web page for the person running Towercab |
 | [metrics.md](metrics.md) | MET | Cost and time per intent, spend per day |
-| [public.md](public.md) | PUB | What the public repo shows: license, security policy, README, no personal names |
+| [public.md](public.md) | PUB | What the public repo shows: license, security policy, README, screenshot, contributing, conduct, example config, no personal names |
 | [maintain.md](maintain.md) | MNT | Removed: parked as intent 261026-2204-2 |
 | [scheduler.md](scheduler.md) | SCH | Removed: superseded by loop.md |
 | [tasks.md](tasks.md) | TSK | Removed: superseded by intents.md |

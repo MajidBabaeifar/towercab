@@ -133,6 +133,14 @@ test("pipeline: plan.md sections", () => {
   expect(section(md, "Approach")).toBe("A signed token.");
 });
 
+test("pipeline: plan names the files that change", () => {
+  const prompt = render("plan", { intent: "i", spec_ids: "WEB-3", checks: "npm test" });
+  const sections = [...prompt.matchAll(/^ {2}- `## ([^`]+)`/gm)].map((m) => m[1]);
+  expect(sections).toEqual(["Approach", "Files that change", "Steps", "Risks", "How to check it"]);
+  expect(prompt).toContain("(new|changed|deleted)");
+  expect(prompt).toContain("another engineer could build it without this session's context");
+});
+
 test("pipeline: PRs link to each other", () => {
   expect(linkLine(links)).toBe(
     `Part of this change: [intent](${links.intentUrl}) · [spec PR](${links.specPrUrl}) · [plan PR](${links.planPrUrl}).`,

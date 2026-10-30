@@ -214,6 +214,14 @@ test("pipeline: review on every PR", () => {
   expect(st.indexOf("gate")).toBe(st.indexOf("review") + 1);
 });
 
+test("pipeline: review prompt has the do-not-report defaults", () => {
+  // The target repo has no REVIEW.md: the default passes and what not to report reach the review.
+  const r = call("review").prompt;
+  expect(r).toContain("Bugs, Security, Compliance");
+  expect(r).toContain("Do not report (Towercab's defaults):");
+  expect(r).toContain("linguist-generated");
+});
+
 test("pipeline: review comment is posted", () => {
   const c = code().comments.filter((x) => x.body.startsWith("<!-- towercab:review:1 -->"));
   expect(c).toHaveLength(1);

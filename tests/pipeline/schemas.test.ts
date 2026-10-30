@@ -69,7 +69,7 @@ test("schemas: closed objects, every key required", () => {
       outcomes: [{ bullet: "b", met: true, why: "w" }],
       tests_weakened: { value: false, where: "" },
       plan_followed: { value: true, where: "" },
-      findings: [{ severity: "nit", file: "a.ts", line: null, what: "x" }],
+      findings: [{ severity: "nit", pass: "Bugs", file: "a.ts", line: null, what: "x" }],
       door: "two-way",
       red_lines: [],
       summary: "ok",
