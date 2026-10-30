@@ -314,11 +314,86 @@ drafted from it keeps that in its own section, so the design starts from everyth
   as for any intent ([PIP-25](pipeline.md)).
 - Verified by: `issues: the intent keeps affected, constraints and open questions`, `issues: empty sections are left out`
 
+### INT-37 · A feature list per repo
+
+Each repo has a short list, in the intents repo, of what people can do with it, which the owner can
+read and edit by hand.
+
+- `features/<repo>.md` (`<repo>` the `[repos]` name, INT-2's repo rule). A new file starts with
+  `# <repo>: what people can do` and an HTML comment saying how to edit it. One feature per line:
+  `- [live] <sentence>`, `- [in progress] <sentence>` or `- [planned] <sentence>` (`*` works as the
+  marker, the status in any case). A line Towercab adds for an intent ends with
+  `<!-- intent <id> -->`, which is how it finds the line again. Any other line (notes, headings,
+  blanks) is kept as it is and never read as a feature.
+- Written only through the store's `editFeatures(repo, what, fn)`: INT-10's protocol (lock, pull,
+  change, regenerate the views, commit `towercab: features <repo> <what>`, push, replay after a
+  rejected push); no change → no commit. A symlink in its path is refused (INT-1), as is a name that
+  isn't a repo name. Towercab edits line by line: every line it doesn't change stays byte-identical.
+- Read for the page through `localFeatures(repo)`: the local checkout's copy, without a pull or the
+  lock (the loop's `list()` keeps the checkout fresh), so a page open while work runs doesn't sync the
+  intents repo every few seconds, and the list still shows offline. Bytes that aren't UTF-8 are refused
+  as `features/<repo>.md: not UTF-8`.
+- Verified by: `features: lines parse with status and intent`, `intents: the feature list is written through the store`
+
+### INT-38 · The list follows the intents
+
+When Towercab starts an intent its line appears as in progress, when the intent is done it becomes
+live, and when its work stops for good its line goes.
+
+- In the loop's entry effects (LOOP-6), after the intent file's fields: entering `pick` sets the
+  intent's line to `in progress`, adding `- [in progress] <title> <!-- intent <id> -->` after the last
+  feature line when there is none; entering `done` sets it to `live` (added the same way when
+  missing); entering `stopped` removes it, whatever stopped it (a drop, a closed PR, the intent file
+  removed or moved), since a stopped intent is no longer being worked on and comes back as planned if
+  it is queued again. A replaced attempt changes nothing: the new attempt's `pick` does. Only the status word of an existing line changes, so the
+  owner's wording stays. The title is cleaned to one line of at most 200 characters.
+- Each edit is idempotent, so an entry retried after a crash repeats it harmlessly. A sync failure
+  retries the entry on the next pass; any other refusal (a symlink, bytes that aren't UTF-8) is
+  logged and the mission moves on.
+- Verified by: `features: a picked intent gets an in-progress line, other lines stay byte-identical`, `features: done marks the line live, keeping the owner's wording`, `features: a dropped intent's line is removed`, `features: the loop tracks an intent from pick to done`, `features: a dropped intent's line goes`, `features: an unreadable feature list doesn't hold a mission`
+
+### INT-39 · Writing the list from the repo
+
+When a repo has no list of its own yet, Towercab reads the repo's README and specs once and writes
+down what people can already do; the owner can ask for it again.
+
+- Asked for by the Repos page (UI-144): meta `features:<repo>` becomes `{state: "due"}`. The loop
+  starts the oldest due one when new work may start (not paused, no blocking problem, under the daily
+  budget), one at a time, on its own (`running`), and records `done` (with the count and cost) or
+  `failed` (with the reason). A stop kills the run and makes it due again; one a crash left `running`
+  is due again on the next start. While it runs the loop isn't idle, so neither a self-update
+  (LOOP-35) nor `towercab run` without `--watch` ends it.
+- The run: inside the pass (so it never fetches Towercab's clone beside a mission's git step), the
+  clone is fetched and a fresh checkout of the base branch is made at `work/features-<repo>` (removed
+  afterwards); then, on its own, `agents/features.md` runs there with `Read`, `Glob`,
+  `Grep` only, in the sandbox, no network, `[agent].model`, `timeout_min: 10`, `max_cost_usd: 2`, its
+  files under `runs/features/<repo>/`, and a run past its time limit fails. Its prompt gets the repo's
+  name, the current live lines no intent added (`<current>`) and the live lines intents added
+  (`<listed>`, not to be repeated), each fenced as data.
+- The answer is data: schema `features` (`{features: string[]}`) is checked first; each sentence is
+  cleaned to one line (no list marker, heading, status, HTML comment; at most 200 characters),
+  duplicates and sentences already in `<listed>` dropped, at most 30 kept, none left → failed. The
+  sentences replace the file's `live` lines that no intent added, at the place of the first one; such
+  lines the owner added during the run (not among those in `<current>`) are kept after them; every
+  other line stays.
+- Verified by: `features: the backfill replaces only the untagged live lines`, `features: model text is cleaned to one sentence`, `features: the backfill reads the repo read-only and writes the live lines`, `features: a bad backfill answer is recorded, not written`, `features: the backfill is shown what intents already listed and doesn't repeat it`, `features: lines the owner adds during a backfill are kept`, `features: a backfill stopped by a shutdown is asked for again`, `features: a backfill that runs out of time fails`, `features: a backfill left running is asked for again on start`
+
+### INT-40 · Planned features
+
+Queued intents count as planned without being written to the file.
+
+- The Repos page shows as planned the file's `planned` lines, then every up-next or waiting intent of
+  the repo (UI-63) that no line names, by its title. Parked intents aren't planned. Towercab never
+  writes a `planned` line; the owner may.
+- Verified by: `ui: a repo page shows its features, work and spend`
+
 ## Out of scope
 
 - Other stores (Notion, Jira).
 - Intents drafted from monitoring alerts.
 - Issues by other people without the `towercab` label (INT-20).
+- The backfill's cost (INT-39) in the spend metrics: it runs outside any mission, so only its own
+  status sentence shows what it cost; side runs' costs are a later intent.
 
 ## Decisions
 

@@ -248,6 +248,7 @@ const STAGE_OF_KIND: Record<RunKind, string> = {
   // The risk agent runs at three gates; its handler names the stage folder (PIP-96).
   risk: "review",
   score: "design",
+  features: "design",
 };
 
 /** Record the step, then spawn a Claude run (LOOP-6, LOOP-7, PIP-13, PIP-24). */

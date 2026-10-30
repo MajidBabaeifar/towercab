@@ -101,6 +101,17 @@ export interface IntentStore {
   hasMark(mark: string): Promise<boolean>;
   /** Read a file in the intents repo's `main` (e.g. a plan.md), or null. */
   readFile(path: string): Promise<string | null>;
+  /**
+   * INT-37: change `features/<repo>.md` and push (`towercab: features <repo> <what>`). `fn` gets the
+   * file's text (null: none yet) and returns the new text, or null to leave it; it runs again on a
+   * fresh `main` after a rejected push. True when a change was pushed.
+   */
+  editFeatures(repo: string, what: string, fn: (text: string | null) => string | null): Promise<boolean>;
+  /**
+   * UI-143: `features/<repo>.md` as the local checkout has it, without a pull or the lock (the page reads
+   * it often, and offline too); null when there is none. The last `list()` keeps the checkout fresh.
+   */
+  localFeatures(repo: string): Promise<string | null>;
   /** The intents repo on GitHub (`owner/name`), or null when its remote isn't GitHub. */
   github(): string | null;
   /** The intent file's URL on GitHub, or null. */

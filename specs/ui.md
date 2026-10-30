@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..104, UI-120..125, UI-130..131, UI-133..137 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..104, UI-120..125, UI-130..131, UI-133..137, UI-140..145 · **Prefix:** UI
 
 ## Purpose
 
@@ -133,13 +133,16 @@ and the intent itself.
   step. The stage map (UI-73..77) takes over the time per step and the run files.
 - Verified by: `ui: intent page shows the three PRs`, `ui: timeline in plain words`
 
-### UI-63 · Queue page
+### UI-63 · Queue per repo
 
-A queue page shows, per repo, what runs, what waits behind it, and what is parked.
+Per repo, Towercab says what runs, what is up next, what waits on something else and why, and what is
+parked.
 
-- `/queue`: one lane per repo ([LOOP-65](loop.md)): the running intent, then the waiting ones in pick
-  order with position and reason; then parked intents; then the last 10 done. The lanes are read-only;
-  the page ends with the Add repo form (UI-130).
+- `lanesOf()` (`GET /api/queue`): one lane per `[repos]` repo, then any other repo a mission names:
+  its missions (the build slot's holder first); "up next": queued intents nothing but their turn holds
+  (none, a full repo, Pause), numbered in pick order; "waiting": those held by a dependency, a usage
+  limit, an unreachable service or another reason, with the reason (UI-61); parked ones; the last 10
+  done. The Repos page (UI-140) shows it. Read-only.
 - Verified by: `ui: queue lanes by repo`
 
 ### UI-64 · Activity page
@@ -156,7 +159,7 @@ An activity page lists what happened, newest first, filterable by intent, repo, 
 The page talks to the loop through a small JSON API.
 
 - `GET /api/state` (the overview's data, with a `version` that changes when anything shown changes),
-  `GET /api/intents/<id>`, `GET /api/queue`, `GET /api/activity?…`, `GET /api/runs/<id>/<file>`
+  `GET /api/intents/<id>`, `GET /api/queue`, `GET /api/repos`, `GET /api/activity?…`, `GET /api/runs/<id>/<file>`
   (`<file>` or `<stage>/<file>`, names `[A-Za-z0-9._-]+`, files under `runs/<id>/` only, no symlinks
   out, text, at most 2 MB), `GET /api/events`
   (Server-Sent Events: `version` on each change), `POST /api/actions` `{action, intent, text?}`
@@ -382,9 +385,9 @@ The strip reads well in light and dark, on a wide screen and on a phone, and wit
 
 An intent whose plan is approved but waits for the build slot shows as ready to build, behind the intent that holds the slot.
 
-- State `Queued` with the sentence "Ready to build, behind <title>" (UI-56, UI-59); on the queue
-  page (UI-63) each repo lane lists the running intent, then ready intents in build order, then the
-  intents ahead of build (with a count `n of <ahead> ahead`), then waiting ones with the reason
+- State `Queued` with the sentence "Ready to build, behind <title>" (UI-56, UI-59); on a repo's
+  page (UI-63, UI-141) "In progress" lists the running intent, then ready intents in build order, then
+  the intents ahead of build (with a count `n of <ahead> ahead`), then the queued ones with the reason
   "repo has <n> intents ahead". On the airspace (UI-78) a ready plane sits at `03 code`.
 - Verified by: `ui: ready to build shows behind the running intent`, `ui: queue lane shows ahead count`
 
@@ -586,12 +589,12 @@ The airspace tells a plane that is rolling back or fixing a live failure apart f
 
 The owner adds a repo from the page by typing only its `owner/name`.
 
-- The Queue page ends with an "Add repo" form: one field (`owner/name`) and an "Add repo" button; not
-  shown when the page is read-only (UI-2). It posts `{action: "addRepo", github, name?}` to
+- The Repos page's All view (UI-142) ends with an "Add repo" form: one field (`owner/name`) and an
+  "Add repo" button; not shown when the page is read-only (UI-2). It posts `{action: "addRepo", github, name?}` to
   `/api/actions`, which runs LOOP-66's `repo add` in the loop (`source` `ui`).
 - The request ends once LOOP-66's checks pass (the server's 15 s request limit stays; a clone can take
   longer): the reply is `Adding <name> (<owner/name>, base <base>): Towercab is cloning it now. It shows
-  on the Queue page when done, and its intents start from then on.`, or the refusal's reason (LOOP-66)
+  on the Repos page when done, and its intents start from then on.`, or the refusal's reason (LOOP-66)
   shown on the form. The clone goes on in the loop; the page's live update shows the new repo when it is
   stored (the page's version covers the `repos` table). A clone or store that fails becomes a problem
   (UI-60), `Towercab couldn't add the repo <name> (<owner/name>)` with the reason, until the repo is
@@ -676,6 +679,72 @@ and shows it on each board row.
   All time is one `SUM(cost_usd) … GROUP BY repo`; only missions updated in the last 8 days have their
   runs read.
 - Verified by: `ui: spend per repo today, 7 days and all time`
+
+### UI-140 · Repos tab
+
+A Repos tab, where the Queue tab was, shows one repo at a time, picked from a row of chips.
+
+- `/repos`, the third top tab. `/queue` (its old name) shows the same page, so old links work. A chip
+  per repo (the queue's lanes, UI-63) with its open intents (in progress, up next, waiting, parked)
+  and a dot when one waits on the owner, after an "All" chip with the total. The chosen repo is in
+  the URL, `/repos?repo=<name>`, so it can be linked; an unknown name shows All and says so.
+- Data: `GET /api/repos[?repo=<name>]`, `repos()` in `src/ui/repos.ts`: `chips`, `selected`, `repo`
+  (UI-141) or `all` (UI-142), the spend totals and `error`. The page updates live like the others.
+- Verified by: `ui: repos chips and the All view`, `ui: repos API and refresh go through the server`, `ui: screenshots light, dark and mobile`
+
+### UI-141 · A repo's page
+
+A repo's page says what people can do with it, then what Towercab is doing in it and what that
+cost, in a few short sections instead of one long list.
+
+- In order: the repo's name, GitHub name and "n of m ahead" (UI-100); "What people can do" (UI-143);
+  "In progress" (its missions as work rows, UI-59, owner waits included); "Up next" (numbered, in pick
+  order); "Waiting" (each with its reason in words, UI-61; only when there is one); "Parked" (folded
+  by default, only when there is one); "Recently done" (UI-63's last 10 done or dropped, folded, only
+  when there is one); "Spend" (today, 7 days, all time, UI-137).
+- Verified by: `ui: a repo page shows its features, work and spend`, `ui: screenshots light, dark and mobile`
+
+### UI-142 · All repos
+
+With no repo chosen, the page shows one short card per repo, not one long list.
+
+- A card per repo: its name, GitHub name, counts in words (in progress, needing the owner, up next,
+  waiting, parked; the zero ones of the last three left out) and its spend; it links to the repo's
+  page. The "Add repo" form (UI-130) ends the All view.
+- Verified by: `ui: repos chips and the All view`, `ui: screenshots light, dark and mobile`
+
+### UI-143 · Feature list on the page
+
+The repo's page leads with its feature list, grouped as In progress, Live and Planned.
+
+- From `features/<repo>.md` as the local checkout has it (INT-37's `localFeatures`, no pull) and
+  INT-40's planned intents. A line Towercab added for an intent links to the intent's page. "Edit the list" links to the file on GitHub when it exists.
+  Nothing listed → "No features listed yet."
+- Verified by: `ui: a repo page shows its features, work and spend`, `ui: screenshots light, dark and mobile`
+
+### UI-144 · Reading the list from the repo
+
+The first time a repo's page is shown, Towercab asks once for its list to be read from the repo, and
+the page offers to read it again.
+
+- `GET /api/repos?repo=<name>` for a configured repo whose run (INT-39) was never asked for and whose
+  file has no line of its own asks for it through the `features` action, only while Towercab runs;
+  the All view and later looks never ask again. Under the list, one sentence says where it stands:
+  asked, reading, `Last read from the repo <when>: <n> live features.`, or the failure and its reason.
+- "Refresh from the repo" (shown while Towercab runs, unless a run is asked for or running) posts
+  `{action: "features", repo}`; the reply says the list is rewritten within a few minutes, or that a
+  run is already on its way.
+- The backfill's state is part of the page's version (`dbMark` reads the `features:%` meta rows), so an
+  open page shows a run asked for, started, done or failed without anything else moving.
+- Verified by: `ui: the first look asks for the backfill once`, `ui: features action asks the loop once`, `ui: repos API and refresh go through the server`, `ui: a backfill's state changes the page's version`
+
+### UI-145 · Repos on a phone
+
+The Repos page works at phone width and in light and dark, like the rest of the page.
+
+- Chips wrap onto more lines; the All view is one column at 720 px or less; nothing scrolls sideways
+  (UI-68).
+- Verified by: `ui: screenshots light, dark and mobile`
 
 ## Out of scope
 

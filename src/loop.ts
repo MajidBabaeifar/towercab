@@ -8,13 +8,24 @@ import { applyPending, paused } from "./commands.ts";
 import type { Config } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
 import { fixFor, Health } from "./faults.ts";
+import {
+  BackfillError,
+  dueFeatures,
+  type FeaturesDeps,
+  prepareBackfill,
+  recoverFeatures,
+  runBackfill,
+  StoppedError,
+  setFeaturesRun,
+} from "./features.ts";
 import { retireBranch } from "./github/branches.ts";
 import { approveRequested, intentEvents, prEvents, releaseRequested } from "./github/events.ts";
 import { pollIssues } from "./github/issues.ts";
 import { closeIfOpen, type PrState, readPr } from "./github/prs.ts";
 import { type ChildEnd, type Clock, type Ctx, EnvError, type GitHub, type Handlers } from "./handlers.ts";
 import type { Home } from "./home.ts";
-import type { Intent, IntentStore, Listing } from "./intents/types.ts";
+import { removeFeature, setFeature } from "./intents/features.ts";
+import { type Intent, type IntentStore, type Listing, SyncError } from "./intents/types.ts";
 import {
   type ApplyCtx,
   apply,
@@ -69,6 +80,8 @@ export interface LoopDeps {
   readPr?: (repo: string, n: number) => Promise<PrState>;
   /** Self-update (LOOP-35); off in tests. */
   selfUpdate?: boolean;
+  /** INT-39: when a backfill run's time is up (default a real timer; tests resolve it themselves). */
+  featuresDeadline?: (ms: number) => Promise<void>;
 }
 
 export interface LoopOpts {
@@ -106,6 +119,9 @@ export class Loop {
   private lastIntentsPoll = 0;
   private lastIssuesPoll = 0;
   private issuesRun: Promise<void> | null = null;
+  /** INT-39: the feature-list backfill running now, and how to stop it. */
+  private featuresJob: Promise<void> | null = null;
+  private featuresStop: (() => void) | null = null;
   /** Why the last issue poll failed (INT-21); while set, the other GitHub reads don't close the fault. */
   private issuesError: string | null = null;
   private lastPrPoll = new Map<number, number>();
@@ -166,6 +182,7 @@ export class Loop {
     }
     db.setMeta("running", `${process.pid} ${Math.floor(this.now)}`);
     loadRepos(this.d.config, db, this.now);
+    recoverFeatures(db, this.now);
     await this.pollIntents(true);
     this.startIssues(true);
   }
@@ -173,6 +190,8 @@ export class Loop {
   /** Clean exit: children get SIGTERM, then SIGKILL; their missions are `interrupted`. */
   async shutdown(): Promise<void> {
     await this.issuesIdle();
+    this.stopFeatures();
+    await this.featuresIdle();
     for (const [id, r] of this.children) {
       r.handle.kill("SIGTERM");
       const done = await Promise.race([
@@ -297,6 +316,7 @@ export class Loop {
     await this.stepDue(!report.woke);
     if (!paused(db) && !this.health.blocked(this.now) && !budgetReached(db, this.d.config, this.now)) {
       report.picked = await this.pick();
+      await this.startFeatures();
     }
     await this.selfUpdate();
     await this.sendMessages();
@@ -305,7 +325,8 @@ export class Loop {
     this.inhibitor.update(driven ? `${driven.intent} ${driven.stage}` : null, clock.mono());
 
     const live = unfinished(db).filter((m) => isWorking(m.stage) && !this.cooling(m));
-    report.idle = this.children.size === 0 && live.length === 0 && report.picked === null;
+    report.idle =
+      this.children.size === 0 && this.featuresJob === null && live.length === 0 && report.picked === null;
     if (this.targetId) {
       const m = db.get<Mission>(
         "SELECT * FROM missions WHERE intent = ? ORDER BY id DESC LIMIT 1",
@@ -417,12 +438,37 @@ export class Loop {
         );
       }
     }
+    if (!replaced) await this.featureLine(m, intent);
     if (replaced) await this.closeReplaced(m);
     else if (m.stage === "stopped") await this.retireStopped(m);
     if (finished(m.stage)) removeCheckout(this.d.home.abs(m.checkout));
     const set: Record<string, SqlValue> = { step: "" };
     if (m.stage === "merge" && paused(db)) set.held = 1;
     update(db, m.id, set, this.now);
+  }
+
+  /**
+   * INT-38: the repo's feature list follows the mission: picked → its line "in progress", done → "live",
+   * stopped (dropped or removed) → its line goes. Each edit is idempotent, so a retried entry repeats
+   * it harmlessly; only a sync failure retries the entry, any other refusal is logged and skipped.
+   */
+  private async featureLine(m: Mission, intent: Intent | null): Promise<void> {
+    if (!this.d.config.repos.has(m.repo)) return;
+    const title = intent?.title ?? "";
+    let fn: ((text: string | null) => string | null) | null = null;
+    if (m.stage === "pick" && intent)
+      fn = (t) => setFeature(t, m.repo, { intent: m.intent, title, status: "in progress" });
+    else if (m.stage === "done")
+      fn = (t) => setFeature(t, m.repo, { intent: m.intent, title, status: "live" });
+    else if (m.stage === "stopped") fn = (t) => removeFeature(t, m.intent);
+    if (!fn) return;
+    const what = m.stage === "pick" ? "start" : m.stage === "done" ? "live" : "drop";
+    try {
+      await this.d.store.editFeatures(m.repo, `${what} ${m.intent}`, fn);
+    } catch (e) {
+      if (e instanceof SyncError) throw e;
+      this.d.log(`${label(m)}: the feature list of ${m.repo} wasn't changed: ${(e as Error).message}`);
+    }
   }
 
   /** The mission's spec, plan and code PRs, with the repo each lives in. */
@@ -596,6 +642,71 @@ export class Loop {
     );
     this.issuesRun = run.finally(() => {
       this.issuesRun = null;
+    });
+  }
+
+  /** Resolves when no feature-list backfill is running (tests and shutdown wait for it). */
+  async featuresIdle(): Promise<void> {
+    while (this.featuresJob) await this.featuresJob;
+  }
+
+  /** Shutdown: a running backfill's child is killed and the backfill is asked for again. */
+  private stopFeatures(): void {
+    this.featuresStop?.();
+  }
+
+  /**
+   * INT-39: the oldest asked-for backfill of a feature list, one at a time, on its own (it takes
+   * minutes). Only when new work may start: not paused, no blocking problem, under the budget.
+   */
+  private async startFeatures(): Promise<void> {
+    if (this.featuresJob) return;
+    const db = this.d.db;
+    const repo = dueFeatures(db)[0];
+    if (repo === undefined) return;
+    setFeaturesRun(db, repo, { state: "running", at: this.now });
+    let stop!: () => void;
+    const stopped = new Promise<void>((r) => {
+      stop = r;
+    });
+    const deps: FeaturesDeps = {
+      config: this.d.config,
+      home: this.d.home,
+      tools: this.d.tools,
+      clock: this.d.clock,
+      store: this.d.store,
+      github: this.d.github,
+      stop: stopped,
+      ...(this.d.featuresDeadline ? { deadline: this.d.featuresDeadline } : {}),
+    };
+    // The clone's fetch and the checkout happen in the pass, never beside a mission's git step.
+    let checkout: string;
+    try {
+      checkout = await prepareBackfill(deps, repo);
+    } catch (e) {
+      setFeaturesRun(db, repo, { state: "failed", at: this.now, why: (e as Error).message, cost: 0 });
+      this.d.log(`feature list of ${repo}: reading the repo failed: ${(e as Error).message}`);
+      return;
+    }
+    this.featuresStop = stop;
+    const run = runBackfill(deps, repo, checkout).then(
+      (r) => {
+        setFeaturesRun(db, repo, { state: "done", at: this.now, n: r.n, cost: r.cost });
+        this.d.log(`feature list of ${repo}: ${r.n} live features read from the repo`);
+      },
+      (e: Error) => {
+        if (e instanceof StoppedError) {
+          setFeaturesRun(db, repo, { state: "due", at: this.now });
+          return;
+        }
+        const cost = e instanceof BackfillError ? e.cost : 0;
+        setFeaturesRun(db, repo, { state: "failed", at: this.now, why: e.message, cost });
+        this.d.log(`feature list of ${repo}: reading the repo failed: ${e.message}`);
+      },
+    );
+    this.featuresJob = run.finally(() => {
+      this.featuresJob = null;
+      this.featuresStop = null;
     });
   }
 
@@ -911,7 +1022,7 @@ export class Loop {
     const r = await checkUpdate({
       tools: this.d.tools,
       checkout: checkoutRoot(),
-      idle: () => this.children.size === 0,
+      idle: () => this.children.size === 0 && this.featuresJob === null,
     });
     if (r.kind === "updated") {
       this.d.log(`updated ${r.from} → ${r.to}; restarting`);

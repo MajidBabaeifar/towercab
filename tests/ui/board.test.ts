@@ -47,7 +47,7 @@ test("ui: board columns follow the airspace", async () => {
     "Your code review",
     "Done",
   ]);
-  expect(b.columns.map((c) => c.count)).toEqual([4, 2, 0, 0, 0, 1, 4, 1, 1, 5]);
+  expect(b.columns.map((c) => c.count)).toEqual([5, 2, 0, 0, 0, 1, 4, 1, 1, 5]);
   // Config order, then a repo only an intent names.
   expect(b.repos.map((r) => r.repo)).toEqual(["web", "api", "docs", "mobile", "infra", "blog", "crm"]);
   expect(b.repos.find((r) => r.repo === "crm")!.github).toBe("");
@@ -62,6 +62,7 @@ test("ui: board columns follow the airspace", async () => {
   const web = b.repos.find((r) => r.repo === "web")!;
   expect(web.cells.queue!.map((c) => [c.title, c.state.label])).toEqual([
     ["Dark mode for the settings page", "Queued"],
+    ["Gift cards at checkout", "Queued"],
     ["Try a new chart library", "Parked"],
   ]);
   expect(web.cells.ci).toEqual([
@@ -71,7 +72,7 @@ test("ui: board columns follow the airspace", async () => {
       state: planes.find((p) => p.intent === IDS.ci)!.state,
     },
   ]);
-  expect([web.open, web.done]).toEqual([4, 2]);
+  expect([web.open, web.done]).toEqual([5, 2]);
 
   // An up-next intent the listing doesn't know is on the airspace, so it has a lane too: the last one.
   f.state.upNext.push({ intent: "261026-2200-9", priority: 4, skip: null });

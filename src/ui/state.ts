@@ -1036,7 +1036,12 @@ export function dbMark(db: Db): string {
     db.get<{ r: string | null }>(
       "SELECT group_concat(name || ' ' || base || ' ' || workers || ' ' || ahead, ',') AS r FROM repos",
     )?.r ?? "";
-  return `${t}:${c}:${u}:${r}`;
+  // A feature-list backfill asked for, started, done or failed (UI-144) shows on open pages too.
+  const f =
+    db.get<{ f: string | null }>(
+      "SELECT group_concat(key || '=' || value, ',') AS f FROM meta WHERE key LIKE 'features:%'",
+    )?.f ?? "";
+  return `${t}:${c}:${u}:${r}:${f}`;
 }
 
 /** The overview's data (`GET /api/state`). */
@@ -1777,14 +1782,23 @@ export function e2eLogOf(root: string, id: string): string | null {
   return best ? `/api/runs/${encodeURIComponent(id)}/e2e/${encodeURIComponent(best.name)}` : null;
 }
 
-/** The queue page's data (`GET /api/queue`): one lane per repo. */
+/** UI-63: a queued intent is up next unless something other than its turn holds it. */
+const HELD = new Set(["after", "cooling", "unreachable", "other"]);
+
+/** The queue's data (`GET /api/queue`, UI-63): one lane per repo. */
 export async function queue(src: UiSources): Promise<QueuePage> {
   const s = await snapshot(src);
+  const lanes = lanesOf(src, s);
+  return { version: versionOf(lanes, dbMark(src.db)), lanes };
+}
+
+/** UI-63: one lane per `[repos]` repo, then any other repo a mission names. */
+export function lanesOf(src: UiSources, s: Snap): Lane[] {
   const list = src.upNext();
   const titles = (x: string) => titleOf(s, x);
   const repos = [...src.config.repos.keys()];
   for (const m of s.missions) if (!repos.includes(m.repo)) repos.push(m.repo);
-  const lanes: Lane[] = repos.map((repo) => {
+  return repos.map((repo): Lane => {
     // The build slot's holder first, then plan-approved intents in build order, then those ahead.
     const rank = (m: Mission) => (isReady(m) ? 1 : isAhead(m) ? 2 : 0);
     const running = s.missions
@@ -1805,7 +1819,9 @@ export async function queue(src: UiSources): Promise<QueuePage> {
       when: null,
       cost: null,
     });
-    const waiting = mine.filter((u) => u.skip?.kind !== "parked").map((u, n) => item(u, n + 1));
+    const queued = mine.filter((u) => u.skip?.kind !== "parked");
+    const upNext = queued.filter((u) => !HELD.has(u.skip?.kind ?? "")).map((u, n) => item(u, n + 1));
+    const waiting = queued.filter((u) => HELD.has(u.skip?.kind ?? "")).map((u) => item(u, null));
     const parked = mine.filter((u) => u.skip?.kind === "parked").map((u) => item(u, null));
     const dropped = s.listing?.droppedIds ?? new Set<string>();
     const done: QueueItem[] = (s.listing?.done ?? [])
@@ -1828,12 +1844,12 @@ export async function queue(src: UiSources): Promise<QueuePage> {
       github: src.config.repos.get(repo)?.github ?? "",
       ahead: `${aheadN} of ${limit} ahead`,
       running,
+      upNext,
       waiting,
       parked,
       done,
     };
   });
-  return { version: versionOf(lanes, dbMark(src.db)), lanes };
 }
 
 export interface ActivityFilters {
