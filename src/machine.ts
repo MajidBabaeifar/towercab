@@ -137,6 +137,9 @@ export function next(stage: Stage, event: Event, from: Stage | null = null): Nex
       if (stage === "blocked" && from === "plan") return go("build");
       return K("ignore");
     case "code_merged":
+      // A wait after shipping (a frozen repo, a revert) keeps reading its merged PR: no new ship.
+      if (stage === "blocked" && from && (orderIndex(from) > orderIndex("merge") || isShipExtra(from)))
+        return K("ignore");
       if (stage === "approval:merge" || stage === "blocked") return go("deploy");
       if (between(stage, "build", "merge")) return go("deploy");
       return K("ignore");

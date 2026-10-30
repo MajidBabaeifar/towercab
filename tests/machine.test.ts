@@ -155,6 +155,11 @@ test("machine: ship transitions", () => {
     ["revert", "closed", "stop"],
   ];
   for (const [s, e, want] of rows) expect(show(next(s, e)), `${s} × ${e}`).toBe(want);
+  // A wait after shipping keeps seeing its merged PR: that is no new merge.
+  expect(show(next("blocked", "code_merged", "rollback"))).toBe("ignore");
+  expect(show(next("blocked", "code_merged", "revert"))).toBe("ignore");
+  expect(show(next("blocked", "code_merged", "e2e"))).toBe("ignore");
+  expect(show(next("blocked", "code_merged", "verify"))).toBe("→ deploy");
   for (const s of ["deploy", "e2e", "rollback", "revert"] as Stage[]) {
     expect(isWorking(s), s).toBe(true);
     expect(phaseOf(s, null), s).toBe("code");
