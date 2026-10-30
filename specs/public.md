@@ -173,7 +173,51 @@ The new public files obey the no-personal-names rule.
   `docs/**` (text files).
 - Verified by: `public: no personal names`
 
+### PUB-18 · Bug report form
+
+A stranger who reports a bug is asked for what we need to act on it: what happened, what was expected, the versions and the log lines.
+
+- `.github/ISSUE_TEMPLATE/bug_report.yml` is a GitHub issue form (`name`, `description`, `body`).
+  Required fields: what happened, what was expected, the Towercab commit or version, OS, Node,
+  `gh` and Claude Code versions. Optional: the relevant log lines, in a `render: shell` textarea
+  that says to remove secrets (tokens, keys, private repo names) first.
+- "What happened" and "what was expected" are the fields that become the intent's Problem and
+  Proposed outcome ([INT-22](intents.md)). The form's `labels` do not include `towercab`: only the
+  owner decides which issues Towercab reads ([INT-20](intents.md)).
+- Verified by: `public: bug report form asks for the versions and logs`
+
+### PUB-19 · Feature request form
+
+A stranger who asks for a feature is asked for the problem and the outcome wanted, the same two parts an intent has.
+
+- `.github/ISSUE_TEMPLATE/feature_request.yml` is an issue form with two required textareas labelled
+  `Problem` and `Proposed outcome`, matching the intent sections ([INT-2](intents.md)). It adds no
+  `towercab` label.
+- Verified by: `public: feature request form has problem and outcome`
+
+### PUB-20 · Issue chooser
+
+Blank issues are off, and security reports are sent to the security policy.
+
+- `.github/ISSUE_TEMPLATE/config.yml` has `blank_issues_enabled: false` and one `contact_links`
+  entry whose `url` points at `SECURITY.md` of this repo ([PUB-1](#pub-1--license-and-security-policy)),
+  with a name that says it is for vulnerabilities.
+- Verified by: `public: issue chooser blocks blank issues and points to the security policy`
+
+### PUB-21 · Pull request template
+
+A stranger's pull request says what changes and why, which spec rows it touches and how it was checked.
+
+- `.github/pull_request_template.md` has `## ` sections, in order: what changes and why, spec rows
+  touched (IDs, or "none" for a change with no behaviour), how it was checked (`npm run check`), and
+  screenshots for UI changes.
+- Towercab's own PR bodies keep the sections of `prompts/writing.md`; no check requires the template's
+  sections in them, and no code reads the template.
+- Verified by: `public: pull request template sections`
+
 ## Out of scope
+
+- Changing CI; bringing it to the shared template is a separate intent.
 
 - Changing the repo's visibility or settings (the owner's).
 - Rewriting history, force-pushing, or rotating keys (the owner's).
