@@ -12,10 +12,12 @@ import {
   duration,
   exactTime,
   intentPage,
+  missionCard,
   money,
   moveWords,
   overview,
   queue,
+  riskView,
   stageMap,
   stateOf,
   stepWords,
@@ -216,6 +218,58 @@ test("ui: unknown repo card offers to add the repo", async () => {
   // No repos to go by: the field starts empty.
   f.sources.config.repos.clear();
   expect((await crm()).addRepo).toEqual({ name: "crm", github: "" });
+});
+
+test("ui: the card shows the risk", async () => {
+  const f = fixture();
+  const o = await overview(f.sources);
+  const code = o.needs.find((c) => c.intent === IDS.code)!;
+  expect(code.risk).toEqual({
+    level: "medium",
+    label: "Medium risk",
+    gate: "code",
+    blast: "Affects many: Everyone who starts with the docs.",
+    door: "Easy to undo: Reverting the PR brings the old guide back.",
+    certainty: "Sure it works once live: Every link and code sample is checked in CI.",
+    summary: "A wrong step would stop new users early, but a revert undoes it at once.",
+    raised: "Raised from low to medium: it could affect many people or systems.",
+  });
+  // A card waits on one gate: the plan card shows no code risk, and none was judged on its plan.
+  expect(o.needs.find((c) => c.intent === IDS.plan)!.risk).toBeUndefined();
+  // The intent page shows it in the card, not twice.
+  const page = (await intentPage(f.sources, IDS.code))!;
+  expect(page.card?.risk?.label).toBe("Medium risk");
+  expect(page.risk).toBeUndefined();
+  // Spec cards list the second reviewer's open points (PIP-97); the latest risk shows without a card.
+  const m = mission({
+    stage: "approval:spec",
+    waiting: "approve spec",
+    head: "abc",
+    data: JSON.stringify({
+      riskOf: { spec: "abc" },
+      risk: {
+        spec: {
+          level: "low",
+          said: "low",
+          raised: null,
+          blast: { size: "small", who: "Readers of the docs." },
+          door: { kind: "two-way", why: "A revert undoes it." },
+          certainty: { level: "high", why: "Docs only." },
+          summary: "Small.",
+          openPoints: [{ point: "Keep the old URL?", why: "Bookmarks break." }],
+          of: "x",
+        },
+      },
+    }),
+  });
+  const card = missionCard(f.sources, m, undefined, null, NOW);
+  expect(card.openPoints).toEqual([{ point: "Keep the old URL?", why: "Bookmarks break." }]);
+  expect(card.risk?.gate).toBe("spec");
+  expect(riskView({ ...m, stage: "build" })?.label).toBe("Low risk");
+  // A risk of an older head (a revision since) shows nothing, nor its open points.
+  const stale = missionCard(f.sources, { ...m, head: "def" }, undefined, null, NOW);
+  expect([stale.risk, stale.openPoints]).toEqual([undefined, undefined]);
+  expect(riskView({ ...m, head: "def", stage: "build" })).toBeNull();
 });
 
 test("ui: empty states are true", async () => {

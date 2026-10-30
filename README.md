@@ -138,8 +138,8 @@ web page shows what needs you, what is stuck, what is moving and what it costs
 | --- | --- |
 | **Sandbox** | Every check and every Claude Code run is sandboxed: no access to your keys, tokens or other repos, and a worker reaches only the network domains it is granted. |
 | **Guard** | A hook stops the worker from writing protected files (CI, `CLAUDE.md`, `AGENTS.md`, `REVIEW.md`, `TOWERCAB.md`, and paths you list) unless its plan grants them, and from editing tests it already pushed during repairs. |
-| **Gates** | Code, not a model, decides whether a PR may merge: green CI, an approving review, and a test that fails without the change. |
-| **Autonomy** | At a1–a3 you merge everything. At a4 Towercab merges after every check passes and the build stayed within the plan. At a5 (only for intents you wrote) it also approves its own plan ([specs/autonomy.md](specs/autonomy.md)). |
+| **Gates** | Code, not a model, decides whether a PR may merge: green CI, an approving review, a test that fails without the change, and a risk level with a floor set in code. |
+| **Autonomy** | At a1–a3 you merge everything. At a4 Towercab merges the plan and the code itself when every check passes, the build stayed within the plan, and an independent risk check rates the change low. At a5 (only for intents you wrote; an intent without a level counts as a5) medium risk goes ahead too, and only high risk waits for you ([specs/autonomy.md](specs/autonomy.md)). |
 
 ## Status
 

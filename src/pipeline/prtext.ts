@@ -29,9 +29,14 @@ export function linkLine(l: Links): string {
   return parts.length ? `Part of this change: ${parts.join(" · ")}.` : "";
 }
 
-/** The spec PR's body: the worker's text, then the links. */
-export function specBody(workerText: string, specIds: string[], l: Links): string {
-  return [workerText.trim(), specIds.length ? `**Spec IDs:** ${specIds.join(", ")}` : "", linkLine(l)]
+/** The spec PR's body: the worker's text, the open points and the risk (PIP-99), then the links. */
+export function specBody(workerText: string, specIds: string[], l: Links, extra: string[] = []): string {
+  return [
+    workerText.trim(),
+    ...extra,
+    specIds.length ? `**Spec IDs:** ${specIds.join(", ")}` : "",
+    linkLine(l),
+  ]
     .filter(Boolean)
     .join("\n\n");
 }
@@ -41,8 +46,8 @@ export interface Access {
   paths: { glob: string; why: string }[];
 }
 
-/** The plan PR's body: the approach's first paragraph, what access it asks for, the links. */
-export function planBody(planMd: string, access: Access, l: Links): string {
+/** The plan PR's body: the approach's first paragraph, what access it asks for, the risk (PIP-99), the links. */
+export function planBody(planMd: string, access: Access, l: Links, risk = ""): string {
   const approach =
     section(planMd, "Approach")
       .split(/\n\s*\n/)[0]
@@ -57,6 +62,7 @@ export function planBody(planMd: string, access: Access, l: Links): string {
       ? `**Access asked for:** ${asks.join(", ")}. Untick any line in the plan's Access section to refuse it before merging.`
       : "**Access asked for:** nothing beyond the defaults.",
     "Merging this PR approves the plan, and the build starts.",
+    risk,
     linkLine(l),
   ]
     .filter(Boolean)
@@ -92,6 +98,8 @@ export interface CodeBody {
   specIds: string[];
   links: Links;
   reviewDetails: string | null;
+  /** The `## Risk` section (PIP-99, `riskMd`); "" when not assessed. */
+  risk?: string;
   footer: Footer;
   /** The intent's `issue:` and the PR's repo (`owner/name`), for INT-27. */
   issue?: { url: string | null; repo: string };
@@ -129,6 +137,7 @@ export function codeBody(b: CodeBody): string {
       ].join("\n"),
     );
   }
+  if (b.risk) parts.push(b.risk);
   if (b.unplanned.length) {
     parts.push(
       ["## Access beyond the plan", "", ...b.unplanned.map((u) => `- ${u.what}: ${u.why}`)].join("\n"),

@@ -1,12 +1,13 @@
-// The `design` stage (PIP-25, PIP-50, PIP-82, AUT-11): the worker's first run writes the spec change;
-// Towercab commits it, opens the spec PR, reads its checks (a red one gets one revision), and then
-// either waits for the owner or merges it itself.
+// The `design` stage (PIP-25, PIP-50, PIP-82, PIP-96, PIP-97, AUT-11): the worker's first run writes the
+// spec change; Towercab commits it, opens the spec PR, reads its checks (a red one gets one revision),
+// has the risk agent assess it, and then either waits for the owner or merges it itself.
 
-import { specGate } from "../autonomy.ts";
+import { riskWhy, specGate } from "../autonomy.ts";
 import { git, refreshBase } from "../checkout.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
+import { currentRisk, openPointsMd, type Risk, riskMd } from "../risk.ts";
 import { ciState, redLog } from "./ci.ts";
 import {
   asEnv,
@@ -14,6 +15,7 @@ import {
   cloneOf,
   coGit,
   data,
+  effectiveOf,
   ended,
   gh,
   intentOf,
@@ -26,6 +28,7 @@ import {
 } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { specBody } from "./prtext.ts";
+import { endRisk, spawnRisk } from "./risk.ts";
 import { parseResult } from "./schemas.ts";
 
 /** The intent's reserved spec IDs (`spec IDs: …` in `## Proposed outcome`), as a prompt sentence. */
@@ -191,6 +194,8 @@ async function designRun(cx: Ctx, m: Mission): Promise<Progress> {
 export const designHandler: Handler = {
   async step(cx, m) {
     const d = data(m);
+    // AUT-21: the owner's retry of a risk check that didn't finish: the checks, then the check again.
+    if (m.step === "" && d.recheck) return specCi(cx, cx.record(m, "spec_ci", {}, { recheck: undefined }));
     switch (m.step) {
       case "":
       case "design":
@@ -203,6 +208,8 @@ export const designHandler: Handler = {
         return gateStep(cx, m);
       case "spec_ci":
         return specCi(cx, m);
+      case "risk":
+        return spawnRisk(cx, m, "spec");
       default:
         void d;
         return { done: { event: "bad_result", why: `unknown design step ${m.step}` } };
@@ -210,9 +217,20 @@ export const designHandler: Handler = {
   },
 
   async finish(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
+    if (m.step === "risk") {
+      const e = endRisk(cx, m, end, "spec");
+      if ("progress" in e) return e.progress;
+      const fresh = cx.record(m, "spec_ci", {}, e.data);
+      await patchBody(cx, fresh);
+      return decide(cx, fresh);
+    }
     const r = ended(cx, m, "design", end, (v) => parseResult("design", v));
     if (!r.ok) return r.progress;
     const v = r.value;
+    const d = data(m);
+    // PIP-97: the owner's answers on the spec PR, kept for the second reviewer (not Towercab's own
+    // conflict or red-check revisions).
+    const owner = d.answer && !d.mergeMain && !d.specRed ? d.answer : null;
     const fresh = cx.record(
       m,
       "commit",
@@ -224,11 +242,13 @@ export const designHandler: Handler = {
           breaking: v.breaking,
           specIds: v.spec_ids,
           concerns: v.concerns,
+          open: v.open_questions.filter((q) => q.answer === null).map((q) => q.question),
           pr: v.pr,
         },
         answer: undefined,
         mergeMain: undefined,
         specRed: undefined,
+        ...(owner ? { specAnswers: [...(d.specAnswers ?? []), owner] } : {}),
       },
     );
     return commit(cx, fresh);
@@ -275,15 +295,39 @@ async function dropOthers(cx: Ctx, m: Mission): Promise<void> {
   await coGit(cx, m, ["clean", "-fdq"]);
 }
 
+/** The spec PR's body (PIP-25), with the risk and open points once assessed (PIP-99). */
+async function bodyOf(cx: Ctx, m: Mission): Promise<string> {
+  const d = data(m);
+  const intent = await intentOf(cx, m);
+  const risk = currentRisk(m, "spec");
+  return specBody(
+    d.design?.pr ?? "",
+    d.design?.specIds ?? [],
+    { intentUrl: cx.store.url(intent), specPrUrl: null, planPrUrl: null },
+    [openPointsMd(risk), riskMd(risk)],
+  );
+}
+
+/** Rewrite the spec PR's body after the risk check (PIP-99); a failure is only logged. */
+async function patchBody(cx: Ctx, m: Mission): Promise<void> {
+  const repo = cx.repo(m);
+  try {
+    await gh(
+      cx,
+      repo.github,
+      ["api", "-X", "PATCH", `repos/${repo.github}/pulls/${m.spec_pr}`, "-F", "body=@-"],
+      await bodyOf(cx, m),
+    );
+  } catch (e) {
+    cx.log(`${m.intent}: couldn't update the spec PR text: ${(e as Error).message}`);
+  }
+}
+
 async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
   const repo = cx.repo(m);
   const d = data(m);
   const intent = await intentOf(cx, m);
-  const body = specBody(d.design?.pr ?? "", d.design?.specIds ?? [], {
-    intentUrl: cx.store.url(intent),
-    specPrUrl: null,
-    planPrUrl: null,
-  });
+  const body = await bodyOf(cx, m);
   if (!m.spec_pr) {
     const existing = JSON.parse(
       await gh(cx, repo.github, [
@@ -344,16 +388,48 @@ async function gateStep(cx: Ctx, m: Mission): Promise<Progress> {
 }
 
 /** AUT-11: the wait for the owner when the spec gate is closed, else null. */
-async function ownerWait(cx: Ctx, m: Mission): Promise<Outcome | null> {
+async function ownerWait(cx: Ctx, m: Mission, risk: Risk | null): Promise<Outcome | null> {
   const intent = await intentOf(cx, m);
   const files = await repoFiles(cx, m);
-  const concerns = data(m).design?.concerns ?? [];
-  const { effectiveOf } = await import("./common.ts");
-  if (!specGate(effectiveOf(m, intent, files), files.towercab.maxAutonomy, concerns.length > 0)) return null;
-  const why = concerns.length
-    ? `${concerns.length} concern${concerns.length > 1 ? "s" : ""} to review`
-    : undefined;
+  const a = effectiveOf(m, intent, files);
+  const points = risk?.openPoints ?? [];
+  if (!specGate(a, points.length, risk?.level ?? null)) return null;
+  const why = points.length
+    ? `${points.length} open point${points.length > 1 ? "s" : ""} for you to decide`
+    : a <= 2
+      ? undefined
+      : riskWhy(a, risk?.level ?? null);
   return wait("approve spec", why);
+}
+
+/**
+ * After green checks: the risk agent and second reviewer first (PIP-96, PIP-97), once per spec head;
+ * then the spec gate (AUT-11): the owner, or Towercab's merge (PIP-50).
+ */
+async function decide(cx: Ctx, m: Mission): Promise<Progress> {
+  const risk = currentRisk(m, "spec");
+  if (risk === undefined) return spawnRisk(cx, m, "spec");
+  const owner = await ownerWait(cx, m, risk);
+  if (owner) return { done: owner };
+  const repo = cx.repo(m);
+  try {
+    await gh(cx, repo.github, [
+      "pr",
+      "merge",
+      String(m.spec_pr),
+      "-R",
+      repo.github,
+      "--squash",
+      "--match-head-commit",
+      m.head!,
+    ]);
+  } catch (e) {
+    throw asEnv(e);
+  }
+  // The squashed spec is now on base: the build starts from there.
+  await git(cx.tools, cloneOf(cx, m), ["fetch", "--quiet", "origin"], await cx.github.gitAuth(repo.github));
+  await refreshBase(cx.tools, cloneOf(cx, m), cx.checkout(m), repo.base);
+  return { done: { event: "spec_merged", why: `spec PR merged: ${prUrl(repo.github, m.spec_pr!)}` } };
 }
 
 /**
@@ -398,24 +474,5 @@ async function specCi(cx: Ctx, m: Mission): Promise<Progress> {
     // The step stays `spec_ci` until the run starts: a run is only a "continue" when it re-enters `design`.
     return designRun(cx, cx.record(m, m.step, {}, { specRed: true, specRedRevisions: done + 1 }));
   }
-  const owner = await ownerWait(cx, m);
-  if (owner) return { done: owner };
-  try {
-    await gh(cx, repo.github, [
-      "pr",
-      "merge",
-      String(m.spec_pr),
-      "-R",
-      repo.github,
-      "--squash",
-      "--match-head-commit",
-      m.head!,
-    ]);
-  } catch (e) {
-    throw asEnv(e);
-  }
-  // The squashed spec is now on base: the build starts from there.
-  await git(cx.tools, cloneOf(cx, m), ["fetch", "--quiet", "origin"], await cx.github.gitAuth(repo.github));
-  await refreshBase(cx.tools, cloneOf(cx, m), cx.checkout(m), repo.base);
-  return { done: { event: "spec_merged", why: `spec PR merged: ${prUrl(repo.github, m.spec_pr!)}` } };
+  return decide(cx, m);
 }

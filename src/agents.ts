@@ -7,7 +7,7 @@ import { parse as parseYaml } from "yaml";
 import type { Config } from "./config.ts";
 import { SCHEMAS } from "./pipeline/schemas.ts";
 
-export const AGENT_NAMES = ["design", "plan", "worker", "repair", "review", "score"] as const;
+export const AGENT_NAMES = ["design", "plan", "worker", "repair", "review", "risk", "score"] as const;
 export type AgentName = (typeof AGENT_NAMES)[number];
 
 export const AGENTS_DIR = resolve(dirname(new URL(import.meta.url).pathname), "..", "agents");

@@ -192,7 +192,8 @@ test("metrics: totals at done", async () => {
   const secs = rows.reduce((s, r) => s + r.agent_secs, 0);
   // Attempt 1: one design session ($0.50); attempt 2: the worker session and the review ($1.00).
   expect(cost).toBeCloseTo(1.5, 6);
-  expect(secs).toBe(60 * p.claudeCalls.length);
+  // The fake risk agent takes no time.
+  expect(secs).toBe(60 * p.claudeCalls.filter((c) => c.kind !== "risk").length);
   const done = p.show("intents", "main", `done/${ID}-${SLUG}/intent.md`);
   expect(done).toContain("stage: done");
   expect(done).toContain(`cost: 1.50\nagent_time: ${secs}\nattempts: 2`);

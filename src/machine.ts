@@ -50,6 +50,7 @@ export const EVENTS = [
   "head_moved",
   "intent_removed",
   "retry_fresh",
+  "recheck",
   "resume",
   "skip",
   "revert",
@@ -109,7 +110,8 @@ export function next(stage: Stage, event: Event, from: Stage | null = null): Nex
       if (stage === "rollback") return go("build");
       return go(ORDER[orderIndex(stage) + 1]!);
     case "red":
-      if (stage === "verify" || stage === "proof" || stage === "ci") return go("build");
+      // PIP-98: a review that doesn't approve is a fix round too.
+      if (stage === "verify" || stage === "proof" || stage === "ci" || stage === "review") return go("build");
       if (stage === "deploy" || stage === "e2e") return go("rollback");
       return K("unexpected");
     case "skip":
@@ -165,6 +167,12 @@ export function next(stage: Stage, event: Event, from: Stage | null = null): Nex
       return K("ignore");
     case "retry_fresh":
       return K("fresh");
+    // AUT-21: the owner's retry of a gate's risk check that didn't finish.
+    case "recheck":
+      if (stage === "approval:spec") return go("design");
+      if (stage === "approval:plan") return go("plan");
+      if (stage === "approval:merge") return go("review");
+      return K("ignore");
     case "resume":
       return stage === "merge" ? K("again") : K("ignore");
   }

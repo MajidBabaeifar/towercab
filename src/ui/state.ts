@@ -12,6 +12,7 @@ import type { Intent, IntentStore, Listing } from "../intents/types.ts";
 import { finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
 import { dataOf, forIntent, type Mission } from "../mission.ts";
 import { usualOwner } from "../repos.ts";
+import { currentRisk, type RiskGate, riskWords } from "../risk.ts";
 import { aheadIn, isAhead, isBuilding, isReady } from "../slots.ts";
 import type {
   Access,
@@ -34,6 +35,7 @@ import type {
   Question,
   QueueItem,
   QueuePage,
+  RiskView,
   Row,
   SpendView,
   StageFileView,
@@ -387,6 +389,30 @@ type MissionData = {
   runs?: { at: number; cost: number }[];
 };
 
+/**
+ * AUT-20: the risk judged at `gate`, else the latest one (code, plan, spec), in plain words; only an
+ * assessment of the current spec head, plan or diff counts (PIP-96).
+ */
+export function riskView(m: Mission, gate: RiskGate | null = null): RiskView | null {
+  const order: RiskGate[] = gate ? [gate] : ["code", "plan", "spec"];
+  for (const g of order) {
+    const r = currentRisk(m, g);
+    if (!r) continue;
+    const w = riskWords(r);
+    return {
+      level: r.level,
+      label: w.label,
+      gate: g,
+      blast: w.blast,
+      door: w.door,
+      certainty: w.certainty,
+      summary: r.summary,
+      raised: r.raised,
+    };
+  }
+  return null;
+}
+
 function repoGithub(src: UiSources, repo: string): string | null {
   return src.config.repos.get(repo)?.github ?? null;
 }
@@ -468,7 +494,12 @@ export function missionCard(
       ? ["merge", "retry", "drop"]
       : ["retry", "drop"]
     : ["reply", "retry", "drop"];
+  const gate = kind === "spec" || kind === "plan" ? kind : kind === "code" ? "code" : null;
+  const risk = riskView(m, gate);
+  const points = kind === "spec" ? (currentRisk(m, "spec")?.openPoints ?? []) : [];
   return {
+    ...(risk ? { risk } : {}),
+    ...(points.length ? { openPoints: points } : {}),
     intent: m.intent,
     title: intent?.title ?? m.intent,
     repo: m.repo,
@@ -1285,7 +1316,7 @@ function kindOf(name: string): { kind: string; details: boolean } {
   if (/^(settings|system)-|^guard\.json$/.test(name)) return { kind: "Details", details: true };
   if (/\.prompt$/.test(name)) return { kind: "Prompt sent", details: false };
   if (/\.err$/.test(name)) return { kind: "Errors", details: false };
-  if (/^(worker|design|plan|review|score)-\d+\.json$/.test(name))
+  if (/^(worker|design|plan|review|risk|score)-\d+\.json$/.test(name))
     return { kind: "Claude's answer", details: false };
   if (/\.log$/.test(name)) return { kind: "Check output", details: false };
   return { kind: "File", details: false };
@@ -1724,6 +1755,9 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     issue: intent?.issue ?? null,
     e2eLog: e2eLogOf(src.home.root, id),
   };
+  // AUT-20: the latest risk, when no card already shows it.
+  const risk = !card && last ? riskView(last) : null;
+  if (risk) body.risk = risk;
   return { version: versionOf(body, dbMark(src.db)), ...body };
 }
 

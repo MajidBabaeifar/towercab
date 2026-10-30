@@ -87,6 +87,16 @@ export const REVIEW_SCHEMA = object({
   summary: S,
 });
 
+/** The risk agent's assessment at a gate (PIP-96, AUT-16) and the spec's second review (PIP-97). */
+export const RISK_SCHEMA = object({
+  blast_radius: object({ size: { type: "string", enum: ["small", "medium", "large"] }, who: S }),
+  door: object({ kind: { type: "string", enum: ["two-way", "one-way"] }, why: S }),
+  certainty: object({ level: { type: "string", enum: ["high", "medium", "low"] }, why: S }),
+  level: { type: "string", enum: ["low", "medium", "high"] },
+  summary: S,
+  open_points: list(object({ point: S, why: S })),
+});
+
 /** The scoring of a GitHub issue (INT-22). */
 export const SCORE_SCHEMA = object({
   u: { type: "integer", minimum: 1, maximum: 5 },
@@ -106,6 +116,7 @@ export const SCHEMAS = {
   plan: PLAN_SCHEMA,
   build: BUILD_SCHEMA,
   review: REVIEW_SCHEMA,
+  risk: RISK_SCHEMA,
   score: SCORE_SCHEMA,
 };
 
@@ -166,6 +177,19 @@ export interface ReviewResult {
   summary: string;
 }
 
+export interface RiskResult {
+  /** Who or what is affected if it goes wrong. */
+  blast_radius: { size: "small" | "medium" | "large"; who: string };
+  /** Hard to undo (`one-way`: data, migrations, public interfaces, deletions) or easy (`two-way`). */
+  door: { kind: "two-way" | "one-way"; why: string };
+  /** How sure we are it behaves as expected once deployed. */
+  certainty: { level: "high" | "medium" | "low"; why: string };
+  level: "low" | "medium" | "high";
+  summary: string;
+  /** PIP-97: what the owner must decide before the spec is built; empty at the plan and code gates. */
+  open_points: { point: string; why: string }[];
+}
+
 export interface ScoreResult {
   u: number;
   u_why: string;
@@ -185,6 +209,7 @@ export interface Results {
   plan: PlanResult;
   build: BuildResult;
   review: ReviewResult;
+  risk: RiskResult;
   score: ScoreResult;
 }
 

@@ -59,12 +59,12 @@ test("autonomy: every stage runs at every level", async () => {
     // Merged only after CI and an approving review.
     expect(JSON.parse(m.data).review.approved).toBe(true);
   }
-  // Autonomy only moves who merges.
+  // Autonomy only moves who merges; at low risk a4 and a5 need nobody (AUT-18).
   expect(waits).toEqual({
     1: ["approval:spec", "approval:plan", "approval:merge"],
     2: ["approval:spec", "approval:plan", "approval:merge"],
     3: ["approval:plan", "approval:merge"],
-    4: ["approval:plan"],
+    4: [],
     5: [],
   });
 }, 60_000);

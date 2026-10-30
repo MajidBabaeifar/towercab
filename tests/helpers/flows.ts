@@ -1,7 +1,8 @@
 // Shared pieces of pipeline flows: a target repo, intent files and Claude's usual answers, so each
 // test only states what differs from the happy path.
 
-import type { ClaudeReply, ClaudeScript, Pipe } from "./pipe.ts";
+import type { Mission } from "../../src/mission.ts";
+import { type ClaudeReply, type ClaudeScript, LOW_RISK, type Pipe } from "./pipe.ts";
 
 export const CLAUDE_MD = `# Web
 
@@ -132,4 +133,23 @@ export function checkRun(
     startedAt: startedAt ?? "2026-10-26T12:00:00Z",
     detailsUrl: `https://github.com/owner/web/actions/runs/${run}/job/1`,
   };
+}
+
+/** A risk agent's answer (PIP-96): the default low risk with `o` over it. */
+export function risk(o: Record<string, unknown> = {}) {
+  return { ...LOW_RISK, ...o };
+}
+
+/** The owner merges whatever PR a mission waits on. */
+export function ownerMerges(p: Pipe): void {
+  for (const m of p.db.all<Mission>("SELECT * FROM missions WHERE stage LIKE 'approval:%' AND step = ''")) {
+    const [repo, n] =
+      m.stage === "approval:spec"
+        ? ["web", m.spec_pr]
+        : m.stage === "approval:plan"
+          ? ["intents", m.plan_pr]
+          : ["web", m.pr];
+    const pr = p.prNo(repo!, n!);
+    if (pr.state === "OPEN") p.mergePr(pr);
+  }
 }

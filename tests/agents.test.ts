@@ -58,6 +58,8 @@ const BEFORE: Record<string, { tools: string; allowed: string[] }> = {
   score: { tools: "", allowed: [] },
 };
 BEFORE.repair = BEFORE.worker!;
+// PIP-96: the risk agent reads exactly as the review does, no more.
+BEFORE.risk = BEFORE.review!;
 
 test("agents: every agent has a file", () => {
   const files = readdirSync(AGENTS_DIR)

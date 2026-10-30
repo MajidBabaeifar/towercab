@@ -96,7 +96,16 @@ test("e2e: an a5 intent goes from pick to done", async () => {
     JSON.stringify(p.db.all("SELECT from_stage, event, to_stage, why FROM transitions")),
   ).toEqual(["done", null, null]);
   expect(passes).toBeGreaterThan(0);
-  expect(p.claudeCalls.map((c) => c.kind)).toEqual(["design", "plan", "worker", "review"]);
+  // The risk agent checks each of the three PRs in a session of its own (PIP-96).
+  expect(p.claudeCalls.map((c) => c.kind)).toEqual([
+    "design",
+    "risk",
+    "plan",
+    "risk",
+    "worker",
+    "review",
+    "risk",
+  ]);
   // Three PRs, all merged; the spec landed first.
   expect(p.prs.map((x) => [x.repo, x.title, x.state])).toEqual([
     ["owner/web", "docs(specs): Show a greeting", "MERGED"],

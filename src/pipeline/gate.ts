@@ -1,13 +1,21 @@
-// The `gate` (PIP-7, AUT-3, AUT-4, AUT-9, AUT-15) and `merge` (PIP-22) stages, in code only.
+// The `gate` (PIP-7, AUT-3, AUT-4, AUT-15, AUT-18) and `merge` (PIP-22) stages, in code only.
 
 import { gate } from "../autonomy.ts";
 import type { Ctx, Handler } from "../handlers.ts";
 import { ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
+import { type Risk, riskMd } from "../risk.ts";
 import { data, effectiveOf, gh, intentOf, prUrl, repoFiles } from "./common.ts";
 import { type Checks, codeBody } from "./prtext.ts";
 import { HOLD_SECS, holder } from "./ship.ts";
 import { changedTests } from "./verify.ts";
+
+/** The code's risk (AUT-16) when it is of the reviewed diff; null when none finished for it. */
+export function codeRisk(m: Mission): Risk | null {
+  const d = data(m);
+  if (!d.review || d.riskOf?.code !== d.review.patchId) return null;
+  return d.risk?.code ?? null;
+}
 
 export function checksLine(m: Mission): Checks {
   const d = data(m);
@@ -49,6 +57,7 @@ async function updateBody(cx: Ctx, m: Mission): Promise<void> {
       planPrUrl: m.plan_pr && cx.store.github() ? prUrl(cx.store.github()!, m.plan_pr) : null,
     },
     reviewDetails: d.review?.details ?? null,
+    risk: d.review ? riskMd(codeRisk(m)) : "",
     footer: { intentUrl: cx.store.url(intent), costUsd: m.cost_usd, secs: m.agent_secs },
     issue: { url: intent.issue, repo: repo.github },
   });
@@ -79,13 +88,11 @@ export const gateHandler: Handler = {
     await updateBody(cx, m);
     const g = gate({
       a: effectiveOf(m, intent, files),
-      cap: files.towercab.maxAutonomy,
       ciGreen: d.ci?.result === "green" || d.ci?.result === "none",
-      review: d.review
-        ? { approved: d.review.approved, door: d.review.door, redLines: d.review.redLines }
-        : null,
+      review: d.review ? { approved: d.review.approved } : null,
       unplanned,
       proven: !d.unproven,
+      risk: codeRisk(m)?.level ?? null,
     });
     if (!g.merge) return { done: wait("review and merge PR", g.why) };
     // Beyond the gate table: work Towercab didn't check itself goes to the owner.
