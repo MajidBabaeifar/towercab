@@ -1,5 +1,7 @@
 // UI-56 to UI-64, UI-71: what the page shows, derived on the server.
 
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { Db } from "../../src/db.ts";
 import type { Stage } from "../../src/machine.ts";
@@ -306,7 +308,6 @@ test("ui: intent page shows the three PRs", async () => {
   expect(page.sentence).toBe("Waiting for your plan review for 2 h 10 min.");
   expect(page.scores).toBe("Priority 14 · urgency 4, importance 5, autonomy 2");
   expect(page.sections.map((s) => s.title)).toEqual(["Why", "Outcome"]);
-  expect(page.runs.map((g) => g.step)).toEqual(["Writing the spec", "Planning"]);
   expect(await intentPage(f.sources, "999999-0000-1")).toBeNull();
 });
 
@@ -536,4 +537,122 @@ test("ui: start now appears only for an unstarted intent", async () => {
   f.state.running = false;
   expect((await intentPage(f.sources, IDS.upnext))!.canStart).toBe(false);
   expect((await overview(f.sources)).upNext[0]!.canStart).toBe(false);
+});
+
+test("ui: visits follow the real path", async () => {
+  const f = fixture();
+  const page = (await intentPage(f.sources, IDS.code))!;
+  expect(page.attempts.map((a) => a.attempt)).toEqual([1, 2]);
+  const map = page.attempts[1]!.map;
+  expect(map.visits.map((v) => v.stage)).toEqual([
+    "design",
+    "spec_review",
+    "plan",
+    "plan_review",
+    "build",
+    "verify",
+    "build",
+    "verify",
+    "proof",
+    "publish",
+    "ci",
+    "review",
+    "gate",
+    "code_review",
+  ]);
+  // Every stage of the pipeline, in order, in plain words (UI-56).
+  expect(map.stages.map((s) => s.name)).toEqual([
+    "Writing the spec",
+    "Your spec review",
+    "Planning",
+    "Your plan review",
+    "Building",
+    "Running checks",
+    "Proving the tests",
+    "Opening the PR",
+    "CI",
+    "Reviewing",
+    "Deciding",
+    "Your code review",
+    "Merging",
+  ]);
+  const by = (id: string) => map.stages.find((s) => s.id === id)!;
+  expect(by("code_review")).toMatchObject({ outcome: "waiting on you", current: true, owner: true });
+  expect(by("design").outcome).toBe("passed");
+  // Merging was not reached; the proof was skipped and says why.
+  expect(by("merge")).toMatchObject({ outcome: "not reached", time: "" });
+  expect(by("proof")).toMatchObject({ outcome: "skipped", note: "no proof needed" });
+  // The wait on the owner is the stage to open first, and the totals split Towercab from the owner.
+  expect(map.open).toBe("code_review");
+  expect(map.towercab).toMatch(/h|min/);
+  expect(map.owner).toMatch(/d|h/);
+  // The first attempt took its own, shorter path.
+  expect(page.attempts[0]!.map.visits.map((v) => v.stage)).toEqual(["design", "spec_review", "design"]);
+  expect(page.attempts[0]!.map.visits[1]).toMatchObject({ outcome: "sent back", returnTo: "design" });
+});
+
+test("ui: visits count rounds and returns", async () => {
+  const f = fixture();
+  const page = (await intentPage(f.sources, IDS.code))!;
+  const map = page.attempts[1]!.map;
+  const build = map.stages.find((s) => s.id === "build")!;
+  const verify = map.stages.find((s) => s.id === "verify")!;
+  expect(build.visits.map((v) => v.round)).toEqual([1, 2]);
+  expect(verify.visits.map((v) => [v.round, v.outcome])).toEqual([
+    [1, "red"],
+    [2, "passed"],
+  ]);
+  // The step back names where it went and why, in plain words.
+  expect(verify.visits[0]).toMatchObject({
+    returnTo: "build",
+    returnLabel: "checks failed: 2 tests red in docs/links.test.ts",
+  });
+  expect(verify.outcome).toBe("passed");
+  expect(verify.time).toMatch(/h|min/);
+  // The last red stage is where the question lands when nothing waits on the owner.
+  const asking = (await intentPage(f.sources, IDS.question))!.attempts[0]!.map;
+  expect(asking.stages.find((s) => s.id === "answer")).toMatchObject({ outcome: "waiting on you" });
+  expect(asking.open).toBe("answer");
+  // The dropped first attempt ended back in the spec, so the spec stage shows two rounds.
+  const first = page.attempts[0]!.map;
+  expect(first.stages.find((s) => s.id === "design")!.visits.map((v) => v.round)).toEqual([1, 2]);
+  expect(first.stages.find((s) => s.id === "design")!.outcome).toBe("sent back");
+});
+
+test("ui: visits skip empty files", async () => {
+  const f = fixture();
+  const dir = f.home.runs(IDS.code, "build");
+  writeFileSync(join(dir, "worker-9.err"), "");
+  writeFileSync(join(dir, ".hidden"), "x");
+  mkdirSync(join(f.home.runs(IDS.code, "verify"), "shots-1"), { recursive: true });
+  writeFileSync(join(f.home.runs(IDS.code, "verify"), "shots-1", "home.png"), "png");
+  const map = (await intentPage(f.sources, IDS.code))!.attempts[1]!.map;
+  const files = map.stages.find((s) => s.id === "build")!.files;
+  expect(files.map((x) => x.name)).not.toContain("worker-9.err");
+  expect(files.map((x) => x.name)).not.toContain(".hidden");
+  // Plain kinds, the round in the name, and Claude's settings, system prompt and guard under "Details".
+  expect(files.find((x) => x.name === "worker-1.prompt")).toMatchObject({
+    kind: "Prompt sent",
+    round: 1,
+    path: "build/worker-1.prompt",
+    details: false,
+  });
+  expect(files.find((x) => x.name === "worker-2.json")).toMatchObject({ kind: "Claude's answer", round: 2 });
+  expect(files.find((x) => x.name === "build-setup.log")!.kind).toBe("Check output");
+  expect(files.find((x) => x.name === "guard.json")).toMatchObject({ kind: "Details", details: true });
+  const verify = map.stages.find((s) => s.id === "verify")!;
+  expect(verify.files.find((x) => x.kind === "Screenshots")).toMatchObject({ path: null, size: "1 image" });
+  expect(verify.visits[0]!.files.map((x) => x.name)).toContain("verify-1.log");
+});
+
+test("ui: flat runs get a map", async () => {
+  const f = fixture();
+  // The plan intent's files were written flat, before the stage folders (LOOP-42).
+  const map = (await intentPage(f.sources, IDS.plan))!.attempts[0]!.map;
+  const files = (id: string) => map.stages.find((s) => s.id === id)!.files.map((x) => x.name);
+  expect(files("design")).toEqual(["design-1.log"]);
+  expect(files("plan")).toEqual(["plan-1.prompt.md", "plan-1.result.json"]);
+  expect(map.stages.find((s) => s.id === "plan_review")).toMatchObject({ outcome: "waiting on you" });
+  // Nothing moved on disk.
+  expect(existsSync(join(f.home.runs(IDS.plan), "design-1.log"))).toBe(true);
 });

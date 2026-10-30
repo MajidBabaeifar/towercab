@@ -116,6 +116,10 @@ export const buildHandler: Handler = {
     const d = data(m);
     switch (m.step) {
       case "": {
+        // The checkout is Towercab's: what another program left in it (an untracked file, an edit)
+        // can't block the checkout below or ride into the PR. Ignored files, such as caches, stay (LOOP-8).
+        await coGit(cx, m, ["reset", "--quiet", "--hard"]);
+        await coGit(cx, m, ["clean", "-fdq"]);
         // The first round starts from base, which now holds the merged spec; read the plan's grants.
         if (!d.build && !d.lockHead) {
           const repo = cx.repo(m);
@@ -176,6 +180,9 @@ export const buildHandler: Handler = {
             m = cx.record(m, "setup");
           }
         }
+        // Where this round starts, so commit can tell a round that changed nothing (PIP-1).
+        const from = (await coGit(cx, m, ["rev-parse", "HEAD"])).trim();
+        m = cx.record(m, m.step, {}, { roundFrom: from });
         return setupOrWorker(cx, m);
       }
       case "setup":
@@ -239,7 +246,7 @@ async function setupOrWorker(cx: Ctx, m: Mission): Promise<Progress> {
       dir: cx.checkout(m),
       network: true,
       cacheWritable: true,
-      log: logPath(cx, m, "build-setup.log"),
+      log: logPath(cx, m, "build", "build-setup.log"),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
     }),
   };
@@ -273,7 +280,17 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
     }
   }
   const head = (await coGit(cx, m, ["rev-parse", "HEAD"])).trim();
-  const patch: Partial<PipeData> = { repair: undefined, answer: undefined };
+  const patch: Partial<PipeData> = { repair: undefined, answer: undefined, roundFrom: undefined };
+  if (head === d.roundFrom && d.repair && d.repair.kind !== "conflict") {
+    // A repair that changed nothing would only run the same red check again: ask the owner now.
+    if (!d.answer) {
+      const notes = d.build?.notes ? ` ${d.build.notes.slice(0, 300)}` : "";
+      return { done: wait("no changes", `The repair round changed nothing.${notes}`) };
+    }
+    // The owner's words and still no change ("it's flaky, go on"): CI gets one more run of this head.
+    if (d.repair.kind === "ci" && d.ci?.reruns)
+      patch.ci = { ...d.ci, reruns: { ...d.ci.reruns, [head]: false } };
+  }
   if (!d.repair) patch.lockHead = head;
   const files = await repoFiles(cx, m);
   void effectiveOf(m, intent, files);

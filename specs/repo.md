@@ -76,7 +76,7 @@ Removed: never used (no repo had a ruleset); parked as intent 261026-2204-5.
 Some paths decide how a change is judged, so a worker can write them only when its autonomy or plan
 allows ([AUT-14](autonomy.md)).
 
-- Protected = `CLAUDE.md`, `REVIEW.md`, `TOWERCAB.md`, `.github/**`, `.claude/**`, `.git/**` plus
+- Protected = `CLAUDE.md`, `AGENTS.md`, `REVIEW.md`, `TOWERCAB.md`, `.github/**`, `.claude/**`, `.git/**` plus
   `TOWERCAB.md` `protected`. `.git/**` is never writable.
 - `protectedPaths(protected, granted).blocks(rel)`: true when a protected glob matches the path or a
   parent directory and no granted glob does; an absolute path, a `..` component or `.git` → true.

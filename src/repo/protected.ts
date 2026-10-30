@@ -7,7 +7,15 @@ import { join, resolve } from "node:path";
 import picomatch from "picomatch";
 
 /** Files Towercab reads from the base branch, what runs on every push, and git's own directory. */
-export const CONTROL = ["CLAUDE.md", "REVIEW.md", "TOWERCAB.md", ".github/**", ".claude/**", ".git/**"];
+export const CONTROL = [
+  "CLAUDE.md",
+  "AGENTS.md",
+  "REVIEW.md",
+  "TOWERCAB.md",
+  ".github/**",
+  ".claude/**",
+  ".git/**",
+];
 
 /** What makes a glob component not literal (`\` escapes the next character). */
 const WILD = /[*?[{\\]/;

@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..81 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..89 · **Prefix:** PIP
 
 ## Purpose
 
@@ -26,10 +26,14 @@ docs, until the repo's checks pass.
   PIP-41) or `access` (with what and why, [AUT-15](autonomy.md)); `pr` (the code PR's text, PIP-48);
   `plan_changed` (markdown, when it departed from the plan, with why); `lower_a`, `lower_why`.
 - Towercab then commits everything as the bot (`git add -A`, message = the design's Conventional
-  Commit line) and goes to verify. No diff → `waiting: no changes`. Timeout, budget used up, or no
+  Commit line) and goes to verify. No diff → `waiting: no changes`. A repair round (not a conflict)
+  that adds nothing to the branch and carries no words from the owner also → `waiting: no changes`,
+  why `The repair round changed nothing.` plus the worker's notes, so the same red check never runs
+  again unchanged; with the owner's words it goes on, and after a CI repair that head's red is rerun
+  once more (PIP-18). Timeout, budget used up, or no
   valid result → one continue with `Continue where you stopped.` and the step's full time budget
   again, then the matching wait.
-- Verified by: `pipeline: build prompt has plan, intent and checks`, `pipeline: build commits as the bot`, `pipeline: no changes waits`, `pipeline: timeout continues once`
+- Verified by: `pipeline: build prompt has plan, intent and checks`, `pipeline: build commits as the bot`, `pipeline: no changes waits`, `pipeline: a repair that changes nothing waits`, `pipeline: after an answer an unchanged head gets CI again`, `pipeline: timeout continues once`
 
 ### PIP-2 · Publish
 
@@ -248,7 +252,8 @@ The worker's first run turns the intent into spec changes, and Towercab opens th
   spec gate ([AUT-11](autonomy.md)): the owner (`approval:spec`) or Towercab (PIP-50). No behaviour
   change (`spec_ids` empty, no diff) → no spec PR; on to plan.
 - The owner's review comments on the spec PR → a design revision in the same session, a new commit
-  on the same PR.
+  on the same PR. Red checks on the spec PR start one too (PIP-82), and every revision sees their
+  logs (PIP-83).
 - Verified by: `pipeline: design edits only specs`, `pipeline: spec PR is opened`, `pipeline: no behaviour change skips the spec PR`, `pipeline: feedback revises the spec`
 
 ### PIP-26 · Spec approval
@@ -297,7 +302,8 @@ Towercab checks that the PR's tests fail without the change, so the tests prove 
   `origin/<base>` with the PR's changed test files laid over it (globs: `TOWERCAB.md` `tests`, default
   `tests/**`, `test/**`, `**/__tests__/**`, `**/*_test.*`, `**/test_*.*`, `**/*.test.*`,
   `**/*.spec.*`) runs setup, then the run set (from the PR's `CLAUDE.md` when PIP-54 applies). Red = proven. Green → a repair round asking for a test
-  that fails without the change; after the repairs → `waiting: tests don't prove the change`. After
+  that fails without the change, naming the commands the proof ran on base and saying that a change
+  to how tests run isn't used there, so a worker that can't wire its test into them asks the owner; after the repairs → `waiting: tests don't prove the change`. After
   the owner answers, a proof that still fails to prove → publish with `data.unproven` (the gate then
   sends the PR to the owner, PIP-7).
 - Verified by: `pipeline: proof red on base proves`, `pipeline: green on base repairs`, `pipeline: unproven goes to the owner`
@@ -459,8 +465,10 @@ For a repo with a screenshots command, the review sees the UI as it now looks.
 When the owner doesn't need to approve the spec, Towercab merges the spec PR once its checks pass.
 
 - Spec gate open ([AUT-11](autonomy.md)) → wait for the spec PR's CI on the head Towercab pushed
-  (PIP-3 rules, no repairs: red, a conflict or someone else's push → `waiting: approve spec` with the
-  reason), then `gh pr merge --squash --match-head-commit <head>`.
+  (PIP-3 rules, no repairs: a red that survives the rerun and one revision (PIP-82), a conflict or
+  someone else's push → `waiting: approve spec` with the reason), then
+  `gh pr merge --squash --match-head-commit <head>`. The same checks come first when the gate is
+  closed (PIP-82).
 - Verified by: `pipeline: spec PR merged when the gate is open`
 
 ### PIP-51 · Towercab merges the plan PR at a5
@@ -486,7 +494,7 @@ PRs wait for review.
 
 - Entering `stopped` with a newer attempt (`retry_fresh`, `/retry`): its open spec, plan and code PRs
   are closed as the App (`gh pr close --comment`, saying the intent started over); merged or closed
-  ones are left. A failure is retried next pass (LOOP-6).
+  ones are left. Their branches are deleted too (PIP-87). A failure is retried next pass (LOOP-6).
 - Verified by: `pipeline: a fresh attempt closes the old PRs`
 
 ### PIP-54 · Proof runs the PR's checks block when it changes it
@@ -647,18 +655,20 @@ When the spec PR no longer merges into `main`, the design resolves the conflict 
 
 When the checks on the spec PR stay red after the rerun, the design revises the spec once by itself, so the owner never has to review a red spec PR.
 
-- Applies while the spec waits for approval (`approval:spec`) and while Towercab waits to merge it
+- Applies to every spec PR before it goes to the owner (`approval:spec`) or to Towercab's merge
   (PIP-50). Towercab reads the spec PR's checks as PIP-3 does, on the head it pushed, with the
   first-red rerun of PIP-18 first. A check that is still red after that rerun sends the mission back
   to design in the same session, as if the owner had commented. The revision is a new commit on the
-  same PR (PIP-25).
+  same PR (PIP-25), and its checks are read the same way.
 - The prompt is the one PIP-83 describes; nothing in the owner's name is posted.
 - At most 1 red revision per spec PR (counted separately from the conflict revisions of
   PIP-81). If the PR is still red after it, or the revision changes nothing, the mission waits for the
   owner (`waiting: approve spec`) and the reason says which checks are red. A red spec PR does not
   count as ready to merge: Towercab does not merge it (PIP-50) and the owner is not asked to approve it
   before the revision has run.
-- A cancelled or pending check is not red. No checks on the repo → nothing to revise.
+- A cancelled check is rerun once like a red one; if it stays cancelled the owner is asked
+  (`waiting: approve spec`, the reason names it) without a revision. Checks pending past `ci_wait`
+  also → `waiting: approve spec` with that reason. No checks on the repo → nothing to revise.
 - Verified by: `pipeline: a red spec PR is revised once`, `pipeline: a red spec PR that stays red waits for the owner`, `pipeline: a red spec PR waiting for approval is revised first`
 
 ### PIP-83 · Design revisions see the failing logs
@@ -683,8 +693,9 @@ When GitHub refuses a push because it already has commits on the branch that Tow
   (LOOP-6) does not count it. It counts as a refused push instead: after 3 refusals the mission is
   `waiting: answer the question`.
 - The question follows the writing guide (PIP-39): it names the branch, says GitHub already has commits
-  on it that Towercab doesn't, and offers what the owner can do (delete the branch on GitHub, or tell
-  Towercab to use another name). Never a force-push (PIP-2).
+  on it that Towercab doesn't, and offers what the owner can do: delete the branch on GitHub and reply,
+  or start the intent over (Retry; the new attempt's branch has a new name). Never a force-push (PIP-2).
+- The same goes for the spec branch's push. Each refusal is retried on the next pass; the third asks.
 - Verified by: `pipeline: a refused push waits with the reason`, `pipeline: a refused push is not counted as a crash`
 
 ### PIP-86 · A leftover branch is replaced only when it is Towercab's own
@@ -693,34 +704,38 @@ Before a mission's first push, Towercab checks whether the branch already exists
 
 - Check: `towercab/<id>-<slug>` on GitHub (`git ls-remote`) and the PRs with that head (`gh pr list
   --head`, all states). No branch → push as today.
-- The branch exists and every PR on it is closed or merged or was opened by the Towercab App, and at
-  least one is open: Towercab closes each open one with a comment saying the intent started over,
-  deletes the branch (PIP-89), then pushes. An earlier attempt or a v1 PR is the usual case.
+- The branch exists, at least one PR on it was opened by the Towercab App, and no open PR on it is
+  anyone else's: Towercab closes each open one with a comment saying the intent started over, deletes
+  the branch (PIP-89), then pushes. An earlier attempt or a v1 PR is the usual case; a branch whose App
+  PRs are all closed is replaced the same way.
 - The branch exists and an open PR was opened by anyone else, or there are commits on the branch and
   no PR of the App's at all: nothing is closed or deleted, and the mission is `waiting: answer the
-  question`. The ask names the branch and the PR if any, and offers: delete the branch on GitHub, or
-  say to use another name. Towercab does not pick the next free name `-<n>` by itself, since the
-  commits may be someone's work.
-- Not done again once the first push has succeeded; later rounds only push (PIP-2).
+  question`. The ask names the branch and the foreign PR if any, and offers: delete the branch on
+  GitHub and reply, or start the intent over (Retry). Towercab does not pick the next free name
+  `-<n>` by itself, since the commits may be someone's work.
+- A branch whose head is the commit about to be pushed (a push that finished before a crash) is not in
+  the way. Not checked again once the first push has succeeded; later rounds only push (PIP-2).
 - Verified by: `pipeline: a leftover App PR is closed and replaced`, `pipeline: someone else's branch is left alone`, `pipeline: a leftover branch with commits but no PR waits`
 
 ### PIP-87 · A PR Towercab closes loses its branch
 
 When Towercab itself closes a PR, it deletes that PR's branch on GitHub too.
 
-- Applies to the closing in PIP-53 (`/retry` replacing an attempt: spec, plan and code PRs), to
-  `drop` closing the current PR (the `drop` command, [PRI-9](priority.md)) and to PIP-86. Merged PRs are not touched; the repo setting
-  deletes their branches (PIP-89).
-- Deleted after the close, subject to the guards in PIP-89. A branch shared with a newer attempt's open
-  PR is kept.
+- Applies to the closing in PIP-53 (`/retry` replacing an attempt: spec, plan and code PRs), to a
+  mission stopped by `drop` or because its intent was removed ([PRI-9](priority.md); its open PRs are
+  closed first, with a comment saying the intent was dropped), and to PIP-86. Merged PRs are not
+  touched; the repo setting deletes their branches (PIP-89).
+- Done on entering `stopped`, after the close, subject to the guards in PIP-89. A branch that another
+  open PR still uses as its head (a newer attempt) is kept.
 - Verified by: `pipeline: retry deletes the old attempt's branches`, `pipeline: drop deletes the PR's branch`
 
 ### PIP-88 · A PR the owner closes loses its branch
 
 When a mission stops because the owner closed its PR, Towercab deletes that PR's branch.
 
-- Entering `stopped` through `machine.apply` because a PR was closed without merge (PIP-43: the
-  `closed` event, the intent is dropped) records the deletion of that PR's branch, then makes it.
+- `machine.apply` moves the mission to `stopped` on the `closed` event (PIP-43: a PR closed without
+  merge, the intent is dropped). That move is the record; the entry step of `stopped` then deletes the
+  branches of the mission's closed PRs.
 - Subject to the guards in PIP-89.
 - Verified by: `pipeline: a PR the owner closes loses its branch`
 
@@ -728,16 +743,37 @@ When a mission stops because the owner closed its PR, Towercab deletes that PR's
 
 Towercab deletes only branches it made for a PR it opened, and tries again if GitHub fails.
 
-- Deleted only if the branch starts with `towercab/`, its PR was opened by the Towercab App, and the PR
-  is closed or Towercab is closing it. A branch with an open PR from anyone else, or outside
-  `towercab/`, is never deleted. A branch already gone counts as done.
-- The deletion is a side effect: `ctx.record` first, then `gh api -X DELETE
-  repos/<repo>/git/refs/heads/<branch>`; a failure is retried next pass (LOOP-6).
+- Deleted only if the branch starts with `towercab/` (or `plan/` in the intents repo, where the plan
+  PRs' branches live), its PR was opened by the Towercab App, and the PR is closed without merge. A
+  branch with an open PR from anyone else, or outside those names, is never deleted. A branch already
+  gone counts as done.
+- The deletion is a side effect: the move to `stopped` (or, for PIP-86, `ctx.record`) is stored first,
+  then `gh api -X DELETE repos/<repo>/git/refs/heads/<branch>`. A failure leaves the entry step due, so
+  the next pass retries it (LOOP-6).
 - Merged branches stay the job of the repo setting `delete_branch_on_merge` (`apply-settings`); Towercab
   does not delete them.
 - Verified by: `pipeline: a branch outside towercab/ is never deleted`, `pipeline: a failed branch delete is retried`, `pipeline: a merged PR's branch is left to the repo setting`
 
-### PIP-90 · Review findings name their pass
+### PIP-90 · One required check for Towercab's CI
+
+Towercab's CI ends in one job, `All required checks passed`, that is green only when every other job is green or skipped on purpose; the repo's ruleset requires only that job.
+
+- `.github/workflows/ci.yml` follows the org template: triggers `pull_request`, `push` to `main` and `workflow_dispatch`; top-level `permissions: {}` with each job granting what it needs; every third-party action pinned by commit SHA (version in a trailing comment).
+- Jobs: the shared `checks` job (PR title as Conventional Commit, gitleaks, actionlint, zizmor, OSV-Scanner) and the `sast` job (Semgrep CE, as the repo is private), both from `MajidBabaeifar/ci`; the repo's own `Node 22: lint, typecheck, tests` and `Playwright: UI screenshots` (PIP-12) stay custom, because `npm run check` is the repo's definition of green and the shared node job does not build the UI; and `ci-ok` with `name: All required checks passed`, `needs:` every other job, `if: always()`, failing when any needed job failed or was cancelled.
+- The jobs need no manual step for Towercab's own PRs: Playwright installs its browser in the job, tests use no network.
+- The ruleset (`apply-settings`) is applied only after this workflow is on `main` and `ci-ok` has run there; it is not part of the code.
+- Verified by: `public: CI workflow has one required aggregate job`, `public: CI workflow pins actions by SHA and grants permissions per job`
+
+### PIP-91 · Releases and dependency updates
+
+Towercab's repo opens a release PR from its Conventional Commits, tags and publishes a release when it is merged, and gets dependency update PRs.
+
+- `release.yml` runs release-please on pushes to `main`, with `release-please-config.json` (`release-type: node`) and `.release-please-manifest.json` starting at the current `package.json` version (`1.0.0`), all from the org templates; actions pinned by SHA, `permissions: {}` at the top with the grants on the job.
+- `renovate.json` is `{"extends": ["github>MajidBabaeifar/ci"]}`, which holds the 3-day release age.
+- Creating the release PR needs the repo setting that lets Actions create PRs, which `apply-settings` sets.
+- Verified by: `public: release-please files are present and consistent`, `public: renovate extends the org config`
+
+### PIP-92 · Review findings name their pass
 
 Each finding the review reports says which pass found it, so the owner sees at a glance whether it is
 a bug, a security problem or a departure from the spec and plan.
@@ -750,7 +786,7 @@ a bug, a security problem or a departure from the spec and plan.
   the nit cap do not change.
 - Verified by: `pipeline: review findings name their pass`, `pipeline: review comment shows each finding's pass`
 
-### PIP-91 · The plan names the files that change
+### PIP-93 · The plan names the files that change
 
 The plan lists the files the build will add, change or delete, so the owner sees how far the change
 reaches before approving it, and someone who wasn't in the session could build from the plan alone.
@@ -764,7 +800,7 @@ reaches before approving it, and someone who wasn't in the session could build f
   (PIP-5) judges it as today.
 - Verified by: `pipeline: plan names the files that change`
 
-### PIP-92 · The review has a cost cap
+### PIP-94 · The review has a cost cap
 
 A review run stops at $3, as every other run has a limit, so a runaway review cannot spend without
 bound.
@@ -841,7 +877,7 @@ score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outc
 - Spec rows are `Draft` in the spec PR and the code PR flips them to `Live`, so `main` never claims
   something is built before it is.
 - The agent files were compared with Anthropic's AI-Native SDLC Playbook (2026-10-28). Taken: findings
-  name their pass (PIP-90), the plan names its files (PIP-91), the review gets a cost cap (PIP-92), the
+  name their pass (PIP-92), the plan names its files (PIP-93), the review gets a cost cap (PIP-94), the
   scorer fills the intent's other sections ([INT-32](intents.md)), and the review skips what the
   checks already enforce ([REPO-12](repo.md)). Not taken: a narrow Bash allowlist (the decision
   above); denying `.env*` and `secrets/` inside the checkout, because the checkout is a fresh clone

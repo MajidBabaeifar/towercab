@@ -1,19 +1,29 @@
 // The `publish` stage (PIP-2, PIP-29, PIP-31): refuse what the guard should have stopped, push the
 // branch as the bot, open the code PR the first time.
 
+import { git } from "../checkout.ts";
+import { type BranchPr, deleteBranch, prsOnBranch } from "../github/branches.ts";
+import { isBot } from "../github/events.ts";
+import { closeIfOpen } from "../github/prs.ts";
 import type { Ctx, Handler, Progress } from "../handlers.ts";
-import { ok, wait } from "../machine.ts";
+import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { CONTROL, Protected } from "../repo/protected.ts";
 import {
+  asEnv,
+  ask,
+  branchInTheWay,
+  cloneOf,
   coGit,
   commitTitle,
   data,
   gh,
   grants,
   intentOf,
+  PushRefused,
   prUrl,
   pushBranch,
+  refusedPush,
   repoFiles,
   takeRemote,
 } from "./common.ts";
@@ -60,13 +70,79 @@ export const publishHandler: Handler = {
     }
     const head = (await coGit(cx, m, ["rev-parse", "HEAD"])).trim();
     const fresh = cx.record(m, "push", { head });
-    await pushBranch(cx, fresh, m.branch, m.branch);
-    return openPr(cx, cx.record(fresh, "pr", { pushed_at: cx.clock.now() }));
+    if (!m.pr && !data(m).pushed) {
+      const stop = await clearLeftover(cx, fresh, head);
+      if (stop) return { done: stop };
+    }
+    try {
+      await pushBranch(cx, fresh, m.branch, m.branch);
+    } catch (e) {
+      if (e instanceof PushRefused) return refusedPush(cx, fresh, e);
+      throw e;
+    }
+    return openPr(
+      cx,
+      cx.record(fresh, "pr", { pushed_at: cx.clock.now() }, { pushed: true, pushRefusals: 0 }),
+    );
   },
   async finish() {
     return { poll: 0 };
   },
 };
+
+/**
+ * Before the first push (PIP-86): a branch of that name already on GitHub is cleared away when only
+ * Towercab's own earlier PRs are on it (an older attempt, or v1); with anyone else's open PR, or no PR
+ * of ours at all, the owner is asked and nothing is touched. Returns the wait, or null to go on.
+ */
+async function clearLeftover(cx: Ctx, m: Mission, head: string): Promise<Outcome | null> {
+  const repo = cx.repo(m);
+  const clone = cloneOf(cx, m);
+  const auth = await cx.github.gitAuth(repo.github);
+  let listed: string;
+  try {
+    listed = await git(cx.tools, clone, ["ls-remote", "--heads", "origin", `refs/heads/${m.branch}`], auth);
+  } catch (e) {
+    throw asEnv(e);
+  }
+  const sha = listed.trim().split(/\s+/)[0] ?? "";
+  // Gone, or already ours (a push that finished before a crash): nothing in the way.
+  if (!sha || sha === head) return null;
+  let prs: BranchPr[];
+  try {
+    prs = await prsOnBranch(cx.github, repo.github, m.branch);
+  } catch (e) {
+    throw asEnv(e);
+  }
+  const bot = (await cx.github.bot()).login;
+  const foreign = prs.find((p) => p.state === "OPEN" && !isBot(p.author, bot));
+  if (foreign || !prs.some((p) => isBot(p.author, bot))) {
+    return ask(
+      cx,
+      m,
+      branchInTheWay(
+        m.branch,
+        foreign ? { number: foreign.number, url: prUrl(repo.github, foreign.number) } : undefined,
+      ),
+    );
+  }
+  const why = `Towercab started this intent over, so this PR is closed. The new attempt pushes its own work to \`${m.branch}\` and opens its own PR.`;
+  for (const p of prs) if (p.state === "OPEN") await closeOwn(cx, repo.github, p.number, why);
+  try {
+    await deleteBranch(cx.github, repo.github, m.branch, cx.store.github());
+  } catch (e) {
+    throw asEnv(e);
+  }
+  return null;
+}
+
+async function closeOwn(cx: Ctx, github: string, n: number, why: string): Promise<void> {
+  try {
+    await closeIfOpen(cx.github, github, n, why);
+  } catch (e) {
+    throw asEnv(e);
+  }
+}
 
 async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
   if (m.pr) return { done: ok() };

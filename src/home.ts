@@ -40,8 +40,9 @@ export class Home {
   abs(rel: string): string {
     return join(this.root, rel);
   }
-  runs(id: string): string {
-    const d = join(this.root, "runs", id);
+  /** `runs/<id>/`, or with a stage `runs/<id>/<stage>/` (LOOP-39): created. */
+  runs(id: string, stage?: string): string {
+    const d = stage ? join(this.root, "runs", id, stage) : join(this.root, "runs", id);
     mkdirSync(d, { recursive: true });
     return d;
   }

@@ -22,8 +22,10 @@ you." Everything else is one click away (the intent page), never on the overview
 - **Overview**: headline and stat pills → airspace strip (full width, hideable) → needs-you cards →
   problems → working → (side) up next (the queue, each with why it waits), spend, version. Phone:
   one column in that order, the strip running top to bottom.
-- **Intent**: title + state sentence → the three PRs → needs-you card (when waiting) → timeline and
-  time per step → cost per attempt → the intent's own text → run files.
+- **Intent**: title + state sentence → the three PRs → needs-you card (when waiting) → stage map (the
+  path taken, rounds and steps back, totals, the open stage's files and log, then "All moves" folded)
+  → cost per attempt → the intent's own text. Phone: the map is a vertical stepper and a stage's files
+  open inside it.
 - **Queue**: one lane per repo: running, waiting (numbered, with reason), parked, recently done.
 - **Activity**: filter bar (intent, repo, kind, since; in the URL) → list grouped by day.
 
@@ -149,12 +151,22 @@ api · 261026-1200-1 · priority 11 (urgency 3, importance 4)
 Waiting for your plan review for 2 h.
 [needs-you card]
 [ Spec  merged #11 ↗ ] [ Plan  open #12 ↗ ] [ Code  not yet ]
-TIMELINE                         | TIME PER STEP
-14:02  Started writing the spec  | Writing the spec   12 min
-14:14  Waiting for your review   | Your reviews       2 h
-…                                | COST  attempt 1  $2.10 · 18 min
-THE INTENT (rendered sections, Answers)
-RUN FILES  Build round 1: log · prompt · result
+HOW IT WENT      [Attempt 1] [Attempt 2]
+[Spec ✓ 12 min] [Spec review ✓ 2 h] [Planning ✓] [Building ✓ r1 r2] [Checks ✓ r1 red · r2 ✓]
+   ↩ sent back to Building: checks failed: 2 tests red       (wraps to a second row)
+[Proof skipped: no proof needed] [PR ✓] [CI ✓] [Review ✓] [Your code review: waiting on you]
+Towercab working 3 h · Waiting on you 2 h
++ Running checks: files by round (Prompt sent, Claude's answer, Check output, Errors) ------+
+| ROUND 1  Check output  6 KB       Details ▸ (settings, system prompt, guard)              |
+| last 200 lines in a monospace viewer · Show all · Open raw                                |
++-------------------------------------------------------------------------------------------+
+▸ All moves (the timeline, exact times)
+COST  attempt 1  $2.10 · 18 min                  THE INTENT (rendered sections, Answers)
 ```
+
+The stage map: one node per stage in pipeline order, a 4 px left edge and an icon plus word for the
+outcome (passed, red, sent back, waiting on you, working now, skipped, not reached; waits on the owner
+in the "Needs you" amber, unreached stages dashed). The open stage and file live in the URL. No motion
+beyond the spinner.
 
 Queue and Activity: one card per repo lane / one list grouped by day, same chips and rows.

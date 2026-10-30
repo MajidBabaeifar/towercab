@@ -103,7 +103,7 @@ test("pipeline: proof falls back to the base's checks block when the PR's does n
   expect(JSON.parse(m.data), p.moves()).toMatchObject({ proof: "proven" });
   expect(proofRuns(p, "proof")).toHaveLength(1);
   expect(proofRuns(p, "proof-head")).toHaveLength(0);
-  const log = readFileSync(join(p.home.runs(m.intent), "proof.log"), "utf8");
+  const log = readFileSync(join(p.home.runs(m.intent, "proof"), "proof.log"), "utf8");
   expect(log).toContain("CLAUDE.md in the PR doesn't parse");
   expect(log).toContain("using the base's checks");
   expect(log.indexOf("using the base's checks")).toBeLessThan(log.indexOf("tests/*.sh"));

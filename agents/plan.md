@@ -30,7 +30,7 @@ What to do:
    `Proposed outcome` bullet.
 3. Work out what access the build needs beyond reading and writing ordinary files in the repo:
    network domains (package registries, APIs, docs it must fetch) and protected paths (CI workflows,
-   `CLAUDE.md`, `REVIEW.md`, `TOWERCAB.md`, `.claude/`, and paths listed in `TOWERCAB.md`). Ask only
+   `CLAUDE.md`, `AGENTS.md`, `REVIEW.md`, `TOWERCAB.md`, `.claude/`, and paths listed in `TOWERCAB.md`). Ask only
    for what you expect to use, with a reason.
 
 Return the JSON result:

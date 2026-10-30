@@ -2,6 +2,8 @@
 // for the owner; the owner's reply continues the build, and the worker's question reaches the
 // intent's current PR as a Question comment.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { build, happy, ID, intent, intents, TARGET } from "../helpers/flows.ts";
 import { type ClaudeReply, Pipe } from "../helpers/pipe.ts";
@@ -53,6 +55,16 @@ test("pipeline: verify red repairs then waits", async () => {
   expect(m.pr).toBeNull();
   expect(p.stages(m.id)).not.toContain("publish");
 }, 30_000);
+
+test("runs: repair prompt reads the stage log", () => {
+  // The failed round's output is in verify/, and its tail is what the next worker round is told.
+  const log = readFileSync(join(p.home.runs(ID, "verify"), "verify-1.log"), "utf8");
+  expect(log).toContain("no bye in greeting.txt");
+  expect(workers()[1]!.prompt).toContain("no bye in greeting.txt");
+  // Each round keeps its own log.
+  expect(readFileSync(join(p.home.runs(ID, "verify"), "verify-2.log"), "utf8")).toContain("no bye");
+  expect(workers()[0]!.prompt).not.toContain("no bye in greeting.txt");
+});
 
 test("pipeline: question comment has context, options, recommendation", async () => {
   const m = p.mission()!;
