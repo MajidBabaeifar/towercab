@@ -1,4 +1,4 @@
-// What the public repo shows (PUB-1..6) and Towercab's own CI (PIP-12).
+// What the public repo shows (PUB-1..8) and Towercab's own CI (PIP-12).
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -106,6 +106,18 @@ test("public: the App manifest stays private", () => {
   expect(manifest.public).toBe(false);
   const src = walk("src").map(read).join("\n");
   expect(src).not.toMatch(/gh repo edit|\/repos\/[^"`]*\/(topics|visibility)/);
+});
+
+test("public: gitleaks allowlist is by fingerprint", () => {
+  const toml = read(".gitleaks.toml");
+  expect(toml).toMatch(/useDefault\s*=\s*true/);
+  expect(toml).not.toMatch(/^\s*(paths|regexes|stopwords|rules|commits)\s*=/m);
+  const lines = read(".gitleaksignore").split("\n");
+  lines.forEach((line, i) => {
+    if (line.trim() === "" || line.startsWith("#")) return;
+    expect(line).toMatch(/^[0-9a-f]{40}:[^:]+:[^:]+:\d+$/);
+    expect(lines[i - 1] ?? "").toMatch(/^#\s*\S/);
+  });
 });
 
 test("public: CI workflow runs the checks", () => {

@@ -1,0 +1,4 @@
+# Default gitleaks rules. False positives are allowed one finding at a time,
+# by fingerprint, in .gitleaksignore (PUB-8); never add paths, rules or regexes here.
+[extend]
+useDefault = true
