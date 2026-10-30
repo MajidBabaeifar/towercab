@@ -322,8 +322,10 @@ During repair rounds the worker can't change tests it already pushed, so it can'
 green by weakening the test.
 
 - Locked = test files (PIP-30's globs) at the head of the last non-repair round; the guard blocks
-  them and publish refuses a diff that changes or deletes them. New test files are fine.
-- Verified by: `pipeline: repair can't edit pushed tests`
+  them and publish refuses a diff that changes or deletes them. New test files are fine. A locked
+  test that reads at the new head exactly as on the base branch came in with a merge of the base (a
+  conflict round), so publish lets it through.
+- Verified by: `pipeline: repair can't edit pushed tests`, `pipeline: a merge of the base may change pushed tests`
 
 ### PIP-32 · Verifier
 
