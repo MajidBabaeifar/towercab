@@ -255,7 +255,8 @@ into events.
 
 - PR reads (LOOP-38, [PIP-21](pipeline.md)) give at most one event per read, in this order: merged,
   closed, owner feedback, `/retry`, conflict, head moved. They are re-derived from the PR each time
-  (level-triggered), so nothing is lost while a child runs.
+  (level-triggered), so nothing is lost while a child runs. A conflict carries the same conflict repair
+  as CI's (PIP-1): the build merges the base branch first, so the next round no longer conflicts.
 - Intents repo: the intent file gone → `intent_removed` (stop); `retry: fresh` written → `retry_fresh`;
   `waiting` removed by the owner while blocked → `answered` with no text.
 - A move out of a stage kills that stage's child.
