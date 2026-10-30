@@ -79,8 +79,9 @@ function nodeLabel(n: StageNodeView): string {
   return bits.join(", ");
 }
 
-/** Words of a step back, as text: "sent back to Building: checks failed". */
+/** Words of a step back, as text: "sent back to Building: checks failed"; a red after the merge rolls back (UI-123). */
 function returnText(v: VisitView, names: Map<StageId, string>): string {
+  if (v.returnTo === "rollback") return `rolled back: ${v.returnLabel ?? "it failed live"}`;
   return `sent back to ${names.get(v.returnTo!) ?? v.returnTo}: ${v.returnLabel ?? "it needed more work"}`;
 }
 

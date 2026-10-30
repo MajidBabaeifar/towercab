@@ -156,7 +156,8 @@ other.
 - `rollback` → `build` with a repair (`kind: e2e`): which suite failed against which URL after which
   commit went live, that the app is back on the last good version, and the suite's log. The worker
   keeps its session ([PIP-13](pipeline.md)), on a new branch `<branch>-fix<n>` from base; `pr`, `head`
-  and `merge_sha` start empty. The fix goes through verify, proof, CI, review and gate as usual.
+  and `merge_sha` start empty; the replaced PR's number goes to `data.ship.prs`, so the intent page
+  still lists it ([UI-124](ui.md)). The fix goes through verify, proof, CI, review and gate as usual.
 - At most 2 fixes per mission (`data.ship.fixes`); a third red goes to `revert`.
 - Verified by: `ship: rollback starts a fix round`, `ship: two fixes then revert`
 

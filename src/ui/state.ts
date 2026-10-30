@@ -1078,12 +1078,31 @@ function prViews(src: UiSources, i: Intent | null, m: Mission | null, ts: Transi
     else st = "not yet";
     return { label, state: st, number: n, url: url ?? null };
   };
+  // UI-124: past Merging the code PR is merged; fix rounds keep the PRs they replaced.
+  const where = m ? (m.stage === "blocked" ? m.from_stage : m.stage) : null;
+  const shipping = where !== null && SHIP_STAGES.includes(where);
+  type Ship = { prs?: number[]; revert?: { pr: number | null; sha: string | null } };
+  const ship = m ? dataOf<{ ship?: Ship }>(m).ship : undefined;
+  const earlier = ship?.prs ?? [];
+  const tile = (n: number, label: PrView["label"], state: PrState = "merged"): PrView => ({
+    label,
+    state,
+    number: n,
+    url: repo ? src.prUrl(repo, n) : null,
+  });
+  const fixLabel = (k: number): PrView["label"] => (k === 0 ? "Code" : `Fix ${k}`);
+  const code = one(fixLabel(earlier.length), 2, m?.pr ?? null, i?.pr ?? null, repo);
+  const revert = ship?.revert ?? null;
   return [
     one("Spec", 0, m?.spec_pr ?? null, i?.specPr ?? null, repo),
     one("Plan", 1, m?.plan_pr ?? null, i?.planPr ?? null, intentsRepo),
-    one("Code", 2, m?.pr ?? null, i?.pr ?? null, repo),
+    ...earlier.map((n, k) => tile(n, fixLabel(k))),
+    shipping && code.number !== null ? { ...code, state: "merged" } : code,
+    ...(revert?.pr ? [tile(revert.pr, "Revert", revert.sha ? "merged" : "open")] : []),
   ];
 }
+
+const SHIP_STAGES: (Stage | null)[] = ["deploy", "e2e", "rollback", "revert"];
 
 const ENTER_WORDS: Partial<Record<Stage, string>> = {
   pick: "Picked up",
@@ -1163,6 +1182,8 @@ interface NodeDef {
   stage: Stage | null;
   folder: string | null;
   owner: boolean;
+  /** A ship stage (UI-123): listed only when the attempt visited it. */
+  ship?: boolean;
 }
 
 /** UI-72: the map's stages in pipeline order, in the words of UI-56. */
@@ -1180,6 +1201,11 @@ const NODES: NodeDef[] = [
   { id: "gate", name: "Deciding", stage: "gate", folder: "gate", owner: false },
   { id: "code_review", name: "Your code review", stage: "approval:merge", folder: null, owner: true },
   { id: "merge", name: "Merging", stage: "merge", folder: "merge", owner: false },
+  // UI-123: the ship stages, listed only when visited.
+  { id: "deploy", name: "Deploying", stage: "deploy", folder: null, owner: false, ship: true },
+  { id: "e2e", name: "e2e tests", stage: "e2e", folder: "e2e", owner: false, ship: true },
+  { id: "rollback", name: "Rolling back", stage: "rollback", folder: null, owner: false, ship: true },
+  { id: "revert", name: "Reverting", stage: "revert", folder: null, owner: false, ship: true },
   { id: "answer", name: "Your answer", stage: "blocked", folder: null, owner: true },
   { id: "other", name: "Other", stage: null, folder: null, owner: false },
 ];
@@ -1314,7 +1340,9 @@ function returnWords(t: Pick<Transition, "event" | "why">, from: StageId): strin
             ? "CI failed"
             : from === "review"
               ? "the review asked for changes"
-              : `${NODE_BY_ID.get(from)?.name.toLowerCase() ?? from} failed`
+              : from === "deploy"
+                ? "the deploy failed"
+                : `${NODE_BY_ID.get(from)?.name.toLowerCase() ?? from} failed`
       : t.event === "feedback"
         ? from === "review"
           ? "the review asked for changes"
@@ -1325,7 +1353,9 @@ function returnWords(t: Pick<Transition, "event" | "why">, from: StageId): strin
             ? "the PR conflicted with its base branch"
             : t.event === "head_moved"
               ? "the PR changed"
-              : "sent back";
+              : from === "rollback"
+                ? "fix round"
+                : "sent back";
   const why = (t.why ?? "").split("\n")[0]!.trim();
   return why && why.length <= 80 && why.toLowerCase() !== what ? `${what}: ${why}` : what;
 }
@@ -1374,6 +1404,9 @@ export function stageMap(
     } else if (lv?.event === "red") {
       outcome = "red";
       returnTo = next.node;
+    } else if (s.node === "rollback" && lv?.event === "ok") {
+      // UI-123: back on the last good version, so the rollback passed; the build that follows is a fix round.
+      returnTo = next.node;
     } else if (lv?.event === "wait" && next.node === "answer") {
       outcome = def.owner ? "passed" : /red|fail/i.test(lv.why ?? "") ? "red" : "passed";
     } else if ((NODE_INDEX.get(next.node) ?? 0) < (NODE_INDEX.get(s.node) ?? 0)) {
@@ -1401,7 +1434,11 @@ export function stageMap(
   // Attach each file to a round: the one in its name, else the visit running when it was written.
   const shown: StageFileView[] = files.map((f) => {
     const { kind, details } = kindOf(f.name);
-    const vs = visits.filter((v) => v.stage === f.node);
+    // UI-123: the smoke suites a rollback runs write to the e2e folder, but belong to the rollback. They
+    // run minutes after it starts; the red suite's own log is written in the same second it starts.
+    const during = visits.filter((v) => v.start + 2 <= f.mtime).at(-1);
+    const node: StageId = f.node === "e2e" && during?.stage === "rollback" ? "rollback" : f.node;
+    const vs = visits.filter((v) => v.stage === node);
     const named = /-(\d+)/.exec(f.name)?.[1];
     let round: number | null = named ? Number(named) : null;
     if (vs.length && (round === null || round > vs.length || kind === "Details")) {
@@ -1409,7 +1446,7 @@ export function stageMap(
       round = v.round;
     }
     return {
-      stage: f.node,
+      stage: node,
       round,
       kind: f.images ? "Screenshots" : kind,
       name: f.name,
@@ -1426,7 +1463,7 @@ export function stageMap(
     const vs = visits.filter((v) => v.stage === def.id);
     const own = shown.filter((f) => f.stage === def.id);
     for (const v of vs) v.files = own.filter((f) => f.round === v.round);
-    if (def.id === "answer" && vs.length === 0) continue;
+    if ((def.id === "answer" || def.ship) && vs.length === 0) continue;
     if (def.id === "other" && own.length === 0) continue;
     const last = vs[vs.length - 1];
     let outcome: VisitOutcome = last?.outcome ?? "not reached";

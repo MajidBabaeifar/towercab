@@ -31,6 +31,8 @@ export interface ShipData {
   since?: number;
   /** Fix rounds after a rollback (SHIP-11). */
   fixes: number;
+  /** The code PRs fix rounds replaced, oldest first (UI-124). */
+  prs?: number[];
   /** The e2e run: suite names in order, the one running, its tries. */
   e2e?: { order: string[]; i: number; tries: number };
   /** The version a rollback goes back to. */
