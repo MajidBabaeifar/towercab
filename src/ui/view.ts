@@ -198,6 +198,8 @@ export interface Plane {
   phases: Phase[];
   /** The "Start now" button is offered (UI-101). */
   canStart: boolean;
+  /** UI-125: rolling back, reverting, or in a fix round; absent otherwise. */
+  ship?: { kind: "rollback" | "revert" | "fix"; mark: string };
 }
 
 export interface AirspaceView {
@@ -210,7 +212,7 @@ export interface AirspaceView {
     recent: { intent: string; title: string; repo: string }[];
   };
   counts: { parked: number; queued: number; flying: number; needs: number; landed: number };
-  /** UI-120: a plane sits at a ship station, so `04 deploy` and `05 e2e` are drawn. */
+  /** UI-120: a plane sits at a ship station, or a mission entered `deploy` in the last 7 days. */
   ship: boolean;
   /** "6 in flight · 3 need you · 1 landed today". */
   countsText: string;
