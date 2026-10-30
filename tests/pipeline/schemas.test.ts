@@ -75,7 +75,9 @@ test("schemas: closed objects, every key required", () => {
       summary: "ok",
     }).ok,
   ).toBe(true);
-  expect(parseResult("plan", { plan: "p", access: { domains: [], paths: [{ glob: "x" }] } })).toEqual({
+  expect(
+    parseResult("plan", { plan: "p", access: { domains: [], paths: [{ glob: "x" }] }, e2e: null }),
+  ).toEqual({
     ok: false,
     why: "result.access.paths[0].why is missing",
   });

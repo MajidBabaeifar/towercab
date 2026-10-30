@@ -226,11 +226,25 @@ const STEP_WORDS: Record<Stage, string> = {
   review: "Reviewing",
   gate: "Deciding",
   merge: "Merging",
+  deploy: "Waiting for the deploy",
+  e2e: "Running e2e",
+  rollback: "Rolling back",
+  revert: "Reverting",
   "approval:merge": "Waiting for your code review",
   blocked: "Waiting for your answer",
   done: "Done",
   stopped: "Dropped",
 };
+
+/** UI-121: a stage in plain words, with a fix round's count and the repo hold. */
+export function shipWords(m: Pick<Mission, "stage" | "step" | "data">): string {
+  if (m.stage === "gate" && m.step === "hold") return "Repo on hold";
+  const fixes = dataOf<{ ship?: { fixes?: number } }>(m as Mission).ship?.fixes ?? 0;
+  const ship = ["deploy", "e2e", "rollback", "revert"].includes(m.stage);
+  if (fixes > 0 && !ship && !isWait(m.stage) && m.stage !== "done")
+    return `Fixing (${fixes} of 2): ${stepWords(m.stage).toLowerCase()}`;
+  return stepWords(m.stage);
+}
 
 /** UI-56: a stage in plain words. */
 export function stepWords(stage: Stage): string {
@@ -520,7 +534,7 @@ export function missionRow(src: UiSources, s: Snap, m: Mission): Row {
     repo: m.repo,
     state: missionState(s, m, src),
     phases: phases(m),
-    step: ready ? "Ready to build" : stepWords(m.stage),
+    step: ready ? "Ready to build" : shipWords(m),
     inStep: duration(s.now - entered),
     cost: money(m.cost_usd),
     model: modelName(m.child_model ?? m.model),
@@ -575,6 +589,10 @@ function queuedRow(s: Snap, u: UpNext): Row {
 
 /** UI-78: where a mission's plane sits on the airspace line. */
 export function stationOf(m: Pick<Mission, "stage" | "from_stage">): StationKey {
+  // UI-120: shipping, and a wait that came out of shipping, sit at the ship stations.
+  const at = m.stage === "blocked" && m.from_stage ? m.from_stage : m.stage;
+  if (at === "deploy" || at === "rollback") return "deploy";
+  if (at === "e2e" || at === "revert") return "e2e";
   if (m.stage === "approval:spec") return "spec-review";
   if (m.stage === "approval:plan") return "plan-review";
   if (m.stage === "approval:merge") return "code-review";
@@ -594,6 +612,8 @@ const STATIONS: StationKey[] = [
   "code",
   "ci",
   "code-review",
+  "deploy",
+  "e2e",
   "landed",
 ];
 
@@ -689,6 +709,7 @@ function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): Air
       recent: landed.slice(0, 3).map((i) => ({ intent: i.id, title: i.title, repo: i.repo })),
     },
     counts,
+    ship: planes.some((p) => p.station === "deploy" || p.station === "e2e"),
     countsText: `${counts.flying} in flight · ${needs} ${needWord} · ${counts.landed} landed today`,
     summary:
       `Airspace: ${counts.parked} parked, ${counts.queued} queued, ${counts.flying} in flight, ` +
@@ -1624,8 +1645,25 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     answers: intent?.sections.get("Answers")?.trim() || null,
     file: intent ? src.intentUrl(intent) : null,
     issue: intent?.issue ?? null,
+    e2eLog: e2eLogOf(src.home.root, id),
   };
   return { version: versionOf(body, dbMark(src.db)), ...body };
+}
+
+/** UI-122: the newest e2e log of an intent, by modification time, as its run-file URL. */
+export function e2eLogOf(root: string, id: string): string | null {
+  const dir = join(root, "runs", id, "e2e");
+  let best: { name: string; at: number } | null = null;
+  try {
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".log")) continue;
+      const at = lstatSync(join(dir, name)).mtimeMs;
+      if (!best || at >= best.at) best = { name, at };
+    }
+  } catch {
+    return null;
+  }
+  return best ? `/api/runs/${encodeURIComponent(id)}/e2e/${encodeURIComponent(best.name)}` : null;
 }
 
 /** The queue page's data (`GET /api/queue`): one lane per repo. */

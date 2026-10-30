@@ -182,6 +182,8 @@ export type StationKey =
   | "code"
   | "ci"
   | "code-review"
+  | "deploy"
+  | "e2e"
   | "landed";
 
 /** UI-78: one open intent on the airspace line. */
@@ -208,6 +210,8 @@ export interface AirspaceView {
     recent: { intent: string; title: string; repo: string }[];
   };
   counts: { parked: number; queued: number; flying: number; needs: number; landed: number };
+  /** UI-120: a plane sits at a ship station, so `04 deploy` and `05 e2e` are drawn. */
+  ship: boolean;
   /** "6 in flight · 3 need you · 1 landed today". */
   countsText: string;
   /** One sentence for screen readers. */
@@ -367,6 +371,8 @@ export interface IntentPage {
   file: string | null;
   /** The GitHub issue the intent came from (INT-29), or null. */
   issue: string | null;
+  /** UI-122: the newest e2e log (`/api/runs/<id>/e2e/<file>`), or null. */
+  e2eLog: string | null;
 }
 
 export interface QueueItem {

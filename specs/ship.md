@@ -1,6 +1,6 @@
 # Ship
 
-**Status:** Draft · **Prefix:** SHIP
+**Status:** Live · **Prefix:** SHIP
 
 ## Purpose
 
@@ -91,7 +91,8 @@ After its code PR is merged, a mission ships instead of finishing.
 
 - New stages: `deploy` and `e2e` in the order after `merge` and before `done`; `rollback` and `revert`
   are working stages outside the order. All four are phase `code`.
-- `code_merged` (build … merge, approval:merge, blocked) → `deploy`. At `deploy`: `ok` → `e2e`, `red`
+- `code_merged` (build … merge, approval:merge, blocked) → `deploy`; a wait that came out of a ship
+  stage keeps seeing its merged PR, so there it is ignored. At `deploy`: `ok` → `e2e`, `red`
   → `rollback`, `skip` → `done`. At `e2e`: `ok` → `done`, `red` → `rollback`. At `rollback`: `ok` →
   `build`, `revert` → `revert`. `revert` leaves only through a wait. [LOOP-3](loop.md)'s tables say so.
 - Verified by: `machine: ship transitions`
@@ -113,7 +114,8 @@ In an opted-in repo, a change comes with end-to-end tests for what it adds.
   or says why none is needed (`e2e: {tests, none_why}`). The review agent is told to check that the
   e2e tests cover the new behaviour.
 - Gate ([PIP-7](pipeline.md)): a live repo, no changed file under a suite's `tests` globs and no
-  `none_why` in the plan → `approval:merge` "no e2e test for the change".
+  `none_why` in the plan → `approval:merge` "no e2e test for the change". A fix round (SHIP-11) is
+  exempt: the suite that failed checks the fix once it ships.
 - e2e test files need the live app, so they don't count as the change's tests in the red→green proof
   ([PIP-30](pipeline.md)).
 - Verified by: `ship: the gate wants an e2e test`, `ship: the plan names its e2e tests`
@@ -163,7 +165,8 @@ When two fixes didn't hold, Towercab undoes the intent's merges on `main` and ha
 
 - Branch `towercab/<intent>-revert` from base with `git revert --no-edit` of every merge of the intent,
   newest first, as the bot; a PR "Revert: <title>" whose body names the merges, the failing suite and
-  the log's tail. Towercab merges it once its CI is green, whatever the intent's autonomy: the repo
+  the log's tail. Towercab merges it once its CI is green (or the repo has none), whatever the
+  intent's autonomy: the repo
   opted into rollback with its `live` block.
 - Then it waits for the revert's commit to be live (SHIP-7) and runs the smoke suites. Green → wait
   `rolled back, revise`, naming the failing suite and its log. A revert conflict, red or stuck CI, a

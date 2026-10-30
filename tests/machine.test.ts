@@ -4,6 +4,7 @@ import {
   continueTo,
   EVENTS,
   isWait,
+  isWorking,
   type Next,
   next,
   ORDER,
@@ -44,8 +45,8 @@ describe("machine", () => {
       ["blocked", "crash", "ignore"],
       ["approval:spec", "spec_merged", "→ plan"],
       ["approval:plan", "plan_merged", "→ build"],
-      ["approval:merge", "code_merged", "→ done"],
-      ["ci", "code_merged", "→ done"],
+      ["approval:merge", "code_merged", "→ deploy"],
+      ["ci", "code_merged", "→ deploy"],
       ["plan", "code_merged", "ignore"],
       ["approval:spec", "feedback", "→ design"],
       ["approval:plan", "feedback", "→ plan"],
@@ -73,7 +74,7 @@ describe("machine", () => {
 
   test("machine: order", () => {
     expect(ORDER.join(" → ")).toBe(
-      "pick → design → plan → build → verify → proof → publish → ci → review → gate → merge → done",
+      "pick → design → plan → build → verify → proof → publish → ci → review → gate → merge → deploy → e2e → done",
     );
     for (let i = 0; i < ORDER.length - 1; i++) expect(show(next(ORDER[i]!, "ok"))).toBe(`→ ${ORDER[i + 1]}`);
     for (const w of Object.keys(WAITS)) expect(isWait(waitInfo(w).stage)).toBe(true);
@@ -131,4 +132,40 @@ test("machine: plan merged while the slot is taken waits", () => {
   expect(next("plan", "plan_merged")).toEqual({ kind: "go", to: "build" });
   expect(next("blocked", "plan_merged", "plan")).toEqual({ kind: "go", to: "build" });
   expect(waitInfo("spec conflict").stage).toBe("blocked");
+});
+
+test("machine: ship transitions", () => {
+  const rows: [Stage, (typeof EVENTS)[number], string][] = [
+    ["merge", "code_merged", "→ deploy"],
+    ["blocked", "code_merged", "→ deploy"],
+    ["deploy", "ok", "→ e2e"],
+    ["deploy", "red", "→ rollback"],
+    ["deploy", "skip", "→ done"],
+    ["e2e", "ok", "→ done"],
+    ["e2e", "red", "→ rollback"],
+    ["e2e", "skip", "unexpected"],
+    ["rollback", "ok", "→ build"],
+    ["rollback", "revert", "→ revert"],
+    ["rollback", "red", "unexpected"],
+    ["revert", "ok", "unexpected"],
+    ["revert", "timeout", "again"],
+    ["rollback", "crash", "recover"],
+    ["e2e", "code_merged", "ignore"],
+    ["deploy", "feedback", "ignore"],
+    ["revert", "closed", "stop"],
+  ];
+  for (const [s, e, want] of rows) expect(show(next(s, e)), `${s} × ${e}`).toBe(want);
+  // A wait after shipping keeps seeing its merged PR: that is no new merge.
+  expect(show(next("blocked", "code_merged", "rollback"))).toBe("ignore");
+  expect(show(next("blocked", "code_merged", "revert"))).toBe("ignore");
+  expect(show(next("blocked", "code_merged", "e2e"))).toBe("ignore");
+  expect(show(next("blocked", "code_merged", "verify"))).toBe("→ deploy");
+  for (const s of ["deploy", "e2e", "rollback", "revert"] as Stage[]) {
+    expect(isWorking(s), s).toBe(true);
+    expect(phaseOf(s, null), s).toBe("code");
+  }
+  expect(waitInfo("rolled back, revise").stage).toBe("blocked");
+  expect(waitInfo("rollback failed").ask).toBe(
+    "Rolling back failed. Nothing more merges in this repo until you fix it.",
+  );
 });

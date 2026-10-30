@@ -6,6 +6,7 @@ import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import { ok } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { DEFAULT_DO_NOT_REPORT, type Review } from "../repo/files.ts";
+import { e2eText } from "../ship/live.ts";
 import { check } from "../tools.ts";
 import { coGit, data, ended, intentOf, note, repoFiles, spawnRun } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
@@ -81,6 +82,7 @@ export const reviewHandler: Handler = {
       ci: d.ci?.result === "none" ? "no CI on this repo" : "green",
       screenshots: shots,
       diff_cmd: `git diff refs/remotes/origin/${repo.base}...HEAD`,
+      e2e: e2eText(files.towercab.live, "review"),
     });
     // A run cut off by a crash runs again as the same round, so its comment is edited, not added.
     const at = m.step === "review" ? m : cx.record(m, "pending", {}, { review: null });

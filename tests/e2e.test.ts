@@ -46,6 +46,7 @@ const design = result(
 const plan = result({
   plan: "## Approach\n\nAdd a greeting file.\n\n## Steps\n\n1. Test\n2. Code\n\n## Risks\n\nNone.\n\n## How to check it\n\nRun the tests.",
   access: { domains: [], paths: [] },
+  e2e: null,
 });
 const build = result(
   {

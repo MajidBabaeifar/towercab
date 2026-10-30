@@ -61,6 +61,11 @@ flowchart LR
 3. **Code PR** in the target repo: written test-first, checked locally and in CI, reviewed by a
    separate Claude session, with a description that says what it does, why, and what to check.
 
+After the merge, a repo can opt into the ship stage ([specs/ship.md](specs/ship.md)): Towercab waits
+until your platform says the change is live, runs your end-to-end tests against it, and when they
+fail, asks for the last good version and fixes forward. It never deploys anything itself; the
+[deploy contract](docs/deploy-contract.md) says what your platform needs to do.
+
 You steer with ordinary GitHub actions. Merge to approve, close to drop, comment or request changes
 to send it back with your notes, and reply to a question to answer it. `/retry` starts over. A local
 web page shows what needs you, what is stuck, what is moving and what it costs

@@ -57,7 +57,12 @@ test("repo: parse the three files", () => {
   expect(files.review.text).toBe(review);
   expect(files.review.passes).toEqual([{ name: "Bugs", what: "wrong things" }]);
   expect(files.review.redLines).toEqual(["`migrations/**`: data"]);
-  expect(files.towercab).toEqual({ maxAutonomy: 3, protected: ["src/machine.ts"], tests: DEFAULT_TESTS });
+  expect(files.towercab).toEqual({
+    maxAutonomy: 3,
+    protected: ["src/machine.ts"],
+    tests: DEFAULT_TESTS,
+    live: null,
+  });
 
   // Absent REVIEW.md and TOWERCAB.md → defaults.
   const bare = parseRepoFiles(claudeMd, null, null);
@@ -234,6 +239,7 @@ test("repo: TOWERCAB.md front matter", () => {
     maxAutonomy: 2,
     protected: ["src/machine.ts", "ops/**"],
     tests: ["spec/**", "**/*_spec.rb"],
+    live: null,
   });
   expect(defaultTowercab()).toEqual({
     maxAutonomy: 5,
@@ -247,6 +253,7 @@ test("repo: TOWERCAB.md front matter", () => {
       "**/*.test.*",
       "**/*.spec.*",
     ],
+    live: null,
   });
   for (const t of [
     "",
@@ -385,7 +392,12 @@ test("repo: Towercab's own files parse", () => {
   expect(own.verifying.fast).toEqual(["npm run lint", "npm run typecheck", "npx vitest run {tests}"]);
   expect(own.review.passes.map((p) => p.name)).toEqual(["Bugs", "Security", "Compliance"]);
   expect(own.review.redLines.some((l) => l.includes("src/machine.ts"))).toBe(true);
-  expect(own.towercab).toEqual({ maxAutonomy: 5, protected: ["src/machine.ts"], tests: ["tests/**"] });
+  expect(own.towercab).toEqual({
+    maxAutonomy: 5,
+    protected: ["src/machine.ts"],
+    tests: ["tests/**"],
+    live: null,
+  });
 });
 
 test("repo: Towercab's setup installs the Playwright browser", () => {
@@ -410,4 +422,83 @@ test("repo: CI is read from the base branch", async () => {
   expect(await hasCi(tools, clone, "main")).toBe(false);
   git(clone, "fetch", "-q", "origin");
   expect(await hasCi(tools, clone, "main")).toBe(true);
+});
+
+test("repo: live block", () => {
+  const got = parseTowercab(
+    [
+      "---",
+      "live:",
+      "  url: https://tracker.example.dev/",
+      "  timeout: 10",
+      "  suites:",
+      "    - name: smoke",
+      "      command: test/e2e/smoke.sh",
+      "      tests: test/e2e/smoke.sh",
+      "      smoke: true",
+      "    - name: browser",
+      "      command: npx playwright test",
+      "      tests: [e2e/**]",
+      "      paths: [ui/**]",
+      "---",
+      "",
+    ].join("\n"),
+  ).live;
+  expect(got).toEqual({
+    url: "https://tracker.example.dev",
+    environment: "production",
+    adapter: "github",
+    liveCommand: null,
+    rollbackCommand: null,
+    timeout: 10,
+    suites: [
+      { name: "smoke", command: "test/e2e/smoke.sh", tests: ["test/e2e/smoke.sh"], paths: [], smoke: true },
+      { name: "browser", command: "npx playwright test", tests: ["e2e/**"], paths: ["ui/**"], smoke: false },
+    ],
+  });
+  const cmd = parseTowercab(
+    "---\nlive:\n  url: https://a.dev\n  adapter: command\n  environment: prod-eu\n  live_command: fly releases --json | jq -r .[0].sha\n  rollback_command: ./ops/rollback.sh\n  suites:\n    - {name: api, command: hurl api.hurl, tests: [api.hurl]}\n---\n",
+  ).live;
+  expect(cmd).toMatchObject({
+    adapter: "command",
+    environment: "prod-eu",
+    liveCommand: "fly releases --json | jq -r .[0].sha",
+    rollbackCommand: "./ops/rollback.sh",
+    timeout: 20,
+  });
+});
+
+test("repo: live block errors", () => {
+  const suite = "  suites:\n    - {name: smoke, command: ./s.sh, tests: [s.sh]}\n";
+  for (const [body, why] of [
+    ["live: yes\n", "live: must be a mapping"],
+    [`live:\n${suite}`, "live: url is required"],
+    [`live:\n  url: http://a.dev\n${suite}`, "live: url must be an https:// URL"],
+    [`live:\n  url: https://a.dev\n  adapter: ssh\n${suite}`, "live: adapter must be github or command"],
+    [
+      `live:\n  url: https://a.dev\n  adapter: command\n${suite}`,
+      "live: the command adapter needs live_command and rollback_command",
+    ],
+    [`live:\n  url: https://a.dev\n  timeout: 0\n${suite}`, "live: timeout must be whole minutes, 1-120"],
+    ["live:\n  url: https://a.dev\n", "live: suites must list at least one suite"],
+    [`live:\n  url: https://a.dev\n  deploy: now\n${suite}`, "live: unknown key deploy"],
+    [
+      "live:\n  url: https://a.dev\n  suites:\n    - {name: Smoke, command: x, tests: [x]}\n",
+      "live: suite 1: name must be lowercase letters, digits and -",
+    ],
+    [
+      "live:\n  url: https://a.dev\n  suites:\n    - {name: s, command: x, tests: []}\n",
+      "live: suite s: tests must list at least one glob",
+    ],
+    [
+      "live:\n  url: https://a.dev\n  suites:\n    - {name: s, command: x, tests: [x]}\n    - {name: s, command: y, tests: [y]}\n",
+      "live: suite s twice",
+    ],
+    [
+      "live:\n  url: https://a.dev\n  suites:\n    - {name: s, command: x, tests: [x], smoke: maybe}\n",
+      "live: suite s: smoke must be true or false",
+    ],
+  ] as const) {
+    expect(() => parseTowercab(`---\n${body}---\n`), body).toThrow(`front matter: ${why}`);
+  }
 });

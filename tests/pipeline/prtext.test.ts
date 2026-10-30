@@ -134,7 +134,7 @@ test("pipeline: plan.md sections", () => {
 });
 
 test("pipeline: plan names the files that change", () => {
-  const prompt = render("plan", { intent: "i", spec_ids: "WEB-3", checks: "npm test" });
+  const prompt = render("plan", { intent: "i", spec_ids: "WEB-3", checks: "npm test", e2e: "" });
   const sections = [...prompt.matchAll(/^ {2}- `## ([^`]+)`/gm)].map((m) => m[1]);
   expect(sections).toEqual(["Approach", "Files that change", "Steps", "Risks", "How to check it"]);
   expect(prompt).toContain("(new|changed|deleted)");
@@ -172,6 +172,7 @@ test("prompts: templates fill every key", () => {
     ci: "green",
     screenshots: "",
     diff_cmd: "git diff",
+    e2e: "",
     what: "w",
     details: "d",
   };

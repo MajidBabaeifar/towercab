@@ -6,6 +6,8 @@ import { ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { data, effectiveOf, gh, intentOf, prUrl, repoFiles } from "./common.ts";
 import { type Checks, codeBody } from "./prtext.ts";
+import { HOLD_SECS, holder } from "./ship.ts";
+import { changedTests } from "./verify.ts";
 
 export function checksLine(m: Mission): Checks {
   const d = data(m);
@@ -64,6 +66,12 @@ async function updateBody(cx: Ctx, m: Mission): Promise<void> {
 
 export const gateHandler: Handler = {
   async step(cx, m) {
+    // SHIP-14: one ship at a time per repo; nothing merges while another change ships or is fixed.
+    const h = holder(cx, m);
+    if (h) {
+      cx.record(m, "hold", { why: `repo on hold: ${h.intent} is shipping` });
+      return { poll: HOLD_SECS };
+    }
     const intent = await intentOf(cx, m);
     const files = await repoFiles(cx, m);
     const d = data(m);
@@ -85,6 +93,16 @@ export const gateHandler: Handler = {
     if (d.foreignHead) return { done: wait("review and merge PR", "someone else pushed commits to the PR") };
     if (d.build?.planChanged && a !== 5) {
       return { done: wait("review and merge PR", "the build departed from the approved plan") };
+    }
+    // SHIP-8: in a live repo a change brings an e2e test, or its plan says why it needs none.
+    const live = files.towercab.live;
+    if (live && !d.plan?.e2e?.none_why?.trim() && !(d.ship?.fixes ?? 0)) {
+      const e2e = await changedTests(
+        cx,
+        m,
+        live.suites.flatMap((s) => s.tests),
+      );
+      if (e2e.length === 0) return { done: wait("review and merge PR", "no e2e test for the change") };
     }
     return { done: ok({ set: { head: m.head } }) };
   },

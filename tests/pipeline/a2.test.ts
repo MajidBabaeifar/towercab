@@ -87,6 +87,7 @@ test("pipeline: feedback revises the plan", async () => {
     reply({
       plan: PLAN_MD,
       access: { domains: [{ domain: "example.com", why: "the greeting text" }], paths: [] },
+      e2e: null,
     }),
   );
   let m = await p.untilStage("approval:plan");
@@ -104,6 +105,7 @@ test("pipeline: feedback revises the plan", async () => {
         ],
         paths: [],
       },
+      e2e: null,
     }),
   );
   p.clock.advance(61);

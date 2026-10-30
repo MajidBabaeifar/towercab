@@ -193,20 +193,22 @@ describe("events", () => {
     expect(apply(gone.cx, gone.m, intentEvents(gone.m, null)!).stage).toBe("stopped");
   });
 
-  test("events: owner merge during CI ends done", () => {
+  test("events: owner merge during CI ships", () => {
     const { db, m, cx } = world("ci", { pr: 7, head: "h1", feedback_seen: "2026-10-15T10:00:00Z" });
     const o = prEvents(m, { code: merged("abc123") }, ME, BOT)!;
     expect(o).toEqual({ event: "code_merged", set: { merge_sha: "abc123", merged_by: "owner" } });
     const after = apply(cx, m, o);
-    expect([after.stage, after.merged_by, after.merge_sha]).toEqual(["done", "owner", "abc123"]);
+    // A merge ships (SHIP-6): deploy ends at once in a repo without a live block.
+    expect([after.stage, after.merged_by, after.merge_sha]).toEqual(["deploy", "owner", "abc123"]);
     expect(db.all("SELECT * FROM transitions")).toMatchObject([
-      { from_stage: "ci", event: "code_merged", to_stage: "done" },
+      { from_stage: "ci", event: "code_merged", to_stage: "deploy" },
     ]);
     expect(db.all("SELECT * FROM outbox")).toEqual([]);
-    // Towercab's own merge (recorded before it) keeps its name; done ignores the next read.
+    // Towercab's own merge (recorded before it) keeps its name; a shipping mission ignores the next read.
     const own = world("merge", { pr: 7, merged_by: "towercab" });
     expect(prEvents(own.m, { code: merged() }, ME, BOT)?.set?.merged_by).toBe("towercab");
-    expect(prEvents(after, { code: merged() }, ME, BOT)).toBeNull();
+    const again = prEvents(after, { code: merged() }, ME, BOT);
+    expect(again === null || apply(cx, after, again).stage === "deploy").toBe(true);
   });
 
   test("events: merge, close, review and comment", () => {
@@ -216,7 +218,7 @@ describe("events", () => {
     const plan = world("approval:plan", { spec_pr: 3, plan_pr: 4 });
     expect(apply(plan.cx, plan.m, prEvents(plan.m, { plan: merged() }, ME, BOT)!).stage).toBe("build");
     const code = world("approval:merge", { spec_pr: 3, plan_pr: 4, pr: 7, head: "h1" });
-    expect(apply(code.cx, code.m, prEvents(code.m, { code: merged() }, ME, BOT)!).stage).toBe("done");
+    expect(apply(code.cx, code.m, prEvents(code.m, { code: merged() }, ME, BOT)!).stage).toBe("deploy");
 
     // Closed without merge: stopped and dropped, no message.
     const closed = world("approval:merge", { pr: 7, head: "h1" });

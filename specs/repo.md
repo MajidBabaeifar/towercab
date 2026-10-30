@@ -20,7 +20,8 @@ never from a PR or a working tree.
   or non-UTF-8 file in a file's place → `RepoError.invalid("<file>: …")`; a failed git →
   `RepoError.git`. Then the pure `parseRepoFiles(claude, review, towercab)` (**Grammar**).
 - `TOWERCAB.md` front matter: `max_autonomy` (1–5, default 5), `protected` (globs), `tests` (globs,
-  default the list in [PIP-30](pipeline.md)). Any other key → `unknown key <k>`.
+  default the list in [PIP-30](pipeline.md)), `live` (the ship stage's block, [SHIP-1](ship.md)). Any
+  other key → `unknown key <k>`.
 - Verified by: `repo: parse the three files`, `repo: read from the base branch only`, `repo: TOWERCAB.md front matter`
 
 ### REPO-2 · The verifying section

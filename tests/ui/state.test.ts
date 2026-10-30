@@ -21,7 +21,7 @@ import {
   until,
 } from "../../src/ui/state.ts";
 import { buildFixture, type Fixture, IDS } from "../../ui/fixture.ts";
-import { testConfig } from "../helpers/world.ts";
+import { tempDir, testConfig } from "../helpers/world.ts";
 
 // Mon 26 Oct 2026, 23:00:00 local time.
 const NOW = new Date(2026, 9, 26, 23, 0, 0).getTime() / 1000;
@@ -655,4 +655,32 @@ test("ui: flat runs get a map", async () => {
   expect(map.stages.find((s) => s.id === "plan_review")).toMatchObject({ outcome: "waiting on you" });
   // Nothing moved on disk.
   expect(existsSync(join(f.home.runs(IDS.plan), "design-1.log"))).toBe(true);
+});
+
+test("ui: ship states", async () => {
+  const { shipWords } = await import("../../src/ui/state.ts");
+  const m = (stage: Stage, step = "", data: unknown = {}) =>
+    ({ stage, step, data: JSON.stringify(data) }) as unknown as Mission;
+  expect(shipWords(m("deploy"))).toBe("Waiting for the deploy");
+  expect(shipWords(m("e2e"))).toBe("Running e2e");
+  expect(shipWords(m("rollback"))).toBe("Rolling back");
+  expect(shipWords(m("revert"))).toBe("Reverting");
+  expect(shipWords(m("verify", "", { ship: { merges: ["a"], fixes: 1 } }))).toBe(
+    "Fixing (1 of 2): running checks",
+  );
+  expect(shipWords(m("gate", "hold"))).toBe("Repo on hold");
+  expect(shipWords(m("gate"))).toBe("Deciding");
+});
+
+test("ui: e2e log link", async () => {
+  const { e2eLogOf } = await import("../../src/ui/state.ts");
+  const root = tempDir();
+  expect(e2eLogOf(root, "261030-0001")).toBeNull();
+  const dir = join(root, "runs", "261030-0001", "e2e");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "1-greet.log"), "red");
+  const { utimesSync } = await import("node:fs");
+  utimesSync(join(dir, "1-greet.log"), 1000, 1000);
+  writeFileSync(join(dir, "2-greet.log"), "red again");
+  expect(e2eLogOf(root, "261030-0001")).toBe("/api/runs/261030-0001/e2e/2-greet.log");
 });

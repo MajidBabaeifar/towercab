@@ -14,6 +14,7 @@ import type { Mission } from "../mission.ts";
 import { parseVerifying, type RepoFiles, type Verifying } from "../repo/files.ts";
 import { CONTROL, Protected } from "../repo/protected.ts";
 import { hasCi, quote, runSet } from "../repo/runset.ts";
+import { withoutE2e } from "../ship/live.ts";
 import { logPath, sandboxSpec } from "./checks.ts";
 import { cloneOf, coGit, data, grants, intentOf, repoFiles, tail } from "./common.ts";
 import { changedTests, MAX_REPAIRS } from "./verify.ts";
@@ -34,7 +35,7 @@ export const proofHandler: Handler = {
     const needed = (d.design?.specIds.length ?? 0) > 0 || d.design?.type === "fix";
     if (!needed) return { done: ok({ why: "no proof needed", data: { proof: "none needed" } }) };
     const files = await repoFiles(cx, m);
-    const tests = await changedTests(cx, m, files.towercab.tests);
+    const tests = withoutE2e(await changedTests(cx, m, files.towercab.tests), files.towercab.live);
     if (tests.length === 0) return notProven(cx, m, "The change adds or changes no test files.");
     if (m.step === "" || m.step === "setup") {
       const repo = cx.repo(m);
@@ -62,7 +63,7 @@ export const proofHandler: Handler = {
   async finish(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
     if (m.step === "setup") {
       const files = await repoFiles(cx, m);
-      return lay(cx, m, await changedTests(cx, m, files.towercab.tests));
+      return lay(cx, m, withoutE2e(await changedTests(cx, m, files.towercab.tests), files.towercab.live));
     }
     if (m.step === "head") return headEnd(cx, m, end);
     removeCheckout(proofDir(cx, m));

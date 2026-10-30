@@ -24,6 +24,8 @@ The repo's checks, which the build must pass:
 {{checks}}
 </checks>
 
+{{e2e}}
+
 What to do:
 
 1. Read the code the change touches, the specs above and `CLAUDE.md`.
@@ -47,3 +49,5 @@ Return the JSON result:
   - `## How to check it`: how a reviewer sees it working (commands, pages, requests).
 - `access`: `domains` and `paths`, each item with a `why`. Empty lists when nothing beyond the
   defaults is needed.
+- `e2e`: in a repo with e2e suites, `tests` (the e2e test files the build adds or changes) and
+  `none_why` (empty, or why the change needs no e2e test). `null` in a repo without suites.

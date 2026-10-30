@@ -86,6 +86,14 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
                 </a>
               </>
             ) : null}
+            {data.e2eLog ? (
+              <>
+                {" · "}
+                <a href={data.e2eLog} target="_blank" rel="noopener noreferrer">
+                  e2e log <External size={12} />
+                </a>
+              </>
+            ) : null}
           </p>
         </div>
         <StateChip state={data.state} />

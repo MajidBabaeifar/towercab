@@ -96,8 +96,10 @@ After the review, code decides whether Towercab merges the code PR or the owner 
 - Effective `a` and caps from [AUT-8, 13](autonomy.md). First match wins → `approval:merge`
   (`waiting: review and merge PR`, why): CI not green; review not approved; access beyond the plan at
   a4 (AUT-15); proof missing (PIP-30); effective `a` ≤ 3; no `a` and not low-risk (AUT-9); someone
-  else's commits on the PR (PIP-2); the build departed from the approved plan, below a5 (PIP-28).
-  Else → `merge`. The PR body's Checks section is updated first (PIP-48).
+  else's commits on the PR (PIP-2); the build departed from the approved plan, below a5 (PIP-28); in a
+  repo with a `live` block, no e2e test for the change ([SHIP-8](ship.md)). Else → `merge`. The PR
+  body's Checks section is updated first (PIP-48). Before any of it, while another change in the repo
+  ships, the gate holds ([SHIP-14](ship.md)).
 - Verified by: `pipeline: gate table`
 
 ### PIP-8 · Deploy
@@ -301,7 +303,7 @@ Towercab checks that the PR's tests fail without the change, so the tests prove 
 - After green verify, when the design changed spec rows or its `type` is `fix`: a checkout of
   `origin/<base>` with the PR's changed test files laid over it (globs: `TOWERCAB.md` `tests`, default
   `tests/**`, `test/**`, `**/__tests__/**`, `**/*_test.*`, `**/test_*.*`, `**/*.test.*`,
-  `**/*.spec.*`) runs setup, then the run set (from the PR's `CLAUDE.md` when PIP-54 applies). Red = proven. Green → a repair round asking for a test
+  `**/*.spec.*`; e2e tests under a `live` block's suites are left out, [SHIP-8](ship.md)) runs setup, then the run set (from the PR's `CLAUDE.md` when PIP-54 applies). Red = proven. Green → a repair round asking for a test
   that fails without the change, naming the commands the proof ran on base and saying that a change
   to how tests run isn't used there, so a worker that can't wire its test into them asks the owner; after the repairs → `waiting: tests don't prove the change`. After
   the owner answers, a proof that still fails to prove → publish with `data.unproven` (the gate then
@@ -859,7 +861,8 @@ score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outc
 
 ## Out of scope
 
-- Deploy, e2e, release, revert and rehearsal (intent 261026-2204-4).
+- After the merge, deploy, e2e, rollback and revert are the ship stage ([ship.md](ship.md)); a release
+  gate and rollback rehearsals stay out.
 - Evals, the verifier, policy skills (intent 261026-2204-5).
 - Review rounds with the worker: a review that doesn't approve sends the PR to the owner.
 

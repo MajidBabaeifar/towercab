@@ -50,6 +50,8 @@ describe("outbox", () => {
     w.move({ event: "limit", limit: { model: "opus", until: 500, backoffs: 0, text: "429" } });
     w.at("ci");
     w.move({ event: "code_merged", set: { merge_sha: "m1" } });
+    expect(w.m.stage).toBe("deploy");
+    w.move({ event: "skip" });
     expect(w.m.stage).toBe("done");
     expect(w.rows()).toEqual([]);
 
