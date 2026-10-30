@@ -101,10 +101,11 @@ After its code PR is merged, a mission ships instead of finishing.
 
 After the merge, Towercab waits until the platform says the merge commit is live.
 
-- `deploy`: no `live` block → `skip`. Else the merge commit joins `data.ship.merges`, and `outcome`
+- `deploy` fetches the base branch first, so a `live` block merged after the change was built still
+  counts. No `live` block → `skip`. Else the merge commit joins `data.ship.merges`, and `outcome`
   is read every `ci_poll`: live → `ok`; failed → `red` "the deploy failed: <reason>"; `timeout`
   minutes after entering → `red` "not live after <n> minutes".
-- Verified by: `ship: deploy waits for the merge commit`, `ship: a failed deploy is red`, `ship: no deploy in time is red`
+- Verified by: `ship: deploy waits for the merge commit`, `ship: a failed deploy is red`, `ship: no deploy in time is red`, `ship: a live block merged meanwhile counts`
 
 ### SHIP-8 · Every change brings its e2e tests
 
