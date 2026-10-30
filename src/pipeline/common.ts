@@ -38,6 +38,12 @@ export interface PipeData {
   specConflicts?: number;
   /** The next design run first merges base into the spec branch (PIP-81). */
   mergeMain?: boolean;
+  /** Spec-PR revisions made for red checks (PIP-82). */
+  specRedRevisions?: number;
+  /** The next design run is the revision for red checks, not an owner's comment (PIP-82). */
+  specRed?: boolean;
+  /** Heads of the spec PR whose red checks were rerun (PIP-18). */
+  specReruns?: Record<string, boolean>;
   plan?: { md: string; access: Access };
   /** The merged plan's ticked access. */
   granted?: Access;
@@ -46,9 +52,13 @@ export interface PipeData {
   answer?: string;
   /** Why the next build round runs: a repair's what and details. */
   repair?: { what: string; details: string; kind: "verify" | "proof" | "ci" | "conflict" };
+  /** HEAD when the current build round began (PIP-1). */
+  roundFrom?: string;
   /** Head at the end of the last non-repair round (PIP-31). */
   lockHead?: string;
   build?: { pr: string | null; notes: string; planChanged: string | null };
+  /** The step whose child really started (LOOP-4); a step re-entered without it never ran. */
+  launched?: string;
   /** Runs per kind, for file names. */
   n?: Record<string, number>;
   /** `<kind>`: a cut-off run gets one continue (PIP-1). */
@@ -78,6 +88,10 @@ export interface PipeData {
   /** Merge asked GitHub to update the branch: the next moved head is that, not someone else's. */
   updatedBranch?: boolean;
   dropped?: boolean;
+  /** Pushes GitHub refused as non-fast-forward, in a row (PIP-85). */
+  pushRefusals?: number;
+  /** The code branch was pushed once: no leftover check any more (PIP-86). */
+  pushed?: boolean;
   /** The question the owner is asked (the UI's card). */
   question?: Question;
   /** The plan's access list (the UI's plan card). */
@@ -179,12 +193,23 @@ function modelOf(cx: Ctx, m: Mission, agent: Agent, intent: Intent): string {
   return m.model;
 }
 
+/** The stage folder a Claude run's files go to (LOOP-39). */
+const STAGE_OF_KIND: Record<RunKind, string> = {
+  design: "design",
+  plan: "plan",
+  worker: "build",
+  review: "review",
+  score: "design",
+};
+
 /** Record the step, then spawn a Claude run (LOOP-6, LOOP-7, PIP-13, PIP-24). */
 export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string): Progress {
   const repo = cx.repo(m);
   const runs = cx.runs(m);
   const cache = cx.home.cache(repo.name);
   const reentered = m.step === p.step;
+  // Only a run that really started is resumed: one that waited for a slot never saw its prompt.
+  const resumed = reentered && data(m).launched === p.step;
   const { n, data: nd } = reentered ? { n: currentN(m, p.kind), data: {} } : nextN(m, p.kind);
   const agent = loadAgent(p.agent);
   // `resume`: the mission's session, started by its first run; `new`: a session of its own per run.
@@ -193,11 +218,11 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
   if (agent.session === "none") session = { mode: "none", id: "" };
   else if (!onWorkerSession) session = { mode: "new", id: crypto.randomUUID() };
   else session = { mode: m.session_used ? "resume" : "new", id: m.session };
-  const fresh = cx.record(m, p.step, onWorkerSession ? { session_used: 1 } : {}, nd);
-  let prompt = reentered && resumePrompt ? resumePrompt : p.prompt;
-  // A re-entered step on a new worker session: the old one was gone (LOOP-7), so the new one is
+  const fresh = cx.record(m, p.step, {}, nd);
+  let prompt = resumed && resumePrompt ? resumePrompt : p.prompt;
+  // A resumed step on a new worker session: the old one was gone (LOOP-7), so the new one is
   // told where the work is, then given the step's task.
-  if (reentered && onWorkerSession && session.mode === "new") {
+  if (resumed && onWorkerSession && session.mode === "new") {
     const pr = currentPr(cx, m, repo);
     const plan = m.plan_pr && cx.store.github() ? prUrl(cx.store.github()!, m.plan_pr) : null;
     prompt = `${freshContext(
@@ -214,6 +239,7 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
     model: modelOf(cx, m, agent, p.intent),
     cwd: cx.checkout(fresh),
     runsDir: runs,
+    stage: STAGE_OF_KIND[p.kind],
     n,
     prompt,
     schema: agent.schema ? SCHEMAS[agent.schema] : null,
@@ -231,6 +257,8 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
   };
   return {
     spawn: prepareRun(run, { towercabExe: join(checkoutRoot(), "bin", "towercab"), home: homedir() }),
+    // The session exists once its first run starts, not when the run is asked for.
+    launched: onWorkerSession ? { session_used: 1 } : {},
   };
 }
 
@@ -370,6 +398,52 @@ export async function botAuthor(cx: Ctx): Promise<string[]> {
   return ["-c", `user.name=${bot.login}`, "-c", `user.email=${bot.email}`, "-c", "commit.gpgsign=false"];
 }
 
+/** GitHub refused a push because the branch has commits Towercab doesn't (PIP-85); never a crash. */
+export class PushRefused extends Error {
+  readonly branch: string;
+  constructor(branch: string, message: string) {
+    super(message);
+    this.branch = branch;
+  }
+}
+
+/** Pushes refused as non-fast-forward before the mission asks the owner. */
+export const PUSH_TRIES = 3;
+
+/** A refused push: try again next pass, and after `PUSH_TRIES` refusals ask the owner (PIP-85). */
+export async function refusedPush(cx: Ctx, m: Mission, e: PushRefused): Promise<Progress> {
+  const n = (data(m).pushRefusals ?? 0) + 1;
+  if (n < PUSH_TRIES) {
+    cx.record(m, m.step, {}, { pushRefusals: n });
+    return { poll: 5 };
+  }
+  const o = await ask(cx, m, branchInTheWay(e.branch));
+  return { done: { ...o, data: { ...o.data, pushRefusals: 0 } } };
+}
+
+/** The owner's question when `branch` holds commits Towercab can't build on (PIP-85, PIP-86). */
+export function branchInTheWay(branch: string, pr?: { number: number; url: string }): Question {
+  const where = pr ? ` Its open PR is ${pr.url}, which Towercab did not open.` : "";
+  return {
+    context: `Towercab can't push \`${branch}\`: GitHub already has commits on that branch that Towercab doesn't, and Towercab never overwrites commits.${where}`,
+    question: `What should happen to \`${branch}\` on GitHub?`,
+    options: [
+      {
+        option: "Delete the branch on GitHub, then reply here",
+        // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
+        then: "Towercab builds once more and pushes a fresh branch of that name. Anything on the old branch is lost.",
+      },
+      {
+        option: "Start the intent over with Retry on the page, or `/retry` on its spec PR",
+        // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
+        then: "The new attempt uses a new branch name, and the old branch stays as it is.",
+      },
+    ],
+    recommendation:
+      "Start over if the commits might be someone's work; delete the branch if you know it is only an old attempt.",
+  };
+}
+
 /** Push `branch` of the checkout to GitHub through Towercab's clone (LOOP-8). */
 export async function pushBranch(
   cx: Ctx,
@@ -396,7 +470,11 @@ export async function pushBranch(
       auth,
     );
   } catch (e) {
-    throw asEnv(e);
+    const err = asEnv(e);
+    if (!(err instanceof EnvError) && /non-fast-forward|fetch first/i.test(err.message)) {
+      throw new PushRefused(remoteBranch, err.message);
+    }
+    throw err;
   }
   return (await git(cx.tools, clone, ["rev-parse", `refs/heads/${remoteBranch}`])).trim();
 }

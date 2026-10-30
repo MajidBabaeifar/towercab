@@ -1,6 +1,7 @@
 // The pass (LOOP-4, 7, 9, 10, 12, 15, 17): the real loop, store and database, with stage handlers
 // faked per test so each test controls what a stage does.
 
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import { insertCommand } from "../src/commands.ts";
@@ -19,8 +20,10 @@ import { PASS_MS } from "../src/loop.ts";
 import { ORDER, ok, wait } from "../src/machine.ts";
 import { insertMission, type Mission, unfinished } from "../src/mission.ts";
 import { decide } from "../src/pick.ts";
+import { intentOf, repoFiles, spawnRun } from "../src/pipeline/common.ts";
+import { handlers as realHandlers } from "../src/pipeline/index.ts";
 import type { ChildExit, ChildSpec } from "../src/tools.ts";
-import { intent, TARGET } from "./helpers/flows.ts";
+import { DESIGN, intent, reply, SPEC, TARGET } from "./helpers/flows.ts";
 import { Pipe } from "./helpers/pipe.ts";
 import { pushFiles } from "./helpers/world.ts";
 
@@ -118,6 +121,82 @@ test("loop: picks while others wait", async () => {
   expect(byIntent(p, B)[0]!.stage).toBe("approval:plan");
 });
 
+test("runs: empty error files are removed", async () => {
+  const p = new Pipe(TARGET, files({ id: A }));
+  const b = childOf(p, "work");
+  const stage = p.home.runs(A, "build");
+  const empty = join(stage, "worker-1.err");
+  const said = join(stage, "worker-2.err");
+  let seen = "";
+  await p.start(
+    {},
+    {
+      handlers: fake(
+        (m) => {
+          if (m.stage === "pick") return { done: ok() };
+          b.spec.stderr = empty;
+          writeFileSync(empty, "");
+          writeFileSync(said, "a warning\n");
+          return { spawn: b.spec };
+        },
+        () => {
+          seen = existsSync(empty) ? "kept" : "gone";
+          return { done: wait("approve spec") };
+        },
+      ),
+    },
+  );
+  for (let i = 0; i < 3; i++) await pass(p, 5);
+  b.end();
+  await new Promise((r) => setTimeout(r, 5));
+  await pass(p, 5);
+  expect(seen).toBe("gone");
+  expect(existsSync(empty)).toBe(false);
+  // A file with something in it is kept.
+  expect(existsSync(said)).toBe(true);
+});
+
+test("loop: a run that waits for a slot keeps its prompt", async () => {
+  const p = new Pipe(TARGET, files({ id: A, u: 5, i: 5 }, { id: B }));
+  const b = childOf(p, "work");
+  let go = false;
+  const design: Handler = {
+    async step(cx, m) {
+      if (m.intent === B) return { spawn: b.spec };
+      if (!go) return { poll: 30 };
+      const plan = { kind: "design", agent: "design", step: "design", prompt: "Write the spec." } as const;
+      return spawnRun(
+        cx,
+        m,
+        { ...plan, files: await repoFiles(cx, m), intent: await intentOf(cx, m) },
+        "Continue where you stopped.",
+      );
+    },
+    finish: async () => ({ done: wait("approve spec") }),
+  };
+  p.queue("design", reply(DESIGN, SPEC));
+  await p.start(
+    {},
+    { handlers: { ...fake(() => ({ done: wait("approve spec") })), pick: realHandlers().pick, design } },
+  );
+  const a = () => byIntent(p, A)[0]!;
+  // A is picked and waits; B is picked and its run takes the only slot.
+  while (byIntent(p, B)[0]?.child_kind !== "work") await pass(p);
+  go = true;
+  // A's run is asked for while the slot is taken: it waits, so nothing of it has started.
+  await pass(p);
+  expect([a().step, a().session_used, a().child_pid]).toEqual(["design", 0, null]);
+  expect(p.claudeCalls).toEqual([]);
+  b.end();
+  await new Promise((r) => setTimeout(r, 5));
+  await p.until(() => p.claudeCalls.length === 1);
+  // When the slot frees, the run starts with its own prompt on a new session, not as a resume.
+  const [run] = p.claudeCalls;
+  expect(run!.prompt).toBe("Write the spec.");
+  expect(run!.session).toEqual({ mode: "new", id: a().session });
+  expect(a().session_used).toBe(1);
+});
+
 const listCalls = (p: Pipe) => p.issueCalls.filter((c) => c.startsWith("issue list")).length;
 
 test("issues: the poll runs every 5 minutes", async () => {
@@ -143,7 +222,18 @@ test("issues: the poll runs every 5 minutes", async () => {
 test("issues: a gh failure is a github fault", async () => {
   const p = new Pipe(TARGET, {});
   p.queue("score", () => ({
-    structured: { u: 3, u_why: "a", i: 3, i_why: "b", title: "Other repo", problem: "p", outcome: ["o"] },
+    structured: {
+      u: 3,
+      u_why: "a",
+      i: 3,
+      i_why: "b",
+      title: "Other repo",
+      problem: "p",
+      outcome: ["o"],
+      affected: "",
+      constraints: [],
+      open_questions: [],
+    },
   }));
   p.issueFail = (args) => (args.includes("owner/web") && args[1] === "list" ? "HTTP 502: bad gateway" : null);
   p.issue({ repo: "owner/api" });

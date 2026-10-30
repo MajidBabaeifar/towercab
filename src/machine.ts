@@ -324,6 +324,8 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
         cols.from_stage = null;
       }
       if (finished(to)) cols.finished = now;
+      // The new stage's steps haven't launched anything (LOOP-4).
+      data = { ...data, launched: undefined };
       write(cols);
       db.run(
         "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) VALUES (?, ?, ?, ?, ?, ?)",

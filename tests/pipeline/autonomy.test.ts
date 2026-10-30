@@ -51,7 +51,7 @@ test("autonomy: unplanned access at a4 goes to the owner", async () => {
   const [ask, resumed] = p.claudeCalls.filter((c) => c.kind === "worker");
   expect(resumed!.prompt).toBe("Access granted: .github/workflows/ci.yml. Continue the build.");
   expect(resumed!.session).toEqual({ mode: "resume", id: ask!.session.id });
-  const guard = JSON.parse(readFileSync(join(p.home.runs(m.intent), "guard.json"), "utf8")) as {
+  const guard = JSON.parse(readFileSync(join(p.home.runs(m.intent, "build"), "guard.json"), "utf8")) as {
     granted: string[];
   };
   expect(guard.granted).toEqual([".github/workflows/ci.yml"]);

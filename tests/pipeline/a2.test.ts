@@ -74,6 +74,13 @@ test("pipeline: a fresh attempt closes the old PRs", () => {
   expect(now!.state).toBe("OPEN");
 });
 
+test("pipeline: retry deletes the old attempt's branches", () => {
+  // Attempt 1's spec PR was closed by the retry, so its branch went with it; the new attempt's stays.
+  expect(p.deleted).toEqual([`owner/web towercab/${ID}-${SLUG}-spec`]);
+  expect(() => p.headSha("owner/web", `towercab/${ID}-${SLUG}-spec`)).toThrow();
+  expect(p.headSha("owner/web", `towercab/${ID}-${SLUG}-2-spec`)).toMatch(/^[0-9a-f]{40}$/);
+});
+
 test("pipeline: feedback revises the plan", async () => {
   p.mergePr(p.prNo("web", p.mission()!.spec_pr!));
   p.script(
@@ -191,3 +198,11 @@ test("metrics: totals at done", async () => {
   expect(view).toContain(ID);
   expect(view).toContain("$1.50");
 }, 30_000);
+
+test("pipeline: a merged PR's branch is left to the repo setting", () => {
+  // The merged spec, plan and code PRs keep their branches: GitHub's own setting deletes those.
+  const merged = p.prs.filter((x) => x.state === "MERGED");
+  expect(merged.length).toBeGreaterThanOrEqual(3);
+  for (const x of merged) expect(p.deleted).not.toContain(`${x.repo} ${x.head}`);
+  expect(p.deleted).toHaveLength(1);
+});

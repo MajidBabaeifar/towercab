@@ -108,13 +108,20 @@ export const DEFAULT_PASSES: Pass[] = [
 
 export const DEFAULT_NIT_CAP = 5;
 
+/** What the review leaves out when `REVIEW.md` doesn't say (REPO-12). */
+export const DEFAULT_DO_NOT_REPORT = [
+  "Files `.gitattributes` marks `linguist-generated`.",
+  "Lockfiles (`package-lock.json`, `Cargo.lock`, `uv.lock` and the like).",
+  "Formatting or lint issues a formatter or linter in the repo's checks would catch.",
+];
+
 export function defaultReview(): Review {
   return {
     text: "",
     passes: DEFAULT_PASSES.map((p) => ({ ...p })),
     important: null,
     nitCap: DEFAULT_NIT_CAP,
-    doNotReport: [],
+    doNotReport: [...DEFAULT_DO_NOT_REPORT],
     redLines: [],
   };
 }
@@ -194,12 +201,13 @@ export function parseReview(file: string): Review {
     }
   }
   const imp = important ? text(important).trim() : "";
+  const skip = doNot ? bullets(doNot) : [];
   return {
     text: file,
     passes: b.length ? parsePasses(b) : DEFAULT_PASSES.map((p) => ({ ...p })),
     important: imp || null,
     nitCap,
-    doNotReport: doNot ? bullets(doNot) : [],
+    doNotReport: skip.length ? skip : [...DEFAULT_DO_NOT_REPORT],
     redLines: red ? bullets(red) : [],
   };
 }

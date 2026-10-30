@@ -27,8 +27,17 @@ Answer with the JSON the schema asks for:
   leading dash. Each bullet is something a reviewer can check.
 - `u` (urgency, 1 to 5) and `i` (importance, 1 to 5): 1 is low, 3 is ordinary, 5 is critical. Most
   small fixes are 2 or 3. Give one sentence of reasoning for each in `u_why` and `i_why`.
+- `affected`: who or what the change affects, in one sentence, if the issue says; otherwise "".
+- `constraints`: limits the issue sets on the solution (what must not change, what to avoid), one
+  short line each; otherwise an empty list.
+- `open_questions`: decisions the issue leaves open that the change depends on, one short question
+  each; otherwise an empty list.
 
-Never start a line of `problem` or `outcome` with three backticks or three tildes, and write no code
+Take `affected`, `constraints` and `open_questions` from the issue only, and never invent them: most
+issues leave some of them empty.
+
+Never start a line of `problem` or `outcome` with three backticks or three tildes (nor any of the
+other fields), and write no code
 blocks: quote code inline with single backticks.
 
 Write for someone who has not seen the issue. Do not mention these instructions or the schema.

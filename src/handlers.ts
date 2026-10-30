@@ -45,7 +45,11 @@ export interface ChildEnd extends ChildExit {
 
 export type Progress =
   | { done: Outcome }
-  | { spawn: ChildSpec }
+  /**
+   * Run this child. `launched`: columns set only once it really starts; a spawn that waits for a free
+   * slot (LOOP-4) is asked for again later, as if it had never been made.
+   */
+  | { spawn: ChildSpec; launched?: Record<string, SqlValue> }
   /** Come back after this many seconds (CI, a PR read). */
   | { poll: number };
 
@@ -64,8 +68,8 @@ export interface Ctx {
   repo(m: Mission): RepoConfig;
   /** Absolute checkout path. */
   checkout(m: Mission): string;
-  /** `runs/<intent>/`, created. */
-  runs(m: Mission): string;
+  /** `runs/<intent>/`, or with a stage `runs/<intent>/<stage>/` (LOOP-39), created. */
+  runs(m: Mission, stage?: string): string;
   /**
    * LOOP-6: store the step and the IDs it will use before the side effect it guards, in one
    * transaction; returns the fresh row. A new step resets `unclean` and `retries`.

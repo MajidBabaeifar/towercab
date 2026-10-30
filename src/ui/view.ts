@@ -244,11 +244,97 @@ export interface TimelineItem {
   tone: "move" | "wait" | "error" | "done";
 }
 
-export interface StepTimeView {
-  step: string;
+/** The stages of the map, in pipeline order (UI-72). `other` only holds files no stage claims (LOOP-42). */
+export type StageId =
+  | "design"
+  | "spec_review"
+  | "plan"
+  | "plan_review"
+  | "build"
+  | "verify"
+  | "proof"
+  | "publish"
+  | "ci"
+  | "review"
+  | "gate"
+  | "merge"
+  | "code_review"
+  | "answer"
+  | "other";
+
+export type VisitOutcome =
+  | "passed"
+  | "red"
+  | "sent back"
+  | "waiting on you"
+  | "working now"
+  | "skipped"
+  | "not reached";
+
+/** One time a mission was in a stage (UI-72). */
+export interface VisitView {
+  stage: StageId;
+  /** 1 for the first time in this stage. */
+  round: number;
+  start: number;
+  /** null while it runs. */
+  end: number | null;
+  time: string;
+  outcome: VisitOutcome;
+  /** Why it moved on, or why it was skipped. */
+  reason: string | null;
+  /** The stage it went back to, if it did. */
+  returnTo: StageId | null;
+  /** "checks failed: 2 tests red": the plain words of the step back. */
+  returnLabel: string | null;
+  files: StageFileView[];
+}
+
+export interface StageFileView {
+  stage: StageId;
+  round: number | null;
+  /** "Prompt sent", "Claude's answer", "Check output", "Errors", "Screenshots", "Details", "File". */
+  kind: string;
+  /** The file name, shown small. */
+  name: string;
+  /** `<stage>/<file>` (or the flat `<file>`) for `GET /api/runs/<id>/…`; null when it can't be shown as text. */
+  path: string | null;
+  size: string;
+  at: When;
+  /** Claude settings, system prompt and guard file: folded under "Details". */
+  details: boolean;
+}
+
+/** One node of the map (UI-73). */
+export interface StageNodeView {
+  id: StageId;
+  name: string;
+  /** A wait on the owner. */
+  owner: boolean;
+  outcome: VisitOutcome;
+  /** Total time spent in it ("" when never reached). */
   time: string;
   secs: number;
-  owner: boolean;
+  /** Why it was skipped. */
+  note: string | null;
+  current: boolean;
+  /** Rounds, in order. */
+  visits: VisitView[];
+  /** Everything it wrote, newest last. */
+  files: StageFileView[];
+}
+
+/** One attempt's path through the pipeline (UI-72..74). */
+export interface StageMapView {
+  attempt: number;
+  /** Every visit, in order. */
+  visits: VisitView[];
+  /** Every stage in pipeline order, reached or not. */
+  stages: StageNodeView[];
+  /** The stage that matters most (UI-75): waiting on you, else last red, else current, else the last. */
+  open: StageId | null;
+  towercab: string;
+  owner: string;
 }
 
 export interface AttemptView {
@@ -257,18 +343,8 @@ export interface AttemptView {
   cost: string;
   agentTime: string;
   started: When;
-}
-
-export interface RunFileView {
-  name: string;
-  label: string;
-  size: string;
-  url: string;
-}
-
-export interface RunGroupView {
-  step: string;
-  files: RunFileView[];
+  /** The path this attempt took (UI-72). */
+  map: StageMapView;
 }
 
 export interface IntentPage {
@@ -285,11 +361,9 @@ export interface IntentPage {
   prs: PrView[];
   card: Card | null;
   timeline: TimelineItem[];
-  times: { steps: StepTimeView[]; towercab: string; owner: string };
   attempts: AttemptView[];
   sections: { title: string; text: string }[];
   answers: string | null;
-  runs: RunGroupView[];
   file: string | null;
   /** The GitHub issue the intent came from (INT-29), or null. */
   issue: string | null;

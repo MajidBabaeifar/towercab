@@ -76,7 +76,7 @@ Removed: never used (no repo had a ruleset); parked as intent 261026-2204-5.
 Some paths decide how a change is judged, so a worker can write them only when its autonomy or plan
 allows ([AUT-14](autonomy.md)).
 
-- Protected = `CLAUDE.md`, `REVIEW.md`, `TOWERCAB.md`, `.github/**`, `.claude/**`, `.git/**` plus
+- Protected = `CLAUDE.md`, `AGENTS.md`, `REVIEW.md`, `TOWERCAB.md`, `.github/**`, `.claude/**`, `.git/**` plus
   `TOWERCAB.md` `protected`. `.git/**` is never writable.
 - `protectedPaths(protected, granted).blocks(rel)`: true when a protected glob matches the path or a
   parent directory and no granted glob does; an absolute path, a `..` component or `.git` → true.
@@ -116,6 +116,18 @@ screenshots command runs in every mission.
 - With the browser installed, the screenshots log of a new mission shows `npm run test:ui` passing
   with no browser-missing error, and the review gets the screenshots ([REPO-10](#repo-10--screenshots-block)).
 - Verified by: `repo: Towercab's own files parse`, `repo: Towercab's setup installs the Playwright browser`
+
+### REPO-12 · What the review leaves out by default
+
+Without a `## Do not report` section, the review still skips generated files and the style the
+repo's checks already enforce, so it spends no findings on what CI catches anyway.
+
+- No `REVIEW.md`, or one without `## Do not report` ([REPO-4](#repo-4--reviewmd)) → the review
+  prompt ([PIP-4](pipeline.md)) gets these defaults: files `.gitattributes` marks
+  `linguist-generated`, lockfiles, and formatting or lint issues a formatter or linter in the repo's
+  checks would catch. A `## Do not report` section with bullets replaces the defaults; one without
+  bullets keeps them, as `## Passes` does.
+- Verified by: `repo: REVIEW.md do-not-report defaults`, `pipeline: review prompt has the do-not-report defaults`
 
 **Grammar** (`src/repo/markdown.ts`)
 

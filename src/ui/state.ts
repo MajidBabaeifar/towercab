@@ -2,7 +2,7 @@
 // functions over the database, the intent listing and what the loop knows; I/O only in the loaders.
 
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
@@ -34,14 +34,18 @@ import type {
   QueueItem,
   QueuePage,
   Row,
-  RunGroupView,
   SpendView,
+  StageFileView,
+  StageId,
+  StageMapView,
+  StageNodeView,
   StateView,
   StationKey,
-  StepTimeView,
   TimelineItem,
   TopBar,
   UpNextView,
+  VisitOutcome,
+  VisitView,
   When,
 } from "./view.ts";
 
@@ -1123,22 +1127,6 @@ function moveKind(t: Pick<Transition, "event" | "to_stage">): ActivityKind {
   return "move";
 }
 
-const STEP_PREFIX: Record<string, string> = {
-  design: "Writing the spec",
-  plan: "Planning",
-  build: "Building",
-  worker: "Building",
-  verify: "Running checks",
-  checks: "Running checks",
-  proof: "Proving the tests",
-  setup: "Setting up",
-  publish: "Opening the PR",
-  ci: "CI",
-  review: "Reviewing",
-  gate: "Deciding",
-  merge: "Merging",
-};
-
 export const RUN_NAME = /^[A-Za-z0-9._-]+$/;
 
 function size(n: number): string {
@@ -1147,46 +1135,320 @@ function size(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** UI-62: the run files of an intent, grouped by step. */
-export function runFiles(home: Home, id: string): RunGroupView[] {
-  if (!RUN_NAME.test(id) || id === "." || id === "..") return [];
-  const dir = join(home.root, "runs", id);
+interface NodeDef {
+  id: StageId;
+  name: string;
+  /** The machine stage it shows, and the folder under `runs/<id>/` that holds its files. */
+  stage: Stage | null;
+  folder: string | null;
+  owner: boolean;
+}
+
+/** UI-72: the map's stages in pipeline order, in the words of UI-56. */
+const NODES: NodeDef[] = [
+  { id: "design", name: "Writing the spec", stage: "design", folder: "design", owner: false },
+  { id: "spec_review", name: "Your spec review", stage: "approval:spec", folder: null, owner: true },
+  { id: "plan", name: "Planning", stage: "plan", folder: "plan", owner: false },
+  { id: "plan_review", name: "Your plan review", stage: "approval:plan", folder: null, owner: true },
+  { id: "build", name: "Building", stage: "build", folder: "build", owner: false },
+  { id: "verify", name: "Running checks", stage: "verify", folder: "verify", owner: false },
+  { id: "proof", name: "Proving the tests", stage: "proof", folder: "proof", owner: false },
+  { id: "publish", name: "Opening the PR", stage: "publish", folder: "publish", owner: false },
+  { id: "ci", name: "CI", stage: "ci", folder: "ci", owner: false },
+  { id: "review", name: "Reviewing", stage: "review", folder: "review", owner: false },
+  { id: "gate", name: "Deciding", stage: "gate", folder: "gate", owner: false },
+  { id: "code_review", name: "Your code review", stage: "approval:merge", folder: null, owner: true },
+  { id: "merge", name: "Merging", stage: "merge", folder: "merge", owner: false },
+  { id: "answer", name: "Your answer", stage: "blocked", folder: null, owner: true },
+  { id: "other", name: "Other", stage: null, folder: null, owner: false },
+];
+
+const NODE_OF_STAGE = new Map<string, NodeDef>(NODES.filter((n) => n.stage).map((n) => [n.stage!, n]));
+const NODE_OF_FOLDER = new Map<string, NodeDef>(NODES.filter((n) => n.folder).map((n) => [n.folder!, n]));
+const NODE_BY_ID = new Map<StageId, NodeDef>(NODES.map((n) => [n.id, n]));
+const NODE_INDEX = new Map<StageId, number>(NODES.map((n, i) => [n.id, i]));
+
+/** LOOP-42: the stage a flat file (written before the stage folders) belongs to, by its old name. */
+const FLAT_PREFIX: Record<string, StageId> = {
+  design: "design",
+  plan: "plan",
+  build: "build",
+  worker: "build",
+  verify: "verify",
+  checks: "verify",
+  shots: "verify",
+  setup: "verify",
+  proof: "proof",
+  publish: "publish",
+  ci: "ci",
+  review: "review",
+  gate: "gate",
+  merge: "merge",
+};
+
+export function flatStage(name: string): StageId {
+  const parts = name.toLowerCase().split(/[-.]/);
+  const first = parts[0] ?? "";
+  if (first === "settings" || first === "system") return FLAT_PREFIX[parts[1] ?? ""] ?? "other";
+  if (first === "guard") return "build";
+  return FLAT_PREFIX[first] ?? "other";
+}
+
+function kindOf(name: string): { kind: string; details: boolean } {
+  if (/^(settings|system)-|^guard\.json$/.test(name)) return { kind: "Details", details: true };
+  if (/\.prompt$/.test(name)) return { kind: "Prompt sent", details: false };
+  if (/\.err$/.test(name)) return { kind: "Errors", details: false };
+  if (/^(worker|design|plan|review|score)-\d+\.json$/.test(name))
+    return { kind: "Claude's answer", details: false };
+  if (/\.log$/.test(name)) return { kind: "Check output", details: false };
+  return { kind: "File", details: false };
+}
+
+interface FoundFile {
+  node: StageId;
+  rel: string;
+  name: string;
+  bytes: number;
+  mtime: number;
+  /** A folder of screenshots: its image count. */
+  images?: number;
+}
+
+function scanDir(dir: string, prefix: string, node: (name: string) => StageId, out: FoundFile[]): void {
   let names: string[];
   try {
     names = readdirSync(dir).sort();
   } catch {
-    return [];
+    return;
   }
-  const groups = new Map<string, RunGroupView>();
   for (const name of names) {
     if (!RUN_NAME.test(name) || name.startsWith(".")) continue;
-    let st: ReturnType<typeof statSync>;
+    let st: ReturnType<typeof lstatSync>;
     try {
-      st = statSync(join(dir, name));
+      st = lstatSync(join(dir, name));
     } catch {
       continue;
     }
-    if (!st.isFile() || /\.(png|jpe?g|gif|webp)$/i.test(name)) continue;
-    const prefix = name.split(/[-.]/)[0]!.toLowerCase();
-    const step = STEP_PREFIX[prefix] ?? prefix.charAt(0).toUpperCase() + prefix.slice(1);
-    const round = /-(\d+)/.exec(name)?.[1];
-    const kind = /prompt/i.test(name)
-      ? "Prompt"
-      : /result|\.json$/i.test(name)
-        ? "Result"
-        : /\.(log|txt|out|err)$/i.test(name)
-          ? "Log"
-          : "File";
-    const g = groups.get(step) ?? { step, files: [] };
-    g.files.push({
+    if (st.isDirectory() && /^shots-\d+$/.test(name)) {
+      let images = 0;
+      try {
+        images = readdirSync(join(dir, name)).filter((f) => /\.(png|jpe?g|gif|webp)$/i.test(f)).length;
+      } catch {
+        // Unreadable: no images to count.
+      }
+      if (images)
+        out.push({
+          node: node(name),
+          rel: `${prefix}${name}`,
+          name,
+          bytes: 0,
+          mtime: st.mtimeMs / 1000,
+          images,
+        });
+      continue;
+    }
+    // Symlinks, images, empty files and folders are not listed (UI-72).
+    if (!st.isFile() || st.size === 0 || /\.(png|jpe?g|gif|webp)$/i.test(name)) continue;
+    out.push({
+      node: node(name),
+      rel: `${prefix}${name}`,
       name,
-      label: round ? `${kind}, round ${round}` : kind,
-      size: size(Number(st.size)),
-      url: `/api/runs/${encodeURIComponent(id)}/${encodeURIComponent(name)}`,
+      bytes: Number(st.size),
+      mtime: st.mtimeMs / 1000,
     });
-    groups.set(step, g);
   }
-  return [...groups.values()];
+}
+
+/** UI-72, LOOP-39, LOOP-42: every file of an intent's runs, with the stage it belongs to. */
+function findRunFiles(home: Home, id: string): FoundFile[] {
+  if (!RUN_NAME.test(id) || id === "." || id === "..") return [];
+  const dir = join(home.root, "runs", id);
+  const out: FoundFile[] = [];
+  let top: string[];
+  try {
+    top = readdirSync(dir);
+  } catch {
+    return out;
+  }
+  for (const name of top) {
+    const def = NODE_OF_FOLDER.get(name);
+    if (def) scanDir(join(dir, name), `${name}/`, () => def.id, out);
+  }
+  // Flat files of runs written before the stage folders.
+  scanDir(dir, "", flatStage, out);
+  return out;
+}
+
+const SKIP_WHY = /^no (behaviour change|proof needed|local checks|CI on this repo)/i;
+
+/** The plain words of a step back (UI-74): "checks failed: 2 tests red". */
+function returnWords(t: Pick<Transition, "event" | "why">, from: StageId): string {
+  const what =
+    t.event === "red"
+      ? from === "verify"
+        ? "checks failed"
+        : from === "proof"
+          ? "the new tests did not prove the change"
+          : from === "ci"
+            ? "CI failed"
+            : from === "review"
+              ? "the review asked for changes"
+              : `${NODE_BY_ID.get(from)?.name.toLowerCase() ?? from} failed`
+      : t.event === "feedback"
+        ? from === "review"
+          ? "the review asked for changes"
+          : "you asked for changes"
+        : t.event === "answered"
+          ? "you answered"
+          : t.event === "conflict"
+            ? "the PR conflicted with its base branch"
+            : t.event === "head_moved"
+              ? "the PR changed"
+              : "sent back";
+  const why = (t.why ?? "").split("\n")[0]!.trim();
+  return why && why.length <= 80 && why.toLowerCase() !== what ? `${what}: ${why}` : what;
+}
+
+/** UI-72..75: one attempt's path through the pipeline, from its moves and the stage folders. */
+export function stageMap(
+  m: Pick<Mission, "attempt" | "created" | "stage">,
+  ts: Pick<Transition, "at" | "from_stage" | "to_stage" | "event" | "why">[],
+  files: FoundFile[],
+  now: number,
+): StageMapView {
+  type Seg = { node: StageId; at: number; via: (typeof ts)[number] | null; end: boolean };
+  const sorted = [...ts].sort((a, b) => a.at - b.at);
+  const raw: { stage: Stage; at: number; via: (typeof ts)[number] | null }[] = [];
+  if (sorted.length) raw.push({ stage: sorted[0]!.from_stage, at: m.created, via: null });
+  for (const t of sorted) raw.push({ stage: t.to_stage, at: t.at, via: t });
+  const segs: Seg[] = [];
+  for (const r of raw) {
+    const def = NODE_OF_STAGE.get(r.stage);
+    if (!def) {
+      // done, stopped and pick are not stages of the map: they only end the one before.
+      segs.push({ node: "other", at: r.at, via: r.via, end: true });
+      continue;
+    }
+    const prev = segs[segs.length - 1];
+    if (prev && !prev.end && prev.node === def.id) continue;
+    segs.push({ node: def.id, at: r.at, via: r.via, end: false });
+  }
+  const visits: VisitView[] = [];
+  const rounds = new Map<StageId, number>();
+  const live = !finished(m.stage);
+  segs.forEach((s, i) => {
+    if (s.end) return;
+    const next = segs[i + 1];
+    const lv = next?.via ?? null;
+    const round = (rounds.get(s.node) ?? 0) + 1;
+    rounds.set(s.node, round);
+    const def = NODE_BY_ID.get(s.node)!;
+    let outcome: VisitOutcome = "passed";
+    const reason: string | null = lv?.why ?? null;
+    let returnTo: StageId | null = null;
+    if (!next) {
+      outcome = !live ? "passed" : def.owner ? "waiting on you" : "working now";
+    } else if (next.end) {
+      outcome = lv?.to_stage === "done" ? "passed" : "sent back";
+    } else if (lv?.event === "red") {
+      outcome = "red";
+      returnTo = next.node;
+    } else if (lv?.event === "wait" && next.node === "answer") {
+      outcome = def.owner ? "passed" : /red|fail/i.test(lv.why ?? "") ? "red" : "passed";
+    } else if ((NODE_INDEX.get(next.node) ?? 0) < (NODE_INDEX.get(s.node) ?? 0)) {
+      outcome = "sent back";
+      returnTo = next.node;
+    } else if (lv && SKIP_WHY.test(lv.why ?? "")) {
+      outcome = "skipped";
+    }
+    // After an answer the work resumes where the question came from, not at the answer.
+    if (s.node === "answer" && next && !next.end) returnTo = null;
+    const end = next ? next.at : live ? null : s.at;
+    visits.push({
+      stage: s.node,
+      round,
+      start: s.at,
+      end,
+      time: duration(Math.max(0, (end ?? now) - s.at)),
+      outcome,
+      reason,
+      returnTo,
+      returnLabel: returnTo && lv ? returnWords(lv, s.node) : null,
+      files: [],
+    });
+  });
+  // Attach each file to a round: the one in its name, else the visit running when it was written.
+  const shown: StageFileView[] = files.map((f) => {
+    const { kind, details } = kindOf(f.name);
+    const vs = visits.filter((v) => v.stage === f.node);
+    const named = /-(\d+)/.exec(f.name)?.[1];
+    let round: number | null = named ? Number(named) : null;
+    if (vs.length && (round === null || round > vs.length || kind === "Details")) {
+      const v = [...vs].reverse().find((x) => x.start <= f.mtime + 1) ?? vs[0]!;
+      round = v.round;
+    }
+    return {
+      stage: f.node,
+      round,
+      kind: f.images ? "Screenshots" : kind,
+      name: f.name,
+      path: f.images ? null : f.rel,
+      size: f.images ? `${f.images} image${f.images === 1 ? "" : "s"}` : size(f.bytes),
+      at: when(f.mtime, now),
+      details,
+    };
+  });
+  const furthest = Math.max(-1, ...visits.map((v) => NODE_INDEX.get(v.stage) ?? -1));
+  const noSpec = visits.find((v) => v.stage === "design" && v.reason && SKIP_WHY.test(v.reason));
+  const stages: StageNodeView[] = [];
+  for (const def of NODES) {
+    const vs = visits.filter((v) => v.stage === def.id);
+    const own = shown.filter((f) => f.stage === def.id);
+    for (const v of vs) v.files = own.filter((f) => f.round === v.round);
+    if (def.id === "answer" && vs.length === 0) continue;
+    if (def.id === "other" && own.length === 0) continue;
+    const last = vs[vs.length - 1];
+    let outcome: VisitOutcome = last?.outcome ?? "not reached";
+    let note: string | null = last?.outcome === "skipped" ? last.reason : null;
+    if (!last && def.id !== "other" && (NODE_INDEX.get(def.id) ?? 0) < furthest) {
+      outcome = "skipped";
+      note =
+        noSpec && ["spec_review", "plan", "plan_review"].includes(def.id)
+          ? noSpec.reason
+          : "not needed this time";
+    }
+    const secs = vs.reduce((a, v) => a + Math.max(0, (v.end ?? now) - v.start), 0);
+    stages.push({
+      id: def.id,
+      name: def.name,
+      owner: def.owner,
+      outcome,
+      time: vs.length ? duration(secs) : "",
+      secs,
+      note,
+      current: !!last && last.end === null && live,
+      visits: vs,
+      files: own,
+    });
+  }
+  const worked = visits.filter((v) => !NODE_BY_ID.get(v.stage)!.owner);
+  const spent = (list: VisitView[]) => list.reduce((a, v) => a + Math.max(0, (v.end ?? now) - v.start), 0);
+  const waiting = visits.filter((v) => NODE_BY_ID.get(v.stage)!.owner);
+  const lastVisit = visits[visits.length - 1];
+  const open =
+    stages.find((s) => s.current && s.owner)?.id ??
+    [...visits].reverse().find((v) => v.outcome === "red")?.stage ??
+    stages.find((s) => s.current)?.id ??
+    lastVisit?.stage ??
+    null;
+  return {
+    attempt: m.attempt,
+    visits,
+    stages,
+    open,
+    towercab: duration(spent(worked)),
+    owner: duration(spent(waiting)),
+  };
 }
 
 function sentenceOf(
@@ -1312,30 +1574,26 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
       });
     });
   }
-  const totals = new Map<Stage, StepTimeView>();
-  let towercab = 0;
-  let owner = 0;
-  for (const m of missions) {
-    const r = stepTimes(
-      ts.filter((t) => t.mission === m.id),
-      { start: m.created, now: finished(m.stage) ? undefined : s.now },
-    );
-    towercab += r.towercab;
-    owner += r.owner;
-    for (const x of r.steps) {
-      const v = totals.get(x.stage) ?? { step: x.words, time: "", secs: 0, owner: x.owner };
-      v.secs += x.secs;
-      totals.set(x.stage, v);
-    }
-  }
-  const steps = [...totals.values()].map((v) => ({ ...v, time: duration(v.secs) }));
-  const attempts: AttemptView[] = missions.map((m) => ({
-    attempt: m.attempt,
-    state: stateOf(m, s.now, { enteredAt: lastMove(m), config: src.config }),
-    cost: money(m.cost_usd),
-    agentTime: duration(m.agent_secs),
-    started: when(m.created, s.now),
-  }));
+  const found = findRunFiles(src.home, realId);
+  const attempts: AttemptView[] = missions.map((m, n) => {
+    const nextCreated = missions[n + 1]?.created ?? Infinity;
+    // Files of one attempt: written from its start until the next attempt began.
+    const mine =
+      missions.length > 1 ? found.filter((f) => f.mtime >= m.created - 5 && f.mtime < nextCreated) : found;
+    return {
+      attempt: m.attempt,
+      state: stateOf(m, s.now, { enteredAt: lastMove(m), config: src.config }),
+      cost: money(m.cost_usd),
+      agentTime: duration(m.agent_secs),
+      started: when(m.created, s.now),
+      map: stageMap(
+        m,
+        ts.filter((t) => t.mission === m.id),
+        mine,
+        s.now,
+      ),
+    };
+  });
   const sections: { title: string; text: string }[] = [];
   for (const [title, text] of intent?.sections ?? []) {
     if (title !== "Answers" && text.trim()) sections.push({ title, text });
@@ -1361,11 +1619,9 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     prs: prViews(src, intent, last, ts),
     card,
     timeline,
-    times: { steps, towercab: duration(towercab), owner: duration(owner) },
     attempts,
     sections,
     answers: intent?.sections.get("Answers")?.trim() || null,
-    runs: runFiles(src.home, realId),
     file: intent ? src.intentUrl(intent) : null,
     issue: intent?.issue ?? null,
   };

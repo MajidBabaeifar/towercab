@@ -2,13 +2,14 @@
 // decisions made in code, row by row, against a real clone and the fake GitHub.
 
 import { afterAll, beforeAll, expect, test } from "vitest";
+import { loadAgent } from "../../src/agents.ts";
 import type { Ctx, Progress } from "../../src/handlers.ts";
 import { insertMission, type Mission, update } from "../../src/mission.ts";
 import { bucket, type Check, checksOf, ciHandler } from "../../src/pipeline/ci.ts";
 import { ask } from "../../src/pipeline/common.ts";
 import { gateHandler } from "../../src/pipeline/gate.ts";
 import { approvedOf, reviewComment } from "../../src/pipeline/review.ts";
-import type { ReviewResult } from "../../src/pipeline/schemas.ts";
+import { parseResult, type ReviewResult } from "../../src/pipeline/schemas.ts";
 import { pickHandler } from "../../src/pipeline/start.ts";
 import { defaultReview } from "../../src/repo/files.ts";
 import { checkRun, ID, intent, REVIEW, TARGET } from "../helpers/flows.ts";
@@ -129,20 +130,57 @@ test("pipeline: approval is computed in code", () => {
   expect(approvedOf({ ...r, tests_weakened: { value: true, where: "tests/a.sh" } })).toBe(false);
   expect(approvedOf({ ...r, plan_followed: { value: false, where: "step 2" } })).toBe(false);
   expect(
-    approvedOf({ ...r, findings: [{ severity: "important", file: "a.ts", line: 3, what: "bug" }] }),
+    approvedOf({
+      ...r,
+      findings: [{ severity: "important", pass: "Bugs", file: "a.ts", line: 3, what: "bug" }],
+    }),
   ).toBe(false);
-  expect(approvedOf({ ...r, findings: [{ severity: "nit", file: "a.ts", line: null, what: "name" }] })).toBe(
-    true,
-  );
+  expect(
+    approvedOf({
+      ...r,
+      findings: [{ severity: "nit", pass: "Bugs", file: "a.ts", line: null, what: "name" }],
+    }),
+  ).toBe(true);
   // Nits are capped by REVIEW.md.
   const nits = Array.from({ length: 8 }, (_, i) => ({
     severity: "nit" as const,
+    pass: "Bugs",
     file: `f${i}`,
     line: null,
     what: `n${i}`,
   }));
   const body = reviewComment({ ...r, findings: nits }, { ...defaultReview(), nitCap: 2 });
-  expect(body.match(/^- `f\d`: n\d$/gm)).toEqual(["- `f0`: n0", "- `f1`: n1"]);
+  expect(body.match(/^- Bugs · `f\d`: n\d$/gm)).toEqual(["- Bugs · `f0`: n0", "- Bugs · `f1`: n1"]);
+});
+
+test("pipeline: review findings name their pass", () => {
+  const r = REVIEW as ReviewResult;
+  const finding = { severity: "important", pass: "Security", file: "a.ts", line: 3, what: "token logged" };
+  expect(parseResult("review", { ...r, findings: [finding] }).ok).toBe(true);
+  const { pass: _, ...noPass } = finding;
+  expect(parseResult("review", { ...r, findings: [noPass] })).toEqual({
+    ok: false,
+    why: "result.findings[0].pass is missing",
+  });
+  // A pass outside REVIEW.md's list is kept as written.
+  expect(parseResult("review", { ...r, findings: [{ ...finding, pass: "Accessibility" }] }).ok).toBe(true);
+  expect(loadAgent("review").prompt).toContain("`pass`");
+});
+
+test("pipeline: review comment shows each finding's pass", () => {
+  const r = REVIEW as ReviewResult;
+  const body = reviewComment(
+    {
+      ...r,
+      findings: [
+        { severity: "important", pass: "Security", file: "a.ts", line: 3, what: "token logged" },
+        { severity: "nit", pass: "Compliance", file: "b.ts", line: null, what: "row text" },
+      ],
+    },
+    defaultReview(),
+  );
+  expect(body).toContain("**Needs attention**\n\n- Security · `a.ts:3`: token logged");
+  expect(body).toContain("**Smaller things**\n\n- Compliance · `b.ts`: row text");
 });
 
 const run = (conclusion: string, o: Partial<Check> = {}): Check => ({

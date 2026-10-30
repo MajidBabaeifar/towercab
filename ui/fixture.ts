@@ -602,6 +602,22 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
       },
     },
   });
+  // The first attempt of the code intent was dropped and started again (UI-76).
+  addMission(db, now, {
+    intent: IDS.code,
+    repo: "docs",
+    stage: "stopped",
+    spec: 54,
+    cost: 1.2,
+    agent: 1500,
+    created: 4 * DAY,
+    moves: [
+      [4 * DAY - 30, "pick", "ok", "design"],
+      [4 * DAY - 20 * MIN, "design", "wait", "approval:spec"],
+      [3 * DAY + 20 * HOUR, "approval:spec", "feedback", "design", "Make the guide shorter."],
+      [3 * DAY + 19 * HOUR, "design", "ok", "stopped", "replaced by a fresh attempt"],
+    ],
+  });
   addMission(db, now, {
     intent: IDS.code,
     repo: "docs",
@@ -613,6 +629,7 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
     pr: 57,
     cost: 4.05,
     agent: 5200,
+    attempt: 2,
     created: 2 * DAY,
     moves: [
       [2 * DAY - 30, "pick", "ok", "design"],
@@ -620,9 +637,11 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
       [DAY + 6 * HOUR, "approval:spec", "spec_merged", "plan"],
       [DAY + 5 * HOUR, "plan", "wait", "approval:plan"],
       [DAY + 2 * HOUR, "approval:plan", "plan_merged", "build"],
-      [9 * HOUR, "build", "ok", "verify"],
+      [12 * HOUR, "build", "ok", "verify"],
+      [11 * HOUR + 30 * MIN, "verify", "red", "build", "2 tests red in docs/links.test.ts"],
+      [10 * HOUR, "build", "ok", "verify"],
       [8 * HOUR + 40 * MIN, "verify", "ok", "proof"],
-      [8 * HOUR + 30 * MIN, "proof", "ok", "publish"],
+      [8 * HOUR + 30 * MIN, "proof", "ok", "publish", "no proof needed"],
       [8 * HOUR + 25 * MIN, "publish", "ok", "ci"],
       [6 * HOUR, "ci", "ok", "review"],
       [5 * HOUR + 20 * MIN, "review", "ok", "gate"],
@@ -833,6 +852,28 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
     "build-1.result.json": '{"status":"done","notes":"Added the logrotate config and a test."}\n',
     "verify-1.log": "$ npm test\nlogrotate test: expected 7 files, found 0\n1 failing\n",
     "verify-2.log": "$ npm test\nlogrotate test: expected 7 files, found 0\n1 failing\n",
+  });
+  // Stage folders (LOOP-39) for the code intent, with a repair round and a skipped proof.
+  const staged = (id: string, files: Record<string, string>) => {
+    for (const [rel, text] of Object.entries(files)) {
+      const [stage, name] = rel.split("/") as [string, string];
+      writeFileSync(join(home.runs(id, stage), name), text);
+    }
+  };
+  staged(IDS.code, {
+    "design/design-1.prompt": "# Design\n\nRewrite the getting-started guide.\n",
+    "design/design-1.json": '{"type":"result","result":"Spec written"}\n',
+    "design/settings-design.json": '{"sandbox":{"enabled":true}}\n',
+    "plan/plan-1.json": '{"type":"result","result":"Plan written"}\n',
+    "build/worker-1.prompt": "# Build\n\nRewrite the guide as a five-minute path.\n",
+    "build/worker-1.json": '{"type":"result","result":"Guide rewritten"}\n',
+    "build/worker-2.prompt": "# Repair\n\nThe checks failed: 2 tests red in docs/links.test.ts.\n",
+    "build/worker-2.json": '{"type":"result","result":"Links fixed"}\n',
+    "build/build-setup.log": "$ npm ci\nadded 212 packages\n",
+    "build/guard.json": '{"checkout":"work","protected":[],"granted":[],"locked":[]}\n',
+    "verify/verify-1.log": `$ npm test\n${Array.from({ length: 240 }, (_, i) => `  ok  link ${i + 1} resolves`).join("\n")}\n2 failing\n  links: /guide/install not found\n  links: /guide/deploy not found\n`,
+    "verify/verify-2.log": "$ npm test\n42 passing\n",
+    "review/review-1.json": '{"type":"result","result":"The review approved."}\n',
   });
   runs(IDS.plan, {
     "design-1.log": "$ claude -p …\nWrote specs/limits.md\n",

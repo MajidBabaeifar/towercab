@@ -300,6 +300,20 @@ The `/intent` skill and the issue scorer write bodies that cannot be read as an 
   block is opened and closed on lines of its own.
 - Verified by: `intents: the skill forbids fence markers in prose`, `issues: the scoring prompt forbids fence markers in prose`
 
+### INT-32 · Issue intents keep who is affected, the constraints and the open questions
+
+When an issue says who is affected, names a constraint or leaves something undecided, the intent
+drafted from it keeps that in its own section, so the design starts from everything the issue said.
+
+- **Schemas** `score` ([pipeline.md](pipeline.md)) gains `affected` (string, empty when the issue
+  doesn't say), `constraints` (list of strings) and `open_questions` (list of strings).
+  `agents/score.md` tells the scorer to take them from the issue only and never invent them: an issue
+  that says nothing about them gives empty values. The fence rule (INT-31) covers them too.
+- INT-23 writes `## Affected users and systems`, `## Constraints` and `## Open questions` (bullets)
+  after `## Proposed outcome`, each only when it has content. The design answers the open questions
+  as for any intent ([PIP-25](pipeline.md)).
+- Verified by: `issues: the intent keeps affected, constraints and open questions`, `issues: empty sections are left out`
+
 ## Out of scope
 
 - Other stores (Notion, Jira).

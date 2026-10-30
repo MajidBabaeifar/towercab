@@ -73,6 +73,7 @@ export const REVIEW_SCHEMA = object({
   findings: list(
     object({
       severity: { type: "string", enum: ["important", "nit"] },
+      pass: S,
       file: S,
       line: { type: ["integer", "null"] },
       what: S,
@@ -92,6 +93,9 @@ export const SCORE_SCHEMA = object({
   title: S,
   problem: S,
   outcome: list(S),
+  affected: S,
+  constraints: list(S),
+  open_questions: list(S),
 });
 
 export const SCHEMAS = {
@@ -145,7 +149,14 @@ export interface ReviewResult {
   outcomes: { bullet: string; met: boolean; why: string }[];
   tests_weakened: { value: boolean; where: string };
   plan_followed: { value: boolean; where: string };
-  findings: { severity: "important" | "nit"; file: string; line: number | null; what: string }[];
+  findings: {
+    severity: "important" | "nit";
+    /** The REVIEW.md pass that found it (PIP-92). */
+    pass: string;
+    file: string;
+    line: number | null;
+    what: string;
+  }[];
   door: "one-way" | "two-way";
   red_lines: { line: string; file: string }[];
   summary: string;
@@ -159,6 +170,10 @@ export interface ScoreResult {
   title: string;
   problem: string;
   outcome: string[];
+  /** INT-32: empty when the issue doesn't say. */
+  affected: string;
+  constraints: string[];
+  open_questions: string[];
 }
 
 export interface Results {
