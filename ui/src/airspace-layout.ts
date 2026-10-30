@@ -52,8 +52,14 @@ const ORDER: StationKey[] = [
   "code",
   "ci",
   "code-review",
+  "deploy",
+  "e2e",
   "landed",
 ];
+
+/** UI-120: the ship stations, drawn only while a plane sits at one. */
+const SHIP = new Set<StationKey>(["deploy", "e2e"]);
+const orderOf = (a: AirspaceView): StationKey[] => (a.ship ? ORDER : ORDER.filter((k) => !SHIP.has(k)));
 
 const NAMES: Record<StationKey, string> = {
   parked: "parked",
@@ -66,11 +72,12 @@ const NAMES: Record<StationKey, string> = {
   code: "03 code",
   ci: "ci",
   "code-review": "you",
+  deploy: "04 deploy",
+  e2e: "05 e2e",
   landed: "landed",
 };
 
 const REVIEWS = new Set<StationKey>(["spec-review", "plan-review", "code-review"]);
-const STEPS = ORDER.slice(2, 10);
 
 /** How many planes a station shows before the rest go behind a `+n` marker. */
 export function capOf(station: StationKey, vertical: boolean, rowCap: number): number {
@@ -113,8 +120,9 @@ function horizontal(
   const lineY = 112;
   const gateX = 150;
   const landedX = w - 56;
-  const step = (landedX - gateX) / 8;
-  const xOf = (k: StationKey) => (k === "landed" ? landedX : gateX + STEPS.indexOf(k) * step);
+  const steps = orderOf(a).slice(2, -1);
+  const step = (landedX - gateX) / steps.length;
+  const xOf = (k: StationKey) => (k === "landed" ? landedX : gateX + steps.indexOf(k) * step);
   const items: Item[] = [];
   const stations: StationMark[] = [];
   const labels: Label[] = [];
@@ -133,7 +141,7 @@ function horizontal(
 
   place("parked", (n) => [30 + 22 * n, 136]);
   place("queue", (n) => [gateX - 54 - 22 * n, lineY]);
-  for (const k of STEPS) {
+  for (const k of steps) {
     const x = xOf(k);
     place(k, (n) => [x, 90 - 22 * n]);
     stations.push({ key: k, x, y: lineY, shape: REVIEWS.has(k) ? "diamond" : "square" });
@@ -176,13 +184,14 @@ function vertical_(
   const lineX = 112;
   const y0 = 56;
   const gap = 34;
-  const yOf = (k: StationKey) => y0 + ORDER.indexOf(k) * gap;
+  const order = orderOf(a);
+  const yOf = (k: StationKey) => y0 + order.indexOf(k) * gap;
   const first = lineX + 26;
   const rowCap = Math.max(2, Math.floor((w - 24 - first) / 22) + 1);
   const items: Item[] = [];
   const stations: StationMark[] = [];
   const labels: Label[] = [];
-  for (const k of ORDER) {
+  for (const k of order) {
     const y = yOf(k);
     const name = k === "parked" || k === "queue" || k === "landed" ? `${NAMES[k]} · ${count(k)}` : NAMES[k];
     const tone = REVIEWS.has(k) ? "review" : k === "landed" ? "landed" : "plain";

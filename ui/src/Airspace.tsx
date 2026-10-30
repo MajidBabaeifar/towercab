@@ -99,6 +99,8 @@ const placeWords: Record<Plane["station"], string> = {
   code: "in code",
   ci: "at CI",
   "code-review": "at your code review",
+  deploy: "waiting for the deploy",
+  e2e: "in e2e",
   landed: "landed",
 };
 

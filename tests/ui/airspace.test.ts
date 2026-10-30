@@ -31,6 +31,7 @@ function view(planes: Plane[], landed = 0): AirspaceView {
       })),
     },
     counts: { parked: 0, queued: 0, flying: planes.length, needs: 0, landed },
+    ship: planes.some((p) => p.station === "deploy" || p.station === "e2e"),
     countsText: "",
     summary: "",
   };
@@ -76,4 +77,29 @@ test("ui: airspace runs top to bottom on a phone", () => {
   expect(lay.items.some((i) => i.kind === "more")).toBe(true);
   const ys = lay.stations.map((s) => s.y);
   expect(ys).toEqual([...ys].sort((p, q) => p - q));
+});
+
+test("ui: ship stations", async () => {
+  const { stationOf } = await import("../../src/ui/state.ts");
+  // Shipping stages, and a wait that came out of them, sit at the two ship stations.
+  expect(stationOf({ stage: "deploy", from_stage: null })).toBe("deploy");
+  expect(stationOf({ stage: "rollback", from_stage: null })).toBe("deploy");
+  expect(stationOf({ stage: "e2e", from_stage: null })).toBe("e2e");
+  expect(stationOf({ stage: "revert", from_stage: null })).toBe("e2e");
+  expect(stationOf({ stage: "blocked", from_stage: "rollback" })).toBe("deploy");
+  expect(stationOf({ stage: "blocked", from_stage: "revert" })).toBe("e2e");
+  expect(stationOf({ stage: "build", from_stage: null })).toBe("code");
+  // Drawn only while a plane is there: the line keeps its old stations otherwise.
+  const names = (a: AirspaceView, w: number) => layoutAirspace(a, w).labels.map((l) => l.text);
+  expect(names(view(many(1, "code")), 900)).not.toContain("04 deploy");
+  const shipping = view([...many(1, "code"), ...many(1, "e2e")]);
+  for (const w of [900, VERTICAL_BELOW - 10]) {
+    const labels = names(shipping, w);
+    expect(labels.indexOf("04 deploy"), `${w}`).toBeGreaterThan(labels.indexOf("ci"));
+    expect(labels.indexOf("05 e2e"), `${w}`).toBe(labels.indexOf("04 deploy") + 1);
+  }
+  const lay = layoutAirspace(shipping, 900);
+  const xs = lay.stations.map((s) => s.x);
+  expect(xs).toEqual([...xs].sort((p, q) => p - q));
+  expect(lay.items.find((i) => i.kind === "plane" && i.plane.station === "e2e")).toBeDefined();
 });

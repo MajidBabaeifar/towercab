@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..104 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..104, UI-120..122 · **Prefix:** UI
 
 ## Purpose
 
@@ -517,10 +517,11 @@ While the loop is paused, the browser tab title starts with `⏸`, so the owner 
 
 The airspace shows a change after its merge, until it is live and tested.
 
-- In repos with a `live` block ([SHIP-1](ship.md)), two stations sit between the code review's `you`
-  and `landed`: `04 deploy` and `05 e2e` (squares). A plane at `deploy` or `rollback` sits at
-  `04 deploy`, at `e2e` or `revert` at `05 e2e`; a plane in a fix round sits at its phase's station as
-  usual. The stations are drawn once any repo has a `live` block.
+- Two stations sit between the code review's `you` and `landed`: `04 deploy` and `05 e2e` (squares).
+  A plane at `deploy` or `rollback`, or waiting after one, sits at `04 deploy`; at `e2e` or `revert`,
+  or waiting after one, at `05 e2e`; a plane in a fix round sits at its phase's station as usual. The
+  two stations are drawn only while a plane sits at one, so a Towercab without a live repo sees the
+  line it always had.
 - Verified by: `ui: ship stations`
 
 ### UI-121 · Ship states
