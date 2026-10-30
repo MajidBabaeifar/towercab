@@ -416,6 +416,53 @@ Reserved for this intent; not used.
 
 - Verified by: manual (nothing to check: no behaviour)
 
+### UI-105 · Done by you, shown everywhere
+
+After the owner merges, drops or starts over from the page, every view shows that action as done, with no button for it, until the loop moves the mission on.
+
+- A successful `merge`, `drop` or `retry` action on a PR (UI-66) stores a note on the mission: the
+  action, the PR number and the time. The note is display only: it never moves the mission (only
+  `machine.apply` does, after GitHub confirms) and it is removed when the mission leaves
+  that wait (any move out of the approval stage, or a new attempt).
+- While the note exists the needs-you card (UI-58) on the overview and on the intent page (UI-62),
+  and the plane card (UI-80), replace the actions with a line: "Merged by you · Towercab moves on
+  within a minute", "Dropped by you · …" or "Started over by you · …". The note comes from the API
+  (UI-65), so a reload or a second tab shows the same card. The count of things that need you
+  (UI-57) still counts the mission until it moves on.
+- A reply or an action that failed stores no note.
+- Verified by: `ui: merged by you survives a reload`, `ui: drop and start over show as done`, `ui: done note never moves the mission`
+
+### UI-106 · Check the PR at once
+
+A successful merge, drop or start over asks the loop to look at that PR immediately, so the mission usually moves on within seconds.
+
+- After GitHub accepts the action, the action asks the loop (a `commands` row, LOOP-15, as other page
+  actions do) to poll that PR on its next pass instead of waiting for the 60 s PR poll (LOOP-12).
+  The poll reads GitHub as usual and `machine.apply` moves the mission only on what GitHub reports.
+  If the request is lost, the normal 60 s poll still moves it.
+- Verified by: `ui: a successful merge asks for an immediate poll`, `ui: a failed merge asks for no poll`
+
+### UI-107 · Merge checks the PR first
+
+Merging a PR that is already merged does nothing on GitHub and says so, with no error.
+
+- Before `gh pr merge`, the `merge` action reads the PR's state as the owner. `MERGED` → no
+  `gh pr merge` call; it stores the note (UI-105), asks for the poll (UI-106) and replies "Already
+  merged; Towercab is moving on." `CLOSED` without merge → error "The <label> #<n> is closed, so
+  there is nothing to merge." Otherwise it merges as before (UI-66). A second merge request while the
+  note exists takes the same already-merged path and never calls `gh pr merge`.
+- Verified by: `ui: merging a merged PR does not call gh pr merge`, `ui: merging a closed PR says so`, `ui: a second merge request never calls gh merge`
+
+### UI-108 · Slow to move on
+
+If the mission has not moved on 5 minutes after the action, the card says so and links to the PR.
+
+- The "moves on within a minute" line (UI-105) applies for the first 5 minutes after the note's
+  time. After that the card says "Merged by you <n> min ago, but Towercab has not moved on yet" (and
+  likewise for drop and start over) with a link to the PR, and still shows no action button for it.
+  Times follow UI-71.
+- Verified by: `ui: done note turns into a stuck message after 5 minutes`
+
 ## Out of scope
 
 - Editing intents in the page: the owner edits them in the intents repo or with `/intent`.
