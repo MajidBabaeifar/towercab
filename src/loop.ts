@@ -541,18 +541,19 @@ export class Loop {
     const known = (this.listing?.open ?? []).filter(
       (i) => i.waiting === "unknown repo" && repos.has(i.repo) && !unfinishedFor(this.d.db, i.id),
     );
-    if (known.length === 0) return;
+    let queued = 0;
     for (const i of known) {
       try {
         await this.d.store.update(i.id, "repo known", (e) => {
           if (e.intent.waiting === "unknown repo") e.removeField("waiting");
         });
+        queued++;
         this.d.log(`${i.id}: its repo ${i.repo} is known now; queued again`);
       } catch (e) {
         this.d.log(`${i.id}: ${(e as Error).message}`);
       }
     }
-    await this.pollIntents(true);
+    if (queued > 0) await this.pollIntents(true);
   }
 
   /** A GitHub read worked; the fault closes unless the issue poll is still failing (INT-21). */
@@ -880,6 +881,8 @@ export class Loop {
     const pick = decision.pick;
     if (!pick) return null;
     const m = this.d.db.tx(() => {
+      // LOOP-68: the repo may have been removed since this pass read the repos (another process).
+      if (!this.d.db.get("SELECT 1 FROM repos WHERE name = ?", pick.repo)) return null;
       this.d.db.delMeta(`start:${pick.id}`);
       return insertMission(
         this.d.db,
@@ -893,6 +896,10 @@ export class Loop {
         this.now,
       );
     });
+    if (!m) {
+      this.d.log(`${pick.id}: its repo ${pick.repo} was just removed; not picked`);
+      return null;
+    }
     this.d.log(`picked ${pick.id} (${pick.repo}): ${pick.title}`);
     return m.intent;
   }

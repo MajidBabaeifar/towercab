@@ -588,10 +588,15 @@ The owner adds a repo from the page by typing only its `owner/name`.
 
 - The Queue page ends with an "Add repo" form: one field (`owner/name`) and an "Add repo" button; not
   shown when the page is read-only (UI-2). It posts `{action: "addRepo", github, name?}` to
-  `/api/actions`, which runs LOOP-66's `repo add` in the loop (`source` `ui`). The reply is one
-  sentence: `Added <name> (<owner/name>, base <base>). Its intents can start on the next pass.`, or the
-  refusal's reason (LOOP-66) shown on the form. "No repos yet." when there are none.
-- Verified by: `ui: add repo action adds the repo and says so`, `ui: add repo goes through the actions API`
+  `/api/actions`, which runs LOOP-66's `repo add` in the loop (`source` `ui`).
+- The request ends once LOOP-66's checks pass (the server's 15 s request limit stays; a clone can take
+  longer): the reply is `Adding <name> (<owner/name>, base <base>): Towercab is cloning it now. It shows
+  on the Queue page when done, and its intents start from then on.`, or the refusal's reason (LOOP-66)
+  shown on the form. The clone goes on in the loop; the page's live update shows the new repo when it is
+  stored (the page's version covers the `repos` table). A clone or store that fails becomes a problem
+  (UI-60), `Towercab couldn't add the repo <name> (<owner/name>)` with the reason, until the repo is
+  added again (`meta.repo-add-failed:<name>`). "No repos yet." when there are none.
+- Verified by: `ui: add repo action adds the repo and says so`, `ui: add repo goes through the actions API`, `repos: a failed add from the page is reported`
 
 ### UI-131 · Add this repo on the unknown-repo card
 

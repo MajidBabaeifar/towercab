@@ -1000,7 +1000,12 @@ export function dbMark(db: Db): string {
   const t = db.get<{ n: number | null }>("SELECT MAX(id) AS n FROM transitions")?.n ?? 0;
   const c = db.get<{ n: number | null }>("SELECT MAX(id) AS n FROM commands")?.n ?? 0;
   const u = db.get<{ n: number | null }>("SELECT MAX(updated) AS n FROM missions")?.n ?? 0;
-  return `${t}:${c}:${u}`;
+  // A repo added, removed or changed (LOOP-68) shows without anything else moving.
+  const r =
+    db.get<{ r: string | null }>(
+      "SELECT group_concat(name || ' ' || base || ' ' || workers || ' ' || ahead, ',') AS r FROM repos",
+    )?.r ?? "";
+  return `${t}:${c}:${u}:${r}`;
 }
 
 /** The overview's data (`GET /api/state`). */

@@ -27,7 +27,10 @@ export interface ActionDeps {
   config: Config;
   clock: Clock;
   github: Pick<GitHub, "owner">;
-  /** LOOP-66's `addRepo`, bound to the loop's database, config, tools and home; null: refused. */
+  /**
+   * LOOP-66's checks, bound to the loop's database, config, tools and home: resolves with the repo once
+   * they pass, while the clone goes on (UI-130); null: refused.
+   */
   addRepo?: ((github: string, name?: string) => Promise<RepoConfig>) | null;
 }
 
@@ -133,7 +136,7 @@ export function createActions(d: ActionDeps): UiActions {
     async addRepo(github, name) {
       if (!d.addRepo) throw new Error("Towercab isn't running, so it can't add a repo now.");
       const r = await d.addRepo(github, name);
-      return `Added ${r.name} (${r.github}, base ${r.base}). Its intents can start on the next pass.`;
+      return `Adding ${r.name} (${r.github}, base ${r.base}): Towercab is cloning it now. It shows on the Queue page when done, and its intents start from then on.`;
     },
   };
 }

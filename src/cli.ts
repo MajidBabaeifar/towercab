@@ -24,7 +24,7 @@ import { decide, nextText } from "./pick.ts";
 import { guardMain } from "./pipeline/guard.ts";
 import { handlers } from "./pipeline/index.ts";
 import { parseScores } from "./priority.ts";
-import { addRepo, loadRepos, removeRepo, repoList } from "./repos.ts";
+import { addRepo, loadRepos, removeRepo, repoLine, repoList, setRepo } from "./repos.ts";
 import { checkoutRoot, down, logsArgv, restart, up } from "./service.ts";
 import { renderStatus } from "./status.ts";
 import { Telegram } from "./telegram.ts";
@@ -66,6 +66,7 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   start <id>                      begin that intent's design now, even when the repo is full
   pause | resume
   repo add <owner/name> [--name <short>] | repo remove <name> | repo list
+  repo set <name> key=value…      workers, ahead, base, path, env (NAME=value or a JSON object)
   ui [--no-open]                  open the web page
   doctor [--quick]                what is missing
   update                          update this checkout to the latest main now
@@ -231,6 +232,20 @@ async function run(
       return spawnSync(c!, a, { stdio: "inherit" }).status ?? 1;
     }
     case "doctor": {
+      if (v.quick) {
+        // The self-update check runs the new code before it is accepted: it must not touch the
+        // database (no migration, no import), so a rejected update leaves it as it was (LOOP-35).
+        let config: Config;
+        try {
+          config = loadConfig(configPath(flags.config));
+        } catch (e) {
+          if (e instanceof ConfigError) return `config: ${e.message}`;
+          throw e;
+        }
+        const r = await doctor({ config, home: Home.resolve(flags.home), tools, github: null, quick: true });
+        process.stdout.write(`${r.lines.join("\n")}\n`);
+        return r.ok ? 0 : 1;
+      }
       let w: World;
       try {
         w = world(flags, tools);
@@ -412,7 +427,10 @@ async function run(
   }
 }
 
-/** `repo add | remove | list` (LOOP-66, LOOP-67); a running loop sees the change on its next pass. */
+const REPO_USAGE =
+  "repo add <owner/name> [--name <short>] | repo remove <name> | repo set <name> key=value… | repo list";
+
+/** `repo add | remove | set | list` (LOOP-66, LOOP-67, LOOP-69); a running loop sees the change on its next pass. */
 async function repo(w: World, args: string[], name: string | undefined): Promise<string> {
   const [sub, arg] = args;
   if (sub === "list" && args.length === 1) return repoList(w.db, w.home.root);
@@ -437,7 +455,10 @@ async function repo(w: World, args: string[], name: string | undefined): Promise
     );
     return `added ${r.name}: ${r.github}, base ${r.base}, cloned`;
   }
-  throw new UsageError("repo add <owner/name> [--name <short>] | repo remove <name> | repo list");
+  if (sub === "set" && arg && args.length >= 3) {
+    return `set ${repoLine(setRepo(w.db, w.config, arg, args.slice(2)), w.home.root)}`;
+  }
+  throw new UsageError(REPO_USAGE);
 }
 
 /** Serve the UI from the running loop (UI-1); the page never stops the loop. */

@@ -850,3 +850,32 @@ test("loop: a repo added while running is picked up", async () => {
   expect(config.repos.has("api")).toBe(false);
   expect(config.repos.has("web")).toBe(true);
 });
+
+test("loop: a repo removed during a pass is not picked", async () => {
+  const p = new Pipe(TARGET, files({ id: A, repo: "api" }));
+  let removeOnRead = false;
+  await p.start(
+    { repos: REPOS },
+    {
+      handlers: staged,
+      // `towercab repo remove` lands while the pass waits on the intents read, after its repo sync.
+      wrapStore: (s) => {
+        const w = Object.create(s) as IntentStore;
+        w.list = () => {
+          if (removeOnRead) p.db.run("DELETE FROM repos WHERE name = 'api'");
+          return s.list();
+        };
+        return w;
+      },
+    },
+  );
+  removeOnRead = true;
+  expect((await pass(p)).picked).toBeNull();
+  expect(byIntent(p, A)).toEqual([]);
+  expect(p.logs).toContain(`${A}: its repo api was just removed; not picked`);
+  // The next pass knows it is gone: the intent waits for an unknown repo.
+  removeOnRead = false;
+  await pass(p);
+  expect(byIntent(p, A)).toEqual([]);
+  expect((await p.store.get(A)).waiting).toBe("unknown repo");
+});

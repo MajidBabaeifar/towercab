@@ -1,6 +1,6 @@
 // The command line (LOOP-15).
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { COMMANDS, main } from "../src/cli.ts";
@@ -109,6 +109,15 @@ test("ui: the ui command", async () => {
   expect(t.lines("xdg-open")).toEqual(["http://localhost:7399/"]);
 });
 
+test("cli: doctor --quick leaves the database alone", async () => {
+  const t = new FakeTools();
+  const { config, home } = setup();
+  // The self-update check runs new code before it is accepted: no migration, no import.
+  await main(["--config", config, "--home", home, "doctor", "--quick"], t);
+  expect(out).toContain(`config: ${config}`);
+  expect(existsSync(join(home, "towercab.db"))).toBe(false);
+});
+
 test("cli: repo commands", async () => {
   const t = new FakeTools();
   const { config, home } = setup();
@@ -122,6 +131,15 @@ test("cli: repo commands", async () => {
   err = "";
   expect(await main([...g, "repo", "add", "api"], t)).toBe(1);
   expect(err).toBe("towercab: api isn't a GitHub repo: write it as owner/name\n");
+  out = "";
+  expect(await main([...g, "repo", "set", "web", "workers=2", "env=FOO=bar"], t)).toBe(0);
+  expect(out.trim()).toBe(
+    `set web: owner/web · base main · 2 workers · ahead 3 · ${join(home, "repos", "web")} · env FOO`,
+  );
+  err = "";
+  expect(await main([...g, "repo", "set", "web", "workers=99"], t)).toBe(1);
+  expect(err).toBe("towercab: workers must be an integer 1-16\n");
+  expect(await main([...g, "repo", "set", "web"], t)).toBe(2);
   out = "";
   expect(await main([...g, "repo", "remove", "web"], t)).toBe(0);
   expect(out).toBe("removed web (owner/web); its clone stays on disk\n");

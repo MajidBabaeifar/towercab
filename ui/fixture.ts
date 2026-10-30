@@ -343,7 +343,7 @@ export function buildFixture(o: { now?: number; root?: string; empty?: boolean }
     async addRepo(github, name) {
       calls.push({ action: "addRepo", github, ...(name ? { name } : {}) });
       const short = name ?? github.split("/")[1] ?? github;
-      return `Added ${short} (${github}, base main). Its intents can start on the next pass.`;
+      return `Adding ${short} (${github}, base main): Towercab is cloning it now. It shows on the Queue page when done, and its intents start from then on.`;
     },
   };
 
