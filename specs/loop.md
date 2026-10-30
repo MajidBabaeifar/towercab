@@ -42,14 +42,15 @@ and its settings in one TOML file.
 Every mission moves through one fixed set of stages, and one table decides every move.
 
 - A mission is one attempt at one intent. Stages (`src/machine.ts`): the order `pick → design →
-  plan → build → verify → proof → publish → ci → review → gate → merge → done`, the waits
+  plan → build → verify → proof → publish → ci → review → gate → merge → deploy → e2e → done`,
+  the ship stages outside the order `rollback` and `revert` ([SHIP-6](ship.md)), the waits
   `approval:spec`, `approval:plan`, `approval:merge` (the owner merges a PR) and `blocked` (any other
   wait), and `stopped`. Events and the table: **Transitions**. Only `apply(mission, outcome)` moves a
   mission; `done` and `stopped` ignore every event.
 - Phase (the intent's `stage` field, [INT-5](intents.md)): pick, design, approval:spec → `spec`;
-  plan, approval:plan → `plan`; build … merge, approval:merge → `code`; `blocked` keeps the phase it
+  plan, approval:plan → `plan`; build … e2e, rollback, revert, approval:merge → `code`; `blocked` keeps the phase it
   came from; `done` → `done`; `stopped` by a closed PR or `drop` → `dropped`.
-- Verified by: `machine: every stage and event pair is defined`, `machine: order`, `machine: continue after an answer`
+- Verified by: `machine: every stage and event pair is defined`, `machine: order`, `machine: continue after an answer`, `machine: ship transitions`
 
 ### LOOP-4 · How much runs at once
 
@@ -510,8 +511,10 @@ like a crash; `–` = ignored)
 
 | Event | Working stages | approval:spec | approval:plan | approval:merge | blocked |
 |---|---|---|---|---|---|
-| ok | next | U | U | U | U |
-| red | verify, proof, ci → build; else U | U | U | U | U |
+| ok | next (e2e → done; rollback → build; revert U) | U | U | U | U |
+| red | verify, proof, ci → build; deploy, e2e → rollback; else U | U | U | U | U |
+| skip | deploy → done; else U | U | U | U | U |
+| revert | rollback → revert; else U | U | U | U | U |
 | timeout, bad_result, interrupted | again | – | – | – | – |
 | limit | cool | U | U | U | U |
 | wait (a handler's) | to the wait's stage | same | same | same | same |
@@ -519,7 +522,7 @@ like a crash; `–` = ignored)
 | crash | recover | – | – | – | – |
 | spec_merged | design → plan; else – | → plan | – | – | from design → plan |
 | plan_merged | plan → build; else – | – | → build | – | from plan → build |
-| code_merged | build … merge → done; else – | – | – | → done | → done |
+| code_merged | build … merge → deploy; else – | – | – | → deploy | → deploy, unless it came from deploy … revert |
 | closed | → stopped | → stopped | → stopped | → stopped | → stopped |
 | feedback | build … merge → build; else – | → design | → plan | → build | as answered |
 | answered | – | – | – | – | continue |
@@ -555,6 +558,8 @@ like a crash; `–` = ignored)
 | `add CLAUDE.md verifying block` | blocked | The repo needs a verifying section in CLAUDE.md. |
 | `fix repo files` | blocked | A repo file doesn't parse. |
 | `unknown repo`, `bad after:` | (intent only) | The intent names a repo or dependency Towercab doesn't know. |
+| `rolled back, revise` | blocked | The change broke the live app, two fixes didn't hold, and it was reverted. Revise the intent, then /retry. |
+| `rollback failed` | blocked | Rolling back failed. Nothing more merges in this repo until you fix it. |
 
 Every blocked wait continues on a reply on the intent's current PR, `towercab answer`, or removing
 `waiting:` from the intent; `/retry` starts over; closing the PR drops the intent.
