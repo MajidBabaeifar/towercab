@@ -27,6 +27,11 @@ export function addRepo(github: string, name?: string): Promise<ActionReply> {
   return post({ action: "addRepo", github, name });
 }
 
+/** UI-144: read the repo again for its feature list. */
+export function refreshFeatures(repo: string): Promise<ActionReply> {
+  return post({ action: "features", repo });
+}
+
 async function post(req: Record<string, string | undefined>): Promise<ActionReply> {
   try {
     const r = await fetch("/api/actions", {

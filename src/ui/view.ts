@@ -422,6 +422,9 @@ export interface Lane {
   /** "1 of 3 ahead": intents before build against `[repos.<r>].ahead` (UI-100). */
   ahead: string;
   running: Row[];
+  /** Queued in pick order, numbered: nothing but their turn holds them (UI-63). */
+  upNext: QueueItem[];
+  /** Queued but held by something else (a dependency, a usage limit, a service), with the reason. */
   waiting: QueueItem[];
   parked: QueueItem[];
   done: QueueItem[];
@@ -430,6 +433,80 @@ export interface Lane {
 export interface QueuePage {
   version: string;
   lanes: Lane[];
+}
+
+/** UI-140: one repo chip of the Repos tab. */
+export interface RepoChip {
+  repo: string;
+  /** Open intents: in progress, up next, waiting and parked. */
+  open: number;
+  /** Of them, waiting on the owner. */
+  needs: number;
+}
+
+/** UI-143: one line of a repo's feature list. */
+export interface FeatureView {
+  text: string;
+  /** The intent the line is for, linked on the page; null for the owner's or the backfill's lines. */
+  intent: string | null;
+}
+
+/** UI-143, UI-144: a repo's feature list, grouped, and where its backfill stands. */
+export interface FeaturesView {
+  inProgress: FeatureView[];
+  live: FeatureView[];
+  /** The file's planned lines, then queued intents that have no line (INT-40). */
+  planned: FeatureView[];
+  /** `features/<repo>.md` on GitHub, or null. */
+  url: string | null;
+  /** The backfill (INT-39): never asked, asked, running, done or failed. */
+  run: "never" | "due" | "running" | "done" | "failed";
+  /** One sentence on where the backfill stands; null when there is nothing to say. */
+  note: string | null;
+  /** "Refresh from the repo" is offered: Towercab runs and the repo is in the config. */
+  canRefresh: boolean;
+}
+
+/** UI-141: one repo's page. */
+export interface RepoView {
+  repo: string;
+  github: string;
+  /** "1 of 3 ahead" (UI-100). */
+  ahead: string;
+  features: FeaturesView;
+  inProgress: Row[];
+  upNext: QueueItem[];
+  waiting: QueueItem[];
+  parked: QueueItem[];
+  spend: RepoSpendView;
+}
+
+/** UI-142: one repo on the All overview. */
+export interface RepoSummary {
+  repo: string;
+  github: string;
+  inProgress: number;
+  needs: number;
+  upNext: number;
+  waiting: number;
+  parked: number;
+  spend: RepoSpendView;
+}
+
+/** `GET /api/repos[?repo=<name>]`. */
+export interface ReposPage {
+  version: string;
+  chips: RepoChip[];
+  /** The chosen repo, or null for All. */
+  selected: string | null;
+  /** The chosen repo's page; null on All. */
+  repo: RepoView | null;
+  /** All: one summary per repo; empty when a repo is chosen. */
+  all: RepoSummary[];
+  /** The totals over every repo (UI-137). */
+  spend: RepoSpendView;
+  /** What went wrong: the intents repo can't be read, or the asked-for repo doesn't exist. */
+  error: string | null;
 }
 
 /** UI-137: what Towercab spent on one repo (or on all of them). */

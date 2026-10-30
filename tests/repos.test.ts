@@ -255,7 +255,7 @@ test("repos: a failed add from the page is reported", async () => {
     {
       title: "Towercab couldn't add the repo missing (owner/missing)",
       detail: expect.stringMatching(/^Towercab couldn't clone owner\/missing: /),
-      fix: "Fix what the message says, then add the repo again from the Queue page or with towercab repo add.",
+      fix: "Fix what the message says, then add the repo again from the Repos page or with towercab repo add.",
       since: T0,
     },
   ]);

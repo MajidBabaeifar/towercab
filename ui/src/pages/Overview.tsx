@@ -84,7 +84,7 @@ export function OverviewPage({ data }: { data: Data }) {
           </Section>
         </div>
         <aside class="col-side">
-          <Section title="Up next" aside={<Link href="/queue">Queue</Link>}>
+          <Section title="Up next" aside={<Link href="/repos">Repos</Link>}>
             {upNext.length ? (
               <UpNextList items={upNext} />
             ) : (

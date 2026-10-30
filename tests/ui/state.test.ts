@@ -142,11 +142,11 @@ test("ui: top bar shows health and counts", async () => {
     health: "Problem",
     needs: 4,
     working: 4,
-    queued: 3,
+    queued: 4,
     paused: false,
     readOnly: false,
   });
-  expect(o.top.countsText).toBe("4 need you · 4 working · 3 queued");
+  expect(o.top.countsText).toBe("4 need you · 4 working · 4 queued");
   expect(o.top.spendToday).toMatch(/^\$\d+\.\d\d$/);
   expect(o.top.budget).toBe("of $40.00");
   expect(o.top.version).toEqual({ commit: "3f9c2ab", behind: "up to date" });
@@ -437,12 +437,16 @@ test("ui: queue lanes by repo", async () => {
   const web = q.lanes[0]!;
   expect(web.github).toBe("acme/web");
   expect(web.running.map((r) => r.intent)).toEqual([IDS.question, IDS.ci]);
-  expect(web.waiting.map((w) => [w.position, w.title, w.reason])).toEqual([
+  // Up next: only its turn holds it, numbered. Waiting: held by something else, with the reason.
+  expect(web.upNext.map((w) => [w.position, w.title, w.reason])).toEqual([
     [
       1,
       "Dark mode for the settings page",
       "3 intents are already ahead of build in this repo; it starts when one has a place free, or when you start it.",
     ],
+  ]);
+  expect(web.waiting.map((w) => [w.position, w.title, w.reason])).toEqual([
+    [null, "Gift cards at checkout", "Waits for “Faster checkout page” to be done."],
   ]);
   expect(web.parked.map((w) => w.title)).toEqual(["Try a new chart library"]);
   expect(web.done.map((w) => [w.title, w.state.label, w.cost])).toEqual([
@@ -451,7 +455,7 @@ test("ui: queue lanes by repo", async () => {
   ]);
   const blog = q.lanes[5]!;
   expect(blog.running).toEqual([]);
-  expect(blog.waiting[0]).toMatchObject({
+  expect(blog.upNext[0]).toMatchObject({
     title: "Add an RSS feed to the blog",
     state: { label: "Up next" },
     reason: null,
@@ -520,6 +524,7 @@ test("ui: airspace places each intent at its station", async () => {
     [IDS.parked1]: ["parked", "Parked"],
     [IDS.queued]: ["queue", "Queued"],
     [IDS.queued2]: ["queue", "Queued"],
+    [IDS.held]: ["queue", "Queued"],
     [IDS.crm]: ["gate", "Needs you"],
     [IDS.upnext]: ["gate", "Up next"],
     [IDS.plan]: ["plan-review", "Needs you"],
@@ -549,9 +554,9 @@ test("ui: airspace places each intent at its station", async () => {
       { intent: IDS.done2, title: "Paginate the orders API", repo: "api" },
     ],
   });
-  expect(a.counts).toEqual({ parked: 2, queued: 3, flying: 4, needs: 4, landed: 2 });
+  expect(a.counts).toEqual({ parked: 2, queued: 4, flying: 4, needs: 4, landed: 2 });
   expect(a.countsText).toBe("4 in flight · 4 need you · 2 landed today");
-  expect(a.summary).toBe("Airspace: 2 parked, 3 queued, 4 in flight, 4 need you, 2 landed today.");
+  expect(a.summary).toBe("Airspace: 2 parked, 4 queued, 4 in flight, 4 need you, 2 landed today.");
 
   const empty = (await overview(fixture({ empty: true }).sources)).airspace;
   expect(empty.planes).toEqual([]);

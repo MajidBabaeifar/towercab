@@ -69,7 +69,7 @@ export function addProblems(db: Db): Problem[] {
   return addFailures(db).map((f) => ({
     title: `Towercab couldn't add the repo ${f.name} (${f.github})`,
     detail: f.why,
-    fix: "Fix what the message says, then add the repo again from the Queue page or with towercab repo add.",
+    fix: "Fix what the message says, then add the repo again from the Repos page or with towercab repo add.",
     since: f.at,
   }));
 }

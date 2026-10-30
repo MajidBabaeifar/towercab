@@ -1,4 +1,4 @@
-// A tiny router on location.pathname (UI-55): `/`, `/i/<id>`, `/board`, `/queue`, `/activity`.
+// A tiny router on location.pathname (UI-55): `/`, `/i/<id>`, `/board`, `/repos` (and `/queue`, its old name), `/activity`.
 
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";

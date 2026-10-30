@@ -96,8 +96,13 @@ export class MemStore implements IntentStore {
   async hasMark(): Promise<boolean> {
     return false;
   }
-  async readFile(): Promise<string | null> {
-    return null;
+  /** Files by path (the feature lists, INT-37). */
+  files = new Map<string, string>();
+  async readFile(path: string): Promise<string | null> {
+    return this.files.get(path) ?? null;
+  }
+  async editFeatures(): Promise<boolean> {
+    throw new Error("the fixture store is read-only");
   }
   github(): string | null {
     return this.repo;
@@ -198,6 +203,7 @@ export interface FakeActionCall {
   text?: string;
   github?: string;
   name?: string;
+  repo?: string;
 }
 
 export interface Fixture {
@@ -224,6 +230,7 @@ export const IDS = {
   upnext: "261026-0905-1",
   queued: "261025-1610-2",
   queued2: "261025-1720-1",
+  held: "261025-1745-1",
   parked1: "261020-1015-1",
   parked2: "261019-0940-2",
   done1: "261023-0915-1",
@@ -269,6 +276,7 @@ export function buildFixture(o: { now?: number; root?: string; empty?: boolean }
           { intent: IDS.upnext, priority: 11, skip: null },
           { intent: IDS.queued, priority: 10, skip: { kind: "ahead", n: 3, limit: 3 } },
           { intent: IDS.queued2, priority: 9, skip: { kind: "ahead", n: 3, limit: 3 } },
+          { intent: IDS.held, priority: 8, skip: { kind: "after", intent: IDS.ci } },
           { intent: IDS.parked2, priority: 6, skip: { kind: "parked" } },
           { intent: IDS.parked1, priority: 5, skip: { kind: "parked" } },
         ]) as UpNext[],
@@ -343,7 +351,12 @@ export function buildFixture(o: { now?: number; root?: string; empty?: boolean }
     async addRepo(github, name) {
       calls.push({ action: "addRepo", github, ...(name ? { name } : {}) });
       const short = name ?? github.split("/")[1] ?? github;
-      return `Adding ${short} (${github}, base main): Towercab is cloning it now. It shows on the Queue page when done, and its intents start from then on.`;
+      return `Adding ${short} (${github}, base main): Towercab is cloning it now. It shows on the Repos page when done, and its intents start from then on.`;
+    },
+
+    async features(repo) {
+      calls.push({ action: "features", repo });
+      return "Towercab reads the repo's README and specs and rewrites its live features within a few minutes.";
     },
   };
 
@@ -450,6 +463,14 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
     }),
     makeIntent({ id: IDS.queued, title: "Dark mode for the settings page", repo: "web", u: 2, i: 4 }),
     makeIntent({ id: IDS.queued2, title: "Translate the docs into German", repo: "docs", u: 3, i: 3 }),
+    makeIntent({
+      id: IDS.held,
+      title: "Gift cards at checkout",
+      repo: "web",
+      u: 2,
+      i: 3,
+      after: [IDS.ci],
+    }),
     makeIntent({ id: IDS.parked1, title: "Try a new chart library", repo: "web", u: 1, i: 2 }),
     makeIntent({ id: IDS.parked2, title: "Move CI to self-hosted runners", repo: "infra", u: 2, i: 2 }),
   ];
@@ -755,6 +776,25 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
     "cooldown:sonnet",
     JSON.stringify({ until: now + 47 * MIN, backoffs: 0, text: "limit", since: now - 20 * MIN }),
   );
+  // The web repo's feature list (INT-37): read from the repo three days ago, with two intents since.
+  store.files.set(
+    "features/web.md",
+    [
+      "# web: what people can do",
+      "",
+      "- [live] Visitors can browse the product catalogue and search it by name.",
+      "- [live] People can sign in with their email address or their GitHub account.",
+      "- [live] Shoppers can pay by card and get a receipt by email.",
+      "- [live] People can see their past orders and download each invoice as a PDF.",
+      "- [live] Admins can change prices without a deploy.",
+      `- [live] People can sign in with GitHub. <!-- intent ${IDS.done1} -->`,
+      `- [in progress] People can export their invoices as a CSV file. <!-- intent ${IDS.question} -->`,
+      `- [in progress] Shoppers get through checkout in fewer steps. <!-- intent ${IDS.ci} -->`,
+      "- [planned] Shoppers can save a basket and finish it on another device.",
+      "",
+    ].join("\n"),
+  );
+  db.setMeta("features:web", JSON.stringify({ state: "done", at: now - 3 * DAY, n: 5, cost: 0.41 }));
   addMission(db, now, {
     intent: IDS.stalled,
     repo: "infra",

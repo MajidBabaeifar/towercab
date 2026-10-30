@@ -42,7 +42,26 @@ const PAGES = [
     path: "/board",
     expect: ["Board", "Your plan review", "Faster checkout page", "Readable CI job names", "all time"],
   },
-  { name: "queue", path: "/queue", expect: ["Queue", "In progress", "Waiting", "Parked", "Recently done"] },
+  { name: "repos", path: "/repos", expect: ["Repos", "All", "in progress", "all time", "Add a repo"] },
+  {
+    name: "repo",
+    path: "/repos?repo=web",
+    expect: [
+      "What people can do",
+      "People can export their invoices as a CSV file.",
+      "Live",
+      "Planned",
+      "In progress",
+      "Up next",
+      "Waiting",
+      "Waits for “Faster checkout page” to be done.",
+      "Parked",
+      "Spend",
+      "Refresh from the repo",
+    ],
+  },
+  // UI-140: the old address shows the same page.
+  { name: "queue", path: "/queue", expect: ["Repos", "All"] },
   { name: "activity", path: "/activity", expect: ["Activity", "Today", "Moves", "Errors"] },
 ] as const;
 

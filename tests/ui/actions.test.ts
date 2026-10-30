@@ -146,10 +146,10 @@ test("ui: add repo action adds the repo and says so", async () => {
     },
   });
   expect(await actions.addRepo("acme/crm", "crm")).toBe(
-    "Adding crm (acme/crm, base trunk): Towercab is cloning it now. It shows on the Queue page when done, and its intents start from then on.",
+    "Adding crm (acme/crm, base trunk): Towercab is cloning it now. It shows on the Repos page when done, and its intents start from then on.",
   );
   expect(await actions.addRepo("acme/shop")).toBe(
-    "Adding shop (acme/shop, base trunk): Towercab is cloning it now. It shows on the Queue page when done, and its intents start from then on.",
+    "Adding shop (acme/shop, base trunk): Towercab is cloning it now. It shows on the Repos page when done, and its intents start from then on.",
   );
   // The refusal is the reason, as the page shows it.
   await expect(actions.addRepo("acme/secret")).rejects.toThrow(

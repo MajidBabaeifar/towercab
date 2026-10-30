@@ -341,7 +341,7 @@ test("ui: add repo goes through the actions API", async () => {
   expect(JSON.parse(r.body)).toEqual({
     ok: true,
     message:
-      "Adding crm (acme/crm, base main): Towercab is cloning it now. It shows on the Queue page when done, and its intents start from then on.",
+      "Adding crm (acme/crm, base main): Towercab is cloning it now. It shows on the Repos page when done, and its intents start from then on.",
   });
   expect(f.calls.at(-1)).toEqual({ action: "addRepo", github: "acme/crm", name: "crm" });
   expect((await post(port, ui.token, { action: "addRepo", github: "acme/shop" })).status).toBe(200);

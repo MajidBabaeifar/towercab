@@ -6,7 +6,7 @@ import type {
   BoardPage as BoardData,
   IntentPage as IntentData,
   Overview,
-  QueuePage as QueueData,
+  ReposPage as ReposData,
   TopBar as Top,
 } from "../../src/ui/view.ts";
 import { act, useLive } from "./api.ts";
@@ -16,13 +16,13 @@ import { ActivityPage } from "./pages/Activity.tsx";
 import { BoardPage } from "./pages/Board.tsx";
 import { IntentPage } from "./pages/Intent.tsx";
 import { OverviewPage } from "./pages/Overview.tsx";
-import { QueuePage } from "./pages/Queue.tsx";
+import { ReposPage } from "./pages/Repos.tsx";
 import { Link, usePath } from "./router.tsx";
 
 const TABS = [
   ["/", "Overview"],
   ["/board", "Board"],
-  ["/queue", "Queue"],
+  ["/repos", "Repos"],
   ["/activity", "Activity"],
 ] as const;
 
@@ -63,8 +63,9 @@ function PauseButton({ top }: { top: Top }) {
 }
 
 function TopBar({ top, path }: { top: Top | null; path: string }) {
-  const section =
-    ["/board", "/queue", "/activity"].find((p) => path === p || path.startsWith(`${p}/`)) ?? "/";
+  // `/queue` is the Repos tab's old name (UI-140): old links land there.
+  const at = path === "/queue" || path.startsWith("/queue/") ? "/repos" : path;
+  const section = ["/board", "/repos", "/activity"].find((p) => at === p || at.startsWith(`${p}/`)) ?? "/";
   return (
     <header class="topbar">
       <div class="topbar-inner">
@@ -138,10 +139,11 @@ function IntentRoute({ id, readOnly, onTitle }: { id: string; readOnly: boolean;
   return <IntentPage data={live.data} readOnly={readOnly} />;
 }
 
-function QueueRoute({ readOnly }: { readOnly: boolean }) {
-  const live = useLive<QueueData>("/api/queue");
+function ReposRoute({ search, readOnly }: { search: string; readOnly: boolean }) {
+  const repo = new URLSearchParams(search).get("repo");
+  const live = useLive<ReposData>(`/api/repos${repo ? `?repo=${encodeURIComponent(repo)}` : ""}`);
   if (live.error && !live.data) return <ErrorNote text={live.error} />;
-  return live.data ? <QueuePage data={live.data} readOnly={readOnly} /> : <Skeleton />;
+  return live.data ? <ReposPage data={live.data} readOnly={readOnly} /> : <Skeleton />;
 }
 
 function BoardRoute() {
@@ -163,8 +165,8 @@ function App() {
       ? intentTitle
       : pathname!.startsWith("/board")
         ? "Board"
-        : pathname!.startsWith("/queue")
-          ? "Queue"
+        : pathname!.startsWith("/repos") || pathname!.startsWith("/queue")
+          ? "Repos"
           : pathname!.startsWith("/activity")
             ? "Activity"
             : null;
@@ -181,7 +183,8 @@ function App() {
       />
     );
   } else if (pathname === "/board") page = <BoardRoute />;
-  else if (pathname === "/queue") page = <QueueRoute readOnly={top?.readOnly ?? true} />;
+  else if (pathname === "/repos" || pathname === "/queue")
+    page = <ReposRoute search={search} readOnly={top?.readOnly ?? true} />;
   else if (pathname === "/activity") page = <ActivityPage search={search} />;
   else if (state.error && !state.data) page = <ErrorNote text={state.error} />;
   else page = state.data ? <OverviewPage data={state.data} /> : <Skeleton />;
