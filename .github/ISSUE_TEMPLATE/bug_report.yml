@@ -1,0 +1,50 @@
+name: Bug report
+description: Something in Towercab does not work as expected
+body:
+  - type: textarea
+    attributes:
+      label: What happened
+      description: What you did and what Towercab did.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What you expected
+      description: What should have happened instead.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Towercab commit or version
+      description: The output of `git rev-parse HEAD` in your checkout, or the release.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: OS
+      placeholder: Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Node version
+      description: The output of `node --version`.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: gh version
+      description: The output of `gh --version`.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Claude Code version
+      description: The output of `claude --version`.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Relevant log lines
+      description: "Remove secrets first (tokens, keys and private repo names)."
+      render: shell
