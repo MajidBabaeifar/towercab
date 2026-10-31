@@ -68,8 +68,9 @@ export async function doctor(o: {
     const r = await o.github.owner(["auth", "status"], { timeoutMs: 20_000 });
     const text = `${r.stdout}\n${r.stderr}`;
     const me = config.github?.me ?? "";
+    const logins = [...text.matchAll(/\b(?:account|as) ([\w-]+)/gi)].map((m) => m[1]!.toLowerCase());
     lines.push(
-      new RegExp(`account ${me}\\b|as ${me}\\b`, "i").test(text)
+      me && logins.includes(me.toLowerCase())
         ? `gh login: ${me}`
         : `gh login: not logged in as ${me} (run gh auth login): the UI's actions need it`,
     );
