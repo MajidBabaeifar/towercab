@@ -8,7 +8,10 @@ two taps. They never want to read a table to find that out.
 
 ## The four questions, in order
 
-1. **What needs me?** Cards, oldest wait first, each with only the buttons that answer it.
+1. **What needs me?** Cards, oldest wait first, each with only the buttons that answer it. After the
+   owner merges, drops or starts over from the page, the buttons give way to one green line ("Merged
+   by you · Towercab moves on within a minute") until the loop moves on; after 5 minutes it turns
+   amber and says Towercab has not moved on yet, with the PR link kept (UI-105, UI-108).
 2. **What is stuck?** Problems, shown only when there are some, each with what to do.
 3. **What is moving?** Working and queued rows: phase, step, time in step, cost.
 4. **What does it cost?** Spend today, the last 7 days, the budget.

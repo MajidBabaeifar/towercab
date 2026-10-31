@@ -392,7 +392,40 @@ type MissionData = {
   build?: { brief?: string; notes?: string };
   review?: { summary?: string; brief?: string; details?: string } | null;
   runs?: { at: number; cost: number }[];
+  doneByYou?: DoneNote;
 };
+
+/** UI-105: what the owner did from the page; display only, never moves the mission. */
+export interface DoneNote {
+  action: "merge" | "drop" | "retry";
+  stage: string;
+  pr: number;
+  at: number;
+}
+
+/** UI-108: after this long without a move, the card stops promising one. */
+export const STUCK_AFTER_S = 300;
+
+const DONE_WORDS = { merge: "Merged", drop: "Dropped", retry: "Started over" } as const;
+
+/** The note, if it still describes this mission's wait: same stage and same PR. */
+export function validNote(m: Mission, pr: { number: number } | null): DoneNote | null {
+  const n = dataOf<MissionData>(m).doneByYou;
+  if (!n || !pr || n.stage !== m.stage || n.pr !== pr.number) return null;
+  return n;
+}
+
+/** UI-105, UI-108: the "by you" line of a card and of a plane's card. */
+export function doneOf(src: UiSources, m: Mission, now: number): Card["done"] {
+  const n = validNote(m, currentPr(m, src.config, src.store.github()));
+  if (!n) return null;
+  const age = now - n.at;
+  const stuck = age >= STUCK_AFTER_S;
+  const text = stuck
+    ? `${DONE_WORDS[n.action]} by you ${ago(n.at, now)}, but Towercab has not moved on yet`
+    : `${DONE_WORDS[n.action]} by you · Towercab moves on within a minute`;
+  return { action: n.action, text, stuck };
+}
 
 const nonEmpty = (s: string | null | undefined): string | null => (s?.trim() ? s.trim() : null);
 const joinMd = (parts: (string | null | undefined)[]): string | null =>
@@ -557,11 +590,14 @@ export function missionCard(
   const why = m.why && m.why !== brief ? m.why : null;
   const shownWhy = approval ? why : null;
   const details = joinMd([approval || why === d.question?.question ? null : why, texts.details]);
-  const actions: Card["actions"] = approval
-    ? pr
-      ? ["merge", "retry", "drop"]
-      : ["retry", "drop"]
-    : ["reply", "retry", "drop"];
+  const done = doneOf(src, m, now);
+  const actions: Card["actions"] = done
+    ? []
+    : approval
+      ? pr
+        ? ["merge", "retry", "drop"]
+        : ["retry", "drop"]
+      : ["reply", "retry", "drop"];
   const gate = kind === "spec" || kind === "plan" ? kind : kind === "code" ? "code" : null;
   const risk = riskView(m, gate);
   const points = kind === "spec" ? (currentRisk(m, "spec")?.openPoints ?? []) : [];
@@ -582,7 +618,8 @@ export function missionCard(
     access: kind === "plan" ? (d.access ?? { domains: [], paths: [] }) : null,
     pr,
     actions,
-    mergeLabel: approval && pr ? MERGE_LABELS[kind]! : null,
+    mergeLabel: approval && pr && !done ? MERGE_LABELS[kind]! : null,
+    done,
     addRepo: null,
   };
 }
@@ -617,6 +654,7 @@ export function intentCard(i: Intent, config: Config): Card {
     pr: null,
     actions: ["reply", "drop"],
     mergeLabel: null,
+    done: null,
     addRepo,
   };
 }
@@ -770,7 +808,7 @@ export function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: numbe
       lines: isReady(m)
         ? [row.behind ?? "Ready to build", `${row.cost} · ${row.model}`]
         : isWait(m.stage)
-          ? [askOf(m.waiting), `Waiting ${waited} · ${row.cost}`]
+          ? [doneOf(src, m, s.now)?.text ?? askOf(m.waiting), `Waiting ${waited} · ${row.cost}`]
           : [back ?? `${row.step} · ${row.inStep}`, `${row.cost} · ${row.model}`],
       phases: row.phases,
       ...(mark ? { ship: mark } : {}),

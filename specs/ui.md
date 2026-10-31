@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..104, UI-120..128, UI-130..131, UI-133..137, UI-140..145 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..108, UI-120..128, UI-130..131, UI-133..137, UI-140..145 · **Prefix:** UI
 
 ## Purpose
 
@@ -441,10 +441,10 @@ After the owner merges, drops or starts over from the page, every view shows tha
 
 A successful merge, drop or start over asks the loop to look at that PR immediately, so the mission usually moves on within seconds.
 
-- After GitHub accepts the action, the action asks the loop (a `commands` row, LOOP-15, as other page
-  actions do) to poll that PR on its next pass instead of waiting for the 60 s PR poll (LOOP-12).
-  The poll reads GitHub as usual and `machine.apply` moves the mission only on what GitHub reports.
-  If the request is lost, the normal 60 s poll still moves it.
+- After GitHub accepts the action, the action sets the `meta` flag `poll:<mission id>`. On its next
+  pass (LOOP-12) the PR poll reads that mission's PRs at once, ignoring the 60 s throttle, and clears
+  the flag; a move clears it too. The poll reads GitHub as usual and `machine.apply` moves the mission
+  only on what GitHub reports. If the flag is lost, the normal 60 s poll still moves it.
 - Verified by: `ui: a successful merge asks for an immediate poll`, `ui: a failed merge asks for no poll`
 
 ### UI-107 · Merge checks the PR first

@@ -6,8 +6,8 @@ import type { Db } from "../db.ts";
 import { askFeatures } from "../features.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { IntentStore } from "../intents/types.ts";
-import { type Mission, unfinishedFor } from "../mission.ts";
-import { currentPr } from "./state.ts";
+import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
+import { currentPr, type DoneNote, validNote } from "./state.ts";
 
 /** What the page can do; each resolves to one sentence saying what happened, or throws the error. */
 export interface UiActions {
@@ -41,6 +41,8 @@ export const MAX_REPLY = 20_000;
 
 const APPROVALS = new Set(["approval:spec", "approval:plan", "approval:merge"]);
 
+const PAST = { merge: "merged", drop: "dropped", retry: "started over" } as const;
+
 function firstLine(s: string): string {
   return (
     s
@@ -66,6 +68,27 @@ export function createActions(d: ActionDeps): UiActions {
     if (r.code !== 0) throw new Error(`GitHub refused to ${what}: ${firstLine(r.stderr || r.stdout)}`);
   };
 
+  /** UI-105, UI-106: remember the action for display and ask the loop to read the PR on its next pass. */
+  const done = (m: Mission, p: { number: number }, action: DoneNote["action"]) => {
+    const note: DoneNote = { action, stage: m.stage, pr: p.number, at: d.clock.now() };
+    d.db.tx(() => {
+      const fresh = getMission(d.db, m.id);
+      if (!fresh || fresh.stage !== m.stage) return;
+      const data = { ...dataOf(fresh), doneByYou: note };
+      d.db.run("UPDATE missions SET data = ? WHERE id = ?", JSON.stringify(data), m.id);
+      d.db.setMeta(`poll:${m.id}`, "1");
+    });
+  };
+  /** A repeat of what the note says: nothing to send to GitHub (UI-107). */
+  const repeated = (m: Mission, p: { number: number; label: string }, action: DoneNote["action"]) => {
+    const n = validNote(m, p);
+    if (!n) return null;
+    if (n.action !== action) {
+      throw new Error(`You already ${PAST[n.action]} the ${p.label} #${p.number}; Towercab is moving on.`);
+    }
+    return `Already ${PAST[action]}; Towercab is moving on.`;
+  };
+
   return {
     async merge(intent) {
       const m = unfinishedFor(d.db, intent);
@@ -73,10 +96,40 @@ export function createActions(d: ActionDeps): UiActions {
         throw new Error("Nothing to merge: this intent isn't waiting for a merge.");
       const p = pr(m);
       if (!p) throw new Error("Nothing to merge: its PR isn't open yet.");
+      const again = repeated(m, p, "merge");
+      if (again) return again;
+      const view = await d.github.owner([
+        "pr",
+        "view",
+        String(p.number),
+        "-R",
+        p.github,
+        "--json",
+        "state,mergedAt",
+      ]);
+      if (view.code !== 0) {
+        throw new Error(
+          `GitHub refused to read the ${p.label} #${p.number}: ${firstLine(view.stderr || view.stdout)}`,
+        );
+      }
+      let state: { state?: unknown; mergedAt?: unknown };
+      try {
+        state = JSON.parse(view.stdout) as typeof state;
+      } catch {
+        throw new Error(`GitHub gave no state for the ${p.label} #${p.number}.`);
+      }
+      if (state.state === "MERGED" || state.mergedAt) {
+        done(m, p, "merge");
+        return "Already merged; Towercab is moving on.";
+      }
+      if (state.state === "CLOSED") {
+        throw new Error(`The ${p.label} #${p.number} is closed, so there is nothing to merge.`);
+      }
       await owner(
         ["pr", "merge", String(p.number), "--squash", "-R", p.github],
         `merge the ${p.label} #${p.number}`,
       );
+      done(m, p, "merge");
       return `Merged the ${p.label} #${p.number} as you. Towercab moves on within a minute.`;
     },
 
@@ -98,12 +151,16 @@ export function createActions(d: ActionDeps): UiActions {
     },
 
     async retry(intent) {
-      const p = pr(unfinishedFor(d.db, intent));
-      if (p) {
+      const m = unfinishedFor(d.db, intent);
+      const p = pr(m);
+      if (m && p) {
+        const again = repeated(m, p, "retry");
+        if (again) return again;
         await owner(
           ["pr", "comment", String(p.number), "-R", p.github, "--body", "/retry"],
           `comment on the ${p.label}`,
         );
+        done(m, p, "retry");
         return `Asked for a fresh start on the ${p.label} #${p.number}. A new attempt begins within a minute.`;
       }
       command("retry", intent);
@@ -111,9 +168,13 @@ export function createActions(d: ActionDeps): UiActions {
     },
 
     async drop(intent) {
-      const p = pr(unfinishedFor(d.db, intent));
-      if (p) {
+      const m = unfinishedFor(d.db, intent);
+      const p = pr(m);
+      if (m && p) {
+        const again = repeated(m, p, "drop");
+        if (again) return again;
         await owner(["pr", "close", String(p.number), "-R", p.github], `close the ${p.label} #${p.number}`);
+        done(m, p, "drop");
         return `Closed the ${p.label} #${p.number}; the intent is dropped.`;
       }
       command("drop", intent);
