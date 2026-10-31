@@ -716,7 +716,10 @@ export class Loop {
     const read = this.d.readPr ?? ((repo: string, n: number) => readPr(this.d.github, repo, n));
     for (const m of unfinished(this.d.db)) {
       if (m.step === "enter" || (!m.spec_pr && !m.plan_pr && !m.pr)) continue;
-      if (this.now - (this.lastPrPoll.get(m.id) ?? 0) < PR_POLL_S) continue;
+      // UI-106: the page acted on this PR, so read it now instead of at the next minute.
+      const asked = this.d.db.meta(`poll:${m.id}`) !== null;
+      if (asked) this.d.db.delMeta(`poll:${m.id}`);
+      else if (this.now - (this.lastPrPoll.get(m.id) ?? 0) < PR_POLL_S) continue;
       this.lastPrPoll.set(m.id, this.now);
       const repo = this.d.config.repos.get(m.repo);
       const intentsRepo = this.d.store.github();
@@ -865,7 +868,10 @@ export class Loop {
     this.pollAt.delete(m.id);
     if (o.event === "plan_merged" && this.slotTaken(m)) return this.markReady(m);
     const out = apply(this.applyCtx(), m, o);
-    if (out.stage !== m.stage || out.id !== m.id) this.lastPrPoll.delete(m.id);
+    if (out.stage !== m.stage || out.id !== m.id) {
+      this.lastPrPoll.delete(m.id);
+      this.d.db.delMeta(`poll:${m.id}`);
+    }
     return out;
   }
 

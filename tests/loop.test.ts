@@ -698,6 +698,40 @@ test("loop: cadence", async () => {
   expect(at(steps)).toEqual([10, 40, 70, 100, 130, 160]);
 });
 
+test("loop: a page action polls the PR at once", async () => {
+  const p = new Pipe(TARGET, files({ id: A }));
+  const reads: number[] = [];
+  let pr = prState();
+  await p.start(
+    {},
+    {
+      readPr: async () => {
+        reads.push(p.clock.now());
+        return pr;
+      },
+      handlers: fake((m) => {
+        if (m.stage === "pick") return { done: ok({ set: { pr: 7 } }) };
+        return { poll: 30 };
+      }),
+    },
+  );
+  for (let i = 0; i < 4; i++) await pass(p, 5);
+  const first = reads.length;
+  expect(first).toBeGreaterThan(0);
+  // Five seconds later, inside the minute: no read, until the page asks for one.
+  await pass(p, 5);
+  expect(reads).toHaveLength(first);
+  const id = p.mission()!.id;
+  p.db.setMeta(`poll:${id}`, "1");
+  pr = prState({ state: "CLOSED" });
+  await pass(p, 5);
+  expect(reads).toHaveLength(first + 1);
+  expect(p.db.meta(`poll:${id}`)).toBeNull();
+  // What GitHub says moves it, through the machine; the flag alone moves nothing.
+  await pass(p, 5);
+  expect(p.db.all("SELECT event FROM transitions WHERE event = 'closed'")).toHaveLength(1);
+});
+
 test("loop: timeout kills the group", async () => {
   const p = new Pipe(TARGET, files({ id: A }));
   p.tools.stubborn.add("work");

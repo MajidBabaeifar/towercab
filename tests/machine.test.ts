@@ -158,6 +158,30 @@ test("machine: an answered question doesn't come back on a later wait", () => {
   expect(dataOf(m).brief).toBeUndefined();
 });
 
+test("machine: the page's done note ends with the wait", () => {
+  const db = testDb();
+  const subject = () => ({ title: "Log in", repo: "web", link: null });
+  let m: Mission = db.tx(() =>
+    insertMission(db, { intent: "261026-1000", slug: "log-in", repo: "web", model: "opus", a: 3 }, 1),
+  );
+  const cx = { db, now: 10, subject };
+  for (let i = 0; i < 3; i++) m = apply(cx, m, { event: "ok" });
+  m = apply(cx, m, { event: "wait", waiting: "checks red" });
+  const note = { action: "retry", stage: "blocked", pr: 5, at: 10 };
+  db.run(
+    "UPDATE missions SET data = ? WHERE id = ?",
+    JSON.stringify({ ...dataOf(m), doneByYou: note }),
+    m.id,
+  );
+  m = getMission(db, m.id)!;
+  // An event the wait ignores leaves the note; leaving the wait takes it.
+  m = apply(cx, m, { event: "timeout" });
+  expect(dataOf(m).doneByYou).toEqual(note);
+  m = apply(cx, m, { event: "answered", text: "skip it" });
+  expect(m.stage).not.toBe("blocked");
+  expect(dataOf(m).doneByYou).toBeUndefined();
+});
+
 test("machine: plan merged while the slot is taken waits", () => {
   // The table still sends a merged plan to build; the loop holds the move while the repo builds
   // (LOOP-61), so the mission stays where it waits and no wait message is sent.

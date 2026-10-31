@@ -1278,6 +1278,22 @@ code {
   margin-top: -4px;
 }
 
+/* UI-105: the owner already acted; UI-108: the loop is slow to move on */
+.done-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  color: var(--done);
+  background: var(--done-bg);
+}
+
+.done-note.stuck {
+  color: var(--warn);
+  background: var(--warn-bg);
+}
+
 /* Problems */
 
 .problems {

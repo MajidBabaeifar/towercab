@@ -11,12 +11,21 @@ import { TestClock, testConfig } from "../helpers/world.ts";
 
 function world(
   owner: (args: string[]) => RunResult = () => ({ code: 0, stdout: "", stderr: "", timedOut: false }),
+  prState = "OPEN",
 ) {
   const db = Db.memory();
   const calls: string[][] = [];
   const github: Pick<GitHub, "owner"> = {
     owner: async (args) => {
       calls.push(args);
+      if (args[1] === "view") {
+        return {
+          code: 0,
+          stdout: JSON.stringify({ state: prState, mergedAt: null }),
+          stderr: "",
+          timedOut: false,
+        };
+      }
       return owner(args);
     },
   };
@@ -51,6 +60,7 @@ test("ui: actions go through GitHub as the owner", async () => {
   w.add("a-plan", "approval:plan", { spec: 11, plan: 31, waiting: "approve plan" });
   w.add("a-code", "approval:merge", { plan: 31, pr: 57, waiting: "review and merge PR" });
   w.add("a-ask", "blocked", { from: "ci", pr: 58, waiting: "CI red" });
+  w.add("a-drop", "approval:merge", { plan: 31, pr: 60, waiting: "review and merge PR" });
   expect(await w.actions.merge("a-spec")).toBe(
     "Merged the spec PR #11 as you. Towercab moves on within a minute.",
   );
@@ -64,14 +74,17 @@ test("ui: actions go through GitHub as the owner", async () => {
     "Replied on the code PR #58. Towercab picks it up within a minute.",
   );
   expect(await w.actions.retry("a-ask")).toMatch(/^Asked for a fresh start on the code PR #58/);
-  expect(await w.actions.drop("a-code")).toBe("Closed the code PR #57; the intent is dropped.");
+  expect(await w.actions.drop("a-drop")).toBe("Closed the code PR #60; the intent is dropped.");
   expect(w.calls).toEqual([
+    ["pr", "view", "11", "-R", "owner/web", "--json", "state,mergedAt"],
     ["pr", "merge", "11", "--squash", "-R", "owner/web"],
+    ["pr", "view", "31", "-R", "acme/intents", "--json", "state,mergedAt"],
     ["pr", "merge", "31", "--squash", "-R", "acme/intents"],
+    ["pr", "view", "57", "-R", "owner/web", "--json", "state,mergedAt"],
     ["pr", "merge", "57", "--squash", "-R", "owner/web"],
     ["pr", "comment", "58", "-R", "owner/web", "--body", "The flaky test is known; skip it."],
     ["pr", "comment", "58", "-R", "owner/web", "--body", "/retry"],
-    ["pr", "close", "57", "-R", "owner/web"],
+    ["pr", "close", "60", "-R", "owner/web"],
   ]);
   expect(w.commands()).toEqual([]);
   // Merge only what waits for a merge.
@@ -90,6 +103,82 @@ test("ui: actions go through GitHub as the owner", async () => {
   await expect(r.actions.merge("a-code")).rejects.toThrow(
     "GitHub refused to merge the code PR #57: X Pull request is not mergeable: the base branch policy prohibits the merge.",
   );
+});
+
+const poll = (w: ReturnType<typeof world>, id: number) => w.db.meta(`poll:${id}`);
+const note = (w: ReturnType<typeof world>, id: number) =>
+  (
+    JSON.parse(w.db.get<{ data: string }>("SELECT data FROM missions WHERE id = ?", id)!.data) as {
+      doneByYou?: { action: string; stage: string; pr: number; at: number };
+    }
+  ).doneByYou;
+
+test("ui: a successful merge asks for an immediate poll", async () => {
+  const w = world();
+  const a = w.add("a-code", "approval:merge", { pr: 57, waiting: "review and merge PR" }).lastId;
+  const b = w.add("b-code", "approval:merge", { pr: 58, waiting: "review and merge PR" }).lastId;
+  const c = w.add("c-code", "approval:merge", { pr: 59, waiting: "review and merge PR" }).lastId;
+  expect(poll(w, a)).toBeNull();
+  await w.actions.merge("a-code");
+  expect(poll(w, a)).toBe("1");
+  expect(note(w, a)).toEqual({ action: "merge", stage: "approval:merge", pr: 57, at: w.clock.now() });
+  await w.actions.drop("b-code");
+  expect(poll(w, b)).toBe("1");
+  expect(note(w, b)?.action).toBe("drop");
+  await w.actions.retry("c-code");
+  expect(poll(w, c)).toBe("1");
+  expect(note(w, c)?.action).toBe("retry");
+  // The loop moves only on what GitHub says: no command row, no stage change.
+  expect(w.commands()).toEqual([]);
+  expect(w.db.all("SELECT stage FROM missions").every((r) => r.stage === "approval:merge")).toBe(true);
+});
+
+test("ui: a failed merge asks for no poll", async () => {
+  const w = world((args) => ({
+    code: args[1] === "merge" ? 1 : 0,
+    stdout: "",
+    stderr: "no",
+    timedOut: false,
+  }));
+  const id = w.add("a-code", "approval:merge", { pr: 57, waiting: "review and merge PR" }).lastId;
+  await expect(w.actions.merge("a-code")).rejects.toThrow("GitHub refused to merge");
+  expect(poll(w, id)).toBeNull();
+  expect(note(w, id)).toBeUndefined();
+  // A failed reply stores nothing either.
+  await w.actions.reply("a-code", "Looks fine.");
+  expect(note(w, id)).toBeUndefined();
+  expect(poll(w, id)).toBeNull();
+});
+
+test("ui: merging a merged PR does not call gh pr merge", async () => {
+  const w = world(undefined, "MERGED");
+  const id = w.add("a-code", "approval:merge", { pr: 57, waiting: "review and merge PR" }).lastId;
+  expect(await w.actions.merge("a-code")).toBe("Already merged; Towercab is moving on.");
+  expect(w.calls.map((c) => c[1])).toEqual(["view"]);
+  expect(note(w, id)?.action).toBe("merge");
+  expect(poll(w, id)).toBe("1");
+});
+
+test("ui: merging a closed PR says so", async () => {
+  const w = world(undefined, "CLOSED");
+  const id = w.add("a-code", "approval:merge", { pr: 57, waiting: "review and merge PR" }).lastId;
+  await expect(w.actions.merge("a-code")).rejects.toThrow(
+    "The code PR #57 is closed, so there is nothing to merge.",
+  );
+  expect(w.calls.map((c) => c[1])).toEqual(["view"]);
+  expect(note(w, id)).toBeUndefined();
+});
+
+test("ui: a second merge request never calls gh merge", async () => {
+  const w = world();
+  w.add("a-code", "approval:merge", { pr: 57, waiting: "review and merge PR" });
+  await w.actions.merge("a-code");
+  const before = w.calls.length;
+  expect(await w.actions.merge("a-code")).toBe("Already merged; Towercab is moving on.");
+  expect(w.calls).toHaveLength(before);
+  // Another action on the same wait is told what already happened, also without a call.
+  await expect(w.actions.drop("a-code")).rejects.toThrow("You already merged the code PR #57");
+  expect(w.calls).toHaveLength(before);
 });
 
 test("ui: actions without a PR use commands", async () => {

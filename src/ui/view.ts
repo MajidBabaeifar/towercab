@@ -126,6 +126,8 @@ export interface Card {
   pr: PrLink | null;
   actions: ActionKey[];
   mergeLabel: string | null;
+  /** UI-105: the owner already acted from the page and the mission has not moved on; no buttons then. */
+  done: { action: "merge" | "drop" | "retry"; text: string; stuck: boolean } | null;
   /** UI-131: the intent's repo is unknown: its short name and a guess at `owner/name` ("" = none). */
   addRepo: { name: string; github: string } | null;
   /** AUT-20: the risk of what it waits on; null when none was judged (or the check didn't finish). */

@@ -6,6 +6,7 @@ import { afterEach, expect, test } from "vitest";
 import { Db } from "../../src/db.ts";
 import { type Stage, WAITS } from "../../src/machine.ts";
 import type { Mission } from "../../src/mission.ts";
+import { createActions } from "../../src/ui/actions.ts";
 import {
   activity,
   ago,
@@ -1020,4 +1021,121 @@ test("ui: rollback and fix planes are marked", async () => {
   expect(plane).toMatchObject({ station: "deploy", ship: { kind: "rollback", mark: "↩" } });
   expect(plane.lines[0]).toBe("drill red · back to 2d6ad8c");
   expect((await overview(f.sources)).airspace.planes.filter((p) => p.ship)).toHaveLength(1);
+});
+
+/** The real actions on the fixture's database, with GitHub answering `state` for a PR read. */
+function realActions(f: Fixture, now: () => number, state = "OPEN") {
+  const calls: string[][] = [];
+  const clock = { now, mono: () => 0 };
+  const actions = createActions({
+    db: f.db,
+    store: f.store,
+    config: f.sources.config,
+    clock,
+    github: {
+      owner: async (args) => {
+        calls.push(args);
+        const stdout = args[1] === "view" ? JSON.stringify({ state, mergedAt: null }) : "";
+        return { code: 0, stdout, stderr: "", timedOut: false };
+      },
+    },
+  });
+  return { actions, calls, sources: { ...f.sources, clock } };
+}
+
+const stageOf = (f: Fixture, id: string) =>
+  f.db.get<{ stage: string }>("SELECT stage FROM missions WHERE intent = ? ORDER BY id DESC", id)!.stage;
+
+test("ui: merged by you survives a reload", async () => {
+  const f = fixture();
+  const t = realActions(f, () => NOW);
+  const before = (await overview(t.sources)).needs.find((c) => c.intent === IDS.code)!;
+  expect(before.actions).toContain("merge");
+  expect(before.done).toBeNull();
+  await t.actions.merge(IDS.code);
+  // A reload or a second tab asks again: the same card, with no buttons.
+  for (const src of [t.sources, { ...t.sources }]) {
+    const card = (await overview(src)).needs.find((c) => c.intent === IDS.code)!;
+    expect(card.done).toEqual({
+      action: "merge",
+      text: "Merged by you · Towercab moves on within a minute",
+      stuck: false,
+    });
+    expect(card.actions).toEqual([]);
+    expect(card.mergeLabel).toBeNull();
+    expect(card.pr?.url).toMatch(/\/pull\/\d+$/);
+  }
+  const page = await intentPage(t.sources, IDS.code);
+  expect(page?.card?.done?.action).toBe("merge");
+  expect(page?.card?.actions).toEqual([]);
+  // The plane's card says it too, and it still counts as waiting on the owner.
+  const o = await overview(t.sources);
+  expect(o.airspace.planes.find((p) => p.intent === IDS.code)!.lines[0]).toBe(
+    "Merged by you · Towercab moves on within a minute",
+  );
+  expect(o.needs.some((c) => c.intent === IDS.code)).toBe(true);
+  // Another card is untouched.
+  expect(o.needs.find((c) => c.intent === IDS.plan)!.actions).toEqual(["merge", "retry", "drop"]);
+  // A second merge request never reaches `gh pr merge` again.
+  const before2 = t.calls.length;
+  expect(await t.actions.merge(IDS.code)).toBe("Already merged; Towercab is moving on.");
+  expect(t.calls).toHaveLength(before2);
+  expect(t.calls.filter((c) => c[1] === "merge")).toHaveLength(1);
+});
+
+test("ui: drop and start over show as done", async () => {
+  const f = fixture();
+  const t = realActions(f, () => NOW);
+  await t.actions.drop(IDS.code);
+  await t.actions.retry(IDS.plan);
+  const o = await overview(t.sources);
+  expect(o.needs.find((c) => c.intent === IDS.code)).toMatchObject({
+    done: { action: "drop", text: "Dropped by you · Towercab moves on within a minute" },
+    actions: [],
+  });
+  expect(o.needs.find((c) => c.intent === IDS.plan)).toMatchObject({
+    done: { action: "retry", text: "Started over by you · Towercab moves on within a minute" },
+    actions: [],
+  });
+});
+
+test("ui: done note never moves the mission", async () => {
+  const f = fixture();
+  const t = realActions(f, () => NOW);
+  const moves = () => f.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM transitions")!.n;
+  const stages = [stageOf(f, IDS.code), stageOf(f, IDS.plan)];
+  const n = moves();
+  await t.actions.merge(IDS.code);
+  await t.actions.drop(IDS.plan);
+  await overview(t.sources);
+  expect([stageOf(f, IDS.code), stageOf(f, IDS.plan)]).toEqual(stages);
+  expect(moves()).toBe(n);
+  // A note for another stage or PR is ignored: the card offers its buttons again.
+  f.db.run(
+    "UPDATE missions SET stage = 'approval:plan' WHERE intent = ? AND stage = 'approval:merge'",
+    IDS.code,
+  );
+  const card = (await overview(t.sources)).needs.find((c) => c.intent === IDS.code)!;
+  expect(card.done).toBeNull();
+});
+
+test("ui: done note turns into a stuck message after 5 minutes", async () => {
+  const f = fixture();
+  let now = NOW;
+  const t = realActions(f, () => now);
+  await t.actions.merge(IDS.code);
+  const card = async () => (await overview(t.sources)).needs.find((c) => c.intent === IDS.code)!;
+  now = NOW + 299;
+  expect((await card()).done).toMatchObject({ stuck: false });
+  now = NOW + 301;
+  const late = await card();
+  expect(late.done).toEqual({
+    action: "merge",
+    text: "Merged by you 5 min ago, but Towercab has not moved on yet",
+    stuck: true,
+  });
+  expect(late.actions).toEqual([]);
+  expect(late.pr).not.toBeNull();
+  now = NOW + 7 * 60;
+  expect((await card()).done?.text).toBe("Merged by you 7 min ago, but Towercab has not moved on yet");
 });

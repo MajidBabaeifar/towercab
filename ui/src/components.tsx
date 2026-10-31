@@ -424,6 +424,12 @@ export function NeedsCard({
           </div>
         </form>
       ) : null}
+      {card.done ? (
+        <p class={`done-note${card.done.stuck ? " stuck" : ""}`} role="status">
+          {card.done.stuck ? <Alert size={16} /> : <Check size={16} />}
+          <span>{card.done.text}</span>
+        </p>
+      ) : null}
       {(can("merge") && card.mergeLabel) || card.pr ? (
         <footer class="card-actions">
           {can("merge") && card.mergeLabel ? (
