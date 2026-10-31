@@ -227,9 +227,18 @@ export interface Plane {
   canStart: boolean;
   /** UI-125: rolling back, reverting, or in a fix round; absent otherwise. */
   ship?: { kind: "rollback" | "revert" | "fix"; mark: string };
+  /** UI-110: why a plane waiting at merge is held ("Held until you resume"); absent otherwise. */
+  held?: string;
 }
 
+/** UI-109: why the airspace is stopped. The owner's pause can be resumed; a service pause cannot. */
+export type GroundStop =
+  | { kind: "owner"; text: string; since: number | null; canResume: boolean }
+  | { kind: "health"; text: string; service: string; reason: string };
+
 export interface AirspaceView {
+  /** UI-109: null while the loop is running. */
+  stop: GroundStop | null;
   planes: Plane[];
   landed: {
     count: number;

@@ -5,6 +5,7 @@ import type { JSX } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { AirspaceView, Phase, Plane, StateKey } from "../../src/ui/view.ts";
 import { type Item, layoutAirspace } from "./airspace-layout.ts";
+import { act } from "./api.ts";
 import { StartButton } from "./components.tsx";
 import { Link, navigate } from "./router.tsx";
 
@@ -163,6 +164,7 @@ function Card({
         <div class="air-card-title">{p.title}</div>
         <div>▸ {p.lines[0]}</div>
         {p.lines[1] ? <div>▸ {p.lines[1]}</div> : null}
+        {p.held ? <div>▸ {p.held}</div> : null}
         <div>▸ {phaseText(p.phases)}</div>
         {p.canStart ? <StartButton intent={p.intent} /> : null}
         <Link class="air-go" href={`/i/${p.intent}`}>
@@ -230,6 +232,33 @@ function Card({
       <i class="k k4" />
       {body}
     </div>
+  );
+}
+
+/** UI-109: the ground-stop text and, for the owner's pause, the Resume button (the `resume` action). */
+function GroundStopBar({ stop }: { stop: NonNullable<AirspaceView["stop"]> }) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const resume = async () => {
+    setBusy(true);
+    const r = await act("resume");
+    setBusy(false);
+    setNote(r.ok ? null : r.message);
+  };
+  return (
+    <span
+      class={`air-stop air-stop-${stop.kind}`}
+      role="status"
+      title={stop.kind === "health" ? stop.reason : undefined}
+    >
+      <span class="air-stop-text">{stop.text}</span>
+      {stop.kind === "owner" && stop.canResume ? (
+        <button type="button" class="btn small" disabled={busy} onClick={() => void resume()}>
+          Resume
+        </button>
+      ) : null}
+      {note ? <span class="meta error">{note}</span> : null}
+    </span>
   );
 }
 
@@ -321,6 +350,7 @@ export function Airspace({ data }: { data: AirspaceView }) {
       <header class="section-head">
         <h2>Airspace</h2>
         <span class="section-aside">
+          {data.stop ? <GroundStopBar stop={data.stop} /> : null}
           <button
             type="button"
             class="btn ghost small"
@@ -333,9 +363,12 @@ export function Airspace({ data }: { data: AirspaceView }) {
         </span>
       </header>
       {hidden ? (
-        <p class="air-collapsed">{data.countsText}</p>
+        <p class="air-collapsed">
+          {data.stop ? "GROUND STOP · " : ""}
+          {data.countsText}
+        </p>
       ) : (
-        <div class="air" id="airspace" ref={wrap}>
+        <div class={`air${data.stop ? " air-stopped" : ""}`} id="airspace" ref={wrap}>
           <p class="sr-only">{data.summary}</p>
           <svg
             class="air-svg"
@@ -359,6 +392,29 @@ export function Airspace({ data }: { data: AirspaceView }) {
               <tspan style={tone("done")}>{data.counts.landed} landed today</tspan>
             </text>
             <line class="air-rule" x1="14" x2={lay.width - 14} y1={lay.header.rule} y2={lay.header.rule} />
+            {lay.band ? (
+              <>
+                <defs>
+                  <pattern
+                    id="air-hatch"
+                    width="8"
+                    height="8"
+                    patternUnits="userSpaceOnUse"
+                    patternTransform="rotate(45)"
+                  >
+                    <line class="air-hatch-line" x1="0" y1="0" x2="0" y2="8" />
+                  </pattern>
+                </defs>
+                <rect
+                  class="air-band"
+                  x={lay.band.x}
+                  y={lay.band.y}
+                  width={lay.band.width}
+                  height={lay.band.height}
+                  fill="url(#air-hatch)"
+                />
+              </>
+            ) : null}
             <path class="air-siding" d={lay.siding} />
             <path class="air-track" d={lay.track} />
             <path class="air-flow" d={lay.flow} />
@@ -375,7 +431,7 @@ export function Airspace({ data }: { data: AirspaceView }) {
               ) : (
                 <rect
                   key={s.key}
-                  class={`air-st${s.shape === "diamond" ? " air-st-review" : ""}`}
+                  class={`air-st${s.shape === "diamond" ? " air-st-review" : ""}${s.dim ? " air-dim" : ""}`}
                   x={s.x - 4}
                   y={s.y - 4}
                   width="8"
@@ -387,12 +443,17 @@ export function Airspace({ data }: { data: AirspaceView }) {
             {lay.labels.map((l) => (
               <text
                 key={`${l.text}${l.x}${l.y}`}
-                class={`air-label air-${l.tone}`}
+                class={`air-label air-${l.tone}${l.dim ? " air-dim" : ""}`}
                 x={l.x}
                 y={l.y}
                 text-anchor={l.anchor}
               >
                 {l.text}
+              </text>
+            ))}
+            {lay.held.map((h) => (
+              <text key={`held-${h.key}`} class="air-label air-held" x={h.x} y={h.y} text-anchor={h.anchor}>
+                held
               </text>
             ))}
             {empty ? (
@@ -406,7 +467,7 @@ export function Airspace({ data }: { data: AirspaceView }) {
                 return (
                   <g
                     key={it.key}
-                    class="air-pos"
+                    class={`air-pos${lay.dimmed.includes(p.station) ? " air-dim" : ""}`}
                     style={{ transform: `translate(${it.x}px, ${it.y}px)`, ...planeTone(p) }}
                   >
                     {target(
@@ -414,16 +475,25 @@ export function Airspace({ data }: { data: AirspaceView }) {
                       <>
                         <Glyph plane={p} heading={it.heading} index={n} />
                         <ShipMark plane={p} />
+                        {p.held ? (
+                          <text class="air-held-tag" x="0" y={lay.vertical ? 20 : -18} text-anchor="middle">
+                            held
+                          </text>
+                        ) : null}
                         <rect class="air-hit" x="-12" y="-12" width="24" height="24" />
                       </>,
-                      `${p.title}, ${p.state.label}, ${placeWords[p.station]}`,
+                      `${p.title}, ${p.state.label}, ${placeWords[p.station]}${p.held ? `, ${p.held.toLowerCase()}` : ""}`,
                     )}
                   </g>
                 );
               }
               if (it.kind === "more")
                 return (
-                  <g key={it.key} class="air-pos" style={{ transform: `translate(${it.x}px, ${it.y}px)` }}>
+                  <g
+                    key={it.key}
+                    class={`air-pos${lay.dimmed.includes(it.station) ? " air-dim" : ""}`}
+                    style={{ transform: `translate(${it.x}px, ${it.y}px)` }}
+                  >
                     {target(
                       it,
                       <>

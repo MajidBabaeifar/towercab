@@ -24,6 +24,7 @@ import type {
   AttemptView,
   Card,
   CardKind,
+  GroundStop,
   IntentPage,
   Lane,
   Overview,
@@ -60,6 +61,10 @@ export interface Problem {
   fix: string;
   since?: number;
   intent?: string;
+  /** UI-109: the unreachable service in plain words ("GitHub"), set for a service fault. */
+  service?: string;
+  /** UI-109: this fault has paused new work (open for 15 minutes, LOOP-10). */
+  pauses?: boolean;
 }
 
 /** Why the picker skips an intent (LOOP-5), worded by the page. */
@@ -93,6 +98,8 @@ export interface UiSources {
   home: Home;
   running: boolean;
   paused(): boolean;
+  /** UI-111: when the owner paused (unix seconds); null for a pause made before the time was stored. */
+  pausedAt(): number | null;
   problems(): Problem[];
   version(): { commit: string; behind: number | null };
   /** The picker's whole list; the overview shows the first 5. */
@@ -783,14 +790,43 @@ const STATIONS: StationKey[] = [
   "landed",
 ];
 
+/** UI-110: the card line of a plane waiting at merge during a ground stop. */
+const heldWords = (stop: GroundStop) =>
+  stop.kind === "owner" ? "Held until you resume" : `Held until ${stop.service} is reachable again`;
+
 const NOT_STARTED: Phase[] = [
   { label: "Spec", status: "todo" },
   { label: "Plan", status: "todo" },
   { label: "Code", status: "todo" },
 ];
 
+/** UI-109: why the airspace is stopped, if it is; the owner's pause wins over a service pause. */
+export function groundStopOf(src: UiSources, s: Snap): GroundStop | null {
+  if (s.paused) {
+    const since = src.pausedAt();
+    return {
+      kind: "owner",
+      text:
+        since === null
+          ? "GROUND STOP · paused"
+          : `GROUND STOP · paused since ${shortTime(since, s.now)} by you`,
+      since,
+      canResume: src.running,
+    };
+  }
+  const fault = src.problems().find((p) => p.pauses && p.service);
+  if (!fault) return null;
+  return {
+    kind: "health",
+    text: `GROUND STOP · can't reach ${fault.service}`,
+    service: fault.service!,
+    reason: fault.detail ?? "",
+  };
+}
+
 /** UI-78: every open intent as a plane at its station, and what landed today. */
 export function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): AirspaceView {
+  const stop = groundStopOf(src, s);
   const planes: Plane[] = [];
   const seen = new Set<string>();
   for (const m of s.missions) {
@@ -812,6 +848,7 @@ export function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: numbe
           : [back ?? `${row.step} · ${row.inStep}`, `${row.cost} · ${row.model}`],
       phases: row.phases,
       ...(mark ? { ship: mark } : {}),
+      ...(m.held && stop ? { held: heldWords(stop) } : {}),
     });
     seen.add(m.intent);
   }
@@ -869,7 +906,9 @@ export function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: numbe
     landed: landed.length,
   };
   const needWord = `need${needs === 1 ? "s" : ""} you`;
+  const stopWords = stop ? `${stop.text.replace("GROUND STOP · ", "Ground stop: ")}. ` : "";
   return {
+    stop,
     planes,
     landed: {
       count: landed.length,
@@ -886,7 +925,7 @@ export function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: numbe
       ) !== undefined,
     countsText: `${counts.flying} in flight · ${needs} ${needWord} · ${counts.landed} landed today`,
     summary:
-      `Airspace: ${counts.parked} parked, ${counts.queued} queued, ${counts.flying} in flight, ` +
+      `${stopWords}Airspace: ${counts.parked} parked, ${counts.queued} queued, ${counts.flying} in flight, ` +
       `${needs} ${needWord}, ${counts.landed} landed today.`,
   };
 }
