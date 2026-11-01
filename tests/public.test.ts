@@ -235,8 +235,8 @@ test("public: CI workflow has one required aggregate job", () => {
   const ci = workflow(".github/workflows/ci.yml");
   expect(Object.keys(ci.on).sort()).toEqual(["pull_request", "push", "workflow_dispatch"]);
   expect(ci.on.push.branches).toEqual(["main"]);
-  expect(ci.jobs.checks.uses).toBe("MajidBabaeifar/ci/.github/workflows/checks.yml@main");
-  expect(ci.jobs.sast.uses).toBe("MajidBabaeifar/ci/.github/workflows/sast.yml@main");
+  expect(ci.jobs.checks.uses).toBe("./.github/workflows/checks.yml");
+  expect(ci.jobs.sast.uses).toBe("./.github/workflows/sast.yml");
   const ok = ci.jobs["ci-ok"];
   expect(ok.name).toBe("All required checks passed");
   expect(ok.if).toBe("always()");
@@ -248,7 +248,7 @@ test("public: CI workflow has one required aggregate job", () => {
 });
 
 test("public: CI workflow pins actions by SHA and grants permissions per job", () => {
-  for (const file of [".github/workflows/ci.yml", ".github/workflows/release.yml"]) {
+  for (const file of [".github/workflows/ci.yml", ".github/workflows/release-please.yml"]) {
     const wf = workflow(file);
     expect(wf.permissions, `${file} top-level permissions`).toEqual({});
     for (const [id, job] of Object.entries(wf.jobs as Record<string, Job>)) {
@@ -257,7 +257,7 @@ test("public: CI workflow pins actions by SHA and grants permissions per job", (
         (u): u is string => typeof u === "string",
       );
       for (const u of uses) {
-        if (u.startsWith("MajidBabaeifar/ci/")) continue;
+        if (u.startsWith("./.github/workflows/")) continue;
         expect(u, `${file} job ${id}`).toMatch(/@[0-9a-f]{40}$/);
       }
     }
@@ -269,9 +269,35 @@ test("public: release-please files are present and consistent", () => {
   expect(config.packages["."]["release-type"]).toBe("node");
   const manifest = JSON.parse(read(".release-please-manifest.json"));
   expect(manifest["."]).toBe(JSON.parse(read("package.json")).version);
-  const release = workflow(".github/workflows/release.yml");
+  const release = workflow(".github/workflows/release-please.yml");
   expect(release.on.push.branches).toEqual(["main"]);
-  expect(release.jobs.release.uses).toBe("MajidBabaeifar/ci/.github/workflows/release.yml@main");
+  expect(release.jobs.release.uses).toBe("./.github/workflows/release.yml");
+});
+
+test("public: CI calls synced copies of the shared workflows", () => {
+  const callers = [".github/workflows/ci.yml", ".github/workflows/release-please.yml"];
+  const called = new Set<string>();
+  for (const file of callers) {
+    const text = read(file);
+    expect(text, `${file} calls no private workflow`).not.toMatch(/uses: MajidBabaeifar\/ci\//);
+    for (const job of Object.values(workflow(file).jobs as Record<string, Job>)) {
+      if (job.uses?.startsWith("./")) called.add(job.uses.slice(2));
+    }
+  }
+  expect([...called].sort()).toEqual([
+    ".github/workflows/checks.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/sast.yml",
+  ]);
+  for (const path of called) {
+    const first = read(path).split("\n")[0]!;
+    expect(first).toMatch(
+      new RegExp(
+        `^# Synced from MajidBabaeifar/ci@[0-9a-f]{12} ${path.replace(/\./g, "\\.")}; edit there, not here\\.$`,
+      ),
+    );
+    expect(workflow(path).on).toHaveProperty("workflow_call");
+  }
 });
 
 test("public: renovate extends the org config", () => {

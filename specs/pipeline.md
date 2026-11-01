@@ -772,16 +772,17 @@ Towercab deletes only branches it made for a PR it opened, and tries again if Gi
 Towercab's CI ends in one job, `All required checks passed`, that is green only when every other job is green or skipped on purpose; the repo's ruleset requires only that job.
 
 - `.github/workflows/ci.yml` follows the org template: triggers `pull_request`, `push` to `main` and `workflow_dispatch`; top-level `permissions: {}` with each job granting what it needs; every third-party action pinned by commit SHA (version in a trailing comment).
-- Jobs: the shared `checks` job (PR title as Conventional Commit, gitleaks, actionlint, zizmor, OSV-Scanner) and the `sast` job (Semgrep CE, as the repo is private), both from `MajidBabaeifar/ci`; the repo's own `Node 22: lint, typecheck, tests` and `Playwright: UI screenshots` (PIP-12) stay custom, because `npm run check` is the repo's definition of green and the shared node job does not build the UI; and `ci-ok` with `name: All required checks passed`, `needs:` every other job, `if: always()`, failing when any needed job failed or was cancelled.
+- Jobs: the shared `checks` job (PR title as Conventional Commit, gitleaks, actionlint, zizmor, OSV-Scanner) and the `sast` job (CodeQL for `actions,javascript-typescript` once the repo is public, Semgrep CE while it is private), both from `MajidBabaeifar/ci`; the repo's own `Node 22: lint, typecheck, tests` and `Playwright: UI screenshots` (PIP-12) stay custom, because `npm run check` is the repo's definition of green and the shared node job does not build the UI; and `ci-ok` with `name: All required checks passed`, `needs:` every other job, `if: always()`, failing when any needed job failed or was cancelled.
 - The jobs need no manual step for Towercab's own PRs: Playwright installs its browser in the job, tests use no network.
 - The ruleset (`apply-settings`) is applied only after this workflow is on `main` and `ci-ok` has run there; it is not part of the code.
-- Verified by: `public: CI workflow has one required aggregate job`, `public: CI workflow pins actions by SHA and grants permissions per job`
+- A public repo can't call a private repo's workflows, so the shared ones are synced copies (REPO-9 in `MajidBabaeifar/ci`): `checks.yml`, `sast.yml` and `release.yml` sit in `.github/workflows/` with the first line `# Synced from MajidBabaeifar/ci@<sha> <path>; edit there, not here.`, and the callers use `./.github/workflows/<name>.yml`. `ci`'s daily `sync-copies` keeps them current by PR.
+- Verified by: `public: CI workflow has one required aggregate job`, `public: CI workflow pins actions by SHA and grants permissions per job`, `public: CI calls synced copies of the shared workflows`
 
 ### PIP-91 · Releases and dependency updates
 
 Towercab's repo opens a release PR from its Conventional Commits, tags and publishes a release when it is merged, and gets dependency update PRs.
 
-- `release.yml` runs release-please on pushes to `main`, with `release-please-config.json` (`release-type: node`) and `.release-please-manifest.json` starting at the current `package.json` version (`1.0.0`), all from the org templates; the job calls the org's shared release workflow, with `permissions: {}` at the top and the grants on the job.
+- `release-please.yml` runs release-please on pushes to `main`, with `release-please-config.json` (`release-type: node`) and `.release-please-manifest.json` starting at the current `package.json` version (`1.0.0`), all from the org templates; the job calls the synced copy of the org's shared release workflow (`release.yml`, PIP-90), with `permissions: {}` at the top and the grants on the job.
 - `renovate.json` is `{"extends": ["github>MajidBabaeifar/ci"]}`, which holds the 3-day release age.
 - Creating the release PR needs the repo setting that lets Actions create PRs, which `apply-settings` sets.
 - Verified by: `public: release-please files are present and consistent`, `public: renovate extends the org config`

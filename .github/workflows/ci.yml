@@ -14,14 +14,16 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    uses: MajidBabaeifar/ci/.github/workflows/checks.yml@main
+    uses: ./.github/workflows/checks.yml
 
   sast:
-    name: "SAST: Semgrep CE"
+    name: "SAST: CodeQL (public) or Semgrep CE (private)"
     permissions:
       contents: read
       security-events: write
-    uses: MajidBabaeifar/ci/.github/workflows/sast.yml@main
+    uses: ./.github/workflows/sast.yml
+    with:
+      languages: actions,javascript-typescript
 
   check:
     name: "Node 22: lint, typecheck, tests"
