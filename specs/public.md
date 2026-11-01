@@ -24,8 +24,10 @@ The repo is licensed under the AGPL-3.0 (only, not "or later") and says how to r
 
 The README explains what Towercab is, what it needs and how to start, in that order.
 
-- `## ` sections, in order: what Towercab is (intents in, reviewed PRs out; an orchestrator for
-  Claude Code), **How it works** (spec, plan and code PRs, linking [pipeline.md](pipeline.md)),
+- `## ` sections, in order: what Towercab is (from intent to production; an orchestrator for
+  Claude Code that also follows a merge to production), **How it works** (spec, plan and code PRs,
+  linking [pipeline.md](pipeline.md), then the ship stage: deploy, live e2e tests, rollback and fix
+  forward, linking [ship.md](ship.md)),
   **Requirements** (Linux, systemd, Node ≥ 22.18, `bwrap`, `gh` ≥ 2.46, the Claude Code CLI, a GitHub
   App), **Quickstart** (clone, `npm ci`, the App, config, `towercab up`, `towercab ui`), **Safety**
   (sandbox, guard, gates, autonomy), **Status** (early, single user), **Docs**. Every `towercab`
@@ -37,7 +39,8 @@ The README explains what Towercab is, what it needs and how to start, in that or
 The README says Towercab is not affiliated with or endorsed by Anthropic, and shows only Towercab's
 own images.
 
-- It names Claude Code and the playbook as plain text, with no Anthropic or Claude logo or image.
+- It names Claude Code and the playbook as plain text, with no Anthropic or Claude logo or image; the
+  header says it is inspired by Anthropic's AI-Native SDLC Playbook, next to the not-affiliated line.
   Every image in the README (`<img src>`, `<source srcset>` or `![]()`) is Towercab's logo
   (`ui/public/favicon.svg`), a screenshot of its own UI in `docs/assets/` (PUB-13), a
   `img.shields.io` badge or this repo's own Actions badge. Every local image exists.

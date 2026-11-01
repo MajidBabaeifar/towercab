@@ -5,9 +5,10 @@
 <h1 align="center">Towercab</h1>
 
 <p align="center">
-  <strong>Intents in, reviewed pull requests out.</strong><br>
-  A local orchestrator for Claude Code that turns short Markdown intents into spec, plan and code
-  pull requests you review on GitHub.
+  <strong>From intent to production.</strong><br>
+  Spec, plan, code, deploy, live test and rollback, orchestrated around Claude Code on your own
+  machine.<br>
+  <sub>Inspired by Anthropic's AI-Native SDLC Playbook. Not affiliated with or endorsed by Anthropic.</sub>
 </p>
 
 <p align="center">
@@ -36,25 +37,33 @@ Towercab is an orchestrator for Claude Code that runs on your own machine. You d
 an *intent*: a short Markdown file saying what the problem is, what outcome you want, and how urgent
 and important it is. Towercab picks the most important one, has Claude Code turn it into a spec, a
 plan and the code, checks the result in code (sandboxed checks, a red→green test proof, CI and a
-review), and opens pull requests you review on GitHub. How much it does without you depends on the
-autonomy level you give each intent.
+review), and opens pull requests you review on GitHub. After the merge it follows the change to
+production: it waits until your platform has deployed it, runs end-to-end tests against the live app,
+and when they fail, rolls back to the last good version and fixes forward. How much it does without
+you depends on the autonomy level you give each intent.
 
-It follows the structure of Anthropic's AI-Native SDLC Playbook. Towercab is not affiliated with or
-endorsed by Anthropic.
+It is inspired by Anthropic's AI-Native SDLC Playbook and follows its structure.
+Towercab is not affiliated with or endorsed by Anthropic.
 
 The website is [towercab.com](https://towercab.com).
 
 ## How it works
 
 Every intent becomes three pull requests, and merging each one is your approval
-([specs/pipeline.md](specs/pipeline.md)):
+([specs/pipeline.md](specs/pipeline.md)). In a repo that opts in, the merge is followed to production
+([specs/ship.md](specs/ship.md)):
 
 ```mermaid
 flowchart LR
   I["Intent<br/>a short Markdown file"] --> S["Spec PR<br/>in the target repo"]
   S -- "you merge" --> P["Plan PR<br/>in the intents repo"]
   P -- "you merge" --> C["Code PR<br/>in the target repo"]
-  C -- "you merge, or Towercab at a4+" --> M(["Merged"])
+  C -- "you merge, or Towercab at a4+" --> D["Deploy<br/>by your platform"]
+  D --> E["Live e2e tests<br/>against the app"]
+  E -- "green" --> L(["Live"])
+  E -- "red" --> R["Rollback<br/>to the last good version"]
+  R --> F["Fix PR<br/>through the same gates"]
+  F --> D
 ```
 
 1. **Spec PR** in the target repo: the requirements the change adds or alters, in plain sentences.
@@ -63,10 +72,14 @@ flowchart LR
 3. **Code PR** in the target repo: written test-first, checked locally and in CI, reviewed by a
    separate Claude session, with a description that says what it does, why, and what to check.
 
-After the merge, a repo can opt into the ship stage ([specs/ship.md](specs/ship.md)): Towercab waits
-until your platform says the change is live, runs your end-to-end tests against it, and when they
-fail, asks for the last good version and fixes forward. It never deploys anything itself; the
-[deploy contract](docs/deploy-contract.md) says what your platform needs to do.
+4. **Ship**, for a repo with a `live` block in its `TOWERCAB.md`: Towercab waits until your platform
+   says the merge commit is live, then runs the repo's end-to-end suites against the live URL. Every
+   change has to bring e2e tests for what it adds. When a suite fails twice, Towercab asks the
+   platform for the last good version, runs the smoke suites against it, and has the worker fix the
+   cause in a new PR that ships the same way. Two failed fixes and it reverts the change and hands the
+   intent back to you. Your platform does the deploys; Towercab only asks it to deploy the last good
+   version or a revert, as the [deploy contract](docs/deploy-contract.md) describes. Without a `live`
+   block, merged means done.
 
 You steer with ordinary GitHub actions. Merge to approve, close to drop, comment or request changes
 to send it back with your notes, and reply to a question to answer it. `/retry` starts over. A local
@@ -139,6 +152,7 @@ web page shows what needs you, what is stuck, what is moving and what it costs
 | **Sandbox** | Every check and every Claude Code run is sandboxed: no access to your keys, tokens or other repos, and a worker reaches only the network domains it is granted. |
 | **Guard** | A hook stops the worker from writing protected files (CI, `CLAUDE.md`, `AGENTS.md`, `REVIEW.md`, `TOWERCAB.md`, and paths you list) unless its plan grants them, and from editing tests it already pushed during repairs. |
 | **Gates** | Code, not a model, decides whether a PR may merge: green CI, an approving review, a test that fails without the change, and a risk level with a floor set in code. |
+| **Ship** | In a repo that opts in, a change counts as done only once its e2e tests pass against the live app. A failure rolls back to the last good version and checks it with smoke tests; a rollback that fails freezes the repo until you look. |
 | **Autonomy** | At a1–a3 you merge everything. At a4 Towercab merges the plan and the code itself when every check passes, the build stayed within the plan, and an independent risk check rates the change low. At a5 (only for intents you wrote; an intent without a level counts as a5) medium risk goes ahead too, and only high risk waits for you ([specs/autonomy.md](specs/autonomy.md)). |
 
 ## Status
