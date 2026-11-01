@@ -1,0 +1,92 @@
+# Synced from MajidBabaeifar/ci@f88c443ce6ac .github/workflows/checks.yml; edit there, not here.
+# CI-1: checks every repo runs.
+name: checks
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  secrets:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install gitleaks
+        run: |
+          curl -fsSLo /tmp/gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tgz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
+      - name: gitleaks
+        # CI-9: --verbose prints each finding's file, rule, commit and line; --redact keeps the secret out of the log.
+        run: gitleaks git --redact --verbose --no-banner .
+
+  actions:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install actionlint and zizmor
+        run: |
+          curl -fsSLo /tmp/actionlint.tgz https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  /tmp/actionlint.tgz" | sha256sum -c -
+          tar -xzf /tmp/actionlint.tgz -C /usr/local/bin actionlint
+          echo "zizmor==1.31.1 --hash=sha256:58e878eb2dbd2c6183c105e1ac28c14f7dd1eca44a783f1fe2a69647d012c410" > /tmp/req.txt
+          python3 -m venv /tmp/zizmor
+          /tmp/zizmor/bin/pip install --quiet --require-hashes -r /tmp/req.txt
+          echo /tmp/zizmor/bin >> "$GITHUB_PATH"
+      - name: actionlint
+        run: if [ -d .github/workflows ]; then actionlint; fi
+      - name: zizmor
+        # Our own reusable workflows stay on @main (the cosign identity is bound to it); everything else by SHA.
+        run: |
+          [ -d .github/workflows ] || exit 0
+          cat > /tmp/zizmor.yml <<'YML'
+          rules:
+            unpinned-uses:
+              config:
+                policies:
+                  "MajidBabaeifar/ci/*": ref-pin
+                  "Specfork/ci/*": ref-pin
+                  "*": hash-pin
+          YML
+          zizmor --offline --config /tmp/zizmor.yml --min-severity medium .github/workflows
+
+  deps:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install OSV-Scanner
+        run: |
+          curl -fsSLo /usr/local/bin/osv-scanner https://github.com/google/osv-scanner/releases/download/v2.7.0/osv-scanner_linux_amd64
+          echo "160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b  /usr/local/bin/osv-scanner" | sha256sum -c -
+          chmod +x /usr/local/bin/osv-scanner
+      - name: OSV-Scanner
+        # 128 = no lockfiles found: nothing to scan.
+        run: |
+          rc=0
+          osv-scanner scan source -r . || rc=$?
+          if [ "$rc" -eq 128 ]; then echo "no lockfiles"; exit 0; fi
+          exit "$rc"

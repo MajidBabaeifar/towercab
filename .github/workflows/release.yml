@@ -1,18 +1,77 @@
+# Synced from MajidBabaeifar/ci@f88c443ce6ac .github/workflows/release.yml; edit there, not here.
+# REPO-5, REPO-6: release-please on main; approve CI on its release PR; version tag on the app image.
 name: release
 
 on:
-  push:
-    branches: [main]
+  workflow_call:
+    inputs:
+      app:
+        description: App image name to tag on release (empty = no image)
+        type: string
+        default: ""
 
 permissions: {}
 
 jobs:
   release:
-    name: "release-please: release PR, tag and GitHub release"
-    # actions: write approves CI on the release PR; packages: write is for the shared workflow's image tagging (unused here, no app image).
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
       actions: write
       packages: write
-    uses: MajidBabaeifar/ci/.github/workflows/release.yml@main
+    steps:
+      - id: rp
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      # GitHub holds CI runs on a PR made with GITHUB_TOKEN for approval; approve the release PR's own runs.
+      - name: Approve CI on the release PR
+        if: steps.rp.outputs.pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.rp.outputs.pr }}
+        run: |
+          branch=$(jq -r .headBranchName <<<"$PR")
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$branch" -q .object.sha)
+          for _ in $(seq 18); do
+            ids=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$sha&status=action_required" -q '.workflow_runs[].id')
+            if [ -n "$ids" ]; then
+              for id in $ids; do gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$id/approve"; done
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::warning::no CI run waiting for approval on $branch@$sha"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.rp.outputs.release_created && inputs.app != ''
+        with:
+          fetch-depth: 50
+          persist-credentials: false
+
+      # The release commit may not have built an image (path filters): tag the newest image at or before it.
+      - name: Tag the app image with the version
+        if: steps.rp.outputs.release_created && inputs.app != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP: ${{ inputs.app }}
+          TAG: ${{ steps.rp.outputs.tag_name }}
+          SHA: ${{ steps.rp.outputs.sha }}
+        run: |
+          owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          image="ghcr.io/$owner/$APP"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          exists() { docker buildx imagetools inspect "$image:sha-$1" >/dev/null 2>&1; }
+          for _ in $(seq 18); do exists "$SHA" && break; sleep 10; done
+          for commit in $(git log --first-parent --format=%H -n 50 "$SHA"); do
+            if exists "$commit"; then
+              docker buildx imagetools create -t "$image:$TAG" "$image:sha-$commit"
+              echo "tagged $image:sha-$commit as $TAG"
+              exit 0
+            fi
+          done
+          echo "::error::no $image:sha-* image in the last 50 commits"
+          exit 1
