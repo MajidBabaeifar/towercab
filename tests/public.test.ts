@@ -55,11 +55,19 @@ test("public: README sections", () => {
     expect(cli, `towercab ${m[1]} is a command`).toContain(`"${m[1]}"`);
   }
   expect(readme).toMatch(/Node\.js 22\.18/);
+  expect(readme).toContain("From intent to production.");
+  const how = readme.split("## How it works")[1]!.split("## Requirements")[0]!;
+  expect(how).toContain("](specs/pipeline.md)");
+  expect(how).toContain("](specs/ship.md)");
+  expect(how).toMatch(/rollback/i);
 });
 
 test("public: README says not affiliated", () => {
   const readme = read("README.md");
   expect(readme).toMatch(/not affiliated with or\s+endorsed by Anthropic/);
+  const header = readme.split("## What it is")[0]!;
+  expect(header).toContain("Inspired by Anthropic's AI-Native SDLC Playbook.");
+  expect(header).toMatch(/Not affiliated with or endorsed by Anthropic/);
   const images = [
     ...readme.matchAll(/<img[^>]*\ssrc="([^"]+)"|<source[^>]*\ssrcset="([^"]+)"|!\[[^\]]*\]\(([^)]+)\)/g),
   ];

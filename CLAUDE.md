@@ -1,6 +1,6 @@
 # Towercab
 
-The owner's software factory: intents in the `intents` repo → Claude Code builds them → reviewed PRs.
+The owner's software factory: intents → Claude Code builds them → reviewed PRs → live, tested, rolled back if broken.
 TypeScript on Node ≥ 22.18, run straight from this checkout (no build step). v1 (Rust): branch `rust`.
 
 ## Commands

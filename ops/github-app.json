@@ -1,7 +1,7 @@
 {
   "name": "towercab",
   "url": "https://github.com/MajidBabaeifar/towercab",
-  "description": "Orchestrator for Claude Code: builds the owner's intents into reviewed PRs as towercab[bot].",
+  "description": "Orchestrator for Claude Code: takes the owner's intents from reviewed PRs to production as towercab[bot].",
   "public": false,
   "hook_attributes": {
     "url": "https://github.com/MajidBabaeifar/towercab",
