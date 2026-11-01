@@ -12,10 +12,11 @@ personal names in what ships.
 
 ### PUB-1 · License and security policy
 
-The repo is MIT-licensed and says how to report a vulnerability privately.
+The repo is licensed under the AGPL-3.0 (only, not "or later") and says how to report a vulnerability privately.
 
-- `LICENSE` is the MIT text (first line `MIT License`, a `Copyright (c)` line); `package.json` has
-  `"license": "MIT"`. `SECURITY.md` says to report through GitHub's private reporting, not a public
+- `LICENSE` is the GNU AGPL-3.0 text (it opens with `GNU AFFERO GENERAL PUBLIC LICENSE` and
+  `Version 3, 19 November 2007`); `package.json` has `"license": "AGPL-3.0-only"`; the README's
+  license badge and footer say `AGPL-3.0-only`, and the footer carries the `Copyright (c)` line. `SECURITY.md` says to report through GitHub's private reporting, not a public
   issue, and names the supported version (the latest release or `main`).
 - Verified by: `public: license and security policy`
 
@@ -143,6 +144,8 @@ The README shows pictures of Towercab's own web page and links to its website in
 - It says: change the specs first (links `specs/README.md`), run `npm ci` and `npm run check`, use
   Conventional Commits, keep PRs small, keep tests hermetic (no network, no real GitHub), and report
   security issues through `SECURITY.md`, not issues (links it). The README links `CONTRIBUTING.md`.
+- It says that a contribution is licensed under the AGPL-3.0-only and also grants the project owner the
+  right to relicense it, including commercially (an inbound grant in place of a separate CLA).
 - Verified by: `public: contributing guide`
 
 ### PUB-15 · Code of conduct
@@ -228,3 +231,8 @@ A stranger's pull request says what changes and why, which spec rows it touches 
 - The README keeps Towercab's logo and its light and dark screenshots (the owner's call, 2026-10-30):
   PUB-3 and PUB-13 first allowed a single `![` screenshot, then were widened to the README the owner
   built by hand.
+- AGPL-3.0-only instead of MIT (the owner's call, 2026-11-01): a hosted Towercab is planned, and the AGPL
+  makes anyone who runs a changed Towercab as a service publish their changes, while it stays open source.
+  "Only" keeps the terms from changing with a future AGPL version. The inbound grant in `CONTRIBUTING.md`
+  keeps the owner free to offer the hosted version under other terms once others contribute. This is an
+  exception to the shared standard of MIT for code (REPO-7 in `MajidBabaeifar/ci`).

@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="https://github.com/MajidBabaeifar/towercab/actions/workflows/ci.yml"><img src="https://github.com/MajidBabaeifar/towercab/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-4338ca" alt="License: MIT"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-4338ca" alt="License: AGPL-3.0-only"></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A5%2022.18-4338ca" alt="Node.js 22.18 or newer">
   <img src="https://img.shields.io/badge/TypeScript-no%20build%20step-4338ca" alt="TypeScript, no build step">
   <img src="https://img.shields.io/badge/status-early-f59e0b" alt="Status: early">
@@ -165,4 +165,4 @@ author. Version 1 (Rust) is on branch `rust`.
 Want to help? Read [CONTRIBUTING.md](CONTRIBUTING.md); everyone taking part follows the
 [code of conduct](CODE_OF_CONDUCT.md).
 
-<p align="center"><sub>MIT licensed · <a href="SECURITY.md">Report a vulnerability</a></sub></p>
+<p align="center"><sub>Copyright (c) 2026 The Towercab authors · <a href="LICENSE">AGPL-3.0-only</a> · <a href="SECURITY.md">Report a vulnerability</a></sub></p>
