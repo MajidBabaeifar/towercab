@@ -556,6 +556,39 @@ intents that waited for it start.
   knows (towercab repo list)`.
 - Verified by: `repos: set changes a repo's settings`, `cli: repo commands`
 
+### LOOP-70 · A repo that is not ready starts no new intent
+
+Towercab starts no new intent in a repo that is missing required setup; intents already running finish.
+
+- `decide` skips an intent whose repo's stored readiness ([REPO-24](repo.md)) is not ready, with `waiting:
+  repo not ready: <n> missing (<items>)`, except a setup intent (LOOP-71). Checked after the unknown-repo
+  rule and before the `ahead` limit (LOOP-60).
+- `start` (LOOP-63) is refused with `start: <repo> is not ready: <items>` unless the intent is a setup intent.
+- A mission that already exists keeps going through every stage, including when a later check finds the
+  repo not ready; only the pick is blocked. When the check next finds the repo ready, the waiting
+  intents are picked on that pass.
+- Verified by: `loop: a not-ready repo starts no new intent`, `loop: running intents finish in a not-ready repo`, `loop: start is refused in a not-ready repo`, `loop: a repo that becomes ready is picked on the same pass`
+
+### LOOP-71 · The setup intent
+
+The one kind of work allowed in a not-ready repo is the intent that sets it up.
+
+- An intent is a setup intent when its front matter has `setup: true` (an unknown key, kept verbatim,
+  INT-2). It is picked in a not-ready repo as in a ready one, in the picker's order (PRI-5).
+- At most one setup intent per repo runs at a time; a second waits with `waiting: <id> is already setting
+  up <repo>`. A setup intent in a ready repo is an ordinary intent.
+- Towercab does not write setup intents. The standards review turns gaps into intents and sets `setup:
+  true` on the one for a not-ready repo; Towercab only shows what is missing (UI-156).
+- Verified by: `loop: a setup intent is picked in a not-ready repo`, `loop: only one setup intent per repo at a time`
+
+### LOOP-72 · Readiness in the commands
+
+`status`, `next`, `repo list` and `doctor` say when a repo is not ready.
+
+- `status` and `next` show the wait of LOOP-70 in plain words. `repo list` (LOOP-67) ends a line with `·
+  not ready (<n> missing)`; `doctor` names each not-ready repo and its missing items, one line per item.
+- Verified by: `status: a not-ready repo is shown`, `cli: repo list shows not ready`, `doctor: not-ready repos are named`
+
 **Config** (`src/config.ts`)
 
 | Key | Type, range | Default |
