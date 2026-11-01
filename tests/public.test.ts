@@ -25,9 +25,12 @@ function walk(dir: string, out: string[] = []): string[] {
 
 test("public: license and security policy", () => {
   const license = read("LICENSE");
-  expect(license.split("\n")[0]).toBe("MIT License");
-  expect(license).toMatch(/Copyright \(c\) \d{4} \S/);
-  expect(JSON.parse(read("package.json")).license).toBe("MIT");
+  expect(license.trim().split("\n")[0]!.trim()).toBe("GNU AFFERO GENERAL PUBLIC LICENSE");
+  expect(license).toMatch(/Version 3, 19 November 2007/);
+  expect(JSON.parse(read("package.json")).license).toBe("AGPL-3.0-only");
+  const readme = read("README.md");
+  expect(readme).toMatch(/badge\/license-AGPL--3\.0--only-/);
+  expect(readme).toMatch(/Copyright \(c\) \d{4} \S.*AGPL-3\.0-only/);
   const security = read("SECURITY.md");
   expect(security).toMatch(/Report a vulnerability/);
   expect(security).toMatch(/not open a public issue/);
@@ -91,6 +94,10 @@ test("public: contributing guide", () => {
   expect(guide).toMatch(/\]\(SECURITY\.md\)/);
   expect(guide).toMatch(/not (in )?(an )?(public )?issue|not .*issues?/i);
   expect(read("README.md")).toMatch(/\]\(CONTRIBUTING\.md\)/);
+  expect(guide).toMatch(/Affero General Public License v3\.0 only/);
+  expect(guide).toMatch(
+    /grant\s+the project owner .* license to use, change and\s+distribute it under other terms/s,
+  );
 });
 
 test("public: code of conduct", () => {

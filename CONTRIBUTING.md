@@ -34,6 +34,14 @@ sleeps for real: inject a test clock. A test's title is the name the spec row li
 - Keep pull requests small, one idea each, and commit in small steps.
 - Say in the description what changes, why, and what a reviewer should look at.
 
+## License of your contribution
+
+Towercab is licensed under the [GNU Affero General Public License v3.0 only](LICENSE). By opening a
+pull request you agree that your contribution is licensed under the same terms, and you also grant
+the project owner a perpetual, worldwide, non-exclusive, royalty-free license to use, change and
+distribute it under other terms, including a commercial license for a hosted Towercab. You confirm
+that you wrote the contribution or have the right to submit it under these terms.
+
 ## Security
 
 Do not report a vulnerability in an issue or a pull request. Follow [SECURITY.md](SECURITY.md) and
