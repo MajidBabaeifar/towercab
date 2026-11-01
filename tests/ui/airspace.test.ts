@@ -19,6 +19,7 @@ function plane(intent: string, station: StationKey): Plane {
 
 function view(planes: Plane[], landed = 0): AirspaceView {
   return {
+    stop: null,
     planes,
     landed: {
       count: landed,
@@ -102,4 +103,20 @@ test("ui: ship stations", async () => {
   const xs = lay.stations.map((s) => s.x);
   expect(xs).toEqual([...xs].sort((p, q) => p - q));
   expect(lay.items.find((i) => i.kind === "plane" && i.plane.station === "e2e")).toBeDefined();
+});
+
+test("ui: airspace layout marks the feeder stations when stopped", () => {
+  const owner = { kind: "owner", text: "GROUND STOP · paused", since: null, canResume: true } as const;
+  const a = { ...view([plane("q", "queue"), plane("c", "code")]), stop: owner };
+  for (const w of [900, 400]) {
+    const lay = layoutAirspace(a, w);
+    expect(lay.dimmed).toEqual(["parked", "queue", "gate"]);
+    expect(lay.held.map((h) => h.key)).toEqual(["parked", "queue", "gate"]);
+    expect(lay.band).not.toBeNull();
+    // Stations past the gate are not dimmed.
+    expect(lay.stations.filter((s) => s.dim).map((s) => s.key)).toEqual(["gate"]);
+    expect(lay.stations.find((s) => s.key === "code")!.dim).toBeFalsy();
+  }
+  const running = layoutAirspace(view([plane("q", "queue")]), 900);
+  expect(running).toMatchObject({ band: null, held: [], dimmed: [] });
 });

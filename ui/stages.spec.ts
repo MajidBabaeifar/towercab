@@ -153,11 +153,11 @@ test("ui: update keeps the open log", async ({ page }) => {
   expect(before).toBeGreaterThan(0);
   // Pausing changes what the page shows, so it refetches.
   await page.getByRole("button", { name: "Pause" }).click();
-  await expect(page.getByRole("button", { name: "Resume" })).toBeVisible();
+  await expect(page.locator(".topbar").getByRole("button", { name: "Resume" })).toBeVisible();
   await expect(page).toHaveURL(/stage=verify&file=verify%2Fverify-1\.log/);
   await expect(text).toContainText("2 failing");
   expect(await text.evaluate((e) => e.scrollTop)).toBe(before);
-  await page.getByRole("button", { name: "Resume" }).click();
+  await page.locator(".topbar").getByRole("button", { name: "Resume" }).click();
   await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
 });
 

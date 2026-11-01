@@ -3012,6 +3012,8 @@ a.pr-tile:hover {
   --air-card-edge: #d3d7de;
   --air-card-title: #15171c;
   --air-card-text: #464d5a;
+  --air-stop: #9a5b00;
+  --air-stop-fill: rgb(217 154 30 / 0.16);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -3029,11 +3031,54 @@ a.pr-tile:hover {
     --air-card-edge: #23302d;
     --air-card-title: #f1f2f4;
     --air-card-text: #b6bdc9;
+    --air-stop: #e0a93a;
+    --air-stop-fill: rgb(224 169 58 / 0.14);
   }
 }
 
 .air-section {
   margin-bottom: var(--s4);
+}
+
+/* Ground stop (UI-109, UI-110): a calm amber band and dimmed feeders; nothing here animates. */
+.air-stop {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  margin-right: var(--s2);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--air-stop);
+}
+
+.air-stop-text {
+  font-weight: 600;
+}
+
+.air-stopped {
+  border-color: var(--air-stop);
+}
+
+.air-band {
+  stroke: none;
+}
+
+.air-hatch-line {
+  stroke: var(--air-stop);
+  stroke-width: 2;
+  opacity: 0.35;
+}
+
+.air-dim {
+  opacity: 0.45;
+}
+
+.air-held,
+.air-held-tag {
+  fill: var(--air-stop);
+  font-size: 10px;
+  letter-spacing: 0.04em;
 }
 
 .air {

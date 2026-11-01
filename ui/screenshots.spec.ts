@@ -127,10 +127,10 @@ test("ui: update keeps typed text", async ({ page }) => {
   // Pausing changes what the page shows, so it refetches.
   await page.getByRole("button", { name: "Pause" }).click();
   await expect(page.locator(".health")).toHaveText(/Paused|Problem/);
-  await expect(page.getByRole("button", { name: "Resume" })).toBeVisible();
+  await expect(page.locator(".topbar").getByRole("button", { name: "Resume" })).toBeVisible();
   await expect(box).toHaveValue("One totals row per currency, please.");
   expect(await page.locator(".tab-badge").textContent()).toBe(before);
-  await page.getByRole("button", { name: "Resume" }).click();
+  await page.locator(".topbar").getByRole("button", { name: "Resume" }).click();
   await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
   await expect(box).toHaveValue("One totals row per currency, please.");
 });
@@ -161,9 +161,9 @@ test("ui: the card shows its brief first and folds the details", async ({ browse
     await expect(card.getByText(/token-bucket limiter/)).toBeVisible();
     // UI-126: it stays open across a live refetch (pausing changes the page, so it refetches).
     await page.getByRole("button", { name: "Pause" }).click();
-    await expect(page.getByRole("button", { name: "Resume" })).toBeVisible();
+    await expect(page.locator(".topbar").getByRole("button", { name: "Resume" })).toBeVisible();
     await expect(details).toHaveAttribute("open", "");
-    await page.getByRole("button", { name: "Resume" }).click();
+    await page.locator(".topbar").getByRole("button", { name: "Resume" }).click();
     await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
     await expect(details).toHaveAttribute("open", "");
     if (m.mode === "dark") await card.screenshot({ path: join(SHOTS, "card-brief-open-dark.png") });
@@ -359,4 +359,140 @@ test("ui: airspace motion stops with reduced motion", async ({ browser }) => {
   };
   expect(await animated("no-preference")).not.toEqual([]);
   expect(await animated("reduce")).toEqual([]);
+});
+
+const OWNER_STOP = /^GROUND STOP · paused since \d\d:\d\d by you$/;
+
+/** A service fault that has paused new work, as the loop reports it after 15 minutes. */
+const GITHUB_DOWN = {
+  title: "Towercab can't reach GitHub",
+  detail: "api.github.com timed out",
+  fix: "Check the network, then wait: Towercab goes on by itself.",
+  service: "GitHub",
+  pauses: true,
+};
+
+test("ui: airspace dims held stations and tags a plane waiting at merge", async ({ browser }) => {
+  const { fixture, server } = await serveFixture(0);
+  const url = `http://localhost:${server.port()}/`;
+  try {
+    for (const m of MODES) {
+      const ctx = await browser.newContext({
+        colorScheme: m.scheme,
+        viewport: m.viewport,
+        isMobile: m.mode === "mobile",
+        hasTouch: m.mode === "mobile",
+      });
+      const page = await ctx.newPage();
+      const air = page.locator(".air-section");
+      const noSideways = () => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      await page.goto(url);
+      await settle(page);
+      await expect(air.locator(".air-stop")).toHaveCount(0);
+      await expect(air.locator(".air-band")).toHaveCount(0);
+      await expect(page).not.toHaveTitle(/⏸/);
+      await air.screenshot({ path: join(SHOTS, `airspace-running-${m.mode}.png`) });
+
+      // The owner pauses from the top bar: the airspace says so, since when, and what it holds back.
+      await page.locator(".topbar").getByRole("button", { name: "Pause" }).click();
+      await expect(air.locator(".air-stop-text")).toHaveText(OWNER_STOP);
+      await expect(page).toHaveTitle(/^⏸ /);
+      await expect(air.locator(".air-band")).toHaveCount(1);
+      await expect(air.locator("text.air-held")).toHaveCount(3);
+      // The plane waiting at merge is tagged; planes past the gate are neither dimmed nor tagged.
+      await expect(air.locator(".air-held-tag")).toHaveCount(1);
+      await expect(air.locator('.air-target[aria-label*="held until you resume"]')).toHaveCount(1);
+      const dimmed = await air.locator(".air-pos.air-dim").count();
+      expect(dimmed).toBeGreaterThan(0);
+      await expect(air.locator(`.air-pos:has(${CI_PLANE})`)).not.toHaveClass(/air-dim/);
+      expect(await noSideways(), `ground stop ${m.mode} scrolls sideways`).toBeLessThanOrEqual(0);
+      await air.screenshot({ path: join(SHOTS, `airspace-owner-pause-${m.mode}.png`) });
+
+      // Hiding the airspace keeps the stop and Resume in the header and in the collapsed line.
+      await air.getByRole("button", { name: "Hide airspace" }).click();
+      await expect(air.locator(".air-collapsed")).toContainText("GROUND STOP");
+      await expect(air.locator(".air-stop-text")).toHaveText(OWNER_STOP);
+      await air.getByRole("button", { name: "Show airspace" }).click();
+
+      // Resume in the airspace header does what the top bar's Resume does.
+      await air.getByRole("button", { name: "Resume" }).click();
+      await expect(air.locator(".air-stop")).toHaveCount(0);
+      await expect(page.locator(".topbar").getByRole("button", { name: "Pause" })).toBeVisible();
+      await expect(page).not.toHaveTitle(/⏸/);
+      await expect(air.locator(".air-held-tag")).toHaveCount(0);
+
+      // A service pause names the service and has nothing to resume.
+      fixture.state.problems = [GITHUB_DOWN];
+      await page.reload();
+      await settle(page);
+      await expect(air.locator(".air-stop-text")).toHaveText("GROUND STOP · can't reach GitHub");
+      await expect(air.getByRole("button", { name: "Resume" })).toHaveCount(0);
+      await expect(air.locator("text.air-held")).toHaveCount(3);
+      await expect(page).toHaveTitle(/^⏸ /);
+      expect(await noSideways(), `service pause ${m.mode} scrolls sideways`).toBeLessThanOrEqual(0);
+      await air.screenshot({ path: join(SHOTS, `airspace-service-pause-${m.mode}.png`) });
+      fixture.state.problems = [];
+      await ctx.close();
+    }
+  } finally {
+    await server.stop();
+    fixture.cleanup();
+  }
+});
+
+test("ui: ground stop adds no motion with reduced motion", async ({ browser }) => {
+  const { fixture, server } = await serveFixture(0);
+  try {
+    fixture.state.paused = true;
+    fixture.state.pausedAt = fixture.sources.clock.now() - 3600;
+    const ctx = await browser.newContext({ reducedMotion: "reduce" });
+    const page = await ctx.newPage();
+    await page.goto(`http://localhost:${server.port()}/`);
+    await settle(page);
+    await expect(page.locator(".air-band")).toHaveCount(1);
+    const moving = await page.$$eval(
+      ".air-band, .air-hatch-line, text.air-held, .air-held-tag, .air-stop",
+      (els) =>
+        els.flatMap((e) => {
+          const s = getComputedStyle(e);
+          const busy = s.animationName !== "none" || Number.parseFloat(s.transitionDuration) > 0;
+          return busy || e.getAnimations().length ? [e.getAttribute("class") ?? e.tagName] : [];
+        }),
+    );
+    expect(moving).toEqual([]);
+    // Everything in the airspace is still, as before.
+    const all = await page.$$eval(".air-section *", (els) =>
+      els.flatMap((e) => {
+        const s = getComputedStyle(e);
+        return s.animationName !== "none" || Number.parseFloat(s.transitionDuration) > 0 ? [e.tagName] : [];
+      }),
+    );
+    expect(all).toEqual([]);
+    await ctx.close();
+  } finally {
+    await server.stop();
+    fixture.cleanup();
+  }
+});
+
+test("ui: tab title starts with a pause mark while paused", async ({ browser }) => {
+  const { fixture, server } = await serveFixture(0);
+  try {
+    const page = await (await browser.newContext()).newPage();
+    await page.goto(`http://localhost:${server.port()}/`);
+    await settle(page);
+    await expect(page).toHaveTitle(/^\(\d+\) Towercab/);
+    fixture.state.paused = true;
+    // The page refreshes on its own (UI-67), so the mark appears without a reload.
+    await expect(page).toHaveTitle(/^⏸ \(\d+\) Towercab/, { timeout: 10000 });
+    fixture.state.paused = false;
+    await expect(page).not.toHaveTitle(/⏸/, { timeout: 10000 });
+    // It also shows on another page of the app.
+    fixture.state.paused = true;
+    await page.locator('.tabs a[href="/activity"]').click();
+    await expect(page).toHaveTitle(/^⏸ .*Activity/, { timeout: 10000 });
+  } finally {
+    await server.stop();
+    fixture.cleanup();
+  }
 });

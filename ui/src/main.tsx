@@ -158,6 +158,8 @@ function App() {
   const state = useLive<Overview>("/api/state");
   const top = state.data?.top ?? null;
   const n = top?.needs ?? 0;
+  // UI-112: a ground stop (the owner's pause or a service pause) marks the tab.
+  const stopped = Boolean(state.data?.airspace.stop);
   const [intentTitle, setIntentTitle] = useState<string | null>(null);
   const intent = /^\/i\/([^/]+)\/?$/.exec(pathname!)?.[1];
   useEffect(() => {
@@ -170,8 +172,8 @@ function App() {
           : pathname!.startsWith("/activity")
             ? "Activity"
             : null;
-    document.title = `${n ? `(${n}) ` : ""}Towercab${page ? ` · ${page}` : ""}`;
-  }, [n, pathname, intent, intentTitle]);
+    document.title = `${stopped ? "⏸ " : ""}${n ? `(${n}) ` : ""}Towercab${page ? ` · ${page}` : ""}`;
+  }, [n, stopped, pathname, intent, intentTitle]);
   let page: JSX.Element;
   if (intent) {
     page = (

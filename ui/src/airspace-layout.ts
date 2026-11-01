@@ -11,6 +11,8 @@ export interface StationMark {
   x: number;
   y: number;
   shape: "square" | "diamond" | "landed";
+  /** UI-110: a station that feeds new work, dimmed during a ground stop. */
+  dim?: boolean;
 }
 
 export interface Label {
@@ -19,6 +21,15 @@ export interface Label {
   y: number;
   anchor: "start" | "middle" | "end";
   tone: "plain" | "review" | "landed";
+  dim?: boolean;
+}
+
+/** UI-110: the small `held` mark under a station that feeds new work. */
+export interface HeldMark {
+  key: StationKey;
+  x: number;
+  y: number;
+  anchor: "start" | "middle" | "end";
 }
 
 export type Item =
@@ -37,6 +48,11 @@ export interface Layout {
   stations: StationMark[];
   labels: Label[];
   items: Item[];
+  /** UI-109, UI-110: the amber band behind the track and the held marks; empty without a ground stop. */
+  band: { x: number; y: number; width: number; height: number } | null;
+  held: HeldMark[];
+  /** The stations whose planes are dimmed (UI-110). */
+  dimmed: StationKey[];
   /** Where the counts line sits; the header rule's y. */
   header: { x: number; y: number; anchor: "start" | "end"; rule: number; tag: boolean };
 }
@@ -76,6 +92,9 @@ const NAMES: Record<StationKey, string> = {
   e2e: "05 e2e",
   landed: "landed",
 };
+
+/** UI-110: the stations that feed new work; a plane past the gate keeps moving. */
+export const FEEDERS: StationKey[] = ["parked", "queue", "gate"];
 
 const REVIEWS = new Set<StationKey>(["spec-review", "plan-review", "code-review"]);
 
@@ -126,6 +145,7 @@ function horizontal(
   const items: Item[] = [];
   const stations: StationMark[] = [];
   const labels: Label[] = [];
+  const stopped = a.stop !== null;
 
   const place = (k: StationKey, slot: (n: number) => [number, number]) => {
     const { shown, hidden } = capped(at.get(k)!, capOf(k, false, 0));
@@ -144,14 +164,41 @@ function horizontal(
   for (const k of steps) {
     const x = xOf(k);
     place(k, (n) => [x, 90 - 22 * n]);
-    stations.push({ key: k, x, y: lineY, shape: REVIEWS.has(k) ? "diamond" : "square" });
-    labels.push({ text: NAMES[k], x, y: 134, anchor: "middle", tone: REVIEWS.has(k) ? "review" : "plain" });
+    stations.push({
+      key: k,
+      x,
+      y: lineY,
+      shape: REVIEWS.has(k) ? "diamond" : "square",
+      dim: stopped && k === "gate",
+    });
+    labels.push({
+      text: NAMES[k],
+      x,
+      y: 134,
+      anchor: "middle",
+      tone: REVIEWS.has(k) ? "review" : "plain",
+      dim: stopped && k === "gate",
+    });
   }
   stations.push({ key: "landed", x: landedX, y: lineY, shape: "landed" });
   labels.push({ text: "landed", x: landedX, y: 134, anchor: "middle", tone: "landed" });
   labels.push({ text: `today · ${count("landed")}`, x: landedX, y: 150, anchor: "middle", tone: "plain" });
-  labels.push({ text: `queue · ${count("queue")}`, x: gateX - 80, y: 98, anchor: "middle", tone: "plain" });
-  labels.push({ text: `parked · ${count("parked")}`, x: 56, y: 160, anchor: "middle", tone: "plain" });
+  labels.push({
+    text: `queue · ${count("queue")}`,
+    x: gateX - 80,
+    y: 98,
+    anchor: "middle",
+    tone: "plain",
+    dim: stopped,
+  });
+  labels.push({
+    text: `parked · ${count("parked")}`,
+    x: 56,
+    y: 160,
+    anchor: "middle",
+    tone: "plain",
+    dim: stopped,
+  });
   if (a.landed.count) {
     const n = Math.min(a.landed.count, capOf("landed", false, 0));
     const slots = LANDED_SLOTS.slice(0, n).map(([dx, dy], i) => ({
@@ -171,6 +218,15 @@ function horizontal(
     stations,
     labels,
     items,
+    band: stopped ? { x: 14, y: lineY - 9, width: w - 28, height: 18 } : null,
+    held: stopped
+      ? [
+          { key: "parked", x: 56, y: 174, anchor: "middle" },
+          { key: "queue", x: gateX - 80, y: 84, anchor: "middle" },
+          { key: "gate", x: gateX, y: 150, anchor: "middle" },
+        ]
+      : [],
+    dimmed: stopped ? FEEDERS : [],
     header: { x: w - 14, y: 20, anchor: "end", rule: 30, tag: true },
   };
 }
@@ -191,17 +247,22 @@ function vertical_(
   const items: Item[] = [];
   const stations: StationMark[] = [];
   const labels: Label[] = [];
+  const stopped = a.stop !== null;
+  const held: HeldMark[] = [];
   for (const k of order) {
     const y = yOf(k);
     const name = k === "parked" || k === "queue" || k === "landed" ? `${NAMES[k]} · ${count(k)}` : NAMES[k];
     const tone = REVIEWS.has(k) ? "review" : k === "landed" ? "landed" : "plain";
-    labels.push({ text: name, x: lineX - 16, y: y + 4, anchor: "end", tone });
+    const dim = stopped && FEEDERS.includes(k);
+    labels.push({ text: name, x: lineX - 16, y: y + 4, anchor: "end", tone, dim });
+    if (dim) held.push({ key: k, x: lineX - 16, y: y + 16, anchor: "end" });
     if (k !== "parked" && k !== "queue")
       stations.push({
         key: k,
         x: lineX,
         y,
         shape: k === "landed" ? "landed" : REVIEWS.has(k) ? "diamond" : "square",
+        dim,
       });
     if (k === "landed") continue;
     const { shown, hidden } = capped(at.get(k)!, rowCap);
@@ -230,6 +291,9 @@ function vertical_(
     stations,
     labels,
     items,
+    band: stopped ? { x: lineX - 9, y: yOf("queue"), width: 18, height: yOf("landed") - yOf("queue") } : null,
+    held,
+    dimmed: stopped ? FEEDERS : [],
     header: { x: 16, y: 22, anchor: "start", rule: 32, tag: false },
   };
 }

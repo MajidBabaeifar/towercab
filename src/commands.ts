@@ -86,10 +86,13 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
   const { db, store } = cx;
   switch (row.name) {
     case "pause":
+      // UI-111: the time of the first pause, so the page can say since when.
+      if (!paused(db)) db.setMeta("paused_at", cx.now.toISOString());
       db.setMeta("paused", "1");
       return "paused: nothing new starts, and merges wait until you resume";
     case "resume": {
       db.delMeta("paused");
+      db.delMeta("paused_at");
       const held = db.all<Mission>(
         "SELECT * FROM missions WHERE held = 1 AND stage NOT IN ('done','stopped')",
       );

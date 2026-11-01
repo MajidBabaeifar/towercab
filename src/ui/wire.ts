@@ -18,6 +18,12 @@ import { budgetReached, type Problem, type Skip, type UiSources, type UpNext } f
 
 export const DIST = join(checkoutRoot(), "ui", "dist");
 
+/** UI-111: when the owner paused, from `meta.paused_at`; null if absent or unreadable. */
+export function pausedAt(db: Db): number | null {
+  const t = Date.parse(db.meta("paused_at") ?? "");
+  return Number.isFinite(t) ? t / 1000 : null;
+}
+
 /** The picker's whole list with why each one waits, structured for the page (UI-61). */
 export function upNextOf(loop: Loop): UpNext[] {
   const { listing } = loop.state();
@@ -48,12 +54,19 @@ export function upNextOf(loop: Loop): UpNext[] {
 
 export function problemsOf(loop: Loop): Problem[] {
   const now = loop.now;
-  const out: Problem[] = loop.health.open().map((f) => ({
-    title: `Towercab can't reach ${f.kind === "github" ? "GitHub" : f.kind === "claude" ? "Claude" : f.kind}`,
-    detail: f.error,
-    fix: fixFor(f.kind),
-    since: f.since,
-  }));
+  // UI-109: only a fault that has paused picks (open 15 minutes) is a ground stop.
+  const pauses = loop.health.blocked(now);
+  const out: Problem[] = loop.health.open().map((f) => {
+    const service = f.kind === "github" ? "GitHub" : f.kind === "claude" ? "Claude" : f.kind;
+    return {
+      title: `Towercab can't reach ${service}`,
+      detail: f.error,
+      fix: fixFor(f.kind),
+      since: f.since,
+      service,
+      pauses,
+    };
+  });
   if (budgetReached(loop.d.db, loop.d.config, now)) {
     out.push({
       title: "Today's budget is spent",
@@ -87,6 +100,7 @@ export function sourcesOf(loop: Loop, home: Home): UiSources {
     home,
     running: true,
     paused: () => loop.d.db.meta("paused") === "1",
+    pausedAt: () => pausedAt(loop.d.db),
     problems: () => problemsOf(loop),
     version: () => version,
     upNext: () => upNextOf(loop),
@@ -155,6 +169,7 @@ export async function serveReadOnly(
       home,
       running: false,
       paused: () => db.meta("paused") === "1",
+      pausedAt: () => pausedAt(db),
       problems: () => [],
       version: () => version,
       upNext: () => [],

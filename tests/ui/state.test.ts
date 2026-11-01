@@ -1139,3 +1139,70 @@ test("ui: done note turns into a stuck message after 5 minutes", async () => {
   now = NOW + 7 * 60;
   expect((await card()).done?.text).toBe("Merged by you 7 min ago, but Towercab has not moved on yet");
 });
+
+test("ui: airspace shows a ground stop when paused", async () => {
+  const f = fixture();
+  expect((await overview(f.sources)).airspace.stop).toBeNull();
+  f.state.paused = true;
+  f.state.pausedAt = NOW - 2 * 3600;
+  f.db.run("UPDATE missions SET held = 1 WHERE intent = ?", IDS.code);
+  const a = (await overview(f.sources)).airspace;
+  expect(a.stop).toEqual({
+    kind: "owner",
+    text: "GROUND STOP · paused since 21:00 by you",
+    since: NOW - 2 * 3600,
+    canResume: true,
+  });
+  expect(a.summary).toMatch(/^Ground stop: paused since 21:00 by you\. Airspace: /);
+  // A plane waiting at merge is held; planes already flying are not.
+  expect(a.planes.find((p) => p.intent === IDS.code)!.held).toBe("Held until you resume");
+  expect(a.planes.filter((p) => p.held).map((p) => p.intent)).toEqual([IDS.code]);
+  expect(a.planes.find((p) => p.intent === IDS.building)!.station).toBe("code");
+  // The page without a loop shows the stop but offers no Resume.
+  f.state.running = false;
+  expect((await overview(f.sources)).airspace.stop).toMatchObject({ kind: "owner", canResume: false });
+  f.state.running = true;
+  f.state.paused = false;
+  f.db.run("UPDATE missions SET held = 0 WHERE intent = ?", IDS.code);
+  const after = (await overview(f.sources)).airspace;
+  expect(after.stop).toBeNull();
+  expect(after.planes.some((p) => p.held)).toBe(false);
+});
+
+test("ui: airspace names the service when health pauses", async () => {
+  const f = fixture();
+  const fault = {
+    title: "Towercab can't reach GitHub",
+    detail: "api.github.com timed out",
+    fix: "Check the network.",
+    service: "GitHub",
+  };
+  // A fault that has not paused picks yet is not a ground stop.
+  f.state.problems = [{ ...fault, pauses: false }];
+  expect((await overview(f.sources)).airspace.stop).toBeNull();
+  f.state.problems = [{ ...fault, pauses: true }];
+  f.db.run("UPDATE missions SET held = 1 WHERE intent = ?", IDS.code);
+  const a = (await overview(f.sources)).airspace;
+  expect(a.stop).toEqual({
+    kind: "health",
+    text: "GROUND STOP · can't reach GitHub",
+    service: "GitHub",
+    reason: "api.github.com timed out",
+  });
+  expect(a.planes.find((p) => p.intent === IDS.code)!.held).toBe("Held until GitHub is reachable again");
+  // The owner's own pause wins: it is the one with a Resume button.
+  f.state.paused = true;
+  expect((await overview(f.sources)).airspace.stop).toMatchObject({ kind: "owner", canResume: true });
+});
+
+test("ui: an older pause shows paused without a time", async () => {
+  const f = fixture();
+  f.state.paused = true;
+  f.state.pausedAt = null;
+  expect((await overview(f.sources)).airspace.stop).toEqual({
+    kind: "owner",
+    text: "GROUND STOP · paused",
+    since: null,
+    canResume: true,
+  });
+});

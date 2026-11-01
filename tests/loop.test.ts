@@ -812,6 +812,27 @@ test("loop: idle", async () => {
   }
 });
 
+test("commands: pause stores the time and resume clears it", async () => {
+  const p = new Pipe(TARGET, {});
+  await p.start({}, { handlers: {} });
+  const cmd = (name: "pause" | "resume") =>
+    insertCommand(p.db, { name, arg: "", text: "", source: "cli" }, p.clock.now());
+  cmd("pause");
+  await pass(p);
+  const first = p.db.meta("paused_at");
+  expect(first).toMatch(/^\d{4}-\d\d-\d\dT/);
+  expect(p.db.meta("paused")).toBe("1");
+  // A second pause later keeps the first time.
+  await pass(p, 120);
+  cmd("pause");
+  await pass(p);
+  expect(p.db.meta("paused_at")).toBe(first);
+  cmd("resume");
+  await pass(p);
+  expect(p.db.meta("paused")).toBeNull();
+  expect(p.db.meta("paused_at")).toBeNull();
+});
+
 test("commands: applied by the loop", async () => {
   const p = new Pipe(TARGET, files({ id: A }));
   await p.start(

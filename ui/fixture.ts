@@ -13,7 +13,7 @@ import type { Intent, IntentStore, Listing, Unreadable } from "../src/intents/ty
 import type { Stage } from "../src/machine.ts";
 import type { UiActions } from "../src/ui/actions.ts";
 import { startUi, type UiServer } from "../src/ui/server.ts";
-import { type LogLine, priority, type UiSources, type UpNext } from "../src/ui/state.ts";
+import { type LogLine, type Problem, priority, type UiSources, type UpNext } from "../src/ui/state.ts";
 
 const MIN = 60;
 const HOUR = 3600;
@@ -217,7 +217,15 @@ export interface Fixture {
   sources: UiSources;
   actions: UiActions;
   calls: FakeActionCall[];
-  state: { paused: boolean; running: boolean; upNext: UpNext[] };
+  state: {
+    paused: boolean;
+    /** UI-111: unix seconds of the owner's pause; null for an older pause without a time. */
+    pausedAt: number | null;
+    /** UI-109: open service faults; a fault with `pauses` has paused new work. */
+    problems: Problem[];
+    running: boolean;
+    upNext: UpNext[];
+  };
   cleanup(): void;
 }
 
@@ -270,8 +278,10 @@ export function buildFixture(o: { now?: number; root?: string; empty?: boolean }
 
   const store = new MemStore();
   if (!o.empty) seed(db, store, home, now);
-  const state = {
+  const state: Fixture["state"] = {
     paused: false,
+    pausedAt: null,
+    problems: [],
     running: true,
     upNext: (o.empty
       ? []
@@ -307,7 +317,8 @@ export function buildFixture(o: { now?: number; root?: string; empty?: boolean }
       return state.running;
     },
     paused: () => state.paused,
-    problems: () => [],
+    pausedAt: () => state.pausedAt,
+    problems: () => state.problems,
     version: () => ({ commit: "3f9c2ab71e0d", behind: 0 }),
     upNext: () =>
       state.paused
@@ -344,11 +355,16 @@ export function buildFixture(o: { now?: number; root?: string; empty?: boolean }
     async pause() {
       calls.push({ action: "pause" });
       state.paused = true;
+      state.pausedAt = now;
+      // A mission waiting at merge is held while paused (PIP-22).
+      db.run("UPDATE missions SET held = 1 WHERE intent = ?", IDS.code);
       return "Paused: nothing new starts until you resume.";
     },
     async resume() {
       calls.push({ action: "resume" });
       state.paused = false;
+      state.pausedAt = null;
+      db.run("UPDATE missions SET held = 0 WHERE intent = ?", IDS.code);
       return "Resumed: Towercab picks up work again.";
     },
     async addRepo(github, name) {
