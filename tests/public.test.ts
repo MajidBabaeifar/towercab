@@ -95,7 +95,9 @@ test("public: contributing guide", () => {
   expect(guide).toMatch(/not (in )?(an )?(public )?issue|not .*issues?/i);
   expect(read("README.md")).toMatch(/\]\(CONTRIBUTING\.md\)/);
   expect(guide).toMatch(/Affero General Public License v3\.0 only/);
-  expect(guide).toMatch(/grant\s+the project owner .* license to use, change and\s+distribute it under other terms/s);
+  expect(guide).toMatch(
+    /grant\s+the project owner .* license to use, change and\s+distribute it under other terms/s,
+  );
 });
 
 test("public: code of conduct", () => {
