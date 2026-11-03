@@ -565,7 +565,7 @@ that can't be checked live.
   `code`. `unverified` ([SHIP-21](ship.md)) is a final stage outside the order, phase `done`, that ignores
   every event, like `done` and `stopped`.
 - `code_merged` → `steps` when an `after` step is unticked, else `deploy`; at `steps`: `ok` → `deploy`.
-  At `deploy`: `skip` → `unverified` (was `done`). The before-merge hold (SHIP-18) is a `blocked` wait
+  At `deploy`: `skip` → `unverified` (was `done`), or `done` when the plan says there is nothing to check live (SHIP-21). The before-merge hold (SHIP-18) is a `blocked` wait
   from the gate that keeps the phase, so it adds no stage.
 - Verified by: `machine: every stage and event pair is defined`, `machine: order`, `machine: steps and unverified transitions`
 

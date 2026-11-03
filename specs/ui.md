@@ -810,9 +810,10 @@ A change waiting on the owner's steps is visible where the rest of its path is.
 A change that ended without a live check looks different from one that works live.
 
 - The card and the intent page say "Merged, not verified live" in the muted style (not the done
-  style), with the reason "No live check set up for this repo." ([SHIP-21](ship.md)). The board
+  style), with the reason "No live check set up for this repo." ([SHIP-21](ship.md)). A change whose plan
+  said there was nothing to check live shows as done, with "Nothing to check live: <why>" on the page. The board
   puts it in the done column with that label; the airspace shows it as landed without the ship stations.
-- Verified by: `ui: unverified is shown apart from done`, `ui: screenshots light, dark and mobile`
+- Verified by: `ui: unverified is shown apart from done`, `ui: nothing to check live shows as done`, `ui: screenshots light, dark and mobile`
 
 ### UI-163 · Steps and the unverified end in the views
 
