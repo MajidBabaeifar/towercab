@@ -4,7 +4,7 @@
 
 import type { Ctx, Handler } from "../handlers.ts";
 import { ok, wait } from "../machine.ts";
-import type { Mission } from "../mission.ts";
+import { getMission, type Mission, patchData } from "../mission.ts";
 import { checklist, parseNoneLive, unticked, withSteps } from "../steps.ts";
 import { data, intentOf, stepsFromPlan } from "./common.ts";
 import { commitToIntents } from "./plan.ts";
@@ -49,7 +49,14 @@ export async function writeTicks(cx: Ctx, m: Mission): Promise<void> {
     { [path]: text },
     `towercab: ticked step ${d.stepsDirty} of ${m.intent}`,
   );
-  cx.record(m, m.step, {}, { stepsDirty: undefined });
+  // A tick made while the push was awaited isn't in the file: clear the mark only if the steps are
+  // still the ones written, in one transaction, so that tick is written on the next pass.
+  cx.db.tx(() => {
+    const cur = getMission(cx.db, m.id);
+    if (!cur) return;
+    if (JSON.stringify(data(cur).steps) === JSON.stringify(d.steps))
+      patchData(cx.db, cur, { stepsDirty: undefined }, cx.clock.now());
+  });
 }
 
 /** SHIP-19: wait for the owner's steps after the merge. */

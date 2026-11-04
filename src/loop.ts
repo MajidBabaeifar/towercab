@@ -386,10 +386,12 @@ export class Loop {
     this.restartIfMoved();
     await this.sendMessages();
 
-    const driven = unfinished(db).find((m) => isWorking(m.stage) && !m.held && !this.cooling(m));
+    // A change waiting days on the owner's steps is not work: the machine may sleep and the loop is idle.
+    const working = (m: Mission) => isWorking(m.stage) && !(m.stage === "steps" && m.waiting);
+    const driven = unfinished(db).find((m) => working(m) && !m.held && !this.cooling(m));
     this.inhibitor.update(driven ? `${driven.intent} ${driven.stage}` : null, clock.mono());
 
-    const live = unfinished(db).filter((m) => isWorking(m.stage) && !this.cooling(m));
+    const live = unfinished(db).filter((m) => working(m) && !this.cooling(m));
     report.idle =
       this.children.size === 0 && this.featuresJob === null && live.length === 0 && report.picked === null;
     if (this.targetId) {
