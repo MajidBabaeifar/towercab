@@ -9,6 +9,7 @@ import type { Ctx, Handler, Progress } from "../handlers.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { CONTROL, Protected } from "../repo/protected.ts";
+import { blockedTests, testGrantsOf } from "./access.ts";
 import {
   asEnv,
   ask,
@@ -27,7 +28,7 @@ import {
   repoFiles,
   takeRemote,
 } from "./common.ts";
-import { lockedTests, publishRefusals, sameAsBase } from "./guard.ts";
+import { existingChanged, existingTests, lockedTests, publishRefusals, sameAsBase } from "./guard.ts";
 import { codeBody } from "./prtext.ts";
 
 export const publishHandler: Handler = {
@@ -54,11 +55,17 @@ export const publishHandler: Handler = {
     // PIP-31: a locked test that now reads as on the base came in with a merge of the base, not from the worker.
     const touched = sinceHead.filter((c) => locked.includes(c.path)).map((c) => c.path);
     const fromBase = await sameAsBase(cx.tools, cx.checkout(m), `refs/remotes/origin/${repo.base}`, touched);
+    // PIP-117: a test on the base branch that no grant covers can't be modified or deleted.
+    const blocked = blockedTests(
+      await existingTests(cx.tools, cx.checkout(m), repo.base, files.towercab.tests, files.towercab.live),
+      d,
+    );
     const bad = publishRefusals(
       changed,
       new Protected([...CONTROL, ...files.towercab.protected], g.paths),
       sinceHead.filter((c) => !fromBase.includes(c.path)),
       locked,
+      await existingChanged(cx.tools, cx.checkout(m), repo.base, blocked),
     );
     if (bad.length)
       return { done: wait("answer the question", `the branch changes paths it may not: ${bad.join(", ")}`) };
@@ -175,6 +182,7 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
       intentProblem: intent.sections.get("Problem") ?? null,
       checks: null,
       unplanned: [],
+      tests: testGrantsOf(d),
       specIds: d.design?.specIds ?? [],
       links: {
         intentUrl: cx.store.url(intent),

@@ -80,6 +80,15 @@ export interface Question {
 export interface Access {
   domains: { domain: string; why: string }[];
   paths: { glob: string; why: string }[];
+  /** PIP-115: existing tests the plan asks to change. */
+  tests?: { path: string; why: string }[];
+}
+
+/** PIP-118: an existing test the worker may change (or was refused), and who decided. */
+export interface ExistingTestView {
+  path: string;
+  why: string;
+  by: "plan" | "owner" | "refused";
 }
 
 export interface PrLink {
@@ -422,6 +431,8 @@ export interface IntentPage {
   brief?: string | null;
   /** UI-127: the latest technical text behind that brief, folded under "Details". */
   details?: string | null;
+  /** PIP-118: the existing tests the worker was allowed to change, or refused, and why. */
+  tests?: ExistingTestView[];
 }
 
 export interface QueueItem {

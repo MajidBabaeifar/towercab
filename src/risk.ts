@@ -70,7 +70,7 @@ export interface ReviewSignal {
 /** What else the floor reads: the review at the code gate, the access a plan asks for. */
 export interface FloorSignals {
   review?: ReviewSignal | null;
-  /** The plan's access beyond the defaults (protected paths, other domains), in words. */
+  /** The plan's access beyond the defaults (protected paths, other domains, existing tests), in words. */
   access?: string[];
 }
 

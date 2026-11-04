@@ -27,7 +27,7 @@ function worker(root: string, over: Partial<ClaudeRun> = {}): ClaudeRun {
     claudeMd: "# Base rules\n",
     grants: { domains: [], paths: [], open: false },
     cacheEnv: {},
-    guardRules: { checkout, protected: [], granted: [], locked: [] },
+    guardRules: { checkout, protected: [], granted: [], locked: [], existing: [] },
     config,
     ...over,
   };

@@ -88,7 +88,7 @@ test("pipeline: feedback revises the plan", async () => {
     reply({
       brief: PLAN_BRIEF,
       plan: PLAN_MD,
-      access: { domains: [{ domain: "example.com", why: "the greeting text" }], paths: [] },
+      access: { domains: [{ domain: "example.com", why: "the greeting text" }], paths: [], tests: [] },
       e2e: null,
     }),
   );
@@ -107,6 +107,7 @@ test("pipeline: feedback revises the plan", async () => {
           { domain: "cdn.example.com", why: "translations" },
         ],
         paths: [],
+        tests: [],
       },
       e2e: null,
     }),
@@ -140,7 +141,7 @@ test("pipeline: merged plan grants its ticked access", async () => {
       build({
         status: "access",
         pr: null,
-        access: { domains: [{ domain: "fonts.example.org", why: "a web font" }], paths: [] },
+        access: { domains: [{ domain: "fonts.example.org", why: "a web font" }], paths: [], tests: [] },
       }),
     ),
     reply(build(), CODE),
@@ -157,6 +158,7 @@ test("pipeline: merged plan grants its ticked access", async () => {
   expect(JSON.parse(p.mission()!.data).granted).toEqual({
     domains: [{ domain: "example.com", why: "the greeting text" }],
     paths: [],
+    tests: [],
   });
 }, 30_000);
 

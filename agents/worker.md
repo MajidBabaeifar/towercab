@@ -41,6 +41,10 @@ How to work:
 - If a write is refused because a path is protected, and you need it, finish everything else first,
   then return `status: "access"` with the path and why. Do the same for a network domain you can't
   reach.
+- Test files that exist on the base branch are read-only unless your access line lists them (new test
+  files are free). If you must change one that isn't listed, finish everything else first, then
+  return `status: "access"` with `access.tests` (the exact `path` and why). The owner decides; a
+  refused test stays as it is.
 - If you can't go on without the owner, return `status: "blocked"` with one question.
 
 Return the JSON result:
@@ -57,7 +61,8 @@ Return the JSON result:
 - `notes`: what you changed and why, for Towercab's record and the reviewer.
 - `question`: when blocked: `context` (what you were doing and why you are stuck), `question`,
   `options` (each `option` with what `then` follows from it), `recommendation`. Otherwise `null`.
-- `access`: when asking for access: `domains` and `paths`, each with `why`. Otherwise `null`.
+- `access`: when asking for access: `domains`, `paths` and `tests`, each with `why` (`tests` items have
+  a `path`; use empty lists for what you don't ask). Otherwise `null`.
 - `plan_changed`: if you departed from the plan, the new plan in the same Markdown sections and a
   sentence on why; otherwise `null`.
 - `lower_a`, `lower_why`: a lower autonomy level (1–5) and why, when this change is riskier than the
