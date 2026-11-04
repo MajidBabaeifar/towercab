@@ -243,8 +243,8 @@ test("issues: a gh failure is a github fault", async () => {
   const fault = p.loop.health.open().find((f) => f.kind === "github");
   expect(fault?.error).toContain("owner/web");
   expect(fault?.error).toContain("HTTP 502");
-  // The other repo was still read, and its issue queued.
-  expect((await p.store.list()).open.map((i) => i.repo)).toEqual(["api"]);
+  // The other repo was still read, and its issue proposed.
+  expect(p.prs.filter((x) => x.repo === "owner/intents").map((x) => x.head)).toEqual(["issue/api-1"]);
   // The 60 s intents poll works, yet does not hide the failing issue poll.
   p.clock.advance(61);
   await p.loop.pass();

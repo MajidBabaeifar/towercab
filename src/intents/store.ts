@@ -302,6 +302,32 @@ function why(r: RunResult): string {
   ).trim();
 }
 
+/** The text of a new intent file (INT-2), checked; a `RefusedError` says what is wrong. */
+export function intentText(n: NewIntent, now: Date): string {
+  const title = n.title.trim();
+  if (!title || /[\r\n]/.test(n.title)) throw new RefusedError("the title must be one non-empty line");
+  let fm = `repo: ${formatValue("repo", n.repo)}\n`;
+  for (const key of ["u", "i", "a"] as const) {
+    const v = n[key];
+    if (v === undefined) continue;
+    if (!Number.isInteger(v) || v < 1 || v > 5) throw new RefusedError(`${key} must be an integer 1-5`);
+    fm += `${key}: ${v}\n`;
+  }
+  fm += `source: ${formatValue("source", n.source ?? "me")}\n`;
+  for (const [key, value] of Object.entries(n.fields ?? {})) {
+    if (!/^[a-z_]+$/.test(key) || /[\r\n]/.test(value)) throw new RefusedError(`bad field ${key}`);
+    fm += `${key}: ${formatValue(key, value)}\n`;
+  }
+  fm += `started: ${localTime(now)}\n`;
+  const text = `---\n${fm}---\n\n# Intent: ${title}\n${n.body?.trim() ? `\n${n.body.trim()}\n` : ""}`;
+  try {
+    IntentFile.parse(text);
+  } catch (e) {
+    throw new RefusedError((e as Error).message);
+  }
+  return text;
+}
+
 /** `openStore`'s store: the intents repo's checkout on `main`, through the `git` CLI. */
 export class GitStore implements IntentStore {
   readonly path: string;
@@ -545,26 +571,7 @@ export class GitStore implements IntentStore {
 
   async add(n: NewIntent, now: Date): Promise<Intent> {
     const title = n.title.trim();
-    if (!title || /[\r\n]/.test(n.title)) throw new RefusedError("the title must be one non-empty line");
-    let fm = `repo: ${formatValue("repo", n.repo)}\n`;
-    for (const key of ["u", "i", "a"] as const) {
-      const v = n[key];
-      if (v === undefined) continue;
-      if (!Number.isInteger(v) || v < 1 || v > 5) throw new RefusedError(`${key} must be an integer 1-5`);
-      fm += `${key}: ${v}\n`;
-    }
-    fm += `source: ${formatValue("source", n.source ?? "me")}\n`;
-    for (const [key, value] of Object.entries(n.fields ?? {})) {
-      if (!/^[a-z_]+$/.test(key) || /[\r\n]/.test(value)) throw new RefusedError(`bad field ${key}`);
-      fm += `${key}: ${formatValue(key, value)}\n`;
-    }
-    fm += `started: ${localTime(now)}\n`;
-    const text = `---\n${fm}---\n\n# Intent: ${title}\n${n.body?.trim() ? `\n${n.body.trim()}\n` : ""}`;
-    try {
-      IntentFile.parse(text);
-    } catch (e) {
-      throw new RefusedError((e as Error).message);
-    }
+    const text = intentText(n, now);
     return this.write(async (s) => {
       const id = newId(now, s.taken);
       const slug = slugOf(title);
