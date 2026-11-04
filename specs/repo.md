@@ -131,6 +131,20 @@ repo's checks already enforce, so it spends no findings on what CI catches anywa
   bullets keeps them, as `## Passes` does.
 - Verified by: `repo: REVIEW.md do-not-report defaults`, `pipeline: review prompt has the do-not-report defaults`
 
+### REPO-13 · Existing tests are write-blocked
+
+From the first build round, a worker can't edit or delete a test file that already exists on the base
+branch unless that file was granted; new test files stay free.
+
+- Blocked = files at `origin/<base>` matching PIP-30's globs (`TOWERCAB.md` `tests`, or the defaults;
+  e2e suites under a `live` block are left out as there), listed when the run starts. Like a
+  protected path (REPO-8) they go into the guard's rules and the sandbox's `denyWrite`; a file
+  matching `protected` is blocked either way. A file is unblocked only by a grant (PIP-115,
+  PIP-116), whatever the autonomy ([AUT-14](autonomy.md)'s access levels do not apply).
+- The guard's reason names the test and ends with how to ask (PIP-116). The block holds in
+  every worker round, repairs included; PIP-31's lock on tests pushed earlier is separate and stays.
+- Verified by: `repo: existing tests are blocked`, `repo: new tests are not blocked`, `repo: granted tests unblock`, `guard: blocks an existing test`
+
 ### REPO-20 · A repo's kind
 
 Each repo says what kind it is in `TOWERCAB.md`, and the kind decides what setup it must have.

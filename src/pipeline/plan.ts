@@ -33,13 +33,20 @@ import { planBody, planFile, section } from "./prtext.ts";
 import { endRisk, extraAccess, spawnRisk } from "./risk.ts";
 import { parseResult } from "./schemas.ts";
 
-/** The clone the plan branches are pushed from (re-cloned when broken). */
-async function plansClone(
-  cx: Ctx,
+/** What a branch on the intents repo needs; the issue poll (INT-23) has it as well as a mission's `Ctx`. */
+export type IntentsCx = Pick<Ctx, "store" | "home" | "github" | "tools" | "config">;
+
+/**
+ * The clone `<home>/<name>` that branches of the intents repo are pushed from: `plans` for plan PRs,
+ * `issues` for the issue poll, which runs alongside missions and so never shares one.
+ */
+async function intentsClone(
+  cx: IntentsCx,
+  name = "plans",
 ): Promise<{ dir: string; github: string; auth: { args: string[]; env: Record<string, string> } }> {
   const github = cx.store.github();
-  if (!github) throw new Error("the intents repo isn't on GitHub, so a plan PR can't be opened");
-  const dir = join(cx.home.root, "plans");
+  if (!github) throw new Error("the intents repo isn't on GitHub, so a PR can't be opened on it");
+  const dir = join(cx.home.root, name);
   const auth = await cx.github.gitAuth(github);
   if (!existsSync(join(dir, ".git"))) {
     mkdirSync(cx.home.root, { recursive: true });
@@ -60,14 +67,15 @@ export function planBranch(intent: Intent): string {
 }
 
 /** Commit `files` (relative path → text) on `branch` of the intents repo, based on `from`, and push. */
-async function commitToIntents(
-  cx: Ctx,
+export async function commitToIntents(
+  cx: IntentsCx,
   branch: string,
   from: string,
   files: Record<string, string>,
   message: string,
+  clone = "plans",
 ): Promise<void> {
-  const { dir, auth } = await plansClone(cx);
+  const { dir, auth } = await intentsClone(cx, clone);
   await git(cx.tools, dir, ["checkout", "--quiet", "--force", "-B", branch, from]);
   await git(cx.tools, dir, ["clean", "-fdq"]);
   for (const [path, text] of Object.entries(files)) {
@@ -211,7 +219,7 @@ async function push(cx: Ctx, m: Mission): Promise<Progress> {
   const d = data(m);
   const a = effectiveOf(m, intent, files);
   const branch = planBranch(intent);
-  const { dir } = await plansClone(cx);
+  const { dir } = await intentsClone(cx);
   const before = await git(cx.tools, dir, [
     "show",
     `refs/remotes/origin/${branch}:${intent.dir}/plan.md`,

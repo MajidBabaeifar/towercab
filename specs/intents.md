@@ -101,7 +101,7 @@ file alone.
 
 ### INT-7 · Intents drafted from issues
 
-Removed: not used in v1 (no drafts were ever made). Issues now go straight onto the queue (INT-20..29).
+Removed: not used in v1 (no drafts were ever made). Issues now arrive as intent PRs the owner merges (INT-20..29).
 
 ### INT-8 · Other machine routes
 
@@ -207,18 +207,25 @@ A short Claude run with no tools reads the issue and proposes its scores, title 
   poll that issue again until the label is removed.
 - Verified by: `issues: the scoring run gets no tools`, `issues: a bad score result is retried once`, `issues: two bad results ask the owner to write it by hand`
 
-### INT-23 · Writing the intent from an issue
+### INT-23 · Proposing the intent from an issue
 
-Towercab turns a scored issue into an accepted intent in one store commit, with no pull request first.
+Towercab turns a scored issue into an intent pull request on the intents repo; nothing from an issue
+is worked on until the owner merges that PR.
 
-- One `Store.add` ([INT-12](#int-12--the-store)) writes `repo`, `u`, `i`, `a` (INT-24), `source: issue`,
-  `issue: <issue URL>`, `started`, then the title, `## Problem` and `## Proposed outcome`. The two
-  reasoning sentences go in the body under `## Towercab` and are not shown as a question.
-- The issue is the owner's request, so the intent is on `main` at once (INT-4 holds: the commit is
-  pushed to `main`). Lowering `u`/`i` or closing the issue (INT-28) is how the owner says no.
-- A mark trailer (`issue:<url>`, [INT-12](#int-12--the-store)) keeps a step re-run after a crash from
-  writing twice.
-- Verified by: `issues: an issue becomes one intent commit`, `issues: a crash before the comment does not write twice`
+- The intent file has `repo`, `u`, `i`, `a` (INT-24), `source: issue`, `issue: <issue URL>`,
+  `started`, then the title, `## Problem` and `## Proposed outcome`. The two reasoning sentences go in
+  the body under `## Towercab` and are not shown as a question.
+- It is committed on the branch `issue/<repo>-<n>` from `origin/main`, from Towercab's own clone
+  `<home>/issues` (never the store's checkout), and opened as the App's PR
+  `docs(intents): add <id> <title>` against `main`. The body links the issue, gives the scores with
+  their reasons, and says that merging accepts it and closing it says no.
+- Merging the PR is the owner's yes ([INT-4](#int-4--accepted-means-on-main)): only then is the intent
+  on `main` and picked. Towercab never merges these PRs itself, at any autonomy.
+- The ID is handed out against `main`'s folders, the IDs in the titles of the other open
+  `issue/*` PRs, and the ones handed out earlier in the same poll, so proposals made in the same
+  minute never share an ID.
+- A step re-run after a crash finds the PR by its branch and opens no second one.
+- Verified by: `issues: an issue becomes one intent PR`, `issues: nothing from an issue reaches main before the owner merges`, `issues: proposals in the same minute get different IDs`, `issues: a crash before the comment does not write twice`
 
 ### INT-24 · Autonomy of an issue intent
 
@@ -230,25 +237,29 @@ An issue intent starts at a3, and the owner changes that with an `a1`..`a5` labe
   ([AUT-13](autonomy.md)); a5 is kept for the owner's own intents.
 - Verified by: `issues: a3 by default`, `issues: an a-label sets the autonomy`, `issues: a5 label stays at a4`
 
-### INT-25 · Telling the issue it is queued
+### INT-25 · Telling the issue it is proposed, then queued
 
-Towercab comments once on the issue to say it is queued, and labels it so it is not read again.
+Towercab comments on the issue when the intent PR is open, and again once the owner has merged it.
 
-- The comment gives the intent's link, `u` and `i` with their reasons, and its place in the queue
-  ([PRI-4](priority.md)). Then the label `towercab:queued` is added. Written in the
-  [writing guide](../prompts/writing.md)'s style, with no internal vocabulary.
-- One comment per issue: an issue that already has `towercab:queued` is not commented again, and a
-  failed comment is retried without a second intent (INT-26).
-- Verified by: `issues: the queued comment names scores and place`, `issues: an issue is commented once`
+- When the PR is open: a comment links the PR and says it waits for the owner's approval, then the
+  label `towercab:proposed` is added.
+- Once the intent is on `main`: a comment gives the intent's link, `u` and `i` with their reasons,
+  and its place in the queue ([PRI-4](priority.md)), then the label `towercab:queued` is added.
+- Both are written in the [writing guide](../prompts/writing.md)'s style, with no internal vocabulary.
+  One comment of each kind per issue: the label stops a second one, and a failed comment is retried
+  without a second PR or intent (INT-26).
+- Verified by: `issues: the proposed comment links the PR`, `issues: the queued comment names scores and place`, `issues: an issue is commented once`
 
 ### INT-26 · One intent per issue, ever
 
 Each issue becomes at most one intent, even after that intent is done or dropped.
 
-- Dedupe on the `issue:` field across open intents, `done/` and dropped ones. A match skips the issue.
-  Removing the label `towercab:queued` does not make a new intent.
+- Dedupe on the `issue:` field across open intents, `done/` and dropped ones, and on any PR from the
+  branch `issue/<repo>-<n>`, open, merged or closed. A match skips the issue: a PR the owner closed
+  unmerged is a no, and the issue is never proposed again. Removing the label `towercab:proposed` or
+  `towercab:queued` does not make a new intent.
 - An unreadable intent file (INT-11) whose text holds the issue's URL still counts.
-- Verified by: `issues: a done intent blocks its issue`, `issues: a dropped intent blocks its issue`
+- Verified by: `issues: a done intent blocks its issue`, `issues: a dropped intent blocks its issue`, `issues: a closed intent PR is never proposed again`
 
 ### INT-27 · The code PR closes the issue
 
@@ -265,9 +276,10 @@ If the owner closes the issue before Towercab starts the intent, the intent is d
 - Each poll (INT-21) looks up the issue of every intent that has an `issue:` and no `stage` yet. If it
   is closed, the intent is dropped ([PRI-9](priority.md)) with the note `issue closed`, and the
   `towercab:queued` label stays.
+- A closed issue labelled `towercab:proposed` whose intent PR is still open has that PR closed.
 - Once the intent has started, closing the issue changes nothing; the code PR's `Fixes` line (INT-27)
   or the owner decides.
-- Verified by: `issues: closing the issue drops an unstarted intent`, `issues: a started intent ignores a closed issue`
+- Verified by: `issues: closing the issue drops an unstarted intent`, `issues: a started intent ignores a closed issue`, `issues: closing the issue closes its open intent PR`
 
 ### INT-29 · The issue on the intent page
 
@@ -465,3 +477,7 @@ Queued intents count as planned without being written to the file.
   steps; the step is in the UI and `status`.
 - v2 keeps v1's file format, so the existing intents repo works unchanged; v1's `test`, `deploy` and
   `maintain` stage values read as `code`.
+- Issues become intent PRs, not commits to `main` (2026-11-04): an issue written under the owner's
+  login, or labelled by anyone with triage access, is not the owner's considered yes, and Towercab's
+  scored rewrite is worth reading before work starts. Merging is the same yes the owner already gives
+  plans and machine-written intents (INT-4).

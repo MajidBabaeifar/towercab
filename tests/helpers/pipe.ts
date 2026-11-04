@@ -777,7 +777,7 @@ export class Pipe {
         return json(
           this.prs
             .filter((x) => x.repo === repo && x.state === "OPEN")
-            .map((x) => ({ number: x.number, headRefName: x.head })),
+            .map((x) => ({ number: x.number, headRefName: x.head, title: x.title })),
         );
       }
       if (a === "pr" && b === "list") {

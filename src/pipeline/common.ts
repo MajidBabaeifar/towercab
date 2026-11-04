@@ -461,7 +461,7 @@ export async function coGit(cx: Ctx, m: Mission, args: string[]): Promise<string
 }
 
 /** `-c user.name=… -c user.email=…` of the App's bot, for Towercab's commits. */
-export async function botAuthor(cx: Ctx): Promise<string[]> {
+export async function botAuthor(cx: Pick<Ctx, "github">): Promise<string[]> {
   const bot = await cx.github.bot();
   return ["-c", `user.name=${bot.login}`, "-c", `user.email=${bot.email}`, "-c", "commit.gpgsign=false"];
 }
