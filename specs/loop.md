@@ -317,7 +317,7 @@ When Towercab's own `main` moves, the running Towercab updates itself and restar
 
 - Every 60 s, when the checkout Towercab runs from is clean, on `main`, and `[update].auto` is true
   (default): `git fetch`; if `origin/main` is ahead, wait until no child runs, then `git merge
-  --ff-only`, `npm ci` when `package-lock.json` changed, `npm run build:ui` when `ui/` changed, and
+  --ff-only` (the wait is a drain, LOOP-108..109), `npm ci` when `package-lock.json` changed, `npm run build:ui` when `ui/` changed, and
   check the new tree with `bin/towercab doctor --quick`, which reads only the config, the tools and the
   modules: it never opens the database, so new code that is then rejected has migrated or imported
   nothing. Pass → exit 75 and systemd starts the new code. Fail → `git reset --hard <previous>`, keep running, one message `self-update failed: <why>`.
@@ -377,6 +377,36 @@ A step that is blocked by Towercab's own setup is retried once automatically bef
 - Blocks caused by the work (a protected path not granted, a failing test, an access request) are
   unchanged and are not retried.
 - Verified by: `loop: a setup block is retried once`, `loop: a second setup block waits for the owner`, `loop: a block caused by the work is not retried`, `loop: only a listed setup error is retried`, `loop: the agent's account of a block does not make it a setup fault`
+
+### LOOP-108 · Drain for update
+
+When `origin/main` is ahead, Towercab stops starting new work, lets running work finish, then updates, so a busy queue cannot hold back an update.
+
+- The self-update check (LOOP-35) that finds `origin/main` ahead sets a drain, recorded with the target
+  commit and the time it began. While a drain is set, a pass starts no child: no pick, no step, no
+  Claude run and no other child. Children already running are not touched and their results are applied
+  as usual. Steps that need no child (waiting, outbox, PR reads) go on.
+- When no child runs, the update of LOOP-35 happens at once (merge, install, check, exit 75), and work
+  resumes on the new code (LOOP-105). A failed update (LOOP-35) clears the drain; the next check sets it
+  again, with one failure message as before.
+- If `origin/main` stops being ahead, or the checkout is no longer clean or on `main`, or `[update].auto`
+  turns false, the drain is cleared and work starts again. The drain does not survive a restart.
+- `status` and the UI show `draining for update to <short commit>` while a drain is set.
+- Verified by: `update: no child starts while main is ahead`, `update: updates once the running child ends`, `update: a drain is cleared when main is no longer ahead`, `update: status says draining for update`
+
+### LOOP-109 · Drain limit
+
+A drain waits at most 30 minutes; after that Towercab updates anyway and the runs it cut off continue after the restart without counting as crashes.
+
+- When a drain has lasted 30 minutes (by the loop's clock) and a child still runs, the loop stops as
+  for SIGTERM (LOOP-7): SIGTERM to each child's group, SIGKILL after 10 s, `interrupted` for each
+  mission (not counted as `unclean`), then the update of LOOP-35 runs and the loop exits 75.
+- After the restart each cut-off Claude run resumes its own session with `Continue where you stopped.`
+  (LOOP-7), and the mission continues from its recorded step. It is never counted toward the three
+  crashes of LOOP-7 and sends no message to the owner.
+- The 30 minutes is a fixed limit, not a setting. The log records that the limit was reached and which
+  missions were interrupted.
+- Verified by: `update: a drain past 30 minutes updates anyway`, `update: an interrupted mission resumes its session after the update`, `update: an interrupted run is not counted as a crash`
 
 ### LOOP-36 · Dev loop
 
