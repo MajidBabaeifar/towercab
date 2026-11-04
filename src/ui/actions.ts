@@ -4,6 +4,7 @@
 import type { Config, RepoConfig } from "../config.ts";
 import type { Db } from "../db.ts";
 import { askFeatures } from "../features.ts";
+import { classifyFiles, fetchFiles, type ProposedPr } from "../github/proposed.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { IntentStore } from "../intents/types.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
@@ -22,6 +23,10 @@ export interface UiActions {
   addRepo(github: string, name?: string): Promise<string>;
   /** UI-144: read the repo again for its feature list (INT-39). */
   features(repo: string): Promise<string>;
+  /** INT-53: merge the proposed intent's PR `pr` as the owner, if it still is at `head`. */
+  accept(pr: number, head: string): Promise<string>;
+  /** INT-53: comment `text` (default `Not going ahead.`) and close the proposed intent's PR. */
+  close(pr: number, text?: string): Promise<string>;
 }
 
 export interface ActionDeps {
@@ -35,7 +40,11 @@ export interface ActionDeps {
    * they pass, while the clone goes on (UI-130); null: refused.
    */
   addRepo?: ((github: string, name?: string) => Promise<RepoConfig>) | null;
+  /** The loop's last list of proposed intents (LOOP-92); Accept refuses one whose file can't be read. */
+  proposed?: () => ProposedPr[];
 }
+
+export const DEFAULT_CLOSE_REASON = "Not going ahead.";
 
 export const MAX_REPLY = 20_000;
 
@@ -89,7 +98,71 @@ export function createActions(d: ActionDeps): UiActions {
     return `Already ${PAST[action]}; Towercab is moving on.`;
   };
 
+  /** INT-53: the PR as GitHub has it now, read as the owner. */
+  const look = async (n: number) => {
+    const repo = d.store.github();
+    if (!repo) throw new Error("Towercab doesn't know the intents repo's GitHub name.");
+    const view = await d.github.owner([
+      "pr",
+      "view",
+      String(n),
+      "-R",
+      repo,
+      "--json",
+      "state,isDraft,headRefOid",
+    ]);
+    if (view.code !== 0)
+      throw new Error(`GitHub refused to read PR #${n}: ${firstLine(view.stderr || view.stdout)}`);
+    let v: { state?: unknown; isDraft?: unknown; headRefOid?: unknown };
+    try {
+      v = JSON.parse(view.stdout) as typeof v;
+    } catch {
+      throw new Error(`GitHub gave no state for PR #${n}.`);
+    }
+    return { repo, state: String(v.state), draft: v.isDraft === true, head: String(v.headRefOid ?? "") };
+  };
+  const files = async (repo: string, n: number) => {
+    try {
+      return classifyFiles(await fetchFiles((a) => d.github.owner(a), repo, n));
+    } catch (e) {
+      throw new Error(`GitHub refused to read PR #${n}'s files: ${firstLine((e as Error).message)}`);
+    }
+  };
+  const changed = (n: number) => new Error(`PR #${n} changed since you looked: check it and try again`);
+  /** Ask the loop to read the intents repo's PRs now (UI-106's way). */
+  const readNow = () => d.db.setMeta("proposed:poll", "1");
+
   return {
+    async accept(n, head) {
+      const now = await look(n);
+      if (now.state !== "OPEN" || now.head !== head) throw changed(n);
+      const c = await files(now.repo, n);
+      if (!c || c.reason !== null) throw changed(n);
+      const known = d.proposed?.().find((p) => p.number === n);
+      if (known && !known.acceptable) throw changed(n);
+      if (now.draft) await owner(["pr", "ready", String(n), "-R", now.repo], `mark PR #${n} ready`);
+      await owner(
+        ["pr", "merge", String(n), "--squash", "--match-head-commit", head, "-R", now.repo],
+        `merge PR #${n}`,
+      );
+      readNow();
+      return `Merged PR #${n} as you. The intent is on main; Towercab picks it up within a minute.`;
+    },
+
+    async close(n, text) {
+      const now = await look(n);
+      if (now.state !== "OPEN") {
+        readNow();
+        return `PR #${n} is already ${now.state === "MERGED" ? "merged" : "closed"}; nothing to do.`;
+      }
+      if (!(await files(now.repo, n)))
+        throw new Error(`PR #${n} doesn't add an intent, so it isn't closed from here.`);
+      const why = text?.trim() || DEFAULT_CLOSE_REASON;
+      await owner(["pr", "close", String(n), "-R", now.repo, "--comment", why], `close PR #${n}`);
+      readNow();
+      return `Closed PR #${n}. The intent never reaches main.`;
+    },
+
     async merge(intent) {
       const m = unfinishedFor(d.db, intent);
       if (!m || !APPROVALS.has(m.stage))

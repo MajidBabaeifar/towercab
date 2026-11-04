@@ -21,6 +21,14 @@ import {
 import { retireBranch } from "./github/branches.ts";
 import { approveRequested, intentEvents, prEvents, releaseRequested } from "./github/events.ts";
 import { pollIssues } from "./github/issues.ts";
+import {
+  MORE_THAN_FILE,
+  MORE_THAN_ONE,
+  type ProposedCache,
+  type ProposedPr,
+  type ProposedState,
+  readProposed,
+} from "./github/proposed.ts";
 import { closeIfOpen, type PrState, readPr } from "./github/prs.ts";
 import { type ChildEnd, type Clock, type Ctx, EnvError, type GitHub, type Handlers } from "./handlers.ts";
 import type { Home } from "./home.ts";
@@ -51,6 +59,7 @@ import {
 } from "./mission.ts";
 import { sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState } from "./pick.ts";
+import { isParked, priority } from "./priority.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
 import { aheadIn, bestReady, buildingIn, isReady } from "./slots.ts";
@@ -79,6 +88,8 @@ export interface LoopDeps {
   sender: { send(text: string): Promise<void> } | null;
   /** Read one PR (tests fake it). */
   readPr?: (repo: string, n: number) => Promise<PrState>;
+  /** Read the intents repo's proposed intents (LOOP-92; tests fake it). */
+  readProposed?: () => Promise<ProposedPr[]>;
   /** Self-update (LOOP-35); off in tests. */
   selfUpdate?: boolean;
   /** INT-39: when a backfill run's time is up (default a real timer; tests resolve it themselves). */
@@ -126,6 +137,12 @@ export class Loop {
   /** Why the last issue poll failed (INT-21); while set, the other GitHub reads don't close the fault. */
   private issuesError: string | null = null;
   private lastPrPoll = new Map<number, number>();
+  /** LOOP-92: the last good list of proposed intents, why the last read failed and when. */
+  private proposed: ProposedPr[] | null = null;
+  private proposedError: string | null = null;
+  private proposedFailedAt: number | null = null;
+  private lastProposedPoll = 0;
+  private proposedCache: ProposedCache = new Map();
   private lastUpdate = 0;
   private last: { wall: number; mono: number } | null = null;
   private stopping = false;
@@ -185,6 +202,7 @@ export class Loop {
     loadRepos(this.d.config, db, this.now);
     recoverFeatures(db, this.now);
     await this.pollIntents(true);
+    await this.pollProposed(true);
     this.startIssues(true);
   }
 
@@ -287,6 +305,7 @@ export class Loop {
       this.pollAt.clear();
       this.lastPrPoll.clear();
       this.lastIntentsPoll = 0;
+      this.lastProposedPoll = 0;
       this.lastIssuesPoll = 0;
       this.d.log("woke from suspend; polling everything before any timeout");
     }
@@ -310,6 +329,7 @@ export class Loop {
     await this.enterDue();
     this.enforceTimeouts();
     await this.pollIntents(false);
+    await this.pollProposed(false);
     await this.requeueKnownRepos();
     this.startIssues(false);
     await this.pollPrs();
@@ -605,7 +625,70 @@ export class Loop {
 
   /** A GitHub read worked; the fault closes unless the issue poll is still failing (INT-21). */
   private githubOk(): void {
-    if (this.issuesError === null) this.health.ok("github");
+    if (this.issuesError === null && this.proposedError === null) this.health.ok("github");
+  }
+
+  /**
+   * LOOP-92, LOOP-93: the intents repo's open PRs that add an intent, every 60 s and on start (or at
+   * once when the page acted on one). A failure keeps the last list. A PR seen for the first time
+   * queues its one message; the first successful read only marks what is already open as seen.
+   */
+  private async pollProposed(force: boolean): Promise<void> {
+    const asked = this.d.db.meta("proposed:poll") !== null;
+    if (asked) this.d.db.delMeta("proposed:poll");
+    if (!force && !asked && this.now - this.lastProposedPoll < INTENTS_POLL_S) return;
+    const repo = this.d.store.github();
+    if (!repo && !this.d.readProposed) return;
+    this.lastProposedPoll = this.now;
+    let list: ProposedPr[];
+    try {
+      list = this.d.readProposed
+        ? await this.d.readProposed()
+        : await readProposed(this.d.github, repo!, this.proposedCache, (await this.d.github.bot()).login);
+    } catch (e) {
+      this.proposedError = (e as Error).message;
+      this.proposedFailedAt = this.now;
+      this.health.fail("github", this.proposedError, this.now);
+      this.d.log(`reading the proposed intents failed: ${this.proposedError}`);
+      return;
+    }
+    this.proposed = list;
+    this.proposedError = null;
+    this.proposedFailedAt = null;
+    if (this.listingError === null) this.githubOk();
+    const db = this.d.db;
+    db.tx(() => {
+      const seeded = db.meta("proposed:seeded") !== null;
+      for (const p of list) {
+        if (db.meta(`proposed:seen:${p.number}`) !== null) continue;
+        db.setMeta(`proposed:seen:${p.number}`, String(Math.floor(this.now)));
+        if (!seeded) continue;
+        const i = p.intent;
+        const head = `Proposed intent: ${i?.title ?? p.title}${
+          i ? ` (${i.repo}), ${this.proposedPriority(i)}` : ""
+        }`;
+        const port = this.d.config.ui.port;
+        const githubOnly = p.reason === MORE_THAN_ONE || p.reason === MORE_THAN_FILE;
+        const link = port && !githubOnly ? `http://localhost:${port}/#proposed-${p.number}` : p.url;
+        db.run(
+          "INSERT OR IGNORE INTO outbox (key, mission, text, created) VALUES (?, NULL, ?, ?)",
+          `proposed:${p.number}`,
+          `${head}\n${link}`,
+          this.now,
+        );
+      }
+      if (!seeded) db.setMeta("proposed:seeded", String(Math.floor(this.now)));
+    });
+  }
+
+  private proposedPriority(i: { u: number | null; i: number | null }): string {
+    const p = priority(i.u, i.i);
+    return isParked(p, this.d.config.intents.cutoff) ? "would be parked" : `priority ${p}`;
+  }
+
+  /** For the page (UI-184) and the actions (INT-53). */
+  proposedState(): ProposedState {
+    return { list: this.proposed ?? [], error: this.proposedError, failedAt: this.proposedFailedAt };
   }
 
   /** Resolves when no issue poll is running (tests and shutdown wait for it). */
@@ -633,7 +716,7 @@ export class Loop {
     }).then(
       () => {
         this.issuesError = null;
-        if (this.listingError === null) this.health.ok("github");
+        if (this.listingError === null && this.proposedError === null) this.health.ok("github");
       },
       (e: Error) => {
         this.issuesError = e.message;
@@ -1061,6 +1144,10 @@ export class Loop {
 
   /** A waiting message whose wait is over is dropped (LOOP-14). */
   private obsolete(row: { key: string; mission: number | null }): boolean {
+    if (row.key.startsWith("proposed:")) {
+      // LOOP-93: a proposal closed or merged before its message went is no longer worth one.
+      return this.proposed !== null && !this.proposed.some((p) => `proposed:${p.number}` === row.key);
+    }
     if (row.mission === null) return false;
     const m = getMission(this.d.db, row.mission);
     if (!m) return true;

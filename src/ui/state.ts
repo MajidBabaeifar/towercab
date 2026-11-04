@@ -6,6 +6,7 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
+import type { ProposedState } from "../github/proposed.ts";
 import type { Clock } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { Intent, IntentStore, Listing } from "../intents/types.ts";
@@ -16,6 +17,7 @@ import { section } from "../pipeline/prtext.ts";
 import { usualOwner } from "../repos.ts";
 import { currentRisk, type RiskGate, riskWords } from "../risk.ts";
 import { aheadIn, isAhead, isBuilding, isReady } from "../slots.ts";
+import { proposedSection } from "./proposed.ts";
 import type {
   Access,
   ActivityItem,
@@ -109,6 +111,8 @@ export interface UiSources {
   /** A PR's URL; `repo` is `owner/name`. */
   prUrl(repo: string, n: number): string;
   intentUrl(intent: Intent): string | null;
+  /** UI-184: the open PRs that add an intent (LOOP-92); without it, none. */
+  proposed?(): ProposedState;
   /** Recent loop log lines; without it, the first lines of `towercab.log`'s entries. */
   logs?(): LogLine[];
 }
@@ -1264,6 +1268,7 @@ export async function overview(src: UiSources): Promise<Overview> {
   };
   const body = {
     top,
+    ...(src.proposed ? { proposed: proposedSection(src) } : {}),
     needs: needs.map(({ order: _, ...c }) => c),
     problems,
     working,
