@@ -35,6 +35,9 @@ What to do:
    network domains (package registries, APIs, docs it must fetch) and protected paths (CI workflows,
    `CLAUDE.md`, `AGENTS.md`, `REVIEW.md`, `TOWERCAB.md`, `.claude/`, and paths listed in `TOWERCAB.md`). Ask only
    for what you expect to use, with a reason.
+4. Every test file that already exists on the base branch is read-only for the worker. If the build
+   must change or delete one, list that exact file (not a glob) in `access.tests` with why; a plan that
+   lists tests always goes to the owner. New test files need no entry.
 
 Return the JSON result:
 
@@ -50,7 +53,7 @@ Return the JSON result:
     test titles and each `Proposed outcome` bullet. Then the code, then the docs.
   - `## Risks`: what could go wrong or break elsewhere, and how the build guards against it.
   - `## How to check it`: how a reviewer sees it working (commands, pages, requests).
-- `access`: `domains` and `paths`, each item with a `why`. Empty lists when nothing beyond the
-  defaults is needed.
+- `access`: `domains`, `paths` and `tests`, each item with a `why` (`tests` items have a `path`). Empty
+  lists when nothing beyond the defaults is needed.
 - `e2e`: in a repo with e2e suites, `tests` (the e2e test files the build adds or changes) and
   `none_why` (empty, or why the change needs no e2e test). `null` in a repo without suites.

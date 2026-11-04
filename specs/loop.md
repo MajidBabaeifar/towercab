@@ -584,6 +584,43 @@ Towercab sends one Telegram message when a proposed intent first appears, and ne
 - Extends LOOP-14: a proposed intent is something the owner has to decide.
 - Verified by: `proposed: a new proposal sends one message`, `proposed: the same PR never sends twice`, `proposed: a proposal closed before sending is dropped`, `proposed: proposals already open on the first read send nothing`
 
+### LOOP-73 · Stages for the owner's steps and the unverified end
+
+The state machine gets a stage where a merged change waits for the owner's steps, and an end for changes
+that can't be checked live.
+
+- The order becomes `… gate → merge → steps → deploy → e2e → done`. `steps` ([SHIP-19](ship.md)) is phase
+  `code`. `unverified` ([SHIP-21](ship.md)) is a final stage outside the order, phase `done`, that ignores
+  every event, like `done` and `stopped`.
+- `code_merged` → `steps` when an `after` step is unticked, else `deploy`; at `steps`: `ok` → `deploy`.
+  At `deploy`: `skip` → `unverified` (was `done`), or `done` when the plan says there is nothing to check live (SHIP-21). The before-merge hold (SHIP-18) is a `blocked` wait
+  from the gate that keeps the phase, so it adds no stage.
+- Verified by: `machine: every stage and event pair is defined`, `machine: order`, `machine: steps and unverified transitions`
+
+### LOOP-74 · Waits for the owner's steps
+
+Two new waits tell the owner which steps are open.
+
+- `your steps first` (blocked, from the gate): "Do these before this change merges: tick them off in
+  Towercab, or reply to change the plan." `your steps` (stage `steps`): "Do these so the change works
+  live: tick them off in Towercab." Both add their rows to **Waits** and carry the checklist in their
+  why ([PIP-110](pipeline.md)).
+- Ticks continue the wait (SHIP-22); a reply, `/retry` and closing the PR act as for any blocked wait.
+  `steps` is not a blocked wait: a reply there is added to the intent page and does not move it.
+- Verified by: `loop: waits for owner steps ask for the checklist`, `loop: a reply at your steps does not move it`
+
+### LOOP-75 · `after:` waits for done
+
+An intent that names another with `after:` starts only when that one is done or ended unverified.
+
+- Done means the stage `done` ([LOOP-73](loop.md)): a merged change whose steps are not ticked or whose
+  deploy and e2e run haven't passed doesn't count. An intent that ended `unverified` counts, because
+  it can never be checked (SHIP-21). A rolled-back, dropped or still running intent doesn't count;
+  `bad after:` ([LOOP-5](loop.md)) is unchanged.
+- The unmet `after` shows as waiting on the other intent, with its stage ("waiting for 261031-1714-1:
+  your steps").
+- Verified by: `pick: after waits for steps and live checks`, `pick: after accepts an unverified end`
+
 **Config** (`src/config.ts`)
 
 | Key | Type, range | Default |

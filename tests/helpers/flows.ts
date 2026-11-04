@@ -81,7 +81,12 @@ export const SPEC = { "specs/web.md": "# Web\n\n### WEB-1 · Greeting\n\nThe pag
 
 export const PLAN_MD =
   "## Approach\n\nAdd a greeting file.\n\n## Steps\n\n1. Test\n2. Code\n\n## Risks\n\nNone.\n\n## How to check it\n\nRun the tests.";
-export const PLAN = { brief: PLAN_BRIEF, plan: PLAN_MD, access: { domains: [], paths: [] }, e2e: null };
+export const PLAN = {
+  brief: PLAN_BRIEF,
+  plan: PLAN_MD,
+  access: { domains: [], paths: [], tests: [] },
+  e2e: null,
+};
 
 export const WORKER_PR =
   "## What this does\n\nThe page says hello.\n\n## Why\n\nVisitors saw nothing.\n\n## What to check before merging\n\nNothing special.\n\n## Changes\n\n- A greeting";

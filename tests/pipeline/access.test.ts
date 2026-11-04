@@ -10,6 +10,7 @@ const ACCESS: Access = {
     { domain: "*.pythonhosted.org", why: "wheels" },
   ],
   paths: [{ glob: ".github/workflows/ci.yml", why: "add the new job\nto CI" }],
+  tests: [],
 };
 
 test("pipeline: access checklist round-trips", () => {
@@ -30,6 +31,7 @@ test("pipeline: access checklist round-trips", () => {
   expect(parseAccess(plan)).toEqual({
     domains: ACCESS.domains,
     paths: [{ glob: ".github/workflows/ci.yml", why: "add the new job to CI" }],
+    tests: [],
   });
   // Each level says what it grants.
   expect(levelSentence(2)).toContain("you merge the code PR yourself");
@@ -37,9 +39,9 @@ test("pipeline: access checklist round-trips", () => {
   expect(levelSentence(5)).toContain("unless its risk is high");
   expect(levelSentence(4)).toContain("when its risk is low");
   // Nothing asked: a line says so, and nothing is granted.
-  const none = renderAccess({ domains: [], paths: [] }, 3);
+  const none = renderAccess({ domains: [], paths: [], tests: [] }, 3);
   expect(none).toContain("Nothing beyond what the level grants.");
-  expect(parseAccess(none)).toEqual({ domains: [], paths: [] });
+  expect(parseAccess(none)).toEqual({ domains: [], paths: [], tests: [] });
 });
 
 test("pipeline: unticked access is not granted", () => {
@@ -70,10 +72,12 @@ test("pipeline: unticked access is not granted", () => {
   expect(parseAccess(plan)).toEqual({
     domains: [{ domain: "crates.io", why: "" }],
     paths: [{ glob: "migrations/**", why: "schema" }],
+    tests: [],
   });
   // No section: nothing beyond the defaults.
   expect(parseAccess("# Plan\n\n## Approach\n\n- [x] network: x.example\n")).toEqual({
     domains: [],
     paths: [],
+    tests: [],
   });
 });
