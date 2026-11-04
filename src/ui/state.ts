@@ -11,6 +11,7 @@ import type { Home } from "../home.ts";
 import type { Intent, IntentStore, Listing } from "../intents/types.ts";
 import { finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
 import { dataOf, forIntent, type Mission } from "../mission.ts";
+import { testGrantsOf } from "../pipeline/access.ts";
 import { section } from "../pipeline/prtext.ts";
 import { usualOwner } from "../repos.ts";
 import { currentRisk, type RiskGate, riskWords } from "../risk.ts";
@@ -24,6 +25,7 @@ import type {
   AttemptView,
   Card,
   CardKind,
+  ExistingTestView,
   GroundStop,
   IntentPage,
   Lane,
@@ -392,6 +394,9 @@ function missionState(s: Snap, m: Mission, src: UiSources): StateView {
 type MissionData = {
   question?: Question;
   access?: Access;
+  granted?: { tests?: { path: string; why: string }[] };
+  testAllowed?: { path: string; why: string }[];
+  refusedTests?: { path: string; why: string }[];
   /** The plain brief of the question asked (PIP-106). */
   brief?: string;
   design?: { brief?: string; pr?: string; concerns?: { what: string; why: string }[]; open?: string[] };
@@ -490,6 +495,12 @@ export function textsOf(
     default:
       return { brief: null, details: null };
   }
+}
+
+/** PIP-118: the existing tests a mission's worker may change (the plan's, the owner's) and those refused. */
+export function existingTestsOf(m: Mission): ExistingTestView[] {
+  const d = dataOf<MissionData>(m);
+  return [...testGrantsOf(d), ...(d.refusedTests ?? []).map((t) => ({ ...t, by: "refused" as const }))];
 }
 
 /**
@@ -622,7 +633,7 @@ export function missionCard(
     why: shownWhy,
     details,
     question: d.question ?? null,
-    access: kind === "plan" ? (d.access ?? { domains: [], paths: [] }) : null,
+    access: kind === "plan" ? (d.access ?? { domains: [], paths: [], tests: [] }) : null,
     pr,
     actions,
     mergeLabel: approval && pr && !done ? MERGE_LABELS[kind]! : null,
@@ -1910,6 +1921,8 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
   // AUT-20: the latest risk, when no card already shows it.
   const risk = !card && last ? riskView(last) : null;
   if (risk) body.risk = risk;
+  const tests = last ? existingTestsOf(last) : [];
+  if (tests.length) body.tests = tests;
   // UI-127: the latest plain brief (code, else plan, else spec), when no card already leads with one.
   if (!card && last) {
     for (const kind of ["code", "plan", "spec"] as const) {

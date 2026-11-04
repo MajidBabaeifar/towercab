@@ -30,6 +30,7 @@ function world(over: Partial<GuardRules> = {}): { checkout: string; runs: string
     protected: ["src/machine.ts"],
     granted: [],
     locked: ["tests/a.test.ts"],
+    existing: [],
     ...over,
   });
   return { checkout, runs, rules };
@@ -87,7 +88,7 @@ test("guard: allows a granted path", () => {
   expect(runGuardHook(all.rules, input("Write", join(all.checkout, "CLAUDE.md"))).code).toBe(0);
   expect(
     guardDecision(
-      { checkout: w.checkout, protected: [], granted: [], locked: [] },
+      { checkout: w.checkout, protected: [], granted: [], locked: [], existing: [] },
       { file_path: join(w.checkout, "new/dir/file.ts") },
     ),
   ).toEqual({ block: false });
@@ -127,7 +128,10 @@ test("guard: fails closed", () => {
   const missing = runGuardHook("/nonexistent/guard.json", ok);
   expect(missing.code).toBe(2);
   expect(missing.stderr).toMatch(/^guard: .*: blocked\n$/);
-  writeFileSync(w.rules, JSON.stringify({ checkout: "relative", protected: [], granted: [], locked: [] }));
+  writeFileSync(
+    w.rules,
+    JSON.stringify({ checkout: "relative", protected: [], granted: [], locked: [], existing: [] }),
+  );
   expect(runGuardHook(w.rules, ok).code).toBe(2);
   writeFileSync(
     w.rules,
@@ -161,7 +165,7 @@ test("pipeline: repair can't edit pushed tests", async () => {
   expect(await lockedTests(tools, repo, null, DEFAULT_TESTS)).toEqual([]);
 
   // The guard blocks them in a repair round; a new test file is fine.
-  const rules: GuardRules = { checkout: repo, protected: [], granted: [], locked };
+  const rules: GuardRules = { checkout: repo, protected: [], granted: [], locked, existing: [] };
   const d = guardDecision(rules, { file_path: join(repo, "tests/a.test.ts") });
   expect(d.block).toBe(true);
   expect(d.block && d.reason).toContain("locked in repair rounds");

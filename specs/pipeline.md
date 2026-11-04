@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..111 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..111, PIP-115..118 · **Prefix:** PIP
 
 ## Purpose
 
@@ -83,7 +83,8 @@ The review returns a structured verdict, and code decides from it whether the PR
   `tests_weakened` (`value`, `where`), `plan_followed` (`value`, `where`), `findings` (`severity`
   `important`/`nit`, `file`, `line`, `what`), `door` (`one-way`/`two-way`), `red_lines` (touched,
   with file), `summary` (markdown, for the owner). Approved = `approved` ∧ every outcome met ∧ no
-  weakened tests ∧ plan followed ∧ no important finding. Nits are capped by `REVIEW.md`.
+  weakened tests ∧ plan followed ∧ no important finding. Nits are capped by `REVIEW.md`. An outcome
+  only the owner can do counts as met (PIP-119).
 - Verified by: `pipeline: approval is computed in code`
 
 ### PIP-6 · Review rounds
@@ -892,7 +893,7 @@ the owner must decide, the spec moves on (subject to its risk); open points go t
 A code review that doesn't approve sends its findings back to the worker, for up to 2 fix rounds,
 before the change waits for the owner.
 
-- Review not approved (PIP-5) and `reviewFixes` < 2 → event `red` from `review` to `build` (why `the
+- Review not approved (PIP-5), something the worker can fix (PIP-120) and `reviewFixes` < 2 → event `red` from `review` to `build` (why `the
   review didn't approve: fix round <n> of 2`) with `repair` kind `review`: the Review comment as the
   details, in `<review>` tags, run by `agents/repair.md` in the worker's session (tests locked as in
   PIP-31). The new diff gets a new review. After 2 fix rounds the gate holds as before (`review not
@@ -1015,9 +1016,10 @@ The plan states whether the intent ends as a code change or as steps the owner d
   a line `Delivery: code` or `Delivery: steps` under the IDs line. The plan agent picks `steps` when the
   intent's outcome is a change only the owner can make (a setting on a service, an account, a machine)
   and no change to the repo would deliver it.
-- A `steps` plan has at least one line in `## Steps` that is a checkbox the owner can tick; the owner
-  steps checklist itself is SHIP-17..22 and is not redefined here. A `steps` plan with no such line is
-  a bad result and is asked for again (PIP-13).
+- A `steps` plan has at least one entry in `owner_steps` (SHIP-17), whose `when` is ignored since there is no merge: the
+  checklist, its ticking and its storage (`## Your steps`, `data.steps`, SHIP-22) are SHIP-17..22 and are
+  not redefined here. A `steps` plan with no `owner_steps` entry is a bad result and is asked for again
+  (PIP-13). A `code` plan keeps SHIP-17 as it is.
 - The plan PR shows the delivery in its description in plain words ("Nothing to build; you do these
   steps"). The merged `plan.md` is the record: the delivery is read from it, not from the mission.
 - Verified by: `pipeline: plan.md carries its delivery`, `pipeline: a steps plan needs steps the owner can tick`, `pipeline: a plan without delivery counts as code`
@@ -1026,17 +1028,19 @@ The plan states whether the intent ends as a code change or as steps the owner d
 
 When the merged plan says `steps`, Towercab opens no code PR, and the intent ends done when the owner ticks its last step.
 
-- Merging the plan PR (`plan_merged`, LOOP-3) moves a `steps` mission to the wait `do the steps`
-  (blocked; ask: "Do these steps, tick each one, and the intent is done"), not to `build`. No build,
-  verify, proof, publish, CI, review or deploy runs, and no branch or code PR is made.
-- The owner ticks the steps with the checklist of SHIP-17..22. Ticking the last one is the event
-  `steps_done` (LOOP-76): the mission ends `done` and the intent's `stage` becomes `done`. Until then
-  the wait keeps the exits of LOOP-76 (`drop`, and `steps` is already the current delivery).
-- Changing a `code` mission to `steps` (PIP-114) mid-way closes nothing the owner merged: an open code
-  PR is closed as for `drop` (PIP-87) and the mission goes to `do the steps` with the steps the plan
-  already lists, or, if it lists none, asks the plan step to add them.
+- Merging the plan PR (`plan_merged`, LOOP-3) moves a `steps` mission to the stage `steps` and its wait
+  `your steps` (LOOP-73, LOOP-74, SHIP-19), not to `build`. No build, verify, proof, publish, CI, review
+  or deploy runs, and no branch or code PR is made.
+- The owner ticks the steps as in SHIP-22. Ticking the last one is `ok` at `steps`; for a `steps`
+  delivery it goes to `done` instead of `deploy` (SHIP-20 is for code), and the intent's `stage` becomes
+  `done`. The `done` exit of LOOP-76 ends it early. Until then the wait keeps the exits of LOOP-76.
+- Changing a `code` mission to `steps` (PIP-114) closes an open code PR as for `drop` (PIP-87),
+  commits `Delivery: steps` and the steps to `plan.md` on `main` of the intents repo as for
+  `plan_changed` (PIP-28), and moves the mission to `steps`. The steps come from the question's option
+  or the plan; with none, the plan step is asked to add them first. Nothing the owner already merged is
+  undone.
 - How merged code PRs end is unchanged: a `code` plan builds, ships and ends as before.
-- Verified by: `pipeline: a steps plan skips build and the code PR`, `pipeline: ticking the last step ends the intent done`, `pipeline: switching to steps closes the open code PR`, `pipeline: a code plan ends as before`
+- Verified by: `pipeline: a steps plan skips build and the code PR`, `pipeline: ticking the last step of a steps plan ends the intent done`, `pipeline: switching to steps closes the open code PR`, `pipeline: a code plan ends as before`
 
 ### PIP-114 · Every option in a question maps to something Towercab does
 
@@ -1111,11 +1115,57 @@ bypassed.
 The intent page lists which existing tests the worker was allowed to change, and why, so the owner sees
 every goalpost that moved.
 
-- `Details` on the intent page (UI-62) gets "Existing tests changed" when the mission has any grant
+- The intent page (UI-62) gets an "Existing tests changed" section, shown when the mission has any grant
   in `tests` or a refusal: one line each with the path, the reason, who allowed it (the plan or the
   owner) and, for a refused one, "refused". The code PR's body lists the granted ones under "Tests
   changed beyond new ones" in plain words; none → neither section appears.
 - Verified by: `ui: the intent page lists granted existing tests`, `pipeline: the code PR lists granted existing tests`
+
+### PIP-119 · An outcome only the owner can do doesn't block approval
+
+The review marks an outcome that only the owner can do as an owner step, and it no longer counts as
+not met.
+
+- `review.outcomes[]` gets `owner: bool`: true for an outcome no worker can do in the sandbox (adding
+  a secret, applying to a server, a setting that needs admin rights). An outcome with `owner` true is
+  not judged `met`; PIP-5's "every outcome met" reads "every outcome met or `owner`". The prompt
+  (`agents/review.md`) says when to use it: only for what the worker cannot do, never for something
+  it merely did badly or left out.
+- Owner steps (the bullet and its `why`) are carried on the mission (`data.ownerSteps`), listed in the
+  Review comment under "For you to do" and in the code PR body's checklist, and shown on the gate's
+  wait. They never start a fix round and never make the gate wait by themselves. The gate still
+  holds for its other reasons (PIP-7); a PR with owner steps is not marked as done work for them.
+- PIP-5 still applies to every outcome the worker can meet: an outcome with `owner` false and `met`
+  false blocks approval as before.
+- Verified by: `pipeline: an owner-only outcome doesn't block approval`, `pipeline: an unmet outcome the worker can meet still blocks approval`, `pipeline: owner steps are listed for the owner`
+
+### PIP-120 · A fix round starts only when the worker can change something
+
+After a review that doesn't approve, Towercab sends the change back to build only when there is
+something the worker can fix; otherwise it goes on to the gate.
+
+- A fix round (PIP-98) starts when the review has at least one of: an important finding, weakened
+  tests, a plan deviation (`plan_followed` false), or an outcome with `met` false and `owner` false.
+  With none of these (so the only reason is an owner step, or `approved` false with nothing named),
+  there is no fix round: `reviewFixes` is unchanged and the mission goes on to the gate with the owner
+  steps listed (PIP-119). A review whose `approved` is false and names no such reason is treated as
+  not approved at the gate (PIP-7), as before.
+- The infra#50 case: the reviewer approves, one outcome is an owner step, every other outcome is met
+  → approved, the mission goes to the gate, not to build, and no fix round is logged.
+- Verified by: `pipeline: an approved review with an owner step goes to the gate, not to build`, `pipeline: a review with nothing the worker can fix gets no fix round`, `pipeline: an important finding still gets a fix round`
+
+### PIP-121 · The Review comment says what Towercab does next
+
+The verdict line of the Review comment always matches what Towercab does with the review.
+
+- The verdict shown is computed from the same code as the decision (PIP-5, PIP-120), never copied
+  from the agent's `approved` alone. Approved → `Approve`. A fix round → `Sending back for fixes
+  (round <n> of 2)` followed by the reasons the worker can fix, in plain words. Not approved with no
+  fix round (rounds used up, or nothing the worker can fix) → `Not approved` with the reason; the
+  comment never shows `Approve` above a fix round.
+- If the agent's `approved` differs from the computed verdict, the comment says which check
+  overrode it, in plain words.
+- Verified by: `pipeline: the review comment says a fix round is coming`, `pipeline: the review comment never approves above a fix round`, `pipeline: the review comment names the check that overrode the agent`
 
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
@@ -1144,12 +1194,12 @@ optional)
 ```
 design   {title: S, subject: S, brief: S, type, scope, breaking: bool, spec_ids: [S], concerns: [{what, why}],
           open_questions: [{question, answer: S?}], pr: S}
-plan     {brief: S, plan: S, access: {domains: [{domain, why}], paths: [{glob, why}]}, e2e}
+plan     {brief: S, plan: S, access: {domains: [{domain, why}], paths: [{glob, why}], tests: [{path, why}]}, e2e}
 build    {status: "done"|"blocked"|"access", brief: S, pr: S?, notes: S,
           question: {context, question, options: [{option, then}], recommendation}?,
-          access: {domains: [{domain, why}], paths: [{glob, why}]}?,
+          access: {domains: [{domain, why}], paths: [{glob, why}], tests: [{path, why}]}?,
           plan_changed: S?, lower_a: int?, lower_why: S?}
-review   {brief: S, approved: bool, outcomes: [{bullet, met: bool, why}], tests_weakened: {value: bool, where},
+review   {brief: S, approved: bool, outcomes: [{bullet, met: bool, owner: bool, why}], tests_weakened: {value: bool, where},
           plan_followed: {value: bool, where}, findings: [{severity, pass, file, line: int?, what}],
           door: "one-way"|"two-way", red_lines: [{line, file}], summary: S}
 risk     {blast_radius: {size: "small"|"medium"|"large", who}, door: {kind: "two-way"|"one-way", why},

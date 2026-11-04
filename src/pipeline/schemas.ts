@@ -32,6 +32,8 @@ function object(props: Record<string, JsonSchema>): JsonSchema {
 const ACCESS = object({
   domains: list(object({ domain: S, why: S })),
   paths: list(object({ glob: S, why: S })),
+  // PIP-115, PIP-116: existing tests (files on the base branch) the plan or the worker asks to change.
+  tests: list(object({ path: S, why: S })),
 });
 
 /** PIP-106: the plain brief beside the technical text, for a reader who doesn't code. */
@@ -135,6 +137,8 @@ export const SCHEMAS = {
 export interface Access {
   domains: { domain: string; why: string }[];
   paths: { glob: string; why: string }[];
+  /** PIP-115, PIP-116: existing tests to change, each a file (not a glob) with why. */
+  tests: { path: string; why: string }[];
 }
 
 export interface DesignResult {

@@ -84,7 +84,7 @@ test("schemas: closed objects, every key required", () => {
     parseResult("plan", {
       brief: "b",
       plan: "p",
-      access: { domains: [], paths: [{ glob: "x" }] },
+      access: { domains: [], paths: [{ glob: "x" }], tests: [] },
       e2e: null,
     }),
   ).toEqual({

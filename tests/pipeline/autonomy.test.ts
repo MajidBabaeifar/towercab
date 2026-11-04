@@ -31,7 +31,7 @@ test("autonomy: unplanned access at a4 goes to the owner", async () => {
       build({
         status: "access",
         pr: null,
-        access: { domains: [], paths: [{ glob: ".github/workflows/ci.yml", why: "the new job" }] },
+        access: { domains: [], paths: [{ glob: ".github/workflows/ci.yml", why: "the new job" }], tests: [] },
       }),
     ),
     reply(build(), { ...CODE, ".github/workflows/ci.yml": "name: CI\n" }),

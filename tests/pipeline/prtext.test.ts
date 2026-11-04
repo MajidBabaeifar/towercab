@@ -150,7 +150,7 @@ test("pipeline: PRs link to each other", () => {
   );
   const plan = planBody(
     "## Approach\n\nA signed token in the link.\n\nMore detail.",
-    { domains: [{ domain: "api.postmarkapp.com", why: "email" }], paths: [] },
+    { domains: [{ domain: "api.postmarkapp.com", why: "email" }], paths: [], tests: [] },
     { ...links, planPrUrl: null },
   );
   expect(plan).toMatch(
@@ -193,7 +193,13 @@ test("pipeline: every PR body opens in plain words", () => {
     ].join("\n\n"),
   );
   // Plan: the brief and the risk open, the approach folded, the access it asks for open.
-  const plan = planBody("## Approach\n\nA signed token.", { domains: [], paths: [] }, links, risk, brief);
+  const plan = planBody(
+    "## Approach\n\nA signed token.",
+    { domains: [], paths: [], tests: [] },
+    links,
+    risk,
+    brief,
+  );
   expect(plan).toMatch(
     /^## In plain words\n\nPeople can log in .*\n\n## Risk: low\n\nSmall\.\n\n<details><summary>Details<\/summary>\n\nA signed token\.\n\n<\/details>\n\n\*\*Access asked for:\*\* nothing/,
   );
@@ -223,7 +229,7 @@ test("pipeline: every PR body opens in plain words", () => {
   expect(open).toContain("**Spec IDs:** WEB-3");
   // No brief (a run from before briefs): no empty section, nothing folded.
   expect(specBody("Adds WEB-3.", [], links)).toMatch(/^Adds WEB-3\./);
-  expect(planBody("## Approach\n\nA.", { domains: [], paths: [] }, links)).toMatch(/^A\./);
+  expect(planBody("## Approach\n\nA.", { domains: [], paths: [], tests: [] }, links)).toMatch(/^A\./);
   expect(codeBody({ ...WITHOUT_BRIEF, worker })).not.toContain("<summary>Details</summary>");
 });
 

@@ -783,6 +783,47 @@ The Repos page works at phone width and in light and dark, like the rest of the 
   (UI-68).
 - Verified by: `ui: screenshots light, dark and mobile`
 
+### UI-160 · Your steps on the intent page
+
+The intent page shows the owner's steps as a checklist they tick off.
+
+- A "Your steps" block (UI-62) when the plan has steps: before-merge ones first, then after-merge ones,
+  each a checkbox with its text and why. Ticking posts `{action: "step", intent, n, done}`
+  ([SHIP-22](ship.md)) and shows the time ticked. The block is highlighted while the mission waits
+  on `your steps first` or `your steps`. The card shows the same wait as a needs-you card
+  ([LOOP-74](loop.md)).
+- Verified by: `ui: your steps checklist`, `ui: ticking a step posts the action`
+
+### UI-161 · Your steps in the map and the airspace
+
+A change waiting on the owner's steps is visible where the rest of its path is.
+
+- The stage map (UI-123) has Your steps (`steps`) after Merging, listed only when the attempt visited
+  it. In the airspace (UI-120), a plane at `steps` sits at `04 deploy`; a plane held by steps before
+  the merge sits at the gate's `you` station.
+- State words (UI-121): `steps`: "waiting for your steps"; the hold before the merge: "waiting for your
+  steps before merging".
+- Verified by: `ui: stage map shows your steps`, `ui: your steps in the airspace`
+
+### UI-162 · Merged, not verified live
+
+A change that ended without a live check looks different from one that works live.
+
+- The card and the intent page say "Merged, not verified live" in the muted style (not the done
+  style), with the reason "No live check set up for this repo." ([SHIP-21](ship.md)). A change whose plan
+  said there was nothing to check live shows as done, with "Nothing to check live: <why>" on the page. The board
+  puts it in the done column with that label; the airspace shows it as landed without the ship stations.
+- Verified by: `ui: unverified is shown apart from done`, `ui: nothing to check live shows as done`, `ui: screenshots light, dark and mobile`
+
+### UI-163 · Steps and the unverified end in the views
+
+The generated overview and the command line say what is open for the owner.
+
+- `TODO.md` ([INT-6](intents.md)): an intent waiting on steps is under Waiting on me with "your steps"
+  and the count left ("2 of 3"). `DONE.md`: an intent with `verified: no` carries "(merged, not verified
+  live)"; one without it has no mark. `towercab status` and `next` show the same words.
+- Verified by: `intents: TODO shows steps left`, `intents: DONE marks unverified`, `cli: status shows steps`
+
 ### UI-164 · The exits are buttons
 
 Every way out of a wait is a button on the card that does exactly what it says.
@@ -792,7 +833,7 @@ Every way out of a wait is a button on the card that does exactly what it says.
   option as a reply, `steps` switches the delivery (PIP-113), `drop` drops with the confirm of UI-58.
   The reply box stays for `continue`.
 - `no changes` shows "Nothing to build: I did it myself" (LOOP-76), which posts the `done` action
-  (UI-66 → the `done` command). A mission waiting on `do the steps` shows the steps checklist and the
+  (UI-66 → the `done` command). A mission waiting on `your steps` shows the checklist of UI-160 and the
   same button.
 - A stuck wait (LOOP-77) shows "Stuck: this came back with nothing new" and only the `steps`, `done`,
   start over and drop buttons: no reply box. `GET /api/state` (UI-65) carries `exits` per waiting

@@ -155,6 +155,7 @@ test("claude: worker argv", () => {
       protected: ["CLAUDE.md", ".github/**"],
       granted: [],
       locked: ["tests/a.test.ts"],
+      existing: [],
     },
     cache: join(root, "cache"),
   });
@@ -309,6 +310,7 @@ test("claude: settings by autonomy", () => {
   const plan = {
     domains: [{ domain: "api.stripe.com", why: "docs" }],
     paths: [{ glob: ".github/**", why: "ci" }],
+    tests: [],
   };
   const at = (a: number) =>
     grantsFor({ a, source: "me", plan, unlock: [], network: [], defaults, unplanned: null });
@@ -322,7 +324,7 @@ test("claude: settings by autonomy", () => {
       run("worker", {
         cwd: checkout,
         grants: g,
-        guardRules: { checkout, protected: [], granted: g.paths, locked: [] },
+        guardRules: { checkout, protected: [], granted: g.paths, locked: [], existing: [] },
       }),
       O,
     ) as {
