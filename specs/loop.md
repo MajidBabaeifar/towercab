@@ -556,6 +556,45 @@ intents that waited for it start.
   knows (towercab repo list)`.
 - Verified by: `repos: set changes a repo's settings`, `cli: repo commands`
 
+### LOOP-76 · Every wait has a way out
+
+Whatever Towercab waits on the owner for, the owner can end or move the intent from Towercab itself.
+
+- Each wait in **Waits** has a set of exits, from this list: `continue` (a reply, `towercab answer`, or
+  an option, LOOP-38, PIP-114), `retry` (start over), `steps` (switch the delivery to steps, PIP-113),
+  `drop` (PRI-9), `done` (the owner did it: the mission ends `done`, event `steps_done`; only for the
+  waits below) and the PR gestures of the approval waits. Every wait has at least one exit that ends the
+  intent or moves it to another stage; `continue` alone does not count when the wait comes straight back
+  (LOOP-77).
+- `no changes` gets the exit `done`, named "Nothing to build: I did it myself". It ends the intent as
+  done, with the mission's `why` saying the owner did it. The ask in **Waits** says so. `done` is a
+  command like `drop` (`towercab done <id>`, a `commands` row, applied by the loop or by the CLI itself,
+  LOOP-15) and the page's button (UI-164). The wait `do the steps` (PIP-113) ends with `done` too, or
+  by ticking the last step.
+- The ask, the Telegram message (LOOP-14) and `towercab status` (LOOP-13) name the exits of the wait in
+  plain words.
+- A test walks every row of **Waits**, from each wait it applies every exit through `machine.apply`
+  and fails when a wait has no exit that leaves it for `done`, `stopped` or another stage, or when a
+  wait in the code is missing from the table.
+- Verified by: `machine: every wait has an exit that ends or moves the intent`, `machine: no changes can end as done`, `cli: done ends an intent the owner did`, `outbox: the message names the exits`, `status: waits list their exits`
+
+### LOOP-77 · The same wait again is stuck
+
+A mission that lands on the same wait again with nothing new is marked stuck and offered only the exits that can still help.
+
+- On entering a blocked wait, Towercab compares it with the wait the mission was in last (the wait key,
+  the head commit and the count of owner answers). Equal → the mission is `stuck`: the flag is kept in
+  the mission's `data`, shown as "Stuck: this came back with nothing new" with the reason, and cleared on
+  any move out of the wait to a different one or when something new arrives (a changed head, an owner
+  answer that was not yet used).
+- A stuck wait offers only the exits that change something: `steps`, `done` (where it applies), `retry`
+  and `drop`. `continue` and the reply box are left out of the page, the Telegram message and `status`,
+  and a bare `answer` for a stuck mission is refused with `<id> is stuck at <wait>: a reply would land
+  here again; use steps, done, retry or drop`.
+- Nothing about the mission's state changes: stuck is a display and an offer, and `machine.apply` still
+  moves it only on events.
+- Verified by: `machine: the same wait again with nothing new is stuck`, `machine: something new clears stuck`, `cli: answer on a stuck mission is refused`, `outbox: a stuck wait offers only the other exits`
+
 **Config** (`src/config.ts`)
 
 | Key | Type, range | Default |

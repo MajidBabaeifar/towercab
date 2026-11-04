@@ -783,6 +783,23 @@ The Repos page works at phone width and in light and dark, like the rest of the 
   (UI-68).
 - Verified by: `ui: screenshots light, dark and mobile`
 
+### UI-164 · The exits are buttons
+
+Every way out of a wait is a button on the card that does exactly what it says.
+
+- On the needs-you card (UI-58), the intent page (UI-62) and the plane card (UI-80), each option of a
+  question is a button labelled with the option and what it does (PIP-114); `continue` posts the
+  option as a reply, `steps` switches the delivery (PIP-113), `drop` drops with the confirm of UI-58.
+  The reply box stays for `continue`.
+- `no changes` shows "Nothing to build: I did it myself" (LOOP-76), which posts the `done` action
+  (UI-66 → the `done` command). A mission waiting on `do the steps` shows the steps checklist and the
+  same button.
+- A stuck wait (LOOP-77) shows "Stuck: this came back with nothing new" and only the `steps`, `done`,
+  start over and drop buttons: no reply box. `GET /api/state` (UI-65) carries `exits` per waiting
+  mission (a list of `{do, label}`) and `stuck`.
+- After a click the card shows the done note of UI-105 ("Done by you · …").
+- Verified by: `ui: question options are buttons that do what they say`, `ui: no changes offers I did it myself`, `ui: a stuck wait offers only the other exits`, `ui: exits come from the API`
+
 ## Out of scope
 
 - Editing intents in the page: the owner edits them in the intents repo or with `/intent`.
