@@ -271,6 +271,63 @@ A readiness check that fails for a network or GitHub reason never blocks or unbl
 - A file that cannot be parsed (invalid `live`, bad `kind`) is a missing item with the parse error as its words, not a failure.
 - Verified by: `repo: a failed readiness read keeps the last result`, `repo: no stored result never blocks`
 
+### REPO-30 · A daily settings check
+
+Towercab checks the standard GitHub settings of every registered repo once a day and shows the gaps on the repo's page.
+
+- Once per 24 h per repo (and never more often than the fetch of [LOOP-8](loop.md) allows), the loop runs
+  REPO-25's check for the repo, whatever its kind and whether or not it has a `TOWERCAB.md`. Nothing is
+  cloned. The result is kept in `meta` (`settings:<repo>`, JSON: `state` `ok`, `gaps` or `unknown`, the
+  script's output lines as `gaps`, the time). `ci` itself is checked like any other repo.
+- The repo page lists the gaps in plain words and the time of the last check; `ok` says
+  `Standard settings in place`. A check that cannot run is `unknown` and keeps the last result
+  ([REPO-27](#repo-27--a-check-that-cannot-run)). The check never blocks work: it only warns, and
+  [REPO-24](#repo-24--readiness)'s `settings` item reads the same stored result.
+- Verified by: `repo: settings are checked daily for every repo`, `repo: settings gaps are stored and shown on the repo page`, `repo: a settings check that cannot run keeps the last result`
+
+### REPO-31 · Applying the settings
+
+With the owner's opt-in, Towercab applies the standard settings itself and checks again, and without it only reports.
+
+- Config `[github] settings = "check" | "apply"`, default `check`; anything else → `settings must be check
+  or apply`. The choice is for the whole installation. With `check`, nothing in this row runs.
+- With `apply`, when REPO-30 finds gaps, Towercab runs `bin/apply-settings <owner/name>` (no `--check`)
+  from the `ci` clone through `Tools` with the App token, then runs `--check` again and stores that
+  result. Still `gaps` after the apply → the remaining lines are shown and Towercab does not apply
+  again until the next daily check; it never loops. A repo whose gaps are already empty is not touched.
+- Towercab keeps no list of settings: what is applied is whatever `ci`'s script applies
+  ([REPO-25](#repo-25--the-settings-check)).
+- Verified by: `repo: settings stay check-only by default`, `repo: apply runs the script then checks again`, `repo: a gap that survives the apply is not retried until the next day`, `repo: a bad settings mode is rejected`
+
+### REPO-32 · A missing permission is said once
+
+If the GitHub App cannot change settings, `towercab doctor` says so in one line and the owner gets one step, never a wait without an exit.
+
+- Applying (REPO-31) needs the App's Administration (write) permission. A 403 or "Resource not accessible"
+  from the apply is that permission missing (not a network failure, [LOOP-10](loop.md)): it is stored
+  (`settings-permission`) and nothing more is applied until `doctor` or the next daily check sees it
+  granted.
+- `doctor` prints one line while `settings = "apply"` and the permission is missing: `GitHub App lacks
+  Administration (write): grant it at <app settings URL> so Towercab can apply settings`. With `check`, or
+  with the permission present, it says nothing about it.
+- The owner gets one step, shown with the repo's gaps and not once per repo: `Grant the Towercab GitHub
+  App the Administration (write) permission`, ticked by the owner. Ticking it clears
+  `settings-permission` so the next check applies again. No mission waits on it.
+- Verified by: `doctor: missing Administration permission is one line`, `repo: a forbidden apply becomes one owner step`, `repo: a forbidden apply is not retried until the step is ticked`
+
+### REPO-33 · A settings-only intent is done by Towercab
+
+An intent whose whole outcome is a GitHub settings change is delivered as steps Towercab does itself, not as a code change.
+
+- A plan with `delivery: steps` ([PIP-112](pipeline.md)) whose steps are all the standard settings (the
+  plan marks them `by: towercab`) is not handed to the owner: with `settings = "apply"` and the
+  permission present, Towercab runs REPO-31 for the intent's repo, and ticks the steps itself once the
+  re-check is `ok`; the intent then ends done as in [PIP-113](pipeline.md).
+- With `check`, or with the permission missing (REPO-32), the same steps are listed for the owner as
+  ordinary owner steps ([SHIP-17](ship.md)) with the gaps as their text, so the intent has an exit. A
+  setting outside the standard list (not in `ci`'s script) stays an owner step.
+- Verified by: `repo: a settings-only intent is applied and ticked by Towercab`, `repo: a settings-only intent falls back to owner steps`
+
 **Grammar** (`src/repo/markdown.ts`)
 
 - Every file: UTF-8, a leading BOM dropped, lines split on `\n`, a trailing `\r` dropped. The first
