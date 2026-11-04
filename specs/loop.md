@@ -402,12 +402,12 @@ When `origin/main` is ahead, Towercab stops starting new work, lets running work
 A drain waits for the limit (`[update].drain_minutes`, default 60); after that Towercab updates anyway, and the runs it cut off continue their session without counting as crashes.
 
 - `[update].drain_minutes` is a whole number of minutes ≥ 1, default 60.
-- Once a drain has lasted `drain_minutes` (by the loop's clock), a running review or build that began
-  less than `drain_minutes` before the limit was reached is allowed to finish, and any other child is
-  cut off. A review or build still running when it has itself run for `drain_minutes` more than the
-  limit allows is cut off too, so a drain lasts at most twice `drain_minutes`. Cutting off is as for
-  SIGTERM (LOOP-7): SIGTERM to each child's group, SIGKILL after 10 s, `interrupted` for each mission
-  (not counted as `unclean`). Then the update of LOOP-35 runs and, if it passes, the loop exits 75.
+- Once a drain has lasted `drain_minutes` (by the loop's clock), any running child that is not a review
+  or a build is cut off. A review or build still running gets up to `drain_minutes` more to finish; if
+  it is still running when the drain has lasted twice `drain_minutes`, it is cut off too. So a drain
+  lasts at most twice `drain_minutes` (two hours with the default). Cutting off is as for SIGTERM
+  (LOOP-7): SIGTERM to each child's group, SIGKILL after 10 s, `interrupted` for each mission (not
+  counted as `unclean`). Then the update of LOOP-35 runs and, if it passes, the loop exits 75.
 - After the restart each cut-off Claude run resumes its own session with `Continue where you stopped.`
   (LOOP-7), and the mission continues from its recorded step. It is never counted toward the three
   crashes of LOOP-7 and sends no message to the owner.
@@ -415,7 +415,7 @@ A drain waits for the limit (`[update].drain_minutes`, default 60); after that T
   process, from its recorded step in its own session, as if no drain had happened, and is not counted
   as a crash or a repair.
 - The log records that the limit was reached and which missions were interrupted.
-- Verified by: `update: a drain past the limit updates anyway`, `update: drain_minutes sets the limit`, `update: a review or build is allowed to finish at the limit`, `update: an interrupted mission resumes its session after the update`, `update: an interrupted run is not counted as a crash`, `update: a failed forced update resumes the cut-off missions in the same process`
+- Verified by: `update: a drain past the limit updates anyway`, `update: drain_minutes sets the limit`, `update: a review or build gets one more drain_minutes to finish`, `update: other children are cut off at the limit`, `update: a drain lasts at most twice drain_minutes`, `update: an interrupted mission resumes its session after the update`, `update: an interrupted run is not counted as a crash`, `update: a failed forced update resumes the cut-off missions in the same process`
 
 ### LOOP-36 · Dev loop
 
