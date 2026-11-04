@@ -309,6 +309,11 @@ Towercab merges the release pull request that release-please opens, once the wor
   - the latest commit on the default branch has green required checks (the checks branch protection
     requires, or all checks if none are required). Pending or red is not green, and so is a commit
     with no checks at all: a repo that runs no checks on `main` is never green;
+  - the PR is up to date with `main`: the PR's merge base with the default branch is the current head
+    commit of the default branch, and the green checks above are those of that same commit. Towercab
+    reads the head commit once per pass and uses it for both. If `main` has moved ahead, the PR is
+    stale: it waits (no card, no edit) for release-please to update the PR, which it does on every
+    push to `main`, and is checked again on a later pass;
   - every file in the PR diff is a release file (SHIP-31);
   - the release is a patch or minor one with no breaking change: no package's version in
     `.release-please-manifest.json` gains a higher major number, and the release notes (the PR body and
@@ -318,12 +323,14 @@ Towercab merges the release pull request that release-please opens, once the wor
     (default) or `manual`, read from the base branch like the other keys ([REPO-1](repo.md)); any other
     value is refused like other bad front matter. A manual repo's release PR is never merged by
     Towercab: it gets the "Needs you" card of SHIP-31 as soon as Towercab sees it.
+- The merge request names the PR head commit that was inspected, and the default branch head is read again
+  just before it; if either changed, nothing is merged and the next pass starts over.
 - The PR's own checks are never awaited: PRs opened with the Actions token run none.
 - Towercab never edits the release PR: no pushes, no comments, no body or label changes. It only merges or holds (SHIP-31).
 - Not a mission: it needs no intent and does not go through the stages or `machine.apply`. A merge that
   GitHub refuses (conflict, branch rules) is logged with GitHub's reason and retried on a later pass, with
   the "Needs you" card of SHIP-31 after 3 refusals in a row.
-- Verified by: `ship: a release PR touching only release files is merged`, `ship: a release PR is merged once main is green`, `ship: the release PR is never edited`, `ship: a refused release merge is retried then held`
+- Verified by: `ship: a release PR touching only release files is merged`, `ship: a release PR is merged once main is green`, `ship: a stale release PR waits for main`, `ship: a release PR is merged only against the commit that is green`, `ship: the release PR is never edited`, `ship: a refused release merge is retried then held`
 
 ### SHIP-31 · Release pull requests that need a look are held
 
@@ -341,6 +348,8 @@ A release pull request that is not plainly a release, or whose `main` is not gre
   hand". It still clears as below; Towercab does not merge, comment on or edit the PR.
 - `main` red, pending or without checks → held; the PR is looked at again each pass and merges when
   `main` turns green. No card at first.
+- A PR that is stale (SHIP-30) is held like a red `main`, and the same 24 hours apply; its card says
+  "behind main, release-please has not updated it".
 - Held for 24 hours (from when Towercab first saw the PR held for this reason) → a "Needs you" card
   titled "Release PR #<n> of <repo> has waited a day", whose why names the checks: the red or pending
   ones by name, or "<repo> runs no checks on main".
