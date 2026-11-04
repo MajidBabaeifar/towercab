@@ -1,5 +1,5 @@
 // GitHub issues become intents (INT-20..28): the real store over a local bare repo, a fake `gh` that
-// serves issues, and a fake `claude` that scores them.
+// serves issues and the intent PRs, and a fake `claude` that scores them. Only a merged PR is an intent.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -46,12 +46,21 @@ async function world(files: Record<string, string> = {}, busy: string[] = []) {
 
 const intents = (p: Pipe) => p.store.list();
 
+/** The intent PRs Towercab opened from issues. */
+const proposals = (p: Pipe) => p.prs.filter((x) => x.repo === "owner/intents" && x.head.startsWith("issue/"));
+
+/** The owner merges every open intent PR; then the intents on `main`. */
+function accepted(p: Pipe) {
+  for (const pr of proposals(p)) if (pr.state === "OPEN") p.mergePr(pr);
+  return intents(p);
+}
+
 test("issues: the owner's issue is eligible", async () => {
   const { p, poll } = await world();
   p.queue("score", scored());
   p.issue({ author: "Owner" });
   await poll();
-  const l = await intents(p);
+  const l = await accepted(p);
   expect(l.open.map((i) => i.title)).toEqual(["Show a greeting"]);
 });
 
@@ -60,7 +69,7 @@ test("issues: a towercab label makes another author's issue eligible", async () 
   p.queue("score", scored());
   p.issue({ author: "stranger", labels: ["towercab"] });
   await poll();
-  expect((await intents(p)).open).toHaveLength(1);
+  expect((await accepted(p)).open).toHaveLength(1);
 });
 
 test("issues: an unlabelled issue by someone else is never read", async () => {
@@ -68,6 +77,7 @@ test("issues: an unlabelled issue by someone else is never read", async () => {
   p.issue({ author: "stranger", title: "SECRET-TITLE", body: "SECRET-BODY", labels: ["bug"] });
   await poll();
   expect((await intents(p)).open).toHaveLength(0);
+  expect(proposals(p)).toEqual([]);
   expect(p.claudeCalls).toEqual([]);
   expect(p.issueCalls.filter((c) => c.startsWith("issue view"))).toEqual([]);
   expect(p.logs.join("\n")).not.toContain("SECRET");
@@ -102,7 +112,7 @@ test("issues: the scorer names the work as a user story about the product", asyn
   expect(c.prompt).toContain("the work's title as a user story");
   expect(c.prompt).toMatch(/Name the\s+product \(web\)/);
   expect(c.prompt).toMatch(/No file names,\s+functions, flags or jargon/);
-  expect((await intents(p)).open.map((i) => i.title)).toEqual([
+  expect((await accepted(p)).open.map((i) => i.title)).toEqual([
     "Web greets every visitor when the page opens",
   ]);
 });
@@ -126,7 +136,7 @@ test("issues: the intent keeps affected, constraints and open questions", async 
   );
   p.issue();
   await poll();
-  const i = (await intents(p)).open[0]!;
+  const i = (await accepted(p)).open[0]!;
   expect([...i.sections.keys()]).toEqual([
     "Problem",
     "Proposed outcome",
@@ -148,7 +158,7 @@ test("issues: empty sections are left out", async () => {
   p.queue("score", scored({ affected: "  ", constraints: ["", " "], open_questions: [] }));
   p.issue();
   await poll();
-  const i = (await intents(p)).open[0]!;
+  const i = (await accepted(p)).open[0]!;
   expect([...i.sections.keys()]).toEqual(["Problem", "Proposed outcome", "Towercab"]);
 });
 
@@ -158,7 +168,7 @@ test("issues: a bad score result is retried once", async () => {
   p.issue();
   await poll();
   expect(p.claudeCalls).toHaveLength(2);
-  expect((await intents(p)).open).toHaveLength(1);
+  expect((await accepted(p)).open).toHaveLength(1);
 });
 
 test("issues: two bad results ask the owner to write it by hand", async () => {
@@ -167,6 +177,7 @@ test("issues: two bad results ask the owner to write it by hand", async () => {
   const it = p.issue();
   await poll();
   expect((await intents(p)).open).toHaveLength(0);
+  expect(proposals(p)).toEqual([]);
   expect(it.comments).toHaveLength(1);
   expect(it.comments[0]).toContain("write the intent by hand");
   expect(it.labels).toContain("towercab:failed");
@@ -176,12 +187,25 @@ test("issues: two bad results ask the owner to write it by hand", async () => {
   expect(it.comments).toHaveLength(1);
 });
 
-test("issues: an issue becomes one intent commit", async () => {
+test("issues: an issue becomes one intent PR", async () => {
   const { p, poll } = await world();
   p.queue("score", scored());
   p.issue({ labels: ["bug"] });
   await poll();
-  const i = (await intents(p)).open[0]!;
+  const [pr, ...more] = proposals(p);
+  expect(more).toEqual([]);
+  expect(pr).toMatchObject({
+    head: "issue/web-1",
+    base: "main",
+    state: "OPEN",
+    author: "towercab[bot]",
+    title: expect.stringMatching(/^docs\(intents\): add \d{6}-\d{4} Show a greeting$/),
+  });
+  expect(pr!.body).toContain("https://github.com/owner/web/issues/1");
+  expect(pr!.body).toContain("Urgency 4 of 5: Visitors hit it on every page.");
+  expect(pr!.body).toContain("Merging this pull request accepts it");
+  const i = (await accepted(p)).open[0]!;
+  expect(pr!.title).toBe(`docs(intents): add ${i.id} Show a greeting`);
   expect(i).toMatchObject({
     repo: "web",
     u: 4,
@@ -194,13 +218,38 @@ test("issues: an issue becomes one intent commit", async () => {
   expect(i.sections.get("Problem")).toBe("The page greets nobody.");
   expect(i.sections.get("Proposed outcome")).toBe("- The page says hello");
   expect(i.sections.get("Towercab")).toContain("Urgency 4 of 5: Visitors hit it on every page.");
-  expect(git(p.bares.intents!, "log", "--format=%s").trim().split("\n")).toEqual([
-    `towercab: add ${i.id}`,
-    "seed",
-  ]);
-  expect(git(p.bares.intents!, "log", "-1", "--format=%B")).toContain(
-    "Towercab-Issue: https://github.com/owner/web/issues/1",
-  );
+});
+
+test("issues: nothing from an issue reaches main before the owner merges", async () => {
+  const { p, poll } = await world();
+  p.queue("score", scored());
+  const it = p.issue();
+  await poll();
+  await poll();
+  await poll();
+  expect((await intents(p)).open).toEqual([]);
+  expect(git(p.bares.intents!, "log", "--format=%s", "main").trim().split("\n")).toEqual(["seed"]);
+  expect(proposals(p).map((x) => x.state)).toEqual(["OPEN"]);
+  expect(p.claudeCalls).toHaveLength(1);
+  expect(it.labels).toEqual(["towercab:proposed"]);
+  // Towercab never merges it itself.
+  expect(p.tools.lines("gh").filter((l) => l.startsWith("pr merge"))).toEqual([]);
+});
+
+test("issues: proposals in the same minute get different IDs", async () => {
+  const { p, poll } = await world();
+  p.queue("score", scored(), scored({ title: "Show a farewell" }), scored({ title: "Show a date" }));
+  p.issue();
+  p.issue();
+  await poll();
+  // A later poll in the same minute steers clear of the open PRs' IDs too.
+  p.issue();
+  await poll();
+  const ids = proposals(p).map((x) => /add (\S+) /.exec(x.title)![1]);
+  expect(new Set(ids).size).toBe(3);
+  const l = await accepted(p);
+  expect(l.unreadable).toEqual([]);
+  expect(l.open.map((i) => i.id).sort()).toEqual([...ids].sort());
 });
 
 test("issues: a crash before the comment does not write twice", async () => {
@@ -209,14 +258,22 @@ test("issues: a crash before the comment does not write twice", async () => {
   const it = p.issue();
   p.issueFail = (args) => (args[1] === "comment" ? "HTTP 502" : null);
   await expect(poll()).rejects.toThrow("HTTP 502");
-  expect((await intents(p)).open).toHaveLength(1);
+  expect(proposals(p)).toHaveLength(1);
   expect(it.comments).toEqual([]);
   p.issueFail = null;
   await poll();
-  const l = await intents(p);
-  expect(l.open).toHaveLength(1);
+  expect(proposals(p)).toHaveLength(1);
   expect(p.claudeCalls).toHaveLength(1);
   expect(it.comments).toHaveLength(1);
+  expect(it.labels).toContain("towercab:proposed");
+  // And once merged, the queued comment fails and is retried without a second intent.
+  await accepted(p);
+  p.issueFail = (args) => (args[1] === "comment" ? "HTTP 502" : null);
+  await expect(poll()).rejects.toThrow("HTTP 502");
+  p.issueFail = null;
+  await poll();
+  expect((await intents(p)).open).toHaveLength(1);
+  expect(it.comments).toHaveLength(2);
   expect(it.labels).toContain("towercab:queued");
 });
 
@@ -225,7 +282,7 @@ test("issues: a3 by default", async () => {
   p.queue("score", scored());
   p.issue({ labels: ["bug", "a-team"] });
   await poll();
-  expect((await intents(p)).open[0]!.a).toBe(3);
+  expect((await accepted(p)).open[0]!.a).toBe(3);
 });
 
 test("issues: an a-label sets the autonomy", async () => {
@@ -234,7 +291,7 @@ test("issues: an a-label sets the autonomy", async () => {
   p.issue({ labels: ["a4"] });
   p.issue({ labels: ["a4", "a2"] });
   await poll();
-  const open = (await intents(p)).open;
+  const open = (await accepted(p)).open;
   expect(open.map((i) => [i.issue, i.a]).sort()).toEqual([
     ["https://github.com/owner/web/issues/1", 4],
     ["https://github.com/owner/web/issues/2", 2],
@@ -246,9 +303,21 @@ test("issues: a5 label stays at a4", async () => {
   p.queue("score", scored());
   p.issue({ labels: ["a5"] });
   await poll();
-  const i = (await intents(p)).open[0]!;
+  const i = (await accepted(p)).open[0]!;
   expect(i.a).toBe(5);
   expect(effectiveA(i.a, i.a, 5, i.source)).toBe(4);
+});
+
+test("issues: the proposed comment links the PR", async () => {
+  const { p, poll } = await world();
+  p.queue("score", scored());
+  const it = p.issue();
+  await poll();
+  const pr = proposals(p)[0]!;
+  expect(it.comments).toHaveLength(1);
+  expect(it.comments[0]).toContain(`https://github.com/owner/intents/pull/${pr.number}`);
+  expect(it.comments[0]).toContain("Nothing starts until the owner merges it.");
+  expect(it.labels).toEqual(["towercab:proposed"]);
 });
 
 test("issues: the queued comment names scores and place", async () => {
@@ -256,8 +325,9 @@ test("issues: the queued comment names scores and place", async () => {
   p.queue("score", scored());
   const it = p.issue();
   await poll();
-  const i = (await intents(p)).open[0]!;
-  const c = it.comments[0]!;
+  const i = (await accepted(p)).open[0]!;
+  await poll();
+  const c = it.comments[1]!;
   expect(c).toContain(p.store.url(i)!);
   expect(c).toContain("Urgency 4 of 5: Visitors hit it on every page.");
   expect(c).toContain("Importance 3 of 5: One page is affected.");
@@ -271,8 +341,11 @@ test("issues: an issue is commented once", async () => {
   const it = p.issue();
   await poll();
   await poll();
-  await poll();
   expect(it.comments).toHaveLength(1);
+  await accepted(p);
+  await poll();
+  await poll();
+  expect(it.comments).toHaveLength(2);
   expect(p.claudeCalls).toHaveLength(1);
   expect((await intents(p)).open).toHaveLength(1);
 });
@@ -283,7 +356,8 @@ async function ended(stage: "done" | "dropped") {
   w.p.queue("score", scored());
   const it = w.p.issue();
   await w.poll();
-  const id = (await intents(w.p)).open[0]!.id;
+  const id = (await accepted(w.p)).open[0]!.id;
+  await w.poll();
   await w.p.store.update(id, stage, (e) => e.setField("stage", stage));
   it.labels = [];
   await w.poll();
@@ -296,7 +370,8 @@ test("issues: a done intent blocks its issue", async () => {
   expect(l.open).toEqual([]);
   expect(l.done.map((i) => i.id)).toEqual([id]);
   expect(p.claudeCalls).toHaveLength(1);
-  expect(it.comments).toHaveLength(1);
+  expect(it.comments).toHaveLength(2);
+  expect(proposals(p)).toHaveLength(1);
 });
 
 test("issues: a dropped intent blocks its issue", async () => {
@@ -305,7 +380,36 @@ test("issues: a dropped intent blocks its issue", async () => {
   expect(l.open).toEqual([]);
   expect(l.done.map((i) => i.id)).toEqual([id]);
   expect(p.claudeCalls).toHaveLength(1);
-  expect(it.comments).toHaveLength(1);
+  expect(it.comments).toHaveLength(2);
+  expect(proposals(p)).toHaveLength(1);
+});
+
+test("issues: a closed intent PR is never proposed again", async () => {
+  const { p, poll } = await world();
+  p.queue("score", scored(), scored());
+  const it = p.issue();
+  await poll();
+  // The owner says no, then even removes the label.
+  proposals(p)[0]!.state = "CLOSED";
+  it.labels = [];
+  await poll();
+  await poll();
+  expect(p.claudeCalls).toHaveLength(1);
+  expect(proposals(p).map((x) => x.state)).toEqual(["CLOSED"]);
+  expect((await intents(p)).open).toEqual([]);
+});
+
+test("issues: closing the issue closes its open intent PR", async () => {
+  const { p, poll } = await world();
+  p.queue("score", scored());
+  const it = p.issue();
+  await poll();
+  it.state = "CLOSED";
+  await poll();
+  const pr = proposals(p)[0]!;
+  expect(pr.state).toBe("CLOSED");
+  expect(pr.comments.map((c) => c.body)).toEqual(["The issue was closed."]);
+  expect((await intents(p)).open).toEqual([]);
 });
 
 test("issues: closing the issue drops an unstarted intent", async () => {
@@ -313,6 +417,7 @@ test("issues: closing the issue drops an unstarted intent", async () => {
   p.queue("score", scored());
   const it = p.issue();
   await poll();
+  await accepted(p);
   it.state = "CLOSED";
   await poll();
   const l = await intents(p);
@@ -328,7 +433,7 @@ test("issues: a started intent ignores a closed issue", async () => {
   const a = p.issue();
   const b = p.issue();
   await poll();
-  const [first, second] = (await intents(p)).open.map((i) => i.id);
+  const [first, second] = (await accepted(p)).open.map((i) => i.id);
   // One has a stage, the other a mission that has not written its stage yet.
   await p.store.update(first!, "stage", (e) => e.setField("stage", "code"));
   busy.push(second!);
@@ -346,5 +451,7 @@ test("issues: an intent from an issue starts at its place in the pick order", as
   p.queue("score", scored());
   const it = p.issue();
   await poll();
-  expect(it.comments[0]).toContain("It is number 2 in the queue.");
+  await accepted(p);
+  await poll();
+  expect(it.comments[1]).toContain("It is number 2 in the queue.");
 });

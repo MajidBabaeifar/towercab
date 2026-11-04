@@ -1,7 +1,7 @@
 // GitHub issues become intents (INT-20..28): every poll lists the issues of each `[repos]` repo, reads
-// only the ones the owner wrote or labelled `towercab`, has a tool-less Claude run score them, writes
-// the intent straight to `main`, and tells the issue. Issue text is untrusted: the list carries none,
-// and the text of an ineligible issue is never fetched.
+// only the ones the owner wrote or labelled `towercab`, has a tool-less Claude run score them, proposes
+// the intent as a PR on the intents repo that only the owner's merge accepts, and tells the issue.
+// Issue text is untrusted: the list carries none, and the text of an ineligible issue is never fetched.
 
 import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -11,21 +11,31 @@ import { type ClaudeRun, parseRun, prepareRun } from "../claude.ts";
 import type { Config, RepoConfig } from "../config.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { Home } from "../home.ts";
+import { newId, slugOf } from "../intents/id.ts";
 import { plainLine, TITLE_MAX } from "../intents/naming.ts";
-import type { Intent, IntentStore, Listing } from "../intents/types.ts";
+import { intentText } from "../intents/store.ts";
+import type { Intent, IntentStore, Listing, NewIntent } from "../intents/types.ts";
 import { oneLine } from "../machine.ts";
+import { prUrl } from "../pipeline/common.ts";
+import { commitToIntents } from "../pipeline/plan.ts";
 import { fence, render } from "../pipeline/prompts.ts";
 import { parseResult, SCHEMAS, type ScoreResult } from "../pipeline/schemas.ts";
 import { isParked, pickOrder } from "../priority.ts";
 import { checkoutRoot } from "../service.ts";
 import { check, type Tools } from "../tools.ts";
+import { prsOnBranch } from "./branches.ts";
 
 /** The label that makes another author's issue eligible (INT-20). */
 export const TRIGGER_LABEL = "towercab";
-/** Added once the issue is queued (INT-25). */
+/** Added once the intent PR is open and waits for the owner (INT-25). */
+export const PROPOSED_LABEL = "towercab:proposed";
+/** Added once the owner merged the intent PR and it is queued (INT-25). */
 export const QUEUED_LABEL = "towercab:queued";
 /** Added when scoring failed twice; the issue is not polled again until it is removed (INT-22). */
 export const FAILED_LABEL = "towercab:failed";
+
+/** The clone under `<home>` that intent PRs are pushed from (INT-23). */
+const CLONE = "issues";
 
 /** How many issues one list call reads. */
 const LIMIT = 200;
@@ -106,6 +116,31 @@ export function queuedComment(o: {
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+/** INT-25: the comment that says the intent waits for the owner's merge. */
+export function proposedComment(prUrl: string): string {
+  return [
+    `Towercab has written this issue up as work in [a pull request](${prUrl}) for the owner to approve.`,
+    "Nothing starts until the owner merges it. Closing it, or this issue, means no.",
+  ].join("\n\n");
+}
+
+/** INT-23: the intent PR's body. */
+function proposalBody(o: { issueUrl: string; reasons: string; a: number }): string {
+  return [
+    `Towercab wrote this intent from ${o.issueUrl}.`,
+    o.reasons,
+    `It runs at autonomy a${o.a}.`,
+    "Merging this pull request accepts it as work. Closing it says no, and the issue is not proposed again.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/** INT-23: the intents-repo branch an issue's intent is proposed from. */
+export function proposalBranch(repo: RepoConfig, n: number): string {
+  return `issue/${repo.name}-${n}`;
 }
 
 function failedComment(): string {
@@ -235,18 +270,18 @@ function issueText(v: Viewed): string {
 
 async function gh(
   d: IssueDeps,
-  repo: RepoConfig,
+  github: string,
   args: string[],
   what: string,
   input?: string,
 ): Promise<string> {
-  return check(await d.github.gh(repo.github, args, input === undefined ? {} : { input }), what);
+  return check(await d.github.gh(github, args, input === undefined ? {} : { input }), what);
 }
 
 async function ensureLabel(d: IssueDeps, repo: RepoConfig, label: string, color: string): Promise<void> {
   await gh(
     d,
-    repo,
+    repo.github,
     ["label", "create", label, "-R", repo.github, "--force", "--color", color, "--description", "Towercab"],
     "gh label create",
   );
@@ -260,7 +295,12 @@ async function addLabel(
   color: string,
 ): Promise<void> {
   await ensureLabel(d, repo, label, color);
-  await gh(d, repo, ["issue", "edit", String(n), "-R", repo.github, "--add-label", label], "gh issue edit");
+  await gh(
+    d,
+    repo.github,
+    ["issue", "edit", String(n), "-R", repo.github, "--add-label", label],
+    "gh issue edit",
+  );
 }
 
 /** INT-25: the comment, then the label; the place is the intent's spot in the pick order (PRI-4, PRI-5). */
@@ -277,7 +317,7 @@ async function announce(d: IssueDeps, repo: RepoConfig, issue: Listed, intent: I
   });
   await gh(
     d,
-    repo,
+    repo.github,
     ["issue", "comment", String(issue.number), "-R", repo.github, "--body-file", "-"],
     "gh issue comment",
     body,
@@ -295,8 +335,110 @@ async function mentionedInUnreadable(d: IssueDeps, listing: Listing, url: string
   return false;
 }
 
+/** What one poll shares between issues: the IDs handed out so far (INT-23). */
+interface Poll {
+  /** The intents repo on GitHub; null when its remote isn't GitHub. */
+  intents: string | null;
+  /** IDs on `main`, in other open intent PRs, and handed out in this poll; null until first needed. */
+  taken: Set<string> | null;
+}
+
+/** The intents repo on GitHub: without one no issue can be proposed (INT-23). */
+function intentsRepo(poll: Poll): string {
+  if (!poll.intents)
+    throw new Error("the intents repo isn't on GitHub, so an issue can't be proposed as an intent PR");
+  return poll.intents;
+}
+
+/** INT-23: the IDs no new proposal may take: `main`'s, and those in the titles of open `issue/*` PRs. */
+async function takenIds(d: IssueDeps, poll: Poll, listing: Listing): Promise<Set<string>> {
+  if (poll.taken) return poll.taken;
+  const intents = intentsRepo(poll);
+  const open = JSON.parse(
+    await gh(
+      d,
+      intents,
+      [
+        "pr",
+        "list",
+        "-R",
+        intents,
+        "--state",
+        "open",
+        "--limit",
+        String(LIMIT),
+        "--json",
+        "headRefName,title",
+      ],
+      "gh pr list",
+    ),
+  ) as { headRefName: string; title?: string }[];
+  const taken = new Set<string>([
+    ...listing.open.map((i) => i.id),
+    ...listing.done.map((i) => i.id),
+    ...listing.doneIds,
+    ...listing.unreadable.flatMap((u) => (u.id ? [u.id] : [])),
+  ]);
+  for (const p of open) {
+    const m = /^docs\(intents\): add (\S+) /.exec(p.title ?? "");
+    if (p.headRefName.startsWith("issue/") && m) taken.add(m[1]!);
+  }
+  poll.taken = taken;
+  return taken;
+}
+
+/** INT-23: commit the intent on its branch of the intents repo and open the PR; returns its URL. */
+async function propose(
+  d: IssueDeps,
+  poll: Poll,
+  listing: Listing,
+  branch: string,
+  n: NewIntent,
+  issueUrl: string,
+  reasons: string,
+): Promise<string> {
+  const intents = intentsRepo(poll);
+  const now = new Date(d.clock.now() * 1000);
+  const text = intentText(n, now);
+  const taken = await takenIds(d, poll, listing);
+  const id = newId(now, taken);
+  taken.add(id);
+  const title = `docs(intents): add ${id} ${n.title.trim()}`;
+  await commitToIntents(
+    d,
+    branch,
+    "origin/main",
+    { [`intents/${id}-${slugOf(n.title.trim())}/intent.md`]: text },
+    title,
+    CLONE,
+  );
+  const out = await gh(
+    d,
+    intents,
+    ["pr", "create", "-R", intents, "--base", "main", "--head", branch, "--title", title, "--body-file", "-"],
+    "gh pr create",
+    proposalBody({ issueUrl, reasons, a: n.a ?? d.config.intents.issueA }),
+  );
+  const m = /\/pull\/(\d+)/.exec(out);
+  if (!m) throw new Error(`gh pr create printed no PR URL: ${oneLine(out, 200)}`);
+  return prUrl(intents, Number(m[1]));
+}
+
+/** INT-25: tell the issue its intent PR waits for the owner, then label it. */
+async function proposed(d: IssueDeps, repo: RepoConfig, issue: Listed, url: string): Promise<void> {
+  await gh(
+    d,
+    repo.github,
+    ["issue", "comment", String(issue.number), "-R", repo.github, "--body-file", "-"],
+    "gh issue comment",
+    proposedComment(url),
+  );
+  await addLabel(d, repo, issue.number, PROPOSED_LABEL, "fbca04");
+}
+
 async function pollIssue(
   d: IssueDeps,
+  poll: Poll,
   repo: RepoConfig,
   issue: Listed,
   listing: Listing,
@@ -304,8 +446,9 @@ async function pollIssue(
 ): Promise<void> {
   const labels = names(issue.labels);
   const intent = known.get(issue.url);
+  const branch = proposalBranch(repo, issue.number);
 
-  // INT-28: closing the issue before the intent starts drops it.
+  // INT-28: closing the issue before the intent starts drops it, or closes its open intent PR.
   if (issue.state.toUpperCase() === "CLOSED") {
     if (intent && !intent.done && intent.stage === null && !d.busy().has(intent.id)) {
       await d.store.update(intent.id, "drop", (e) => {
@@ -314,27 +457,45 @@ async function pollIssue(
         e.setSection("Towercab", "issue closed");
       });
       d.log(`${issue.url}: closed; dropped ${intent.id}`);
+    } else if (!intent && labels.includes(PROPOSED_LABEL)) {
+      const intents = intentsRepo(poll);
+      for (const pr of await prsOnBranch(d.github, intents, branch)) {
+        if (pr.state !== "OPEN") continue;
+        await gh(
+          d,
+          intents,
+          ["pr", "close", String(pr.number), "-R", intents, "--comment", "The issue was closed."],
+          "gh pr close",
+        );
+        d.log(`${issue.url}: closed; closed its intent PR #${pr.number}`);
+      }
     }
     return;
   }
   if (!isEligible(issue, d.github.me)) return;
 
-  // INT-25: an intent without the label (a crash, a failed comment) is announced, not written again.
+  // INT-25: an intent the owner merged is announced once, never written again.
   if (intent) {
     if (!intent.done && !labels.includes(QUEUED_LABEL)) await announce(d, repo, issue, intent);
     return;
   }
   // INT-22: scoring failed twice before; the owner removes the label to try again.
-  if (labels.includes(FAILED_LABEL) || labels.includes(QUEUED_LABEL)) return;
+  if (labels.some((l) => l === FAILED_LABEL || l === QUEUED_LABEL || l === PROPOSED_LABEL)) return;
   // INT-26: an unreadable file of an earlier intent still counts.
   if (await mentionedInUnreadable(d, listing, issue.url)) return;
-  const mark = `Towercab-Issue: ${issue.url}`;
-  if (await d.store.hasMark(mark)) return;
+  // INT-26: a PR from this issue's branch, in any state, is its one proposal; a closed one is a no.
+  const intents = intentsRepo(poll);
+  const prs = await prsOnBranch(d.github, intents, branch);
+  if (prs.length) {
+    const open = prs.find((p) => p.state === "OPEN");
+    if (open) await proposed(d, repo, issue, prUrl(intents, open.number));
+    return;
+  }
 
   const view = JSON.parse(
     await gh(
       d,
-      repo,
+      repo.github,
       ["issue", "view", String(issue.number), "-R", repo.github, "--json", "title,body,author,labels"],
       "gh issue view",
     ),
@@ -351,7 +512,7 @@ async function pollIssue(
     d.log(`${issue.url}: scoring failed twice: ${scored.why}`);
     await gh(
       d,
-      repo,
+      repo.github,
       ["issue", "comment", String(issue.number), "-R", repo.github, "--body-file", "-"],
       "gh issue comment",
       failedComment(),
@@ -360,22 +521,23 @@ async function pollIssue(
     return;
   }
   const s = scored.value;
-  const added = await d.store.add(
-    {
-      repo: repo.name,
-      title: plainLine(s.title, TITLE_MAX) || `GitHub issue #${issue.number}`,
-      u: s.u,
-      i: s.i,
-      a: autonomyFrom(names(view.labels), d.config.intents.issueA),
-      source: "issue",
-      fields: { issue: issue.url },
-      body: bodyOf(s),
-      mark,
-    },
-    new Date(d.clock.now() * 1000),
-  );
-  d.log(`${issue.url}: queued as ${added.id}`);
-  await announce(d, repo, issue, added);
+  const n: NewIntent = {
+    repo: repo.name,
+    title: plainLine(s.title, TITLE_MAX) || `GitHub issue #${issue.number}`,
+    u: s.u,
+    i: s.i,
+    a: autonomyFrom(names(view.labels), d.config.intents.issueA),
+    source: "issue",
+    fields: { issue: issue.url },
+    body: bodyOf(s),
+  };
+  const reasons = [
+    `- Urgency ${s.u} of 5: ${plain(s.u_why)}`,
+    `- Importance ${s.i} of 5: ${plain(s.i_why)}`,
+  ].join("\n");
+  const url = await propose(d, poll, listing, branch, n, issue.url, reasons);
+  d.log(`${issue.url}: proposed as ${url}`);
+  await proposed(d, repo, issue, url);
 }
 
 /**
@@ -384,12 +546,13 @@ async function pollIssue(
  */
 export async function pollIssues(d: IssueDeps): Promise<void> {
   const errors: string[] = [];
+  const poll: Poll = { intents: d.store.github(), taken: null };
   for (const repo of d.config.repos.values()) {
     try {
       const listed = JSON.parse(
         await gh(
           d,
-          repo,
+          repo.github,
           [
             "issue",
             "list",
@@ -410,7 +573,7 @@ export async function pollIssues(d: IssueDeps): Promise<void> {
       for (const i of [...listing.open, ...listing.done]) if (i.issue) known.set(i.issue, i);
       for (const issue of listed.sort((a, b) => a.number - b.number)) {
         try {
-          await pollIssue(d, repo, issue, listing, known);
+          await pollIssue(d, poll, repo, issue, listing, known);
         } catch (e) {
           errors.push(`${repo.github}#${issue.number}: ${(e as Error).message}`);
         }
