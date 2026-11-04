@@ -16,6 +16,7 @@ export const STEPS = [
   "Review",
   "Gate",
   "Question",
+  "Answer",
   "Access",
 ] as const;
 export type Step = (typeof STEPS)[number];

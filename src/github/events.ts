@@ -4,6 +4,7 @@
 import type { Intent } from "../intents/types.ts";
 import { finished, next, type Outcome } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
+import { parseAllow } from "../pipeline/access.ts";
 import { recheck } from "../risk.ts";
 import type { PrState } from "./prs.ts";
 
@@ -151,7 +152,10 @@ export function prEvents(m: Mission, prs: Prs, me: string, botLogin: string): Ou
   }
 
   const fresh = ownerSaid(prs, me, botLogin).filter((s) => newer(s.at, m.feedback_seen));
-  const isCommand = (s: Said) => s.text === RETRY || s.text === RELEASE;
+  // PIP-141: `allow <path>` reverses a refusal (not feedback), unless a test question is open.
+  const asking = Boolean(dataOf<{ testAsk?: unknown }>(m).testAsk);
+  const isCommand = (s: Said) =>
+    s.text === RETRY || s.text === RELEASE || (!asking && parseAllow(s.text) !== null);
   const feedback = fresh.filter((s) => !isCommand(s));
   if (feedback.length > 0) {
     const kinds = new Set(feedback.map((s) => s.kind));
@@ -254,6 +258,41 @@ export function releaseRequested(m: Mission, prs: Prs, me: string, botLogin: str
       const marker = `<!-- towercab:release:${c.id} -->`;
       const answered = pr.comments.some((b) => isBot(b.author, botLogin) && b.body.includes(marker));
       if (!answered) out.push({ kind, pr: n, commentId: c.id, reply: releaseReply(c.id) });
+    }
+  }
+  return out;
+}
+
+/** An owner's `allow <path>` the bot hasn't answered yet (PIP-141). */
+export interface ReversalAsk {
+  kind: PrKind;
+  pr: number;
+  commentId: string;
+  paths: string[];
+  text: string;
+}
+
+/** The marker of the reply to the owner's comment `commentId`; it shows the comment was answered. */
+export const reversalMarker = (commentId: string) => `<!-- towercab:allow:${commentId} -->`;
+
+/**
+ * PIP-141: the owner's `allow <path>` comments, newer than `feedback_seen`, that no bot reply carrying
+ * their marker answers; none while a test question is open (then they are its answer).
+ */
+export function reversalRequested(m: Mission, prs: Prs, me: string, botLogin: string): ReversalAsk[] {
+  if (finished(m.stage) || dataOf<{ testAsk?: unknown }>(m).testAsk) return [];
+  const out: ReversalAsk[] = [];
+  for (const kind of KINDS) {
+    const pr = prs[kind];
+    const n = prNumber(m, kind);
+    if (!pr || n === null) continue;
+    for (const c of pr.comments) {
+      if (!isOwner(c.author, me) || !c.id || !newer(c.at, m.feedback_seen)) continue;
+      const paths = parseAllow(c.body);
+      if (!paths) continue;
+      const marker = reversalMarker(c.id);
+      if (pr.comments.some((b) => isBot(b.author, botLogin) && b.body.includes(marker))) continue;
+      out.push({ kind, pr: n, commentId: c.id, paths, text: c.body.trim() });
     }
   }
   return out;

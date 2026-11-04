@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..111, PIP-115..121, PIP-133..134 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..111, PIP-115..121, PIP-133..134, PIP-138..141 · **Prefix:** PIP
 
 ## Purpose
 
@@ -1122,10 +1122,10 @@ owner, naming the test and why, and the owner's answer decides.
   guard's block reason for a protected existing test ends `if you need it, finish what you can and
   return status access with this test and why`. Unlike other unplanned access (AUT-15) this is never
   granted by Towercab itself, at any autonomy: the mission waits with a question that names the test
-  and the reason (PIP-110), with the options `Allow this change` and `Keep the test as it is`, and a
+  and the reason (PIP-110), with the options `Allow this change` and `No, keep the test as it is` (PIP-138), and a
   recommendation.
-- The owner's answer is read as a choice: allow → the file joins the grants (`by: owner`) and the worker
-  resumes with it writable; anything else, or a reply that doesn't clearly allow → refused. A refused
+- The owner's answer is read as a choice (PIP-138): allow → the file joins the grants (`by: owner`) and the
+  worker resumes with it writable; refusal → refused; a reply that is neither is asked again (PIP-139). A refused
   file is recorded in `data.refusedTests`, stays blocked for the rest of the mission, and the resumed
   worker is told it is refused and must finish without changing it, or ask in another way
   (`status: blocked`). Asking again for a refused file doesn't ask the owner twice: it is refused at
@@ -1183,7 +1183,7 @@ owner once, with the whole list.
   with every file in `access.tests`. The worker does not stop at the first block. The agent file for
   the worker says the same.
 - The mission waits with one question (PIP-110) listing each file and its reason, with the options
-  `Allow all of them` and `Keep all as they are`, and a recommendation. A reply that names some of the
+  `Allow all of them` and `No, keep all as they are` (PIP-138), and a recommendation. A reply that names some of the
   files allows those. Following PIP-116's rule, a file the reply does not clearly allow is refused.
 - Allowed files join the grants (`by: owner`); refused ones go to `data.refusedTests` (PIP-116). A
   list of one file asks as before. Files already granted or refused are left out of the list; if all

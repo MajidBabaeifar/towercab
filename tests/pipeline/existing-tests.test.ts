@@ -11,7 +11,7 @@ import {
   answerTest,
   blockedTests,
   parseAccess,
-  readsAsAllow,
+  readReply,
   renderAccess,
   sortTestRequests,
   testGrantsOf,
@@ -221,7 +221,7 @@ test("pipeline: an unplanned test change asks the owner", () => {
   expect(q.context).toContain("`tests/a.test.ts`");
   expect(q.context).toContain("the greeting changed");
   expect(q.question).toBe("May the worker change `tests/a.test.ts`?");
-  expect(q.options.map((o) => o.option)).toEqual(["Allow this change", "Keep the test as it is"]);
+  expect(q.options.map((o) => o.option)).toEqual(["Allow this change", "No, keep the test as it is"]);
   expect(q.recommendation).not.toBe("");
   // A test the plan already granted is not asked about; a blocked one is, once; a non-test is skipped.
   const state = { granted: { tests: [{ path: "tests/a.test.ts", why: "w" }] } };
@@ -240,7 +240,9 @@ test("pipeline: an unplanned test change asks the owner", () => {
 });
 
 test("pipeline: allowing a test grants that file", () => {
-  for (const yes of ["Allow this change", "yes", "OK, go ahead"]) expect(readsAsAllow(yes), yes).toBe(true);
+  for (const yes of ["Allow this change", "yes", "OK, go ahead"]) {
+    expect(readReply(yes, ["tests/a.test.ts"]).allowed, yes).toEqual(["tests/a.test.ts"]);
+  }
   const ask = { path: "tests/a.test.ts", why: "w", rest: [] };
   const r = answerTest(ask, {}, "Allow this change");
   expect(r.patch).toEqual({ testAllowed: [{ path: "tests/a.test.ts", why: "w" }] });
@@ -250,11 +252,11 @@ test("pipeline: allowing a test grants that file", () => {
 });
 
 test("pipeline: a refused test stays blocked", () => {
-  for (const no of ["Keep the test as it is", "no", "yes, but not that one", "maybe", "", undefined]) {
-    expect(readsAsAllow(no), String(no)).toBe(false);
+  for (const no of ["Keep the test as it is", "no", "No, keep the test as it is"]) {
+    expect(readReply(no, ["tests/a.test.ts"]).refused, no).toEqual(["tests/a.test.ts"]);
   }
   const ask = { path: "tests/a.test.ts", why: "w", rest: [] };
-  const r = answerTest(ask, {}, "Keep the test as it is");
+  const r = answerTest(ask, {}, "No, keep the test as it is");
   expect(r.patch).toEqual({ refusedTests: [{ path: "tests/a.test.ts", why: "w" }] });
   expect(r.note).toContain("refused");
   // Still blocked, and asking again is answered at once, not put to the owner twice.

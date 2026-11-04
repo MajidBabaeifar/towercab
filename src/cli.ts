@@ -61,6 +61,7 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   status | next                   what is happening, and what runs next
   add "<repo>: <title>" [uN iN aN]
   answer <id> <text>              answer a question (when there is no PR to reply on)
+  answer <id> allow <path>…       allow a test you refused earlier, for the running mission
   approve <id>                    merge the PR the intent waits on, as you
   retry <id> | drop <id>
   start <id>                      begin that intent's design now, even when the repo is full
