@@ -325,6 +325,47 @@ When Towercab's own `main` moves, the running Towercab updates itself and restar
   behind `main`. Never moves to an older commit.
 - Verified by: `update: pulls and restarts when idle`, `update: a failed check rolls back`, `update: a dirty checkout is left alone`, `cli: doctor --quick leaves the database alone`
 
+### LOOP-105 · One code version at a time
+
+The loop restarts itself, before starting any new work, when the checkout it runs from has moved to a different commit than the one it started from.
+
+- At start the loop records `git rev-parse HEAD` of its checkout. In every pass, before it starts a
+  Claude run or any other child that carries the guard hook (PIP-29) or reads files the loop wrote, it
+  compares that commit with the checkout's HEAD. Different → it starts nothing new, lets running steps
+  finish without applying a new one, then exits 75 so systemd starts the current code (as LOOP-35
+  does). A HEAD that moves mid-pass is caught by the next comparison, before the next run.
+- This covers any move of the checkout (self-update between `git merge` and the restart, a manual
+  `git pull`). It sends no message and records the restart in the log with both commits.
+- Verified by: `update: a moved checkout restarts before the next run`, `update: a HEAD that moves mid-pass restarts before the next run`
+
+### LOOP-106 · Versioned guard rules
+
+The guard hook refuses a rules file written by a different version of the loop, and the build step is retried after the restart rather than ending blocked.
+
+- `guard.json` (PIP-29) carries a number `version`; the loop writes the current one and the hook knows
+  the same one. A file whose `version` is missing or different makes the hook exit 2 with `guard rules
+  are from another version of Towercab; the loop is restarting, try again`. A file of the right version
+  that is unreadable or malformed (a missing `existing`, a wrong type) still fails closed with exit 2
+  and its own reason, and is not treated as skew.
+- A build run whose only refusals are version skew is not a block: the mission stays at its step, the
+  loop restarts (LOOP-105), and the step runs again with newly written rules. A rules file without
+  `existing` from an "old" loop is skew (no `version`), never an owner wait.
+- Verified by: `guard: a rules file of another version is refused as skew`, `guard: a malformed rules file of the current version fails closed`, `build: version skew restarts and retries the build`
+
+### LOOP-107 · One automatic retry for Towercab's own setup
+
+A step that is blocked by Towercab's own setup is retried once automatically before the owner is asked.
+
+- A block whose cause is the setup (guard settings or rules files, sandbox, the files the loop writes
+  for a run) and not the work itself counts as a setup fault. The first time it happens for a mission
+  step, the loop restarts that step once (a fresh setup, no wait, no message). The retry is recorded
+  in the mission's move log with the cause.
+- If the retry is blocked by a setup fault again, the mission waits for the owner as today (LOOP-10),
+  with the cause in plain words. Version skew (LOOP-106) does not use up this retry.
+- Blocks caused by the work (a protected path not granted, a failing test, an access request) are
+  unchanged and are not retried.
+- Verified by: `loop: a setup block is retried once`, `loop: a second setup block waits for the owner`, `loop: a block caused by the work is not retried`
+
 ### LOOP-36 · Dev loop
 
 A code change to Towercab runs on the owner's machine within seconds.
