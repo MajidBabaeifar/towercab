@@ -1222,16 +1222,21 @@ for the worker, not a refusal.
 - Replaces the reading rule of PIP-116 and PIP-136 (`readsAsAllow`). The reply is trimmed and lower-cased,
   then read by its first whole word (the text up to the first space or punctuation, so `no,` is `no` but
   `not` and `nothing` are not): an *allow* starts with the word `yes`, `allow`, `ok`, `okay`, `approve`,
-  `approved` or the phrase `go ahead`; a *refusal* starts with exactly the word `no`, `refuse`, `don't`
-  or `dont`, or the phrase `keep it`; a reply that starts with anything else is *unclear*. So `Not sure`
-  and `Nothing against it, go ahead` are unclear, never refusals. Words later in the reply (`not`,
-  `keep`, `without`, `don't`) never change the reading.
+  `approved` or the phrase `go ahead`; a *refusal* starts with exactly the word `no`, `refuse`, `don't`,
+  `dont` or `keep`; a reply that starts with anything else is *unclear*. So `Keep the test as it is`
+  and `No, keep all as they are` refuse, while `Not sure` and `Nothing against it, go ahead` are
+  unclear, never refusals. Words later in the reply (`not`, `keep`, `without`, `don't`) never change
+  the reading.
+- The suggested answers start with the reading word: the options of the test question (PIP-116) are
+  `Allow this change` and `No, keep the test as it is`, and those of the batched question (PIP-136) are
+  `Allow all of them` and `No, keep all as they are`, so choosing an option as written is read as
+  intended.
 - On an allow, whatever follows the allow word is passed to the resumed worker as the owner's conditions
   ("The owner allowed you to change X, on these conditions: …"), with the full reply quoted. A bare
   allow adds no conditions line.
 - In a batched question (PIP-136) a reply that allows names the files it allows: a bare allow allows all
   asked; a reply naming some allows those and leaves the rest unanswered, not refused (PIP-139).
-- Verified by: `access: a reply starting with yes allows even with a condition`, `access: the fifteen replies of 261031-1714-5 read as allow`, `access: a reply starting with no refuses`, `access: only whole first words refuse`, `pipeline: conditions after a yes reach the worker`
+- Verified by: `access: a reply starting with yes allows even with a condition`, `access: the fifteen replies of 261031-1714-5 read as allow`, `access: a reply starting with no refuses`, `access: a reply starting with keep refuses`, `pipeline: the test question options start with the word they are read by`, `access: only whole first words refuse`, `pipeline: conditions after a yes reach the worker`
 
 ### PIP-139 · An unclear reply is asked again, never read as allow or refusal
 
