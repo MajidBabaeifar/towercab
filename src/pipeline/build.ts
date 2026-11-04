@@ -11,7 +11,14 @@ import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { CONTROL } from "../repo/protected.ts";
 import { runSet } from "../repo/runset.ts";
-import { answerTest, blockedTests, sortTestRequests, testGrantsOf, testQuestion } from "./access.ts";
+import {
+  answerTest,
+  blockedTests,
+  readingReply,
+  sortTestRequests,
+  testGrantsOf,
+  testQuestion,
+} from "./access.ts";
 import { logPath, sandboxSpec } from "./checks.ts";
 import {
   ask,
@@ -26,11 +33,13 @@ import {
   grants,
   intentOf,
   type PipeData,
+  questionMd,
   readText,
   repoFiles,
   spawnRun,
   tail,
   takeRemote,
+  tellOwner,
 } from "./common.ts";
 import {
   clearGuardLogs,
@@ -431,8 +440,19 @@ export async function askForTests(
 export async function resolveTestAsk(cx: Ctx, m: Mission): Promise<{ done: Outcome } | { m: Mission }> {
   const d = data(m);
   const asked = d.testAsk!;
-  // Only text that came with the answer counts (ask clears the old one); no text refuses.
+  // Only text that came with the answer counts (ask clears the old one).
   const r = answerTest(asked, d, d.answer);
+  const said = readingReply(r.read);
+  if (r.read.undecided.length) {
+    // PIP-139: neither a yes nor a no: nothing is recorded and the same question stays open.
+    const q = d.question ?? testQuestion(asked);
+    await tellOwner(cx, m, said, questionMd(q, d.brief));
+    return {
+      done: wait("answer the question", q.question, {
+        data: { question: q, brief: d.brief, testAsk: asked, answer: undefined },
+      }),
+    };
+  }
   const note = [d.testNote, r.note].filter(Boolean).join(" ");
   const next = sortTestRequests(
     asked.rest,
@@ -441,6 +461,7 @@ export async function resolveTestAsk(cx: Ctx, m: Mission): Promise<{ done: Outco
   ).ask;
   const [first, ...rest] = next;
   if (first) {
+    await tellOwner(cx, m, said);
     const o = await ask(cx, m, testQuestion(first));
     return {
       done: {
@@ -449,7 +470,10 @@ export async function resolveTestAsk(cx: Ctx, m: Mission): Promise<{ done: Outco
       },
     };
   }
-  return { m: cx.record(m, m.step, {}, { ...r.patch, testAsk: undefined, testNote: note }) };
+  // PIP-140: recorded first, then said.
+  const recorded = cx.record(m, m.step, {}, { ...r.patch, testAsk: undefined, testNote: note });
+  await tellOwner(cx, m, said);
+  return { m: recorded };
 }
 
 async function setupOrWorker(cx: Ctx, m: Mission): Promise<Progress> {

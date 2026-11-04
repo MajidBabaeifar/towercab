@@ -44,7 +44,8 @@ How to work:
 - Test files that exist on the base branch are read-only unless your access line lists them (new test
   files are free). If you must change one that isn't listed, finish everything else first, then
   return `status: "access"` with `access.tests` (the exact `path` and why). The owner decides; a
-  refused test stays as it is.
+  refused test stays as it is. When the owner allows a test with conditions ("Yes, but keep every
+  transition test's meaning"), the conditions come with the allowance: follow them.
 - If you can't go on without the owner, return `status: "blocked"` with one question.
 
 Return the JSON result:

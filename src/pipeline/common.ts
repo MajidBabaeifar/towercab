@@ -629,6 +629,25 @@ export async function note(cx: Ctx, m: Mission, step: Step, round: number, body:
   }
 }
 
+/**
+ * PIP-140: tell the owner how their answer was read, where it came from: an "Answer" stage comment on
+ * the current PR, or the top of the intent's `## Towercab` section, above `keep` (the question that
+ * is still open, if any). Never fails the step.
+ */
+export async function tellOwner(cx: Ctx, m: Mission, body: string, keep = ""): Promise<void> {
+  const pr = currentPr(cx, m, cx.repo(m));
+  try {
+    if (pr) {
+      await upsertStageComment(cx.github, pr.github, pr.n, "Answer", m.continued, body);
+    } else {
+      const text = keep ? `${body}\n\n${keep}` : body;
+      await cx.store.update(m.intent, "answer", (e) => e.setSection("Towercab", text));
+    }
+  } catch (e) {
+    cx.log(`${m.intent}: couldn't say how the answer was read: ${(e as Error).message}`);
+  }
+}
+
 /** The merged plan's ticked access, from `plan.md` on the intents repo's main. */
 export async function grantedFromPlan(cx: Ctx, intent: Intent): Promise<Access> {
   const md = await cx.store.readFile(`${intent.dir}/plan.md`);
