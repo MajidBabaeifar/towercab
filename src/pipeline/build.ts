@@ -142,6 +142,7 @@ export const buildHandler: Handler = {
     switch (m.step) {
       case "": {
         // PIP-116: the owner's answer on a test the worker asked for comes first.
+        const resumed = Boolean(d.testAsk);
         if (d.testAsk) {
           const r = await resolveTestAsk(cx, m);
           if ("done" in r) return r;
@@ -149,10 +150,13 @@ export const buildHandler: Handler = {
         }
         // The checkout is Towercab's: what another program left in it (an untracked file, an edit)
         // can't block the checkout below or ride into the PR. Ignored files, such as caches, stay (LOOP-8).
-        await coGit(cx, m, ["reset", "--quiet", "--hard"]);
-        await coGit(cx, m, ["clean", "-fdq"]);
+        // After a test question the worker's own edits stay: it was told to finish the rest first.
+        if (!resumed) {
+          await coGit(cx, m, ["reset", "--quiet", "--hard"]);
+          await coGit(cx, m, ["clean", "-fdq"]);
+        }
         // The first round starts from base, which now holds the merged spec; read the plan's grants.
-        if (!d.build && !d.lockHead) {
+        if (!d.build && !d.lockHead && !resumed) {
           const repo = cx.repo(m);
           const clone = cloneOf(cx, m);
           await git(cx.tools, clone, ["fetch", "--quiet", "origin"], await cx.github.gitAuth(repo.github));
@@ -265,27 +269,8 @@ export const buildHandler: Handler = {
           files.towercab.tests,
           files.towercab.live,
         );
-        const s = sortTestRequests(v.access.tests, d, existing);
-        if (s.granted.length) lines.push(`Already allowed: ${s.granted.join(", ")}.`);
-        if (s.refused.length)
-          lines.push(`The owner refused earlier, so these stay as they are: ${s.refused.join(", ")}.`);
-        if (s.notBlocked.length)
-          lines.push(`Not existing tests, nothing to ask: ${s.notBlocked.join(", ")}.`);
-        const [first, ...rest] = s.ask;
-        if (first) {
-          const o = await ask(cx, m, testQuestion(first), "answer the question", v.brief);
-          return {
-            done: {
-              ...o,
-              data: {
-                ...o.data,
-                unplanned,
-                testAsk: { ...first, rest },
-                testNote: lines.join(" ") || undefined,
-              },
-            },
-          };
-        }
+        const asked = await askForTests(cx, m, v.access.tests, existing, v.brief, unplanned, lines);
+        if (asked) return { done: asked };
       }
       const fresh = cx.record(m, "access", {}, { unplanned, testNote: undefined });
       return spawnWorker(cx, fresh, [...lines, "Continue the build."].join(" "));
@@ -306,19 +291,49 @@ export const buildHandler: Handler = {
 };
 
 /**
+ * PIP-116: the tests the worker asked to change that still need the owner: puts the first to them (the
+ * rest wait in `testAsk`) and returns the wait, or null when every one is settled. `lines` gets what
+ * the resumed worker is told about the others. The owner's earlier `answer` is cleared, so only a
+ * reply to this question can grant the test.
+ */
+export async function askForTests(
+  cx: Ctx,
+  m: Mission,
+  tests: { path: string; why: string }[],
+  existing: string[],
+  brief: string,
+  unplanned: NetAccess | undefined,
+  lines: string[],
+): Promise<Outcome | null> {
+  const s = sortTestRequests(tests, data(m), existing);
+  if (s.granted.length) lines.push(`Already allowed: ${s.granted.join(", ")}.`);
+  if (s.refused.length)
+    lines.push(`The owner refused earlier, so these stay as they are: ${s.refused.join(", ")}.`);
+  if (s.notBlocked.length) lines.push(`Not existing tests, nothing to ask: ${s.notBlocked.join(", ")}.`);
+  const [first, ...rest] = s.ask;
+  if (!first) return null;
+  const o = await ask(cx, m, testQuestion(first), "answer the question", brief);
+  return {
+    ...o,
+    data: {
+      ...o.data,
+      unplanned,
+      answer: undefined,
+      testAsk: { ...first, rest },
+      testNote: lines.join(" ") || undefined,
+    },
+  };
+}
+
+/**
  * PIP-116: the owner answered the question about a test: allowed → the file joins the grants,
  * anything else → refused for good. More tests asked in the same round are put one after the other.
  */
-async function resolveTestAsk(cx: Ctx, m: Mission): Promise<{ done: Outcome } | { m: Mission }> {
+export async function resolveTestAsk(cx: Ctx, m: Mission): Promise<{ done: Outcome } | { m: Mission }> {
   const d = data(m);
   const asked = d.testAsk!;
-  let reply = d.answer;
-  if (!reply) {
-    const intent = await intentOf(cx, m);
-    const last = (intent.sections.get("Answers") ?? "").trim().split("\n").filter(Boolean).at(-1);
-    reply = last?.replace(/^-\s+\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\s*/, "");
-  }
-  const r = answerTest(asked, d, reply);
+  // Only text that came with the answer counts (ask clears the old one); no text refuses.
+  const r = answerTest(asked, d, d.answer);
   const note = [d.testNote, r.note].filter(Boolean).join(" ");
   const next = sortTestRequests(
     asked.rest,
@@ -328,7 +343,12 @@ async function resolveTestAsk(cx: Ctx, m: Mission): Promise<{ done: Outcome } | 
   const [first, ...rest] = next;
   if (first) {
     const o = await ask(cx, m, testQuestion(first));
-    return { done: { ...o, data: { ...o.data, ...r.patch, testAsk: { ...first, rest }, testNote: note } } };
+    return {
+      done: {
+        ...o,
+        data: { ...o.data, ...r.patch, answer: undefined, testAsk: { ...first, rest }, testNote: note },
+      },
+    };
   }
   return { m: cx.record(m, m.step, {}, { ...r.patch, testAsk: undefined, testNote: note }) };
 }

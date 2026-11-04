@@ -252,9 +252,13 @@ export function claudeSettings(
       if (!denyWrite.includes(p)) denyWrite.push(p);
     }
     // REPO-13: existing tests no grant covers; only those still in the checkout can be named.
+    const have = new Set(denyWrite);
     for (const rel of g.existing) {
       const p = join(resolve(g.checkout), rel);
-      if (!denyWrite.includes(p) && existsSync(p)) denyWrite.push(p);
+      if (!have.has(p) && existsSync(p)) {
+        have.add(p);
+        denyWrite.push(p);
+      }
     }
   }
   const filesystem: Record<string, unknown> = { denyRead, denyWrite };
