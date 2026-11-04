@@ -3,6 +3,7 @@
 
 import type { Db, SqlValue } from "./db.ts";
 import { COLUMNS, dataOf, getMission, insertMission, type Mission } from "./mission.ts";
+import { type ShipFacts, shipFacts } from "./steps.ts";
 
 export const ORDER = [
   "pick",
@@ -16,6 +17,7 @@ export const ORDER = [
   "review",
   "gate",
   "merge",
+  "steps",
   "deploy",
   "e2e",
   "done",
@@ -26,9 +28,9 @@ export const WAIT_STAGES = ["approval:spec", "approval:plan", "approval:merge", 
 
 export type WorkStage = (typeof ORDER)[number] | (typeof SHIP_EXTRA)[number];
 export type WaitStage = (typeof WAIT_STAGES)[number];
-export type Stage = WorkStage | WaitStage | "stopped";
+export type Stage = WorkStage | WaitStage | "stopped" | "unverified";
 
-export const STAGES: Stage[] = [...ORDER, ...SHIP_EXTRA, ...WAIT_STAGES, "stopped"];
+export const STAGES: Stage[] = [...ORDER, ...SHIP_EXTRA, ...WAIT_STAGES, "stopped", "unverified"];
 
 export const EVENTS = [
   "ok",
@@ -85,8 +87,9 @@ function isShipExtra(s: Stage): boolean {
   return (SHIP_EXTRA as readonly string[]).includes(s);
 }
 
+/** LOOP-73: `unverified` ends a change that merged but can't be checked live; it is final like `done`. */
 export function finished(s: Stage): boolean {
-  return s === "done" || s === "stopped";
+  return s === "done" || s === "stopped" || s === "unverified";
 }
 
 /** Position in ORDER (waits and stopped: -1). */
@@ -101,7 +104,12 @@ const between = (s: Stage, a: WorkStage, b: WorkStage) =>
  * The transition table. `from` is the stage a wait was entered from (blocked uses it for
  * `spec_merged`/`plan_merged`).
  */
-export function next(stage: Stage, event: Event, from: Stage | null = null): Next {
+export function next(
+  stage: Stage,
+  event: Event,
+  from: Stage | null = null,
+  facts: ShipFacts = { steps: false, nothingLive: false },
+): Next {
   if (finished(stage)) return K("ignore");
   const wait = isWait(stage);
   switch (event) {
@@ -115,7 +123,9 @@ export function next(stage: Stage, event: Event, from: Stage | null = null): Nex
       if (stage === "deploy" || stage === "e2e") return go("rollback");
       return K("unexpected");
     case "skip":
-      return stage === "deploy" ? go("done") : K("unexpected");
+      if (stage !== "deploy") return K("unexpected");
+      // SHIP-21: no live check ends as unverified, unless the plan says there is nothing to check.
+      return go(facts.nothingLive ? "done" : "unverified");
     case "revert":
       return stage === "rollback" ? go("revert") : K("unexpected");
     case "timeout":
@@ -142,8 +152,8 @@ export function next(stage: Stage, event: Event, from: Stage | null = null): Nex
       // A wait after shipping (a frozen repo, a revert) keeps reading its merged PR: no new ship.
       if (stage === "blocked" && from && (orderIndex(from) > orderIndex("merge") || isShipExtra(from)))
         return K("ignore");
-      if (stage === "approval:merge" || stage === "blocked") return go("deploy");
-      if (between(stage, "build", "merge")) return go("deploy");
+      if (stage === "approval:merge" || stage === "blocked") return go(facts.steps ? "steps" : "deploy");
+      if (between(stage, "build", "merge")) return go(facts.steps ? "steps" : "deploy");
       return K("ignore");
     case "closed":
     case "intent_removed":
@@ -183,7 +193,7 @@ export function next(stage: Stage, event: Event, from: Stage | null = null): Nex
  * keys are stored in intent files and never change; the asks say plainly what the owner decides or
  * does (PIP-110).
  */
-export const WAITS: Record<string, { stage: WaitStage; ask: string }> = {
+export const WAITS: Record<string, { stage: Stage; ask: string }> = {
   "approve spec": {
     stage: "approval:spec",
     ask: "Decide if this is the right change to build: merge the spec PR to go ahead, or comment what to change.",
@@ -272,6 +282,15 @@ export const WAITS: Record<string, { stage: WaitStage; ask: string }> = {
     stage: "blocked",
     ask: "Taking the broken change back out failed, so nothing more goes live in this repo until you fix it.",
   },
+  // LOOP-74: the checklist is in the why. The first holds the gate; the second is the `steps` stage itself.
+  "your steps first": {
+    stage: "blocked",
+    ask: "Do these before this change merges: tick them off in Towercab, or reply to change the plan.",
+  },
+  "your steps": {
+    stage: "steps",
+    ask: "Do these so the change works live: tick them off in Towercab.",
+  },
 };
 
 /** The WAITS key of a `waiting:` text (`crashed at build` → `crashed at`). */
@@ -281,7 +300,7 @@ export function waitKey(waiting: string): string {
   return waiting;
 }
 
-export function waitInfo(waiting: string): { stage: WaitStage; ask: string } {
+export function waitInfo(waiting: string): { stage: Stage; ask: string } {
   const w = WAITS[waitKey(waiting)];
   if (!w) throw new Error(`bug: unknown wait "${waiting}"`);
   return w;
@@ -294,7 +313,7 @@ export function continueTo(waiting: string | null, from: Stage | null): Stage {
     if (STAGES.includes(s)) return s;
   }
   if (waiting === "CI stuck") return "ci";
-  if (waiting === "merge failed") return "gate";
+  if (waiting === "merge failed" || waiting === "your steps first") return "gate";
   // PIP-95: the answer is read where the question was asked.
   if (waiting === "allow check writes" && from) return from;
   if (from === "pick" || from === "design" || from === "plan") return from;
@@ -304,7 +323,7 @@ export function continueTo(waiting: string | null, from: Stage | null): Stage {
 /** The intent's `stage` field (INT-5): the phase a person cares about. */
 export function phaseOf(stage: Stage, from: Stage | null): "spec" | "plan" | "code" | "done" | "dropped" {
   const s = stage === "blocked" && from ? from : stage;
-  if (s === "done") return "done";
+  if (s === "done" || s === "unverified") return "done";
   if (s === "stopped") return "dropped";
   if (s === "pick" || s === "design" || s === "approval:spec") return "spec";
   if (s === "plan" || s === "approval:plan") return "plan";
@@ -385,15 +404,15 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
   return db.tx(() => {
     const cur = getMission(db, m.id);
     if (!cur || cur.stage !== m.stage) return cur ?? m;
-    let n = next(cur.stage, o.event, cur.from_stage);
+    let data = dataOf(cur);
+    if (o.data) data = { ...data, ...o.data };
+    let n = next(cur.stage, o.event, cur.from_stage, shipFacts(data));
     if (n.kind === "unexpected") {
       cx.log?.(`unexpected ${o.event} at ${cur.stage}`);
       n = isWait(cur.stage) ? { kind: "ignore" } : { kind: "recover" };
     }
     const set: Record<string, SqlValue> = { ...(o.set ?? {}) };
     for (const c of Object.keys(set)) if (!COLUMNS.has(c)) throw new Error(`bug: column ${c} can't be set`);
-    let data = dataOf(cur);
-    if (o.data) data = { ...data, ...o.data };
 
     const move = (to: Stage, extra: Record<string, SqlValue>, why: string | null) => {
       const leavingWait = isWait(cur.stage) && to !== cur.stage;
@@ -410,7 +429,8 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
       };
       if (to !== cur.stage) cols.step_secs = 0;
       if (leavingWait) cols.continued = cur.continued + 1;
-      if (!isWait(to)) {
+      // `your steps` is a wait at a working stage (LOOP-74): it keeps its text.
+      if (!isWait(to) && !(to === "steps" && extra.waiting)) {
         cols.waiting = null;
         cols.from_stage = null;
       }

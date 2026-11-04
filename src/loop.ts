@@ -69,10 +69,12 @@ import { sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import type { PipeData } from "./pipeline/common.ts";
+import { writeTicks } from "./pipeline/steps.ts";
 import { isParked, priority } from "./priority.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
 import { aheadIn, bestReady, buildingIn, isReady } from "./slots.ts";
+import { leftOf, type OwnerStep, unticked } from "./steps.ts";
 import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
 import { budgetReached } from "./ui/state.ts";
 import { checkUpdate, RESTART_CODE } from "./update.ts";
@@ -368,6 +370,7 @@ export class Loop {
       this.d.log(`command ${c.id}: ${c.result}`);
     }
 
+    await this.syncSteps();
     await this.reap();
     await this.enterDue();
     this.enforceTimeouts();
@@ -392,10 +395,12 @@ export class Loop {
     this.restartIfMoved();
     await this.sendMessages();
 
-    const driven = unfinished(db).find((m) => isWorking(m.stage) && !m.held && !this.cooling(m));
+    // A change waiting days on the owner's steps is not work: the machine may sleep and the loop is idle.
+    const working = (m: Mission) => isWorking(m.stage) && !(m.stage === "steps" && m.waiting);
+    const driven = unfinished(db).find((m) => working(m) && !m.held && !this.cooling(m));
     this.inhibitor.update(driven ? `${driven.intent} ${driven.stage}` : null, clock.mono());
 
-    const live = unfinished(db).filter((m) => isWorking(m.stage) && !this.cooling(m));
+    const live = unfinished(db).filter((m) => working(m) && !this.cooling(m));
     report.idle =
       this.children.size === 0 && this.featuresJob === null && live.length === 0 && report.picked === null;
     if (this.targetId) {
@@ -443,6 +448,48 @@ export class Loop {
     }
   }
 
+  /**
+   * SHIP-22: ticks the owner made (the CLI and the page write them to the database) go to `plan.md`, and
+   * the wait they finish continues. A failed write is tried again on the next pass; the tick counts meanwhile.
+   */
+  private async syncSteps(): Promise<void> {
+    const { db } = this.d;
+    for (const m of unfinished(db)) {
+      const d = dataOf<{ steps?: OwnerStep[]; stepsDirty?: number }>(m);
+      if (!d.steps?.length) continue;
+      if (d.stepsDirty !== undefined) {
+        try {
+          await writeTicks(this.ctx(), m);
+        } catch (e) {
+          this.d.log(
+            `${label(m)}: couldn't write the ticked steps to plan.md, retrying: ${(e as Error).message}`,
+          );
+        }
+      }
+      const cur = getMission(db, m.id) ?? m;
+      if (
+        cur.stage === "blocked" &&
+        cur.waiting === "your steps first" &&
+        unticked(d.steps, "before").length === 0
+      ) {
+        this.move(cur, { event: "answered", why: "your steps are done" });
+      }
+      // The intent shows how many are left (UI-163).
+      const left = leftOf(d.steps, cur.waiting);
+      const i = this.intentOf(cur.intent);
+      if (i && cur.waiting && (i.stepsLeft ?? null) !== left && !i.done) {
+        try {
+          await this.d.store.update(cur.intent, "steps", (e) => {
+            if (left) e.setField("steps_left", left);
+            else e.removeField("steps_left");
+          });
+        } catch (e) {
+          this.d.log(`${label(cur)}: couldn't update the steps left: ${(e as Error).message}`);
+        }
+      }
+    }
+  }
+
   /** Entry effects of every mission whose step is `enter` (LOOP-6), finished ones too. */
   private async enterDue(): Promise<void> {
     for (const m of this.d.db.all<Mission>("SELECT * FROM missions WHERE step = 'enter' ORDER BY id")) {
@@ -472,7 +519,7 @@ export class Loop {
         db.get<{ id: number }>("SELECT MAX(id) AS id FROM transitions WHERE mission = ?", m.id)?.id ?? 0;
       const mark = `Towercab-Entry: ${m.session} ${t}`;
       if (!(await store.hasMark(mark))) {
-        const data = dataOf<{ dropped?: boolean }>(m);
+        const data = dataOf<{ dropped?: boolean; steps?: OwnerStep[] }>(m);
         const repo = this.d.config.repos.get(m.repo);
         const prUrl = (n: number | null, gh: string | null | undefined) =>
           n && gh ? `https://github.com/${gh}/pull/${n}` : null;
@@ -486,8 +533,12 @@ export class Loop {
               return;
             }
             e.setField("stage", phaseOf(m.stage, m.from_stage));
-            if (m.waiting && isWait(m.stage)) e.setField("waiting", m.waiting);
+            if (m.waiting && (isWait(m.stage) || m.stage === "steps")) e.setField("waiting", m.waiting);
             else e.removeField("waiting");
+            // UI-163: how many of the owner's steps are left, while the change waits on them.
+            const left = leftOf(data.steps, m.waiting);
+            if (left) e.setField("steps_left", left);
+            else e.removeField("steps_left");
             const spec = prUrl(m.spec_pr, repo?.github);
             const plan = prUrl(m.plan_pr, store.github());
             const code = prUrl(m.pr, repo?.github);
@@ -495,7 +546,10 @@ export class Loop {
             if (plan) e.setField("plan_pr", plan);
             if (code) e.setField("pr", code);
             if (m.stage === "pick") e.removeField("retry");
-            if (m.stage === "done") {
+            // SHIP-21: merged but never checked live; a mission that reaches `done` has no such field.
+            if (m.stage === "unverified") e.setField("verified", "no");
+            else e.removeField("verified");
+            if (m.stage === "done" || m.stage === "unverified") {
               const all = db.all<{ cost_usd: number; agent_secs: number }>(
                 "SELECT cost_usd, agent_secs FROM missions WHERE intent = ?",
                 m.intent,
@@ -531,7 +585,7 @@ export class Loop {
       fn = (t) => setFeature(t, m.repo, { intent: m.intent, title, status: "in progress" });
     else if (m.stage === "done")
       fn = (t) => setFeature(t, m.repo, { intent: m.intent, title, status: "live" });
-    else if (m.stage === "stopped") fn = (t) => removeFeature(t, m.intent);
+    else if (m.stage === "stopped" || m.stage === "unverified") fn = (t) => removeFeature(t, m.intent);
     if (!fn) return;
     const what = m.stage === "pick" ? "start" : m.stage === "done" ? "live" : "drop";
     try {

@@ -55,7 +55,18 @@ export const DESIGN_SCHEMA = object({
 /** SHIP-8: the e2e tests a change in a live repo adds, or why it needs none; null elsewhere. */
 const E2E = nullable(object({ tests: list(S), none_why: S }));
 
-export const PLAN_SCHEMA = object({ brief: BRIEF, plan: S, access: ACCESS, e2e: E2E });
+/** SHIP-17: what only the owner can do for the change to work, and when it is needed. */
+const OWNER_STEPS = list(object({ when: { type: "string", enum: ["before", "after"] }, text: S, why: S }));
+
+export const PLAN_SCHEMA = object({
+  brief: BRIEF,
+  plan: S,
+  access: ACCESS,
+  e2e: E2E,
+  owner_steps: OWNER_STEPS,
+  // SHIP-21: empty, or why nothing about the change can be seen live.
+  live_none_why: S,
+});
 
 export const QUESTION = object({
   context: S,
@@ -164,6 +175,10 @@ export interface PlanResult {
   plan: string;
   access: Access;
   e2e: { tests: string[]; none_why: string } | null;
+  /** SHIP-17: absent counts as none. */
+  owner_steps?: { when: "before" | "after"; text: string; why: string }[];
+  /** SHIP-21: absent counts as empty. */
+  live_none_why?: string;
 }
 
 export interface Question {
@@ -306,6 +321,10 @@ export function parseResult<K extends keyof Results>(
       ...value,
       outcomes: value.outcomes.map((o) => (isObject(o) && !("owner" in o) ? { ...o, owner: false } : o)),
     };
+  }
+  // SHIP-17, SHIP-21: a plan from before owner steps (or a cached one) reads as none and no claim.
+  if (kind === "plan" && isObject(value)) {
+    value = { owner_steps: [], live_none_why: "", ...value };
   }
   const why = validate(SCHEMAS[kind], value);
   return why === null ? { ok: true, value: value as Results[K] } : { ok: false, why };

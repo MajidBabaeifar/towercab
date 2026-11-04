@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..69, LOOP-92..93, LOOP-105..107 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..69, LOOP-73..75, LOOP-92..93, LOOP-105..107 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -219,7 +219,7 @@ which intent, with a link.
 The CLI covers running the service and the few actions that have no GitHub gesture.
 
 - `up`, `down`, `restart`, `logs` (LOOP-2); `run [--watch] [--intent <id>]`; `status`, `next`
-  (LOOP-13); `add` ([INT-2](intents.md)); `answer <id> <text>` (LOOP-38); `start <id>` (LOOP-63); `retry <id>` (a fresh
+  (LOOP-13); `add` ([INT-2](intents.md)); `answer <id> <text>` (LOOP-38); `start <id>` (LOOP-63); `step <id> <n…|all>` ([SHIP-22](ship.md)); `retry <id>` (a fresh
   attempt); `drop <id>` ([PRI-9](priority.md)); `approve <id>` (merges the PR the intent waits on, as
   the owner, LOOP-38); `pause`, `resume`; `repo add | remove | set | list` (LOOP-66, LOOP-67, LOOP-69); `ui` (opens
   the page); `doctor`; `update` (LOOP-35);
@@ -846,7 +846,7 @@ CREATE TABLE missions (
   child_pid INTEGER, child_kind TEXT, child_since REAL, child_model TEXT,
   cost_usd REAL NOT NULL DEFAULT 0, agent_secs REAL NOT NULL DEFAULT 0,
   data TEXT NOT NULL DEFAULT '{}', created REAL NOT NULL, updated REAL NOT NULL, finished REAL);
-CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT IN ('done','stopped');
+CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT IN ('done','stopped','unverified');
 CREATE TABLE transitions (id INTEGER PRIMARY KEY, mission INTEGER NOT NULL REFERENCES missions(id),
   at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT);
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
@@ -921,6 +921,8 @@ are stored in intent files and never change; each ask says plainly what the owne
 | `bad after:` | (intent only) | Fix what this intent waits for: Towercab can't find one of the intents it names, or it was dropped. |
 | `rolled back, revise` | blocked | The change broke the live app, two fixes didn't hold, and it was taken back out. Revise the intent, then start over (/retry). |
 | `rollback failed` | blocked | Taking the broken change back out failed, so nothing more goes live in this repo until you fix it. |
+| `your steps first` | blocked | Do these before this change merges: tick them off in Towercab, or reply to change the plan. |
+| `your steps` | steps | Do these so the change works live: tick them off in Towercab. |
 
 Every blocked wait continues on a reply on the intent's current PR, `towercab answer`, or removing
 `waiting:` from the intent; `/retry` starts over; closing the PR drops the intent.

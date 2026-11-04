@@ -81,11 +81,15 @@ export const SPEC = { "specs/web.md": "# Web\n\n### WEB-1 · Greeting\n\nThe pag
 
 export const PLAN_MD =
   "## Approach\n\nAdd a greeting file.\n\n## Steps\n\n1. Test\n2. Code\n\n## Risks\n\nNone.\n\n## How to check it\n\nRun the tests.";
+/** SHIP-21: a repo without a live block ends as done only when its plan says nothing can be checked live. */
+export const NONE_LIVE = "A greeting file is not something the live app shows.";
 export const PLAN = {
   brief: PLAN_BRIEF,
   plan: PLAN_MD,
   access: { domains: [], paths: [], tests: [] },
   e2e: null,
+  owner_steps: [],
+  live_none_why: NONE_LIVE,
 };
 
 export const WORKER_PR =

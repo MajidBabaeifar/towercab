@@ -91,7 +91,9 @@ export function getMission(db: Db, id: number): Mission | undefined {
 
 /** Missions not done or stopped, oldest first. */
 export function unfinished(db: Db): Mission[] {
-  return db.all<Mission>("SELECT * FROM missions WHERE stage NOT IN ('done','stopped') ORDER BY id");
+  return db.all<Mission>(
+    "SELECT * FROM missions WHERE stage NOT IN ('done','stopped','unverified') ORDER BY id",
+  );
 }
 
 export function forIntent(db: Db, intent: string): Mission[] {
@@ -100,7 +102,7 @@ export function forIntent(db: Db, intent: string): Mission[] {
 
 export function unfinishedFor(db: Db, intent: string): Mission | undefined {
   return db.get<Mission>(
-    "SELECT * FROM missions WHERE intent = ? AND stage NOT IN ('done','stopped')",
+    "SELECT * FROM missions WHERE intent = ? AND stage NOT IN ('done','stopped','unverified')",
     intent,
   );
 }

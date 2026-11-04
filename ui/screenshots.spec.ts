@@ -30,7 +30,15 @@ const PAGES = [
   {
     name: "stages",
     path: "/i/261024-1130-1?stage=verify&file=verify%2Fverify-1.log",
-    expect: ["Running checks", "Round 2", "Check output", "Showing the last 200 of", "2 failing"],
+    expect: [
+      "Running checks",
+      "Round 2",
+      "Check output",
+      "Showing the last 200 of",
+      "2 failing",
+      "Your steps",
+      "Run the docs server apply",
+    ],
   },
   {
     name: "question",

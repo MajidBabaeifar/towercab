@@ -2,7 +2,7 @@
 // plan-approved intents waiting for it. Pure: the loop and the pages count with these.
 
 import type { Listing } from "./intents/types.ts";
-import { phaseOf, type Stage } from "./machine.ts";
+import { finished, phaseOf, type Stage } from "./machine.ts";
 import { dataOf, type Mission } from "./mission.ts";
 import { priorityOf } from "./priority.ts";
 
@@ -14,7 +14,7 @@ export function readySince(m: Mission): number | null {
 
 export const isReady = (m: Mission): boolean => readySince(m) !== null;
 
-const unfinished = (m: Mission) => m.stage !== "done" && m.stage !== "stopped";
+const unfinished = (m: Mission) => !finished(m.stage);
 
 /** Designed, planned or waiting for approval, not yet plan-approved (LOOP-60). */
 export function isAhead(m: Mission): boolean {

@@ -17,6 +17,7 @@ import { section } from "../pipeline/prtext.ts";
 import { usualOwner } from "../repos.ts";
 import { currentRisk, type RiskGate, riskWords } from "../risk.ts";
 import { aheadIn, isAhead, isBuilding, isReady } from "../slots.ts";
+import type { OwnerStep } from "../steps.ts";
 import { proposedSection } from "./proposed.ts";
 import type {
   Access,
@@ -243,6 +244,7 @@ const STEP_WORDS: Record<Stage, string> = {
   review: "Reviewing",
   gate: "Deciding",
   merge: "Merging",
+  steps: "Waiting for your steps",
   deploy: "Waiting for the deploy",
   e2e: "Running e2e",
   rollback: "Rolling back",
@@ -250,15 +252,19 @@ const STEP_WORDS: Record<Stage, string> = {
   "approval:merge": "Waiting for your code review",
   blocked: "Waiting for your answer",
   done: "Done",
+  unverified: "Merged, not verified live",
   stopped: "Dropped",
 };
 
 /** UI-121: a stage in plain words, with a fix round's count and the repo hold. */
-export function shipWords(m: Pick<Mission, "stage" | "step" | "data">): string {
+export function shipWords(m: Pick<Mission, "stage" | "step" | "data"> & { waiting?: string | null }): string {
   if (m.stage === "gate" && m.step === "hold") return "Repo on hold";
+  // UI-161: the hold before the merge, and the stage after it, wait on the owner's steps.
+  if (m.stage === "blocked" && m.waiting === "your steps first")
+    return "Waiting for your steps before merging";
   const fixes = dataOf<{ ship?: { fixes?: number } }>(m as Mission).ship?.fixes ?? 0;
   const ship = ["deploy", "e2e", "rollback", "revert"].includes(m.stage);
-  if (fixes > 0 && !ship && !isWait(m.stage) && m.stage !== "done")
+  if (fixes > 0 && !ship && !isWait(m.stage) && !finished(m.stage))
     return `Fixing (${fixes} of 2): ${stepWords(m.stage).toLowerCase()}`;
   return stepWords(m.stage);
 }
@@ -279,6 +285,7 @@ const LABELS: Record<StateView["key"], StateView["label"]> = {
   upnext: "Up next",
   parked: "Parked",
   done: "Done",
+  unverified: "Merged, not verified live",
   dropped: "Dropped",
 };
 
@@ -316,6 +323,10 @@ const CARD_NOTES: Partial<Record<Stage, string>> = {
 export function stateOf(m: Mission, now: number, o: StateOpts = {}): StateView {
   if (m.stage === "stopped") return state("dropped");
   if (m.stage === "done") return state("done");
+  if (m.stage === "unverified") return state("unverified");
+  // UI-161: the owner's steps are a wait, before the merge (a hold at the gate) or after it (`steps`).
+  if (m.waiting === "your steps first" || (m.stage === "steps" && m.waiting))
+    return state("needs", "Your steps");
   if (isReady(m)) return state("queued", "ready to build");
   if (isWait(m.stage)) {
     const note = CARD_NOTES[m.stage] ?? (isQuestion(m.waiting) ? "Question" : "Blocked");
@@ -330,6 +341,24 @@ export function stateOf(m: Mission, now: number, o: StateOpts = {}): StateView {
   if (since > stallAfter(m.stage, o.config)) return state("stalled", `for ${duration(since)}`);
   if (m.stage === "ci") return state("ci");
   return state("working");
+}
+
+/** LOOP-75: "Waiting for <id>: your steps" for a queued intent whose `after` intent isn't done yet. */
+export function waitingFor(
+  s: Pick<Snap, "listing" | "missions">,
+  intent: Intent | null | undefined,
+): string | null {
+  if (!intent || intent.done || intent.stage !== null || intent.waiting !== null) return null;
+  const blocker = intent.after.find((a) => !s.listing?.doneIds.has(a));
+  if (!blocker) return null;
+  const m = s.missions.find((x) => x.intent === blocker);
+  const where = m ? (m.waiting ?? stepWords(m.stage).toLowerCase()) : "not started yet";
+  return `Waiting for ${blocker}: ${where}.`;
+}
+
+/** UI-162: a finished intent is done, or merged but never checked live. */
+export function finishedState(i: Pick<Intent, "verified">, note: string | null = null): StateView {
+  return i.verified === "no" ? state("unverified", note) : state("done", note);
 }
 
 function skipState(s: Skip | null, parked: boolean): StateView {
@@ -363,11 +392,11 @@ export async function snapshot(src: UiSources): Promise<Snap> {
   const intents = new Map<string, Intent>();
   for (const i of [...(listing?.done ?? []), ...(listing?.open ?? [])]) intents.set(i.id, i);
   const missions = src.db.all<Mission>(
-    "SELECT * FROM missions WHERE stage NOT IN ('done','stopped') ORDER BY id",
+    "SELECT * FROM missions WHERE stage NOT IN ('done','stopped','unverified') ORDER BY id",
   );
   const entered = new Map<number, number>();
   for (const r of src.db.all<{ mission: number; at: number }>(
-    "SELECT mission, MAX(at) AS at FROM transitions WHERE mission IN (SELECT id FROM missions WHERE stage NOT IN ('done','stopped')) GROUP BY mission",
+    "SELECT mission, MAX(at) AS at FROM transitions WHERE mission IN (SELECT id FROM missions WHERE stage NOT IN ('done','stopped','unverified')) GROUP BY mission",
   )) {
     entered.set(r.mission, r.at);
   }
@@ -760,10 +789,14 @@ function queuedRow(s: Snap, u: UpNext): Row {
 }
 
 /** UI-78: where a mission's plane sits on the airspace line. */
-export function stationOf(m: Pick<Mission, "stage" | "from_stage">): StationKey {
+export function stationOf(
+  m: Pick<Mission, "stage" | "from_stage"> & { waiting?: string | null },
+): StationKey {
+  // UI-161: a change held by steps before the merge waits at the gate's owner station.
+  if (m.stage === "blocked" && m.waiting === "your steps first") return "code-review";
   // UI-120: shipping, and a wait that came out of shipping, sit at the ship stations.
   const at = m.stage === "blocked" && m.from_stage ? m.from_stage : m.stage;
-  if (at === "deploy" || at === "rollback") return "deploy";
+  if (at === "steps" || at === "deploy" || at === "rollback") return "deploy";
   if (at === "e2e" || at === "revert") return "e2e";
   if (m.stage === "approval:spec") return "spec-review";
   if (m.stage === "approval:plan") return "plan-review";
@@ -1341,7 +1374,7 @@ function prViews(src: UiSources, i: Intent | null, m: Mission | null, ts: Transi
   ];
 }
 
-const SHIP_STAGES: (Stage | null)[] = ["deploy", "e2e", "rollback", "revert"];
+const SHIP_STAGES: (Stage | null)[] = ["steps", "deploy", "e2e", "rollback", "revert"];
 
 const ENTER_WORDS: Partial<Record<Stage, string>> = {
   pick: "Picked up",
@@ -1359,7 +1392,9 @@ const ENTER_WORDS: Partial<Record<Stage, string>> = {
   "approval:plan": "Asked you to review the plan",
   "approval:merge": "Asked you to review and merge the code PR",
   blocked: "Stopped and asked you",
-  done: "Done: the code PR is merged",
+  steps: "Merged; waiting for your steps",
+  unverified: "Merged, not verified live",
+  done: "Done: the code PR is merged and works live",
 };
 
 /** UI-62: one move in plain words. */
@@ -1443,6 +1478,8 @@ const NODES: NodeDef[] = [
   { id: "code_review", name: "Your code review", stage: "approval:merge", folder: null, owner: true },
   { id: "merge", name: "Merging", stage: "merge", folder: "merge", owner: false },
   // UI-123: the ship stages, listed only when visited.
+  // UI-161: the owner's steps after the merge, listed only when visited.
+  { id: "steps", name: "Your steps", stage: "steps", folder: null, owner: true, ship: true },
   { id: "deploy", name: "Deploying", stage: "deploy", folder: null, owner: false, ship: true },
   { id: "e2e", name: "e2e tests", stage: "e2e", folder: "e2e", owner: false, ship: true },
   { id: "rollback", name: "Rolling back", stage: "rollback", folder: null, owner: false, ship: true },
@@ -1775,6 +1812,9 @@ function sentenceOf(
       const at = m?.finished ?? null;
       return `Done${at ? ` ${ago(at, now)}` : ""}${i?.cost !== null && i?.cost !== undefined ? `; it cost ${money(i.cost)}` : ""}.`;
     }
+    case "unverified":
+      // UI-162: merged, but the repo can't check the change live.
+      return `Merged, not verified live${m?.finished ? ` ${ago(m.finished, now)}` : ""}. No live check set up for this repo.`;
     case "dropped":
       return `Dropped${m?.finished ? ` ${ago(m.finished, now)}` : ""}.`;
     case "parked":
@@ -1829,9 +1869,16 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
       config: src.config,
     });
   } else if (intent?.done) {
-    st = s.listing?.droppedIds.has(realId) || intent.stage === "dropped" ? state("dropped") : state("done");
+    st =
+      s.listing?.droppedIds.has(realId) || intent.stage === "dropped"
+        ? state("dropped")
+        : finishedState(intent);
   } else if (intent?.waiting) {
     st = state("needs", "Blocked");
+  } else if (waitingFor(s, intent)) {
+    // LOOP-75: `after` waits for the other intent to be done, and says where it is now.
+    st = state("queued");
+    reason = waitingFor(s, intent);
   } else if (entry) {
     st = skipState(entry.skip, false);
     reason = skipWords(entry.skip, titles, s.now);
@@ -1925,6 +1972,27 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     issue: intent?.issue ?? null,
     e2eLog: e2eLogOf(src.home.root, id),
   };
+  // UI-160, UI-162: the owner's steps, and the plan's claim that nothing could be checked live.
+  const shown = live ?? last;
+  const sd = shown ? dataOf<{ steps?: OwnerStep[]; liveNoneWhy?: string }>(shown) : {};
+  if (sd.steps?.length) {
+    body.steps = [...sd.steps]
+      .sort((a, b) => (a.when === b.when ? a.n - b.n : a.when === "before" ? -1 : 1))
+      .map((x) => {
+        const at = x.done_at ? Date.parse(x.done_at) / 1000 : Number.NaN;
+        return {
+          n: x.n,
+          when: x.when,
+          text: x.text,
+          why: x.why,
+          doneAt: x.done_at ? when(Number.isFinite(at) ? at : (shown?.updated ?? s.now), s.now) : null,
+        };
+      });
+    body.stepsWait =
+      shown?.waiting === "your steps first" ? "before" : shown?.waiting === "your steps" ? "after" : null;
+  }
+  if (sd.liveNoneWhy?.trim() && intent?.done && intent.verified !== "no")
+    body.nothingLive = sd.liveNoneWhy.trim();
   // AUT-20: the latest risk, when no card already shows it.
   const risk = !card && last ? riskView(last) : null;
   if (risk) body.risk = risk;
@@ -2010,7 +2078,7 @@ export function lanesOf(src: UiSources, s: Snap): Lane[] {
           intent: i.id,
           title: i.title,
           position: null,
-          state: dropped.has(i.id) || i.stage === "dropped" ? state("dropped") : state("done"),
+          state: dropped.has(i.id) || i.stage === "dropped" ? state("dropped") : finishedState(i),
           reason: null,
           when: Number.isFinite(at) ? when(at, s.now) : null,
           cost: i.cost !== null ? money(i.cost) : null,

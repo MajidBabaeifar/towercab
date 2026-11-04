@@ -20,6 +20,7 @@ import { dataOf, type Mission } from "../mission.ts";
 import { loadRepoFiles, RepoError, type RepoFiles } from "../repo/files.ts";
 import type { Risk } from "../risk.ts";
 import { checkoutRoot } from "../service.ts";
+import { combine, type OwnerStep, type PlanStep, parseNoneLive, parseSteps } from "../steps.ts";
 import { check } from "../tools.ts";
 import { grantsFor, parseAccess, type TestAsk } from "./access.ts";
 import { cacheEnv } from "./sandbox.ts";
@@ -85,7 +86,16 @@ export interface PipeData {
     e2e?: { tests: string[]; none_why: string } | null;
     /** PIP-106: the plan's plain brief. */
     brief?: string;
+    /** SHIP-17, SHIP-21: the owner's steps and the "nothing to check live" claim the plan made. */
+    ownerSteps?: PlanStep[];
+    liveNoneWhy?: string;
   };
+  /** SHIP-17: the owner's steps, read from the merged `plan.md` (the file is the record). */
+  steps?: OwnerStep[];
+  /** SHIP-21: the merged plan's claim that nothing about the change can be checked live. */
+  liveNoneWhy?: string;
+  /** SHIP-22: a tick the database has and `plan.md` doesn't yet; the loop writes it. */
+  stepsDirty?: number;
   /** The merged plan's ticked access. */
   granted?: Access;
   unplanned?: Omit<Access, "tests">;
@@ -652,6 +662,19 @@ export async function tellOwner(cx: Ctx, m: Mission, body: string, keep = ""): P
 export async function grantedFromPlan(cx: Ctx, intent: Intent): Promise<Access> {
   const md = await cx.store.readFile(`${intent.dir}/plan.md`);
   return md ? parseAccess(md) : { domains: [], paths: [], tests: [] };
+}
+
+/**
+ * SHIP-17, SHIP-22: the merged plan's steps and its "nothing to check live" claim, read from `plan.md`.
+ * Ticks the database has and the file doesn't yet (`stepsDirty`) are kept, so a failed write is never lost.
+ */
+export async function stepsFromPlan(cx: Ctx, m: Mission): Promise<Partial<PipeData>> {
+  const intent = await intentOf(cx, m);
+  const md = await cx.store.readFile(`${intent.dir}/plan.md`);
+  if (md === null) return {};
+  const d = data(m);
+  const c = combine(parseSteps(md), d.steps, d.stepsDirty !== undefined);
+  return { steps: c.steps, liveNoneWhy: parseNoneLive(md), stepsDirty: c.dirty ? d.stepsDirty : undefined };
 }
 
 /**

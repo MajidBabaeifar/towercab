@@ -35,6 +35,10 @@ export interface Intent {
   attempts: number | null;
   finished: string | null;
   lowerWhy: string | null;
+  /** `no` when the change merged but could not be checked live (SHIP-21); absent otherwise. */
+  verified?: string | null;
+  /** `2 of 3` while the change waits on the owner's steps (UI-163); absent otherwise. */
+  stepsLeft?: string | null;
   /** `## <title>` → body text (trimmed), in file order. */
   sections: Map<string, string>;
   /** The whole file, as read. */

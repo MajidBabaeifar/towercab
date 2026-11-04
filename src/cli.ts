@@ -5,7 +5,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { applyCommand, type CommandName, commandResult, insertCommand, pendingCommands } from "./commands.ts";
+import {
+  applyCommand,
+  type CommandName,
+  commandResult,
+  insertCommand,
+  pendingCommands,
+  tickSteps,
+} from "./commands.ts";
 import { appKeyPath, type Config, ConfigError, checkLoop, configPath, loadConfig } from "./config.ts";
 import { Db } from "./db.ts";
 import { doctor } from "./doctor.ts";
@@ -44,6 +51,7 @@ export const COMMANDS = [
   "retry",
   "drop",
   "start",
+  "step",
   "approve",
   "pause",
   "resume",
@@ -65,6 +73,7 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   approve <id>                    merge the PR the intent waits on, as you
   retry <id> | drop <id>
   start <id>                      begin that intent's design now, even when the repo is full
+  step <id> <n…|all>              tick off steps the plan lists for you (the change then goes on)
   pause | resume
   repo add <owner/name> [--name <short>] | repo remove <name> | repo list
   repo set <name> key=value…      workers, ahead, base, path, env (NAME=value or a JSON object)
@@ -376,6 +385,15 @@ async function run(
     case "start":
       need(1, "<id>");
       return submit(w, "start", args[0]);
+    case "step": {
+      need(2, "<id> <n…|all>");
+      const store = await w.store();
+      const id = (await store.get(args[0]!)).id;
+      const which = args.slice(1).length === 1 && args[1] === "all" ? "all" : args.slice(1).map(Number);
+      if (which !== "all" && which.some((n) => !Number.isInteger(n) || n < 1))
+        throw new UsageError(`want step numbers or all, got "${args.slice(1).join(" ")}"`);
+      return tickSteps(w.db, id, which, true, new Date());
+    }
     case "pause":
       return submit(w, "pause");
     case "resume":

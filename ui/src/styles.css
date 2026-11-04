@@ -63,6 +63,8 @@
   --upnext-bg: #eceeff;
   --parked: #5b6474;
   --parked-bg: #f0f1f4;
+  --unverified: #5b6474;
+  --unverified-bg: #f0f1f4;
   --done: #146c43;
   --done-bg: #e1f3e9;
   --dropped: #5b6474;
@@ -115,6 +117,8 @@
     --upnext-bg: rgb(120 125 255 / 0.16);
     --parked: #a3abb8;
     --parked-bg: rgb(150 162 180 / 0.1);
+    --unverified: #a3abb8;
+    --unverified-bg: rgb(150 162 180 / 0.1);
     --done: #6bd6a1;
     --done-bg: rgb(60 200 130 / 0.13);
     --dropped: #a3abb8;
@@ -824,6 +828,41 @@ code {
 .chip-done {
   color: var(--done);
   background: var(--done-bg);
+}
+
+.chip-unverified {
+  color: var(--unverified);
+  background: var(--unverified-bg);
+}
+
+/* UI-160: the owner's steps */
+.steps-block.waiting {
+  outline: 2px solid var(--needs, #b45309);
+}
+
+.steps-block h3 {
+  margin: 0.75rem 0 0.25rem;
+  font-size: 0.85rem;
+}
+
+.steps-block ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.steps-block li label {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  padding: 0.25rem 0;
+}
+
+.steps-block .step-why,
+.steps-block .step-time {
+  display: block;
+  color: var(--muted, #5b6474);
+  font-size: 0.85rem;
 }
 
 .chip-dropped {

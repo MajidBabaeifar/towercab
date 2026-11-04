@@ -92,15 +92,17 @@ test("e2e: an a5 intent goes from pick to done", async () => {
   );
   p.script(design, plan, build, review);
   await p.start();
+  // SHIP-21: the repo has no live block and the plan claims nothing about checking live, so the
+  // change ends as merged, not verified live.
   const passes = await p.until(
-    () => p.db.get<{ stage: string }>("SELECT stage FROM missions LIMIT 1")?.stage === "done",
+    () => p.db.get<{ stage: string }>("SELECT stage FROM missions LIMIT 1")?.stage === "unverified",
   );
-  await p.loop.pass(); // the done entry effect: the intent file
+  await p.loop.pass(); // the final entry effect: the intent file
   const m = getMission(p.db, 1)!;
   expect(
     [m.stage, m.waiting, m.why],
     JSON.stringify(p.db.all("SELECT from_stage, event, to_stage, why FROM transitions")),
-  ).toEqual(["done", null, null]);
+  ).toEqual(["unverified", null, null]);
   expect(passes).toBeGreaterThan(0);
   // The risk agent checks each of the three PRs in a session of its own (PIP-96).
   expect(p.claudeCalls.map((c) => c.kind)).toEqual([
@@ -135,7 +137,10 @@ test("e2e: an a5 intent goes from pick to done", async () => {
   expect(intent).toBeNull();
   const done = p.show("intents", "main", "done/261026-1000-show-a-greeting/intent.md");
   expect(done).toMatch(/stage: done/);
+  expect(done).toMatch(/verified: no/);
   // The worker session reports its running total ($0.50) on each run, so design, plan and build add
   // $0.50 once (MET-28); the review is its own session: $1.00 in all.
   expect(done).toMatch(/cost: 1\.00\nagent_time: 240\nattempts: 1/);
+  // No steps and no claim in the plan: no `## Your steps` section (SHIP-17).
+  expect(planMd).not.toContain("## Your steps");
 });

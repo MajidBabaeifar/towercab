@@ -51,8 +51,11 @@ export function todoView(listing: Listing, cutoff: number): string {
   const parked: string[] = [];
   const open = listing.open.filter((i) => i.stage !== "done" && i.stage !== "dropped").sort(cmpIntents);
   for (const i of open) {
-    if (i.waiting !== null) waiting.push(`${head(i)} · **${oneLine(i.waiting)}**${withPr(latestPr(i))}`);
-    else if (i.stage !== null) flight.push(`${head(i)} · ${i.stage}${withPr(latestPr(i))}`);
+    if (i.waiting !== null) {
+      // UI-163: the owner's steps say how many are left.
+      const left = i.stepsLeft ? ` · ${oneLine(i.stepsLeft)} left` : "";
+      waiting.push(`${head(i)} · **${oneLine(i.waiting)}**${left}${withPr(latestPr(i))}`);
+    } else if (i.stage !== null) flight.push(`${head(i)} · ${i.stage}${withPr(latestPr(i))}`);
     else {
       let line = `${head(i)} · p${priorityOf(i)} u${i.u ?? DEFAULT_SCORE} i${i.i ?? DEFAULT_SCORE}`;
       if (i.a !== null) line += ` a${i.a}`;
@@ -89,8 +92,10 @@ export function doneView(listing: Listing, legacy: string): string {
     const h = head(i).replace("- ", `- ${date} `);
     if (i.stage === "dropped") return `${h} · dropped${withPr(latestPr(i))}`;
     const opt = (v: string | null) => v ?? "?";
+    // SHIP-21, UI-163: merged but never checked live.
+    const unverified = i.verified === "no" ? " (merged, not verified live)" : "";
     return (
-      `${h} · ${i.pr === null ? "no PR" : prLink(oneLine(i.pr))}` +
+      `${h}${unverified} · ${i.pr === null ? "no PR" : prLink(oneLine(i.pr))}` +
       ` · $${opt(i.cost === null ? null : i.cost.toFixed(2))}` +
       ` · ${opt(i.agentTime === null ? null : agentTime(i.agentTime))}` +
       ` · ${opt(i.attempts === null ? null : String(i.attempts))}`

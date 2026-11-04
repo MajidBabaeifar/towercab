@@ -2,12 +2,14 @@
 // the loop applies it on its next pass, or the CLI applies it itself when no loop runs.
 
 import type { Db } from "./db.ts";
+import { localTime } from "./intents/intent.ts";
 import type { IntentStore } from "./intents/types.ts";
 import { type ApplyCtx, apply } from "./machine.ts";
 import { dataOf, type Mission, patchData, unfinishedFor } from "./mission.ts";
 import { parseAllow, readingReply, reverseRefusals } from "./pipeline/access.ts";
 import type { PipeData } from "./pipeline/common.ts";
 import { recheck } from "./risk.ts";
+import { checklist, type OwnerStep } from "./steps.ts";
 
 export type CommandName = "answer" | "retry" | "drop" | "pause" | "resume" | "start";
 
@@ -57,6 +59,28 @@ export interface CommandCtx {
   now: Date;
 }
 
+/**
+ * SHIP-22: tick (or untick) the owner's steps of an intent's unfinished mission, with the time, in one
+ * transaction. The loop writes the ticks to `plan.md` and continues the wait. Returns the steps left.
+ */
+export function tickSteps(db: Db, intent: string, which: number[] | "all", done: boolean, now: Date): string {
+  return db.tx(() => {
+    const m = unfinishedFor(db, intent);
+    const steps = dataOf<{ steps?: OwnerStep[] }>(m ?? ({ data: "{}" } as Mission)).steps ?? [];
+    if (!m || steps.length === 0) throw new Error(`${intent} has no steps`);
+    const ns = which === "all" ? steps.map((s) => s.n) : which;
+    for (const n of ns)
+      if (!steps.some((s) => s.n === n)) throw new Error(`step ${n} isn't one of ${intent}'s steps`);
+    const at = localTime(now);
+    const next = steps.map((s) => (ns.includes(s.n) ? { ...s, done_at: done ? at : null } : s));
+    patchData(db, m, { steps: next, stepsDirty: ns.at(-1) }, now.getTime() / 1000);
+    const left = next.filter((s) => !s.done_at);
+    return left.length
+      ? `${done ? "ticked" : "unticked"} ${ns.join(", ")}; steps left: ${checklist(next, "before")}${checklist(next, "before") && checklist(next, "after") ? "; " : ""}${checklist(next, "after")}`
+      : `${done ? "ticked" : "unticked"} ${ns.join(", ")}; no steps left`;
+  });
+}
+
 export function paused(db: Db): boolean {
   return db.meta("paused") === "1";
 }
@@ -96,7 +120,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       db.delMeta("paused");
       db.delMeta("paused_at");
       const held = db.all<Mission>(
-        "SELECT * FROM missions WHERE held = 1 AND stage NOT IN ('done','stopped')",
+        "SELECT * FROM missions WHERE held = 1 AND stage NOT IN ('done','stopped','unverified')",
       );
       for (const m of held) {
         db.run("UPDATE missions SET held = 0 WHERE id = ?", m.id);

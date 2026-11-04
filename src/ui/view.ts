@@ -13,6 +13,7 @@ export type StateKey =
   | "upnext"
   | "parked"
   | "done"
+  | "unverified"
   | "dropped";
 
 export type StateLabel =
@@ -26,6 +27,7 @@ export type StateLabel =
   | "Up next"
   | "Parked"
   | "Done"
+  | "Merged, not verified live"
   | "Dropped";
 
 export interface StateView {
@@ -312,6 +314,7 @@ export type StageId =
   | "review"
   | "gate"
   | "merge"
+  | "steps"
   | "code_review"
   | "deploy"
   | "e2e"
@@ -435,6 +438,21 @@ export interface IntentPage {
   details?: string | null;
   /** PIP-118: the existing tests the worker was allowed to change, or refused, and why. */
   tests?: ExistingTestView[];
+  /** UI-160: the owner's steps from the plan, before-merge ones first. */
+  steps?: StepView[];
+  /** UI-160: which steps the mission waits on now (`your steps first`: before; `your steps`: after). */
+  stepsWait?: "before" | "after" | null;
+  /** UI-162: why the plan said nothing could be checked live, for a change that shows as done. */
+  nothingLive?: string | null;
+}
+
+/** UI-160: one of the owner's steps, with when it was ticked. */
+export interface StepView {
+  n: number;
+  when: "before" | "after";
+  text: string;
+  why: string;
+  doneAt: When | null;
 }
 
 export interface QueueItem {

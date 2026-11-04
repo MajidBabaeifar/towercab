@@ -1,7 +1,8 @@
 // One intent's whole story (UI-62): state, the three PRs, the stage map with its logs (UI-73 to UI-77),
 // the folded list of moves, cost and the intent's own text.
 
-import type { IntentPage as Data, PrView } from "../../../src/ui/view.ts";
+import type { IntentPage as Data, PrView, StepView } from "../../../src/ui/view.ts";
+import { tickStep } from "../api.ts";
 import { Details, Id, NeedsCard, RiskBlock, Section, StartButton, StateChip, Time } from "../components.tsx";
 import { ChevronLeft, External, PullRequest } from "../icons.tsx";
 import { Markdown } from "../md.tsx";
@@ -34,6 +35,50 @@ function PrTile({ pr }: { pr: PrView }) {
     </a>
   ) : (
     <div class="pr-tile pr-none">{body}</div>
+  );
+}
+
+/** UI-160: the owner's steps as a checklist; ticking one posts the step action. */
+function StepsBlock({ data, readOnly }: { data: Data; readOnly: boolean }) {
+  const steps = data.steps ?? [];
+  const group = (when: StepView["when"], title: string) => {
+    const list = steps.filter((s) => s.when === when);
+    if (!list.length) return null;
+    return (
+      <>
+        <h3>{title}</h3>
+        <ul>
+          {list.map((s) => (
+            <li key={s.n}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={s.doneAt !== null}
+                  disabled={readOnly}
+                  onChange={(e) => void tickStep(data.id, s.n, (e.currentTarget as HTMLInputElement).checked)}
+                />
+                <span>
+                  {s.text}
+                  {s.why ? <span class="step-why">{s.why}</span> : null}
+                  {s.doneAt ? (
+                    <span class="step-time">
+                      Ticked <Time when={s.doneAt} />
+                    </span>
+                  ) : null}
+                </span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      </>
+    );
+  };
+  return (
+    <section class={`card pad steps-block${data.stepsWait ? " waiting" : ""}`} aria-label="Your steps">
+      <p class="access-head">Your steps</p>
+      {group("before", "Before the change merges")}
+      {group("after", "After the change merges")}
+    </section>
   );
 }
 
@@ -106,6 +151,8 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
         ))}
       </section>
       {data.card ? <NeedsCard card={data.card} readOnly={readOnly} linkTitle={false} /> : null}
+      {data.steps?.length ? <StepsBlock data={data} readOnly={readOnly} /> : null}
+      {data.nothingLive ? <p class="meta">Nothing to check live: {data.nothingLive}</p> : null}
       {data.brief ? (
         <section class="card pad plain-brief" aria-label="In plain words">
           <p class="access-head">In plain words</p>
