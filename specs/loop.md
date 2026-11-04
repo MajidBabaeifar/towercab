@@ -558,6 +558,54 @@ Not used: kept free; `start` is LOOP-63.
   reads `ready to build, behind <id>`.
 - Verified by: `status: ready to build and ahead limit are shown`
 
+### LOOP-100 · Waiting on the owner does not use a place
+
+An intent that waits only for the owner no longer takes one of a repo's `ahead` places, so the next intent can start while the owner is busy.
+
+- An intent ahead (LOOP-60) is *waiting on the owner* when its mission is at `approval:spec` or
+  `approval:plan`, or is `blocked` in the spec or plan phase on a question, a missing permission or any
+  other wait for the owner. One at `pick`, `design` or `plan` is *working* and still takes a place.
+  (`approval:merge` is after build, so it is never ahead, LOOP-60.)
+- The `ahead` limit of LOOP-60 counts only working intents. `decide` (LOOP-5) skips an intent of a repo
+  with `ahead` working intents ahead, as before; intents waiting on the owner are not counted.
+- An intent that stops waiting (the owner merges the spec PR or answers) counts as working again. It
+  keeps its mission and is not stopped to make room, so a repo can briefly have more than `ahead`
+  working intents; it starts no new pick until the count is below `ahead` again.
+- `start` (LOOP-63) is unchanged and still goes over every limit of this section.
+- Verified by: `loop: intents waiting on the owner do not count toward ahead`, `loop: with three intents waiting on the owner a fourth starts`, `loop: an intent that stops waiting counts again without being stopped`
+
+### LOOP-101 · Cap on intents before build
+
+A repo's normal pick stops at `2 × ahead` intents before build, and an intent that outranks every intent ahead starts right away, below the cap and at it.
+
+- The cap is `2 × [repos.<r>].ahead` (6 with the default), counting every intent ahead of build
+  (LOOP-60), working or waiting on the owner (LOOP-100). It is not a new setting.
+- An intent *outranks* the repo when its priority is higher than that of every intent ahead of build in
+  the repo ([PRI-5](priority.md) order; a tie is not higher). With no intent ahead, the rule changes
+  nothing. An intent that outranks the repo starts at once: it goes over the working limit of LOOP-100
+  and over the cap. Nothing running or waiting is stopped, paused or dropped for it, so the repo can
+  hold more than the cap.
+- An intent that does not outrank the repo is skipped when the repo has `ahead` working intents
+  (LOOP-100) or is at the cap (`waiting: repo has <n> intents ahead, at the cap of <cap>`). Other
+  skips of LOOP-5 still apply to every intent, whatever its priority.
+- `[repos.<r>].workers` (LOOP-61) is unchanged: a ready mission is not ahead and does not count toward
+  the cap.
+- Verified by: `loop: an intent that outranks every intent ahead starts below the cap`, `loop: at the cap only a higher priority intent starts`, `loop: an equal priority intent does not pass the cap`, `loop: the cap is twice ahead`, `loop: a ready intent does not count toward the cap`
+
+### LOOP-102 · status names the rule that held an intent back
+
+`towercab status` and `next` say which rule kept an intent from starting: the places taken by working intents or the cap (an intent that outranks the repo is never held by either, LOOP-101).
+
+- A skipped intent reads `waiting: repo has <w> intents working ahead (start <id> to go now)` when
+  `ahead` working intents hold the places (LOOP-100), and `waiting: repo is at the cap of <cap> intents
+  before build, <w> working and <o> waiting on the owner (start <id> to go now)` at the cap (LOOP-101).
+  When both hold, the cap text is shown. UI-61 shows both in plain words.
+- An intent that went ahead of others by priority (LOOP-101) is not marked as skipped; it
+  has a mission and shows its stage as usual.
+- This replaces the text `waiting: repo has <n> intents ahead` of LOOP-60 and LOOP-64, which counted
+  intents waiting on the owner.
+- Verified by: `status: the working limit and the cap are told apart`, `status: the cap names the intents waiting on the owner`
+
 ### LOOP-65 · Repos live in the database
 
 The repos Towercab works on are kept in its database, so they can be added and removed while it
