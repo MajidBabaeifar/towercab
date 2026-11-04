@@ -83,7 +83,8 @@ The review returns a structured verdict, and code decides from it whether the PR
   `tests_weakened` (`value`, `where`), `plan_followed` (`value`, `where`), `findings` (`severity`
   `important`/`nit`, `file`, `line`, `what`), `door` (`one-way`/`two-way`), `red_lines` (touched,
   with file), `summary` (markdown, for the owner). Approved = `approved` ∧ every outcome met ∧ no
-  weakened tests ∧ plan followed ∧ no important finding. Nits are capped by `REVIEW.md`.
+  weakened tests ∧ plan followed ∧ no important finding. Nits are capped by `REVIEW.md`. An outcome
+  only the owner can do counts as met (PIP-119).
 - Verified by: `pipeline: approval is computed in code`
 
 ### PIP-6 · Review rounds
@@ -892,7 +893,7 @@ the owner must decide, the spec moves on (subject to its risk); open points go t
 A code review that doesn't approve sends its findings back to the worker, for up to 2 fix rounds,
 before the change waits for the owner.
 
-- Review not approved (PIP-5) and `reviewFixes` < 2 → event `red` from `review` to `build` (why `the
+- Review not approved (PIP-5), something the worker can fix (PIP-120) and `reviewFixes` < 2 → event `red` from `review` to `build` (why `the
   review didn't approve: fix round <n> of 2`) with `repair` kind `review`: the Review comment as the
   details, in `<review>` tags, run by `agents/repair.md` in the worker's session (tests locked as in
   PIP-31). The new diff gets a new review. After 2 fix rounds the gate holds as before (`review not
@@ -1070,6 +1071,52 @@ every goalpost that moved.
   changed beyond new ones" in plain words; none → neither section appears.
 - Verified by: `ui: the intent page lists granted existing tests`, `pipeline: the code PR lists granted existing tests`
 
+### PIP-119 · An outcome only the owner can do doesn't block approval
+
+The review marks an outcome that only the owner can do as an owner step, and it no longer counts as
+not met.
+
+- `review.outcomes[]` gets `owner: bool`: true for an outcome no worker can do in the sandbox (adding
+  a secret, applying to a server, a setting that needs admin rights). An outcome with `owner` true is
+  not judged `met`; PIP-5's "every outcome met" reads "every outcome met or `owner`". The prompt
+  (`agents/review.md`) says when to use it: only for what the worker cannot do, never for something
+  it merely did badly or left out.
+- Owner steps (the bullet and its `why`) are carried on the mission (`data.ownerSteps`), listed in the
+  Review comment under "For you to do" and in the code PR body's checklist, and shown on the gate's
+  wait. They never start a fix round and never make the gate wait by themselves. The gate still
+  holds for its other reasons (PIP-7); a PR with owner steps is not marked as done work for them.
+- PIP-5 still applies to every outcome the worker can meet: an outcome with `owner` false and `met`
+  false blocks approval as before.
+- Verified by: `pipeline: an owner-only outcome doesn't block approval`, `pipeline: an unmet outcome the worker can meet still blocks approval`, `pipeline: owner steps are listed for the owner`
+
+### PIP-120 · A fix round starts only when the worker can change something
+
+After a review that doesn't approve, Towercab sends the change back to build only when there is
+something the worker can fix; otherwise it goes on to the gate.
+
+- A fix round (PIP-98) starts when the review has at least one of: an important finding, weakened
+  tests, a plan deviation (`plan_followed` false), or an outcome with `met` false and `owner` false.
+  With none of these (so the only reason is an owner step, or `approved` false with nothing named),
+  there is no fix round: `reviewFixes` is unchanged and the mission goes on to the gate with the owner
+  steps listed (PIP-119). A review whose `approved` is false and names no such reason is treated as
+  not approved at the gate (PIP-7), as before.
+- The infra#50 case: the reviewer approves, one outcome is an owner step, every other outcome is met
+  → approved, the mission goes to the gate, not to build, and no fix round is logged.
+- Verified by: `pipeline: an approved review with an owner step goes to the gate, not to build`, `pipeline: a review with nothing the worker can fix gets no fix round`, `pipeline: an important finding still gets a fix round`
+
+### PIP-121 · The Review comment says what Towercab does next
+
+The verdict line of the Review comment always matches what Towercab does with the review.
+
+- The verdict shown is computed from the same code as the decision (PIP-5, PIP-120), never copied
+  from the agent's `approved` alone. Approved → `Approve`. A fix round → `Sending back for fixes
+  (round <n> of 2)` followed by the reasons the worker can fix, in plain words. Not approved with no
+  fix round (rounds used up, or nothing the worker can fix) → `Not approved` with the reason; the
+  comment never shows `Approve` above a fix round.
+- If the agent's `approved` differs from the computed verdict, the comment says which check
+  overrode it, in plain words.
+- Verified by: `pipeline: the review comment says a fix round is coming`, `pipeline: the review comment never approves above a fix round`, `pipeline: the review comment names the check that overrode the agent`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
@@ -1102,7 +1149,7 @@ build    {status: "done"|"blocked"|"access", brief: S, pr: S?, notes: S,
           question: {context, question, options: [{option, then}], recommendation}?,
           access: {domains: [{domain, why}], paths: [{glob, why}]}?,
           plan_changed: S?, lower_a: int?, lower_why: S?}
-review   {brief: S, approved: bool, outcomes: [{bullet, met: bool, why}], tests_weakened: {value: bool, where},
+review   {brief: S, approved: bool, outcomes: [{bullet, met: bool, owner: bool, why}], tests_weakened: {value: bool, where},
           plan_followed: {value: bool, where}, findings: [{severity, pass, file, line: int?, what}],
           door: "one-way"|"two-way", red_lines: [{line, file}], summary: S}
 risk     {blast_radius: {size: "small"|"medium"|"large", who}, door: {kind: "two-way"|"one-way", why},
