@@ -1007,6 +1007,69 @@ intent's title is a long user story.
   intent's title as before.
 - Verified by: `pipeline: PR titles use the design's short subject`
 
+### PIP-115 · The plan names the existing tests it changes
+
+A plan that has to change a test already on the base branch lists that test and why, and approving the
+plan allows exactly those files.
+
+- The plan result's `access` gains `tests: [{path, why}]` (**Schemas**); `path` is a file, not a glob.
+  `plan.md`'s `## Access` section (PIP-47) gets one line each, ticked by default:
+  `- [x] test: <path> (<why>)`. A path that matches none of PIP-30's globs, or doesn't exist on the base
+  branch, is dropped with a note, since new and non-test files need no grant.
+- Merging the plan PR grants the ticked test lines and no others; unticked lines are not granted. A
+  revised plan PR keeps the boxes the owner unticked, as for other access.
+- A plan with any test line is at least medium risk (AUT-17), and at every autonomy, a5 included, the
+  owner merges it: the plan gate (AUT-12) and AUT-18 do not let Towercab merge such a plan, and the
+  wait says `The plan asks to change existing tests; you decide which.` (PIP-110). Towercab never
+  grants a planned test by itself.
+- A granted test is no longer blocked for the worker (REPO-13). The grant is kept in the mission's
+  grants as `tests` (`path`, `why`, `by: plan`).
+- Verified by: `pipeline: plan.md lists existing tests to change`, `pipeline: merged plan grants its ticked tests`, `pipeline: unticked test is not granted`, `pipeline: a plan that changes existing tests waits for the owner at a5`, `pipeline: a plan that changes existing tests is at least medium risk`
+
+### PIP-116 · An unplanned test change is asked, not taken
+
+When the worker finds mid-build that it must change an existing test the plan didn't grant, it asks the
+owner, naming the test and why, and the owner's answer decides.
+
+- The worker returns `status: access` with `access.tests: [{path, why}]` (**Schemas** `build`); the
+  guard's block reason for a protected existing test ends `if you need it, finish what you can and
+  return status access with this test and why`. Unlike other unplanned access (AUT-15) this is never
+  granted by Towercab itself, at any autonomy: the mission waits with a question that names the test
+  and the reason (PIP-110), with the options `Allow this change` and `Keep the test as it is`, and a
+  recommendation.
+- The owner's answer is read as a choice: allow → the file joins the grants (`by: owner`) and the worker
+  resumes with it writable; anything else, or a reply that doesn't clearly allow → refused. A refused
+  file is recorded in `data.refusedTests`, stays blocked for the rest of the mission, and the resumed
+  worker is told it is refused and must finish without changing it, or ask in another way
+  (`status: blocked`). Asking again for a refused file doesn't ask the owner twice: it is refused at
+  once.
+- Verified by: `pipeline: an unplanned test change asks the owner`, `pipeline: allowing a test grants that file`, `pipeline: a refused test stays blocked`
+
+### PIP-117 · Publish refuses a changed existing test that wasn't granted
+
+The code PR can't change or delete an existing test unless it was granted, even if the guard was
+bypassed.
+
+- Publish compares the head with `origin/<base>`: any file matching PIP-30's globs that exists on the
+  base and is modified, deleted or renamed away, and is not granted (PIP-115, PIP-116), refuses the
+  push, naming the files, as for a protected path (PIP-29). New test files pass. A repair round
+  returns to the worker as for PIP-31.
+- A file that reads at the new head exactly as on the base branch is not a change: a merge of the base
+  that brought test changes in (a conflict round) passes, as in PIP-31. PIP-31's repair lock and the
+  review's weakened-test check (PIP-5) are unchanged and apply to granted tests too.
+- Verified by: `pipeline: publish refuses an ungranted change to an existing test`, `pipeline: publish refuses deleting an existing test`, `pipeline: new tests and granted tests pass publish`, `pipeline: a merge of the base may bring in test changes`
+
+### PIP-118 · The intent page shows the tests that were granted
+
+The intent page lists which existing tests the worker was allowed to change, and why, so the owner sees
+every goalpost that moved.
+
+- `Details` on the intent page (UI-62) gets "Existing tests changed" when the mission has any grant
+  in `tests` or a refusal: one line each with the path, the reason, who allowed it (the plan or the
+  owner) and, for a refused one, "refused". The code PR's body lists the granted ones under "Tests
+  changed beyond new ones" in plain words; none → neither section appears.
+- Verified by: `ui: the intent page lists granted existing tests`, `pipeline: the code PR lists granted existing tests`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
