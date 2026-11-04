@@ -1214,6 +1214,69 @@ without asking; any other change to it is asked.
   only had free changes.
 - Verified by: `guard: a helper without test cases is not blocked`, `pipeline: adding an exported function to a helper does not ask`, `pipeline: changing a helper function asks`, `pipeline: a new top-level statement in a helper asks`, `pipeline: a held helper edit stays until the owner answers`, `pipeline: a refused helper edit is restored`, `pipeline: publish refuses an unanswered helper change`, `pipeline: publish passes a free helper change`, `repo: a file with test cases stays blocked`
 
+### PIP-138 · A reply that starts with yes is an allow, with its conditions passed on
+
+An owner's reply to a test question is read by how it starts, and anything after a yes is an instruction
+for the worker, not a refusal.
+
+- Replaces the reading rule of PIP-116 and PIP-136 (`readsAsAllow`). The reply is trimmed and lower-cased,
+  then read by its first whole word (the text up to the first space or punctuation, so `no,` is `no` but
+  `not` and `nothing` are not): an *allow* starts with the word `yes`, `allow`, `ok`, `okay`, `approve`,
+  `approved` or the phrase `go ahead`; a *refusal* starts with exactly the word `no`, `refuse`, `don't`,
+  `dont` or `keep`; a reply that starts with anything else is *unclear*. So `Keep the test as it is`
+  and `No, keep all as they are` refuse, while `Not sure` and `Nothing against it, go ahead` are
+  unclear, never refusals. Words later in the reply (`not`, `keep`, `without`, `don't`) never change
+  the reading.
+- The suggested answers start with the reading word: the options of the test question (PIP-116) are
+  `Allow this change` and `No, keep the test as it is`, and those of the batched question (PIP-136) are
+  `Allow all of them` and `No, keep all as they are`, so choosing an option as written is read as
+  intended.
+- On an allow, whatever follows the allow word is passed to the resumed worker as the owner's conditions
+  ("The owner allowed you to change X, on these conditions: …"), with the full reply quoted. A bare
+  allow adds no conditions line.
+- In a batched question (PIP-136) a reply that allows names the files it allows: a bare allow allows all
+  asked; a reply naming some allows those and leaves the rest unanswered, not refused (PIP-139).
+- Verified by: `access: a reply starting with yes allows even with a condition`, `access: the fifteen replies of 261031-1714-5 read as allow`, `access: a reply starting with no refuses`, `access: a reply starting with keep refuses`, `pipeline: the test question options start with the word they are read by`, `access: only whole first words refuse`, `pipeline: conditions after a yes reach the worker`
+
+### PIP-139 · An unclear reply is asked again, never read as allow or refusal
+
+When a reply starts with neither an allow nor a refusal word, Towercab asks again instead of deciding.
+
+- The default stays safe: an unclear reply (including an empty one) never allows and never records a
+  refusal, since a refusal is permanent without PIP-141. The mission keeps waiting and Towercab posts
+  (as an owner reply, PIP-140) "I could not tell whether this is a yes or a no. Reply starting with yes or no." The
+  question is not re-created; it stays the same one.
+- In a batched question, files the reply names with a clear allow or refusal are decided; files it does
+  not decide stay asked, with the same line. This replaces PIP-136's "not clearly allowed is refused".
+- Verified by: `access: an unclear reply is asked again`, `pipeline: an unclear reply records no refusal`, `pipeline: undecided files of a batch stay asked`
+
+### PIP-140 · Towercab says how it read each answer
+
+Every answer to a test question gets a reply that states what Towercab did with it, so a misreading shows at once.
+
+- After an answer is processed (PIP-116, PIP-136, PIP-137, PIP-141), Towercab posts one reply where the
+  answer came from (the PR or the intent page): `Allowed: <paths>` and/or `Refused: <paths>`, plus
+  `Still asked: <paths>` for undecided files, and a line "Reply `allow <path>` to change a refusal."
+  when anything was refused. Paths are listed as files, one per line when more than three.
+- The text follows `prompts/writing.md`. It is posted before the worker resumes (record first, then the
+  side effect), so the owner sees it even if the build ends blocked.
+- Verified by: `pipeline: the reply states which tests were allowed and refused`, `pipeline: the reply lists tests still asked`, `pipeline: the reply tells how to reverse a refusal`
+
+### PIP-141 · The owner can reverse a refusal
+
+A refused test can be allowed later, for the running mission, without throwing the build away.
+
+- `towercab answer <id> allow <path>` and, on GitHub, a plain reply `allow <path>` on the mission's PR or
+  on the question (same exits as `towercab answer`, LOOP wait rules) move `<path>` from `data.refusedTests` to the grants (`by: owner`).
+  `<path>` must be in `data.refusedTests`; otherwise the command fails with an error that says so and
+  lists the refused paths. Several paths may follow `allow`.
+- Only a running mission can be changed: a merged, dropped or failed one refuses with the reason. Nothing
+  moves the other way: an allowed test is not refused again by this command.
+- The next guard rules (REPO-13) leave the file writable, and a worker that was told the file was refused
+  (PIP-116) is told it is now allowed on its next round. A mission blocked on the refusal continues. The
+  intent page (PIP-118) shows the file as allowed by the owner. Towercab replies as in PIP-140.
+- Verified by: `cli: answer allow moves a refused test to allowed`, `cli: answer allow fails for a test that was not refused`, `pipeline: a reversed refusal leaves the test writable in the next guard rules`, `pipeline: a blocked mission continues after a refusal is reversed`
+
 ### PIP-119 · An outcome only the owner can do doesn't block approval
 
 The review marks an outcome that only the owner can do as an owner step, and it no longer counts as
