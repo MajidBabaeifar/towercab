@@ -1,6 +1,6 @@
 # Intents
 
-**Status:** Live · **Prefix:** INT
+**Status:** Live: INT-1..40 · **Prefix:** INT
 
 ## Purpose
 
@@ -457,6 +457,47 @@ Queued intents count as planned without being written to the file.
   the repo (UI-63) that no line names, by its title. Parked intents aren't planned. Towercab never
   writes a `planned` line; the owner may.
 - Verified by: `ui: a repo page shows its features, work and spend`
+
+### INT-51 · Proposed intents on GitHub
+
+Towercab knows which open pull requests on the intents repo would add an intent, so none waits unseen.
+
+- A proposed intent is an open PR against `main` of the intents repo (drafts included) whose changes
+  include a new `<id>/intent.md` (INT-2). Plan PRs (PIP-21) and PRs that add no intent are not proposed
+  intents. It is read from the PR, never from the checkout, which stays on `main` (INT-4).
+- The PR is **acceptable** when it adds exactly one intent file and changes nothing else apart from
+  the generated `TODO.md`/`DONE.md` (INT-6). Otherwise it is **GitHub only**: listed, with a link, and
+  neither accepted nor closed from Towercab.
+- Read for each: PR number and URL, title, draft or not, author login, `createdAt`, head SHA, and for an
+  acceptable PR the intent file at that SHA. The file is parsed like any intent (INT-2) but only for
+  display: its text reaches no Claude run. A file that doesn't parse shows the PR with the reason and
+  can only be opened on GitHub.
+- Merging the PR is what accepts the intent (INT-4); an intent from an issue stays as INT-23 says.
+- Verified by: `proposed: a PR that adds one intent is proposed`, `proposed: drafts are proposed too`, `proposed: plan PRs and other PRs are not`, `proposed: a PR with several intents or other files is GitHub only`, `proposed: an unreadable intent file is shown with its reason`
+
+### INT-52 · What a proposed intent shows
+
+A proposed intent shows what the owner needs to judge it: who sent it, how urgent it is, and where it would rank.
+
+- `title` (the intent's first heading, without `Intent: `), `repo`, `u`, `i`, `a` as written, `source`
+  (INT-2), the proposer (the PR author's login; for the App, `Towercab`), `waitingSince` (the PR's
+  creation time), `draft`, the PR URL and the URL of the intent file at the head SHA.
+- `priority` = [PRI-3](priority.md)'s score with missing scores counted as 3; `parked` when it is below
+  `[intents].cutoff` (PRI-5), shown as "would be parked" instead of the number.
+- Verified by: `proposed: priority and parked follow the scores`, `proposed: the proposer is the PR author`
+
+### INT-53 · Accepting and closing a proposed intent
+
+The owner accepts a proposed intent by merging its PR, or says no by closing it, from Towercab.
+
+- **Accept**: only for an acceptable PR (INT-51) still open at the head SHA the card showed. A draft is
+  first marked ready; then the PR is squash-merged, both as the owner (LOOP-38). Merged, the intent is
+  on `main` and the next read picks it up (INT-4). Changed head, closed, merged or no longer acceptable
+  → nothing happens and the reply says why (`<PR> changed since you looked: check it and try again`).
+- **Close**: comments the owner's reason (default `Not going ahead.`), then closes the PR as the owner.
+  The intent never reaches `main`, and Towercab does not propose it again unless a new PR is opened.
+- A GitHub failure is reported to the owner as it is, and nothing is retried silently.
+- Verified by: `proposed: accept marks a draft ready and squash-merges`, `proposed: accept refuses a PR that changed`, `proposed: close comments the reason and closes`, `proposed: GitHub-only PRs can't be accepted or closed`
 
 ## Out of scope
 
