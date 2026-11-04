@@ -2,6 +2,7 @@
 // Actions run once, send a red to the worker as a repair (2 at most), else wait for the owner.
 
 import { git, refreshBase } from "../checkout.ts";
+import { conflictOutcome } from "../github/events.ts";
 import type { Ctx, Handler, Progress } from "../handlers.ts";
 import { ok, red, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
@@ -196,15 +197,7 @@ export const ciHandler: Handler = {
         );
         return { poll: cx.config.agent.ciPoll };
       case "conflict":
-        return {
-          done: {
-            event: "conflict",
-            why: "the PR conflicts with its base",
-            data: {
-              repair: { what: "The PR conflicts with its base branch.", details: "", kind: "conflict" },
-            },
-          },
-        };
+        return { done: conflictOutcome(m) };
       case "pending": {
         if (cx.timeouts && cx.clock.now() - pushedAt > cx.config.agent.ciWait) {
           return { done: wait("CI stuck", `no result after ${Math.round(cx.config.agent.ciWait / 60)} min`) };

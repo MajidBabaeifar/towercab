@@ -103,6 +103,8 @@ export interface PipeData {
     details: string;
     kind: "verify" | "proof" | "ci" | "conflict" | "e2e" | "review";
   };
+  /** Conflict rounds of the code PR since the owner last commented (`seen` = `feedback_seen`; PIP-134). */
+  conflictRounds?: { n: number; seen: string | null };
   /** Review fix rounds sent back to build (PIP-98). */
   reviewFixes?: number;
   /** PIP-119: outcomes only the owner can do, from the last review. */

@@ -2,7 +2,7 @@
 // level-triggered: each read re-derives at most one event against `feedback_seen` and `head`.
 
 import type { Intent } from "../intents/types.ts";
-import { finished, type Outcome } from "../machine.ts";
+import { finished, next, type Outcome } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
 import { recheck } from "../risk.ts";
 import type { PrState } from "./prs.ts";
@@ -42,7 +42,34 @@ export function currentPr(m: Mission): { kind: PrKind; number: number } | null {
 /** PIP-81: conflict revisions per spec PR before the owner is asked. */
 export const SPEC_CONFLICT_REVISIONS = 2;
 export const SPEC_CONFLICT_TEXT =
-  "The spec PR conflicts with the base branch: another spec change merged first. Resolve the conflict in the specs and keep the rows of both sides.";
+  "The spec PR conflicts with the base branch: another spec change merged first. Resolve the conflict in the specs and keep the rows of both sides. If the base took requirement IDs this PR adds, renumber this PR's rows (and the references to them) to the next free reserved IDs.";
+
+/** PIP-134: conflict rounds per code PR before the owner is asked. */
+export const CODE_CONFLICT_ROUNDS = 2;
+
+/**
+ * PIP-134: what a code PR that conflicts with its base gets: a conflict round, or, once
+ * `CODE_CONFLICT_ROUNDS` ran since the owner last spoke, a wait. The build counts the rounds.
+ */
+export function conflictOutcome(m: Mission): Outcome {
+  if (conflictRoundsDone(m) >= CODE_CONFLICT_ROUNDS)
+    return {
+      event: "wait",
+      waiting: "merge failed",
+      why: `the PR still conflicts with its base after ${CODE_CONFLICT_ROUNDS} automatic merges`,
+    };
+  return {
+    event: "conflict",
+    why: "the PR conflicts with its base",
+    data: { repair: { what: "The PR conflicts with its base branch.", details: "", kind: "conflict" } },
+  };
+}
+
+/** Conflict rounds run since the owner's last comment (`feedback_seen` moves on every one). */
+export function conflictRoundsDone(m: Mission): number {
+  const c = dataOf<{ conflictRounds?: { n: number; seen: string | null } }>(m).conflictRounds;
+  return c && c.seen === m.feedback_seen ? c.n : 0;
+}
 
 /** The comment that starts over (PIP-45). */
 export const RETRY = "/retry";
@@ -163,12 +190,15 @@ export function prEvents(m: Mission, prs: Prs, me: string, botLogin: string): Ou
   if (code?.state === "OPEN" && m.pr !== null) {
     // LOOP-18: the same conflict repair CI gives, so the build merges the base first instead of
     // building on the old base again (a round that would conflict forever).
-    if (code.mergeable === "CONFLICTING")
-      return {
-        event: "conflict",
-        why: "the PR conflicts with its base",
-        data: { repair: { what: "The PR conflicts with its base branch.", details: "", kind: "conflict" } },
-      };
+    if (code.mergeable === "CONFLICTING") {
+      // PIP-134: after the last round only the stages that take a `conflict` ask the owner. A round
+      // still running (GitHub shows the old state until the merge is pushed) and an owner who was
+      // already asked are left alone.
+      const spent = conflictRoundsDone(m) >= CODE_CONFLICT_ROUNDS;
+      if (!spent) return conflictOutcome(m);
+      if (m.stage !== "blocked" && next(m.stage, "conflict").kind === "go") return conflictOutcome(m);
+      return null;
+    }
     if (m.head && code.head && code.head !== m.head) return { event: "head_moved" };
   }
   return null;

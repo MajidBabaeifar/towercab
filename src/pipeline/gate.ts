@@ -1,6 +1,7 @@
 // The `gate` (PIP-7, AUT-3, AUT-4, AUT-15, AUT-18) and `merge` (PIP-22) stages, in code only.
 
 import { gate } from "../autonomy.ts";
+import { conflictOutcome } from "../github/events.ts";
 import type { Ctx, Handler } from "../handlers.ts";
 import { ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
@@ -216,15 +217,7 @@ export const mergeHandler: Handler = {
           },
         };
       case "DIRTY":
-        return {
-          done: {
-            event: "conflict",
-            why: "the PR conflicts with its base",
-            data: {
-              repair: { what: "The PR conflicts with its base branch.", details: "", kind: "conflict" },
-            },
-          },
-        };
+        return { done: conflictOutcome(m) };
       case "BLOCKED":
       case "UNSTABLE": {
         const tries = (d.mergeTries ?? 0) + 1;

@@ -1,9 +1,13 @@
 // The `design` stage (PIP-25, PIP-50, PIP-82, PIP-96, PIP-97, AUT-11): the worker's first run writes the
-// spec change; Towercab commits it, opens the spec PR, reads its checks (a red one gets one revision),
+// spec change; Towercab commits it, opens the spec PR, reads its checks (a red one gets one revision, a
+// conflict with base up to two: PIP-133),
 // has the risk agent assess it, and then either waits for the owner or merges it itself.
 
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { riskWhy, specGate } from "../autonomy.ts";
 import { git, refreshBase } from "../checkout.ts";
+import { SPEC_CONFLICT_REVISIONS, SPEC_CONFLICT_TEXT } from "../github/events.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import { renameFeature } from "../intents/features.ts";
 import { plainLine, TITLE_MAX, titleProblem } from "../intents/naming.ts";
@@ -124,6 +128,83 @@ async function mergeBase(cx: Ctx, m: Mission): Promise<string[]> {
   return files.split("\n").filter(Boolean);
 }
 
+/** The requirement rows of a spec file: `### <ID> ·` heading to the next heading, by ID. */
+function rowsOf(text: string): Map<string, string> {
+  const rows = new Map<string, string>();
+  let id: string | null = null;
+  let buf: string[] = [];
+  const flush = () => {
+    if (id) rows.set(id, buf.join("\n").trim());
+  };
+  for (const line of text.split("\n")) {
+    if (/^#{1,3} /.test(line)) {
+      flush();
+      id = /^### ([A-Z]+-\d+)\b/.exec(line)?.[1] ?? null;
+      buf = [line];
+    } else buf.push(line);
+  }
+  flush();
+  return rows;
+}
+
+/**
+ * PIP-133: the IDs of rows base changed since this PR's merge base that the revision in the checkout
+ * doesn't carry as base has them. A row both sides changed may also end as this PR's version (it
+ * amended it on purpose), except one both sides added: that is base's, and this PR renumbers its own.
+ */
+async function mainRowsAltered(cx: Ctx, m: Mission): Promise<string[]> {
+  try {
+    return await compareRows(cx, m);
+  } catch (e) {
+    // Unreadable means unverified: the owner decides.
+    cx.log(`${m.intent}: couldn't compare the spec rows with base: ${(e as Error).message}`);
+    return ["the rows could not be compared"];
+  }
+}
+
+/** PIP-133: the spec files both base (since the merge base) and this PR changed, for the owner's wait. */
+async function clashFiles(cx: Ctx, m: Mission): Promise<string> {
+  try {
+    const base = `refs/remotes/origin/${cx.repo(m).base}`;
+    const mergeBase = (await coGit(cx, m, ["merge-base", base, m.head ?? "HEAD"])).trim();
+    const list = async (to: string) =>
+      (await coGit(cx, m, ["diff", "--name-only", mergeBase, to, "--", "specs"])).split("\n").filter(Boolean);
+    const mine = new Set(await list(m.head ?? "HEAD"));
+    const both = (await list(base)).filter((f) => mine.has(f));
+    if (both.length) return both.join(", ");
+  } catch {
+    // Falls back to the folder.
+  }
+  return "specs/";
+}
+
+async function compareRows(cx: Ctx, m: Mission): Promise<string[]> {
+  if (!m.head) return [];
+  const base = `refs/remotes/origin/${cx.repo(m).base}`;
+  const mergeBase = (await coGit(cx, m, ["merge-base", base, m.head])).trim();
+  const files = (await coGit(cx, m, ["diff", "--name-only", mergeBase, base, "--", "specs"]))
+    .split("\n")
+    .filter(Boolean);
+  const at = (ref: string, f: string) =>
+    coGit(cx, m, ["show", `${ref}:${f}`]).then(
+      (t) => rowsOf(t),
+      () => new Map<string, string>(),
+    );
+  const altered: string[] = [];
+  for (const f of files) {
+    const [was, main, mine] = await Promise.all([at(mergeBase, f), at(base, f), at(m.head, f)]);
+    const now = rowsOf(await readFile(join(cx.checkout(m), f), "utf8").catch(() => ""));
+    for (const [id, text] of main) {
+      if (text === was.get(id)) continue;
+      const r = now.get(id);
+      if (r === text) continue;
+      if (was.has(id) && mine.get(id) !== was.get(id) && r === mine.get(id)) continue;
+      altered.push(id);
+    }
+  }
+  return altered;
+}
+
 /** PIP-83: the failing jobs' log tails when the spec PR's checks are red, else nothing. */
 async function ciSection(cx: Ctx, m: Mission): Promise<string> {
   if (!m.spec_pr) return "";
@@ -231,6 +312,22 @@ export const designHandler: Handler = {
     if (!r.ok) return r.progress;
     const v = r.value;
     const d = data(m);
+    // PIP-133: a conflict revision that altered a row main changed is not pushed; the owner is asked.
+    if (d.mergeMain) {
+      const altered = await mainRowsAltered(cx, m);
+      if (altered.length) {
+        await coGit(cx, m, ["merge", "--abort"]).catch(() => undefined);
+        await coGit(cx, m, ["reset", "--hard", "--quiet", m.head ?? "HEAD"]);
+        await coGit(cx, m, ["clean", "-fdq"]);
+        return {
+          done: wait(
+            "spec conflict",
+            `The revision would have changed requirements merged since the spec was written (${altered.join(", ")}), so it was not pushed.`,
+            { data: { mergeMain: undefined, answer: undefined } },
+          ),
+        };
+      }
+    }
     // PIP-97: the owner's answers on the spec PR, kept for the second reviewer (not Towercab's own
     // conflict or red-check revisions).
     const owner = d.answer && !d.mergeMain && !d.specRed ? d.answer : null;
@@ -524,13 +621,21 @@ async function specCi(cx: Ctx, m: Mission): Promise<Progress> {
         "Someone else changed the spec PR. Check their change, then merge it or comment what to change.",
       ),
     };
-  if (s.kind === "conflict")
-    return {
-      done: wait(
-        "approve spec",
-        "The spec clashes with changes merged since it was written. Comment on the spec PR so Towercab revises it, or resolve the clash there and merge.",
-      ),
-    };
+  if (s.kind === "conflict") {
+    // PIP-133: the same revision the owner's wait would get (PIP-81), before the owner is asked.
+    const done = d.specConflicts ?? 0;
+    if (done >= SPEC_CONFLICT_REVISIONS)
+      return {
+        done: wait(
+          "spec conflict",
+          `The spec PR still clashes with changes merged since it was written, after two automatic revisions (${await clashFiles(cx, m)}).`,
+        ),
+      };
+    return designRun(
+      cx,
+      cx.record(m, m.step, {}, { answer: SPEC_CONFLICT_TEXT, specConflicts: done + 1, mergeMain: true }),
+    );
+  }
   if (s.kind === "red" || s.kind === "cancel") {
     const reruns = d.specReruns ?? {};
     const head = m.head ?? "";
