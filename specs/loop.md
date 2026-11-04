@@ -363,15 +363,20 @@ The guard hook refuses a rules file written by a different version of the loop, 
 
 A step that is blocked by Towercab's own setup is retried once automatically before the owner is asked.
 
-- A block whose cause is the setup (guard settings or rules files, sandbox, the files the loop writes
-  for a run) and not the work itself counts as a setup fault. The first time it happens for a mission
-  step, the loop restarts that step once (a fresh setup, no wait, no message). The retry is recorded
-  in the mission's move log with the cause.
+- A setup fault is a block that matches an entry of a fixed list of known setup errors, kept in the
+  code: the guard refusing its rules file, the sandbox failing to start, a rules file the loop wrote
+  that cannot be read. Each entry names the exact log text or exit code that identifies it. Towercab
+  decides from its own logs and exit codes (the guard's, the sandbox's and the loop's), never from the
+  agent's account of why it was blocked. A block that matches no entry is not a setup fault, and a new
+  kind of setup fault becomes a new entry when it is seen.
+- The first time a setup fault happens for a mission step, the loop restarts that step once (a fresh
+  setup, no wait, no message). The retry is recorded in the mission's move log with the entry that
+  matched.
 - If the retry is blocked by a setup fault again, the mission goes to the normal blocked wait
   ([LOOP-3](loop.md)) and asks the owner, with the cause in plain words. Version skew (LOOP-106) does not use up this retry.
 - Blocks caused by the work (a protected path not granted, a failing test, an access request) are
   unchanged and are not retried.
-- Verified by: `loop: a setup block is retried once`, `loop: a second setup block waits for the owner`, `loop: a block caused by the work is not retried`
+- Verified by: `loop: a setup block is retried once`, `loop: a second setup block waits for the owner`, `loop: a block caused by the work is not retried`, `loop: only a listed setup error is retried`, `loop: the agent's account of a block does not make it a setup fault`
 
 ### LOOP-36 · Dev loop
 
