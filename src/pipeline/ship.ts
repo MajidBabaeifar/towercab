@@ -635,7 +635,7 @@ const SHIPPING = ["deploy", "e2e", "rollback", "revert"];
 /** Another mission of the repo that is shipping, being fixed, or frozen; null when the repo is free. */
 export function holder(cx: Ctx, m: Mission): Mission | null {
   const others = cx.db.all<Mission>(
-    "SELECT * FROM missions WHERE repo = ? AND id != ? AND stage NOT IN ('done', 'stopped')",
+    "SELECT * FROM missions WHERE repo = ? AND id != ? AND stage NOT IN ('done', 'stopped', 'unverified')",
     m.repo,
     m.id,
   );

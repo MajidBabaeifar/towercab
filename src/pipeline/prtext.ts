@@ -129,9 +129,11 @@ export function planFile(
   specIds: string[],
   planMd: string,
   accessMd: string,
+  ownerMd = "",
 ): string {
   const ids = specIds.length ? `Spec IDs: ${specIds.join(", ")}.` : "No spec change.";
-  return `# Plan: ${title}\n\nIntent ${intentId}. ${ids}\n\n${planMd.trim()}\n\n${accessMd.trim()}\n`;
+  const owner = ownerMd.trim() ? `\n\n${ownerMd.trim()}` : "";
+  return `# Plan: ${title}\n\nIntent ${intentId}. ${ids}\n\n${planMd.trim()}\n\n${accessMd.trim()}${owner}\n`;
 }
 
 export interface Checks {

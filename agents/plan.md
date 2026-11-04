@@ -55,5 +55,13 @@ Return the JSON result:
   - `## How to check it`: how a reviewer sees it working (commands, pages, requests).
 - `access`: `domains`, `paths` and `tests`, each item with a `why` (`tests` items have a `path`). Empty
   lists when nothing beyond the defaults is needed.
+- `owner_steps`: every step only the owner can do for the change to work, as `{when, text, why}`:
+  `when` is `before` if it must be done before the change merges, `after` if it can wait until it has
+  merged; `text` is one action in plain words ("add the `NPM_TOKEN` secret to the repo"); `why` is one
+  sentence. A step is anything the worker can't do: a secret, an apply on a server, an account or a
+  setting on a platform. A step Towercab or CI can do is not one. Nothing needed: an empty list.
+  Towercab lists the steps in `plan.md` and makes the owner tick them off.
+- `live_none_why`: empty by default. When nothing about the change could ever be seen in the live app
+  (docs, CI or tests only), one sentence saying why. Leave it empty for any change a user could notice.
 - `e2e`: in a repo with e2e suites, `tests` (the e2e test files the build adds or changes) and
   `none_why` (empty, or why the change needs no e2e test). `null` in a repo without suites.

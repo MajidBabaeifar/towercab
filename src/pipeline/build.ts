@@ -28,6 +28,7 @@ import {
   type PipeData,
   repoFiles,
   spawnRun,
+  stepsFromPlan,
   tail,
   takeRemote,
 } from "./common.ts";
@@ -165,7 +166,12 @@ export const buildHandler: Handler = {
           const base = (await coGit(cx, m, ["rev-parse", `refs/remotes/origin/${repo.base}`])).trim();
           await coGit(cx, m, ["checkout", "--quiet", "-B", m.branch, `refs/remotes/origin/${repo.base}`]);
           const intent = await intentOf(cx, m);
-          m = cx.record(m, "setup", { base_sha: base }, { granted: await grantedFromPlan(cx, intent) });
+          m = cx.record(
+            m,
+            "setup",
+            { base_sha: base },
+            { granted: await grantedFromPlan(cx, intent), ...(await stepsFromPlan(cx, m)) },
+          );
         } else if (d.repair?.kind === "conflict") {
           // PIP-134: the round is counted before it runs; the owner's next comment starts the count over.
           // A re-entry of the same round (`roundFrom` is set) is not a new one.
@@ -405,6 +411,7 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
   if (d.build?.planChanged) {
     try {
       await writePlanToMain(cx, intent, d.build.planChanged);
+      m = cx.record(m, m.step, {}, await stepsFromPlan(cx, m));
     } catch (e) {
       cx.log(`${m.intent}: couldn't write the changed plan: ${(e as Error).message}`);
     }

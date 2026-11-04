@@ -27,7 +27,7 @@ describe("machine", () => {
       for (const e of EVENTS) {
         const n = next(s, e);
         expect(n.kind, `${s} × ${e}`).toBeTruthy();
-        if (s === "done" || s === "stopped") expect(n.kind).toBe("ignore");
+        if (s === "done" || s === "stopped" || s === "unverified") expect(n.kind).toBe("ignore");
       }
     }
     // Spot checks against **Transitions**.
@@ -80,10 +80,11 @@ describe("machine", () => {
 
   test("machine: order", () => {
     expect(ORDER.join(" → ")).toBe(
-      "pick → design → plan → build → verify → proof → publish → ci → review → gate → merge → deploy → e2e → done",
+      "pick → design → plan → build → verify → proof → publish → ci → review → gate → merge → steps → deploy → e2e → done",
     );
     for (let i = 0; i < ORDER.length - 1; i++) expect(show(next(ORDER[i]!, "ok"))).toBe(`→ ${ORDER[i + 1]}`);
-    for (const w of Object.keys(WAITS)) expect(isWait(waitInfo(w).stage)).toBe(true);
+    // `your steps` is the one wait that sits at a working stage (LOOP-74).
+    for (const w of Object.keys(WAITS)) expect(isWait(waitInfo(w).stage), w).toBe(w !== "your steps");
     expect(phaseOf("design", null)).toBe("spec");
     expect(phaseOf("approval:plan", null)).toBe("plan");
     expect(phaseOf("ci", null)).toBe("code");
@@ -197,7 +198,7 @@ test("machine: ship transitions", () => {
     ["blocked", "code_merged", "→ deploy"],
     ["deploy", "ok", "→ e2e"],
     ["deploy", "red", "→ rollback"],
-    ["deploy", "skip", "→ done"],
+    ["deploy", "skip", "→ unverified"],
     ["e2e", "ok", "→ done"],
     ["e2e", "red", "→ rollback"],
     ["e2e", "skip", "unexpected"],
@@ -217,7 +218,7 @@ test("machine: ship transitions", () => {
   expect(show(next("blocked", "code_merged", "revert"))).toBe("ignore");
   expect(show(next("blocked", "code_merged", "e2e"))).toBe("ignore");
   expect(show(next("blocked", "code_merged", "verify"))).toBe("→ deploy");
-  for (const s of ["deploy", "e2e", "rollback", "revert"] as Stage[]) {
+  for (const s of ["steps", "deploy", "e2e", "rollback", "revert"] as Stage[]) {
     expect(isWorking(s), s).toBe(true);
     expect(phaseOf(s, null), s).toBe("code");
   }
@@ -240,4 +241,75 @@ test("machine: every ask says what the owner decides, as the spec's table does",
     // Plain words: no step names or Towercab's own vocabulary.
     expect(w.ask, key).not.toMatch(/\b(repair rounds?|worker|verify|proof|gate|approval)\b/);
   }
+});
+
+test("machine: steps and unverified transitions", () => {
+  const none = { steps: false, nothingLive: false };
+  // LOOP-73: a merge goes to `steps` only when an after-merge step is open, else straight to the deploy.
+  expect(show(next("merge", "code_merged", null, { ...none, steps: true }))).toBe("→ steps");
+  expect(show(next("approval:merge", "code_merged", null, { ...none, steps: true }))).toBe("→ steps");
+  expect(show(next("blocked", "code_merged", "gate", { ...none, steps: true }))).toBe("→ steps");
+  expect(show(next("merge", "code_merged", null, none))).toBe("→ deploy");
+  // A wait that came out of a ship stage still ignores its merged PR; so does `steps` itself.
+  expect(show(next("blocked", "code_merged", "steps", { ...none, steps: true }))).toBe("ignore");
+  expect(show(next("steps", "code_merged", null, { ...none, steps: true }))).toBe("ignore");
+  expect(show(next("steps", "ok"))).toBe("→ deploy");
+  expect(show(next("steps", "feedback"))).toBe("ignore");
+  expect(show(next("steps", "answered"))).toBe("ignore");
+  expect(show(next("steps", "closed"))).toBe("stop");
+  // SHIP-21: no live check ends unverified, unless the plan said there is nothing to check.
+  expect(show(next("deploy", "skip", null, none))).toBe("→ unverified");
+  expect(show(next("deploy", "skip", null, { ...none, nothingLive: true }))).toBe("→ done");
+  expect(show(next("steps", "skip"))).toBe("unexpected");
+  for (const e of EVENTS) expect(show(next("unverified", e)), `unverified × ${e}`).toBe("ignore");
+  expect(phaseOf("unverified", null)).toBe("done");
+  expect(phaseOf("steps", null)).toBe("code");
+  expect(isWorking("steps")).toBe(true);
+  expect(isWorking("unverified")).toBe(false);
+  // The hold before the merge is a blocked wait from the gate, and continues at the gate.
+  expect(waitInfo("your steps first").stage).toBe("blocked");
+  expect(continueTo("your steps first", "gate")).toBe("gate");
+  expect(waitInfo("your steps").stage).toBe("steps");
+
+  // `apply` reads the facts from the mission's data: open steps send the merge to `steps`...
+  const db = testDb();
+  const cx = { db, now: 100, subject: (m: Mission) => ({ title: m.intent, repo: m.repo, link: null }) };
+  const mk = (data: Record<string, unknown>) => {
+    const m0 = insertMission(
+      db,
+      { intent: `i${db.all("SELECT 1 FROM missions").length}`, slug: "x", repo: "web", model: "m", a: 5 },
+      1,
+    );
+    db.run(
+      "UPDATE missions SET stage = 'merge', step = '', data = ? WHERE id = ?",
+      JSON.stringify(data),
+      m0.id,
+    );
+    return getMission(db, m0.id)!;
+  };
+  const step = { n: 1, when: "after", text: "add the secret", why: "the app needs it", done_at: null };
+  expect(apply(cx, mk({ steps: [step] }), { event: "code_merged" }).stage).toBe("steps");
+  // ...a ticked one, or a fix round, goes straight on...
+  expect(
+    apply(cx, mk({ steps: [{ ...step, done_at: "2026-11-04T10:00:00+01:00" }] }), { event: "code_merged" })
+      .stage,
+  ).toBe("deploy");
+  expect(
+    apply(cx, mk({ steps: [step], ship: { merges: [], fixes: 1 } }), { event: "code_merged" }).stage,
+  ).toBe("deploy");
+  // ...and a wait at `steps` keeps its text and the stage.
+  const at = apply(cx, mk({ steps: [step] }), { event: "code_merged" });
+  const waiting = apply(cx, at, { event: "wait", waiting: "your steps", why: "1. add the secret" });
+  expect([waiting.stage, waiting.waiting, waiting.why]).toEqual(["steps", "your steps", "1. add the secret"]);
+  expect(db.all("SELECT text FROM outbox WHERE mission = ?", waiting.id)).toHaveLength(1);
+  // `skip` at deploy: unverified is final (finished is set), `done` when the plan claims nothing to check.
+  const dep = (data: Record<string, unknown>) => {
+    const m = mk(data);
+    db.run("UPDATE missions SET stage = 'deploy' WHERE id = ?", m.id);
+    return getMission(db, m.id)!;
+  };
+  const u = apply(cx, dep({}), { event: "skip" });
+  expect([u.stage, u.finished]).toEqual(["unverified", 100]);
+  expect(apply(cx, dep({ liveNoneWhy: "docs only" }), { event: "skip" }).stage).toBe("done");
+  expect(apply(cx, u, { event: "closed" }).stage).toBe("unverified");
 });

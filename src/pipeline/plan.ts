@@ -13,6 +13,7 @@ import type { Mission } from "../mission.ts";
 import { runSet } from "../repo/runset.ts";
 import { currentRisk, riskMd } from "../risk.ts";
 import { e2eText } from "../ship/live.ts";
+import { keepTicks, numbered, type PlanStep, parseNoneLive, parseSteps, withSteps } from "../steps.ts";
 import { renderAccess } from "./access.ts";
 import {
   asEnv,
@@ -104,7 +105,12 @@ export async function writePlanToMain(cx: Ctx, intent: Intent, md: string): Prom
   const merged = (await cx.store.readFile(`${intent.dir}/plan.md`)) ?? "";
   const access = section(merged, "Access");
   const body = md.replace(/^## Access[\s\S]*?(?=^## |(?![\s\S]))/m, "").trimEnd();
-  const text = `${body}\n\n## Access\n\n${access || "Nothing beyond the defaults."}\n`;
+  let text = `${body}\n\n## Access\n\n${access || "Nothing beyond the defaults."}\n`;
+  // SHIP-17: the owner's steps and the claim stay as merged, ticks included, unless the new plan lists its own.
+  const mergedSteps = parseSteps(merged);
+  const ownSteps = parseSteps(md);
+  const steps = ownSteps.length ? keepTicks(ownSteps, mergedSteps) : mergedSteps;
+  text = withSteps(text, steps, parseNoneLive(md) || parseNoneLive(merged));
   await commitToIntents(
     cx,
     "main",
@@ -224,7 +230,15 @@ export const planHandler: Handler = {
         "push",
         {},
         {
-          plan: { md: r.value.plan, access, droppedTests, e2e: r.value.e2e ?? null, brief: r.value.brief },
+          plan: {
+            md: r.value.plan,
+            access,
+            droppedTests,
+            e2e: r.value.e2e ?? null,
+            brief: r.value.brief,
+            ownerSteps: r.value.owner_steps ?? [],
+            liveNoneWhy: (r.value.live_none_why ?? "").trim(),
+          },
           access,
           answer: undefined,
         },
@@ -232,6 +246,12 @@ export const planHandler: Handler = {
     );
   },
 };
+
+/** SHIP-17, SHIP-21: the plan's `## Your steps` and `Nothing to check live:`, after `## Access`. */
+function ownerText(plan: { ownerSteps?: PlanStep[]; liveNoneWhy?: string }): string {
+  const steps = withSteps("", numbered(plan.ownerSteps ?? []), plan.liveNoneWhy ?? "");
+  return steps.trim();
+}
 
 async function push(cx: Ctx, m: Mission): Promise<Progress> {
   const intent = await intentOf(cx, m);
@@ -250,6 +270,7 @@ async function push(cx: Ctx, m: Mission): Promise<Progress> {
     d.design?.specIds ?? [],
     d.plan!.md,
     keepUnticked(renderAccess(d.plan!.access, a, d.plan!.droppedTests), before),
+    ownerText(d.plan!),
   );
   await commitToIntents(
     cx,

@@ -36,6 +36,8 @@ const KINDS: Record<string, Kind> = {
   pr: "str",
   retry: "str",
   lower_why: "str",
+  verified: "str",
+  steps_left: "str",
   after: "after",
   unlock: "list",
   network: "list",
@@ -481,6 +483,8 @@ export class IntentFile implements IntentEdit {
       attempts: num("attempts"),
       finished: str("finished"),
       lowerWhy: str("lower_why"),
+      verified: str("verified"),
+      stepsLeft: str("steps_left"),
       sections,
       text: this.render(),
     };

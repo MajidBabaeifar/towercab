@@ -12,6 +12,7 @@ import {
   ID,
   intent,
   intents,
+  NONE_LIVE,
   PLAN_BRIEF,
   PLAN_MD,
   reply,
@@ -90,6 +91,8 @@ test("pipeline: feedback revises the plan", async () => {
       plan: PLAN_MD,
       access: { domains: [{ domain: "example.com", why: "the greeting text" }], paths: [], tests: [] },
       e2e: null,
+      owner_steps: [],
+      live_none_why: NONE_LIVE,
     }),
   );
   let m = await p.untilStage("approval:plan");
@@ -110,6 +113,8 @@ test("pipeline: feedback revises the plan", async () => {
         tests: [],
       },
       e2e: null,
+      owner_steps: [],
+      live_none_why: NONE_LIVE,
     }),
   );
   p.clock.advance(61);

@@ -4,7 +4,16 @@
 
 import type { Intent } from "../intents/types.ts";
 import { lastSevenDays, repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
-import { ago, airspaceOf, dbMark, localDate, snapshot, state, type UiSources, versionOf } from "./state.ts";
+import {
+  ago,
+  airspaceOf,
+  dbMark,
+  finishedState,
+  localDate,
+  snapshot,
+  type UiSources,
+  versionOf,
+} from "./state.ts";
 import type { BoardCard, BoardColumn, BoardColumnKey, BoardPage, BoardRepo } from "./view.ts";
 
 const COLUMNS: { key: BoardColumnKey; label: string }[] = [
@@ -82,7 +91,7 @@ export async function board(src: UiSources): Promise<BoardPage> {
     put(
       i.repo,
       "done",
-      { intent: i.id, title: i.title, state: state("done", ago(finishedAt(i), s.now)) },
+      { intent: i.id, title: i.title, state: finishedState(i, ago(finishedAt(i), s.now)) },
       true,
     );
   }

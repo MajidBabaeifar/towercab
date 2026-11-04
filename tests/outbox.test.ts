@@ -51,8 +51,9 @@ describe("outbox", () => {
     w.at("ci");
     w.move({ event: "code_merged", set: { merge_sha: "m1" } });
     expect(w.m.stage).toBe("deploy");
+    // SHIP-21: no live check ends as merged, not verified live, without a message.
     w.move({ event: "skip" });
-    expect(w.m.stage).toBe("done");
+    expect(w.m.stage).toBe("unverified");
     expect(w.rows()).toEqual([]);
 
     // The owner closing the PR: no message.

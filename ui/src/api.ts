@@ -22,6 +22,11 @@ export function act(action: string, intent?: string, text?: string): Promise<Act
   return post({ action, intent, text });
 }
 
+/** UI-160, SHIP-22: tick (or untick) one of the owner's steps. */
+export function tickStep(intent: string, n: number, done: boolean): Promise<ActionReply> {
+  return post({ action: "step", intent, n, done });
+}
+
 /** UI-130, UI-131: add `owner/name` as a repo, under `name` when given. */
 export function addRepo(github: string, name?: string): Promise<ActionReply> {
   return post({ action: "addRepo", github, name });
@@ -32,7 +37,7 @@ export function refreshFeatures(repo: string): Promise<ActionReply> {
   return post({ action: "features", repo });
 }
 
-async function post(req: Record<string, string | undefined>): Promise<ActionReply> {
+async function post(req: Record<string, string | number | boolean | undefined>): Promise<ActionReply> {
   try {
     const r = await fetch("/api/actions", {
       method: "POST",

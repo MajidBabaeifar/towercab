@@ -1,6 +1,7 @@
 // The page's buttons (UI-66): each does what the owner would do on GitHub (as the owner, LOOP-38) or
 // in the CLI (a `commands` row the loop applies, LOOP-15).
 
+import { tickSteps } from "../commands.ts";
 import type { Config, RepoConfig } from "../config.ts";
 import type { Db } from "../db.ts";
 import { askFeatures } from "../features.ts";
@@ -16,6 +17,8 @@ export interface UiActions {
   retry(intent: string): Promise<string>;
   drop(intent: string): Promise<string>;
   start(intent: string): Promise<string>;
+  /** UI-160, SHIP-22: tick (or untick) one of the owner's steps. */
+  step?(intent: string, n: number, done: boolean): Promise<string>;
   pause(): Promise<string>;
   resume(): Promise<string>;
   /** UI-130: add `owner/name` as a repo (`name` = its short name, default the repo part). */
@@ -190,6 +193,11 @@ export function createActions(d: ActionDeps): UiActions {
     async pause() {
       command("pause");
       return "Paused: nothing new starts until you resume.";
+    },
+
+    async step(intent, n, done) {
+      // The same transaction as `towercab step`; the loop writes the tick to plan.md and goes on.
+      return tickSteps(d.db, intent, [n], done, new Date(d.clock.now() * 1000));
     },
 
     async resume() {

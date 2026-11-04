@@ -193,6 +193,8 @@ const STATE_ICONS: Record<StateKey, (p: IconProps) => JSX.Element> = {
   upnext: ArrowRight,
   parked: Moon,
   done: Check,
+  // UI-162: merged but never checked live, in the muted style of a parked intent.
+  unverified: Moon,
   dropped: XCircle,
 };
 

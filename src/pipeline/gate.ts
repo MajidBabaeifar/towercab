@@ -10,6 +10,7 @@ import { testGrantsOf } from "./access.ts";
 import { data, effectiveOf, gh, intentOf, prUrl, repoFiles } from "./common.ts";
 import { type Checks, codeBody } from "./prtext.ts";
 import { HOLD_SECS, holder } from "./ship.ts";
+import { stepsBeforeMerge } from "./steps.ts";
 import { changedTests } from "./verify.ts";
 
 /** PIP-110: why the PR waits for the owner beyond the gate table, in plain sentences. */
@@ -114,6 +115,10 @@ export const gateHandler: Handler = {
       cx.record(m, "hold", { why: `repo on hold: ${h.intent} is shipping` });
       return { poll: HOLD_SECS };
     }
+    // SHIP-18: steps only the owner can do before the merge hold it, whatever the autonomy.
+    const held = await stepsBeforeMerge(cx, m);
+    m = held.m;
+    if (held.why) return { done: wait("your steps first", held.why) };
     const intent = await intentOf(cx, m);
     const files = await repoFiles(cx, m);
     const d = data(m);

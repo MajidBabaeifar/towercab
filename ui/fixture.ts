@@ -207,6 +207,8 @@ export interface FakeActionCall {
   github?: string;
   name?: string;
   repo?: string;
+  n?: number;
+  done?: boolean;
 }
 
 export interface Fixture {
@@ -351,6 +353,10 @@ export function buildFixture(o: { now?: number; root?: string; empty?: boolean }
     async start(intent) {
       calls.push({ action: "start", intent });
       return "Starting its design on the next pass, even if the repo is full.";
+    },
+    async step(intent, n, done) {
+      calls.push({ action: "step", intent, n, done });
+      return `${done ? "Ticked" : "Unticked"} step ${n}.`;
     },
     async pause() {
       calls.push({ action: "pause" });
@@ -978,6 +984,28 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
     "verify/verify-2.log": "$ npm test\n42 passing\n",
     "review/review-1.json": '{"type":"result","result":"The review approved."}\n',
   });
+  // UI-160: the code intent's plan lists two owner steps, one of them ticked.
+  const steps = [
+    {
+      n: 1,
+      when: "before",
+      text: "Add the DOCS_TOKEN secret to the repo",
+      why: "The docs build needs it.",
+      done_at: iso(now - 3 * HOUR),
+    },
+    {
+      n: 2,
+      when: "after",
+      text: "Run the docs server apply",
+      why: "The server reads the new settings.",
+      done_at: null,
+    },
+  ];
+  db.run(
+    "UPDATE missions SET data = json_set(data, '$.steps', json(?)) WHERE id = (SELECT MAX(id) FROM missions WHERE intent = ?)",
+    JSON.stringify(steps),
+    IDS.code,
+  );
   runs(IDS.plan, {
     "design-1.log": "$ claude -p …\nWrote specs/limits.md\n",
     "plan-1.prompt.md": "# Plan\n\nRate-limit the public API.\n",

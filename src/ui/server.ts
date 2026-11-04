@@ -85,6 +85,7 @@ const ACTIONS = new Set([
   "retry",
   "drop",
   "start",
+  "step",
   "pause",
   "resume",
   "addRepo",
@@ -272,6 +273,8 @@ export function startUi(o: UiOptions): UiServer {
       github?: unknown;
       name?: unknown;
       repo?: unknown;
+      n?: unknown;
+      done?: unknown;
     };
     try {
       body = JSON.parse(raw) as typeof body;
@@ -307,16 +310,22 @@ export function startUi(o: UiOptions): UiServer {
                 ? await a.drop(intent)
                 : action === "start"
                   ? await a.start(intent)
-                  : action === "pause"
-                    ? await a.pause()
-                    : action === "addRepo"
-                      ? await a.addRepo(
-                          typeof body.github === "string" ? body.github : "",
-                          typeof body.name === "string" && body.name ? body.name : undefined,
-                        )
-                      : action === "features"
-                        ? await a.features(repo)
-                        : await a.resume();
+                  : action === "step"
+                    ? await (a.step ?? (() => Promise.reject(new Error("Ticking steps isn't available."))))(
+                        intent,
+                        Number(body.n),
+                        body.done !== false,
+                      )
+                    : action === "pause"
+                      ? await a.pause()
+                      : action === "addRepo"
+                        ? await a.addRepo(
+                            typeof body.github === "string" ? body.github : "",
+                            typeof body.name === "string" && body.name ? body.name : undefined,
+                          )
+                        : action === "features"
+                          ? await a.features(repo)
+                          : await a.resume();
       reply = { ok: true, message };
     } catch (e) {
       reply = { ok: false, message: (e as Error).message };
