@@ -9,6 +9,8 @@ import type {
   Card,
   Phase,
   ProblemView,
+  ProposedCard as ProposedCardData,
+  ProposedSection as ProposedData,
   RiskView,
   Row,
   SpendView,
@@ -17,7 +19,7 @@ import type {
   When,
 } from "../../src/ui/view.ts";
 import { AddRepoForm } from "./AddRepo.tsx";
-import { act, useFreshness } from "./api.ts";
+import { acceptProposed, act, closeProposed, useFreshness } from "./api.ts";
 import {
   Alert,
   Check,
@@ -679,5 +681,127 @@ export function Skeleton() {
       <div />
       <div />
     </div>
+  );
+}
+
+const proposedResults = new Map<number, ActionReply>();
+
+/** UI-184, UI-185: a proposed intent, with its PR, its text, Accept and Close. */
+export function ProposedCard({ card, readOnly }: { card: ProposedCardData; readOnly: boolean }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [result, setResult] = useState<ActionReply | null>(proposedResults.get(card.pr) ?? null);
+  const [closing, setClosing] = useState(false);
+  const [reason, setReason] = useState("");
+  const run = async (what: string, call: () => Promise<ActionReply>) => {
+    setBusy(what);
+    const r = await call();
+    proposedResults.set(card.pr, r);
+    setResult(r);
+    setBusy(null);
+    if (r.ok) setClosing(false);
+  };
+  const scores = [
+    card.u !== null ? `u${card.u}` : "",
+    card.i !== null ? `i${card.i}` : "",
+    card.a !== null ? `a${card.a}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const why = readOnly ? "Towercab isn't running." : card.acceptWhy;
+  return (
+    <article class="card proposed-card" id={`proposed-${card.pr}`}>
+      <header class="proposed-head">
+        <span class="chip chip-sm">Proposed</span>
+        {card.draft ? <span class="chip chip-sm chip-draft">Draft</span> : null}
+        <h3>{card.title}</h3>
+      </header>
+      <p class="meta proposed-meta">
+        {card.repo ? <span class="mono">{card.repo}</span> : <span>repo unknown</span>}
+        {scores ? <span class="mono"> · {scores}</span> : null}
+        {card.priorityText ? <span> · {card.priorityText}</span> : null}
+        <span> · {card.from}</span>
+        <span> · {card.waiting}</span>
+      </p>
+      {card.problem ? <p class="proposed-problem">{card.problem}</p> : null}
+      <div class="proposed-links">
+        <a href={card.prUrl} target="_blank" rel="noreferrer noopener">
+          <PullRequest size={14} /> Open on GitHub
+        </a>
+        {card.textUrl ? (
+          <a href={card.textUrl} target="_blank" rel="noreferrer noopener">
+            Read the intent
+          </a>
+        ) : null}
+      </div>
+      {closing ? (
+        <div class="proposed-close">
+          <label>
+            <span class="meta">Why close it? (optional)</span>
+            <input
+              type="text"
+              value={reason}
+              placeholder="Not going ahead."
+              onInput={(e) => setReason((e.currentTarget as HTMLInputElement).value)}
+            />
+          </label>
+          <button
+            type="button"
+            class="btn"
+            disabled={busy !== null}
+            onClick={() => run("close", () => closeProposed(card.pr, reason))}
+          >
+            {busy === "close" ? "Closing…" : "Close the PR"}
+          </button>
+          <button type="button" class="btn ghost" onClick={() => setClosing(false)}>
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <div class="proposed-actions">
+          <button
+            type="button"
+            class="btn primary"
+            disabled={readOnly || !card.canAccept || busy !== null}
+            title={why ?? undefined}
+            onClick={() => run("accept", () => acceptProposed(card.pr, card.head))}
+          >
+            {busy === "accept" ? "Accepting…" : "Accept"}
+          </button>
+          <button
+            type="button"
+            class="btn"
+            disabled={readOnly || busy !== null}
+            onClick={() => setClosing(true)}
+          >
+            Close
+          </button>
+          {why ? <span class="meta">{why}</span> : null}
+        </div>
+      )}
+      {result ? (
+        <p class={`result ${result.ok ? "ok" : "err"}`} role="status">
+          {result.message}
+        </p>
+      ) : null}
+    </article>
+  );
+}
+
+/** UI-184, UI-186, UI-188: the proposed cards in order, with the notice of a failed read. */
+export function ProposedList({ data, readOnly, id }: { data: ProposedData; readOnly: boolean; id?: string }) {
+  useEffect(() => {
+    const m = /^#proposed-(\d+)$/.exec(location.hash);
+    if (m) document.getElementById(`proposed-${m[1]}`)?.scrollIntoView();
+  }, []);
+  if (!data.cards.length) return null;
+  return (
+    <Section title="Proposed" count={data.cards.length} id={id} class="proposed-section">
+      {data.stale ? <p class="proposed-stale meta">{data.stale}</p> : null}
+      <div class="cards">
+        {data.cards.map((c) => (
+          <ProposedCard key={c.pr} card={c} readOnly={readOnly} />
+        ))}
+      </div>
+    </Section>
   );
 }

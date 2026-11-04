@@ -2,7 +2,16 @@
 
 import type { Overview as Data } from "../../../src/ui/view.ts";
 import { Airspace } from "../Airspace.tsx";
-import { Empty, NeedsCard, ProblemItem, Section, SpendCard, UpNextList, WorkRow } from "../components.tsx";
+import {
+  Empty,
+  NeedsCard,
+  ProblemItem,
+  ProposedList,
+  Section,
+  SpendCard,
+  UpNextList,
+  WorkRow,
+} from "../components.tsx";
 import { Check, ListIcon, Moon } from "../icons.tsx";
 import { Link } from "../router.tsx";
 
@@ -47,6 +56,7 @@ export function OverviewPage({ data }: { data: Data }) {
       <Airspace data={airspace} />
       <div class="cols">
         <div class="col-main">
+          {data.proposed ? <ProposedList data={data.proposed} readOnly={top.readOnly} id="proposed" /> : null}
           {needs.length ? (
             <div class="cards">
               {needs.map((c) => (

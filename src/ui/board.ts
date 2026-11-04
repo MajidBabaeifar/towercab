@@ -3,6 +3,7 @@
 // intent can't be found (no repo) goes to an "unknown repo" lane, last.
 
 import type { Intent } from "../intents/types.ts";
+import { proposedSection } from "./proposed.ts";
 import { lastSevenDays, repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
 import { ago, airspaceOf, dbMark, localDate, snapshot, state, type UiSources, versionOf } from "./state.ts";
 import type { BoardCard, BoardColumn, BoardColumnKey, BoardPage, BoardRepo } from "./view.ts";
@@ -91,6 +92,14 @@ export async function board(src: UiSources): Promise<BoardPage> {
   const spend = spendByRepo(src.db, s.now);
   // Every repo that cost something has a row, so the rows add up to the totals.
   for (const repo of spend.keys()) if (!repos.includes(repo)) repos.push(repo);
+  // UI-187: proposed intents per repo; those of unknown repos count in the "" row.
+  const proposed = new Map<string, number>();
+  const proposals = proposedSection(src).cards;
+  for (const c of proposals) {
+    const repo = src.config.repos.has(c.repo) ? c.repo : "";
+    proposed.set(repo, (proposed.get(repo) ?? 0) + 1);
+  }
+  for (const repo of proposed.keys()) if (!repos.includes(repo)) repos.push(repo);
   const unknown = repos.indexOf("");
   if (unknown >= 0) repos.push(...repos.splice(unknown, 1));
   const rows: BoardRepo[] = repos.map((repo) => ({
@@ -98,6 +107,7 @@ export async function board(src: UiSources): Promise<BoardPage> {
     github: src.config.repos.get(repo)?.github ?? "",
     open: counts.get(repo)?.open ?? 0,
     done: counts.get(repo)?.done ?? 0,
+    proposed: proposed.get(repo) ?? 0,
     spend: repoSpendView(spend.get(repo)),
     cells: cells.get(repo) ?? {},
   }));
@@ -108,6 +118,7 @@ export async function board(src: UiSources): Promise<BoardPage> {
   const body = {
     columns,
     repos: rows,
+    ...(src.proposed ? { proposed: proposals.length } : {}),
     spend: repoSpendView(spendTotals(spend)),
     error: s.listError
       ? `Towercab can't read the intents repo, so the board shows only intents that have started. ${s.listError}`

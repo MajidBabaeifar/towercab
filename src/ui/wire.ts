@@ -106,6 +106,7 @@ export function sourcesOf(loop: Loop, home: Home): UiSources {
     upNext: () => upNextOf(loop),
     prUrl: (repo, n) => `https://github.com/${repo}/pull/${n}`,
     intentUrl: (i) => loop.d.store.url(i),
+    proposed: () => loop.proposedState(),
   };
 }
 
@@ -119,6 +120,7 @@ export function startLoopUi(loop: Loop, config: Config, github: GitHub, home: Ho
       config,
       clock: loop.d.clock,
       github,
+      proposed: () => loop.proposedState().list,
       // UI-130: answer once the checks pass; the clone runs on, and the page's live update shows the
       // repo (or, on failure, a problem) when it ends.
       addRepo: async (gh, name) => {
