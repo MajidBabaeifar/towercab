@@ -556,6 +556,34 @@ intents that waited for it start.
   knows (towercab repo list)`.
 - Verified by: `repos: set changes a repo's settings`, `cli: repo commands`
 
+### LOOP-92 · Reading the proposed intents
+
+The loop looks at the open pull requests on the intents repo every minute, so a proposed intent is seen within a minute of being opened.
+
+- Like the PR reads of LOOP-18, once per minute of the loop's clock (also on start): one
+  `gh pr list --state open` on the intents repo as the App, with drafts, and the files of each PR. The result is
+  kept in memory for the UI (UI-184) and the messages (LOOP-93); nothing is written to the intents repo.
+- A GitHub failure is a `github` fault (LOOP-10): the last good list stays, the read is retried on the
+  next pass, and the UI says the list may be out of date (UI-188). Reading never moves a mission.
+- Verified by: `proposed: the intents PRs are read every minute`, `proposed: a gh failure is a github fault and keeps the last list`
+
+### LOOP-93 · One message per proposed intent
+
+Towercab sends one Telegram message when a proposed intent first appears, and never another for the same pull request.
+
+- Each new proposed intent (INT-51, drafts too) writes one outbox row with the key `proposed:<PR number>`
+  in the transaction that first sees it, so the primary key makes it once. Text: `Proposed intent: <title>
+  (<repo>), priority <n>` (`would be parked` instead of the priority when below the cutoff), then the link
+  to its card in the UI (UI-184). GitHub-only PRs get the message too, linking the PR.
+- A PR closed or merged before the row is sent drops the row (LOOP-14). A PR that changes after the
+  message, or leaves draft, sends nothing more.
+- The first read after this feature is first run marks every proposed PR already open as seen, with no
+  message: it records them in `meta` (`proposed:seeded`, and `proposed:seen:<PR number>`) in one
+  transaction. Only a PR that appears in a later read sends one. A restart repeats nothing, because
+  the seen PRs are kept in `meta` and the outbox.
+- Extends LOOP-14: a proposed intent is something the owner has to decide.
+- Verified by: `proposed: a new proposal sends one message`, `proposed: the same PR never sends twice`, `proposed: a proposal closed before sending is dropped`, `proposed: proposals already open on the first read send nothing`
+
 ### LOOP-73 · Stages for the owner's steps and the unverified end
 
 The state machine gets a stage where a merged change waits for the owner's steps, and an end for changes

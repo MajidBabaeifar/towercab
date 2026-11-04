@@ -783,6 +783,64 @@ The Repos page works at phone width and in light and dark, like the rest of the 
   (UI-68).
 - Verified by: `ui: screenshots light, dark and mobile`
 
+### UI-184 · Proposed cards
+
+The overview shows each proposed intent as a "Proposed" card, so the owner sees what waits for a yes.
+
+- A "Proposed" section on the overview, only when there is one, before the needs-you cards of
+  missions. Each card (INT-52) carries: the title; the repo; `u`, `i`, `a`; the priority it would get or
+  "would be parked"; "from <proposer>"; "waiting <duration>" (the PR's age); a "Draft" chip when it is
+  one; "Open on GitHub" (the PR); and "Read the intent" (the intent file at the PR's head). It has the
+  anchor `#proposed-<PR number>`, which LOOP-93's message links.
+- A GitHub-only PR (INT-51) says why it can't be accepted here (`Changes more than one intent` or
+  `Changes more than an intent file`) and offers the PR link and Close, not Accept. Plan PRs keep their own cards (UI-58).
+- Data: `GET /api/overview` gains `proposed`, a list of the cards; it is part of the page's version
+  (UI-67), so the page updates when one arrives or goes.
+- Verified by: `ui: the overview lists proposed intents`, `ui: a GitHub-only proposal can be closed but not accepted`, `ui: screenshots light, dark and mobile`
+
+### UI-185 · Accept and Close
+
+The owner accepts or closes a proposed intent from its card, and the page says what happened.
+
+- "Accept" posts `{action: "accept", pr}` and "Close" posts `{action: "close", pr, text?}` to
+  `POST /api/actions` (UI-65), with the head SHA the card showed. Close asks for a short reason, with a
+  default. The server does what INT-53 says and replies with its one sentence; the card goes when the
+  PR does, and a failure stays on the card in the owner's words.
+- Accept is disabled with its reason while the loop's last read failed or the PR is GitHub-only. Close
+  is offered on every card.
+- Verified by: `ui: accept merges the proposal and the card goes`, `ui: close sends the reason`, `ui: a refused accept says why`
+
+### UI-186 · Proposed on a repo's page
+
+Each repo's page lists the proposed intents for that repo, with the same cards and buttons.
+
+- A "Proposed" section on UI-141's page, after "In progress", only when the repo has any: the same
+  cards as UI-184, with Accept and Close. The repo is the intent's `repo`, matched like INT-2's.
+- A proposal whose repo Towercab doesn't know (LOOP-65), or whose file can't be read, shows on the
+  overview only, with the repo name as written.
+- Verified by: `ui: a repo page lists its proposed intents`, `ui: a proposal for an unknown repo shows on the overview only`
+
+### UI-187 · Proposed on the Board
+
+The Board counts how many proposed intents wait, overall and per repo.
+
+- The Board's heading says `<n> proposed` when there are any, linking the overview's section. A repo
+  row header adds `<n> proposed` (UI-134's counts) for its repo; proposals of unknown repos count in the
+  heading and in the "Unknown repo" row. No proposed intents → nothing is shown. They are not cards
+  in the grid.
+- `GET /api/board` gains `proposed` (total) and a `proposed` count per repo row.
+- Verified by: `ui: the board counts proposed intents`
+
+### UI-188 · Proposed intents in priority order
+
+Proposed intents are listed by the priority they would have, and the page says when the list may be out of date.
+
+- Descending by priority (INT-52), ties by oldest PR first; the ones that would be parked come last,
+  in the same order. The overview and each repo's page use the same order.
+- When the last read failed (LOOP-92), the section says `Couldn't reach GitHub at <time>: this list
+  may be out of date.` above the cards it kept.
+- Verified by: `ui: proposed intents are sorted by priority`, `ui: a failed read says the list may be out of date`
+
 ### UI-160 · Your steps on the intent page
 
 The intent page shows the owner's steps as a checklist they tick off.
