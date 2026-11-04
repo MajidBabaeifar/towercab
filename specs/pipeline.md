@@ -1191,21 +1191,28 @@ owner once, with the whole list.
 
 ### PIP-137 · A helper can get additions without asking
 
-A shared test helper with no test cases of its own can be added to freely; changing or deleting what is
-already there is still asked.
+A shared test helper with no test cases of its own can get new exported functions, types and constants
+without asking; any other change to it is asked.
 
 - A *helper* is a file on the base branch that matches PIP-30's globs and contains no test cases (no
   `it`, `test` or `describe` call; `tests/helpers/**` is the usual case). A helper is not
-  write-blocked (REPO-13), so the worker can append functions, exports and imports. A file with any
-  test case stays blocked as before: this never loosens the guard for tests.
-- A helper change counts as an addition when its diff against `origin/<base>` removes no line. When a
-  worker round ends with a helper whose diff removes or changes a line and is not granted, Towercab
-  restores that helper to the base content and asks about it like any guarded test (PIP-136), so the
-  worker's other work is kept. Deleting or renaming a helper is likewise asked.
-- Publish (PIP-117) lets an ungranted helper pass when the diff removes no line, and refuses it
-  otherwise. The planner (PIP-135) lists a helper only when the plan edits or removes what it holds.
-  The intent page (PIP-118) does not list helpers that only gained lines.
-- Verified by: `guard: a helper without test cases is not blocked`, `pipeline: adding a function to a helper does not ask`, `pipeline: changing a helper function asks`, `pipeline: publish passes an additive helper change`, `repo: a file with test cases stays blocked`
+  write-blocked (REPO-13), so the worker can edit it. A file with any test case stays blocked as
+  before: this never loosens the guard for tests.
+- A helper change is *free* only when, against `origin/<base>`, it removes or changes no existing line
+  and every added top-level statement is a new exported function, type, interface or constant (with
+  the imports they need). Any other added top-level statement is not free: code that runs on import,
+  `vi.mock` or other mocks, `beforeEach`/`afterEach` hooks, changed setup. Deleting or renaming a
+  helper is not free.
+- When a worker round ends with a helper whose change is not free and not granted, the edit stays in
+  the worktree but is *held*: it is not published. Towercab adds the helper to the batched question
+  (PIP-136) with the reason. On allow, the file joins the grants (`by: owner`) and the edit stays; on
+  refuse, the helper is restored to the base content then and recorded in `data.refusedTests`
+  (PIP-116). The worker's other work is kept throughout.
+- Publish (PIP-117) refuses any helper whose change is not free and still has no answer, naming the
+  files, so nothing ungranted ships. A free change passes. The planner (PIP-135) lists a helper only
+  when the plan changes more than that free kind. The intent page (PIP-118) does not list helpers that
+  only had free changes.
+- Verified by: `guard: a helper without test cases is not blocked`, `pipeline: adding an exported function to a helper does not ask`, `pipeline: changing a helper function asks`, `pipeline: a new top-level statement in a helper asks`, `pipeline: a held helper edit stays until the owner answers`, `pipeline: a refused helper edit is restored`, `pipeline: publish refuses an unanswered helper change`, `pipeline: publish passes a free helper change`, `repo: a file with test cases stays blocked`
 
 ### PIP-119 · An outcome only the owner can do doesn't block approval
 
