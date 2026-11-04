@@ -1156,6 +1156,64 @@ every goalpost that moved.
   changed beyond new ones" in plain words; none → neither section appears.
 - Verified by: `ui: the intent page lists granted existing tests`, `pipeline: the code PR lists granted existing tests`
 
+### PIP-135 · The plan predicts the existing tests a change touches
+
+The planner looks up which existing tests cover the files the plan changes and lists them for the
+owner up front, so the build does not stop to ask about each one.
+
+- Extends PIP-115. For every file the plan changes, the planner finds the existing test files that
+  cover it: those that import it, or whose name matches it (`src/machine.ts` → `tests/machine.test.ts`),
+  and the shared helpers those tests import (PIP-137). A plan that changes behaviour a state machine,
+  schema or public function defines also lists the tests that assert that behaviour.
+- Each such file the change will edit, delete or rename goes into `access.tests` with a `why` that
+  names the file or behaviour that makes it necessary. Tests the plan only adds to, and tests it
+  expects to stay unchanged, are not listed. PIP-115's drop rule, ticking, risk and owner-merge rules
+  apply unchanged.
+- The planner's agent file (`agents/plan.md`) tells it to do this search before it writes `## Access`.
+- Verified by: `pipeline: plan prompt tells the planner to predict covering tests`, `pipeline: plan access lists tests that import a changed file`
+
+### PIP-136 · Guarded tests are asked once, all together
+
+When the worker needs several guarded tests mid-build, it keeps working on everything else and asks the
+owner once, with the whole list.
+
+- Extends PIP-116. The guard's block reason (REPO-13) tells the worker to carry on with all work that
+  does not need the file, note every guarded file it needs and why, and return one `status: access`
+  with every file in `access.tests`. The worker does not stop at the first block. The agent file for
+  the worker says the same.
+- The mission waits with one question (PIP-110) listing each file and its reason, with the options
+  `Allow all of them` and `Keep all as they are`, and a recommendation. A reply that names some of the
+  files allows those. Following PIP-116's rule, a file the reply does not clearly allow is refused.
+- Allowed files join the grants (`by: owner`); refused ones go to `data.refusedTests` (PIP-116). A
+  list of one file asks as before. Files already granted or refused are left out of the list; if all
+  are, nothing is asked.
+- Verified by: `pipeline: a build needing three guarded tests asks once with all three`, `pipeline: a reply can allow some of the asked tests`, `pipeline: the guard reason tells the worker to collect every guarded test`
+
+### PIP-137 · A helper can get additions without asking
+
+A shared test helper with no test cases of its own can get new exported functions, types and constants
+without asking; any other change to it is asked.
+
+- A *helper* is a file on the base branch that matches PIP-30's globs and contains no test cases (no
+  `it`, `test` or `describe` call; `tests/helpers/**` is the usual case). A helper is not
+  write-blocked (REPO-13), so the worker can edit it. A file with any test case stays blocked as
+  before: this never loosens the guard for tests.
+- A helper change is *free* only when, against `origin/<base>`, it removes or changes no existing line
+  and every added top-level statement is a new exported function, type, interface or constant (with
+  the imports they need). Any other added top-level statement is not free: code that runs on import,
+  `vi.mock` or other mocks, `beforeEach`/`afterEach` hooks, changed setup. Deleting or renaming a
+  helper is not free.
+- When a worker round ends with a helper whose change is not free and not granted, the edit stays in
+  the worktree but is *held*: it is not published. Towercab adds the helper to the batched question
+  (PIP-136) with the reason. On allow, the file joins the grants (`by: owner`) and the edit stays; on
+  refuse, the helper is restored to the base content then and recorded in `data.refusedTests`
+  (PIP-116). The worker's other work is kept throughout.
+- Publish (PIP-117) refuses any helper whose change is not free and still has no answer, naming the
+  files, so nothing ungranted ships. A free change passes. The planner (PIP-135) lists a helper only
+  when the plan changes more than that free kind. The intent page (PIP-118) does not list helpers that
+  only had free changes.
+- Verified by: `guard: a helper without test cases is not blocked`, `pipeline: adding an exported function to a helper does not ask`, `pipeline: changing a helper function asks`, `pipeline: a new top-level statement in a helper asks`, `pipeline: a held helper edit stays until the owner answers`, `pipeline: a refused helper edit is restored`, `pipeline: publish refuses an unanswered helper change`, `pipeline: publish passes a free helper change`, `repo: a file with test cases stays blocked`
+
 ### PIP-119 · An outcome only the owner can do doesn't block approval
 
 The review marks an outcome that only the owner can do as an owner step, and it no longer counts as
