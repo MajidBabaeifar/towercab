@@ -311,23 +311,34 @@ With the owner's opt-in, Towercab applies the standard settings itself and check
   not apply again until the next daily check; it never loops. A repo with no gaps is not touched.
 - Towercab keeps no list of settings: what is applied is whatever the pinned script applies
   ([REPO-25](#repo-25--the-settings-check)).
-- **Ruleset guard.** The ruleset requires the `ci-ok` check. Before applying, Towercab reads the check
-  runs of the head commit of the repo's base branch (`gh api repos/<r>/commits/<sha>/check-runs`); the
-  ruleset is applied only when a run named `ci-ok` has concluded `success` there. Otherwise it applies
-  everything except the ruleset (`apply-settings --skip ruleset`, a flag the pinned `ci` release must
-  have; a release without it → nothing is applied, the reason is stored) and the gap is stored and shown
-  as `Ruleset not applied: ci-ok has not run green on main`, so no repo becomes unmergeable. The next
-  daily check tries again.
-- **Backup.** Before every apply, Towercab saves the repo's settings (`gh api repos/<r>`) and all its
-  rulesets (`repos/<r>/rulesets`, each with its full body) as one JSON file
-  `<home>/settings-backups/<owner>/<name>/<UTC time>.json`, and keeps the last 5 per repo (older ones
-  deleted). A backup that cannot be written → nothing is applied.
-- **Restore.** `towercab settings restore <repo>` writes the newest backup back with the App token:
-  the repo's settings by `PATCH repos/<r>`, each saved ruleset by `PUT` (recreated when deleted), rulesets
-  that are not in the backup deleted. It prints what it restored and the backup's time; no backup →
-  `<repo> has no saved settings`; unknown repo → as in [LOOP-69](loop.md)'s text; a forbidden write is
-  REPO-32's permission message. It does not need the loop to be running.
-- Verified by: `repo: settings stay check-only by default`, `repo: TOWERCAB.md settings check keeps a repo check-only`, `repo: a bad TOWERCAB.md settings value is invalid`, `repo: apply runs the script then checks again`, `repo: a gap that survives the apply is not retried until the next day`, `repo: a bad settings mode is rejected`, `repo: the ruleset waits for a green ci-ok on main`, `repo: apply backs up settings and rulesets and keeps 5`, `repo: no backup, no apply`, `cli: settings restore writes the newest backup back`
+- **Ruleset guard.** The ruleset requires check names that the pinned script names itself: Towercab runs
+  `apply-settings --plan <owner/name>` (JSON of what it would change, including the required check names;
+  added by intent 261105-0010) and reads the names from it, so none is written in Towercab (today `ci-ok`).
+  Before applying, Towercab reads the check runs of the head commit of the repo's base branch (`gh api
+  repos/<r>/commits/<sha>/check-runs`); the guard passes only when every required name has a run that
+  concluded `success` there. Then the script is applied whole. When the guard fails, the plan can't be
+  read (a release without `--plan`) or the check runs can't be read, Towercab applies with
+  `apply-settings --skip-ruleset <owner/name>` (also from 261105-0010) and stores and shows the gap as
+  `Ruleset not applied: <name> has not run green on main`, so no repo becomes unmergeable. A release
+  that rejects `--skip-ruleset` (a usage error, before it changes anything) → nothing is applied to that
+  repo, only reported, with the reason stored. The next daily check tries again.
+- **Backup.** Before every apply, Towercab saves everything the script can change, as one JSON file
+  `<home>/settings-backups/<owner>/<name>/<UTC time>.json`: the repo's settings (`gh api repos/<r>`),
+  its `security_and_analysis`, all rulesets (`repos/<r>/rulesets`, each with its full body), the classic
+  branch protection of the base branch (`branches/<base>/protection`), the Actions workflow permissions
+  (`actions/permissions/workflow`) and whether vulnerability alerts are on (`vulnerability-alerts`).
+  A part that does not exist (a 404, such as no branch protection) is saved as absent. The last 5 files
+  per repo are kept, older ones are deleted. A backup that cannot be read or written in full → nothing
+  is applied.
+- **Restore.** `towercab settings restore <repo>` writes back, with the App token, only what the newest
+  backup saved: the repo's settings and `security_and_analysis` (`PATCH repos/<r>`), each saved ruleset
+  (`PUT`, recreated when deleted), the branch protection, the workflow permissions, and vulnerability
+  alerts on or off as saved. A part saved as absent is not touched. Anything added since (a ruleset not
+  in the backup, branch protection the backup lacks) is left alone and listed in the output as `Not in the
+  backup, left as it is: <what>`. It prints what it restored and the backup's time; no backup → `<repo>
+  has no saved settings`; unknown repo → as in [LOOP-69](loop.md)'s text; a forbidden write is REPO-32's
+  permission message. It does not need the loop to be running.
+- Verified by: `repo: settings stay check-only by default`, `repo: TOWERCAB.md settings check keeps a repo check-only`, `repo: a bad TOWERCAB.md settings value is invalid`, `repo: apply runs the script then checks again`, `repo: a gap that survives the apply is not retried until the next day`, `repo: a bad settings mode is rejected`, `repo: the required check names come from the plan`, `repo: a green main gets the whole apply`, `repo: a main not green gets everything but the ruleset`, `repo: a release without skip-ruleset applies nothing to a repo not green`, `repo: apply backs up everything the script can change and keeps 5`, `repo: no backup, no apply`, `cli: settings restore writes back what was saved`, `cli: settings restore lists what was added since and leaves it`
 
 ### REPO-32 · A missing permission is said once
 
