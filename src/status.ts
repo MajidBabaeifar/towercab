@@ -3,9 +3,10 @@
 import type { Db } from "./db.ts";
 import type { Listing } from "./intents/types.ts";
 import { isWait, isWorking, waitInfo } from "./machine.ts";
-import { type Mission, unfinished } from "./mission.ts";
+import { dataOf, type Mission, unfinished } from "./mission.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
 import { isBuilding } from "./slots.ts";
+import { leftOf, type OwnerStep } from "./steps.ts";
 
 export interface Problem {
   kind: string;
@@ -67,19 +68,25 @@ export function renderStatus(s: StatusInput): string {
     .join(" · ");
   const lines = [head];
   const ms = unfinished(s.db);
-  const working = ms.filter((m) => isWorking(m.stage) && !s.queued.has(m.id) && m.stage !== "ci");
+  // LOOP-74: `steps` is a working stage that waits on the owner.
+  const onSteps = (m: Mission) => m.stage === "steps" && m.waiting !== null;
+  const working = ms.filter(
+    (m) => isWorking(m.stage) && !s.queued.has(m.id) && m.stage !== "ci" && !onSteps(m),
+  );
   lines.push(working.length ? "working:" : "working: nothing");
   for (const m of working) {
     const model = m.child_model ? ` · ${m.child_model}` : "";
     lines.push(`- ${title(m)} · ${STEP[m.stage] ?? m.stage}${model} · since ${time(m.updated, s.now)}`);
   }
-  const onMe = ms.filter((m) => isWait(m.stage) && !s.queued.has(m.id));
+  const onMe = ms.filter((m) => (isWait(m.stage) || onSteps(m)) && !s.queued.has(m.id));
   if (onMe.length) {
     lines.push("waiting on you:");
     for (const m of onMe) {
       const link = s.prLink(m);
+      // UI-163: how many of the owner's steps are left.
+      const left = leftOf(dataOf<{ steps?: OwnerStep[] }>(m).steps, m.waiting);
       lines.push(
-        `- ${title(m)} · ${waitInfo(m.waiting ?? "answer the question").ask}${link ? ` ${link}` : ""}`,
+        `- ${title(m)} · ${waitInfo(m.waiting ?? "answer the question").ask}${left ? ` (${left} left)` : ""}${link ? ` ${link}` : ""}`,
       );
     }
   }

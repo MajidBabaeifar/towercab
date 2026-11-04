@@ -293,7 +293,7 @@ export async function addRepo(d: AddRepoDeps, text: string, name?: string): Prom
 function needing(db: Db, name: string): string[] {
   return db
     .all<{ intent: string }>(
-      "SELECT DISTINCT intent FROM missions WHERE repo = ? AND (stage NOT IN ('done','stopped') OR step != '') ORDER BY intent",
+      "SELECT DISTINCT intent FROM missions WHERE repo = ? AND (stage NOT IN ('done','stopped','unverified') OR step != '') ORDER BY intent",
       name,
     )
     .map((r) => r.intent);

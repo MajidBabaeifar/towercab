@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..72, LOOP-92..93, LOOP-105..107 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-92..93, LOOP-105..107 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -219,7 +219,7 @@ which intent, with a link.
 The CLI covers running the service and the few actions that have no GitHub gesture.
 
 - `up`, `down`, `restart`, `logs` (LOOP-2); `run [--watch] [--intent <id>]`; `status`, `next`
-  (LOOP-13); `add` ([INT-2](intents.md)); `answer <id> <text>` (LOOP-38); `start <id>` (LOOP-63); `retry <id>` (a fresh
+  (LOOP-13); `add` ([INT-2](intents.md)); `answer <id> <text>` (LOOP-38); `start <id>` (LOOP-63); `step <id> <n…|all>` ([SHIP-22](ship.md)); `retry <id>` (a fresh
   attempt); `drop <id>` ([PRI-9](priority.md)); `approve <id>` (merges the PR the intent waits on, as
   the owner, LOOP-38); `pause`, `resume`; `repo add | remove | set | list` (LOOP-66, LOOP-67, LOOP-69); `ui` (opens
   the page); `doctor`; `update` (LOOP-35);
@@ -317,7 +317,7 @@ When Towercab's own `main` moves, the running Towercab updates itself and restar
 
 - Every 60 s, when the checkout Towercab runs from is clean, on `main`, and `[update].auto` is true
   (default): `git fetch`; if `origin/main` is ahead, wait until no child runs, then `git merge
-  --ff-only`, `npm ci` when `package-lock.json` changed, `npm run build:ui` when `ui/` changed, and
+  --ff-only` (the wait is a drain, LOOP-108..109), `npm ci` when `package-lock.json` changed, `npm run build:ui` when `ui/` changed, and
   check the new tree with `bin/towercab doctor --quick`, which reads only the config, the tools and the
   modules: it never opens the database, so new code that is then rejected has migrated or imported
   nothing. Pass → exit 75 and systemd starts the new code. Fail → `git reset --hard <previous>`, keep running, one message `self-update failed: <why>`.
@@ -377,6 +377,45 @@ A step that is blocked by Towercab's own setup is retried once automatically bef
 - Blocks caused by the work (a protected path not granted, a failing test, an access request) are
   unchanged and are not retried.
 - Verified by: `loop: a setup block is retried once`, `loop: a second setup block waits for the owner`, `loop: a block caused by the work is not retried`, `loop: only a listed setup error is retried`, `loop: the agent's account of a block does not make it a setup fault`
+
+### LOOP-108 · Drain for update
+
+When `origin/main` is ahead, Towercab stops starting new work, lets running work finish, then updates, so a busy queue cannot hold back an update.
+
+- The self-update check (LOOP-35) that finds `origin/main` ahead sets a drain, recorded with the target
+  commit and the time it began. While a drain is set, a pass starts no child: no pick, no step, no
+  Claude run and no other child. Children already running are not touched and their results are applied
+  as usual. Steps that need no child (waiting, outbox, PR reads) go on.
+- When no child runs, the update of LOOP-35 happens at once (merge, install, check, exit 75), and work
+  resumes on the new code (LOOP-105).
+- A failed update (LOOP-35) clears the drain and the loop remembers the commit that failed. It does not
+  drain for that commit again: the next drain starts only when `origin/main` has moved past it. One
+  message names the failed commit and the reason (`self-update to <short commit> failed: <why>`). Work
+  that was held back starts again in the same process. The memory is kept while the loop runs.
+- If `origin/main` stops being ahead, or the checkout is no longer clean or on `main`, or `[update].auto`
+  turns false, the drain is cleared and work starts again. The drain does not survive a restart.
+- `status` and the UI show `draining for update to <short commit>` while a drain is set.
+- Verified by: `update: no child starts while main is ahead`, `update: updates once the running child ends`, `update: a drain is cleared when main is no longer ahead`, `update: status says draining for update`, `update: a failed commit is not drained for again`, `update: a failed update sends one message naming the commit`
+
+### LOOP-109 · Drain limit
+
+A drain waits for the limit (`[update].drain_minutes`, default 60); after that Towercab updates anyway, and the runs it cut off continue their session without counting as crashes.
+
+- `[update].drain_minutes` is a whole number of minutes ≥ 1, default 60.
+- Once a drain has lasted `drain_minutes` (by the loop's clock), any running child that is not a review
+  or a build is cut off. A review or build still running gets up to `drain_minutes` more to finish; if
+  it is still running when the drain has lasted twice `drain_minutes`, it is cut off too. So a drain
+  lasts at most twice `drain_minutes` (two hours with the default). Cutting off is as for SIGTERM
+  (LOOP-7): SIGTERM to each child's group, SIGKILL after 10 s, `interrupted` for each mission (not
+  counted as `unclean`). Then the update of LOOP-35 runs and, if it passes, the loop exits 75.
+- After the restart each cut-off Claude run resumes its own session with `Continue where you stopped.`
+  (LOOP-7), and the mission continues from its recorded step. It is never counted toward the three
+  crashes of LOOP-7 and sends no message to the owner.
+- If the update fails (LOOP-108), the loop keeps running: each mission it cut off continues in the same
+  process, from its recorded step in its own session, as if no drain had happened, and is not counted
+  as a crash or a repair.
+- The log records that the limit was reached and which missions were interrupted.
+- Verified by: `update: a drain past the limit updates anyway`, `update: drain_minutes sets the limit`, `update: a review or build gets one more drain_minutes to finish`, `update: other children are cut off at the limit`, `update: a drain lasts at most twice drain_minutes`, `update: an interrupted mission resumes its session after the update`, `update: an interrupted run is not counted as a crash`, `update: a failed forced update resumes the cut-off missions in the same process`
 
 ### LOOP-36 · Dev loop
 
@@ -807,7 +846,7 @@ CREATE TABLE missions (
   child_pid INTEGER, child_kind TEXT, child_since REAL, child_model TEXT,
   cost_usd REAL NOT NULL DEFAULT 0, agent_secs REAL NOT NULL DEFAULT 0,
   data TEXT NOT NULL DEFAULT '{}', created REAL NOT NULL, updated REAL NOT NULL, finished REAL);
-CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT IN ('done','stopped');
+CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT IN ('done','stopped','unverified');
 CREATE TABLE transitions (id INTEGER PRIMARY KEY, mission INTEGER NOT NULL REFERENCES missions(id),
   at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT);
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
@@ -882,6 +921,8 @@ are stored in intent files and never change; each ask says plainly what the owne
 | `bad after:` | (intent only) | Fix what this intent waits for: Towercab can't find one of the intents it names, or it was dropped. |
 | `rolled back, revise` | blocked | The change broke the live app, two fixes didn't hold, and it was taken back out. Revise the intent, then start over (/retry). |
 | `rollback failed` | blocked | Taking the broken change back out failed, so nothing more goes live in this repo until you fix it. |
+| `your steps first` | blocked | Do these before this change merges: tick them off in Towercab, or reply to change the plan. |
+| `your steps` | steps | Do these so the change works live: tick them off in Towercab. |
 
 Every blocked wait continues on a reply on the intent's current PR, `towercab answer`, or removing
 `waiting:` from the intent; `/retry` starts over; closing the PR drops the intent.

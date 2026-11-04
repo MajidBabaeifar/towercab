@@ -27,7 +27,7 @@ CREATE TABLE missions (
   child_pid INTEGER, child_kind TEXT, child_since REAL, child_model TEXT,
   cost_usd REAL NOT NULL DEFAULT 0, agent_secs REAL NOT NULL DEFAULT 0,
   data TEXT NOT NULL DEFAULT '{}', created REAL NOT NULL, updated REAL NOT NULL, finished REAL);
-CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT IN ('done','stopped');
+CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT IN ('done','stopped','unverified');
 CREATE TABLE transitions (id INTEGER PRIMARY KEY, mission INTEGER NOT NULL REFERENCES missions(id),
   at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT);
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
@@ -52,6 +52,9 @@ ALTER TABLE commands_new RENAME TO commands;`,
   // 3: repos move from config.toml into the database (LOOP-65). `IF NOT EXISTS`: after a manual
   // rollback to version 2 (LOOP-37) the table and its rows are still there.
   REPOS.replace("CREATE TABLE repos", "CREATE TABLE IF NOT EXISTS repos"),
+  // 4: a mission that ended `unverified` (LOOP-73) is finished, so its intent may start a new one.
+  `DROP INDEX missions_one_per_intent;
+CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT IN ('done','stopped','unverified');`,
 ];
 
 /**

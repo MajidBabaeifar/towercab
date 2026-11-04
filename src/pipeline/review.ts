@@ -126,6 +126,12 @@ async function patchId(cx: Ctx, m: Mission): Promise<string> {
   return check(r, "git patch-id").trim().split(/\s+/)[0] ?? "";
 }
 
+/** SHIP-21: the review checks the plan's claim that nothing about the change can be seen live. */
+function noneLiveText(why: string | undefined): string {
+  if (!why?.trim()) return "";
+  return `The plan says nothing about this change can be checked in the live app, so Towercab will call it done without a live check: "${why.trim().replace(/\s+/g, " ")}". Check the claim. If a user of the app could notice the change, the claim is wrong and that is an important finding.`;
+}
+
 export const reviewHandler: Handler = {
   async step(cx, m) {
     if (m.step === "risk") return spawnRisk(cx, m, "code");
@@ -150,7 +156,7 @@ export const reviewHandler: Handler = {
       ci: d.ci?.result === "none" ? "no CI on this repo" : "green",
       screenshots: shots,
       diff_cmd: `git diff refs/remotes/origin/${repo.base}...HEAD`,
-      e2e: e2eText(files.towercab.live, "review"),
+      e2e: [e2eText(files.towercab.live, "review"), noneLiveText(d.liveNoneWhy)].filter(Boolean).join("\n\n"),
     });
     // A run cut off by a crash runs again as the same round, so its comment is edited, not added.
     const at = m.step === "review" ? m : cx.record(m, "pending", {}, { review: null });
