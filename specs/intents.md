@@ -502,6 +502,43 @@ The owner accepts a proposed intent by merging its PR, or says no by closing it,
 - A GitHub failure is reported to the owner as it is, and nothing is retried silently.
 - Verified by: `proposed: accept marks a draft ready and squash-merges`, `proposed: accept refuses a PR that changed`, `proposed: close comments the reason and closes`, `proposed: GitHub-only PRs can't be accepted`, `proposed: GitHub-only PRs can be closed`
 
+### INT-60 · Labels are checked against the intents
+
+On each issue poll Towercab checks that every issue labelled queued or proposed has the intent or intent PR the label promises.
+
+- Each poll (INT-21) lists the open issues labelled `towercab:queued` or `towercab:proposed` and
+  compares them with the intents (open, `done/` and dropped, INT-26), the unreadable intent files whose
+  text holds the issue's URL (INT-11), and the intent PRs (open, merged or closed) on the branch
+  `issue/<repo>-<n>` or whose new `intent.md` carries the issue's `issue:` URL (INT-51).
+- An issue with a match is left alone. The check writes nothing itself: INT-61 and INT-62 say what
+  follows from a label with nothing behind it.
+- A GitHub or store read that fails makes the poll skip the check and try again on the next poll; an
+  incomplete list never counts as "no intent".
+- Verified by: `issues: a labelled issue with an intent is left alone`, `issues: a failed read skips the label check`
+
+### INT-61 · A queued issue with no intent is proposed
+
+An issue labelled queued that has no intent anywhere gets one proposed, as if it were new.
+
+- When the issue has no match (INT-60) and no PR from `issue/<repo>-<n>` in any state (INT-26), it goes
+  through the same steps as a new issue (INT-23): scored, committed on `issue/<repo>-<n>`, opened as
+  a PR. The `towercab:queued` label is replaced by `towercab:proposed` once the PR is open (INT-25),
+  and its comment says the label had no intent behind it.
+- Proposed once: the next poll finds the PR (INT-26) and does nothing more; a step re-run after a
+  crash opens no second PR.
+- Verified by: `issues: a queued issue with no intent is proposed once`, `issues: a queued issue with no intent gets its label corrected`
+
+### INT-62 · A proposed issue whose PR was closed loses its label
+
+When the owner closes the intent PR without merging, the issue stops saying it is proposed.
+
+- An issue labelled `towercab:proposed` whose intent PR is closed and not merged, with no other open
+  intent PR or intent for it, has the label removed and gets one comment saying the proposal was closed
+  without merging and that Towercab will not propose it again (INT-26). The label is removed after the
+  comment, so a failed comment is retried, and a second poll writes nothing.
+- A merged PR or an open one is not touched.
+- Verified by: `issues: a proposed issue whose PR was closed loses the label and is told`, `issues: a closed-PR comment is written once`
+
 ## Out of scope
 
 - Other stores (Notion, Jira).
