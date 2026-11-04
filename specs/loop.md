@@ -601,6 +601,33 @@ The one kind of work allowed in a blocking repo is the intent that sets it up, a
   not ready (<n> missing, blocking)` or `· not ready (<n> missing, warning)`; `doctor` names each repo
   with a missing or unknown item and the items, one line per item, with the waived ones and their reasons.
 - Verified by: `status: a not-ready repo is shown`, `cli: repo list shows not ready`, `doctor: not-ready repos are named`
+### LOOP-92 · Reading the proposed intents
+
+The loop looks at the open pull requests on the intents repo every minute, so a proposed intent is seen within a minute of being opened.
+
+- Like the PR reads of LOOP-18, once per minute of the loop's clock (also on start): one
+  `gh pr list --state open` on the intents repo as the App, with drafts, and the files of each PR. The result is
+  kept in memory for the UI (UI-184) and the messages (LOOP-93); nothing is written to the intents repo.
+- A GitHub failure is a `github` fault (LOOP-10): the last good list stays, the read is retried on the
+  next pass, and the UI says the list may be out of date (UI-188). Reading never moves a mission.
+- Verified by: `proposed: the intents PRs are read every minute`, `proposed: a gh failure is a github fault and keeps the last list`
+
+### LOOP-93 · One message per proposed intent
+
+Towercab sends one Telegram message when a proposed intent first appears, and never another for the same pull request.
+
+- Each new proposed intent (INT-51, drafts too) writes one outbox row with the key `proposed:<PR number>`
+  in the transaction that first sees it, so the primary key makes it once. Text: `Proposed intent: <title>
+  (<repo>), priority <n>` (`would be parked` instead of the priority when below the cutoff), then the link
+  to its card in the UI (UI-184). GitHub-only PRs get the message too, linking the PR.
+- A PR closed or merged before the row is sent drops the row (LOOP-14). A PR that changes after the
+  message, or leaves draft, sends nothing more.
+- The first read after this feature is first run marks every proposed PR already open as seen, with no
+  message: it records them in `meta` (`proposed:seeded`, and `proposed:seen:<PR number>`) in one
+  transaction. Only a PR that appears in a later read sends one. A restart repeats nothing, because
+  the seen PRs are kept in `meta` and the outbox.
+- Extends LOOP-14: a proposed intent is something the owner has to decide.
+- Verified by: `proposed: a new proposal sends one message`, `proposed: the same PR never sends twice`, `proposed: a proposal closed before sending is dropped`, `proposed: proposals already open on the first read send nothing`
 
 ### LOOP-73 · Stages for the owner's steps and the unverified end
 
@@ -638,6 +665,47 @@ An intent that names another with `after:` starts only when that one is done or 
 - The unmet `after` shows as waiting on the other intent, with its stage ("waiting for 261031-1714-1:
   your steps").
 - Verified by: `pick: after waits for steps and live checks`, `pick: after accepts an unverified end`
+
+### LOOP-76 · Every wait has a way out
+
+Whatever Towercab waits on the owner for, the owner can end or move the intent from Towercab itself.
+
+- Each wait in **Waits** has a set of exits, from this list: `continue` (a reply, `towercab answer`, or
+  an option, LOOP-38, PIP-114), `retry` (start over), `steps` (switch the delivery to steps, PIP-113),
+  `drop` (PRI-9), `done` (the owner did it: the mission ends `done`, event `owner_done`; only for the
+  waits below), ticking steps (SHIP-22) and the PR gestures of the approval waits. Every wait has at
+  least one exit that ends the intent or moves it to another stage; `continue` alone does not count when
+  the wait comes straight back (LOOP-77).
+- `no changes` gets the exit `done`, named "Nothing to build: I did it myself". It ends the intent as
+  done, with the mission's `why` saying the owner did it. The ask in **Waits** says so. `done` is a
+  command like `drop` (`towercab done <id> [note]`, a `commands` row, applied by the loop or by the CLI
+  itself, LOOP-15) and the page's button (UI-164). The owner's one-line note (what they did) becomes a
+  step in the plan's `## Your steps` that is already ticked, with the time (SHIP-17, SHIP-22), so the
+  plan records the work; without a note the step reads "Done by the owner". `your steps` (LOOP-74) ends by ticking the last step
+  (SHIP-22), or with `done`, `retry` or `drop`.
+- The ask, the Telegram message (LOOP-14) and `towercab status` (LOOP-13) name the exits of the wait in
+  plain words.
+- A test walks every row of **Waits**, including the ones LOOP-74 adds, applies every exit from each
+  wait through `machine.apply`, and fails when a wait has no exit that leaves it for `done`, `stopped`
+  or another stage, or when a wait in the code is missing from the table.
+- Verified by: `machine: every wait has an exit that ends or moves the intent`, `machine: no changes can end as done`, `cli: done ends an intent the owner did`, `cli: done turns the note into a ticked step`, `outbox: the message names the exits`, `status: waits list their exits`
+
+### LOOP-77 · The same wait again is stuck
+
+A mission that lands on the same wait again with nothing new is marked stuck and offered only the exits that can still help.
+
+- On entering a blocked wait, Towercab compares it with the wait the mission was in last (the wait key,
+  the head commit and the count of owner answers). Equal → the mission is `stuck`: the flag is kept in
+  the mission's `data`, shown as "Stuck: this came back with nothing new" with the reason, and cleared on
+  any move out of the wait to a different one or when something new arrives (a changed head, an owner
+  answer that was not yet used).
+- A stuck wait offers only the exits that change something: `steps`, `done` (where it applies), `retry`
+  and `drop`. `continue` and the reply box are left out of the page, the Telegram message and `status`,
+  and a bare `answer` for a stuck mission is refused with `<id> is stuck at <wait>: a reply would land
+  here again; use steps, done, retry or drop`.
+- Nothing about the mission's state changes: stuck is a display and an offer, and `machine.apply` still
+  moves it only on events.
+- Verified by: `machine: the same wait again with nothing new is stuck`, `machine: something new clears stuck`, `cli: answer on a stuck mission is refused`, `outbox: a stuck wait offers only the other exits`
 
 **Config** (`src/config.ts`)
 
