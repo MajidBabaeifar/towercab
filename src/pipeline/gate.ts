@@ -88,6 +88,7 @@ async function updateBody(cx: Ctx, m: Mission): Promise<void> {
       planPrUrl: m.plan_pr && cx.store.github() ? prUrl(cx.store.github()!, m.plan_pr) : null,
     },
     reviewDetails: d.review?.details ?? null,
+    ownerSteps: d.ownerSteps,
     risk: d.review ? riskMd(codeRisk(m)) : "",
     footer: { intentUrl: cx.store.url(intent), costUsd: m.cost_usd, secs: m.agent_secs },
     issue: { url: intent.issue, repo: repo.github },
@@ -125,7 +126,11 @@ export const gateHandler: Handler = {
       proven: !d.unproven,
       risk: codeRisk(m)?.level ?? null,
     });
-    if (!g.merge) return { done: wait("review and merge PR", g.why) };
+    // PIP-119: the owner's steps are shown on the wait; they never make the gate wait by themselves.
+    const steps = d.ownerSteps?.length
+      ? ` For you to do: ${d.ownerSteps.map((s) => s.bullet).join("; ")}.`
+      : "";
+    if (!g.merge) return { done: wait("review and merge PR", g.why + steps) };
     // Beyond the gate table: work Towercab didn't check itself goes to the owner.
     const a = effectiveOf(m, intent, files);
     if (d.foreignHead) return { done: wait("review and merge PR", GATE_HOLD.foreign) };

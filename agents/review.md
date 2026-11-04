@@ -48,7 +48,14 @@ Check, in this order:
 5. Is it easy to undo (`two-way`), or hard (`one-way`: data, migrations, public interfaces)? Which of
    the red lines in `REVIEW.md` does it touch?
 
-Return the JSON result: `brief`, `approved`, `outcomes` (one per bullet, in order), `tests_weakened`,
+An outcome only the owner can do (adding a secret, applying to a server, a setting that needs admin
+rights) is not something the builder can meet: mark it `owner: true` and `met: false`, and judge the
+rest of the change as usual. Use `owner` only for what the builder cannot do in its sandbox, never for
+something it did badly or left out. Towercab decides what happens next from your fields, and the
+verdict line of the comment is written by Towercab, so judge each field on its own.
+
+Return the JSON result: `brief`, `approved`, `outcomes` (one per bullet, in order, each with `bullet`,
+`met`, `owner` and `why`), `tests_weakened`,
 `plan_followed`, `findings` (each with `severity`, `pass`, `file`, `line`, `what`), `door`, `red_lines`, and `summary`: Markdown for the owner, opening with
 your verdict in one sentence, then what is good, then what needs attention, most important first.
 
