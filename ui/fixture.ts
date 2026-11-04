@@ -7,6 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseConfig } from "../src/config.ts";
 import { Db } from "../src/db.ts";
+import type { ProposedPr, ProposedState } from "../src/github/proposed.ts";
 import type { Clock } from "../src/handlers.ts";
 import { Home } from "../src/home.ts";
 import type { Intent, IntentStore, Listing, Unreadable } from "../src/intents/types.ts";
@@ -209,6 +210,8 @@ export interface FakeActionCall {
   repo?: string;
   n?: number;
   done?: boolean;
+  pr?: number;
+  head?: string;
 }
 
 export interface Fixture {
@@ -227,6 +230,8 @@ export interface Fixture {
     problems: Problem[];
     running: boolean;
     upNext: UpNext[];
+    /** UI-184: the open PRs that add an intent, and why the last read failed (UI-188). */
+    proposed: ProposedState;
   };
   cleanup(): void;
 }
@@ -254,9 +259,47 @@ export const IDS = {
   dropped: "261022-1010-1",
 } as const;
 
+/** UI-184: the fixture's proposed intents: a draft, a parked one, a GitHub-only one and an unknown repo. */
+export function proposals(now: number): ProposedPr[] {
+  const mk = (
+    n: number,
+    title: string,
+    repo: string,
+    u: number,
+    i: number,
+    p: Partial<ProposedPr> = {},
+  ): ProposedPr => ({
+    number: n,
+    url: `https://github.com/acme/intents/pull/${n}`,
+    title: `Intent: ${title}`,
+    draft: false,
+    proposer: "Towercab",
+    createdAt: now - 2 * DAY,
+    head: `a${n}`.padEnd(40, "0"),
+    path: `intents/261101-0900-${n}-x/intent.md`,
+    intent: { title, repo, u, i, a: 3, source: "agent" },
+    textUrl: `https://github.com/acme/intents/blob/a${n}/intents/261101-0900-${n}-x/intent.md`,
+    acceptable: true,
+    reason: null,
+    ...p,
+  });
+  return [
+    mk(201, "Export invoices as a spreadsheet", "web", 4, 5),
+    mk(202, "Weekly digest email", "api", 3, 4, { draft: true, proposer: "majid", createdAt: now - 6 * DAY }),
+    mk(203, "Try a new chart library", "web", 1, 2),
+    mk(204, "Rework three intents at once", "docs", 3, 3, {
+      acceptable: false,
+      reason: "Changes more than one intent",
+    }),
+    mk(205, "Billing portal for the CRM", "crm", 4, 4),
+  ];
+}
+
 /** Build the fixture home; `now` defaults to the real clock so relative times read naturally. `empty`
  * gives a home with nothing in it (UI-70). */
-export function buildFixture(o: { now?: number; root?: string; empty?: boolean } = {}): Fixture {
+export function buildFixture(
+  o: { now?: number; root?: string; empty?: boolean; proposed?: boolean } = {},
+): Fixture {
   const now = o.now ?? Date.now() / 1000;
   const root = o.root ?? mkdtempSync(join(tmpdir(), "tc-ui-fixture-"));
   const home = new Home(root);
@@ -281,6 +324,7 @@ export function buildFixture(o: { now?: number; root?: string; empty?: boolean }
   const store = new MemStore();
   if (!o.empty) seed(db, store, home, now);
   const state: Fixture["state"] = {
+    proposed: { list: [], error: null, failedAt: null },
     paused: false,
     pausedAt: null,
     problems: [],
@@ -296,6 +340,7 @@ export function buildFixture(o: { now?: number; root?: string; empty?: boolean }
           { intent: IDS.parked1, priority: 5, skip: { kind: "parked" } },
         ]) as UpNext[],
   };
+  state.proposed = { list: o.proposed && !o.empty ? proposals(now) : [], error: null, failedAt: null };
   const logs: LogLine[] = o.empty
     ? []
     : [
@@ -328,6 +373,7 @@ export function buildFixture(o: { now?: number; root?: string; empty?: boolean }
         : state.upNext,
     prUrl: (repo, n) => `https://github.com/${repo}/pull/${n}`,
     intentUrl: (i) => store.url(i),
+    ...(o.proposed ? { proposed: () => state.proposed } : {}),
     logs: () => logs,
   };
 
@@ -377,6 +423,18 @@ export function buildFixture(o: { now?: number; root?: string; empty?: boolean }
       calls.push({ action: "addRepo", github, ...(name ? { name } : {}) });
       const short = name ?? github.split("/")[1] ?? github;
       return `Adding ${short} (${github}, base main): Towercab is cloning it now. It shows on the Repos page when done, and its intents start from then on.`;
+    },
+
+    async accept(pr, head) {
+      calls.push({ action: "accept", pr, head });
+      state.proposed = { ...state.proposed, list: state.proposed.list.filter((p) => p.number !== pr) };
+      return `Merged PR #${pr} as you. The intent is on main; Towercab picks it up within a minute.`;
+    },
+
+    async close(pr, text) {
+      calls.push({ action: "close", pr, ...(text !== undefined ? { text } : {}) });
+      state.proposed = { ...state.proposed, list: state.proposed.list.filter((p) => p.number !== pr) };
+      return `Closed PR #${pr}. The intent never reaches main.`;
     },
 
     async features(repo) {
@@ -1016,7 +1074,7 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
 /** Serve the fixture (the screenshot tests and a manual look). */
 export async function serveFixture(
   port = 0,
-  o: { empty?: boolean } = {},
+  o: { empty?: boolean; proposed?: boolean } = {},
 ): Promise<{ fixture: Fixture; server: UiServer }> {
   const fixture = buildFixture(o);
   const here = dirname(fileURLToPath(import.meta.url));

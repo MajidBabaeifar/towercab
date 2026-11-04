@@ -16,7 +16,7 @@ import type {
 } from "../../../src/ui/view.ts";
 import { AddRepoForm } from "../AddRepo.tsx";
 import { refreshFeatures } from "../api.ts";
-import { ErrorNote, StateChip, Time, WorkRow } from "../components.tsx";
+import { ErrorNote, ProposedList, StateChip, Time, WorkRow } from "../components.tsx";
 import { Alert, Check, External } from "../icons.tsx";
 import { Link } from "../router.tsx";
 
@@ -167,7 +167,7 @@ function SpendLine({ spend }: { spend: RepoSpendView }) {
   );
 }
 
-function Repo({ r }: { r: RepoView }) {
+function Repo({ r, readOnly }: { r: RepoView; readOnly: boolean }) {
   return (
     <div class="repo-page">
       <header class="repo-head">
@@ -189,6 +189,7 @@ function Repo({ r }: { r: RepoView }) {
           <p class="empty-line">Nothing is in progress.</p>
         )}
       </Group>
+      <ProposedList data={r.proposed} readOnly={readOnly} />
       <Group title="Up next" count={r.upNext.length}>
         {r.upNext.length ? (
           <ol class="q-list">
@@ -286,7 +287,7 @@ export function ReposPage({ data, readOnly }: { data: Data; readOnly: boolean })
       {data.chips.length === 0 ? (
         <p class="empty-line">No repos yet.{readOnly ? "" : " Add one below."}</p>
       ) : data.repo ? (
-        <Repo r={data.repo} />
+        <Repo r={data.repo} readOnly={readOnly} />
       ) : (
         <All data={data} />
       )}

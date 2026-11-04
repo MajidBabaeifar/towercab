@@ -270,6 +270,8 @@ export interface AirspaceView {
 export interface Overview {
   version: string;
   top: TopBar;
+  /** UI-184: every proposed intent, before the needs-you cards; absent when Towercab isn't reading them. */
+  proposed?: ProposedSection;
   needs: Card[];
   problems: ProblemView[];
   working: Row[];
@@ -514,12 +516,53 @@ export interface FeaturesView {
   canRefresh: boolean;
 }
 
+/** UI-184: a proposed intent, as the card shows it. */
+export interface ProposedCard {
+  /** The PR's number; the anchor is `proposed-<pr>`. */
+  pr: number;
+  title: string;
+  /** The repo as the intent file writes it; "" when the file can't be read. */
+  repo: string;
+  u: number | null;
+  i: number | null;
+  a: number | null;
+  /** The number it would get; null when the file can't be read. */
+  priority: number | null;
+  /** "priority 11" or "would be parked". */
+  priorityText: string;
+  parked: boolean;
+  /** "from Towercab". */
+  from: string;
+  /** "waiting 3 d". */
+  waiting: string;
+  waitingSince: number;
+  draft: boolean;
+  prUrl: string;
+  /** "Read the intent": the file at the PR's head. */
+  textUrl: string | null;
+  /** The head SHA the card was built from; Accept sends it back (INT-53). */
+  head: string;
+  /** Why the card can't be accepted from here, or why the file can't be read; null when it can. */
+  problem: string | null;
+  canAccept: boolean;
+  /** Shown beside the disabled Accept. */
+  acceptWhy: string | null;
+}
+
+/** UI-184, UI-188: the proposed cards in priority order, and a notice when the list may be old. */
+export interface ProposedSection {
+  cards: ProposedCard[];
+  stale: string | null;
+}
+
 /** UI-141: one repo's page. */
 export interface RepoView {
   repo: string;
   github: string;
   /** "1 of 3 ahead" (UI-100). */
   ahead: string;
+  /** UI-186: the unmerged intent PRs for this repo. */
+  proposed: ProposedSection;
   features: FeaturesView;
   inProgress: Row[];
   upNext: QueueItem[];
@@ -593,6 +636,8 @@ export interface BoardRepo {
   github: string;
   open: number;
   done: number;
+  /** UI-187: proposed intents for this repo. */
+  proposed: number;
   spend: RepoSpendView;
   /** Cards per column, in column order; columns without cards are absent. */
   cells: Partial<Record<BoardColumnKey, BoardCard[]>>;
@@ -602,6 +647,8 @@ export interface BoardPage {
   version: string;
   columns: BoardColumn[];
   repos: BoardRepo[];
+  /** UI-187: how many proposed intents wait; absent when Towercab isn't reading them. */
+  proposed?: number;
   /** UI-137: the totals over every repo. */
   spend: RepoSpendView;
   /** The intents repo can't be read: what went wrong, shown above the board. */

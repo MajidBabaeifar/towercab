@@ -90,6 +90,8 @@ const ACTIONS = new Set([
   "resume",
   "addRepo",
   "features",
+  "accept",
+  "close",
 ]);
 const INTENT_ID = /^[A-Za-z0-9._-]{1,100}$/;
 
@@ -275,6 +277,8 @@ export function startUi(o: UiOptions): UiServer {
       repo?: unknown;
       n?: unknown;
       done?: unknown;
+      pr?: unknown;
+      head?: unknown;
     };
     try {
       body = JSON.parse(raw) as typeof body;
@@ -285,9 +289,15 @@ export function startUi(o: UiOptions): UiServer {
     const intent = typeof body.intent === "string" ? body.intent : "";
     const repo = typeof body.repo === "string" ? body.repo : "";
     if (!ACTIONS.has(action)) return json(res, 400, { ok: false, message: `Unknown action “${action}”.` });
-    const needsIntent = !["pause", "resume", "addRepo", "features"].includes(action);
+    const proposal = action === "accept" || action === "close";
+    const needsIntent = !["pause", "resume", "addRepo", "features", "accept", "close"].includes(action);
     if (needsIntent && !INTENT_ID.test(intent))
       return json(res, 400, { ok: false, message: "Which intent?" });
+    const pr = typeof body.pr === "number" && Number.isSafeInteger(body.pr) && body.pr > 0 ? body.pr : 0;
+    if (proposal && !pr) return json(res, 400, { ok: false, message: "Which pull request?" });
+    const head = typeof body.head === "string" ? body.head : "";
+    if (action === "accept" && !/^[0-9a-f]{7,64}$/.test(head))
+      return json(res, 400, { ok: false, message: "Which version of the pull request?" });
     if (action === "features" && !isRepoName(repo))
       return json(res, 400, { ok: false, message: "Which repo?" });
     if (!o.actions) {
@@ -325,7 +335,11 @@ export function startUi(o: UiOptions): UiServer {
                           )
                         : action === "features"
                           ? await a.features(repo)
-                          : await a.resume();
+                          : action === "accept"
+                            ? await a.accept(pr, head)
+                            : action === "close"
+                              ? await a.close(pr, typeof body.text === "string" ? body.text : undefined)
+                              : await a.resume();
       reply = { ok: true, message };
     } catch (e) {
       reply = { ok: false, message: (e as Error).message };

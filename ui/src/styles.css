@@ -3800,3 +3800,78 @@ a.pr-tile:hover {
   gap: var(--s1);
   margin-top: var(--s3);
 }
+
+/* UI-184 to UI-188: proposed intents */
+.proposed-card {
+  padding: var(--s2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  scroll-margin-top: 72px;
+}
+
+.proposed-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.proposed-head h3 {
+  margin: 0;
+  font-size: var(--t-md, 1rem);
+  flex: 1 1 14rem;
+  overflow-wrap: anywhere;
+}
+
+.chip-draft {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.proposed-meta {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.proposed-problem {
+  margin: 0;
+  color: var(--warn);
+}
+
+.proposed-links,
+.proposed-actions,
+.proposed-close {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.proposed-close label {
+  display: flex;
+  flex: 1 1 16rem;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.proposed-close input {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: inherit;
+}
+
+.proposed-stale {
+  margin: 0 0 var(--s1);
+  color: var(--warn);
+}
+
+@media (max-width: 720px) {
+  .proposed-actions .btn,
+  .proposed-close .btn {
+    flex: 1 1 auto;
+  }
+}

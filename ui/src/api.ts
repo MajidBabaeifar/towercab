@@ -32,6 +32,16 @@ export function addRepo(github: string, name?: string): Promise<ActionReply> {
   return post({ action: "addRepo", github, name });
 }
 
+/** UI-185: merge a proposed intent's PR, as the card showed it at `head`. */
+export function acceptProposed(pr: number, head: string): Promise<ActionReply> {
+  return post({ action: "accept", pr, head });
+}
+
+/** UI-185: close a proposed intent's PR with a reason (empty: the default). */
+export function closeProposed(pr: number, text: string): Promise<ActionReply> {
+  return post({ action: "close", pr, text: text.trim() || undefined });
+}
+
 /** UI-144: read the repo again for its feature list. */
 export function refreshFeatures(repo: string): Promise<ActionReply> {
   return post({ action: "features", repo });

@@ -78,6 +78,7 @@ function LaneHead({ repo, folded, onToggle }: { repo: BoardRepo; folded: boolean
       <span class="meta">
         {repo.github ? <span class="mono">{repo.github} · </span> : null}
         {repo.open} open · {repo.done} done in the last 7 days
+        {repo.proposed ? ` · ${repo.proposed} proposed` : ""}
       </span>
       <SpendLine spend={repo.spend} />
     </div>
@@ -190,7 +191,15 @@ export function BoardPage({ data }: { data: Data }) {
     <main class="page board-page" id="main">
       <section class="hero hero-small">
         <h1>Board</h1>
-        <p class="hero-sub">Every intent at its station, one row per repo.</p>
+        <p class="hero-sub">
+          Every intent at its station, one row per repo.
+          {data.proposed ? (
+            <>
+              {" "}
+              <Link href="/#proposed">{data.proposed} proposed</Link>
+            </>
+          ) : null}
+        </p>
         <p class="board-total">
           Spent <SpendLine spend={data.spend} />
         </p>

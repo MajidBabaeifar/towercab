@@ -1,6 +1,6 @@
 # Intents
 
-**Status:** Live: INT-1..40 · **Prefix:** INT
+**Status:** Live: INT-1..40, INT-51..53 · **Prefix:** INT
 
 ## Purpose
 

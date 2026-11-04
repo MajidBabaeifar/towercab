@@ -240,8 +240,8 @@ plain words; a repo whose kind nobody confirmed only warns.
 
 The standard GitHub settings are checked with the same check that `ci` uses, so the two cannot disagree.
 
-- Towercab runs `bin/apply-settings --check <owner/name>` from the `ci` repo's clone (`<home>/repos/ci`)
-  through `Tools`, as the App; exit 0 is `settings` present, a non-zero exit is missing with the script's
+- Towercab runs `bin/apply-settings --check <owner/name>` from the pinned release of the `ci` repo
+  ([REPO-30](#repo-30--a-daily-settings-check)), not its main head, through `Tools`, as the App; exit 0 is `settings` present, a non-zero exit is missing with the script's
   first output line as the words. Towercab keeps no copy of the list of settings.
 - No `ci` clone, no such script, or a script that cannot run (not exit 0 or 1) → the item is `unknown`
   with `The standard settings could not be checked: add the ci repo to Towercab` (or the reason). It is
@@ -270,6 +270,109 @@ A readiness check that fails for a network or GitHub reason never blocks or unbl
   nothing blocks and the repo shows `Not checked yet` until one check succeeds.
 - A file that cannot be parsed (invalid `live`, bad `kind`) is a missing item with the parse error as its words, not a failure.
 - Verified by: `repo: a failed readiness read keeps the last result`, `repo: no stored result never blocks`
+
+### REPO-30 · A daily settings check
+
+Towercab checks the standard GitHub settings of every registered repo once a day and shows the gaps on the repo's page.
+
+- Once per 24 h per repo (and never more often than the fetch of [LOOP-8](loop.md) allows), the loop runs
+  REPO-25's check for the repo, whatever its kind and whether or not it has a `TOWERCAB.md`. The target
+  repo is not cloned. The result is kept in `meta` (`settings:<repo>`, JSON: `state` `ok`, `gaps` or
+  `unknown`, the script's output lines as `gaps`, the `ci` tag that ran, the time). `ci` itself is
+  checked like any other repo.
+- The script is the pinned release of `ci`: `ciRelease(clone)` is the latest `v*` tag (highest version)
+  of `<home>/repos/ci` whose commit is an ancestor of `origin/<base>` (`git merge-base --is-ancestor`).
+  Towercab exports that tag's tree to a scratch directory (`git archive`) and runs
+  `bin/apply-settings` from there, never from the clone's working tree or main head, so what Towercab
+  applies changes only with a reviewed `ci` release. The run is logged with its tag
+  (`apply-settings v<x.y.z> <check|apply> <owner/name>`). No such tag → the item is `unknown` with
+  `No ci release to run the standard settings from: tag a v* release on ci's main`; Towercab never
+  falls back to the head.
+- Each run sets `GH_TOKEN` to the App's installation token for the repo's owner and passes only the
+  repo named (`apply-settings [--check] <owner/name>` acts on the repos it is given and asks nothing).
+- The repo page lists the gaps in plain words and the time of the last check; `ok` says
+  `Standard settings in place`. A check that cannot run is `unknown` and keeps the last result
+  ([REPO-27](#repo-27--a-check-that-cannot-run)). The check never blocks work: it only warns, and
+  [REPO-24](#repo-24--readiness)'s `settings` item reads the same stored result.
+- Verified by: `repo: settings run from the latest ci release tag on main`, `repo: no ci release tag is unknown, never the head`, `repo: the settings run is logged with its tag`, `repo: settings are checked daily for every repo`, `repo: settings gaps are stored and shown on the repo page`, `repo: a settings check that cannot run keeps the last result`
+
+### REPO-31 · Applying the settings
+
+With the owner's opt-in, Towercab applies the standard settings itself and checks again, and without it only reports.
+
+- Config `[github] settings = "check" | "apply"`, default `check`; anything else → `settings must be check
+  or apply`. It is the installation's switch; with `check`, nothing in this row runs. Once it is
+  `apply`, every repo is applied to unless its `TOWERCAB.md` says `settings: check`
+  ([REPO-1](#repo-1--read-from-the-base-branch)'s keys gain `settings`; only `check` is allowed, any
+  other value → `settings: <v> isn't check`, which makes the file invalid).
+- Per repo, when REPO-30 finds gaps and the repo is to be applied to: (1) the guard below, (2) the backup
+  below, (3) `apply-settings <owner/name>` (no `--check`) from the pinned release, (4) `--check` again,
+  stored as the result. Still `gaps` after the apply → the remaining lines are shown and Towercab does
+  not apply again until the next daily check; it never loops. A repo with no gaps is not touched.
+- Towercab keeps no list of settings: what is applied is whatever the pinned script applies
+  ([REPO-25](#repo-25--the-settings-check)).
+- **Ruleset guard.** The ruleset requires check names that the pinned script names itself: Towercab runs
+  `apply-settings --plan <owner/name>` (JSON of what it would change, including the required check names;
+  added by intent 261105-0010) and reads the names from it, so none is written in Towercab (today `ci-ok`).
+  Before applying, Towercab reads the check runs of the head commit of the repo's base branch (`gh api
+  repos/<r>/commits/<sha>/check-runs`); the guard passes only when every required name has a run that
+  concluded `success` there. Then the script is applied whole. When the guard fails, the plan can't be
+  read (a release without `--plan`) or the check runs can't be read, Towercab applies with
+  `apply-settings --skip-ruleset <owner/name>` (also from 261105-0010) and stores and shows the gap as
+  `Ruleset not applied: <name> has not run green on main`, so no repo becomes unmergeable. A release
+  that rejects `--skip-ruleset` (a usage error, before it changes anything) → nothing is applied to that
+  repo, only reported, with the reason stored. The next daily check tries again.
+- **Backup.** Before every apply, Towercab saves everything the script can change, as one JSON file
+  `<home>/settings-backups/<owner>/<name>/<UTC time>.json`: the repo's settings (`gh api repos/<r>`),
+  its `security_and_analysis`, all rulesets (`repos/<r>/rulesets`, each with its full body), the classic
+  branch protection of the default branch (`branches/<default_branch>/protection`, the name read from
+  the repo's settings; the script acts only on the default branch), the Actions workflow permissions
+  (`actions/permissions/workflow`) and whether vulnerability alerts are on (`vulnerability-alerts`).
+  When the plan ([REPO-31](#repo-31--applying-the-settings)'s guard) names another branch it would
+  change, that branch's protection is saved too. A part that does not exist (a 404, such as no branch
+  protection) is saved as absent. The last 5 files
+  per repo are kept, older ones are deleted. A backup that cannot be read or written in full → nothing
+  is applied.
+- **Restore.** `towercab settings restore <repo>` writes back, with the App token, only what the newest
+  backup saved: the repo's settings and `security_and_analysis` (`PATCH repos/<r>`), each saved ruleset
+  (`PUT`, recreated when deleted), the saved branch protections, the workflow permissions, and vulnerability
+  alerts on or off as saved. A part saved as absent is not touched. Anything added since (a ruleset not
+  in the backup, branch protection the backup lacks) is left alone and listed in the output as `Not in the
+  backup, left as it is: <what>`. It prints what it restored and the backup's time; no backup → `<repo>
+  has no saved settings`; unknown repo → as in [LOOP-69](loop.md)'s text; a forbidden write is REPO-32's
+  permission message. It does not need the loop to be running.
+- Verified by: `repo: settings stay check-only by default`, `repo: TOWERCAB.md settings check keeps a repo check-only`, `repo: a bad TOWERCAB.md settings value is invalid`, `repo: apply runs the script then checks again`, `repo: a gap that survives the apply is not retried until the next day`, `repo: a bad settings mode is rejected`, `repo: the required check names come from the plan`, `repo: a green main gets the whole apply`, `repo: a main not green gets everything but the ruleset`, `repo: a release without skip-ruleset applies nothing to a repo not green`, `repo: apply backs up everything the script can change and keeps 5`, `repo: the backup includes another branch the plan names`, `repo: no backup, no apply`, `cli: settings restore writes back what was saved`, `cli: settings restore lists what was added since and leaves it`
+
+### REPO-32 · A missing permission is said once
+
+If the GitHub App cannot change settings, `towercab doctor` says so in one line and the owner gets one step, never a wait without an exit.
+
+- Applying (REPO-31) needs the App's Administration (write) permission. A 403 or "Resource not accessible"
+  from the apply is that permission missing (not a network failure, [LOOP-10](loop.md)): it is stored
+  (`settings-permission`) and nothing more is applied until `doctor` or the next daily check sees it
+  granted.
+- `doctor` prints one line while `settings = "apply"` and the permission is missing: `GitHub App lacks
+  Administration (write): grant it at <app settings URL> so Towercab can apply settings`. With `check`, or
+  with the permission present, it says nothing about it.
+- The owner gets one step, shown with the repo's gaps and not once per repo: `Grant the Towercab GitHub
+  App the Administration (write) permission`, ticked by the owner. Ticking it clears
+  `settings-permission` so the next check applies again. No mission waits on it.
+- Verified by: `doctor: missing Administration permission is one line`, `repo: a forbidden apply becomes one owner step`, `repo: a forbidden apply is not retried until the step is ticked`
+
+### REPO-33 · A settings-only intent is done by Towercab
+
+An intent whose whole outcome is a GitHub settings change is delivered as steps Towercab does itself, not as a code change.
+
+- A plan with `delivery: steps` ([PIP-112](pipeline.md)) whose steps are all the standard settings (the
+  plan marks them `by: towercab`) is not handed to the owner: with `settings = "apply"`, the repo not
+  set to `settings: check` and the permission present, Towercab runs REPO-31 (guard and backup
+  included) for the intent's repo, and ticks the steps itself once the re-check is `ok`; the intent
+  then ends done as in [PIP-113](pipeline.md). A ruleset step held back by the guard stays unticked and
+  is listed for the owner with the guard's words.
+- With `check` (global or in the repo's `TOWERCAB.md`), or with the permission missing (REPO-32), the same steps are listed for the owner as
+  ordinary owner steps ([SHIP-17](ship.md)) with the gaps as their text, so the intent has an exit. A
+  setting outside the standard list (not in `ci`'s script) stays an owner step.
+- Verified by: `repo: a settings-only intent is applied and ticked by Towercab`, `repo: a settings-only intent falls back to owner steps`
 
 **Grammar** (`src/repo/markdown.ts`)
 

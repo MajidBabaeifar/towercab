@@ -340,6 +340,8 @@ export interface Outcome {
   limit?: { model: string; until: number; backoffs: number; text: string };
   /** For `answered`/`feedback`: the owner's text, kept for the next worker prompt. */
   text?: string;
+  /** For a step that runs again (`bad_result`, `timeout`): write the retry to the move log (LOOP-106, 107). */
+  record?: boolean;
   /** Mission columns to set in the same transaction. */
   set?: Record<string, SqlValue>;
   /** Keys to merge into `missions.data` in the same transaction. */
@@ -488,6 +490,17 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
         break;
       case "again":
         write({ ...set, step: cur.step === "enter" ? "enter" : cur.step, busy: 0 });
+        if (o.record) {
+          db.run(
+            "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) VALUES (?, ?, ?, ?, ?, ?)",
+            cur.id,
+            now,
+            cur.stage,
+            o.event,
+            cur.stage,
+            o.why ?? null,
+          );
+        }
         break;
       case "cool": {
         if (!o.limit) throw new Error("bug: limit without a limit");

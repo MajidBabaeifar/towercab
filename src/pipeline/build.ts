@@ -26,16 +26,29 @@ import {
   grants,
   intentOf,
   type PipeData,
+  readText,
   repoFiles,
   spawnRun,
   stepsFromPlan,
   tail,
   takeRemote,
 } from "./common.ts";
-import { existingTests, lockedTests } from "./guard.ts";
+import {
+  clearGuardLogs,
+  existingTests,
+  lockedTests,
+  readGuardReasons,
+  readSkew,
+  type SkewLine,
+} from "./guard.ts";
 import { writePlanToMain } from "./plan.ts";
 import { fence, intentData, render } from "./prompts.ts";
-import { type Access, parseResult } from "./schemas.ts";
+import { type Access, parseResult, type Question } from "./schemas.ts";
+import { type SetupEvidence, setupFault } from "./setup-faults.ts";
+
+/** LOOP-106: skew retries per mission within `SKEW_WINDOW` seconds, before the owner is asked. */
+const SKEW_LIMIT = 3;
+const SKEW_WINDOW = 3600;
 
 type NetAccess = Omit<Access, "tests">;
 
@@ -111,6 +124,8 @@ async function spawnWorker(cx: Ctx, m: Mission, prompt?: string): Promise<Progre
   const locked = repairRound
     ? await lockedTests(cx.tools, cx.checkout(m), d.lockHead ?? null, files.towercab.tests)
     : [];
+  // LOOP-106, LOOP-107: what the guard logs from here on is about this run alone.
+  clearGuardLogs(cx.runs(m, "build"));
   // REPO-13: every round, repairs included, the base branch's tests no grant covers are write-blocked.
   const existing = blockedTests(
     await existingTests(cx.tools, cx.checkout(m), cx.repo(m).base, files.towercab.tests, files.towercab.live),
@@ -256,6 +271,11 @@ export const buildHandler: Handler = {
       return spawnWorker(cx, cx.record(m, "setup-done", {}, { setup: cx.checkout(m) }));
     }
     const r = ended(cx, m, "worker", end, (v) => parseResult("build", v));
+    // LOOP-106: a run the guard refused for version skew is thrown away, whatever it answered (its cost
+    // is counted above); a limit still cools the model.
+    const skew = readSkew(cx.runs(m, "build"));
+    const limited = !r.ok && "done" in r.progress && r.progress.done.event === "limit";
+    if (skew.length > 0 && !limited) return { done: await skewRetry(cx, m, skew) };
     if (!r.ok) return r.progress;
     const v = r.value;
     const intent = await intentOf(cx, m);
@@ -268,8 +288,29 @@ export const buildHandler: Handler = {
         });
       }
     }
-    if (v.status === "blocked" && v.question)
-      return { done: await ask(cx, m, v.question, "answer the question", v.brief) };
+    if (v.status === "blocked" && v.question) {
+      // LOOP-107: a block that Towercab's own logs trace to a known setup error is retried once.
+      const fault = setupFault(setupEvidence(cx, m, end));
+      if (!fault) return { done: await ask(cx, m, v.question, "answer the question", v.brief) };
+      const d = data(m);
+      const key = `${m.stage}:${d.roundFrom ?? ""}`;
+      const tried = d.setupRetried ?? {};
+      if (!tried[key]) {
+        cx.record(m, "", {}, { setupRetried: { ...tried, [key]: true } });
+        return {
+          done: {
+            event: "bad_result",
+            why: `Towercab's own setup failed (${fault.id}: ${fault.plain}); trying the step once more`,
+            record: true,
+          },
+        };
+      }
+      const again: Question = {
+        ...v.question,
+        context: `Towercab's own setup failed again after one automatic retry: ${fault.plain}. ${v.question.context}`,
+      };
+      return { done: await ask(cx, m, again, "answer the question", v.brief) };
+    }
     if (v.status === "access" && v.access) {
       const d = data(m);
       const net = [...v.access.domains.map((x) => x.domain), ...v.access.paths.map((p) => p.glob)];
@@ -305,6 +346,54 @@ export const buildHandler: Handler = {
     );
   },
 };
+
+/** What Towercab itself saw of the run that ended (LOOP-107): the hook's refusals and the sandbox's output. */
+function setupEvidence(cx: Ctx, m: Mission, end: ChildEnd): SetupEvidence {
+  return {
+    guardReasons: readGuardReasons(cx.runs(m, "build")),
+    output: [readText(end.stderr), readText(logPath(cx, m, "build", "build-setup.log"))],
+  };
+}
+
+/**
+ * LOOP-106: the run met a rules file of another version. The step starts over (the checkout is reset
+ * where it begins) and the loop, whose code is behind or ahead of the hook's, restarts first. The
+ * fourth skew within an hour asks the owner, naming the loop's commit, the hook's and its checkout.
+ */
+async function skewRetry(cx: Ctx, m: Mission, skew: SkewLine[]): Promise<Outcome> {
+  const now = cx.clock.now();
+  const recent = (data(m).skew ?? []).filter((t) => t > now - SKEW_WINDOW);
+  if (recent.length >= SKEW_LIMIT) {
+    const last = skew[skew.length - 1]!;
+    const loop = cx.db.meta("code_commit") ?? "unknown";
+    const question: Question = {
+      context: `The guard that checks the worker's writes keeps refusing its settings as coming from another version of Towercab. Towercab restarted and tried again ${SKEW_LIMIT} times in the last hour without fixing it. The loop runs commit ${loop}; the guard ran commit ${last.hookCommit ?? "unknown"} from ${last.hookCheckout || "an unknown checkout"}.`,
+      question: "Is the guard running from the same Towercab checkout as the loop?",
+      options: [
+        {
+          option: "Fix the service so both use the same checkout, restart Towercab, then reply",
+          // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
+          then: "The build starts again with matching code and three more automatic tries.",
+        },
+        {
+          option: "Reply to try again as it is",
+          // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
+          then: "The build runs once more; if the two still differ, it asks you again after three more tries.",
+        },
+      ],
+      recommendation:
+        "If the two commits differ, run `towercab restart` and reply. If they are the same, the checkout path is the one to look at.",
+    };
+    const o = await ask(cx, m, question, "answer the question");
+    return { ...o, data: { ...o.data, skew: [] } };
+  }
+  cx.record(m, "", {}, { skew: [...recent, now] });
+  return {
+    event: "bad_result",
+    why: "the guard's settings were from another version of Towercab; the step runs again after the restart",
+    record: true,
+  };
+}
 
 /**
  * PIP-116: the tests the worker asked to change that still need the owner: puts the first to them (the

@@ -4,6 +4,7 @@
 
 import { featuresRun } from "../features.ts";
 import { type Feature, featuresPath, hasOwnLines, parseFeatures } from "../intents/features.ts";
+import { proposedFor, proposedSection } from "./proposed.ts";
 import { type RepoSpend, repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
 import { ago, dbMark, lanesOf, type Snap, snapshot, type UiSources, versionOf } from "./state.ts";
 import type { FeaturesView, FeatureView, Lane, RepoSummary, ReposPage, RepoView } from "./view.ts";
@@ -66,6 +67,7 @@ async function repoView(
     repo: lane.repo,
     github: lane.github,
     ahead: lane.ahead,
+    proposed: proposedFor(proposedSection(src), src, lane.repo),
     features: await featuresView(src, s, lane, o),
     inProgress: lane.running,
     upNext: lane.upNext,
