@@ -325,6 +325,59 @@ When Towercab's own `main` moves, the running Towercab updates itself and restar
   behind `main`. Never moves to an older commit.
 - Verified by: `update: pulls and restarts when idle`, `update: a failed check rolls back`, `update: a dirty checkout is left alone`, `cli: doctor --quick leaves the database alone`
 
+### LOOP-105 · One code version at a time
+
+The loop restarts itself, before starting any new work, when the checkout it runs from has moved to a different commit than the one it started from.
+
+- At start the loop records `git rev-parse HEAD` of its checkout. In every pass, before it starts a
+  Claude run or any other child that carries the guard hook (PIP-29) or reads files the loop wrote, it
+  compares that commit with the checkout's HEAD. Different → it starts nothing new, waits for running
+  steps to finish, then exits 75 so systemd starts the current code (as LOOP-35 does). A HEAD that
+  moves mid-pass is caught by the next comparison, before the next run.
+- A run in progress keeps its result and the loop applies it, unless the guard refused a write in that
+  run because of version skew (LOOP-106). Then the result is thrown away: the mission stays at its step
+  and the step is redone after the restart.
+- This covers any move of the checkout (self-update between `git merge` and the restart, a manual
+  `git pull`). It sends no message and records the restart in the log with both commits.
+- Verified by: `update: a moved checkout restarts before the next run`, `update: a HEAD that moves mid-pass restarts before the next run`, `update: a run in progress keeps its result across the restart`
+
+### LOOP-106 · Versioned guard rules
+
+The guard hook refuses a rules file written by a different version of the loop, and the build step is retried after the restart rather than ending blocked.
+
+- `guard.json` (PIP-29) carries a number `version`; the loop writes the current one and the hook knows
+  the same one. A file whose `version` is missing or different makes the hook exit 2 with `guard rules
+  are from another version of Towercab; the loop is restarting, try again`, and the hook records its
+  own commit and checkout path where the loop can read them. A file of the right version
+  that is unreadable or malformed (a missing `existing`, a wrong type) still fails closed with exit 2
+  and its own reason, and is not treated as skew.
+- A build run whose only refusals are version skew is not a block: the mission stays at its step, the
+  loop restarts (LOOP-105), and the step runs again with newly written rules. A rules file without
+  `existing` from an "old" loop is skew (no `version`), never an owner wait.
+- At most 3 skew retries per mission within one hour. After that the mission goes to the normal
+  blocked wait ([LOOP-3](loop.md)), and its question names the loop's commit, the hook's commit and the
+  hook's checkout path, so a hook running from another checkout is visible.
+- Verified by: `guard: a rules file of another version is refused as skew`, `guard: a malformed rules file of the current version fails closed`, `build: version skew restarts and retries the build`, `build: a run refused by skew is redone after the restart`, `build: a fourth skew in an hour blocks naming both commits and the checkout`
+
+### LOOP-107 · One automatic retry for Towercab's own setup
+
+A step that is blocked by Towercab's own setup is retried once automatically before the owner is asked.
+
+- A setup fault is a block that matches an entry of a fixed list of known setup errors, kept in the
+  code: the guard refusing its rules file, the sandbox failing to start, a rules file the loop wrote
+  that cannot be read. Each entry names the exact log text or exit code that identifies it. Towercab
+  decides from its own logs and exit codes (the guard's, the sandbox's and the loop's), never from the
+  agent's account of why it was blocked. A block that matches no entry is not a setup fault, and a new
+  kind of setup fault becomes a new entry when it is seen.
+- The first time a setup fault happens for a mission step, the loop restarts that step once (a fresh
+  setup, no wait, no message). The retry is recorded in the mission's move log with the entry that
+  matched.
+- If the retry is blocked by a setup fault again, the mission goes to the normal blocked wait
+  ([LOOP-3](loop.md)) and asks the owner, with the cause in plain words. Version skew (LOOP-106) does not use up this retry.
+- Blocks caused by the work (a protected path not granted, a failing test, an access request) are
+  unchanged and are not retried.
+- Verified by: `loop: a setup block is retried once`, `loop: a second setup block waits for the owner`, `loop: a block caused by the work is not retried`, `loop: only a listed setup error is retried`, `loop: the agent's account of a block does not make it a setup fault`
+
 ### LOOP-36 · Dev loop
 
 A code change to Towercab runs on the owner's machine within seconds.
