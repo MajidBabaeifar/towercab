@@ -186,6 +186,7 @@ test("autonomy: access by level", () => {
     plan: {
       domains: [{ domain: "api.stripe.com", why: "docs" }],
       paths: [{ glob: ".github/workflows/ci.yml", why: "ci" }],
+      tests: [],
     },
     unlock: ["migrations/**"],
     network: ["pkg.go.dev"],

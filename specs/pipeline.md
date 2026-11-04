@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..111 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..111, PIP-115..118 · **Prefix:** PIP
 
 ## Purpose
 
@@ -1065,7 +1065,7 @@ bypassed.
 The intent page lists which existing tests the worker was allowed to change, and why, so the owner sees
 every goalpost that moved.
 
-- `Details` on the intent page (UI-62) gets "Existing tests changed" when the mission has any grant
+- The intent page (UI-62) gets an "Existing tests changed" section, shown when the mission has any grant
   in `tests` or a refusal: one line each with the path, the reason, who allowed it (the plan or the
   owner) and, for a refused one, "refused". The code PR's body lists the granted ones under "Tests
   changed beyond new ones" in plain words; none → neither section appears.
@@ -1144,10 +1144,10 @@ optional)
 ```
 design   {title: S, subject: S, brief: S, type, scope, breaking: bool, spec_ids: [S], concerns: [{what, why}],
           open_questions: [{question, answer: S?}], pr: S}
-plan     {brief: S, plan: S, access: {domains: [{domain, why}], paths: [{glob, why}]}, e2e}
+plan     {brief: S, plan: S, access: {domains: [{domain, why}], paths: [{glob, why}], tests: [{path, why}]}, e2e}
 build    {status: "done"|"blocked"|"access", brief: S, pr: S?, notes: S,
           question: {context, question, options: [{option, then}], recommendation}?,
-          access: {domains: [{domain, why}], paths: [{glob, why}]}?,
+          access: {domains: [{domain, why}], paths: [{glob, why}], tests: [{path, why}]}?,
           plan_changed: S?, lower_a: int?, lower_why: S?}
 review   {brief: S, approved: bool, outcomes: [{bullet, met: bool, owner: bool, why}], tests_weakened: {value: bool, where},
           plan_followed: {value: bool, where}, findings: [{severity, pass, file, line: int?, what}],

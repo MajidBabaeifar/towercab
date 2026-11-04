@@ -370,7 +370,7 @@ export function NeedsCard({
       {card.access ? (
         <div class="access">
           <p class="access-head">What the worker may reach beyond the repo</p>
-          {card.access.domains.length + card.access.paths.length === 0 ? (
+          {card.access.domains.length + card.access.paths.length + (card.access.tests?.length ?? 0) === 0 ? (
             <p class="meta">Nothing extra: the repo and the usual package sites only.</p>
           ) : (
             <ul>
@@ -384,6 +384,12 @@ export function NeedsCard({
                 <li key={p.glob}>
                   <span class="mono">{p.glob}</span>
                   <span class="access-why">{p.why}</span>
+                </li>
+              ))}
+              {(card.access.tests ?? []).map((t) => (
+                <li key={t.path}>
+                  <span class="mono">{t.path}</span> (existing test)
+                  <span class="access-why">{t.why}</span>
                 </li>
               ))}
             </ul>

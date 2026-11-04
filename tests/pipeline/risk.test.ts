@@ -181,7 +181,7 @@ test("autonomy: a4 plan asking for protected paths waits", async () => {
   // The risk agent says low; the access the plan asks for makes it medium (AUT-17).
   p.respond.plan = reply({
     ...PLAN,
-    access: { domains: [], paths: [{ glob: ".github/workflows/ci.yml", why: "the new job" }] },
+    access: { domains: [], paths: [{ glob: ".github/workflows/ci.yml", why: "the new job" }], tests: [] },
   });
   await p.start();
   const m = await p.untilStage("approval:plan");

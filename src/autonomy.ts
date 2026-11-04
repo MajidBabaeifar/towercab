@@ -60,10 +60,11 @@ export function specGate(a: number, openPoints: number, risk: RiskLevel | null):
 
 /**
  * The plan gate (AUT-12): true = the owner merges the plan PR (`approval:plan`): effective `a` ≤ 3,
- * or a risk that waits at this `a` (AUT-18).
+ * or a risk that waits at this `a` (AUT-18), or a plan that lists existing tests to change (PIP-115),
+ * which the owner merges at every `a`.
  */
-export function planGate(a: number, risk: RiskLevel | null): boolean {
-  if (a <= OWNER_MERGES) return true;
+export function planGate(a: number, risk: RiskLevel | null, tests = false): boolean {
+  if (a <= OWNER_MERGES || tests) return true;
   return riskWaits(a, risk);
 }
 

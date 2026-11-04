@@ -6,6 +6,7 @@
 import { appendFileSync, lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative as relPath, resolve } from "node:path";
 import { CONTROL, glob, Protected } from "../repo/protected.ts";
+import { type Live, withoutE2e } from "../ship/live.ts";
 import type { Tools } from "../tools.ts";
 
 /** What the guard knows of one worker run. */
@@ -18,12 +19,17 @@ export interface GuardRules {
   granted: string[];
   /** Repo-relative test files locked in repair rounds (PIP-31). */
   locked: string[];
+  /** Repo-relative test files on the base branch that no grant covers (REPO-13). */
+  existing: string[];
 }
 
 export type GuardDecision = { block: false } | { block: true; reason: string };
 
 /** What a protected path's reason ends with: how the worker asks for it (AUT-15). */
 export const ASK = "if you need it, finish what you can and return status access with this path and why";
+
+/** What an existing test's reason ends with: how the worker asks for it (PIP-116). */
+export const ASK_TEST = "if you need it, finish what you can and return status access with this test and why";
 
 /** Write `<runsDir>/guard.json`; returns its path. `protected` gets CONTROL in front when missing. */
 export function writeGuardRules(runsDir: string, rules: GuardRules): string {
@@ -36,6 +42,7 @@ export function writeGuardRules(runsDir: string, rules: GuardRules): string {
       protected: prot,
       granted: rules.granted,
       locked: rules.locked,
+      existing: rules.existing,
     }),
   );
   return file;
@@ -59,6 +66,7 @@ export function readGuardRules(path: string): GuardRules {
     protected: list("protected"),
     granted: list("granted"),
     locked: list("locked"),
+    existing: list("existing"),
   };
 }
 
@@ -82,6 +90,9 @@ export function guardDecision(rules: GuardRules, toolInput: unknown): GuardDecis
       return { block: true, reason: `${rel.rel} is git's own directory: Towercab commits for you` };
     }
     return { block: true, reason: `${rel.rel} is protected: ${ASK}` };
+  }
+  if (rules.existing.includes(rel.rel)) {
+    return { block: true, reason: `${rel.rel} is an existing test: ${ASK_TEST}` };
   }
   if (rules.locked.includes(rel.rel)) {
     return {
@@ -235,6 +246,58 @@ export async function lockedTests(
 }
 
 /**
+ * REPO-13: the test files on the base branch (`refs/remotes/origin/<base>`) matching the `tests`
+ * globs, without the e2e suites of a `live` block (as PIP-30 leaves them out).
+ */
+export async function existingTests(
+  tools: Tools,
+  checkout: string,
+  base: string,
+  tests: string[],
+  live: Live | null,
+): Promise<string[]> {
+  return withoutE2e(await lockedTests(tools, checkout, `refs/remotes/origin/${base}`, tests), live);
+}
+
+/**
+ * PIP-117: the paths among `blocked` that the branch modifies, deletes or retypes since the base
+ * branch, leaving out those that read exactly as on the base (a merge of the base brought the change in).
+ */
+export async function existingChanged(
+  tools: Tools,
+  checkout: string,
+  base: string,
+  blocked: string[],
+): Promise<string[]> {
+  if (!blocked.length) return [];
+  const ref = `refs/remotes/origin/${base}`;
+  const r = await tools.run(
+    "git",
+    [
+      "-c",
+      "core.hooksPath=/dev/null",
+      "-c",
+      "core.fsmonitor=false",
+      "diff",
+      "--name-status",
+      "--no-renames",
+      "-z",
+      `${ref}...HEAD`,
+    ],
+    { cwd: checkout, timeoutMs: 300_000 },
+  );
+  if (r.code !== 0)
+    throw new Error(`git diff ${ref}...HEAD: ${r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`}`);
+  const parts = r.stdout.split("\0");
+  const touched: string[] = [];
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    if (/^[MDT]/.test(parts[i]!) && blocked.includes(parts[i + 1]!)) touched.push(parts[i + 1]!);
+  }
+  const same = await sameAsBase(tools, checkout, ref, touched);
+  return touched.filter((p) => !same.includes(p));
+}
+
+/**
  * PIP-31: the paths among `paths` whose content at `HEAD` is the base branch's (`baseRef`): a change
  * that came in by merging the base (a conflict round), not one the worker made.
  */
@@ -276,10 +339,14 @@ export function publishRefusals(
   protectedPaths: Protected,
   sinceHead: { status: string; path: string }[],
   locked: string[],
+  existingChanged: string[] = [],
 ): string[] {
   const bad = changed.filter((p) => protectedPaths.blocks(p)).map((p) => `${p} (protected)`);
   for (const { status, path } of sinceHead) {
     if (/^[MDT]/.test(status) && locked.includes(path)) bad.push(`${path} (a test already pushed)`);
+  }
+  for (const p of existingChanged) {
+    if (!bad.some((b) => b.startsWith(`${p} `))) bad.push(`${p} (an existing test)`);
   }
   return bad;
 }
