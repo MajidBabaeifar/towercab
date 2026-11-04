@@ -325,20 +325,23 @@ With the owner's opt-in, Towercab applies the standard settings itself and check
 - **Backup.** Before every apply, Towercab saves everything the script can change, as one JSON file
   `<home>/settings-backups/<owner>/<name>/<UTC time>.json`: the repo's settings (`gh api repos/<r>`),
   its `security_and_analysis`, all rulesets (`repos/<r>/rulesets`, each with its full body), the classic
-  branch protection of the base branch (`branches/<base>/protection`), the Actions workflow permissions
+  branch protection of the default branch (`branches/<default_branch>/protection`, the name read from
+  the repo's settings; the script acts only on the default branch), the Actions workflow permissions
   (`actions/permissions/workflow`) and whether vulnerability alerts are on (`vulnerability-alerts`).
-  A part that does not exist (a 404, such as no branch protection) is saved as absent. The last 5 files
+  When the plan ([REPO-31](#repo-31--applying-the-settings)'s guard) names another branch it would
+  change, that branch's protection is saved too. A part that does not exist (a 404, such as no branch
+  protection) is saved as absent. The last 5 files
   per repo are kept, older ones are deleted. A backup that cannot be read or written in full → nothing
   is applied.
 - **Restore.** `towercab settings restore <repo>` writes back, with the App token, only what the newest
   backup saved: the repo's settings and `security_and_analysis` (`PATCH repos/<r>`), each saved ruleset
-  (`PUT`, recreated when deleted), the branch protection, the workflow permissions, and vulnerability
+  (`PUT`, recreated when deleted), the saved branch protections, the workflow permissions, and vulnerability
   alerts on or off as saved. A part saved as absent is not touched. Anything added since (a ruleset not
   in the backup, branch protection the backup lacks) is left alone and listed in the output as `Not in the
   backup, left as it is: <what>`. It prints what it restored and the backup's time; no backup → `<repo>
   has no saved settings`; unknown repo → as in [LOOP-69](loop.md)'s text; a forbidden write is REPO-32's
   permission message. It does not need the loop to be running.
-- Verified by: `repo: settings stay check-only by default`, `repo: TOWERCAB.md settings check keeps a repo check-only`, `repo: a bad TOWERCAB.md settings value is invalid`, `repo: apply runs the script then checks again`, `repo: a gap that survives the apply is not retried until the next day`, `repo: a bad settings mode is rejected`, `repo: the required check names come from the plan`, `repo: a green main gets the whole apply`, `repo: a main not green gets everything but the ruleset`, `repo: a release without skip-ruleset applies nothing to a repo not green`, `repo: apply backs up everything the script can change and keeps 5`, `repo: no backup, no apply`, `cli: settings restore writes back what was saved`, `cli: settings restore lists what was added since and leaves it`
+- Verified by: `repo: settings stay check-only by default`, `repo: TOWERCAB.md settings check keeps a repo check-only`, `repo: a bad TOWERCAB.md settings value is invalid`, `repo: apply runs the script then checks again`, `repo: a gap that survives the apply is not retried until the next day`, `repo: a bad settings mode is rejected`, `repo: the required check names come from the plan`, `repo: a green main gets the whole apply`, `repo: a main not green gets everything but the ruleset`, `repo: a release without skip-ruleset applies nothing to a repo not green`, `repo: apply backs up everything the script can change and keeps 5`, `repo: the backup includes another branch the plan names`, `repo: no backup, no apply`, `cli: settings restore writes back what was saved`, `cli: settings restore lists what was added since and leaves it`
 
 ### REPO-32 · A missing permission is said once
 
