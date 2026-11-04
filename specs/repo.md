@@ -20,7 +20,8 @@ never from a PR or a working tree.
   or non-UTF-8 file in a file's place → `RepoError.invalid("<file>: …")`; a failed git →
   `RepoError.git`. Then the pure `parseRepoFiles(claude, review, towercab)` (**Grammar**).
 - `TOWERCAB.md` front matter: `max_autonomy` (1–5, default 5), `protected` (globs), `tests` (globs,
-  default the list in [PIP-30](pipeline.md)), `live` (the ship stage's block, [SHIP-1](ship.md)). Any
+  default the list in [PIP-30](pipeline.md)), `live` (the ship stage's block, [SHIP-1](ship.md)),
+  `kind`, `readiness`, `waive` and `go_live` ([REPO-20](#repo-20--a-repos-kind), once built). Any
   other key → `unknown key <k>`.
 - Verified by: `repo: parse the three files`, `repo: read from the base branch only`, `repo: TOWERCAB.md front matter`
 
@@ -143,6 +144,132 @@ branch unless that file was granted; new test files stay free.
 - The guard's reason names the test and ends with how to ask (PIP-116). The block holds in
   every worker round, repairs included; PIP-31's lock on tests pushed earlier is separate and stays.
 - Verified by: `repo: existing tests are blocked`, `repo: new tests are not blocked`, `repo: granted tests unblock`, `guard: blocks an existing test`
+
+### REPO-20 · A repo's kind
+
+Each repo says what kind it is in `TOWERCAB.md`, and the kind decides what setup it must have.
+
+- `TOWERCAB.md` front matter key `kind` ([REPO-1](#repo-1--read-from-the-base-branch)): one of
+  `service`, `site`, `cli`, `library`, `spec-only`, `infra`. Another value → `kind: <v> isn't one of
+  service, site, cli, library, spec-only, infra`, which makes the file invalid (`waiting: fix repo files`).
+- A kind written in `TOWERCAB.md` is *confirmed*. No `kind` (or no `TOWERCAB.md`) → the kind is
+  *unconfirmed*: Towercab uses the kind it suggests ([REPO-21](#repo-21--suggesting-a-kind)), or none when
+  there is no suggestion, and the repo only ever warns ([REPO-24](#repo-24--readiness)). Towercab never
+  writes the kind: `TOWERCAB.md` is protected ([REPO-8](#repo-8--protected-paths)), so the owner confirms
+  by committing it.
+- `readiness`: `warn` (default) or `block`, per repo. Anything else → `readiness: <v> isn't warn or block`
+  (the file is invalid). It takes effect only with a confirmed kind ([LOOP-70](loop.md)).
+- `waive`: a list of lines `<item>: <reason>`, `<item>` one of REPO-22's items and the reason non-empty;
+  anything else → `waive: <line>: …` (the file is invalid). A waived item counts as present
+  ([REPO-24](#repo-24--readiness)).
+- `infra` repos also give `go_live`, one line saying how their changes reach production (a non-empty
+  string; see [REPO-22](#repo-22--required-setup-per-kind)).
+- Verified by: `repo: TOWERCAB.md kind`, `repo: an unknown kind is invalid`, `repo: TOWERCAB.md readiness and waive`, `repo: a bad readiness or waive line is invalid`
+
+### REPO-21 · Suggesting a kind
+
+Towercab suggests a kind from the repo's files, so the owner confirms instead of working it out.
+
+- `suggestKind(paths, manifests)` is pure, over the base branch's file list and `package.json` /
+  `Cargo.toml` when present. The first rule that matches wins: `*.tf`, `ansible/` or an `apps:` file →
+  `infra`; a `Dockerfile` or a compose file → `service`; a static-site generator config (`astro.config.*`,
+  `_config.yml`, `hugo.*`, `mkdocs.yml`) or a root `index.html` with no server code → `site`;
+  `package.json` `bin`, or `Cargo.toml` `[[bin]]` or `src/main.rs` → `cli`; `package.json` `main` or
+  `exports`, or `src/lib.rs` → `library`; only Markdown and `specs/` → `spec-only`. No rule matches → no suggestion.
+- Until the owner confirms a kind, the suggestion stands in for it: the required setup, the readiness
+  warnings and the stage map ([REPO-26](#repo-26--which-stages-apply)) all use it. It is shown with the
+  repo's missing items ([UI-156](ui.md)), but is never written to the repo.
+- Verified by: `repo: suggest a kind from files`, `repo: no suggestion when nothing matches`
+
+### REPO-22 · Required setup per kind
+
+Each kind has a fixed list of setup a repo should have, and Towercab can hold work back until it does.
+
+- Every repo: `ci` (CI with required checks), `settings` (the standard GitHub settings), `release`
+  (release-please) and `verifying` (a `## Verifying your work` section with a `checks` block, REPO-5).
+- `service` adds `image` (a signed image), `apps` (its `apps:` entry in the `infra` repo), `deploy` (the
+  deploy jobs) and `live` (a `live` block with a smoke suite, [SHIP-1](ship.md)).
+- `site` adds `live`.
+- `cli` and `library` add `publish` (release publishing set up).
+- `infra` adds `go_live` (the stated way its changes go live: a one-line `go_live` note in `TOWERCAB.md`, or a `live` block).
+- `spec-only` adds nothing.
+- `requiredSetup(kind)` returns the list, in this order, for the checks of REPO-23 and the words of REPO-24.
+- Verified by: `repo: required setup per kind`
+
+### REPO-23 · How each item is checked
+
+Every item is checked from files and settings Towercab can read cheaply, never by running CI.
+
+- From the base branch's file list and contents, plus a few `gh api` reads as the App (LOOP-19):
+  - `ci`: a `.github/workflows/*.yml` file, and the base branch's rules require at least one status check
+    (`gh api repos/<r>/rules/branches/<base>`).
+  - `settings`: [REPO-25](#repo-25--the-settings-check).
+  - `release`: `release-please-config.json`, `.release-please-manifest.json` and a workflow that uses release-please.
+  - `verifying`: REPO-5's rule.
+  - `image`: a workflow that builds an image and signs it (`cosign sign`, or a call to the shared image
+    workflow in `ci`).
+  - `apps`: the `infra` repo's `apps:` list has an entry for this repo (read from `infra`'s base branch).
+  - `deploy`: a workflow with a job whose name starts `deploy`.
+  - `live`: a valid `live` block with at least one suite that has `smoke: true`.
+  - `publish`: a workflow job named `publish*`, or one running `npm publish`, `cargo publish` or a PyPI publish action.
+  - `go_live`: a non-empty `go_live` line, or a valid `live` block.
+- Nothing is cloned or built for these checks; no workflow runs. Each reads at most a handful of API
+  calls, and the whole check has a 60 s limit.
+- Verified by: `repo: each setup item is checked from files`, `repo: apps entry is read from infra`, `repo: live needs a smoke suite`
+
+### REPO-24 · Readiness
+
+A repo is ready when none of its required setup is missing, and Towercab says each missing item in
+plain words; a repo whose kind nobody confirmed only warns.
+
+- `repoReadiness(kind, confirmed, checks, waive)` → `{ kind, confirmed, ready, items: [{ item, state,
+  words }] }`. `state` is `present`, `missing`, `unknown` (the check could not run, REPO-25 and
+  REPO-27) or `waived` (`words` is the owner's reason). A waived item counts as present. `ready` is
+  true when no item is `missing`; an `unknown` item is a warning and does not make the repo not ready.
+- Unconfirmed kind: `kind` is the suggestion of REPO-21 (none → only the every-repo items), and one
+  extra item `kind` is `missing` with `Say what kind of repo this is: add kind to TOWERCAB.md`
+  (naming the suggestion). Words name the fix, for example `No signed image: add a workflow that builds
+  and signs one` or `The standard GitHub settings differ: run bin/apply-settings`.
+- The result also says whether it *blocks*: `blocks` = not ready and the kind is confirmed and
+  `readiness` is `block` ([REPO-20](#repo-20--a-repos-kind)). Everything else only warns.
+- The check runs whenever Towercab fetches the repo ([LOOP-8](loop.md)) and at the pick step, and the result is kept in
+  `meta` (`readiness:<repo>`, JSON with the base commit it was read at and the time) so pages read no network.
+- Verified by: `repo: readiness lists each missing item in words`, `repo: an unconfirmed kind uses the suggestion and only warns`, `repo: a waived item counts as present`, `repo: only a confirmed block repo blocks`, `repo: readiness is stored at fetch`
+
+### REPO-25 · The settings check
+
+The standard GitHub settings are checked with the same check that `ci` uses, so the two cannot disagree.
+
+- Towercab runs `bin/apply-settings --check <owner/name>` from the `ci` repo's clone (`<home>/repos/ci`)
+  through `Tools`, as the App; exit 0 is `settings` present, a non-zero exit is missing with the script's
+  first output line as the words. Towercab keeps no copy of the list of settings.
+- No `ci` clone, no such script, or a script that cannot run (not exit 0 or 1) → the item is `unknown`
+  with `The standard settings could not be checked: add the ci repo to Towercab` (or the reason). It is
+  shown as a warning and never blocks. `ci` is a registered repo, so the clone is normally there.
+- Verified by: `repo: settings check runs ci's script`, `repo: settings check without a ci clone is unknown`
+
+### REPO-26 · Which stages apply
+
+Every kind has the same list of stages; a stage that does not apply says why.
+
+- `stageApplies(kind, hasLive, stage)`: the stages from design to merge apply to every kind. The ship
+  stages (`deploy`, `e2e`, `rollback`, `revert`, SHIP-1) apply to `service` and `site`, and to any repo with a
+  valid `live` block. Otherwise they are skipped with a reason: `a library has nothing to deploy`, `a CLI
+  has nothing to deploy`, `a spec-only repo has nothing to deploy`, `this repo's changes go live outside
+  Towercab: <go_live>` (infra with no `live` block).
+- `kind` is the confirmed kind, else the suggested one ([REPO-21](#repo-21--suggesting-a-kind)). With
+  neither, the ship stages are skipped with `kind not set`.
+- Verified by: `repo: ship stages are skipped with a reason for kinds that do not deploy`
+
+### REPO-27 · A check that cannot run
+
+A readiness check that fails for a network or GitHub reason never blocks or unblocks a repo by itself.
+
+- A failed read is classified as in [LOOP-10](loop.md); the last stored result stands and the check runs again on the next
+  fetch. The item whose read failed is `unknown` (a warning), never `missing`. With no stored result,
+  nothing blocks and the repo shows `Not checked yet` until one check succeeds.
+- A file that cannot be parsed (invalid `live`, bad `kind`) is a missing item with the parse error as its words, not a failure.
+- Verified by: `repo: a failed readiness read keeps the last result`, `repo: no stored result never blocks`
 
 **Grammar** (`src/repo/markdown.ts`)
 

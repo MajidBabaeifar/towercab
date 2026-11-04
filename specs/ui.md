@@ -554,7 +554,7 @@ The stage map follows a change after its merge, so the owner sees the deploy, th
 
 - After Merging, the map has Deploying (`deploy`), e2e tests (`e2e`), Rolling back (`rollback`) and
   Reverting (`revert`) ([SHIP-1](ship.md)). They are listed only when the attempt visited them, so a repo
-  without a `live` block sees the map it always had.
+  without a `live` block sees the map it always had. (UI-158 lists them for every attempt once built.)
 - Merging → Deploying is a pass, not a step back. A red deploy or e2e run is `red` with a return link to
   Rolling back, labelled with its reason ("e2e tests failed: e2e suite drill failed twice …"). A
   rollback that is back on the last good version is `passed`, with a return link to Building labelled
@@ -783,6 +783,59 @@ The Repos page works at phone width and in light and dark, like the rest of the 
   (UI-68).
 - Verified by: `ui: screenshots light, dark and mobile`
 
+### UI-155 · Not-ready badge on the Repos tab
+
+A repo that is missing required setup shows a "not ready" warning on the Repos tab, on its chip and on its card.
+
+- The badge reads "Not ready" with the count of missing items in its accessible name, and uses the
+  warning colour of UI-68, never the "Needs you" colour. A repo that holds work back ([LOOP-70](loop.md))
+  says so in the same badge ("Not ready · new work paused"); otherwise it is a warning only. A repo with
+  only `unknown` items shows "Could not check" in the same colour. It comes from the stored readiness
+  ([REPO-24](repo.md)); `GET /api/repos` adds `ready`, `blocks` and `missing` to each chip and card.
+- Verified by: `ui: repos chips and cards show the not-ready badge`, `ui: screenshots light, dark and mobile`
+
+### UI-156 · What a repo is missing
+
+A not-ready repo's page lists each missing item in plain words, above everything else, so the owner knows what to fix.
+
+- A "Set up this repo" section right under the repo's name (before UI-143): one line per missing item
+  (REPO-24's words) and per `unknown` item (as a warning), the suggested kind when the kind is
+  unconfirmed ([REPO-21](repo.md)) with the lines to add to `TOWERCAB.md` (`kind`, and `readiness:
+  block` to start holding work back), and one sentence saying whether new intents wait (LOOP-70) or only
+  a warning is shown. Nothing missing or unknown and nothing waived → no section.
+- Waived items are listed there too, each with the owner's reason (`Waived: <reason>`).
+- It links to the repo's setup intent, or to the pull request that proposes it, when one is open
+  (LOOP-71), so the owner can act without leaving Towercab for another tool to find it.
+- The new intents of this repo that wait for it read `Waiting: repo not ready` in the Waiting list (UI-61).
+- Verified by: `ui: a not-ready repo page lists what is missing`, `ui: a repo page shows waived items with their reason`, `ui: screenshots light, dark and mobile`
+
+### UI-157 · Not-ready badge on the Board
+
+The Board marks the repos that are not ready, so the owner sees it without opening the Repos tab.
+
+- The repo's lane header on the Board (UI-133) shows the same badge as UI-155, linking to the repo's
+  page; its missing items are the badge's tooltip. A folded repo (UI-135) keeps the badge.
+- Verified by: `ui: board lanes show the not-ready badge`
+
+### UI-158 · The stage map always lists every stage
+
+Every task's stage map shows the same full list of stages, whatever the repo, so maps look alike.
+
+- Replaces the "listed only when the attempt visited them" rule of UI-123: the map lists the stages of
+  UI-72 and all of the ship stages for every attempt. A stage the attempt never reached is `not reached`
+  as before; one that does not apply is `skipped` with its reason (UI-159).
+- The ship stages are listed for repos with no `live` block, and for attempts that finished before this
+  rule, with the same reasons.
+- Verified by: `ui: stage map lists every stage for every repo`
+
+### UI-159 · Why a stage is skipped
+
+A stage that does not apply to the repo's kind says why, in the map itself.
+
+- The `reason` of a `skipped` visit-less stage is REPO-26's text (`a library has nothing to deploy`,
+  `kind not set`), shown on the node as for other skipped stages (UI-73). It comes from the repo's
+  confirmed kind, or the suggested one while unconfirmed ([REPO-21](repo.md)), at the time the page is built; a stage the attempt did visit keeps its own outcome.
+- Verified by: `ui: ship stages are skipped with the kind's reason`, `ui: screenshots light, dark and mobile`
 ### UI-184 · Proposed cards
 
 The overview shows each proposed intent as a "Proposed" card, so the owner sees what waits for a yes.
