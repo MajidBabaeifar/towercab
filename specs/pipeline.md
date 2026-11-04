@@ -295,7 +295,8 @@ The worker plans the build, read-only, and Towercab opens the plan as a PR on th
 A hook stops the worker from writing paths it hasn't been granted, and tells it how to ask.
 
 - Every worker run's settings add a `PreToolUse` hook on `Edit|Write|NotebookEdit` running
-  `towercab hook guard <runs>/guard.json` (`{checkout, protected, granted, locked}`), which exits 2
+  `towercab hook guard <runs>/guard.json` (`{version, checkout, protected, granted, locked, existing}`;
+  a file of another `version` is refused as skew, [LOOP-106](loop.md)), which exits 2
   with a reason for: a path outside the checkout, a protected path not granted
   ([REPO-8](repo.md), [AUT-14](autonomy.md)), a locked test (PIP-31). The reason for a protected path
   ends `if you need it, finish what you can and return status access with this path and why`. It

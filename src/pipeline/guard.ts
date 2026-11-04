@@ -1,10 +1,13 @@
 // The worker's guard (PIP-29, PIP-31): before a worker run Towercab writes `<runs>/guard.json`
-// (`{checkout, protected, granted, locked}`); Claude Code's `PreToolUse` hook runs
+// (`{version, checkout, protected, granted, locked, existing}`; another `version` is skew, LOOP-106);
+// Claude Code's `PreToolUse` hook runs
 // `towercab hook guard <runs>/guard.json` on every Edit, Write and NotebookEdit, which exits 2 with a
 // reason to block. It fails closed. Publish refuses what got past it (`publishRefusals`).
 
-import { appendFileSync, lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { appendFileSync, lstatSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative as relPath, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { readHead } from "../head.ts";
 import { CONTROL, glob, Protected } from "../repo/protected.ts";
 import { type Live, withoutE2e } from "../ship/live.ts";
 import type { Tools } from "../tools.ts";
@@ -31,6 +34,85 @@ export const ASK = "if you need it, finish what you can and return status access
 /** What an existing test's reason ends with: how the worker asks for it (PIP-116). */
 export const ASK_TEST = "if you need it, finish what you can and return status access with this test and why";
 
+/**
+ * The shape of `guard.json` (LOOP-106). Raise it when a key is added or changes meaning: a hook that
+ * reads another version refuses the file as skew, and the loop restarts and writes it again.
+ */
+export const GUARD_VERSION = 2;
+
+/** What the hook says when the rules file is from another version. */
+export const SKEW_REASON =
+  "guard rules are from another version of Towercab; the loop is restarting, try again";
+
+/** The rules file is from another version of Towercab than this hook (LOOP-106). */
+export class GuardSkew extends Error {}
+
+/** The checkout this code runs from: the hook's own. */
+const HOOK_CHECKOUT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/** A refusal for version skew, as the hook logs it to `guard-skew.jsonl`. */
+export interface SkewLine {
+  at: string;
+  /** The version the rules file named, or null. */
+  rulesVersion: number | null;
+  hookVersion: number;
+  hookCommit: string | null;
+  hookCheckout: string;
+}
+
+/** The skew refusals logged next to the rules in `dir`, oldest first. */
+export function readSkew(dir: string): SkewLine[] {
+  let text: string;
+  try {
+    text = readFileSync(join(dir, "guard-skew.jsonl"), "utf8");
+  } catch {
+    return [];
+  }
+  const out: SkewLine[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      out.push(JSON.parse(line) as SkewLine);
+    } catch {
+      // A torn line still counts that the hook refused: the next round starts clean anyway.
+      out.push({
+        at: "",
+        rulesVersion: null,
+        hookVersion: GUARD_VERSION,
+        hookCommit: null,
+        hookCheckout: "",
+      });
+    }
+  }
+  return out;
+}
+
+/** The hook's own refusals logged in `dir` (`guard-blocks.jsonl`): their reasons, oldest first. */
+export function readGuardReasons(dir: string): string[] {
+  let text: string;
+  try {
+    text = readFileSync(join(dir, "guard-blocks.jsonl"), "utf8");
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const line of text.split("\n")) {
+    try {
+      const r = (JSON.parse(line) as { reason?: unknown }).reason;
+      if (typeof r === "string") out.push(r);
+    } catch {
+      // Not a log line.
+    }
+  }
+  return out;
+}
+
+/** Forget the hook's logs before a worker run, so the next read says only what that run met. */
+export function clearGuardLogs(dir: string): void {
+  rmSync(join(dir, "guard-skew.jsonl"), { force: true });
+  rmSync(join(dir, "guard-blocks.jsonl"), { force: true });
+}
+
 /** Write `<runsDir>/guard.json`; returns its path. `protected` gets CONTROL in front when missing. */
 export function writeGuardRules(runsDir: string, rules: GuardRules): string {
   const file = join(runsDir, "guard.json");
@@ -38,6 +120,7 @@ export function writeGuardRules(runsDir: string, rules: GuardRules): string {
   writeFileSync(
     file,
     JSON.stringify({
+      version: GUARD_VERSION,
       checkout: resolve(rules.checkout),
       protected: prot,
       granted: rules.granted,
@@ -53,6 +136,12 @@ export function readGuardRules(path: string): GuardRules {
   const v: unknown = JSON.parse(readFileSync(path, "utf8"));
   if (typeof v !== "object" || v === null) throw new Error(`${path}: not an object`);
   const o = v as Record<string, unknown>;
+  // The version comes first: a file from another version is skew, whatever else it lacks (LOOP-106).
+  if (o.version !== GUARD_VERSION) {
+    throw new GuardSkew(
+      `${path}: rules version ${typeof o.version === "number" ? o.version : "none"}, this hook reads ${GUARD_VERSION}`,
+    );
+  }
   const list = (k: string): string[] => {
     const x = o[k];
     if (!Array.isArray(x) || x.some((s) => typeof s !== "string")) throw new Error(`${path}: ${k} missing`);
@@ -161,6 +250,13 @@ function relative(checkout: string, path: string): { rel: string } | { outside: 
  */
 export function runGuardHook(rulesPath: string, stdin: string): { code: number; stderr: string } {
   let reason: string;
+  const log = (line: object): void => {
+    try {
+      appendFileSync(join(dirname(rulesPath), "guard-blocks.jsonl"), `${JSON.stringify(line)}\n`);
+    } catch {
+      // The block stands without its log line.
+    }
+  };
   try {
     const rules = readGuardRules(rulesPath);
     let input: unknown;
@@ -174,19 +270,33 @@ export function runGuardHook(rulesPath: string, stdin: string): { code: number; 
     const d = guardDecision(rules, toolInput);
     if (!d.block) return { code: 0, stderr: "" };
     reason = d.reason;
-    try {
-      const path = (toolInput as Record<string, unknown> | null)?.file_path ?? null;
-      appendFileSync(
-        join(dirname(rulesPath), "guard-blocks.jsonl"),
-        `${JSON.stringify({ at: new Date().toISOString(), path, reason })}\n`,
-      );
-    } catch {
-      // The block stands without its log line.
-    }
+    const path = (toolInput as Record<string, unknown> | null)?.file_path ?? null;
+    log({ at: new Date().toISOString(), path, reason });
   } catch (e) {
-    reason = `guard: ${(e as Error).message}: blocked`;
+    if (e instanceof GuardSkew) {
+      reason = SKEW_REASON;
+      const rulesVersion = /rules version (\d+)/.exec(e.message)?.[1];
+      appendSkew(rulesPath, {
+        at: new Date().toISOString(),
+        rulesVersion: rulesVersion === undefined ? null : Number(rulesVersion),
+        hookVersion: GUARD_VERSION,
+        hookCommit: readHead(HOOK_CHECKOUT),
+        hookCheckout: HOOK_CHECKOUT,
+      });
+    } else {
+      reason = `guard: ${(e as Error).message}: blocked`;
+      log({ at: new Date().toISOString(), path: null, reason });
+    }
   }
   return { code: 2, stderr: `${reason}\n` };
+}
+
+function appendSkew(rulesPath: string, line: SkewLine): void {
+  try {
+    appendFileSync(join(dirname(rulesPath), "guard-skew.jsonl"), `${JSON.stringify(line)}\n`);
+  } catch {
+    // The refusal stands without its log line.
+  }
 }
 
 /** The CLI's `hook guard <rules>`: reads stdin, writes the reason to stderr, returns the exit code. */

@@ -31,6 +31,7 @@ import {
 } from "./github/proposed.ts";
 import { closeIfOpen, type PrState, readPr } from "./github/prs.ts";
 import { type ChildEnd, type Clock, type Ctx, EnvError, type GitHub, type Handlers } from "./handlers.ts";
+import { readHead } from "./head.ts";
 import type { Home } from "./home.ts";
 import { removeFeature, setFeature } from "./intents/features.ts";
 import { type Intent, type IntentStore, type Listing, SyncError } from "./intents/types.ts";
@@ -92,6 +93,8 @@ export interface LoopDeps {
   readProposed?: () => Promise<ProposedPr[]>;
   /** Self-update (LOOP-35); off in tests. */
   selfUpdate?: boolean;
+  /** The checkout this loop's code runs from (LOOP-105); default the one this file is in. */
+  codeRoot?: string;
   /** INT-39: when a backfill run's time is up (default a real timer; tests resolve it themselves). */
   featuresDeadline?: (ms: number) => Promise<void>;
 }
@@ -144,6 +147,8 @@ export class Loop {
   private lastProposedPoll = 0;
   private proposedCache: ProposedCache = new Map();
   private lastUpdate = 0;
+  /** LOOP-105: the commit the checkout was at when this loop started, or null when unknown. */
+  private startCommit: string | null = null;
   private last: { wall: number; mono: number } | null = null;
   private stopping = false;
   exitCode = 0;
@@ -199,11 +204,40 @@ export class Loop {
       }
     }
     db.setMeta("running", `${process.pid} ${Math.floor(this.now)}`);
+    // LOOP-105: the code this loop runs is the checkout as it is now; the guard's question names it.
+    this.startCommit = readHead(this.codeRoot());
+    if (this.startCommit) db.setMeta("code_commit", this.startCommit);
+    else db.delMeta("code_commit");
     loadRepos(this.d.config, db, this.now);
     recoverFeatures(db, this.now);
     await this.pollIntents(true);
     await this.pollProposed(true);
     this.startIssues(true);
+  }
+
+  private codeRoot(): string {
+    return this.d.codeRoot ?? checkoutRoot();
+  }
+
+  /**
+   * LOOP-105: the checkout's commit now when it is not the one this loop started from, else null. The
+   * hook of a run is the checkout's code, so a loop that writes its files from older code must restart.
+   */
+  private codeMoved(): string | null {
+    if (this.startCommit === null) return null;
+    const now = readHead(this.codeRoot());
+    return now !== null && now !== this.startCommit ? now : null;
+  }
+
+  /** LOOP-105: with the checkout moved and nothing running, exit 75 so systemd starts the current code. */
+  private restartIfMoved(): void {
+    if (this.stopping) return;
+    const to = this.codeMoved();
+    if (to === null || this.children.size > 0 || this.featuresJob !== null || this.issuesRun !== null) return;
+    this.d.log(
+      `the checkout moved from ${this.startCommit} to ${to}; restarting so the loop and its guard run the same code`,
+    );
+    this.stop(RESTART_CODE);
   }
 
   /** Clean exit: children get SIGTERM, then SIGKILL; their missions are `interrupted`. */
@@ -331,15 +365,22 @@ export class Loop {
     await this.pollIntents(false);
     await this.pollProposed(false);
     await this.requeueKnownRepos();
-    this.startIssues(false);
+    // LOOP-105: with the checkout moved, running children finish but nothing new starts.
+    if (this.codeMoved() === null) this.startIssues(false);
     await this.pollPrs();
     this.releaseReady();
     await this.stepDue(!report.woke);
-    if (!paused(db) && !this.health.blocked(this.now) && !budgetReached(db, this.d.config, this.now)) {
+    if (
+      !paused(db) &&
+      !this.health.blocked(this.now) &&
+      !budgetReached(db, this.d.config, this.now) &&
+      this.codeMoved() === null
+    ) {
       report.picked = await this.pick();
       await this.startFeatures();
     }
     await this.selfUpdate();
+    this.restartIfMoved();
     await this.sendMessages();
 
     const driven = unfinished(db).find((m) => isWorking(m.stage) && !m.held && !this.cooling(m));
@@ -860,6 +901,8 @@ export class Loop {
     const queued = this.queued();
     for (const m of unfinished(db)) {
       if (!isWorking(m.stage) || m.step === "enter" || m.held || this.children.has(m.id)) continue;
+      // LOOP-105: no step of a loop whose checkout moved under it runs.
+      if (this.codeMoved() !== null) break;
       if (queued.has(m.id) || this.cooling(m)) continue;
       if (m.retry_at && m.retry_at > this.now) continue;
       if ((this.pollAt.get(m.id) ?? 0) > this.now) continue;
@@ -901,6 +944,12 @@ export class Loop {
       update(this.d.db, m.id, { busy: 0 }, this.now);
     } else {
       let spec = p.spawn;
+      // LOOP-105: the checkout moved while the step prepared its run (its rules file may be from this
+      // older code): drop the run; the step is asked for again after the restart.
+      if (this.codeMoved() !== null) {
+        update(this.d.db, m.id, { busy: 0 }, this.now);
+        return;
+      }
       if (spec.slot && this.slotsUsed() >= this.d.config.agent.parallel) {
         update(this.d.db, m.id, { busy: 0 }, this.now);
         this.pollAt.set(m.id, this.now + 1);
