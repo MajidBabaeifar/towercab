@@ -1008,6 +1008,57 @@ intent's title is a long user story.
   intent's title as before.
 - Verified by: `pipeline: PR titles use the design's short subject`
 
+### PIP-112 · The plan says how the intent is delivered
+
+The plan states whether the intent ends as a code change or as steps the owner does, so Towercab never builds something only the owner can finish.
+
+- The plan result (**Schemas** `plan`) gains `delivery`: `code` or `steps`; missing counts as `code`. `plan.md` (PIP-46) gets
+  a line `Delivery: code` or `Delivery: steps` under the IDs line. The plan agent picks `steps` when the
+  intent's outcome is a change only the owner can make (a setting on a service, an account, a machine)
+  and no change to the repo would deliver it.
+- A `steps` plan has at least one entry in `owner_steps` (SHIP-17), whose `when` is ignored since there is no merge: the
+  checklist, its ticking and its storage (`## Your steps`, `data.steps`, SHIP-22) are SHIP-17..22 and are
+  not redefined here. A `steps` plan with no `owner_steps` entry is a bad result and is asked for again
+  (PIP-13). A `code` plan keeps SHIP-17 as it is.
+- The plan PR shows the delivery in its description in plain words ("Nothing to build; you do these
+  steps"). The merged `plan.md` is the record: the delivery is read from it, not from the mission.
+- Verified by: `pipeline: plan.md carries its delivery`, `pipeline: a steps plan needs steps the owner can tick`, `pipeline: a plan without delivery counts as code`
+
+### PIP-113 · A steps-delivered intent skips the code PR
+
+When the merged plan says `steps`, Towercab opens no code PR, and the intent ends done when the owner ticks its last step.
+
+- Merging the plan PR (`plan_merged`, LOOP-3) moves a `steps` mission to the stage `steps` and its wait
+  `your steps` (LOOP-73, LOOP-74, SHIP-19), not to `build`. No build, verify, proof, publish, CI, review
+  or deploy runs, and no branch or code PR is made.
+- The owner ticks the steps as in SHIP-22. Ticking the last one is `ok` at `steps`; for a `steps`
+  delivery it goes to `done` instead of `deploy` (SHIP-20 is for code), and the intent's `stage` becomes
+  `done`. The `done` exit of LOOP-76 ends it early. Until then the wait keeps the exits of LOOP-76.
+- Changing a `code` mission to `steps` (PIP-114) closes an open code PR by itself, as `drop` does
+  (PIP-87), after commenting on it why ("Closed: the owner will do this by hand, so there is nothing to
+  merge."). It then commits `Delivery: steps` and the steps to `plan.md` on `main` of the intents repo as for
+  `plan_changed` (PIP-28), and moves the mission to `steps`. The steps come from the question's option
+  or the plan; with none, the plan step is asked to add them first. Nothing the owner already merged is
+  undone.
+- How merged code PRs end is unchanged: a `code` plan builds, ships and ends as before.
+- Verified by: `pipeline: a steps plan skips build and the code PR`, `pipeline: ticking the last step of a steps plan ends the intent done`, `pipeline: switching to steps closes the open code PR and says why`, `pipeline: a code plan ends as before`
+
+### PIP-114 · Every option in a question maps to something Towercab does
+
+Each option in a worker's question is one of three things Towercab can do, so choosing it always moves the intent.
+
+- Each `options` entry in the `question` result (PIP-41) gains `do`: `continue` (resume the work with
+  this option as the answer, LOOP-38), `steps` (switch the delivery to steps, PIP-113) or `drop` (stop
+  the intent, PRI-9). A result with an option that has no `do`, or any other value, is a bad result and
+  the worker is asked to fix it (PIP-13). A question with no option that moves the intent is refused the
+  same way.
+- The Question comment (PIP-42) and the plain brief name what each option will do ("Carry on with the
+  build", "I'll do this myself, give me the steps", "Drop the intent"). The agent file for the worker
+  tells it that options are limited to these three effects.
+- An owner's own reply still answers as before (`continue` with the text); `do` only governs the
+  options.
+- Verified by: `pipeline: every question option maps to continue, steps or drop`, `pipeline: a question option without a valid action is asked again`, `pipeline: question comment says what each option does`
+
 ### PIP-115 · The plan names the existing tests it changes
 
 A plan that has to change a test already on the base branch lists that test and why, and approving the
