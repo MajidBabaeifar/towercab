@@ -2,7 +2,7 @@
 // level-triggered: each read re-derives at most one event against `feedback_seen` and `head`.
 
 import type { Intent } from "../intents/types.ts";
-import { finished, type Outcome } from "../machine.ts";
+import { finished, next, type Outcome } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
 import { recheck } from "../risk.ts";
 import type { PrState } from "./prs.ts";
@@ -191,9 +191,13 @@ export function prEvents(m: Mission, prs: Prs, me: string, botLogin: string): Ou
     // LOOP-18: the same conflict repair CI gives, so the build merges the base first instead of
     // building on the old base again (a round that would conflict forever).
     if (code.mergeable === "CONFLICTING") {
-      // PIP-134: once the owner has been asked, the wait stands until they speak.
-      if (m.stage === "blocked" && conflictRoundsDone(m) >= CODE_CONFLICT_ROUNDS) return null;
-      return conflictOutcome(m);
+      // PIP-134: after the last round only the stages that take a `conflict` ask the owner. A round
+      // still running (GitHub shows the old state until the merge is pushed) and an owner who was
+      // already asked are left alone.
+      const spent = conflictRoundsDone(m) >= CODE_CONFLICT_ROUNDS;
+      if (!spent) return conflictOutcome(m);
+      if (m.stage !== "blocked" && next(m.stage, "conflict").kind === "go") return conflictOutcome(m);
+      return null;
     }
     if (m.head && code.head && code.head !== m.head) return { event: "head_moved" };
   }

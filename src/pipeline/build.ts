@@ -168,12 +168,14 @@ export const buildHandler: Handler = {
           m = cx.record(m, "setup", { base_sha: base }, { granted: await grantedFromPlan(cx, intent) });
         } else if (d.repair?.kind === "conflict") {
           // PIP-134: the round is counted before it runs; the owner's next comment starts the count over.
-          m = cx.record(
-            m,
-            m.step,
-            {},
-            { conflictRounds: { n: conflictRoundsDone(m) + 1, seen: m.feedback_seen } },
-          );
+          // A re-entry of the same round (`roundFrom` is set) is not a new one.
+          if (!d.roundFrom)
+            m = cx.record(
+              m,
+              m.step,
+              {},
+              { conflictRounds: { n: conflictRoundsDone(m) + 1, seen: m.feedback_seen } },
+            );
           const repo = cx.repo(m);
           const clone = cloneOf(cx, m);
           await git(cx.tools, clone, ["fetch", "--quiet", "origin"], await cx.github.gitAuth(repo.github));

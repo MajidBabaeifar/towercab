@@ -153,6 +153,32 @@ function rowsOf(text: string): Map<string, string> {
  * amended it on purpose), except one both sides added: that is base's, and this PR renumbers its own.
  */
 async function mainRowsAltered(cx: Ctx, m: Mission): Promise<string[]> {
+  try {
+    return await compareRows(cx, m);
+  } catch (e) {
+    // Unreadable means unverified: the owner decides.
+    cx.log(`${m.intent}: couldn't compare the spec rows with base: ${(e as Error).message}`);
+    return ["the rows could not be compared"];
+  }
+}
+
+/** PIP-133: the spec files both base (since the merge base) and this PR changed, for the owner's wait. */
+async function clashFiles(cx: Ctx, m: Mission): Promise<string> {
+  try {
+    const base = `refs/remotes/origin/${cx.repo(m).base}`;
+    const mergeBase = (await coGit(cx, m, ["merge-base", base, m.head ?? "HEAD"])).trim();
+    const list = async (to: string) =>
+      (await coGit(cx, m, ["diff", "--name-only", mergeBase, to, "--", "specs"])).split("\n").filter(Boolean);
+    const mine = new Set(await list(m.head ?? "HEAD"));
+    const both = (await list(base)).filter((f) => mine.has(f));
+    if (both.length) return both.join(", ");
+  } catch {
+    // Falls back to the folder.
+  }
+  return "specs/";
+}
+
+async function compareRows(cx: Ctx, m: Mission): Promise<string[]> {
   if (!m.head) return [];
   const base = `refs/remotes/origin/${cx.repo(m).base}`;
   const mergeBase = (await coGit(cx, m, ["merge-base", base, m.head])).trim();
@@ -602,7 +628,7 @@ async function specCi(cx: Ctx, m: Mission): Promise<Progress> {
       return {
         done: wait(
           "spec conflict",
-          "The spec PR still clashes with changes merged since it was written, after two automatic revisions.",
+          `The spec PR still clashes with changes merged since it was written, after two automatic revisions (${await clashFiles(cx, m)}).`,
         ),
       };
     return designRun(
