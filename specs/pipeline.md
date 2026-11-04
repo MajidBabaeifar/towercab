@@ -664,23 +664,29 @@ When the spec PR no longer merges into `main`, the design resolves the conflict 
 - At most 2 conflict revisions per spec PR; after that the mission waits for the owner
   (`waiting: spec conflict`). A conflict outside `specs/**` is not edited: the same wait.
 - Verified by: `pipeline: a conflicting spec PR is revised`, `pipeline: a spec conflict that stays waits for the owner`
-- The count and the wait on this row are replaced by PIP-133: one automatic revision, then the owner.
+- PIP-133 makes the code do this before the owner is asked and adds when the owner is asked earlier.
 
-### PIP-133 · A conflicting spec PR is revised once, without asking
+### PIP-133 · A conflicting spec PR is revised twice, without asking
 
-A spec PR that conflicts with `main` gets one automatic revision that merges `main` in and keeps every row, so the owner is not asked to merge the base by hand.
+A spec PR that conflicts with `main` gets up to two automatic revisions that merge `main` in and keep every row, so the owner is not asked to merge the base by hand.
 
 - Applies in `specCi`, before the owner is asked (`approval:spec`) and before Towercab merges (PIP-50),
   as PIP-82 does for a red check. A conflict sends the mission back to design in the same session
   (PIP-81's merge of `main` into the branch). The prompt says: keep every row from both sides; if
   `main` took an ID this PR adds, renumber this PR's row (and its references) to the next free
   reserved ID outside the IDs other open spec PRs add (PIP-80); edit only `specs/**`.
-- At most 1 conflict revision per spec PR, counted apart from the red revisions of PIP-82. The owner is
-  asked (`waiting: spec conflict`, the reason names the files) when the PR still conflicts after the
-  revision, when a conflict is outside `specs/**`, or when the revision changed or removed a row that
-  came from `main` (compared with `origin/<base>` before the push; the revision is not pushed).
+- At most 2 conflict revisions per spec PR (as PIP-81), counted apart from the red revisions of
+  PIP-82. The owner is asked (`waiting: spec conflict`, the reason names the files) when the PR still
+  conflicts after the second revision, when a conflict is outside `specs/**`, or when a revision
+  altered a row that `main` changed (the revision is not pushed).
+- Three-way compare, before the push: a row counts as "from main" only if `main` changed it since this
+  PR's merge base (`git merge-base origin/<base> HEAD`). Rows this PR edited on purpose (its own diff
+  against the merge base, such as an existing row it amends) are its own and may be kept in this PR's
+  form. Rows neither side changed are ignored. A revision that alters, drops or reorders-with-edits a
+  row `main` changed since the merge base goes to the owner; one that only keeps both sides, adds this
+  PR's rows or renumbers this PR's own new IDs does not.
 - No owner comment is posted in the owner's name. The revision is a new commit on the same PR (PIP-25).
-- Verified by: `pipeline: a conflicting spec PR is revised once without asking`, `pipeline: a spec conflict that stays waits for the owner`, `pipeline: a revision that changes a row from main waits for the owner`
+- Verified by: `pipeline: a conflicting spec PR is revised without asking`, `pipeline: a spec conflict that stays after two revisions waits for the owner`, `pipeline: a revision that changes a row main changed waits for the owner`, `pipeline: a row the PR itself amended may be kept`
 
 ### PIP-134 · A code PR in conflict is resolved before the gate without asking
 
@@ -689,9 +695,9 @@ A code PR that conflicts with its base is merged with the base by Towercab's con
 - Applies to the conflict round of PIP-31 and PIP-22 (`DIRTY`), also when the conflict is found before
   the gate (in `ci` or `review`): the mission goes to `build` with `repair.kind = "conflict"` and never
   to an owner wait first. The conflict round's first run is not counted as a fix round.
-- The owner is asked (`waiting: merge failed`) only when a second conflict round on the same PR still
-  leaves it conflicting.
-- Verified by: `pipeline: a code PR in conflict is resolved without asking`, `pipeline: a code conflict that stays asks the owner`
+- Up to 2 automatic conflict rounds per code PR. The owner is asked (`waiting: merge failed`) only
+  when the PR still conflicts after the second round.
+- Verified by: `pipeline: a code PR in conflict is resolved without asking`, `pipeline: a code conflict that stays after two rounds asks the owner`
 
 ### PIP-82 · A red spec PR is revised once
 
