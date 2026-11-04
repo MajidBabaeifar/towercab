@@ -331,12 +331,15 @@ The loop restarts itself, before starting any new work, when the checkout it run
 
 - At start the loop records `git rev-parse HEAD` of its checkout. In every pass, before it starts a
   Claude run or any other child that carries the guard hook (PIP-29) or reads files the loop wrote, it
-  compares that commit with the checkout's HEAD. Different → it starts nothing new, lets running steps
-  finish without applying a new one, then exits 75 so systemd starts the current code (as LOOP-35
-  does). A HEAD that moves mid-pass is caught by the next comparison, before the next run.
+  compares that commit with the checkout's HEAD. Different → it starts nothing new, waits for running
+  steps to finish, then exits 75 so systemd starts the current code (as LOOP-35 does). A HEAD that
+  moves mid-pass is caught by the next comparison, before the next run.
+- A run in progress keeps its result and the loop applies it, unless the guard refused a write in that
+  run because of version skew (LOOP-106). Then the result is thrown away: the mission stays at its step
+  and the step is redone after the restart.
 - This covers any move of the checkout (self-update between `git merge` and the restart, a manual
   `git pull`). It sends no message and records the restart in the log with both commits.
-- Verified by: `update: a moved checkout restarts before the next run`, `update: a HEAD that moves mid-pass restarts before the next run`
+- Verified by: `update: a moved checkout restarts before the next run`, `update: a HEAD that moves mid-pass restarts before the next run`, `update: a run in progress keeps its result across the restart`
 
 ### LOOP-106 · Versioned guard rules
 
@@ -344,13 +347,17 @@ The guard hook refuses a rules file written by a different version of the loop, 
 
 - `guard.json` (PIP-29) carries a number `version`; the loop writes the current one and the hook knows
   the same one. A file whose `version` is missing or different makes the hook exit 2 with `guard rules
-  are from another version of Towercab; the loop is restarting, try again`. A file of the right version
+  are from another version of Towercab; the loop is restarting, try again`, and the hook records its
+  own commit and checkout path where the loop can read them. A file of the right version
   that is unreadable or malformed (a missing `existing`, a wrong type) still fails closed with exit 2
   and its own reason, and is not treated as skew.
 - A build run whose only refusals are version skew is not a block: the mission stays at its step, the
   loop restarts (LOOP-105), and the step runs again with newly written rules. A rules file without
   `existing` from an "old" loop is skew (no `version`), never an owner wait.
-- Verified by: `guard: a rules file of another version is refused as skew`, `guard: a malformed rules file of the current version fails closed`, `build: version skew restarts and retries the build`
+- At most 3 skew retries per mission within one hour. After that the mission goes to the normal
+  blocked wait ([LOOP-3](loop.md)), and its question names the loop's commit, the hook's commit and the
+  hook's checkout path, so a hook running from another checkout is visible.
+- Verified by: `guard: a rules file of another version is refused as skew`, `guard: a malformed rules file of the current version fails closed`, `build: version skew restarts and retries the build`, `build: a run refused by skew is redone after the restart`, `build: a fourth skew in an hour blocks naming both commits and the checkout`
 
 ### LOOP-107 · One automatic retry for Towercab's own setup
 
@@ -360,8 +367,8 @@ A step that is blocked by Towercab's own setup is retried once automatically bef
   for a run) and not the work itself counts as a setup fault. The first time it happens for a mission
   step, the loop restarts that step once (a fresh setup, no wait, no message). The retry is recorded
   in the mission's move log with the cause.
-- If the retry is blocked by a setup fault again, the mission waits for the owner as today (LOOP-10),
-  with the cause in plain words. Version skew (LOOP-106) does not use up this retry.
+- If the retry is blocked by a setup fault again, the mission goes to the normal blocked wait
+  ([LOOP-3](loop.md)) and asks the owner, with the cause in plain words. Version skew (LOOP-106) does not use up this retry.
 - Blocks caused by the work (a protected path not granted, a failing test, an access request) are
   unchanged and are not retried.
 - Verified by: `loop: a setup block is retried once`, `loop: a second setup block waits for the owner`, `loop: a block caused by the work is not retried`
