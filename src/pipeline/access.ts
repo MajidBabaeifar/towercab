@@ -107,15 +107,110 @@ export function blockedTests(existing: string[], d: TestState): string[] {
   return existing.filter((p) => !granted.has(p));
 }
 
+// The first whole word of a reply decides (PIP-138): `no,` is `no`, `not` and `nothing` are not.
+const ALLOW_WORD = /^(yes|allow|ok|okay|approve|approved|go ahead)(?![\w'’])/i;
+const REFUSE_WORD = /^(no|refuse|don['’]?t|keep)(?![\w'’])/i;
+const NOT_LETTERS = /^[^\p{L}\p{N}]+/u;
+
+/** What a reply decided about the files asked (PIP-138, PIP-139). */
+export interface Reading {
+  allowed: string[];
+  refused: string[];
+  /** Asked, and not decided by the reply: they stay asked. */
+  undecided: string[];
+  /** On an allow: what follows the allow word, for the worker; "" for a bare allow. */
+  conditions: string;
+}
+
 /**
- * PIP-116: whether the owner's reply allows the change: it starts with a clear yes and says nothing
- * against it. Anything else, or no reply, refuses.
+ * PIP-138, PIP-139: reads the owner's reply by its first whole word. An allow word allows, a refusal
+ * word refuses, anything else (or no reply) decides nothing. A reply that names some of the asked
+ * paths decides those; one that names none decides them all. Later words never change the reading.
  */
-export function readsAsAllow(text: string | null | undefined): boolean {
-  const t = (text ?? "").trim().toLowerCase();
-  if (!t) return false;
-  if (!/^(allow|yes|ok|okay|approve|approved|go ahead)\b/.test(t)) return false;
-  return !/\b(not|no|don't|dont|never|refuse|keep|without)\b/.test(t);
+export function readReply(text: string | null | undefined, asked: string[]): Reading {
+  const raw = (text ?? "").trim();
+  const body = raw.replace(NOT_LETTERS, "");
+  const allow = ALLOW_WORD.test(body);
+  if (!allow && !REFUSE_WORD.test(body)) {
+    return { allowed: [], refused: [], undecided: [...asked], conditions: "" };
+  }
+  const named = asked.filter((p) => raw.includes(p));
+  const decided = named.length ? named : [...asked];
+  const undecided = asked.filter((p) => !decided.includes(p));
+  if (!allow) return { allowed: [], refused: decided, undecided, conditions: "" };
+  const rest = body
+    .replace(ALLOW_WORD, "")
+    .replace(/^[\s,.:;!\-–—]+/, "")
+    .trim();
+  const bare = /^(this change|this|it|them|all( of them)?|please)?[\s.!]*$/i.test(rest);
+  return { allowed: decided, refused: [], undecided, conditions: bare ? "" : rest };
+}
+
+const fileList = (label: string, paths: string[]) =>
+  paths.length > 3
+    ? `${label}:\n${paths.map((p) => `- \`${p}\``).join("\n")}`
+    : `${label}: ${paths.map((p) => `\`${p}\``).join(", ")}`;
+
+/** PIP-140: what Towercab says it understood: allowed, refused and still-asked files. */
+export function readingReply(r: Pick<Reading, "allowed" | "refused" | "undecided">): string {
+  const out: string[] = [];
+  if (r.allowed.length) out.push(fileList("Allowed", r.allowed));
+  if (r.refused.length) out.push(fileList("Refused", r.refused));
+  if (r.undecided.length) out.push(fileList("Still asked", r.undecided));
+  if (r.undecided.length) {
+    out.push("I could not tell whether this is a yes or a no. Reply starting with yes or no.");
+  }
+  if (r.refused.length) out.push("Reply `allow <path>` to change a refusal.");
+  return out.join("\n\n");
+}
+
+/** PIP-141: `allow <path> …` (every word a file path) → the paths; else null. */
+export function parseAllow(text: string | null | undefined): string[] | null {
+  const m = /^\s*allow\s+(.+)$/is.exec(text ?? "");
+  if (!m) return null;
+  const tokens = m[1]!
+    .split(/[\s,]+/)
+    .filter(Boolean)
+    .map((t) => t.replace(/^`|`$/g, ""));
+  const pathLike = (t: string) => /^[\w@.\-/]+$/.test(t) && (t.includes("/") || /\.\w+$/.test(t));
+  return tokens.length && tokens.every(pathLike) ? tokens : null;
+}
+
+/**
+ * PIP-141: moves refused tests to the owner's grants. Throws unless every path was refused, listing
+ * the refused ones. The patch also tells the worker its next round.
+ */
+export function reverseRefusals(
+  d: TestState & { testNote?: string },
+  paths: string[],
+): {
+  patch: {
+    testAllowed: { path: string; why: string }[];
+    refusedTests: { path: string; why: string }[] | undefined;
+    testNote: string;
+  };
+  moved: string[];
+} {
+  const refused = d.refusedTests ?? [];
+  const bad = paths.filter((p) => !refused.some((r) => r.path === p));
+  if (bad.length) {
+    throw new Error(
+      `${bad.join(", ")} ${bad.length > 1 ? "were" : "was"} not refused; ${
+        refused.length ? `refused: ${refused.map((r) => r.path).join(", ")}` : "no test is refused"
+      }`,
+    );
+  }
+  const moved = refused.filter((r) => paths.includes(r.path));
+  const left = refused.filter((r) => !paths.includes(r.path));
+  const note = `The owner now allows you to change ${moved.map((r) => r.path).join(", ")}: the earlier refusal is lifted.`;
+  return {
+    moved: moved.map((r) => r.path),
+    patch: {
+      testAllowed: [...(d.testAllowed ?? []), ...moved],
+      refusedTests: left.length ? left : undefined,
+      testNote: [d.testNote, note].filter(Boolean).join(" "),
+    },
+  };
 }
 
 /** A test the worker asked to change, with the reason. */
@@ -167,7 +262,7 @@ export function testQuestion(t: { path: string; why: string }): Question {
         then: "The worker may edit this one test file and carries on; the code PR and the intent page list it.",
       },
       {
-        option: "Keep the test as it is",
+        option: "No, keep the test as it is",
         // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
         then: "The file stays locked for the rest of the build; the worker has to make the change fit the test.",
       },
@@ -178,8 +273,9 @@ export function testQuestion(t: { path: string; why: string }): Question {
 }
 
 /**
- * PIP-116: the owner's reply to the test asked about → the data patch: allowed joins the grants,
- * anything else is refused for good; plus the note the resumed worker is told.
+ * PIP-116, PIP-138, PIP-139: the owner's reply to the test asked about → the data patch: a yes joins
+ * the grants (with its conditions in the note the resumed worker is told), a no is refused for good,
+ * and a reply that is neither decides nothing (`read.undecided`): the test is asked again.
  */
 export function answerTest(
   ask: TestAsk,
@@ -188,18 +284,28 @@ export function answerTest(
 ): {
   patch: { testAllowed?: { path: string; why: string }[]; refusedTests?: { path: string; why: string }[] };
   note: string;
+  read: Reading;
 } {
   const t = { path: ask.path, why: ask.why };
-  if (readsAsAllow(reply)) {
+  const read = readReply(reply, [t.path]);
+  if (read.allowed.length) {
+    const on = read.conditions
+      ? `, on these conditions: ${oneLine(read.conditions)}. Their reply: "${oneLine(reply ?? "")}"`
+      : ".";
     return {
       patch: { testAllowed: [...(d.testAllowed ?? []), t] },
-      note: `The owner allowed you to change ${t.path}.`,
+      note: `The owner allowed you to change ${t.path}${on}`,
+      read,
     };
   }
-  return {
-    patch: { refusedTests: [...(d.refusedTests ?? []), t] },
-    note: `The owner refused changes to ${t.path}: it stays as it is. Finish without changing it; if that is impossible, return status blocked and explain.`,
-  };
+  if (read.refused.length) {
+    return {
+      patch: { refusedTests: [...(d.refusedTests ?? []), t] },
+      note: `The owner refused changes to ${t.path}: it stays as it is. Finish without changing it; if that is impossible, return status blocked and explain.`,
+      read,
+    };
+  }
+  return { patch: {}, note: "", read };
 }
 
 /** Inputs of `grantsFor`. */

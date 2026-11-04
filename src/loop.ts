@@ -19,7 +19,14 @@ import {
   setFeaturesRun,
 } from "./features.ts";
 import { retireBranch } from "./github/branches.ts";
-import { approveRequested, intentEvents, prEvents, releaseRequested } from "./github/events.ts";
+import {
+  approveRequested,
+  intentEvents,
+  prEvents,
+  releaseRequested,
+  reversalMarker,
+  reversalRequested,
+} from "./github/events.ts";
 import { pollIssues } from "./github/issues.ts";
 import {
   MORE_THAN_FILE,
@@ -60,6 +67,8 @@ import {
 } from "./mission.ts";
 import { sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState } from "./pick.ts";
+import { readingReply, reverseRefusals } from "./pipeline/access.ts";
+import type { PipeData } from "./pipeline/common.ts";
 import { writeTicks } from "./pipeline/steps.ts";
 import { isParked, priority } from "./priority.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
@@ -935,6 +944,37 @@ export class Loop {
               input: ask.reply,
             },
           );
+        }
+        // PIP-141: the owner's `allow <path>` reverses a refusal, when no worker holds the mission's data.
+        let reversed = false;
+        if (!this.children.has(m.id)) {
+          for (const ask of reversalRequested(m, prs, this.d.github.me, bot)) {
+            let said: string;
+            try {
+              const r = reverseRefusals(dataOf(m) as PipeData, ask.paths);
+              const live = unfinishedFor(this.d.db, m.intent) ?? m;
+              if (live.stage === "blocked")
+                this.move(live, { event: "answered", text: ask.text, data: r.patch });
+              else patchData(this.d.db, live, r.patch, this.now);
+              said = readingReply({ allowed: r.moved, refused: [], undecided: [] });
+              reversed = true;
+            } catch (e) {
+              said = (e as Error).message;
+            }
+            const target = ask.kind === "plan" ? intentsRepo! : repo.github;
+            await this.d.github.gh(
+              target,
+              ["pr", "comment", String(ask.pr), "-R", target, "--body-file", "-"],
+              {
+                input: `${reversalMarker(ask.commentId)}\n${said}`,
+              },
+            );
+            break;
+          }
+        }
+        if (reversed) {
+          this.lastPrPoll.delete(m.id);
+          continue;
         }
         const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot);
         if (!o) continue;

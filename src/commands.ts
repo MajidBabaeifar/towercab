@@ -6,6 +6,8 @@ import { localTime } from "./intents/intent.ts";
 import type { IntentStore } from "./intents/types.ts";
 import { type ApplyCtx, apply } from "./machine.ts";
 import { dataOf, type Mission, patchData, unfinishedFor } from "./mission.ts";
+import { parseAllow, readingReply, reverseRefusals } from "./pipeline/access.ts";
+import type { PipeData } from "./pipeline/common.ts";
 import { recheck } from "./risk.ts";
 import { checklist, type OwnerStep } from "./steps.ts";
 
@@ -129,6 +131,22 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
     case "answer": {
       const intent = await store.get(row.arg);
       const m = unfinishedFor(db, intent.id);
+      // PIP-141: `allow <path>` reverses a refusal, unless a test question is open (then it is its answer).
+      const paths = parseAllow(row.text);
+      if (paths && m && !(dataOf(m) as PipeData).testAsk) {
+        const r = reverseRefusals(dataOf(m) as PipeData, paths);
+        await store.update(intent.id, "answer", (e) => e.addAnswer(row.text, cx.now));
+        const said = readingReply({ allowed: r.moved, refused: [], undecided: [] });
+        if (m.stage === "blocked") {
+          apply(cx.applyCtx, m, { event: "answered", text: row.text, data: r.patch });
+          return `${said}\nit continues`;
+        }
+        patchData(db, m, r.patch, cx.now.getTime() / 1000);
+        return `${said}\nthe worker is told on its next run`;
+      }
+      if (paths && !m && !intent.waiting) {
+        throw new Error(`${intent.id} has no running mission, so its tests can't be changed`);
+      }
       if (!m && !intent.waiting) throw new Error(`${intent.id} isn't waiting on you`);
       await store.update(intent.id, "answer", (e) => {
         e.addAnswer(row.text, cx.now);

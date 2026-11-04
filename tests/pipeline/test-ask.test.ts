@@ -54,13 +54,14 @@ test("pipeline: an earlier yes does not grant a test", async () => {
   const kept = { ...dataOf(m0), ...o.data } as Record<string, unknown>;
   const m = make(JSON.parse(JSON.stringify(kept)));
   expect(dataOf(m).answer).toBeUndefined();
+  // PIP-139: no words of the owner's own decide nothing; the test is asked again, not refused.
   const r = await resolveTestAsk(cx, m);
-  expect("m" in r).toBe(true);
-  const d = dataOf((r as { m: Mission }).m);
-  expect(d.testAllowed).toBeUndefined();
-  expect(d.refusedTests).toEqual([ASKED]);
-  expect(d.testAsk).toBeUndefined();
-  expect(String(d.testNote)).toContain("refused");
+  expect("done" in r).toBe(true);
+  const again = (r as { done: { event: string; data?: Record<string, unknown> } }).done;
+  expect(again.event).toBe("wait");
+  expect(again.data).toMatchObject({ testAsk: { path: ASKED.path } });
+  expect(again.data).not.toHaveProperty("refusedTests");
+  expect(again.data).not.toHaveProperty("testAllowed");
 });
 
 test("pipeline: the owner's reply to the test question allows it and the worker resumes with the grant", async () => {
