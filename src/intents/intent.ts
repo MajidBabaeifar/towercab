@@ -432,6 +432,12 @@ export class IntentFile implements IntentEdit {
     this.setSection("Answers", `${old ? `${old}\n` : ""}- ${answerTime(at)}: ${t}`);
   }
 
+  /** LOOP-71: `setup: true` in the front matter (an unknown key, so it is read from the text). */
+  private isSetup(): boolean {
+    const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(this.render())?.[1] ?? "";
+    return /^setup:[ \t]*(["']?)true\1[ \t]*(#.*)?$/m.test(fm);
+  }
+
   /** The `Intent` as it is now. */
   get intent(): Intent {
     const v = this.values;
@@ -467,6 +473,7 @@ export class IntentFile implements IntentEdit {
       review: str("review"),
       source: str("source"),
       issue: str("issue"),
+      setup: this.isSetup(),
       started: str("started"),
       unlock: list("unlock"),
       network: list("network"),

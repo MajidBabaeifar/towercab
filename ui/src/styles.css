@@ -3836,3 +3836,34 @@ a.pr-tile:hover {
     flex: 1 1 auto;
   }
 }
+
+/* UI-155..157: a repo missing setup. The warning colour, never the "Needs you" one. */
+.ready-badge {
+  display: inline-block;
+  padding: 0 0.5em;
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 0.8em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ready-link {
+  text-decoration: none;
+}
+.repo-setup {
+  border-left: 4px solid var(--warn);
+  margin-block-end: 1rem;
+}
+.setup-items {
+  margin: 0.5rem 0;
+  padding-inline-start: 1.1rem;
+}
+.setup-state {
+  color: var(--warn);
+  font-weight: 600;
+}
+.setup-item.waived .setup-state {
+  color: inherit;
+}

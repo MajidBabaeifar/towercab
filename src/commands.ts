@@ -7,6 +7,7 @@ import { type ApplyCtx, apply } from "./machine.ts";
 import { dataOf, type Mission, patchData, unfinishedFor } from "./mission.ts";
 import { parseAllow, readingReply, reverseRefusals } from "./pipeline/access.ts";
 import type { PipeData } from "./pipeline/common.ts";
+import { missing, parseStored } from "./repo/readiness.ts";
 import { recheck } from "./risk.ts";
 
 export type CommandName = "answer" | "retry" | "drop" | "pause" | "resume" | "start";
@@ -139,6 +140,15 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       if (intent.stage === "dropped") throw new Error(`${intent.id} is done or dropped`);
       if (unfinishedFor(db, intent.id) || db.meta(`start:${intent.id}`) !== null) {
         throw new Error(`${intent.id} has already started`);
+      }
+      // LOOP-70: a blocking repo starts nothing but its setup intent.
+      const ready = parseStored(db.meta(`readiness:${intent.repo}`))?.readiness;
+      if (ready?.blocks && intent.setup !== true) {
+        throw new Error(
+          `${intent.repo} is not ready: ${missing(ready)
+            .map((i) => i.item)
+            .join(", ")}`,
+        );
       }
       db.setMeta(`start:${intent.id}`, "1");
       return `starting ${intent.id}: its design begins on the next pass, over the limit if need be`;

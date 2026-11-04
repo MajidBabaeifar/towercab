@@ -4,6 +4,7 @@
 
 import type { Intent } from "../intents/types.ts";
 import { proposedSection } from "./proposed.ts";
+import { readinessBadge } from "./readiness.ts";
 import { lastSevenDays, repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
 import { ago, airspaceOf, dbMark, localDate, snapshot, state, type UiSources, versionOf } from "./state.ts";
 import type { BoardCard, BoardColumn, BoardColumnKey, BoardPage, BoardRepo } from "./view.ts";
@@ -103,6 +104,7 @@ export async function board(src: UiSources): Promise<BoardPage> {
   const unknown = repos.indexOf("");
   if (unknown >= 0) repos.push(...repos.splice(unknown, 1));
   const rows: BoardRepo[] = repos.map((repo) => ({
+    ...(readinessBadge(src.db, repo) ? { readiness: readinessBadge(src.db, repo)! } : {}),
     repo,
     github: src.config.repos.get(repo)?.github ?? "",
     open: counts.get(repo)?.open ?? 0,

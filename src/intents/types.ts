@@ -20,6 +20,8 @@ export interface Intent {
   source: string | null;
   /** The GitHub issue this intent came from (INT-23). */
   issue: string | null;
+  /** `setup: true` (LOOP-71): the intent that sets a repo up; allowed in a blocking repo. */
+  setup?: boolean;
   started: string | null;
   unlock: string[];
   network: string[];

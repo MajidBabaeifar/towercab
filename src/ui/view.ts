@@ -467,7 +467,36 @@ export interface QueuePage {
 }
 
 /** UI-140: one repo chip of the Repos tab. */
+/** UI-155: a repo missing setup, or one whose setup could not be checked. Absent for a ready repo. */
+export interface ReadinessBadge {
+  /** "Not ready", "Not ready · new work paused" or "Could not check". */
+  label: string;
+  /** New work waits (LOOP-70). */
+  blocks: boolean;
+  missing: number;
+  unknown: number;
+  /** The missing items in words, for a tooltip. */
+  detail: string;
+  /** The accessible name, with the counts. */
+  name: string;
+}
+
+/** UI-156: the "Set up this repo" section. */
+export interface SetupView {
+  kind: string | null;
+  confirmed: boolean;
+  blocks: boolean;
+  items: { item: string; state: "missing" | "unknown" | "waived"; words: string }[];
+  /** Whether new intents wait or only a warning shows. */
+  sentence: string;
+  /** Lines to add to `TOWERCAB.md`. */
+  hint: string[];
+  /** The repo's open setup intent (LOOP-71), if any. */
+  intent: { id: string; title: string } | null;
+}
+
 export interface RepoChip {
+  readiness?: ReadinessBadge;
   repo: string;
   /** Open intents: in progress, up next, waiting and parked. */
   open: number;
@@ -539,6 +568,8 @@ export interface ProposedSection {
 
 /** UI-141: one repo's page. */
 export interface RepoView {
+  /** UI-156: what the repo is missing; absent when nothing is. */
+  setup?: SetupView;
   repo: string;
   github: string;
   /** "1 of 3 ahead" (UI-100). */
@@ -557,6 +588,7 @@ export interface RepoView {
 
 /** UI-142: one repo on the All overview. */
 export interface RepoSummary {
+  readiness?: ReadinessBadge;
   repo: string;
   github: string;
   inProgress: number;
@@ -613,6 +645,7 @@ export interface BoardCard {
 
 /** UI-133: one repo's row. */
 export interface BoardRepo {
+  readiness?: ReadinessBadge;
   /** "" for intents the listing doesn't know (the "unknown repo" lane). */
   repo: string;
   github: string;

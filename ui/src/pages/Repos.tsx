@@ -13,10 +13,11 @@ import type {
   RepoSpendView,
   RepoSummary,
   RepoView,
+  SetupView,
 } from "../../../src/ui/view.ts";
 import { AddRepoForm } from "../AddRepo.tsx";
 import { refreshFeatures } from "../api.ts";
-import { ErrorNote, ProposedList, StateChip, Time, WorkRow } from "../components.tsx";
+import { ErrorNote, ProposedList, ReadinessChip, StateChip, Time, WorkRow } from "../components.tsx";
 import { Alert, Check, External } from "../icons.tsx";
 import { Link } from "../router.tsx";
 
@@ -42,6 +43,7 @@ function Chips({ data }: { data: Data }) {
           title={`${c.open} open${c.needs ? `, ${c.needs} waiting on you` : ""}`}
         >
           {c.repo}
+          <ReadinessChip badge={c.readiness} />
           <span class="num repo-chip-n">{c.open}</span>
           {c.needs ? <span class="repo-chip-needs" role="img" aria-label={`${c.needs} need you`} /> : null}
         </Link>
@@ -167,6 +169,39 @@ function SpendLine({ spend }: { spend: RepoSpendView }) {
   );
 }
 
+/** UI-156: what the repo is missing, in words, above everything else. */
+function SetupSection({ s }: { s: SetupView }) {
+  return (
+    <section class="card repo-setup" aria-label="Set up this repo">
+      <h2>Set up this repo</h2>
+      <ul class="setup-items">
+        {s.items.map((i) => (
+          <li key={i.item} class={`setup-item ${i.state}`}>
+            <span class="setup-state">
+              {i.state === "missing" ? "Missing" : i.state === "unknown" ? "Could not check" : "Waived"}
+            </span>{" "}
+            {i.words}
+          </li>
+        ))}
+      </ul>
+      <p>{s.sentence}</p>
+      {s.hint.length ? (
+        <p class="meta">
+          To change that, add to <span class="mono">TOWERCAB.md</span>:{" "}
+          {s.hint.map((h) => (
+            <code key={h}>{h} </code>
+          ))}
+        </p>
+      ) : null}
+      {s.intent ? (
+        <p>
+          Setting it up: <Link href={`/i/${s.intent.id}`}>{s.intent.title}</Link>
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 function Repo({ r, readOnly }: { r: RepoView; readOnly: boolean }) {
   return (
     <div class="repo-page">
@@ -177,6 +212,7 @@ function Repo({ r, readOnly }: { r: RepoView; readOnly: boolean }) {
           {r.ahead}
         </span>
       </header>
+      {r.setup ? <SetupSection s={r.setup} /> : null}
       <Features repo={r.repo} f={r.features} />
       <Group title="In progress" count={r.inProgress.length}>
         {r.inProgress.length ? (
@@ -264,6 +300,7 @@ function All({ data }: { data: Data }) {
       {data.all.map((s) => (
         <Link key={s.repo} class="card repo-card" href={repoHref(s.repo)}>
           <span class="repo-card-name">{s.repo}</span>
+          <ReadinessChip badge={s.readiness} />
           {s.github ? <span class="meta mono">{s.github}</span> : null}
           <span class="repo-card-counts">{counts(s)}</span>
           <span class="meta num">

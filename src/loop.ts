@@ -70,6 +70,8 @@ import { decide, orphans, type PickState } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import type { PipeData } from "./pipeline/common.ts";
 import { isParked, priority } from "./priority.ts";
+import { blockingRepos, proposeSetup, refreshReadiness } from "./readiness.ts";
+import { missingText } from "./repo/readiness.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
 import { aheadIn, bestReady, buildingIn, isReady } from "./slots.ts";
@@ -102,6 +104,8 @@ export interface LoopDeps {
   readProposed?: () => Promise<ProposedPr[]>;
   /** Self-update (LOOP-35); off in tests. */
   selfUpdate?: boolean;
+  /** REPO-24: check each repo's setup when it is fetched, and propose setup intents (LOOP-71); off in tests. */
+  readiness?: boolean;
   /** The checkout this loop's code runs from (LOOP-105); default the one this file is in. */
   codeRoot?: string;
   /** INT-39: when a backfill run's time is up (default a real timer; tests resolve it themselves). */
@@ -374,6 +378,7 @@ export class Loop {
     await this.pollIntents(false);
     await this.pollProposed(false);
     await this.requeueKnownRepos();
+    await this.checkReadiness();
     // LOOP-105: with the checkout moved, running children finish but nothing new starts.
     if (this.codeMoved() === null) this.startIssues(false);
     await this.pollPrs();
@@ -671,6 +676,35 @@ export class Loop {
       }
     }
     if (queued > 0) await this.pollIntents(true);
+  }
+
+  /**
+   * REPO-24, LOOP-71: each repo's readiness is read when its clone is fetched (at most every 10 minutes),
+   * and a repo with a missing item gets one proposed setup intent. A failure keeps the last result.
+   */
+  private async checkReadiness(): Promise<void> {
+    if (!this.d.readiness) return;
+    const deps = {
+      config: this.d.config,
+      home: this.d.home,
+      db: this.d.db,
+      tools: this.d.tools,
+      clock: this.d.clock,
+      store: this.d.store,
+      github: this.d.github,
+      log: this.d.log,
+    };
+    for (const repo of this.d.config.repos.values()) {
+      const before = this.d.db.meta(`readiness:${repo.name}`);
+      const s = await refreshReadiness(deps, repo);
+      if (!s || this.d.db.meta(`readiness:${repo.name}`) === before) continue;
+      if (!this.listing) continue;
+      try {
+        await proposeSetup(deps, repo, s.readiness, this.listing);
+      } catch (e) {
+        this.d.log(`${repo.name}: couldn't propose a setup intent: ${(e as Error).message}`);
+      }
+    }
   }
 
   /** A GitHub read worked; the fault closes unless the issue poll is still failing (INT-21). */
@@ -1131,6 +1165,7 @@ export class Loop {
       repos: new Set(config.repos.keys()),
       full,
       started,
+      notReady: new Map([...blockingRepos(db, config)].map(([name, r]) => [name, missingText(r)] as const)),
       cooling,
       active: new Set(unfinished(db).map((m) => m.intent)),
       defaultModel: config.agent.model,
