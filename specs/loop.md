@@ -556,37 +556,50 @@ intents that waited for it start.
   knows (towercab repo list)`.
 - Verified by: `repos: set changes a repo's settings`, `cli: repo commands`
 
-### LOOP-70 · A repo that is not ready starts no new intent
+### LOOP-70 · A repo set to block starts no new intent
 
-Towercab starts no new intent in a repo that is missing required setup; intents already running finish.
+Towercab holds back new intents only in a repo whose kind the owner confirmed, that is missing required setup and that is set to `readiness: block`; every other repo keeps starting intents and only warns.
 
-- `decide` skips an intent whose repo's stored readiness ([REPO-24](repo.md)) is not ready, with `waiting:
+- `decide` skips an intent whose repo's stored readiness ([REPO-24](repo.md)) `blocks`, with `waiting:
   repo not ready: <n> missing (<items>)`, except a setup intent (LOOP-71). Checked after the unknown-repo
-  rule and before the `ahead` limit (LOOP-60).
-- `start` (LOOP-63) is refused with `start: <repo> is not ready: <items>` unless the intent is a setup intent.
+  rule and before the `ahead` limit (LOOP-60). An unconfirmed kind, the default `readiness: warn`, an
+  `unknown` item, a waived item or a repo not checked yet never skips anything.
+- `start` (LOOP-63) is refused with `start: <repo> is not ready: <items>` when the repo blocks, unless
+  the intent is a setup intent.
 - A mission that already exists keeps going through every stage, including when a later check finds the
-  repo not ready; only the pick is blocked. When the check next finds the repo ready, the waiting
-  intents are picked on that pass.
-- Verified by: `loop: a not-ready repo starts no new intent`, `loop: running intents finish in a not-ready repo`, `loop: start is refused in a not-ready repo`, `loop: a repo that becomes ready is picked on the same pass`
+  repo blocking; only the pick is held. When the check next finds the repo ready, or the owner waives the
+  item or sets `warn`, the waiting intents are picked on that pass.
+- Verified by: `loop: a blocking repo starts no new intent`, `loop: an unconfirmed or warn repo keeps starting intents`, `loop: running intents finish in a blocking repo`, `loop: start is refused in a blocking repo`, `loop: a repo that becomes ready is picked on the same pass`
 
 ### LOOP-71 · The setup intent
 
-The one kind of work allowed in a not-ready repo is the intent that sets it up.
+The one kind of work allowed in a blocking repo is the intent that sets it up, and Towercab proposes that intent itself.
 
 - An intent is a setup intent when its front matter has `setup: true` (an unknown key, kept verbatim,
-  INT-2). It is picked in a not-ready repo as in a ready one, in the picker's order (PRI-5).
+  INT-2). It is picked in a blocking repo as in a ready one, in the picker's order (PRI-5), so a repo
+  never blocks itself out of the intent that fixes it.
 - At most one setup intent per repo runs at a time; a second waits with `waiting: <id> is already setting
-  up <repo>`. A setup intent in a ready repo is an ordinary intent.
-- Towercab does not write setup intents. The standards review turns gaps into intents and sets `setup:
-  true` on the one for a not-ready repo; Towercab only shows what is missing (UI-156).
-- Verified by: `loop: a setup intent is picked in a not-ready repo`, `loop: only one setup intent per repo at a time`
+  up <repo>`. A setup intent in a repo that does not block is an ordinary intent.
+- Proposing: when a repo's readiness has a `missing` item (blocking or not) and no open setup intent
+  exists for it, Towercab opens one pull request in the intents repo with a new intent file for it
+  (`repo`, `setup: true`, `source: towercab`, a title and a `## Problem` listing the missing items in the
+  words of REPO-24), as other proposed intents arrive. The owner accepts it by merging (INT-4). Open
+  means: an intent of that repo with `setup: true` that is on `main` and not done or dropped, or has a
+  pull request still open; the standards review may open one first, and then Towercab opens none.
+- Never a second one while one is open; a closed or dropped one may be proposed again on a later
+  check that still finds a missing item. The proposal is keyed by repo (a mark in the PR body), so a
+  crash cannot open two.
+- The wait is resolvable inside Towercab: the repo's page links the proposed pull request or the
+  intent ([UI-156](ui.md)).
+- Verified by: `loop: a setup intent is picked in a blocking repo`, `loop: only one setup intent per repo at a time`, `loop: a missing item proposes one setup intent`, `loop: no second setup intent while one is open`, `loop: an existing setup intent from the standards review stops the proposal`
 
 ### LOOP-72 · Readiness in the commands
 
-`status`, `next`, `repo list` and `doctor` say when a repo is not ready.
+`status`, `next`, `repo list` and `doctor` say when a repo is not ready, and whether that holds work back.
 
 - `status` and `next` show the wait of LOOP-70 in plain words. `repo list` (LOOP-67) ends a line with `·
-  not ready (<n> missing)`; `doctor` names each not-ready repo and its missing items, one line per item.
+  not ready (<n> missing, blocking)` or `· not ready (<n> missing, warning)`; `doctor` names each repo
+  with a missing or unknown item and the items, one line per item, with the waived ones and their reasons.
 - Verified by: `status: a not-ready repo is shown`, `cli: repo list shows not ready`, `doctor: not-ready repos are named`
 
 **Config** (`src/config.ts`)
