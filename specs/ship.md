@@ -305,10 +305,13 @@ Towercab merges the release pull request that release-please opens, once the wor
 
 - Each pass looks, for every registered repo, for an open PR from branch `release-please--branches--<base>`
   (`<base>` is the repo's default branch) authored by `github-actions[bot]`. Repos without one are skipped.
-- It merges (squash, as the App) when both hold, and logs `merged release PR #<n> of <repo>`:
+- It merges (squash, as the App) when all hold, and logs `merged release PR #<n> of <repo>`:
   - the latest commit on the default branch has green required checks (the checks branch protection
-    requires, or all checks if none are required; pending counts as not green);
-  - every file in the PR diff is a release file (SHIP-31).
+    requires, or all checks if none are required). Pending or red is not green, and so is a commit
+    with no checks at all: a repo that runs no checks on `main` is never green;
+  - every file in the PR diff is a release file (SHIP-31);
+  - the release is a patch or minor one: no package's version in `.release-please-manifest.json` gains
+    a higher major number (SHIP-31 holds major releases for the owner).
 - The PR's own checks are never awaited: PRs opened with the Actions token run none.
 - Towercab never edits the release PR: no pushes, no comments, no body or label changes. It only merges or holds (SHIP-31).
 - Not a mission: it needs no intent and does not go through the stages or `machine.apply`. A merge that
@@ -320,16 +323,24 @@ Towercab merges the release pull request that release-please opens, once the wor
 
 A release pull request that is not plainly a release, or whose `main` is not green, is left alone, and the owner sees a card when it needs them.
 
-- Release files: `CHANGELOG.md`, `.release-please-manifest.json`, and version fields: `package.json`,
-  `package-lock.json`, `Cargo.toml`, `Cargo.lock`, `pyproject.toml` or the repo's `release-please-config.json`
-  `extra-files`, where the changed lines touch only the version. Any other file or any other changed line
-  in the diff → held.
-- `main` red or pending → held without a card; the PR is looked at again each pass and merges when `main`
-  turns green.
-- A diff with other files → a "Needs you" card (`{kind: "release", repo, pr}`) titled
-  "Release PR #<n> of <repo> changes more than release files", whose why lists the extra files. It
-  clears when the PR is merged, closed or changed to release files only.
-- Verified by: `ship: a release PR touching other files is held`, `ship: a release PR is held while main is red`, `ship: a held release PR is a Needs you card`, `ship: the card clears when the PR is merged or closed`
+- Release files: `CHANGELOG.md`, `.release-please-manifest.json`, and version files: `package.json`,
+  `package-lock.json`, `Cargo.toml`, `Cargo.lock`, `pyproject.toml`, `version.txt`, plus every path in
+  the `extra-files` of `release-please-config.json`, read from the default branch (never from the PR).
+  There is no per-repo list in Towercab. `go.mod` is not a version file. In a version file the changed
+  lines may touch only the version. Any other file or changed line in the diff → held.
+- A major release (see SHIP-30) is held the same way, with the card's why saying
+  "major release <old> → <new>". Patch and minor releases merge on their own.
+- `main` red, pending or without checks → held; the PR is looked at again each pass and merges when
+  `main` turns green. No card at first.
+- Held for 24 hours (from when Towercab first saw the PR held for this reason) → a "Needs you" card
+  titled "Release PR #<n> of <repo> has waited a day", whose why names the checks: the red or pending
+  ones by name, or "<repo> runs no checks on main".
+- A diff with other files, or a major release → a "Needs you" card at once (`{kind: "release", repo, pr}`),
+  titled "Release PR #<n> of <repo> needs you", whose why lists the extra files or the major jump.
+- A card clears when the PR is merged or closed, or when what held it no longer applies (the diff is
+  release files only, `main` is green, or for the owner's decision on a major release, the owner merges
+  it by hand). Towercab never merges a major release itself.
+- Verified by: `ship: a release PR touching other files is held`, `ship: a release PR is held while main is red`, `ship: a release PR is held while main has no checks`, `ship: a major release is held for the owner`, `ship: a minor release is merged`, `ship: extra-files of the release config count as release files`, `ship: go.mod is not a release file`, `ship: a release PR held for 24 hours gets a card naming the checks`, `ship: a held release PR is a Needs you card`, `ship: the card clears when the PR is merged or closed`
 
 ### SHIP-32 · Published means the release exists
 
