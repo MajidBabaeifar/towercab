@@ -138,9 +138,9 @@ branch unless that file was granted; new test files stay free.
 - Blocked = files at `origin/<base>` matching PIP-30's globs (`TOWERCAB.md` `tests`, or the defaults;
   e2e suites under a `live` block are left out as there), listed when the run starts. Like a
   protected path (REPO-8) they go into the guard's rules and the sandbox's `denyWrite`; a file
-  matching `protected` is blocked either way. A file is unblocked only by a grant (PIP-112,
-  PIP-113), whatever the autonomy ([AUT-14](autonomy.md)'s access levels do not apply).
-- The guard's reason names the test and ends with how to ask (PIP-113). The block holds in
+  matching `protected` is blocked either way. A file is unblocked only by a grant (PIP-115,
+  PIP-116), whatever the autonomy ([AUT-14](autonomy.md)'s access levels do not apply).
+- The guard's reason names the test and ends with how to ask (PIP-116). The block holds in
   every worker round, repairs included; PIP-31's lock on tests pushed earlier is separate and stays.
 - Verified by: `repo: existing tests are blocked`, `repo: new tests are not blocked`, `repo: granted tests unblock`, `guard: blocks an existing test`
 

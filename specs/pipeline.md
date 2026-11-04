@@ -1007,7 +1007,7 @@ intent's title is a long user story.
   intent's title as before.
 - Verified by: `pipeline: PR titles use the design's short subject`
 
-### PIP-112 · The plan names the existing tests it changes
+### PIP-115 · The plan names the existing tests it changes
 
 A plan that has to change a test already on the base branch lists that test and why, and approving the
 plan allows exactly those files.
@@ -1016,14 +1016,17 @@ plan allows exactly those files.
   `plan.md`'s `## Access` section (PIP-47) gets one line each, ticked by default:
   `- [x] test: <path> (<why>)`. A path that matches none of PIP-30's globs, or doesn't exist on the base
   branch, is dropped with a note, since new and non-test files need no grant.
-- Merging the plan PR, by the owner or by the gate at the intent's autonomy (AUT-12), grants the
-  ticked test lines and no others; unticked lines are not granted. A revised plan PR keeps the boxes
-  the owner unticked, as for other access.
+- Merging the plan PR grants the ticked test lines and no others; unticked lines are not granted. A
+  revised plan PR keeps the boxes the owner unticked, as for other access.
+- A plan with any test line is at least medium risk (AUT-17), and at every autonomy, a5 included, the
+  owner merges it: the plan gate (AUT-12) and AUT-18 do not let Towercab merge such a plan, and the
+  wait says `The plan asks to change existing tests; you decide which.` (PIP-110). Towercab never
+  grants a planned test by itself.
 - A granted test is no longer blocked for the worker (REPO-13). The grant is kept in the mission's
   grants as `tests` (`path`, `why`, `by: plan`).
-- Verified by: `pipeline: plan.md lists existing tests to change`, `pipeline: merged plan grants its ticked tests`, `pipeline: unticked test is not granted`
+- Verified by: `pipeline: plan.md lists existing tests to change`, `pipeline: merged plan grants its ticked tests`, `pipeline: unticked test is not granted`, `pipeline: a plan that changes existing tests waits for the owner at a5`, `pipeline: a plan that changes existing tests is at least medium risk`
 
-### PIP-113 · An unplanned test change is asked, not taken
+### PIP-116 · An unplanned test change is asked, not taken
 
 When the worker finds mid-build that it must change an existing test the plan didn't grant, it asks the
 owner, naming the test and why, and the owner's answer decides.
@@ -1042,13 +1045,13 @@ owner, naming the test and why, and the owner's answer decides.
   once.
 - Verified by: `pipeline: an unplanned test change asks the owner`, `pipeline: allowing a test grants that file`, `pipeline: a refused test stays blocked`
 
-### PIP-114 · Publish refuses a changed existing test that wasn't granted
+### PIP-117 · Publish refuses a changed existing test that wasn't granted
 
 The code PR can't change or delete an existing test unless it was granted, even if the guard was
 bypassed.
 
 - Publish compares the head with `origin/<base>`: any file matching PIP-30's globs that exists on the
-  base and is modified, deleted or renamed away, and is not granted (PIP-112, PIP-113), refuses the
+  base and is modified, deleted or renamed away, and is not granted (PIP-115, PIP-116), refuses the
   push, naming the files, as for a protected path (PIP-29). New test files pass. A repair round
   returns to the worker as for PIP-31.
 - A file that reads at the new head exactly as on the base branch is not a change: a merge of the base
@@ -1056,7 +1059,7 @@ bypassed.
   review's weakened-test check (PIP-5) are unchanged and apply to granted tests too.
 - Verified by: `pipeline: publish refuses an ungranted change to an existing test`, `pipeline: publish refuses deleting an existing test`, `pipeline: new tests and granted tests pass publish`, `pipeline: a merge of the base may bring in test changes`
 
-### PIP-115 · The intent page shows the tests that were granted
+### PIP-118 · The intent page shows the tests that were granted
 
 The intent page lists which existing tests the worker was allowed to change, and why, so the owner sees
 every goalpost that moved.
