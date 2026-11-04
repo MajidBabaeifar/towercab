@@ -783,6 +783,18 @@ The Repos page works at phone width and in light and dark, like the rest of the 
   (UI-68).
 - Verified by: `ui: screenshots light, dark and mobile`
 
+### UI-164 · Question options and waits are buttons that do what they say
+
+Each way out of a wait is a button that makes that move, so nothing on an intent's page offers a
+choice Towercab can't carry out.
+
+- The intent's page and the card show one button per exit (LOOP-76) and per question option
+  (PIP-114), with its effect under it in small text. A `steps` option shows its steps before it is
+  picked. The free-text reply box stays.
+- A stuck wait (LOOP-77) shows a "Stuck" badge on the card, the board and the airspace, and the page
+  hides the exit that looped.
+- Verified by: `ui: question options are buttons with their effect`, `ui: a stuck wait shows the badge`, `ui: screenshots light, dark and mobile`
+
 ## Out of scope
 
 - Editing intents in the page: the owner edits them in the intents repo or with `/intent`.

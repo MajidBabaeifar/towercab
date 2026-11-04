@@ -1007,6 +1007,51 @@ intent's title is a long user story.
   intent's title as before.
 - Verified by: `pipeline: PR titles use the design's short subject`
 
+### PIP-112 · The plan says when there is nothing for Towercab to build
+
+When the outcome can only be reached by the owner (a repo setting, a secret, an account, a tool that
+needs the owner's login), the plan says so, so the owner learns it when approving the plan and not
+after the build has found nothing to do.
+
+- The plan agent's result gets `delivery`: `code` (the build changes files, as today) or `steps` (no
+  file in any repo changes; the outcome is reached only by the owner's steps,
+  [SHIP-17](ship.md)), and `delivery_why`, one sentence. `steps` needs at least one owner step and no
+  file under `## Files that change` (PIP-93); a result that breaks either is a `bad_result`.
+- `agents/plan.md` states the test: anything the worker can't do from its sandbox with the access the
+  plan asks for is an owner step, and when no work is left for the worker, `delivery` is `steps`.
+  Saying in the risks that "this is run by the owner" is not enough.
+- `plan.md` with `steps` opens `## Approach` with "Towercab builds nothing for this intent: you do the
+  steps under Your steps." and `delivery_why`. The plan's risk check (PIP-96) judges the steps.
+- Verified by: `pipeline: a plan with only owner steps is delivered by steps`, `pipeline: steps delivery with files or no steps is a bad result`
+
+### PIP-113 · An intent delivered by steps ends when its steps are ticked
+
+An intent whose plan is delivered by steps skips the code PR, waits for the owner's ticks and is then
+done.
+
+- `plan_merged` with `delivery: steps` → stage `steps` ([SHIP-19](ship.md)); build through merge, deploy
+  and e2e are skipped with the reason "no code change: you do the steps", shown as for any skipped stage.
+- At `steps`, ticking the last step ([SHIP-22](ship.md)) → `done`, not `deploy`: there is no change to
+  deploy or check live, so [SHIP-21](ship.md)'s unverified end doesn't apply. Towercab writes no PR,
+  branch or commit to the target repo.
+- Verified by: `pipeline: a steps plan goes from plan to your steps`, `pipeline: ticking the last step of a steps intent ends it done`
+
+### PIP-114 · Every option in a question is something Towercab can do
+
+The options the worker offers in a question each map to a move Towercab can make, so picking one never
+leads nowhere.
+
+- In the build result, each `question.options[]` gets `action`: `continue` (the worker carries on with
+  this option as the answer, as today), `steps` (the rest is the owner's: the option carries its
+  `steps`, `[{when, text, why}]`), or `drop` (the intent isn't needed). An option without a valid
+  `action`, or `steps` with no steps, makes the result a `bad_result`.
+- Picking a `steps` option writes the steps into `plan.md`'s `## Your steps` (SHIP-17) in a commit to
+  the `intents` repo, sets `delivery: steps` on the mission and moves it to stage `steps` (PIP-113).
+  Picking `drop` drops the intent as `towercab drop` does. A free-text reply is still `continue`.
+- The Question comment (PIP-41) and the intent's `## Towercab` section name each option's action in
+  words ("Towercab carries on", "you do these steps, Towercab builds nothing", "drop the intent").
+- Verified by: `pipeline: question options carry an action`, `pipeline: picking a steps option moves the mission to your steps`, `pipeline: picking drop drops the intent`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
@@ -1034,9 +1079,11 @@ optional)
 ```
 design   {title: S, subject: S, brief: S, type, scope, breaking: bool, spec_ids: [S], concerns: [{what, why}],
           open_questions: [{question, answer: S?}], pr: S}
-plan     {brief: S, plan: S, access: {domains: [{domain, why}], paths: [{glob, why}]}, e2e}
+plan     {brief: S, plan: S, access: {domains: [{domain, why}], paths: [{glob, why}]}, e2e,
+          delivery: "code"|"steps", delivery_why: S}
 build    {status: "done"|"blocked"|"access", brief: S, pr: S?, notes: S,
-          question: {context, question, options: [{option, then}], recommendation}?,
+          question: {context, question, options: [{option, then, action: "continue"|"steps"|"drop",
+                     steps: [{when, text, why}]?}], recommendation}?,
           access: {domains: [{domain, why}], paths: [{glob, why}]}?,
           plan_changed: S?, lower_a: int?, lower_why: S?}
 review   {brief: S, approved: bool, outcomes: [{bullet, met: bool, why}], tests_weakened: {value: bool, where},
@@ -1063,6 +1110,8 @@ score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outc
 - After the merge, deploy, e2e, rollback and revert are the ship stage ([ship.md](ship.md)); a release
   gate and rollback rehearsals stay out.
 - Evals, the verifier, policy skills (intent 261026-2204-5).
+- Towercab doing an owner step itself, or running a check that needs the owner's login to see the
+  step worked: the owner's tick is the record (PIP-113).
 
 ## Decisions
 
@@ -1077,6 +1126,11 @@ score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outc
 - The worker gets general Bash inside the sandbox: v1's per-command allowlist caused most of its
   blocked waits ("compound command refused"), and the sandbox, not the allowlist, is what keeps the
   machine safe.
+- An intent whose outcome only the owner can reach is planned as steps (PIP-112..114), not built: the
+  worker has no admin login, secrets or accounts on purpose, and before this such an intent found out
+  at build, asked a question whose answer led back to build, and could only be dropped (intent
+  261101-1200, a repo settings change, waited 2 days). The general rule is that every wait has a way
+  out ([LOOP-76](loop.md)) and a wait that loops is called stuck ([LOOP-77](loop.md)).
 - Spec rows are `Draft` in the spec PR and the code PR flips them to `Live`, so `main` never claims
   something is built before it is.
 - The agent files were compared with Anthropic's AI-Native SDLC Playbook (2026-10-28). Taken: findings

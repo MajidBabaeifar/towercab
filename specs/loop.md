@@ -556,6 +556,35 @@ intents that waited for it start.
   knows (towercab repo list)`.
 - Verified by: `repos: set changes a repo's settings`, `cli: repo commands`
 
+### LOOP-76 · Every wait has a way out
+
+For every wait, the owner has at least one move inside Towercab that ends the intent or moves it on,
+and none of them lead straight back to the same wait.
+
+- Each **Waits** row gets its exits: the owner's moves that apply to it (`reply`, `tick`, `merge`,
+  `retry`, `drop`, a question's options, PIP-114) and where each one goes. They are kept next to
+  `WAITS` in `src/machine.ts`, and the UI, Telegram and `towercab status` offer exactly those.
+- A test walks every wait and every exit through `next` and `continueTo` and fails when a wait has no
+  exit that reaches a final stage, or when an exit's first stop is the same wait.
+- `no changes` gets the exit "Nothing to build: I did it myself": the owner names what they did in one
+  line, it is added to the plan as a ticked step (SHIP-17, SHIP-22), and the intent ends `done` as
+  for steps delivery (PIP-113).
+- Verified by: `machine: every wait has an exit that ends or moves the intent`, `loop: no changes can end as done by you`
+
+### LOOP-77 · A wait that comes back unchanged is stuck
+
+When a mission lands on the same wait again with nothing new in between, Towercab says it is stuck and
+offers only the other ways out.
+
+- Stuck: the mission enters a wait key it was in before, and since then its branch has no new commit,
+  its plan didn't change and the wait's `why` is the same; or it enters the same wait key a third time.
+  Towercab sets `data.stuck` with the earlier wait's time.
+- A stuck wait's message and card start with "Stuck: this came back unchanged, so the same answer won't
+  help." and list only the exits (LOOP-76) other than the one taken last time. It counts as one Telegram
+  message (LOOP-14), not a new one per return.
+- `towercab status` and the board show stuck missions first among those waiting on the owner (UI-164).
+- Verified by: `loop: a wait that returns unchanged is marked stuck`, `loop: a stuck wait hides the exit that looped`
+
 **Config** (`src/config.ts`)
 
 | Key | Type, range | Default |
