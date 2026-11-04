@@ -793,10 +793,10 @@ The overview shows each proposed intent as a "Proposed" card, so the owner sees 
   one; "Open on GitHub" (the PR); and "Read the intent" (the intent file at the PR's head). It has the
   anchor `#proposed-<PR number>`, which LOOP-93's message links.
 - A GitHub-only PR (INT-51) says why it can't be accepted here (`Changes more than one intent` or
-  `Changes more than an intent file`) and offers only the PR link. Plan PRs keep their own cards (UI-58).
+  `Changes more than an intent file`) and offers the PR link and Close, not Accept. Plan PRs keep their own cards (UI-58).
 - Data: `GET /api/overview` gains `proposed`, a list of the cards; it is part of the page's version
   (UI-67), so the page updates when one arrives or goes.
-- Verified by: `ui: the overview lists proposed intents`, `ui: a GitHub-only proposal has no buttons`, `ui: screenshots light, dark and mobile`
+- Verified by: `ui: the overview lists proposed intents`, `ui: a GitHub-only proposal can be closed but not accepted`, `ui: screenshots light, dark and mobile`
 
 ### UI-185 · Accept and Close
 
@@ -806,7 +806,8 @@ The owner accepts or closes a proposed intent from its card, and the page says w
   `POST /api/actions` (UI-65), with the head SHA the card showed. Close asks for a short reason, with a
   default. The server does what INT-53 says and replies with its one sentence; the card goes when the
   PR does, and a failure stays on the card in the owner's words.
-- Accept is disabled with its reason while the loop's last read failed or the PR is GitHub-only.
+- Accept is disabled with its reason while the loop's last read failed or the PR is GitHub-only. Close
+  is offered on every card.
 - Verified by: `ui: accept merges the proposal and the card goes`, `ui: close sends the reason`, `ui: a refused accept says why`
 
 ### UI-186 · Proposed on a repo's page

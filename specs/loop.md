@@ -576,10 +576,13 @@ Towercab sends one Telegram message when a proposed intent first appears, and ne
   (<repo>), priority <n>` (`would be parked` instead of the priority when below the cutoff), then the link
   to its card in the UI (UI-184). GitHub-only PRs get the message too, linking the PR.
 - A PR closed or merged before the row is sent drops the row (LOOP-14). A PR that changes after the
-  message, or leaves draft, sends nothing more. The first read after start counts the PRs that
-  already have a row as seen, so a restart repeats nothing.
+  message, or leaves draft, sends nothing more.
+- The first read after this feature is first run marks every proposed PR already open as seen, with no
+  message: it records them in `meta` (`proposed:seeded`, and `proposed:seen:<PR number>`) in one
+  transaction. Only a PR that appears in a later read sends one. A restart repeats nothing, because
+  the seen PRs are kept in `meta` and the outbox.
 - Extends LOOP-14: a proposed intent is something the owner has to decide.
-- Verified by: `proposed: a new proposal sends one message`, `proposed: the same PR never sends twice`, `proposed: a proposal closed before sending is dropped`
+- Verified by: `proposed: a new proposal sends one message`, `proposed: the same PR never sends twice`, `proposed: a proposal closed before sending is dropped`, `proposed: proposals already open on the first read send nothing`
 
 **Config** (`src/config.ts`)
 

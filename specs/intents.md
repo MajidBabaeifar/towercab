@@ -467,11 +467,11 @@ Towercab knows which open pull requests on the intents repo would add an intent,
   intents. It is read from the PR, never from the checkout, which stays on `main` (INT-4).
 - The PR is **acceptable** when it adds exactly one intent file and changes nothing else apart from
   the generated `TODO.md`/`DONE.md` (INT-6). Otherwise it is **GitHub only**: listed, with a link, and
-  neither accepted nor closed from Towercab.
+  closed from Towercab but not accepted (INT-53).
 - Read for each: PR number and URL, title, draft or not, author login, `createdAt`, head SHA, and for an
   acceptable PR the intent file at that SHA. The file is parsed like any intent (INT-2) but only for
   display: its text reaches no Claude run. A file that doesn't parse shows the PR with the reason and
-  can only be opened on GitHub.
+  can be closed from Towercab or opened on GitHub, not accepted.
 - Merging the PR is what accepts the intent (INT-4); an intent from an issue stays as INT-23 says.
 - Verified by: `proposed: a PR that adds one intent is proposed`, `proposed: drafts are proposed too`, `proposed: plan PRs and other PRs are not`, `proposed: a PR with several intents or other files is GitHub only`, `proposed: an unreadable intent file is shown with its reason`
 
@@ -494,10 +494,13 @@ The owner accepts a proposed intent by merging its PR, or says no by closing it,
   first marked ready; then the PR is squash-merged, both as the owner (LOOP-38). Merged, the intent is
   on `main` and the next read picks it up (INT-4). Changed head, closed, merged or no longer acceptable
   → nothing happens and the reply says why (`<PR> changed since you looked: check it and try again`).
-- **Close**: comments the owner's reason (default `Not going ahead.`), then closes the PR as the owner.
-  The intent never reaches `main`, and Towercab does not propose it again unless a new PR is opened.
+- **Close**: allowed on every proposed intent, GitHub-only and unreadable ones included, because closing
+  can be undone by reopening the PR. Comments the owner's reason (default `Not going ahead.`), then
+  closes the PR as the owner. A PR already closed or merged → nothing happens and the reply says so.
+  The intent never reaches `main`, and Towercab does not propose it again unless a PR is reopened or
+  a new one is opened.
 - A GitHub failure is reported to the owner as it is, and nothing is retried silently.
-- Verified by: `proposed: accept marks a draft ready and squash-merges`, `proposed: accept refuses a PR that changed`, `proposed: close comments the reason and closes`, `proposed: GitHub-only PRs can't be accepted or closed`
+- Verified by: `proposed: accept marks a draft ready and squash-merges`, `proposed: accept refuses a PR that changed`, `proposed: close comments the reason and closes`, `proposed: GitHub-only PRs can't be accepted`, `proposed: GitHub-only PRs can be closed`
 
 ## Out of scope
 
