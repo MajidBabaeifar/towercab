@@ -1220,16 +1220,18 @@ An owner's reply to a test question is read by how it starts, and anything after
 for the worker, not a refusal.
 
 - Replaces the reading rule of PIP-116 and PIP-136 (`readsAsAllow`). The reply is trimmed and lower-cased,
-  then read by its first words: an *allow* starts with `yes`, `allow`, `ok`, `okay`, `approve`,
-  `approved` or `go ahead`; a *refusal* starts with `no`, `refuse`, `don't`, `dont` or `keep it`; a
-  reply that starts with neither is *unclear*. Words later in the reply (`not`, `keep`, `without`,
-  `don't`) never change the reading.
+  then read by its first whole word (the text up to the first space or punctuation, so `no,` is `no` but
+  `not` and `nothing` are not): an *allow* starts with the word `yes`, `allow`, `ok`, `okay`, `approve`,
+  `approved` or the phrase `go ahead`; a *refusal* starts with exactly the word `no`, `refuse`, `don't`
+  or `dont`, or the phrase `keep it`; a reply that starts with anything else is *unclear*. So `Not sure`
+  and `Nothing against it, go ahead` are unclear, never refusals. Words later in the reply (`not`,
+  `keep`, `without`, `don't`) never change the reading.
 - On an allow, whatever follows the allow word is passed to the resumed worker as the owner's conditions
   ("The owner allowed you to change X, on these conditions: …"), with the full reply quoted. A bare
   allow adds no conditions line.
 - In a batched question (PIP-136) a reply that allows names the files it allows: a bare allow allows all
   asked; a reply naming some allows those and leaves the rest unanswered, not refused (PIP-139).
-- Verified by: `access: a reply starting with yes allows even with a condition`, `access: the fifteen replies of 261031-1714-5 read as allow`, `access: a reply starting with no refuses`, `pipeline: conditions after a yes reach the worker`
+- Verified by: `access: a reply starting with yes allows even with a condition`, `access: the fifteen replies of 261031-1714-5 read as allow`, `access: a reply starting with no refuses`, `access: only whole first words refuse`, `pipeline: conditions after a yes reach the worker`
 
 ### PIP-139 · An unclear reply is asked again, never read as allow or refusal
 
@@ -1259,8 +1261,8 @@ Every answer to a test question gets a reply that states what Towercab did with 
 
 A refused test can be allowed later, for the running mission, without throwing the build away.
 
-- `towercab answer <id> allow <path>` and a GitHub reply `allow <path>` on the mission's PR (same exits as
-  `towercab answer`, LOOP wait rules) move `<path>` from `data.refusedTests` to the grants (`by: owner`).
+- `towercab answer <id> allow <path>` and, on GitHub, a plain reply `allow <path>` on the mission's PR or
+  on the question (same exits as `towercab answer`, LOOP wait rules) move `<path>` from `data.refusedTests` to the grants (`by: owner`).
   `<path>` must be in `data.refusedTests`; otherwise the command fails with an error that says so and
   lists the refused paths. Several paths may follow `allow`.
 - Only a running mission can be changed: a merged, dropped or failed one refuses with the reason. Nothing
