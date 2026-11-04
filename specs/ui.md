@@ -953,6 +953,37 @@ Every way out of a wait is a button on the card that does exactly what it says.
 - After a click the card shows the done note of UI-105 ("Done by you · …").
 - Verified by: `ui: question options are buttons that do what they say`, `ui: no changes offers I did it myself`, `ui: a stuck wait offers only the other exits`, `ui: exits come from the API`
 
+### UI-165 · The intent page shows each repo's part
+
+The page of a multi-repo intent lists its parts, each with its state and what it waits on.
+
+- Under the stage map (UI-158) a list with one row per repo, the lead first: the repo, the part's
+  stage, a link to its PR, and "waiting for <what>" in plain words: the owner's answer, a check, the
+  part it merges after (INT-43), or "the freeze of <repo>" (LOOP-79). Parts that ran into trouble show
+  the reason as the stage map does.
+- While the freeze is held it shows "Merges frozen in <repos>" with how long and the time limit
+  (LOOP-81). A single-repo intent shows no list.
+- Verified by: `ui: a multi-repo intent lists a part per repo`, `ui: a part says what it waits on`, `ui: the page shows the freeze and its age`, `ui: a single-repo intent has no parts list`
+
+### UI-166 · The Board shows repos and the freeze
+
+A multi-repo intent's card on the Board says how many repos it spans, and a frozen repo says so.
+
+- The card shows "3 repos" and the state of the part furthest behind; a part that needs the owner
+  makes the card a needs-you card (UI-58) naming the repo. A frozen repo's lane shows "Merges frozen for
+  <title>"; other intents' cards waiting at their merge show "waiting for the freeze".
+- Verified by: `ui: a multi-repo card shows the repo count and the slowest part`, `ui: a frozen repo is marked on the Board`, `ui: an intent held by a freeze says so`
+
+### UI-167 · Freeze exits and the API
+
+A freeze that ran past its limit shows buttons to keep waiting or to lift it, and the API carries the parts.
+
+- The needs-you card, the intent page and the plane card (UI-164) show, for the `freeze` wait (LOOP-81),
+  "Keep waiting" (posts `continue`), "Unfreeze" (the `unfreeze` action, UI-66, with a confirm saying
+  what ends `unverified` if a part is already merged) and drop. `GET /api/state` (UI-65) carries per
+  mission `parts` (a list of `{repo, stage, pr, waitsOn}`) and per repo `frozenBy` (mission id or null).
+- Verified by: `ui: a freeze past its limit offers keep waiting and unfreeze`, `ui: unfreeze confirms when a part is merged`, `ui: parts and frozen repos come from the API`
+
 ### UI-192 · Focus tab
 
 A Focus tab shows the one thing that needs the owner most, and nothing else.

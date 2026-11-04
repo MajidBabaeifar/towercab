@@ -461,6 +461,53 @@ Queued intents count as planned without being written to the file.
   writes a `planned` line; the owner may.
 - Verified by: `ui: a repo page shows its features, work and spend`
 
+### INT-41 · A lead repo and the other repos
+
+An intent names one lead repo and, optionally, the other repos it changes.
+
+- `repo` (INT-2) is the lead: the repo that holds the spec and the intent's PRs for the spec and the
+  plan. `repos` is a new optional front matter field: a list of repo names (or one name) for the other
+  repos, in the form `repo` has. It is read and written like `after` (`setField`/`removeField`, other
+  lines stay byte-identical). Without `repos` the intent works in the lead alone and nothing below
+  applies.
+- Names are unique and none equals the lead. An intent with `repos` is a **multi-repo intent**.
+- Verified by: `intents: repos lists the other repos`, `intents: repos is optional and a single name works`, `intents: repos keeps the other lines byte-identical`
+
+### INT-42 · The other repos must exist
+
+A multi-repo intent whose `repos` names a repo Towercab is not set up for is not started.
+
+- Every name in `repos` must be a repo in the config (LOOP-8) and must pass the same readiness check as
+  the lead (LOOP-70). Otherwise the intent is not picked and shows `bad repos: <names>` with the reason,
+  like `bad after:` (LOOP-5); the owner fixes the file or the config.
+- `repos` naming the lead or twice the same repo makes the file unreadable (INT-11).
+- Verified by: `pick: an unknown repo in repos is not started`, `pick: a repo that is not ready holds the intent`, `intents: repos naming the lead is unreadable`
+
+### INT-43 · The plan says what changes in each repo
+
+The plan of a multi-repo intent has one part per repo and says in which order they merge.
+
+- `plan.md` (PIP-46) gets a `## Repos` section with one `### <repo>` entry for the lead and for each
+  repo in `repos`: what changes there, in plain words, and the repos that part waits on (the first
+  merges before the second). The entries form an order with no cycles; the merge order is read from
+  them. A repo in `repos` the plan gives no change to is dropped from the intent's parts with a
+  sentence saying so; the lead always has a part.
+- A plan with a missing part, a repo that is not in the intent, or a cycle fails the plan check
+  (PIP-46) and the planner is asked again, as for any bad plan.
+- Verified by: `plan: a multi-repo plan has a part per repo`, `plan: a cycle in the merge order is refused`, `plan: a repo the intent does not name is refused`, `plan: a repo with no change is dropped from the parts`
+
+### INT-44 · One intent is still one spec and three phases
+
+A multi-repo intent has one spec and one pull request each for the spec and the plan, in the lead repo.
+
+- The spec PR and the plan PR (PIP-50, PIP-51) are opened and merged in the lead repo only. Requirements
+  for code in other repos are written in the lead's specs, so the owner reviews the whole feature in one
+  place. If most of the change is elsewhere, the owner makes that repo the lead by editing `repo`
+  before the spec phase starts; Towercab does not move the spec by itself.
+- Only the code phase splits into one PR per repo (LOOP-78). The intent's `stage` stays `spec`, `plan`
+  or `code` (INT-5) for the whole intent.
+- Verified by: `pipeline: a multi-repo intent has one spec PR and one plan PR in the lead`, `intents: the stage is one for all parts`
+
 ### INT-51 · Proposed intents on GitHub
 
 Towercab knows which open pull requests on the intents repo would add an intent, so none waits unseen.
