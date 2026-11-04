@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..69, LOOP-92..93 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..69, LOOP-92..93, LOOP-105..107 · **Prefix:** LOOP
 
 ## Purpose
 

@@ -1391,6 +1391,8 @@ export function moveWords(t: Pick<Transition, "from_stage" | "event" | "to_stage
       return "Starting over with a fresh attempt";
     case "timeout":
       return `${stepWords(t.from_stage)} timed out`;
+    case "bad_result":
+      return `${stepWords(t.from_stage)} ran again`;
     case "crash":
       return `Towercab crashed while ${from}`;
   }

@@ -131,6 +131,10 @@ export interface PipeData {
   n?: Record<string, number>;
   /** `<kind>`: a cut-off run gets one continue (PIP-1). */
   continued?: Record<string, boolean>;
+  /** Unix times of the build runs refused for guard version skew; an hour's worth counts (LOOP-106). */
+  skew?: number[];
+  /** `<stage>:<round start>`: the build round already retried once for a known setup error (LOOP-107). */
+  setupRetried?: Record<string, boolean>;
   setup?: string;
   verify?: { log: string; result: "green" | "red" };
   shots?: string[];
