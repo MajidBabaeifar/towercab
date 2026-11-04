@@ -605,15 +605,17 @@ Whatever Towercab waits on the owner for, the owner can end or move the intent f
   the wait comes straight back (LOOP-77).
 - `no changes` gets the exit `done`, named "Nothing to build: I did it myself". It ends the intent as
   done, with the mission's `why` saying the owner did it. The ask in **Waits** says so. `done` is a
-  command like `drop` (`towercab done <id>`, a `commands` row, applied by the loop or by the CLI itself,
-  LOOP-15) and the page's button (UI-164). `your steps` (LOOP-74) ends by ticking the last step
+  command like `drop` (`towercab done <id> [note]`, a `commands` row, applied by the loop or by the CLI
+  itself, LOOP-15) and the page's button (UI-164). The owner's one-line note (what they did) becomes a
+  step in the plan's `## Your steps` that is already ticked, with the time (SHIP-17, SHIP-22), so the
+  plan records the work; without a note the step reads "Done by the owner". `your steps` (LOOP-74) ends by ticking the last step
   (SHIP-22), or with `done`, `retry` or `drop`.
 - The ask, the Telegram message (LOOP-14) and `towercab status` (LOOP-13) name the exits of the wait in
   plain words.
 - A test walks every row of **Waits**, including the ones LOOP-74 adds, applies every exit from each
   wait through `machine.apply`, and fails when a wait has no exit that leaves it for `done`, `stopped`
   or another stage, or when a wait in the code is missing from the table.
-- Verified by: `machine: every wait has an exit that ends or moves the intent`, `machine: no changes can end as done`, `cli: done ends an intent the owner did`, `outbox: the message names the exits`, `status: waits list their exits`
+- Verified by: `machine: every wait has an exit that ends or moves the intent`, `machine: no changes can end as done`, `cli: done ends an intent the owner did`, `cli: done turns the note into a ticked step`, `outbox: the message names the exits`, `status: waits list their exits`
 
 ### LOOP-77 · The same wait again is stuck
 

@@ -833,7 +833,8 @@ Every way out of a wait is a button on the card that does exactly what it says.
   option as a reply, `steps` switches the delivery (PIP-113), `drop` drops with the confirm of UI-58.
   The reply box stays for `continue`.
 - `no changes` shows "Nothing to build: I did it myself" (LOOP-76), which posts the `done` action
-  (UI-66 → the `done` command). A mission waiting on `your steps` shows the checklist of UI-160 and the
+  (UI-66 → the `done` command), next to an optional one-line field for what the owner did, which
+  becomes a ticked step (LOOP-76). A mission waiting on `your steps` shows the checklist of UI-160 and the
   same button.
 - A stuck wait (LOOP-77) shows "Stuck: this came back with nothing new" and only the `steps`, `done`,
   start over and drop buttons: no reply box. `GET /api/state` (UI-65) carries `exits` per waiting

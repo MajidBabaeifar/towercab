@@ -1034,13 +1034,14 @@ When the merged plan says `steps`, Towercab opens no code PR, and the intent end
 - The owner ticks the steps as in SHIP-22. Ticking the last one is `ok` at `steps`; for a `steps`
   delivery it goes to `done` instead of `deploy` (SHIP-20 is for code), and the intent's `stage` becomes
   `done`. The `done` exit of LOOP-76 ends it early. Until then the wait keeps the exits of LOOP-76.
-- Changing a `code` mission to `steps` (PIP-114) closes an open code PR as for `drop` (PIP-87),
-  commits `Delivery: steps` and the steps to `plan.md` on `main` of the intents repo as for
+- Changing a `code` mission to `steps` (PIP-114) closes an open code PR by itself, as `drop` does
+  (PIP-87), after commenting on it why ("Closed: the owner will do this by hand, so there is nothing to
+  merge."). It then commits `Delivery: steps` and the steps to `plan.md` on `main` of the intents repo as for
   `plan_changed` (PIP-28), and moves the mission to `steps`. The steps come from the question's option
   or the plan; with none, the plan step is asked to add them first. Nothing the owner already merged is
   undone.
 - How merged code PRs end is unchanged: a `code` plan builds, ships and ends as before.
-- Verified by: `pipeline: a steps plan skips build and the code PR`, `pipeline: ticking the last step of a steps plan ends the intent done`, `pipeline: switching to steps closes the open code PR`, `pipeline: a code plan ends as before`
+- Verified by: `pipeline: a steps plan skips build and the code PR`, `pipeline: ticking the last step of a steps plan ends the intent done`, `pipeline: switching to steps closes the open code PR and says why`, `pipeline: a code plan ends as before`
 
 ### PIP-114 · Every option in a question maps to something Towercab does
 
