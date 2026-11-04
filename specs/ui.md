@@ -953,6 +953,72 @@ Every way out of a wait is a button on the card that does exactly what it says.
 - After a click the card shows the done note of UI-105 ("Done by you · …").
 - Verified by: `ui: question options are buttons that do what they say`, `ui: no changes offers I did it myself`, `ui: a stuck wait offers only the other exits`, `ui: exits come from the API`
 
+### UI-192 · Focus tab
+
+A Focus tab shows the one thing that needs the owner most, and nothing else.
+
+- `/focus`, a top tab after Board (UI-133); Repos (UI-140) follows, so it becomes the fourth tab.
+  `GET /api/focus` returns `{item, more}`: `item` is the top wait (UI-193) or `null`, `more` the number
+  of other waits (UI-196). It is part of the page's version (UI-67), so the page updates when a wait
+  comes or goes, without losing input.
+- The tab label carries no count; the top bar (UI-57) already does.
+- Verified by: `ui: the focus tab shows one wait`, `ui: focus is served from its own API`
+
+### UI-193 · The most important wait comes first
+
+Focus picks the wait with the highest priority; between equals, the one waiting longest.
+
+- Every wait counts: approvals (spec, plan, code), questions, blocked waits (UI-58), and proposed
+  intents (UI-184). Priority is the intent's `2i + u` (PRI-3); a proposed intent uses the priority it
+  would get (INT-52), and one that would be parked comes after every other wait.
+- Ties: oldest wait first (the time the wait began, the PR's age for a proposal), then the intent ID, so
+  the pick never flips between two reads.
+- Verified by: `ui: focus picks the highest priority wait`, `ui: focus breaks ties by oldest wait`, `ui: focus includes questions, blocked waits and proposed intents`
+
+### UI-194 · What Focus shows
+
+Focus shows enough to act without opening anything else: where the work is, what it is, what happened,
+and what is asked now.
+
+- Top to bottom: the repo; the intent in one line (its title and a one-sentence overview, the first
+  sentence of its Problem); what has happened so far in plain words, one line per finished phase (spec,
+  plan, code) from that phase's plain brief (PIP-107), with no technical text; then the ask, the plain
+  reason and the actions of the Needs you card (UI-58, UI-126, UI-164), the risk block (AUT-20)
+  and the PR link. A proposed intent shows its fields and Accept/Close (UI-185) in the same place.
+- A phase not yet reached is not listed. A mission from before briefs shows the review's summary
+  (UI-126's fallback) in place of the history.
+- Verified by: `ui: focus shows repo, overview, history and the ask`, `ui: focus offers the actions of the needs-you card`, `ui: focus shows a proposed intent`
+
+### UI-195 · The next one takes its place
+
+When the owner acts, or the wait ends for any other reason, Focus moves on to the next.
+
+- The page replaces the item as soon as `GET /api/focus` names another (after the owner's action, or
+  when the loop moves the mission), with a short fade of at most 300 ms, none under
+  `prefers-reduced-motion`. Text the owner is typing in a reply box belongs to the item it was typed on
+  and is not carried to the next (UI-67).
+- With no wait left, Focus says "Nothing needs you."
+- Verified by: `ui: focus moves to the next wait after an action`, `ui: focus moves on when a wait ends elsewhere`, `ui: focus says nothing needs you when empty`
+
+### UI-196 · How many more
+
+Focus says how many other waits there are, without listing them.
+
+- `more` is the count of waits other than the one shown, proposed intents included: "3 more waiting",
+  "1 more waiting"; nothing is shown at 0. No titles, links or list; the Overview has them.
+- Verified by: `ui: focus counts the other waits without listing them`
+
+### UI-197 · Same actions, any screen
+
+Focus adds no new way to act, and it works on a phone and by keyboard.
+
+- Every action posts to `POST /api/actions` (UI-65), exactly as on the Needs you card; Focus has no
+  action of its own. The same refusals and errors show in the same words.
+- At 360 px wide the item is one column with no sideways scroll; buttons are at least 44 px tall. Every
+  action is reachable by Tab in reading order with a visible focus ring; the item has a heading the
+  tab moves to when the next one arrives, and the change is announced politely (`aria-live="polite"`).
+- Verified by: `ui: focus has no action the needs-you card lacks`, `ui: focus works by keyboard`, `ui: screenshots light, dark and mobile`
+
 ## Out of scope
 
 - Editing intents in the page: the owner edits them in the intents repo or with `/intent`.
