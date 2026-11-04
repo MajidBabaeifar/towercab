@@ -403,6 +403,7 @@ function fixRound(m: Mission, sc: ShipCx, ship: ShipData, target: string): Outco
     ci: undefined,
     review: undefined,
     reviewFixes: undefined,
+    ownerSteps: undefined,
     proof: undefined,
     proofLines: undefined,
     proofWaited: undefined,

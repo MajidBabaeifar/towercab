@@ -155,6 +155,8 @@ export interface CodeBody {
   specIds: string[];
   links: Links;
   reviewDetails: string | null;
+  /** PIP-119: outcomes only the owner can do, as a checklist. */
+  ownerSteps?: { bullet: string; why: string }[];
   /** The `## Risk` section (PIP-99, `riskMd`); "" when not assessed. */
   risk?: string;
   footer: Footer;
@@ -205,17 +207,22 @@ export function codeBody(b: CodeBody): string {
     ? ["## Access beyond the plan", "", ...b.unplanned.map((u) => `- ${u.what}: ${u.why}`)].join("\n")
     : "";
   const testsMd = testsChangedMd(b.tests ?? []);
+  const stepsMd = b.ownerSteps?.length
+    ? ["## For you to do", "", ...b.ownerSteps.map((s) => `- [ ] ${s.bullet} (${s.why})`)].join("\n")
+    : "";
   const review = b.reviewDetails?.trim()
     ? `<details><summary>Review details</summary>\n\n${b.reviewDetails.trim()}\n\n</details>`
     : "";
   if (plain) {
     // PIP-108: what the owner decides on stays open (the risk, access beyond the plan); the worker's
     // text, the checks and the review fold under Details.
+    if (stepsMd) parts.push(stepsMd);
     if (unplanned) parts.push(unplanned);
     if (testsMd) parts.push(testsMd);
     parts.push(...detailsMd([...tech, review], b.brief));
   } else {
     parts.push(...tech);
+    if (stepsMd) parts.push(stepsMd);
     if (unplanned) parts.push(unplanned);
     if (testsMd) parts.push(testsMd);
   }

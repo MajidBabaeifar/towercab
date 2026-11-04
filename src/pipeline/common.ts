@@ -105,6 +105,8 @@ export interface PipeData {
   };
   /** Review fix rounds sent back to build (PIP-98). */
   reviewFixes?: number;
+  /** PIP-119: outcomes only the owner can do, from the last review. */
+  ownerSteps?: { bullet: string; why: string }[];
   /** The risk agent's assessment per gate (PIP-96, AUT-16); null = the run didn't finish. */
   risk?: { spec?: Risk | null; plan?: Risk | null; code?: Risk | null };
   /** What each gate's assessment was of (`Risk.of`), kept also when the run didn't finish. */

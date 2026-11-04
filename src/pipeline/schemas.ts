@@ -80,7 +80,8 @@ export const BUILD_SCHEMA = object({
 export const REVIEW_SCHEMA = object({
   brief: BRIEF,
   approved: BOOL,
-  outcomes: list(object({ bullet: S, met: BOOL, why: S })),
+  // PIP-119: `owner` is true for an outcome only the owner can do; it is not judged `met`.
+  outcomes: list(object({ bullet: S, met: BOOL, owner: BOOL, why: S })),
   tests_weakened: object({ value: BOOL, where: S }),
   plan_followed: object({ value: BOOL, where: S }),
   findings: list(
@@ -189,7 +190,8 @@ export interface ReviewResult {
   /** PIP-106: the verdict and what it means for the owner's decision, in plain words. */
   brief: string;
   approved: boolean;
-  outcomes: { bullet: string; met: boolean; why: string }[];
+  /** `owner` (PIP-119): only the owner can do it; absent counts as false. */
+  outcomes: { bullet: string; met: boolean; owner?: boolean; why: string }[];
   tests_weakened: { value: boolean; where: string };
   plan_followed: { value: boolean; where: string };
   findings: {
@@ -298,6 +300,13 @@ export function parseResult<K extends keyof Results>(
   kind: K,
   value: unknown,
 ): { ok: true; value: Results[K] } | { ok: false; why: string } {
+  // PIP-119: a review from before `owner` existed (or a cached one) reads as `owner: false`.
+  if (kind === "review" && isObject(value) && Array.isArray(value.outcomes)) {
+    value = {
+      ...value,
+      outcomes: value.outcomes.map((o) => (isObject(o) && !("owner" in o) ? { ...o, owner: false } : o)),
+    };
+  }
   const why = validate(SCHEMAS[kind], value);
   return why === null ? { ok: true, value: value as Results[K] } : { ok: false, why };
 }
