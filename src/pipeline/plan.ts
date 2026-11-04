@@ -17,6 +17,7 @@ import { renderAccess } from "./access.ts";
 import {
   asEnv,
   botAuthor,
+  cloneOf,
   data,
   effectiveOf,
   ended,
@@ -28,10 +29,14 @@ import {
   spawnRun,
   subjectOf,
 } from "./common.ts";
+import { existingTests } from "./guard.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { planBody, planFile, section } from "./prtext.ts";
 import { endRisk, extraAccess, spawnRisk } from "./risk.ts";
 import { parseResult } from "./schemas.ts";
+
+/** PIP-115: why the owner merges a plan that lists existing tests (PIP-110). */
+export const TESTS_WHY = "The plan asks to change existing tests; you decide which.";
 
 /** What a branch on the intents repo needs; the issue poll (INT-23) has it as well as a mission's `Ctx`. */
 export type IntentsCx = Pick<Ctx, "store" | "home" | "github" | "tools" | "config">;
@@ -197,6 +202,21 @@ export const planHandler: Handler = {
     }
     const r = ended(cx, m, "plan", end, (v) => parseResult("plan", v));
     if (!r.ok) return r.progress;
+    // PIP-115: only files that exist on the base branch and match the test globs need a grant.
+    let access = r.value.access;
+    let droppedTests: string[] = [];
+    if (access.tests.length) {
+      const files = await repoFiles(cx, m);
+      const existing = await existingTests(
+        cx.tools,
+        cloneOf(cx, m),
+        cx.repo(m).base,
+        files.towercab.tests,
+        files.towercab.live,
+      );
+      droppedTests = access.tests.filter((t) => !existing.includes(t.path)).map((t) => t.path);
+      access = { ...access, tests: access.tests.filter((t) => existing.includes(t.path)) };
+    }
     return push(
       cx,
       cx.record(
@@ -204,8 +224,8 @@ export const planHandler: Handler = {
         "push",
         {},
         {
-          plan: { md: r.value.plan, access: r.value.access, e2e: r.value.e2e ?? null, brief: r.value.brief },
-          access: r.value.access,
+          plan: { md: r.value.plan, access, droppedTests, e2e: r.value.e2e ?? null, brief: r.value.brief },
+          access,
           answer: undefined,
         },
       ),
@@ -229,7 +249,7 @@ async function push(cx: Ctx, m: Mission): Promise<Progress> {
     intent.id,
     d.design?.specIds ?? [],
     d.plan!.md,
-    keepUnticked(renderAccess(d.plan!.access, a), before),
+    keepUnticked(renderAccess(d.plan!.access, a, d.plan!.droppedTests), before),
   );
   await commitToIntents(
     cx,
@@ -332,8 +352,11 @@ async function gateStep(cx: Ctx, m: Mission): Promise<Progress> {
   const files = await repoFiles(cx, m);
   const a = effectiveOf(m, intent, files);
   const level = risk?.level ?? null;
-  if (planGate(a, level)) {
-    return { done: wait("approve plan", a <= 3 ? undefined : riskWhy(a, level)) };
+  // PIP-115: a plan that lists existing tests to change is the owner's to merge, at every a.
+  const tests = (data(m).plan?.access.tests?.length ?? 0) > 0;
+  if (planGate(a, level, tests)) {
+    const why = tests ? TESTS_WHY : a <= 3 ? undefined : riskWhy(a, level);
+    return { done: wait("approve plan", why) };
   }
   const github = cx.store.github()!;
   await gh(cx, github, ["pr", "merge", String(m.plan_pr), "-R", github, "--squash"]);

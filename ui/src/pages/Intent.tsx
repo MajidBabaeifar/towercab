@@ -113,6 +113,26 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
           {data.details ? <Details id={`page:${data.id}`} text={data.details} /> : null}
         </section>
       ) : null}
+      {data.tests?.length ? (
+        <section class="card pad access" aria-label="Existing tests changed">
+          <p class="access-head">Existing tests changed</p>
+          <ul>
+            {data.tests.map((t) => (
+              <li key={t.path}>
+                <span class="mono">{t.path}</span>
+                <span class="access-why">
+                  {t.why}
+                  {t.by === "refused"
+                    ? " (refused: it stays as it is)"
+                    : t.by === "plan"
+                      ? " (allowed by the approved plan)"
+                      : " (allowed by you)"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       {data.risk ? <RiskBlock risk={data.risk} /> : null}
       <Section title="How it went" class="path">
         {data.attempts.length ? <StageMap id={data.id} attempts={data.attempts} moves={moves} /> : moves}

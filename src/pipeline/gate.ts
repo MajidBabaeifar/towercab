@@ -5,6 +5,7 @@ import type { Ctx, Handler } from "../handlers.ts";
 import { ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { type Risk, riskMd } from "../risk.ts";
+import { testGrantsOf } from "./access.ts";
 import { data, effectiveOf, gh, intentOf, prUrl, repoFiles } from "./common.ts";
 import { type Checks, codeBody } from "./prtext.ts";
 import { HOLD_SECS, holder } from "./ship.ts";
@@ -79,6 +80,7 @@ async function updateBody(cx: Ctx, m: Mission): Promise<void> {
       ...(d.unplanned?.domains ?? []).map((x) => ({ what: `network access to ${x.domain}`, why: x.why })),
       ...(d.unplanned?.paths ?? []).map((x) => ({ what: `writing ${x.glob}`, why: x.why })),
     ],
+    tests: testGrantsOf(d),
     specIds: d.design?.specIds ?? [],
     links: {
       intentUrl: cx.store.url(intent),

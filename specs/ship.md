@@ -1,13 +1,15 @@
 # Ship
 
-**Status:** Live · **Prefix:** SHIP
+**Status:** Live: SHIP-1..16 · **Prefix:** SHIP
 
 ## Purpose
 
 After a merge, Towercab follows the change until it is live, tests the live app end to end, and, when
 the change broke it, gets the last good version back and fixes the problem itself. It works with any
 platform: it learns what is live and asks for an older version through a small adapter, and it never
-deploys anything or touches a server. A repo opts in; without that, merged means done, as before.
+deploys anything or touches a server. A repo opts in; without that, a change ends as merged but not
+verified live (SHIP-21). Steps only the owner can do are listed in the plan and ticked off in Towercab
+(SHIP-17..19); a change is done only once they are done and the live app passes its tests (SHIP-20).
 
 ## Requirements
 
@@ -199,6 +201,8 @@ While a change ships, rolls back or is being fixed, nothing else merges in its r
 A repo without a `live` block works as before: merged means done.
 
 - `deploy` → `skip` → `done`; no adapter call, no suite, no hold.
+- Changed by SHIP-21: `skip` now ends as merged, not verified live, unless the plan says there is
+  nothing to check live; only then it is still `done`. The rest stands.
 - Verified by: `ship: no live block means done at merge`
 
 ### SHIP-16 · The deploy contract
@@ -211,6 +215,89 @@ A public page tells a platform team what to build so Towercab can ship to their 
   deploying from GitHub Actions over Tailscale. Short sketches for an Argo CD notification hook and for
   Vercel or Fly through the command adapter. The README links it.
 - Verified by: manual (read `docs/deploy-contract.md`; the README links it)
+
+### SHIP-17 · Owner steps in the plan
+
+The plan lists every step only the owner can do for the change to work, and says whether it is needed
+before the merge or after it.
+
+- The plan agent's result gets `owner_steps`: a list of `{when, text, why}`, `when` = `before` or `after`
+  the merge, `text` one action in plain words ("add the `NPM_TOKEN` secret to the repo"), `why` one
+  sentence. None needed → an empty list. A step is anything the worker can't do: a secret, an apply, an
+  account or a setting on a platform. A step Towercab or CI can do is not one.
+- `plan.md` ([PIP-46](pipeline.md)) gets Towercab's `## Your steps` after `## Access`, written like it:
+  `- [ ] before merge: <text> (<why>)` and `- [ ] after merge: <text> (<why>)`, numbered by order. No
+  steps → no section. A ticked step reads `- [x] … · ticked <RFC3339 time>` (SHIP-22).
+- Read from the merged `plan.md` into the mission as `data.steps` (`{n, when, text, why, done_at}`),
+  ticks included, so the file is the record and the database a copy of it. A plan that changes later
+  (`plan_changed`) keeps the ticks of steps whose text is unchanged.
+- Verified by: `ship: the plan lists owner steps`, `ship: steps are read from the merged plan`
+
+### SHIP-18 · Steps before the merge hold the merge
+
+A change whose plan has steps needed before the merge doesn't merge, or ask the owner to, until they
+are ticked.
+
+- At the gate ([PIP-7](pipeline.md)), before deciding: any `before` step not ticked → wait
+  `your steps first` (blocked), ask "Do these before this change merges." with the unticked steps as a
+  checklist in the why. Towercab neither merges nor asks for the merge meanwhile, whatever the intent's
+  autonomy.
+- Ticking the last one continues at the gate. A reply or `/retry` act as for any blocked wait
+  ([LOOP-74](loop.md)).
+- Verified by: `ship: the gate waits for steps before the merge`, `ship: ticking the last step continues the gate`
+
+### SHIP-19 · Your steps after the merge
+
+After the merge, the change waits at a "Your steps" stage until the owner has ticked the `after` steps.
+
+- Stage `steps` in the order between `merge` and `deploy` ([LOOP-73](loop.md)). Entered from
+  `code_merged` only when an `after` step is unticked; else `deploy` directly. Wait `your steps`, ask
+  "Do these so the change works live." with the checklist. Nothing is deployed or applied by Towercab;
+  it only waits for the ticks.
+- All ticked → `deploy`, which so counts the owner's work (secrets, an apply) as done before the
+  live check. A fix round (SHIP-11) doesn't visit `steps` again.
+- Verified by: `ship: merge goes to your steps when the plan has after steps`, `ship: no after steps goes straight to deploy`, `ship: a fix round skips your steps`
+
+### SHIP-20 · Done means it works live
+
+A change is done only after its merge, its steps and a green live check.
+
+- Order: merge, `steps` (SHIP-19), `deploy` (SHIP-7), `e2e` (SHIP-9), `done`. The live check is the
+  `live` block and its suites; nothing new is run. Rollback and fix rounds are as before
+  (SHIP-10..12).
+- Verified by: `ship: done only after steps, deploy and e2e`
+
+### SHIP-21 · Merged, not verified live
+
+When a repo can't check live, the change ends as merged and not verified, unless the plan says there is
+nothing to check live.
+
+- The plan agent's result gets `live_none_why`: empty by default, else one sentence on why nothing
+  about this change can be seen live (docs, CI or tests only). Towercab writes it to `plan.md` after
+  `## Your steps` as `Nothing to check live: <why>`, and the review agent is told to check the claim.
+  With a `live` block it is ignored: the suites run anyway (SHIP-20).
+- `deploy` → `skip` (no `live` block, SHIP-15) → with `live_none_why` set: `done`, as before this
+  requirement. Without it: stage `unverified`, terminal like `done` (ignores every event), phase
+  `done` ([INT-5](intents.md)). Towercab sets `verified: no` on the intent (with `setField`) and moves
+  the folder to `done/` as for `done`. A mission that reaches `done` has no such field.
+- Unverified is a successful end: no rollback, no hold ([SHIP-14](ship.md) doesn't apply). It still
+  waits for the owner's steps first (SHIP-18, SHIP-19).
+- Verified by: `ship: no live block ends unverified`, `ship: nothing to check live ends done`, `ship: unverified marks the intent`
+
+### SHIP-22 · Ticking steps
+
+The owner ticks steps off in Towercab, and the ticks are kept in the plan as well as the database.
+
+- UI action `{action: "step", intent, n, done}` (UI-160) and `towercab step <id> <n…|all>`; both tick a
+  step (stored with the time, in one transaction) and the CLI prints the steps left. `done: false`
+  unticks one. Refusals: `<id> has no steps`, `step <n> isn't one of <id>'s steps`.
+- Each tick is also written to `intents/<id>-<slug>/plan.md` on `main` of the intents repo (SHIP-17's
+  line, `[x]` and the time), committed as `towercab: ticked step <n> of <id>` and pushed like other
+  plan changes. A failed push is retried on the next pass; the database tick counts meanwhile. If the
+  database is lost or rebuilt, the ticks come back from `plan.md`.
+- A tick that completes the steps the mission waits for continues it on the next pass; ticks outside
+  the wait are stored and counted when the wait comes.
+- Verified by: `ship: ticking steps from the CLI`, `ship: ticks outside the wait are kept`, `ship: ticks are written to plan.md`, `ship: ticks survive a rebuilt database`
 
 ## Out of scope
 

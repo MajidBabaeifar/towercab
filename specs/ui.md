@@ -837,6 +837,47 @@ A stage that does not apply to the repo's kind says why, in the map itself.
   confirmed kind, or the suggested one while unconfirmed ([REPO-21](repo.md)), at the time the page is built; a stage the attempt did visit keeps its own outcome.
 - Verified by: `ui: ship stages are skipped with the kind's reason`, `ui: screenshots light, dark and mobile`
 
+### UI-160 · Your steps on the intent page
+
+The intent page shows the owner's steps as a checklist they tick off.
+
+- A "Your steps" block (UI-62) when the plan has steps: before-merge ones first, then after-merge ones,
+  each a checkbox with its text and why. Ticking posts `{action: "step", intent, n, done}`
+  ([SHIP-22](ship.md)) and shows the time ticked. The block is highlighted while the mission waits
+  on `your steps first` or `your steps`. The card shows the same wait as a needs-you card
+  ([LOOP-74](loop.md)).
+- Verified by: `ui: your steps checklist`, `ui: ticking a step posts the action`
+
+### UI-161 · Your steps in the map and the airspace
+
+A change waiting on the owner's steps is visible where the rest of its path is.
+
+- The stage map (UI-123) has Your steps (`steps`) after Merging, listed only when the attempt visited
+  it. In the airspace (UI-120), a plane at `steps` sits at `04 deploy`; a plane held by steps before
+  the merge sits at the gate's `you` station.
+- State words (UI-121): `steps`: "waiting for your steps"; the hold before the merge: "waiting for your
+  steps before merging".
+- Verified by: `ui: stage map shows your steps`, `ui: your steps in the airspace`
+
+### UI-162 · Merged, not verified live
+
+A change that ended without a live check looks different from one that works live.
+
+- The card and the intent page say "Merged, not verified live" in the muted style (not the done
+  style), with the reason "No live check set up for this repo." ([SHIP-21](ship.md)). A change whose plan
+  said there was nothing to check live shows as done, with "Nothing to check live: <why>" on the page. The board
+  puts it in the done column with that label; the airspace shows it as landed without the ship stations.
+- Verified by: `ui: unverified is shown apart from done`, `ui: nothing to check live shows as done`, `ui: screenshots light, dark and mobile`
+
+### UI-163 · Steps and the unverified end in the views
+
+The generated overview and the command line say what is open for the owner.
+
+- `TODO.md` ([INT-6](intents.md)): an intent waiting on steps is under Waiting on me with "your steps"
+  and the count left ("2 of 3"). `DONE.md`: an intent with `verified: no` carries "(merged, not verified
+  live)"; one without it has no mark. `towercab status` and `next` show the same words.
+- Verified by: `intents: TODO shows steps left`, `intents: DONE marks unverified`, `cli: status shows steps`
+
 ## Out of scope
 
 - Editing intents in the page: the owner edits them in the intents repo or with `/intent`.

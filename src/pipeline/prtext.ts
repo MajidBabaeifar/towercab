@@ -72,6 +72,26 @@ export function specBody(
 export interface Access {
   domains: { domain: string; why: string }[];
   paths: { glob: string; why: string }[];
+  tests: { path: string; why: string }[];
+}
+
+/** An existing test the worker may change, and who allowed it (PIP-118). */
+export interface TestChange {
+  path: string;
+  why: string;
+  by: "plan" | "owner";
+}
+
+/** PIP-118: the code PR's plain section on existing tests changed beyond new ones; "" when none. */
+export function testsChangedMd(tests: TestChange[]): string {
+  if (!tests.length) return "";
+  return [
+    "## Tests changed beyond new ones",
+    "",
+    ...tests.map(
+      (t) => `- \`${t.path}\`: ${t.why} (allowed by ${t.by === "plan" ? "the approved plan" : "you"})`,
+    ),
+  ].join("\n");
 }
 
 /**
@@ -86,6 +106,7 @@ export function planBody(planMd: string, access: Access, l: Links, risk = "", br
   const asks = [
     ...access.domains.map((d) => `network access to ${d.domain}`),
     ...access.paths.map((p) => `writing ${p.glob}`),
+    ...access.tests.map((t) => `changing the existing test ${t.path}`),
   ];
   return [
     plainMd(brief),
@@ -129,6 +150,8 @@ export interface CodeBody {
   intentProblem: string | null;
   checks: Checks | null;
   unplanned: { what: string; why: string }[];
+  /** PIP-118: existing tests granted (by the plan or the owner). */
+  tests?: TestChange[];
   specIds: string[];
   links: Links;
   reviewDetails: string | null;
@@ -181,6 +204,7 @@ export function codeBody(b: CodeBody): string {
   const unplanned = b.unplanned.length
     ? ["## Access beyond the plan", "", ...b.unplanned.map((u) => `- ${u.what}: ${u.why}`)].join("\n")
     : "";
+  const testsMd = testsChangedMd(b.tests ?? []);
   const review = b.reviewDetails?.trim()
     ? `<details><summary>Review details</summary>\n\n${b.reviewDetails.trim()}\n\n</details>`
     : "";
@@ -188,10 +212,12 @@ export function codeBody(b: CodeBody): string {
     // PIP-108: what the owner decides on stays open (the risk, access beyond the plan); the worker's
     // text, the checks and the review fold under Details.
     if (unplanned) parts.push(unplanned);
+    if (testsMd) parts.push(testsMd);
     parts.push(...detailsMd([...tech, review], b.brief));
   } else {
     parts.push(...tech);
     if (unplanned) parts.push(unplanned);
+    if (testsMd) parts.push(testsMd);
   }
   const meta = [
     b.specIds.length ? `**Spec IDs:** ${b.specIds.join(", ")}` : "",

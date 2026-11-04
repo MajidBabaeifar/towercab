@@ -6,7 +6,7 @@
 // writing guide go into the system prompt file; the sandbox and the guard come from Towercab's own
 // `--settings` file.
 
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AgentName, agentTimeoutMin, loadAgent } from "./agents.ts";
@@ -250,6 +250,15 @@ export function claudeSettings(
     for (const rel of g.locked) {
       const p = join(resolve(g.checkout), rel);
       if (!denyWrite.includes(p)) denyWrite.push(p);
+    }
+    // REPO-13: existing tests no grant covers; only those still in the checkout can be named.
+    const have = new Set(denyWrite);
+    for (const rel of g.existing) {
+      const p = join(resolve(g.checkout), rel);
+      if (!have.has(p) && existsSync(p)) {
+        have.add(p);
+        denyWrite.push(p);
+      }
     }
   }
   const filesystem: Record<string, unknown> = { denyRead, denyWrite };

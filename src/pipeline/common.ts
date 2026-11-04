@@ -21,7 +21,7 @@ import { loadRepoFiles, RepoError, type RepoFiles } from "../repo/files.ts";
 import type { Risk } from "../risk.ts";
 import { checkoutRoot } from "../service.ts";
 import { check } from "../tools.ts";
-import { grantsFor, parseAccess } from "./access.ts";
+import { grantsFor, parseAccess, type TestAsk } from "./access.ts";
 import { cacheEnv } from "./sandbox.ts";
 import { type Access, type Question, SCHEMAS } from "./schemas.ts";
 
@@ -80,13 +80,21 @@ export interface PipeData {
   plan?: {
     md: string;
     access: Access;
+    /** PIP-115: test paths the plan named that are not existing tests, so got no grant line. */
+    droppedTests?: string[];
     e2e?: { tests: string[]; none_why: string } | null;
     /** PIP-106: the plan's plain brief. */
     brief?: string;
   };
   /** The merged plan's ticked access. */
   granted?: Access;
-  unplanned?: Access;
+  unplanned?: Omit<Access, "tests">;
+  /** PIP-116: existing tests the owner allowed or refused mid-build, and the one being asked about. */
+  testAllowed?: { path: string; why: string }[];
+  refusedTests?: { path: string; why: string }[];
+  testAsk?: TestAsk;
+  /** What the resumed worker is told about the owner's answer on a test. */
+  testNote?: string;
   /** The owner's last words for the worker (an answer, feedback). */
   answer?: string;
   /** Why the next build round runs: a repair's what and details. */
@@ -616,7 +624,7 @@ export async function note(cx: Ctx, m: Mission, step: Step, round: number, body:
 /** The merged plan's ticked access, from `plan.md` on the intents repo's main. */
 export async function grantedFromPlan(cx: Ctx, intent: Intent): Promise<Access> {
   const md = await cx.store.readFile(`${intent.dir}/plan.md`);
-  return md ? parseAccess(md) : { domains: [], paths: [] };
+  return md ? parseAccess(md) : { domains: [], paths: [], tests: [] };
 }
 
 /**
