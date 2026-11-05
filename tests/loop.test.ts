@@ -269,6 +269,14 @@ const staged = fake((m) => {
   return { done: ok() };
 });
 
+/** Like `staged`, but a build keeps working, so it holds its build slot until the test merges it (LOOP-61). */
+const building = fake((m) => {
+  if (m.stage === "pick" || m.stage === "design") return { done: ok() };
+  if (m.stage === "plan") return { done: wait("approve plan") };
+  if (m.stage === "build") return { poll: 3600 };
+  return { done: ok() };
+});
+
 const stageOf = (p: Pipe, id: string) => byIntent(p, id)[0]?.stage;
 const approvePlan = (p: Pipe, id: string) => p.loop.move(byIntent(p, id)[0]!, { event: "plan_merged" });
 const merged = (p: Pipe, id: string) =>
@@ -418,12 +426,12 @@ test("loop: the cap is twice ahead", async () => {
 
 test("loop: one intent builds at a time per repo", async () => {
   const p = new Pipe(TARGET, files({ id: A, u: 5, i: 5 }, { id: B }));
-  await p.start({}, { handlers: staged });
+  await p.start({}, { handlers: building });
   await ahead(p);
   expect([stageOf(p, A), stageOf(p, B)]).toEqual(["approval:plan", "approval:plan"]);
   approvePlan(p, A);
   await ahead(p, 2);
-  expect(stageOf(p, A)).toBe("approval:merge");
+  expect(stageOf(p, A)).toBe("build");
   // B's plan is approved while A builds: B is ready to build, not building, and sends no message.
   const messages = p.db.all("SELECT key FROM outbox").length;
   approvePlan(p, B);
@@ -437,26 +445,26 @@ test("loop: one intent builds at a time per repo", async () => {
   merged(p, A);
   await ahead(p, 3);
   expect(stageOf(p, A)).toBe("done");
-  expect(stageOf(p, B)).toBe("approval:merge");
+  expect(stageOf(p, B)).toBe("build");
   expect(p.loop.queued().size).toBe(0);
 
   // With `workers = 2` both build at once.
   const q = new Pipe(TARGET, files({ id: A, u: 5, i: 5 }, { id: B }));
-  await q.start({ repos: { web: { github: "owner/web", workers: 2 } } }, { handlers: staged });
+  await q.start({ repos: { web: { github: "owner/web", workers: 2 } } }, { handlers: building });
   await ahead(q);
   approvePlan(q, A);
   approvePlan(q, B);
   await ahead(q, 3);
-  expect([stageOf(q, A), stageOf(q, B)]).toEqual(["approval:merge", "approval:merge"]);
+  expect([stageOf(q, A), stageOf(q, B)]).toEqual(["build", "build"]);
 });
 
 test("loop: the free build slot goes to the highest priority plan-approved intent", async () => {
   const p = new Pipe(TARGET, files({ id: A }, { id: B, u: 3, i: 3 }, { id: C, u: 5, i: 5 }));
-  await p.start({}, { handlers: staged });
+  await p.start({}, { handlers: building });
   await ahead(p, 10);
   approvePlan(p, A);
   await ahead(p, 2);
-  expect(stageOf(p, A)).toBe("approval:merge");
+  expect(stageOf(p, A)).toBe("build");
   // B's plan is approved before C's, but C has the higher priority.
   approvePlan(p, B);
   p.clock.advance(60);
@@ -465,22 +473,22 @@ test("loop: the free build slot goes to the highest priority plan-approved inten
   expect([stageOf(p, B), stageOf(p, C)]).toEqual(["approval:plan", "approval:plan"]);
   merged(p, A);
   await ahead(p, 3);
-  expect([stageOf(p, B), stageOf(p, C)]).toEqual(["approval:plan", "approval:merge"]);
+  expect([stageOf(p, B), stageOf(p, C)]).toEqual(["approval:plan", "build"]);
   merged(p, C);
   await ahead(p, 3);
-  expect(stageOf(p, B)).toBe("approval:merge");
+  expect(stageOf(p, B)).toBe("build");
 });
 
 test("loop: a ready intent does not count as ahead", async () => {
   const p = new Pipe(TARGET, files({ id: A, u: 5, i: 5 }, { id: B }, { id: C }, { id: D, u: 3, i: 3 }));
-  await p.start({ repos: { web: { github: "owner/web", ahead: 1 } } }, { handlers: staged });
+  await p.start({ repos: { web: { github: "owner/web", ahead: 1 } } }, { handlers: building });
   await ahead(p, 12);
   // Two wait on the owner, which is the cap for `ahead = 1`.
   expect([stageOf(p, A), stageOf(p, B)]).toEqual(["approval:plan", "approval:plan"]);
   expect([C, D].map((id) => byIntent(p, id).length)).toEqual([0, 0]);
   approvePlan(p, A);
   await ahead(p, 12);
-  expect(stageOf(p, A)).toBe("approval:merge");
+  expect(stageOf(p, A)).toBe("build");
   expect(byIntent(p, C)).toHaveLength(1);
   expect(byIntent(p, D)).toEqual([]);
   // B is plan-approved but waits for the slot: it frees its place, so D is picked.
@@ -493,7 +501,7 @@ test("loop: a ready intent does not count as ahead", async () => {
 
 test("loop: a ready intent does not count toward the cap", async () => {
   const p = new Pipe(TARGET, files({ id: A, u: 5, i: 5 }, { id: B }, { id: C }));
-  await p.start({ repos: { web: { github: "owner/web", ahead: 1 } } }, { handlers: staged });
+  await p.start({ repos: { web: { github: "owner/web", ahead: 1 } } }, { handlers: building });
   await ahead(p, 12);
   approvePlan(p, A);
   await ahead(p, 12);
@@ -526,7 +534,7 @@ test("loop: start goes over the ahead limit", async () => {
 
 test("loop: start does not skip the build slot", async () => {
   const p = new Pipe(TARGET, files({ id: A, u: 5, i: 5 }, { id: B }));
-  await p.start({}, { handlers: staged });
+  await p.start({}, { handlers: building });
   await ahead(p);
   approvePlan(p, A);
   await ahead(p, 2);
@@ -540,7 +548,7 @@ test("loop: start does not skip the build slot", async () => {
   );
   await ahead(p, 3);
   expect(stageOf(p, B)).toBe("approval:plan");
-  expect(stageOf(p, A)).toBe("approval:merge");
+  expect(stageOf(p, A)).toBe("build");
 });
 
 test("loop: one mission per intent", async () => {
