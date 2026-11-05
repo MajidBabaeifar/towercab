@@ -635,8 +635,12 @@ export function releaseCard(h: Held, now: number): Card {
     mergeLabel: null,
     done: null,
     addRepo: null,
+    ...RELEASE_WAIT,
   };
 }
+
+/** A release card has no wait of its own: no ways out to offer and nothing stuck (the fields #173 added to `Card`). */
+const RELEASE_WAIT = { exits: [], stuck: false };
 
 function askOf(waiting: string | null): string {
   if (!waiting) return "Towercab needs you.";
