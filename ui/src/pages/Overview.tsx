@@ -1,5 +1,6 @@
 // The overview (UI-57 to UI-61, UI-78): what needs me, what is stuck, what is moving, what it costs.
 
+import { useEffect } from "preact/hooks";
 import type { Overview as Data } from "../../../src/ui/view.ts";
 import { Airspace } from "../Airspace.tsx";
 import {
@@ -12,6 +13,7 @@ import {
   UpNextList,
   WorkRow,
 } from "../components.tsx";
+import { pruneFolds } from "../folds.ts";
 import { Check, ListIcon, Moon } from "../icons.tsx";
 import { Link } from "../router.tsx";
 
@@ -23,6 +25,9 @@ function headline(n: number): string {
 export function OverviewPage({ data }: { data: Data }) {
   const { top, needs, problems, working, upNext, spend, airspace } = data;
   const oldest = needs.find((c) => c.since)?.since;
+  const waiting = needs.map((c) => c.intent).join(",");
+  // UI-191: a fold for an intent that no longer waits is forgotten.
+  useEffect(() => pruneFolds(waiting ? waiting.split(",") : []), [waiting]);
   return (
     <main class="page overview" id="main">
       <section class={`hero${needs.length ? " hero-needs" : " hero-calm"}`}>
@@ -60,7 +65,7 @@ export function OverviewPage({ data }: { data: Data }) {
           {needs.length ? (
             <div class="cards">
               {needs.map((c) => (
-                <NeedsCard key={c.intent} card={c} readOnly={top.readOnly} />
+                <NeedsCard key={c.intent} card={c} readOnly={top.readOnly} foldable />
               ))}
             </div>
           ) : (

@@ -903,6 +903,67 @@ code {
   margin: -6px -8px -6px 0;
 }
 
+/* UI-189..190: a folded Needs you card is its header row only: toggle, title, repo, ask, age. */
+.fold-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.fold-toggle:hover {
+  background: var(--surface-2);
+}
+
+.fold-toggle[aria-expanded="false"] .fold-chev {
+  transform: rotate(-90deg);
+}
+
+.needs-card.folded {
+  gap: 0;
+}
+
+.needs-card.folded > :not(.card-head),
+.needs-card.folded .card-head > :not(.fold-toggle):not(.fold-line) {
+  display: none;
+}
+
+.fold-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s1);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.fold-line > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fold-title {
+  flex: 0 10 auto;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.fold-ask {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.fold-repo,
+.fold-age {
+  flex: none;
+}
+
 .card-titles {
   display: flex;
   flex-direction: column;
