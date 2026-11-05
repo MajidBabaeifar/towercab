@@ -1,4 +1,4 @@
-// GitHub issues become intents (INT-20..28): every poll lists the issues of each `[repos]` repo, reads
+// GitHub and GitLab issues become intents (INT-20..28, INT-63..68): every poll lists the issues of each `[repos]` repo, reads
 // only the ones the owner wrote or labelled `towercab`, has a tool-less Claude run score them, proposes
 // the intent as a PR on the intents repo that only the owner's merge accepts, and tells the issue.
 // Issue text is untrusted: the list carries none, and the text of an ineligible issue is never fetched.
@@ -9,7 +9,9 @@ import { join } from "node:path";
 import { agentBudgetUsd, loadAgent } from "../agents.ts";
 import { type ClaudeRun, parseRun, prepareRun } from "../claude.ts";
 import type { Config, RepoConfig } from "../config.ts";
+import type { GitLabForge } from "../forge/gitlab.ts";
 import { isGitlab } from "../forge/types.ts";
+import type { Forge } from "../forge.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import { newId, slugOf } from "../intents/id.ts";
@@ -51,6 +53,8 @@ export interface IssueDeps {
   clock: Clock;
   store: IntentStore;
   github: GitHub;
+  /** INT-64: GitLab, for the repos on `gitlab:…`; without it those repos are not polled. */
+  gitlab?: GitLabForge | null;
   log(line: string): void;
   /** IDs of intents that have an unfinished mission (INT-28: a started intent is left alone). */
   busy(): Set<string>;
@@ -67,6 +71,8 @@ interface Listed {
   state: string;
   author: { login?: string } | null;
   labels: { name: string }[];
+  /** INT-63: set by a host that has confidential issues (GitLab). */
+  confidential?: boolean;
 }
 
 interface Viewed {
@@ -74,9 +80,30 @@ interface Viewed {
   body: string;
   author: { login?: string } | null;
   labels: { name: string }[];
+  confidential?: boolean;
 }
 
 const names = (labels: { name: string }[] | undefined): string[] => (labels ?? []).map((l) => l.name);
+
+/** What the poll asks of a host's issues: GitHub through `gh`, GitLab through its API. */
+type IssueApi = Pick<Forge, "listIssues" | "readIssue" | "commentOnIssue" | "addLabel" | "removeLabels">;
+
+/** The host that has `repo`'s issues; null when a GitLab repo has no `[gitlab]` to ask. */
+function apiFor(d: IssueDeps, repo: RepoConfig): IssueApi | null {
+  if (!isGitlab(repo.github)) return forgeOf(d.github);
+  return d.gitlab ?? null;
+}
+
+function host(d: IssueDeps, repo: RepoConfig): IssueApi {
+  const api = apiFor(d, repo);
+  if (!api) throw new Error(`${repo.github} is on GitLab but [gitlab] isn't configured`);
+  return api;
+}
+
+/** INT-63: the owner's login on the host `repo` is on. */
+function meFor(d: IssueDeps, repo: RepoConfig): string {
+  return isGitlab(repo.github) && d.gitlab ? d.gitlab.me : d.github.me;
+}
 
 /** INT-20: written by `me` (case-insensitive), or labelled `towercab`. */
 export function isEligible(
@@ -265,7 +292,7 @@ function bodyOf(s: ScoreResult): string {
   return [
     "## Problem",
     "",
-    problem || "See the GitHub issue.",
+    problem || "See the issue.",
     "",
     "## Proposed outcome",
     "",
@@ -302,12 +329,12 @@ async function addLabel(
   label: string,
   color: string,
 ): Promise<void> {
-  await forgeOf(d.github).addLabel(repo.github, n, label, color);
+  await host(d, repo).addLabel(repo.github, n, label, color);
 }
 
 /** INT-62: take labels off an issue in one call. */
 async function removeLabels(d: IssueDeps, repo: RepoConfig, n: number, labels: string[]): Promise<void> {
-  await forgeOf(d.github).removeLabels(repo.github, n, labels);
+  await host(d, repo).removeLabels(repo.github, n, labels);
 }
 
 /**
@@ -315,6 +342,10 @@ async function removeLabels(d: IssueDeps, repo: RepoConfig, n: number, labels: s
  * A failed read throws, so the issue is tried again and never counts as set by someone else.
  */
 async function queuedByOwner(d: IssueDeps, repo: RepoConfig, n: number): Promise<boolean> {
+  if (isGitlab(repo.github)) {
+    const who = await d.gitlab!.labelAddedBy(repo.github, n, QUEUED_LABEL);
+    return !!who && who.toLowerCase() === meFor(d, repo).toLowerCase();
+  }
   const out = await gh(
     d,
     repo.github,
@@ -355,7 +386,7 @@ async function announce(
     place,
     lost,
   });
-  await forgeOf(d.github).commentOnIssue(repo.github, issue.number, body);
+  await host(d, repo).commentOnIssue(repo.github, issue.number, body);
   await addLabel(d, repo, issue.number, QUEUED_LABEL, "0e8a16");
 }
 
@@ -463,7 +494,7 @@ async function propose(
 
 /** INT-25: tell the issue its intent PR waits for the owner, then label it. */
 async function proposed(d: IssueDeps, repo: RepoConfig, issue: Listed, url: string): Promise<void> {
-  await forgeOf(d.github).commentOnIssue(repo.github, issue.number, proposedComment(url));
+  await host(d, repo).commentOnIssue(repo.github, issue.number, proposedComment(url));
   await addLabel(d, repo, issue.number, PROPOSED_LABEL, "fbca04");
 }
 
@@ -503,7 +534,9 @@ async function pollIssue(
     }
     return;
   }
-  if (!isEligible(issue, d.github.me)) return;
+  // INT-63: a confidential issue is never read, whoever wrote it or labelled it.
+  if (issue.confidential) return;
+  if (!isEligible(issue, meFor(d, repo))) return;
 
   // INT-25: an intent the owner merged is announced once, never written again.
   if (intent) {
@@ -532,7 +565,7 @@ async function pollIssue(
     if (!labelled) return;
     if (latest!.state === "CLOSED") {
       // INT-62: the comment first, then the labels, so a failed comment is tried again.
-      await forgeOf(d.github).commentOnIssue(
+      await host(d, repo).commentOnIssue(
         repo.github,
         issue.number,
         closedProposalComment(prUrl(intents, latest!.number)),
@@ -551,15 +584,16 @@ async function pollIssue(
   }
   const byOwner = labels.includes(QUEUED_LABEL) && (await queuedByOwner(d, repo, issue.number));
 
-  const text = await forgeOf(d.github).readIssue(repo.github, issue.number);
+  const text = await host(d, repo).readIssue(repo.github, issue.number);
   const view: Viewed = {
     title: text.title,
     body: text.body,
     author: text.author === null ? null : { login: text.author },
     labels: text.labels.map((name) => ({ name })),
+    confidential: text.confidential === true,
   };
-  // The labels may have changed since the list.
-  if (!isEligible(view, d.github.me)) return;
+  // The issue may have become confidential, or lost its label, since the list.
+  if (view.confidential || !isEligible(view, meFor(d, repo))) return;
 
   const scored = await score(d, issueText(view), repo.name);
   if (scored.kind === "later") {
@@ -568,14 +602,14 @@ async function pollIssue(
   }
   if (scored.kind === "bad") {
     d.log(`${issue.url}: scoring failed twice: ${scored.why}`);
-    await forgeOf(d.github).commentOnIssue(repo.github, issue.number, failedComment());
+    await host(d, repo).commentOnIssue(repo.github, issue.number, failedComment());
     await addLabel(d, repo, issue.number, FAILED_LABEL, "d93f0b");
     return;
   }
   const s = scored.value;
   const n: NewIntent = {
     repo: repo.name,
-    title: plainLine(s.title, TITLE_MAX) || `GitHub issue #${issue.number}`,
+    title: plainLine(s.title, TITLE_MAX) || `Issue #${issue.number}`,
     u: s.u,
     i: s.i,
     a: autonomyFrom(names(view.labels), d.config.intents.issueA),
@@ -609,15 +643,17 @@ export async function pollIssues(d: IssueDeps): Promise<void> {
   const errors: string[] = [];
   const poll: Poll = { intents: d.store.github(), taken: null };
   for (const repo of d.config.repos.values()) {
-    // GL-3: GitHub's issues only; a GitLab repo has none to read here (GitLab issues are out of scope).
-    if (isGitlab(repo.github)) continue;
+    // INT-64: a GitLab repo is polled through `[gitlab]`; without it there is nothing to ask.
+    const api = apiFor(d, repo);
+    if (!api) continue;
     try {
-      const listed: Listed[] = (await forgeOf(d.github).listIssues(repo.github, LIMIT)).map((r) => ({
+      const listed: Listed[] = (await api.listIssues(repo.github, LIMIT)).map((r) => ({
         number: r.number,
         url: r.url,
         state: r.state,
         author: r.author === null ? null : { login: r.author },
         labels: r.labels.map((name) => ({ name })),
+        ...(r.confidential === undefined ? {} : { confidential: r.confidential }),
       }));
       const listing = await d.store.list();
       const known = new Map<string, Intent>();

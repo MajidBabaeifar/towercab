@@ -1,6 +1,8 @@
 // PR texts (PIP-46, PIP-48, PIP-52): the worker writes what a person reads; code adds only facts it
 // owns (links, check results, the footer).
 
+import { gitlabPath, isGitlab } from "../forge/types.ts";
+
 export interface Footer {
   intentUrl: string | null;
   costUsd: number;
@@ -179,10 +181,18 @@ export interface CodeBody {
 /**
  * INT-27: `Fixes #<n>` for an issue in the PR's own repo, which closes it on merge; an issue
  * anywhere else is only linked, since `Fixes` would not close it.
+ * INT-67: on a GitLab project it is `Closes #<n>` for an issue of the same project, and another
+ * project's issue is named by its full reference (`group/project#<n>`), which does not close it.
  */
 export function issueLine(issue: { url: string | null; repo: string } | undefined): string {
   const url = issue?.url;
   if (!issue || !url) return "";
+  if (isGitlab(issue.repo)) {
+    const g = /^https:\/\/[^/]+\/(.+?)\/-\/issues\/(\d+)$/.exec(url);
+    if (!g) return `From the issue: ${url}`;
+    if (g[1]!.toLowerCase() === gitlabPath(issue.repo).toLowerCase()) return `Closes #${g[2]}`;
+    return `From the issue: ${g[1]}#${g[2]}`;
+  }
   const m = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/issues\/(\d+)$/.exec(url);
   if (m && m[1]!.toLowerCase() === issue.repo.toLowerCase()) return `Fixes #${m[2]}`;
   return `From the issue: ${url}`;

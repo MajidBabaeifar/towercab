@@ -343,6 +343,7 @@ async function run(
           clock: systemClock,
           store,
           github: w.github!,
+          gitlab: w.gitlab,
           handlers: handlers(),
           log: (l) => log.emit(l),
           sender: w.config.telegram ? new Telegram(w.config.telegram) : null,

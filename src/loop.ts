@@ -19,6 +19,7 @@ import {
   StoppedError,
   setFeaturesRun,
 } from "./features.ts";
+import type { GitLabForge } from "./forge/gitlab.ts";
 import { isGitlab } from "./forge/types.ts";
 import { MERGE_METHOD } from "./forge.ts";
 import { retireBranch } from "./github/branches.ts";
@@ -119,7 +120,7 @@ const INTENTS_POLL_S = 60;
 const UPDATE_POLL_S = 60;
 /** LOOP-108: a step that wanted to start a child during a drain is asked again after this long. */
 const DRAIN_RETRY_S = 10;
-/** INT-21: GitHub issues are listed every 5 minutes. */
+/** INT-21, INT-64: GitHub and GitLab issues are listed every 5 minutes. */
 export const ISSUES_POLL_S = 300;
 
 export interface LoopDeps {
@@ -130,6 +131,8 @@ export interface LoopDeps {
   clock: Clock;
   store: IntentStore;
   github: Host;
+  /** INT-64: GitLab, for the issues of `gitlab:…` repos. */
+  gitlab?: GitLabForge | null;
   handlers: Handlers;
   log(line: string): void;
   /** Delivers outbox rows (Telegram), or null. */
@@ -1063,6 +1066,7 @@ export class Loop {
       clock: this.d.clock,
       store: this.d.store,
       github: this.d.github,
+      gitlab: this.d.gitlab ?? null,
       log: this.d.log,
       busy: () => new Set(unfinished(this.d.db).map((m) => m.intent)),
     }).then(

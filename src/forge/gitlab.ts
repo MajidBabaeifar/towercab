@@ -3,6 +3,7 @@
 
 import type { GitLabConfig } from "../config.ts";
 import { readTokenFile } from "../config.ts";
+import type { IssueRow, IssueText } from "../forge.ts";
 import type { Http } from "../github/app.ts";
 import { type Step, stageComment, stageMarker } from "../github/comments.ts";
 import type { PrComment, PrReview, PrState } from "../github/prs.ts";
@@ -29,6 +30,8 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const arr = (v: unknown): Obj[] => (Array.isArray(v) ? v.filter(isObj) : []);
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
 
 /** What to do about a merge request, from GitLab's `detailed_merge_status` (GL-5). */
 export type MergeStep = "merge" | "update" | "conflict" | "ready" | "wait";
@@ -319,6 +322,93 @@ export class GitLabForge {
       reviews,
       comments,
     };
+  }
+
+  private issue(slug: string, iid: number, tail = ""): string {
+    return `/projects/${encodeURIComponent(gitlabPath(slug))}/issues/${iid}${tail}`;
+  }
+
+  /**
+   * INT-64: the newest issues, open and closed, at most `limit`, without their text. A missing
+   * `confidential` flag counts as confidential (INT-63).
+   */
+  async listIssues(slug: string, limit: number): Promise<IssueRow[]> {
+    const base = `/projects/${encodeURIComponent(gitlabPath(slug))}/issues?state=all&order_by=created_at&sort=desc`;
+    const rows: Obj[] = [];
+    for (let page = 1; page <= MAX_PAGES && rows.length < limit; page++) {
+      const got = await this.ok("GET", `${base}&per_page=${PER_PAGE}&page=${page}`);
+      const part = Array.isArray(got) ? arr(got) : [];
+      rows.push(...part);
+      if (part.length < PER_PAGE) break;
+    }
+    return rows.slice(0, limit).flatMap((r) =>
+      typeof r.iid === "number"
+        ? [
+            {
+              number: r.iid,
+              url: str(r.web_url),
+              state: str(r.state) === "closed" ? "CLOSED" : "OPEN",
+              author: isObj(r.author) ? str(r.author.username) || null : null,
+              labels: strings(r.labels),
+              confidential: r.confidential !== false,
+            },
+          ]
+        : [],
+    );
+  }
+
+  /** INT-63: one issue's text, read only after the list said it may be. */
+  async readIssue(slug: string, iid: number): Promise<IssueText> {
+    const v = await this.ok("GET", this.issue(slug, iid));
+    if (!isObj(v)) throw new Error("GitLab sent no issue");
+    return {
+      title: str(v.title),
+      body: str(v.description),
+      author: isObj(v.author) ? str(v.author.username) || null : null,
+      labels: strings(v.labels),
+      confidential: v.confidential !== false,
+    };
+  }
+
+  /** INT-66: a note on the issue. */
+  async commentOnIssue(slug: string, iid: number, text: string): Promise<void> {
+    await this.ok("POST", this.issue(slug, iid, "/notes"), { body: text });
+  }
+
+  /**
+   * INT-65: put a label on an issue, creating it in the project first when it is missing. A label that
+   * exists (the project's or its group's) is left as it is.
+   */
+  async addLabel(slug: string, iid: number, label: string, color: string): Promise<void> {
+    const made = await this.call("POST", `/projects/${encodeURIComponent(gitlabPath(slug))}/labels`, {
+      name: label,
+      color: `#${color}`,
+      description: "Towercab",
+    });
+    if (!(made.status >= 200 && made.status < 300) && made.status !== 409) {
+      throw failure(
+        "POST",
+        `/projects/${encodeURIComponent(gitlabPath(slug))}/labels`,
+        made.status,
+        made.json,
+      );
+    }
+    await this.ok("PUT", this.issue(slug, iid), { add_labels: label });
+  }
+
+  async removeLabels(slug: string, iid: number, labels: string[]): Promise<void> {
+    if (!labels.length) return;
+    await this.ok("PUT", this.issue(slug, iid), { remove_labels: labels.join(",") });
+  }
+
+  /** INT-61: who last added `label` to the issue, or null. */
+  async labelAddedBy(slug: string, iid: number, label: string): Promise<string | null> {
+    let who: string | null = null;
+    for (const e of await this.list(this.issue(slug, iid, "/resource_label_events"))) {
+      if (e.action !== "add" || !isObj(e.label) || e.label.name !== label) continue;
+      who = isObj(e.user) ? str(e.user.username) || null : null;
+    }
+    return who;
   }
 
   /** GL-9: the token's scopes and expiry (`GET /personal_access_tokens/self`, any kind of access token). */
