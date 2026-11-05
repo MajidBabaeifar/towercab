@@ -327,6 +327,8 @@ green by weakening the test.
   them and publish refuses a diff that changes or deletes them. New test files are fine. A locked
   test that reads at the new head exactly as on the base branch came in with a merge of the base (a
   conflict round), so publish lets it through.
+- Which tests stay locked is narrowed by PIP-151 (tests the PR added or its plan allowed are not locked),
+  PIP-152 (an owner's allow unlocks a path) and PIP-153 (a forced edit that comes with a merge of the base).
 - Verified by: `pipeline: repair can't edit pushed tests`, `pipeline: a merge of the base may change pushed tests`
 
 ### PIP-32 · Verifier
@@ -1472,6 +1474,45 @@ If the GitHub App can't read code scanning alerts, the owner gets one step to gr
   it and shows the step again.
 - No mission waits on it and nothing is sent as a message (LOOP-14).
 - Verified by: `pipeline: a refused alert read becomes one owner step`, `pipeline: a refused alert read is not retried until the step is ticked`
+
+### PIP-151 · A change keeps editing the tests it added itself
+
+Repair rounds can edit a test file the pull request created or its plan allowed; only tests that already exist on the base branch stay locked.
+
+- The lock of PIP-31 covers a test file (PIP-30's globs) only when it exists on `origin/<base>` and is
+  not granted. A file absent on the base (the PR added it), or granted by the plan or the owner (REPO-13,
+  PIP-116, PIP-141), is never locked, in the guard rules (`locked` in `guard.json`, PIP-29) and in
+  publish's check, in every later round: CI fixes, review fixes, answers and conflict rounds.
+- "Absent on the base" is read at the base branch tip fetched for the round, so a file whose path was
+  added to the base by someone else meanwhile counts as a base file and is locked.
+- A test file that exists on the base stays locked even if the PR edited it in its first push.
+- Verified by: `pipeline: a repair round may edit a test the pull request added`, `pipeline: a repair round that edits a test from the base still waits`, `pipeline: a granted test is not locked in a repair round`
+
+### PIP-152 · An owner's allow also unlocks a test locked by the repair lock
+
+`towercab answer <id> allow <path>` (or a reply `allow <path>` on the PR) lets the worker edit a test that PIP-31 locked, for the rest of that mission.
+
+- `allow <path>` is valid for a path that is in `data.refusedTests` (PIP-141) or that a repair round was
+  stopped on because of the lock (guard or publish). A stop on the lock records the path as
+  `data.lockedTests` and the question or wait names it, with the line "Reply `allow <path>` to let the
+  worker edit it."
+- An allow moves the path to the grants (`by: owner`); the next guard rules and publish check leave it
+  unlocked in every later round of the mission, and the command fails for any other path with the error
+  of PIP-141 listing the refused and locked paths. Towercab replies as in PIP-140 and the blocked
+  mission continues.
+- The grant is for this mission only; it does not outlast a merge or a new mission.
+- Verified by: `cli: answer allow unlocks a test locked in a repair round`, `pipeline: an allowed locked test passes publish in later rounds`, `pipeline: a stop on the repair lock names the path and how to allow it`
+
+### PIP-153 · A merge of the base may force an edit to a locked test
+
+A conflict round may change a locked test where the base's own changes force it, and publish accepts that as part of the merge.
+
+- In a conflict round (PIP-134, PIP-22), a hunk in a locked test (PIP-31) that overlaps lines the base
+  changed since the merge base is accepted by publish and the guard, as lines that come from the base are
+  in PIP-31 (for example a call that follows an interface changed on the base). Hunks elsewhere in the
+  file still refuse.
+- Only the conflict round gets this; a CI, review or answer round does not.
+- Verified by: `pipeline: a merge of the base may adapt a pushed test to a changed interface`, `pipeline: a conflict round still can't change other lines of a pushed test`
 
 ### PIP-130 · The design treats IDs of other open spec PRs as taken
 
