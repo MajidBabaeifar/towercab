@@ -610,9 +610,11 @@ For a GitLab repo, Towercab reads an open issue only if the owner wrote it or la
   author is the owner's GitLab user, or the label `towercab` is on the issue, exactly as INT-20 says
   for GitHub. Any other issue is never read: its title, description and labels reach no Claude run, no
   log and no file.
-- Confidential issues are not read at all, even the owner's own or a labelled one, because the intent
-  text lands in an intents repo that more people may see than the issue. They are skipped without
-  being opened, and the owner can file the work as an intent file or with the `/intent` skill.
+- Confidential issues are skipped whoever wrote them: the owner's own and labelled ones too, because
+  the intent text lands in an intents repo that more people may see than the issue. The check uses the
+  `confidential` flag of the list answer, so the title, description and labels of such an issue reach
+  no Claude run, no log and no file. The owner can file that work as an intent file or with the
+  `/intent` skill.
 - Merge requests are not issues and are skipped.
 - Verified by: `gitlab issues: the owner's issue is eligible`, `gitlab issues: a towercab label makes another author's issue eligible`, `gitlab issues: an unlabelled issue by someone else is never read`, `gitlab issues: a confidential issue is never read`
 
@@ -664,14 +666,17 @@ A GitLab issue is scored, proposed as an intent PR, deduplicated and label-check
 
 - INT-22, INT-23, INT-26, INT-29 and INT-60..62 hold with the GitLab issue's URL in `issue:`, and the
   intent's `source` is `issue`. The scoring run gets only the title, description and labels.
-- The intents repo stays on GitHub; only the issue side is GitLab. A GitHub and a GitLab issue never
-  share an intent, because dedupe is on the full `issue:` URL.
+- Proposals go wherever the intents repo is hosted, which is GitHub today: the proposal is a GitHub
+  pull request on the intents repo (INT-23), never a GitLab merge request, and no GitLab-hosted
+  intents repo is built here. Moving the intents repo is a separate intent.
+- A GitHub and a GitLab issue never share an intent, because dedupe is on the full `issue:` URL.
 - Verified by: `gitlab issues: an issue becomes one intent PR`, `gitlab issues: a done intent blocks its issue`, `gitlab issues: a labelled issue with no intent is proposed once`, `gitlab issues: the scoring run gets no tools`
 
 ## Out of scope
 
 - Other stores (Notion, Jira).
-- Confidential GitLab issues (INT-63).
+- Confidential GitLab issues, including the owner's own (INT-63).
+- An intents repo hosted on GitLab (INT-68).
 - Intents drafted from monitoring alerts.
 - Issues by other people without the `towercab` label (INT-20).
 - The backfill's cost (INT-39) in the spend metrics: it runs outside any mission, so only its own
