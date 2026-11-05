@@ -18,6 +18,8 @@ const prefixOf = (id: string) => id.slice(0, id.lastIndexOf("-"));
  */
 async function reserveIds(cx: Ctx, m: Mission): Promise<void> {
   const intent = await intentOf(cx, m);
+  // A fresh attempt after the spec PR opened or merged: the IDs on base or in that PR are this intent's own.
+  if (intent.specPr || m.spec_pr) return;
   const line = /spec IDs:\s*([^\n]+)/i.exec(intent.sections.get("Proposed outcome") ?? "");
   const reserved = line ? parseIds(line[1]!) : [];
   if (!reserved.length) return;
