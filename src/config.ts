@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
+import { type Capacity, defaultParallel, readCapacity } from "./capacity.ts";
 
 export const DEFAULT_NETWORK = [
   "registry.npmjs.org",
@@ -107,10 +108,14 @@ export function loadConfig(file: string): Config {
   } catch (e) {
     throw new ConfigError(`config: ${file}: ${(e as Error).message.split("\n")[0]}`);
   }
-  return parseConfig(raw, file);
+  return parseConfig(raw, file, readCapacity);
 }
 
-export function parseConfig(raw: Record<string, unknown>, file: string): Config {
+/**
+ * `capacity` reads the machine for the default of `[agent].parallel` (LOOP-103); without it the default
+ * is 1, so tests do not depend on the host.
+ */
+export function parseConfig(raw: Record<string, unknown>, file: string, capacity?: () => Capacity): Config {
   const r = new Reader(file);
   const intents = r.table(raw.intents ?? raw.tasks, "intents");
   const agent = r.table(raw.agent, "agent");
@@ -130,7 +135,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string): Config 
     agent: {
       model: r.word(agent, "agent", "model", "opus"),
       reviewModel: r.optWord(agent, "agent", "review_model"),
-      parallel: r.int(agent, "agent", "parallel", 1, 1, 16),
+      parallel: r.int(agent, "agent", "parallel", capacity ? defaultParallel(capacity()) : 1, 1, 16),
       buildTimeoutMin: r.int(agent, "agent", "build_timeout", 60, 1, 1440),
       reviewTimeoutMin: r.int(agent, "agent", "review_timeout", 15, 1, 1440),
       checkTimeoutMin: r.int(agent, "agent", "check_timeout", 10, 1, 1440),

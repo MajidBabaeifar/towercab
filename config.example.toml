@@ -17,8 +17,8 @@ issue_a = 3
 model = "opus"
 # Claude model for the reviews (one step above the worker's when left out).
 review_model = "sonnet"
-# How many workers run at once (1-16).
-parallel = 1
+# How many workers run at once (1-16). Leave it out to size it from the machine: the smaller of 4, cores / 3 and free memory GB / 1.5.
+parallel = 4
 # Minutes a build may run (1-1440).
 build_timeout = 60
 # Minutes a review may run (1-1440).

@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..102, LOOP-105..109, LOOP-110..112, LOOP-115..116 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-115..116 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -626,8 +626,9 @@ With no `[agent].parallel` in the config, Towercab runs as many Claude runs at o
 `towercab status` and the overview show how many runs are going against the limit and how long the oldest intent has waited only for a free slot, and `doctor` suggests a higher limit when that wait is long and the machine has room.
 
 - A run that is asked for while every slot is taken (LOOP-4) stamps `data.slot_wait_since` on its mission
-  once, in the same `apply`; the stamp is cleared when the run starts or the mission leaves that step. Waiting
-  for anything else (the owner, CI, a repo's `ahead` or `workers` limits, a cooling model) does not set it.
+  once, as a data stamp (`patchData`, not a move through `machine.apply`) next to `data.slot_wait_step`, the
+  stage and step it was set at; the stamp is cleared when the run starts, and a stamp whose step is no longer
+  the mission's, or on a mission that has a child, is ignored. Waiting for anything else (the owner, CI, a repo's `ahead` or `workers` limits, a cooling model) does not set it.
 - `status` prints `running: <n> of <limit> runs` in the active-work section (LOOP-13) and, when any mission
   has the stamp, `oldest wait for a free slot: <intent> <duration>`; with none, the second line is absent.
   The overview shows the same two facts in plain words (UI view model reads the same data as `status`).

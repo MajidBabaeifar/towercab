@@ -1,5 +1,6 @@
 // `towercab status` (LOOP-13): what is happening, in plain lines, with or without a running loop.
 
+import { slotLines } from "./capacity.ts";
 import type { Db } from "./db.ts";
 import type { Listing } from "./intents/types.ts";
 import { exitsOf, isWait, isWorking, waitInfo } from "./machine.ts";
@@ -30,6 +31,8 @@ export interface StatusInput {
   queued: Set<number>;
   /** A repo's `workers` (LOOP-110); 1 when absent. */
   workers?: (repo: string) => number;
+  /** `[agent].parallel` (LOOP-104); the runs line is left out when absent. */
+  limit?: number;
 }
 
 const STEP: Record<string, string> = {
@@ -82,6 +85,8 @@ export function renderStatus(s: StatusInput): string {
     const model = m.child_model ? ` · ${m.child_model}` : "";
     lines.push(`- ${title(m)} · ${STEP[m.stage] ?? m.stage}${model} · since ${time(m.updated, s.now)}`);
   }
+  // LOOP-104: runs going against `[agent].parallel`, and the longest wait for a free one.
+  if (s.limit !== undefined) lines.push(...slotLines(s.db, s.now, s.limit));
   const onMe = ms.filter((m) => (isWait(m.stage) || onSteps(m)) && !s.queued.has(m.id));
   if (onMe.length) {
     lines.push("waiting on you:");

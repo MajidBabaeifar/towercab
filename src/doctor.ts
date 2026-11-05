@@ -2,6 +2,7 @@
 // self-update check (LOOP-35): config, tools and modules only, no network.
 
 import { existsSync, statSync } from "node:fs";
+import { type Capacity, readCapacity, slotHint } from "./capacity.ts";
 import type { Config } from "./config.ts";
 import { appKeyPath, clonePath } from "./config.ts";
 import type { Db } from "./db.ts";
@@ -35,6 +36,9 @@ export async function doctor(o: {
   quick: boolean;
   /** The database, for the readiness lines (LOOP-72). */
   db?: Db;
+  /** Unix seconds and the machine's cores and memory, for the slots line (LOOP-104); real ones when absent. */
+  now?: number;
+  capacity?: Capacity;
 }): Promise<DoctorResult> {
   const { config, home, tools } = o;
   const lines: string[] = [`config: ${config.file}`, `home: ${home.root}`, `node: ${process.version}`];
@@ -105,6 +109,16 @@ export async function doctor(o: {
           `${name}: ${i.state === "waived" ? `waived ${i.item}: ${i.words}` : `${i.state} ${i.item}: ${i.words}`}`,
         );
     }
+  }
+  // LOOP-104: a hint (never a failure) when runs wait long for a slot and the machine has room.
+  if (o.db) {
+    const hint = slotHint({
+      db: o.db,
+      now: o.now ?? Date.now() / 1000,
+      limit: config.agent.parallel,
+      capacity: o.capacity ?? readCapacity(),
+    });
+    if (hint) lines.push(hint);
   }
   // LOOP-84: a warning (never a failure) when the host needs approvals that Towercab isn't waiting for.
   if (o.github) {

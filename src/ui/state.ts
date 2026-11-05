@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { slotsText } from "../capacity.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import type { ProposedState } from "../github/proposed.ts";
@@ -1488,6 +1489,7 @@ export async function overview(src: UiSources): Promise<Overview> {
     working: working.length,
     queued: queued.length,
     countsText: counts.join(" · "),
+    slotsText: slotsText(src.db, s.now, src.config.agent.parallel),
     spendToday: money(sp.today),
     budget: budget === null ? null : `of ${money(budget)}`,
     overBudget: budget !== null && sp.today >= budget,
