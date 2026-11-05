@@ -882,9 +882,13 @@ While a repo's settings are being moved into the repo, the page says where that 
   settings was closed; Towercab still keeps them.`, with an "Open the move PR again" button that posts
   `{action: "repo-move", repo}`. The reply is `Opened PR #<n>.` or REPO-19's refusal; the button is
   hidden while a move PR is open and once moved, and the line goes with it.
+- Until Towercab has run this version for 24 hours (REPO-19), the section shows one line, `Saving and
+  moving settings open in <n> hours: Towercab is checking this version first.`, Save and the button are
+  off, and the values are shown read-only from what Towercab keeps. `settings` in the API carries
+  `waitHours` (null once the wait is over).
   The Settings section, like the rest of the Repos page, fits 360 px, works in light and dark and by
   keyboard, with labels on the fields (UI-68, UI-145).
-- Verified by: `ui: the move PR shows on the repo page`, `ui: a closed move PR offers to open it again`, `ui: settings fit a phone and work by keyboard`, `ui: screenshots light, dark and mobile`
+- Verified by: `ui: the move PR shows on the repo page`, `ui: a closed move PR offers to open it again`, `ui: settings are read-only during the 24-hour wait`, `ui: settings fit a phone and work by keyboard`, `ui: screenshots light, dark and mobile`
 
 ### UI-155 · Not-ready badge on the Repos tab
 
