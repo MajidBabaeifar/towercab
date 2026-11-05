@@ -32,7 +32,11 @@ export type GuardDecision = { block: false } | { block: true; reason: string };
 export const ASK = "if you need it, finish what you can and return status access with this path and why";
 
 /** What an existing test's reason ends with: how the worker asks for it (PIP-116). */
-export const ASK_TEST = "if you need it, finish what you can and return status access with this test and why";
+export const ASK_TEST =
+  "if you need it, carry on with everything that doesn't need it, note every guarded test you need and why, then return one status access listing them all";
+
+/** PIP-137: why a held helper edit is put to the owner. */
+export const HELPER_WHY = "changes existing helper code, not only additions";
 
 /**
  * The shape of `guard.json` (LOOP-106). Raise it when a key is added or changes meaning: a hook that
@@ -450,6 +454,7 @@ export function publishRefusals(
   sinceHead: { status: string; path: string }[],
   locked: string[],
   existingChanged: string[] = [],
+  heldHelpers: string[] = [],
 ): string[] {
   const bad = changed.filter((p) => protectedPaths.blocks(p)).map((p) => `${p} (protected)`);
   for (const { status, path } of sinceHead) {
@@ -458,5 +463,134 @@ export function publishRefusals(
   for (const p of existingChanged) {
     if (!bad.some((b) => b.startsWith(`${p} `))) bad.push(`${p} (an existing test)`);
   }
+  for (const p of heldHelpers) {
+    if (!bad.some((b) => b.startsWith(`${p} `))) bad.push(`${p} (an existing helper)`);
+  }
   return bad;
+}
+
+/** PIP-137: helpers are code files; a snapshot or fixture is never one, whatever it contains. */
+const HELPER_CODE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
+
+/** What marks a test case in a file (ERE, for `git grep -E`): `it(`, `test(`, `describe(` and other runners' forms. */
+const TEST_CASE =
+  "(^|[^[:alnum:]_.$])(it|test|describe)(\\.[[:alnum:]_]+)*[[:space:]]*[(`]|def test_|#\\[test\\]|func Test|@Test([^[:alnum:]_]|$)|fn test_";
+
+/**
+ * PIP-137: among `existing` (REPO-13), the helpers: code files at `origin/<base>` that hold no test
+ * case, such as `tests/helpers/**`. A file with any test case is never one, so the guard stays
+ * as it is for tests.
+ */
+export async function helperTests(
+  tools: Tools,
+  checkout: string,
+  base: string,
+  existing: string[],
+): Promise<string[]> {
+  const code = existing.filter((p) => HELPER_CODE.test(p));
+  if (!code.length) return [];
+  const ref = `refs/remotes/origin/${base}`;
+  const r = await tools.run(
+    "git",
+    [
+      "-c",
+      "core.hooksPath=/dev/null",
+      "-c",
+      "core.fsmonitor=false",
+      "grep",
+      "-l",
+      "-z",
+      "-I",
+      "-E",
+      "-e",
+      TEST_CASE,
+      ref,
+    ],
+    { cwd: checkout, timeoutMs: 300_000 },
+  );
+  // Exit 1 = no file has a test case.
+  if (r.code !== 0 && r.code !== 1)
+    throw new Error(`git grep ${ref}: ${r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`}`);
+  const withCases = new Set(
+    r.stdout
+      .split("\0")
+      .filter(Boolean)
+      .map((p) => p.slice(ref.length + 1)),
+  );
+  return code.filter((p) => !withCases.has(p));
+}
+
+const HELPER_START =
+  /^(?:import\s+(?:type\s+)?[\w*{]|export\s+(?:async\s+)?function\b|export\s+(?:const|type|interface)\b)/;
+const HELPER_CLOSE = /^[})\]]/;
+const HELPER_COMMENT = /^\s*(?:\/\/|\/\*|\*)/;
+const HELPER_RUNS =
+  /\b(?:vi\.(?:mock|doMock|hoisted|stubGlobal|stubEnv)|beforeEach|afterEach|beforeAll|afterAll)\b/;
+
+/**
+ * PIP-137: whether a `git diff -U0` of a helper is *free*: no line removed or changed, and every added
+ * block is whole top-level statements, each a new import or exported function, type, interface or
+ * constant. Mocks, hooks, other top-level code and indented lines at the start of a block (an edit
+ * inside what is already there) are not. No diff is free.
+ */
+export function isFreeHelperDiff(diff: string): boolean {
+  // A deleted file or a changed mode has no hunk to read, and is not an addition.
+  if (/^(?:deleted file mode|old mode|new mode|rename |copy )/m.test(diff)) return false;
+  let hunks = 0;
+  let starts = true;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("@@")) {
+      hunks++;
+      starts = true;
+      continue;
+    }
+    if (hunks === 0 || line === "") continue;
+    if (line.startsWith("-") || line.startsWith("\\")) return false;
+    if (!line.startsWith("+")) continue;
+    const t = line.slice(1);
+    if (HELPER_RUNS.test(t)) return false;
+    if (t.trim() === "" || HELPER_COMMENT.test(t)) continue;
+    // The block must begin with a statement of its own, not in the middle of one.
+    if (starts) {
+      if (!HELPER_START.test(t)) return false;
+      starts = false;
+    } else if (!/^\s/.test(t) && !HELPER_START.test(t) && !HELPER_CLOSE.test(t)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * PIP-137: the helpers among `helpers` whose change in the checkout (committed or not, since the merge
+ * base with `origin/<base>`) is not free and so is held; a helper that reads as on the base branch is
+ * not changed (a merge brought it in). A deleted helper is held.
+ */
+export async function heldHelpers(
+  tools: Tools,
+  checkout: string,
+  base: string,
+  helpers: string[],
+): Promise<string[]> {
+  if (!helpers.length) return [];
+  const ref = `refs/remotes/origin/${base}`;
+  const run = async (args: string[], ok: number[] = [0]) => {
+    const r = await tools.run(
+      "git",
+      ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args],
+      { cwd: checkout, timeoutMs: 300_000 },
+    );
+    if (r.code === null || !ok.includes(r.code))
+      throw new Error(`git ${args[0]}: ${r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`}`);
+    return r;
+  };
+  const mb = (await run(["merge-base", ref, "HEAD"])).stdout.trim();
+  const changed = new Set((await run(["diff", "--name-only", "-z", mb])).stdout.split("\0").filter(Boolean));
+  const held: string[] = [];
+  for (const p of helpers.filter((h) => changed.has(h))) {
+    if ((await run(["diff", "--quiet", ref, "--", p], [0, 1])).code === 0) continue;
+    const diff = (await run(["diff", "-U0", "--no-color", mb, "--", p])).stdout;
+    if (!isFreeHelperDiff(diff)) held.push(p);
+  }
+  return held;
 }

@@ -38,6 +38,14 @@ What to do:
 4. Every test file that already exists on the base branch is read-only for the worker. If the build
    must change or delete one, list that exact file (not a glob) in `access.tests` with why; a plan that
    lists tests always goes to the owner. New test files need no entry.
+   Predict these before you write `## Access`: for every file the plan changes, find the existing tests
+   that cover it, those that import it or share its name (`src/machine.ts` → `tests/machine.test.ts`),
+   and the shared helpers (test files with no test cases, such as `tests/helpers/**`) those tests use.
+   A change to behaviour that a state machine, schema or public function defines also touches the tests
+   that assert it. List each one the build will edit, delete or rename in `access.tests`, with a `why`
+   naming the file or behaviour that makes it necessary. Don't list tests the build only adds to or
+   expects to leave alone; a helper that only gets new exported functions, types or constants needs no
+   entry. Asking for them now saves the worker from stopping to ask later.
 
 Return the JSON result:
 
