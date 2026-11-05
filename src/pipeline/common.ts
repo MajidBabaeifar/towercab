@@ -50,6 +50,18 @@ export interface ShipData {
   revert?: { branch: string; pr: number | null; head: string | null; sha: string | null };
 }
 
+/** SHIP-34, SHIP-35: one secret step's progress. */
+export interface SecretState {
+  pr?: number;
+  branch?: string;
+  /** The owner approved the PR; Towercab merges it. */
+  approved?: boolean;
+  /** Failures in a row; at 3 Towercab stops trying until the owner tries again. */
+  fails?: number;
+  /** The last failure, redacted. */
+  error?: string;
+}
+
 export interface PipeData {
   design?: {
     type: string;
@@ -99,6 +111,8 @@ export interface PipeData {
   answers?: number;
   /** SHIP-17: the owner's steps, read from the merged `plan.md` (the file is the record). */
   steps?: OwnerStep[];
+  /** SHIP-34: where each secret step is (by step number): its PR, approval and failures. Never a value. */
+  secrets?: Record<string, SecretState>;
   /** SHIP-21: the merged plan's claim that nothing about the change can be checked live. */
   liveNoneWhy?: string;
   /** SHIP-22: a tick the database has and `plan.md` doesn't yet; the loop writes it. */

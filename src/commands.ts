@@ -64,14 +64,28 @@ export interface CommandCtx {
  * SHIP-22: tick (or untick) the owner's steps of an intent's unfinished mission, with the time, in one
  * transaction. The loop writes the ticks to `plan.md` and continues the wait. Returns the steps left.
  */
-export function tickSteps(db: Db, intent: string, which: number[] | "all", done: boolean, now: Date): string {
+export function tickSteps(
+  db: Db,
+  intent: string,
+  which: number[] | "all",
+  done: boolean,
+  now: Date,
+  /** SHIP-34: Towercab itself ticks a secret step once its key exists; the owner can't. */
+  auto = false,
+): string {
   return db.tx(() => {
     const m = unfinishedFor(db, intent);
     const steps = dataOf<{ steps?: OwnerStep[] }>(m ?? ({ data: "{}" } as Mission)).steps ?? [];
     if (!m || steps.length === 0) throw new Error(`${intent} has no steps`);
-    const ns = which === "all" ? steps.map((s) => s.n) : which;
-    for (const n of ns)
-      if (!steps.some((s) => s.n === n)) throw new Error(`step ${n} isn't one of ${intent}'s steps`);
+    // SHIP-33: "all" leaves the secret steps to Towercab.
+    const ns = which === "all" ? steps.filter((s) => auto || !s.secret).map((s) => s.n) : which;
+    if (ns.length === 0) throw new Error(`${intent} has no steps you tick: its secrets tick themselves`);
+    for (const n of ns) {
+      const s = steps.find((x) => x.n === n);
+      if (!s) throw new Error(`step ${n} isn't one of ${intent}'s steps`);
+      if (done && s.secret && !auto)
+        throw new Error(`step ${n} ticks itself once ${s.secret.key} exists in ${s.secret.file}`);
+    }
     const at = localTime(now);
     const next = steps.map((s) => (ns.includes(s.n) ? { ...s, done_at: done ? at : null } : s));
     patchData(db, m, { steps: next, stepsDirty: ns.at(-1) }, now.getTime() / 1000);

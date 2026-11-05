@@ -105,17 +105,22 @@ export function cacheEnv(cache: string, config: Config, repo: RepoConfig | null)
   };
 }
 
+/** SHIP-36: only Towercab's own process holds the age key; no worker or check gets it, whatever `[agent].env` says. */
+export function withoutAgeKey(env: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !/^(SOPS_|AGE_)/i.test(k)));
+}
+
 /** A sandboxed command's whole environment: HOME, PATH = `[agent].path`, LANG, TMPDIR, then `cacheEnv`. */
 export function sandboxEnv(
   home: string,
   config: Config,
   cache: Record<string, string>,
 ): Record<string, string> {
-  return {
+  return withoutAgeKey({
     HOME: home,
     PATH: config.agent.path,
     LANG: process.env.LANG || "C.UTF-8",
     TMPDIR: "/tmp",
     ...cache,
-  };
+  });
 }

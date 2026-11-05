@@ -470,6 +470,21 @@ export interface StepView {
   text: string;
   why: string;
   doneAt: When | null;
+  /** SHIP-33: the secret this step stands for (never its value). */
+  secret?: SecretView;
+}
+
+/** SHIP-34, SHIP-35: where a secret step is, for the page's field and approve button. */
+export interface SecretView {
+  key: string;
+  file: string;
+  source: "generate" | "supply";
+  /** The pull request that adds it, once there is one. */
+  pr: { number: number; url: string } | null;
+  approved: boolean;
+  /** The last failure, and whether Towercab gave up trying until the owner asks again. */
+  error: string | null;
+  stopped: boolean;
 }
 
 export interface QueueItem {
