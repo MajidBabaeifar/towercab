@@ -733,13 +733,14 @@ The one kind of work allowed in a blocking repo is the intent that sets it up, a
 - A closed proposal is a no: a proposal is tried only when the set of missing items differs from the set
   last tried (the items, never the stored time), and at most once a day per repo. Nothing missing forgets
   the set, so a later gap is new.
-- The readiness check (REPO-24) runs as a background job beside the pass, one repo at a time, like the
-  feature backfill of INT-39. Its 60 s limit covers the fetch and every read: each child process gets only
-  the time left and is killed with it, and at the limit no further call starts. A pass never waits for it,
-  and a drain waits for it to end (LOOP-108).
-- The wait is resolvable inside Towercab: the repo's page links the proposed pull request or the
-  intent ([UI-156](ui.md)).
-- Verified by: `loop: a setup intent is picked in a blocking repo`, `loop: only one setup intent per repo at a time`, `loop: a missing item proposes one setup intent`, `loop: no second setup intent while one is open`, `loop: an existing setup intent from the standards review stops the proposal`, `readiness: a closed proposal is not proposed again until the missing items change`, `readiness: at most one proposal per repo per day`, `readiness: a setup PR from the proposed list counts as open`, `readiness: nothing is proposed while the proposed intents are unknown`, `readiness: the check has one deadline for the fetch and the reads`, `readiness: a hung check ends at the limit and the pass does not wait for it`
+- The readiness check (REPO-24) fetches in the pass and reads in the background. The oldest due repo's
+  clone (and the `ci` and `infra` clones it reads, each at most every 10 minutes) is fetched in the pass,
+  never beside a mission's git step, as the feature backfill of INT-39 does; the reads, the stored result and
+  the proposal then run as a background job, one repo at a time. One 60 s limit covers the fetch and every
+  read: each child process gets only the time left and is killed with it, and at the limit no further call
+  starts. A pass waits for the fetch (at most the limit) but never for the reads, a repo whose first check
+  failed waits 10 minutes before the next try, and a drain waits for a running job to end (LOOP-108).
+- Verified by: `loop: a setup intent is picked in a blocking repo`, `loop: only one setup intent per repo at a time`, `loop: a missing item proposes one setup intent`, `loop: no second setup intent while one is open`, `loop: an existing setup intent from the standards review stops the proposal`, `readiness: a closed proposal is not proposed again until the missing items change`, `readiness: at most one proposal per repo per day`, `readiness: a setup PR from the proposed list counts as open`, `readiness: nothing is proposed while the proposed intents are unknown`, `readiness: the check has one deadline for the fetch and the reads`, `readiness: a hung read ends at the limit and the pass does not wait for it`, `readiness: the clone is fetched in the pass, never beside the background reads`, `readiness: a hung fetch holds the pass until the limit, then waits ten minutes`
 
 ### LOOP-72 · Readiness in the commands
 

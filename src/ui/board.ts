@@ -112,16 +112,19 @@ export async function board(src: UiSources): Promise<BoardPage> {
   for (const repo of proposed.keys()) if (!repos.includes(repo)) repos.push(repo);
   const unknown = repos.indexOf("");
   if (unknown >= 0) repos.push(...repos.splice(unknown, 1));
-  const rows: BoardRepo[] = repos.map((repo) => ({
-    ...(readinessBadge(src.db, repo) ? { readiness: readinessBadge(src.db, repo)! } : {}),
-    repo,
-    github: src.config.repos.get(repo)?.github ?? "",
-    open: counts.get(repo)?.open ?? 0,
-    done: counts.get(repo)?.done ?? 0,
-    proposed: proposed.get(repo) ?? 0,
-    spend: repoSpendView(spend.get(repo)),
-    cells: cells.get(repo) ?? {},
-  }));
+  const rows: BoardRepo[] = repos.map((repo) => {
+    const readiness = readinessBadge(src.db, repo);
+    return {
+      ...(readiness ? { readiness } : {}),
+      repo,
+      github: src.config.repos.get(repo)?.github ?? "",
+      open: counts.get(repo)?.open ?? 0,
+      done: counts.get(repo)?.done ?? 0,
+      proposed: proposed.get(repo) ?? 0,
+      spend: repoSpendView(spend.get(repo)),
+      cells: cells.get(repo) ?? {},
+    };
+  });
   const columns: BoardColumn[] = shown.map((c) => ({
     ...c,
     count: rows.reduce((n, r) => n + (r.cells[c.key]?.length ?? 0), 0),

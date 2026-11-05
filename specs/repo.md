@@ -240,15 +240,18 @@ plain words; a repo whose kind nobody confirmed only warns.
 
 The standard GitHub settings are checked with the same check that `ci` uses, so the two cannot disagree.
 
-- Towercab runs `bin/apply-settings --check <owner/name>` through `Tools`, as the App, from the latest
-  `v*` tag of the `ci` repo (newest by version), never from the clone's working tree: after a fetch of
-  its tags it makes a worktree of that tag, runs the script there, removes the worktree and logs the tag
-  (`settings check of <repo>: bin/apply-settings from ci <tag>`). Exit 0 is `settings` present, exit 1 is
-  missing with the script's first output line as the words. Towercab keeps no copy of the list of settings.
+- Towercab runs `bin/apply-settings --check <owner/name>` through `Tools` from the latest `v*` tag of the
+  `ci` repo (newest by version), never from the clone's working tree: it exports that tag's files with a
+  private index (the clone itself is only read), runs the script there as the App, with a minimal
+  environment (`PATH`, `HOME` and the App's token for the repo being checked, nothing else from the loop's),
+  removes the files and logs the tag (`settings check of <repo>: bin/apply-settings from ci <tag>`). Exit 0
+  is `settings` present, exit 1 is missing with the script's first output line as the words. Towercab keeps
+  no copy of the list of settings. The `ci` clone is fetched at most once per 10 minutes, with the checked
+  repo's own fetch ([LOOP-71](loop.md)).
 - No `ci` clone, no `v*` tag, no such script in the tag, or a script that cannot run (not exit 0 or 1) → the item is `unknown`
   with `The standard settings could not be checked: add the ci repo to Towercab` (or the reason). It is
   shown as a warning and never blocks. `ci` is a registered repo, so the clone is normally there.
-- Verified by: `repo: settings check runs ci's script`, `repo: settings check without a ci clone is unknown`, `readiness: settings run from the latest v* tag of ci`, `readiness: settings without a ci release are unknown`
+- Verified by: `repo: settings check runs ci's script`, `repo: settings check without a ci clone is unknown`, `readiness: settings run from the latest v* tag of ci`, `readiness: settings without a ci release are unknown`, `readiness: the ci release is read without touching the clone and runs with the App's token only`
 
 ### REPO-26 · Which stages apply
 

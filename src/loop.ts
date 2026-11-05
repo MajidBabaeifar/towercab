@@ -71,7 +71,7 @@ import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import type { PipeData } from "./pipeline/common.ts";
 import { writeTicks } from "./pipeline/steps.ts";
 import { isParked, priority } from "./priority.ts";
-import { blockingRepos, readinessCycle } from "./readiness.ts";
+import { blockingRepos, type Prepared, startReadiness as startReadinessCheck } from "./readiness.ts";
 import { missingText } from "./repo/readiness.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
@@ -412,7 +412,7 @@ export class Loop {
     await this.pollIntents(false);
     await this.pollProposed(false);
     await this.requeueKnownRepos();
-    this.startReadiness();
+    await this.startReadiness();
     this.enforceDrain();
     // LOOP-105, LOOP-108: with the checkout moved or an update waiting, running children finish but
     // nothing new starts.
@@ -809,10 +809,12 @@ export class Loop {
   }
 
   /**
-   * REPO-24, LOOP-71: the readiness check runs in the background, one repo at a time, like the feature
-   * backfill, so a slow fetch never holds up a pass. A failure keeps the last result.
+   * REPO-24, LOOP-71: the readiness check of the oldest due repo. Its fetch is awaited here in the pass, never
+   * beside a mission's git step (the feature backfill does the same); the reads, the stored result and the
+   * setup proposal run in the background, one repo at a time, so a pass never waits for them. A failure keeps
+   * the last result.
    */
-  private startReadiness(): void {
+  private async startReadiness(): Promise<void> {
     if (!this.d.readiness || this.readinessJob || this.drain !== null || this.codeMoved() !== null) return;
     const deps = {
       config: this.d.config,
@@ -825,13 +827,23 @@ export class Loop {
       log: this.d.log,
       ...(this.d.readinessLimitMs ? { limitMs: this.d.readinessLimitMs } : {}),
     };
-    const run = readinessCycle(deps, { listing: () => this.listing, proposed: () => this.proposed }).then(
-      () => undefined,
-      (e: Error) => this.d.log(`readiness: ${e.message}`),
-    );
-    this.readinessJob = run.finally(() => {
-      this.readinessJob = null;
-    });
+    let job: Prepared | null;
+    try {
+      job = await startReadinessCheck(deps, { listing: () => this.listing, proposed: () => this.proposed });
+    } catch (e) {
+      this.d.log(`readiness: ${(e as Error).message}`);
+      return;
+    }
+    if (!job) return;
+    this.readinessJob = job
+      .run()
+      .then(
+        () => undefined,
+        (e: Error) => this.d.log(`readiness: ${e.message}`),
+      )
+      .finally(() => {
+        this.readinessJob = null;
+      });
   }
 
   /** Resolves when no readiness check is running (tests and shutdown wait for it). */

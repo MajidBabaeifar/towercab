@@ -3,8 +3,8 @@
 // intent. The rules themselves are pure and live in src/repo/readiness.ts.
 
 import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { ensureClone, git } from "./checkout.ts";
+import { dirname, join, resolve } from "node:path";
+import { ensureClone } from "./checkout.ts";
 import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db } from "./db.ts";
 import { prsOnBranch } from "./github/branches.ts";
@@ -117,8 +117,10 @@ async function show(d: ReadinessDeps, clone: string, ref: string, path: string):
 }
 
 /**
- * REPO-25: the settings check is `ci`'s own script, from the latest `v*` release of the ci repo (a
- * worktree of that tag after a fetch), never from the clone's working tree. The tag is logged.
+ * REPO-25: the settings check is `ci`'s own script, from the latest `v*` release of the ci repo, never
+ * from the clone's working tree. The tag's files are exported with a private index (the clone itself is
+ * only read), the script runs there as the App with a minimal environment, and the tag is logged. The ci
+ * clone was fetched in the pass ({@link fetchClones}).
  */
 async function settingsCheck(d: ReadinessDeps, repo: RepoConfig): Promise<Check> {
   const ci = d.config.repos.get(CI_REPO);
@@ -129,12 +131,6 @@ async function settingsCheck(d: ReadinessDeps, repo: RepoConfig): Promise<Check>
   if (!ci) return unknown("add the ci repo to Towercab");
   const dir = clonePath(ci, d.home.root);
   if (!existsSync(join(dir, ".git"))) return unknown("the ci repo has no clone yet");
-  await git(
-    d.tools,
-    dir,
-    ["fetch", "--quiet", "--tags", "--prune", "origin"],
-    await d.github.gitAuth(ci.github),
-  );
   const tag = (await repoGit(d.tools, dir, ["tag", "--list", "v*", "--sort=-v:refname"]))
     .split("\n")
     .map((t) => t.trim())
@@ -142,15 +138,36 @@ async function settingsCheck(d: ReadinessDeps, repo: RepoConfig): Promise<Check>
   if (!tag) return unknown("the ci repo has no v* release yet");
   d.log(`settings check of ${repo.name}: bin/apply-settings from ci ${tag}`);
   const tree = join(d.home.root, "tmp", `ci-settings-${tag.replace(/[^\w.-]/g, "_")}`);
+  const index = `${tree}.index`;
   mkdirSync(join(d.home.root, "tmp"), { recursive: true });
-  await repoGit(d.tools, dir, ["worktree", "prune"]);
   rmSync(tree, { recursive: true, force: true });
-  await repoGit(d.tools, dir, ["worktree", "add", "--quiet", "--detach", tree, `refs/tags/${tag}`]);
+  rmSync(index, { force: true });
   try {
+    const gitEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined) gitEnv[k] = v;
+    gitEnv.GIT_INDEX_FILE = index;
+    gitEnv.GIT_CEILING_DIRECTORIES = dirname(resolve(dir));
+    for (const args of [
+      ["read-tree", `refs/tags/${tag}`],
+      ["checkout-index", "-a", "--prefix", `${tree}/`],
+    ]) {
+      const r = await d.tools.run("git", args, { cwd: dir, env: gitEnv, timeoutMs: READINESS_LIMIT_MS });
+      if (r.code !== 0) return unknown(`ci ${tag} could not be read: ${r.stderr.trim().split("\n")[0]}`);
+    }
     const script = join(tree, "bin", "apply-settings");
     if (!existsSync(script)) return unknown(`ci ${tag} has no bin/apply-settings`);
+    // As the App: its token for the repo being checked, and nothing else from the loop's environment.
+    const auth = await d.github.gitAuth(repo.github);
+    const env: Record<string, string> = {
+      PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+      HOME: process.env.HOME ?? "",
+      GH_PROMPT_DISABLED: "1",
+      NO_COLOR: "1",
+      ...auth.env,
+    };
     const r = await d.tools.run(script, ["--check", repo.github], {
       cwd: tree,
+      env,
       timeoutMs: READINESS_LIMIT_MS,
     });
     if (r.code === 0) return { state: "present" };
@@ -158,8 +175,8 @@ async function settingsCheck(d: ReadinessDeps, repo: RepoConfig): Promise<Check>
     const first = r.stdout.trim().split("\n")[0] || r.stderr.trim().split("\n")[0];
     return { state: "missing", words: first || wordsFor("settings") };
   } finally {
-    await repoGit(d.tools, dir, ["worktree", "remove", "--force", tree]).catch(() => {});
     rmSync(tree, { recursive: true, force: true });
+    rmSync(index, { force: true });
   }
 }
 
@@ -279,46 +296,109 @@ export async function readRepo(d: ReadinessDeps, repo: RepoConfig): Promise<Stor
 }
 
 /**
- * Fetch the repo and store its readiness (REPO-24). A failed fetch or read keeps the last stored
- * result (REPO-27) and the check runs again on the next try.
+ * Fetch the clones a check reads: the repo's own, and the `ci` and `infra` clones it may read, each at most
+ * once per {@link READINESS_EVERY_S}. This is the only part that writes to a shared clone, so the loop runs
+ * it in the pass, never beside a mission's git step.
  */
+async function fetchClones(d: ReadinessDeps, repo: RepoConfig): Promise<void> {
+  const now = d.clock.now();
+  const wanted = [repo];
+  for (const name of [CI_REPO, INFRA_REPO]) {
+    const other = d.config.repos.get(name);
+    const at = Number(d.db.meta(`readiness-fetched:${name}`) ?? 0);
+    if (other && other.name !== repo.name && now - at >= READINESS_EVERY_S) wanted.push(other);
+  }
+  for (const r of wanted) {
+    await ensureClone(d.tools, clonePath(r, d.home.root), r, await d.github.gitAuth(r.github));
+    d.db.setMeta(`readiness-fetched:${r.name}`, String(Math.floor(now)));
+  }
+}
+
+/** A started check: its fetch is done; `run` reads, stores and proposes, and may run in the background. */
+export interface Prepared {
+  repo: RepoConfig;
+  run(): Promise<void>;
+}
+
+/**
+ * REPO-24: begin a repo's check. The fetch happens here, so the loop awaits it in the pass; the returned
+ * `run` only reads (REPO-23), stores the result and, with `o`, proposes the setup intent (LOOP-71). One
+ * deadline covers both halves. A failure keeps the last stored result (REPO-27). Null when the repo's
+ * stored result is still fresh and `force` is not set.
+ */
+export async function beginReadiness(
+  d: ReadinessDeps,
+  repo: RepoConfig,
+  force = false,
+  o?: CycleOpts,
+): Promise<Prepared | null> {
+  const old = storedReadiness(d.db, repo.name);
+  if (!force && old && d.clock.now() - old.at < READINESS_EVERY_S) return null;
+  const limit = d.limitMs ?? READINESS_LIMIT_MS;
+  const scope = withDeadline(d, limit);
+  const inner: ReadinessDeps = { ...d, tools: scope.tools, github: scope.github };
+  let timer: NodeJS.Timeout | undefined;
+  const expiry = new Promise<never>((_, no) => {
+    timer = setTimeout(() => {
+      scope.abort();
+      no(new Error(`timed out after ${Math.round(limit / 1000)} s`));
+    }, limit);
+  });
+  expiry.catch(() => {});
+  const failed = (e: unknown) => {
+    scope.abort();
+    clearTimeout(timer);
+    d.log(`readiness of ${repo.name}: ${(e as Error).message}; keeping the last result`);
+    const now = Math.floor(d.clock.now());
+    if (old) d.db.setMeta(metaKey(repo.name), JSON.stringify({ ...old, at: now }));
+    else d.db.setMeta(`readiness-failed:${repo.name}`, String(now));
+  };
+  try {
+    const fetched = fetchClones(inner, repo);
+    fetched.catch(() => {});
+    await Promise.race([fetched, expiry]);
+  } catch (e) {
+    failed(e);
+    return { repo, run: async () => {} };
+  }
+  return {
+    repo,
+    async run() {
+      let s: Stored;
+      try {
+        const read = readRepo(inner, repo);
+        read.catch(() => {});
+        s = await Promise.race([read, expiry]);
+      } catch (e) {
+        failed(e);
+        return;
+      }
+      clearTimeout(timer);
+      d.db.setMeta(metaKey(repo.name), JSON.stringify(s));
+      d.db.delMeta(`readiness-failed:${repo.name}`);
+      if (!o) return;
+      const listing = o.listing();
+      const proposed = o.proposed();
+      if (!listing || !proposed || !setupAttemptDue(d.db, repo.name, s.readiness, d.clock.now())) return;
+      try {
+        const opened = await proposeSetup(d, repo, s.readiness, listing, proposed);
+        setupAttempted(d.db, repo.name, s.readiness, opened, d.clock.now());
+      } catch (e) {
+        d.log(`${repo.name}: couldn't propose a setup intent: ${(e as Error).message}`);
+      }
+    },
+  };
+}
+
+/** Fetch the repo and store its readiness in one go (tests, and anything outside the loop's pass). */
 export async function refreshReadiness(
   d: ReadinessDeps,
   repo: RepoConfig,
   force = false,
 ): Promise<Stored | null> {
-  const old = storedReadiness(d.db, repo.name);
-  if (!force && old && d.clock.now() - old.at < READINESS_EVERY_S) return old;
-  const limit = d.limitMs ?? READINESS_LIMIT_MS;
-  const scope = withDeadline(d, limit);
-  const inner: ReadinessDeps = { ...d, tools: scope.tools, github: scope.github };
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    const clone = clonePath(repo, d.home.root);
-    const auth = await scope.github.gitAuth(repo.github);
-    const read = (async () => {
-      await ensureClone(scope.tools, clone, repo, auth);
-      return readRepo(inner, repo);
-    })();
-    read.catch(() => {});
-    // The deadline covers the fetch too; on expiry no further call starts and the child in flight is killed.
-    const expiry = new Promise<never>((_, no) => {
-      timer = setTimeout(() => {
-        scope.abort();
-        no(new Error(`timed out after ${Math.round(limit / 1000)} s`));
-      }, limit);
-    });
-    const s = await Promise.race([read, expiry]);
-    d.db.setMeta(metaKey(repo.name), JSON.stringify(s));
-    return s;
-  } catch (e) {
-    scope.abort();
-    d.log(`readiness of ${repo.name}: ${(e as Error).message}; keeping the last result`);
-    if (old) d.db.setMeta(metaKey(repo.name), JSON.stringify({ ...old, at: Math.floor(d.clock.now()) }));
-    return old;
-  } finally {
-    clearTimeout(timer);
-  }
+  const p = await beginReadiness(d, repo, force);
+  if (p) await p.run();
+  return storedReadiness(d.db, repo.name);
 }
 
 /** Repos whose stored readiness holds work back (LOOP-70) → the plain text of the wait. */
@@ -469,35 +549,33 @@ export interface CycleOpts {
   proposed(): ProposedPr[] | null;
 }
 
-/** The repo whose check is due and oldest (never checked first), or null. */
+/** The repo whose check is due and oldest (never checked first), or null. A failed first read waits too. */
 export function nextDue(d: ReadinessDeps): RepoConfig | null {
   let best: { repo: RepoConfig; at: number } | null = null;
+  const now = d.clock.now();
   for (const repo of d.config.repos.values()) {
     const at = storedReadiness(d.db, repo.name)?.at ?? 0;
-    if (at !== 0 && d.clock.now() - at < READINESS_EVERY_S) continue;
+    const failedAt = Number(d.db.meta(`readiness-failed:${repo.name}`) ?? 0);
+    if (at !== 0 && now - at < READINESS_EVERY_S) continue;
+    if (failedAt !== 0 && now - failedAt < READINESS_EVERY_S) continue;
     if (!best || at < best.at) best = { repo, at };
   }
   return best?.repo ?? null;
 }
 
 /**
- * One background step: check the oldest due repo, then propose its setup intent when the rules allow.
- * Returns the repo's name, or null when none was due. Never throws.
+ * The oldest due repo: fetched here (awaited), read and proposed by the returned `run`. Null when none is
+ * due. Never throws.
  */
-export async function readinessCycle(d: ReadinessDeps, o: CycleOpts): Promise<string | null> {
+export async function startReadiness(d: ReadinessDeps, o: CycleOpts): Promise<Prepared | null> {
   const repo = nextDue(d);
-  if (!repo) return null;
-  const s = await refreshReadiness(d, repo);
-  if (!s) return repo.name;
-  const listing = o.listing();
-  const proposed = o.proposed();
-  if (!listing || !proposed || !setupAttemptDue(d.db, repo.name, s.readiness, d.clock.now()))
-    return repo.name;
-  try {
-    const opened = await proposeSetup(d, repo, s.readiness, listing, proposed);
-    setupAttempted(d.db, repo.name, s.readiness, opened, d.clock.now());
-  } catch (e) {
-    d.log(`${repo.name}: couldn't propose a setup intent: ${(e as Error).message}`);
-  }
-  return repo.name;
+  return repo ? beginReadiness(d, repo, false, o) : null;
+}
+
+/** One whole step, fetch and read: the repo's name, or null when none was due. */
+export async function readinessCycle(d: ReadinessDeps, o: CycleOpts): Promise<string | null> {
+  const p = await startReadiness(d, o);
+  if (!p) return null;
+  await p.run();
+  return p.repo.name;
 }
