@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..145, UI-155..163, UI-184..188, UI-192..197 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..145, UI-155..164, UI-184..188, UI-192..197 · **Prefix:** UI
 
 ## Purpose
 
@@ -1100,7 +1100,7 @@ Every way out of a wait is a button on the card that does exactly what it says.
   start over and drop buttons: no reply box. `GET /api/state` (UI-65) carries `exits` per waiting
   mission (a list of `{do, label}`) and `stuck`.
 - After a click the card shows the done note of UI-105 ("Done by you · …").
-- Verified by: `ui: question options are buttons that do what they say`, `ui: no changes offers I did it myself`, `ui: a stuck wait offers only the other exits`, `ui: exits come from the API`
+- Verified by: `ui: question options are buttons that do what they say`, `ui: no changes offers I did it myself`, `ui: a stuck wait offers only the other exits`, `ui: exits come from the API`, `ui: an option that asks for something first only fills the reply`, `ui: exits screenshots light, dark and mobile`
 
 ### UI-168 · Teammate review on the card and the repo page
 

@@ -1,6 +1,6 @@
 # Repo files
 
-**Status:** Live: REPO-1..13, REPO-20..27 · **Prefix:** REPO
+**Status:** Live: REPO-1..13, REPO-20..27, REPO-30..32 · **Prefix:** REPO
 
 ## Purpose
 
@@ -400,8 +400,8 @@ Towercab checks the standard GitHub settings of every registered repo once a day
   `unknown`, the script's output lines as `gaps`, the `ci` tag that ran, the time). `ci` itself is
   checked like any other repo.
 - The script is the pinned release of `ci`: `ciRelease(clone)` is the latest `v*` tag (highest version)
-  of `<home>/repos/ci` whose commit is an ancestor of `origin/<base>` (`git merge-base --is-ancestor`).
-  Towercab exports that tag's tree to a scratch directory (`git archive`) and runs
+  of `<home>/repos/ci` merged into `origin/<base>` (`git tag --merged`). Towercab exports that tag's tree to a scratch
+  directory (`git read-tree` into a private index, then `git checkout-index`, so the clone is only read) and runs
   `bin/apply-settings` from there, never from the clone's working tree or main head, so what Towercab
   applies changes only with a reviewed `ci` release. The run is logged with its tag
   (`apply-settings v<x.y.z> <check|apply> <owner/name>`). No such tag → the item is `unknown` with

@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..44, PIP-46..54, PIP-70..83, PIP-85..100, PIP-106..111, PIP-115..121, PIP-133..134, PIP-138..141 · **Prefix:** PIP
+**Status:** Live: PIP-1..44, PIP-46..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-133..134, PIP-138..141 · **Prefix:** PIP
 
 ## Purpose
 
@@ -1069,7 +1069,7 @@ The plan states whether the intent ends as a code change or as steps the owner d
   (PIP-13). A `code` plan keeps SHIP-17 as it is.
 - The plan PR shows the delivery in its description in plain words ("Nothing to build; you do these
   steps"). The merged `plan.md` is the record: the delivery is read from it, not from the mission.
-- Verified by: `pipeline: plan.md carries its delivery`, `pipeline: a steps plan needs steps the owner can tick`, `pipeline: a plan without delivery counts as code`
+- Verified by: `pipeline: plan.md carries its delivery`, `pipeline: a steps plan needs steps the owner can tick`, `pipeline: a plan without delivery counts as code`, `pipeline: an owner's edit of the delivery from code to steps is followed`, `pipeline: an owner's edit of the delivery from steps to code is followed`
 
 ### PIP-113 · A steps-delivered intent skips the code PR
 
@@ -1088,7 +1088,7 @@ When the merged plan says `steps`, Towercab opens no code PR, and the intent end
   or the plan; with none, the plan step is asked to add them first. Nothing the owner already merged is
   undone.
 - How merged code PRs end is unchanged: a `code` plan builds, ships and ends as before.
-- Verified by: `pipeline: a steps plan skips build and the code PR`, `pipeline: ticking the last step of a steps plan ends the intent done`, `pipeline: switching to steps closes the open code PR and says why`, `pipeline: a code plan ends as before`
+- Verified by: `pipeline: a steps plan skips build and the code PR`, `pipeline: ticking the last step of a steps plan ends the intent done`, `pipeline: switching to steps closes the open code PR and says why`, `pipeline: a code plan ends as before`, `pipeline: a code change waiting for its steps cannot be marked done`, `pipeline: switching to steps with only before-merge steps waits for the owner`, `machine: to_steps moves only a wait on the owner`
 
 ### PIP-114 · Every option in a question maps to something Towercab does
 

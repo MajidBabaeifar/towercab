@@ -10,7 +10,7 @@ import type { ProposedState } from "../github/proposed.ts";
 import type { Clock } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { Intent, IntentStore, Listing } from "../intents/types.ts";
-import { finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
+import { exitsOf, finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
 import { dataOf, forIntent, type Mission } from "../mission.ts";
 import { testGrantsOf } from "../pipeline/access.ts";
 import { section } from "../pipeline/prtext.ts";
@@ -441,11 +441,13 @@ type MissionData = {
   review?: { summary?: string; brief?: string; details?: string } | null;
   runs?: { at: number; cost: number }[];
   doneByYou?: DoneNote;
+  /** LOOP-77: the wait came back with nothing new. */
+  stuck?: boolean;
 };
 
 /** UI-105: what the owner did from the page; display only, never moves the mission. */
 export interface DoneNote {
-  action: "merge" | "drop" | "retry";
+  action: "merge" | "drop" | "retry" | "done" | "steps";
   stage: string;
   pr: number;
   at: number;
@@ -454,12 +456,19 @@ export interface DoneNote {
 /** UI-108: after this long without a move, the card stops promising one. */
 export const STUCK_AFTER_S = 300;
 
-const DONE_WORDS = { merge: "Merged", drop: "Dropped", retry: "Started over" } as const;
+const DONE_WORDS = {
+  merge: "Merged",
+  drop: "Dropped",
+  retry: "Started over",
+  done: "Marked done",
+  steps: "Switched to steps",
+} as const;
 
 /** The note, if it still describes this mission's wait: same stage and same PR. */
 export function validNote(m: Mission, pr: { number: number } | null): DoneNote | null {
   const n = dataOf<MissionData>(m).doneByYou;
-  if (!n || !pr || n.stage !== m.stage || n.pr !== pr.number) return null;
+  // UI-164: `done` and `steps` need no PR; their note carries PR 0.
+  if (!n || n.stage !== m.stage || n.pr !== (pr?.number ?? 0)) return null;
   return n;
 }
 
@@ -673,13 +682,19 @@ export function missionCard(
   const shownWhy = approval ? why : null;
   const details = joinMd([approval || why === d.question?.question ? null : why, texts.details]);
   const done = doneOf(src, m, now);
+  const stuck = dataOf<MissionData>(m).stuck === true && !approval;
   const actions: Card["actions"] = done
     ? []
     : approval
       ? pr
         ? ["merge", "retry", "drop"]
         : ["retry", "drop"]
-      : ["reply", "retry", "drop"];
+      : stuck
+        ? ["retry", "drop"]
+        : ["reply", "retry", "drop"];
+  const exits = done
+    ? []
+    : exitsOf(m.waiting ?? "", stuck, (dataOf(m) as { delivery?: string }).delivery !== "steps");
   const gate = kind === "spec" || kind === "plan" ? kind : kind === "code" ? "code" : null;
   const risk = riskView(m, gate);
   const points = kind === "spec" ? (currentRisk(m, "spec")?.openPoints ?? []) : [];
@@ -700,6 +715,8 @@ export function missionCard(
     access: kind === "plan" ? (d.access ?? { domains: [], paths: [], tests: [] }) : null,
     pr,
     actions,
+    exits,
+    stuck,
     mergeLabel: approval && pr && !done ? MERGE_LABELS[kind]! : null,
     done,
     addRepo: null,
@@ -735,6 +752,8 @@ export function intentCard(i: Intent, config: Config): Card {
     access: null,
     pr: null,
     actions: ["reply", "drop"],
+    exits: exitsOf(w),
+    stuck: false,
     mergeLabel: null,
     done: null,
     addRepo,

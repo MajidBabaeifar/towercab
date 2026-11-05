@@ -75,8 +75,15 @@ export type CardKind = "spec" | "plan" | "code" | "question" | "blocked" | "rele
 export interface Question {
   context: string;
   question: string;
-  options: { option: string; then: string }[];
+  /** `do`: what Towercab does when the owner picks it (PIP-114); absent in questions stored before. */
+  options: { option: string; then: string; do?: "continue" | "steps" | "drop" }[];
   recommendation: string;
+}
+
+/** UI-164: one way out of a wait, as a button. */
+export interface ExitView {
+  do: string;
+  label: string;
 }
 
 export interface Access {
@@ -136,9 +143,13 @@ export interface Card {
   access: Access | null;
   pr: PrLink | null;
   actions: ActionKey[];
+  /** UI-164: every way out of this wait, in plain words; none once the owner has acted. */
+  exits: ExitView[];
+  /** LOOP-77: the wait came back with nothing new; a reply would land on it again. */
+  stuck: boolean;
   mergeLabel: string | null;
   /** UI-105: the owner already acted from the page and the mission has not moved on; no buttons then. */
-  done: { action: "merge" | "drop" | "retry"; text: string; stuck: boolean } | null;
+  done: { action: "merge" | "drop" | "retry" | "done" | "steps"; text: string; stuck: boolean } | null;
   /** UI-131: the intent's repo is unknown: its short name and a guess at `owner/name` ("" = none). */
   addRepo: { name: string; github: string } | null;
   /** AUT-20: the risk of what it waits on; null when none was judged (or the check didn't finish). */
@@ -588,6 +599,23 @@ export interface ProposedSection {
   stale: string | null;
 }
 
+/** REPO-30: the standard GitHub settings of a repo, as last checked. */
+export interface SettingsView {
+  /** `ok`, `gaps` or `unknown` (never checked). */
+  state: "ok" | "gaps" | "unknown";
+  /** The one line the page leads with. */
+  summary: string;
+  gaps: string[];
+  /** Why the ruleset or the apply was held back, or why the last check could not run. */
+  notes: string[];
+  /** When it was checked, unix seconds; 0 when never. */
+  at: number;
+  /** REPO-32: the one step the owner has, shared by every repo; null when nothing is missing. */
+  step: string | null;
+  /** The step's button works: Towercab runs (a read-only page can't act). */
+  canGrant: boolean;
+}
+
 /** UI-194: what one finished phase did, in its plain brief. */
 export interface FocusHistory {
   label: "Spec" | "Plan" | "Code";
@@ -624,6 +652,7 @@ export interface FocusPage {
 
 /** UI-141: one repo's page. */
 export interface RepoView {
+  settings: SettingsView;
   /** UI-156: what the repo is missing; absent when nothing is. */
   setup?: SetupView;
   repo: string;
@@ -667,6 +696,8 @@ export interface ReposPage {
   all: RepoSummary[];
   /** The totals over every repo (UI-137). */
   spend: RepoSpendView;
+  /** REPO-32: the one settings step the owner has (the same on every repo page), or null. */
+  settingsStep: { text: string; canGrant: boolean } | null;
   /** What went wrong: the intents repo can't be read, or the asked-for repo doesn't exist. */
   error: string | null;
 }

@@ -33,6 +33,8 @@ import { handlers } from "./pipeline/index.ts";
 import { parseScores } from "./priority.ts";
 import { addRepo, loadRepos, removeRepo, repoLine, repoList, setRepo } from "./repos.ts";
 import { checkoutRoot, down, logsArgv, restart, up } from "./service.ts";
+import { restoreBackup } from "./settings/backup.ts";
+import { grantPermission } from "./settings/store.ts";
 import { renderStatus } from "./status.ts";
 import { Telegram } from "./telegram.ts";
 import { realTools, type Tools } from "./tools.ts";
@@ -52,6 +54,8 @@ export const COMMANDS = [
   "drop",
   "start",
   "step",
+  "done",
+  "steps",
   "approve",
   "pause",
   "resume",
@@ -59,6 +63,7 @@ export const COMMANDS = [
   "doctor",
   "update",
   "repo",
+  "settings",
   "hook",
 ] as const;
 
@@ -74,9 +79,13 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   retry <id> | drop <id>
   start <id>                      begin that intent's design now, even when the repo is full
   step <id> <n…|all>              tick off steps the plan lists for you (the change then goes on)
+  done <id> [note]                you did the work yourself: ends the intent; the note is kept as a ticked step
+  steps <id>                      you will do it by hand: the intent becomes steps for you to tick
   pause | resume
   repo add <owner/name> [--name <short>] | repo remove <name> | repo list
   repo set <name> key=value…      workers, ahead, base, path, env (NAME=value or a JSON object)
+  settings restore <repo>         put back the settings saved before the last apply
+  settings granted                the GitHub App now has Administration (write)
   ui [--no-open]                  open the web page
   doctor [--quick]                what is missing
   update                          update this checkout to the latest main now
@@ -387,6 +396,12 @@ async function run(
     case "start":
       need(1, "<id>");
       return submit(w, "start", args[0]);
+    case "done":
+      need(1, "<id> [note]");
+      return submit(w, "done", args[0], args.slice(1).join(" "));
+    case "steps":
+      need(1, "<id>");
+      return submit(w, "steps", args[0]);
     case "step": {
       need(2, "<id> <n…|all>");
       const store = await w.store();
@@ -423,6 +438,8 @@ async function run(
     }
     case "repo":
       return repo(w, args, v.name as string | undefined);
+    case "settings":
+      return settingsCommand(w, args);
     case "ui": {
       if (!w.config.ui.port) throw new Error("ui is off: [ui] port = 0");
       const url = `http://localhost:${w.config.ui.port}/`;
@@ -446,6 +463,37 @@ async function run(
     default:
       return 0;
   }
+}
+
+/** `settings restore <repo>` (REPO-31) and `settings granted` (REPO-32). */
+export async function settingsCommand(
+  w: Pick<World, "config" | "home" | "db" | "tools" | "github">,
+  args: string[],
+): Promise<string> {
+  const [sub, name] = args;
+  if (sub === "granted" && args.length === 1) {
+    return grantPermission(w.db)
+      ? "noted: Towercab applies settings again at its next check"
+      : "nothing to clear: the GitHub App was not missing the permission";
+  }
+  if (sub !== "restore" || !name || args.length !== 2)
+    throw new UsageError("settings restore <repo> | settings granted");
+  const repo = w.config.repos.get(name);
+  if (!repo) throw new Error(`${name} isn't a repo Towercab knows (towercab repo list)`);
+  if (!w.github) throw new Error(`settings restore needs [github] in ${w.config.file} (app_id, me)`);
+  const lines = await restoreBackup(
+    {
+      config: w.config,
+      home: w.home,
+      db: w.db,
+      tools: w.tools,
+      clock: systemClock,
+      github: w.github,
+      log: (l) => log.emit(l),
+    },
+    repo,
+  );
+  return lines.join("\n");
 }
 
 const REPO_USAGE =

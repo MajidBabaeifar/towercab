@@ -76,9 +76,10 @@ import { blockingRepos, startReadiness as startReadinessCheck } from "./readines
 import { missingText } from "./repo/readiness.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
+import { nextSettingsDue, settingsCycle } from "./settings/apply.ts";
 import { runReleases } from "./ship/releases.ts";
 import { aheadIn, bestReady, buildingIn, isReady } from "./slots.ts";
-import { leftOf, type OwnerStep, unticked } from "./steps.ts";
+import { leftOf, type OwnerStep, parseDelivery, unticked } from "./steps.ts";
 import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
 import { budgetReached } from "./ui/state.ts";
 import { checkUpdate, RESTART_CODE } from "./update.ts";
@@ -173,6 +174,8 @@ export class Loop {
   /** INT-39: the feature-list backfill running now, and how to stop it. */
   private featuresJob: Promise<void> | null = null;
   private readinessJob: Promise<void> | null = null;
+  /** REPO-30: the daily settings check of one repo, running now. */
+  private settingsJob: Promise<void> | null = null;
   /** Held by every handler call and by the readiness fetch: two fetches of one clone never overlap. */
   private readonly cloneLock = new Mutex();
   private featuresStop: (() => void) | null = null;
@@ -282,6 +285,7 @@ export class Loop {
       this.children.size > 0 ||
       this.featuresJob !== null ||
       this.readinessJob !== null ||
+      this.settingsJob !== null ||
       this.issuesRun !== null
     )
       return;
@@ -297,6 +301,7 @@ export class Loop {
     this.stopFeatures();
     await this.featuresIdle();
     await this.readinessIdle();
+    await this.settingsIdle();
     for (const [id, r] of this.children) {
       r.handle.kill("SIGTERM");
       const done = await Promise.race([
@@ -421,6 +426,7 @@ export class Loop {
     await this.pollProposed(false);
     await this.requeueKnownRepos();
     this.startReadiness();
+    this.startSettings();
     this.enforceDrain();
     // LOOP-105, LOOP-108: with the checkout moved or an update waiting, running children finish but
     // nothing new starts.
@@ -453,6 +459,7 @@ export class Loop {
       this.children.size === 0 &&
       this.featuresJob === null &&
       this.readinessJob === null &&
+      this.settingsJob === null &&
       live.length === 0 &&
       report.picked === null;
     if (this.targetId) {
@@ -623,6 +630,11 @@ export class Loop {
     if (!replaced) await this.featureLine(m, intent);
     if (replaced) await this.closeReplaced(m);
     else if (m.stage === "stopped") await this.retireStopped(m);
+    await this.switchedToSteps(m);
+    // LOOP-76: the owner's note, ticked, goes to the plan of an intent they finished themselves.
+    if (m.stage === "done" && (dataOf(m) as PipeData).stepsDirty !== undefined) {
+      await writeTicks(this.ctx(), m);
+    }
     if (finished(m.stage)) removeCheckout(this.d.home.abs(m.checkout));
     const set: Record<string, SqlValue> = { step: "" };
     if (m.stage === "merge" && paused(db)) set.held = 1;
@@ -687,6 +699,41 @@ export class Loop {
     else if (last?.event === "intent_removed") {
       await this.closeAndRetire(m, "Towercab closed this PR because the intent was dropped.");
     }
+  }
+
+  /**
+   * PIP-113: a mission the owner switched to steps has no code to merge: its open code PR is closed with
+   * a comment saying why, and its branch goes. A failure leaves the step at `enter`: retried next pass.
+   */
+  /** The mission with `delivery` read from the merged plan.md; a plan without the line keeps what it had. */
+  private async deliveryFromPlan(m: Mission): Promise<Mission> {
+    const intent = this.intentOf(m.intent);
+    if (!intent) return m;
+    const md = await this.d.store.readFile(`${intent.dir}/plan.md`);
+    const delivery = md === null ? null : parseDelivery(md);
+    if (!delivery) return m;
+    return patchData(this.d.db, m, { delivery }, this.now);
+  }
+
+  private async switchedToSteps(m: Mission): Promise<void> {
+    if (!m.pr) return;
+    const last = this.d.db.get<{ event: string }>(
+      "SELECT event FROM transitions WHERE mission = ? ORDER BY id DESC LIMIT 1",
+      m.id,
+    );
+    const repo = this.d.config.repos.get(m.repo);
+    if ((last?.event !== "to_steps" && last?.event !== "owner_done") || !repo) return;
+    await closeIfOpen(
+      this.d.github,
+      repo.github,
+      m.pr,
+      last.event === "owner_done"
+        ? "Closed: the owner did this by hand, so there is nothing to merge."
+        : "Closed: the owner will do this by hand, so there is nothing to merge.",
+    );
+    const gone = await retireBranch(this.d.github, repo.github, m.pr, this.d.store.github());
+    if (gone) this.d.log(`${label(m)}: deleted branch ${gone} of ${repo.github}#${m.pr}`);
+    update(this.d.db, m.id, { pr: null }, this.now);
   }
 
   private async closeAndRetire(m: Mission, why: string | null): Promise<void> {
@@ -768,7 +815,8 @@ export class Loop {
       const unreadable = listing.unreadable.some((u) => u.id === m.intent);
       if (!intent && unreadable) continue;
       const o = intentEvents(m, intent);
-      if (o) this.move(m, o);
+      // LOOP-77: the owner removing `waiting` is an answer, though it has no words.
+      if (o) this.move(m, o.event === "answered" ? { ...o, counted: true } : o);
     }
     const busy = new Set(unfinished(db).map((m) => m.intent));
     // `retry: fresh` on an intent with no mission: queue it again (LOOP-18).
@@ -848,6 +896,36 @@ export class Loop {
       .finally(() => {
         this.readinessJob = null;
       });
+  }
+
+  /**
+   * REPO-30, REPO-31: the daily settings check (and, with the owner's opt-in, the apply) of the oldest due
+   * repo, as a background job like the readiness check, one at a time; its fetch holds the clone lock.
+   */
+  private startSettings(): void {
+    if (!this.d.readiness || this.settingsJob || this.drain !== null || this.codeMoved() !== null) return;
+    const deps = {
+      config: this.d.config,
+      home: this.d.home,
+      db: this.d.db,
+      tools: this.d.tools,
+      clock: this.d.clock,
+      github: this.d.github,
+      log: this.d.log,
+      exclusive: <T>(fn: () => Promise<T>) => this.cloneLock.run(fn),
+    };
+    if (!this.d.config.github || !nextSettingsDue(deps)) return;
+    this.settingsJob = settingsCycle(deps)
+      .then(() => undefined)
+      .catch((e: Error) => this.d.log(`settings: ${e.message}`))
+      .finally(() => {
+        this.settingsJob = null;
+      });
+  }
+
+  /** Resolves when no settings check is running (tests and shutdown wait for it). */
+  async settingsIdle(): Promise<void> {
+    while (this.settingsJob) await this.settingsJob;
   }
 
   /** Resolves when no readiness check is running (tests and shutdown wait for it). */
@@ -1108,7 +1186,8 @@ export class Loop {
         if (!o) continue;
         const running = this.children.has(m.id);
         if (running && !["code_merged", "spec_merged", "plan_merged", "closed"].includes(o.event)) continue;
-        this.move(m, o);
+        // PIP-112: the merged plan.md is the record of the delivery, edits in the plan PR included.
+        this.move(o.event === "plan_merged" ? await this.deliveryFromPlan(m) : m, o);
       } catch (e) {
         const msg = (e as Error).message;
         this.health.fail("github", msg, this.now);
@@ -1241,7 +1320,9 @@ export class Loop {
 
   move(m: Mission, o: Outcome): Mission {
     this.pollAt.delete(m.id);
-    if (o.event === "plan_merged" && this.slotTaken(m)) return this.markReady(m);
+    // PIP-113: a steps-delivered intent builds nothing, so it needs no build slot.
+    const byHand = (dataOf(m) as PipeData).delivery === "steps";
+    if (o.event === "plan_merged" && !byHand && this.slotTaken(m)) return this.markReady(m);
     const out = apply(this.applyCtx(), m, o);
     if (out.stage !== m.stage || out.id !== m.id) {
       this.lastPrPoll.delete(m.id);
@@ -1403,7 +1484,11 @@ export class Loop {
       this.endDrain();
       return;
     }
-    const idle = () => this.children.size === 0 && this.featuresJob === null && this.readinessJob === null;
+    const idle = () =>
+      this.children.size === 0 &&
+      this.featuresJob === null &&
+      this.readinessJob === null &&
+      this.settingsJob === null;
     // A drain whose children are gone updates at once instead of at the next minute.
     if (!(this.drain !== null && idle()) && this.now - this.lastUpdate < UPDATE_POLL_S) return;
     this.lastUpdate = this.now;

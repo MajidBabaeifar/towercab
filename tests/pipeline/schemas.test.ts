@@ -23,7 +23,7 @@ const BUILD = {
     context: "c",
     question: "q?",
     // biome-ignore lint/suspicious/noThenProperty: the spec's key; never awaited.
-    options: [{ option: "a", then: "b" }],
+    options: [{ option: "a", then: "b", do: "continue" }],
     recommendation: "a",
   },
   access: null,

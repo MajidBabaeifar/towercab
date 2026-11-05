@@ -59,6 +59,8 @@ export interface TowercabFile {
   releases?: "manual";
   /** The confirmed kind (REPO-20); absent: unconfirmed. */
   kind?: Kind;
+  /** `check` keeps the repo check-only when Towercab applies settings (REPO-31); absent: applied. */
+  settings?: "check";
   /** `warn` (absent) or `block` (LOOP-70). */
   readiness?: Mode;
   /** Items the owner waived, with the reason (REPO-20); absent: none. */
@@ -257,6 +259,7 @@ const KEYS = [
   "readiness",
   "waive",
   "go_live",
+  "settings",
 ];
 const KEY = /^([A-Za-z_][A-Za-z0-9_-]*):(?:[ \t]|$)/;
 
@@ -316,6 +319,9 @@ function frontMatter(ls: string[], t: TowercabFile): void {
     } else if (k === "kind") {
       if (!isKind(val)) throw new Error(`kind: ${String(val)} isn't one of ${KINDS.join(", ")}`);
       t.kind = val;
+    } else if (k === "settings") {
+      if (val !== "check") throw new Error(`settings: ${String(val)} isn't check`);
+      t.settings = "check";
     } else if (k === "readiness") {
       if (val !== "warn" && val !== "block") throw new Error(`readiness: ${String(val)} isn't warn or block`);
       t.readiness = val;

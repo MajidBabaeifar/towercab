@@ -9,6 +9,7 @@ import { classifyFiles, fetchFiles, type ProposedPr } from "../github/proposed.t
 import type { Clock, GitHub } from "../handlers.ts";
 import type { IntentStore } from "../intents/types.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
+import { grantPermission } from "../settings/store.ts";
 import { currentPr, type DoneNote, validNote } from "./state.ts";
 
 /** What the page can do; each resolves to one sentence saying what happened, or throws the error. */
@@ -20,6 +21,12 @@ export interface UiActions {
   start(intent: string): Promise<string>;
   /** UI-160, SHIP-22: tick (or untick) one of the owner's steps. */
   step?(intent: string, n: number, done: boolean): Promise<string>;
+  /** REPO-32: the owner granted the App Administration (write); settings are applied again. */
+  granted?(): Promise<string>;
+  /** UI-164, LOOP-76: "I did it myself": ends the intent; the note becomes a ticked step. */
+  done?(intent: string, note: string): Promise<string>;
+  /** UI-164, PIP-113: the owner does it by hand; the intent becomes steps. */
+  steps?(intent: string): Promise<string>;
   pause(): Promise<string>;
   resume(): Promise<string>;
   /** UI-130: add `owner/name` as a repo (`name` = its short name, default the repo part). */
@@ -53,7 +60,13 @@ export const MAX_REPLY = 20_000;
 
 const APPROVALS = new Set(["approval:spec", "approval:plan", "approval:merge"]);
 
-const PAST = { merge: "merged", drop: "dropped", retry: "started over" } as const;
+const PAST = {
+  merge: "merged",
+  drop: "dropped",
+  retry: "started over",
+  done: "marked it done",
+  steps: "switched it to steps",
+} as const;
 
 function firstLine(s: string): string {
   return (
@@ -81,8 +94,8 @@ export function createActions(d: ActionDeps): UiActions {
   };
 
   /** UI-105, UI-106: remember the action for display and ask the loop to read the PR on its next pass. */
-  const done = (m: Mission, p: { number: number }, action: DoneNote["action"]) => {
-    const note: DoneNote = { action, stage: m.stage, pr: p.number, at: d.clock.now() };
+  const done = (m: Mission, p: { number: number } | null, action: DoneNote["action"]) => {
+    const note: DoneNote = { action, stage: m.stage, pr: p?.number ?? 0, at: d.clock.now() };
     d.db.tx(() => {
       const fresh = getMission(d.db, m.id);
       if (!fresh || fresh.stage !== m.stage) return;
@@ -226,6 +239,12 @@ export function createActions(d: ActionDeps): UiActions {
       return "Answer saved to the intent. Towercab goes on with it on its next pass.";
     },
 
+    async granted() {
+      return grantPermission(d.db)
+        ? "Noted. Towercab applies the standard settings again at its next check."
+        : "Nothing to clear: the GitHub App was not missing the permission.";
+    },
+
     async retry(intent) {
       const m = unfinishedFor(d.db, intent);
       const p = pr(m);
@@ -271,6 +290,22 @@ export function createActions(d: ActionDeps): UiActions {
     async step(intent, n, done) {
       // The same transaction as `towercab step`; the loop writes the tick to plan.md and goes on.
       return tickSteps(d.db, intent, [n], done, new Date(d.clock.now() * 1000));
+    },
+
+    async done(intent, note) {
+      const m = unfinishedFor(d.db, intent);
+      if (!m) throw new Error("Nothing to finish: this intent isn't waiting on you.");
+      command("done", intent, note.trim().slice(0, 300));
+      done(m, pr(m), "done");
+      return "Marked as done by you. Towercab ends the intent on its next pass.";
+    },
+
+    async steps(intent) {
+      const m = unfinishedFor(d.db, intent);
+      if (!m) throw new Error("Nothing to switch: this intent isn't waiting on you.");
+      command("steps", intent);
+      done(m, pr(m), "steps");
+      return "Switched to steps for you to do. Towercab sets it up on its next pass.";
     },
 
     async resume() {

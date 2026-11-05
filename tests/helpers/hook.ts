@@ -12,9 +12,9 @@ export const QUESTION = {
   question: "Should Towercab regenerate the build's guard settings?",
   options: [
     // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
-    { option: "Yes", then: "The worker tries again." },
+    { option: "Yes", then: "The worker tries again.", do: "continue" },
     // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
-    { option: "No", then: "The build stays blocked." },
+    { option: "No", then: "The build stays blocked.", do: "continue" },
   ],
   recommendation: "Yes.",
 };

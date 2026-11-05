@@ -31,7 +31,7 @@ CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT 
 CREATE TABLE transitions (id INTEGER PRIMARY KEY, mission INTEGER NOT NULL REFERENCES missions(id),
   at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT);
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start')),
+  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps')),
   arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
   created REAL NOT NULL, applied_at REAL, result TEXT);
 CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, created REAL NOT NULL,
@@ -40,7 +40,7 @@ ${REPOS}`;
 
 /** Migration i takes `user_version` from i to i+1. Later changes append. */
 export const MIGRATIONS: string[] = [
-  SCHEMA.replace("'resume','start'", "'resume'").replace(`\n${REPOS}`, ""),
+  SCHEMA.replace("'resume','start','done','steps'", "'resume'").replace(`\n${REPOS}`, ""),
   // 2: `start` joins the commands (LOOP-63); the CHECK can't be altered, so the table is rebuilt.
   `CREATE TABLE commands_new (id INTEGER PRIMARY KEY,
   name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start')),
@@ -55,6 +55,14 @@ ALTER TABLE commands_new RENAME TO commands;`,
   // 4: a mission that ended `unverified` (LOOP-73) is finished, so its intent may start a new one.
   `DROP INDEX missions_one_per_intent;
 CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT IN ('done','stopped','unverified');`,
+  // 5: `done` and `steps` join the commands (LOOP-76); the CHECK can't be altered, so the table is rebuilt.
+  `CREATE TABLE commands_new (id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps')),
+  arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
+  created REAL NOT NULL, applied_at REAL, result TEXT);
+INSERT INTO commands_new SELECT id, name, arg, text, source, created, applied_at, result FROM commands;
+DROP TABLE commands;
+ALTER TABLE commands_new RENAME TO commands;`,
 ];
 
 /**

@@ -66,13 +66,19 @@ export const PLAN_SCHEMA = object({
   owner_steps: OWNER_STEPS,
   // SHIP-21: empty, or why nothing about the change can be seen live.
   live_none_why: S,
+  // PIP-112: `code` builds and ships a change; `steps` is work only the owner can do.
+  delivery: { type: "string", enum: ["code", "steps"] },
 });
+
+/** PIP-114: the three things an option of a question can make Towercab do. */
+export const QUESTION_DO = ["continue", "steps", "drop"];
 
 export const QUESTION = object({
   context: S,
   question: S,
+  // PIP-114: what Towercab does when the owner picks the option.
   // biome-ignore lint/suspicious/noThenProperty: the spec's key; this object is never awaited.
-  options: list(object({ option: S, then: S })),
+  options: list(object({ option: S, then: S, do: { type: "string", enum: QUESTION_DO } })),
   recommendation: S,
 });
 
@@ -179,12 +185,15 @@ export interface PlanResult {
   owner_steps?: { when: "before" | "after"; text: string; why: string }[];
   /** SHIP-21: absent counts as empty. */
   live_none_why?: string;
+  /** PIP-112: absent counts as `code`. */
+  delivery?: "code" | "steps";
 }
 
 export interface Question {
   context: string;
   question: string;
-  options: { option: string; then: string }[];
+  /** `do` is absent in questions stored before PIP-114 (and means `continue`). */
+  options: { option: string; then: string; do?: "continue" | "steps" | "drop" }[];
   recommendation: string;
 }
 
@@ -324,10 +333,23 @@ export function parseResult<K extends keyof Results>(
   }
   // SHIP-17, SHIP-21: a plan from before owner steps (or a cached one) reads as none and no claim.
   if (kind === "plan" && isObject(value)) {
-    value = { owner_steps: [], live_none_why: "", ...value };
+    value = { owner_steps: [], live_none_why: "", delivery: "code", ...value };
   }
   const why = validate(SCHEMAS[kind], value);
-  return why === null ? { ok: true, value: value as Results[K] } : { ok: false, why };
+  if (why !== null) return { ok: false, why };
+  // PIP-112: a plan the owner does by hand needs steps they can tick.
+  if (kind === "plan" && isObject(value) && value.delivery === "steps") {
+    const steps = value.owner_steps;
+    if (!Array.isArray(steps) || steps.length === 0)
+      return { ok: false, why: "a plan with delivery steps needs at least one owner_steps entry" };
+  }
+  // PIP-114: a question with no options has nothing the owner can pick.
+  if (kind === "build" && isObject(value) && isObject(value.question)) {
+    const options = value.question.options;
+    if (Array.isArray(options) && options.length === 0)
+      return { ok: false, why: "question.options needs at least one option" };
+  }
+  return { ok: true, value: value as Results[K] };
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

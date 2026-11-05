@@ -2490,6 +2490,27 @@ a.pr-tile:hover {
   font-weight: 600;
 }
 
+.repo-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+}
+
+.repo-gaps {
+  margin: 0;
+  padding-left: var(--s3);
+  overflow-wrap: anywhere;
+}
+
+.repo-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+  margin: 0;
+}
+
 .repo-features {
   display: flex;
   flex-direction: column;
@@ -3966,6 +3987,19 @@ a.pr-tile:hover {
   .focus-item {
     animation: none;
   }
+}
+
+/* UI-164: the exits of a wait */
+.exits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+.exits input[type="text"] {
+  flex: 1 1 220px;
+  min-width: 0;
 }
 
 /* UI-155..157: a repo missing setup. The warning colour, never the "Needs you" one. */
