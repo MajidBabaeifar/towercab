@@ -1331,9 +1331,17 @@ In such a repo the gate never merges before a teammate approval, at any autonomy
   gated head (PIP-142) → `approval:teammate_review` (PIP-143), at `a` 4 and 5 too, whatever the risk
   level (AUT-18) or caps. In this repo the "review not approved" row holds for the owner until the
   owner passes it on (PIP-143); after that the teammate row applies. Once approved, the rest of the
-  table applies unchanged; at `a` ≤ 3 the owner still merges, and an Approve by the owner on the PR
-  neither merges it nor passes it on (it overrides PIP-43 here): Towercab replies once, "Reply `/pass`
-  to ask your teammates."
+  table applies unchanged.
+- At `a` ≤ 3, once the teammate approvals the host requires are in (PIP-142, PIP-147), the mission
+  waits for the owner as everywhere else (PIP-7, `approval:merge`) and the owner merges the usual
+  ways: the card's Merge button, `towercab approve <id>`, or GitHub's own merge button (the host
+  decides whether it allows it; Towercab does not stop it). Before the approvals are in, the card's
+  Merge button and `towercab approve` are refused with the reason (`waiting for teammate review from
+  <who>`).
+- The owner's Approve review on the PR is not one of those ways in these repos (it overrides PIP-43
+  here): it never counts as a teammate approval, never merges and never passes the PR on. Towercab
+  replies once, "Reply `/pass` to ask your teammates" before they are asked, or "Merge with the card's
+  button or `towercab approve`" after.
 - Towercab merging (PIP-22) re-checks the approval on the head it merges. If the host refuses the
   merge for the review rule, the mission goes back to this wait; Towercab never works around the host's
   rules, and the host's rules and the list are both required (a listed approval does not override a
@@ -1341,7 +1349,7 @@ In such a repo the gate never merges before a teammate approval, at any autonomy
 - Spec PRs follow the same rule: Towercab merges one at a4 and a5 (PIP-50) only after a teammate
   approval, and waits as above. Plan PRs in the owner's intents repo (PIP-51) do not: that repo is the
   owner's own.
-- Verified by: `pipeline: gate waits for a teammate approval at a4 and a5`, `pipeline: owner approve does not merge in a teammate review repo`, `pipeline: merge re-checks the approval on the head`, `pipeline: a spec PR waits for a teammate approval`, `pipeline: a plan PR does not wait for a teammate`
+- Verified by: `pipeline: gate waits for a teammate approval at a4 and a5`, `pipeline: owner approve does not merge in a teammate review repo`, `pipeline: the owner merges at a3 once the teammates approved`, `pipeline: merge and approve are refused before the teammates approved`, `cli: approve merges once the teammates approved`, `pipeline: merge re-checks the approval on the head`, `pipeline: a spec PR waits for a teammate approval`, `pipeline: a plan PR does not wait for a teammate`
 
 ### PIP-145 · A reviewer's feedback starts a repair round
 
