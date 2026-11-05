@@ -1520,6 +1520,46 @@ A conflict round may change a locked test where the base's own changes force it,
 - Proof and review (PIP-151) apply to these edits like to any other.
 - Verified by: `pipeline: a merge of the base may edit a pushed test whose imported source changed on the base`, `pipeline: a merge of the base may edit a pushed test that changed on the base`, `pipeline: a conflict round can't edit a pushed test the base did not touch`
 
+### PIP-154 · A repair round reads the log of the job that failed
+
+When a run's failed-jobs log is only a summary job's, the repair round gets the own log of each job that really failed.
+
+- Applies wherever PIP-83's log tails are built for a red pull request (the code PR's repair rounds in
+  `ci.ts` and the spec PR's revisions). For a failed check with a `run`, the job id is the number after
+  `/job/` in the check's details URL (`Check.url`). The `Forge` gets `jobLog(repo, job)`, which reads
+  `gh api repos/<repo>/actions/jobs/<job id>/logs`; like the other host reads only `GitHubForge` builds the
+  arguments.
+- A check is a summary job when its name's last segment (after the final ` / `) is `ci-ok`, or when the
+  run's `--log-failed` output holds only lines of such jobs. When at least one failed check is not a
+  summary job, summary checks are skipped and only the others are read. When every failed check is a
+  summary job, the log is read as before (PIP-83).
+- Each job's tail is the last 6000 characters of its log (PIP-83's limit) under the line `Job <check name>:`;
+  at most 3 jobs are read per round, in the order of the checks. The run-level `--log-failed` read of
+  PIP-83 is kept for a check whose URL holds no job id and for the all-summary case.
+- Verified by: `pipeline: a red run whose failed log is only the summary job gives the repair round the failed job's finding`, `pipeline: summary jobs are skipped when another check failed`, `pipeline: a check without a job id in its URL keeps the run log`
+
+### PIP-155 · A long job log is cut around the finding, never the secret
+
+A long log from a secret scanner or Semgrep is cut to the findings, and a secret's value never reaches the repair round.
+
+- A job log longer than the tail limit (PIP-154) is cut before the tail is taken: for gitleaks, to the
+  finding blocks (the `RuleID`, `File`, `Line` and `Fingerprint` lines of each block); for Semgrep, to
+  the block that starts at `Findings:` or `Code Finding` and ends at the summary line. Other logs keep
+  their last 6000 characters.
+- Lines that carry the secret are dropped for gitleaks: `Secret:`, `Match:` and the `Finding:` line,
+  whatever the log level prefix. The rule applies to a log of any length, also one that is short enough
+  to pass whole. A repair round is told the file and line, not the value.
+- If no block is recognised, the tail applies as before, with the same lines dropped.
+- Verified by: `pipeline: a long gitleaks log is cut to its RuleID, File and Line blocks`, `pipeline: a gitleaks secret value never reaches the repair details`, `pipeline: a long Semgrep log is cut to its findings block`, `pipeline: a log without a known finding block keeps its tail`
+
+### PIP-156 · An unreadable job log is noted, not fatal
+
+When one job's log can't be read, the repair details say so in one line and the round goes on.
+
+- A failure of the read in PIP-154 adds `(the log of job <name> couldn't be read: <reason>)` and the run's
+  `--log-failed` output is used for that check instead; it neither throws nor counts as a crash (LOOP-6).
+- Verified by: `pipeline: an unreadable job log is noted and the run log is used`
+
 ### PIP-130 · The design treats IDs of other open spec PRs as taken
 
 Two open spec pull requests never get the same requirement numbers: the design leaves out every number another open one already added.
