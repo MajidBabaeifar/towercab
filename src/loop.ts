@@ -77,7 +77,7 @@ import { missingText } from "./repo/readiness.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
 import { aheadIn, bestReady, buildingIn, isReady } from "./slots.ts";
-import { leftOf, type OwnerStep, unticked } from "./steps.ts";
+import { leftOf, type OwnerStep, parseDelivery, unticked } from "./steps.ts";
 import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
 import { budgetReached } from "./ui/state.ts";
 import { checkUpdate, RESTART_CODE } from "./update.ts";
@@ -692,6 +692,16 @@ export class Loop {
    * PIP-113: a mission the owner switched to steps has no code to merge: its open code PR is closed with
    * a comment saying why, and its branch goes. A failure leaves the step at `enter`: retried next pass.
    */
+  /** The mission with `delivery` read from the merged plan.md; a plan without the line keeps what it had. */
+  private async deliveryFromPlan(m: Mission): Promise<Mission> {
+    const intent = this.intentOf(m.intent);
+    if (!intent) return m;
+    const md = await this.d.store.readFile(`${intent.dir}/plan.md`);
+    const delivery = md === null ? null : parseDelivery(md);
+    if (!delivery) return m;
+    return patchData(this.d.db, m, { delivery }, this.now);
+  }
+
   private async switchedToSteps(m: Mission): Promise<void> {
     if (!m.pr) return;
     const last = this.d.db.get<{ event: string }>(
@@ -792,7 +802,8 @@ export class Loop {
       const unreadable = listing.unreadable.some((u) => u.id === m.intent);
       if (!intent && unreadable) continue;
       const o = intentEvents(m, intent);
-      if (o) this.move(m, o);
+      // LOOP-77: the owner removing `waiting` is an answer, though it has no words.
+      if (o) this.move(m, o.event === "answered" ? { ...o, counted: true } : o);
     }
     const busy = new Set(unfinished(db).map((m) => m.intent));
     // `retry: fresh` on an intent with no mission: queue it again (LOOP-18).
@@ -1132,7 +1143,8 @@ export class Loop {
         if (!o) continue;
         const running = this.children.has(m.id);
         if (running && !["code_merged", "spec_merged", "plan_merged", "closed"].includes(o.event)) continue;
-        this.move(m, o);
+        // PIP-112: the merged plan.md is the record of the delivery, edits in the plan PR included.
+        this.move(o.event === "plan_merged" ? await this.deliveryFromPlan(m) : m, o);
       } catch (e) {
         const msg = (e as Error).message;
         this.health.fail("github", msg, this.now);

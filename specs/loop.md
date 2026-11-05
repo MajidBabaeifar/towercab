@@ -951,7 +951,7 @@ Whatever Towercab waits on the owner for, the owner can end or move the intent f
 - A test walks every row of **Waits**, including the ones LOOP-74 adds, applies every exit from each
   wait through `machine.apply`, and fails when a wait has no exit that leaves it for `done`, `stopped`
   or another stage, or when a wait in the code is missing from the table.
-- Verified by: `machine: every wait has an exit that ends or moves the intent`, `machine: no changes can end as done`, `cli: done ends an intent the owner did`, `cli: done turns the note into a ticked step`, `outbox: the message names the exits`, `status: waits list their exits`
+- Verified by: `machine: every wait has an exit that ends or moves the intent`, `machine: no changes can end as done`, `cli: done ends an intent the owner did`, `cli: done turns the note into a ticked step`, `outbox: the message names the exits`, `status: waits list their exits`, `machine: every wait has an exit besides a reply that ends or moves the intent`, `db: the commands rebuild keeps existing rows and accepts done and steps`
 
 ### LOOP-77 · The same wait again is stuck
 
@@ -968,7 +968,7 @@ A mission that lands on the same wait again with nothing new is marked stuck and
   here again; use steps, done, retry or drop`.
 - Nothing about the mission's state changes: stuck is a display and an offer, and `machine.apply` still
   moves it only on events.
-- Verified by: `machine: the same wait again with nothing new is stuck`, `machine: something new clears stuck`, `cli: answer on a stuck mission is refused`, `outbox: a stuck wait offers only the other exits`
+- Verified by: `machine: the same wait again with nothing new is stuck`, `machine: something new clears stuck`, `cli: answer on a stuck mission is refused`, `outbox: a stuck wait offers only the other exits`, `machine: an answer without words still counts as new`
 
 ### LOOP-78 · A part per repo, built in parallel
 

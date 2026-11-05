@@ -160,7 +160,8 @@ export function next(
       return stage === "blocked" ? go("done") : K("ignore");
     // PIP-113: switch to steps; with none in the plan yet, the plan is made again to add them.
     case "to_steps":
-      if (stage === "steps" || stage === "plan") return K("ignore");
+      // Only a wait on the owner can be switched; nothing else moves on this event.
+      if (stage !== "blocked") return K("ignore");
       return go(facts.hasSteps ? "steps" : "plan");
     case "code_merged":
       // A wait after shipping (a frozen repo, a revert) keeps reading its merged PR: no new ship.
@@ -445,6 +446,8 @@ export interface Outcome {
   limit?: { model: string; until: number; backoffs: number; text: string };
   /** For `answered`/`feedback`: the owner's text, kept for the next worker prompt. */
   text?: string;
+  /** An owner's answer without words (they removed `waiting`): it still counts as new for LOOP-77. */
+  counted?: boolean;
   /** For a step that runs again (`bad_result`, `timeout`): write the retry to the move log (LOOP-106, 107). */
   record?: boolean;
   /** Mission columns to set in the same transaction. */
@@ -665,10 +668,9 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
       }
       case "continue": {
         const to = continueTo(cur.waiting, cur.from_stage);
-        if (o.text) {
-          data.answer = o.text;
-          data.answers = (Number(data.answers) || 0) + 1;
-        }
+        if (o.text) data.answer = o.text;
+        // LOOP-77: an answer is new, with words or without (the owner removed `waiting`).
+        if (o.text || o.counted) data.answers = (Number(data.answers) || 0) + 1;
         move(to, { repairs: 0, ci_repairs: 0, unclean: 0 }, o.why ?? null);
         break;
       }

@@ -35,6 +35,7 @@ import {
   Trash,
 } from "./icons.tsx";
 import { Markdown } from "./md.tsx";
+import { asksFirst } from "./options.ts";
 import { Link } from "./router.tsx";
 
 const drafts = new Map<string, string>();
@@ -256,11 +257,11 @@ export function NeedsCard({
   const pick = (o: { option: string; do?: string }) => {
     if (o.do === "steps") void run("steps");
     else if (o.do === "drop") setConfirm(true);
-    else if (o.do === "continue") void run("reply", o.option);
+    else if (o.do === "continue" && !asksFirst(o.option)) void run("reply", o.option);
     else setDraft(o.option);
   };
   return (
-    <article class={`card needs-card kind-${card.kind}`} data-intent={key}>
+    <article class={`card needs-card kind-${card.kind}${card.stuck ? " stuck-card" : ""}`} data-intent={key}>
       <header class="card-head">
         <span class="chip chip-needs">
           <StateIcon state="needs" size={14} />
@@ -371,6 +372,8 @@ export function NeedsCard({
                     <span class="opt-name">
                       {o.option}
                       {rec ? <span class="tag">Recommended</span> : null}
+                      {o.do === "steps" ? <span class="tag">Gives you the steps</span> : null}
+                      {o.do === "drop" ? <span class="tag">Drops the intent</span> : null}
                     </span>
                     <span class="opt-then">{o.then}</span>
                   </button>
