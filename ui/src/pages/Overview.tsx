@@ -8,12 +8,12 @@ import {
   NeedsCard,
   ProblemItem,
   ProposedList,
-  pruneFolds,
   Section,
   SpendCard,
   UpNextList,
   WorkRow,
 } from "../components.tsx";
+import { pruneFolds } from "../folds.ts";
 import { Check, ListIcon, Moon } from "../icons.tsx";
 import { Link } from "../router.tsx";
 

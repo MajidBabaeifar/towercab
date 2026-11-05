@@ -1041,7 +1041,7 @@ The page remembers which Needs you cards are folded in this browser, keeps them 
   gives a different key, so the card renders open and the stale entry is removed. An entry for an
   intent that no longer waits is removed. A live update (UI-66) that leaves the key unchanged leaves
   the card folded and its place in the order.
-- Verified by: `ui: folded needs-you cards are remembered`, `ui: a changed ask opens a folded card again`, `ui: live updates keep a card folded`
+- Verified by: `ui: folded needs-you cards are remembered`, `ui: a changed ask opens a folded card again`, `ui: live updates keep a card folded`, `ui: needs-you folds are kept per intent in localStorage`, `ui: a new ask or round gives a card a new wait key`, `ui: folds of intents that no longer wait are forgotten`, `ui: folds work without storage`
 
 ### UI-160 · Your steps on the intent page
 

@@ -21,6 +21,7 @@ import type {
 } from "../../src/ui/view.ts";
 import { AddRepoForm } from "./AddRepo.tsx";
 import { acceptProposed, act, closeProposed, useFreshness } from "./api.ts";
+import { foldedOn, forgetFold, setFolded, waitKey } from "./folds.ts";
 import {
   Alert,
   Check,
@@ -204,50 +205,6 @@ function useOutside(open: boolean, close: () => void) {
 
 const recommended = (rec: string, option: string) => rec.toLowerCase().startsWith(option.toLowerCase());
 
-const FOLD_KEY = "towercab.needs.folded";
-
-/** UI-191: intent id → the key of the wait it was folded on, mirrored in `localStorage` when there is one. */
-let foldedCards: Map<string, string> | null = null;
-
-function folds(): Map<string, string> {
-  if (foldedCards) return foldedCards;
-  foldedCards = new Map();
-  try {
-    const v: unknown = JSON.parse(localStorage.getItem(FOLD_KEY) ?? "{}");
-    if (v && typeof v === "object" && !Array.isArray(v)) {
-      for (const [id, k] of Object.entries(v)) if (typeof k === "string") foldedCards.set(id, k);
-    }
-  } catch {
-    // No storage, or not JSON: start with nothing folded.
-  }
-  return foldedCards;
-}
-
-function saveFolds(): void {
-  try {
-    localStorage.setItem(FOLD_KEY, JSON.stringify(Object.fromEntries(folds())));
-  } catch {
-    // No storage: the card stays folded until the page reloads.
-  }
-}
-
-/** UI-191: drops the folds of intents that no longer wait. */
-export function pruneFolds(waiting: string[]): void {
-  const map = folds();
-  let changed = false;
-  for (const id of [...map.keys()]) {
-    if (!waiting.includes(id)) {
-      map.delete(id);
-      changed = true;
-    }
-  }
-  if (changed) saveFolds();
-}
-
-/** UI-191: what a card waits on; a new ask or a new round gives a different key. */
-const waitKey = (c: Card) =>
-  JSON.stringify([c.kind, c.pr?.number ?? null, c.ask, c.question?.question ?? null]);
-
 /** UI-58: one thing waiting on the owner, with only the actions that answer it. */
 export function NeedsCard({
   card,
@@ -268,18 +225,15 @@ export function NeedsCard({
   const [, redraw] = useState(0);
   // UI-191: folded only while the stored key is this wait's key; a changed wait renders open.
   const wait = waitKey(card);
-  const stored = foldable ? folds().get(key) : undefined;
+  const stored = foldable ? foldedOn(key) : undefined;
   const folded = stored !== undefined && stored === wait;
   useEffect(() => {
     if (stored !== undefined && stored !== wait) {
-      folds().delete(key);
-      saveFolds();
+      forgetFold(key);
     }
   }, [key, stored, wait]);
   const fold = () => {
-    if (folded) folds().delete(key);
-    else folds().set(key, wait);
-    saveFolds();
+    setFolded(key, wait, !folded);
     redraw((n) => n + 1);
   };
   const [draft, setDraftState] = useState(drafts.get(key) ?? "");
