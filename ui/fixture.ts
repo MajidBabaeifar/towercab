@@ -12,6 +12,14 @@ import type { Clock } from "../src/handlers.ts";
 import { Home } from "../src/home.ts";
 import type { Intent, IntentStore, Listing, Unreadable } from "../src/intents/types.ts";
 import type { Stage } from "../src/machine.ts";
+import {
+  type Check,
+  type Item,
+  type Kind,
+  repoReadiness,
+  requiredSetup,
+  type Stored,
+} from "../src/repo/readiness.ts";
 import type { UiActions } from "../src/ui/actions.ts";
 import { startUi, type UiServer } from "../src/ui/server.ts";
 import { type LogLine, type Problem, priority, type UiSources, type UpNext } from "../src/ui/state.ts";
@@ -295,10 +303,67 @@ export function proposals(now: number): ProposedPr[] {
   ];
 }
 
+/** UI-156: the setup intent Towercab proposed for `web`, waiting for the owner's merge. */
+export function setupProposal(now: number): ProposedPr {
+  return {
+    number: 210,
+    url: "https://github.com/acme/intents/pull/210",
+    title: "docs(intents): add 261103-0900 web is set up as a library and ready for work",
+    draft: false,
+    proposer: "Towercab",
+    createdAt: now - DAY,
+    head: "b210".padEnd(40, "0"),
+    path: "intents/261103-0900-web-is-set-up/intent.md",
+    intent: {
+      title: "web is set up as a library and ready for work",
+      repo: "web",
+      u: 4,
+      i: 4,
+      a: null,
+      source: "towercab",
+      setup: true,
+    },
+    textUrl: "https://github.com/acme/intents/blob/b210/intents/261103-0900-web-is-set-up/intent.md",
+    acceptable: true,
+    reason: null,
+  };
+}
+
+/** UI-155..157: `web` blocks until it is set up, `api` has an unconfirmed kind, `docs` could not be checked. */
+function storeReadiness(db: Db, now: number): void {
+  const put = (
+    repo: string,
+    kind: Kind,
+    confirmed: boolean,
+    mode: "warn" | "block",
+    states: Partial<Record<Item, Check>>,
+  ) => {
+    const checks = new Map<Item, Check>(
+      requiredSetup(kind).map((i) => [i, states[i] ?? { state: "present" as const }]),
+    );
+    const s: Stored = {
+      base: "0".repeat(40),
+      at: now,
+      readiness: repoReadiness(kind, confirmed, checks, [], mode),
+      goLive: null,
+      hasLive: false,
+    };
+    db.setMeta(`readiness:${repo}`, JSON.stringify(s));
+  };
+  put("web", "library", true, "block", { release: { state: "missing" }, publish: { state: "missing" } });
+  put("api", "service", false, "warn", { image: { state: "missing" }, deploy: { state: "missing" } });
+  put("docs", "spec-only", true, "warn", {
+    settings: {
+      state: "unknown",
+      words: "The standard settings could not be checked: add the ci repo to Towercab",
+    },
+  });
+}
+
 /** Build the fixture home; `now` defaults to the real clock so relative times read naturally. `empty`
  * gives a home with nothing in it (UI-70). */
 export function buildFixture(
-  o: { now?: number; root?: string; empty?: boolean; proposed?: boolean } = {},
+  o: { now?: number; root?: string; empty?: boolean; proposed?: boolean; readiness?: boolean } = {},
 ): Fixture {
   const now = o.now ?? Date.now() / 1000;
   const root = o.root ?? mkdtempSync(join(tmpdir(), "tc-ui-fixture-"));
@@ -340,7 +405,15 @@ export function buildFixture(
           { intent: IDS.parked1, priority: 5, skip: { kind: "parked" } },
         ]) as UpNext[],
   };
-  state.proposed = { list: o.proposed && !o.empty ? proposals(now) : [], error: null, failedAt: null };
+  state.proposed = {
+    list: [
+      ...(o.proposed && !o.empty ? proposals(now) : []),
+      ...(o.readiness && !o.empty ? [setupProposal(now)] : []),
+    ],
+    error: null,
+    failedAt: null,
+  };
+  if (o.readiness && !o.empty) storeReadiness(db, now);
   const logs: LogLine[] = o.empty
     ? []
     : [
@@ -373,7 +446,7 @@ export function buildFixture(
         : state.upNext,
     prUrl: (repo, n) => `https://github.com/${repo}/pull/${n}`,
     intentUrl: (i) => store.url(i),
-    ...(o.proposed ? { proposed: () => state.proposed } : {}),
+    ...(o.proposed || o.readiness ? { proposed: () => state.proposed } : {}),
     logs: () => logs,
   };
 
@@ -1088,7 +1161,7 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
 /** Serve the fixture (the screenshot tests and a manual look). */
 export async function serveFixture(
   port = 0,
-  o: { empty?: boolean; proposed?: boolean } = {},
+  o: { empty?: boolean; proposed?: boolean; readiness?: boolean } = {},
 ): Promise<{ fixture: Fixture; server: UiServer }> {
   const fixture = buildFixture(o);
   const here = dirname(fileURLToPath(import.meta.url));

@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..69, LOOP-73..75, LOOP-92..93, LOOP-105..109 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-92..93, LOOP-105..109 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -791,12 +791,22 @@ The one kind of work allowed in a blocking repo is the intent that sets it up, a
   words of REPO-24), as other proposed intents arrive. The owner accepts it by merging (INT-4). Open
   means: an intent of that repo with `setup: true` that is on `main` and not done or dropped, or has a
   pull request still open; the standards review may open one first, and then Towercab opens none.
-- Never a second one while one is open; a closed or dropped one may be proposed again on a later
-  check that still finds a missing item. The proposal is keyed by repo (a mark in the PR body), so a
-  crash cannot open two.
-- The wait is resolvable inside Towercab: the repo's page links the proposed pull request or the
-  intent ([UI-156](ui.md)).
-- Verified by: `loop: a setup intent is picked in a blocking repo`, `loop: only one setup intent per repo at a time`, `loop: a missing item proposes one setup intent`, `loop: no second setup intent while one is open`, `loop: an existing setup intent from the standards review stops the proposal`
+- Never a second one while one is open. Open also counts a setup PR from anywhere: the proposed pull
+  requests of LOOP-92 whose intent is a setup intent for the repo (the standards review's, the owner's);
+  while that list is unknown nothing is proposed. The PR body starts with the mark
+  `<!-- towercab:setup repo=<repo> -->`, and the branch is `setup/<repo>`, so a crash cannot open two.
+- A closed proposal is a no: a proposal is tried only when the set of missing items differs from the set
+  last tried (the items, never the stored time), and at most once a day per repo. Nothing missing forgets
+  the set, so a later gap is new.
+- The readiness check (REPO-24) runs as a background job beside the pass, one repo at a time, like the
+  feature backfill of INT-39. Its fetch of the repo's clone (and of the `ci` and `infra` clones it reads,
+  each at most every 10 minutes) holds the loop's clone lock, which every mission step also holds, so two
+  fetches of one clone never overlap; the reads, the stored result and the proposal that follow only read.
+  One 60 s limit, counted from when the lock is taken, covers the fetch and every read: each child process
+  gets only the time left and is killed with it, and at the limit no further call starts. A pass never
+  waits for the job, a repo whose first check failed waits 10 minutes before the next try, and a drain
+  waits for a running job to end (LOOP-108).
+- Verified by: `loop: a setup intent is picked in a blocking repo`, `loop: only one setup intent per repo at a time`, `loop: a missing item proposes one setup intent`, `loop: no second setup intent while one is open`, `loop: an existing setup intent from the standards review stops the proposal`, `readiness: a closed proposal is not proposed again until the missing items change`, `readiness: at most one proposal per repo per day`, `readiness: a setup PR from the proposed list counts as open`, `readiness: nothing is proposed while the proposed intents are unknown`, `readiness: the check has one deadline for the fetch and the reads`, `readiness: a hung read ends at the limit and the pass does not wait for it`, `readiness: the clone is fetched under the clone lock, never beside a mission step`, `readiness: the clone lock runs calls one at a time, in order`, `readiness: a hung fetch ends at the limit in the background, then waits ten minutes`
 
 ### LOOP-72 · Readiness in the commands
 
