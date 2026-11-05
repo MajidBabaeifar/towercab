@@ -24,6 +24,7 @@ import { acceptProposed, act, closeProposed, useFreshness } from "./api.ts";
 import {
   Alert,
   Check,
+  ChevronDown,
   External,
   Merge,
   More,
@@ -203,20 +204,84 @@ function useOutside(open: boolean, close: () => void) {
 
 const recommended = (rec: string, option: string) => rec.toLowerCase().startsWith(option.toLowerCase());
 
+const FOLD_KEY = "towercab.needs.folded";
+
+/** UI-191: intent id → the key of the wait it was folded on, mirrored in `localStorage` when there is one. */
+let foldedCards: Map<string, string> | null = null;
+
+function folds(): Map<string, string> {
+  if (foldedCards) return foldedCards;
+  foldedCards = new Map();
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(FOLD_KEY) ?? "{}");
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      for (const [id, k] of Object.entries(v)) if (typeof k === "string") foldedCards.set(id, k);
+    }
+  } catch {
+    // No storage, or not JSON: start with nothing folded.
+  }
+  return foldedCards;
+}
+
+function saveFolds(): void {
+  try {
+    localStorage.setItem(FOLD_KEY, JSON.stringify(Object.fromEntries(folds())));
+  } catch {
+    // No storage: the card stays folded until the page reloads.
+  }
+}
+
+/** UI-191: drops the folds of intents that no longer wait. */
+export function pruneFolds(waiting: string[]): void {
+  const map = folds();
+  let changed = false;
+  for (const id of [...map.keys()]) {
+    if (!waiting.includes(id)) {
+      map.delete(id);
+      changed = true;
+    }
+  }
+  if (changed) saveFolds();
+}
+
+/** UI-191: what a card waits on; a new ask or a new round gives a different key. */
+const waitKey = (c: Card) =>
+  JSON.stringify([c.kind, c.pr?.number ?? null, c.ask, c.question?.question ?? null]);
+
 /** UI-58: one thing waiting on the owner, with only the actions that answer it. */
 export function NeedsCard({
   card,
   readOnly,
   linkTitle = true,
+  foldable = false,
   onActed,
 }: {
   card: Card;
   readOnly: boolean;
   linkTitle?: boolean;
+  /** UI-189: the overview lets the card fold to one line. */
+  foldable?: boolean;
   /** UI-195: called after an action the loop accepted, so Focus can move on at once. */
   onActed?: (action: string) => void;
 }) {
   const key = card.intent;
+  const [, redraw] = useState(0);
+  // UI-191: folded only while the stored key is this wait's key; a changed wait renders open.
+  const wait = waitKey(card);
+  const stored = foldable ? folds().get(key) : undefined;
+  const folded = stored !== undefined && stored === wait;
+  useEffect(() => {
+    if (stored !== undefined && stored !== wait) {
+      folds().delete(key);
+      saveFolds();
+    }
+  }, [key, stored, wait]);
+  const fold = () => {
+    if (folded) folds().delete(key);
+    else folds().set(key, wait);
+    saveFolds();
+    redraw((n) => n + 1);
+  };
   const [draft, setDraftState] = useState(drafts.get(key) ?? "");
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<ActionReply | null>(results.get(key) ?? null);
@@ -261,8 +326,45 @@ export function NeedsCard({
     else setDraft(o.option);
   };
   return (
-    <article class={`card needs-card kind-${card.kind}${card.stuck ? " stuck-card" : ""}`} data-intent={key}>
+    <article
+      class={`card needs-card kind-${card.kind}${card.stuck ? " stuck-card" : ""}${folded ? " folded" : ""}`}
+      data-intent={key}
+    >
       <header class="card-head">
+        {foldable ? (
+          // A button by role, not by tag: the card's own list of actions (which Focus must match, UI-195)
+          // is its <button>s, and the fold is a view setting, not an action.
+          // biome-ignore lint/a11y/useSemanticElements: see above
+          <span
+            role="button"
+            tabIndex={0}
+            class="fold-toggle"
+            aria-expanded={!folded}
+            aria-label={`${folded ? "Open" : "Fold"} ${card.title}`}
+            title={`${folded ? "Open" : "Fold"} ${card.title}`}
+            onClick={fold}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                fold();
+              }
+            }}
+          >
+            <ChevronDown size={16} class="fold-chev" />
+          </span>
+        ) : null}
+        {folded ? (
+          <span class="fold-line">
+            <span class="fold-title">{card.title}</span>
+            <span class="fold-repo meta">{card.repo}</span>
+            <span class="fold-ask">{card.ask}</span>
+            {card.since ? (
+              <span class="fold-age meta">
+                <Time when={card.since} />
+              </span>
+            ) : null}
+          </span>
+        ) : null}
         <span class="chip chip-needs">
           <StateIcon state="needs" size={14} />
           <span>{card.kindLabel}</span>
