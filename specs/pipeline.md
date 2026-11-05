@@ -1283,10 +1283,17 @@ A refused test can be allowed later, for the running mission, without throwing t
 In a repo that needs a teammate's review, only an approval from someone other than the owner, the bot and the Claude review counts as that review.
 
 - Applies when the repo has `teammate_review=on` (LOOP-83). A teammate approval is a GitHub review in
-  state `APPROVED` on the PR's current head (`commit.oid` = `headRefOid`; an approval of an older head
-  is stale and does not count), whose author is not `[github].me`, not the App's bot and not the PR's
-  author when that is the owner. The Claude review (PIP-4) and the owner's own Approve (PIP-43) never
-  count; a later `CHANGES_REQUESTED` from the same reviewer replaces their earlier approval.
+  state `APPROVED` on the PR's current head (`commit.oid` = `headRefOid`), whose author is not
+  `[github].me`, not the App's bot and not the PR's author when that is the owner. The Claude review
+  (PIP-4) and the owner's own Approve (PIP-43) never count; a later `CHANGES_REQUESTED` from the same
+  reviewer replaces their earlier approval.
+- **Stale approvals.** An approval of an older head is stale and does not count, except when the head
+  moved only by bringing the branch up to date with the base: the PR's own changes are the same, i.e.
+  `git patch-id --stable` of the diff from the merge base to the approved commit equals that of the
+  diff from the merge base to the current head (both computed from the git history, nothing
+  remembered). Any difference in the PR's own diff cancels the approval and the teammates are asked
+  again (PIP-143). If the host's branch rules dismiss stale approvals, Towercab follows the host: a
+  review the host reports `DISMISSED` never counts, and Towercab does not re-count it.
 - The PR's **requested** logins are those the host has requested review from and not withdrawn,
   code owners included. The host clears a request once its person reviews, so Towercab reads the PR's
   timeline (`gh api repos/<r>/issues/<n>/timeline`: a `review_requested` event with no later
@@ -1303,7 +1310,7 @@ In a repo that needs a teammate's review, only an approval from someone other th
 - Without a list, with no requested login and with the host reporting no review rule
   (`reviewDecision` empty), nobody is known to review: the mission asks the owner to list reviewers
   (`towercab repo set <name> reviewers=…`, LOOP-83) and does not merge.
-- Verified by: `pipeline: a listed reviewer's approval counts`, `pipeline: the owner's approval is not a teammate approval`, `pipeline: an approval of an older head is stale`, `pipeline: a code owner's approval counts when the host requested them`, `pipeline: with a list an unlisted unrequested approval does not count even if the host approved`, `pipeline: without a list any approval the host accepts counts`, `pipeline: a withdrawn request is no longer trusted`, `pipeline: requested reviewers are read again before each decision`, `pipeline: no reviewers and no review rule asks the owner`
+- Verified by: `pipeline: a listed reviewer's approval counts`, `pipeline: the owner's approval is not a teammate approval`, `pipeline: an approval of an older head with a changed diff is stale`, `pipeline: a code owner's approval counts when the host requested them`, `pipeline: with a list an unlisted unrequested approval does not count even if the host approved`, `pipeline: without a list any approval the host accepts counts`, `pipeline: a withdrawn request is no longer trusted`, `pipeline: requested reviewers are read again before each decision`, `pipeline: no reviewers and no review rule asks the owner`
 
 ### PIP-143 · Review is requested once the PR is ready
 
@@ -1324,8 +1331,10 @@ When the code PR is ready, Towercab asks the listed reviewers (or the code owner
   `from the code owners`, worded plainly per PIP-110). `status`, `next`, the intent page and the
   stage comment (PIP-42) show the same wait. It does not use a build place (LOOP-100) and has a way out
   (LOOP-76): the owner can `/retry`, change the list, or close the PR.
-- A new head (after a repair round) asks again and drops the wait on the old approval (PIP-142).
-- Verified by: `pipeline: a ready PR requests the listed reviewers`, `pipeline: an empty list leaves the request to CODEOWNERS`, `pipeline: the wait names the reviewers`, `pipeline: a draft PR requests nobody`, `pipeline: a new head asks again`, `pipeline: an unapproved review goes to the owner before the teammates`, `pipeline: the owner passing it on requests the teammates`, `events: pass comment passes it on`, `events: approve review does not pass it on`
+- A new head whose own diff changed (a repair round, PIP-142) asks again and drops the wait on the old
+  approval. A head that only brought the branch up to date with the base keeps the approval and asks
+  nobody again, unless the host dismissed it.
+- Verified by: `pipeline: a ready PR requests the listed reviewers`, `pipeline: an empty list leaves the request to CODEOWNERS`, `pipeline: the wait names the reviewers`, `pipeline: a draft PR requests nobody`, `pipeline: a new head asks again`, `pipeline: an approval survives an update that only brings the branch up to date`, `pipeline: a changed diff cancels the approval and asks again`, `pipeline: a dismissed approval is not counted again`, `pipeline: an unapproved review goes to the owner before the teammates`, `pipeline: the owner passing it on requests the teammates`, `events: pass comment passes it on`, `events: approve review does not pass it on`
 
 ### PIP-144 · Nothing merges without the teammate's approval
 
