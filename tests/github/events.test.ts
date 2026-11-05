@@ -4,8 +4,9 @@ import {
   currentPr,
   intentEvents,
   prEvents,
-  RELEASE_PARKED,
+  type ReleaseRepo,
   releaseRequested,
+  releaseText,
 } from "../../src/github/events.ts";
 import type { PrComment, PrReview, PrState } from "../../src/github/prs.ts";
 import type { Intent } from "../../src/intents/types.ts";
@@ -375,18 +376,27 @@ describe("events", () => {
     expect(prEvents(fresh, { code }, ME, BOT)).toMatchObject({ text: "older than feedback_seen\n\nmine" });
   });
 
-  test("events: release says it is parked", () => {
+  const plain: ReleaseRepo = { name: "web", live: null };
+  const liveRepo: ReleaseRepo = { name: "web", live: { url: "https://web.example" } };
+
+  test("events: release without a live block says merging is the last step", () => {
     const { m } = world("approval:merge", { pr: 7, head: "h1", feedback_seen: "2026-10-15T10:00:00Z" });
     const code = pr({ comments: [said(ME, "2026-10-15T11:00:00Z", "/release", "IC_9")] });
     // Not an event, not feedback: a reply, once.
     expect(prEvents(m, { code }, ME, BOT)).toBeNull();
-    const asks = releaseRequested(m, { code }, ME, BOT);
+    const asks = releaseRequested(m, { code }, ME, BOT, [plain]);
     expect(asks).toEqual([
-      { kind: "code", pr: 7, commentId: "IC_9", reply: `<!-- towercab:release:IC_9 -->\n${RELEASE_PARKED}` },
+      {
+        kind: "code",
+        pr: 7,
+        commentId: "IC_9",
+        reply:
+          "<!-- towercab:release:IC_9 -->\nweb: there is no live check, so merging the code PR is the last step.",
+      },
     ]);
-    expect(RELEASE_PARKED).toMatch(/parked/);
+    expect(asks[0]!.reply).not.toMatch(/parked|switched off/);
     code.comments.push(said("towercab", "2026-10-15T11:01:00Z", asks[0]!.reply));
-    expect(releaseRequested(m, { code }, ME, BOT)).toEqual([]);
+    expect(releaseRequested(m, { code }, ME, BOT, [plain])).toEqual([]);
     // Someone else's /release gets nothing.
     expect(
       releaseRequested(
@@ -394,7 +404,36 @@ describe("events", () => {
         { code: pr({ comments: [said("x", "2026-10-15T11:00:00Z", "/release")] }) },
         ME,
         BOT,
+        [plain],
       ),
     ).toEqual([]);
+  });
+
+  test("events: release with a live block says what the ship stage does", () => {
+    const text = releaseText("approval:merge", [liveRepo]);
+    expect(text).toBe(
+      "web: after the merge Towercab waits for the deploy to https://web.example and runs the e2e suites.",
+    );
+    expect(text).not.toMatch(/parked|switched off/);
+  });
+
+  test("events: release after the merge says what it waits for", () => {
+    const say = (s: Stage) => releaseText(s, [liveRepo]);
+    expect(say("steps")).toMatch(/your steps/);
+    expect(say("deploy")).toMatch(/the deploy/);
+    expect(say("e2e")).toMatch(/e2e suites/);
+    expect(say("rollback")).toMatch(/rolling back/);
+    expect(say("revert")).toMatch(/reverting/);
+    expect(say("done")).toBe("web: it is live and passed its tests.");
+    expect(releaseText("deploy", [{ name: "web", live: null, unreadable: "bad file" }])).toMatch(
+      /could not read the live settings \(bad file\)/,
+    );
+  });
+
+  test("events: release of a multi-repo intent has a line per repo", () => {
+    const lines = releaseText("deploy", [liveRepo, { name: "api", live: null }]).split("\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^web: .*deploy/);
+    expect(lines[1]).toMatch(/^api: there is no live check/);
   });
 });

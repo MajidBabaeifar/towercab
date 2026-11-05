@@ -2,7 +2,7 @@
 // level-triggered: each read re-derives at most one event against `feedback_seen` and `head`.
 
 import type { Intent } from "../intents/types.ts";
-import { finished, next, type Outcome } from "../machine.ts";
+import { finished, next, type Outcome, type Stage } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
 import { parseAllow } from "../pipeline/access.ts";
 import { recheck } from "../risk.ts";
@@ -95,7 +95,7 @@ export interface TeamReads {
   /** REST ids of the approving reviews: their inline comments are not feedback. */
   approvedReviewIds: ReadonlySet<string>;
 }
-/** Reserved for the parked ship stage (PIP-45). */
+/** The comment that asks what the ship stage does with the PR (PIP-45). */
 export const RELEASE = "/release";
 
 /** RFC 3339 `at` after `seen` (no `seen`: everything is new). */
@@ -357,13 +357,42 @@ export function approveNotices(m: Mission, prs: Prs, me: string, botLogin: strin
   return out;
 }
 
-/** The reply to `/release` while the ship stage is parked. */
-export const RELEASE_PARKED =
-  "`/release` is reserved for the ship stage, which is parked for now: there is nothing to release. Merging the code PR is the last step today.";
+/** What `/release` needs to know of one repo of the intent: its live URL, or why that is unknown. */
+export interface ReleaseRepo {
+  name: string;
+  /** The repo's `live` block (SHIP-1): null when it has none. */
+  live: { url: string } | null;
+  /** Set when the repo's files could not be read: the reason replaces the guess. */
+  unreadable?: string;
+}
+
+const AFTER_MERGE: Partial<Record<Stage, string>> = {
+  steps: "waiting for your steps after the merge",
+  deploy: "waiting for the deploy",
+  e2e: "running the e2e suites against the live app",
+  rollback: "rolling back to the last good version",
+  revert: "reverting the change",
+  done: "it is live and passed its tests",
+  unverified: "merged, but not verified live",
+};
+
+/** PIP-45: one line per repo, the lead first, saying what the ship stage does with this PR. */
+export function releaseText(stage: Stage, repos: ReleaseRepo[]): string {
+  return repos
+    .map((r) => {
+      if (r.unreadable !== undefined)
+        return `${r.name}: I could not read the live settings (${r.unreadable}), so I can't say what happens after the merge.`;
+      if (!r.live) return `${r.name}: there is no live check, so merging the code PR is the last step.`;
+      const now = AFTER_MERGE[stage];
+      if (now) return `${r.name}: ${now}.`;
+      return `${r.name}: after the merge Towercab waits for the deploy to ${r.live.url} and runs the e2e suites.`;
+    })
+    .join("\n");
+}
 
 /** The reply's text; its marker lets the next read see the comment was answered. */
-export function releaseReply(commentId: string): string {
-  return `<!-- towercab:release:${commentId} -->\n${RELEASE_PARKED}`;
+export function releaseReply(commentId: string, text: string): string {
+  return `<!-- towercab:release:${commentId} -->\n${text}`;
 }
 
 /** A `/release` the bot hasn't answered yet: post `reply` on that PR as the App. */
@@ -375,8 +404,15 @@ export interface ReleaseAsk {
 }
 
 /** PIP-45: the owner's `/release` comments with no bot reply carrying their marker. */
-export function releaseRequested(m: Mission, prs: Prs, me: string, botLogin: string): ReleaseAsk[] {
+export function releaseRequested(
+  m: Mission,
+  prs: Prs,
+  me: string,
+  botLogin: string,
+  repos: ReleaseRepo[],
+): ReleaseAsk[] {
   if (finished(m.stage)) return [];
+  const text = releaseText(m.stage, repos);
   const out: ReleaseAsk[] = [];
   for (const kind of KINDS) {
     const pr = prs[kind];
@@ -386,7 +422,7 @@ export function releaseRequested(m: Mission, prs: Prs, me: string, botLogin: str
       if (!isOwner(c.author, me) || c.body.trim() !== RELEASE || !c.id) continue;
       const marker = `<!-- towercab:release:${c.id} -->`;
       const answered = pr.comments.some((b) => isBot(b.author, botLogin) && b.body.includes(marker));
-      if (!answered) out.push({ kind, pr: n, commentId: c.id, reply: releaseReply(c.id) });
+      if (!answered) out.push({ kind, pr: n, commentId: c.id, reply: releaseReply(c.id, text) });
     }
   }
   return out;
