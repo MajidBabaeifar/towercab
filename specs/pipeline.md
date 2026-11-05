@@ -1486,7 +1486,11 @@ Repair rounds can edit a test file the pull request created or its plan allowed;
 - "Absent on the base" is read at the base branch tip fetched for the round, so a file whose path was
   added to the base by someone else meanwhile counts as a base file and is locked.
 - A test file that exists on the base stays locked even if the PR edited it in its first push.
-- Verified by: `pipeline: a repair round may edit a test the pull request added`, `pipeline: a repair round that edits a test from the base still waits`, `pipeline: a granted test is not locked in a repair round`
+- The looser lock keeps its two safeguards: the red→green proof (PIP-30) runs again after every round that
+  changes a test, so the PR's tests must still fail without the change, and the review sees the test
+  diff. `agents/review.md` gets one line: flag a fix round that weakens the PR's own tests (it counts as
+  `tests_weakened`, PIP-5).
+- Verified by: `pipeline: a repair round may edit a test the pull request added`, `pipeline: a repair round that edits a test from the base still waits`, `pipeline: a granted test is not locked in a repair round`, `pipeline: proof runs again after a round that edited a test`, `pipeline: the review prompt asks to flag a fix round that weakens the PR's own tests`
 
 ### PIP-152 · An owner's allow also unlocks a test locked by the repair lock
 
@@ -1507,12 +1511,14 @@ Repair rounds can edit a test file the pull request created or its plan allowed;
 
 A conflict round may change a locked test where the base's own changes force it, and publish accepts that as part of the merge.
 
-- In a conflict round (PIP-134, PIP-22), a hunk in a locked test (PIP-31) that overlaps lines the base
-  changed since the merge base is accepted by publish and the guard, as lines that come from the base are
-  in PIP-31 (for example a call that follows an interface changed on the base). Hunks elsewhere in the
-  file still refuse.
-- Only the conflict round gets this; a CI, review or answer round does not.
-- Verified by: `pipeline: a merge of the base may adapt a pushed test to a changed interface`, `pipeline: a conflict round still can't change other lines of a pushed test`
+- In a conflict round (PIP-134, PIP-22), edits to a locked test (PIP-31) are accepted by publish and the
+  guard when the base changed, since the merge base, that test file or a file under `src/` that the test
+  imports (directly, by its relative `import`s). There is no matching of lines or hunks: the whole file is
+  open for that round.
+- A locked test whose own file and imported `src/` files are unchanged on the base stays locked in the
+  conflict round. Only the conflict round gets this; a CI, review or answer round does not.
+- Proof and review (PIP-151) apply to these edits like to any other.
+- Verified by: `pipeline: a merge of the base may edit a pushed test whose imported source changed on the base`, `pipeline: a merge of the base may edit a pushed test that changed on the base`, `pipeline: a conflict round can't edit a pushed test the base did not touch`
 
 ### PIP-130 · The design treats IDs of other open spec PRs as taken
 
