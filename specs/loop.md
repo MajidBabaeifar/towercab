@@ -725,6 +725,36 @@ A change keeps its repo's build slot from the start of its build until GitHub ch
   when that holder waits for CI the text adds `, waiting for CI`. The overview reads the same data.
 - Verified by: `status: the slot holder is named and shown waiting for CI`, `status: a ready mission behind a mission waiting for CI says so`
 
+### LOOP-117 · A mission re-reads `after:` before it builds
+
+A mission whose intent gains an unfinished `after:` while it runs waits before its next build, instead of building on a base that is missing.
+
+- Before a mission starts `build` or re-enters it (after a question, a review or conflict round, a CI
+  repair, a retry), the step re-reads the intent file's current `after` (not the value at pick, LOOP-5) and
+  checks each listed intent as LOOP-75 does. Nothing is cached from the pick.
+- While any listed intent is not done (or ended unverified), the mission stays at `build` and starts no
+  Claude run: nothing is recorded as launched (LOOP-4), no slot is taken (LOOP-111), no retry or repair
+  round is counted, and the owner is not asked anything. The wait is Towercab's own, not the owner's, so
+  it is not a blocked wait for the owner and frees the slot as LOOP-110 says.
+- A list that names an unknown, dropped or cyclic intent gives `waiting: bad after:` as in LOOP-5.
+- The check is read again every pass, so an `after:` added or removed in the intent file takes effect
+  without a restart. The existing exits of LOOP-76 (`retry`, `drop`) still apply.
+- When every listed intent is done or unverified, the mission continues by itself on the next pass as a
+  returning mission (LOOP-111), with no reply from the owner. Its next build runs as it would have.
+- Does not change picking: an intent with an unfinished `after:` before its pick is still not picked
+  (LOOP-75).
+- Verified by: `loop: a mission whose intent gains an unfinished after waits at build and goes on when that intent finishes`, `loop: a build is not started while after is unfinished`, `loop: a returning mission re-reads after before building`, `loop: a bad after at build waits with bad after`
+
+### LOOP-118 · status says which intent a mission waits for
+
+`towercab status`, `next` and the overview say "waiting for <id>" for a mission held by `after:` at build.
+
+- The reason reads `waiting for <id>: <its stage>` as in LOOP-75, naming the first unfinished intent of the
+  `after:` list and adding `(+<n> more)` when several are unfinished. It disappears when the last one is
+  done.
+- Such a mission is not listed as needing the owner and sends no message.
+- Verified by: `status: a mission held by after names the intent it waits for`, `status: a mission held by after is not listed as needing the owner`
+
 ### LOOP-65 · Repos live in the database
 
 The repos Towercab works on are kept in its database, so they can be added and removed while it
