@@ -19,6 +19,7 @@ import {
   overview,
   queue,
   riskView,
+  skipWords,
   stageMap,
   stateOf,
   stepWords,
@@ -1205,4 +1206,10 @@ test("ui: an older pause shows paused without a time", async () => {
     since: null,
     canResume: true,
   });
+});
+
+test("ui: the cap is worded for an Up next row", () => {
+  expect(skipWords({ kind: "cap", working: 1, owner: 5, cap: 6 }, () => "", 0)).toBe(
+    "This repo is at its limit of 6 intents before build (1 being worked on, 5 waiting on you); it starts when one moves on, when it outranks them all, or when you start it.",
+  );
 });

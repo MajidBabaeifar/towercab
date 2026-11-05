@@ -93,6 +93,7 @@ export interface Problem {
 export type Skip =
   | { kind: "paused" }
   | { kind: "ahead"; n: number; limit: number }
+  | { kind: "cap"; working: number; owner: number; cap: number }
   | { kind: "cooling"; model: string; until: number }
   | { kind: "parked" }
   | { kind: "unreachable"; what: string }
@@ -844,6 +845,8 @@ export function skipWords(skip: Skip | null, titles: (id: string) => string, now
       return "New work starts when you resume.";
     case "ahead":
       return `${skip.n} intents are already ahead of build in this repo; it starts when one has a place free, or when you start it.`;
+    case "cap":
+      return `This repo is at its limit of ${skip.cap} intents before build (${skip.working} being worked on, ${skip.owner} waiting on you); it starts when one moves on, when it outranks them all, or when you start it.`;
     case "cooling":
       return `${modelName(skip.model)} is cooling down after a usage limit; it can start ${until(skip.until, now)}.`;
     case "parked":
