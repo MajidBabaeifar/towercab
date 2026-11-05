@@ -1362,13 +1362,17 @@ A request for changes or comment from a listed reviewer or a reviewer the host r
 - Extends PIP-44 for repos with `teammate_review=on`: reviews and comments by one of the PR's reviewers
   (PIP-142: listed, or requested by the host and not withdrawn, read again before the event is taken;
   case-insensitive, never the bot or the owner) raise `feedback` (PIP-43) with their text, prefixed with who wrote
-  it (`alice asked for changes: …`). A review in state `CHANGES_REQUESTED`, or a non-empty comment or
-  review body, counts; a plain `APPROVED` with no body does not. Inline review comments (PIP-21) count.
-  They follow `feedback_seen` as the owner's do.
+  it (`alice asked for changes: …`). Feedback is a review in state `CHANGES_REQUESTED`, or a
+  non-empty comment that is not part of an approval: an issue comment, or an inline review comment
+  (PIP-21) belonging to a review that is not `APPROVED`. They follow `feedback_seen` as the owner's do.
+- An approval is an approval, with or without text: an `APPROVED` review, its body and its inline
+  comments never raise `feedback` and never start a repair round. Its text is added to the mission's
+  record (`alice approved: …`, shown on the intent page and in the stage comment, PIP-42) so the owner
+  can read it, and nothing more happens.
 - The feedback starts a repair round like the owner's, goes into the continue prompt (PIP-37) and
   clears the teammate approval of the old head. Slash commands (PIP-45) and `allow` replies still
   need the owner. Anyone who is neither listed nor requested by the host is ignored as before.
-- Verified by: `events: a listed reviewer's request for changes is feedback`, `events: a listed reviewer's comment is feedback`, `events: a code owner's request for changes is feedback`, `events: someone neither listed nor requested is ignored`, `events: someone no longer requested is ignored`, `events: a reviewer cannot send slash commands`, `pipeline: reviewer feedback names who wrote it`
+- Verified by: `events: a listed reviewer's request for changes is feedback`, `events: a listed reviewer's comment is feedback`, `events: a code owner's request for changes is feedback`, `events: someone neither listed nor requested is ignored`, `events: someone no longer requested is ignored`, `events: a reviewer cannot send slash commands`, `events: an approval with text is not feedback`, `events: inline comments of an approval are not feedback`, `pipeline: an approval's text is shown in the record`, `pipeline: reviewer feedback names who wrote it`
 
 ### PIP-146 · The owner answers for the PR
 
