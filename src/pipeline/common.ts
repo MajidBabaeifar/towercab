@@ -161,6 +161,8 @@ export interface PipeData {
   ship?: ShipData;
   /** HEAD when the current build round began (PIP-1). */
   roundFrom?: string;
+  /** LOOP-115: the owner answered a wait; the next build round merges the base branch first. */
+  answered?: boolean;
   /** Head at the end of the last non-repair round (PIP-31). */
   lockHead?: string;
   /** `brief`: the worker's plain brief of what changed (PIP-106). */

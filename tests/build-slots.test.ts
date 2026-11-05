@@ -6,7 +6,8 @@ import { expect, test } from "vitest";
 import { Db } from "../src/db.ts";
 import type { Ctx, Handler, Handlers, Progress } from "../src/handlers.ts";
 import { apply, ORDER, ok, wait } from "../src/machine.ts";
-import { insertMission, type Mission } from "../src/mission.ts";
+import { insertMission, type Mission, unfinished } from "../src/mission.ts";
+import { returningIn } from "../src/slots.ts";
 import { renderStatus } from "../src/status.ts";
 import type { ChildExit, ChildSpec } from "../src/tools.ts";
 import { intent, TARGET } from "./helpers/flows.ts";
@@ -77,7 +78,16 @@ const web = (o: { workers?: number; ahead?: number } = {}) => ({
  * Design and plan run through. A build goes on until the test merges it (`holds`), waits on the owner's
  * merge (`owner`), or runs on to the checks, which poll for as long as the intent isn't in `go`.
  */
-function world(opts: { holds?: string[]; owner?: string[]; go?: Set<string>; review?: () => ChildSpec }) {
+function world(opts: {
+  holds?: string[];
+  owner?: string[];
+  go?: Set<string>;
+  review?: () => ChildSpec;
+  /** Intents whose review only waits for a person (no run). */
+  reviewWait?: Set<string>;
+  /** Intents whose review sends the change back to build (a fix round). */
+  fix?: Set<string>;
+}) {
   return fake((m) => {
     if (m.stage === "pick" || m.stage === "design") return { done: ok() };
     if (m.stage === "plan") return { done: wait("approve plan") };
@@ -87,6 +97,11 @@ function world(opts: { holds?: string[]; owner?: string[]; go?: Set<string>; rev
       return { done: ok() };
     }
     if (m.stage === "ci") return opts.go?.has(m.intent) ? { done: ok() } : { poll: 120 };
+    if (m.stage === "review" && opts.reviewWait?.has(m.intent)) return { poll: 120 };
+    if (m.stage === "review" && opts.fix?.has(m.intent)) {
+      opts.fix.delete(m.intent);
+      return { done: { event: "red", why: "the review found something" } };
+    }
     if (m.stage === "review" && opts.review) return { spawn: opts.review() };
     return { done: ok() };
   });
@@ -99,19 +114,142 @@ async function setup(ids: { id: string; u?: number; i?: number }[], handlers: Ha
   return p;
 }
 
-test("loop: missions waiting on CI do not hold build slots", async () => {
-  const p = await setup([{ id: A }, { id: B }, { id: C }], world({ holds: [C] }), 2);
+test("loop: missions with green CI waiting on review do not hold build slots", async () => {
+  const go = new Set([A]);
+  const p = await setup([{ id: A }, { id: B }], world({ holds: [B], go, reviewWait: new Set([A]) }));
+  approvePlan(p, A);
+  await pass(p, 8);
+  // A's checks are green and it only waits for a person's review.
+  expect(stageOf(p, A)).toBe("review");
+  approvePlan(p, B);
+  await pass(p, 3);
+  // The next intent starts building at once; it is not ready-and-waiting.
+  expect(stageOf(p, B)).toBe("build");
+  expect(dataOfIntent(p, B).ready).toBeUndefined();
+});
+
+/** A is at the checks (not green) and holds the one slot; B's plan is approved and waits. */
+async function atCi(extra: { fix?: Set<string> } = {}) {
+  const holds = [B];
+  const go = new Set<string>();
+  const reviewWait = new Set([A]);
+  const p = await setup(
+    [{ id: A }, { id: B }, { id: C, u: 5, i: 5 }],
+    world({ holds, go, reviewWait, fix: extra.fix }),
+  );
   approvePlan(p, A);
   await pass(p, 6);
+  expect(stageOf(p, A)).toBe("ci");
+  return { p, go, reviewWait, holds };
+}
+
+test("loop: a second ready intent does not start while the first waits for CI", async () => {
+  const { p } = await atCi();
   approvePlan(p, B);
   await pass(p, 6);
-  // Both workers' missions only wait for GitHub's checks.
-  expect([stageOf(p, A), stageOf(p, B)]).toEqual(["ci", "ci"]);
+  expect(stageOf(p, A)).toBe("ci");
+  expect(stageOf(p, B)).toBe("approval:plan");
+  expect(dataOfIntent(p, B).ready).toBeTypeOf("number");
+});
+
+test("loop: a second ready intent starts once CI is green", async () => {
+  const { p, go } = await atCi();
+  approvePlan(p, B);
+  await pass(p, 3);
+  expect(stageOf(p, B)).toBe("approval:plan");
+  go.add(A);
+  await pass(p, 6);
+  expect(stageOf(p, A)).toBe("review");
+  expect(stageOf(p, B)).toBe("build");
+});
+
+test("loop: a new push holds the slot until CI is green on it", async () => {
+  const { p, go } = await atCi();
+  go.add(A);
+  await pass(p, 6);
+  expect(stageOf(p, A)).toBe("review");
+  // A new push brings A back to the checks; it holds the slot again while they run.
+  go.delete(A);
+  p.loop.move(byIntent(p, A)[0]!, { event: "head_moved" });
+  await pass(p, 3);
+  expect(stageOf(p, A)).toBe("ci");
+  expect(dataOfIntent(p, A).idle).toBeUndefined();
+  approvePlan(p, B);
+  await pass(p, 4);
+  expect(stageOf(p, B)).toBe("approval:plan");
+  expect(dataOfIntent(p, B).ready).toBeTypeOf("number");
+  go.add(A);
+  await pass(p, 6);
+  expect(stageOf(p, B)).toBe("build");
+});
+
+test("loop: a review fix round takes the slot before a new build", async () => {
+  // A's checks pass and it waits for review; B builds on; the review then sends A back to build.
+  const fix = new Set<string>();
+  const { p, go, reviewWait, holds } = await atCi({ fix });
+  go.add(A);
+  await pass(p, 6);
+  expect(stageOf(p, A)).toBe("review");
+  approvePlan(p, B);
+  await pass(p, 3);
+  expect(stageOf(p, B)).toBe("build");
+  fix.add(A);
+  holds.push(A);
+  reviewWait.delete(A);
+  await pass(p, 6);
+  // A is back at build and waits for B's slot; C (higher priority) is ready behind it.
+  expect(stageOf(p, A)).toBe("build");
+  expect(dataOfIntent(p, A).returning).toBeTypeOf("number");
   approvePlan(p, C);
   await pass(p, 3);
-  // A third intent starts building at once; it is not ready-and-waiting.
-  expect(stageOf(p, C)).toBe("build");
-  expect(dataOfIntent(p, C).ready).toBeUndefined();
+  expect(stageOf(p, C)).toBe("approval:plan");
+  merged(p, B);
+  await pass(p, 4);
+  expect(dataOfIntent(p, A).returning).toBeUndefined();
+  expect(dataOfIntent(p, A).idle).toBeUndefined();
+  expect(stageOf(p, C)).toBe("approval:plan");
+  expect(dataOfIntent(p, C).ready).toBeTypeOf("number");
+});
+
+test("loop: a change blocked on the owner before CI gives up the slot", async () => {
+  const { p } = await atCi();
+  approvePlan(p, B);
+  await pass(p, 3);
+  expect(stageOf(p, B)).toBe("approval:plan");
+  // A asks the owner something before its checks are green: the repo moves on.
+  p.loop.move(byIntent(p, A)[0]!, wait("answer the question"));
+  await pass(p, 4);
+  expect(stageOf(p, A)).toBe("blocked");
+  expect(stageOf(p, B)).toBe("build");
+});
+
+test("loop: an answered change takes the next free slot before other returning missions", async () => {
+  const { p } = await atCi();
+  p.loop.move(byIntent(p, A)[0]!, wait("answer the question"));
+  await pass(p, 2);
+  approvePlan(p, B);
+  await pass(p, 3);
+  expect(stageOf(p, B)).toBe("build");
+  // The owner answers while B holds the slot: A is back at build, first in line, and flagged.
+  p.loop.move(byIntent(p, A)[0]!, { event: "answered" });
+  await pass(p, 2);
+  expect(stageOf(p, A)).toBe("build");
+  expect(dataOfIntent(p, A).answered).toBe(true);
+  expect(dataOfIntent(p, A).returning).toBeTypeOf("number");
+  approvePlan(p, C);
+  await pass(p, 3);
+  expect(stageOf(p, C)).toBe("approval:plan");
+  merged(p, B);
+  await pass(p, 4);
+  expect(dataOfIntent(p, A).returning).toBeUndefined();
+  expect(stageOf(p, C)).toBe("approval:plan");
+});
+
+test("loop: answered missions are first among the returning", () => {
+  const db = Db.memory();
+  mission(db, B, 8, { idle: true, returning: NOW - 20 });
+  mission(db, C, 3, { idle: true, answered: true });
+  expect(returningIn(unfinished(db), "web", null).map((m) => m.intent)).toEqual([C, B]);
 });
 
 test("loop: missions waiting on the owner do not hold build slots", async () => {
@@ -180,8 +318,12 @@ test("loop: a repair at ci holds a slot", async () => {
   child.end();
 });
 
-/** A is at the checks and goes on to a review run; B builds on and holds the one slot; C and D are ready. */
+/**
+ * A reaches a review and waits for a person (`reviewWait`) while B builds on and holds the one slot; C and D
+ * are ready. Taking A out of `reviewWait` makes its review want a run.
+ */
 async function returning(ids = [A, B, C], go = new Set<string>()) {
+  const reviewWait = new Set(ids);
   const kids: Record<string, ReturnType<typeof childOf>> = {};
   const holder = ids[1]!;
   const p = new Pipe(
@@ -195,26 +337,27 @@ async function returning(ids = [A, B, C], go = new Set<string>()) {
   );
   for (const id of ids) kids[id] = childOf(p, `review-${id}`);
   let current = "";
-  const handlers = world({ holds: [holder, ids[2]!], go, review: () => kids[current]!.spec });
+  const handlers = world({ holds: [holder, ids[2]!], go, reviewWait, review: () => kids[current]!.spec });
   const wrapped = fake((m, cx) => {
     current = m.intent;
     return (handlers.ci as Handler).step(cx, m) as never;
   });
   await p.start(web(), { handlers: wrapped });
   await pass(p, 8);
-  return { p, kids, go };
+  return { p, kids, go, reviewWait };
 }
 
 test("loop: a returning mission with every slot taken waits without starting", async () => {
-  const { p, go } = await returning();
+  const { p, go, reviewWait } = await returning();
+  go.add(A);
   approvePlan(p, A);
-  await pass(p, 6);
-  expect(stageOf(p, A)).toBe("ci");
-  // B builds and holds the one slot; A's checks end and its review wants to run.
+  await pass(p, 8);
+  expect(stageOf(p, A)).toBe("review");
+  // B builds and holds the one slot; A's review wants to run.
   approvePlan(p, B);
   await pass(p, 3);
   expect(stageOf(p, B)).toBe("build");
-  go.add(A);
+  reviewWait.delete(A);
   await pass(p, 8);
   const a = byIntent(p, A)[0]!;
   expect(a.stage).toBe("review");
@@ -224,12 +367,13 @@ test("loop: a returning mission with every slot taken waits without starting", a
 });
 
 test("loop: a returning mission takes the next free slot before a new build", async () => {
-  const { p, go } = await returning();
+  const { p, go, reviewWait } = await returning();
+  go.add(A);
   approvePlan(p, A);
-  await pass(p, 6);
+  await pass(p, 8);
   approvePlan(p, B);
   await pass(p, 3);
-  go.add(A);
+  reviewWait.delete(A);
   await pass(p, 8);
   // C's plan is approved while A waits for the slot: C is ready behind it.
   approvePlan(p, C);
@@ -245,17 +389,19 @@ test("loop: a returning mission takes the next free slot before a new build", as
 });
 
 test("loop: returning missions take slots by priority", async () => {
-  // A is low priority, D high; both are at the checks while B holds the slot.
-  const { p, go } = await returning([A, B, C, D]);
-  approvePlan(p, A);
-  await pass(p, 6);
-  approvePlan(p, D);
-  await pass(p, 6);
-  expect([stageOf(p, A), stageOf(p, D)]).toEqual(["ci", "ci"]);
-  approvePlan(p, B);
-  await pass(p, 3);
+  // A is low priority, D high; both wait for a review while B holds the slot.
+  const { p, go, reviewWait } = await returning([A, B, C, D]);
   go.add(A);
   go.add(D);
+  approvePlan(p, A);
+  await pass(p, 8);
+  approvePlan(p, D);
+  await pass(p, 8);
+  expect([stageOf(p, A), stageOf(p, D)]).toEqual(["review", "review"]);
+  approvePlan(p, B);
+  await pass(p, 3);
+  reviewWait.delete(A);
+  reviewWait.delete(D);
   await pass(p, 8);
   expect([byIntent(p, A)[0]!.child_kind, byIntent(p, D)[0]!.child_kind]).toEqual([null, null]);
   merged(p, B);
@@ -333,4 +479,24 @@ test("status: a returning mission names the one ahead", () => {
   const text = status(two);
   expect(text).toContain("- 261026-1002 web: T2 · waiting for a build slot, behind 261026-1001");
   expect(text).toContain("- 261026-1001 web: T1 · waiting for a build slot\n");
+});
+
+test("status: the slot holder is named and shown waiting for CI", () => {
+  const db = Db.memory();
+  mission(db, A, 7);
+  mission(db, B, 7, { idle: true });
+  const text = status(db);
+  expect(text).toContain("holds the slot: 261026-1000 (ci), waiting for CI");
+  expect(text).not.toContain("holds the slot: 261026-1001");
+  // A holder that builds is named without the CI text.
+  const building = Db.memory();
+  mission(building, A, 3);
+  expect(status(building)).toContain("holds the slot: 261026-1000 (build)\n");
+});
+
+test("status: a ready mission behind a mission waiting for CI says so", () => {
+  const db = Db.memory();
+  mission(db, A, 7);
+  const ready = mission(db, D, 2, { ready: NOW });
+  expect(status(db, [ready.id])).toContain("T3 · ready to build, behind 261026-1000, waiting for CI");
 });

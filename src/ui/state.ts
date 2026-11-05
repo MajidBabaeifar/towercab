@@ -30,6 +30,7 @@ import {
   isReady,
   returningIn,
   returningSince,
+  waitsForCi,
   workingIn,
 } from "../slots.ts";
 import type { OwnerStep, SecretSpec } from "../steps.ts";
@@ -856,7 +857,7 @@ export function missionRow(src: UiSources, s: Snap, m: Mission): Row {
       ? inFlight >= capOf(workers)
         ? `Ready to build; the repo has ${inFlight} changes between build and merge, ${idleIn(s.missions, m.repo).length} of them waiting, the most it takes.`
         : holder
-          ? `Ready to build, behind “${titleOf(s, holder.intent)}”.`
+          ? `Ready to build, behind “${titleOf(s, holder.intent)}”${waitsForCi(holder) ? ", which is waiting for its checks" : ""}.`
           : "Ready to build; it starts on the next pass."
       : back
         ? holder

@@ -87,12 +87,39 @@ const prioOf = (listing: Listing | null) => (m: Mission) => {
   return i ? priorityOf(i) : 0;
 };
 
-/** Missions of `repo` waiting for a slot for their next run, first in line first (LOOP-111). */
+/** LOOP-115: the owner answered a wait and the change is back in build: it goes first in line for a slot. */
+export function isAnswered(m: Mission): boolean {
+  return isBuilding(m) && dataOf<{ answered?: boolean }>(m).answered === true;
+}
+
+/** A mission at `build` outside the slots whose step has not yet asked for one (LOOP-115). */
+function wantsBuild(m: Mission): boolean {
+  return (
+    (m.stage === "build" || m.stage === "ci") && isIdle(m) && dataOf<{ idle?: boolean }>(m).idle === true
+  );
+}
+
+/**
+ * Missions of `repo` waiting for a slot for their next run, first in line first: answered ones, then by
+ * priority (LOOP-111, LOOP-115). A mission back at `build` counts from the moment it is back.
+ */
 export function returningIn(ms: Mission[], repo: string, listing: Listing | null): Mission[] {
   const prio = prioOf(listing);
+  const since = (m: Mission) => returningSince(m) ?? m.updated;
   return ms
-    .filter((m) => m.repo === repo && returningSince(m) !== null)
-    .sort((a, b) => prio(b) - prio(a) || returningSince(a)! - returningSince(b)! || a.id - b.id);
+    .filter((m) => m.repo === repo && (returningSince(m) !== null || wantsBuild(m)))
+    .sort(
+      (a, b) =>
+        Number(isAnswered(b)) - Number(isAnswered(a)) ||
+        prio(b) - prio(a) ||
+        since(a) - since(b) ||
+        a.id - b.id,
+    );
+}
+
+/** LOOP-116: the working mission at `ci` that waits for GitHub's checks, with no run going. */
+export function waitsForCi(m: Mission): boolean {
+  return m.stage === "ci" && isBuilding(m) && !isIdle(m) && m.child_pid === null;
 }
 
 /** The ready mission of `repo` that gets a free slot: highest priority, then the earliest ready. */
