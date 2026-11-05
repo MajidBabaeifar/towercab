@@ -759,6 +759,12 @@ export interface BoardRepo {
   /** "" for intents the listing doesn't know (the "unknown repo" lane). */
   repo: string;
   github: string;
+  /** UI-147: intents waiting on the owner (cards with the Needs you chip). */
+  waiting: number;
+  /** UI-147: ISO time of the latest move of any of its intents; null when none. */
+  changedAt: string | null;
+  /** UI-147: its position in the board's row order (config order, "" last). */
+  index: number;
   open: number;
   done: number;
   /** UI-187: proposed intents for this repo. */

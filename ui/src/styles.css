@@ -3604,6 +3604,29 @@ a.pr-tile:hover {
   max-width: none;
 }
 
+.board-sort {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+  font-size: var(--t-sm);
+  color: var(--text-2);
+}
+
+.board-sort select {
+  min-height: 36px;
+  max-width: 100%;
+  font: inherit;
+  color: var(--text);
+}
+
+@media (max-width: 720px) {
+  .board-sort select {
+    min-height: 44px;
+  }
+}
+
 .board-total {
   margin-top: var(--s1);
   color: var(--text-2);

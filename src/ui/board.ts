@@ -112,12 +112,26 @@ export async function board(src: UiSources): Promise<BoardPage> {
   for (const repo of proposed.keys()) if (!repos.includes(repo)) repos.push(repo);
   const unknown = repos.indexOf("");
   if (unknown >= 0) repos.push(...repos.splice(unknown, 1));
-  const rows: BoardRepo[] = repos.map((repo) => {
+  // UI-147: the latest move of any mission of the repo, finished and dropped ones included.
+  const changed = new Map<string, number>();
+  for (const r of src.db.all<{ repo: string; at: number }>(
+    "SELECT repo, MAX(updated) AS at FROM missions GROUP BY repo",
+  )) {
+    changed.set(r.repo, r.at);
+  }
+  const rows: BoardRepo[] = repos.map((repo, index) => {
     const readiness = readinessBadge(src.db, repo);
+    const at = changed.get(repo);
     return {
       ...(readiness ? { readiness } : {}),
       repo,
       github: src.config.repos.get(repo)?.github ?? "",
+      waiting: Object.values(cells.get(repo) ?? {}).reduce(
+        (n, list) => n + (list ?? []).filter((c) => c.state.key === "needs").length,
+        0,
+      ),
+      changedAt: at === undefined ? null : new Date(at * 1000).toISOString(),
+      index,
       open: counts.get(repo)?.open ?? 0,
       done: counts.get(repo)?.done ?? 0,
       proposed: proposed.get(repo) ?? 0,
