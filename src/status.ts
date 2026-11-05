@@ -5,7 +5,7 @@ import type { Listing } from "./intents/types.ts";
 import { isWait, isWorking, waitInfo } from "./machine.ts";
 import { dataOf, type Mission, unfinished } from "./mission.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
-import { isBuilding } from "./slots.ts";
+import { buildingIn, capOf, idleIn, returningIn, returningSince, workingIn } from "./slots.ts";
 import { leftOf, type OwnerStep } from "./steps.ts";
 
 export interface Problem {
@@ -28,6 +28,8 @@ export interface StatusInput {
   waits?: string[];
   prLink(m: Mission): string | null;
   queued: Set<number>;
+  /** A repo's `workers` (LOOP-110); 1 when absent. */
+  workers?: (repo: string) => number;
 }
 
 const STEP: Record<string, string> = {
@@ -71,8 +73,9 @@ export function renderStatus(s: StatusInput): string {
   const ms = unfinished(s.db);
   // LOOP-74: `steps` is a working stage that waits on the owner.
   const onSteps = (m: Mission) => m.stage === "steps" && m.waiting !== null;
+  const returning = (m: Mission) => returningSince(m) !== null;
   const working = ms.filter(
-    (m) => isWorking(m.stage) && !s.queued.has(m.id) && m.stage !== "ci" && !onSteps(m),
+    (m) => isWorking(m.stage) && !s.queued.has(m.id) && m.stage !== "ci" && !onSteps(m) && !returning(m),
   );
   lines.push(working.length ? "working:" : "working: nothing");
   for (const m of working) {
@@ -91,18 +94,44 @@ export function renderStatus(s: StatusInput): string {
       );
     }
   }
-  const ci = ms.filter((m) => m.stage === "ci");
+  const ci = ms.filter((m) => m.stage === "ci" && !returning(m));
   if (ci.length) {
     lines.push("waiting on CI:");
     for (const m of ci) lines.push(`- ${title(m)} · since ${time(m.updated, s.now)}`);
   }
+  // LOOP-110..112: the build slots of each repo, and what holds a ready or returning mission back.
+  const workersOf = (repo: string) => s.workers?.(repo) ?? 1;
   const queued = ms.filter((m) => s.queued.has(m.id));
-  if (queued.length) {
+  const back = ms.filter(returning);
+  if (queued.length || back.length) {
     lines.push("queued:");
     for (const m of queued) {
-      const holder = ms.find((x) => x.repo === m.repo && isBuilding(x));
+      const w = workersOf(m.repo);
+      const building = buildingIn(ms, m.repo);
+      if (building.length >= capOf(w)) {
+        const idle = idleIn(ms, m.repo).length;
+        lines.push(
+          `- ${title(m)} · waiting: repo is at the cap of ${capOf(w)} missions between build and merge, ${building.length - idle} working and ${idle} waiting`,
+        );
+        continue;
+      }
+      const holder = workingIn(ms, m.repo)[0] ?? returningIn(ms, m.repo, s.listing)[0];
       lines.push(`- ${title(m)} · ready to build${holder ? `, behind ${holder.intent}` : ""}`);
     }
+    for (const m of back) {
+      const line = returningIn(ms, m.repo, s.listing);
+      const holder = workingIn(ms, m.repo)[0] ?? line[line.findIndex((x) => x.id === m.id) - 1];
+      lines.push(`- ${title(m)} · waiting for a build slot${holder ? `, behind ${holder.intent}` : ""}`);
+    }
+  }
+  for (const repo of [...new Set(ms.map((m) => m.repo))]) {
+    const building = buildingIn(ms, repo);
+    if (building.length === 0) continue;
+    const w = workersOf(repo);
+    const idle = idleIn(ms, repo).length;
+    lines.push(
+      `build slots: ${repo} ${building.length - idle} of ${w} used, ${idle} waiting outside slots (cap ${capOf(w)})`,
+    );
   }
   for (const w of s.waits ?? []) lines.push(`waiting: ${w}`);
   // LOOP-72: a repo missing setup, and whether that holds its new work back.

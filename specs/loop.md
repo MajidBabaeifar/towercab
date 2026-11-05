@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-92..93, LOOP-105..109 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-92..93, LOOP-105..109, LOOP-110..112 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -520,7 +520,8 @@ A repo can have up to 3 intents being designed, planned or waiting for approval 
 Only one intent per repo builds at a time, and when the slot is free it goes to the highest-priority intent whose plan is approved.
 
 - `[repos.<r>].workers` (default 1) now counts missions from `build` through `merge` (including
-  `approval:merge` and `blocked` in the code phase). When the plan PR is merged and the repo already
+  `approval:merge` and `blocked` in the code phase) that are working; one that only waits holds no slot
+  (LOOP-110), and a returning one goes first (LOOP-111). When the plan PR is merged and the repo already
   has `workers` such missions, the mission does not start `build`: it waits as *ready to build*, with
   no message to the owner and its intent `stage` still `plan`.
 - Each pass, for each repo with a free slot, the ready mission with the highest priority starts
@@ -555,7 +556,7 @@ Not used: kept free; `start` is LOOP-63.
 `status` and `next` say when an intent waits for a place or for the build slot.
 
 - A skipped intent reads `waiting: repo has <n> intents ahead (start <id> to go now)`; a ready mission
-  reads `ready to build, behind <id>`.
+  reads `ready to build, behind <id>`; LOOP-112 adds the cap text and the slot counts.
 - Verified by: `status: ready to build and ahead limit are shown`
 
 ### LOOP-100 · Waiting on the owner does not use a place

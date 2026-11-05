@@ -364,6 +364,7 @@ async function run(
           .map((l) => l.replace(/^skipped: /, "")),
         prLink: (m) => dummy.subject(m).link,
         queued: dummy.queued(),
+        workers: (repo) => w.config.repos.get(repo)?.workers ?? 1,
       });
     }
     case "add": {
