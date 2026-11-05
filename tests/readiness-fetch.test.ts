@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { Loop } from "../src/loop.ts";
+import { Mutex } from "../src/mutex.ts";
 import { refreshReadiness, storedReadiness } from "../src/readiness.ts";
 import type { ChildSpec, RunOpts } from "../src/tools.ts";
 import { TARGET } from "./helpers/flows.ts";
@@ -59,24 +60,65 @@ test("readiness: a hung read ends at the limit and the pass does not wait for it
   expect(storedReadiness(p.db, "web")).toBeNull();
 });
 
-test("readiness: the clone is fetched in the pass, never beside the background reads", async () => {
-  const { loop, seen } = await hangingLoop(() => false, 5_000);
-  await loop.pass();
-  const fetches = seen.filter((l) => l.startsWith("fetch")).length;
-  expect(fetches).toBeGreaterThan(0);
-  await loop.readinessIdle();
-  expect(seen.filter((l) => l.startsWith("fetch")).length).toBe(fetches);
-  expect(seen.some((l) => l.startsWith("ls-tree"))).toBe(true);
+test("readiness: the clone is fetched under the clone lock, never beside a mission step", async () => {
+  const r = rig({ web: WEB });
+  // The lock the loop shares with every mission step: the fetch runs inside it, the reads after it.
+  const inside = { now: false };
+  r.deps.exclusive = async (fn) => {
+    inside.now = true;
+    try {
+      return await fn();
+    } finally {
+      inside.now = false;
+    }
+  };
+  const fetches: boolean[] = [];
+  const reads: boolean[] = [];
+  const real = r.deps.tools;
+  r.deps.tools = {
+    run: (cmd, args, opts) => {
+      if (cmd === "git" && args.includes("fetch")) fetches.push(inside.now);
+      if (cmd === "git" && args.includes("ls-tree")) reads.push(inside.now);
+      return real.run(cmd, args, opts);
+    },
+    spawn: (spec) => real.spawn(spec),
+    which: (cmd) => real.which(cmd),
+  };
+  await refreshReadiness(r.deps, r.config.repos.get("web")!, true);
+  expect(fetches.length).toBeGreaterThan(0);
+  expect(fetches.every(Boolean)).toBe(true);
+  expect(reads.length).toBeGreaterThan(0);
+  expect(reads.some(Boolean)).toBe(false);
 });
 
-test("readiness: a hung fetch holds the pass until the limit, then waits ten minutes", async () => {
+test("readiness: the clone lock runs calls one at a time, in order", async () => {
+  const lock = new Mutex();
+  const events: string[] = [];
+  const job = (name: string, ms: number) =>
+    lock.run(async () => {
+      events.push(`${name} start`);
+      await new Promise((r) => setTimeout(r, ms));
+      events.push(`${name} end`);
+    });
+  await Promise.all([job("a", 30), job("b", 1), job("c", 1)]);
+  expect(events).toEqual(["a start", "a end", "b start", "b end", "c start", "c end"]);
+  // A failing call releases the lock for the next.
+  await expect(lock.run(async () => Promise.reject(new Error("boom")))).rejects.toThrow("boom");
+  await expect(lock.run(async () => "ok")).resolves.toBe("ok");
+});
+
+test("readiness: a hung fetch ends at the limit in the background, then waits ten minutes", async () => {
   const { p, loop } = await hangingLoop((cmd, args) => cmd === "git" && args.includes("fetch"), 300);
+  const started = Date.now();
   await loop.pass();
+  expect(Date.now() - started).toBeLessThan(250);
+  await loop.readinessIdle();
   expect(p.logs.some((l) => l.includes("timed out"))).toBe(true);
   expect(storedReadiness(p.db, "web")).toBeNull();
   expect(Number(p.db.meta("readiness-failed:web"))).toBeGreaterThan(0);
   const before = p.logs.filter((l) => l.includes("timed out")).length;
   await loop.pass();
+  await loop.readinessIdle();
   expect(p.logs.filter((l) => l.includes("timed out")).length).toBe(before);
 });
 

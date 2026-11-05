@@ -52,6 +52,8 @@ export interface ReadinessDeps {
   log(line: string): void;
   /** The whole check of one repo, fetch included (default {@link READINESS_LIMIT_MS}). */
   limitMs?: number;
+  /** Runs the fetch of the shared clones alone, beside nothing else that touches them (the loop's lock). */
+  exclusive?: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
 /** A repo is checked again after this long (REPO-24: whenever Towercab fetches it). */
@@ -335,18 +337,12 @@ export async function beginReadiness(
   const old = storedReadiness(d.db, repo.name);
   if (!force && old && d.clock.now() - old.at < READINESS_EVERY_S) return null;
   const limit = d.limitMs ?? READINESS_LIMIT_MS;
-  const scope = withDeadline(d, limit);
-  const inner: ReadinessDeps = { ...d, tools: scope.tools, github: scope.github };
+  let scope!: Scope;
+  let inner!: ReadinessDeps;
+  let expiry!: Promise<never>;
   let timer: NodeJS.Timeout | undefined;
-  const expiry = new Promise<never>((_, no) => {
-    timer = setTimeout(() => {
-      scope.abort();
-      no(new Error(`timed out after ${Math.round(limit / 1000)} s`));
-    }, limit);
-  });
-  expiry.catch(() => {});
   const failed = (e: unknown) => {
-    scope.abort();
+    scope?.abort();
     clearTimeout(timer);
     d.log(`readiness of ${repo.name}: ${(e as Error).message}; keeping the last result`);
     const now = Math.floor(d.clock.now());
@@ -354,9 +350,21 @@ export async function beginReadiness(
     else d.db.setMeta(`readiness-failed:${repo.name}`, String(now));
   };
   try {
-    const fetched = fetchClones(inner, repo);
-    fetched.catch(() => {});
-    await Promise.race([fetched, expiry]);
+    // The deadline starts once the lock is ours, and covers the fetch and the reads that follow.
+    await (d.exclusive ?? ((fn) => fn()))(async () => {
+      scope = withDeadline(d, limit);
+      inner = { ...d, tools: scope.tools, github: scope.github };
+      expiry = new Promise<never>((_, no) => {
+        timer = setTimeout(() => {
+          scope.abort();
+          no(new Error(`timed out after ${Math.round(limit / 1000)} s`));
+        }, limit);
+      });
+      expiry.catch(() => {});
+      const fetched = fetchClones(inner, repo);
+      fetched.catch(() => {});
+      await Promise.race([fetched, expiry]);
+    });
   } catch (e) {
     failed(e);
     return { repo, run: async () => {} };

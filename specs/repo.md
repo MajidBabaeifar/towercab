@@ -247,7 +247,7 @@ The standard GitHub settings are checked with the same check that `ci` uses, so 
   removes the files and logs the tag (`settings check of <repo>: bin/apply-settings from ci <tag>`). Exit 0
   is `settings` present, exit 1 is missing with the script's first output line as the words. Towercab keeps
   no copy of the list of settings. The `ci` clone is fetched at most once per 10 minutes, with the checked
-  repo's own fetch ([LOOP-71](loop.md)).
+  repo's own fetch, under the loop's clone lock ([LOOP-71](loop.md)).
 - No `ci` clone, no `v*` tag, no such script in the tag, or a script that cannot run (not exit 0 or 1) → the item is `unknown`
   with `The standard settings could not be checked: add the ci repo to Towercab` (or the reason). It is
   shown as a warning and never blocks. `ci` is a registered repo, so the clone is normally there.

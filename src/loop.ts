@@ -65,13 +65,14 @@ import {
   unfinishedFor,
   update,
 } from "./mission.ts";
+import { Mutex } from "./mutex.ts";
 import { sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import type { PipeData } from "./pipeline/common.ts";
 import { writeTicks } from "./pipeline/steps.ts";
 import { isParked, priority } from "./priority.ts";
-import { blockingRepos, type Prepared, startReadiness as startReadinessCheck } from "./readiness.ts";
+import { blockingRepos, startReadiness as startReadinessCheck } from "./readiness.ts";
 import { missingText } from "./repo/readiness.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
@@ -168,6 +169,8 @@ export class Loop {
   /** INT-39: the feature-list backfill running now, and how to stop it. */
   private featuresJob: Promise<void> | null = null;
   private readinessJob: Promise<void> | null = null;
+  /** Held by every handler call and by the readiness fetch: two fetches of one clone never overlap. */
+  private readonly cloneLock = new Mutex();
   private featuresStop: (() => void) | null = null;
   /** Why the last issue poll failed (INT-21); while set, the other GitHub reads don't close the fault. */
   private issuesError: string | null = null;
@@ -412,7 +415,7 @@ export class Loop {
     await this.pollIntents(false);
     await this.pollProposed(false);
     await this.requeueKnownRepos();
-    await this.startReadiness();
+    this.startReadiness();
     this.enforceDrain();
     // LOOP-105, LOOP-108: with the checkout moved or an update waiting, running children finish but
     // nothing new starts.
@@ -542,7 +545,7 @@ export class Loop {
   private async enterDue(): Promise<void> {
     for (const m of this.d.db.all<Mission>("SELECT * FROM missions WHERE step = 'enter' ORDER BY id")) {
       try {
-        await this.enter(m);
+        await this.cloneLock.run(() => this.enter(m));
       } catch (e) {
         this.d.log(`${label(m)}: entering ${m.stage} failed, retrying next pass: ${(e as Error).message}`);
       }
@@ -809,12 +812,12 @@ export class Loop {
   }
 
   /**
-   * REPO-24, LOOP-71: the readiness check of the oldest due repo. Its fetch is awaited here in the pass, never
-   * beside a mission's git step (the feature backfill does the same); the reads, the stored result and the
-   * setup proposal run in the background, one repo at a time, so a pass never waits for them. A failure keeps
-   * the last result.
+   * REPO-24, LOOP-71: the readiness check of the oldest due repo runs as a background job, one repo at a
+   * time, so a pass never waits for it. Its fetch of a shared clone holds the clone lock that every mission
+   * step also holds (`cloneLock`), so the two never fetch the same clone at once; the reads that follow only
+   * read. A failure keeps the last result.
    */
-  private async startReadiness(): Promise<void> {
+  private startReadiness(): void {
     if (!this.d.readiness || this.readinessJob || this.drain !== null || this.codeMoved() !== null) return;
     const deps = {
       config: this.d.config,
@@ -825,22 +828,17 @@ export class Loop {
       store: this.d.store,
       github: this.d.github,
       log: this.d.log,
+      exclusive: <T>(fn: () => Promise<T>) => this.cloneLock.run(fn),
       ...(this.d.readinessLimitMs ? { limitMs: this.d.readinessLimitMs } : {}),
     };
-    let job: Prepared | null;
-    try {
-      job = await startReadinessCheck(deps, { listing: () => this.listing, proposed: () => this.proposed });
-    } catch (e) {
-      this.d.log(`readiness: ${(e as Error).message}`);
-      return;
-    }
-    if (!job) return;
-    this.readinessJob = job
-      .run()
-      .then(
-        () => undefined,
-        (e: Error) => this.d.log(`readiness: ${e.message}`),
-      )
+    this.readinessJob = (async () => {
+      const job = await startReadinessCheck(deps, {
+        listing: () => this.listing,
+        proposed: () => this.proposed,
+      });
+      if (job) await job.run();
+    })()
+      .catch((e: Error) => this.d.log(`readiness: ${e.message}`))
       .finally(() => {
         this.readinessJob = null;
       });
@@ -1140,7 +1138,7 @@ export class Loop {
   ): Promise<void> {
     let p: import("./handlers.ts").Progress;
     try {
-      p = await call();
+      p = await this.cloneLock.run(call);
     } catch (e) {
       const cur = getMission(this.d.db, m.id) ?? m;
       if (e instanceof EnvError) {
