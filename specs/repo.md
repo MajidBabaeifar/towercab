@@ -1,6 +1,6 @@
 # Repo files
 
-**Status:** Live: REPO-1..13, REPO-20..27, REPO-30..32 · **Prefix:** REPO
+**Status:** Live: REPO-1..13, REPO-14..19, REPO-20..27, REPO-30..32 · **Prefix:** REPO
 
 ## Purpose
 
@@ -194,13 +194,14 @@ Saving a setting opens a pull request that changes only that setting in `TOWERCA
   `removeField` so every other line stays byte-identical. Nothing differs → no PR and the reply says
   `Nothing changed.`
 - Towercab's App pushes branch `towercab/settings-<repo>-<n>` from the base branch and opens a PR titled
-  `chore(towercab): change <keys>`, with a body in plain words (what changes, from what to what, that
-  it was asked from Towercab's page) written to `prompts/writing.md`.
+  `chore(towercab): change Towercab settings`, with a body in plain words (what changes, from what to
+  what, that it was asked from Towercab's page) written to `prompts/writing.md`. The commit is made
+  from the base branch with git plumbing in Towercab's clone, so its working tree is untouched.
 - The PR goes through the repo's normal checks and always waits for the owner's approval, at any
   autonomy ([REPO-8](#repo-8--protected-paths)): Towercab never merges it itself.
 - One settings PR per repo is open at a time. Saving again while it is open pushes a commit to the same
   PR with the new changes added to the old ones (a later value for the same key replaces the earlier); the
-  PR's title and body are rewritten to match.
+  PR's body is rewritten to match (the title names no keys, so it stays).
 - A key or value that doesn't validate ([REPO-14](#repo-14--per-repo-tuning-lives-in-towercabmd)) is
   refused before any push, with the same reason. If the base branch's file is missing it is created with
   only the changed keys; if its front matter is invalid the PR is refused with the file's reason.

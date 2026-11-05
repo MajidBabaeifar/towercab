@@ -17,6 +17,7 @@ export { ghVersionOk };
 
 import type { Home } from "./home.ts";
 import { parseStored } from "./repo/readiness.ts";
+import { isMoved, readRecord } from "./repo/settings.ts";
 import { permissionLine } from "./settings/store.ts";
 import { tooFewListed } from "./teammates.ts";
 import type { Tools } from "./tools.ts";
@@ -152,6 +153,16 @@ export async function doctor(o: {
   for (const [name, why] of config.badRepos) lines.push(`${name}: ${why}`);
   // LOOP-65: a table for a repo in the database is ignored; it can go.
   for (const [name, why] of config.ignoredRepos) lines.push(`${name}: ${why}`);
+  // REPO-19: a move PR that was closed is a warning, not a failure.
+  if (o.db) {
+    for (const name of config.repos.keys()) {
+      if (readRecord(o.db, name, "move")?.state === "closed" && !isMoved(o.db, name)) {
+        lines.push(
+          `${name}: the PR that moves its settings into TOWERCAB.md was closed; open it again from the repo's page.`,
+        );
+      }
+    }
+  }
   lines.push(
     `telegram: ${config.telegram ? `chat ${config.telegram.chatId}` : "not configured (no messages)"}`,
   );

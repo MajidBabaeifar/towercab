@@ -10,6 +10,7 @@ import type { Intent } from "../intents/types.ts";
 import type { Loop } from "../loop.ts";
 import { heldBack } from "../pick.ts";
 import { isParked, pickOrder, priorityOf } from "../priority.ts";
+import { proposeSettings, reopenMove, type SettingsEnv } from "../repo/settings.ts";
 import { addFailures, beginAddRepo } from "../repos.ts";
 import { checkoutRoot } from "../service.ts";
 import { supplySecret } from "../ship/secret-steps.ts";
@@ -117,6 +118,14 @@ export function sourcesOf(loop: Loop, home: Home): UiSources {
 }
 
 export function startLoopUi(loop: Loop, config: Config, github: Host, home: Home): UiServer {
+  const settingsEnv = (): SettingsEnv => ({
+    db: loop.d.db,
+    tools: loop.d.tools,
+    forge: github,
+    home: home.root,
+    now: loop.now,
+    repos: config.repos,
+  });
   return startUi({
     port: config.ui.port,
     sources: sourcesOf(loop, home),
@@ -127,6 +136,11 @@ export function startLoopUi(loop: Loop, config: Config, github: Host, home: Home
       clock: loop.d.clock,
       github,
       proposed: () => loop.proposedState().list,
+      // REPO-16, REPO-19: the settings PR and the move, as the loop's own database, tools and forge do them.
+      limits: {
+        propose: (repo, changes, confirmed) => proposeSettings(settingsEnv(), repo, changes, confirmed),
+        move: (repo) => reopenMove(settingsEnv(), repo),
+      },
       // SHIP-35: a typed secret goes straight to `sops`; the value stays in this request.
       supplySecret: (intent, n, value) =>
         supplySecret(

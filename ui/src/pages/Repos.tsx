@@ -20,6 +20,7 @@ import { AddRepoForm } from "../AddRepo.tsx";
 import { act, refreshFeatures } from "../api.ts";
 import { ErrorNote, ProposedList, ReadinessChip, StateChip, Time, WorkRow } from "../components.tsx";
 import { Alert, Check, External } from "../icons.tsx";
+import { FileNotice, Limits } from "../Limits.tsx";
 import { Link } from "../router.tsx";
 
 const repoHref = (repo: string | null) => (repo ? `/repos?repo=${encodeURIComponent(repo)}` : "/repos");
@@ -269,6 +270,7 @@ function Repo({ r, readOnly }: { r: RepoView; readOnly: boolean }) {
           {r.ahead}
         </span>
       </header>
+      {r.limits.fileError ? <FileNotice text={r.limits.fileError} url={r.limits.fileUrl} /> : null}
       {r.setup ? <SetupSection s={r.setup} /> : null}
       {r.teammate ? (
         <section class="teammate-review">
@@ -350,6 +352,7 @@ function Repo({ r, readOnly }: { r: RepoView; readOnly: boolean }) {
       <Group title="Spend">
         <SpendLine spend={r.spend} />
       </Group>
+      <Limits repo={r.repo} l={r.limits} />
     </div>
   );
 }
@@ -378,6 +381,7 @@ function All({ data }: { data: Data }) {
           <span class="repo-card-name">{s.repo}</span>
           <ReadinessChip badge={s.readiness} />
           {s.github ? <span class="meta mono">{s.github}</span> : null}
+          {s.fileError ? <span class="why file-notice">{s.fileError}</span> : null}
           <span class="repo-card-counts">{counts(s)}</span>
           <span class="meta num">
             {s.spend.today} today · {s.spend.week} 7 days · {s.spend.all} all time

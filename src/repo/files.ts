@@ -67,6 +67,10 @@ export interface TowercabFile {
   waive?: Waiver[];
   /** How an infra repo's changes go live (REPO-22). */
   goLive?: string;
+  /** REPO-14: missions from build through merge at once; absent when the file doesn't say. */
+  workers?: number;
+  /** REPO-14: intents ahead of build; absent when the file doesn't say. */
+  ahead?: number;
 }
 
 export interface RepoFiles {
@@ -250,6 +254,8 @@ function parsePasses(bs: string[]): Pass[] {
 }
 
 const KEYS = [
+  "workers",
+  "ahead",
   "max_autonomy",
   "protected",
   "tests",
@@ -313,6 +319,11 @@ function frontMatter(ls: string[], t: TowercabFile): void {
       t.maxAutonomy = val;
     } else if (k === "live") {
       t.live = parseLive(val);
+    } else if (k === "workers" || k === "ahead") {
+      if (typeof val !== "number" || !Number.isInteger(val) || val < 1 || val > 16) {
+        throw new Error(`${k}: ${String(val)} isn't a whole number from 1 to 16`);
+      }
+      t[k] = val;
     } else if (k === "releases") {
       if (val !== "auto" && val !== "manual") throw new Error("releases must be auto or manual");
       if (val === "manual") t.releases = "manual";

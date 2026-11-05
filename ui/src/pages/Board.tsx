@@ -81,6 +81,7 @@ function LaneHead({ repo, folded, onToggle }: { repo: BoardRepo; folded: boolean
           <ReadinessChip badge={repo.readiness} />
         </Link>
       ) : null}
+      {repo.fileError ? <span class="why file-notice">{repo.fileError}</span> : null}
       <span class="meta">
         {repo.github ? <span class="mono">{repo.github} · </span> : null}
         {repo.open} open · {repo.done} done in the last 7 days

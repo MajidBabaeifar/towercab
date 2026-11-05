@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..149, UI-155..164, UI-168, UI-184..191, UI-192..197 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..149, UI-150..154, UI-155..164, UI-168, UI-184..191, UI-192..197 · **Prefix:** UI
 
 ## Purpose
 
@@ -836,8 +836,9 @@ A repo's page has a Settings section where the owner sees and changes how many m
   them into the repo ([UI-154](#ui-154--the-move-on-the-page)).`
 - Under the form, `Kept on this machine only:` lists the repo's environment variable names, comma
   separated (`None set.` when there are none). Values are never sent to the page or the API.
-- The form is part of `GET /api/repos?repo=<name>` as `settings`: `{values, defaults, pending, moved,
-  envNames}`. It is absent in the All view.
+- The form is part of `GET /api/repos?repo=<name>` as `limits` (`settings` is the GitHub check of
+  REPO-30): `{values, defaults, inFile, pending, moved, envNames, waitHours, fileError, fileUrl, move,
+  canSave}`. It is absent in the All view.
 - Verified by: `ui: a repo page shows its settings`, `ui: env names show but never values`, `ui: screenshots light, dark and mobile`
 
 ### UI-151 · Saving opens a PR
@@ -888,7 +889,7 @@ While a repo's settings are being moved into the repo, the page says where that 
   hidden while a move PR is open and once moved, and the line goes with it.
 - Until Towercab has run this version for 24 hours (REPO-19), the section shows one line, `Towercab
   moves these settings into the repo by itself in <n> hours, once it has run this version for a day.`;
-  the form stays editable (UI-151 adds the confirm line). `settings` in the API carries `waitHours`
+  the form stays editable (UI-151 adds the confirm line). `limits` in the API carries `waitHours`
   (null once the wait is over).
   The Settings section, like the rest of the Repos page, fits 360 px, works in light and dark and by
   keyboard, with labels on the fields (UI-68, UI-145).

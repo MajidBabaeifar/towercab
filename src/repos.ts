@@ -11,6 +11,7 @@ import type { GitLabForge } from "./forge/gitlab.ts";
 import { gitlabPath, isGitlab, parseGitlabProject } from "./forge/types.ts";
 import type { Forge } from "./forge.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
+import { isMoved, readFileValues } from "./repo/settings.ts";
 import type { Tools } from "./tools.ts";
 
 /** Where a row came from: a config table, or `repo add` from the CLI or the page. */
@@ -56,7 +57,21 @@ function toRepo(r: RepoRow): RepoConfig {
 
 /** Every repo in the database, in the order they were added. */
 export function readRepos(db: Db): RepoConfig[] {
-  return db.all<RepoRow>("SELECT * FROM repos ORDER BY rowid").map(toRepo);
+  return db.all<RepoRow>("SELECT * FROM repos ORDER BY rowid").map((r) => effective(db, toRepo(r)));
+}
+
+/**
+ * REPO-15: `workers` and `ahead` as the repo's `TOWERCAB.md` says (the last good read); a key it
+ * lacks falls back to the database value until the repo has moved, then to the default.
+ */
+function effective(db: Db, repo: RepoConfig): RepoConfig {
+  const file = readFileValues(db, repo.name) ?? {};
+  const moved = isMoved(db, repo.name);
+  return {
+    ...repo,
+    workers: file.workers ?? (moved ? 1 : repo.workers),
+    ahead: file.ahead ?? (moved ? 3 : repo.ahead),
+  };
 }
 
 function insertRepo(db: Db, repo: RepoConfig, source: RepoSource, now: number): void {
@@ -484,8 +499,14 @@ export function setRepo(db: Db, config: Config, name: string, pairs: string[], b
       if (eq < 1) throw new Error(`${pair} isn't key=value`);
       const key = pair.slice(0, eq);
       const value = pair.slice(eq + 1);
-      if (key === "workers" || key === "ahead") r[key] = int16(key, value);
-      else if (key === "base") {
+      if (key === "workers" || key === "ahead") {
+        if (isMoved(db, name)) {
+          throw new Error(
+            `workers and ahead for ${name} now live in TOWERCAB.md; change them on the repo's page or in the file.`,
+          );
+        }
+        r[key] = int16(key, value);
+      } else if (key === "base") {
         if (!isBranch(value)) throw new Error(`base: ${value || "nothing"} is not a branch name`);
         r.base = value;
       } else if (key === "path") {

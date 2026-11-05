@@ -43,6 +43,10 @@ export interface UiActions {
   secret?(intent: string, n: number, value: string): Promise<string>;
   /** SHIP-34: approve a secret's pull request, or ask to try again after repeated failures. */
   approveSecret?(intent: string, n: number): Promise<string>;
+  /** UI-151: open (or update) the PR that changes the repo's limits; `confirmed` in the first day (REPO-14). */
+  repoSettings?(repo: string, changes: unknown, confirmed: boolean): Promise<string>;
+  /** UI-154: open the move PR again (REPO-19). */
+  repoMove?(repo: string): Promise<string>;
   /** INT-53: merge the proposed intent's PR `pr` as the owner, if it still is at `head`. */
   accept(pr: number, head: string): Promise<string>;
   /** INT-53: comment `text` (default `Not going ahead.`) and close the proposed intent's PR. */
@@ -60,6 +64,11 @@ export interface ActionDeps {
    * they pass, while the clone goes on (UI-130); null: refused.
    */
   addRepo?: ((github: string, name?: string) => Promise<RepoConfig>) | null;
+  /** REPO-16, REPO-19: the settings PR and the move, bound to the loop's database, tools and forge. */
+  limits?: {
+    propose(repo: string, changes: unknown, confirmed: boolean): Promise<string>;
+    move(repo: string): Promise<string>;
+  } | null;
   /** The loop's last list of proposed intents (LOOP-92); Accept refuses one whose file can't be read. */
   proposed?: () => ProposedPr[];
   /** SHIP-35: writes a typed secret; none: the page can't take one. */
@@ -348,6 +357,16 @@ export function createActions(d: ActionDeps): UiActions {
       if (!d.addRepo) throw new Error("Towercab isn't running, so it can't add a repo now.");
       const r = await d.addRepo(github, name);
       return `Adding ${r.name} (${r.github}, base ${r.base}): Towercab is cloning it now. It shows on the Repos page when done, and its intents start from then on.`;
+    },
+
+    async repoSettings(repo, changes, confirmed) {
+      if (!d.limits) throw new Error("Towercab isn't running, so it can't open a pull request now.");
+      return d.limits.propose(repo, changes, confirmed);
+    },
+
+    async repoMove(repo) {
+      if (!d.limits) throw new Error("Towercab isn't running, so it can't open a pull request now.");
+      return d.limits.move(repo);
     },
 
     async features(repo) {

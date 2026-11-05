@@ -52,12 +52,26 @@ export function closeProposed(pr: number, text: string): Promise<ActionReply> {
   return post({ action: "close", pr, text: text.trim() || undefined });
 }
 
+/** UI-151: open (or update) the PR that changes a repo's limits; `null` takes a key out of the file. */
+export function saveLimits(
+  repo: string,
+  changes: Record<string, number | null>,
+  confirmed: boolean,
+): Promise<ActionReply> {
+  return post({ action: "repo-settings", repo, changes, confirmed });
+}
+
+/** UI-154: open the PR that moves a repo's limits into its file again. */
+export function openMove(repo: string): Promise<ActionReply> {
+  return post({ action: "repo-move", repo });
+}
+
 /** UI-144: read the repo again for its feature list. */
 export function refreshFeatures(repo: string): Promise<ActionReply> {
   return post({ action: "features", repo });
 }
 
-async function post(req: Record<string, string | number | boolean | undefined>): Promise<ActionReply> {
+async function post(req: Record<string, unknown>): Promise<ActionReply> {
   try {
     const r = await fetch("/api/actions", {
       method: "POST",
