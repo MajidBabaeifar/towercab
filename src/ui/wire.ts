@@ -11,6 +11,7 @@ import type { Loop } from "../loop.ts";
 import { isParked, pickOrder, priorityOf } from "../priority.ts";
 import { addFailures, beginAddRepo } from "../repos.ts";
 import { checkoutRoot } from "../service.ts";
+import { supplySecret } from "../ship/secret-steps.ts";
 import { version as gitVersion } from "../update.ts";
 import { createActions } from "./actions.ts";
 import { startUi, type UiServer } from "./server.ts";
@@ -124,6 +125,22 @@ export function startLoopUi(loop: Loop, config: Config, github: GitHub, home: Ho
       clock: loop.d.clock,
       github,
       proposed: () => loop.proposedState().list,
+      // SHIP-35: a typed secret goes straight to `sops`; the value stays in this request.
+      supplySecret: (intent, n, value) =>
+        supplySecret(
+          {
+            db: loop.d.db,
+            tools: loop.d.tools,
+            github,
+            config,
+            home,
+            clock: loop.d.clock,
+            log: loop.d.log,
+          },
+          intent,
+          n,
+          value,
+        ),
       // UI-130: answer once the checks pass; the clone runs on, and the page's live update shows the
       // repo (or, on failure, a problem) when it ends.
       addRepo: async (gh, name) => {

@@ -13,11 +13,13 @@ import type { Intent, IntentStore, Listing } from "../intents/types.ts";
 import { exitsOf, finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
 import { dataOf, forIntent, type Mission } from "../mission.ts";
 import { testGrantsOf } from "../pipeline/access.ts";
+import type { SecretState } from "../pipeline/common.ts";
 import { section } from "../pipeline/prtext.ts";
 import { type Kind, parseStored, stageSkip } from "../repo/readiness.ts";
 import { usualOwner } from "../repos.ts";
 import { currentRisk, type RiskGate, riskWords } from "../risk.ts";
 import { type Held, heldReleases, releaseLine, releaseTitle } from "../ship/releases.ts";
+import { MAX_FAILS } from "../ship/secret-steps.ts";
 import {
   aheadIn,
   buildingIn,
@@ -30,7 +32,7 @@ import {
   returningSince,
   workingIn,
 } from "../slots.ts";
-import type { OwnerStep } from "../steps.ts";
+import type { OwnerStep, SecretSpec } from "../steps.ts";
 import { proposedSection } from "./proposed.ts";
 import type {
   Access,
@@ -58,6 +60,7 @@ import type {
   QueuePage,
   RiskView,
   Row,
+  SecretView,
   SpendView,
   StageFileView,
   StageId,
@@ -332,6 +335,20 @@ const CARD_NOTES: Partial<Record<Stage, string>> = {
   "approval:plan": "Plan review",
   "approval:merge": "Code review",
 };
+
+/** SHIP-34, SHIP-35: a secret step's progress for the page; no value is ever kept to show. */
+function secretView(spec: SecretSpec, st: SecretState | undefined, src: UiSources): SecretView {
+  const github = src.config.repos.get(spec.repo)?.github;
+  return {
+    key: spec.key,
+    file: spec.file,
+    source: spec.source,
+    pr: st?.pr && github ? { number: st.pr, url: src.prUrl(github, st.pr) } : null,
+    approved: !!st?.approved,
+    error: st?.error ?? null,
+    stopped: (st?.fails ?? 0) >= MAX_FAILS,
+  };
+}
 
 /** UI-56: the one state of a mission. */
 export function stateOf(m: Mission, now: number, o: StateOpts = {}): StateView {
@@ -2137,7 +2154,9 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
   };
   // UI-160, UI-162: the owner's steps, and the plan's claim that nothing could be checked live.
   const shown = live ?? last;
-  const sd = shown ? dataOf<{ steps?: OwnerStep[]; liveNoneWhy?: string }>(shown) : {};
+  const sd = shown
+    ? dataOf<{ steps?: OwnerStep[]; liveNoneWhy?: string; secrets?: Record<string, SecretState> }>(shown)
+    : {};
   if (sd.steps?.length) {
     body.steps = [...sd.steps]
       .sort((a, b) => (a.when === b.when ? a.n - b.n : a.when === "before" ? -1 : 1))
@@ -2149,6 +2168,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
           text: x.text,
           why: x.why,
           doneAt: x.done_at ? when(Number.isFinite(at) ? at : (shown?.updated ?? s.now), s.now) : null,
+          ...(x.secret ? { secret: secretView(x.secret, sd.secrets?.[String(x.n)], src) } : {}),
         };
       });
     body.stepsWait =

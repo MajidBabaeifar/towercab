@@ -1,6 +1,6 @@
 # Ship
 
-**Status:** Live: SHIP-1..22, SHIP-30..32 · **Prefix:** SHIP
+**Status:** Live: SHIP-1..22, SHIP-30..32, SHIP-33..36 · **Prefix:** SHIP
 
 ## Purpose
 
@@ -310,7 +310,8 @@ A plan can list a secret as an owner step, saying where it goes, what it is for 
   `length` (1–256, default 43) and `alphabet` (`urlsafe` default, `hex`, `alnum`); `supply` steps may not
   (refused like any bad plan result). A step with `secret` has `when`
   as any other; its `text` is derived ("Add `KEY` to `file`") if left empty.
-- `plan.md` writes the line as in SHIP-17 plus `· secret <key> in <repo>/<file> (generate|supply)`. The
+- `plan.md` writes the line as in SHIP-17 plus `· secret <key> in <repo>/<file> (generate|supply)`, with
+  `, length <n>` and `, alphabet <a>` inside the brackets when set, before any `· ticked` time. The
   value is never part of the plan, the step or any text the worker produces. A plan listing a secret the
   agent could not name a `file` and `key` for is refused like any bad plan result.
 - A secret step is ticked only by SHIP-34 or SHIP-35, never by hand (SHIP-22 refuses with
@@ -321,8 +322,8 @@ A plan can list a secret as an owner step, saying where it goes, what it is for 
 
 For a secret Towercab may generate, it creates the value and writes it to the encrypted file in a pull request, and the step ticks itself.
 
-- When the mission reaches the wait for the step (SHIP-18, SHIP-19), or on the first pass after the plan
-  merges for a `before` step, the Towercab process, not a worker, creates the value from the system's
+- On each pass while the mission waits on the step (`your steps first`, `your steps`, SHIP-18, SHIP-19),
+  the Towercab process, not a worker, creates the value from the system's
   secure random source: by default 43 characters of URL-safe base64 without padding (32 random bytes;
   letters, digits, `-`, `_`), or `length` characters of the step's `alphabet` (`hex` = `0-9a-f`, `alnum` =
   `A-Za-z0-9`, `urlsafe` = `A-Za-z0-9-_`), drawn without modulo bias. It runs `sops set` through `Tools`
@@ -330,17 +331,17 @@ For a secret Towercab may generate, it creates the value and writes it to the en
   value is passed on stdin or a file Towercab deletes, never on a command line. The commit
   `chore(secrets): add <key> to <file>` goes on a branch `towercab/secret-<id>-<key>` and opens a PR as
   the App; its body names the file, key and purpose, never the value.
-- Every secret PR waits for the owner, whatever the repo's own rules, autonomy or review say: a "Needs
-  you" card `{kind: "secret", intent, n}` titled "Approve secret <key> for <file>", whose why gives the
-  purpose and the PR link. One click on the card (UI action `{action: "approve-secret", intent, n}`)
-  approves; only then does Towercab merge the PR (squash, as the App). Closing the PR without a merge
-  clears the card and the step goes back to waiting for a new PR.
-- The step ticks itself once `<key>` exists in `<file>` on the default branch (checked with `sops decrypt
-  --extract` discarding the output, or by reading the key names from the file's unencrypted structure),
-  and a key that already exists is never overwritten or replaced: the step ticks without a PR or a card.
+- Every secret PR waits for the owner, whatever the repo's own rules, autonomy or review say. The wait
+  is the "Your steps" one the mission is already in, so the owner's card for it is that one: the step on
+  the intent page shows the PR link and a button "Approve secret <key> for <file>" (UI action
+  `{action: "approve-secret", intent, n}`). Only after that click does Towercab merge the PR (squash, as
+  the App). Closing the PR without a merge clears the step's progress, and the next pass opens a new PR.
+- The step ticks itself once `<key>` exists in `<file>` on the default branch (read from the file's
+  plain-text key names, never by decrypting it), and a key that already exists is never overwritten or replaced: the step ticks without a PR or a card.
   Rotating a secret is a separate owner action and is not part of this requirement.
-- A failure (no age key, `sops` error, push refused) is logged without the value, retried on a later pass,
-  and after 3 in a row the mission waits `fix secrets` with the reason.
+- A failure (no age key, `sops` error, push refused) is logged without the value and retried on a later
+  pass. After 3 in a row Towercab stops trying that step; the step on the page shows the reason and a
+  "Try again" button (the same action as the approval), which starts the count again.
 - Verified by: `ship: a generated secret is set with sops and the step ticks`, `ship: a generated secret defaults to 43 url-safe characters`, `ship: a step sets the length and alphabet of a generated secret`, `ship: a secret PR waits for the owner's approval`, `ship: a secret PR closed unmerged clears the card`, `ship: an existing key is not overwritten`, `ship: a failed secret write is retried then held`
 
 ### SHIP-35 · Supplied secrets are typed into Towercab
@@ -353,7 +354,7 @@ For a secret only the owner has, the intent page has a field that writes it the 
   answers `ok` or the refusal. The value is held in memory for that request only; it is not stored in
   the database, the run record, the event log or the browser (the field is cleared on send). The PR it
   opens waits for the owner's approval like a generated one (SHIP-34), so typing the value is followed by
-  one click on the "Approve secret" card.
+  one click on the step's "Approve secret" button.
 - The UI answers only on the loopback address the UI already uses ([UI-1](ui.md)). An empty value, or one
   over 8 KiB, is refused with `<key> needs a value` or `<key> is too long`. A `generate` step has no
   field. There is no CLI command taking the value as an argument.
@@ -365,11 +366,11 @@ For a secret only the owner has, the intent page has a field that writes it the 
 No secret value appears in a log, a pull request, a stored record or the worker's sandbox.
 
 - Only the Towercab process holds the age key and the value. The worker's sandbox
-  gets neither the key, its file path nor the `sops` binary's configuration; the environment passed to
-  workers is checked not to carry them.
+  gets neither the key, its file path nor the `sops` binary's configuration: no variable starting with
+  `SOPS_` or `AGE_` is passed to a worker or a check, whatever `[agent].env` or a repo's `env` says.
 - Every output of `sops` and of the secret write (stdout, stderr, error messages) is redacted of the value
-  before it is logged, put in a PR, a comment, a UI message or `runs`; `Tools` calls that carry a value
-  record their argument list with the value replaced by `***`.
+  before it is logged, put in a PR, a comment, a UI message or `runs`. The value reaches `sops` on stdin
+  (`sops set --value-stdin`), so it is in no argument list that `Tools` or a process listing could show.
 - Verified by: `ship: a secret value is absent from every log line, PR body and run record`, `ship: the worker environment carries no age key`, `ship: sops output is redacted`
 
 ### SHIP-30 · Release pull requests are merged

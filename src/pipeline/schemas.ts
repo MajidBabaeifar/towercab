@@ -1,6 +1,8 @@
 // The `--json-schema`s of the worker and review runs (pipeline.md **Schemas**): every object closed,
 // every key required, `null` where optional; plus their result types and a validator for them.
 
+import type { PlanStep } from "../steps.ts";
+
 /** Conventional Commit types. */
 export const TYPES = [
   "feat",
@@ -56,7 +58,25 @@ export const DESIGN_SCHEMA = object({
 const E2E = nullable(object({ tests: list(S), none_why: S }));
 
 /** SHIP-17: what only the owner can do for the change to work, and when it is needed. */
-const OWNER_STEPS = list(object({ when: { type: "string", enum: ["before", "after"] }, text: S, why: S }));
+const OWNER_STEPS = list(
+  object({
+    when: { type: "string", enum: ["before", "after"] },
+    text: S,
+    why: S,
+    // SHIP-33: a secret Towercab writes to a SOPS file; null for any other step.
+    secret: nullable(
+      object({
+        repo: S,
+        file: S,
+        key: S,
+        purpose: S,
+        source: { type: "string", enum: ["generate", "supply"] },
+        length: { type: ["integer", "null"] },
+        alphabet: S_NULL,
+      }),
+    ),
+  }),
+);
 
 export const PLAN_SCHEMA = object({
   brief: BRIEF,
@@ -182,7 +202,7 @@ export interface PlanResult {
   access: Access;
   e2e: { tests: string[]; none_why: string } | null;
   /** SHIP-17: absent counts as none. */
-  owner_steps?: { when: "before" | "after"; text: string; why: string }[];
+  owner_steps?: PlanStep[];
   /** SHIP-21: absent counts as empty. */
   live_none_why?: string;
   /** PIP-112: absent counts as `code`. */
@@ -332,11 +352,30 @@ export function parseResult<K extends keyof Results>(
     };
   }
   // SHIP-17, SHIP-21: a plan from before owner steps (or a cached one) reads as none and no claim.
+  let checked = value;
   if (kind === "plan" && isObject(value)) {
-    value = { owner_steps: [], live_none_why: "", delivery: "code", ...value };
+    const plan: Record<string, unknown> = { owner_steps: [], live_none_why: "", delivery: "code", ...value };
+    value = plan;
+    const own = plan.owner_steps;
+    // SHIP-33: a step from before secrets reads as an ordinary one.
+    checked = {
+      ...plan,
+      owner_steps: Array.isArray(own)
+        ? own.map((s: unknown) => {
+            if (!isObject(s)) return s;
+            if (!("secret" in s)) return { ...s, secret: null };
+            // A secret without length or alphabet leaves them unset.
+            return isObject(s.secret) ? { ...s, secret: { length: null, alphabet: null, ...s.secret } } : s;
+          })
+        : own,
+    };
   }
-  const why = validate(SCHEMAS[kind], value);
+  const why = validate(SCHEMAS[kind], checked);
   if (why !== null) return { ok: false, why };
+  if (kind === "plan" && isObject(value)) {
+    const bad = secretProblem((value as Record<string, unknown>).owner_steps);
+    if (bad) return { ok: false, why: bad };
+  }
   // PIP-112: a plan the owner does by hand needs steps they can tick.
   if (kind === "plan" && isObject(value) && value.delivery === "steps") {
     const steps = value.owner_steps;
@@ -350,6 +389,37 @@ export function parseResult<K extends keyof Results>(
       return { ok: false, why: "question.options needs at least one option" };
   }
   return { ok: true, value: value as Results[K] };
+}
+
+/** SHIP-33: what is wrong with the secrets of a plan's steps, or null. */
+export function secretProblem(steps: unknown): string | null {
+  if (!Array.isArray(steps)) return null;
+  for (const st of steps) {
+    const sec = isObject(st) ? st.secret : null;
+    if (!isObject(sec)) continue;
+    const { repo, file, key, source, length, alphabet } = sec as Record<string, unknown>;
+    if (typeof repo !== "string" || !/^[A-Za-z0-9._-]+$/.test(repo))
+      return "a secret step needs the repo's short name in secret.repo";
+    if (
+      typeof file !== "string" ||
+      !/^[A-Za-z0-9_./-]+$/.test(file) ||
+      file.startsWith("/") ||
+      file.split("/").includes("..")
+    )
+      return "a secret step needs a relative file path in secret.file";
+    if (typeof key !== "string" || !/^[A-Za-z0-9_.-]+$/.test(key))
+      return "a secret step needs a key of letters, digits, _, . and - in secret.key";
+    if (source === "supply" && (length != null || alphabet != null))
+      return "secret.length and secret.alphabet are for generate steps only";
+    if (
+      length != null &&
+      (typeof length !== "number" || !Number.isInteger(length) || length < 1 || length > 256)
+    )
+      return "secret.length is 1 to 256";
+    if (alphabet != null && !["hex", "alnum", "urlsafe"].includes(alphabet as string))
+      return "secret.alphabet is hex, alnum or urlsafe";
+  }
+  return null;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

@@ -2,6 +2,17 @@
 // the ticks, and `missions.data.steps` is a copy read from it. Pure text and data; the loop, the
 // handlers and the commands do the reading and writing.
 
+/** SHIP-33: a secret an owner step stands for. The value is never part of it. */
+export interface SecretSpec {
+  repo: string;
+  file: string;
+  key: string;
+  purpose: string;
+  source: "generate" | "supply";
+  length?: number;
+  alphabet?: "hex" | "alnum" | "urlsafe";
+}
+
 /** One of the owner's steps from the plan; `done_at` is an RFC 3339 time once ticked. */
 export interface OwnerStep {
   n: number;
@@ -9,13 +20,21 @@ export interface OwnerStep {
   text: string;
   why: string;
   done_at: string | null;
+  /** SHIP-33: set when the step is a secret Towercab writes (SHIP-34, SHIP-35). */
+  secret?: SecretSpec;
 }
 
-/** A step as the plan agent returns it (SHIP-17). */
+/** A step as the plan agent returns it (SHIP-17); `secret` is null or absent for an ordinary step. */
 export interface PlanStep {
   when: "before" | "after";
   text: string;
   why: string;
+  secret?:
+    | (Omit<SecretSpec, "length" | "alphabet"> & {
+        length?: number | null;
+        alphabet?: SecretSpec["alphabet"] | null;
+      })
+    | null;
 }
 
 /** What `machine.next` needs to know about a mission's data (LOOP-73). */
@@ -52,21 +71,50 @@ const oneLine = (s: string) => s.split(/\s+/).filter(Boolean).join(" ");
 
 /** The steps numbered by their order in the list. */
 export function numbered(steps: PlanStep[]): OwnerStep[] {
-  return steps.map((s, i) => ({
-    n: i + 1,
-    when: s.when === "before" ? "before" : "after",
-    text: oneLine(s.text),
-    why: oneLine(s.why),
-    done_at: null,
-  }));
+  return steps.map((s, i) => {
+    const secret = s.secret ? secretOf(s.secret) : undefined;
+    return {
+      n: i + 1,
+      when: s.when === "before" ? "before" : "after",
+      text: oneLine(s.text) || (secret ? secretText(secret) : ""),
+      why: oneLine(s.why) || (secret ? oneLine(secret.purpose) : ""),
+      done_at: null,
+      ...(secret ? { secret } : {}),
+    };
+  });
 }
+
+/** The words of a secret step whose text was left empty (SHIP-33). */
+export const secretText = (s: SecretSpec): string => `Add \`${s.key}\` to \`${s.file}\``;
+
+function secretOf(s: NonNullable<PlanStep["secret"]>): SecretSpec {
+  return {
+    repo: s.repo,
+    file: s.file,
+    key: s.key,
+    purpose: oneLine(s.purpose),
+    source: s.source,
+    ...(s.length ? { length: s.length } : {}),
+    ...(s.alphabet ? { alphabet: s.alphabet } : {}),
+  };
+}
+
+/** ` · secret <key> in <repo>/<file> (generate|supply[, length n][, alphabet a])` (SHIP-33); no secret, "". */
+function secretSuffix(s: SecretSpec | undefined): string {
+  if (!s) return "";
+  const opts = `${s.length ? `, length ${s.length}` : ""}${s.alphabet ? `, alphabet ${s.alphabet}` : ""}`;
+  return ` · secret ${s.key} in ${s.repo}/${s.file} (${s.source}${opts})`;
+}
+
+const SECRET_SUFFIX =
+  /\s+·\s+secret\s+(\S+)\s+in\s+([^\s/]+)\/(\S+)\s+\((generate|supply)(?:, length (\d+))?(?:, alphabet (hex|alnum|urlsafe))?\)$/;
 
 /** `- [ ] before merge: <text> (<why>)`, ticked: `- [x] … · ticked <time>` (SHIP-17). */
 export function stepLine(s: OwnerStep): string {
   // Parentheses in the why would end it early when the line is read back.
   const why = s.why.replace(/\(/g, "[").replace(/\)/g, "]");
   const tick = s.done_at ? ` · ticked ${s.done_at}` : "";
-  return `- [${s.done_at ? "x" : " "}] ${s.when} merge: ${s.text}${why ? ` (${why})` : ""}${tick}`;
+  return `- [${s.done_at ? "x" : " "}] ${s.when} merge: ${s.text}${why ? ` (${why})` : ""}${secretSuffix(s.secret)}${tick}`;
 }
 
 /** The `## Your steps` section; no steps → no section (SHIP-17). */
@@ -100,6 +148,20 @@ export function parseSteps(planMd: string): OwnerStep[] {
     } else if (m[1] !== " ") {
       done_at = "";
     }
+    let secret: SecretSpec | undefined;
+    const sec = SECRET_SUFFIX.exec(rest);
+    if (sec) {
+      secret = {
+        repo: sec[2]!,
+        file: sec[3]!,
+        key: sec[1]!,
+        purpose: "",
+        source: sec[4] as SecretSpec["source"],
+        ...(sec[5] ? { length: Number(sec[5]) } : {}),
+        ...(sec[6] ? { alphabet: sec[6] as SecretSpec["alphabet"] } : {}),
+      };
+      rest = rest.slice(0, sec.index);
+    }
     let text = rest;
     let why = "";
     const at = rest.lastIndexOf(" (");
@@ -114,6 +176,7 @@ export function parseSteps(planMd: string): OwnerStep[] {
       why,
       // Ticked by hand without a time: counts as done, the time unknown.
       done_at: done_at === "" ? "unknown" : done_at,
+      ...(secret ? { secret: { ...secret, purpose: why } } : {}),
     });
   }
   return out;
