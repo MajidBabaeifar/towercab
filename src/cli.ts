@@ -32,6 +32,7 @@ import { Loop } from "./loop.ts";
 import { type ApplyCtx, isWait } from "./machine.ts";
 import { type Mission, unfinishedFor } from "./mission.ts";
 import { decide, nextText } from "./pick.ts";
+import { grantScanning } from "./pipeline/alerts.ts";
 import { guardMain } from "./pipeline/guard.ts";
 import { handlers } from "./pipeline/index.ts";
 import { ownerMergeRefusal } from "./pipeline/teammate.ts";
@@ -93,6 +94,7 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   repo set <name> key=value…      workers, ahead, base, path, env (NAME=value or a JSON object)
   settings restore <repo>         put back the settings saved before the last apply
   settings granted                the GitHub App now has Administration (write)
+  settings scanning-granted       the GitHub App now has Code scanning alerts (read)
   ui [--no-open]                  open the web page
   specs check-ids [--base <ref>] [--prs <file>]
                                   fail when a spec adds a requirement ID the base branch or another open PR has
@@ -526,8 +528,13 @@ export async function settingsCommand(
       ? "noted: Towercab applies settings again at its next check"
       : "nothing to clear: the GitHub App was not missing the permission";
   }
+  if (sub === "scanning-granted" && args.length === 1) {
+    return grantScanning(w.db)
+      ? "noted: Towercab reads code scanning alerts again on the next red check"
+      : "nothing to clear: the GitHub App was not missing the permission";
+  }
   if (sub !== "restore" || !name || args.length !== 2)
-    throw new UsageError("settings restore <repo> | settings granted");
+    throw new UsageError("settings restore <repo> | settings granted | settings scanning-granted");
   const repo = w.config.repos.get(name);
   if (!repo) throw new Error(`${name} isn't a repo Towercab knows (towercab repo list)`);
   if (!w.github) throw new Error(`settings restore needs [github] in ${w.config.file} (app_id, me)`);
