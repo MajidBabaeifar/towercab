@@ -1294,23 +1294,27 @@ In a repo that needs a teammate's review, only an approval from someone other th
   remembered). Any difference in the PR's own diff cancels the approval and the teammates are asked
   again (PIP-143). If the host's branch rules dismiss stale approvals, Towercab follows the host: a
   review the host reports `DISMISSED` never counts, and Towercab does not re-count it.
-- The PR's **requested** logins are those the host has requested review from and not withdrawn,
-  code owners included. The host clears a request once its person reviews, so Towercab reads the PR's
-  timeline (`gh api repos/<r>/issues/<n>/timeline`: a `review_requested` event with no later
-  `review_request_removed` for that login) together with `reviewRequests`, again with the PR
-  (PIP-21) before every decision that uses them (the gate, a merge, an event). It keeps no list of its
-  own: someone whose request was withdrawn, and who is not listed, is no longer trusted for that PR.
-  The owner and the bot are never requested reviewers.
-- **With a list** (`reviewers` not empty, LOOP-83), the list limits who can sign off: an approval
-  counts only when its author is a listed login or a requested login. An approval from anyone else
-  does not count, even when the host already reports the PR `APPROVED` (`reviewDecision`).
-- **Without a list**, any approval the host accepts counts: the host reports the PR `APPROVED` at that
-  read, and the approving login is not the owner or the bot. The host's own rules must also be met in
-  both cases (PIP-147).
-- Without a list, with no requested login and with the host reporting no review rule
-  (`reviewDecision` empty), nobody is known to review: the mission asks the owner to list reviewers
-  (`towercab repo set <name> reviewers=…`, LOOP-83) and does not merge.
-- Verified by: `pipeline: a listed reviewer's approval counts`, `pipeline: the owner's approval is not a teammate approval`, `pipeline: an approval of an older head with a changed diff is stale`, `pipeline: a code owner's approval counts when the host requested them`, `pipeline: with a list an unlisted unrequested approval does not count even if the host approved`, `pipeline: without a list any approval the host accepts counts`, `pipeline: a withdrawn request is no longer trusted`, `pipeline: requested reviewers are read again before each decision`, `pipeline: no reviewers and no review rule asks the owner`
+- **Who counts.** Only two kinds of people: the logins in `reviewers` (LOOP-83) and the **code
+  owners** of the PR's changed paths. Anyone else the host was asked to review, whoever asked
+  (Towercab, a teammate, a rule), does not count and is not heard (PIP-145), even when the host
+  already reports the PR `APPROVED` (`reviewDecision`). A listed login counts for every path.
+- **Code owners.** Read from the repo's `CODEOWNERS` (`.github/`, the root or `docs/`, first found)
+  on the **base branch**, so a PR cannot change its own owners; the PR's changed paths come from its
+  file list (`gh pr view --json files`). Per path the last matching pattern wins, as on GitHub; its
+  `@login` owners are the path's code owners. Read again with the PR (PIP-21) before every decision
+  that uses them (the gate, a merge, an event); nothing is remembered.
+- **Stricter where the case is unclear**, always the option that counts fewer people:
+  - a team owner (`@org/team`) or an email owner is not expanded and counts for nobody; list the
+    people instead;
+  - an unreadable or missing `CODEOWNERS`, a file list that cannot be read (or is cut off by the host
+    at 3000 files), and a path no pattern matches mean no code owners for that path;
+  - the owner (`[github].me`), the bot and the PR's author never count, even if listed or a code owner;
+  - an approval counts only when the host also keeps it: a review the host reports `DISMISSED`
+    does not count.
+- With no listed login and no code owner for any changed path, nobody is known to review: the mission
+  asks the owner to list reviewers (`towercab repo set <name> reviewers=…`, LOOP-83) and does not
+  merge. One counted approval is enough for Towercab; the host's own rules must also be met (PIP-147).
+- Verified by: `pipeline: a listed reviewer's approval counts`, `pipeline: the owner's approval is not a teammate approval`, `pipeline: an approval of an older head with a changed diff is stale`, `pipeline: a code owner of a changed path counts`, `pipeline: someone the host was asked to review but is neither listed nor a code owner does not count`, `pipeline: an unlisted approval does not count even if the host approved`, `pipeline: CODEOWNERS is read from the base branch`, `pipeline: the last matching CODEOWNERS pattern wins`, `pipeline: a team owner counts for nobody`, `pipeline: an unreadable CODEOWNERS means no code owners`, `pipeline: no reviewers and no code owners asks the owner`
 
 ### PIP-143 · Review is requested once the PR is ready
 
@@ -1334,7 +1338,7 @@ When the code PR is ready, Towercab asks the listed reviewers (or the code owner
 - A new head whose own diff changed (a repair round, PIP-142) asks again and drops the wait on the old
   approval. A head that only brought the branch up to date with the base keeps the approval and asks
   nobody again, unless the host dismissed it.
-- Verified by: `pipeline: a ready PR requests the listed reviewers`, `pipeline: an empty list leaves the request to CODEOWNERS`, `pipeline: the wait names the reviewers`, `pipeline: a draft PR requests nobody`, `pipeline: a new head asks again`, `pipeline: an approval survives an update that only brings the branch up to date`, `pipeline: a changed diff cancels the approval and asks again`, `pipeline: a dismissed approval is not counted again`, `pipeline: an unapproved review goes to the owner before the teammates`, `pipeline: the owner passing it on requests the teammates`, `events: pass comment passes it on`, `events: approve review does not pass it on`
+- Verified by: `pipeline: a ready PR requests the listed reviewers`, `pipeline: an empty list requests nobody and leaves it to the host's CODEOWNERS rule`, `pipeline: the wait names the reviewers`, `pipeline: a draft PR requests nobody`, `pipeline: a new head asks again`, `pipeline: an approval survives an update that only brings the branch up to date`, `pipeline: a changed diff cancels the approval and asks again`, `pipeline: a dismissed approval is not counted again`, `pipeline: an unapproved review goes to the owner before the teammates`, `pipeline: the owner passing it on requests the teammates`, `events: pass comment passes it on`, `events: approve review does not pass it on`
 
 ### PIP-144 · Nothing merges without the teammate's approval
 
@@ -1366,10 +1370,10 @@ In such a repo the gate never merges before a teammate approval, at any autonomy
 
 ### PIP-145 · A reviewer's feedback starts a repair round
 
-A request for changes or comment from a listed reviewer or a reviewer the host requested and did not withdraw (code owners included) is treated like the owner's feedback, and nobody else's is.
+A request for changes or comment from a listed reviewer or a code owner of the changed paths is treated like the owner's feedback, and nobody else's is.
 
 - Extends PIP-44 for repos with `teammate_review=on`: reviews and comments by one of the PR's reviewers
-  (PIP-142: listed, or requested by the host and not withdrawn, read again before the event is taken;
+  (PIP-142: listed, or a code owner of a changed path, read again before the event is taken;
   case-insensitive, never the bot or the owner) raise `feedback` (PIP-43) with their text, prefixed with who wrote
   it (`alice asked for changes: …`). Feedback is a review in state `CHANGES_REQUESTED`, or a
   non-empty comment that is not part of an approval: an issue comment, or an inline review comment
@@ -1380,8 +1384,8 @@ A request for changes or comment from a listed reviewer or a reviewer the host r
   can read it, and nothing more happens.
 - The feedback starts a repair round like the owner's, goes into the continue prompt (PIP-37) and
   clears the teammate approval of the old head. Slash commands (PIP-45) and `allow` replies still
-  need the owner. Anyone who is neither listed nor requested by the host is ignored as before.
-- Verified by: `events: a listed reviewer's request for changes is feedback`, `events: a listed reviewer's comment is feedback`, `events: a code owner's request for changes is feedback`, `events: someone neither listed nor requested is ignored`, `events: someone no longer requested is ignored`, `events: a reviewer cannot send slash commands`, `events: an approval with text is not feedback`, `events: inline comments of an approval are not feedback`, `pipeline: an approval's text is shown in the record`, `pipeline: reviewer feedback names who wrote it`
+  need the owner. Anyone who is neither listed nor a code owner of a changed path is ignored as before, even if the host asked them to review.
+- Verified by: `events: a listed reviewer's request for changes is feedback`, `events: a listed reviewer's comment is feedback`, `events: a code owner's request for changes is feedback`, `events: someone neither listed nor a code owner is ignored`, `events: someone the host asked to review but who is not a code owner is ignored`, `events: a reviewer cannot send slash commands`, `events: an approval with text is not feedback`, `events: inline comments of an approval are not feedback`, `pipeline: an approval's text is shown in the record`, `pipeline: reviewer feedback names who wrote it`
 
 ### PIP-146 · The owner answers for the PR
 
