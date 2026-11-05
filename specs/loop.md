@@ -729,21 +729,27 @@ A change keeps its repo's build slot from the start of its build until GitHub ch
 
 A mission whose intent gains an unfinished `after:` while it runs waits before its next build, instead of building on a base that is missing.
 
-- Before a mission starts `build` or re-enters it (after a question, a review or conflict round, a CI
-  repair, a retry), the step re-reads the intent file's current `after` (not the value at pick, LOOP-5) and
-  checks each listed intent as LOOP-75 does. Nothing is cached from the pick.
+- Applies only to a mission that has not opened a code PR yet. Before it starts `build` or re-enters it
+  (after a question, a retry, a spec or plan round), the step re-reads the intent file's current `after`
+  (not the value at pick, LOOP-5) and checks each listed intent as LOOP-75 does. Nothing is cached from
+  the pick.
+- A mission with an open code PR is never held: its CI repairs, review and conflict rounds (PIP-31) go on
+  as today, whatever `after:` says. A mission whose code PR was opened and later closed is held again
+  only if it has no open code PR when it re-enters `build`.
 - While any listed intent is not done (or ended unverified), the mission stays at `build` and starts no
   Claude run: nothing is recorded as launched (LOOP-4), no slot is taken (LOOP-111), no retry or repair
   round is counted, and the owner is not asked anything. The wait is Towercab's own, not the owner's, so
-  it is not a blocked wait for the owner and frees the slot as LOOP-110 says.
-- A list that names an unknown, dropped or cyclic intent gives `waiting: bad after:` as in LOOP-5.
+  it is not a blocked wait for the owner and frees the slot as LOOP-110 says. The owner is told only in
+  the cases of LOOP-119.
+- A list that names an unknown or cyclic intent gives `waiting: bad after:` as in LOOP-5 (a dropped one
+  is LOOP-119).
 - The check is read again every pass, so an `after:` added or removed in the intent file takes effect
   without a restart. The existing exits of LOOP-76 (`retry`, `drop`) still apply.
 - When every listed intent is done or unverified, the mission continues by itself on the next pass as a
   returning mission (LOOP-111), with no reply from the owner. Its next build runs as it would have.
 - Does not change picking: an intent with an unfinished `after:` before its pick is still not picked
   (LOOP-75).
-- Verified by: `loop: a mission whose intent gains an unfinished after waits at build and goes on when that intent finishes`, `loop: a build is not started while after is unfinished`, `loop: a returning mission re-reads after before building`, `loop: a bad after at build waits with bad after`
+- Verified by: `loop: a mission whose intent gains an unfinished after waits at build and goes on when that intent finishes`, `loop: a build is not started while after is unfinished`, `loop: a returning mission re-reads after before building`, `loop: a bad after at build waits with bad after`, `loop: a mission with an open code PR is not held by after`
 
 ### LOOP-118 · status says which intent a mission waits for
 
@@ -752,8 +758,26 @@ A mission whose intent gains an unfinished `after:` while it runs waits before i
 - The reason reads `waiting for <id>: <its stage>` as in LOOP-75, naming the first unfinished intent of the
   `after:` list and adding `(+<n> more)` when several are unfinished. It disappears when the last one is
   done.
-- Such a mission is not listed as needing the owner and sends no message.
+- Such a mission is not listed as needing the owner and sends no message, until LOOP-119 applies.
 - Verified by: `status: a mission held by after names the intent it waits for`, `status: a mission held by after is not listed as needing the owner`
+
+### LOOP-119 · The owner is told once when a dependency will not finish soon
+
+A mission held by `after:` (LOOP-117) tells the owner once, with one "Needs you" card naming the intent, when that intent is rolled back or dropped, or is still unfinished after 3 days; until then it waits quietly.
+
+- Triggers, checked every pass for a held mission: a listed intent whose last mission ended `rolled back`
+  or whose intent was dropped (LOOP-75, LOOP-5), or the mission has been held for 3 days. The 3 days count
+  from when the mission was first held for this `after:` list (stored with the wait, so a restart does not
+  restart them); a change to the list that adds an intent starts them again.
+- The mission then becomes a blocked wait (LOOP-14 **Waits**) whose ask names the intent and why:
+  `<id> was rolled back`, `<id> was dropped` or `<id> is still <stage> after 3 days`. It is one card
+  (UI-58), written once: later passes, a restart and a further trigger on the same hold add no second
+  card, comment or message. A replay after a crash writes nothing twice.
+- The mission keeps waiting for the dependency while the card stands: a reply does not start a build. When
+  the last listed intent is done the wait ends by itself, the card goes, and the mission continues as in
+  LOOP-117. The owner may instead remove the intent from `after:` (the same effect), `retry` or `drop`
+  (LOOP-76).
+- Verified by: `loop: a rolled back dependency shows one needs-you card`, `loop: a dropped dependency shows one needs-you card`, `loop: a dependency unfinished after 3 days shows one needs-you card`, `loop: a held mission asks nothing before 3 days`, `loop: the card of a held mission goes when the dependency is done`
 
 ### LOOP-65 · Repos live in the database
 
