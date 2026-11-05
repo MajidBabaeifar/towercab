@@ -91,7 +91,10 @@ async function json<T>(d: ReleaseDeps, github: string, path: string): Promise<T>
 /** A file of the default branch as text, or null when it isn't there. */
 async function raw(d: ReleaseDeps, github: string, base: string, file: string): Promise<string | null> {
   const r = await api(d, github, `repos/${github}/contents/${file}?ref=${encodeURIComponent(base)}`, RAW);
-  return r.code === 0 ? r.stdout : null;
+  if (r.code === 0) return r.stdout;
+  // Only "not found" means the file is absent; any other failure is an error, never "no file".
+  if (/\b404\b|not found/i.test(r.stderr)) return null;
+  throw new Error(`gh api ${file}: ${r.stderr.trim() || `exit ${r.code}`}`);
 }
 
 function isJsonObject(text: string): boolean {
@@ -288,13 +291,15 @@ async function releasePr(d: ReleaseDeps, name: string, github: string, base: str
     return;
   }
   const reason = m.stderr.trim() || `exit ${m.code}`;
-  const refusals = (prev && prev.pr === pr.number ? prev.refusals : 0) + 1;
+  // Refusals count in a row, and their clock starts at the first one, not at an earlier hold.
+  const before = prev && prev.pr === pr.number && prev.reason === "refused" ? prev : null;
+  const refusals = (before?.refusals ?? 0) + 1;
   d.log(`release PR #${pr.number} of ${name}: merge refused (${refusals}): ${reason}`);
   const row: HeldRow = {
     github,
     pr: pr.number,
     reason: "refused",
-    since: prev && prev.pr === pr.number ? prev.since : d.now,
+    since: before ? before.since : d.now,
     immediate: refusals >= REFUSALS,
     why: `GitHub refused the merge: ${reason}`,
     title: "needs you",
@@ -320,26 +325,47 @@ async function published(d: ReleaseDeps, name: string, github: string): Promise<
   const releases = (Array.isArray(list) ? list : [])
     .filter((r) => !r.draft)
     .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""));
+  const newest = releases[releases.length - 1];
+  if (!newest) return;
+  // Does the release's tag contain the commit? null: GitHub couldn't say.
+  const contains = async (sha: string, tag: string): Promise<boolean | null> => {
+    const c = await api(d, github, `repos/${github}/compare/${sha}...${encodeURIComponent(tag)}`);
+    if (c.code !== 0) return null;
+    try {
+      const status = (JSON.parse(c.stdout) as { status?: string }).status ?? "";
+      return status === "ahead" || status === "identical";
+    } catch {
+      return null;
+    }
+  };
   for (const m of missions) {
-    for (const r of releases) {
-      const c = await api(
-        d,
-        github,
-        `repos/${github}/compare/${m.merge_sha}...${encodeURIComponent(r.tag_name)}`,
-      );
-      if (c.code !== 0) continue;
-      let status = "";
-      try {
-        status = (JSON.parse(c.stdout) as { status?: string }).status ?? "";
-      } catch {
-        continue;
-      }
-      if (status === "ahead" || status === "identical") {
-        patchData(d.db, m, { release: { tag: r.tag_name, url: r.html_url } }, d.now);
-        d.log(`${m.intent}: published in ${r.tag_name} of ${name}`);
+    // A mission already found not to be in the newest release waits until a newer one appears:
+    // this costs one compare per mission per new release, not per pass.
+    if (dataOf<{ releaseChecked?: string }>(m).releaseChecked === newest.tag_name) continue;
+    const inNewest = await contains(m.merge_sha!, newest.tag_name);
+    if (inNewest === null) continue;
+    if (!inNewest) {
+      patchData(d.db, m, { releaseChecked: newest.tag_name }, d.now);
+      continue;
+    }
+    // Releases are in order, so containing is monotone: a binary search finds the first one.
+    let lo = 0;
+    let hi = releases.length - 1;
+    let failed = false;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      const has = await contains(m.merge_sha!, releases[mid]!.tag_name);
+      if (has === null) {
+        failed = true;
         break;
       }
+      if (has) hi = mid;
+      else lo = mid + 1;
     }
+    if (failed) continue;
+    const r = releases[lo]!;
+    patchData(d.db, m, { release: { tag: r.tag_name, url: r.html_url }, releaseChecked: undefined }, d.now);
+    d.log(`${m.intent}: published in ${r.tag_name} of ${name}`);
   }
 }
 

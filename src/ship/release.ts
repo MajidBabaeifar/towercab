@@ -72,7 +72,41 @@ export function isReleaseFile(file: PrFile, extraFiles: string[]): boolean {
   const lines = changed(file.patch);
   if (b === "version.txt") return lines.every((l) => l.text.trim() === "" || SEMVER.test(l.text));
   if (VERSION_FILES.has(b)) return lines.every((l) => VERSION_KEY.test(l.text));
-  return lines.every((l) => /version/i.test(l.text) || SEMVER.test(l.text));
+  return lines.every((l) => SEMVER.test(l.text));
+}
+
+const SEMVERS = /\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?/g;
+
+/** The versions a changed line names. */
+const versionsOf = (text: string): string[] => text.match(SEMVERS) ?? [];
+
+/**
+ * Version files whose changed lines name a version the release doesn't bump: a dependency's
+ * `version` line in a lock file, say. The release's versions are the ones the manifest diff names;
+ * without a manifest in the diff, all version files may bump one old and one new version only.
+ */
+export function foreignVersionFiles(files: PrFile[], extraFiles: string[]): string[] {
+  const extra = extraFiles.map(clean);
+  const versioned = files.filter((f) => {
+    const b = base(clean(f.name));
+    return f.patch !== null && (VERSION_FILES.has(b) || extra.includes(clean(f.name)));
+  });
+  const manifest = files.find((f) => base(f.name) === ".release-please-manifest.json");
+  const allowed = new Set(
+    (manifest?.patch ? changed(manifest.patch) : []).flatMap((l) => versionsOf(l.text)),
+  );
+  const lines = (f: PrFile) => changed(f.patch!).filter((l) => versionsOf(l.text).length > 0);
+  if (allowed.size > 0) {
+    return versioned
+      .filter((f) => lines(f).some((l) => versionsOf(l.text).some((v) => !allowed.has(v))))
+      .map((f) => f.name);
+  }
+  const olds = new Set<string>();
+  const news = new Set<string>();
+  for (const f of versioned) {
+    for (const l of lines(f)) for (const v of versionsOf(l.text)) (l.sign === "-" ? olds : news).add(v);
+  }
+  return olds.size > 1 || news.size > 1 ? versioned.map((f) => f.name) : [];
 }
 
 /** The paths in the diff that are not release files. */
@@ -136,6 +170,15 @@ export function decideRelease(i: ReleaseInput): Decision {
   const extra = extraPaths(i.files, i.extraFiles);
   if (extra.length) {
     return hold("files", "needs you", `The release also changes: ${extra.join(", ")}.`, true);
+  }
+  const foreign = foreignVersionFiles(i.files, i.extraFiles);
+  if (foreign.length) {
+    return hold(
+      "files",
+      "needs you",
+      `The release changes versions it doesn't release in: ${foreign.join(", ")}.`,
+      true,
+    );
   }
   const jump = majorJump(i.files);
   if (jump) return hold("major", "needs you", `Major release ${jump}.`, true);
