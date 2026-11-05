@@ -10,6 +10,7 @@ import type { Clock, GitHub } from "../handlers.ts";
 import type { IntentStore } from "../intents/types.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
 import { grantPermission } from "../settings/store.ts";
+import { approveSecret } from "../ship/secret-steps.ts";
 import { currentPr, type DoneNote, validNote } from "./state.ts";
 
 /** What the page can do; each resolves to one sentence saying what happened, or throws the error. */
@@ -33,6 +34,10 @@ export interface UiActions {
   addRepo(github: string, name?: string): Promise<string>;
   /** UI-144: read the repo again for its feature list (INT-39). */
   features(repo: string): Promise<string>;
+  /** SHIP-35: write the value the owner typed for a supplied secret (never stored, never echoed). */
+  secret?(intent: string, n: number, value: string): Promise<string>;
+  /** SHIP-34: approve a secret's pull request, or ask to try again after repeated failures. */
+  approveSecret?(intent: string, n: number): Promise<string>;
   /** INT-53: merge the proposed intent's PR `pr` as the owner, if it still is at `head`. */
   accept(pr: number, head: string): Promise<string>;
   /** INT-53: comment `text` (default `Not going ahead.`) and close the proposed intent's PR. */
@@ -52,6 +57,8 @@ export interface ActionDeps {
   addRepo?: ((github: string, name?: string) => Promise<RepoConfig>) | null;
   /** The loop's last list of proposed intents (LOOP-92); Accept refuses one whose file can't be read. */
   proposed?: () => ProposedPr[];
+  /** SHIP-35: writes a typed secret; none: the page can't take one. */
+  supplySecret?: (intent: string, n: number, value: string) => Promise<string>;
 }
 
 export const DEFAULT_CLOSE_REASON = "Not going ahead.";
@@ -290,6 +297,15 @@ export function createActions(d: ActionDeps): UiActions {
     async step(intent, n, done) {
       // The same transaction as `towercab step`; the loop writes the tick to plan.md and goes on.
       return tickSteps(d.db, intent, [n], done, new Date(d.clock.now() * 1000));
+    },
+
+    async secret(intent, n, value) {
+      if (!d.supplySecret) throw new Error("Secrets aren't available.");
+      return d.supplySecret(intent, n, value);
+    },
+
+    async approveSecret(intent, n) {
+      return approveSecret(d.db, d.clock, intent, n);
     },
 
     async done(intent, note) {

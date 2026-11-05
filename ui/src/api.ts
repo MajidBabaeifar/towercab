@@ -27,6 +27,16 @@ export function tickStep(intent: string, n: number, done: boolean): Promise<Acti
   return post({ action: "step", intent, n, done });
 }
 
+/** SHIP-35: write the value typed for a supplied secret. */
+export function sendSecret(intent: string, n: number, value: string): Promise<ActionReply> {
+  return post({ action: "secret", intent, n, value });
+}
+
+/** SHIP-34: approve a secret's pull request (or try again after a failure). */
+export function approveSecret(intent: string, n: number): Promise<ActionReply> {
+  return post({ action: "approve-secret", intent, n });
+}
+
 /** UI-130, UI-131: add `owner/name` as a repo, under `name` when given. */
 export function addRepo(github: string, name?: string): Promise<ActionReply> {
   return post({ action: "addRepo", github, name });

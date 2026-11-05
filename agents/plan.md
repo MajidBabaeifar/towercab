@@ -61,6 +61,15 @@ Return the JSON result:
   sentence. A step is anything the worker can't do: a secret, an apply on a server, an account or a
   setting on a platform. A step Towercab or CI can do is not one. Nothing needed: an empty list.
   Towercab lists the steps in `plan.md` and makes the owner tick them off.
+  A secret the change needs in a SOPS-encrypted file of a registered repo is a step with `secret`
+  (otherwise `null`): `{repo, file, key, purpose, source, length, alphabet}`. `repo` is the repo's short
+  name, `file` the path in it, `key` the name inside the file, `purpose` one sentence on what it is for.
+  `source` is `generate` when a random value will do (a password, a session secret): Towercab makes it and
+  writes it itself, and `length` (1 to 256) and `alphabet` (`hex`, `alnum`, `urlsafe`) may be set when
+  the program needs something other than the default of 43 URL-safe characters (else `null`). `source` is
+  `supply` when only the owner has the value (a third-party token): then `length` and `alphabet` are
+  `null`. Never write a secret value anywhere; you never see one. Leave `text` empty for a secret step to
+  have Towercab word it. Towercab ticks a secret step itself once the key exists in the file.
 - `delivery`: `code` (the default) when a change to the repo delivers the outcome. `steps` when the
   outcome is something only the owner can do (a setting on a service, an account, a machine) and no
   change to the repo would deliver it: then nothing is built, there is no code PR, and the intent is

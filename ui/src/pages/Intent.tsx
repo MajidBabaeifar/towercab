@@ -1,8 +1,9 @@
 // One intent's whole story (UI-62): state, the three PRs, the stage map with its logs (UI-73 to UI-77),
 // the folded list of moves, cost and the intent's own text.
 
+import { useState } from "preact/hooks";
 import type { IntentPage as Data, PrView, StepView } from "../../../src/ui/view.ts";
-import { tickStep } from "../api.ts";
+import { approveSecret, sendSecret, tickStep } from "../api.ts";
 import { Details, Id, NeedsCard, RiskBlock, Section, StartButton, StateChip, Time } from "../components.tsx";
 import { ChevronLeft, External, PullRequest } from "../icons.tsx";
 import { Markdown } from "../md.tsx";
@@ -38,6 +39,73 @@ function PrTile({ pr }: { pr: PrView }) {
   );
 }
 
+/** SHIP-35: the field for a supplied secret; the value is sent once and the field cleared. */
+function SecretField({ intent, step }: { intent: string; step: StepView }) {
+  const [value, setValue] = useState("");
+  const [note, setNote] = useState("");
+  const sec = step.secret!;
+  const send = async () => {
+    const v = value;
+    setValue("");
+    const r = await sendSecret(intent, step.n, v);
+    setNote(r.message);
+  };
+  return (
+    <div class="secret-field">
+      {sec.source === "supply" && !sec.pr ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void send();
+          }}
+        >
+          <input
+            type="password"
+            autocomplete="off"
+            aria-label={`Value for ${sec.key} in ${sec.file}`}
+            value={value}
+            onInput={(e) => setValue((e.currentTarget as HTMLInputElement).value)}
+          />
+          <button type="submit" disabled={!value}>
+            Save {sec.key}
+          </button>
+        </form>
+      ) : null}
+      {sec.pr ? (
+        <p>
+          <a href={sec.pr.url} target="_blank" rel="noopener noreferrer">
+            Pull request #{sec.pr.number}
+          </a>{" "}
+          {sec.approved ? (
+            "approved; Towercab merges it."
+          ) : (
+            <button
+              type="button"
+              onClick={() => void approveSecret(intent, step.n).then((r) => setNote(r.message))}
+            >
+              Approve secret {sec.key} for {sec.file}
+            </button>
+          )}
+        </p>
+      ) : null}
+      {sec.error ? (
+        <p class="step-why">
+          {sec.error}
+          {sec.stopped ? (
+            <button
+              type="button"
+              onClick={() => void approveSecret(intent, step.n).then((r) => setNote(r.message))}
+            >
+              Try again
+            </button>
+          ) : null}
+        </p>
+      ) : null}
+      {note ? <p class="step-why">{note}</p> : null}
+    </div>
+  );
+}
+
 /** UI-160: the owner's steps as a checklist; ticking one posts the step action. */
 function StepsBlock({ data, readOnly }: { data: Data; readOnly: boolean }) {
   const steps = data.steps ?? [];
@@ -54,7 +122,7 @@ function StepsBlock({ data, readOnly }: { data: Data; readOnly: boolean }) {
                 <input
                   type="checkbox"
                   checked={s.doneAt !== null}
-                  disabled={readOnly}
+                  disabled={readOnly || !!s.secret}
                   onChange={(e) => void tickStep(data.id, s.n, (e.currentTarget as HTMLInputElement).checked)}
                 />
                 <span>
@@ -67,6 +135,7 @@ function StepsBlock({ data, readOnly }: { data: Data; readOnly: boolean }) {
                   ) : null}
                 </span>
               </label>
+              {s.secret && !readOnly && s.doneAt === null ? <SecretField intent={data.id} step={s} /> : null}
             </li>
           ))}
         </ul>
