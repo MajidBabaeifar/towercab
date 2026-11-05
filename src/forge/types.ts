@@ -23,7 +23,8 @@ export function parseGitlabProject(text: string, host: string | null): string | 
   if (s.startsWith(GITLAB)) s = s.slice(GITLAB.length);
   else if (host && s.startsWith(`https://${host}/`)) s = s.slice(`https://${host}/`.length);
   else return null;
-  s = s.replace(/\/+$/, "").replace(/\.git$/, "");
+  while (s.endsWith("/")) s = s.slice(0, -1);
+  if (s.endsWith(".git")) s = s.slice(0, -4);
   const parts = s.split("/");
   return parts.length >= 2 && parts.every(isRepoName) ? parts.join("/") : null;
 }

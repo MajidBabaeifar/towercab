@@ -215,10 +215,11 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
 
 /** GL-1: `api_base` is an https URL ending in `/api/v4` (http only for localhost, for tests). */
 function gitlabApiBase(r: Reader, t: Record<string, unknown>): string {
-  const v = r.url(t, "gitlab", "api_base", "https://gitlab.com/api/v4").replace(/\/+$/, "");
+  const v = r.url(t, "gitlab", "api_base", "https://gitlab.com/api/v4");
   let u: URL;
   try {
     u = new URL(v);
+    while (u.pathname.endsWith("/") && u.pathname.length > 1) u.pathname = u.pathname.slice(0, -1);
   } catch {
     throw r.err("gitlab.api_base must be an https URL ending in /api/v4");
   }
@@ -226,7 +227,7 @@ function gitlabApiBase(r: Reader, t: Record<string, unknown>): string {
   if ((u.protocol !== "https:" && !(local && u.protocol === "http:")) || !u.pathname.endsWith("/api/v4")) {
     throw r.err("gitlab.api_base must be an https URL ending in /api/v4");
   }
-  return v;
+  return u.href.replace(/\/$/, "");
 }
 
 function gitlabTokenFile(r: Reader, t: Record<string, unknown>): string {

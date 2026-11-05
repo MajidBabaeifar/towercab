@@ -17,6 +17,7 @@ import { appKeyPath, type Config, ConfigError, checkLoop, configPath, loadConfig
 import { Db } from "./db.ts";
 import { doctor } from "./doctor.ts";
 import { GitLabForge } from "./forge/gitlab.ts";
+import { parseGitlabProject } from "./forge/types.ts";
 import { fetchHttp } from "./github/app.ts";
 import { createGitHub } from "./github/gh.ts";
 import { approve as ownerApprove } from "./github/owner.ts";
@@ -555,7 +556,7 @@ async function repo(w: World, args: string[], name: string | undefined): Promise
     return `removed ${r.name} (${r.github}); its clone stays on disk`;
   }
   if (sub === "add" && arg && args.length === 2) {
-    const isGl = arg.startsWith("gitlab:") || arg.startsWith("https://gitlab");
+    const isGl = arg.startsWith("gitlab:") || parseGitlabProject(arg, w.gitlab?.host ?? null) !== null;
     if (!w.github && !isGl) throw new Error(`repo add needs [github] in ${w.config.file} (app_id, me)`);
     const r = await addRepo(
       {
