@@ -61,6 +61,7 @@ export function renderStatus(s: StatusInput): string {
   const head = [
     `towercab ${s.version} · ${s.running ? `running (pid ${s.running})` : "not running"}`,
     s.db.meta("paused") === "1" ? "paused" : "",
+    s.running && s.db.meta("draining") ? `draining for update to ${s.db.meta("draining")}` : "",
     s.problems.length ? "problems" : "",
   ]
     .filter(Boolean)

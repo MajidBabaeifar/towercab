@@ -277,7 +277,7 @@ async function run(
       const r = await checkUpdate({ tools, checkout: checkoutRoot(), idle: () => true });
       if (r.kind === "updated") return `updated ${r.from} → ${r.to}; run towercab restart to use it`;
       if (r.kind === "failed") throw new Error(`update failed and rolled back: ${r.why}`);
-      return r.kind === "none" ? `nothing to update: ${r.why}` : "waiting";
+      return r.kind === "none" || r.kind === "unreachable" ? `nothing to update: ${r.why}` : "waiting";
     }
     default:
       break;

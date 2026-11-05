@@ -86,7 +86,7 @@ test("config: loads defaults", () => {
   expect(c.github).toEqual({ appId: 7, me: "me", apiBase: "https://api.github.com" });
   expect(c.telegram).toBeNull();
   expect(c.ui).toEqual({ port: 7311 });
-  expect(c.update).toEqual({ auto: true });
+  expect(c.update).toEqual({ auto: true, drainMinutes: 60 });
   expect(c.badRepos.size).toBe(0);
   // `~/` is expanded, and v1's [tasks] is read as [intents] when [intents] is absent.
   const t = parseConfig(
@@ -131,6 +131,8 @@ test("config: bad values name the key", async () => {
     ['[github]\napp_id = 1\nme = "me"\napi_base = "ftp://x"', "github.api_base must be an http(s) URL"],
     ["[ui]\nport = 70000", "ui.port must be an integer 0-65535"],
     ['[update]\nauto = "yes"', "update.auto must be true or false"],
+    ["[update]\ndrain_minutes = 0", "update.drain_minutes must be an integer 1-1440"],
+    ['[update]\ndrain_minutes = "60"', "update.drain_minutes must be an integer 1-1440"],
     ['[telegram]\nbot_token = "t"', "telegram.bot_token and telegram.chat_id are required"],
   ];
   for (const [text, what] of cases) {

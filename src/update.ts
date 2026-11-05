@@ -12,13 +12,18 @@ export interface UpdateDeps {
   checkout: string;
   /** True when no child runs (the swap waits for it). */
   idle(): boolean;
+  /** LOOP-108: the full commit of an `origin/main` an update already failed on; no update is tried for it. */
+  failed?: string | null;
 }
 
 export type UpdateResult =
   | { kind: "none"; why: string }
-  | { kind: "waiting"; behind: number }
+  /** The fetch failed: nothing is known, so a drain in progress stays as it is. */
+  | { kind: "unreachable"; why: string }
+  /** `origin/main` is ahead and children run; `to` is its short commit, `target` the full one. */
+  | { kind: "waiting"; behind: number; to: string; target: string }
   | { kind: "updated"; from: string; to: string }
-  | { kind: "failed"; why: string };
+  | { kind: "failed"; why: string; to: string; target: string };
 
 async function git(d: UpdateDeps, args: string[]): Promise<{ ok: boolean; out: string }> {
   const r = await d.tools.run("git", args, { cwd: d.checkout, timeoutMs: 120_000 });
@@ -43,17 +48,21 @@ export async function checkUpdate(d: UpdateDeps): Promise<UpdateResult> {
   const status = await git(d, ["status", "--porcelain", "--untracked-files=no"]);
   if (!status.ok || status.out !== "") return { kind: "none", why: "the checkout has local changes" };
   const fetch = await git(d, ["fetch", "--quiet", "origin", "main"]);
-  if (!fetch.ok) return { kind: "none", why: `fetch failed: ${fetch.out.split("\n")[0]}` };
+  if (!fetch.ok) return { kind: "unreachable", why: `fetch failed: ${fetch.out.split("\n")[0]}` };
   const behind = Number((await git(d, ["rev-list", "--count", "HEAD..origin/main"])).out || "0");
   if (behind === 0) return { kind: "none", why: "up to date" };
   if (!(await git(d, ["merge-base", "--is-ancestor", "HEAD", "origin/main"])).ok) {
     return { kind: "none", why: "origin/main isn't ahead of this commit" };
   }
-  if (!d.idle()) return { kind: "waiting", behind };
+  const target = (await git(d, ["rev-parse", "origin/main"])).out;
+  const short = target.slice(0, 7);
+  if (d.failed && d.failed === target) return { kind: "none", why: `the update to ${short} failed before` };
+  if (!d.idle()) return { kind: "waiting", behind, to: short, target };
 
   const from = (await git(d, ["rev-parse", "HEAD"])).out;
   const merge = await git(d, ["merge", "--ff-only", "--quiet", "origin/main"]);
-  if (!merge.ok) return { kind: "failed", why: `merge failed: ${merge.out.split("\n")[0]}` };
+  if (!merge.ok)
+    return { kind: "failed", why: `merge failed: ${merge.out.split("\n")[0]}`, to: short, target };
   const to = (await git(d, ["rev-parse", "HEAD"])).out;
   const changed = (await git(d, ["diff", "--name-only", from, to])).out.split("\n");
   const lockChanged = changed.includes("package-lock.json");
@@ -72,7 +81,7 @@ export async function checkUpdate(d: UpdateDeps): Promise<UpdateResult> {
   if (failure) {
     await git(d, ["reset", "--hard", "--quiet", from]);
     if (lockChanged) await step("npm", ["ci", "--no-audit", "--no-fund"]);
-    return { kind: "failed", why: failure };
+    return { kind: "failed", why: failure, to: short, target };
   }
   return { kind: "updated", from: from.slice(0, 7), to: to.slice(0, 7) };
 }
