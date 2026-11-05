@@ -602,9 +602,76 @@ When the owner closes an issue's intent PR without merging, the issue stops sayi
 - An open or merged PR is not touched here.
 - Verified by: `issues: a proposed issue whose PR was closed loses the label and is told`, `issues: a queued issue whose PR was closed loses the label and is told`, `issues: a closed-PR comment is written once`
 
+### INT-63 · Which GitLab issues are read
+
+For a GitLab repo, Towercab reads an open issue only if the owner wrote it or labelled it `towercab`, and never reads a confidential one.
+
+- Applies to every `[repos]` repo hosted on GitLab (the host support of #129). Eligible: the issue's
+  author is the owner's GitLab user, or the label `towercab` is on the issue, exactly as INT-20 says
+  for GitHub. Any other issue is never read: its title, description and labels reach no Claude run, no
+  log and no file.
+- Confidential issues are not read at all, even the owner's own or a labelled one, because the intent
+  text lands in an intents repo that more people may see than the issue. They are skipped without
+  being opened, and the owner can file the work as an intent file or with the `/intent` skill.
+- Merge requests are not issues and are skipped.
+- Verified by: `gitlab issues: the owner's issue is eligible`, `gitlab issues: a towercab label makes another author's issue eligible`, `gitlab issues: an unlabelled issue by someone else is never read`, `gitlab issues: a confidential issue is never read`
+
+### INT-64 · The GitLab issue poll
+
+The loop looks for new eligible GitLab issues every 5 minutes, together with the GitHub ones.
+
+- The poll (INT-21) lists the open issues of each GitLab repo through the GitLab API as the identity
+  from #129, on the same 5-minute schedule and at start. The list is filtered by author or label on
+  GitLab's side where it can be, and again by INT-63 before anything is read.
+- A GitLab failure is a fault like a GitHub one ([LOOP-10](loop.md)): the poll is retried on the next
+  pass, nothing is written for the issues it did not reach, and one repo failing does not stop the others.
+- Verified by: `gitlab issues: the poll runs every 5 minutes`, `gitlab issues: a GitLab failure is a fault`, `gitlab issues: one failing repo does not stop the others`
+
+### INT-65 · Labels on a GitLab project
+
+The labels `a1`..`a5`, `towercab:proposed`, `towercab:queued` and `towercab:failed` work on a GitLab issue as on GitHub, and Towercab creates the ones the project lacks.
+
+- Meaning and rules are those of INT-24 (autonomy label, several → lowest, effective cap 4), INT-22
+  (`towercab:failed`) and INT-25 (`towercab:proposed`, `towercab:queued`).
+- A missing label is created in the project before it is first set. Creating it twice, or finding it
+  already there, is not an error. Existing labels are never changed or deleted.
+- Verified by: `gitlab issues: an a-label sets the autonomy`, `gitlab issues: missing labels are created in the project`, `gitlab issues: an existing label is left alone`
+
+### INT-66 · Notes on a GitLab issue, and closing it
+
+Towercab tells a GitLab issue it is proposed and then queued with a note, and closing the issue before the intent starts drops the intent.
+
+- The proposed and queued comments of INT-25 are notes on the issue, in the same words and style, once
+  each; the label stops a second one and a failed note is retried without a second proposal.
+- Closing an issue before the intent has a `stage` drops the intent with the note `issue closed`, and a
+  `towercab:proposed` issue whose intent PR is open has that PR closed, as INT-28 says; once the
+  intent has started, closing the issue changes nothing.
+- Verified by: `gitlab issues: the queued note names scores and place`, `gitlab issues: an issue is noted once`, `gitlab issues: closing the issue drops an unstarted intent`, `gitlab issues: a started intent ignores a closed issue`
+
+### INT-67 · The merge request closes the GitLab issue
+
+Merging the code merge request closes a same-project issue, and links an issue from another project without closing it.
+
+- When `issue:` points to an issue in the same project as the code change, the description built in
+  `src/pipeline/prtext.ts` has the line `Closes #<n>`.
+- An issue in another project is written as its full reference `group/project#<n>` with no closing
+  word, so merging does not close it.
+- Verified by: `prtext: a same-project GitLab issue gets Closes`, `prtext: another project's GitLab issue is linked by full reference`
+
+### INT-68 · A GitLab issue follows the GitHub flow
+
+A GitLab issue is scored, proposed as an intent PR, deduplicated and label-checked the same way a GitHub issue is.
+
+- INT-22, INT-23, INT-26, INT-29 and INT-60..62 hold with the GitLab issue's URL in `issue:`, and the
+  intent's `source` is `issue`. The scoring run gets only the title, description and labels.
+- The intents repo stays on GitHub; only the issue side is GitLab. A GitHub and a GitLab issue never
+  share an intent, because dedupe is on the full `issue:` URL.
+- Verified by: `gitlab issues: an issue becomes one intent PR`, `gitlab issues: a done intent blocks its issue`, `gitlab issues: a labelled issue with no intent is proposed once`, `gitlab issues: the scoring run gets no tools`
+
 ## Out of scope
 
 - Other stores (Notion, Jira).
+- Confidential GitLab issues (INT-63).
 - Intents drafted from monitoring alerts.
 - Issues by other people without the `towercab` label (INT-20).
 - The backfill's cost (INT-39) in the spend metrics: it runs outside any mission, so only its own
