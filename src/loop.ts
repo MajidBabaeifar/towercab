@@ -76,6 +76,7 @@ import { blockingRepos, startReadiness as startReadinessCheck } from "./readines
 import { missingText } from "./repo/readiness.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
+import { nextSettingsDue, settingsCycle } from "./settings/apply.ts";
 import { aheadIn, bestReady, buildingIn, isReady } from "./slots.ts";
 import { leftOf, type OwnerStep, parseDelivery, unticked } from "./steps.ts";
 import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
@@ -169,6 +170,8 @@ export class Loop {
   /** INT-39: the feature-list backfill running now, and how to stop it. */
   private featuresJob: Promise<void> | null = null;
   private readinessJob: Promise<void> | null = null;
+  /** REPO-30: the daily settings check of one repo, running now. */
+  private settingsJob: Promise<void> | null = null;
   /** Held by every handler call and by the readiness fetch: two fetches of one clone never overlap. */
   private readonly cloneLock = new Mutex();
   private featuresStop: (() => void) | null = null;
@@ -278,6 +281,7 @@ export class Loop {
       this.children.size > 0 ||
       this.featuresJob !== null ||
       this.readinessJob !== null ||
+      this.settingsJob !== null ||
       this.issuesRun !== null
     )
       return;
@@ -293,6 +297,7 @@ export class Loop {
     this.stopFeatures();
     await this.featuresIdle();
     await this.readinessIdle();
+    await this.settingsIdle();
     for (const [id, r] of this.children) {
       r.handle.kill("SIGTERM");
       const done = await Promise.race([
@@ -416,6 +421,7 @@ export class Loop {
     await this.pollProposed(false);
     await this.requeueKnownRepos();
     this.startReadiness();
+    this.startSettings();
     this.enforceDrain();
     // LOOP-105, LOOP-108: with the checkout moved or an update waiting, running children finish but
     // nothing new starts.
@@ -447,6 +453,7 @@ export class Loop {
       this.children.size === 0 &&
       this.featuresJob === null &&
       this.readinessJob === null &&
+      this.settingsJob === null &&
       live.length === 0 &&
       report.picked === null;
     if (this.targetId) {
@@ -883,6 +890,36 @@ export class Loop {
       .finally(() => {
         this.readinessJob = null;
       });
+  }
+
+  /**
+   * REPO-30, REPO-31: the daily settings check (and, with the owner's opt-in, the apply) of the oldest due
+   * repo, as a background job like the readiness check, one at a time; its fetch holds the clone lock.
+   */
+  private startSettings(): void {
+    if (!this.d.readiness || this.settingsJob || this.drain !== null || this.codeMoved() !== null) return;
+    const deps = {
+      config: this.d.config,
+      home: this.d.home,
+      db: this.d.db,
+      tools: this.d.tools,
+      clock: this.d.clock,
+      github: this.d.github,
+      log: this.d.log,
+      exclusive: <T>(fn: () => Promise<T>) => this.cloneLock.run(fn),
+    };
+    if (!this.d.config.github || !nextSettingsDue(deps)) return;
+    this.settingsJob = settingsCycle(deps)
+      .then(() => undefined)
+      .catch((e: Error) => this.d.log(`settings: ${e.message}`))
+      .finally(() => {
+        this.settingsJob = null;
+      });
+  }
+
+  /** Resolves when no settings check is running (tests and shutdown wait for it). */
+  async settingsIdle(): Promise<void> {
+    while (this.settingsJob) await this.settingsJob;
   }
 
   /** Resolves when no readiness check is running (tests and shutdown wait for it). */
@@ -1426,7 +1463,11 @@ export class Loop {
       this.endDrain();
       return;
     }
-    const idle = () => this.children.size === 0 && this.featuresJob === null && this.readinessJob === null;
+    const idle = () =>
+      this.children.size === 0 &&
+      this.featuresJob === null &&
+      this.readinessJob === null &&
+      this.settingsJob === null;
     // A drain whose children are gone updates at once instead of at the next minute.
     if (!(this.drain !== null && idle()) && this.now - this.lastUpdate < UPDATE_POLL_S) return;
     this.lastUpdate = this.now;
