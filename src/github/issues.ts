@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { agentBudgetUsd, loadAgent } from "../agents.ts";
 import { type ClaudeRun, parseRun, prepareRun } from "../claude.ts";
 import type { Config, RepoConfig } from "../config.ts";
+import { isGitlab } from "../forge/types.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import { newId, slugOf } from "../intents/id.ts";
@@ -608,6 +609,8 @@ export async function pollIssues(d: IssueDeps): Promise<void> {
   const errors: string[] = [];
   const poll: Poll = { intents: d.store.github(), taken: null };
   for (const repo of d.config.repos.values()) {
+    // GL-3: GitHub's issues only; a GitLab repo has none to read here (GitLab issues are out of scope).
+    if (isGitlab(repo.github)) continue;
     try {
       const listed: Listed[] = (await forgeOf(d.github).listIssues(repo.github, LIMIT)).map((r) => ({
         number: r.number,

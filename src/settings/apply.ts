@@ -3,6 +3,7 @@
 
 import { ensureClone } from "../checkout.ts";
 import { clonePath, type RepoConfig } from "../config.ts";
+import { isGitlab } from "../forge/types.ts";
 import { forgeOf } from "../github/forge.ts";
 import { parseTowercab } from "../repo/files.ts";
 import { ForbiddenError, saveBackup } from "./backup.ts";
@@ -131,6 +132,8 @@ export function nextSettingsDue(d: SettingsDeps): RepoConfig | null {
   let best: { repo: RepoConfig; at: number } | null = null;
   const now = d.clock.now();
   for (const repo of d.config.repos.values()) {
+    // GL-3: the standard settings are GitHub's; a GitLab repo has none to check.
+    if (isGitlab(repo.github)) continue;
     const at = storedSettings(d.db, repo.name)?.at ?? 0;
     if (at !== 0 && now - at < DAY_S) continue;
     if (!best || at < best.at) best = { repo, at };

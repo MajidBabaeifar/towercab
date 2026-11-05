@@ -5,6 +5,7 @@
 import { existsSync, lstatSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Config, RepoConfig } from "./config.ts";
+import { gitlabPath, isGitlab } from "./forge/types.ts";
 import { GIT_TIMEOUT_MS, type Tools } from "./tools.ts";
 
 /** No hook or fsmonitor of the repo's runs ever runs in Towercab's git (LOOP-8). */
@@ -115,6 +116,7 @@ export async function ensureClone(
 }
 
 export function originUrl(repo: RepoConfig): string {
+  if (isGitlab(repo.github)) return `https://${repo.host ?? "gitlab.com"}/${gitlabPath(repo.github)}.git`;
   return `https://github.com/${repo.github}.git`;
 }
 

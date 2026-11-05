@@ -48,6 +48,8 @@ export interface PickState {
   full: Map<string, Places>;
   /** Intents the owner started with `start` (LOOP-63): they go over the limit, first. */
   started?: Set<string>;
+  /** GitLab repos (GL-3): added, but the pipeline can't work on them yet, so none of their intents is picked. */
+  unsupported?: Set<string>;
   /** Repos set to block while not ready (LOOP-70) → `<n> missing (<items>)`. */
   notReady?: Map<string, string>;
   /** Models cooling down (LOOP-9) → until, as shown (`15:30`). */
@@ -104,6 +106,10 @@ export function heldText(h: Held, id: string): string {
     : `repo has ${h.working} intents working ahead (start ${id} to go now)`;
 }
 
+/** Why an intent on a GitLab repo is not picked: the pipeline is GitHub-only for now. */
+export const GITLAB_NOT_YET = (repo: string): string =>
+  `${repo} is a GitLab repo and the pipeline doesn't support GitLab yet: its intents wait`;
+
 /** LOOP-5: the picker's list (PRI-5) in order; the first intent nothing skips is picked. */
 export function decide(listing: Listing, state: PickState): Decision {
   const d: Decision = { pick: null, skipped: [], writes: [] };
@@ -126,6 +132,10 @@ export function decide(listing: Listing, state: PickState): Decision {
     if (!state.repos.has(i.repo)) {
       d.writes.push({ id: i.id, waiting: "unknown repo", why: i.repo });
       d.skipped.push({ id: i.id, reason: `unknown repo ${i.repo}` });
+      continue;
+    }
+    if (state.unsupported?.has(i.repo)) {
+      d.skipped.push({ id: i.id, reason: GITLAB_NOT_YET(i.repo) });
       continue;
     }
     // INT-42: every other repo of a multi-repo intent must be one Towercab knows, and ready.

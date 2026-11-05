@@ -8,7 +8,15 @@ import { App, type Http } from "./app.ts";
 import { GitHubForge } from "./forge.ts";
 
 /** Variables through which a GitHub token reaches `gh` or `git`. */
-export const TOKEN_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"];
+export const TOKEN_VARS = [
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "GH_ENTERPRISE_TOKEN",
+  "GITHUB_ENTERPRISE_TOKEN",
+  "GITLAB_TOKEN",
+  "GITLAB_ACCESS_TOKEN",
+  "TOWERCAB_GITLAB_TOKEN",
+];
 
 /** `env` (default: the loop's own) without any GitHub token: the owner's `gh`, and Claude runs. */
 export function withoutTokens(env?: Record<string, string | undefined>): Record<string, string> {
