@@ -160,12 +160,13 @@ A repo's work limits are written in its own `TOWERCAB.md`, so anyone who reads t
   `env` is never written to the repo, by a settings PR or the move: it can hold secrets and
   machine-specific paths. Its variable names (never the values) are shown on the repo page
   ([UI-150](ui.md)), so they aren't hidden.
-- The parser ships before any repo's file is changed: until [REPO-19](#repo-19--the-one-time-move)'s
-  24-hour wait is over, Towercab opens no PR that writes `workers` or `ahead`, whether from the form
-  ([REPO-16](#repo-16--a-settings-change-is-a-pull-request)) or the move, so a rollback of this version
-  never meets a file it can't read (an older Towercab rejects the unknown keys, REPO-1). A save before
-  then is refused: `Settings can be saved from the repo's page after Towercab has run this version for
-  24 hours (<n> hours left).`
+- The parser ships before Towercab changes any repo's file on its own: until
+  [REPO-19](#repo-19--the-one-time-move)'s 24-hour wait is over, only the owner's own save from the
+  form ([REPO-16](#repo-16--a-settings-change-is-a-pull-request)) can write `workers` or `ahead`, and
+  only after a confirmation: a save in that window needs `confirmed: true`, and without it the server
+  refuses with `An older Towercab can't read this setting; a rollback in the next day would need a manual
+  fix.` The automatic move PRs wait for the end of the window. An older Towercab rejects the unknown
+  keys (REPO-1), which is why a rollback needs a manual fix.
 - Verified by: `repo: TOWERCAB.md workers and ahead`, `repo: a bad workers or ahead is invalid`, `repo: a new limit applies on the next fetch`
 
 ### REPO-15 · Which value wins
@@ -244,8 +245,9 @@ Towercab opens one pull request per repo to bring its tuning from its own config
   (`git merge-base --is-ancestor <commit> HEAD`). Time is elapsed, not uptime: a stop does not restart it.
   If the commit is no longer in the history (the change was rolled back or reverted, or Towercab went
   back to an older version), the record is cleared and the 24 hours start again from the next start on a
-  commit with the parser. Until the gate opens no move PR is opened, the owner's button
-  ([UI-154](ui.md)) is off, and `status` and the repo page say how long is left.
+  commit with the parser. Until the gate opens, Towercab opens no move PR on its own, and `status` and
+  the repo page say how long is left. The gate does not apply to the owner's own saves (REPO-14) or to
+  `reopenMove`, which the owner asks for.
 - Towercab asks on its own at most once per repo (`meta.repo-move:<name>` holds the PR number). A PR
   closed without merging is not replaced automatically: the database values stay in use and `doctor`
   warns `<name>: the PR that moves its settings into TOWERCAB.md was closed; open it again from the
@@ -254,7 +256,7 @@ Towercab opens one pull request per repo to bring its tuning from its own config
   same way as the first, from the values at that moment; it is refused while a move PR is open or once
   the repo has moved (`<name> has already moved` / `a move PR is already open: #<n>`). The new PR's
   number replaces the stored one.
-- Verified by: `repo: the first run of the parser is recorded once`, `repo: no move PR before 24 hours`, `repo: no settings PR before 24 hours`, `repo: the move starts after 24 hours`, `repo: a rolled back parser restarts the 24 hours`, `repo: the move PR opens only once the wait is over`, `repo: the move opens one PR with the non-default values`, `repo: the move is skipped when nothing differs`, `repo: a closed move PR is not replaced on its own`, `repo: a closed move PR is a doctor warning`, `repo: the owner can open the move PR again`, `repo: a merged move PR marks the repo moved`
+- Verified by: `repo: the first run of the parser is recorded once`, `repo: no move PR before 24 hours`, `repo: a save in the first 24 hours needs a confirmation`, `repo: a confirmed save in the first 24 hours opens the PR`, `repo: the move starts after 24 hours`, `repo: a rolled back parser restarts the 24 hours`, `repo: the move PR opens only once the wait is over`, `repo: the move opens one PR with the non-default values`, `repo: the move is skipped when nothing differs`, `repo: a closed move PR is not replaced on its own`, `repo: a closed move PR is a doctor warning`, `repo: the owner can open the move PR again`, `repo: a merged move PR marks the repo moved`
 
 ### REPO-20 · A repo's kind
 
