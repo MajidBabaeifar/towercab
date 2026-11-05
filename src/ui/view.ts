@@ -75,8 +75,15 @@ export type CardKind = "spec" | "plan" | "code" | "question" | "blocked";
 export interface Question {
   context: string;
   question: string;
-  options: { option: string; then: string }[];
+  /** `do`: what Towercab does when the owner picks it (PIP-114); absent in questions stored before. */
+  options: { option: string; then: string; do?: "continue" | "steps" | "drop" }[];
   recommendation: string;
+}
+
+/** UI-164: one way out of a wait, as a button. */
+export interface ExitView {
+  do: string;
+  label: string;
 }
 
 export interface Access {
@@ -136,9 +143,13 @@ export interface Card {
   access: Access | null;
   pr: PrLink | null;
   actions: ActionKey[];
+  /** UI-164: every way out of this wait, in plain words; none once the owner has acted. */
+  exits: ExitView[];
+  /** LOOP-77: the wait came back with nothing new; a reply would land on it again. */
+  stuck: boolean;
   mergeLabel: string | null;
   /** UI-105: the owner already acted from the page and the mission has not moved on; no buttons then. */
-  done: { action: "merge" | "drop" | "retry"; text: string; stuck: boolean } | null;
+  done: { action: "merge" | "drop" | "retry" | "done" | "steps"; text: string; stuck: boolean } | null;
   /** UI-131: the intent's repo is unknown: its short name and a guess at `owner/name` ("" = none). */
   addRepo: { name: string; github: string } | null;
   /** AUT-20: the risk of what it waits on; null when none was judged (or the check didn't finish). */
