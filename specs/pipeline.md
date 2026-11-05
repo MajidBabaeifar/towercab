@@ -1287,19 +1287,23 @@ In a repo that needs a teammate's review, only an approval from someone other th
   is stale and does not count), whose author is not `[github].me`, not the App's bot and not the PR's
   author when that is the owner. The Claude review (PIP-4) and the owner's own Approve (PIP-43) never
   count; a later `CHANGES_REQUESTED` from the same reviewer replaces their earlier approval.
-- The PR's **reviewers** are the logins in `reviewers` (LOOP-83) plus the logins the host currently
-  requests review from, code owners included (`reviewRequests`). Towercab reads the requests again
-  with the PR (PIP-21) before every decision that uses them (the gate, a merge, an event) and keeps no
-  list of its own: someone no longer requested, and not listed, is no longer trusted for that PR.
-  The owner and the bot are never reviewers.
-- An approval counts when its author is a listed login, or when the host itself reports the PR
-  `APPROVED` (`reviewDecision`) at that read and the author is not the owner or the bot. The host
-  clears a request when its person reviews, so this is how a code owner's approval is taken; Towercab
-  does not trust the unlisted author beyond the host's word. The host's own rules must also be met
-  (PIP-147).
-- With no listed login and no login currently requested, nobody is known to review: the mission asks
-  the owner to list reviewers (`towercab repo set <name> reviewers=…`, LOOP-83) and does not merge.
-- Verified by: `pipeline: a listed reviewer's approval counts`, `pipeline: the owner's approval is not a teammate approval`, `pipeline: an approval of an older head is stale`, `pipeline: a code owner's approval counts when the host reports approved`, `pipeline: requested reviewers are read again before each decision`, `pipeline: no reviewers and no CODEOWNERS asks the owner`, `pipeline: an unlisted approval does not count while the host is not approved`
+- The PR's **requested** logins are those the host has requested review from and not withdrawn,
+  code owners included. The host clears a request once its person reviews, so Towercab reads the PR's
+  timeline (`gh api repos/<r>/issues/<n>/timeline`: a `review_requested` event with no later
+  `review_request_removed` for that login) together with `reviewRequests`, again with the PR
+  (PIP-21) before every decision that uses them (the gate, a merge, an event). It keeps no list of its
+  own: someone whose request was withdrawn, and who is not listed, is no longer trusted for that PR.
+  The owner and the bot are never requested reviewers.
+- **With a list** (`reviewers` not empty, LOOP-83), the list limits who can sign off: an approval
+  counts only when its author is a listed login or a requested login. An approval from anyone else
+  does not count, even when the host already reports the PR `APPROVED` (`reviewDecision`).
+- **Without a list**, any approval the host accepts counts: the host reports the PR `APPROVED` at that
+  read, and the approving login is not the owner or the bot. The host's own rules must also be met in
+  both cases (PIP-147).
+- Without a list, with no requested login and with the host reporting no review rule
+  (`reviewDecision` empty), nobody is known to review: the mission asks the owner to list reviewers
+  (`towercab repo set <name> reviewers=…`, LOOP-83) and does not merge.
+- Verified by: `pipeline: a listed reviewer's approval counts`, `pipeline: the owner's approval is not a teammate approval`, `pipeline: an approval of an older head is stale`, `pipeline: a code owner's approval counts when the host requested them`, `pipeline: with a list an unlisted unrequested approval does not count even if the host approved`, `pipeline: without a list any approval the host accepts counts`, `pipeline: a withdrawn request is no longer trusted`, `pipeline: requested reviewers are read again before each decision`, `pipeline: no reviewers and no review rule asks the owner`
 
 ### PIP-143 · Review is requested once the PR is ready
 
@@ -1353,10 +1357,10 @@ In such a repo the gate never merges before a teammate approval, at any autonomy
 
 ### PIP-145 · A reviewer's feedback starts a repair round
 
-A request for changes or comment from a listed reviewer or a reviewer the host currently requests (code owners included) is treated like the owner's feedback, and nobody else's is.
+A request for changes or comment from a listed reviewer or a reviewer the host requested and did not withdraw (code owners included) is treated like the owner's feedback, and nobody else's is.
 
 - Extends PIP-44 for repos with `teammate_review=on`: reviews and comments by one of the PR's reviewers
-  (PIP-142: listed, or currently requested by the host, read again before the event is taken;
+  (PIP-142: listed, or requested by the host and not withdrawn, read again before the event is taken;
   case-insensitive, never the bot or the owner) raise `feedback` (PIP-43) with their text, prefixed with who wrote
   it (`alice asked for changes: …`). A review in state `CHANGES_REQUESTED`, or a non-empty comment or
   review body, counts; a plain `APPROVED` with no body does not. Inline review comments (PIP-21) count.
