@@ -78,9 +78,13 @@ const OWNER_STEPS = list(
   }),
 );
 
+/** INT-43: for a multi-repo intent, what changes in each repo and in which order the parts land; else empty. */
+const REPOS = list(object({ repo: S, change: S, waits_on: list(S), safe_alone: S }));
+
 export const PLAN_SCHEMA = object({
   brief: BRIEF,
   plan: S,
+  repos: REPOS,
   access: ACCESS,
   e2e: E2E,
   owner_steps: OWNER_STEPS,
@@ -201,6 +205,8 @@ export interface PlanResult {
   plan: string;
   access: Access;
   e2e: { tests: string[]; none_why: string } | null;
+  /** INT-43: the parts of a multi-repo plan; absent counts as none. */
+  repos?: { repo: string; change: string; waits_on: string[]; safe_alone: string }[];
   /** SHIP-17: absent counts as none. */
   owner_steps?: PlanStep[];
   /** SHIP-21: absent counts as empty. */
@@ -354,7 +360,14 @@ export function parseResult<K extends keyof Results>(
   // SHIP-17, SHIP-21: a plan from before owner steps (or a cached one) reads as none and no claim.
   let checked = value;
   if (kind === "plan" && isObject(value)) {
-    const plan: Record<string, unknown> = { owner_steps: [], live_none_why: "", delivery: "code", ...value };
+    // INT-43: a plan without `repos` is a single-repo plan.
+    const plan: Record<string, unknown> = {
+      owner_steps: [],
+      live_none_why: "",
+      delivery: "code",
+      repos: [],
+      ...value,
+    };
     value = plan;
     const own = plan.owner_steps;
     // SHIP-33: a step from before secrets reads as an ordinary one.

@@ -788,6 +788,8 @@ export function intentCard(i: Intent, config: Config): Card {
     addRepo = { name: i.repo, github: owner ? `${owner}/${i.repo}` : "" };
   } else if (w.startsWith("bad after:")) {
     why = `It waits for ${w.slice("bad after:".length).trim() || "an intent"}, which Towercab can't find or is dropped. Fix its after list.`;
+  } else if (w.startsWith("bad repos:")) {
+    why = `It changes ${w.slice("bad repos:".length).trim() || "a repo"}, which Towercab doesn't know. Add the repo or fix the intent's repos list.`;
   }
   return {
     intent: i.id,

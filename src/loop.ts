@@ -881,14 +881,19 @@ export class Loop {
    */
   private async requeueKnownRepos(): Promise<void> {
     const repos = this.d.config.repos;
+    // INT-42: `bad repos:` clears the same way once every repo it names is known.
     const known = (this.listing?.open ?? []).filter(
-      (i) => i.waiting === "unknown repo" && repos.has(i.repo) && !unfinishedFor(this.d.db, i.id),
+      (i) =>
+        ((i.waiting === "unknown repo" && repos.has(i.repo)) ||
+          (i.waiting?.startsWith("bad repos:") && (i.repos ?? []).every((r) => repos.has(r)))) &&
+        !unfinishedFor(this.d.db, i.id),
     );
     let queued = 0;
     for (const i of known) {
       try {
         await this.d.store.update(i.id, "repo known", (e) => {
-          if (e.intent.waiting === "unknown repo") e.removeField("waiting");
+          if (e.intent.waiting === "unknown repo" || e.intent.waiting?.startsWith("bad repos:"))
+            e.removeField("waiting");
         });
         queued++;
         this.d.log(`${i.id}: its repo ${i.repo} is known now; queued again`);

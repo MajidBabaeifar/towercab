@@ -61,6 +61,14 @@ Return the JSON result:
     test titles and each `Proposed outcome` bullet. Then the code, then the docs.
   - `## Risks`: what could go wrong or break elsewhere, and how the build guards against it.
   - `## How to check it`: how a reviewer sees it working (commands, pages, requests).
+- `repos`: empty unless the intent's front matter has `repos:` (it changes several repos; `repo:` is the
+  lead). Then one entry for the lead and for each repo in `repos:`: `repo`, `change` (what changes there,
+  in plain words; empty if the repo needs no change after all), `waits_on` (the repos whose parts land
+  before this one) and `safe_alone` (one sentence on why this part, landed with only the parts before
+  it, works live without the later ones). The order must be backward compatible: a failure rolls back
+  only the failing part and the ones after it, so every part must work without the parts after it
+  (for example the server accepts the new field before the client sends it). No cycles. Towercab writes
+  the `## Repos` section of the plan from this; do not write it yourself.
 - `access`: `domains`, `paths` and `tests`, each item with a `why` (`tests` items have a `path`). Empty
   lists when nothing beyond the defaults is needed.
 - `owner_steps`: every step only the owner can do for the change to work, as `{when, text, why}`:

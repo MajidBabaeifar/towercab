@@ -18,7 +18,18 @@ export const LEGACY_STAGES: Record<string, string> = {
   maintain: "code",
 };
 
-type Kind = "repo" | "score" | "str" | "after" | "list" | "time" | "stage" | "float" | "seconds" | "count";
+type Kind =
+  | "repo"
+  | "repos"
+  | "score"
+  | "str"
+  | "after"
+  | "list"
+  | "time"
+  | "stage"
+  | "float"
+  | "seconds"
+  | "count";
 type Value = number | string | string[];
 
 const KINDS: Record<string, Kind> = {
@@ -39,6 +50,7 @@ const KINDS: Record<string, Kind> = {
   verified: "str",
   steps_left: "str",
   after: "after",
+  repos: "repos",
   unlock: "list",
   network: "list",
   started: "time",
@@ -54,6 +66,7 @@ const DESCRIBE: Record<Kind, string> = {
   score: "an integer 1-5",
   str: "a string",
   after: "a list of ids",
+  repos: "a list of repo names (or one name)",
   list: "a list of strings",
   time: "an RFC 3339 time with offset",
   stage: `one of ${STAGES.join(", ")}`,
@@ -112,6 +125,11 @@ function check(key: string, kind: Kind, v: unknown, reading: boolean): Value {
       // One ID counts as a one-item list (only for `after`).
       if (typeof v === "string" && isId(v)) return [v];
       if (strings(v) && v.every(isId)) return v;
+      throw bad();
+    case "repos":
+      // INT-41: one name counts as a one-item list, like `after`.
+      if (typeof v === "string" && isRepoName(v)) return [v];
+      if (strings(v) && v.every(isRepoName)) return v;
       throw bad();
     case "list":
       if (strings(v)) return v;
@@ -471,6 +489,7 @@ export class IntentFile implements IntentEdit {
       i: num("i"),
       a: num("a"),
       after: list("after"),
+      repos: list("repos"),
       model: str("model"),
       review: str("review"),
       source: str("source"),
@@ -529,6 +548,15 @@ function readValues(segments: Segment[]): Map<string, Value> {
     values.set(s.key, check(s.key, kind, map[s.key] ?? null, true));
   }
   if (!values.has("repo")) throw new Error("repo is missing");
+  // INT-42: the other repos are distinct and none is the lead.
+  const others = values.get("repos");
+  if (Array.isArray(others)) {
+    const dup = others.find((r, n) => others.indexOf(r) !== n);
+    if (dup !== undefined) throw new Error(`repos names ${dup} twice`);
+    const lead = values.get("repo") as string;
+    if (others.includes(lead))
+      throw new Error(`repos names the lead repo ${lead}: list only the other repos`);
+  }
   return values;
 }
 

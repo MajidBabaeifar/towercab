@@ -15,6 +15,8 @@ export interface Intent {
   i: number | null;
   a: number | null;
   after: string[];
+  /** INT-41: the other repos this intent changes (`repo` is the lead); empty for a single-repo intent. */
+  repos?: string[];
   model: string | null;
   review: string | null;
   source: string | null;

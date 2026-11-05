@@ -96,6 +96,8 @@ export interface PipeData {
     /** PIP-115: test paths the plan named that are not existing tests, so got no grant line. */
     droppedTests?: string[];
     e2e?: { tests: string[]; none_why: string } | null;
+    /** INT-43: the repos of a multi-repo plan, in landing order; absent for a single-repo plan. */
+    parts?: string[];
     /** PIP-106: the plan's plain brief. */
     brief?: string;
     /** SHIP-17, SHIP-21: the owner's steps and the "nothing to check live" claim the plan made. */

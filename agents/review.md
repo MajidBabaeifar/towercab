@@ -45,7 +45,10 @@ Check, in this order:
    writes it). Leave out what it says not to report.
 3. Were any tests weakened, deleted or skipped to make the checks pass?
 4. Does the change follow the plan? Where it doesn't, is the difference explained?
-5. Is it easy to undo (`two-way`), or hard (`one-way`: data, migrations, public interfaces)? Which of
+5. In a plan with a `## Repos` section (a change to several repos): does each part work live with only the
+   parts before it landed? A part that would break the live app until a later part lands is an `important`
+   finding (pass `repo order`): a failure rolls back only the failing part and the ones after it.
+6. Is it easy to undo (`two-way`), or hard (`one-way`: data, migrations, public interfaces)? Which of
    the red lines in `REVIEW.md` does it touch?
 
 An outcome only the owner can do (adding a secret, applying to a server, a setting that needs admin

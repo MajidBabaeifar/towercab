@@ -1228,6 +1228,8 @@ are stored in intent files and never change; each ask says plainly what the owne
 | `fix repo files` | blocked | One of the repo's files for Towercab can't be read. Fix it, then reply. |
 | `unknown repo` | (intent only) | Tell Towercab which repo this is for: add the repo, or fix the repo name in the intent. |
 | `bad after:` | (intent only) | Fix what this intent waits for: Towercab can't find one of the intents it names, or it was dropped. |
+| `several repos` | blocked | This change spans several repos and Towercab can't build those yet, so nothing was built. Do the change yourself and say so, or drop the intent. |
+| `bad repos:` | (intent only) | Fix which repos this intent changes: Towercab doesn't know one of the repos it names. Add the repo, or fix the intent's repos list. |
 | `rolled back, revise` | blocked | The change broke the live app, two fixes didn't hold, and it was taken back out. Revise the intent, then start over (/retry). |
 | `rollback failed` | blocked | Taking the broken change back out failed, so nothing more goes live in this repo until you fix it. |
 | `your steps first` | blocked | Do these before this change merges: tick them off in Towercab, or reply to change the plan. |
