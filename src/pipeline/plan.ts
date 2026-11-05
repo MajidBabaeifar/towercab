@@ -6,7 +6,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { planGate, riskWhy } from "../autonomy.ts";
 import { git } from "../checkout.ts";
-import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
+import { MERGE_METHOD } from "../forge.ts";
+import type { ChildEnd, Ctx, GitHub, Handler, Progress } from "../handlers.ts";
 import type { Intent } from "../intents/types.ts";
 import { wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
@@ -22,13 +23,14 @@ import {
   data,
   effectiveOf,
   ended,
-  gh,
   grantedFromPlan,
   intentOf,
+  mustForge,
   prUrl,
   repoFiles,
   spawnRun,
   subjectOf,
+  viaForge,
 } from "./common.ts";
 import { existingTests } from "./guard.ts";
 import { fence, intentData, render } from "./prompts.ts";
@@ -41,7 +43,9 @@ import { parseResult } from "./schemas.ts";
 export const TESTS_WHY = "The plan asks to change existing tests; you decide which.";
 
 /** What a branch on the intents repo needs; the issue poll (INT-23) has it as well as a mission's `Ctx`. */
-export type IntentsCx = Pick<Ctx, "store" | "home" | "github" | "tools" | "config">;
+export type IntentsCx = Pick<Ctx, "store" | "home" | "tools" | "config"> & {
+  github: Pick<GitHub, "gitAuth" | "bot">;
+};
 
 /**
  * The clone `<home>/<name>` that branches of the intents repo are pushed from: `plans` for plan PRs,
@@ -327,12 +331,7 @@ async function bodyOf(cx: Ctx, m: Mission): Promise<string> {
 async function patchBody(cx: Ctx, m: Mission): Promise<void> {
   const github = cx.store.github()!;
   try {
-    await gh(
-      cx,
-      github,
-      ["api", "-X", "PATCH", `repos/${github}/pulls/${m.plan_pr}`, "-F", "body=@-"],
-      await bodyOf(cx, m),
-    );
+    await viaForge(cx.github.updatePrBody(github, m.plan_pr!, await bodyOf(cx, m)));
   } catch (e) {
     cx.log(`${m.intent}: couldn't update the plan PR text: ${(e as Error).message}`);
   }
@@ -345,45 +344,20 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
   const branch = planBranch(intent);
   let n = m.plan_pr;
   if (!n) {
-    const existing = JSON.parse(
-      await gh(cx, github, [
-        "pr",
-        "list",
-        "-R",
-        github,
-        "--head",
-        branch,
-        "--state",
-        "open",
-        "--json",
-        "number",
-      ]),
-    ) as { number: number }[];
-    n = existing[0]?.number ?? null;
+    n = await viaForge(cx.github.openPrOn(github, branch));
     if (!n) {
-      const url = await gh(
-        cx,
-        github,
-        [
-          "pr",
-          "create",
-          "-R",
-          github,
-          "--base",
-          "main",
-          "--head",
-          branch,
-          "--title",
-          `docs(plan): ${subjectOf(m, intent)}`,
-          "--body-file",
-          "-",
-        ],
-        body,
+      n = await viaForge(
+        cx.github.openPr(github, {
+          base: "main",
+          head: branch,
+          title: `docs(plan): ${subjectOf(m, intent)}`,
+          body,
+        }),
       );
-      n = Number(/\/pull\/(\d+)/.exec(url)?.[1]);
+      if (!n) throw new Error("GitHub gave no pull request number");
     }
   } else {
-    await gh(cx, github, ["api", "-X", "PATCH", `repos/${github}/pulls/${n}`, "-F", "body=@-"], body);
+    await viaForge(cx.github.updatePrBody(github, n, body));
   }
   return gateStep(cx, cx.record(m, "gate", { plan_pr: n }));
 }
@@ -403,7 +377,7 @@ async function gateStep(cx: Ctx, m: Mission): Promise<Progress> {
     return { done: wait("approve plan", why) };
   }
   const github = cx.store.github()!;
-  await gh(cx, github, ["pr", "merge", String(m.plan_pr), "-R", github, "--squash"]);
+  mustForge(await cx.github.mergePr(github, m.plan_pr!, { method: MERGE_METHOD }), "gh pr merge");
   return { done: { event: "plan_merged", why: `a${a}, ${level} risk: Towercab approved its own plan` } };
 }
 

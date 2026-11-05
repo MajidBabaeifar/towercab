@@ -7,6 +7,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { riskWhy, specGate } from "../autonomy.ts";
 import { git, refreshBase } from "../checkout.ts";
+import { MERGE_METHOD } from "../forge.ts";
 import { SPEC_CONFLICT_REVISIONS, SPEC_CONFLICT_TEXT } from "../github/events.ts";
 import { assignOwner } from "../github/teammates.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
@@ -25,8 +26,8 @@ import {
   data,
   effectiveOf,
   ended,
-  gh,
   intentOf,
+  mustForge,
   PushRefused,
   prUrl,
   pushBranch,
@@ -34,6 +35,7 @@ import {
   repoFiles,
   spawnRun,
   subjectOf,
+  viaForge,
 } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { specBody } from "./prtext.ts";
@@ -83,18 +85,10 @@ export async function takenIds(cx: Ctx, m: Mission): Promise<Taken> {
   const open: Taken["open"] = [];
   let unchecked: string | null = null;
   try {
-    const prs = JSON.parse(
-      await gh(cx, repo.github, [
-        "pr",
-        "list",
-        "-R",
-        repo.github,
-        "--state",
-        "open",
-        "--json",
-        "number,headRefName",
-      ]),
-    ) as { number: number; headRefName: string }[];
+    const prs = (await viaForge(cx.github.openPrBranches(repo.github))).map((p) => ({
+      number: p.number,
+      headRefName: p.branch,
+    }));
     const others = prs.filter((p) => p.number !== m.spec_pr && p.headRefName !== `${m.branch}-spec`);
     await git(
       cx.tools,
@@ -147,14 +141,9 @@ export const IDS_UNCHECKED = "IDs unchecked against open PRs";
 async function approvedPr(cx: Ctx, github: string, n: number | null): Promise<boolean> {
   if (n === null) return false;
   try {
-    const v = JSON.parse(
-      await gh(cx, github, ["pr", "view", String(n), "-R", github, "--json", "reviews"]),
-    ) as {
-      reviews?: { author?: { login?: string }; state?: string }[];
-    };
+    const v = { reviews: await viaForge(cx.github.reviews(github, n)) };
     const last = new Map<string, string>();
-    for (const r of v.reviews ?? [])
-      if (r.state && r.state !== "COMMENTED") last.set(r.author?.login ?? "", r.state);
+    for (const r of v.reviews ?? []) if (r.state && r.state !== "COMMENTED") last.set(r.author, r.state);
     return [...last.values()].includes("APPROVED");
   } catch (e) {
     cx.log(`spec PR #${n}: can't read its reviews, counted as not approved: ${(e as Error).message}`);
@@ -623,12 +612,7 @@ async function bodyOf(cx: Ctx, m: Mission): Promise<string> {
 async function patchBody(cx: Ctx, m: Mission): Promise<void> {
   const repo = cx.repo(m);
   try {
-    await gh(
-      cx,
-      repo.github,
-      ["api", "-X", "PATCH", `repos/${repo.github}/pulls/${m.spec_pr}`, "-F", "body=@-"],
-      await bodyOf(cx, m),
-    );
+    await viaForge(cx.github.updatePrBody(repo.github, m.spec_pr!, await bodyOf(cx, m)));
   } catch (e) {
     cx.log(`${m.intent}: couldn't update the spec PR text: ${(e as Error).message}`);
   }
@@ -640,42 +624,17 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
   const intent = await intentOf(cx, m);
   const body = await bodyOf(cx, m);
   if (!m.spec_pr) {
-    const existing = JSON.parse(
-      await gh(cx, repo.github, [
-        "pr",
-        "list",
-        "-R",
-        repo.github,
-        "--head",
-        d.specBranch!,
-        "--state",
-        "open",
-        "--json",
-        "number",
-      ]),
-    ) as { number: number }[];
-    let n = existing[0]?.number;
+    let n = await viaForge(cx.github.openPrOn(repo.github, d.specBranch!));
     if (!n) {
-      const url = await gh(
-        cx,
-        repo.github,
-        [
-          "pr",
-          "create",
-          "-R",
-          repo.github,
-          "--base",
-          repo.base,
-          "--head",
-          d.specBranch!,
-          "--title",
-          `docs(specs): ${subjectOf(m, intent)}`,
-          "--body-file",
-          "-",
-        ],
-        body,
+      n = await viaForge(
+        cx.github.openPr(repo.github, {
+          base: repo.base,
+          head: d.specBranch!,
+          title: `docs(specs): ${subjectOf(m, intent)}`,
+          body,
+        }),
       );
-      n = Number(/\/pull\/(\d+)/.exec(url)?.[1]);
+      if (!n) throw new Error("GitHub gave no pull request number");
       // PIP-146: the owner answers for the PR.
       if (repo.teammateReview && !(await assignOwner(cx.github, repo.github, n))) {
         cx.log(`${m.intent}: couldn't assign ${cx.github.me} to PR ${n}`);
@@ -683,12 +642,7 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
     }
     m = cx.record(m, "gate", { spec_pr: n });
   } else {
-    await gh(
-      cx,
-      repo.github,
-      ["api", "-X", "PATCH", `repos/${repo.github}/pulls/${m.spec_pr}`, "-F", "body=@-"],
-      body,
-    );
+    await viaForge(cx.github.updatePrBody(repo.github, m.spec_pr, body));
     m = cx.record(m, "gate");
   }
   return gateStep(cx, m);
@@ -730,20 +684,10 @@ async function decide(cx: Ctx, m: Mission): Promise<Progress> {
   const owner = await ownerWait(cx, m, risk);
   if (owner) return { done: owner };
   const repo = cx.repo(m);
-  try {
-    await gh(cx, repo.github, [
-      "pr",
-      "merge",
-      String(m.spec_pr),
-      "-R",
-      repo.github,
-      "--squash",
-      "--match-head-commit",
-      m.head!,
-    ]);
-  } catch (e) {
-    throw asEnv(e);
-  }
+  mustForge(
+    await cx.github.mergePr(repo.github, m.spec_pr!, { method: MERGE_METHOD, head: m.head! }),
+    "gh pr merge",
+  );
   // The squashed spec is now on base: the build starts from there.
   await git(cx.tools, cloneOf(cx, m), ["fetch", "--quiet", "origin"], await cx.github.gitAuth(repo.github));
   await refreshBase(cx.tools, cloneOf(cx, m), cx.checkout(m), repo.base);
@@ -797,8 +741,7 @@ async function specCi(cx: Ctx, m: Mission): Promise<Progress> {
     const head = m.head ?? "";
     const runs = [...new Set(s.checks.map((c) => c.run).filter((r): r is number => r !== null))];
     if (!reruns[head] && runs.length) {
-      for (const run of runs)
-        await gh(cx, repo.github, ["run", "rerun", String(run), "-R", repo.github, "--failed"]);
+      for (const run of runs) await viaForge(cx.github.rerunFailed(repo.github, run));
       cx.record(m, m.step, { pushed_at: cx.clock.now() }, { specReruns: { ...reruns, [head]: true } });
       return { poll: cx.config.agent.ciPoll };
     }

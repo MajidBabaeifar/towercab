@@ -18,10 +18,11 @@ import { Db } from "./db.ts";
 import { doctor } from "./doctor.ts";
 import { GitLabForge } from "./forge/gitlab.ts";
 import { parseGitlabProject } from "./forge/types.ts";
+import type { Forge } from "./forge.ts";
 import { fetchHttp } from "./github/app.ts";
 import { createGitHub } from "./github/gh.ts";
 import { approve as ownerApprove } from "./github/owner.ts";
-import type { GitHub } from "./handlers.ts";
+import type { Host } from "./handlers.ts";
 import { systemClock } from "./handlers.ts";
 import { Home } from "./home.ts";
 import { openStore } from "./intents/store.ts";
@@ -111,8 +112,8 @@ function pkgVersion(): string {
 }
 
 /** A GitHub that refuses: a GitLab-only installation has none (GL-3). */
-const noGitHub: Pick<GitHub, "gh" | "gitAuth"> = {
-  gh: () => Promise.reject(new Error("repo add needs [github] (app_id, me)")),
+const noGitHub: Pick<Forge, "repoInfo" | "gitAuth"> = {
+  repoInfo: () => Promise.reject(new Error("repo add needs [github] (app_id, me)")),
   gitAuth: () => Promise.reject(new Error("repo add needs [github] (app_id, me)")),
 };
 
@@ -122,7 +123,7 @@ interface World {
   home: Home;
   db: Db;
   tools: Tools;
-  github: GitHub | null;
+  github: Host | null;
   store(): Promise<IntentStore>;
 }
 

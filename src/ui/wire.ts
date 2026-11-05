@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import { fixFor } from "../faults.ts";
-import { type GitHub, systemClock } from "../handlers.ts";
+import { type Host, systemClock } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { Intent } from "../intents/types.ts";
 import type { Loop } from "../loop.ts";
@@ -116,7 +116,7 @@ export function sourcesOf(loop: Loop, home: Home): UiSources {
   };
 }
 
-export function startLoopUi(loop: Loop, config: Config, github: GitHub, home: Home): UiServer {
+export function startLoopUi(loop: Loop, config: Config, github: Host, home: Home): UiServer {
   return startUi({
     port: config.ui.port,
     sources: sourcesOf(loop, home),

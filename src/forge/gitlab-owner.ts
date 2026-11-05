@@ -2,6 +2,7 @@
 // the owner's own `glab` login, never the bot's token.
 
 import type { GitLabConfig } from "../config.ts";
+import { MERGE_METHOD } from "../forge.ts";
 import { check, GH_TIMEOUT_MS, type RunOpts, type Tools } from "../tools.ts";
 import { gitlabPath } from "./types.ts";
 
@@ -54,7 +55,7 @@ export class GlabOwner {
     const repo = gitlabPath(slug);
     check(await this.run(["mr", "approve", String(iid), "-R", repo]), "glab mr approve");
     check(
-      await this.run(["mr", "merge", String(iid), "-R", repo, "--squash", "--sha", head, "--yes"]),
+      await this.run(["mr", "merge", String(iid), "-R", repo, `--${MERGE_METHOD}`, "--sha", head, "--yes"]),
       "glab mr merge",
     );
   }

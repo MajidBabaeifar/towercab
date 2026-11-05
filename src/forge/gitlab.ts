@@ -22,7 +22,8 @@ export interface GitLabBot {
 }
 
 /** The scopes Towercab's token needs (GL-9). */
-export const NEEDED_SCOPES = ["api", "write_repository"];
+const SCOPE_API = "api";
+export const NEEDED_SCOPES = [SCOPE_API, "write_repository"];
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);

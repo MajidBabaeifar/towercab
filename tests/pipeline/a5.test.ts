@@ -104,9 +104,7 @@ test("pipeline: spec PR merged when the gate is open", () => {
   // a5, no concerns: Towercab merged it itself after its (absent) CI, and moved on to plan.
   expect(spec().state).toBe("MERGED");
   expect(
-    p.tools
-      .lines("gh")
-      .some((l) => l.startsWith(`pr merge ${spec().number} -R owner/web --squash --match-head-commit `)),
+    p.tools.lines("gh").some((l) => l.startsWith(`pr merge ${spec().number} --squash --match-head-commit `)),
   ).toBe(true);
   const moves = p.db.all<{ event: string; to_stage: string }>(
     "SELECT event, to_stage FROM transitions WHERE mission = ? ORDER BY id",
@@ -142,7 +140,7 @@ test("pipeline: plan PR is opened on intents", () => {
 
 test("pipeline: plan PR merged at a5", () => {
   expect(plan().state).toBe("MERGED");
-  expect(p.tools.lines("gh")).toContain(`pr merge ${plan().number} -R owner/intents --squash`);
+  expect(p.tools.lines("gh")).toContain(`pr merge ${plan().number} --squash -R owner/intents`);
   expect(p.stages(m.id)).not.toContain("approval:plan");
 });
 
@@ -284,7 +282,7 @@ test("runs: review reads logs and shots from stage folders", () => {
 
 test("pipeline: merge on the gated head", () => {
   const merge = p.tools.lines("gh").filter((l) => l.startsWith(`pr merge ${code().number} `));
-  expect(merge).toEqual([`pr merge ${code().number} -R owner/web --squash --match-head-commit ${m.head}`]);
+  expect(merge).toEqual([`pr merge ${code().number} --squash --match-head-commit ${m.head} -R owner/web`]);
   expect(code().state).toBe("MERGED");
   expect(m.merge_sha).toBe(code().mergeCommit);
   expect(m.merged_by).toBe("towercab");

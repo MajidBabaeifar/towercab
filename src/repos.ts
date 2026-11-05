@@ -9,7 +9,7 @@ import { type Config, clonePath, expand, isBranch, isRepoName, type RepoConfig }
 import type { Db } from "./db.ts";
 import type { GitLabForge } from "./forge/gitlab.ts";
 import { gitlabPath, isGitlab, parseGitlabProject } from "./forge/types.ts";
-import type { GitHub } from "./handlers.ts";
+import type { Forge } from "./forge.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
 import type { Tools } from "./tools.ts";
 
@@ -134,7 +134,7 @@ export interface AddRepoDeps {
   db: Db;
   config: Config;
   tools: Tools;
-  github: Pick<GitHub, "gh" | "gitAuth">;
+  github: Pick<Forge, "repoInfo" | "gitAuth">;
   /** GL-3: Towercab's GitLab, when `[gitlab]` is configured. */
   gitlab?: GitLabForge | null;
   /** The home's root: the clone goes to `<home>/repos/<name>`. */
@@ -229,21 +229,15 @@ export async function beginAddRepo(d: AddRepoDeps, text: string, name?: string):
   let repo: RepoConfig;
   try {
     d.db.delMeta(failedKey(short));
-    let reply: string;
+    let info: { name: string; defaultBranch: string };
     try {
-      const r = await d.github.gh(typed, [
-        "api",
-        `repos/${typed}`,
-        "--jq",
-        '.full_name + " " + .default_branch',
-      ]);
-      if (r.code !== 0) throw new Error(firstLine(r.stderr || r.stdout));
-      reply = r.stdout.trim();
+      info = await d.github.repoInfo(typed);
     } catch (e) {
       throw new Error(`Towercab can't reach ${typed}: ${(e as Error).message}`);
     }
     // GitHub's own spelling of the name, so links and the clone's URL match it.
-    const [full = "", base = ""] = reply.split(/\s+/);
+    const full = info.name;
+    const base = info.defaultBranch;
     const github = ownerName(full) ?? typed;
     if (!isBranch(base)) throw new Error(`GitHub didn't say which branch is ${github}'s default`);
     const again = duplicate(d.db, short, github);

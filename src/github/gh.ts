@@ -2,9 +2,10 @@
 
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
-import type { Clock, GitHub } from "../handlers.ts";
+import type { Clock, GitHub, Host } from "../handlers.ts";
 import { GH_TIMEOUT_MS, type RunOpts, type Tools } from "../tools.ts";
 import { App, type Http } from "./app.ts";
+import { GitHubForge } from "./forge.ts";
 
 /** Variables through which a GitHub token reaches `gh` or `git`. */
 export const TOKEN_VARS = [
@@ -36,8 +37,13 @@ export interface GitHubOptions {
   clock?: Clock;
 }
 
-/** The `GitHub` the loop and handlers use: the App from `[github]` and `app.pem`. */
-export function createGitHub(o: GitHubOptions): GitHub {
+/** The forge the loop and handlers use: the App from `[github]` and `app.pem`. */
+export function createGitHub(o: GitHubOptions): Host {
+  return new GitHubForge(createGhClient(o));
+}
+
+/** `gh` and `git` as the App, and `gh` as the owner: what `GitHubForge` is built on. */
+export function createGhClient(o: GitHubOptions): GitHub {
   const g = o.config.github;
   if (!g) throw new Error(`config: ${o.config.file}: [github] is required (app_id, me)`);
   const app = new App({
@@ -89,4 +95,18 @@ export function createGitHub(o: GitHubOptions): GitHub {
 
     bot: () => app.bot(),
   };
+}
+
+/** `gh --version` text → its version, and whether Towercab can use it (2.46 or newer). */
+export function ghVersionOk(text: string): { version: string; ok: boolean } {
+  const m = /gh version (\d+)\.(\d+)\.(\d+)/.exec(text);
+  if (!m) return { version: "unknown", ok: false };
+  const [maj, min] = [Number(m[1]), Number(m[2])];
+  return { version: `${m[1]}.${m[2]}.${m[3]}`, ok: maj > 2 || (maj === 2 && min >= 46) };
+}
+
+/** The installed `gh`'s version. */
+export async function ghVersion(tools: Tools): Promise<{ version: string; ok: boolean }> {
+  const r = await tools.run("gh", ["--version"], { timeoutMs: 20_000 });
+  return ghVersionOk(r.stdout);
 }

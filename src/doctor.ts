@@ -8,8 +8,13 @@ import { appKeyPath, clonePath } from "./config.ts";
 import type { Db } from "./db.ts";
 import { type GitLabForge, NEEDED_SCOPES } from "./forge/gitlab.ts";
 import { GlabOwner } from "./forge/gitlab-owner.ts";
+import { forgeOf } from "./github/forge.ts";
+import { ghVersion, ghVersionOk } from "./github/gh.ts";
 import { readRequired } from "./github/teammates.ts";
 import type { GitHub } from "./handlers.ts";
+
+export { ghVersionOk };
+
 import type { Home } from "./home.ts";
 import { parseStored } from "./repo/readiness.ts";
 import { permissionLine } from "./settings/store.ts";
@@ -17,13 +22,6 @@ import { tooFewListed } from "./teammates.ts";
 import type { Tools } from "./tools.ts";
 
 export const TOOLS = ["git", "gh", "claude", "bwrap", "systemd-inhibit", "systemctl", "journalctl"];
-
-export function ghVersionOk(text: string): { version: string; ok: boolean } {
-  const m = /gh version (\d+)\.(\d+)\.(\d+)/.exec(text);
-  if (!m) return { version: "unknown", ok: false };
-  const [maj, min] = [Number(m[1]), Number(m[2])];
-  return { version: `${m[1]}.${m[2]}.${m[3]}`, ok: maj > 2 || (maj === 2 && min >= 46) };
-}
 
 export interface DoctorResult {
   lines: string[];
@@ -64,8 +62,7 @@ export async function doctor(o: {
   }
   if (o.quick) return { lines, ok };
 
-  const gh = await tools.run("gh", ["--version"], { timeoutMs: 20_000 });
-  const v = ghVersionOk(gh.stdout);
+  const v = await ghVersion(tools);
   lines.push(`gh version: ${v.version}${v.ok ? "" : ": Towercab needs 2.46 or newer"}`);
   if (!v.ok) ok = false;
   const key = appKeyPath(config);
@@ -85,10 +82,8 @@ export async function doctor(o: {
     }
   }
   if (o.github) {
-    const r = await o.github.owner(["auth", "status"], { timeoutMs: 20_000 });
-    const text = `${r.stdout}\n${r.stderr}`;
     const me = config.github?.me ?? "";
-    const logins = [...text.matchAll(/\b(?:account|as) ([\w-]+)/gi)].map((m) => m[1]!.toLowerCase());
+    const logins = await forgeOf(o.github).ownerLogins();
     lines.push(
       me && logins.includes(me.toLowerCase())
         ? `gh login: ${me}`

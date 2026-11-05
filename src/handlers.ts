@@ -3,6 +3,7 @@
 
 import type { Config, RepoConfig } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
+import type { Forge } from "./forge.ts";
 import type { Home } from "./home.ts";
 import type { IntentStore } from "./intents/types.ts";
 import type { Outcome } from "./machine.ts";
@@ -35,6 +36,12 @@ export interface GitHub {
   readonly me: string;
 }
 
+/**
+ * What the loop and the stages hold: the forge, and, until the code that still makes raw `gh` calls
+ * (settings, teammate review, releases, secrets, readiness) has moved behind it, the raw calls too.
+ */
+export type Host = Forge & GitHub;
+
 export interface ChildEnd extends ChildExit {
   timedOut: boolean;
   /** Run time in ms. */
@@ -60,7 +67,7 @@ export interface Ctx {
   tools: Tools;
   clock: Clock;
   store: IntentStore;
-  github: GitHub;
+  github: Host;
   /** False right after a wake from suspend: no wait timeout may fire before its poll (LOOP-11). */
   timeouts: boolean;
   log(line: string): void;

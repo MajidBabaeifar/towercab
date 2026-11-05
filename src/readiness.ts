@@ -9,6 +9,7 @@ import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db } from "./db.ts";
 import { isGitlab } from "./forge/types.ts";
 import { prsOnBranch } from "./github/branches.ts";
+import { forgeOf, limitedForge } from "./github/forge.ts";
 import type { ProposedPr } from "./github/proposed.ts";
 import type { Clock, GitHub } from "./handlers.ts";
 import type { Home } from "./home.ts";
@@ -89,13 +90,7 @@ export function withDeadline(d: ReadinessDeps, ms: number, now: () => number = D
     spawn: (spec) => d.tools.spawn(spec),
     which: (cmd) => d.tools.which(cmd),
   };
-  const github: GitHub = {
-    me: d.github.me,
-    gh: async (repo, args, opts) => d.github.gh(repo, args, left(opts)),
-    owner: (args, opts) => d.github.owner(args, opts),
-    gitAuth: (repo) => d.github.gitAuth(repo),
-    bot: () => d.github.bot(),
-  };
+  const github = limitedForge(d.github, left);
   return {
     tools,
     github,
@@ -191,14 +186,7 @@ async function settingsCheck(d: ReadinessDeps, repo: RepoConfig): Promise<Check>
 
 /** REPO-23: does the base branch require a status check? null when GitHub can't say. */
 async function requiredChecks(d: ReadinessDeps, repo: RepoConfig): Promise<boolean | null> {
-  const r = await d.github.gh(repo.github, ["api", `repos/${repo.github}/rules/branches/${repo.base}`]);
-  if (r.code !== 0) return null;
-  try {
-    const rules = JSON.parse(r.stdout) as { type?: string }[];
-    return rules.some((x) => x.type === "required_status_checks");
-  } catch {
-    return null;
-  }
+  return forgeOf(d.github).requiresStatusChecks(repo.github, repo.base);
 }
 
 /** REPO-23: the infra repo's `apps:` list names this repo. null when infra isn't known or readable. */
@@ -491,35 +479,17 @@ export async function proposeSetup(
     prTitle,
     "setup",
   );
-  const out = check(
-    await d.github.gh(
-      intents,
-      [
-        "pr",
-        "create",
-        "-R",
-        intents,
-        "--base",
-        "main",
-        "--head",
-        branch,
-        "--title",
-        prTitle,
-        "--body-file",
-        "-",
-      ],
-      {
-        input: [
-          setupMark(repo.name),
-          `Towercab found ${gaps.length} missing item${gaps.length === 1 ? "" : "s"} in ${repo.name} and wrote the intent that fixes ${gaps.length === 1 ? "it" : "them"}.`,
-          "Merging this pull request accepts it as work. Closing it says no; Towercab may propose it again if the gaps are still there.",
-        ].join("\n\n"),
-      },
-    ),
-    "gh pr create",
-  );
-  const m = /\/pull\/(\d+)/.exec(out);
-  d.log(`${repo.name}: proposed a setup intent${m ? ` ${prUrl(intents, Number(m[1]))}` : ""}`);
+  const n = await forgeOf(d.github).openPr(intents, {
+    base: "main",
+    head: branch,
+    title: prTitle,
+    body: [
+      setupMark(repo.name),
+      `Towercab found ${gaps.length} missing item${gaps.length === 1 ? "" : "s"} in ${repo.name} and wrote the intent that fixes ${gaps.length === 1 ? "it" : "them"}.`,
+      "Merging this pull request accepts it as work. Closing it says no; Towercab may propose it again if the gaps are still there.",
+    ].join("\n\n"),
+  });
+  d.log(`${repo.name}: proposed a setup intent${n ? ` ${prUrl(intents, n)}` : ""}`);
   return true;
 }
 

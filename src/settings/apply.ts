@@ -3,6 +3,7 @@
 
 import { ensureClone } from "../checkout.ts";
 import { clonePath, type RepoConfig } from "../config.ts";
+import { forgeOf } from "../github/forge.ts";
 import { parseTowercab } from "../repo/files.ts";
 import { ForbiddenError, saveBackup } from "./backup.ts";
 import { mainGreen, parsePlan } from "./guard.ts";
@@ -37,15 +38,16 @@ const gapLines = (stdout: string, stderr: string): string[] => {
 /** REPO-31: may Towercab apply here? A `settings: check` line in the repo's `TOWERCAB.md` says no. */
 async function mayApply(d: SettingsDeps, repo: RepoConfig): Promise<boolean> {
   if (d.config.githubSettings !== "apply") return false;
-  const r = await d.github.gh(repo.github, [
-    "api",
-    `repos/${repo.github}/contents/TOWERCAB.md?ref=${encodeURIComponent(repo.base)}`,
-    "-H",
-    "Accept: application/vnd.github.raw",
-  ]);
-  if (r.code !== 0) return /\b404\b|Not Found/i.test(`${r.stderr}\n${r.stdout}`);
+  let text: string | null;
   try {
-    return parseTowercab(r.stdout).settings !== "check";
+    text = await forgeOf(d.github).readFile(repo.github, "TOWERCAB.md", repo.base);
+  } catch {
+    return false;
+  }
+  // No file: nothing says check-only.
+  if (text === null) return true;
+  try {
+    return parseTowercab(text).settings !== "check";
   } catch {
     // A file that can't be read is check-only: the safe side.
     return false;

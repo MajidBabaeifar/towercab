@@ -39,7 +39,7 @@ function world() {
     config,
     tools: new FakeTools(),
     github: {
-      gh: () => Promise.reject(new Error("no GitHub here")),
+      repoInfo: () => Promise.reject(new Error("no GitHub here")),
       gitAuth: () => Promise.reject(new Error("no GitHub here")),
     },
     gitlab: forge,

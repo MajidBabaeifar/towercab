@@ -20,6 +20,7 @@ import {
   setFeaturesRun,
 } from "./features.ts";
 import { isGitlab } from "./forge/types.ts";
+import { MERGE_METHOD } from "./forge.ts";
 import { retireBranch } from "./github/branches.ts";
 import {
   approveNotices,
@@ -42,7 +43,7 @@ import {
   readProposed,
 } from "./github/proposed.ts";
 import { closeIfOpen, type PrState, readPr } from "./github/prs.ts";
-import { type ChildEnd, type Clock, type Ctx, EnvError, type GitHub, type Handlers } from "./handlers.ts";
+import { type ChildEnd, type Clock, type Ctx, EnvError, type Handlers, type Host } from "./handlers.ts";
 import { readHead } from "./head.ts";
 import type { Home } from "./home.ts";
 import { removeFeature, setFeature } from "./intents/features.ts";
@@ -128,7 +129,7 @@ export interface LoopDeps {
   tools: Tools;
   clock: Clock;
   store: IntentStore;
-  github: GitHub;
+  github: Host;
   handlers: Handlers;
   log(line: string): void;
   /** Delivers outbox rows (Telegram), or null. */
@@ -1168,16 +1169,9 @@ export class Loop {
         const approve = approveRequested(m, prs, this.d.github.me, teamOn);
         if (approve !== null) {
           const target = approve === m.plan_pr ? intentsRepo! : repo.github;
-          const r = await this.d.github.gh(target, [
-            "pr",
-            "merge",
-            String(approve),
-            "--squash",
-            "-R",
-            target,
-          ]);
+          const r = await this.d.github.mergePr(target, approve, { method: MERGE_METHOD });
           this.d.log(
-            `${label(m)}: the owner approved PR ${approve}; ${r.code === 0 ? "merged" : `merge refused: ${r.stderr.trim()}`}`,
+            `${label(m)}: the owner approved PR ${approve}; ${r.ok ? "merged" : `merge refused: ${r.reason}`}`,
           );
           this.lastPrPoll.delete(m.id);
           continue;
@@ -1197,13 +1191,7 @@ export class Loop {
         }
         for (const ask of asks) {
           const target = ask.kind === "plan" ? intentsRepo! : repo.github;
-          await this.d.github.gh(
-            target,
-            ["pr", "comment", String(ask.pr), "-R", target, "--body-file", "-"],
-            {
-              input: ask.reply,
-            },
-          );
+          await this.d.github.commentOnPr(target, ask.pr, ask.reply);
         }
         // PIP-141: the owner's `allow <path>` reverses a refusal, when no worker holds the mission's data.
         let reversed = false;
@@ -1222,13 +1210,7 @@ export class Loop {
               said = (e as Error).message;
             }
             const target = ask.kind === "plan" ? intentsRepo! : repo.github;
-            await this.d.github.gh(
-              target,
-              ["pr", "comment", String(ask.pr), "-R", target, "--body-file", "-"],
-              {
-                input: `${reversalMarker(ask.commentId)}\n${said}`,
-              },
-            );
+            await this.d.github.commentOnPr(target, ask.pr, `${reversalMarker(ask.commentId)}\n${said}`);
             break;
           }
         }
@@ -1247,11 +1229,7 @@ export class Loop {
               : team?.passable
                 ? APPROVE_NOTICE.before
                 : APPROVE_NOTICE.waiting;
-            await this.d.github.gh(
-              repo.github,
-              ["pr", "comment", String(ask.pr), "-R", repo.github, "--body-file", "-"],
-              { input: `${ask.marker}\n${text}` },
-            );
+            await this.d.github.commentOnPr(repo.github, ask.pr, `${ask.marker}\n${text}`);
           }
         }
         const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot, team);
@@ -1263,13 +1241,7 @@ export class Loop {
         if (o.event === "reviewed" && notes.length > 0) {
           const pr = team?.kind === "spec" ? m.spec_pr : m.pr;
           if (pr) {
-            await this.d.github.gh(
-              repo.github,
-              ["pr", "comment", String(pr), "-R", repo.github, "--body-file", "-"],
-              {
-                input: notes.join("\n\n"),
-              },
-            );
+            await this.d.github.commentOnPr(repo.github, pr, notes.join("\n\n"));
           }
         }
         // PIP-112: the merged plan.md is the record of the delivery, edits in the plan PR included.
