@@ -644,12 +644,13 @@ A mission that has its checks green and only waits for a person's review, the ga
 
 - Refines LOOP-61: of the missions from `build` through `merge`, only those *working* count toward
   `[repos.<r>].workers`. A mission is *waiting outside slots* when it has no Claude run or check going or
-  asked for, its CI is green on the current head (LOOP-115), and it is at `review` waiting for a person's
-  review, at `approval:merge`, or `blocked` in the code phase on a question, a missing permission, steps or
-  any other wait for the owner. Every other mission from `build` through `merge` (including `ci` while it
-  waits for GitHub checks and while a repair runs) is working.
-- Changed by LOOP-115: until CI is green on the current head a mission is never waiting outside slots, so
-  waiting for GitHub checks holds the slot.
+  asked for, and is `blocked` in the code phase on a question, a missing permission, steps, no repair
+  rounds left or any other wait for the owner (also before CI is green, LOOP-115), or its CI is green on the
+  current head (LOOP-115) and it is at `review` waiting for a person's review or at `approval:merge`. Every
+  other mission from `build` through `merge` (including `ci` while it waits for GitHub checks and while a
+  repair runs) is working.
+- Changed by LOOP-115: until CI is green on the current head, only a wait for the owner frees the slot;
+  waiting for GitHub checks holds it.
 - Cap: a repo has at most `3 × workers` missions between `build` and `merge`, working and waiting
   together (6 with the default). At the cap a ready mission does not start `build` even with a free slot.
   The cap is not a new setting. `start` (LOOP-63) does not skip it.
@@ -696,13 +697,22 @@ A change keeps its repo's build slot from the start of its build until GitHub ch
   the wait for GitHub checks and repair rounds that go back to `build`. It frees the slot when CI is green
   on the current head; from then its waits for review, the gate, the owner or the merge hold none
   (LOOP-110).
+- A mission that becomes `blocked` on the owner before CI is green (a question, a missing permission,
+  steps, or no repair rounds left) gives up the slot at once, so one stuck change never stops a repo. The
+  next returning or ready mission takes the slot as LOOP-111 and LOOP-110 say.
+- When the owner answers, the mission is *returning* and goes first in line for the slot: ahead of other
+  returning missions and of ready ones, whatever their priority (ties: the one answered first). A running
+  build or repair is never stopped for it. Its next step is to merge the base branch (`main`) into the
+  change, as the conflict round does (PIP-31); only then does the build start. From that run it holds the
+  slot until CI is green on the current head.
 - A mission that comes back to `build` (a review fix round, a conflict round, owner feedback) is
   *returning*: it waits for a slot ahead of new builds (LOOP-111). A new push makes the head new, so it
   holds the slot again until CI is green on that head.
 - `[repos.<r>].workers` (default 1, [repo.md](repo.md)) is unchanged and still raises the number of
   missions that hold slots at once. The cap of LOOP-110 and `[agent].parallel` (LOOP-4) are unchanged.
-- Supersedes the part of LOOP-110 that freed the slot while waiting for GitHub checks.
-- Verified by: `loop: a second ready intent does not start while the first waits for CI`, `loop: a second ready intent starts once CI is green`, `loop: a review fix round takes the slot before a new build`, `loop: a new push holds the slot until CI is green on it`
+- Supersedes the part of LOOP-110 that freed the slot while waiting for GitHub checks, and puts an
+  answered mission ahead of the priority order of LOOP-111.
+- Verified by: `loop: a second ready intent does not start while the first waits for CI`, `loop: a second ready intent starts once CI is green`, `loop: a review fix round takes the slot before a new build`, `loop: a new push holds the slot until CI is green on it`, `loop: a change blocked on the owner before CI gives up the slot`, `loop: an answered change takes the next free slot before other returning missions`, `loop: an answered change merges main before it builds and keeps the slot until CI is green`
 
 ### LOOP-116 · status shows who holds the slot and that it waits for CI
 
