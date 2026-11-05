@@ -3876,6 +3876,98 @@ a.pr-tile:hover {
   }
 }
 
+/* Focus (UI-192 to UI-197): one wait at a time. */
+
+.focus-page {
+  max-width: 720px;
+}
+
+.focus-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  animation: focus-in 300ms ease-out;
+}
+
+@keyframes focus-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.focus-repo {
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
+
+.focus-title {
+  font-size: var(--t-lg);
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.focus-overview {
+  color: var(--text-2);
+  font-size: var(--t-md);
+}
+
+.focus-history h2 {
+  margin-bottom: var(--s1);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.focus-history ol {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.focus-history li {
+  overflow-wrap: anywhere;
+}
+
+.focus-history strong {
+  display: block;
+  font-size: var(--t-xs);
+}
+
+.focus-more {
+  margin-top: var(--s3);
+  color: var(--text-2);
+}
+
+/* The title above is the item's heading; the proposed card does not repeat it. */
+.focus-page .proposed-head h3 {
+  display: none;
+}
+
+.focus-page .btn,
+.focus-page .link-btn,
+.focus-page .menu button {
+  min-height: 44px;
+}
+
+.focus-page .option {
+  min-height: 44px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-item {
+    animation: none;
+  }
+}
+
 /* UI-155..157: a repo missing setup. The warning colour, never the "Needs you" one. */
 .ready-badge {
   display: inline-block;

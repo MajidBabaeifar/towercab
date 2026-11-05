@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..145, UI-155..163, UI-184..188 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..145, UI-155..163, UI-184..188, UI-192..197 · **Prefix:** UI
 
 ## Purpose
 
@@ -824,6 +824,75 @@ The Repos page works at phone width and in light and dark, like the rest of the 
 - Chips wrap onto more lines; the All view is one column at 720 px or less; nothing scrolls sideways
   (UI-68).
 - Verified by: `ui: screenshots light, dark and mobile`
+
+### UI-150 · Settings on the repo page
+
+A repo's page has a Settings section where the owner sees and changes how many missions run at once.
+
+- After "Spend" (UI-141): "Settings" with a field per setting of [REPO-14](repo.md): "Missions building at
+  once" (`workers`) and "Intents ahead of build" (`ahead`), each a whole number 1–16 with its current value,
+  its default and a one-line explanation in plain words. A line under the form says where the values
+  come from: `Saved in TOWERCAB.md in the repo.`, or before the move `Still kept by Towercab; moving
+  them into the repo ([UI-154](#ui-154--the-move-on-the-page)).`
+- Under the form, `Kept on this machine only:` lists the repo's environment variable names, comma
+  separated (`None set.` when there are none). Values are never sent to the page or the API.
+- The form is part of `GET /api/repos?repo=<name>` as `settings`: `{values, defaults, pending, moved,
+  envNames}`. It is absent in the All view.
+- Verified by: `ui: a repo page shows its settings`, `ui: env names show but never values`, `ui: screenshots light, dark and mobile`
+
+### UI-151 · Saving opens a PR
+
+Saving the form opens a pull request with only what changed and says so.
+
+- "Save" posts `{action: "repo-settings", repo, changes}` (UI-66's actions) and is off until a value
+  differs from the shown one. A value outside 1–16 is refused in the form and again by the server with
+  REPO-14's reason. The reply links the PR: `Opened PR #<n>. The change applies after it is merged.`;
+  nothing changed → `Nothing changed.`; a refusal or GitHub failure shows its reason and keeps the typed
+  values (UI-67). Only while Towercab runs, as the other actions.
+- "Back to default" beside a value that is set in the file sends `null` for it (REPO-16).
+- While the 24-hour wait of REPO-19 runs (`waitHours` not null), pressing Save first shows one confirm
+  line, `An older Towercab can't read this setting; a rollback in the next day would need a manual fix.`,
+  with "Save anyway" and "Cancel"; "Save anyway" posts the action with `confirmed: true`. After the wait
+  there is no extra line.
+- Verified by: `ui: saving settings posts only the changed keys`, `ui: an invalid setting is refused in the form and by the server`, `ui: a failed save keeps what was typed`, `ui: a save in the first 24 hours asks to confirm`, `ui: no confirm line after the wait`
+
+### UI-152 · Pending in PR
+
+A setting waiting in a pull request shows the new value and the PR until it merges.
+
+- Beside the current value: `pending: <new> in PR #<n>` linking the PR, from REPO-17's `pendingSettings`.
+  Typing again while it is pending shows the pending value as the starting point and saves into the same
+  PR (REPO-16). When the PR merges or closes the mark goes at the next refresh without a reload, and the
+  current value changes once the base branch is fetched (REPO-14). The pending state is part of the
+  page's version, so an open page updates.
+- Verified by: `ui: a pending setting shows its PR`, `ui: the pending mark clears when the PR merges or closes`
+
+### UI-153 · An invalid file shows its reason
+
+When the repo's `TOWERCAB.md` cannot be read, the repo's page says why, so the owner can fix it.
+
+- A notice at the top of the repo page and on its card in the All view and its Board lane: `TOWERCAB.md
+  in <repo> can't be read: <reason>`, with a link to the file on GitHub; the reason is REPO-18's. The
+  Settings form still shows the limits in force (REPO-15) and says that they are the last good ones. The
+  notice goes when the file is valid.
+- Verified by: `ui: an invalid TOWERCAB.md shows its reason`, `ui: the notice goes when the file is valid`
+
+### UI-154 · The move on the page
+
+While a repo's settings are being moved into the repo, the page says where that stands.
+
+- Before the move: `Moving these settings into the repo: PR #<n>` with a link while REPO-19's PR is
+  open; nothing once moved. After a close without merging: one line, `The PR that moves these
+  settings was closed; Towercab still keeps them.`, with an "Open the move PR again" button that posts
+  `{action: "repo-move", repo}`. The reply is `Opened PR #<n>.` or REPO-19's refusal; the button is
+  hidden while a move PR is open and once moved, and the line goes with it.
+- Until Towercab has run this version for 24 hours (REPO-19), the section shows one line, `Towercab
+  moves these settings into the repo by itself in <n> hours, once it has run this version for a day.`;
+  the form stays editable (UI-151 adds the confirm line). `settings` in the API carries `waitHours`
+  (null once the wait is over).
+  The Settings section, like the rest of the Repos page, fits 360 px, works in light and dark and by
+  keyboard, with labels on the fields (UI-68, UI-145).
+- Verified by: `ui: the move PR shows on the repo page`, `ui: a closed move PR offers to open it again`, `ui: the page says how long until the automatic move`, `ui: settings fit a phone and work by keyboard`, `ui: screenshots light, dark and mobile`
 
 ### UI-155 · Not-ready badge on the Repos tab
 

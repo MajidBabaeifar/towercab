@@ -31,6 +31,7 @@ import type {
   Card,
   CardKind,
   ExistingTestView,
+  FocusHistory,
   GroundStop,
   IntentPage,
   Lane,
@@ -1272,32 +1273,95 @@ export function dbMark(db: Db): string {
   return `${t}:${c}:${u}:${r}:${f}:${q}`;
 }
 
-/** The overview's data (`GET /api/state`). */
-export async function overview(src: UiSources): Promise<Overview> {
-  const s = await snapshot(src);
-  const sp = spend(src.db, s.now);
-  const needs: (Card & { order: number })[] = [];
-  const working: Row[] = [];
-  const ready: Row[] = [];
+/** One thing waiting on the owner (UI-58): its card, its intent's priority and when the wait began. */
+export interface Wait {
+  card: Card;
+  /** PRI-3; missing scores count as 3. */
+  priority: number;
+  /** When the wait began; infinite for a wait written only on the intent. */
+  order: number;
+  /** The mission it belongs to, if any. */
+  mission: Mission | null;
+  intent: Intent | undefined;
+}
+
+/** UI-58: every wait on the owner, oldest first; the overview and Focus (UI-193) read the same list. */
+export function waitsOf(src: UiSources, s: Snap): Wait[] {
+  const waits: Wait[] = [];
   for (const m of s.missions) {
-    if (isReady(m)) {
-      ready.push(missionRow(src, s, m));
-    } else if (isWait(m.stage)) {
-      const since = s.entered.get(m.id) ?? m.created;
-      needs.push({ ...missionCard(src, m, s.intents.get(m.intent), since, s.now), order: since });
-    } else {
-      working.push(missionRow(src, s, m));
-    }
+    if (isReady(m) || !isWait(m.stage)) continue;
+    const since = s.entered.get(m.id) ?? m.created;
+    const intent = s.intents.get(m.intent);
+    waits.push({
+      card: missionCard(src, m, intent, since, s.now),
+      priority: priority(intent?.u ?? null, intent?.i ?? null),
+      order: since,
+      mission: m,
+      intent,
+    });
   }
   const withMission = new Set(s.missions.map((m) => m.intent));
   for (const i of s.listing?.open ?? []) {
     if (i.waiting && !withMission.has(i.id))
-      needs.push({ ...intentCard(i, src.config), order: Number.POSITIVE_INFINITY });
+      waits.push({
+        card: intentCard(i, src.config),
+        priority: priority(i.u, i.i),
+        order: Number.POSITIVE_INFINITY,
+        mission: null,
+        intent: i,
+      });
   }
+  // SHIP-31: a held release PR has no intent or mission; its priority is the default one (PRI-3).
   for (const h of heldReleases(src.db, s.now)) {
-    if (h.card) needs.push({ ...releaseCard(h, s.now), order: h.since });
+    if (h.card)
+      waits.push({
+        card: releaseCard(h, s.now),
+        priority: priority(null, null),
+        order: h.since,
+        mission: null,
+        intent: undefined,
+      });
   }
-  needs.sort((a, b) => a.order - b.order);
+  return waits.sort((a, b) => a.order - b.order);
+}
+
+/** UI-194: the first sentence of the intent's Problem (else its Why), on one line; null without one. */
+export function overviewOf(intent: Intent | undefined): string | null {
+  const text = (intent?.sections.get("Problem") ?? intent?.sections.get("Why") ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return null;
+  const first = /^.+?[.!?](?=\s|$)/.exec(text)?.[0] ?? text;
+  return first.length > 240 ? `${first.slice(0, 239).trimEnd()}…` : first;
+}
+
+/**
+ * UI-194: what the finished phases before the one the mission is in did, from their plain briefs. The
+ * phase it is in is the ask itself (the card carries its brief), so it is not repeated here.
+ */
+export function historyOf(m: Mission): FocusHistory[] {
+  const d = dataOf<MissionData>(m);
+  const phase = phaseOf(m.stage, m.from_stage);
+  const out: FocusHistory[] = [];
+  const spec = nonEmpty(d.design?.brief);
+  const plan = nonEmpty(d.plan?.brief);
+  if (phase !== "spec" && spec) out.push({ label: "Spec", text: spec });
+  if (phase === "code" && plan) out.push({ label: "Plan", text: plan });
+  return out;
+}
+
+/** The overview's data (`GET /api/state`). */
+export async function overview(src: UiSources): Promise<Overview> {
+  const s = await snapshot(src);
+  const sp = spend(src.db, s.now);
+  const working: Row[] = [];
+  const ready: Row[] = [];
+  for (const m of s.missions) {
+    if (isReady(m)) ready.push(missionRow(src, s, m));
+    else if (!isWait(m.stage)) working.push(missionRow(src, s, m));
+  }
+  const needs = waitsOf(src, s).map((w) => w.card);
+  const withMission = new Set(s.missions.map((m) => m.intent));
   const list = src.upNext().filter((u) => !withMission.has(u.intent));
   const queued = [...ready, ...list.filter((u) => u.skip?.kind !== "parked").map((u) => queuedRow(s, u))];
   const upNext: UpNextView[] = list.slice(0, 5).map((u) => {
@@ -1338,7 +1402,7 @@ export async function overview(src: UiSources): Promise<Overview> {
   const body = {
     top,
     ...(src.proposed ? { proposed: proposedSection(src) } : {}),
-    needs: needs.map(({ order: _, ...c }) => c),
+    needs,
     problems,
     working,
     queued,
