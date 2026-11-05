@@ -33,6 +33,7 @@ import {
 import { existingTests } from "./guard.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { planBody, planFile, section } from "./prtext.ts";
+import { checkParts, reposMd, withRepos } from "./repos.ts";
 import { endRisk, extraAccess, spawnRisk } from "./risk.ts";
 import { parseResult } from "./schemas.ts";
 
@@ -222,6 +223,10 @@ export const planHandler: Handler = {
         return { done: { event: "bad_result", why: "a plan the owner does by hand needs owner_steps" } };
       ownerSteps = ownerSteps.map((s) => ({ ...s, when: "after" as const }));
     }
+    // INT-43: a multi-repo plan has a part per repo in an order without cycles; else the planner is asked again.
+    const intent = await intentOf(cx, m);
+    const checked = checkParts(intent.repo, intent.repos ?? [], r.value.repos ?? []);
+    if (!checked.ok) return { done: { event: "bad_result", why: checked.why, record: true } };
     // PIP-115: only files that exist on the base branch and match the test globs need a grant.
     let access = r.value.access;
     let droppedTests: string[] = [];
@@ -245,7 +250,8 @@ export const planHandler: Handler = {
         {},
         {
           plan: {
-            md: r.value.plan,
+            md: withRepos(r.value.plan, reposMd(checked.value)),
+            parts: checked.value.parts.map((p) => p.repo),
             access,
             droppedTests,
             e2e: r.value.e2e ?? null,

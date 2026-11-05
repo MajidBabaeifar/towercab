@@ -48,6 +48,8 @@ export interface Config {
     ciPoll: number;
     ciGrace: number;
     ciWait: number;
+    /** LOOP-81: minutes a freeze may last before the owner is asked. */
+    freezeWaitMin: number;
     path: string;
     toolchain: string[];
     env: Record<string, string>;
@@ -134,6 +136,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string): Config 
       ciPoll: r.int(agent, "agent", "ci_poll", 30, 5, 3600),
       ciGrace: r.int(agent, "agent", "ci_grace", 120, 0, 3600),
       ciWait: r.int(agent, "agent", "ci_wait", 1800, 60, 86400),
+      freezeWaitMin: r.int(agent, "agent", "freeze_wait", 120, 1, 1440),
       path: r.str(agent, "agent", "path", process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"),
       toolchain: r.dirs(agent, "agent", "toolchain", ["~/.local/bin"]),
       env: r.env(agent, "agent", "env"),

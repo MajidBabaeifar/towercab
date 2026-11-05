@@ -33,7 +33,7 @@ export interface Decision {
   pick: Intent | null;
   /** Intents passed over, in order, and why (plain words). */
   skipped: { id: string; reason: string }[];
-  /** Waits to write on the intent without a mission (`unknown repo` + the repo, `bad after:` + the IDs). */
+  /** Waits to write on the intent without a mission (`unknown repo` + the repo, `bad after:` + the IDs, `bad repos:` + the names). */
   writes: { id: string; waiting: string; why: string }[];
 }
 
@@ -89,6 +89,19 @@ export function decide(listing: Listing, state: PickState): Decision {
     if (!state.repos.has(i.repo)) {
       d.writes.push({ id: i.id, waiting: "unknown repo", why: i.repo });
       d.skipped.push({ id: i.id, reason: `unknown repo ${i.repo}` });
+      continue;
+    }
+    // INT-42: every other repo of a multi-repo intent must be one Towercab knows, and ready.
+    const others = i.repos ?? [];
+    const unknown = others.filter((r) => !state.repos.has(r));
+    if (unknown.length) {
+      d.writes.push({ id: i.id, waiting: "bad repos:", why: unknown.join(", ") });
+      d.skipped.push({ id: i.id, reason: `bad repos: ${unknown.join(", ")}` });
+      continue;
+    }
+    const heldBy = others.find((r) => state.notReady?.has(r));
+    if (heldBy !== undefined) {
+      d.skipped.push({ id: i.id, reason: `repo ${heldBy} not ready: ${state.notReady!.get(heldBy)}` });
       continue;
     }
     // LOOP-70: a blocking repo starts nothing new, except the intent that sets it up (LOOP-71).
