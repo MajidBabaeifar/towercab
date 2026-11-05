@@ -606,6 +606,36 @@ A repo's normal pick stops at `2 × ahead` intents before build, and an intent t
   intents waiting on the owner.
 - Verified by: `status: the working limit and the cap are told apart`, `status: the cap names the intents waiting on the owner`
 
+### LOOP-103 · The default for how much runs at once fits the machine
+
+With no `[agent].parallel` in the config, Towercab runs as many Claude runs at once as the machine can carry, up to four.
+
+- Default `parallel = max(1, min(4, floor(cores / 3), floor(free_memory_gb / 1.5)))`. `cores` is
+  `os.availableParallelism()`, `free_memory_gb` is `os.freemem()` in GiB, both read through `Tools`-style
+  injected readers so tests pass fake counts.
+- Computed once when the loop starts (and again on `restart`), not on every pass; a value that is set in
+  `[agent].parallel` is used as it is and never replaced. LOOP-4 uses the result as its limit.
+- Examples: 8 cores, 16 GB free → 2; 16 cores, 32 GB free → 4; 2 cores or 1 GB free → 1.
+- The config table row for `agent.parallel` reads: int 1–16; default the computed value.
+- Verified by: `config: parallel defaults from cores and free memory`, `config: a set parallel is not replaced`, `config: parallel is at least 1 and at most 4 by default`
+
+### LOOP-104 · status, the overview and doctor show whether slots are the bottleneck
+
+`towercab status` and the overview show how many runs are going against the limit and how long the oldest intent has waited only for a free slot, and `doctor` suggests a higher limit when that wait is long and the machine has room.
+
+- A run that is asked for while every slot is taken (LOOP-4) stamps `data.slot_wait_since` on its mission
+  once, in the same `apply`; the stamp is cleared when the run starts or the mission leaves that step. Waiting
+  for anything else (the owner, CI, a repo's `ahead` or `workers` limits, a cooling model) does not set it.
+- `status` prints `running: <n> of <limit> runs` in the active-work section (LOOP-13) and, when any mission
+  has the stamp, `oldest wait for a free slot: <intent> <duration>`; with none, the second line is absent.
+  The overview shows the same two facts in plain words (UI view model reads the same data as `status`).
+- `doctor` prints `slots: <intent> waited <duration> for a free run; the machine has room for <k>, raise
+  [agent].parallel from <limit>` while the oldest slot wait is over 30 minutes and the LOOP-103 formula,
+  recomputed now, gives more than the current limit. The line is absent when the wait is 30 minutes or
+  less, when no mission waits for a slot, or when the formula gives no more than the limit; it disappears
+  once the limit is raised or the wait ends. It is a hint: `doctor` changes nothing and its exit code does not change.
+- Verified by: `status: runs going against the limit`, `status: the oldest wait for a free slot`, `doctor: suggests raising parallel after 30 minutes with room`, `doctor: the slot line disappears when the wait ends or the limit is raised`, `loop: only waiting for a slot stamps the wait`
+
 ### LOOP-65 · Repos live in the database
 
 The repos Towercab works on are kept in its database, so they can be added and removed while it
@@ -946,7 +976,7 @@ If a part fails after the merges, that part and every part that landed after it 
 | `intents.cutoff` | int 1–15 | 7 |
 | `intents.issue_a` | int 1–5 | 3 |
 | `agent.model`, `agent.review_model` | model name | `opus`; one step above the worker's |
-| `agent.parallel` | int 1–16 | 1 |
+| `agent.parallel` | int 1–16 | computed from cores and free memory, at most 4 (LOOP-103) |
 | `agent.build_timeout`, `review_timeout`, `check_timeout` | minutes 1–1440 | 60, 15, 10 |
 | `agent.max_budget_usd`, `agent.daily_budget_usd` | number > 0 | 10; none |
 | `agent.ci_poll`, `ci_grace`, `ci_wait` | seconds | 30, 120, 1800 |
