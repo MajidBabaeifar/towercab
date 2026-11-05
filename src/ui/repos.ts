@@ -5,6 +5,7 @@
 import { featuresRun } from "../features.ts";
 import { type Feature, featuresPath, hasOwnLines, parseFeatures } from "../intents/features.ts";
 import { proposedFor, proposedSection } from "./proposed.ts";
+import { readinessBadge, setupView } from "./readiness.ts";
 import { type RepoSpend, repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
 import { ago, dbMark, lanesOf, type Snap, snapshot, type UiSources, versionOf } from "./state.ts";
 import type { FeaturesView, FeatureView, Lane, RepoSummary, ReposPage, RepoView } from "./view.ts";
@@ -22,10 +23,15 @@ export async function repos(src: UiSources, selected: string | null, o: ReposOpt
   const s = await snapshot(src);
   const lanes = lanesOf(src, s);
   const by = spendByRepo(src.db, s.now);
+  const badge = (repo: string) => {
+    const readiness = readinessBadge(src.db, repo);
+    return readiness ? { readiness } : {};
+  };
   const chips = lanes.map((l) => ({
     repo: l.repo,
     open: l.running.length + l.upNext.length + l.waiting.length + l.parked.length,
     needs: l.running.filter((r) => r.state.key === "needs").length,
+    ...badge(l.repo),
   }));
   let error = s.listError
     ? `The intents repo can't be read, so only started intents are shown: ${s.listError}`
@@ -44,6 +50,7 @@ export async function repos(src: UiSources, selected: string | null, o: ReposOpt
         waiting: l.waiting.length,
         parked: l.parked.length,
         spend: repoSpendView(by.get(l.repo)),
+        ...badge(l.repo),
       }));
   const body = {
     chips,
@@ -63,7 +70,9 @@ async function repoView(
   spend: RepoSpend | undefined,
   o: ReposOpts,
 ): Promise<RepoView> {
+  const setup = setupView(src.db, lane.repo, s.listing, src.proposed?.().list ?? []);
   return {
+    ...(setup ? { setup } : {}),
     repo: lane.repo,
     github: lane.github,
     ahead: lane.ahead,

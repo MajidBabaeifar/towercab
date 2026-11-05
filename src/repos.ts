@@ -8,6 +8,7 @@ import { ensureClone, git, originUrl } from "./checkout.ts";
 import { type Config, clonePath, expand, isBranch, isRepoName, type RepoConfig } from "./config.ts";
 import type { Db } from "./db.ts";
 import type { GitHub } from "./handlers.ts";
+import { missing, parseStored } from "./repo/readiness.ts";
 import type { Tools } from "./tools.ts";
 
 /** Where a row came from: a config table, or `repo add` from the CLI or the page. */
@@ -410,7 +411,14 @@ export function repoLine(repo: RepoConfig, home: string): string {
 export function repoList(db: Db, home: string): string {
   const rows = db.all<RepoRow>("SELECT * FROM repos ORDER BY name");
   if (rows.length === 0) return "no repos yet: add one with towercab repo add <owner/name>";
-  return rows.map((r) => repoLine(toRepo(r), home)).join("\n");
+  return rows.map((r) => repoLine(toRepo(r), home) + readinessSuffix(db, r.name)).join("\n");
+}
+
+/** LOOP-72: ` · not ready (2 missing, blocking)` or `warning`; nothing for a ready or unchecked repo. */
+export function readinessSuffix(db: Db, name: string): string {
+  const r = parseStored(db.meta(`readiness:${name}`))?.readiness;
+  if (!r || r.ready) return "";
+  return ` · not ready (${missing(r).length} missing, ${r.blocks ? "blocking" : "warning"})`;
 }
 
 /** The GitHub owner most of the known repos share, to prefill `owner/` (UI-131); null when none. */

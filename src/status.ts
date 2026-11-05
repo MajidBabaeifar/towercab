@@ -4,6 +4,7 @@ import type { Db } from "./db.ts";
 import type { Listing } from "./intents/types.ts";
 import { exitsOf, isWait, isWorking, waitInfo } from "./machine.ts";
 import { dataOf, type Mission, unfinished } from "./mission.ts";
+import { missing, parseStored } from "./repo/readiness.ts";
 import { isBuilding } from "./slots.ts";
 import { leftOf, type OwnerStep } from "./steps.ts";
 
@@ -113,6 +114,17 @@ export function renderStatus(s: StatusInput): string {
     }
   }
   for (const w of s.waits ?? []) lines.push(`waiting: ${w}`);
+  // LOOP-72: a repo missing setup, and whether that holds its new work back.
+  for (const { key, value } of s.db.all<{ key: string; value: string }>(
+    "SELECT key, value FROM meta WHERE key LIKE 'readiness:%' ORDER BY key",
+  )) {
+    const r = parseStored(value)?.readiness;
+    if (!r || r.ready) continue;
+    const n = missing(r).length;
+    lines.push(
+      `not ready: ${key.slice(10)} · ${n} missing · ${r.blocks ? "new work waits" : "warning only"}`,
+    );
+  }
   for (const row of s.db.all<{ key: string; value: string }>(
     "SELECT key, value FROM meta WHERE key LIKE 'cooldown:%'",
   )) {

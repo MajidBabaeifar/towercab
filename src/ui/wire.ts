@@ -41,7 +41,10 @@ export function upNextOf(loop: Loop): UpNext[] {
       else if (state.blocked) skip = { kind: "unreachable", what: state.blocked };
       else if (isParked(p, config.intents.cutoff)) skip = { kind: "parked" };
       else if (blocker) skip = { kind: "after", intent: blocker };
-      else {
+      else if (state.notReady?.has(i.repo) && i.setup !== true) {
+        // UI-156: the repo is set to block until its setup is done (LOOP-70).
+        skip = { kind: "other", text: `Waiting: repo not ready, ${state.notReady.get(i.repo)}.` };
+      } else {
         const full = state.full.get(i.repo);
         if (full && !state.started?.has(i.id)) skip = { kind: "ahead", n: full.n, limit: full.ahead };
         const model = i.model ?? config.agent.model;

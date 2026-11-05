@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..69, LOOP-73..77, LOOP-92..93, LOOP-105..109 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-92..93, LOOP-105..109 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -606,6 +606,36 @@ A repo's normal pick stops at `2 × ahead` intents before build, and an intent t
   intents waiting on the owner.
 - Verified by: `status: the working limit and the cap are told apart`, `status: the cap names the intents waiting on the owner`
 
+### LOOP-103 · The default for how much runs at once fits the machine
+
+With no `[agent].parallel` in the config, Towercab runs as many Claude runs at once as the machine can carry, up to four.
+
+- Default `parallel = max(1, min(4, floor(cores / 3), floor(free_memory_gb / 1.5)))`. `cores` is
+  `os.availableParallelism()`, `free_memory_gb` is `os.freemem()` in GiB, both read through `Tools`-style
+  injected readers so tests pass fake counts.
+- Computed once when the loop starts (and again on `restart`), not on every pass; a value that is set in
+  `[agent].parallel` is used as it is and never replaced. LOOP-4 uses the result as its limit.
+- Examples: 8 cores, 16 GB free → 2; 16 cores, 32 GB free → 4; 2 cores or 1 GB free → 1.
+- The config table row for `agent.parallel` reads: int 1–16; default the computed value.
+- Verified by: `config: parallel defaults from cores and free memory`, `config: a set parallel is not replaced`, `config: parallel is at least 1 and at most 4 by default`
+
+### LOOP-104 · status, the overview and doctor show whether slots are the bottleneck
+
+`towercab status` and the overview show how many runs are going against the limit and how long the oldest intent has waited only for a free slot, and `doctor` suggests a higher limit when that wait is long and the machine has room.
+
+- A run that is asked for while every slot is taken (LOOP-4) stamps `data.slot_wait_since` on its mission
+  once, in the same `apply`; the stamp is cleared when the run starts or the mission leaves that step. Waiting
+  for anything else (the owner, CI, a repo's `ahead` or `workers` limits, a cooling model) does not set it.
+- `status` prints `running: <n> of <limit> runs` in the active-work section (LOOP-13) and, when any mission
+  has the stamp, `oldest wait for a free slot: <intent> <duration>`; with none, the second line is absent.
+  The overview shows the same two facts in plain words (UI view model reads the same data as `status`).
+- `doctor` prints `slots: <intent> waited <duration> for a free run; the machine has room for <k>, raise
+  [agent].parallel from <limit>` while the oldest slot wait is over 30 minutes and the LOOP-103 formula,
+  recomputed now, gives more than the current limit. The line is absent when the wait is 30 minutes or
+  less, when no mission waits for a slot, or when the formula gives no more than the limit; it disappears
+  once the limit is raised or the wait ends. It is a hint: `doctor` changes nothing and its exit code does not change.
+- Verified by: `status: runs going against the limit`, `status: the oldest wait for a free slot`, `doctor: suggests raising parallel after 30 minutes with room`, `doctor: the slot line disappears when the wait ends or the limit is raised`, `loop: only waiting for a slot stamps the wait`
+
 ### LOOP-65 · Repos live in the database
 
 The repos Towercab works on are kept in its database, so they can be added and removed while it
@@ -696,6 +726,41 @@ intents that waited for it start.
   knows (towercab repo list)`.
 - Verified by: `repos: set changes a repo's settings`, `cli: repo commands`
 
+### LOOP-83 · A repo can require a reviewer other than the owner
+
+`towercab repo set <name> teammate_review=on` marks a repo whose changes need a teammate's approval, and `reviewers=` lists who may give it.
+
+- Keys: `teammate_review` (`on` or `off`, default `off`) and `reviewers` (comma-separated host logins,
+  e.g. `reviewers=alice,bob`; `reviewers=` empties the list). Both live in Towercab's `repos` table
+  (LOOP-65), never in the shared repo. The build adds the columns `teammate_review INTEGER NOT NULL
+  DEFAULT 0` and `reviewers TEXT NOT NULL DEFAULT ''` and updates the **Schema** block then. `repo list`
+  shows `· teammate review: alice, bob` (or `· teammate review: CODEOWNERS`) for an `on` repo.
+- Refusals, in addition to LOOP-69's: `teammate_review must be on or off`; `reviewers: <login> is not a
+  login` (logins are `[A-Za-z0-9-]`, up to 39 characters); `reviewers: <login> is you: the owner cannot
+  review their own change` (the owner is `[github].me`, case-insensitive; the App's bot is refused the
+  same way). A listed login is stored lowercase, once.
+- `reviewers` set while `teammate_review=off` is kept and does nothing. The running loop uses the new
+  values from its next pass (LOOP-68), including for missions already in flight.
+- Verified by: `repos: set teammate_review and reviewers`, `repos: reviewers refuses the owner and the bot`, `cli: repo list shows teammate review`
+
+### LOOP-84 · doctor warns when the host requires approvals and the setting is off
+
+`towercab doctor` tells the owner when a repo's host demands approvals that Towercab is not waiting for.
+
+- For each repo with `teammate_review=off`, `doctor` reads the base branch's protection (GitHub:
+  `gh api repos/<r>/branches/<base>/protection`, `required_pull_request_reviews.required_approving_review_count`,
+  and rulesets with a pull-request rule) and, when it requires 1 or more approvals, prints `<name>:
+  GitHub requires <n> approval(s) but teammate review is off: run towercab repo set <name>
+  teammate_review=on reviewers=<logins>`. It is a warning: the exit code does not change.
+- For each repo with `teammate_review=on` and a non-empty list, when the host requires `n` approvals
+  and fewer than `n` reviewers are listed (the owner never counts), it prints `<name>: GitHub requires
+  <n> approvals but only <k> reviewers are listed: run towercab repo set <name> reviewers=…`. An empty
+  list is not warned here: code owners may supply them (PIP-142); the PR's card warns when they don't
+  (PIP-147).
+- A repo whose protection cannot be read (no permission, 404) prints nothing for it and `doctor --quick`
+  (LOOP-35) skips the check; it never fails because of it.
+- Verified by: `doctor: a required approval with teammate review off is a warning`, `doctor: an unreadable branch protection is not a warning`, `doctor: fewer listed reviewers than required approvals is a warning`
+
 ### LOOP-70 · A repo set to block starts no new intent
 
 Towercab holds back new intents only in a repo whose kind the owner confirmed, that is missing required setup and that is set to `readiness: block`; every other repo keeps starting intents and only warns.
@@ -726,12 +791,22 @@ The one kind of work allowed in a blocking repo is the intent that sets it up, a
   words of REPO-24), as other proposed intents arrive. The owner accepts it by merging (INT-4). Open
   means: an intent of that repo with `setup: true` that is on `main` and not done or dropped, or has a
   pull request still open; the standards review may open one first, and then Towercab opens none.
-- Never a second one while one is open; a closed or dropped one may be proposed again on a later
-  check that still finds a missing item. The proposal is keyed by repo (a mark in the PR body), so a
-  crash cannot open two.
-- The wait is resolvable inside Towercab: the repo's page links the proposed pull request or the
-  intent ([UI-156](ui.md)).
-- Verified by: `loop: a setup intent is picked in a blocking repo`, `loop: only one setup intent per repo at a time`, `loop: a missing item proposes one setup intent`, `loop: no second setup intent while one is open`, `loop: an existing setup intent from the standards review stops the proposal`
+- Never a second one while one is open. Open also counts a setup PR from anywhere: the proposed pull
+  requests of LOOP-92 whose intent is a setup intent for the repo (the standards review's, the owner's);
+  while that list is unknown nothing is proposed. The PR body starts with the mark
+  `<!-- towercab:setup repo=<repo> -->`, and the branch is `setup/<repo>`, so a crash cannot open two.
+- A closed proposal is a no: a proposal is tried only when the set of missing items differs from the set
+  last tried (the items, never the stored time), and at most once a day per repo. Nothing missing forgets
+  the set, so a later gap is new.
+- The readiness check (REPO-24) runs as a background job beside the pass, one repo at a time, like the
+  feature backfill of INT-39. Its fetch of the repo's clone (and of the `ci` and `infra` clones it reads,
+  each at most every 10 minutes) holds the loop's clone lock, which every mission step also holds, so two
+  fetches of one clone never overlap; the reads, the stored result and the proposal that follow only read.
+  One 60 s limit, counted from when the lock is taken, covers the fetch and every read: each child process
+  gets only the time left and is killed with it, and at the limit no further call starts. A pass never
+  waits for the job, a repo whose first check failed waits 10 minutes before the next try, and a drain
+  waits for a running job to end (LOOP-108).
+- Verified by: `loop: a setup intent is picked in a blocking repo`, `loop: only one setup intent per repo at a time`, `loop: a missing item proposes one setup intent`, `loop: no second setup intent while one is open`, `loop: an existing setup intent from the standards review stops the proposal`, `readiness: a closed proposal is not proposed again until the missing items change`, `readiness: at most one proposal per repo per day`, `readiness: a setup PR from the proposed list counts as open`, `readiness: nothing is proposed while the proposed intents are unknown`, `readiness: the check has one deadline for the fetch and the reads`, `readiness: a hung read ends at the limit and the pass does not wait for it`, `readiness: the clone is fetched under the clone lock, never beside a mission step`, `readiness: the clone lock runs calls one at a time, in order`, `readiness: a hung fetch ends at the limit in the background, then waits ten minutes`
 
 ### LOOP-72 · Readiness in the commands
 
@@ -946,7 +1021,7 @@ If a part fails after the merges, that part and every part that landed after it 
 | `intents.cutoff` | int 1–15 | 7 |
 | `intents.issue_a` | int 1–5 | 3 |
 | `agent.model`, `agent.review_model` | model name | `opus`; one step above the worker's |
-| `agent.parallel` | int 1–16 | 1 |
+| `agent.parallel` | int 1–16 | computed from cores and free memory, at most 4 (LOOP-103) |
 | `agent.build_timeout`, `review_timeout`, `check_timeout` | minutes 1–1440 | 60, 15, 10 |
 | `agent.max_budget_usd`, `agent.daily_budget_usd` | number > 0 | 10; none |
 | `agent.ci_poll`, `ci_grace`, `ci_wait` | seconds | 30, 120, 1800 |

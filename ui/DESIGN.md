@@ -35,6 +35,9 @@ you." Everything else is one click away (the intent page), never on the overview
 - **Repos**: a row of repo chips (with counts) picks one repo, kept in the URL. Its page: what people
   can do (In progress, Live, Planned) → In progress → Up next (numbered) → Waiting (with the reason) →
   Parked (folded) → Spend. With no repo chosen ("All"): one short card per repo, then "Add a repo".
+  A repo missing setup shows a "Not ready" badge (the warning colour, never "Needs you") on its chip,
+  card and Board row, and its page opens with a "Set up this repo" section listing each gap in words,
+  before everything else.
 - **Activity**: filter bar (intent, repo, kind, since; in the URL) → list grouped by day.
 
 ## State vocabulary

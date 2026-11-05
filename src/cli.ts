@@ -273,6 +273,7 @@ async function run(
         tools,
         github: w.github,
         quick: Boolean(v.quick),
+        db: w.db,
       });
       process.stdout.write(`${r.lines.join("\n")}\n`);
       return r.ok ? 0 : 1;
@@ -307,6 +308,7 @@ async function run(
           log: (l) => log.emit(l),
           sender: w.config.telegram ? new Telegram(w.config.telegram) : null,
           selfUpdate: Boolean(v.watch),
+          readiness: true,
         },
         { watch: Boolean(v.watch), intent: v.intent as string | undefined },
       );
@@ -362,7 +364,7 @@ async function run(
         next: next.split("\n")[0]!,
         waits: next
           .split("\n")
-          .filter((l) => / intents ahead \(start /.test(l))
+          .filter((l) => / intents ahead \(start /.test(l) || / repo not ready: /.test(l))
           .map((l) => l.replace(/^skipped: /, "")),
         prLink: (m) => dummy.subject(m).link,
         queued: dummy.queued(),

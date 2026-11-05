@@ -6,7 +6,7 @@ const PORT = Number(process.env.TOWERCAB_FIXTURE_PORT ?? 7398);
 
 export default defineConfig({
   testDir: ".",
-  testMatch: ["screenshots.spec.ts", "stages.spec.ts", "proposed.spec.ts"],
+  testMatch: ["screenshots.spec.ts", "stages.spec.ts", "proposed.spec.ts", "readiness.spec.ts"],
   outputDir: "screenshots/.results",
   fullyParallel: false,
   workers: 1,

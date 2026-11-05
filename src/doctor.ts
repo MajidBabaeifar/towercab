@@ -4,8 +4,10 @@
 import { existsSync, statSync } from "node:fs";
 import type { Config } from "./config.ts";
 import { appKeyPath, clonePath } from "./config.ts";
+import type { Db } from "./db.ts";
 import type { GitHub } from "./handlers.ts";
 import type { Home } from "./home.ts";
+import { parseStored } from "./repo/readiness.ts";
 import type { Tools } from "./tools.ts";
 
 export const TOOLS = ["git", "gh", "claude", "bwrap", "systemd-inhibit", "systemctl", "journalctl"];
@@ -28,6 +30,8 @@ export async function doctor(o: {
   tools: Tools;
   github: GitHub | null;
   quick: boolean;
+  /** The database, for the readiness lines (LOOP-72). */
+  db?: Db;
 }): Promise<DoctorResult> {
   const { config, home, tools } = o;
   const lines: string[] = [`config: ${config.file}`, `home: ${home.root}`, `node: ${process.version}`];
@@ -79,6 +83,22 @@ export async function doctor(o: {
     lines.push(
       `${name}: ${repo.github} · ${existsSync(clonePath(repo, home.root)) ? "cloned" : "clones on first use"}`,
     );
+  }
+  // LOOP-72: repos with a missing or unknown item, and the waived ones.
+  if (o.db) {
+    for (const name of config.repos.keys()) {
+      const r = parseStored(o.db.meta(`readiness:${name}`))?.readiness;
+      if (!r) continue;
+      const shown = r.items.filter((i) => i.state !== "present");
+      if (r.ready && shown.length === 0) continue;
+      lines.push(
+        `${name}: ${r.ready ? "ready" : `not ready, ${r.blocks ? "blocking new work" : "warning only"}`}`,
+      );
+      for (const i of shown)
+        lines.push(
+          `${name}: ${i.state === "waived" ? `waived ${i.item}: ${i.words}` : `${i.state} ${i.item}: ${i.words}`}`,
+        );
+    }
   }
   for (const [name, why] of config.badRepos) lines.push(`${name}: ${why}`);
   // LOOP-65: a table for a repo in the database is ignored; it can go.

@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..145, UI-160..164, UI-184..188 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..145, UI-155..164, UI-184..188 · **Prefix:** UI
 
 ## Purpose
 
@@ -717,6 +717,48 @@ and shows it on each board row.
   runs read.
 - Verified by: `ui: spend per repo today, 7 days and all time`
 
+### UI-146 · Sort the Board's repos
+
+A sort control above the Board orders its repo rows by what needs the owner, by latest change, by open work, by name, or as configured.
+
+- A labelled select with five options: "Needs you" (the default), "Latest change", "Most to do", "Name",
+  "Config order". Only the rows move; the columns, the cards and the "Unknown repo" row stay as UI-133
+  has them, and "Unknown repo" stays last.
+- Needs you: most intents waiting on the owner first, i.e. those with a Needs you chip (UI-56). Latest
+  change: the repo whose intents moved most recently first. Most to do: most open intents first (the
+  open count of UI-134). Name: A to Z, ignoring case. Config order: UI-133's order.
+- Verified by: `ui: board sorts repos by the chosen order`
+
+### UI-147 · The server provides the sort keys
+
+`GET /api/board` carries what each sort needs, so the page only orders rows.
+
+- Each entry of `repos` gains `waiting` (intents waiting on the owner), `changedAt` (ISO time of the
+  latest move of any of its intents, `null` when none) and `index` (its position in config order); `open`
+  already exists (UI-133). The page computes none of these from cards.
+- `changedAt` is the latest `updated_at` of the repo's missions, finished and dropped ones included.
+- Verified by: `ui: board api gives each repo its sort keys`
+
+### UI-148 · Ties keep config order
+
+Repos that tie on the chosen sort keep their config order, so rows never jump between reloads.
+
+- Every sort falls back to `index` (UI-147) on equal keys; repos without `changedAt` sort after those
+  with one under Latest change. Live updates (UI-67) reorder rows only when the keys change.
+- Verified by: `ui: board sort ties fall back to config order`
+
+### UI-149 · The sort is remembered and accessible
+
+The page remembers the chosen sort in this browser and the control works by keyboard, by screen reader and on a phone.
+
+- Stored in `localStorage` under `towercab.board.sort` (one of `needs`, `latest`, `todo`, `name`,
+  `config`); every read and write is wrapped in `try`/`catch` as UI-135 does, so without storage the sort
+  still applies until the page reloads. A missing, unknown or unreadable value means `needs`.
+- A native `<select>` with a visible `<label>`, reachable by Tab and changed with the arrow keys; the
+  rows' new order is announced with a polite live region ("Sorted by Name"). At 360 px wide the control
+  fits without sideways scrolling of the page (UI-136).
+- Verified by: `ui: board sort is remembered without storage failing`, `ui: board sort works by keyboard and at 360px`
+
 ### UI-140 · Repos tab
 
 A Repos tab, where the Queue tab was, shows one repo at a time, picked from a row of chips.
@@ -804,10 +846,11 @@ A not-ready repo's page lists each missing item in plain words, above everything
   block` to start holding work back), and one sentence saying whether new intents wait (LOOP-70) or only
   a warning is shown. Nothing missing or unknown and nothing waived → no section.
 - Waived items are listed there too, each with the owner's reason (`Waived: <reason>`).
-- It links to the repo's setup intent, or to the pull request that proposes it, when one is open
-  (LOOP-71), so the owner can act without leaving Towercab for another tool to find it.
+- It links to the repo's setup intent, and to the open pull request that proposes it (LOOP-71, from the
+  proposed pull requests of LOOP-92), so the owner can act without leaving Towercab for another tool to
+  find it.
 - The new intents of this repo that wait for it read `Waiting: repo not ready` in the Waiting list (UI-61).
-- Verified by: `ui: a not-ready repo page lists what is missing`, `ui: a repo page shows waived items with their reason`, `ui: screenshots light, dark and mobile`
+- Verified by: `ui: a not-ready repo page lists what is missing`, `ui: a repo page shows waived items with their reason`, `ui: a repo page links the open setup proposal`, `ui: readiness screenshots light, dark and mobile`, `ui: screenshots light, dark and mobile`
 
 ### UI-157 · Not-ready badge on the Board
 
@@ -989,6 +1032,19 @@ Every way out of a wait is a button on the card that does exactly what it says.
   mission (a list of `{do, label}`) and `stuck`.
 - After a click the card shows the done note of UI-105 ("Done by you · …").
 - Verified by: `ui: question options are buttons that do what they say`, `ui: no changes offers I did it myself`, `ui: a stuck wait offers only the other exits`, `ui: exits come from the API`
+
+### UI-168 · Teammate review on the card and the repo page
+
+The card shows who the change waits for and has a button to pass it on, and a repo's page and the card show a warning when the host asks for more approvals than the reviewers can give.
+
+- A mission at `approval:teammate_review` shows `Waiting for teammate review: alice, bob` (or `the code
+  owners`) in its card, the intent page and the Working view; it is not under Needs you, because the
+  owner has nothing to do. A mission whose Claude review did not approve shows the button **Pass on to teammates**
+  (`POST /api/missions/<id>/pass`, raising `passed_on`, PIP-143); the button is not shown otherwise.
+- `data.reviewWarning` (PIP-147) shows as a warning line on the card and the intent page. A repo with
+  teammate review on shows its reviewers on its page (UI-141) and a warning line when the host's
+  required approvals (LOOP-84) exceed the listed reviewers and no code owner is known.
+- Verified by: `ui: a card shows the teammate review wait`, `ui: pass on button raises passed_on`, `ui: the warning shows on the card and the repo page`
 
 ### UI-165 · The intent page shows each repo's part
 
