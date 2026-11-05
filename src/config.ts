@@ -1,6 +1,6 @@
 // Config (LOOP-1, **Config**): ~/.config/towercab/config.toml, validated with errors that name the key.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -35,6 +35,15 @@ export interface RepoConfig {
   /** LOOP-83: changes need a teammate's approval; `reviewers` are the logins that may give it. */
   teammateReview?: boolean;
   reviewers?: string[];
+  /** GL-3: the host a `gitlab:` repo is cloned from (set from `[gitlab].api_base`, never stored). */
+  host?: string;
+}
+
+/** GL-1: `[gitlab]`: where GitLab is, who the owner is there and where the bot's token is kept. */
+export interface GitLabConfig {
+  apiBase: string;
+  me: string;
+  tokenFile: string;
 }
 
 export interface Config {
@@ -72,6 +81,7 @@ export interface Config {
   /** Repo tables Towercab ignores because the repo is in its database: name → what to do (LOOP-65). */
   ignoredRepos: Map<string, string>;
   github: { appId: number; me: string; apiBase: string } | null;
+  gitlab: GitLabConfig | null;
   /** REPO-31: `[github] settings`: `check` (default) or `apply` the standard GitHub settings. */
   githubSettings: "check" | "apply";
   telegram: { botToken: string; chatId: string; apiBase: string } | null;
@@ -108,7 +118,12 @@ export function loadConfig(file: string): Config {
   } catch (e) {
     throw new ConfigError(`config: ${file}: ${(e as Error).message.split("\n")[0]}`);
   }
-  return parseConfig(raw, file, readCapacity);
+  const config = parseConfig(raw, file, readCapacity);
+  if (config.gitlab) {
+    const why = tokenFileProblem(config.gitlab.tokenFile);
+    if (why) throw new ConfigError(`config: ${file}: gitlab.token_file ${why}`);
+  }
+  return config;
 }
 
 /**
@@ -120,6 +135,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
   const intents = r.table(raw.intents ?? raw.tasks, "intents");
   const agent = r.table(raw.agent, "agent");
   const github = raw.github === undefined ? null : r.table(raw.github, "github");
+  const gitlab = raw.gitlab === undefined ? null : r.table(raw.gitlab, "gitlab");
   const telegram = raw.telegram === undefined ? null : r.table(raw.telegram, "telegram");
   const ui = r.table(raw.ui, "ui");
   const update = r.table(raw.update, "update");
@@ -160,6 +176,11 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       me: r.login(github, "github", "me"),
       apiBase: r.url(github, "github", "api_base", "https://api.github.com"),
     },
+    gitlab: gitlab && {
+      apiBase: gitlabApiBase(r, gitlab),
+      me: r.gitlabLogin(gitlab),
+      tokenFile: gitlabTokenFile(r, gitlab),
+    },
     githubSettings: settingsMode(r, github ?? {}),
     telegram: telegram && {
       botToken: r.str(telegram, "telegram", "bot_token", ""),
@@ -190,6 +211,48 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
     }
   }
   return config;
+}
+
+/** GL-1: `api_base` is an https URL ending in `/api/v4` (http only for localhost, for tests). */
+function gitlabApiBase(r: Reader, t: Record<string, unknown>): string {
+  const v = r.url(t, "gitlab", "api_base", "https://gitlab.com/api/v4").replace(/\/+$/, "");
+  let u: URL;
+  try {
+    u = new URL(v);
+  } catch {
+    throw r.err("gitlab.api_base must be an https URL ending in /api/v4");
+  }
+  const local = u.hostname === "localhost" || u.hostname === "127.0.0.1";
+  if ((u.protocol !== "https:" && !(local && u.protocol === "http:")) || !u.pathname.endsWith("/api/v4")) {
+    throw r.err("gitlab.api_base must be an https URL ending in /api/v4");
+  }
+  return v;
+}
+
+function gitlabTokenFile(r: Reader, t: Record<string, unknown>): string {
+  const v = r.str(t, "gitlab", "token_file", "");
+  if (!v) throw r.err("gitlab.token_file is required");
+  const p = expand(v);
+  if (!isAbsolute(p)) throw r.err("gitlab.token_file must be absolute or start with ~/");
+  return p;
+}
+
+/** GL-1: why the token file can't be used, or null: it exists, is a 0600 regular file and holds one line. */
+export function tokenFileProblem(file: string): string | null {
+  let st: ReturnType<typeof statSync>;
+  try {
+    st = statSync(file);
+  } catch {
+    return "does not exist";
+  }
+  if (!st.isFile()) return "is not a regular file";
+  if ((st.mode & 0o077) !== 0) return "is readable by group or others: chmod 600 it";
+  const lines = readFileSync(file, "utf8")
+    .split("\n")
+    .filter((l) => l.trim());
+  if (lines.length === 0) return "is empty";
+  if (lines.length > 1) return "must hold one line, the token";
+  return null;
 }
 
 /** REPO-31: `[github] settings` is `check` (default) or `apply`. */
@@ -292,6 +355,12 @@ class Reader {
   login(t: Record<string, unknown>, s: string, k: string): string {
     const v = this.str(t, s, k, "");
     if (!/^[A-Za-z0-9-]+$/.test(v)) throw this.err(`${s}.${k} must be a GitHub login`);
+    return v;
+  }
+
+  gitlabLogin(t: Record<string, unknown>): string {
+    const v = this.str(t, "gitlab", "me", "");
+    if (!/^[A-Za-z0-9_.-]+$/.test(v)) throw this.err("gitlab.me must be a GitLab username");
     return v;
   }
 

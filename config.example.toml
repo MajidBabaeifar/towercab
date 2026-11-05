@@ -56,6 +56,15 @@ me = "your-login"
 # GitHub API address (change it only for GitHub Enterprise).
 api_base = "https://api.github.com"
 
+# Delete this table if your code is not on GitLab (specs/gitlab.md).
+# [gitlab]
+# Your GitLab username.
+# me = "your-login"
+# A file (mode 600) holding a project or group access token with the api and write_repository scopes.
+# token_file = "~/.config/towercab/gitlab-token"
+# Change it only for a self-managed server, e.g. "https://git.example.com/api/v4".
+# api_base = "https://gitlab.com/api/v4"
+
 # Delete this table if you do not use Telegram. Both bot_token and chat_id are then required.
 [telegram]
 # Token of your Telegram bot, from BotFather.

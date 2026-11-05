@@ -16,6 +16,8 @@ import {
 import { appKeyPath, type Config, ConfigError, checkLoop, configPath, loadConfig } from "./config.ts";
 import { Db } from "./db.ts";
 import { doctor } from "./doctor.ts";
+import { GitLabForge } from "./forge/gitlab.ts";
+import { fetchHttp } from "./github/app.ts";
 import { createGitHub } from "./github/gh.ts";
 import { approve as ownerApprove } from "./github/owner.ts";
 import type { GitHub } from "./handlers.ts";
@@ -107,8 +109,15 @@ function pkgVersion(): string {
   }
 }
 
+/** A GitHub that refuses: a GitLab-only installation has none (GL-3). */
+const noGitHub: Pick<GitHub, "gh" | "gitAuth"> = {
+  gh: () => Promise.reject(new Error("repo add needs [github] (app_id, me)")),
+  gitAuth: () => Promise.reject(new Error("repo add needs [github] (app_id, me)")),
+};
+
 interface World {
   config: Config;
+  gitlab: GitLabForge | null;
   home: Home;
   db: Db;
   tools: Tools;
@@ -122,9 +131,11 @@ function world(flags: { config?: string; home?: string }, tools: Tools): World {
   const db = Db.openHome(home.db);
   loadRepos(config, db, Date.now() / 1000);
   const github = config.github ? createGitHub({ config, tools, db, keyPath: appKeyPath(config) }) : null;
+  const gitlab = config.gitlab ? new GitLabForge({ ...config.gitlab, file: config.file }, fetchHttp) : null;
   let store: Promise<IntentStore> | null = null;
   return {
     config,
+    gitlab,
     home,
     db,
     tools,
@@ -297,6 +308,7 @@ async function run(
         home: w.home,
         tools,
         github: w.github,
+        gitlab: w.gitlab,
         quick: Boolean(v.quick),
         db: w.db,
       });
@@ -543,13 +555,15 @@ async function repo(w: World, args: string[], name: string | undefined): Promise
     return `removed ${r.name} (${r.github}); its clone stays on disk`;
   }
   if (sub === "add" && arg && args.length === 2) {
-    if (!w.github) throw new Error(`repo add needs [github] in ${w.config.file} (app_id, me)`);
+    const isGl = arg.startsWith("gitlab:") || arg.startsWith("https://gitlab");
+    if (!w.github && !isGl) throw new Error(`repo add needs [github] in ${w.config.file} (app_id, me)`);
     const r = await addRepo(
       {
         db: w.db,
         config: w.config,
         tools: w.tools,
-        github: w.github,
+        github: w.github ?? noGitHub,
+        gitlab: w.gitlab,
         home: w.home.root,
         now: Date.now() / 1000,
         source: "cli",

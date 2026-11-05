@@ -8,7 +8,7 @@ import { type Clock, EnvError, systemClock } from "../handlers.ts";
 
 /** One HTTP request; `timeoutMs` bounds the whole call. */
 export interface HttpRequest {
-  method: "GET" | "POST" | "PATCH";
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
   url: string;
   headers?: Record<string, string>;
   body?: string;

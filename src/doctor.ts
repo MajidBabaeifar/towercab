@@ -6,6 +6,8 @@ import { type Capacity, readCapacity, slotHint } from "./capacity.ts";
 import type { Config } from "./config.ts";
 import { appKeyPath, clonePath } from "./config.ts";
 import type { Db } from "./db.ts";
+import { type GitLabForge, NEEDED_SCOPES } from "./forge/gitlab.ts";
+import { GlabOwner } from "./forge/gitlab-owner.ts";
 import { readRequired } from "./github/teammates.ts";
 import type { GitHub } from "./handlers.ts";
 import type { Home } from "./home.ts";
@@ -33,6 +35,8 @@ export async function doctor(o: {
   home: Home;
   tools: Tools;
   github: GitHub | null;
+  /** GL-9: Towercab's GitLab, when `[gitlab]` is configured. */
+  gitlab?: GitLabForge | null;
   quick: boolean;
   /** The database, for the readiness lines (LOOP-72). */
   db?: Db;
@@ -52,6 +56,11 @@ export async function doctor(o: {
     const p = tools.which(t);
     lines.push(`${t}: ${p ?? "missing"}`);
     if (!p && t !== "journalctl") ok = false;
+  }
+  if (config.gitlab) {
+    const p = tools.which("glab");
+    lines.push(`glab: ${p ?? "missing"}`);
+    if (!p) ok = false;
   }
   if (o.quick) return { lines, ok };
 
@@ -89,6 +98,11 @@ export async function doctor(o: {
   // REPO-32: said once, and only while Towercab is meant to apply settings.
   const perm = o.db && config.githubSettings === "apply" ? permissionLine(o.db) : null;
   if (perm) lines.push(perm);
+  if (config.gitlab && o.gitlab) {
+    const g = await gitlabLines(o.gitlab, new GlabOwner(tools, config.gitlab), o.now ?? Date.now() / 1000);
+    lines.push(...g.lines);
+    if (!g.ok) ok = false;
+  }
   for (const [name, repo] of config.repos) {
     lines.push(
       `${name}: ${repo.github} · ${existsSync(clonePath(repo, home.root)) ? "cloned" : "clones on first use"}`,
@@ -146,5 +160,50 @@ export async function doctor(o: {
   lines.push(
     `telegram: ${config.telegram ? `chat ${config.telegram.chatId}` : "not configured (no messages)"}`,
   );
+  return { lines, ok };
+}
+
+const DAY_S = 86_400;
+/** GL-9: warn this many days before the token expires. */
+export const TOKEN_WARN_DAYS = 14;
+
+/** GL-9: the token file, its scopes and expiry, and the owner's `glab` login. */
+async function gitlabLines(
+  gl: GitLabForge,
+  owner: GlabOwner,
+  now: number,
+): Promise<{ lines: string[]; ok: boolean }> {
+  const lines: string[] = [];
+  let ok = true;
+  try {
+    gl.token();
+    const bot = await gl.bot();
+    lines.push(`gitlab token: ${bot.login} ${bot.id}`);
+    const t = await gl.tokenInfo();
+    for (const scope of NEEDED_SCOPES) {
+      if (t.scopes.includes(scope)) continue;
+      lines.push(
+        `GitLab token lacks ${scope}: create a project or group access token with api and write_repository`,
+      );
+      ok = false;
+    }
+    const exp = t.expiresAt ? Date.parse(`${t.expiresAt}T23:59:59Z`) / 1000 : null;
+    if (!t.active || (exp !== null && exp < now)) {
+      lines.push(`GitLab token expired on ${t.expiresAt ?? "an earlier date"}: create a new one`);
+      ok = false;
+    } else if (exp !== null && exp - now < TOKEN_WARN_DAYS * DAY_S) {
+      const days = Math.max(0, Math.floor((exp - now) / DAY_S));
+      lines.push(`GitLab token expires in ${days} days (${t.expiresAt}): create a new one before then`);
+    }
+  } catch (e) {
+    lines.push(`gitlab token: ${(e as Error).message}`);
+    ok = false;
+  }
+  try {
+    lines.push(`glab login: ${await owner.login()}`);
+  } catch (e) {
+    lines.push((e as Error).message);
+    ok = false;
+  }
   return { lines, ok };
 }

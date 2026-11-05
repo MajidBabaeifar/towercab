@@ -7,6 +7,8 @@ import { isAbsolute, join } from "node:path";
 import { ensureClone, git, originUrl } from "./checkout.ts";
 import { type Config, clonePath, expand, isBranch, isRepoName, type RepoConfig } from "./config.ts";
 import type { Db } from "./db.ts";
+import type { GitLabForge } from "./forge/gitlab.ts";
+import { gitlabPath, isGitlab, parseGitlabProject } from "./forge/types.ts";
 import type { GitHub } from "./handlers.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
 import type { Tools } from "./tools.ts";
@@ -81,6 +83,8 @@ export function syncRepos(config: Config, db: Db): void {
   const names = new Set(rows.map((r) => r.name));
   for (const name of [...config.repos.keys()]) if (!names.has(name)) config.repos.delete(name);
   for (const r of rows) {
+    // GL-3: a GitLab repo is cloned from the host of `[gitlab].api_base`.
+    if (isGitlab(r.github) && config.gitlab) r.host = new URL(config.gitlab.apiBase).host;
     const cur = config.repos.get(r.name);
     if (!cur || JSON.stringify(cur) !== JSON.stringify(r)) config.repos.set(r.name, r);
   }
@@ -131,6 +135,8 @@ export interface AddRepoDeps {
   config: Config;
   tools: Tools;
   github: Pick<GitHub, "gh" | "gitAuth">;
+  /** GL-3: Towercab's GitLab, when `[gitlab]` is configured. */
+  gitlab?: GitLabForge | null;
   /** The home's root: the clone goes to `<home>/repos/<name>`. */
   home: string;
   now: number;
@@ -202,6 +208,10 @@ export function addFailures(db: Db): AddFailure[] {
  * refusal is an Error whose message is the reason.
  */
 export async function beginAddRepo(d: AddRepoDeps, text: string, name?: string): Promise<PendingAdd> {
+  const gitlabHost = d.config.gitlab ? new URL(d.config.gitlab.apiBase).host : null;
+  if (text.trim().startsWith("gitlab:") || (gitlabHost && text.trim().startsWith(`https://${gitlabHost}/`))) {
+    return beginAddGitlab(d, text, name);
+  }
   const typed = ownerName(text);
   if (!typed) throw new Error(`${text.trim() || "nothing"} isn't a GitHub repo: write it as owner/name`);
   const short = name?.trim() || typed.split("/")[1]!;
@@ -265,6 +275,91 @@ export async function beginAddRepo(d: AddRepoDeps, text: string, name?: string):
       }
       d.db.tx(() => {
         // Checked again: the page and the CLI are different processes.
+        const late = duplicate(d.db, repo.name, repo.github);
+        if (late) throw new Error(late);
+        insertRepo(d.db, repo, d.source, d.now);
+      });
+      syncRepos(d.config, d.db);
+      return repo;
+    } catch (e) {
+      if (d.source === "ui") {
+        d.db.setMeta(
+          failedKey(repo.name),
+          JSON.stringify({ github: repo.github, why: (e as Error).message, at: d.now }),
+        );
+      }
+      throw e;
+    } finally {
+      release();
+    }
+  })();
+  return { repo, done };
+}
+
+/**
+ * GL-3: `repo add gitlab:group/subgroup/project`: the project is looked up by its URL-encoded path as
+ * the bot, GitLab's spelling of the path and its default branch are stored, and the clone is made with
+ * the bot's token.
+ */
+async function beginAddGitlab(d: AddRepoDeps, text: string, name?: string): Promise<PendingAdd> {
+  const gl = d.gitlab;
+  if (!d.config.gitlab || !gl)
+    throw new Error(`repo add needs [gitlab] in ${d.config.file} (me, token_file)`);
+  const host = new URL(d.config.gitlab.apiBase).host;
+  const typed = parseGitlabProject(text, host);
+  if (!typed)
+    throw new Error(`${text.trim() || "nothing"} isn't a GitLab project: write it as gitlab:group/project`);
+  const short = name?.trim() || typed.split("/").pop()!;
+  if (!isRepoName(short) || short === "intents") {
+    throw new Error(`${short} can't be a repo name: use letters, digits, dots, dashes and underscores`);
+  }
+  const keys = [`name:${short}`, `github:gitlab:${typed.toLowerCase()}`];
+  if (keys.some((k) => adding.has(k))) throw new Error(`gitlab:${typed} is being added already`);
+  const dup = duplicate(d.db, short, `gitlab:${typed}`);
+  if (dup) throw new Error(dup);
+  for (const k of keys) adding.add(k);
+  const release = () => {
+    for (const k of keys) adding.delete(k);
+  };
+  let repo: RepoConfig;
+  try {
+    d.db.delMeta(failedKey(short));
+    let found: { path: string; base: string };
+    try {
+      found = await gl.project(typed);
+    } catch (e) {
+      throw new Error(`Towercab can't reach gitlab:${typed}: ${(e as Error).message}`);
+    }
+    const slug = `gitlab:${found.path}`;
+    if (!isBranch(found.base)) throw new Error(`GitLab didn't say which branch is ${slug}'s default`);
+    const again = duplicate(d.db, short, slug);
+    if (again) throw new Error(again);
+    repo = { name: short, github: slug, path: "", base: found.base, workers: 1, ahead: 3, env: {}, host };
+    const clone = clonePath(repo, d.home);
+    if (existsSync(join(clone, ".git"))) {
+      const url = await git(d.tools, clone, [
+        "config",
+        "--file",
+        join(clone, ".git", "config"),
+        "--get",
+        "remote.origin.url",
+      ]).catch(() => "");
+      if (url.trim().toLowerCase() !== originUrl(repo).toLowerCase()) {
+        throw new Error(`${clone} already holds a clone of another repo: move it away first`);
+      }
+    }
+  } catch (e) {
+    release();
+    throw e;
+  }
+  const done = (async () => {
+    try {
+      try {
+        await ensureClone(d.tools, clonePath(repo, d.home), repo, await gl.gitAuth());
+      } catch (e) {
+        throw new Error(`Towercab couldn't clone ${repo.github}: ${(e as Error).message}`);
+      }
+      d.db.tx(() => {
         const late = duplicate(d.db, repo.name, repo.github);
         if (late) throw new Error(late);
         insertRepo(d.db, repo, d.source, d.now);

@@ -1,6 +1,6 @@
 # GitLab
 
-**Status:** Draft · **Prefix:** GL
+**Status:** Live: GL-1..2, GL-9..10 · **Prefix:** GL
 
 ## Purpose
 
