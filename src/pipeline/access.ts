@@ -217,7 +217,7 @@ export function reverseRefusals(
 export interface TestAsk {
   path: string;
   why: string;
-  /** Asked for in the same round; they are put to the owner one after the other. */
+  /** Asked for in the same round; they are in the same question (PIP-136). */
   rest: { path: string; why: string }[];
 }
 
@@ -250,8 +250,44 @@ export function sortTestRequests(
   return out;
 }
 
-/** PIP-116: the question naming the test and why, with the two answers (PIP-110). */
-export function testQuestion(t: { path: string; why: string }): Question {
+/** PIP-136: the tests a `TestAsk` still asks about, the first and the rest. */
+export function askedTests(ask: TestAsk): { path: string; why: string }[] {
+  return [{ path: ask.path, why: ask.why }, ...ask.rest];
+}
+
+/**
+ * PIP-116, PIP-136: the question naming the test and why, with the two answers (PIP-110); several tests
+ * are one question listing each with its reason.
+ */
+export function testQuestion(
+  tests: { path: string; why: string } | { path: string; why: string }[],
+): Question {
+  const list = Array.isArray(tests) ? tests : [tests];
+  const t = list[0]!;
+  if (list.length > 1) {
+    return {
+      context: `The worker needs to change ${list.length} existing tests, which the approved plan did not list:\n${list
+        .map((x) => `- \`${x.path}\`: ${oneLine(x.why) || "no reason given"}`)
+        .join("\n")}`,
+      question: `May the worker change these ${list.length} tests?`,
+      options: [
+        {
+          option: "Allow all of them",
+          do: "continue",
+          // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
+          then: "The worker may edit these test files and carries on; the code PR and the intent page list them.",
+        },
+        {
+          option: "No, keep all as they are",
+          do: "continue",
+          // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
+          then: "The files stay locked for the rest of the build; the worker has to make the change fit the tests. To allow only some, reply with yes and the paths.",
+        },
+      ],
+      recommendation:
+        "Keep a test unless its reason shows the old test is out of date; a change that only passes by editing its own test proves little. Helper files that only grow are the easy ones to allow.",
+    };
+  }
   return {
     context: `The worker needs to change the existing test \`${t.path}\`, which the approved plan did not list. Its reason: ${oneLine(t.why) || "none given"}.`,
     question: `May the worker change \`${t.path}\`?`,
@@ -288,26 +324,32 @@ export function answerTest(
   note: string;
   read: Reading;
 } {
-  const t = { path: ask.path, why: ask.why };
-  const read = readReply(reply, [t.path]);
-  if (read.allowed.length) {
+  const all = askedTests(ask);
+  const read = readReply(
+    reply,
+    all.map((t) => t.path),
+  );
+  const allowed = all.filter((t) => read.allowed.includes(t.path));
+  const refused = all.filter((t) => read.refused.includes(t.path));
+  const patch: {
+    testAllowed?: { path: string; why: string }[];
+    refusedTests?: { path: string; why: string }[];
+  } = {};
+  const notes: string[] = [];
+  if (allowed.length) {
     const on = read.conditions
       ? `, on these conditions: ${oneLine(read.conditions)}. Their reply: "${oneLine(reply ?? "")}"`
       : ".";
-    return {
-      patch: { testAllowed: [...(d.testAllowed ?? []), t] },
-      note: `The owner allowed you to change ${t.path}${on}`,
-      read,
-    };
+    patch.testAllowed = [...(d.testAllowed ?? []), ...allowed];
+    notes.push(`The owner allowed you to change ${allowed.map((t) => t.path).join(", ")}${on}`);
   }
-  if (read.refused.length) {
-    return {
-      patch: { refusedTests: [...(d.refusedTests ?? []), t] },
-      note: `The owner refused changes to ${t.path}: it stays as it is. Finish without changing it; if that is impossible, return status blocked and explain.`,
-      read,
-    };
+  if (refused.length) {
+    patch.refusedTests = [...(d.refusedTests ?? []), ...refused];
+    notes.push(
+      `The owner refused changes to ${refused.map((t) => t.path).join(", ")}: ${refused.length > 1 ? "they stay" : "it stays"} as ${refused.length > 1 ? "they are" : "it is"}. Finish without changing ${refused.length > 1 ? "them" : "it"}; if that is impossible, return status blocked and explain.`,
+    );
   }
-  return { patch: {}, note: "", read };
+  return { patch, note: notes.join(" "), read };
 }
 
 /** Inputs of `grantsFor`. */

@@ -42,9 +42,15 @@ How to work:
   then return `status: "access"` with the path and why. Do the same for a network domain you can't
   reach.
 - Test files that exist on the base branch are read-only unless your access line lists them (new test
-  files are free). If you must change one that isn't listed, finish everything else first, then
-  return `status: "access"` with `access.tests` (the exact `path` and why). The owner decides; a
-  refused test stays as it is. When the owner allows a test with conditions ("Yes, but keep every
+  files are free). When a write to one is refused, don't stop: carry on with everything that doesn't
+  need it, note every such file you need and why, and when you have finished the rest return one
+  `status: "access"` with every file in `access.tests` (the exact `path` and why). The owner answers
+  once for the whole list; a refused test stays as it is.
+- Shared test helpers (existing test files with no test cases, such as `tests/helpers/**`) are
+  writable, but only new exported functions, types and constants (with their imports) go through
+  without asking. Changing or deleting what is already there, or adding mocks, hooks or other code
+  that runs on import, is held and put to the owner with the tests you ask for; if refused, the helper
+  goes back to the base content, so write what you add as new exports. When the owner allows a test with conditions ("Yes, but keep every
   transition test's meaning"), the conditions come with the allowance: follow them.
 - If you can't go on without the owner, return `status: "blocked"` with one question.
 
