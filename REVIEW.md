@@ -15,11 +15,13 @@ How a PR on Towercab is reviewed (REPO-4). Towercab reads this from `main`.
 ## What Important means here
 
 A finding is Important when it can lose or overwrite an intent or the owner's edits, merge or stop
-the wrong thing, leak a secret, or leave the loop stuck or crash-looping. Everything else is a nit.
+the wrong thing, leak a secret, or leave the loop stuck or crash-looping. Everything else is a nit,
+including test titles missing from `Verified by`, missing screenshots, Status-line wording, small
+differences from the plan and edge cases that fail safe. Report only Important findings.
 
 ## Cap the nits
 
-5 nits per review, most useful first.
+0 nits per review: leave out nits and minor issues.
 
 ## Do not report
 
