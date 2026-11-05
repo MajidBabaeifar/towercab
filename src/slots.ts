@@ -2,7 +2,7 @@
 // plan-approved intents waiting for it. Pure: the loop and the pages count with these.
 
 import type { Listing } from "./intents/types.ts";
-import { finished, phaseOf, type Stage } from "./machine.ts";
+import { finished, isWorking, phaseOf, type Stage } from "./machine.ts";
 import { dataOf, type Mission } from "./mission.ts";
 import { priorityOf } from "./priority.ts";
 
@@ -42,7 +42,8 @@ export const capOf = (workers: number): number => 3 * workers;
 /**
  * LOOP-110: a mission from build through merge that only waits holds no slot: it is at `approval:merge`,
  * blocked in the code phase, waiting on the owner's steps, or `data.idle` is set (polling CI or a review
- * with no run going, or just back from a wait for the owner).
+ * with no run going, or just back from a wait for the owner). The mark stays until the mission's next
+ * run starts, so a later stage that finishes without a run still counts as idle; only a run takes a slot.
  */
 export function isIdle(m: Mission): boolean {
   if (!isBuilding(m)) return false;
@@ -54,7 +55,7 @@ export function isIdle(m: Mission): boolean {
 /** LOOP-111: an idle mission whose next run was asked for while every slot was taken. */
 export function returningSince(m: Mission): number | null {
   const v = dataOf<{ returning?: number }>(m).returning;
-  return isBuilding(m) && typeof v === "number" ? v : null;
+  return isBuilding(m) && isWorking(m.stage) && typeof v === "number" ? v : null;
 }
 
 /** Building through merge and doing work: these fill a repo's `workers` slots (LOOP-110). */

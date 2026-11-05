@@ -432,8 +432,9 @@ export class Loop {
     // nothing new starts.
     if (this.codeMoved() === null && this.drain === null) this.startIssues(false);
     await this.pollPrs();
-    this.releaseReady();
+    // LOOP-111: missions back from a wait ask for their run before a ready build takes the free slot.
     await this.stepDue(!report.woke);
+    this.releaseReady();
     if (
       !paused(db) &&
       !this.health.blocked(this.now) &&
@@ -1173,6 +1174,10 @@ export class Loop {
     } else if ("poll" in p) {
       this.pollAt.set(m.id, this.now + p.poll);
       update(this.d.db, m.id, { busy: 0 }, this.now);
+      // A deferred mission that polls again is not asking for a slot (LOOP-111).
+      if (returningSince(cur) !== null) {
+        patchData(this.d.db, getMission(this.d.db, m.id) ?? cur, { returning: undefined }, this.now);
+      }
       // LOOP-110: polling CI or a review with no run going holds no slot.
       if ((cur.stage === "ci" || cur.stage === "review") && isBuilding(cur) && !isIdle(cur)) {
         patchData(this.d.db, getMission(this.d.db, m.id) ?? cur, { idle: true }, this.now);
@@ -1259,6 +1264,10 @@ export class Loop {
     // LOOP-111: a mission back from a wait for the owner was outside the slots; its next run takes one.
     if (out.id === m.id && out.stage !== m.stage && isIdle(m) && isWorking(out.stage) && isBuilding(out)) {
       out = patchData(this.d.db, out, { idle: true }, this.now);
+    }
+    // LOOP-111: a mission that moves on without starting its run no longer asks for a slot.
+    if (out.id === m.id && dataOf<{ returning?: number }>(out).returning !== undefined) {
+      out = patchData(this.d.db, out, { returning: undefined }, this.now);
     }
     if (out.stage !== m.stage || out.id !== m.id) {
       this.lastPrPoll.delete(m.id);

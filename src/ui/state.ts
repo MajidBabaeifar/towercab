@@ -17,7 +17,17 @@ import { section } from "../pipeline/prtext.ts";
 import { type Kind, parseStored, stageSkip } from "../repo/readiness.ts";
 import { usualOwner } from "../repos.ts";
 import { currentRisk, type RiskGate, riskWords } from "../risk.ts";
-import { aheadIn, isAhead, isBuilding, isReady } from "../slots.ts";
+import {
+  aheadIn,
+  buildingIn,
+  capOf,
+  idleIn,
+  isAhead,
+  isReady,
+  returningIn,
+  returningSince,
+  workingIn,
+} from "../slots.ts";
 import type { OwnerStep } from "../steps.ts";
 import { proposedSection } from "./proposed.ts";
 import type {
@@ -730,22 +740,33 @@ function phases(m: Mission): Phase[] {
 export function missionRow(src: UiSources, s: Snap, m: Mission): Row {
   const entered = s.entered.get(m.id) ?? m.created;
   const ready = isReady(m);
-  const holder = s.missions.find((x) => x.repo === m.repo && isBuilding(x));
+  // LOOP-112: only a mission that works, or one waiting for its next run, holds the turn.
+  const back = returningSince(m) !== null;
+  const line = returningIn(s.missions, m.repo, null);
+  const holder = workingIn(s.missions, m.repo)[0] ?? line[line.findIndex((x) => x.id === m.id) - 1];
+  const workers = src.config.repos.get(m.repo)?.workers ?? 1;
+  const inFlight = buildingIn(s.missions, m.repo).length;
   return {
     intent: m.intent,
     title: titleOf(s, m.intent),
     repo: m.repo,
     state: missionState(s, m, src),
     phases: phases(m),
-    step: ready ? "Ready to build" : shipWords(m),
+    step: ready ? "Ready to build" : back ? "Waiting for a build slot" : shipWords(m),
     inStep: duration(s.now - entered),
     cost: money(m.cost_usd),
     model: modelName(m.child_model ?? m.model),
     behind: ready
-      ? holder
-        ? `Ready to build, behind “${titleOf(s, holder.intent)}”.`
-        : "Ready to build; it starts on the next pass."
-      : null,
+      ? inFlight >= capOf(workers)
+        ? `Ready to build; the repo has ${inFlight} changes between build and merge, ${idleIn(s.missions, m.repo).length} of them waiting, the most it takes.`
+        : holder
+          ? `Ready to build, behind “${titleOf(s, holder.intent)}”.`
+          : "Ready to build; it starts on the next pass."
+      : back
+        ? holder
+          ? `Waiting for a build slot, behind “${titleOf(s, holder.intent)}”.`
+          : "Waiting for a build slot; it runs on the next pass."
+        : null,
   };
 }
 
