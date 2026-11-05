@@ -1283,19 +1283,20 @@ A refused test can be allowed later, for the running mission, without throwing t
 Two open spec pull requests never get the same requirement numbers: the design leaves out every number another open one already added.
 
 - Before the design runs, and again before it pushes a revision, Towercab lists the open spec PRs of the repo (head `towercab/*-spec` or any PR touching `specs/`), reads the requirement headings each one adds (`### <ID> ·` lines in its diff against the base branch), and puts them in the design prompt as taken, with the IDs already on the base branch.
-- The design picks the next free number after the highest taken one for the prefix; it never renumbers a row that exists on `main` or in another PR.
-- If a revision finds that an ID it added is now also added by another open spec PR that was opened earlier, it moves its own rows to free numbers and updates every reference to them in that PR.
-- If the open PRs cannot be listed, the design stops with the reason instead of guessing.
-- Verified by: `pipeline: design prompt lists IDs added by other open spec PRs`, `pipeline: second design takes the next free ID`, `pipeline: a revision renumbers an ID another open spec PR added first`, `pipeline: design stops when open spec PRs cannot be listed`
+- An ID the intent reserved is kept wherever it sits, gap or not, as long as nothing on `main` or in an open spec PR uses it (PIP-131). New IDs that are not reserved take the next free number after the highest taken one for the prefix. The design never renumbers a row that exists on `main` or in another PR.
+- If a check finds that an ID this PR added is also added by another open spec PR, one of the two yields: the one that is not yet approved; if neither or both are approved, the later one. The yielding PR moves its own rows to free numbers and, in the same revision, updates every reference it owns to them (its plan, its PR body, its intent).
+- If the open PRs cannot be listed (GitHub unreachable), spec writing goes on: the design is marked "IDs unchecked against open PRs", and Towercab lists the open PRs again before the spec PR is opened or updated. A clash found then is renumbered as above. The CI check (PIP-132) is the backstop.
+- Verified by: `pipeline: design prompt lists IDs added by other open spec PRs`, `pipeline: second design takes the next free ID`, `pipeline: a reserved ID in a gap is kept when free`, `pipeline: the unapproved spec PR yields a clashing ID`, `pipeline: the later spec PR yields when both are unapproved`, `pipeline: a renumbering updates the plan and PR body in the same revision`, `pipeline: design goes on and is re-checked when open spec PRs cannot be listed`
 
 ### PIP-131 · Reserved IDs in an intent are checked when it is picked
 
 An intent that names requirement numbers in advance gets different ones, written back to the intent, when they are taken.
 
 - At pick, Towercab reads the IDs in the intent's `## Proposed outcome` (`spec IDs: PIP-130..132`, ranges and lists) and checks them against the base branch and the requirement IDs added by open spec PRs (PIP-130).
+- A reserved range that sits in a gap is valid when nothing on `main` or in an open spec PR uses its IDs; it is never renumbered just for being in a gap.
 - A clash renumbers the whole reserved range to the next free numbers of the same prefix, keeping its length, and rewrites that line and any other mention of the old IDs in the intent through `setField`-style edits that leave other lines byte-identical; the new numbers are what the design gets as its reserved IDs.
 - The change is committed to the intents repo like any intent edit (INT rules) and noted in the mission's log; nothing else in the intent changes. No clash → the intent is untouched.
-- Verified by: `pipeline: reserved IDs that clash are renumbered at pick`, `pipeline: renumbered IDs are written back to the intent`, `pipeline: free reserved IDs leave the intent untouched`
+- Verified by: `pipeline: reserved IDs that clash are renumbered at pick`, `pipeline: renumbered IDs are written back to the intent`, `pipeline: free reserved IDs leave the intent untouched`, `pipeline: a reserved range in a gap is not renumbered`
 
 ### PIP-132 · A check fails a spec PR that reuses a requirement ID
 
