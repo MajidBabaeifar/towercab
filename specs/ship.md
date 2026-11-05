@@ -452,8 +452,8 @@ A change counts as published only once the release that contains its merge exist
   (intent 261030-0401).
 - Staging and preview environments before production (parked, intent 261030-0401-2).
 - Watching the live app after green, alerts and incidents: the AI SRE (parked, intent 261030-0401-3).
-- A release gate, rollback rehearsals and `/release` (v1's PIP-34, PIP-35; `/release` stays reserved,
-  [PIP-45](pipeline.md)).
+- A release gate and rollback rehearsals (v1's PIP-34, PIP-35). `/release` only reports what the ship
+  stage is doing ([PIP-45](pipeline.md)); it starts nothing.
 - Changes merged by hand outside Towercab: they ship by the platform, but Towercab doesn't test them.
 
 ## Decisions
