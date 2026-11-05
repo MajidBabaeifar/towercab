@@ -814,7 +814,13 @@ The code phase of a multi-repo intent builds one pull request per repo, side by 
 - A part that needs the owner (a question, access, a failed check) waits as a blocked wait of that part
   (LOOP-74); the mission shows the waits of all parts, and each exit acts on the part named. Dropping
   the intent closes every part's PR.
-- Verified by: `loop: parts build in parallel, one PR per repo`, `loop: one part waiting does not stop the others`, `loop: parts count in the workers of their repos`, `machine: the mission leaves the parts when all are at the gate`, `loop: dropping a multi-repo intent closes every part's PR`
+- One spending cap covers the whole intent: `[agent].max_budget_usd` (LOOP-1 config) is the total for
+  all parts, not per part, and the parts draw on it as they run. The mission's spend is the sum of all
+  parts' runs (MET). When the total reaches the cap, every part stops at its next step, no new run
+  starts for any part, and the mission enters the blocked wait `worker budget` for the whole intent,
+  asked like a single-repo intent's (**Waits**): the owner replies to let all parts carry on, or starts
+  over, or drops. A run already going when the cap is reached finishes its step.
+- Verified by: `loop: the cap is one total for all parts`, `loop: reaching the cap stops every part and asks once`, `loop: parts build in parallel, one PR per repo`, `loop: one part waiting does not stop the others`, `loop: parts count in the workers of their repos`, `machine: the mission leaves the parts when all are at the gate`, `loop: dropping a multi-repo intent closes every part's PR`
 
 ### LOOP-79 · All the repos freeze together
 
@@ -857,8 +863,10 @@ If a freeze lasts longer than the limit, Towercab asks the owner whether to keep
   the mission enters the blocked wait `freeze` with the repos, what each part is doing and for how long.
   Exits (LOOP-76): `continue` = keep waiting, for another `freeze_wait` and then ask again; `unfreeze`;
   `drop`.
-- `unfreeze` lifts the freeze. If no part is merged yet, the parts go back to the gate and the mission
-  takes the freeze again later (LOOP-79). If some part is already merged, the mission ends `unverified`
+- `unfreeze` lifts the freeze, and Towercab never freezes again on its own. If no part is merged yet,
+  the parts stay at the gate and the mission enters the blocked wait `freeze lifted` ("Merges are
+  unfrozen; freeze again when you are ready"). Its exits (LOOP-76): `continue` ("Freeze again"), which
+  takes the freeze as LOOP-79 says, and `drop`. Other intents' merges continue meanwhile. If some part is already merged, the mission ends `unverified`
   ("merged, not verified live", SHIP-21) and nothing is rolled back. Its card lists each part as merged
   or not merged, and offers `retry`: it takes the freeze again and lands only the parts not yet merged,
   in the plan's order, then ships and checks all parts live (LOOP-80). A retried part whose PR changed
@@ -866,7 +874,7 @@ If a freeze lasts longer than the limit, Towercab asks the owner whether to keep
 - `unfreeze` is a command like `drop` (`towercab unfreeze <id>`, LOOP-15) and a button (UI-167).
 - Time comes from the injected clock (`Clock`); the wait is listed in **Waits** with its exits and is
   covered by LOOP-76's walk.
-- Verified by: `loop: a freeze past the limit asks the owner`, `loop: continue keeps waiting another period`, `loop: unfreeze before any merge goes back to the gate`, `loop: unfreeze after a merge ends unverified and rolls nothing back`, `loop: the unverified card lists merged and unmerged parts`, `loop: retry lands only the unmerged parts`, `cli: unfreeze lifts the freeze`
+- Verified by: `loop: a freeze past the limit asks the owner`, `loop: continue keeps waiting another period`, `loop: unfreeze before any merge waits for the owner's go-ahead`, `loop: a lifted freeze is never taken again on its own`, `loop: freeze again takes the freeze`, `loop: unfreeze after a merge ends unverified and rolls nothing back`, `loop: the unverified card lists merged and unmerged parts`, `loop: retry lands only the unmerged parts`, `cli: unfreeze lifts the freeze`
 
 ### LOOP-82 · A red part rolls back itself and the parts after it
 
