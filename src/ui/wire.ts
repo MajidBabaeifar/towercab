@@ -8,6 +8,7 @@ import { type GitHub, systemClock } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { Intent } from "../intents/types.ts";
 import type { Loop } from "../loop.ts";
+import { heldBack } from "../pick.ts";
 import { isParked, pickOrder, priorityOf } from "../priority.ts";
 import { addFailures, beginAddRepo } from "../repos.ts";
 import { checkoutRoot } from "../service.ts";
@@ -46,8 +47,9 @@ export function upNextOf(loop: Loop): UpNext[] {
         // UI-156: the repo is set to block until its setup is done (LOOP-70).
         skip = { kind: "other", text: `Waiting: repo not ready, ${state.notReady.get(i.repo)}.` };
       } else {
-        const full = state.full.get(i.repo);
-        if (full && !state.started?.has(i.id)) skip = { kind: "ahead", n: full.n, limit: full.ahead };
+        const held = state.started?.has(i.id) ? null : heldBack(state.full.get(i.repo), i, listing);
+        if (held?.kind === "working") skip = { kind: "ahead", n: held.working, limit: held.limit };
+        else if (held) skip = { kind: "cap", working: held.working, owner: held.owner, cap: held.cap };
         const model = i.model ?? config.agent.model;
         const until = loop.cooldownUntil(model);
         if (!skip && until) skip = { kind: "cooling", model, until };

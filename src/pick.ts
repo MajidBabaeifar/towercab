@@ -4,6 +4,36 @@
 import type { Intent, Listing } from "./intents/types.ts";
 import { DEFAULT_SCORE, isParked, isQueued, pickOrder, priorityOf } from "./priority.ts";
 
+/** One repo's intents ahead of build: `working` take a place, `owner` wait for the owner (LOOP-100). */
+export interface Places {
+  working: number;
+  owner: number;
+  /** `[repos.<r>].ahead`. */
+  limit: number;
+  /** The intents ahead, working or waiting. */
+  ids: string[];
+}
+
+/** Why a repo holds an intent back: the places of working intents (LOOP-100) or the cap (LOOP-101). */
+export type Held =
+  | { kind: "working"; working: number; limit: number }
+  | { kind: "cap"; working: number; owner: number; cap: number };
+
+/**
+ * LOOP-100, LOOP-101: null when the intent may start. One that outranks every intent ahead (a tie does
+ * not) always may; else the cap of `2 × ahead` holds it first, then `ahead` working intents.
+ */
+export function heldBack(places: Places | undefined, intent: Intent, listing: Listing): Held | null {
+  if (!places) return null;
+  const p = priorityOf(intent);
+  const prio = new Map(listing.open.map((i) => [i.id, priorityOf(i)]));
+  if (places.ids.every((id) => p > (prio.get(id) ?? 0))) return null;
+  const { working, owner, limit } = places;
+  if (working + owner >= 2 * limit) return { kind: "cap", working, owner, cap: 2 * limit };
+  if (working >= limit) return { kind: "working", working, limit };
+  return null;
+}
+
 /** What a pick depends on besides the intents. */
 export interface PickState {
   /** `[intents].cutoff`. */
@@ -14,8 +44,8 @@ export interface PickState {
   blocked: string | null;
   /** `[repos]` names. */
   repos: Set<string>;
-  /** Repos with `ahead` intents ahead of build (LOOP-60): how many, and the limit. */
-  full: Map<string, { n: number; ahead: number }>;
+  /** Every repo's intents ahead of build (LOOP-60, LOOP-100): working, waiting on the owner, the limit. */
+  full: Map<string, Places>;
   /** Intents the owner started with `start` (LOOP-63): they go over the limit, first. */
   started?: Set<string>;
   /** Repos set to block while not ready (LOOP-70) → `<n> missing (<items>)`. */
@@ -67,6 +97,13 @@ export function badAfter(listing: Listing): { id: string; ids: string[] }[] {
   return out;
 }
 
+/** LOOP-102: which rule held the intent back, as `status` and `next` word it. */
+export function heldText(h: Held, id: string): string {
+  return h.kind === "cap"
+    ? `repo is at the cap of ${h.cap} intents before build, ${h.working} working and ${h.owner} waiting on the owner (start ${id} to go now)`
+    : `repo has ${h.working} intents working ahead (start ${id} to go now)`;
+}
+
 /** LOOP-5: the picker's list (PRI-5) in order; the first intent nothing skips is picked. */
 export function decide(listing: Listing, state: PickState): Decision {
   const d: Decision = { pick: null, skipped: [], writes: [] };
@@ -107,14 +144,14 @@ export function decide(listing: Listing, state: PickState): Decision {
       }
     }
     const model = i.model ?? state.defaultModel;
-    const full = started.has(i.id) ? undefined : state.full.get(i.repo);
+    const held = started.has(i.id) ? null : heldBack(state.full.get(i.repo), i, listing);
     const until = state.cooling.get(model);
     const reason = state.paused
       ? "paused"
       : state.blocked !== null
         ? state.blocked
-        : full
-          ? `repo has ${full.n} intents ahead (start ${i.id} to go now)`
+        : held
+          ? heldText(held, i.id)
           : until !== undefined
             ? `${model} cooling until ${until}`
             : null;

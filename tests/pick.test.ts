@@ -2,8 +2,13 @@
 // orphaned stages, and `towercab next`'s text.
 
 import { expect, test } from "vitest";
-import { badAfter, decide, nextText, orphans, type PickState } from "../src/pick.ts";
+import { badAfter, decide, heldBack, nextText, orphans, type PickState, type Places } from "../src/pick.ts";
 import { at, listing } from "./intents/fixtures.ts";
+
+/** A repo's intents ahead: `ids` work first, then wait on the owner. */
+function places(limit: number, ids: string[], working = ids.length): Places {
+  return { working, owner: ids.length - working, limit, ids };
+}
 
 function state(repos: string[], o: Partial<PickState> = {}): PickState {
   return {
@@ -30,10 +35,10 @@ test("pick: order and skips", () => {
   expect(d.pick?.id).toBe("261002-0900");
   expect(d.skipped).toEqual([]);
   // A full repo: same priority → the oldest ID.
-  const full = decide(l, state(["web", "api"], { full: new Map([["web", { n: 1, ahead: 1 }]]) }));
+  const full = decide(l, state(["web", "api"], { full: new Map([["web", places(1, ["261002-0900"])]]) }));
   expect(full.pick?.id).toBe("261000-0900");
   expect(full.skipped).toEqual([
-    { id: "261002-0900", reason: "repo has 1 intents ahead (start 261002-0900 to go now)" },
+    { id: "261002-0900", reason: "repo has 1 intents working ahead (start 261002-0900 to go now)" },
   ]);
   // An intent with an unfinished mission is never picked again.
   expect(decide(l, state(["web", "api"], { active: new Set(["261002-0900"]) })).pick?.id).toBe("261000-0900");
@@ -77,10 +82,10 @@ test("pick: parked waits", () => {
   ]);
   expect(decide(l, state(["web", "api"])).pick?.id).toBe("261005-0900");
   // The important one skipped (its repo full): the parked one still waits, listed why.
-  const d = decide(l, state(["web", "api"], { full: new Map([["api", { n: 1, ahead: 1 }]]) }));
+  const d = decide(l, state(["web", "api"], { full: new Map([["api", places(1, ["261005-0900"])]]) }));
   expect(d.pick).toBeNull();
   expect(d.skipped).toEqual([
-    { id: "261005-0900", reason: "repo has 1 intents ahead (start 261005-0900 to go now)" },
+    { id: "261005-0900", reason: "repo has 1 intents working ahead (start 261005-0900 to go now)" },
     { id: "260901-0900", reason: "parked (p5 < 7): raise u or i to run it" },
   ]);
   expect(nextText(d, l, 7)).toContain(
@@ -180,10 +185,49 @@ test("pick: start goes first and over the ahead limit", () => {
     at("intents/261002-0900-big", "u: 5\ni: 5\n", "web", "Big"),
     at("intents/261001-0900-small", "u: 3\ni: 3\n", "web", "Small"),
   ]);
-  const full = new Map([["web", { n: 3, ahead: 3 }]]);
+  const full = new Map([["web", places(3, ["261002-0900", "261002-0901", "261002-0902"])]]);
   expect(decide(l, state(["web"], { full })).pick).toBeNull();
   const d = decide(l, state(["web"], { full, started: new Set(["261001-0900"]) }));
   expect(d.pick?.id).toBe("261001-0900");
   // Other skips still apply to a started intent.
   expect(decide(l, state(["web"], { paused: true, started: new Set(["261001-0900"]) })).pick).toBeNull();
+});
+
+const I = (id: string, scores: string) => at(`intents/${id}-x`, scores, "web", id);
+
+test("pick: heldBack counts only working intents and caps at twice ahead", () => {
+  const ids = ["261001-0001", "261001-0002", "261001-0003"];
+  const l = listing([...ids.map((id) => I(id, "u: 4\ni: 4\n")), I("261002-0001", "u: 4\ni: 4\n")]);
+  const x = l.open.find((i) => i.id === "261002-0001")!;
+  // Three waiting on the owner take no place.
+  expect(heldBack(places(3, ids, 0), x, l)).toBeNull();
+  // Three working take all of them; a tie does not outrank.
+  expect(heldBack(places(3, ids), x, l)).toEqual({ kind: "working", working: 3, limit: 3 });
+  // At the cap the cap holds, even though working intents also fill the places.
+  const six = [...ids, "261001-0004", "261001-0005", "261001-0006"];
+  expect(heldBack(places(3, six, 3), x, l)).toEqual({ kind: "cap", working: 3, owner: 3, cap: 6 });
+  expect(heldBack(places(3, six, 0), x, l)).toEqual({ kind: "cap", working: 0, owner: 6, cap: 6 });
+  // Nothing ahead, or an unknown repo: nothing holds it.
+  expect(heldBack(places(3, []), x, l)).toBeNull();
+  expect(heldBack(undefined, x, l)).toBeNull();
+});
+
+test("pick: an intent that outranks every intent ahead is never held", () => {
+  const ids = ["261001-0001", "261001-0002"];
+  const l = listing([...ids.map((id) => I(id, "u: 4\ni: 4\n")), I("261002-0001", "u: 5\ni: 5\n")]);
+  const top = l.open.find((i) => i.id === "261002-0001")!;
+  // Full of working intents, and over the cap: the higher priority starts.
+  expect(heldBack(places(1, ids), top, l)).toBeNull();
+  const d = decide(l, state(["web"], { full: new Map([["web", places(1, ids)]]) }));
+  expect(d.pick?.id).toBe("261002-0001");
+  // The others are held, with their reason.
+  expect(d.skipped.map((s) => s.reason)).toEqual([]);
+  const d2 = decide(
+    l,
+    state(["web"], { active: new Set(["261002-0001"]), full: new Map([["web", places(1, ids)]]) }),
+  );
+  expect(d2.pick).toBeNull();
+  expect(d2.skipped[0]!.reason).toBe(
+    "repo is at the cap of 2 intents before build, 2 working and 0 waiting on the owner (start 261001-0001 to go now)",
+  );
 });
