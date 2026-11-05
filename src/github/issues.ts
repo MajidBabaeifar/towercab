@@ -94,12 +94,17 @@ export function autonomyFrom(labels: string[], dflt: number): number {
   return as.length ? Math.min(...as) : dflt;
 }
 
+/** INT-61: said when an earlier merged proposal left no intent file behind. */
+const LOST_NOTE = "The earlier intent for this issue was lost, so Towercab wrote it again.";
+
 /** INT-25: the comment that says the issue is queued (the writing guide's style, no internal terms). */
 export function queuedComment(o: {
   title: string;
   intentUrl: string | null;
   reasons: string;
   place: { n: number } | "parked" | null;
+  /** INT-61: the intent had been lost and is written again. */
+  lost?: boolean;
 }): string {
   const what = o.intentUrl ? `[${o.title}](${o.intentUrl})` : o.title;
   const where =
@@ -110,6 +115,7 @@ export function queuedComment(o: {
         : "It waits for the intents it depends on.";
   return [
     `This issue is queued as work for Towercab: ${what}.`,
+    o.lost ? LOST_NOTE : "",
     o.reasons,
     where,
     "To drop it, close this issue before work starts. To change its order, edit the scores in the intent file.",
@@ -127,9 +133,10 @@ export function proposedComment(prUrl: string): string {
 }
 
 /** INT-23: the intent PR's body. */
-function proposalBody(o: { issueUrl: string; reasons: string; a: number }): string {
+function proposalBody(o: { issueUrl: string; reasons: string; a: number; lost?: boolean }): string {
   return [
     `Towercab wrote this intent from ${o.issueUrl}.`,
+    o.lost ? LOST_NOTE : "",
     o.reasons,
     `It runs at autonomy a${o.a}.`,
     "Merging this pull request accepts it as work. Closing it says no, and the issue is not proposed again.",
@@ -141,6 +148,14 @@ function proposalBody(o: { issueUrl: string; reasons: string; a: number }): stri
 /** INT-23: the intents-repo branch an issue's intent is proposed from. */
 export function proposalBranch(repo: RepoConfig, n: number): string {
   return `issue/${repo.name}-${n}`;
+}
+
+/** INT-62: the comment that says a closed proposal cleared the label. */
+export function closedProposalComment(prUrl: string): string {
+  return [
+    `The [pull request](${prUrl}) that proposed this issue as work was closed without merging, so Towercab removed its label.`,
+    "Towercab will not propose this issue again.",
+  ].join("\n\n");
 }
 
 function failedComment(): string {
@@ -303,8 +318,51 @@ async function addLabel(
   );
 }
 
+/** INT-62: take labels off an issue in one call. */
+async function removeLabels(d: IssueDeps, repo: RepoConfig, n: number, labels: string[]): Promise<void> {
+  if (!labels.length) return;
+  await gh(
+    d,
+    repo.github,
+    ["issue", "edit", String(n), "-R", repo.github, ...labels.flatMap((l) => ["--remove-label", l])],
+    "gh issue edit",
+  );
+}
+
+/**
+ * INT-61: whether the owner set the issue's latest `towercab:queued` label, which is their approval.
+ * A failed read throws, so the issue is tried again and never counts as set by someone else.
+ */
+async function queuedByOwner(d: IssueDeps, repo: RepoConfig, n: number): Promise<boolean> {
+  const out = await gh(
+    d,
+    repo.github,
+    [
+      "api",
+      `repos/${repo.github}/issues/${n}/events`,
+      "--paginate",
+      "--jq",
+      '.[] | select(.event == "labeled") | {label: .label.name, actor: .actor.login}',
+    ],
+    "gh api issue events",
+  );
+  const events = out
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((l) => JSON.parse(l) as { label: string; actor: string | null })
+    .filter((e) => e.label === QUEUED_LABEL);
+  const last = events[events.length - 1];
+  return !!last?.actor && last.actor.toLowerCase() === d.github.me.toLowerCase();
+}
+
 /** INT-25: the comment, then the label; the place is the intent's spot in the pick order (PRI-4, PRI-5). */
-async function announce(d: IssueDeps, repo: RepoConfig, issue: Listed, intent: Intent): Promise<void> {
+async function announce(
+  d: IssueDeps,
+  repo: RepoConfig,
+  issue: Listed,
+  intent: Intent,
+  lost = false,
+): Promise<void> {
   const l = await d.store.list();
   const cur = l.open.find((i) => i.id === intent.id) ?? intent;
   const at = pickOrder(l, d.config.intents.cutoff).findIndex((i) => i.id === cur.id);
@@ -314,6 +372,7 @@ async function announce(d: IssueDeps, repo: RepoConfig, issue: Listed, intent: I
     intentUrl: d.store.url(cur),
     reasons: cur.sections.get("Towercab") ?? "",
     place,
+    lost,
   });
   await gh(
     d,
@@ -396,6 +455,7 @@ async function propose(
   n: NewIntent,
   issueUrl: string,
   reasons: string,
+  lost = false,
 ): Promise<string> {
   const intents = intentsRepo(poll);
   const now = new Date(d.clock.now() * 1000);
@@ -412,12 +472,14 @@ async function propose(
     title,
     CLONE,
   );
+  // INT-61: the owner's own label is their yes, so the intent goes straight to `main` with no PR.
+  if (branch === "main") return "";
   const out = await gh(
     d,
     intents,
     ["pr", "create", "-R", intents, "--base", "main", "--head", branch, "--title", title, "--body-file", "-"],
     "gh pr create",
-    proposalBody({ issueUrl, reasons, a: n.a ?? d.config.intents.issueA }),
+    proposalBody({ issueUrl, reasons, a: n.a ?? d.config.intents.issueA, lost }),
   );
   const m = /\/pull\/(\d+)/.exec(out);
   if (!m) throw new Error(`gh pr create printed no PR URL: ${oneLine(out, 200)}`);
@@ -480,17 +542,47 @@ async function pollIssue(
     return;
   }
   // INT-22: scoring failed twice before; the owner removes the label to try again.
-  if (labels.some((l) => l === FAILED_LABEL || l === QUEUED_LABEL || l === PROPOSED_LABEL)) return;
+  if (labels.includes(FAILED_LABEL)) return;
+  // INT-60: a queued or proposed label promises an intent or an open proposal.
+  const labelled = labels.includes(QUEUED_LABEL) || labels.includes(PROPOSED_LABEL);
   // INT-26: an unreadable file of an earlier intent still counts.
   if (await mentionedInUnreadable(d, listing, issue.url)) return;
   // INT-26: a PR from this issue's branch, in any state, is its one proposal; a closed one is a no.
   const intents = intentsRepo(poll);
   const prs = await prsOnBranch(d.github, intents, branch);
+  const latest = prs.reduce<(typeof prs)[number] | null>((a, p) => (!a || p.number > a.number ? p : a), null);
+  let lost = false;
   if (prs.length) {
     const open = prs.find((p) => p.state === "OPEN");
-    if (open) await proposed(d, repo, issue, prUrl(intents, open.number));
-    return;
+    if (open) {
+      // INT-61: a queued label beside an open proposal is corrected to proposed.
+      if (!labels.includes(PROPOSED_LABEL)) await proposed(d, repo, issue, prUrl(intents, open.number));
+      if (labels.includes(QUEUED_LABEL)) await removeLabels(d, repo, issue.number, [QUEUED_LABEL]);
+      return;
+    }
+    if (!labelled) return;
+    if (latest!.state === "CLOSED") {
+      // INT-62: the comment first, then the labels, so a failed comment is tried again.
+      await gh(
+        d,
+        repo.github,
+        ["issue", "comment", String(issue.number), "-R", repo.github, "--body-file", "-"],
+        "gh issue comment",
+        closedProposalComment(prUrl(intents, latest!.number)),
+      );
+      await removeLabels(
+        d,
+        repo,
+        issue.number,
+        labels.filter((l) => l === QUEUED_LABEL || l === PROPOSED_LABEL),
+      );
+      d.log(`${issue.url}: its intent PR #${latest!.number} was closed; removed the label`);
+      return;
+    }
+    // INT-61: merged, yet no intent file is left.
+    lost = true;
   }
+  const byOwner = labels.includes(QUEUED_LABEL) && (await queuedByOwner(d, repo, issue.number));
 
   const view = JSON.parse(
     await gh(
@@ -535,9 +627,18 @@ async function pollIssue(
     `- Urgency ${s.u} of 5: ${plain(s.u_why)}`,
     `- Importance ${s.i} of 5: ${plain(s.i_why)}`,
   ].join("\n");
-  const url = await propose(d, poll, listing, branch, n, issue.url, reasons);
+  if (byOwner) {
+    await propose(d, poll, listing, "main", n, issue.url, reasons, lost);
+    d.log(`${issue.url}: queued by the owner; wrote its intent to main`);
+    // A crash from here on leaves the label and no comment; the intent itself is found next poll.
+    const now = (await d.store.list()).open.find((i) => i.issue === issue.url);
+    if (now) await announce(d, repo, issue, now, lost);
+    return;
+  }
+  const url = await propose(d, poll, listing, branch, n, issue.url, reasons, lost);
   d.log(`${issue.url}: proposed as ${url}`);
   await proposed(d, repo, issue, url);
+  if (labels.includes(QUEUED_LABEL)) await removeLabels(d, repo, issue.number, [QUEUED_LABEL]);
 }
 
 /**
