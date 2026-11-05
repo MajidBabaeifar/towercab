@@ -1278,6 +1278,34 @@ A refused test can be allowed later, for the running mission, without throwing t
   intent page (PIP-118) shows the file as allowed by the owner. Towercab replies as in PIP-140.
 - Verified by: `cli: answer allow moves a refused test to allowed`, `cli: answer allow fails for a test that was not refused`, `pipeline: a reversed refusal leaves the test writable in the next guard rules`, `pipeline: a blocked mission continues after a refusal is reversed`
 
+### PIP-130 · The design treats IDs of other open spec PRs as taken
+
+Two open spec pull requests never get the same requirement numbers: the design leaves out every number another open one already added.
+
+- Before the design runs, and again before it pushes a revision, Towercab lists the open spec PRs of the repo (head `towercab/*-spec` or any PR touching `specs/`), reads the requirement headings each one adds (`### <ID> ·` lines in its diff against the base branch), and puts them in the design prompt as taken, with the IDs already on the base branch.
+- The design picks the next free number after the highest taken one for the prefix; it never renumbers a row that exists on `main` or in another PR.
+- If a revision finds that an ID it added is now also added by another open spec PR that was opened earlier, it moves its own rows to free numbers and updates every reference to them in that PR.
+- If the open PRs cannot be listed, the design stops with the reason instead of guessing.
+- Verified by: `pipeline: design prompt lists IDs added by other open spec PRs`, `pipeline: second design takes the next free ID`, `pipeline: a revision renumbers an ID another open spec PR added first`, `pipeline: design stops when open spec PRs cannot be listed`
+
+### PIP-131 · Reserved IDs in an intent are checked when it is picked
+
+An intent that names requirement numbers in advance gets different ones, written back to the intent, when they are taken.
+
+- At pick, Towercab reads the IDs in the intent's `## Proposed outcome` (`spec IDs: PIP-130..132`, ranges and lists) and checks them against the base branch and the requirement IDs added by open spec PRs (PIP-130).
+- A clash renumbers the whole reserved range to the next free numbers of the same prefix, keeping its length, and rewrites that line and any other mention of the old IDs in the intent through `setField`-style edits that leave other lines byte-identical; the new numbers are what the design gets as its reserved IDs.
+- The change is committed to the intents repo like any intent edit (INT rules) and noted in the mission's log; nothing else in the intent changes. No clash → the intent is untouched.
+- Verified by: `pipeline: reserved IDs that clash are renumbered at pick`, `pipeline: renumbered IDs are written back to the intent`, `pipeline: free reserved IDs leave the intent untouched`
+
+### PIP-132 · A check fails a spec PR that reuses a requirement ID
+
+A pull request that adds a requirement ID already taken fails a check, so duplicates are caught without reading diffs.
+
+- `towercab specs check-ids` (also run by `npm run check`) compares the requirement headings a PR adds with the base branch: an added `### <ID> ·` whose ID already exists there fails with the ID, the file and the reason. Repos that use this spec format run the same command in their CI.
+- In Towercab's own CI the check also fails when an ID the PR adds is added by another open PR, naming that PR. It needs the PR list from GitHub, so it is skipped with a note where none is available (a fork, a local run).
+- Moving or editing an existing heading is not an add; a heading that keeps `Removed: <why>` stays and its ID is still taken.
+- Verified by: `specs: an added ID that exists on main fails the check`, `specs: an added ID that another open PR adds fails the check`, `specs: editing an existing requirement passes the check`, `specs: the open PR comparison is skipped without a PR list`
+
 ### PIP-119 · An outcome only the owner can do doesn't block approval
 
 The review marks an outcome that only the owner can do as an owner step, and it no longer counts as
