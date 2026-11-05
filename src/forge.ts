@@ -125,6 +125,22 @@ export interface ReleaseInfo {
 /** A check's state on a commit, by name. */
 export type CheckState = "green" | "pending" | "red";
 
+export interface IssueRow {
+  number: number;
+  url: string;
+  state: string;
+  /** The author's login, or null. */
+  author: string | null;
+  labels: string[];
+}
+
+export interface IssueText {
+  title: string;
+  body: string;
+  author: string | null;
+  labels: string[];
+}
+
 export interface Forge {
   /** `[github].me`: the owner's login. */
   readonly me: string;
@@ -206,4 +222,12 @@ export interface Forge {
   listReleases(repo: string, limit: number): Promise<ReleaseInfo[]>;
   /** Whether `tag` contains `sha`; null when the host can't say. */
   tagContains(repo: string, sha: string, tag: string): Promise<boolean | null>;
+  /** Every issue (open and closed) up to `limit`, without their text. */
+  listIssues(repo: string, limit: number): Promise<IssueRow[]>;
+  /** One issue's text. */
+  readIssue(repo: string, n: number): Promise<IssueText>;
+  commentOnIssue(repo: string, n: number, text: string): Promise<void>;
+  /** Put a label on an issue, creating the label (with `color`) first. */
+  addLabel(repo: string, n: number, label: string, color: string): Promise<void>;
+  removeLabels(repo: string, n: number, labels: string[]): Promise<void>;
 }

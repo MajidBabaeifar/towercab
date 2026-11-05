@@ -1,7 +1,7 @@
 // `Forge` for GitHub: every `gh` call and GitHub reply the stages used to handle themselves, moved here.
 // `GitHubForge` also still offers the raw `gh`/`owner` calls (`GitHub`) to the code that has not moved yet.
 
-import type { CheckState, ReleaseInfo, SettingsSnapshot } from "../forge.ts";
+import type { CheckState, IssueRow, IssueText, ReleaseInfo, SettingsSnapshot } from "../forge.ts";
 import {
   type Bot,
   type ChecksRead,
@@ -457,6 +457,80 @@ export class GitHubForge implements Forge, GitHub {
     } catch {
       return null;
     }
+  }
+
+  async listIssues(repo: string, limit: number): Promise<IssueRow[]> {
+    const rows = JSON.parse(
+      await this.ok(repo, [
+        "issue",
+        "list",
+        "-R",
+        repo,
+        "--state",
+        "all",
+        "--limit",
+        String(limit),
+        "--json",
+        "number,url,state,author,labels",
+      ]),
+    ) as {
+      number: number;
+      url: string;
+      state: string;
+      author: { login?: string } | null;
+      labels: { name: string }[];
+    }[];
+    return rows.map((r) => ({
+      number: r.number,
+      url: r.url,
+      state: r.state,
+      author: r.author?.login ?? null,
+      labels: (r.labels ?? []).map((l) => l.name),
+    }));
+  }
+
+  async readIssue(repo: string, n: number): Promise<IssueText> {
+    const v = JSON.parse(
+      await this.ok(repo, ["issue", "view", String(n), "-R", repo, "--json", "title,body,author,labels"]),
+    ) as { title: string; body: string; author: { login?: string } | null; labels: { name: string }[] };
+    return {
+      title: v.title,
+      body: v.body,
+      author: v.author?.login ?? null,
+      labels: (v.labels ?? []).map((l) => l.name),
+    };
+  }
+
+  async commentOnIssue(repo: string, n: number, text: string): Promise<void> {
+    await this.ok(repo, ["issue", "comment", String(n), "-R", repo, "--body-file", "-"], text);
+  }
+
+  async addLabel(repo: string, n: number, label: string, color: string): Promise<void> {
+    await this.ok(repo, [
+      "label",
+      "create",
+      label,
+      "-R",
+      repo,
+      "--force",
+      "--color",
+      color,
+      "--description",
+      "Towercab",
+    ]);
+    await this.ok(repo, ["issue", "edit", String(n), "-R", repo, "--add-label", label]);
+  }
+
+  async removeLabels(repo: string, n: number, labels: string[]): Promise<void> {
+    if (!labels.length) return;
+    await this.ok(repo, [
+      "issue",
+      "edit",
+      String(n),
+      "-R",
+      repo,
+      ...labels.flatMap((l) => ["--remove-label", l]),
+    ]);
   }
 
   async ownerLogins(): Promise<string[]> {

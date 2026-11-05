@@ -24,6 +24,7 @@ import { isParked, pickOrder } from "../priority.ts";
 import { checkoutRoot } from "../service.ts";
 import { check, type Tools } from "../tools.ts";
 import { prsOnBranch } from "./branches.ts";
+import { forgeOf } from "./forge.ts";
 
 /** The label that makes another author's issue eligible (INT-20). */
 export const TRIGGER_LABEL = "towercab";
@@ -293,15 +294,6 @@ async function gh(
   return check(await d.github.gh(github, args, input === undefined ? {} : { input }), what);
 }
 
-async function ensureLabel(d: IssueDeps, repo: RepoConfig, label: string, color: string): Promise<void> {
-  await gh(
-    d,
-    repo.github,
-    ["label", "create", label, "-R", repo.github, "--force", "--color", color, "--description", "Towercab"],
-    "gh label create",
-  );
-}
-
 async function addLabel(
   d: IssueDeps,
   repo: RepoConfig,
@@ -309,24 +301,12 @@ async function addLabel(
   label: string,
   color: string,
 ): Promise<void> {
-  await ensureLabel(d, repo, label, color);
-  await gh(
-    d,
-    repo.github,
-    ["issue", "edit", String(n), "-R", repo.github, "--add-label", label],
-    "gh issue edit",
-  );
+  await forgeOf(d.github).addLabel(repo.github, n, label, color);
 }
 
 /** INT-62: take labels off an issue in one call. */
 async function removeLabels(d: IssueDeps, repo: RepoConfig, n: number, labels: string[]): Promise<void> {
-  if (!labels.length) return;
-  await gh(
-    d,
-    repo.github,
-    ["issue", "edit", String(n), "-R", repo.github, ...labels.flatMap((l) => ["--remove-label", l])],
-    "gh issue edit",
-  );
+  await forgeOf(d.github).removeLabels(repo.github, n, labels);
 }
 
 /**
@@ -374,13 +354,7 @@ async function announce(
     place,
     lost,
   });
-  await gh(
-    d,
-    repo.github,
-    ["issue", "comment", String(issue.number), "-R", repo.github, "--body-file", "-"],
-    "gh issue comment",
-    body,
-  );
+  await forgeOf(d.github).commentOnIssue(repo.github, issue.number, body);
   await addLabel(d, repo, issue.number, QUEUED_LABEL, "0e8a16");
 }
 
@@ -488,13 +462,7 @@ async function propose(
 
 /** INT-25: tell the issue its intent PR waits for the owner, then label it. */
 async function proposed(d: IssueDeps, repo: RepoConfig, issue: Listed, url: string): Promise<void> {
-  await gh(
-    d,
-    repo.github,
-    ["issue", "comment", String(issue.number), "-R", repo.github, "--body-file", "-"],
-    "gh issue comment",
-    proposedComment(url),
-  );
+  await forgeOf(d.github).commentOnIssue(repo.github, issue.number, proposedComment(url));
   await addLabel(d, repo, issue.number, PROPOSED_LABEL, "fbca04");
 }
 
@@ -563,11 +531,9 @@ async function pollIssue(
     if (!labelled) return;
     if (latest!.state === "CLOSED") {
       // INT-62: the comment first, then the labels, so a failed comment is tried again.
-      await gh(
-        d,
+      await forgeOf(d.github).commentOnIssue(
         repo.github,
-        ["issue", "comment", String(issue.number), "-R", repo.github, "--body-file", "-"],
-        "gh issue comment",
+        issue.number,
         closedProposalComment(prUrl(intents, latest!.number)),
       );
       await removeLabels(
@@ -584,14 +550,13 @@ async function pollIssue(
   }
   const byOwner = labels.includes(QUEUED_LABEL) && (await queuedByOwner(d, repo, issue.number));
 
-  const view = JSON.parse(
-    await gh(
-      d,
-      repo.github,
-      ["issue", "view", String(issue.number), "-R", repo.github, "--json", "title,body,author,labels"],
-      "gh issue view",
-    ),
-  ) as Viewed;
+  const text = await forgeOf(d.github).readIssue(repo.github, issue.number);
+  const view: Viewed = {
+    title: text.title,
+    body: text.body,
+    author: text.author === null ? null : { login: text.author },
+    labels: text.labels.map((name) => ({ name })),
+  };
   // The labels may have changed since the list.
   if (!isEligible(view, d.github.me)) return;
 
@@ -602,13 +567,7 @@ async function pollIssue(
   }
   if (scored.kind === "bad") {
     d.log(`${issue.url}: scoring failed twice: ${scored.why}`);
-    await gh(
-      d,
-      repo.github,
-      ["issue", "comment", String(issue.number), "-R", repo.github, "--body-file", "-"],
-      "gh issue comment",
-      failedComment(),
-    );
+    await forgeOf(d.github).commentOnIssue(repo.github, issue.number, failedComment());
     await addLabel(d, repo, issue.number, FAILED_LABEL, "d93f0b");
     return;
   }
@@ -650,25 +609,13 @@ export async function pollIssues(d: IssueDeps): Promise<void> {
   const poll: Poll = { intents: d.store.github(), taken: null };
   for (const repo of d.config.repos.values()) {
     try {
-      const listed = JSON.parse(
-        await gh(
-          d,
-          repo.github,
-          [
-            "issue",
-            "list",
-            "-R",
-            repo.github,
-            "--state",
-            "all",
-            "--limit",
-            String(LIMIT),
-            "--json",
-            "number,url,state,author,labels",
-          ],
-          "gh issue list",
-        ),
-      ) as Listed[];
+      const listed: Listed[] = (await forgeOf(d.github).listIssues(repo.github, LIMIT)).map((r) => ({
+        number: r.number,
+        url: r.url,
+        state: r.state,
+        author: r.author === null ? null : { login: r.author },
+        labels: r.labels.map((name) => ({ name })),
+      }));
       const listing = await d.store.list();
       const known = new Map<string, Intent>();
       for (const i of [...listing.open, ...listing.done]) if (i.issue) known.set(i.issue, i);
