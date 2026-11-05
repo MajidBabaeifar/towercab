@@ -349,6 +349,7 @@ async function run(
           sender: w.config.telegram ? new Telegram(w.config.telegram) : null,
           selfUpdate: Boolean(v.watch),
           readiness: true,
+          limits: true,
         },
         { watch: Boolean(v.watch), intent: v.intent as string | undefined },
       );

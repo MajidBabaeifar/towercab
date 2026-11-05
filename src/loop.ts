@@ -147,6 +147,8 @@ export interface LoopDeps {
   selfUpdate?: boolean;
   /** REPO-24: check each repo's setup when it is fetched, and propose setup intents (LOOP-71); off in tests. */
   readiness?: boolean;
+  /** REPO-15 to REPO-19: read each repo's `TOWERCAB.md` limits in the background; off in tests. */
+  limits?: boolean;
   /** The limit of one readiness check (default 60 s); tests shorten it. */
   readinessLimitMs?: number;
   /** The checkout this loop's code runs from (LOOP-105); default the one this file is in. */
@@ -304,7 +306,7 @@ export class Loop {
    * holds the clone lock.
    */
   private pollSettings(): void {
-    if (this.limitsJob || this.drain !== null || this.codeMoved() !== null) return;
+    if (!this.d.limits || this.limitsJob || this.drain !== null || this.codeMoved() !== null) return;
     const forced = this.d.db.meta("repo-poll") !== null;
     if (!forced && this.now - this.lastSettingsPoll < INTENTS_POLL_S) return;
     this.lastSettingsPoll = this.now;

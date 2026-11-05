@@ -12,6 +12,7 @@ const fm = (body: string) => `---\n${body}\n---\n`;
 test("loop: a change made in the repo applies on a pass", async () => {
   const p = new Pipe(TARGET, {});
   await p.start({ repos: { web: { github: "owner/web", workers: 2 } } });
+  p.loop.d.limits = true;
   const web = () => p.loop.d.config.repos.get("web")!;
   await p.loop.pass();
   await p.loop.limitsIdle();
