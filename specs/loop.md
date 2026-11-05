@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-92..93, LOOP-105..109 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-92..93, LOOP-100..102, LOOP-105..109 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -554,7 +554,8 @@ Not used: kept free; `start` is LOOP-63.
 
 `status` and `next` say when an intent waits for a place or for the build slot.
 
-- A skipped intent reads `waiting: repo has <n> intents ahead (start <id> to go now)`; a ready mission
+- A skipped intent reads as LOOP-102 says (`waiting: repo has <w> intents working ahead (start <id> to go now)`
+  or the cap text); a ready mission
   reads `ready to build, behind <id>`.
 - Verified by: `status: ready to build and ahead limit are shown`
 
@@ -586,7 +587,7 @@ A repo's normal pick stops at `2 × ahead` intents before build, and an intent t
   and over the cap. Nothing running or waiting is stopped, paused or dropped for it, so the repo can
   hold more than the cap.
 - An intent that does not outrank the repo is skipped when the repo has `ahead` working intents
-  (LOOP-100) or is at the cap (`waiting: repo has <n> intents ahead, at the cap of <cap>`). Other
+  (LOOP-100) or is at the cap (the text of LOOP-102). Other
   skips of LOOP-5 still apply to every intent, whatever its priority.
 - `[repos.<r>].workers` (LOOP-61) is unchanged: a ready mission is not ahead and does not count toward
   the cap.

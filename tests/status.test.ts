@@ -56,7 +56,7 @@ test("status: next explains skips", () => {
     paused: false,
     blocked: null,
     repos: new Set(["web"]),
-    full: new Map([["web", { n: 1, ahead: 1 }]]),
+    full: new Map([["web", { working: 1, owner: 0, limit: 1, ids: ["261026-1000"] }]]),
     cooling: new Map(),
     active: new Set(),
     defaultModel: "opus",
@@ -91,13 +91,48 @@ test("status: ready to build and ahead limit are shown", () => {
     now,
     problems: [],
     next: "next: nothing can run now",
-    waits: ["261026-1200 web: Docs · repo has 3 intents ahead (start 261026-1200 to go now)"],
+    waits: ["261026-1200 web: Docs · repo has 3 intents working ahead (start 261026-1200 to go now)"],
     prLink: () => null,
     queued: new Set([b.id]),
   });
   expect(text).toContain("queued:\n- 261026-1100 web: Rate limits · ready to build, behind 261026-1000");
   expect(text).toContain(
-    "waiting: 261026-1200 web: Docs · repo has 3 intents ahead (start 261026-1200 to go now)",
+    "waiting: 261026-1200 web: Docs · repo has 3 intents working ahead (start 261026-1200 to go now)",
   );
   expect(text).not.toContain("waiting on you");
+});
+
+const held = (working: number, owner: number, limit: number) => {
+  const ids = Array.from({ length: working + owner }, (_, n) => `26102${n}-1000`);
+  const l = listing([
+    ...ids.map((id) => at(`intents/${id}-a`, "", "web", id)),
+    at("intents/261026-2000-new", "", "web", "New"),
+  ]);
+  const d = decide(l, {
+    cutoff: 7,
+    paused: false,
+    blocked: null,
+    repos: new Set(["web"]),
+    full: new Map([["web", { working, owner, limit, ids }]]),
+    cooling: new Map(),
+    active: new Set(ids),
+    defaultModel: "opus",
+  });
+  return nextText(d, l, 7);
+};
+
+test("status: the working limit and the cap are told apart", () => {
+  expect(held(3, 0, 3)).toContain(
+    "skipped: 261026-2000 web: New · repo has 3 intents working ahead (start 261026-2000 to go now)",
+  );
+  expect(held(3, 3, 3)).toContain("repo is at the cap of 6 intents before build");
+  expect(held(3, 3, 3)).not.toContain("working ahead");
+  // Both rules hold at the cap: the cap text is shown.
+  expect(held(6, 0, 3)).toContain("repo is at the cap of 6");
+});
+
+test("status: the cap names the intents waiting on the owner", () => {
+  expect(held(1, 5, 3)).toContain(
+    "skipped: 261026-2000 web: New · repo is at the cap of 6 intents before build, 1 working and 5 waiting on the owner (start 261026-2000 to go now)",
+  );
 });

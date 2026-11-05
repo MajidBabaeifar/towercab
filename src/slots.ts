@@ -2,7 +2,7 @@
 // plan-approved intents waiting for it. Pure: the loop and the pages count with these.
 
 import type { Listing } from "./intents/types.ts";
-import { finished, phaseOf, type Stage } from "./machine.ts";
+import { finished, phaseOf, type Stage, WAIT_STAGES } from "./machine.ts";
 import { dataOf, type Mission } from "./mission.ts";
 import { priorityOf } from "./priority.ts";
 
@@ -30,6 +30,21 @@ export function isBuilding(m: Mission): boolean {
 
 export function aheadIn(ms: Mission[], repo: string): Mission[] {
   return ms.filter((m) => m.repo === repo && isAhead(m));
+}
+
+/** An intent ahead that waits for the owner: an approval or a block (LOOP-100). */
+export function isWaitingOnOwner(m: Mission): boolean {
+  return isAhead(m) && (WAIT_STAGES as readonly string[]).includes(m.stage);
+}
+
+/** Intents ahead that are being designed or planned: they take a place (LOOP-100). */
+export function workingIn(ms: Mission[], repo: string): Mission[] {
+  return aheadIn(ms, repo).filter((m) => !isWaitingOnOwner(m));
+}
+
+/** Intents ahead that wait for the owner: they take no place, only count toward the cap (LOOP-100). */
+export function ownerIn(ms: Mission[], repo: string): Mission[] {
+  return aheadIn(ms, repo).filter(isWaitingOnOwner);
 }
 
 export function buildingIn(ms: Mission[], repo: string): Mission[] {

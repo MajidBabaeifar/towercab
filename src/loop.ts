@@ -67,7 +67,7 @@ import {
 } from "./mission.ts";
 import { Mutex } from "./mutex.ts";
 import { sendDue } from "./outbox.ts";
-import { decide, orphans, type PickState } from "./pick.ts";
+import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import type { PipeData } from "./pipeline/common.ts";
 import { writeTicks } from "./pipeline/steps.ts";
@@ -76,7 +76,7 @@ import { blockingRepos, startReadiness as startReadinessCheck } from "./readines
 import { missingText } from "./repo/readiness.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
-import { aheadIn, bestReady, buildingIn, isReady } from "./slots.ts";
+import { aheadIn, bestReady, buildingIn, isReady, ownerIn, workingIn } from "./slots.ts";
 import { leftOf, type OwnerStep, parseDelivery, unticked } from "./steps.ts";
 import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
 import { budgetReached } from "./ui/state.ts";
@@ -1334,12 +1334,16 @@ export class Loop {
 
   pickState(): PickState {
     const { db, config } = this.d;
-    // Only repos with `ahead` intents ahead of build are full (LOOP-60).
+    // Intents ahead of build per repo: working ones take a place, those waiting on the owner do not (LOOP-100).
     const ms = unfinished(db);
-    const full = new Map<string, { n: number; ahead: number }>();
+    const full = new Map<string, Places>();
     for (const [name, repo] of config.repos) {
-      const n = aheadIn(ms, name).length;
-      if (n >= repo.ahead) full.set(name, { n, ahead: repo.ahead });
+      full.set(name, {
+        working: workingIn(ms, name).length,
+        owner: ownerIn(ms, name).length,
+        limit: repo.ahead,
+        ids: aheadIn(ms, name).map((m) => m.intent),
+      });
     }
     const started = new Set(
       db.all<{ key: string }>("SELECT key FROM meta WHERE key LIKE 'start:%'").map((r) => r.key.slice(6)),
