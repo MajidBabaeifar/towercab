@@ -636,6 +636,54 @@ With no `[agent].parallel` in the config, Towercab runs as many Claude runs at o
   once the limit is raised or the wait ends. It is a hint: `doctor` changes nothing and its exit code does not change.
 - Verified by: `status: runs going against the limit`, `status: the oldest wait for a free slot`, `doctor: suggests raising parallel after 30 minutes with room`, `doctor: the slot line disappears when the wait ends or the limit is raised`, `loop: only waiting for a slot stamps the wait`
 
+### LOOP-110 · Waiting does not hold a build slot
+
+A mission that only waits for GitHub checks, for a person's review or for the owner no longer holds one of its repo's build slots, so the next ready intent can start building.
+
+- Refines LOOP-61: of the missions from `build` through `merge`, only those *working* count toward
+  `[repos.<r>].workers`. A mission is *waiting outside slots* when it has no Claude run or check going or
+  asked for, and is at `ci` waiting for GitHub checks, at `review` waiting for a person's review, at
+  `approval:merge`, or `blocked` in the code phase on a question, a missing permission, steps or any other
+  wait for the owner. Every other mission from `build` through `merge` (including `ci` while a repair
+  runs) is working.
+- Cap: a repo has at most `3 × workers` missions between `build` and `merge`, working and waiting
+  together (6 with the default). At the cap a ready mission does not start `build` even with a free slot.
+  The cap is not a new setting. `start` (LOOP-63) does not skip it.
+- A slot is free when fewer than `workers` missions are working. The free slot goes to the ready mission
+  with the highest priority, as in LOOP-61, unless a returning mission wants it (LOOP-111).
+- `[agent].parallel` (LOOP-4) is unchanged and still caps every Claude run and check.
+- Verified by: `loop: missions waiting on CI do not hold build slots`, `loop: missions waiting on the owner do not hold build slots`, `loop: at the cap of three times workers nothing new builds`, `loop: a repair at ci holds a slot`
+
+### LOOP-111 · A returning mission goes before a new build
+
+When a waiting mission moves on and every slot is taken, it waits for the next free slot before its next Claude run, ahead of any new build.
+
+- A mission *returns* when what it waited for ends (checks finish, a review or comment arrives, the owner
+  answers or replies) and its next step needs a Claude run or check. If fewer than `workers` missions are
+  working, it takes a slot at once and counts as working. Otherwise it keeps its stage and waits, without
+  a message to the owner; the run is not started and not recorded as launched (LOOP-4).
+- A free slot goes first to returning missions, the highest priority first (ties: the one that returned
+  first), then to ready missions (LOOP-110). A ready mission never takes a slot while a mission is
+  returning. A running build or repair is never stopped for a returning mission; the returning mission
+  waits, so working missions never exceed `workers`.
+- A returning mission needs no new place under the cap: it is already counted.
+- Verified by: `loop: a returning mission takes the next free slot before a new build`, `loop: a returning mission with every slot taken waits without starting`, `loop: returning missions take slots by priority`
+
+### LOOP-112 · status shows slots, waiting missions and why an intent is held
+
+`towercab status` and `next` show how many build slots are in use, how many missions wait outside slots, and the reason an intent is held.
+
+- `status` prints `build slots: <repo> <working> of <workers> used, <waiting> waiting outside slots (cap
+  <3 × workers>)` per repo that has a mission from `build` through `merge`, in the active-work section
+  (LOOP-13).
+- A ready mission (LOOP-64) reads `ready to build, behind <id>` when a slot or a returning mission holds
+  it, and `waiting: repo is at the cap of <cap> missions between build and merge, <w> working and <o>
+  waiting` at the cap (LOOP-110). When both hold, the cap text is shown.
+- A returning mission reads `waiting for a build slot, behind <id>` while it waits (LOOP-111), where
+  `<id>` is the mission holding the slot's turn or the returning mission ahead of it.
+- The overview ([UI](ui.md) view model) reads the same data as `status`.
+- Verified by: `status: build slots used and missions waiting outside slots`, `status: a ready mission at the cap names the cap`, `status: a returning mission names the one ahead`
+
 ### LOOP-65 · Repos live in the database
 
 The repos Towercab works on are kept in its database, so they can be added and removed while it
