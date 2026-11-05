@@ -39,6 +39,8 @@ import {
   suggestKind,
   wordsFor,
 } from "./repo/readiness.ts";
+import { ciRelease } from "./settings/script.ts";
+import { DAY_S as SETTINGS_DAY_S, storedSettings } from "./settings/store.ts";
 import { check, type RunOpts, type Tools } from "./tools.ts";
 
 export interface ReadinessDeps {
@@ -133,10 +135,14 @@ async function settingsCheck(d: ReadinessDeps, repo: RepoConfig): Promise<Check>
   if (!ci) return unknown("add the ci repo to Towercab");
   const dir = clonePath(ci, d.home.root);
   if (!existsSync(join(dir, ".git"))) return unknown("the ci repo has no clone yet");
-  const tag = (await repoGit(d.tools, dir, ["tag", "--list", "v*", "--sort=-v:refname"]))
-    .split("\n")
-    .map((t) => t.trim())
-    .find(Boolean);
+  // REPO-30: the daily check's stored answer is the same answer (the two cannot disagree).
+  const stored = storedSettings(d.db, repo.name);
+  if (stored && stored.state !== "unknown" && d.clock.now() - stored.at < SETTINGS_DAY_S) {
+    return stored.state === "ok"
+      ? { state: "present" }
+      : { state: "missing", words: stored.gaps[0] ?? wordsFor("settings") };
+  }
+  const tag = await ciRelease(d.tools, dir, ci.base);
   if (!tag) return unknown("the ci repo has no v* release yet");
   d.log(`settings check of ${repo.name}: bin/apply-settings from ci ${tag}`);
   const tree = join(d.home.root, "tmp", `ci-settings-${tag.replace(/[^\w.-]/g, "_")}`);

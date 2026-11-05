@@ -62,6 +62,8 @@ export interface FakeIssue {
   title: string;
   body: string;
   comments: string[];
+  /** Who set each label, for `gh api …/issues/<n>/events` (default `someone`; `issue edit` sets the App). */
+  labeledBy?: Record<string, string>;
 }
 
 /** What a fake Claude run does. */
@@ -660,7 +662,7 @@ export class Pipe {
     return i >= 0 ? args[i + 1]! : "owner/web";
   }
 
-  private bareOf(github: string): string {
+  bareOf(github: string): string {
     return this.bares[github.split("/")[1]!]!;
   }
 
@@ -762,7 +764,14 @@ export class Pipe {
       return json({ title: it.title, body: it.body, author: { login: it.author }, labels: labels(it) });
     }
     if (b === "comment") it.comments.push(opts.input ?? "");
-    if (b === "edit" && args.includes("--add-label")) it.labels.push(flag("--add-label"));
+    if (b === "edit" && args.includes("--add-label")) {
+      const label = flag("--add-label");
+      if (!it.labels.includes(label)) it.labels.push(label);
+      it.labeledBy = { ...it.labeledBy, [label]: "towercab[bot]" };
+    }
+    args.forEach((x, k) => {
+      if (b === "edit" && x === "--remove-label") it.labels = it.labels.filter((l) => l !== args[k + 1]);
+    });
     return okResult();
   }
 
@@ -899,6 +908,17 @@ export class Pipe {
       }
       if (a === "api") {
         const path = args.find((x) => x.startsWith("repos/")) ?? "";
+        const ev = /^repos\/([^/]+\/[^/]+)\/issues\/(\d+)\/events$/.exec(path);
+        if (ev) {
+          const it = this.issues.find((x) => x.repo === ev[1] && x.number === Number(ev[2]));
+          if (!it) return failResult(`issue ${ev[2]} not found`);
+          // The real call filters with `--jq`: one `{label, actor}` line per `labeled` event.
+          return okResult(
+            it.labels
+              .map((label) => JSON.stringify({ label, actor: it.labeledBy?.[label] ?? "someone" }))
+              .join("\n"),
+          );
+        }
         const dep = /^repos\/([^/]+\/[^/?]+)\/deployments(?:\/(\d+)\/statuses)?(?:\?(.*))?$/.exec(path);
         if (dep) {
           const [, r, id, query] = dep;
