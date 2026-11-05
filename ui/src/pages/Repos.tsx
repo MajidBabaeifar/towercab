@@ -118,9 +118,17 @@ function RefreshButton({ repo }: { repo: string }) {
 }
 
 /** REPO-32: the one step for a missing permission, with its button when the page can act. */
-function SettingsStep({ text, canGrant }: { text: string; canGrant: boolean }) {
+function SettingsStep({
+  text,
+  canGrant,
+  action = "granted",
+}: {
+  text: string;
+  canGrant: boolean;
+  action?: string;
+}) {
   const [result, setResult] = useState<ActionReply | null>(null);
-  const grant = async () => setResult(await act("granted"));
+  const grant = async () => setResult(await act(action));
   return (
     <>
       <p class="repo-step">
@@ -371,6 +379,15 @@ function All({ data }: { data: Data }) {
       {data.settingsStep ? (
         <section class="card repo-settings" aria-label="GitHub settings">
           <SettingsStep text={data.settingsStep.text} canGrant={data.settingsStep.canGrant} />
+        </section>
+      ) : null}
+      {data.scanningStep ? (
+        <section class="card repo-settings" aria-label="Code scanning alerts">
+          <SettingsStep
+            text={data.scanningStep.text}
+            canGrant={data.scanningStep.canGrant}
+            action="scanningGranted"
+          />
         </section>
       ) : null}
       {data.all.map((s) => (

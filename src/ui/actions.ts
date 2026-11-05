@@ -11,6 +11,7 @@ import { classifyFiles, type ProposedPr } from "../github/proposed.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { IntentStore } from "../intents/types.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
+import { grantScanning } from "../pipeline/alerts.ts";
 import { ownerMergeRefusal } from "../pipeline/teammate.ts";
 import { grantPermission } from "../settings/store.ts";
 import { approveSecret } from "../ship/secret-steps.ts";
@@ -29,6 +30,8 @@ export interface UiActions {
   step?(intent: string, n: number, done: boolean): Promise<string>;
   /** REPO-32: the owner granted the App Administration (write); settings are applied again. */
   granted?(): Promise<string>;
+  /** PIP-150: the owner granted the App Code scanning alerts (read); alerts are read again. */
+  scanningGranted?(): Promise<string>;
   /** UI-164, LOOP-76: "I did it myself": ends the intent; the note becomes a ticked step. */
   done?(intent: string, note: string): Promise<string>;
   /** UI-164, PIP-113: the owner does it by hand; the intent becomes steps. */
@@ -264,6 +267,12 @@ export function createActions(d: ActionDeps): UiActions {
     async granted() {
       return grantPermission(d.db)
         ? "Noted. Towercab applies the standard settings again at its next check."
+        : "Nothing to clear: the GitHub App was not missing the permission.";
+    },
+
+    async scanningGranted() {
+      return grantScanning(d.db)
+        ? "Noted. Towercab reads code scanning alerts again on the next red check."
         : "Nothing to clear: the GitHub App was not missing the permission.";
     },
 

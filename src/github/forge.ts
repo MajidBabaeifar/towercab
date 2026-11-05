@@ -1,7 +1,15 @@
 // `Forge` for GitHub: every `gh` call and GitHub reply the stages used to handle themselves, moved here.
 // `GitHubForge` also still offers the raw `gh`/`owner` calls (`GitHub`) to the code that has not moved yet.
 
-import type { CheckState, IssueRow, IssueText, ReleaseInfo, SettingsSnapshot } from "../forge.ts";
+import type {
+  CheckState,
+  CodeScanningAlert,
+  IssueRow,
+  IssueText,
+  Json,
+  ReleaseInfo,
+  SettingsSnapshot,
+} from "../forge.ts";
 import {
   type Bot,
   type ChecksRead,
@@ -245,6 +253,36 @@ export class GitHubForge implements Forge, GitHub {
 
   failedLog(repo: string, run: number): Promise<string> {
     return this.ok(repo, ["run", "view", String(run), "-R", repo, "--log-failed"]);
+  }
+
+  async codeScanningAlerts(repo: string, n: number): Promise<CodeScanningAlert[]> {
+    const r = await this.raw.gh(repo, [
+      "api",
+      `repos/${repo}/code-scanning/alerts?ref=refs/pull/${n}/merge&state=open&per_page=100`,
+    ]);
+    if (r.code !== 0) {
+      const why = first(r.stderr || r.stdout);
+      if (/HTTP 403|Resource not accessible/i.test(r.stderr + r.stdout)) throw new ForgeDenied(why);
+      throw new Error(why || "gh api code-scanning alerts failed");
+    }
+    let rows: unknown;
+    try {
+      rows = JSON.parse(r.stdout);
+    } catch {
+      throw new ForgeBadReply("no alerts list");
+    }
+    if (!Array.isArray(rows)) return [];
+    return rows.map((raw) => {
+      const a = (raw ?? {}) as Json;
+      const loc = a.most_recent_instance?.location ?? {};
+      const line = Number(loc.start_line);
+      return {
+        rule: String(a.rule?.id ?? ""),
+        path: String(loc.path ?? ""),
+        line: Number.isFinite(line) && line > 0 ? line : null,
+        message: String(a.most_recent_instance?.message?.text ?? a.rule?.description ?? ""),
+      };
+    });
   }
 
   async listDeployments(repo: string, environment: string, sha?: string): Promise<Deployment[]> {

@@ -266,6 +266,16 @@ export class Pipe {
   newPrChecks: FakePr["checks"] = () => [];
   /** `gh run view` fails, as for a log GitHub no longer has. */
   runViewFails = false;
+  /** Open code scanning alerts the fake `gh api …/code-scanning/alerts` serves (PIP-148). */
+  alerts: { rule: string; path: string; line: number; message: string }[] = [];
+  /** The alerts read is refused with a 403 (the App lacks the permission). */
+  alertsDenied = false;
+  /** The alerts read fails with this text. */
+  alertsFail = "";
+  /** The paths of every alerts read made. */
+  readonly alertReads: string[] = [];
+  /** The files every PR's `…/pulls/<n>/files` lists. */
+  changedFiles: string[] = [];
   /** Heads GitHub's "update branch" made. */
   readonly updates: string[] = [];
   /** Branches deleted through `gh api -X DELETE …/git/refs/heads/…`, as `<repo> <branch>`. */
@@ -920,6 +930,23 @@ export class Pipe {
               .join("\n"),
           );
         }
+        const scan = /^repos\/([^/]+\/[^/]+)\/code-scanning\/alerts\?/.exec(path);
+        if (scan) {
+          this.alertReads.push(path);
+          if (this.alertsDenied) return failResult("gh: Resource not accessible by integration (HTTP 403)");
+          if (this.alertsFail) return failResult(this.alertsFail);
+          return json(
+            this.alerts.map((a) => ({
+              rule: { id: a.rule },
+              most_recent_instance: {
+                location: { path: a.path, start_line: a.line },
+                message: { text: a.message },
+              },
+            })),
+          );
+        }
+        const changed = /^repos\/([^/]+\/[^/]+)\/pulls\/\d+\/files/.exec(path);
+        if (changed) return json(this.changedFiles.map((filename) => ({ filename, status: "modified" })));
         const dep = /^repos\/([^/]+\/[^/?]+)\/deployments(?:\/(\d+)\/statuses)?(?:\?(.*))?$/.exec(path);
         if (dep) {
           const [, r, id, query] = dep;

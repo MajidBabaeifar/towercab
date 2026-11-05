@@ -7,6 +7,7 @@ import { conflictOutcome } from "../github/events.ts";
 import type { Ctx, Handler, Progress } from "../handlers.ts";
 import { ok, red, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
+import { alertsBlock } from "./alerts.ts";
 import { asEnv, cloneOf, coGit, data, tail, viaForge } from "./common.ts";
 
 export type { Check };
@@ -76,11 +77,14 @@ export async function ciState(
 export async function redLog(cx: Ctx, github: string, pr: number, pushedAt: number): Promise<string | null> {
   const v = await viaForge(cx.github.readChecks(github, pr));
   const b = bucket(v.checks, pushedAt, cx.clock.now(), cx.config.agent.ciGrace);
-  return b.kind === "red" ? failedLog(cx, github, b.checks) : null;
+  return b.kind === "red" ? failedLog(cx, github, pr, b.checks) : null;
 }
 
-/** The failed jobs' log, cut to what matters (`gh run view --log-failed`). */
-async function failedLog(cx: Ctx, github: string, checks: Check[]): Promise<string> {
+/**
+ * The failed jobs' log, cut to what matters (`gh run view --log-failed`), then the open code scanning
+ * alerts for a failed check that has no run (PIP-148).
+ */
+async function failedLog(cx: Ctx, github: string, pr: number, checks: Check[]): Promise<string> {
   const runs = [...new Set(checks.map((c) => c.run).filter((r): r is number => r !== null))];
   const parts: string[] = [];
   for (const run of runs.slice(0, 3)) {
@@ -91,6 +95,8 @@ async function failedLog(cx: Ctx, github: string, checks: Check[]): Promise<stri
     }
   }
   const named = checks.map((c) => `- ${c.name}: ${c.conclusion.toLowerCase()} ${c.url}`).join("\n");
+  const alerts = await alertsBlock(cx, github, pr, checks);
+  if (alerts) parts.push(alerts);
   return `${named}\n\n${parts.join("\n\n")}`.trim();
 }
 
@@ -167,7 +173,7 @@ export const ciHandler: Handler = {
           );
           return { poll: cx.config.agent.ciPoll };
         }
-        const log = await failedLog(cx, repo.github, s.checks);
+        const log = await failedLog(cx, repo.github, m.pr!, s.checks);
         if (m.ci_repairs >= MAX_CI_REPAIRS)
           return { done: wait("CI red", s.checks.map((c) => c.name).join(", ")) };
         return {
