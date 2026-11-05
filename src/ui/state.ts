@@ -14,6 +14,7 @@ import { finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
 import { dataOf, forIntent, type Mission } from "../mission.ts";
 import { testGrantsOf } from "../pipeline/access.ts";
 import { section } from "../pipeline/prtext.ts";
+import { type Kind, parseStored, stageSkip } from "../repo/readiness.ts";
 import { usualOwner } from "../repos.ts";
 import { currentRisk, type RiskGate, riskWords } from "../risk.ts";
 import { aheadIn, isAhead, isBuilding, isReady } from "../slots.ts";
@@ -1238,7 +1239,12 @@ export function dbMark(db: Db): string {
     db.get<{ f: string | null }>(
       "SELECT group_concat(key || '=' || value, ',') AS f FROM meta WHERE key LIKE 'features:%'",
     )?.f ?? "";
-  return `${t}:${c}:${u}:${r}:${f}`;
+  // A repo's setup checked again (REPO-24) shows on open pages too.
+  const q =
+    db.get<{ q: string | null }>(
+      "SELECT group_concat(key || '=' || value, ',') AS q FROM meta WHERE key LIKE 'readiness:%'",
+    )?.q ?? "";
+  return `${t}:${c}:${u}:${r}:${f}:${q}`;
 }
 
 /** The overview's data (`GET /api/state`). */
@@ -1640,12 +1646,23 @@ function returnWords(t: Pick<Transition, "event" | "why">, from: StageId): strin
   return why && why.length <= 80 && why.toLowerCase() !== what ? `${what}: ${why}` : what;
 }
 
+/** UI-158: what the stage map needs of a repo's stored readiness; undefined until it was checked once. */
+export function repoSetup(
+  db: Db,
+  repo: string,
+): { kind: Kind | null; hasLive: boolean; goLive: string | null } | undefined {
+  const s = parseStored(db.meta(`readiness:${repo}`));
+  return s ? { kind: s.readiness.kind, hasLive: s.hasLive, goLive: s.goLive } : undefined;
+}
+
 /** UI-72..75: one attempt's path through the pipeline, from its moves and the stage folders. */
 export function stageMap(
   m: Pick<Mission, "attempt" | "created" | "stage">,
   ts: Pick<Transition, "at" | "from_stage" | "to_stage" | "event" | "why">[],
   files: FoundFile[],
   now: number,
+  /** UI-158: the repo's kind, once known; then the ship stages are always listed, skipped with a reason. */
+  repo?: { kind: Kind | null; hasLive: boolean; goLive: string | null },
 ): StageMapView {
   type Seg = { node: StageId; at: number; via: (typeof ts)[number] | null; end: boolean };
   const sorted = [...ts].sort((a, b) => a.at - b.at);
@@ -1743,12 +1760,18 @@ export function stageMap(
     const vs = visits.filter((v) => v.stage === def.id);
     const own = shown.filter((f) => f.stage === def.id);
     for (const v of vs) v.files = own.filter((f) => f.round === v.round);
-    if ((def.id === "answer" || def.ship) && vs.length === 0) continue;
+    if ((def.id === "answer" || (def.ship && !repo)) && vs.length === 0) continue;
     if (def.id === "other" && own.length === 0) continue;
     const last = vs[vs.length - 1];
     let outcome: VisitOutcome = last?.outcome ?? "not reached";
     let note: string | null = last?.outcome === "skipped" ? last.reason : null;
-    if (!last && def.id !== "other" && (NODE_INDEX.get(def.id) ?? 0) < furthest) {
+    // UI-159: a ship stage that doesn't apply to the repo's kind says why.
+    const skipWhy =
+      !last && def.ship && repo ? stageSkip(repo.kind, repo.hasLive, repo.goLive, def.id) : null;
+    if (skipWhy) {
+      outcome = "skipped";
+      note = skipWhy;
+    } else if (!last && def.id !== "other" && (NODE_INDEX.get(def.id) ?? 0) < furthest) {
       outcome = "skipped";
       note =
         noSpec && ["spec_review", "plan", "plan_review"].includes(def.id)
@@ -1939,6 +1962,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
         ts.filter((t) => t.mission === m.id),
         mine,
         s.now,
+        repoSetup(src.db, m.repo),
       ),
     };
   });

@@ -8,6 +8,7 @@ import { type Live, parseLive } from "../ship/live.ts";
 import type { Tools } from "../tools.ts";
 import { bullets, fences, items, lines, sections, text } from "./markdown.ts";
 import { glob } from "./protected.ts";
+import { ITEMS, isItem, isKind, KINDS, type Kind, type Mode, type Waiver } from "./readiness.ts";
 
 /** The three files, in the order they are parsed. */
 export const FILES = ["CLAUDE.md", "REVIEW.md", "TOWERCAB.md"] as const;
@@ -54,6 +55,14 @@ export interface TowercabFile {
   tests: string[];
   /** The ship stage's block (SHIP-1), or null: merged means done. */
   live: Live | null;
+  /** The confirmed kind (REPO-20); absent: unconfirmed. */
+  kind?: Kind;
+  /** `warn` (absent) or `block` (LOOP-70). */
+  readiness?: Mode;
+  /** Items the owner waived, with the reason (REPO-20); absent: none. */
+  waive?: Waiver[];
+  /** How an infra repo's changes go live (REPO-22). */
+  goLive?: string;
 }
 
 export interface RepoFiles {
@@ -130,7 +139,12 @@ export function defaultReview(): Review {
 }
 
 export function defaultTowercab(): TowercabFile {
-  return { maxAutonomy: 5, protected: [], tests: [...DEFAULT_TESTS], live: null };
+  return {
+    maxAutonomy: 5,
+    protected: [],
+    tests: [...DEFAULT_TESTS],
+    live: null,
+  };
 }
 
 /**
@@ -231,7 +245,7 @@ function parsePasses(bs: string[]): Pass[] {
   return out;
 }
 
-const KEYS = ["max_autonomy", "protected", "tests", "live"];
+const KEYS = ["max_autonomy", "protected", "tests", "live", "kind", "readiness", "waive", "go_live"];
 const KEY = /^([A-Za-z_][A-Za-z0-9_-]*):(?:[ \t]|$)/;
 
 /** `TOWERCAB.md` → its front matter; anything after it is prose. */
@@ -284,12 +298,53 @@ function frontMatter(ls: string[], t: TowercabFile): void {
       t.maxAutonomy = val;
     } else if (k === "live") {
       t.live = parseLive(val);
+    } else if (k === "kind") {
+      if (!isKind(val)) throw new Error(`kind: ${String(val)} isn't one of ${KINDS.join(", ")}`);
+      t.kind = val;
+    } else if (k === "readiness") {
+      if (val !== "warn" && val !== "block") throw new Error(`readiness: ${String(val)} isn't warn or block`);
+      t.readiness = val;
+    } else if (k === "go_live") {
+      if (typeof val !== "string" || !val.trim()) throw new Error("go_live: must be one non-empty line");
+      t.goLive = val.trim();
+    } else if (k === "waive") {
+      t.waive = waivers(val);
     } else {
       const gs = globList(k, val);
       if (k === "protected") t.protected = gs;
       else if (gs.length) t.tests = gs;
     }
   }
+}
+
+/** `waive:` lines `<item>: <reason>` (YAML reads `- ci: why` as a one-entry mapping; both work). */
+function waivers(v: unknown): Waiver[] {
+  if (v === null || v === undefined) return [];
+  if (!Array.isArray(v)) throw new Error("waive must be a list of `<item>: <reason>` lines");
+  const out: Waiver[] = [];
+  for (const entry of v) {
+    let item: string;
+    let reason: string;
+    if (typeof entry === "string") {
+      const at = entry.indexOf(":");
+      item = at < 0 ? entry : entry.slice(0, at);
+      reason = at < 0 ? "" : entry.slice(at + 1);
+    } else if (entry instanceof Map && entry.size === 1) {
+      const [k, r] = [...entry][0] as [unknown, unknown];
+      item = String(k);
+      reason = typeof r === "string" ? r : "";
+    } else {
+      throw new Error(`waive: ${JSON.stringify(entry)}: want "<item>: <reason>"`);
+    }
+    item = item.trim();
+    reason = reason.trim();
+    if (!isItem(item) || item === "kind") {
+      throw new Error(`waive: ${item}: not an item (${ITEMS.filter((i) => i !== "kind").join(", ")})`);
+    }
+    if (!reason) throw new Error(`waive: ${item}: needs a reason`);
+    out.push({ item, reason });
+  }
+  return out;
 }
 
 function globList(key: string, v: unknown): string[] {

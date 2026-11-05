@@ -10,7 +10,7 @@ import type {
   BoardPage as Data,
   RepoSpendView,
 } from "../../../src/ui/view.ts";
-import { ErrorNote, StateChip } from "../components.tsx";
+import { ErrorNote, ReadinessChip, StateChip } from "../components.tsx";
 import { ChevronDown } from "../icons.tsx";
 import { Link } from "../router.tsx";
 
@@ -75,6 +75,11 @@ function LaneHead({ repo, folded, onToggle }: { repo: BoardRepo; folded: boolean
           <span>{repoName(repo.repo)}</span>
         </button>
       </h2>
+      {repo.readiness ? (
+        <Link href={`/repos?repo=${encodeURIComponent(repo.repo)}`} class="ready-link">
+          <ReadinessChip badge={repo.readiness} />
+        </Link>
+      ) : null}
       <span class="meta">
         {repo.github ? <span class="mono">{repo.github} · </span> : null}
         {repo.open} open · {repo.done} done in the last 7 days

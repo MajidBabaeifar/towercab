@@ -18,6 +18,8 @@ export interface PickState {
   full: Map<string, { n: number; ahead: number }>;
   /** Intents the owner started with `start` (LOOP-63): they go over the limit, first. */
   started?: Set<string>;
+  /** Repos set to block while not ready (LOOP-70) → `<n> missing (<items>)`. */
+  notReady?: Map<string, string>;
   /** Models cooling down (LOOP-9) → until, as shown (`15:30`). */
   cooling: Map<string, string>;
   /** Intents with an unfinished mission: never picked again (LOOP-4). */
@@ -88,6 +90,21 @@ export function decide(listing: Listing, state: PickState): Decision {
       d.writes.push({ id: i.id, waiting: "unknown repo", why: i.repo });
       d.skipped.push({ id: i.id, reason: `unknown repo ${i.repo}` });
       continue;
+    }
+    // LOOP-70: a blocking repo starts nothing new, except the intent that sets it up (LOOP-71).
+    const notReady = state.notReady?.get(i.repo);
+    if (notReady !== undefined && i.setup !== true) {
+      d.skipped.push({ id: i.id, reason: `repo not ready: ${notReady}` });
+      continue;
+    }
+    if (notReady !== undefined) {
+      const other = listing.open.find(
+        (x) => x.id !== i.id && x.setup === true && x.repo === i.repo && state.active.has(x.id),
+      );
+      if (other) {
+        d.skipped.push({ id: i.id, reason: `${other.id} is already setting up ${i.repo}` });
+        continue;
+      }
     }
     const model = i.model ?? state.defaultModel;
     const full = started.has(i.id) ? undefined : state.full.get(i.repo);
