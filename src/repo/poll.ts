@@ -2,12 +2,12 @@
 // from the base branch, remember the last good values or why it can't be read, follow the settings and
 // move pull requests, and open the one-time move once the wait is over.
 
-import { ensureClone } from "../checkout.ts";
 import { clonePath } from "../config.ts";
 import { parseTowercab } from "./files.ts";
 import {
   baseText,
   errorKey,
+  fetchBase,
   fileKey,
   isMoved,
   movedKey,
@@ -36,10 +36,10 @@ async function pollRepo(d: SettingsEnv, name: string, log: (l: string) => void):
     if (rec?.state === "open") states.set(kind, (await d.forge.prBrief(repo.github, rec.pr)).state);
   }
   const clone = clonePath(repo, d.home);
-  await ensureClone(d.tools, clone, repo, await d.forge.gitAuth(repo.github));
+  const ref = await fetchBase(d, repo, clone);
   let good = false;
   try {
-    const text = await baseText(d.tools, clone, repo.base);
+    const text = await baseText(d.tools, clone, ref);
     const t = text === null ? null : parseTowercab(text);
     const values: Record<string, number> = {};
     if (t?.workers !== undefined) values.workers = t.workers;

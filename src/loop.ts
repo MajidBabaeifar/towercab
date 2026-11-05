@@ -207,6 +207,7 @@ export class Loop {
   /** INT-39: the feature-list backfill running now, and how to stop it. */
   private featuresJob: Promise<void> | null = null;
   private readinessJob: Promise<void> | null = null;
+  private limitsJob: Promise<void> | null = null;
   /** REPO-30: the daily settings check of one repo, running now. */
   private settingsJob: Promise<void> | null = null;
   /** Held by every handler call and by the readiness fetch: two fetches of one clone never overlap. */
@@ -297,27 +298,44 @@ export class Loop {
     this.startIssues(true);
   }
 
-  /** REPO-15 to REPO-19: read each repo's `TOWERCAB.md` limits and follow the settings PRs, about once a minute. */
-  private async pollSettings(): Promise<void> {
+  /**
+   * REPO-15 to REPO-19: read each repo's `TOWERCAB.md` limits and follow the settings PRs, about once a
+   * minute, as a background job like the readiness check: the pass never waits on it, and its fetch
+   * holds the clone lock.
+   */
+  private pollSettings(): void {
+    if (this.limitsJob || this.drain !== null || this.codeMoved() !== null) return;
     const forced = this.d.db.meta("repo-poll") !== null;
     if (!forced && this.now - this.lastSettingsPoll < INTENTS_POLL_S) return;
     this.lastSettingsPoll = this.now;
     this.d.db.delMeta("repo-poll");
-    await recordParser(this.d.db, this.d.tools, this.codeRoot(), this.startCommit, this.now).catch(
-      () => undefined,
-    );
-    await pollRepoSettings(
-      {
-        db: this.d.db,
-        tools: this.d.tools,
-        forge: this.d.github,
-        home: this.d.home.root,
-        now: this.now,
-        repos: this.d.config.repos,
-      },
-      this.d.log,
-    );
-    syncRepos(this.d.config, this.d.db);
+    const now = this.now;
+    this.limitsJob = (async () => {
+      await recordParser(this.d.db, this.d.tools, this.codeRoot(), this.startCommit, now).catch(
+        () => undefined,
+      );
+      await pollRepoSettings(
+        {
+          db: this.d.db,
+          tools: this.d.tools,
+          forge: this.d.github,
+          home: this.d.home.root,
+          now,
+          repos: this.d.config.repos,
+          exclusive: <T>(fn: () => Promise<T>) => this.cloneLock.run(fn),
+        },
+        this.d.log,
+      );
+    })()
+      .catch((e: Error) => this.d.log(`settings: ${e.message}`))
+      .finally(() => {
+        this.limitsJob = null;
+      });
+  }
+
+  /** Resolves when no limits poll is running (tests and shutdown wait for it). */
+  async limitsIdle(): Promise<void> {
+    while (this.limitsJob) await this.limitsJob;
   }
 
   private codeRoot(): string {
@@ -360,6 +378,7 @@ export class Loop {
     await this.featuresIdle();
     await this.readinessIdle();
     await this.settingsIdle();
+    await this.limitsIdle();
     for (const [id, r] of this.children) {
       r.handle.kill("SIGTERM");
       const done = await Promise.race([
@@ -490,6 +509,7 @@ export class Loop {
     // nothing new starts.
     if (this.codeMoved() === null && this.drain === null) this.startIssues(false);
     await this.pollPrs();
+    this.pollSettings();
     await this.pollReleases();
     this.releaseReady();
     // LOOP-111: missions back from a wait ask for their run before a ready build takes the free slot.

@@ -1,10 +1,10 @@
 // A repo's own tuning in its `TOWERCAB.md` (REPO-14 to REPO-19): `workers` and `ahead` are read from the
 // base branch, changed only through a pull request, and moved there once from Towercab's database.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ensureClone, git } from "../checkout.ts";
+import { ensureClone, git, originUrl } from "../checkout.ts";
 import { clonePath, type RepoConfig } from "../config.ts";
 import type { Db } from "../db.ts";
 import type { Forge } from "../forge.ts";
@@ -186,14 +186,15 @@ export interface ProposeDeps {
   db: Db;
   tools: Tools;
   forge: Pick<Forge, "openPr" | "prBrief" | "updatePrBody" | "bot" | "gitAuth">;
+  /** The loop's clone lock, when the caller has it. */
+  exclusive?: <T>(fn: () => Promise<T>) => Promise<T>;
   /** Towercab's home root: clones live under it. */
   home: string;
   now: number;
 }
 
 /** `TOWERCAB.md` on the base branch of Towercab's clone, or null when it isn't there. */
-export async function baseText(tools: Tools, clone: string, base: string): Promise<string | null> {
-  const ref = `refs/remotes/origin/${base}`;
+export async function baseText(tools: Tools, clone: string, ref: string): Promise<string | null> {
   const entry = (
     await repoGit(tools, clone, ["ls-tree", "-z", "--full-tree", ref, "--", "TOWERCAB.md"])
   ).split("\0")[0];
@@ -271,8 +272,8 @@ export async function openSettingsPr(
   kind: PrKind,
 ): Promise<{ pr: number; fresh: boolean } | null> {
   const clone = clonePath(repo, d.home);
-  await ensureClone(d.tools, clone, repo, await d.forge.gitAuth(repo.github));
-  const base = await baseText(d.tools, clone, repo.base);
+  const ref = await fetchBase(d, repo, clone);
+  const base = await baseText(d.tools, clone, ref);
   // An open PR of this kind keeps its earlier changes; a later value for a key replaces the earlier one.
   let rec = readRecord(d.db, repo.name, kind);
   if (rec && (rec.state !== "open" || (await d.forge.prBrief(repo.github, rec.pr)).state !== "OPEN"))
@@ -296,7 +297,6 @@ export async function openSettingsPr(
       GIT_COMMITTER_EMAIL: bot.email,
     };
     const as = { args: [], env };
-    const ref = `refs/remotes/origin/${repo.base}`;
     mkdirSync(tmp, { recursive: true });
     writeFileSync(join(tmp, "TOWERCAB.md"), edit.text);
     const blob = (await git(d.tools, clone, ["hash-object", "-w", join(tmp, "TOWERCAB.md")])).trim();
@@ -348,8 +348,26 @@ export function moveChanges(row: { workers: number; ahead: number }, file: strin
   return out;
 }
 
+/**
+ * The base branch as of now, in a ref of its own (`refs/towercab/limits/<base>`): the clone is made
+ * when missing, and the fetch goes by URL, so it never moves `refs/remotes/origin/*`, which the pipeline compares
+ * across its steps. Runs under the clone lock when there is one. Returns the ref.
+ */
+export async function fetchBase(d: ProposeDeps, repo: RepoConfig, clone: string): Promise<string> {
+  const auth = await d.forge.gitAuth(repo.github);
+  const ref = `refs/towercab/limits/${repo.base}`;
+  const run = async () => {
+    if (!existsSync(join(clone, ".git"))) await ensureClone(d.tools, clone, repo, auth);
+    await git(d.tools, clone, ["fetch", "--quiet", originUrl(repo), `+refs/heads/${repo.base}:${ref}`], auth);
+  };
+  await (d.exclusive ? d.exclusive(run) : run());
+  return ref;
+}
+
 export interface SettingsEnv extends ProposeDeps {
   repos: Map<string, RepoConfig>;
+  /** The loop's clone lock: the fetch runs inside it, never beside a mission step. */
+  exclusive?: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
 function known(d: SettingsEnv, name: string): RepoConfig {
@@ -396,8 +414,8 @@ function rawLimits(d: SettingsEnv, name: string): { workers: number; ahead: numb
 export async function moveRepo(d: SettingsEnv, name: string): Promise<{ pr: number } | null> {
   const repo = known(d, name);
   const clone = clonePath(repo, d.home);
-  await ensureClone(d.tools, clone, repo, await d.forge.gitAuth(repo.github));
-  const changes = moveChanges(rawLimits(d, name), await baseText(d.tools, clone, repo.base));
+  const ref = await fetchBase(d, repo, clone);
+  const changes = moveChanges(rawLimits(d, name), await baseText(d.tools, clone, ref));
   if (Object.keys(changes).length === 0) {
     d.db.setMeta(movedKey(name), String(Math.floor(d.now)));
     return null;
