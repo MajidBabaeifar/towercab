@@ -36,14 +36,35 @@ const dirOf = (d: SettingsDeps, repo: RepoConfig) =>
   join(d.home.root, "settings-backups", ...repo.github.split("/"));
 const notFound = (r: RunResult) => /\b404\b|Not Found/i.test(`${r.stderr}\n${r.stdout}`);
 
+/**
+ * The repo's own rulesets from a paginated list: `gh --paginate --jq '.[]'` prints one object per line, a
+ * plain array is read too. Rulesets inherited from an organisation are left out: they aren't this repo's.
+ */
+function rulesetList(text: string): Json[] {
+  const t = text.trim();
+  let all: Json[];
+  try {
+    const v = JSON.parse(t || "[]") as Json | Json[];
+    all = Array.isArray(v) ? v : [v];
+  } catch {
+    all = t
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as Json);
+  }
+  return all.filter((r) => r.source_type === undefined || r.source_type === "Repository");
+}
+
 async function api(
   d: SettingsDeps,
   repo: RepoConfig,
   path: string,
   method = "GET",
   body?: unknown,
+  paginate = false,
 ): Promise<RunResult> {
   const args = ["api", `repos/${repo.github}${path}`];
+  if (paginate) args.push("--paginate", "--jq", ".[]");
   if (method !== "GET") args.push("-X", method);
   if (body !== undefined) args.push("--input", "-");
   return d.github.gh(repo.github, args, body !== undefined ? { input: JSON.stringify(body) } : {});
@@ -51,7 +72,8 @@ async function api(
 
 /** A read that must work, or 404 (null). Anything else fails the whole backup. */
 async function read(d: SettingsDeps, repo: RepoConfig, path: string): Promise<Json | null> {
-  const r = await api(d, repo, path);
+  const r = await api(d, repo, path, "GET", undefined, path === "/rulesets");
+  if (r.code === 0 && path === "/rulesets") return rulesetList(r.stdout) as unknown as Json;
   if (r.code === 0) {
     try {
       return r.stdout.trim() ? (JSON.parse(r.stdout) as Json) : {};
@@ -214,7 +236,10 @@ export async function restoreBackup(d: SettingsDeps, repo: RepoConfig): Promise<
     const r = await api(d, repo, path, method, body);
     if (r.code === 0) out.push(`Restored ${what}`);
     else if (forbidden(r))
-      throw new Error("the GitHub App lacks Administration (write): grant it, then run this again");
+      // What was restored before stays visible with the reason.
+      throw new Error(
+        [...out, "the GitHub App lacks Administration (write): grant it, then run this again"].join("\n"),
+      );
     else out.push(`Could not restore ${what}: ${(r.stderr || r.stdout).trim().split("\n")[0]}`);
   };
   const patch: Json = pick(b.repository, SETTINGS_KEYS);
@@ -225,7 +250,20 @@ export async function restoreBackup(d: SettingsDeps, repo: RepoConfig): Promise<
   }
   await put("the repository settings", "", "PATCH", patch);
 
-  const now = ((await read(d, repo, "/rulesets")) as unknown as Json[] | null) ?? [];
+  // A read that fails is listed like a write that fails; the rest still goes back.
+  const tryRead = async (what: string, path: string): Promise<Json | null | undefined> => {
+    try {
+      return await read(d, repo, path);
+    } catch (e) {
+      out.push(`Could not read ${what}: ${(e as Error).message}`);
+      return undefined;
+    }
+  };
+  const nowList = (await tryRead("the current rulesets", "/rulesets")) as unknown as
+    | Json[]
+    | null
+    | undefined;
+  const now = nowList ?? [];
   const nowIds = new Set(now.map((r) => r.id));
   for (const rs of b.rulesets) {
     const body = pick(rs, RULESET_KEYS);
@@ -239,7 +277,7 @@ export async function restoreBackup(d: SettingsDeps, repo: RepoConfig): Promise<
   for (const [branch, p] of Object.entries(b.protection)) {
     const path = `/branches/${encodeURIComponent(branch)}/protection`;
     if (p) await put(`branch protection of ${branch}`, path, "PUT", protectionBody(p));
-    else if (await read(d, repo, path))
+    else if (await tryRead(`the branch protection of ${branch}`, path))
       out.push(`Not in the backup, left as it is: branch protection of ${branch}`);
   }
   if (b.workflow) {
