@@ -206,3 +206,42 @@ test("ui: board says when the intents repo can't be read", async () => {
   // Started intents still show, at their stations.
   expect(placed(b)[IDS.ci]).toEqual(["web", "ci"]);
 });
+
+test("ui: board api gives each repo its sort keys", async () => {
+  const f = fixture();
+  const b = await board(f.sources);
+  // `index` is the row's place in config order, then the repos only an intent names.
+  expect(b.repos.map((r) => [r.repo, r.index])).toEqual([
+    ["web", 0],
+    ["api", 1],
+    ["docs", 2],
+    ["mobile", 3],
+    ["infra", 4],
+    ["blog", 5],
+    ["crm", 6],
+  ]);
+  // `waiting` counts the cards with the Needs you chip.
+  for (const r of b.repos) {
+    const needs = Object.values(r.cells)
+      .flatMap((cards) => cards ?? [])
+      .filter((c) => c.state.key === "needs");
+    expect(r.waiting, r.repo).toBe(needs.length);
+  }
+  expect(b.repos.map((r) => r.waiting)).toEqual([1, 1, 1, 0, 0, 0, 1]);
+  // `changedAt` is the newest mission update of the repo, finished and dropped ones included; null without.
+  for (const r of b.repos) {
+    const at = f.db.get<{ at: number | null }>(
+      "SELECT MAX(updated) AS at FROM missions WHERE repo = ?",
+      r.repo,
+    )?.at;
+    expect(r.changedAt, r.repo).toBe(at ? new Date(at * 1000).toISOString() : null);
+  }
+  expect(b.repos.find((r) => r.repo === "blog")!.changedAt).toBeNull();
+  expect(b.repos.find((r) => r.repo === "web")!.changedAt).not.toBeNull();
+
+  // The row of intents the listing doesn't know stays last, with the last index.
+  f.state.upNext.push({ intent: "261026-2200-9", priority: 4, skip: null });
+  const unknown = await board(f.sources);
+  expect(unknown.repos.at(-1)).toMatchObject({ repo: "", index: unknown.repos.length - 1, changedAt: null });
+  f.state.upNext.pop();
+});

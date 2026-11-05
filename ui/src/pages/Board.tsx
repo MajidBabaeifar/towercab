@@ -2,7 +2,7 @@
 // the folded rows are remembered in this browser. At 720 px wide or less it is one list per repo instead.
 
 import type { JSX } from "preact";
-import { useState } from "preact/hooks";
+import { useMemo, useState } from "preact/hooks";
 import type {
   BoardCard,
   BoardColumn,
@@ -10,6 +10,7 @@ import type {
   BoardPage as Data,
   RepoSpendView,
 } from "../../../src/ui/view.ts";
+import { readSort, SORTS, type SortKey, sortLabel, sortRepos, writeSort } from "../board-sort.ts";
 import { ErrorNote, ReadinessChip, StateChip } from "../components.tsx";
 import { ChevronDown } from "../icons.tsx";
 import { Link } from "../router.tsx";
@@ -192,6 +193,14 @@ export function BoardPage({ data }: { data: Data }) {
     writeFolded(next);
     setFolded(next);
   };
+  const [sort, setSort] = useState<SortKey>(readSort);
+  const [announce, setAnnounce] = useState("");
+  const choose = (key: SortKey) => {
+    writeSort(key);
+    setSort(key);
+    setAnnounce(`Sorted by ${sortLabel(key)}`);
+  };
+  const sorted = useMemo(() => ({ ...data, repos: sortRepos(data.repos, sort) }), [data, sort]);
   return (
     <main class="page board-page" id="main">
       <section class="hero hero-small">
@@ -216,8 +225,25 @@ export function BoardPage({ data }: { data: Data }) {
         )
       ) : data.error && data.repos.every((r) => r.open + r.done === 0) ? null : (
         <>
-          <Grid data={data} folded={folded} toggle={toggle} />
-          <List data={data} folded={folded} toggle={toggle} />
+          <div class="board-sort">
+            <label for="board-sort">Sort by</label>
+            <select
+              id="board-sort"
+              value={sort}
+              onChange={(e) => choose((e.currentTarget as HTMLSelectElement).value as SortKey)}
+            >
+              {SORTS.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+            <p class="sr-only" role="status" aria-live="polite">
+              {announce}
+            </p>
+          </div>
+          <Grid data={sorted} folded={folded} toggle={toggle} />
+          <List data={sorted} folded={folded} toggle={toggle} />
         </>
       )}
     </main>
