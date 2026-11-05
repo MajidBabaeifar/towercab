@@ -98,7 +98,14 @@ export function testsChangedMd(tests: TestChange[]): string {
  * The plan PR's body: the plain brief (PIP-108) and the risk (PIP-99), the approach's first
  * paragraph (folded under Details with a brief), what access it asks for, and the links.
  */
-export function planBody(planMd: string, access: Access, l: Links, risk = "", brief = ""): string {
+export function planBody(
+  planMd: string,
+  access: Access,
+  l: Links,
+  risk = "",
+  brief = "",
+  delivery: "code" | "steps" = "code",
+): string {
   const approach =
     section(planMd, "Approach")
       .split(/\n\s*\n/)[0]
@@ -115,7 +122,9 @@ export function planBody(planMd: string, access: Access, l: Links, risk = "", br
     asks.length
       ? `**Access asked for:** ${asks.join(", ")}. Untick any line in the plan's Access section to refuse it before merging.`
       : "**Access asked for:** nothing beyond the defaults.",
-    "Merging this PR approves the plan, and the build starts.",
+    delivery === "steps"
+      ? "**Nothing to build:** this plan is steps you do yourself. Merging this PR hands them to you, and the intent is done when you tick the last one."
+      : "Merging this PR approves the plan, and the build starts.",
     linkLine(l),
   ]
     .filter(Boolean)
@@ -130,10 +139,11 @@ export function planFile(
   planMd: string,
   accessMd: string,
   ownerMd = "",
+  delivery: "code" | "steps" = "code",
 ): string {
   const ids = specIds.length ? `Spec IDs: ${specIds.join(", ")}.` : "No spec change.";
   const owner = ownerMd.trim() ? `\n\n${ownerMd.trim()}` : "";
-  return `# Plan: ${title}\n\nIntent ${intentId}. ${ids}\n\n${planMd.trim()}\n\n${accessMd.trim()}${owner}\n`;
+  return `# Plan: ${title}\n\nIntent ${intentId}. ${ids}\nDelivery: ${delivery}\n\n${planMd.trim()}\n\n${accessMd.trim()}${owner}\n`;
 }
 
 export interface Checks {

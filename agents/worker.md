@@ -61,7 +61,9 @@ Return the JSON result:
   special."), `## Changes` (short bullets on behaviour, not files). Otherwise `null`.
 - `notes`: what you changed and why, for Towercab's record and the reviewer.
 - `question`: when blocked: `context` (what you were doing and why you are stuck), `question`,
-  `options` (each `option` with what `then` follows from it), `recommendation`. Otherwise `null`.
+  `options` (each `option` with what `then` follows from it and `do`, what Towercab does when the owner
+  picks it: `continue` carries on with the option as the answer, `steps` hands the work to the owner as
+  steps they do themselves, `drop` ends the intent; no other value), `recommendation`. Otherwise `null`.
 - `access`: when asking for access: `domains`, `paths` and `tests`, each with `why` (`tests` items have
   a `path`; use empty lists for what you don't ask). Otherwise `null`.
 - `plan_changed`: if you departed from the plan, the new plan in the same Markdown sections and a

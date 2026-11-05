@@ -107,11 +107,13 @@ export function cacheWriteQuestion(
     options: [
       {
         option: "Allow",
+        do: "continue",
         // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
         then: `Towercab remembers this for ${repo} and runs the checks again; later missions of ${repo} don't ask. Its checks, proof, screenshots and e2e can then change the shared cache, as setup and the worker already can.`,
       },
       {
         option: "Don't allow",
+        do: "continue",
         // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
         then: `The intent waits as "checks red". To go on, make the checks write inside the checkout (for example set CARGO_TARGET_DIR under [repos.${repo}].env in Towercab's config) and reply, or drop the intent.`,
       },

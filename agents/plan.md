@@ -61,6 +61,10 @@ Return the JSON result:
   sentence. A step is anything the worker can't do: a secret, an apply on a server, an account or a
   setting on a platform. A step Towercab or CI can do is not one. Nothing needed: an empty list.
   Towercab lists the steps in `plan.md` and makes the owner tick them off.
+- `delivery`: `code` (the default) when a change to the repo delivers the outcome. `steps` when the
+  outcome is something only the owner can do (a setting on a service, an account, a machine) and no
+  change to the repo would deliver it: then nothing is built, there is no code PR, and the intent is
+  done when the owner ticks the last step. A `steps` plan lists at least one `owner_steps` entry.
 - `live_none_why`: empty by default. When nothing about the change could ever be seen in the live app
   (docs, CI or tests only), one sentence saying why. Leave it empty for any change a user could notice.
 - `e2e`: in a repo with e2e suites, `tests` (the e2e test files the build adds or changes) and

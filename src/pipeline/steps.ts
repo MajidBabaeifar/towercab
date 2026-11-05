@@ -5,7 +5,7 @@
 import type { Ctx, Handler } from "../handlers.ts";
 import { ok, wait } from "../machine.ts";
 import { getMission, type Mission, patchData } from "../mission.ts";
-import { checklist, parseNoneLive, unticked, withSteps } from "../steps.ts";
+import { checklist, parseDelivery, parseNoneLive, unticked, withDelivery, withSteps } from "../steps.ts";
 import { data, intentOf, stepsFromPlan } from "./common.ts";
 import { commitToIntents } from "./plan.ts";
 
@@ -59,9 +59,28 @@ export async function writeTicks(cx: Ctx, m: Mission): Promise<void> {
   });
 }
 
+/** PIP-113: a mission switched to steps says so in the plan file, which is the record. */
+async function syncDelivery(cx: Ctx, m: Mission): Promise<void> {
+  const intent = await intentOf(cx, m);
+  const path = `${intent.dir}/plan.md`;
+  const md = await cx.store.readFile(path);
+  if (md === null || parseDelivery(md) === "steps") return;
+  // The steps are written as the mission has them (all "after"), so the file and the database agree.
+  const steps = data(m).steps;
+  const text = withDelivery(md, "steps");
+  await commitToIntents(
+    cx,
+    "main",
+    "origin/main",
+    { [path]: steps?.length ? withSteps(text, steps, parseNoneLive(md)) : text },
+    `towercab: plan changed ${m.intent}`,
+  );
+}
+
 /** SHIP-19: wait for the owner's steps after the merge. */
 export const stepsHandler: Handler = {
   async step(cx, m) {
+    if (data(m).delivery === "steps") await syncDelivery(cx, m);
     const fresh = await refreshSteps(cx, m);
     const steps = data(fresh).steps ?? [];
     if (unticked(steps, "after").length === 0) return { done: ok({ why: "your steps are done" }) };
