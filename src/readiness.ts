@@ -7,6 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { ensureClone } from "./checkout.ts";
 import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db } from "./db.ts";
+import { isGitlab } from "./forge/types.ts";
 import { prsOnBranch } from "./github/branches.ts";
 import type { ProposedPr } from "./github/proposed.ts";
 import type { Clock, GitHub } from "./handlers.ts";
@@ -568,6 +569,8 @@ export function nextDue(d: ReadinessDeps): RepoConfig | null {
   let best: { repo: RepoConfig; at: number } | null = null;
   const now = d.clock.now();
   for (const repo of d.config.repos.values()) {
+    // GL-3: the readiness checks read GitHub only; a GitLab repo has none until the pipeline supports it.
+    if (isGitlab(repo.github)) continue;
     const at = storedReadiness(d.db, repo.name)?.at ?? 0;
     const failedAt = Number(d.db.meta(`readiness-failed:${repo.name}`) ?? 0);
     if (at !== 0 && now - at < READINESS_EVERY_S) continue;

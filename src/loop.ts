@@ -19,6 +19,7 @@ import {
   StoppedError,
   setFeaturesRun,
 } from "./features.ts";
+import { isGitlab } from "./forge/types.ts";
 import { retireBranch } from "./github/branches.ts";
 import {
   approveNotices,
@@ -1618,6 +1619,7 @@ export class Loop {
       paused: paused(db),
       blocked: this.health.blocked(this.now) ? (this.health.open()[0]?.kind ?? "problem") : null,
       repos: new Set(config.repos.keys()),
+      unsupported: new Set([...config.repos].filter(([, r]) => isGitlab(r.github)).map(([n]) => n)),
       full,
       started,
       notReady: new Map([...blockingRepos(db, config)].map(([name, r]) => [name, missingText(r)] as const)),
