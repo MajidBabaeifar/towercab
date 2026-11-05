@@ -676,12 +676,14 @@ export class Loop {
       m.id,
     );
     const repo = this.d.config.repos.get(m.repo);
-    if (last?.event !== "to_steps" || !repo) return;
+    if ((last?.event !== "to_steps" && last?.event !== "owner_done") || !repo) return;
     await closeIfOpen(
       this.d.github,
       repo.github,
       m.pr,
-      "Closed: the owner will do this by hand, so there is nothing to merge.",
+      last.event === "owner_done"
+        ? "Closed: the owner did this by hand, so there is nothing to merge."
+        : "Closed: the owner will do this by hand, so there is nothing to merge.",
     );
     const gone = await retireBranch(this.d.github, repo.github, m.pr, this.d.store.github());
     if (gone) this.d.log(`${label(m)}: deleted branch ${gone} of ${repo.github}#${m.pr}`);

@@ -65,11 +65,14 @@ async function syncDelivery(cx: Ctx, m: Mission): Promise<void> {
   const path = `${intent.dir}/plan.md`;
   const md = await cx.store.readFile(path);
   if (md === null || parseDelivery(md) === "steps") return;
+  // The steps are written as the mission has them (all "after"), so the file and the database agree.
+  const steps = data(m).steps;
+  const text = withDelivery(md, "steps");
   await commitToIntents(
     cx,
     "main",
     "origin/main",
-    { [path]: withDelivery(md, "steps") },
+    { [path]: steps?.length ? withSteps(text, steps, parseNoneLive(md)) : text },
     `towercab: plan changed ${m.intent}`,
   );
 }

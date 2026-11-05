@@ -685,7 +685,9 @@ export async function stepsFromPlan(cx: Ctx, m: Mission): Promise<Partial<PipeDa
   const md = await cx.store.readFile(`${intent.dir}/plan.md`);
   if (md === null) return {};
   const d = data(m);
-  const c = combine(parseSteps(md), d.steps, d.stepsDirty !== undefined);
+  // PIP-113: a steps delivery has no merge, so every step is asked for after the plan.
+  const file = parseSteps(md).map((s) => (d.delivery === "steps" ? { ...s, when: "after" as const } : s));
+  const c = combine(file, d.steps, d.stepsDirty !== undefined);
   return { steps: c.steps, liveNoneWhy: parseNoneLive(md), stepsDirty: c.dirty ? d.stepsDirty : undefined };
 }
 

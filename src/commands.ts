@@ -205,7 +205,8 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       const note = row.text.trim() || "Done by the owner";
       const old = (dataOf(m) as PipeData).steps ?? [];
       const steps: OwnerStep[] = [
-        ...old.map((s) => (s.done_at ? s : { ...s, done_at: at })),
+        // Steps needed before a merge may not have happened: only the ones after it count as done.
+        ...old.map((s) => (s.done_at || s.when === "before" ? s : { ...s, done_at: at })),
         { n: old.length + 1, when: "after", text: note, why: "", done_at: at },
       ];
       // One write: the steps go with the move, so a refused move leaves nothing behind.
