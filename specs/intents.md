@@ -1,6 +1,6 @@
 # Intents
 
-**Status:** Live: INT-1..44, INT-51..53, INT-60..62 · **Prefix:** INT
+**Status:** Live: INT-1..44, INT-51..53, INT-60..68 · **Prefix:** INT
 
 ## Purpose
 
@@ -623,8 +623,8 @@ For a GitLab repo, Towercab reads an open issue only if the owner wrote it or la
 The loop looks for new eligible GitLab issues every 5 minutes, together with the GitHub ones.
 
 - The poll (INT-21) lists the open issues of each GitLab repo through the GitLab API as the identity
-  from #129, on the same 5-minute schedule and at start. The list is filtered by author or label on
-  GitLab's side where it can be, and again by INT-63 before anything is read.
+  from #129, on the same 5-minute schedule and at start. The list carries no title or description; it is
+  filtered by INT-63 before anything is read.
 - A GitLab failure is a fault like a GitHub one ([LOOP-10](loop.md)): the poll is retried on the next
   pass, nothing is written for the issues it did not reach, and one repo failing does not stop the others.
 - Verified by: `gitlab issues: the poll runs every 5 minutes`, `gitlab issues: a GitLab failure is a fault`, `gitlab issues: one failing repo does not stop the others`

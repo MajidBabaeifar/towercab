@@ -132,6 +132,8 @@ export interface IssueRow {
   /** The author's login, or null. */
   author: string | null;
   labels: string[];
+  /** INT-63: the host says the issue is confidential. A host with no such issues leaves it out. */
+  confidential?: boolean;
 }
 
 export interface IssueText {
@@ -139,6 +141,8 @@ export interface IssueText {
   body: string;
   author: string | null;
   labels: string[];
+  /** INT-63: as in `IssueRow`; the text of a confidential issue is not used. */
+  confidential?: boolean;
 }
 
 export interface Forge {
