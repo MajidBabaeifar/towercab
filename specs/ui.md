@@ -980,9 +980,13 @@ A freeze that ran past its limit shows buttons to keep waiting or to lift it, an
 
 - The needs-you card, the intent page and the plane card (UI-164) show, for the `freeze` wait (LOOP-81),
   "Keep waiting" (posts `continue`), "Unfreeze" (the `unfreeze` action, UI-66, with a confirm saying
-  what ends `unverified` if a part is already merged) and drop. `GET /api/state` (UI-65) carries per
-  mission `parts` (a list of `{repo, stage, pr, waitsOn}`) and per repo `frozenBy` (mission id or null).
-- Verified by: `ui: a freeze past its limit offers keep waiting and unfreeze`, `ui: unfreeze confirms when a part is merged`, `ui: parts and frozen repos come from the API`
+  the intent will end as merged, not verified live, if a part is already merged) and drop.
+- After an unfreeze with merged parts, the card of the unverified end lists each part as "merged" or
+  "not merged" with its PR, says nothing was rolled back, and has a "Land the rest" button that posts
+  `retry` (LOOP-81).
+- `GET /api/state` (UI-65) carries per mission `parts` (a list of `{repo, stage, pr, waitsOn, merged}`)
+  and per repo `frozenBy` (mission id or null).
+- Verified by: `ui: a freeze past its limit offers keep waiting and unfreeze`, `ui: unfreeze confirms when a part is merged`, `ui: the unverified card lists merged and unmerged parts with a retry`, `ui: parts and frozen repos come from the API`
 
 ### UI-192 · Focus tab
 

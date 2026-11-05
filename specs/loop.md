@@ -826,12 +826,13 @@ When every part is ready, Towercab freezes merges in all the intent's repos at o
   covers a repo, so two multi-repo intents never hold each other's repos.
 - While a repo is frozen, other intents there keep working up to the gate; their `merge` stage waits and
   starts when the freeze lifts. Reads, pushes and CI are not stopped.
-- Merges the owner makes outside Towercab: Towercab posts a pending commit status `towercab/freeze` on
-  the head of every other open PR of a frozen repo, with the reason, and sets it to success when the
-  freeze lifts. Whether the status blocks the merge depends on the owner marking it a required check in
-  the repo's branch protection; Towercab never changes branch protection. If it cannot write the status
-  it says so once and the freeze still holds for Towercab's own merges.
-- Verified by: `loop: all the repos freeze in one step or none`, `loop: a held freeze makes the mission wait at the gate`, `loop: other intents work up to the merge while frozen`, `loop: a frozen repo's other PRs get a pending freeze status`, `loop: a freeze survives a restart`
+- Merges the owner makes outside Towercab: warn only. Towercab tells the owner, once when a freeze
+  starts and once when it lifts, in the Telegram message (LOOP-14), `towercab status` (LOOP-13) and the
+  Board (UI-166), which repos are frozen and why. It writes nothing to GitHub for the freeze: no commit
+  status, no required check, no change to branch protection, so it needs no permission beyond those it
+  has. A merge the owner makes by hand on GitHub is not stopped; Towercab's own merge buttons for a
+  frozen repo ask for a confirmation first.
+- Verified by: `loop: all the repos freeze in one step or none`, `loop: a held freeze makes the mission wait at the gate`, `loop: other intents work up to the merge while frozen`, `loop: the owner is told when a freeze starts and lifts`, `loop: a freeze writes nothing to GitHub`, `loop: a freeze survives a restart`
 
 ### LOOP-80 · Merge in the plan's order, then check live
 
@@ -844,8 +845,7 @@ The frozen parts merge one after the other in the plan's order, and the freeze l
   A repo without a live block (SHIP-15) ships nothing and counts as ok. The mission is `done` only when
   every part is ok and the steps of the plan are ticked (SHIP-20); a part that ends `unverified`
   (SHIP-21) makes the mission end that way.
-- The freeze lifts, and the status `towercab/freeze` becomes success, when the mission is `done`,
-  `unverified`, rolled back (LOOP-82) or dropped; held merges of other intents then continue in their
+- The freeze lifts when the mission is `done`, `unverified` (LOOP-81), rolled back (LOOP-82) or dropped; held merges of other intents then continue in their
   priority order.
 - Verified by: `loop: parts merge in the plan's order`, `loop: a failed merge stops the ones after it`, `loop: a part without a live block counts as ok`, `loop: the freeze lifts when every part is checked live`, `loop: held merges continue after the freeze`
 
@@ -853,31 +853,34 @@ The frozen parts merge one after the other in the plan's order, and the freeze l
 
 If a freeze lasts longer than the limit, Towercab asks the owner whether to keep waiting or to lift it.
 
-- `[agent].freeze_wait`: minutes, 1–1440, default 60, counted from when the freeze was taken. Past it
+- `[agent].freeze_wait`: minutes, 1–1440, default 120, counted from when the freeze was taken. Past it
   the mission enters the blocked wait `freeze` with the repos, what each part is doing and for how long.
   Exits (LOOP-76): `continue` = keep waiting, for another `freeze_wait` and then ask again; `unfreeze`;
   `drop`.
 - `unfreeze` lifts the freeze. If no part is merged yet, the parts go back to the gate and the mission
-  takes the freeze again later (LOOP-79). If a part is already merged, the mission ends `unverified`
-  (SHIP-21) with the merged and unmerged parts named, since it can no longer be made consistent without
-  the owner. `unfreeze` is a command like `drop` (`towercab unfreeze <id>`, LOOP-15) and a button
-  (UI-167).
+  takes the freeze again later (LOOP-79). If some part is already merged, the mission ends `unverified`
+  ("merged, not verified live", SHIP-21) and nothing is rolled back. Its card lists each part as merged
+  or not merged, and offers `retry`: it takes the freeze again and lands only the parts not yet merged,
+  in the plan's order, then ships and checks all parts live (LOOP-80). A retried part whose PR changed
+  since is rebuilt first.
+- `unfreeze` is a command like `drop` (`towercab unfreeze <id>`, LOOP-15) and a button (UI-167).
 - Time comes from the injected clock (`Clock`); the wait is listed in **Waits** with its exits and is
   covered by LOOP-76's walk.
-- Verified by: `loop: a freeze past the limit asks the owner`, `loop: continue keeps waiting another period`, `loop: unfreeze before any merge goes back to the gate`, `loop: unfreeze after a merge ends unverified`, `cli: unfreeze lifts the freeze`
+- Verified by: `loop: a freeze past the limit asks the owner`, `loop: continue keeps waiting another period`, `loop: unfreeze before any merge goes back to the gate`, `loop: unfreeze after a merge ends unverified and rolls nothing back`, `loop: the unverified card lists merged and unmerged parts`, `loop: retry lands only the unmerged parts`, `cli: unfreeze lifts the freeze`
 
-### LOOP-82 · A red part rolls the whole feature back
+### LOOP-82 · A red part rolls back itself and the parts after it
 
-If any part fails after the merges, every merged part is rolled back together.
+If a part fails after the merges, that part and every part that landed after it are rolled back; the parts that landed before it stay.
 
-- A `red` at `deploy` or `e2e` of any part (SHIP-6) sends the mission to `rollback` for all merged
-  parts, in the reverse of the merge order, each by its own rollback (SHIP-10, SHIP-12). Parts not yet
-  merged are not merged; their PRs are left open. A rollback that fails freezes that repo as SHIP-13 says
-  and the other repos stay frozen too until the owner decides.
-- The freeze stays during the rollback and lifts when every part is back (LOOP-80). After the rollback
-  the mission continues as SHIP-10 says for a single repo: it goes back to `build` for every part, so a
-  fix is one more set of PRs merged together.
-- Verified by: `loop: a red part rolls every merged part back in reverse order`, `loop: unmerged parts are not merged after a red part`, `loop: the freeze holds during the rollback`, `loop: a failed rollback keeps the other repos frozen`
+- A `red` at `deploy` or `e2e` of a part (SHIP-6) sends that part and every part after it in the landing
+  order (INT-43) to `rollback`, last landed first, each by its own rollback (SHIP-10, SHIP-12). Parts
+  before it stay merged and live: the plan orders parts so that each works without the later ones
+  (INT-43). Parts not yet merged are not merged; their PRs stay open. A rollback that fails freezes that
+  repo as SHIP-13 says, and the other repos stay frozen until the owner decides.
+- The freeze stays during the rollback and lifts when every rolled-back part is back (LOOP-80). The
+  mission then goes back to `build` for the rolled-back parts only, as SHIP-10 says for one repo; their
+  new PRs are checked and landed together again with the parts that stayed counted as merged.
+- Verified by: `loop: a red part rolls itself and the later parts back, last first`, `loop: parts before the red one stay merged`, `loop: unmerged parts are not merged after a red part`, `loop: the freeze holds during the rollback`, `loop: a failed rollback keeps the other repos frozen`, `loop: only the rolled-back parts are built again`
 
 **Config** (`src/config.ts`)
 
@@ -891,7 +894,7 @@ If any part fails after the merges, every merged part is rolled back together.
 | `agent.build_timeout`, `review_timeout`, `check_timeout` | minutes 1–1440 | 60, 15, 10 |
 | `agent.max_budget_usd`, `agent.daily_budget_usd` | number > 0 | 10; none |
 | `agent.ci_poll`, `ci_grace`, `ci_wait` | seconds | 30, 120, 1800 |
-| `agent.freeze_wait` | minutes 1–1440 (LOOP-81) | 60 |
+| `agent.freeze_wait` | minutes 1–1440 (LOOP-81) | 120 |
 | `agent.path` | `PATH` for runs and checks | the loop's `PATH` |
 | `agent.toolchain` | list of absolute dirs (`~/` expanded) | `~/.local/bin` |
 | `agent.env` | table of strings | `{}` |

@@ -492,9 +492,14 @@ The plan of a multi-repo intent has one part per repo and says in which order th
   merges before the second). The entries form an order with no cycles; the merge order is read from
   them. A repo in `repos` the plan gives no change to is dropped from the intent's parts with a
   sentence saying so; the lead always has a part.
+- The order must be backward compatible: each part, with only the parts before it landed, works live
+  without the later ones, because a failure rolls back only the failing part and the ones after it
+  (LOOP-82). The plan says in one sentence per part why it is safe alone.
 - A plan with a missing part, a repo that is not in the intent, or a cycle fails the plan check
   (PIP-46) and the planner is asked again, as for any bad plan.
-- Verified by: `plan: a multi-repo plan has a part per repo`, `plan: a cycle in the merge order is refused`, `plan: a repo the intent does not name is refused`, `plan: a repo with no change is dropped from the parts`
+- The review of the plan PR and of each code PR (PIP-5) checks that order: a part that would break the
+  live app until a later part lands is a finding.
+- Verified by: `review: a plan whose early part breaks without a later one is a finding`, `plan: a multi-repo plan has a part per repo`, `plan: a cycle in the merge order is refused`, `plan: a repo the intent does not name is refused`, `plan: a repo with no change is dropped from the parts`
 
 ### INT-44 · One intent is still one spec and three phases
 
