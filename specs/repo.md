@@ -53,10 +53,11 @@ Removed: the ship stage is parked (intent 261026-2204-4).
 
 ### REPO-5 · No verifying section
 
-A repo without a checks block waits for the owner to add one.
+A repo without a checks block gets one drafted by Towercab ([REPO-34](#repo-34--drafting-a-verifying-section)); it waits for the owner only when no check can be found ([REPO-37](#repo-37--asking-only-when-nothing-passes)).
 
-- No `## Verifying your work` with a non-empty ` ```checks ` block on the base →
-  `waiting: add CLAUDE.md verifying block`. `REVIEW.md` and `TOWERCAB.md` are optional.
+- No `## Verifying your work` with a non-empty ` ```checks ` block on the base → the setup path of
+  REPO-34..36 runs first. Only its failure ends in `waiting: add CLAUDE.md verifying block`.
+  `REVIEW.md` and `TOWERCAB.md` are optional.
 - Verified by: `repo: missing verifying block waits`
 
 ### REPO-6 · Towercab's own repo files
@@ -492,6 +493,67 @@ An intent whose whole outcome is a GitHub settings change is delivered as steps 
   ordinary owner steps ([SHIP-17](ship.md)) with the gaps as their text, so the intent has an exit. A
   setting outside the standard list (not in `ci`'s script) stays an owner step.
 - Verified by: `repo: a settings-only intent is applied and ticked by Towercab`, `repo: a settings-only intent falls back to owner steps`
+
+### REPO-34 · Drafting a verifying section
+
+When a repo has no checks block, Towercab drafts one from what the repo already holds.
+
+- `draftVerifying(files)` is pure over the base branch's file list and the text of the files it reads,
+  and returns a `setup` and `checks` block (REPO-2) with the evidence for each line (the file it came
+  from). Sources, in order: `package.json` scripts (`check`, `test`, `lint`, `typecheck`, `build`) with the
+  package manager its lockfile names; a `Makefile` target (`check`, `test`); the commands of the
+  `run:` steps in `.github/workflows/*.yml` that run on pull requests; `Cargo.toml`, `go.mod`,
+  `pyproject.toml` with their usual test command. A repo of plain static files (an `index.html` or `*.html`,
+  data files such as `*.json`, `*.ics`, `*.csv`) gets checks that parse each HTML file and validate each
+  data file, written as a small script under `scripts/` or an inline command with no network.
+- Commands that need secrets, deploy, publish or reach the network in ` ```checks ` (`npm publish`, `curl`,
+  `deploy*` targets, jobs that use `secrets.`) are never taken from CI. `setup` may use the network.
+- If the repo has a test folder (a directory matching PIP-30's globs, or `TOWERCAB.md` `tests`), the draft
+  runs it. A repo with none gets a check that runs the globs' default folder and passes while it is empty,
+  so a test added by a build runs ([PIP-30](pipeline.md)) and the proof can show it failing without the change.
+- The draft states the evidence for each line in plain words; it changes nothing but `CLAUDE.md`.
+- Verified by: `repo: draft from package scripts`, `repo: draft from a Makefile`, `repo: draft from CI workflows`, `repo: draft for a static site validates its files`, `repo: draft never takes deploy or secret commands`, `repo: draft runs the test folder`, `repo: draft runs a test folder added later`
+
+### REPO-35 · A draft must pass first
+
+Towercab proposes a draft only if its checks pass on the base branch.
+
+- The draft's `setup` and `checks` run once in the sandbox ([PIP-23](pipeline.md)) on a clean checkout of
+  the base branch, with the usual limits. If `checks` fail, Towercab tries the next source (REPO-34's
+  order), at most 3 drafts. The first draft that exits 0 is used; the output of the run is kept for the PR.
+- A check that passes only because it runs nothing (no command found, an empty test folder aside)
+  doesn't count: a draft needs at least one command that reads the repo's own files.
+- Verified by: `repo: a draft runs on the base branch before it is proposed`, `repo: a failing draft falls back to the next source`, `repo: a draft that checks nothing is not used`
+
+### REPO-36 · The setup pull request
+
+Towercab opens the chosen draft as a small pull request in the repo, and the waiting intent continues by itself once it merges.
+
+- The PR changes only `CLAUDE.md` (created, or given the section; text already there stays
+  byte-identical). Branch `towercab/setup-<repo>`, title `chore(towercab): add verifying checks`, a body to
+  `prompts/writing.md`: what the checks do, where each line came from, that it passed on the base
+  branch, and what it doesn't cover.
+- It goes through the repo's autonomy like any other change ([AUT-14](autonomy.md)), unlike a settings PR
+  ([REPO-16](#repo-16--a-settings-change-is-a-pull-request)): at an autonomy that merges on its own Towercab merges
+  it after CI and review; otherwise it waits for the owner's approval. `CLAUDE.md` is protected
+  ([REPO-8](#repo-8--protected-paths)), so this grant is made for this PR only.
+- One setup PR per repo is open at a time; intents for the same repo wait on it. The intent that
+  triggered it waits with the reason `setting up checks: #<n>` (shown with the PR). When the PR
+  merges and the base branch has a checks block, the intent continues at the next pass with no reply. A PR
+  closed without merging → REPO-37's ask, with the PR named.
+- Verified by: `repo: the setup PR changes only CLAUDE.md`, `repo: the setup PR follows the repo's autonomy`, `repo: one setup PR per repo`, `repo: a merged setup PR resumes the waiting intent`, `repo: a closed setup PR asks the owner`
+
+### REPO-37 · Asking only when nothing passes
+
+The owner is asked to add a verifying section only when Towercab found no check that passes on the base branch.
+
+- All drafts of REPO-35 failed, or nothing was found to draft from → `waiting: add CLAUDE.md verifying
+  block`, with the ask of LOOP's message table amended to say what was tried and the last failure
+  (`Towercab tried <sources> and none passed on <base>: <last failure>. Add a verifying section to its
+  CLAUDE.md, then reply.`). A reply continues as today.
+- A repo whose base branch fails its own CI checks does not count as "no check found": the failing draft is
+  reported in that ask, not proposed.
+- Verified by: `repo: no passing draft asks the owner`, `repo: the ask names what was tried`
 
 **Grammar** (`src/repo/markdown.ts`)
 
