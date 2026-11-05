@@ -13,6 +13,7 @@ export default defineConfig({
     "readiness.spec.ts",
     "focus.spec.ts",
     "exits.spec.ts",
+    "needs-fold.spec.ts",
   ],
   outputDir: "screenshots/.results",
   fullyParallel: false,
