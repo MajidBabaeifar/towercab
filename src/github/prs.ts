@@ -24,6 +24,8 @@ export interface PrComment {
   /** Review comments: the file and line they are on. */
   path?: string;
   line?: number;
+  /** Review comments: the review they belong to (PIP-145: an approval's comments are not feedback). */
+  reviewId?: string;
 }
 
 export interface PrState {
@@ -35,12 +37,38 @@ export interface PrState {
   mergeable: string;
   body: string;
   isDraft: boolean;
+  /** PIP-142: the PR's author, the host's review decision and the base branch, when gh says. */
+  author?: string;
+  reviewDecision?: string;
+  base?: string;
   reviews: PrReview[];
   /** Conversation comments, then review comments. */
   comments: PrComment[];
 }
 
 export const PR_FIELDS = "state,mergedAt,mergeCommit,headRefOid,mergeable,isDraft,reviews,comments,body";
+
+/** PIP-142: what the teammate-review rules also need of a PR (read only where the setting is on). */
+export async function readPrExtra(
+  gh: GitHub,
+  repo: string,
+  n: number,
+): Promise<Pick<PrState, "author" | "reviewDecision" | "base">> {
+  const view = check(
+    await gh.gh(repo, ["pr", "view", String(n), "-R", repo, "--json", "author,reviewDecision,baseRefName"]),
+    "gh pr view",
+  );
+  const v = JSON.parse(view) as {
+    author?: { login?: string };
+    reviewDecision?: string;
+    baseRefName?: string;
+  };
+  return {
+    author: v.author?.login ?? "",
+    reviewDecision: v.reviewDecision ?? "",
+    ...(v.baseRefName ? { base: v.baseRefName } : {}),
+  };
+}
 
 /** Read PR `n` of `repo` (`owner/name`) as the App. */
 export async function readPr(gh: GitHub, repo: string, n: number): Promise<PrState> {
@@ -83,6 +111,9 @@ export function parsePr(viewJson: string, commentsText: string): PrState {
         id: idOf(c.id),
         ...(typeof c.path === "string" ? { path: c.path } : {}),
         ...(typeof line === "number" ? { line } : {}),
+        ...(c.pull_request_review_id !== undefined && c.pull_request_review_id !== null
+          ? { reviewId: idOf(c.pull_request_review_id) }
+          : {}),
       });
     }
   }
@@ -95,6 +126,9 @@ export function parsePr(viewJson: string, commentsText: string): PrState {
     mergeable: str(v.mergeable) || "UNKNOWN",
     body: str(v.body),
     isDraft: v.isDraft === true,
+    ...(v.author !== undefined ? { author: login(v.author) } : {}),
+    ...(typeof v.reviewDecision === "string" ? { reviewDecision: v.reviewDecision } : {}),
+    ...(typeof v.baseRefName === "string" ? { base: v.baseRefName } : {}),
     reviews: arr(v.reviews).map((r) => ({
       author: login(r.author),
       state: str(r.state),

@@ -33,6 +33,7 @@ import {
   workingIn,
 } from "../slots.ts";
 import type { OwnerStep, SecretSpec } from "../steps.ts";
+import { whoText } from "../teammates.ts";
 import { proposedSection } from "./proposed.ts";
 import type {
   Access,
@@ -360,6 +361,8 @@ export function stateOf(m: Mission, now: number, o: StateOpts = {}): StateView {
   if (m.waiting === "your steps first" || (m.stage === "steps" && m.waiting))
     return state("needs", "Your steps");
   if (isReady(m)) return state("queued", "ready to build");
+  // UI-168: waiting for the teammates is not waiting for the owner.
+  if (onTeammates(m)) return state("working", "waiting for teammates");
   if (isWait(m.stage)) {
     const note = CARD_NOTES[m.stage] ?? (isQuestion(m.waiting) ? "Question" : "Blocked");
     return state("needs", note);
@@ -472,7 +475,21 @@ type MissionData = {
   doneByYou?: DoneNote;
   /** LOOP-77: the wait came back with nothing new. */
   stuck?: boolean;
+  /** PIP-143: the change waits for the owner to pass it on to the teammates. */
+  teammate?: { passNeeded?: boolean };
+  /** PIP-147: the host asks for approvals the reviewers can't give. */
+  reviewWarning?: string;
 };
+
+/** PIP-143, UI-168: the change waits for the teammates, not for the owner. */
+export function onTeammates(m: Pick<Mission, "waiting">): boolean {
+  return m.waiting === "teammate review" || m.waiting === "teammate review of spec";
+}
+
+/** UI-168: `Waiting for teammate review: alice, bob` (or `the code owners`). */
+export function teammateWords(config: Config, m: Pick<Mission, "repo">): string {
+  return `Waiting for teammate review: ${whoText(config.repos.get(m.repo)?.reviewers ?? [])}`;
+}
 
 /** UI-105: what the owner did from the page; display only, never moves the mission. */
 export interface DoneNote {
@@ -712,12 +729,16 @@ export function missionCard(
   const details = joinMd([approval || why === d.question?.question ? null : why, texts.details]);
   const done = doneOf(src, m, now);
   const stuck = dataOf<MissionData>(m).stuck === true && !approval;
+  // UI-168: a change the automated review didn't approve is passed on to the teammates before it can merge.
+  const passing = d.teammate?.passNeeded === true && m.waiting === "review and merge PR";
   const actions: Card["actions"] = done
     ? []
     : approval
-      ? pr
-        ? ["merge", "retry", "drop"]
-        : ["retry", "drop"]
+      ? passing
+        ? ["pass", "retry", "drop"]
+        : pr
+          ? ["merge", "retry", "drop"]
+          : ["retry", "drop"]
       : stuck
         ? ["retry", "drop"]
         : ["reply", "retry", "drop"];
@@ -746,9 +767,10 @@ export function missionCard(
     actions,
     exits,
     stuck,
-    mergeLabel: approval && pr && !done ? MERGE_LABELS[kind]! : null,
+    mergeLabel: approval && pr && !done && !passing ? MERGE_LABELS[kind]! : null,
     done,
     addRepo: null,
+    ...(d.reviewWarning ? { warning: d.reviewWarning } : {}),
   };
 }
 
@@ -819,7 +841,14 @@ export function missionRow(src: UiSources, s: Snap, m: Mission): Row {
     repo: m.repo,
     state: missionState(s, m, src),
     phases: phases(m),
-    step: ready ? "Ready to build" : back ? "Waiting for a build slot" : shipWords(m),
+    step: ready
+      ? "Ready to build"
+      : back
+        ? "Waiting for a build slot"
+        : onTeammates(m)
+          ? teammateWords(src.config, m)
+          : shipWords(m),
+    ...(dataOf<MissionData>(m).reviewWarning ? { warning: dataOf<MissionData>(m).reviewWarning } : {}),
     inStep: duration(s.now - entered),
     cost: money(m.cost_usd),
     model: modelName(m.child_model ?? m.model),
@@ -1354,7 +1383,7 @@ export interface Wait {
 export function waitsOf(src: UiSources, s: Snap): Wait[] {
   const waits: Wait[] = [];
   for (const m of s.missions) {
-    if (isReady(m) || !isWait(m.stage)) continue;
+    if (isReady(m) || !isWait(m.stage) || onTeammates(m)) continue;
     const since = s.entered.get(m.id) ?? m.created;
     const intent = s.intents.get(m.intent);
     waits.push({
@@ -1423,7 +1452,7 @@ export async function overview(src: UiSources): Promise<Overview> {
   const ready: Row[] = [];
   for (const m of s.missions) {
     if (isReady(m)) ready.push(missionRow(src, s, m));
-    else if (!isWait(m.stage)) working.push(missionRow(src, s, m));
+    else if (!isWait(m.stage) || onTeammates(m)) working.push(missionRow(src, s, m));
   }
   const needs = waitsOf(src, s).map((w) => w.card);
   const withMission = new Set(s.missions.map((m) => m.intent));

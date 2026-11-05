@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..44, PIP-46..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-133..141 · **Prefix:** PIP
+**Status:** Live: PIP-1..44, PIP-46..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-133..147 · **Prefix:** PIP
 
 ## Purpose
 
@@ -1343,21 +1343,21 @@ When the code PR is ready, Towercab asks the listed reviewers (or the code owner
   `/pass` (alongside PIP-45's commands) or the card's button (UI-168) raises `passed_on`. The owner's
   Approve review does not pass it on and does not merge here (PIP-144). Pass-on holds for the head it
   was given on; a new head is reviewed by Claude again and, if not approved, comes back to the owner.
-- The mission waits as `approval:teammate_review` (`waiting: teammate review from alice, bob`, or
-  `from the code owners`, worded plainly per PIP-110). `status`, `next`, the intent page and the
-  stage comment (PIP-42) show the same wait. It does not use a build place (LOOP-100) and has a way out
+- The mission waits as `teammate review` at the code PR's `approval:merge` (`teammate review of spec` at
+  the spec PR's `approval:spec`); its why names who: `Waiting for teammate review from alice, bob.`, or
+  `from the code owners`, worded plainly per PIP-110. `status`, `next` and the intent page show the same wait. It does not use a build place (LOOP-100) and has a way out
   (LOOP-76): the owner can `/retry`, change the list, or close the PR.
 - A new head whose own diff changed (a repair round, PIP-142) asks again and drops the wait on the old
   approval. A head that only brought the branch up to date with the base keeps the approval and asks
   nobody again, unless the host dismissed it.
-- Verified by: `pipeline: a ready PR requests the listed reviewers`, `pipeline: an empty list requests nobody and leaves it to the host's CODEOWNERS rule`, `pipeline: the wait names the reviewers`, `pipeline: a draft PR requests nobody`, `pipeline: a new head asks again`, `pipeline: an approval survives an update that only brings the branch up to date`, `pipeline: a changed diff cancels the approval and asks again`, `pipeline: a dismissed approval is not counted again`, `pipeline: an unapproved review goes to the owner before the teammates`, `pipeline: the owner passing it on requests the teammates`, `events: pass comment passes it on`, `events: approve review does not pass it on`
+- Verified by: `pipeline: gate waits for a teammate approval at a4 and a5` (the listed reviewers are asked once, the wait names them), `pipeline: an approval survives an update that only brings the branch up to date`, `pipeline: a changed diff cancels the approval and asks again`, `pipeline: a dismissed approval is not counted again`, `pipeline: an unapproved review goes to the owner before the teammates, who are asked once it is passed on`, `events: pass comment passes it on`, `events: approve review does not pass it on`
 
 ### PIP-144 · Nothing merges without the teammate's approval
 
 In such a repo the gate never merges before a teammate approval, at any autonomy level.
 
 - PIP-7's table gets one row, right after its rows for CI and the review: no teammate approval on the
-  gated head (PIP-142) → `approval:teammate_review` (PIP-143), at `a` 4 and 5 too, whatever the risk
+  gated head (PIP-142) → `teammate review` (PIP-143), at `a` 4 and 5 too, whatever the risk
   level (AUT-18) or caps. In this repo the "review not approved" row holds for the owner until the
   owner passes it on (PIP-143); after that the teammate row applies. Once approved, the rest of the
   table applies unchanged.
@@ -1371,6 +1371,10 @@ In such a repo the gate never merges before a teammate approval, at any autonomy
   here): it never counts as a teammate approval, never merges and never passes the PR on. Towercab
   replies once, "Reply `/pass` to ask your teammates" before they are asked, or "Merge with the card's
   button or `towercab approve`" after.
+- The owner's own merge (the card's Merge, `towercab approve`) re-checks too: it is refused until the
+  change is passed on, and, where the gate did not check for a teammate approval (the review or CI had
+  not finished, or any wait on a spec PR), until the owner's `gh` reads a counted approval on the PR's
+  head. A PR that can't be read is refused.
 - Towercab merging (PIP-22) re-checks the approval on the head it merges. If the host refuses the
   merge for the review rule, the mission goes back to this wait; Towercab never works around the host's
   rules, and the host's rules and the list are both required (a listed approval does not override a
@@ -1378,7 +1382,7 @@ In such a repo the gate never merges before a teammate approval, at any autonomy
 - Spec PRs follow the same rule: Towercab merges one at a4 and a5 (PIP-50) only after a teammate
   approval, and waits as above. Plan PRs in the owner's intents repo (PIP-51) do not: that repo is the
   owner's own.
-- Verified by: `pipeline: gate waits for a teammate approval at a4 and a5`, `pipeline: owner approve does not merge in a teammate review repo`, `pipeline: the owner merges at a3 once the teammates approved`, `pipeline: merge and approve are refused before the teammates approved`, `cli: approve merges once the teammates approved`, `pipeline: merge re-checks the approval on the head`, `pipeline: a spec PR waits for a teammate approval`, `pipeline: a plan PR does not wait for a teammate`
+- Verified by: `pipeline: gate waits for a teammate approval at a4 and a5`, `pipeline: owner approve does not merge in a teammate review repo`, `pipeline: the owner merges at a3 once the teammates approved`, `pipeline: merge and approve are refused before the teammates approved` (the page's Merge; the approve command gives the same refusal), `pipeline: the owner's merge needs the pass-on first`, `pipeline: the owner's merge is refused where the gate skipped the teammate check`, `pipeline: the owner's merge of a spec PR checks for a teammate approval`, `pipeline: the owner's merge is untouched where no teammate review is needed`, `pipeline: the owner's merge is refused when the PR can't be read`
 
 ### PIP-145 · A reviewer's feedback starts a repair round
 
@@ -1406,7 +1410,7 @@ In a repo that needs a teammate's review, the PR is assigned to the owner.
 - With `teammate_review=on`, Towercab assigns `[github].me` to the spec and code PRs when it opens
   them (`gh pr edit --add-assignee`, once; a failure is logged, not a wait). Plan PRs in the owner's
   intents repo are not assigned. A repo with the setting off is unchanged.
-- Verified by: `pipeline: the owner is assigned to the code and spec PRs`, `pipeline: plan PRs are not assigned`
+- Verified by: `pipeline: gate waits for a teammate approval at a4 and a5` (the owner is assigned to the spec and code PRs, never a plan PR)
 
 ### PIP-147 · A warning when the host asks for more approvals than the reviewers can give
 
@@ -1414,7 +1418,7 @@ When the host's rules need approvals the reviewers can't supply, Towercab says s
 
 - Both the reviewers' approval (PIP-142) and the host's rules must be met; Towercab never merges around
   the host. The mission carries `data.reviewWarning` (text, or none) while either holds, for a PR
-  waiting at `approval:teammate_review` or refused by the host for its review rule (PIP-144):
+  waiting at `teammate review` or refused by the host for its review rule (PIP-144):
   the host requires `n` approvals (branch protection or ruleset, as in LOOP-84) and the reviewers
   (PIP-142, minus the PR's author) number fewer than `n`; or the PR has the reviewers' approval but the
   host still reports it `REVIEW_REQUIRED` or the merge is refused for approvals.

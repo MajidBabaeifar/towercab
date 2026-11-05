@@ -24,6 +24,8 @@ interface RepoRow {
   env: string;
   source: RepoSource;
   added: number;
+  teammate_review?: number;
+  reviewers?: string;
 }
 
 /** The meta key that marks a config table as imported: it is never imported again. */
@@ -44,6 +46,9 @@ function toRepo(r: RepoRow): RepoConfig {
     workers: Number(r.workers),
     ahead: Number(r.ahead),
     env,
+    // LOOP-83: only a repo that sets them carries them.
+    ...(Number(r.teammate_review ?? 0) === 1 ? { teammateReview: true } : {}),
+    ...(r.reviewers ? { reviewers: r.reviewers.split(",").filter(Boolean) } : {}),
   };
 }
 
@@ -318,6 +323,31 @@ export function removeRepo(db: Db, config: Config, name: string): RepoConfig {
 }
 
 const SETTINGS = "workers, ahead, base, path or env";
+const LOGIN = /^[A-Za-z0-9-]{1,39}$/;
+
+/** LOOP-83: the reviewers a `reviewers=` value lists: lowercase, once each; the owner and the bot refused. */
+function reviewersOf(value: string, me: string, bot: string): string[] {
+  const out: string[] = [];
+  for (const raw of value.split(",")) {
+    const login = raw.trim();
+    if (login === "") continue;
+    if (!LOGIN.test(login)) throw new Error(`reviewers: ${login} is not a login`);
+    const lower = login.toLowerCase();
+    const norm = (s: string) =>
+      s
+        .toLowerCase()
+        .replace(/^app\//, "")
+        .replace(/\[bot\]$/, "");
+    if (me !== "" && lower === me.toLowerCase()) {
+      throw new Error(`reviewers: ${login} is you: the owner cannot review their own change`);
+    }
+    if (bot !== "" && lower === norm(bot)) {
+      throw new Error(`reviewers: ${login} is Towercab's bot: it cannot review its own change`);
+    }
+    if (!out.includes(lower)) out.push(lower);
+  }
+  return out;
+}
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function int16(key: string, value: string): number {
@@ -354,7 +384,7 @@ function envOf(env: Record<string, string>, value: string): Record<string, strin
  * JSON object of strings replaces them all). `base` and `path` wait until no mission needs the repo.
  * All or nothing: one bad pair changes nothing.
  */
-export function setRepo(db: Db, config: Config, name: string, pairs: string[]): RepoConfig {
+export function setRepo(db: Db, config: Config, name: string, pairs: string[], bot = ""): RepoConfig {
   if (pairs.length === 0) throw new Error(`say what to set (${SETTINGS}) as key=value`);
   const repo = db.tx(() => {
     const row = db.get<RepoRow>("SELECT * FROM repos WHERE name = ?", name);
@@ -374,7 +404,15 @@ export function setRepo(db: Db, config: Config, name: string, pairs: string[]): 
         if (p !== "" && !isAbsolute(p)) throw new Error("path must be absolute or start with ~/");
         r.path = p;
       } else if (key === "env") r.env = envOf(r.env, value);
-      else throw new Error(`unknown setting ${key}: use ${SETTINGS}`);
+      else if (key === "teammate_review") {
+        if (value !== "on" && value !== "off") throw new Error("teammate_review must be on or off");
+        if (value === "on") r.teammateReview = true;
+        else delete r.teammateReview;
+      } else if (key === "reviewers") {
+        const list = reviewersOf(value, config.github?.me ?? "", bot);
+        if (list.length > 0) r.reviewers = list;
+        else delete r.reviewers;
+      } else throw new Error(`unknown setting ${key}: use ${SETTINGS}`);
     }
     if (r.base !== row.base || r.path !== row.path) {
       const busy = needing(db, name);
@@ -385,12 +423,14 @@ export function setRepo(db: Db, config: Config, name: string, pairs: string[]): 
       }
     }
     db.run(
-      "UPDATE repos SET path = ?, base = ?, workers = ?, ahead = ?, env = ? WHERE name = ?",
+      "UPDATE repos SET path = ?, base = ?, workers = ?, ahead = ?, env = ?, teammate_review = ?, reviewers = ? WHERE name = ?",
       r.path,
       r.base,
       r.workers,
       r.ahead,
       JSON.stringify(r.env),
+      r.teammateReview ? 1 : 0,
+      (r.reviewers ?? []).join(","),
       name,
     );
     return r;
@@ -404,7 +444,10 @@ export function repoLine(repo: RepoConfig, home: string): string {
   const w = `${repo.workers} worker${repo.workers === 1 ? "" : "s"}`;
   const names = Object.keys(repo.env).sort();
   const env = names.length ? ` · env ${names.join(", ")}` : "";
-  return `${repo.name}: ${repo.github} · base ${repo.base} · ${w} · ahead ${repo.ahead} · ${clonePath(repo, home)}${env}`;
+  const team = repo.teammateReview
+    ? ` · teammate review: ${repo.reviewers?.length ? repo.reviewers.join(", ") : "CODEOWNERS"}`
+    : "";
+  return `${repo.name}: ${repo.github} · base ${repo.base} · ${w} · ahead ${repo.ahead} · ${clonePath(repo, home)}${env}${team}`;
 }
 
 /** LOOP-67: `repo list`, one line per repo. */

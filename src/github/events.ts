@@ -74,6 +74,27 @@ export function conflictRoundsDone(m: Mission): number {
 
 /** The comment that starts over (PIP-45). */
 export const RETRY = "/retry";
+/** PIP-143: the owner's comment that passes a change the automated review didn't approve to the teammates. */
+export const PASS = "/pass";
+
+/** The waits of a change that needs a teammate's review (PIP-143, PIP-144). */
+const TEAMMATE_WAITS = ["teammate review", "teammate review of spec"];
+
+/**
+ * What a repo that needs a teammate's review adds to a PR read (PIP-142, PIP-143, PIP-145): the PR the
+ * mission waits on, the reviewers who are heard, and what the rules found of it.
+ */
+export interface TeamReads {
+  kind: PrKind;
+  /** The PR's reviewers, lowercase (never the owner or the bot). */
+  heard: ReadonlySet<string>;
+  /** A teammate approval counts on the PR's head. */
+  approved: boolean;
+  /** The owner may pass the change on now (the automated review didn't approve; teammates not asked). */
+  passable: boolean;
+  /** REST ids of the approving reviews: their inline comments are not feedback. */
+  approvedReviewIds: ReadonlySet<string>;
+}
 /** Reserved for the parked ship stage (PIP-45). */
 export const RELEASE = "/release";
 
@@ -132,11 +153,59 @@ function ownerSaid(prs: Prs, me: string, botLogin: string): Said[] {
 const latest = (xs: Said[]) => xs.reduce((a, b) => (newer(b.at, a.at) ? b : a)).at;
 
 /**
+ * PIP-145: a reviewer's request for changes, or a comment outside an approval, on the PR the mission
+ * waits on. An approval, its text and its inline comments never are; a reviewer's slash commands and
+ * `allow` replies are not heard.
+ */
+function reviewerSaid(prs: Prs, team: TeamReads): Said[] {
+  const pr = prs[team.kind];
+  if (!pr) return [];
+  const out: Said[] = [];
+  const isCommand = (t: string) => t === RETRY || t === RELEASE || t === PASS || parseAllow(t) !== null;
+  for (const c of pr.comments) {
+    const text = c.body.trim();
+    if (!team.heard.has(c.author.toLowerCase()) || !text || isCommand(text)) continue;
+    if (c.reviewId && team.approvedReviewIds.has(c.reviewId)) continue;
+    const where = c.path ? `${c.path}${c.line ? `:${c.line}` : ""}: ` : "";
+    out.push({ kind: team.kind, at: c.at, text: `${c.author}: ${where}${text}` });
+  }
+  for (const r of pr.reviews) {
+    if (!team.heard.has(r.author.toLowerCase())) continue;
+    const text = r.body.trim();
+    if (r.state === "CHANGES_REQUESTED") {
+      out.push({
+        kind: team.kind,
+        at: r.at,
+        text: `${r.author} asked for changes: ${text || "Changes requested."}`,
+      });
+    } else if (r.state === "COMMENTED" && text && !isCommand(text)) {
+      out.push({ kind: team.kind, at: r.at, text: `${r.author}: ${text}` });
+    }
+  }
+  return out;
+}
+
+/** PIP-145: what the approving reviewers wrote, for the record (`alice approved: …`); nothing more happens. */
+export function approvalNotes(prs: Prs, team: TeamReads): string[] {
+  const pr = prs[team.kind];
+  if (!pr) return [];
+  return pr.reviews
+    .filter((r) => r.state === "APPROVED" && team.heard.has(r.author.toLowerCase()) && r.body.trim())
+    .map((r) => `${r.author} approved: ${r.body.trim()}`);
+}
+
+/**
  * At most one event from a PR read, in LOOP-18's order: merged (the current PR) > closed >
  * the owner's feedback (`answered` while blocked) > `/retry` > conflict > head moved (code PR).
  * Only the owner's comments newer than `feedback_seen` count; taking one moves it forward.
  */
-export function prEvents(m: Mission, prs: Prs, me: string, botLogin: string): Outcome | null {
+export function prEvents(
+  m: Mission,
+  prs: Prs,
+  me: string,
+  botLogin: string,
+  team?: TeamReads,
+): Outcome | null {
   if (finished(m.stage)) return null;
   const cur = currentPr(m);
   const curPr = cur ? prs[cur.kind] : undefined;
@@ -151,11 +220,17 @@ export function prEvents(m: Mission, prs: Prs, me: string, botLogin: string): Ou
     if (prs[kind]?.state === "CLOSED" && prNumber(m, kind) !== null) return { event: "closed" };
   }
 
-  const fresh = ownerSaid(prs, me, botLogin).filter((s) => newer(s.at, m.feedback_seen));
+  const said = team
+    ? [...ownerSaid(prs, me, botLogin), ...reviewerSaid(prs, team)]
+    : ownerSaid(prs, me, botLogin);
+  const fresh = said.filter((s) => newer(s.at, m.feedback_seen));
   // PIP-141: `allow <path>` reverses a refusal (not feedback), unless a test question is open.
   const asking = Boolean(dataOf<{ testAsk?: unknown }>(m).testAsk);
   const isCommand = (s: Said) =>
-    s.text === RETRY || s.text === RELEASE || (!asking && parseAllow(s.text) !== null);
+    s.text === RETRY ||
+    s.text === RELEASE ||
+    (team && s.text === PASS) ||
+    (!asking && parseAllow(s.text) !== null);
   const feedback = fresh.filter((s) => !isCommand(s));
   if (feedback.length > 0) {
     const kinds = new Set(feedback.map((s) => s.kind));
@@ -175,6 +250,29 @@ export function prEvents(m: Mission, prs: Prs, me: string, botLogin: string): Ou
     const again = recheck(m);
     if (again) return { ...again, set: { feedback_seen: latest(retries) } };
     return { event: "retry_fresh", set: { feedback_seen: latest(retries) } };
+  }
+
+  if (team) {
+    // PIP-143: the owner's `/pass` hands a change the automated review didn't approve to the teammates.
+    const passes = fresh.filter((s) => s.text === PASS);
+    if (passes.length > 0 && team.passable && prs.code?.head) {
+      const kept = dataOf<{ teammate?: object }>(m).teammate ?? {};
+      return {
+        event: "reviewed",
+        why: "the owner passed it on to the teammates",
+        set: { feedback_seen: latest(passes) },
+        data: { teammate: { ...kept, passedOn: prs.code.head } },
+      };
+    }
+    // PIP-142: a counted teammate approval ends the wait; what it says goes to the record.
+    if (team.approved && m.waiting !== null && TEAMMATE_WAITS.includes(m.waiting)) {
+      return {
+        event: "reviewed",
+        why: "a teammate approved",
+        // The spec PR's gate runs again through the design's recheck (PIP-144).
+        data: { approvalNotes: approvalNotes(prs, team), ...(team.kind === "spec" ? { recheck: true } : {}) },
+      };
+    }
   }
 
   // PIP-81: an open spec PR that no longer merges into base gets a design revision, at most twice.
@@ -212,9 +310,10 @@ export function prEvents(m: Mission, prs: Prs, me: string, botLogin: string): Ou
  * PIP-43: the owner's Approve review, newer than `feedback_seen` and on the PR's current head,
  * on the open PR the mission waits on → that PR's number, for Towercab to merge as the owner.
  */
-export function approveRequested(m: Mission, prs: Prs, me: string): number | null {
+export function approveRequested(m: Mission, prs: Prs, me: string, teamOn = false): number | null {
   const kind = WAITS_ON[m.stage];
-  if (!kind) return null;
+  // PIP-144: in a repo that needs a teammate's review the owner's Approve never merges.
+  if (!kind || (teamOn && kind !== "plan")) return null;
   const pr = prs[kind];
   const n = prNumber(m, kind);
   if (!pr || n === null || pr.state !== "OPEN") return null;
@@ -226,6 +325,36 @@ export function approveRequested(m: Mission, prs: Prs, me: string): number | nul
       (r.commit === null || r.commit === pr.head),
   );
   return ok ? n : null;
+}
+
+/** The marker of the one reply to the owner's Approve review submitted at `at` (PIP-144). */
+export const approveMarker = (at: string) => `<!-- towercab:approve:${at} -->`;
+
+/** An Approve of the owner's in a repo that needs a teammate's review, which the bot hasn't answered. */
+export interface ApproveAsk {
+  kind: PrKind;
+  pr: number;
+  marker: string;
+}
+
+/**
+ * PIP-144: the owner's Approve reviews on the PR the mission waits on that no bot reply carrying their
+ * marker answers. They neither merge nor count, so the owner is told once what to do instead.
+ */
+export function approveNotices(m: Mission, prs: Prs, me: string, botLogin: string): ApproveAsk[] {
+  const kind = WAITS_ON[m.stage];
+  if (!kind || kind === "plan" || finished(m.stage)) return [];
+  const pr = prs[kind];
+  const n = prNumber(m, kind);
+  if (!pr || n === null || pr.state !== "OPEN") return [];
+  const out: ApproveAsk[] = [];
+  for (const r of pr.reviews) {
+    if (!isOwner(r.author, me) || r.state !== "APPROVED" || !r.at) continue;
+    const marker = approveMarker(r.at);
+    if (pr.comments.some((b) => isBot(b.author, botLogin) && b.body.includes(marker))) continue;
+    out.push({ kind, pr: n, marker });
+  }
+  return out;
 }
 
 /** The reply to `/release` while the ship stage is parked. */

@@ -74,6 +74,25 @@ export async function repos(src: UiSources, selected: string | null, o: ReposOpt
   return { version: versionOf(body, `${dbMark(src.db)}:${s.listing?.head ?? ""}`), ...body };
 }
 
+/**
+ * UI-168: the repo's reviewers, and a warning when the host's required approvals (the figure the gate
+ * and `doctor` last read, kept in `meta`) are more than the listed reviewers, with no code owners to
+ * make up the rest (an empty list leaves that to the PR's card, PIP-147).
+ */
+export function teammateView(
+  src: UiSources,
+  repo: string,
+  reviewers: string[],
+): { reviewers: string[]; warning: string | null } {
+  const cached = src.db.meta(`required:${repo}`);
+  const required = cached && cached.split(" ")[1] !== "?" ? Number(cached.split(" ")[1]) : null;
+  const warning =
+    required !== null && reviewers.length > 0 && required > reviewers.length
+      ? `GitHub needs ${required} approvals and your reviewers can give ${reviewers.length}: add reviewers with towercab repo set ${repo} reviewers=…`
+      : null;
+  return { reviewers, warning };
+}
+
 async function repoView(
   src: UiSources,
   s: Snap,
@@ -82,8 +101,10 @@ async function repoView(
   o: ReposOpts,
 ): Promise<RepoView> {
   const setup = setupView(src.db, lane.repo, s.listing, src.proposed?.().list ?? []);
+  const cfg = src.config.repos.get(lane.repo);
   return {
     ...(setup ? { setup } : {}),
+    ...(cfg?.teammateReview ? { teammate: teammateView(src, lane.repo, cfg.reviewers ?? []) } : {}),
     repo: lane.repo,
     github: lane.github,
     ahead: lane.ahead,

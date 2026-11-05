@@ -9,6 +9,7 @@ import { classifyFiles, fetchFiles, type ProposedPr } from "../github/proposed.t
 import type { Clock, GitHub } from "../handlers.ts";
 import type { IntentStore } from "../intents/types.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
+import { ownerMergeRefusal } from "../pipeline/teammate.ts";
 import { grantPermission } from "../settings/store.ts";
 import { approveSecret } from "../ship/secret-steps.ts";
 import { currentPr, type DoneNote, validNote } from "./state.ts";
@@ -20,6 +21,8 @@ export interface UiActions {
   retry(intent: string): Promise<string>;
   drop(intent: string): Promise<string>;
   start(intent: string): Promise<string>;
+  /** UI-168, PIP-143: pass a change the automated review didn't approve on to the teammates. */
+  pass?(intent: string): Promise<string>;
   /** UI-160, SHIP-22: tick (or untick) one of the owner's steps. */
   step?(intent: string, n: number, done: boolean): Promise<string>;
   /** REPO-32: the owner granted the App Administration (write); settings are applied again. */
@@ -190,6 +193,23 @@ export function createActions(d: ActionDeps): UiActions {
       const m = unfinishedFor(d.db, intent);
       if (!m || !APPROVALS.has(m.stage))
         throw new Error("Nothing to merge: this intent isn't waiting for a merge.");
+      // PIP-143: a change the automated review didn't approve is passed on before it can merge.
+      if ((dataOf(m) as { teammate?: { passNeeded?: boolean } }).teammate?.passNeeded === true) {
+        throw new Error("Pass it on to your teammates first: they need to review it before it can merge.");
+      }
+      // PIP-144: the owner's Merge waits for the teammates' approval.
+      if (m.waiting === "teammate review" || m.waiting === "teammate review of spec") {
+        const repo = d.config.repos.get(m.repo);
+        throw new Error(
+          `Waiting for teammate review (${repo?.reviewers?.join(", ") || "the code owners"}): you can merge once they have approved.`,
+        );
+      }
+      // PIP-144: where the gate didn't check for a teammate approval, the owner's merge does.
+      const cfg = d.config.repos.get(m.repo);
+      const refusal = cfg
+        ? await ownerMergeRefusal({ owner: d.github.owner, me: d.config.github?.me ?? "", repo: cfg, m })
+        : null;
+      if (refusal) throw new Error(refusal);
       const p = pr(m);
       if (!p) throw new Error("Nothing to merge: its PR isn't open yet.");
       const again = repeated(m, p, "merge");
@@ -227,6 +247,22 @@ export function createActions(d: ActionDeps): UiActions {
       );
       done(m, p, "merge");
       return `Merged the ${p.label} #${p.number} as you. Towercab moves on within a minute.`;
+    },
+
+    async pass(intent) {
+      const m = unfinishedFor(d.db, intent);
+      const t = m ? (dataOf(m) as { teammate?: { passNeeded?: boolean } }).teammate : undefined;
+      if (m?.stage !== "approval:merge" || m.waiting !== "review and merge PR" || !t?.passNeeded) {
+        throw new Error(
+          "Nothing to pass on: this change isn't waiting for you to pass it to your teammates.",
+        );
+      }
+      const p = pr(m);
+      if (!p) throw new Error("Nothing to pass on: its PR isn't open yet.");
+      // The same comment the owner can write on GitHub, so there is one way in (PIP-143).
+      await owner(["pr", "comment", String(p.number), "-R", p.github, "--body", "/pass"], "pass it on");
+      d.db.setMeta(`poll:${m.id}`, "1");
+      return `Passed on: Towercab asks your teammates within a minute.`;
     },
 
     async reply(intent, text) {

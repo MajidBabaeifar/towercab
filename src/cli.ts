@@ -30,6 +30,7 @@ import { type Mission, unfinishedFor } from "./mission.ts";
 import { decide, nextText } from "./pick.ts";
 import { guardMain } from "./pipeline/guard.ts";
 import { handlers } from "./pipeline/index.ts";
+import { ownerMergeRefusal } from "./pipeline/teammate.ts";
 import { parseScores } from "./priority.ts";
 import { addRepo, loadRepos, removeRepo, repoLine, repoList, setRepo } from "./repos.ts";
 import { checkoutRoot, down, logsArgv, restart, up } from "./service.ts";
@@ -428,6 +429,19 @@ async function run(
       }
       const repo = w.config.repos.get(m.repo);
       if (!repo || !w.github) throw new Error(`unknown repo ${m.repo}`);
+      // PIP-144: the owner's merge waits for the teammates' approval.
+      if (m.waiting === "teammate review" || m.waiting === "teammate review of spec") {
+        throw new Error(
+          `${intent.id} is waiting for teammate review (${repo.reviewers?.join(", ") || "the code owners"}): it can be merged once they have approved`,
+        );
+      }
+      const refusal = await ownerMergeRefusal({
+        owner: w.github.owner,
+        me: w.config.github?.me ?? "",
+        repo,
+        m,
+      });
+      if (refusal) throw new Error(`${intent.id}: ${refusal}`);
       const [gh, n] =
         m.stage === "approval:plan"
           ? [store.github()!, m.plan_pr!]
@@ -526,7 +540,16 @@ async function repo(w: World, args: string[], name: string | undefined): Promise
     return `added ${r.name}: ${r.github}, base ${r.base}, cloned`;
   }
   if (sub === "set" && arg && args.length >= 3) {
-    return `set ${repoLine(setRepo(w.db, w.config, arg, args.slice(2)), w.home.root)}`;
+    // LOOP-83: the bot can't be a reviewer; its login is asked only when a list is set, and a GitHub
+    // that can't be reached doesn't stop the setting (the owner is still refused).
+    let bot = "";
+    if (w.github && args.slice(2).some((p) => p.startsWith("reviewers="))) {
+      bot = await w.github.bot().then(
+        (b) => b.login,
+        () => "",
+      );
+    }
+    return `set ${repoLine(setRepo(w.db, w.config, arg, args.slice(2), bot), w.home.root)}`;
   }
   throw new UsageError(REPO_USAGE);
 }

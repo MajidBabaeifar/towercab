@@ -5,7 +5,7 @@ import { readFileSync, rmSync, statSync } from "node:fs";
 import { Inhibitor, woke } from "./awake.ts";
 import { removeCheckout } from "./checkout.ts";
 import { applyPending, paused } from "./commands.ts";
-import type { Config } from "./config.ts";
+import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
 import { fixFor, Health } from "./faults.ts";
 import {
@@ -20,12 +20,14 @@ import {
 } from "./features.ts";
 import { retireBranch } from "./github/branches.ts";
 import {
+  approveNotices,
   approveRequested,
   intentEvents,
   prEvents,
   releaseRequested,
   reversalMarker,
   reversalRequested,
+  type TeamReads,
 } from "./github/events.ts";
 import { pollIssues } from "./github/issues.ts";
 import {
@@ -71,6 +73,7 @@ import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import type { PipeData } from "./pipeline/common.ts";
 import { writeTicks } from "./pipeline/steps.ts";
+import { evaluate } from "./pipeline/teammate.ts";
 import { isParked, priority } from "./priority.ts";
 import { blockingRepos, startReadiness as startReadinessCheck } from "./readiness.ts";
 import { missingText } from "./repo/readiness.ts";
@@ -94,6 +97,7 @@ import {
   workingIn,
 } from "./slots.ts";
 import { leftOf, type OwnerStep, parseDelivery, unticked } from "./steps.ts";
+import { APPROVE_NOTICE } from "./teammates.ts";
 import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
 import { budgetReached } from "./ui/state.ts";
 import { checkUpdate, RESTART_CODE } from "./update.ts";
@@ -1147,7 +1151,8 @@ export class Loop {
         if (m.plan_pr && intentsRepo) prs.plan = await read(intentsRepo, m.plan_pr);
         if (m.pr) prs.code = await read(repo.github, m.pr);
         this.githubOk();
-        const approve = approveRequested(m, prs, this.d.github.me);
+        const teamOn = repo.teammateReview === true;
+        const approve = approveRequested(m, prs, this.d.github.me, teamOn);
         if (approve !== null) {
           const target = approve === m.plan_pr ? intentsRepo! : repo.github;
           const r = await this.d.github.gh(target, [
@@ -1206,10 +1211,42 @@ export class Loop {
           this.lastPrPoll.delete(m.id);
           continue;
         }
-        const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot);
+        // PIP-142..145: a repo that needs a teammate's review adds the reviewers' side of the PR read.
+        let team: TeamReads | undefined;
+        if (teamOn) {
+          team = await this.teamReads(m, repo, prs, bot);
+          for (const ask of approveNotices(m, prs, this.d.github.me, bot)) {
+            // PIP-144: the owner's Approve neither merges nor counts: say so once.
+            const text = team?.approved
+              ? APPROVE_NOTICE.after
+              : team?.passable
+                ? APPROVE_NOTICE.before
+                : APPROVE_NOTICE.waiting;
+            await this.d.github.gh(
+              repo.github,
+              ["pr", "comment", String(ask.pr), "-R", repo.github, "--body-file", "-"],
+              { input: `${ask.marker}\n${text}` },
+            );
+          }
+        }
+        const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot, team);
         if (!o) continue;
         const running = this.children.has(m.id);
         if (running && !["code_merged", "spec_merged", "plan_merged", "closed"].includes(o.event)) continue;
+        // PIP-145: what an approving reviewer wrote goes to the PR's record, nothing more.
+        const notes = (o.data as { approvalNotes?: string[] } | undefined)?.approvalNotes ?? [];
+        if (o.event === "reviewed" && notes.length > 0) {
+          const pr = team?.kind === "spec" ? m.spec_pr : m.pr;
+          if (pr) {
+            await this.d.github.gh(
+              repo.github,
+              ["pr", "comment", String(pr), "-R", repo.github, "--body-file", "-"],
+              {
+                input: notes.join("\n\n"),
+              },
+            );
+          }
+        }
         // PIP-112: the merged plan.md is the record of the delivery, edits in the plan PR included.
         this.move(o.event === "plan_merged" ? await this.deliveryFromPlan(m) : m, o);
       } catch (e) {
@@ -1218,6 +1255,36 @@ export class Loop {
         this.d.log(`${label(m)}: reading its PRs failed: ${msg}`);
       }
     }
+  }
+
+  /**
+   * PIP-142: what the teammate-review rules find of the PR the mission waits on (the code PR at
+   * `approval:merge`, the spec PR at `approval:spec`); undefined elsewhere.
+   */
+  private async teamReads(
+    m: Mission,
+    repo: RepoConfig,
+    prs: { spec?: PrState; code?: PrState },
+    bot: string,
+  ): Promise<TeamReads | undefined> {
+    const kind = m.stage === "approval:merge" ? "code" : m.stage === "approval:spec" ? "spec" : null;
+    if (!kind) return undefined;
+    const pr = kind === "code" ? prs.code : prs.spec;
+    const n = kind === "code" ? m.pr : m.spec_pr;
+    if (pr?.state !== "OPEN" || n === null) return undefined;
+    const d = dataOf(m) as PipeData;
+    const e = await evaluate(
+      { github: this.d.github, tools: this.d.tools, clone: clonePath(repo, this.d.home.root) },
+      repo,
+      { n, branch: kind === "code" ? m.branch : (d.specBranch ?? m.branch), bot, pr },
+    );
+    return {
+      kind,
+      heard: new Set(e.reviewers),
+      approved: e.counted,
+      passable: kind === "code" && m.waiting === "review and merge PR" && d.teammate?.passNeeded === true,
+      approvedReviewIds: e.approvedReviewIds,
+    };
   }
 
   /** SHIP-30..32: the release PRs of every repo, every 60 s; not a mission, so outside `apply`. */

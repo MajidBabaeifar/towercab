@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { riskWhy, specGate } from "../autonomy.ts";
 import { git, refreshBase } from "../checkout.ts";
 import { SPEC_CONFLICT_REVISIONS, SPEC_CONFLICT_TEXT } from "../github/events.ts";
+import { assignOwner } from "../github/teammates.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import { renameFeature } from "../intents/features.ts";
 import { plainLine, TITLE_MAX, titleProblem } from "../intents/naming.ts";
@@ -37,6 +38,7 @@ import { fence, intentData, render } from "./prompts.ts";
 import { specBody } from "./prtext.ts";
 import { endRisk, spawnRisk } from "./risk.ts";
 import { parseResult } from "./schemas.ts";
+import { teammateStep } from "./teammate.ts";
 
 /** The intent's reserved spec IDs (`spec IDs: …` in `## Proposed outcome`), as a prompt sentence. */
 export function reservedLine(outcome: string): string {
@@ -527,6 +529,10 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
         body,
       );
       n = Number(/\/pull\/(\d+)/.exec(url)?.[1]);
+      // PIP-146: the owner answers for the PR.
+      if (repo.teammateReview && !(await assignOwner(cx.github, repo.github, n))) {
+        cx.log(`${m.intent}: couldn't assign ${cx.github.me} to PR ${n}`);
+      }
     }
     m = cx.record(m, "gate", { spec_pr: n });
   } else {
@@ -571,6 +577,9 @@ async function ownerWait(cx: Ctx, m: Mission, risk: Risk | null): Promise<Outcom
 async function decide(cx: Ctx, m: Mission): Promise<Progress> {
   const risk = currentRisk(m, "spec");
   if (risk === undefined) return spawnRisk(cx, m, "spec");
+  // PIP-144: a spec PR in a repo that needs a teammate's review waits for it, before the owner or Towercab merges.
+  const team = await teammateStep(cx, m, "spec");
+  if (team) return team;
   const owner = await ownerWait(cx, m, risk);
   if (owner) return { done: owner };
   const repo = cx.repo(m);

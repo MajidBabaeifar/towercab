@@ -58,6 +58,7 @@ export const EVENTS = [
   "revert",
   "owner_done",
   "to_steps",
+  "reviewed",
 ] as const;
 export type Event = (typeof EVENTS)[number];
 
@@ -198,6 +199,11 @@ export function next(
       if (stage === "approval:plan") return go("plan");
       if (stage === "approval:merge") return go("review");
       return K("ignore");
+    // PIP-142, PIP-143: a teammate approved, or the owner passed the change on: the gate decides again.
+    case "reviewed":
+      if (stage === "approval:merge") return go("gate");
+      if (stage === "approval:spec") return go("design");
+      return K("ignore");
     case "resume":
       return stage === "merge" ? K("again") : K("ignore");
   }
@@ -220,6 +226,15 @@ export const WAITS: Record<string, { stage: Stage; ask: string }> = {
   "review and merge PR": {
     stage: "approval:merge",
     ask: "Decide if this change can go live: merge the PR to ship it, or comment what to fix.",
+  },
+  // PIP-143, PIP-144: in a repo that needs a teammate's review, the change waits for them.
+  "teammate review": {
+    stage: "approval:merge",
+    ask: "Your teammates need to approve this change before it can merge: nothing to do until they have, or comment what to fix.",
+  },
+  "teammate review of spec": {
+    stage: "approval:spec",
+    ask: "Your teammates need to approve this spec before it can merge: nothing to do until they have, or comment what to change.",
   },
   "answer the question": {
     stage: "blocked",
@@ -319,6 +334,9 @@ export const EXITS: Record<string, ExitKind[]> = {
   "approve spec": APPROVE,
   "approve plan": APPROVE,
   "review and merge PR": APPROVE,
+  // PIP-144: the owner's Merge is refused until the teammates approved; nothing to press meanwhile.
+  "teammate review": ["retry", "drop"],
+  "teammate review of spec": ["retry", "drop"],
   "answer the question": ["continue", "steps", "retry", "drop"],
   "checks red": BASIC,
   "allow check writes": BASIC,

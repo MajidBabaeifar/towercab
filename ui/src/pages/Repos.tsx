@@ -270,6 +270,19 @@ function Repo({ r, readOnly }: { r: RepoView; readOnly: boolean }) {
         </span>
       </header>
       {r.setup ? <SetupSection s={r.setup} /> : null}
+      {r.teammate ? (
+        <section class="teammate-review">
+          <p class="meta">
+            Changes need a teammate's review:{" "}
+            {r.teammate.reviewers.length ? r.teammate.reviewers.join(", ") : "the code owners"}
+          </p>
+          {r.teammate.warning ? (
+            <p class="why review-warning" role="status">
+              {r.teammate.warning}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
       <Settings s={r.settings} />
       <Features repo={r.repo} f={r.features} />
       <Group title="In progress" count={r.inProgress.length}>
