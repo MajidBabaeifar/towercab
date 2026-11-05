@@ -77,8 +77,20 @@ import { missingText } from "./repo/readiness.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
 import { nextSettingsDue, settingsCycle } from "./settings/apply.ts";
+import { runReleases } from "./ship/releases.ts";
 import { advanceSecrets } from "./ship/secret-steps.ts";
-import { aheadIn, bestReady, buildingIn, isReady } from "./slots.ts";
+import {
+  aheadIn,
+  bestReady,
+  buildingIn,
+  capOf,
+  isBuilding,
+  isIdle,
+  isReady,
+  returningIn,
+  returningSince,
+  workingIn,
+} from "./slots.ts";
 import { leftOf, type OwnerStep, parseDelivery, unticked } from "./steps.ts";
 import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
 import { budgetReached } from "./ui/state.ts";
@@ -86,6 +98,8 @@ import { checkUpdate, RESTART_CODE } from "./update.ts";
 
 export const PASS_MS = 5_000;
 const PR_POLL_S = 60;
+/** SHIP-30: release PRs are looked at every minute. */
+const RELEASE_POLL_S = 60;
 const INTENTS_POLL_S = 60;
 const UPDATE_POLL_S = 60;
 /** LOOP-108: a step that wanted to start a child during a drain is asked again after this long. */
@@ -167,6 +181,7 @@ export class Loop {
   private listingError: string | null = null;
   private lastIntentsPoll = 0;
   private lastIssuesPoll = 0;
+  private lastReleasePoll = 0;
   private issuesRun: Promise<void> | null = null;
   /** INT-39: the feature-list backfill running now, and how to stop it. */
   private featuresJob: Promise<void> | null = null;
@@ -393,6 +408,7 @@ export class Loop {
       report.woke = true;
       this.pollAt.clear();
       this.lastPrPoll.clear();
+      this.lastReleasePoll = 0;
       this.lastIntentsPoll = 0;
       this.lastProposedPoll = 0;
       this.lastIssuesPoll = 0;
@@ -428,8 +444,11 @@ export class Loop {
     // nothing new starts.
     if (this.codeMoved() === null && this.drain === null) this.startIssues(false);
     await this.pollPrs();
+    await this.pollReleases();
     this.releaseReady();
+    // LOOP-111: missions back from a wait ask for their run before a ready build takes the free slot.
     await this.stepDue(!report.woke);
+    this.releaseReady();
     if (
       !paused(db) &&
       !this.health.blocked(this.now) &&
@@ -1199,11 +1218,30 @@ export class Loop {
     }
   }
 
+  /** SHIP-30..32: the release PRs of every repo, every 60 s; not a mission, so outside `apply`. */
+  private async pollReleases(): Promise<void> {
+    if (this.now - this.lastReleasePoll < RELEASE_POLL_S) return;
+    this.lastReleasePoll = this.now;
+    const failure = await runReleases({
+      github: this.d.github,
+      db: this.d.db,
+      config: this.d.config,
+      now: this.now,
+      log: this.d.log,
+    });
+    if (failure === null) this.githubOk();
+    else this.health.fail("github", failure, this.now);
+  }
+
   /** Missions whose step is due: their handler's `step` (LOOP-4). */
   private async stepDue(timeouts: boolean): Promise<void> {
     const { db } = this.d;
     const queued = this.queued();
-    for (const m of unfinished(db)) {
+    // LOOP-111: missions waiting for a slot for their next run go first, best priority first.
+    const all = unfinished(db);
+    const back = [...new Set(all.map((m) => m.repo))].flatMap((r) => returningIn(all, r, this.listing));
+    const order = [...back, ...all.filter((m) => !back.includes(m))];
+    for (const m of order) {
       if (!isWorking(m.stage) || m.step === "enter" || m.held || this.children.has(m.id)) continue;
       // LOOP-105: no step of a loop whose checkout moved under it runs.
       if (this.codeMoved() !== null) break;
@@ -1246,6 +1284,14 @@ export class Loop {
     } else if ("poll" in p) {
       this.pollAt.set(m.id, this.now + p.poll);
       update(this.d.db, m.id, { busy: 0 }, this.now);
+      // A deferred mission that polls again is not asking for a slot (LOOP-111).
+      if (returningSince(cur) !== null) {
+        patchData(this.d.db, getMission(this.d.db, m.id) ?? cur, { returning: undefined }, this.now);
+      }
+      // LOOP-110: polling CI or a review with no run going holds no slot.
+      if ((cur.stage === "ci" || cur.stage === "review") && isBuilding(cur) && !isIdle(cur)) {
+        patchData(this.d.db, getMission(this.d.db, m.id) ?? cur, { idle: true }, this.now);
+      }
     } else {
       let spec = p.spawn;
       // LOOP-105: the checkout moved while the step prepared its run (its rules file may be from this
@@ -1259,6 +1305,19 @@ export class Loop {
         update(this.d.db, m.id, { busy: 0 }, this.now);
         this.pollAt.set(m.id, this.now + DRAIN_RETRY_S);
         return;
+      }
+      // LOOP-111: a mission back from outside the slots takes a free one, or waits for it without starting.
+      if (dataOf<{ idle?: boolean }>(cur).idle === true && isBuilding(cur)) {
+        const workers = this.d.config.repos.get(cur.repo)?.workers ?? 1;
+        const taken = workingIn(unfinished(this.d.db), cur.repo).filter((x) => x.id !== cur.id);
+        if (taken.length >= workers) {
+          update(this.d.db, m.id, { busy: 0 }, this.now);
+          if (returningSince(cur) === null) {
+            patchData(this.d.db, getMission(this.d.db, m.id) ?? cur, { returning: this.now }, this.now);
+          }
+          this.pollAt.set(m.id, this.now + 1);
+          return;
+        }
       }
       if (spec.slot && this.slotsUsed() >= this.d.config.agent.parallel) {
         update(this.d.db, m.id, { busy: 0 }, this.now);
@@ -1289,6 +1348,8 @@ export class Loop {
       void handle.done.then((exit) => {
         r.exit = exit;
       });
+      // The run holds a slot from here on (LOOP-110).
+      const { idle: _idle, returning: _returning, ...rest } = dataOf(cur);
       update(
         this.d.db,
         m.id,
@@ -1299,7 +1360,7 @@ export class Loop {
           child_kind: spec.kind,
           child_since: this.now,
           child_model: spec.model ?? null,
-          data: JSON.stringify({ ...dataOf(cur), launched: cur.step }),
+          data: JSON.stringify({ ...rest, launched: cur.step }),
         },
         this.now,
       );
@@ -1311,7 +1372,15 @@ export class Loop {
     // PIP-113: a steps-delivered intent builds nothing, so it needs no build slot.
     const byHand = (dataOf(m) as PipeData).delivery === "steps";
     if (o.event === "plan_merged" && !byHand && this.slotTaken(m)) return this.markReady(m);
-    const out = apply(this.applyCtx(), m, o);
+    let out = apply(this.applyCtx(), m, o);
+    // LOOP-111: a mission back from a wait for the owner was outside the slots; its next run takes one.
+    if (out.id === m.id && out.stage !== m.stage && isIdle(m) && isWorking(out.stage) && isBuilding(out)) {
+      out = patchData(this.d.db, out, { idle: true }, this.now);
+    }
+    // LOOP-111: a mission that moves on without starting its run no longer asks for a slot.
+    if (out.id === m.id && dataOf<{ returning?: number }>(out).returning !== undefined) {
+      out = patchData(this.d.db, out, { returning: undefined }, this.now);
+    }
     if (out.stage !== m.stage || out.id !== m.id) {
       this.lastPrPoll.delete(m.id);
       this.d.db.delMeta(`poll:${m.id}`);
@@ -1324,8 +1393,20 @@ export class Loop {
     if (phaseOf(m.stage, m.from_stage) !== "plan") return false;
     const ms = unfinished(this.d.db);
     const workers = this.d.config.repos.get(m.repo)?.workers ?? 1;
-    if (buildingIn(ms, m.repo).length >= workers) return true;
+    if (this.repoFull(ms, m.repo, workers)) return true;
     return ms.some((x) => x.id !== m.id && x.repo === m.repo && isReady(x));
+  }
+
+  /**
+   * LOOP-110, LOOP-111: no new build starts while `workers` missions work, while the repo holds the cap of
+   * missions between build and merge, or while a returning mission waits for the slot.
+   */
+  private repoFull(ms: Mission[], repo: string, workers: number): boolean {
+    return (
+      workingIn(ms, repo).length >= workers ||
+      buildingIn(ms, repo).length >= capOf(workers) ||
+      returningIn(ms, repo, this.listing).length > 0
+    );
   }
 
   /** Remember (once) that the plan is approved and the mission waits for the build slot. */
@@ -1341,7 +1422,7 @@ export class Loop {
       const workers = this.d.config.repos.get(repo)?.workers ?? 1;
       for (;;) {
         const ms = unfinished(this.d.db);
-        if (buildingIn(ms, repo).length >= workers) break;
+        if (this.repoFull(ms, repo, workers)) break;
         const m = bestReady(ms, repo, this.listing);
         if (!m) break;
         this.pollAt.delete(m.id);

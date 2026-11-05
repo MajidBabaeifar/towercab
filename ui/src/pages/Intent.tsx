@@ -222,6 +222,17 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
       {data.card ? <NeedsCard card={data.card} readOnly={readOnly} linkTitle={false} /> : null}
       {data.steps?.length ? <StepsBlock data={data} readOnly={readOnly} /> : null}
       {data.nothingLive ? <p class="meta">Nothing to check live: {data.nothingLive}</p> : null}
+      {data.release ? (
+        <p class="meta">
+          {data.release.url ? (
+            <a href={data.release.url} target="_blank" rel="noopener noreferrer">
+              {data.release.text} <External size={12} />
+            </a>
+          ) : (
+            data.release.text
+          )}
+        </p>
+      ) : null}
       {data.brief ? (
         <section class="card pad plain-brief" aria-label="In plain words">
           <p class="access-head">In plain words</p>

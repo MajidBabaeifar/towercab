@@ -55,6 +55,8 @@ export interface TowercabFile {
   tests: string[];
   /** The ship stage's block (SHIP-1), or null: merged means done. */
   live: Live | null;
+  /** SHIP-31: `manual` when the owner merges the repo's release PRs by hand; absent means `auto`. */
+  releases?: "manual";
   /** The confirmed kind (REPO-20); absent: unconfirmed. */
   kind?: Kind;
   /** `check` keeps the repo check-only when Towercab applies settings (REPO-31); absent: applied. */
@@ -252,6 +254,7 @@ const KEYS = [
   "protected",
   "tests",
   "live",
+  "releases",
   "kind",
   "readiness",
   "waive",
@@ -310,6 +313,9 @@ function frontMatter(ls: string[], t: TowercabFile): void {
       t.maxAutonomy = val;
     } else if (k === "live") {
       t.live = parseLive(val);
+    } else if (k === "releases") {
+      if (val !== "auto" && val !== "manual") throw new Error("releases must be auto or manual");
+      if (val === "manual") t.releases = "manual";
     } else if (k === "kind") {
       if (!isKind(val)) throw new Error(`kind: ${String(val)} isn't one of ${KINDS.join(", ")}`);
       t.kind = val;

@@ -18,8 +18,20 @@ import { section } from "../pipeline/prtext.ts";
 import { type Kind, parseStored, stageSkip } from "../repo/readiness.ts";
 import { usualOwner } from "../repos.ts";
 import { currentRisk, type RiskGate, riskWords } from "../risk.ts";
+import { type Held, heldReleases, releaseLine, releaseTitle } from "../ship/releases.ts";
 import { MAX_FAILS } from "../ship/secret-steps.ts";
-import { aheadIn, isAhead, isBuilding, isReady } from "../slots.ts";
+import {
+  aheadIn,
+  buildingIn,
+  capOf,
+  idleIn,
+  isAhead,
+  isBuilding,
+  isReady,
+  returningIn,
+  returningSince,
+  workingIn,
+} from "../slots.ts";
 import type { OwnerStep, SecretSpec } from "../steps.ts";
 import { proposedSection } from "./proposed.ts";
 import type {
@@ -637,7 +649,35 @@ const KIND_LABELS: Record<CardKind, string> = {
   code: "Code review",
   question: "Question",
   blocked: "Blocked",
+  release: "Release PR",
 };
+
+/** SHIP-31: a held release PR as a "Needs you" card. It has no intent; its key is `release:<repo>`. */
+export function releaseCard(h: Held, now: number): Card {
+  return {
+    intent: `release:${h.repo}`,
+    title: releaseTitle(h),
+    repo: h.repo,
+    kind: "release",
+    kindLabel: KIND_LABELS.release,
+    ask: "Merge it yourself or close it. Towercab leaves this release alone.",
+    since: when(h.since, now),
+    brief: null,
+    why: h.why,
+    details: null,
+    question: null,
+    access: null,
+    pr: { number: h.pr, url: `https://github.com/${h.github}/pull/${h.pr}`, label: "release PR" },
+    actions: [],
+    mergeLabel: null,
+    done: null,
+    addRepo: null,
+    ...RELEASE_WAIT,
+  };
+}
+
+/** A release card has no wait of its own: no ways out to offer and nothing stuck (the fields #173 added to `Card`). */
+const RELEASE_WAIT = { exits: [], stuck: false };
 
 function askOf(waiting: string | null): string {
   if (!waiting) return "Towercab needs you.";
@@ -766,22 +806,33 @@ function phases(m: Mission): Phase[] {
 export function missionRow(src: UiSources, s: Snap, m: Mission): Row {
   const entered = s.entered.get(m.id) ?? m.created;
   const ready = isReady(m);
-  const holder = s.missions.find((x) => x.repo === m.repo && isBuilding(x));
+  // LOOP-112: only a mission that works, or one waiting for its next run, holds the turn.
+  const back = returningSince(m) !== null;
+  const line = returningIn(s.missions, m.repo, null);
+  const holder = workingIn(s.missions, m.repo)[0] ?? line[line.findIndex((x) => x.id === m.id) - 1];
+  const workers = src.config.repos.get(m.repo)?.workers ?? 1;
+  const inFlight = buildingIn(s.missions, m.repo).length;
   return {
     intent: m.intent,
     title: titleOf(s, m.intent),
     repo: m.repo,
     state: missionState(s, m, src),
     phases: phases(m),
-    step: ready ? "Ready to build" : shipWords(m),
+    step: ready ? "Ready to build" : back ? "Waiting for a build slot" : shipWords(m),
     inStep: duration(s.now - entered),
     cost: money(m.cost_usd),
     model: modelName(m.child_model ?? m.model),
     behind: ready
-      ? holder
-        ? `Ready to build, behind “${titleOf(s, holder.intent)}”.`
-        : "Ready to build; it starts on the next pass."
-      : null,
+      ? inFlight >= capOf(workers)
+        ? `Ready to build; the repo has ${inFlight} changes between build and merge, ${idleIn(s.missions, m.repo).length} of them waiting, the most it takes.`
+        : holder
+          ? `Ready to build, behind “${titleOf(s, holder.intent)}”.`
+          : "Ready to build; it starts on the next pass."
+      : back
+        ? holder
+          ? `Waiting for a build slot, behind “${titleOf(s, holder.intent)}”.`
+          : "Waiting for a build slot; it runs on the next pass."
+        : null,
   };
 }
 
@@ -1320,6 +1371,17 @@ export function waitsOf(src: UiSources, s: Snap): Wait[] {
         order: Number.POSITIVE_INFINITY,
         mission: null,
         intent: i,
+      });
+  }
+  // SHIP-31: a held release PR has no intent or mission; its priority is the default one (PRI-3).
+  for (const h of heldReleases(src.db, s.now)) {
+    if (h.card)
+      waits.push({
+        card: releaseCard(h, s.now),
+        priority: priority(null, null),
+        order: h.since,
+        mission: null,
+        intent: undefined,
       });
   }
   return waits.sort((a, b) => a.order - b.order);
@@ -2114,6 +2176,9 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
   }
   if (sd.liveNoneWhy?.trim() && intent?.done && intent.verified !== "no")
     body.nothingLive = sd.liveNoneWhy.trim();
+  // SHIP-32: whether the release that contains the merge exists yet.
+  const rel = last ? releaseLine(src.db, last) : null;
+  if (rel) body.release = rel;
   // AUT-20: the latest risk, when no card already shows it.
   const risk = !card && last ? riskView(last) : null;
   if (risk) body.risk = risk;
