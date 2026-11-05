@@ -894,6 +894,43 @@ Proposed intents are listed by the priority they would have, and the page says w
   may be out of date.` above the cards it kept.
 - Verified by: `ui: proposed intents are sorted by priority`, `ui: a failed read says the list may be out of date`
 
+### UI-189 · Fold a Needs you card
+
+Each Needs you card on the overview folds to one line with a toggle, and opens again.
+
+- A button on the card's header with `aria-expanded` and an accessible name (`Fold <title>` / `Open
+  <title>`), reachable and operable by keyboard like the stage map's toggles (UI-73). It applies to
+  the overview only; the card on the intent page (UI-62) stays open.
+- Folding only hides: the brief, risk block, open points, options, access list, reply box and menu
+  are hidden, not removed, so the card's content, actions and order (UI-58) do not change and a draft
+  reply typed in the box is kept while folded.
+- Cards start open.
+- Verified by: `ui: needs-you card folds and opens`, `ui: fold toggle is keyboard operable`
+
+### UI-190 · A folded card's line
+
+A folded Needs you card still shows what it is, what it asks and how long it has waited.
+
+- One line: the intent's title, its repo, the ask in the same words as the open card's (LOOP-14
+  **Waits**; an open question shows its first line cut with an ellipsis) and the wait's age in the
+  same form as the open card ("2 h"). The line ends with the toggle; it does not wrap on a 720 px
+  screen (the title is cut with an ellipsis first).
+- Verified by: `ui: folded needs-you card shows title, repo, ask and age`
+
+### UI-191 · Remember folded cards
+
+The page remembers which Needs you cards are folded in this browser, keeps them folded through live updates, and opens a card again when it changes.
+
+- Folded cards are kept in `localStorage` under `towercab.needs.folded` as a JSON object from intent
+  ID to the wait's key (the kind of wait and its round: the `Waits` kind plus the PR number or
+  question round it belongs to). Every read and write is wrapped in `try`/`catch` as UI-135 does, so
+  without storage a card still folds until the page reloads.
+- A card is folded only while its stored key equals its current wait's key. A new ask or a new round
+  gives a different key, so the card renders open and the stale entry is removed. An entry for an
+  intent that no longer waits is removed. A live update (UI-66) that leaves the key unchanged leaves
+  the card folded and its place in the order.
+- Verified by: `ui: folded needs-you cards are remembered`, `ui: a changed ask opens a folded card again`, `ui: live updates keep a card folded`
+
 ### UI-160 · Your steps on the intent page
 
 The intent page shows the owner's steps as a checklist they tick off.
