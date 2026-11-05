@@ -3989,6 +3989,19 @@ a.pr-tile:hover {
   }
 }
 
+/* UI-164: the exits of a wait */
+.exits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+.exits input[type="text"] {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
 /* UI-155..157: a repo missing setup. The warning colour, never the "Needs you" one. */
 .ready-badge {
   display: inline-block;

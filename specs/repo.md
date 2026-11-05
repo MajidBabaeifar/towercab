@@ -145,6 +145,119 @@ branch unless that file was granted; new test files stay free.
   every worker round, repairs included; PIP-31's lock on tests pushed earlier is separate and stays.
 - Verified by: `repo: existing tests are blocked`, `repo: new tests are not blocked`, `repo: granted tests unblock`, `guard: blocks an existing test`
 
+### REPO-14 · Per-repo tuning lives in TOWERCAB.md
+
+A repo's work limits are written in its own `TOWERCAB.md`, so anyone who reads the repo can see them.
+
+- Two more `TOWERCAB.md` front matter keys ([REPO-1](#repo-1--read-from-the-base-branch)): `workers`
+  (int 1–16, default 1: missions from build through merge at once, [LOOP-61](loop.md)) and `ahead` (int
+  1–16, default 3: intents ahead of build, [LOOP-60](loop.md)). Anything else → `workers: <v> isn't a
+  whole number from 1 to 16` (or `ahead: …`), which makes the file invalid like any bad key.
+- A change applies on the next fetch of the base branch, not mid-run: missions already past the limit
+  keep running and no new one starts until the count is under it.
+- `path`, `base`, `env` and the GitHub name stay in Towercab's database ([LOOP-65](loop.md)): they say
+  where the clone is and how it runs on this machine, and `base` is needed to find the file at all.
+  `env` is never written to the repo, by a settings PR or the move: it can hold secrets and
+  machine-specific paths. Its variable names (never the values) are shown on the repo page
+  ([UI-150](ui.md)), so they aren't hidden.
+- The parser ships before Towercab changes any repo's file on its own: until
+  [REPO-19](#repo-19--the-one-time-move)'s 24-hour wait is over, only the owner's own save from the
+  form ([REPO-16](#repo-16--a-settings-change-is-a-pull-request)) can write `workers` or `ahead`, and
+  only after a confirmation: a save in that window needs `confirmed: true`, and without it the server
+  refuses with `An older Towercab can't read this setting; a rollback in the next day would need a manual
+  fix.` The automatic move PRs wait for the end of the window. An older Towercab rejects the unknown
+  keys (REPO-1), which is why a rollback needs a manual fix.
+- Verified by: `repo: TOWERCAB.md workers and ahead`, `repo: a bad workers or ahead is invalid`, `repo: a new limit applies on the next fetch`
+
+### REPO-15 · Which value wins
+
+`TOWERCAB.md` is the one source of truth for `workers` and `ahead`; the database value is used only until the repo has moved.
+
+- A key written in the base branch's `TOWERCAB.md` wins. A key absent from it → the database value
+  (set by `repo set`, or imported from `config.toml`) while the repo has *not moved*, and the default
+  once it has. A repo has moved when its settings PR ([REPO-19](#repo-19--the-one-time-move)) is seen
+  merged: `meta.repo-moved:<name>` is set then and stays.
+- A repo with no readable `TOWERCAB.md` (none, or invalid, [REPO-18](#repo-18--changes-made-outside-towercab))
+  keeps the values it had at the last good read; before any good read, the database values.
+- After the move, `towercab repo set <name> workers=…` or `ahead=…` is refused: `workers and ahead for
+  <name> now live in TOWERCAB.md; change them on the repo's page or in the file.` `doctor` names a
+  `[repos.<name>]` `workers` or `ahead` that is still in `config.toml` for a moved repo as ignored.
+- Verified by: `repo: a TOWERCAB.md key wins over the database`, `repo: before the move the database value is used`, `repo: after the move a missing key is the default`, `repo: an unreadable file keeps the last good limits`, `repo: repo set refuses moved keys`
+
+### REPO-16 · A settings change is a pull request
+
+Saving a setting opens a pull request that changes only that setting in `TOWERCAB.md`; nothing reaches the repo any other way.
+
+- `proposeSettings(repo, changes)`: `changes` maps a key to a new value, or to `null` to remove it (back
+  to the default). Only keys that differ from the base branch's file are written, with `setField` and
+  `removeField` so every other line stays byte-identical. Nothing differs → no PR and the reply says
+  `Nothing changed.`
+- Towercab's App pushes branch `towercab/settings-<repo>-<n>` from the base branch and opens a PR titled
+  `chore(towercab): change <keys>`, with a body in plain words (what changes, from what to what, that
+  it was asked from Towercab's page) written to `prompts/writing.md`.
+- The PR goes through the repo's normal checks and always waits for the owner's approval, at any
+  autonomy ([REPO-8](#repo-8--protected-paths)): Towercab never merges it itself.
+- One settings PR per repo is open at a time. Saving again while it is open pushes a commit to the same
+  PR with the new changes added to the old ones (a later value for the same key replaces the earlier); the
+  PR's title and body are rewritten to match.
+- A key or value that doesn't validate ([REPO-14](#repo-14--per-repo-tuning-lives-in-towercabmd)) is
+  refused before any push, with the same reason. If the base branch's file is missing it is created with
+  only the changed keys; if its front matter is invalid the PR is refused with the file's reason.
+- Verified by: `repo: a settings change opens a PR with only that change`, `repo: unchanged settings open no PR`, `repo: other lines stay byte-identical`, `repo: a second save updates the open settings PR`, `repo: an invalid value opens no PR`, `repo: a settings PR is never merged by Towercab`
+
+### REPO-17 · Pending until merged
+
+A setting that is waiting in a pull request is shown as pending until the PR merges or closes.
+
+- `pendingSettings(repo)` reads the repo's open settings PR (REPO-16) on every pass of the
+  loop's PR reads and gives `{pr, url, changes}`; a setting is pending while the PR is open and
+  its value differs from the base branch's.
+- Merged → the value is read from the base branch at the next fetch (REPO-14) and the pending mark goes.
+  Closed without merging → the mark goes and the value is unchanged. A PR the owner edits by hand shows
+  what its head's file says.
+- Verified by: `repo: a setting is pending while its PR is open`, `repo: a merged settings PR applies on the next fetch`, `repo: a closed settings PR leaves the value alone`
+
+### REPO-18 · Changes made outside Towercab
+
+A change made in the repo without Towercab applies the same way, and a file that no longer parses is reported with its reason.
+
+- There is one path: `TOWERCAB.md` from the base branch ([REPO-1](#repo-1--read-from-the-base-branch)).
+  A hand edit, another tool's PR or Towercab's own settings PR all take effect at the next fetch once on
+  the base branch; Towercab keeps no second copy that could disagree.
+- A file that fails to parse or validate keeps the repo in `waiting: fix repo files` as today, and the
+  reason (the parser's message, for example `workers: 20 isn't a whole number from 1 to 16`) is kept with
+  the repo until the file is valid again, for the repo page ([UI-153](ui.md)). Limits in force stay at
+  the last good read (REPO-15).
+- Verified by: `repo: a hand edit applies on the next fetch`, `repo: an invalid file reports its reason`, `repo: the reason clears when the file is valid`
+
+### REPO-19 · The one-time move
+
+Towercab opens one pull request per repo to bring its tuning from its own config into `TOWERCAB.md`, and stops reading the old values once it merges.
+
+- For each repo that has not moved (REPO-15) and has no open or earlier move PR, Towercab compares the
+  database `workers` and `ahead` with the defaults. Keys that differ and are absent from the base file go
+  into one PR titled `chore(towercab): move Towercab settings into TOWERCAB.md` through REPO-16's path.
+  Nothing differs → no PR; the repo is marked moved at once.
+- The parser ships first and the move waits for it. The first time Towercab starts on a commit that
+  reads `workers` and `ahead` from `TOWERCAB.md` (REPO-14), it records `meta.settings-parser` =
+  `<commit> <unix time>` and never overwrites it. Move PRs are opened only when the clock reads at least
+  24 hours past that time and the recorded commit is still part of the running checkout's history
+  (`git merge-base --is-ancestor <commit> HEAD`). Time is elapsed, not uptime: a stop does not restart it.
+  If the commit is no longer in the history (the change was rolled back or reverted, or Towercab went
+  back to an older version), the record is cleared and the 24 hours start again from the next start on a
+  commit with the parser. Until the gate opens, Towercab opens no move PR on its own, and `status` and
+  the repo page say how long is left. The gate does not apply to the owner's own saves (REPO-14) or to
+  `reopenMove`, which the owner asks for.
+- Towercab asks on its own at most once per repo (`meta.repo-move:<name>` holds the PR number). A PR
+  closed without merging is not replaced automatically: the database values stay in use and `doctor`
+  warns `<name>: the PR that moves its settings into TOWERCAB.md was closed; open it again from the
+  repo's page.` (a warning, exit code unchanged). Merging the PR marks the repo moved.
+- `reopenMove(repo)`, asked by the owner from the repo's page ([UI-154](ui.md)), opens a new move PR the
+  same way as the first, from the values at that moment; it is refused while a move PR is open or once
+  the repo has moved (`<name> has already moved` / `a move PR is already open: #<n>`). The new PR's
+  number replaces the stored one.
+- Verified by: `repo: the first run of the parser is recorded once`, `repo: no move PR before 24 hours`, `repo: a save in the first 24 hours needs a confirmation`, `repo: a confirmed save in the first 24 hours opens the PR`, `repo: the move starts after 24 hours`, `repo: a rolled back parser restarts the 24 hours`, `repo: the move PR opens only once the wait is over`, `repo: the move opens one PR with the non-default values`, `repo: the move is skipped when nothing differs`, `repo: a closed move PR is not replaced on its own`, `repo: a closed move PR is a doctor warning`, `repo: the owner can open the move PR again`, `repo: a merged move PR marks the repo moved`
+
 ### REPO-20 · A repo's kind
 
 Each repo says what kind it is in `TOWERCAB.md`, and the kind decides what setup it must have.

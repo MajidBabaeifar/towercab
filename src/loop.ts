@@ -78,7 +78,7 @@ import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
 import { nextSettingsDue, settingsCycle } from "./settings/apply.ts";
 import { aheadIn, bestReady, buildingIn, isReady } from "./slots.ts";
-import { leftOf, type OwnerStep, unticked } from "./steps.ts";
+import { leftOf, type OwnerStep, parseDelivery, unticked } from "./steps.ts";
 import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
 import { budgetReached } from "./ui/state.ts";
 import { checkUpdate, RESTART_CODE } from "./update.ts";
@@ -624,6 +624,11 @@ export class Loop {
     if (!replaced) await this.featureLine(m, intent);
     if (replaced) await this.closeReplaced(m);
     else if (m.stage === "stopped") await this.retireStopped(m);
+    await this.switchedToSteps(m);
+    // LOOP-76: the owner's note, ticked, goes to the plan of an intent they finished themselves.
+    if (m.stage === "done" && (dataOf(m) as PipeData).stepsDirty !== undefined) {
+      await writeTicks(this.ctx(), m);
+    }
     if (finished(m.stage)) removeCheckout(this.d.home.abs(m.checkout));
     const set: Record<string, SqlValue> = { step: "" };
     if (m.stage === "merge" && paused(db)) set.held = 1;
@@ -688,6 +693,41 @@ export class Loop {
     else if (last?.event === "intent_removed") {
       await this.closeAndRetire(m, "Towercab closed this PR because the intent was dropped.");
     }
+  }
+
+  /**
+   * PIP-113: a mission the owner switched to steps has no code to merge: its open code PR is closed with
+   * a comment saying why, and its branch goes. A failure leaves the step at `enter`: retried next pass.
+   */
+  /** The mission with `delivery` read from the merged plan.md; a plan without the line keeps what it had. */
+  private async deliveryFromPlan(m: Mission): Promise<Mission> {
+    const intent = this.intentOf(m.intent);
+    if (!intent) return m;
+    const md = await this.d.store.readFile(`${intent.dir}/plan.md`);
+    const delivery = md === null ? null : parseDelivery(md);
+    if (!delivery) return m;
+    return patchData(this.d.db, m, { delivery }, this.now);
+  }
+
+  private async switchedToSteps(m: Mission): Promise<void> {
+    if (!m.pr) return;
+    const last = this.d.db.get<{ event: string }>(
+      "SELECT event FROM transitions WHERE mission = ? ORDER BY id DESC LIMIT 1",
+      m.id,
+    );
+    const repo = this.d.config.repos.get(m.repo);
+    if ((last?.event !== "to_steps" && last?.event !== "owner_done") || !repo) return;
+    await closeIfOpen(
+      this.d.github,
+      repo.github,
+      m.pr,
+      last.event === "owner_done"
+        ? "Closed: the owner did this by hand, so there is nothing to merge."
+        : "Closed: the owner will do this by hand, so there is nothing to merge.",
+    );
+    const gone = await retireBranch(this.d.github, repo.github, m.pr, this.d.store.github());
+    if (gone) this.d.log(`${label(m)}: deleted branch ${gone} of ${repo.github}#${m.pr}`);
+    update(this.d.db, m.id, { pr: null }, this.now);
   }
 
   private async closeAndRetire(m: Mission, why: string | null): Promise<void> {
@@ -769,7 +809,8 @@ export class Loop {
       const unreadable = listing.unreadable.some((u) => u.id === m.intent);
       if (!intent && unreadable) continue;
       const o = intentEvents(m, intent);
-      if (o) this.move(m, o);
+      // LOOP-77: the owner removing `waiting` is an answer, though it has no words.
+      if (o) this.move(m, o.event === "answered" ? { ...o, counted: true } : o);
     }
     const busy = new Set(unfinished(db).map((m) => m.intent));
     // `retry: fresh` on an intent with no mission: queue it again (LOOP-18).
@@ -1139,7 +1180,8 @@ export class Loop {
         if (!o) continue;
         const running = this.children.has(m.id);
         if (running && !["code_merged", "spec_merged", "plan_merged", "closed"].includes(o.event)) continue;
-        this.move(m, o);
+        // PIP-112: the merged plan.md is the record of the delivery, edits in the plan PR included.
+        this.move(o.event === "plan_merged" ? await this.deliveryFromPlan(m) : m, o);
       } catch (e) {
         const msg = (e as Error).message;
         this.health.fail("github", msg, this.now);
@@ -1257,7 +1299,9 @@ export class Loop {
 
   move(m: Mission, o: Outcome): Mission {
     this.pollAt.delete(m.id);
-    if (o.event === "plan_merged" && this.slotTaken(m)) return this.markReady(m);
+    // PIP-113: a steps-delivered intent builds nothing, so it needs no build slot.
+    const byHand = (dataOf(m) as PipeData).delivery === "steps";
+    if (o.event === "plan_merged" && !byHand && this.slotTaken(m)) return this.markReady(m);
     const out = apply(this.applyCtx(), m, o);
     if (out.stage !== m.stage || out.id !== m.id) {
       this.lastPrPoll.delete(m.id);

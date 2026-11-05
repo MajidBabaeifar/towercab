@@ -54,6 +54,8 @@ export const COMMANDS = [
   "drop",
   "start",
   "step",
+  "done",
+  "steps",
   "approve",
   "pause",
   "resume",
@@ -77,6 +79,8 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   retry <id> | drop <id>
   start <id>                      begin that intent's design now, even when the repo is full
   step <id> <n…|all>              tick off steps the plan lists for you (the change then goes on)
+  done <id> [note]                you did the work yourself: ends the intent; the note is kept as a ticked step
+  steps <id>                      you will do it by hand: the intent becomes steps for you to tick
   pause | resume
   repo add <owner/name> [--name <short>] | repo remove <name> | repo list
   repo set <name> key=value…      workers, ahead, base, path, env (NAME=value or a JSON object)
@@ -392,6 +396,12 @@ async function run(
     case "start":
       need(1, "<id>");
       return submit(w, "start", args[0]);
+    case "done":
+      need(1, "<id> [note]");
+      return submit(w, "done", args[0], args.slice(1).join(" "));
+    case "steps":
+      need(1, "<id>");
+      return submit(w, "steps", args[0]);
     case "step": {
       need(2, "<id> <n…|all>");
       const store = await w.store();

@@ -1159,11 +1159,52 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
 }
 
 /** Serve the fixture (the screenshot tests and a manual look). */
+/**
+ * UI-164: three waits with their exits. The question's options carry their actions, the plan's intent
+ * finished "no changes", and the code intent came back to "no changes" with nothing new (stuck).
+ */
+function exitsScene(f: Fixture): void {
+  const set = (intent: string, waiting: string, patch: (d: Record<string, unknown>) => void) => {
+    const row = f.db.get<{ id: number; data: string }>(
+      "SELECT id, data FROM missions WHERE intent = ? ORDER BY id DESC",
+      intent,
+    )!;
+    const d = JSON.parse(row.data) as Record<string, unknown>;
+    patch(d);
+    f.db.run(
+      "UPDATE missions SET stage = 'blocked', waiting = ?, from_stage = 'build', data = ? WHERE id = ?",
+      waiting,
+      JSON.stringify(d),
+      row.id,
+    );
+  };
+  const question = f.db.get<{ data: string }>(
+    "SELECT data FROM missions WHERE intent = ? ORDER BY id DESC",
+    IDS.question,
+  )!;
+  const q = (JSON.parse(question.data) as { question: { options: { do?: string }[] } }).question;
+  const doing = ["continue", "steps", "drop"];
+  q.options.forEach((o, n) => {
+    o.do = doing[n] ?? "continue";
+  });
+  set(IDS.question, "answer the question", (d) => {
+    d.question = q;
+  });
+  set(IDS.plan, "no changes", (d) => {
+    d.question = undefined;
+  });
+  set(IDS.code, "no changes", (d) => {
+    d.question = undefined;
+    d.stuck = true;
+  });
+}
+
 export async function serveFixture(
   port = 0,
-  o: { empty?: boolean; proposed?: boolean; readiness?: boolean } = {},
+  o: { empty?: boolean; proposed?: boolean; readiness?: boolean; exits?: boolean } = {},
 ): Promise<{ fixture: Fixture; server: UiServer }> {
   const fixture = buildFixture(o);
+  if (o.exits && !o.empty) exitsScene(fixture);
   const here = dirname(fileURLToPath(import.meta.url));
   const server = startUi({
     port,

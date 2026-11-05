@@ -12,6 +12,7 @@ export default defineConfig({
     "proposed.spec.ts",
     "readiness.spec.ts",
     "focus.spec.ts",
+    "exits.spec.ts",
   ],
   outputDir: "screenshots/.results",
   fullyParallel: false,

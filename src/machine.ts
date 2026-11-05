@@ -56,6 +56,8 @@ export const EVENTS = [
   "resume",
   "skip",
   "revert",
+  "owner_done",
+  "to_steps",
 ] as const;
 export type Event = (typeof EVENTS)[number];
 
@@ -115,6 +117,8 @@ export function next(
   switch (event) {
     case "ok":
       if (wait || stage === "revert") return K("unexpected");
+      // PIP-113: a steps-delivered intent has no deploy; its last tick ends it.
+      if (stage === "steps" && facts.delivery) return go("done");
       if (stage === "rollback") return go("build");
       return go(ORDER[orderIndex(stage) + 1]!);
     case "red":
@@ -145,9 +149,20 @@ export function next(
       if (stage === "blocked" && from === "design") return go("plan");
       return K("ignore");
     case "plan_merged":
-      if (stage === "plan" || stage === "approval:plan") return go("build");
-      if (stage === "blocked" && from === "plan") return go("build");
+      // PIP-113: a steps-delivered intent skips the build and the code PR.
+      if (stage === "plan" || stage === "approval:plan") return go(facts.delivery ? "steps" : "build");
+      if (stage === "blocked" && from === "plan") return go(facts.delivery ? "steps" : "build");
       return K("ignore");
+    // LOOP-76: the owner did the work (a `no changes` wait, or the steps themselves).
+    case "owner_done":
+      // A merged code change still has to deploy: at `steps` only a steps delivery ends this way.
+      if (stage === "steps") return facts.delivery ? go("done") : K("ignore");
+      return stage === "blocked" ? go("done") : K("ignore");
+    // PIP-113: switch to steps; with none in the plan yet, the plan is made again to add them.
+    case "to_steps":
+      // Only a wait on the owner can be switched; nothing else moves on this event.
+      if (stage !== "blocked") return K("ignore");
+      return go(facts.hasSteps ? "steps" : "plan");
     case "code_merged":
       // A wait after shipping (a frozen repo, a revert) keeps reading its merged PR: no new ship.
       if (stage === "blocked" && from && (orderIndex(from) > orderIndex("merge") || isShipExtra(from)))
@@ -244,7 +259,7 @@ export const WAITS: Record<string, { stage: Stage; ask: string }> = {
   },
   "no changes": {
     stage: "blocked",
-    ask: "The agent finished without changing anything. Reply with what it should do, or drop the intent if nothing is needed.",
+    ask: "The agent finished without changing anything. Reply with what it should do, say you did it yourself, or drop the intent if nothing is needed.",
   },
   "crashed at": {
     stage: "blocked",
@@ -293,6 +308,97 @@ export const WAITS: Record<string, { stage: Stage; ask: string }> = {
   },
 };
 
+/** What the owner can do at a wait (LOOP-76); each is one event of the machine. */
+export type ExitKind = "continue" | "retry" | "steps" | "drop" | "done" | "merge" | "tick";
+
+const APPROVE: ExitKind[] = ["merge", "retry", "drop"];
+const BASIC: ExitKind[] = ["continue", "retry", "drop"];
+
+/** Every wait's exits (LOOP-76). `done` only where the owner may have done the work themselves. */
+export const EXITS: Record<string, ExitKind[]> = {
+  "approve spec": APPROVE,
+  "approve plan": APPROVE,
+  "review and merge PR": APPROVE,
+  "answer the question": ["continue", "steps", "retry", "drop"],
+  "checks red": BASIC,
+  "allow check writes": BASIC,
+  "tests don't prove the change": BASIC,
+  "CI red": BASIC,
+  "CI stuck": BASIC,
+  "worker timeout": BASIC,
+  "worker budget": BASIC,
+  "no result": BASIC,
+  "no changes": ["continue", "done", "steps", "retry", "drop"],
+  "crashed at": BASIC,
+  "spec conflict": BASIC,
+  "merge failed": BASIC,
+  "add CLAUDE.md verifying block": BASIC,
+  "fix repo files": BASIC,
+  "unknown repo": BASIC,
+  "bad after:": BASIC,
+  "rolled back, revise": BASIC,
+  "rollback failed": BASIC,
+  "your steps first": BASIC,
+  "your steps": ["tick", "done", "retry", "drop"],
+};
+
+const EXIT_LABELS: Record<ExitKind, string> = {
+  continue: "Reply",
+  retry: "Start over",
+  steps: "I'll do this myself: give me the steps",
+  drop: "Drop",
+  done: "Nothing to build: I did it myself",
+  merge: "Merge",
+  tick: "Tick the steps",
+};
+
+export interface Exit {
+  do: ExitKind;
+  label: string;
+}
+
+/**
+ * The exits a wait offers, in plain words (`code`: the mission's delivery is code). A stuck wait (LOOP-77) leaves out `continue`: a reply would
+ * only land on the same wait again.
+ */
+export function exitsOf(waiting: string, stuck = false, code = false): Exit[] {
+  const kinds = EXITS[waitKey(waiting)] ?? BASIC;
+  return (
+    kinds
+      .filter((k) => !(stuck && k === "continue"))
+      // A merged code change waiting for the owner's steps still has to deploy: no "I did it" there.
+      .filter((k) => !(code && k === "done" && waitKey(waiting) === "your steps"))
+      .map((k) => ({
+        do: k,
+        label: k === "done" && waitKey(waiting) === "your steps" ? "I did all of it myself" : EXIT_LABELS[k],
+      }))
+  );
+}
+
+/** The event an exit sends to the machine at a wait's stage (LOOP-76's walk uses it). */
+export function exitEvent(kind: ExitKind, stage: Stage): Event {
+  switch (kind) {
+    case "continue":
+      return "answered";
+    case "retry":
+      return "retry_fresh";
+    case "drop":
+      return "intent_removed";
+    case "done":
+      return "owner_done";
+    case "steps":
+      return "to_steps";
+    case "tick":
+      return "ok";
+    case "merge":
+      return stage === "approval:spec"
+        ? "spec_merged"
+        : stage === "approval:plan"
+          ? "plan_merged"
+          : "code_merged";
+  }
+}
+
 /** The WAITS key of a `waiting:` text (`crashed at build` → `crashed at`). */
 export function waitKey(waiting: string): string {
   if (waiting.startsWith("crashed at")) return "crashed at";
@@ -340,6 +446,8 @@ export interface Outcome {
   limit?: { model: string; until: number; backoffs: number; text: string };
   /** For `answered`/`feedback`: the owner's text, kept for the next worker prompt. */
   text?: string;
+  /** An owner's answer without words (they removed `waiting`): it still counts as new for LOOP-77. */
+  counted?: boolean;
   /** For a step that runs again (`bad_result`, `timeout`): write the retry to the move log (LOOP-106, 107). */
   record?: boolean;
   /** Mission columns to set in the same transaction. */
@@ -382,8 +490,14 @@ export function envBackoff(retries: number): number {
 }
 
 /** The text of a wait's message (LOOP-14): the ask, title and repo, why, link. */
-export function waitMessage(waiting: string, s: Subject, why: string | null): string {
-  const lines = [waitInfo(waiting).ask, `${s.title} (${s.repo})`];
+export function waitMessage(waiting: string, s: Subject, why: string | null, stuck = false): string {
+  const lines = [waitInfo(waiting).ask];
+  // LOOP-77: a wait that came back with nothing new offers only the exits that change something.
+  if (stuck) {
+    const exits = exitsOf(waiting, true).map((e) => e.label);
+    lines.push(`Stuck: this came back with nothing new. You can: ${exits.join(", ")}.`);
+  }
+  lines.push(`${s.title} (${s.repo})`);
   if (why) lines.push(oneLine(why, 300));
   if (s.link) lines.push(s.link);
   return lines.join("\n").slice(0, 4000);
@@ -411,6 +525,10 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
       cx.log?.(`unexpected ${o.event} at ${cur.stage}`);
       n = isWait(cur.stage) ? { kind: "ignore" } : { kind: "recover" };
     }
+    // LOOP-76: `done` is an exit of some waits only; anywhere else the event changes nothing.
+    if (o.event === "owner_done" && cur.stage === "blocked") {
+      if (!exitsOf(cur.waiting ?? "").some((e) => e.do === "done")) n = K("ignore");
+    }
     const set: Record<string, SqlValue> = { ...(o.set ?? {}) };
     for (const c of Object.keys(set)) if (!COLUMNS.has(c)) throw new Error(`bug: column ${c} can't be set`);
 
@@ -436,7 +554,11 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
       }
       if (finished(to)) cols.finished = now;
       // The new stage's steps haven't launched anything (LOOP-4).
-      data = { ...data, launched: undefined, ...(leavingWait ? { doneByYou: undefined } : {}) };
+      data = {
+        ...data,
+        launched: undefined,
+        ...(leavingWait ? { doneByYou: undefined, stuck: undefined } : {}),
+      };
       write(cols);
       db.run(
         "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) VALUES (?, ?, ?, ?, ?, ?)",
@@ -461,6 +583,13 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
     };
     const toWait = (waiting: string, why: string | null) => {
       const info = waitInfo(waiting);
+      // LOOP-77: the same blocked wait again, with the same head and no new answer, is stuck.
+      if (info.stage === "blocked") {
+        const rec = { key: waitKey(waiting), head: cur.head, answers: Number(data.answers) || 0 };
+        const last = data.lastWait as typeof rec | undefined;
+        const same = !!last && last.key === rec.key && last.head === rec.head && last.answers === rec.answers;
+        data = { ...data, lastWait: rec, stuck: same ? true : undefined };
+      }
       // PIP-107: a wait that asks no question of its own drops an earlier one and its brief, so a card
       // never shows a question that was already answered.
       if (!o.data?.question) data = { ...data, question: undefined, brief: undefined };
@@ -473,7 +602,7 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
         "INSERT OR IGNORE INTO outbox (key, mission, text, created) VALUES (?, ?, ?, ?)",
         key,
         cur.id,
-        waitMessage(waiting, cx.subject(cur), why),
+        waitMessage(waiting, cx.subject(cur), why, data.stuck === true),
         now,
       );
     };
@@ -481,7 +610,10 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
     if (o.meta && n.kind === "go") for (const [k, v] of Object.entries(o.meta)) db.setMeta(k, v);
     switch (n.kind) {
       case "go":
-        if (o.text) data.answer = o.text;
+        if (o.text) {
+          data.answer = o.text;
+          data.answers = (Number(data.answers) || 0) + 1;
+        }
         move(n.to, {}, o.why ?? null);
         break;
       case "wait":
@@ -537,6 +669,8 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
       case "continue": {
         const to = continueTo(cur.waiting, cur.from_stage);
         if (o.text) data.answer = o.text;
+        // LOOP-77: an answer is new, with words or without (the owner removed `waiting`).
+        if (o.text || o.counted) data.answers = (Number(data.answers) || 0) + 1;
         move(to, { repairs: 0, ci_repairs: 0, unclean: 0 }, o.why ?? null);
         break;
       }

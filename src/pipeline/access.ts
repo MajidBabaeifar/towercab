@@ -258,11 +258,13 @@ export function testQuestion(t: { path: string; why: string }): Question {
     options: [
       {
         option: "Allow this change",
+        do: "continue",
         // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
         then: "The worker may edit this one test file and carries on; the code PR and the intent page list it.",
       },
       {
         option: "No, keep the test as it is",
+        do: "continue",
         // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
         then: "The file stays locked for the rest of the build; the worker has to make the change fit the test.",
       },

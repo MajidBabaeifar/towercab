@@ -44,7 +44,7 @@ test("pipeline: no changes waits", () => {
   expect(m.from_stage).toBe("build");
   const msg = p.db.get<{ text: string }>("SELECT text FROM outbox WHERE mission = ?", m.id)!.text;
   expect(msg.split("\n")[0]).toBe(
-    "The agent finished without changing anything. Reply with what it should do, or drop the intent if nothing is needed.",
+    "The agent finished without changing anything. Reply with what it should do, say you did it yourself, or drop the intent if nothing is needed.",
   );
 });
 
