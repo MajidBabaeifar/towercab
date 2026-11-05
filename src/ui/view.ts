@@ -70,7 +70,7 @@ export interface TopBar {
 }
 
 export type ActionKey = "merge" | "reply" | "retry" | "drop";
-export type CardKind = "spec" | "plan" | "code" | "question" | "blocked";
+export type CardKind = "spec" | "plan" | "code" | "question" | "blocked" | "release";
 
 export interface Question {
   context: string;
@@ -444,6 +444,8 @@ export interface IntentPage {
   stepsWait?: "before" | "after" | null;
   /** UI-162: why the plan said nothing could be checked live, for a change that shows as done. */
   nothingLive?: string | null;
+  /** SHIP-32: "Published in v1.2.0" with its link, or "Merged, waiting for a release"; absent when the repo has no releases. */
+  release?: { text: string; url: string | null };
 }
 
 /** UI-160: one of the owner's steps, with when it was ticked. */

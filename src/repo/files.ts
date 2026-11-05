@@ -54,6 +54,8 @@ export interface TowercabFile {
   tests: string[];
   /** The ship stage's block (SHIP-1), or null: merged means done. */
   live: Live | null;
+  /** SHIP-31: `manual` when the owner merges the repo's release PRs by hand; absent means `auto`. */
+  releases?: "manual";
 }
 
 export interface RepoFiles {
@@ -231,7 +233,7 @@ function parsePasses(bs: string[]): Pass[] {
   return out;
 }
 
-const KEYS = ["max_autonomy", "protected", "tests", "live"];
+const KEYS = ["max_autonomy", "protected", "tests", "live", "releases"];
 const KEY = /^([A-Za-z_][A-Za-z0-9_-]*):(?:[ \t]|$)/;
 
 /** `TOWERCAB.md` → its front matter; anything after it is prose. */
@@ -284,6 +286,9 @@ function frontMatter(ls: string[], t: TowercabFile): void {
       t.maxAutonomy = val;
     } else if (k === "live") {
       t.live = parseLive(val);
+    } else if (k === "releases") {
+      if (val !== "auto" && val !== "manual") throw new Error("releases must be auto or manual");
+      if (val === "manual") t.releases = "manual";
     } else {
       const gs = globList(k, val);
       if (k === "protected") t.protected = gs;

@@ -21,7 +21,8 @@ never from a PR or a working tree.
   `RepoError.git`. Then the pure `parseRepoFiles(claude, review, towercab)` (**Grammar**).
 - `TOWERCAB.md` front matter: `max_autonomy` (1–5, default 5), `protected` (globs), `tests` (globs,
   default the list in [PIP-30](pipeline.md)), `live` (the ship stage's block, [SHIP-1](ship.md)),
-  `kind`, `readiness`, `waive` and `go_live` ([REPO-20](#repo-20--a-repos-kind), once built). Any
+  `releases` (`auto` or `manual`, default `auto`; [SHIP-30](ship.md)), `kind`, `readiness`, `waive`
+  and `go_live` ([REPO-20](#repo-20--a-repos-kind), once built). Any
   other key → `unknown key <k>`.
 - Verified by: `repo: parse the three files`, `repo: read from the base branch only`, `repo: TOWERCAB.md front matter`
 

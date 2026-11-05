@@ -303,10 +303,22 @@ export function NeedsCard({
       {linkTitle ? (
         <div class="card-titles">
           <h3 class="card-title">
-            <Link href={`/i/${key}`}>{card.title}</Link>
+            {card.kind === "release" && card.pr ? (
+              <a href={card.pr.url} target="_blank" rel="noopener noreferrer">
+                {card.title}
+              </a>
+            ) : (
+              <Link href={`/i/${key}`}>{card.title}</Link>
+            )}
           </h3>
           <p class="meta">
-            {card.repo} · <Id id={key} />
+            {card.repo}
+            {card.kind === "release" ? null : (
+              <>
+                {" · "}
+                <Id id={key} />
+              </>
+            )}
           </p>
         </div>
       ) : null}

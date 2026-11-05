@@ -16,6 +16,7 @@ import { testGrantsOf } from "../pipeline/access.ts";
 import { section } from "../pipeline/prtext.ts";
 import { usualOwner } from "../repos.ts";
 import { currentRisk, type RiskGate, riskWords } from "../risk.ts";
+import { type Held, heldReleases, releaseLine, releaseTitle } from "../ship/releases.ts";
 import { aheadIn, isAhead, isBuilding, isReady } from "../slots.ts";
 import type { OwnerStep } from "../steps.ts";
 import { proposedSection } from "./proposed.ts";
@@ -609,7 +610,31 @@ const KIND_LABELS: Record<CardKind, string> = {
   code: "Code review",
   question: "Question",
   blocked: "Blocked",
+  release: "Release PR",
 };
+
+/** SHIP-31: a held release PR as a "Needs you" card. It has no intent; its key is `release:<repo>`. */
+export function releaseCard(h: Held, now: number): Card {
+  return {
+    intent: `release:${h.repo}`,
+    title: releaseTitle(h),
+    repo: h.repo,
+    kind: "release",
+    kindLabel: KIND_LABELS.release,
+    ask: "Merge it yourself or close it. Towercab leaves this release alone.",
+    since: when(h.since, now),
+    brief: null,
+    why: h.why,
+    details: null,
+    question: null,
+    access: null,
+    pr: { number: h.pr, url: `https://github.com/${h.github}/pull/${h.pr}`, label: "release PR" },
+    actions: [],
+    mergeLabel: null,
+    done: null,
+    addRepo: null,
+  };
+}
 
 function askOf(waiting: string | null): string {
   if (!waiting) return "Towercab needs you.";
@@ -1262,6 +1287,9 @@ export async function overview(src: UiSources): Promise<Overview> {
   for (const i of s.listing?.open ?? []) {
     if (i.waiting && !withMission.has(i.id))
       needs.push({ ...intentCard(i, src.config), order: Number.POSITIVE_INFINITY });
+  }
+  for (const h of heldReleases(src.db, s.now)) {
+    if (h.card) needs.push({ ...releaseCard(h, s.now), order: h.since });
   }
   needs.sort((a, b) => a.order - b.order);
   const list = src.upNext().filter((u) => !withMission.has(u.intent));
@@ -1995,6 +2023,9 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
   }
   if (sd.liveNoneWhy?.trim() && intent?.done && intent.verified !== "no")
     body.nothingLive = sd.liveNoneWhy.trim();
+  // SHIP-32: whether the release that contains the merge exists yet.
+  const rel = last ? releaseLine(src.db, last) : null;
+  if (rel) body.release = rel;
   // AUT-20: the latest risk, when no card already shows it.
   const risk = !card && last ? riskView(last) : null;
   if (risk) body.risk = risk;
