@@ -429,7 +429,9 @@ Two short commands cover what a GitHub action can't express.
   `/release` (alone in a comment by the owner on any of the intent's PRs): Towercab answers once per
   comment with a reply that says what the ship stage does with this PR. It starts nothing; releases
   are made by release-please ([SHIP-30](ship.md)).
-- The reply depends on the repo's `live` block ([SHIP-1](ship.md)) and the mission's stage:
+- The reply has one line per repo of the intent, the lead first, each starting with the repo's name
+  (`owner/name`). A single-repo intent gets one line. The line depends on that repo's `live` block
+  ([SHIP-1](ship.md)) and the mission's stage:
   - no `live` block: there is no live check, so merging the code PR is the last step;
   - a `live` block, before the merge: after the merge Towercab waits for the deploy and runs the
     e2e suites ([SHIP-20](ship.md));
@@ -437,7 +439,7 @@ Two short commands cover what a GitHub action can't express.
     e2e suites, a rollback or a revert), in one sentence each;
   - a `live` block, finished (`done`): it is live and passed its tests.
   The text never says the ship stage is parked or switched off.
-- Verified by: `events: retry command`, `events: release without a live block says merging is the last step`, `events: release with a live block says what the ship stage does`, `events: release after the merge says what it waits for`
+- Verified by: `events: retry command`, `events: release without a live block says merging is the last step`, `events: release with a live block says what the ship stage does`, `events: release of a multi-repo intent has a line per repo`, `events: release after the merge says what it waits for`
 
 ### PIP-46 · plan.md
 
