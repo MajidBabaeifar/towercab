@@ -1429,6 +1429,30 @@ When the host's rules need approvals the reviewers can't supply, Towercab says s
   stop the wait and is shown, not sent as a message (LOOP-14).
 - Verified by: `pipeline: too few reviewers for the host's rule sets a warning`, `pipeline: a host that still wants approval after the reviewers' sets a warning`, `pipeline: the warning clears when the list is fixed`
 
+### PIP-148 · A repair round sees the code scanning alerts that failed the pull request
+
+When a failed check has no Actions run log, such as `CodeQL`, the repair round gets the open code scanning alerts of the pull request, each with its rule, file, line and message.
+
+- Applies wherever PIP-83's log tails are built for a red pull request (the code PR's repair rounds in
+  `ci.ts` and the spec PR's revisions, PIP-83). A red check has no run log when its `run` is null.
+- For such checks the `Forge` reads the open alerts of the merge ref: `gh api
+  repos/<repo>/code-scanning/alerts?ref=refs/pull/<n>/merge&state=open`, like the other host reads only
+  `GitHubForge` builds the arguments. A host without code scanning returns no alerts.
+- Each alert becomes one line after the check list: `- <rule id> at <path>:<line>: <message>`, in the
+  alerts' order, at most 20; more are summarised as `and <k> more`. The block is passed as fenced data
+  (PIP-39), with the tail limit of the run logs. Checks that do have a run keep their log tail as today.
+- No open alerts, or all checks have a run → no alert block, and the details are as before.
+- Verified by: `pipeline: a red CodeQL check without a run gives the repair round the alert's rule, file and line`, `pipeline: a check with a run log gets no alert block`
+
+### PIP-149 · Unreadable code scanning alerts are noted, not fatal
+
+When the alerts can't be read, the repair details say so in one line and the repair round goes on.
+
+- A failure of the read in PIP-148 (no permission, the host unreachable, an error from `gh`) adds
+  `(the code scanning alerts couldn't be read: <reason>)` to the details, as an unreadable run log does
+  (PIP-83); it neither throws nor counts as a crash (LOOP-6), and the repair round starts.
+- Verified by: `pipeline: unreadable code scanning alerts are noted in the repair details`
+
 ### PIP-130 · The design treats IDs of other open spec PRs as taken
 
 Two open spec pull requests never get the same requirement numbers: the design leaves out every number another open one already added.
