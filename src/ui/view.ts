@@ -57,6 +57,8 @@ export interface TopBar {
   queued: number;
   /** "2 need you · 1 working · 3 queued". */
   countsText: string;
+  /** "2 of 4 runs going · the longest wait for a free slot is 12 min" (LOOP-104). */
+  slotsText: string;
   spendToday: string;
   /** "of $20.00" when a daily budget is set. */
   budget: string | null;

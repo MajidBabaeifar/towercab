@@ -3,6 +3,7 @@
 
 import { readFileSync, rmSync, statSync } from "node:fs";
 import { Inhibitor, woke } from "./awake.ts";
+import { slotStep } from "./capacity.ts";
 import { removeCheckout } from "./checkout.ts";
 import { applyPending, paused } from "./commands.ts";
 import { type Config, clonePath, type RepoConfig } from "./config.ts";
@@ -1429,6 +1430,11 @@ export class Loop {
       }
       if (spec.slot && this.slotsUsed() >= this.d.config.agent.parallel) {
         update(this.d.db, m.id, { busy: 0 }, this.now);
+        // LOOP-104: only this wait is stamped, once; the start clears it.
+        const step = slotStep(cur);
+        if (dataOf(cur).slot_wait_step !== step) {
+          patchData(this.d.db, cur, { slot_wait_since: this.now, slot_wait_step: step }, this.now);
+        }
         this.pollAt.set(m.id, this.now + 1);
         return;
       }
@@ -1457,7 +1463,13 @@ export class Loop {
         r.exit = exit;
       });
       // The run holds a slot from here on (LOOP-110).
-      const { idle: _idle, returning: _returning, ...rest } = dataOf(cur);
+      const {
+        idle: _idle,
+        returning: _returning,
+        slot_wait_since: _since,
+        slot_wait_step: _step,
+        ...rest
+      } = dataOf(cur);
       update(
         this.d.db,
         m.id,
