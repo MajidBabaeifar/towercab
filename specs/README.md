@@ -43,6 +43,7 @@ An intent's priority is twice its importance plus its urgency.
 | [pipeline.md](pipeline.md) | PIP | Spec, plan and code PRs; build, verify, proof, CI, review, gate, merge; GitHub interactions; writing |
 | [ship.md](ship.md) | SHIP | After the merge: wait for the deploy, run e2e against the live app, roll back and fix forward |
 | [repo.md](repo.md) | REPO | What Towercab reads from a target repo: `CLAUDE.md`, `REVIEW.md`, `TOWERCAB.md`; protected paths |
+| [gitlab.md](gitlab.md) | GL | Working with code hosted on GitLab: config, token identity, project names, merge requests, approvals |
 | [ui.md](ui.md) | UI | The local web page for the person running Towercab |
 | [metrics.md](metrics.md) | MET | Cost and time per intent, spend per day |
 | [public.md](public.md) | PUB | What the public repo shows: license, security policy, README, screenshot, contributing, conduct, example config, no personal names |
