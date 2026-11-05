@@ -9,6 +9,7 @@ import { classifyFiles, fetchFiles, type ProposedPr } from "../github/proposed.t
 import type { Clock, GitHub } from "../handlers.ts";
 import type { IntentStore } from "../intents/types.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
+import { grantPermission } from "../settings/store.ts";
 import { currentPr, type DoneNote, validNote } from "./state.ts";
 
 /** What the page can do; each resolves to one sentence saying what happened, or throws the error. */
@@ -20,6 +21,8 @@ export interface UiActions {
   start(intent: string): Promise<string>;
   /** UI-160, SHIP-22: tick (or untick) one of the owner's steps. */
   step?(intent: string, n: number, done: boolean): Promise<string>;
+  /** REPO-32: the owner granted the App Administration (write); settings are applied again. */
+  granted?(): Promise<string>;
   /** UI-164, LOOP-76: "I did it myself": ends the intent; the note becomes a ticked step. */
   done?(intent: string, note: string): Promise<string>;
   /** UI-164, PIP-113: the owner does it by hand; the intent becomes steps. */
@@ -234,6 +237,12 @@ export function createActions(d: ActionDeps): UiActions {
       }
       command("answer", intent, body);
       return "Answer saved to the intent. Towercab goes on with it on its next pass.";
+    },
+
+    async granted() {
+      return grantPermission(d.db)
+        ? "Noted. Towercab applies the standard settings again at its next check."
+        : "Nothing to clear: the GitHub App was not missing the permission.";
     },
 
     async retry(intent) {

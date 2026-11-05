@@ -76,6 +76,8 @@ import { blockingRepos, startReadiness as startReadinessCheck } from "./readines
 import { missingText } from "./repo/readiness.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
+import { nextSettingsDue, settingsCycle } from "./settings/apply.ts";
+import { runReleases } from "./ship/releases.ts";
 import { aheadIn, bestReady, buildingIn, isReady, ownerIn, workingIn } from "./slots.ts";
 import { leftOf, type OwnerStep, parseDelivery, unticked } from "./steps.ts";
 import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
@@ -84,6 +86,8 @@ import { checkUpdate, RESTART_CODE } from "./update.ts";
 
 export const PASS_MS = 5_000;
 const PR_POLL_S = 60;
+/** SHIP-30: release PRs are looked at every minute. */
+const RELEASE_POLL_S = 60;
 const INTENTS_POLL_S = 60;
 const UPDATE_POLL_S = 60;
 /** LOOP-108: a step that wanted to start a child during a drain is asked again after this long. */
@@ -165,10 +169,13 @@ export class Loop {
   private listingError: string | null = null;
   private lastIntentsPoll = 0;
   private lastIssuesPoll = 0;
+  private lastReleasePoll = 0;
   private issuesRun: Promise<void> | null = null;
   /** INT-39: the feature-list backfill running now, and how to stop it. */
   private featuresJob: Promise<void> | null = null;
   private readinessJob: Promise<void> | null = null;
+  /** REPO-30: the daily settings check of one repo, running now. */
+  private settingsJob: Promise<void> | null = null;
   /** Held by every handler call and by the readiness fetch: two fetches of one clone never overlap. */
   private readonly cloneLock = new Mutex();
   private featuresStop: (() => void) | null = null;
@@ -278,6 +285,7 @@ export class Loop {
       this.children.size > 0 ||
       this.featuresJob !== null ||
       this.readinessJob !== null ||
+      this.settingsJob !== null ||
       this.issuesRun !== null
     )
       return;
@@ -293,6 +301,7 @@ export class Loop {
     this.stopFeatures();
     await this.featuresIdle();
     await this.readinessIdle();
+    await this.settingsIdle();
     for (const [id, r] of this.children) {
       r.handle.kill("SIGTERM");
       const done = await Promise.race([
@@ -387,6 +396,7 @@ export class Loop {
       report.woke = true;
       this.pollAt.clear();
       this.lastPrPoll.clear();
+      this.lastReleasePoll = 0;
       this.lastIntentsPoll = 0;
       this.lastProposedPoll = 0;
       this.lastIssuesPoll = 0;
@@ -416,11 +426,13 @@ export class Loop {
     await this.pollProposed(false);
     await this.requeueKnownRepos();
     this.startReadiness();
+    this.startSettings();
     this.enforceDrain();
     // LOOP-105, LOOP-108: with the checkout moved or an update waiting, running children finish but
     // nothing new starts.
     if (this.codeMoved() === null && this.drain === null) this.startIssues(false);
     await this.pollPrs();
+    await this.pollReleases();
     this.releaseReady();
     await this.stepDue(!report.woke);
     if (
@@ -447,6 +459,7 @@ export class Loop {
       this.children.size === 0 &&
       this.featuresJob === null &&
       this.readinessJob === null &&
+      this.settingsJob === null &&
       live.length === 0 &&
       report.picked === null;
     if (this.targetId) {
@@ -885,6 +898,36 @@ export class Loop {
       });
   }
 
+  /**
+   * REPO-30, REPO-31: the daily settings check (and, with the owner's opt-in, the apply) of the oldest due
+   * repo, as a background job like the readiness check, one at a time; its fetch holds the clone lock.
+   */
+  private startSettings(): void {
+    if (!this.d.readiness || this.settingsJob || this.drain !== null || this.codeMoved() !== null) return;
+    const deps = {
+      config: this.d.config,
+      home: this.d.home,
+      db: this.d.db,
+      tools: this.d.tools,
+      clock: this.d.clock,
+      github: this.d.github,
+      log: this.d.log,
+      exclusive: <T>(fn: () => Promise<T>) => this.cloneLock.run(fn),
+    };
+    if (!this.d.config.github || !nextSettingsDue(deps)) return;
+    this.settingsJob = settingsCycle(deps)
+      .then(() => undefined)
+      .catch((e: Error) => this.d.log(`settings: ${e.message}`))
+      .finally(() => {
+        this.settingsJob = null;
+      });
+  }
+
+  /** Resolves when no settings check is running (tests and shutdown wait for it). */
+  async settingsIdle(): Promise<void> {
+    while (this.settingsJob) await this.settingsJob;
+  }
+
   /** Resolves when no readiness check is running (tests and shutdown wait for it). */
   async readinessIdle(): Promise<void> {
     while (this.readinessJob) await this.readinessJob;
@@ -1151,6 +1194,21 @@ export class Loop {
         this.d.log(`${label(m)}: reading its PRs failed: ${msg}`);
       }
     }
+  }
+
+  /** SHIP-30..32: the release PRs of every repo, every 60 s; not a mission, so outside `apply`. */
+  private async pollReleases(): Promise<void> {
+    if (this.now - this.lastReleasePoll < RELEASE_POLL_S) return;
+    this.lastReleasePoll = this.now;
+    const failure = await runReleases({
+      github: this.d.github,
+      db: this.d.db,
+      config: this.d.config,
+      now: this.now,
+      log: this.d.log,
+    });
+    if (failure === null) this.githubOk();
+    else this.health.fail("github", failure, this.now);
   }
 
   /** Missions whose step is due: their handler's `step` (LOOP-4). */
@@ -1430,7 +1488,11 @@ export class Loop {
       this.endDrain();
       return;
     }
-    const idle = () => this.children.size === 0 && this.featuresJob === null && this.readinessJob === null;
+    const idle = () =>
+      this.children.size === 0 &&
+      this.featuresJob === null &&
+      this.readinessJob === null &&
+      this.settingsJob === null;
     // A drain whose children are gone updates at once instead of at the next minute.
     if (!(this.drain !== null && idle()) && this.now - this.lastUpdate < UPDATE_POLL_S) return;
     this.lastUpdate = this.now;

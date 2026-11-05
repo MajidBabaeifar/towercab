@@ -70,7 +70,7 @@ export interface TopBar {
 }
 
 export type ActionKey = "merge" | "reply" | "retry" | "drop";
-export type CardKind = "spec" | "plan" | "code" | "question" | "blocked";
+export type CardKind = "spec" | "plan" | "code" | "question" | "blocked" | "release";
 
 export interface Question {
   context: string;
@@ -455,6 +455,8 @@ export interface IntentPage {
   stepsWait?: "before" | "after" | null;
   /** UI-162: why the plan said nothing could be checked live, for a change that shows as done. */
   nothingLive?: string | null;
+  /** SHIP-32: "Published in v1.2.0" with its link, or "Merged, waiting for a release"; absent when the repo has no releases. */
+  release?: { text: string; url: string | null };
 }
 
 /** UI-160: one of the owner's steps, with when it was ticked. */
@@ -597,6 +599,23 @@ export interface ProposedSection {
   stale: string | null;
 }
 
+/** REPO-30: the standard GitHub settings of a repo, as last checked. */
+export interface SettingsView {
+  /** `ok`, `gaps` or `unknown` (never checked). */
+  state: "ok" | "gaps" | "unknown";
+  /** The one line the page leads with. */
+  summary: string;
+  gaps: string[];
+  /** Why the ruleset or the apply was held back, or why the last check could not run. */
+  notes: string[];
+  /** When it was checked, unix seconds; 0 when never. */
+  at: number;
+  /** REPO-32: the one step the owner has, shared by every repo; null when nothing is missing. */
+  step: string | null;
+  /** The step's button works: Towercab runs (a read-only page can't act). */
+  canGrant: boolean;
+}
+
 /** UI-194: what one finished phase did, in its plain brief. */
 export interface FocusHistory {
   label: "Spec" | "Plan" | "Code";
@@ -633,6 +652,7 @@ export interface FocusPage {
 
 /** UI-141: one repo's page. */
 export interface RepoView {
+  settings: SettingsView;
   /** UI-156: what the repo is missing; absent when nothing is. */
   setup?: SetupView;
   repo: string;
@@ -676,6 +696,8 @@ export interface ReposPage {
   all: RepoSummary[];
   /** The totals over every repo (UI-137). */
   spend: RepoSpendView;
+  /** REPO-32: the one settings step the owner has (the same on every repo page), or null. */
+  settingsStep: { text: string; canGrant: boolean } | null;
   /** What went wrong: the intents repo can't be read, or the asked-for repo doesn't exist. */
   error: string | null;
 }

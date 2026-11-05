@@ -8,6 +8,7 @@ import type { Db } from "./db.ts";
 import type { GitHub } from "./handlers.ts";
 import type { Home } from "./home.ts";
 import { parseStored } from "./repo/readiness.ts";
+import { permissionLine } from "./settings/store.ts";
 import type { Tools } from "./tools.ts";
 
 export const TOOLS = ["git", "gh", "claude", "bwrap", "systemd-inhibit", "systemctl", "journalctl"];
@@ -79,6 +80,9 @@ export async function doctor(o: {
         : `gh login: not logged in as ${me} (run gh auth login): the UI's actions need it`,
     );
   }
+  // REPO-32: said once, and only while Towercab is meant to apply settings.
+  const perm = o.db && config.githubSettings === "apply" ? permissionLine(o.db) : null;
+  if (perm) lines.push(perm);
   for (const [name, repo] of config.repos) {
     lines.push(
       `${name}: ${repo.github} · ${existsSync(clonePath(repo, home.root)) ? "cloned" : "clones on first use"}`,

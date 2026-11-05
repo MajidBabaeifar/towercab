@@ -55,8 +55,12 @@ export interface TowercabFile {
   tests: string[];
   /** The ship stage's block (SHIP-1), or null: merged means done. */
   live: Live | null;
+  /** SHIP-31: `manual` when the owner merges the repo's release PRs by hand; absent means `auto`. */
+  releases?: "manual";
   /** The confirmed kind (REPO-20); absent: unconfirmed. */
   kind?: Kind;
+  /** `check` keeps the repo check-only when Towercab applies settings (REPO-31); absent: applied. */
+  settings?: "check";
   /** `warn` (absent) or `block` (LOOP-70). */
   readiness?: Mode;
   /** Items the owner waived, with the reason (REPO-20); absent: none. */
@@ -245,7 +249,18 @@ function parsePasses(bs: string[]): Pass[] {
   return out;
 }
 
-const KEYS = ["max_autonomy", "protected", "tests", "live", "kind", "readiness", "waive", "go_live"];
+const KEYS = [
+  "max_autonomy",
+  "protected",
+  "tests",
+  "live",
+  "releases",
+  "kind",
+  "readiness",
+  "waive",
+  "go_live",
+  "settings",
+];
 const KEY = /^([A-Za-z_][A-Za-z0-9_-]*):(?:[ \t]|$)/;
 
 /** `TOWERCAB.md` → its front matter; anything after it is prose. */
@@ -298,9 +313,15 @@ function frontMatter(ls: string[], t: TowercabFile): void {
       t.maxAutonomy = val;
     } else if (k === "live") {
       t.live = parseLive(val);
+    } else if (k === "releases") {
+      if (val !== "auto" && val !== "manual") throw new Error("releases must be auto or manual");
+      if (val === "manual") t.releases = "manual";
     } else if (k === "kind") {
       if (!isKind(val)) throw new Error(`kind: ${String(val)} isn't one of ${KINDS.join(", ")}`);
       t.kind = val;
+    } else if (k === "settings") {
+      if (val !== "check") throw new Error(`settings: ${String(val)} isn't check`);
+      t.settings = "check";
     } else if (k === "readiness") {
       if (val !== "warn" && val !== "block") throw new Error(`readiness: ${String(val)} isn't warn or block`);
       t.readiness = val;

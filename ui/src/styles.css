@@ -2490,6 +2490,27 @@ a.pr-tile:hover {
   font-weight: 600;
 }
 
+.repo-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+}
+
+.repo-gaps {
+  margin: 0;
+  padding-left: var(--s3);
+  overflow-wrap: anywhere;
+}
+
+.repo-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+  margin: 0;
+}
+
 .repo-features {
   display: flex;
   flex-direction: column;

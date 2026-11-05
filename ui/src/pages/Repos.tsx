@@ -13,10 +13,11 @@ import type {
   RepoSpendView,
   RepoSummary,
   RepoView,
+  SettingsView,
   SetupView,
 } from "../../../src/ui/view.ts";
 import { AddRepoForm } from "../AddRepo.tsx";
-import { refreshFeatures } from "../api.ts";
+import { act, refreshFeatures } from "../api.ts";
 import { ErrorNote, ProposedList, ReadinessChip, StateChip, Time, WorkRow } from "../components.tsx";
 import { Alert, Check, External } from "../icons.tsx";
 import { Link } from "../router.tsx";
@@ -113,6 +114,54 @@ function RefreshButton({ repo }: { repo: string }) {
         </p>
       ) : null}
     </>
+  );
+}
+
+/** REPO-32: the one step for a missing permission, with its button when the page can act. */
+function SettingsStep({ text, canGrant }: { text: string; canGrant: boolean }) {
+  const [result, setResult] = useState<ActionReply | null>(null);
+  const grant = async () => setResult(await act("granted"));
+  return (
+    <>
+      <p class="repo-step">
+        <span>{text}</span>{" "}
+        {canGrant ? (
+          <button type="button" class="btn ghost small" onClick={() => void grant()}>
+            Done
+          </button>
+        ) : null}
+      </p>
+      {result ? (
+        <p class={`result ${result.ok ? "ok" : "err"}`} role="status">
+          <span>{result.message}</span>
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+function Settings({ s }: { s: SettingsView }) {
+  return (
+    <section class="card repo-settings" aria-labelledby="settings-h">
+      <header class="repo-sec-head">
+        <h2 id="settings-h">GitHub settings</h2>
+        {s.at ? <span class="meta">checked {new Date(s.at * 1000).toLocaleString()}</span> : null}
+      </header>
+      <p class={s.state === "gaps" ? "" : "meta"}>{s.summary}</p>
+      {s.gaps.length ? (
+        <ul class="repo-gaps">
+          {s.gaps.map((g) => (
+            <li key={g}>{g}</li>
+          ))}
+        </ul>
+      ) : null}
+      {s.notes.map((n) => (
+        <p class="meta" key={n}>
+          {n}
+        </p>
+      ))}
+      {s.step ? <SettingsStep text={s.step} canGrant={s.canGrant} /> : null}
+    </section>
   );
 }
 
@@ -221,6 +270,7 @@ function Repo({ r, readOnly }: { r: RepoView; readOnly: boolean }) {
         </span>
       </header>
       {r.setup ? <SetupSection s={r.setup} /> : null}
+      <Settings s={r.settings} />
       <Features repo={r.repo} f={r.features} />
       <Group title="In progress" count={r.inProgress.length}>
         {r.inProgress.length ? (
@@ -305,6 +355,11 @@ function counts(s: RepoSummary): string {
 function All({ data }: { data: Data }) {
   return (
     <div class="repo-all">
+      {data.settingsStep ? (
+        <section class="card repo-settings" aria-label="GitHub settings">
+          <SettingsStep text={data.settingsStep.text} canGrant={data.settingsStep.canGrant} />
+        </section>
+      ) : null}
       {data.all.map((s) => (
         <Link key={s.repo} class="card repo-card" href={repoHref(s.repo)}>
           <span class="repo-card-name">{s.repo}</span>
