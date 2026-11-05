@@ -4,6 +4,7 @@
 
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
+import { isGitlab } from "../forge/types.ts";
 import { MERGE_METHOD } from "../forge.ts";
 import { forgeOf } from "../github/forge.ts";
 import type { GitHub } from "../handlers.ts";
@@ -288,6 +289,8 @@ async function published(d: ReleaseDeps, name: string, github: string): Promise<
 export async function runReleases(d: ReleaseDeps): Promise<string | null> {
   let failure: string | null = null;
   for (const [name, repo] of d.config.repos) {
+    // GL-3: release-please is GitHub's here; a GitLab repo has no release pass until the pipeline supports it.
+    if (isGitlab(repo.github)) continue;
     try {
       const config = await raw(d, repo.github, repo.base, "release-please-config.json");
       if (config === null || !isJsonObject(config)) {
