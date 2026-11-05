@@ -242,6 +242,9 @@ export interface StartOpts {
   watch?: boolean;
   intent?: string;
   sender?: LoopDeps["sender"];
+  /** Self-update on, against `codeRoot` (a temp clone of a bare repo the test pushes to). */
+  selfUpdate?: boolean;
+  codeRoot?: string;
 }
 
 export class Pipe {
@@ -407,6 +410,8 @@ export class Pipe {
         log: (l) => this.logs.push(l),
         sender: o.sender ?? null,
         ...(o.readPr ? { readPr: o.readPr } : {}),
+        ...(o.selfUpdate ? { selfUpdate: true } : {}),
+        ...(o.codeRoot ? { codeRoot: o.codeRoot } : {}),
       },
       { watch: o.watch ?? true, ...(o.intent ? { intent: o.intent } : {}) },
     );

@@ -72,6 +72,8 @@ port = 7311
 [update]
 # Whether Towercab updates itself when its main branch moves.
 auto = true
+# Minutes an update waits for running work before cutting it off; reviews and builds get as long again.
+drain_minutes = 60
 
 # One table per repo Towercab works in; the name after repos. is yours to choose. Towercab imports
 # these tables into its database once, on its first start, and ignores them after that: add repos

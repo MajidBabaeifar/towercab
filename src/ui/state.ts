@@ -1204,6 +1204,8 @@ function healthOf(
   if (problems.some((p) => p.tone === "error"))
     return { health: "Problem", note: "Something needs a look: see Problems." };
   if (paused) return { health: "Paused", note: "Nothing new starts until you resume." };
+  const draining = src.db.meta("draining");
+  if (draining) return { health: "Running", note: `Draining for update to ${draining}.` };
   return { health: "Running", note: "Towercab is running." };
 }
 

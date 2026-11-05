@@ -83,6 +83,8 @@ export const PASS_MS = 5_000;
 const PR_POLL_S = 60;
 const INTENTS_POLL_S = 60;
 const UPDATE_POLL_S = 60;
+/** LOOP-108: a step that wanted to start a child during a drain is asked again after this long. */
+const DRAIN_RETRY_S = 10;
 /** INT-21: GitHub issues are listed every 5 minutes. */
 export const ISSUES_POLL_S = 300;
 
@@ -123,7 +125,19 @@ interface Running {
   exit: { code: number | null; signal: string | null } | null;
   termAt: number | null;
   timedOut: boolean;
+  /** LOOP-109: cut off by a drain past its limit; its mission is `interrupted`, not finished. */
+  interrupted?: boolean;
 }
+
+/** LOOP-108: Towercab waits for running work to end so it can update; `since` is on the monotonic clock. */
+interface Drain {
+  to: string;
+  since: number;
+  limitLogged: boolean;
+}
+
+/** LOOP-109: the kinds of run (a review, a build) that get a second `drain_minutes` to finish. */
+const GRACE_KINDS = new Set(["review", "worker"]);
 
 export interface PassReport {
   idle: boolean;
@@ -158,6 +172,10 @@ export class Loop {
   private lastProposedPoll = 0;
   private proposedCache: ProposedCache = new Map();
   private lastUpdate = 0;
+  /** LOOP-108: set while Towercab waits for running work to end before updating. */
+  private drain: Drain | null = null;
+  /** LOOP-108: the full commit of the `origin/main` an update failed on; no drain starts for it again. */
+  private failedUpdate: string | null = null;
   /** LOOP-105: the commit the checkout was at when this loop started, or null when unknown. */
   private startCommit: string | null = null;
   private last: { wall: number; mono: number } | null = null;
@@ -215,6 +233,7 @@ export class Loop {
       }
     }
     db.setMeta("running", `${process.pid} ${Math.floor(this.now)}`);
+    db.delMeta("draining");
     // LOOP-105: the code this loop runs is the checkout as it is now; the guard's question names it.
     this.startCommit = readHead(this.codeRoot());
     if (this.startCommit) db.setMeta("code_commit", this.startCommit);
@@ -277,6 +296,7 @@ export class Loop {
     }
     this.children.clear();
     this.inhibitor.stop();
+    this.d.db.delMeta("draining");
     this.d.db.delMeta("running");
   }
 
@@ -377,8 +397,10 @@ export class Loop {
     await this.pollIntents(false);
     await this.pollProposed(false);
     await this.requeueKnownRepos();
-    // LOOP-105: with the checkout moved, running children finish but nothing new starts.
-    if (this.codeMoved() === null) this.startIssues(false);
+    this.enforceDrain();
+    // LOOP-105, LOOP-108: with the checkout moved or an update waiting, running children finish but
+    // nothing new starts.
+    if (this.codeMoved() === null && this.drain === null) this.startIssues(false);
     await this.pollPrs();
     this.releaseReady();
     await this.stepDue(!report.woke);
@@ -386,7 +408,8 @@ export class Loop {
       !paused(db) &&
       !this.health.blocked(this.now) &&
       !budgetReached(db, this.d.config, this.now) &&
-      this.codeMoved() === null
+      this.codeMoved() === null &&
+      this.drain === null
     ) {
       report.picked = await this.pick();
       await this.startFeatures();
@@ -432,6 +455,11 @@ export class Loop {
         { child_pid: null, child_kind: null, child_since: null, step_secs: m.step_secs + runMs / 1000 },
         this.now,
       );
+      if (r.interrupted) {
+        // LOOP-109: cut off by a drain: the step runs again in its session, never counted as a crash.
+        this.move(update(this.d.db, m.id, { child_model: null }, this.now), { event: "interrupted" });
+        continue;
+      }
       dropIfEmpty(r.spec.stderr);
       const end: ChildEnd = {
         ...r.exit,
@@ -654,6 +682,39 @@ export class Loop {
         r.termAt = mono;
         r.handle.kill("SIGTERM");
       }
+    }
+  }
+
+  /**
+   * LOOP-109: a drain that has lasted `drain_minutes` cuts off every run but a review or a build, which get
+   * `drain_minutes` more; at twice the limit nothing is spared. Cut off = SIGTERM, then SIGKILL after 10 s
+   * (`enforceTimeouts`), and the mission is `interrupted` when the child is reaped.
+   */
+  private enforceDrain(): void {
+    const drain = this.drain;
+    if (!drain) return;
+    const mono = this.d.clock.mono();
+    const limitMs = this.d.config.update.drainMinutes * 60_000;
+    const age = mono - drain.since;
+    if (age < limitMs) return;
+    const last = age >= 2 * limitMs;
+    const cut: string[] = [];
+    for (const [id, r] of this.children) {
+      if (r.exit || r.termAt !== null) continue;
+      if (!last && GRACE_KINDS.has(r.spec.kind)) continue;
+      r.interrupted = true;
+      r.termAt = mono;
+      r.handle.kill("SIGTERM");
+      cut.push(`${r.spec.kind} of mission ${id}`);
+    }
+    if (this.featuresJob !== null) this.stopFeatures();
+    if (!drain.limitLogged || cut.length > 0) {
+      this.d.log(
+        `the drain for the update to ${drain.to} reached its ${last ? "last" : "first"} limit; ${
+          cut.length ? `interrupted ${cut.join(", ")}` : "nothing to interrupt"
+        }`,
+      );
+      drain.limitLogged = true;
     }
   }
 
@@ -1044,6 +1105,12 @@ export class Loop {
         update(this.d.db, m.id, { busy: 0 }, this.now);
         return;
       }
+      // LOOP-108: an update waits for running work to end, so no new child starts; asked again later.
+      if (this.drain !== null) {
+        update(this.d.db, m.id, { busy: 0 }, this.now);
+        this.pollAt.set(m.id, this.now + DRAIN_RETRY_S);
+        return;
+      }
       if (spec.slot && this.slotsUsed() >= this.d.config.agent.parallel) {
         update(this.d.db, m.id, { busy: 0 }, this.now);
         this.pollAt.set(m.id, this.now + 1);
@@ -1249,26 +1316,50 @@ export class Loop {
   }
 
   private async selfUpdate(): Promise<void> {
-    if (!this.d.selfUpdate || !this.d.config.update.auto) return;
-    if (this.now - this.lastUpdate < UPDATE_POLL_S) return;
+    if (!this.d.selfUpdate || !this.d.config.update.auto) {
+      this.endDrain();
+      return;
+    }
+    const idle = () => this.children.size === 0 && this.featuresJob === null;
+    // A drain whose children are gone updates at once instead of at the next minute.
+    if (!(this.drain !== null && idle()) && this.now - this.lastUpdate < UPDATE_POLL_S) return;
     this.lastUpdate = this.now;
     const r = await checkUpdate({
       tools: this.d.tools,
-      checkout: checkoutRoot(),
-      idle: () => this.children.size === 0 && this.featuresJob === null,
+      checkout: this.codeRoot(),
+      idle,
+      failed: this.failedUpdate,
     });
-    if (r.kind === "updated") {
+    if (r.kind === "waiting") {
+      // A newer main while draining changes the target, not the start: the limit counts from the first.
+      if (this.drain === null) {
+        this.drain = { to: r.to, since: this.d.clock.mono(), limitLogged: false };
+        this.d.log(`main is ahead (${r.to}); draining: nothing new starts until running work ends`);
+      } else this.drain.to = r.to;
+      this.d.db.setMeta("draining", r.to);
+    } else if (r.kind === "updated") {
       this.d.log(`updated ${r.from} → ${r.to}; restarting`);
       this.stop(RESTART_CODE);
     } else if (r.kind === "failed") {
-      this.d.log(`self-update failed: ${r.why}`);
+      this.d.log(`self-update to ${r.to} failed: ${r.why}`);
+      this.failedUpdate = r.target;
+      this.endDrain();
       this.d.db.run(
         "INSERT OR IGNORE INTO outbox (key, mission, text, created) VALUES (?, NULL, ?, ?)",
-        `update:${r.why}`,
-        `Towercab couldn't update itself and kept running the old version.\n${r.why}`,
+        `update:${r.target}`,
+        `Towercab couldn't update itself to ${r.to} and kept running the old version.\n${r.why}`,
         this.now,
       );
+    } else if (r.kind === "none") {
+      this.endDrain();
     }
+  }
+
+  /** LOOP-108: work may start again (the update is no longer waited for). */
+  private endDrain(): void {
+    if (this.drain === null) return;
+    this.drain = null;
+    this.d.db.delMeta("draining");
   }
 
   private async sendMessages(): Promise<void> {
