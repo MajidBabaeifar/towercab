@@ -157,6 +157,9 @@ A repo's work limits are written in its own `TOWERCAB.md`, so anyone who reads t
   keep running and no new one starts until the count is under it.
 - `path`, `base`, `env` and the GitHub name stay in Towercab's database ([LOOP-65](loop.md)): they say
   where the clone is and how it runs on this machine, and `base` is needed to find the file at all.
+  `env` is never written to the repo, by a settings PR or the move: it can hold secrets and
+  machine-specific paths. Its variable names (never the values) are shown on the repo page
+  ([UI-150](ui.md)), so they aren't hidden.
 - Verified by: `repo: TOWERCAB.md workers and ahead`, `repo: a bad workers or ahead is invalid`, `repo: a new limit applies on the next fetch`
 
 ### REPO-15 · Which value wins
@@ -228,11 +231,15 @@ Towercab opens one pull request per repo to bring its tuning from its own config
   database `workers` and `ahead` with the defaults. Keys that differ and are absent from the base file go
   into one PR titled `chore(towercab): move Towercab settings into TOWERCAB.md` through REPO-16's path.
   Nothing differs → no PR; the repo is marked moved at once.
-- Asked at most once per repo (`meta.repo-move:<name>` holds the PR number): a PR closed without merging
-  is not reopened, the database values stay in use, and `doctor` says `<name>: the PR that moves its
-  settings into TOWERCAB.md was closed; reopen it or set them on the repo's page.` Merging it marks the
-  repo moved.
-- Verified by: `repo: the move opens one PR with the non-default values`, `repo: the move is skipped when nothing differs`, `repo: a closed move PR is not reopened`, `repo: a merged move PR marks the repo moved`
+- Towercab asks on its own at most once per repo (`meta.repo-move:<name>` holds the PR number). A PR
+  closed without merging is not replaced automatically: the database values stay in use and `doctor`
+  warns `<name>: the PR that moves its settings into TOWERCAB.md was closed; open it again from the
+  repo's page.` (a warning, exit code unchanged). Merging the PR marks the repo moved.
+- `reopenMove(repo)`, asked by the owner from the repo's page ([UI-154](ui.md)), opens a new move PR the
+  same way as the first, from the values at that moment; it is refused while a move PR is open or once
+  the repo has moved (`<name> has already moved` / `a move PR is already open: #<n>`). The new PR's
+  number replaces the stored one.
+- Verified by: `repo: the move opens one PR with the non-default values`, `repo: the move is skipped when nothing differs`, `repo: a closed move PR is not replaced on its own`, `repo: a closed move PR is a doctor warning`, `repo: the owner can open the move PR again`, `repo: a merged move PR marks the repo moved`
 
 ### REPO-20 · A repo's kind
 

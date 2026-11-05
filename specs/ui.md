@@ -834,9 +834,11 @@ A repo's page has a Settings section where the owner sees and changes how many m
   its default and a one-line explanation in plain words. A line under the form says where the values
   come from: `Saved in TOWERCAB.md in the repo.`, or before the move `Still kept by Towercab; moving
   them into the repo ([UI-154](#ui-154--the-move-on-the-page)).`
-- The form is part of `GET /api/repos?repo=<name>` as `settings`: `{values, defaults, pending, moved}`.
-  It is absent in the All view.
-- Verified by: `ui: a repo page shows its settings`, `ui: screenshots light, dark and mobile`
+- Under the form, `Kept on this machine only:` lists the repo's environment variable names, comma
+  separated (`None set.` when there are none). Values are never sent to the page or the API.
+- The form is part of `GET /api/repos?repo=<name>` as `settings`: `{values, defaults, pending, moved,
+  envNames}`. It is absent in the All view.
+- Verified by: `ui: a repo page shows its settings`, `ui: env names show but never values`, `ui: screenshots light, dark and mobile`
 
 ### UI-151 · Saving opens a PR
 
@@ -876,10 +878,13 @@ When the repo's `TOWERCAB.md` cannot be read, the repo's page says why, so the o
 While a repo's settings are being moved into the repo, the page says where that stands.
 
 - Before the move: `Moving these settings into the repo: PR #<n>` with a link while REPO-19's PR is
-  open; `The PR was closed; the values are still kept by Towercab.` after a close; nothing once moved.
+  open; nothing once moved. After a close without merging: one line, `The PR that moves these
+  settings was closed; Towercab still keeps them.`, with an "Open the move PR again" button that posts
+  `{action: "repo-move", repo}`. The reply is `Opened PR #<n>.` or REPO-19's refusal; the button is
+  hidden while a move PR is open and once moved, and the line goes with it.
   The Settings section, like the rest of the Repos page, fits 360 px, works in light and dark and by
   keyboard, with labels on the fields (UI-68, UI-145).
-- Verified by: `ui: the move PR shows on the repo page`, `ui: settings fit a phone and work by keyboard`, `ui: screenshots light, dark and mobile`
+- Verified by: `ui: the move PR shows on the repo page`, `ui: a closed move PR offers to open it again`, `ui: settings fit a phone and work by keyboard`, `ui: screenshots light, dark and mobile`
 
 ### UI-155 · Not-ready badge on the Repos tab
 
