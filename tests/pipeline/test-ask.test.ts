@@ -73,15 +73,15 @@ test("pipeline: the owner's reply to the test question allows it and the worker 
   expect(String(d.testNote)).toContain("allowed you to change tests/a.test.ts");
 });
 
-test("pipeline: several tests are asked one after the other", async () => {
+test("pipeline: several tests are asked together", async () => {
+  // PIP-136: one question for the whole list, so one answer settles every test in it.
   const second = { path: "tests/b.test.ts", why: "renamed" };
-  const m = make({ testAsk: { ...ASKED, rest: [second] }, answer: "Allow this change" });
+  const m = make({ testAsk: { ...ASKED, rest: [second] }, answer: "Allow all of them" });
   const r = await resolveTestAsk(cx, m);
-  expect("done" in r).toBe(true);
-  const o = (r as { done: { event: string; data?: Record<string, unknown> } }).done;
-  expect(o.event).toBe("wait");
-  expect(o.data).toMatchObject({ testAsk: { path: second.path, rest: [] }, testAllowed: [ASKED] });
-  expect(o.data).toHaveProperty("answer", undefined);
+  expect("m" in r).toBe(true);
+  const d = dataOf((r as { m: Mission }).m);
+  expect(d.testAllowed).toEqual([ASKED, second]);
+  expect(d.testAsk).toBeUndefined();
 });
 
 test("claude: thousands of existing tests are all denied for writing", () => {

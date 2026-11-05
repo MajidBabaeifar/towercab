@@ -13,6 +13,7 @@ import { CONTROL } from "../repo/protected.ts";
 import { runSet } from "../repo/runset.ts";
 import {
   answerTest,
+  askedTests,
   blockedTests,
   readingReply,
   sortTestRequests,
@@ -45,6 +46,9 @@ import {
 import {
   clearGuardLogs,
   existingTests,
+  HELPER_WHY,
+  heldHelpers,
+  helperTests,
   lockedTests,
   readGuardReasons,
   readSkew,
@@ -136,10 +140,16 @@ async function spawnWorker(cx: Ctx, m: Mission, prompt?: string): Promise<Progre
   // LOOP-106, LOOP-107: what the guard logs from here on is about this run alone.
   clearGuardLogs(cx.runs(m, "build"));
   // REPO-13: every round, repairs included, the base branch's tests no grant covers are write-blocked.
-  const existing = blockedTests(
-    await existingTests(cx.tools, cx.checkout(m), cx.repo(m).base, files.towercab.tests, files.towercab.live),
-    d,
+  // PIP-137: except helpers (no test cases), whose edits are checked after the round; a refused one stays blocked.
+  const onBase = await existingTests(
+    cx.tools,
+    cx.checkout(m),
+    cx.repo(m).base,
+    files.towercab.tests,
+    files.towercab.live,
   );
+  const free = await openHelpers(cx, m, onBase);
+  const existing = blockedTests(onBase, d).filter((p) => !free.includes(p));
   return spawnRun(
     cx,
     m,
@@ -320,12 +330,19 @@ export const buildHandler: Handler = {
       };
       return { done: await ask(cx, m, again, "answer the question", v.brief) };
     }
+    // PIP-137: a helper edit that is more than additions waits for the owner, in the same question as
+    // the tests the worker asked for (PIP-136). The edit stays in the checkout, unpublished.
+    const held = await heldHelperEdits(cx, m);
     if (v.status === "access" && v.access) {
       const d = data(m);
       const net = [...v.access.domains.map((x) => x.domain), ...v.access.paths.map((p) => p.glob)];
       const unplanned = net.length ? merge(d.unplanned, v.access) : d.unplanned;
       const lines = net.length ? [`Access granted: ${net.join(", ")}.`] : [];
-      if (v.access.tests.length) {
+      const tests = [
+        ...v.access.tests,
+        ...held.filter((h) => !v.access!.tests.some((t) => t.path === h.path)),
+      ];
+      if (tests.length) {
         // PIP-116: a test is never granted by Towercab itself; the owner is asked.
         const files = await repoFiles(cx, m);
         const existing = await existingTests(
@@ -335,11 +352,23 @@ export const buildHandler: Handler = {
           files.towercab.tests,
           files.towercab.live,
         );
-        const asked = await askForTests(cx, m, v.access.tests, existing, v.brief, unplanned, lines);
+        const asked = await askForTests(cx, m, tests, existing, v.brief, unplanned, lines);
         if (asked) return { done: asked };
       }
       const fresh = cx.record(m, "access", {}, { unplanned, testNote: undefined });
       return spawnWorker(cx, fresh, [...lines, "Continue the build."].join(" "));
+    }
+    if (v.status === "done" && held.length) {
+      const asked = await askForTests(
+        cx,
+        m,
+        held,
+        held.map((h) => h.path),
+        v.brief,
+        data(m).unplanned,
+        [],
+      );
+      if (asked) return { done: asked };
     }
     return commit(
       cx,
@@ -405,8 +434,9 @@ async function skewRetry(cx: Ctx, m: Mission, skew: SkewLine[]): Promise<Outcome
 }
 
 /**
- * PIP-116: the tests the worker asked to change that still need the owner: puts the first to them (the
- * rest wait in `testAsk`) and returns the wait, or null when every one is settled. `lines` gets what
+ * PIP-116, PIP-136: the tests the worker asked to change that still need the owner: puts all of them to
+ * them in one question (`testAsk` holds the first and the rest) and returns the wait, or null when every
+ * one is settled. `lines` gets what
  * the resumed worker is told about the others. The owner's earlier `answer` is cleared, so only a
  * reply to this question can grant the test.
  */
@@ -426,7 +456,8 @@ export async function askForTests(
   if (s.notBlocked.length) lines.push(`Not existing tests, nothing to ask: ${s.notBlocked.join(", ")}.`);
   const [first, ...rest] = s.ask;
   if (!first) return null;
-  const o = await ask(cx, m, testQuestion(first), "answer the question", brief);
+  // PIP-136: one question for the whole list.
+  const o = await ask(cx, m, testQuestion(s.ask), "answer the question", brief);
   return {
     ...o,
     data: {
@@ -440,8 +471,9 @@ export async function askForTests(
 }
 
 /**
- * PIP-116: the owner answered the question about a test: allowed → the file joins the grants,
- * anything else → refused for good. More tests asked in the same round are put one after the other.
+ * PIP-116, PIP-136: the owner answered the one question about the tests asked: allowed → the files join
+ * the grants, refused → refused for good (a held helper edit is restored then, PIP-137), and files the
+ * reply doesn't decide stay asked (PIP-139) in a question of their own.
  */
 export async function resolveTestAsk(cx: Ctx, m: Mission): Promise<{ done: Outcome } | { m: Mission }> {
   const d = data(m);
@@ -449,9 +481,10 @@ export async function resolveTestAsk(cx: Ctx, m: Mission): Promise<{ done: Outco
   // Only text that came with the answer counts (ask clears the old one).
   const r = answerTest(asked, d, d.answer);
   const said = readingReply(r.read);
-  if (r.read.undecided.length) {
+  const all = askedTests(asked);
+  if (r.read.undecided.length === all.length) {
     // PIP-139: neither a yes nor a no: nothing is recorded and the same question stays open.
-    const q = d.question ?? testQuestion(asked);
+    const q = d.question ?? testQuestion(all);
     await tellOwner(cx, m, said, questionMd(q, d.brief));
     return {
       done: wait("answer the question", q.question, {
@@ -460,15 +493,11 @@ export async function resolveTestAsk(cx: Ctx, m: Mission): Promise<{ done: Outco
     };
   }
   const note = [d.testNote, r.note].filter(Boolean).join(" ");
-  const next = sortTestRequests(
-    asked.rest,
-    { ...d, ...r.patch },
-    asked.rest.map((t) => t.path),
-  ).ask;
-  const [first, ...rest] = next;
+  const [first, ...rest] = all.filter((t) => r.read.undecided.includes(t.path));
   if (first) {
+    await restoreFromBase(cx, m, r.read.refused);
     await tellOwner(cx, m, said);
-    const o = await ask(cx, m, testQuestion(first));
+    const o = await ask(cx, m, testQuestion([first, ...rest]));
     return {
       done: {
         ...o,
@@ -478,8 +507,52 @@ export async function resolveTestAsk(cx: Ctx, m: Mission): Promise<{ done: Outco
   }
   // PIP-140: recorded first, then said.
   const recorded = cx.record(m, m.step, {}, { ...r.patch, testAsk: undefined, testNote: note });
+  await restoreFromBase(cx, m, r.read.refused);
   await tellOwner(cx, m, said);
   return { m: recorded };
+}
+
+/**
+ * PIP-137: the helpers (existing tests with no test cases) the worker may edit: all of them but those
+ * the owner refused, which stay blocked.
+ */
+async function openHelpers(cx: Ctx, m: Mission, onBase: string[]): Promise<string[]> {
+  const refused = (data(m).refusedTests ?? []).map((t) => t.path);
+  const helpers = await helperTests(cx.tools, cx.checkout(m), cx.repo(m).base, onBase);
+  return helpers.filter((p) => !refused.includes(p));
+}
+
+/**
+ * PIP-137: the helper edits in the checkout that are more than additions and that no grant or refusal
+ * covers yet, each with why it is asked. They stay in the checkout, unpublished, until the owner answers.
+ */
+async function heldHelperEdits(cx: Ctx, m: Mission): Promise<{ path: string; why: string }[]> {
+  const files = await repoFiles(cx, m);
+  const onBase = await existingTests(
+    cx.tools,
+    cx.checkout(m),
+    cx.repo(m).base,
+    files.towercab.tests,
+    files.towercab.live,
+  );
+  const d = data(m);
+  const settled = new Set(testGrantsOf(d).map((g) => g.path));
+  const open = (await openHelpers(cx, m, onBase)).filter((p) => !settled.has(p));
+  const held = await heldHelpers(cx.tools, cx.checkout(m), cx.repo(m).base, open);
+  return held.map((path) => ({ path, why: HELPER_WHY }));
+}
+
+/**
+ * PIP-137: a refused file goes back to the base branch's content. A test the worker could not touch
+ * reads as on the base already; a held helper edit is undone here. Publish refuses what is left.
+ */
+async function restoreFromBase(cx: Ctx, m: Mission, paths: string[]): Promise<void> {
+  const ref = `refs/remotes/origin/${cx.repo(m).base}`;
+  for (const p of paths) {
+    await coGit(cx, m, ["checkout", "--quiet", ref, "--", p]).catch((e) =>
+      cx.log(`${m.intent}: couldn't restore ${p}: ${(e as Error).message}`),
+    );
+  }
 }
 
 async function setupOrWorker(cx: Ctx, m: Mission): Promise<Progress> {

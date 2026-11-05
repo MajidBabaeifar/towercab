@@ -78,6 +78,7 @@ import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
 import { nextSettingsDue, settingsCycle } from "./settings/apply.ts";
 import { runReleases } from "./ship/releases.ts";
+import { advanceSecrets } from "./ship/secret-steps.ts";
 import {
   aheadIn,
   bestReady,
@@ -541,6 +542,14 @@ export class Loop {
           this.d.log(
             `${label(m)}: couldn't write the ticked steps to plan.md, retrying: ${(e as Error).message}`,
           );
+        }
+      }
+      // SHIP-34, SHIP-35: the secret steps the mission waits on go one step on.
+      if (d.steps.some((x) => x.secret && !x.done_at)) {
+        try {
+          await advanceSecrets(this.ctx(), getMission(db, m.id) ?? m);
+        } catch (e) {
+          this.d.log(`${label(m)}: secret steps failed: ${(e as Error).message}`);
         }
       }
       const cur = getMission(db, m.id) ?? m;

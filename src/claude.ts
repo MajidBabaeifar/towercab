@@ -295,6 +295,8 @@ export function claudeEnv(run: ClaudeRun, home: string): Record<string, string> 
     ...run.cacheEnv,
   };
   for (const t of TOKENS) delete env[t];
+  // SHIP-36: the age key stays with Towercab's own process.
+  for (const k of Object.keys(env)) if (/^(SOPS_|AGE_)/i.test(k)) delete env[k];
   return env;
 }
 
