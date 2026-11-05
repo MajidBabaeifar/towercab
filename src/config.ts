@@ -31,6 +31,9 @@ export interface RepoConfig {
   /** Intents that may be ahead of build at once (LOOP-60). */
   ahead: number;
   env: Record<string, string>;
+  /** LOOP-83: changes need a teammate's approval; `reviewers` are the logins that may give it. */
+  teammateReview?: boolean;
+  reviewers?: string[];
 }
 
 export interface Config {

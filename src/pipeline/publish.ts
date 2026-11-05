@@ -5,6 +5,7 @@ import { git } from "../checkout.ts";
 import { type BranchPr, deleteBranch, prsOnBranch } from "../github/branches.ts";
 import { isBot } from "../github/events.ts";
 import { closeIfOpen } from "../github/prs.ts";
+import { assignOwner } from "../github/teammates.ts";
 import type { Ctx, Handler, Progress } from "../handlers.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
@@ -213,6 +214,10 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
       body,
     );
     n = Number(/\/pull\/(\d+)/.exec(url)?.[1]);
+    // PIP-146: the owner answers for the PR.
+    if (repo.teammateReview && !(await assignOwner(cx.github, repo.github, n))) {
+      cx.log(`${m.intent}: couldn't assign ${cx.github.me} to PR ${n}`);
+    }
   }
   return { done: ok({ set: { pr: n } }) };
 }

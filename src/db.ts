@@ -9,7 +9,14 @@ export type Row = Record<string, SqlValue>;
 /** The repos Towercab works on (LOOP-65); `env` is a JSON object, `path` '' = `<home>/repos/<name>`. */
 const REPOS = `CREATE TABLE repos (name TEXT PRIMARY KEY, github TEXT NOT NULL, path TEXT NOT NULL DEFAULT '',
   base TEXT NOT NULL, workers INTEGER NOT NULL DEFAULT 1, ahead INTEGER NOT NULL DEFAULT 3,
-  env TEXT NOT NULL DEFAULT '{}', source TEXT NOT NULL, added REAL NOT NULL);`;
+  env TEXT NOT NULL DEFAULT '{}', source TEXT NOT NULL, added REAL NOT NULL,
+  teammate_review INTEGER NOT NULL DEFAULT 0, reviewers TEXT NOT NULL DEFAULT '');`;
+
+/** The `repos` table as migration 3 made it, before LOOP-83's columns. */
+const REPOS_V3 = REPOS.replace(
+  ",\n  teammate_review INTEGER NOT NULL DEFAULT 0, reviewers TEXT NOT NULL DEFAULT '');",
+  ");",
+);
 
 /** LOOP-37 **Schema**, as written in specs/loop.md (a test compares them). */
 export const SCHEMA = `CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -51,7 +58,7 @@ DROP TABLE commands;
 ALTER TABLE commands_new RENAME TO commands;`,
   // 3: repos move from config.toml into the database (LOOP-65). `IF NOT EXISTS`: after a manual
   // rollback to version 2 (LOOP-37) the table and its rows are still there.
-  REPOS.replace("CREATE TABLE repos", "CREATE TABLE IF NOT EXISTS repos"),
+  REPOS_V3.replace("CREATE TABLE repos", "CREATE TABLE IF NOT EXISTS repos"),
   // 4: a mission that ended `unverified` (LOOP-73) is finished, so its intent may start a new one.
   `DROP INDEX missions_one_per_intent;
 CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT IN ('done','stopped','unverified');`,
@@ -63,13 +70,16 @@ CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT 
 INSERT INTO commands_new SELECT id, name, arg, text, source, created, applied_at, result FROM commands;
 DROP TABLE commands;
 ALTER TABLE commands_new RENAME TO commands;`,
+  // 6: a repo can need a teammate's review (LOOP-83). Additive.
+  `ALTER TABLE repos ADD COLUMN teammate_review INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE repos ADD COLUMN reviewers TEXT NOT NULL DEFAULT '';`,
 ];
 
 /**
  * Versions reached by migrations that only add (tables, columns, keys older code doesn't read): a
  * Towercab older than them can still use the database (LOOP-37).
  */
-export const ADDITIVE = new Set([3]);
+export const ADDITIVE = new Set([3, 6]);
 
 /** The oldest Towercab (by its migration count) that can open a database at `version`. */
 export function compatibleFrom(version: number): number {
@@ -129,11 +139,19 @@ export class Db {
     }
     for (let i = v; i < MIGRATIONS.length; i++) {
       this.tx(() => {
-        this.sql.exec(MIGRATIONS[i]!);
+        // Migration 6 adds columns: after a manual rollback (LOOP-37) they are still there.
+        if (i !== 5 || !this.hasColumn("repos", "teammate_review")) this.sql.exec(MIGRATIONS[i]!);
         this.sql.exec(`PRAGMA user_version = ${i + 1}`);
         this.setMeta("compatible_from", String(compatibleFrom(i + 1)));
       });
     }
+  }
+
+  private hasColumn(table: string, column: string): boolean {
+    return this.sql
+      .prepare(`PRAGMA table_info(${table})`)
+      .all()
+      .some((r) => (r as Row).name === column);
   }
 
   /** One `BEGIN IMMEDIATE` transaction; nested calls join the outer one. `fn` must not be async. */

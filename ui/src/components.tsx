@@ -342,6 +342,11 @@ export function NeedsCard({
       ) : null}
       <p class="ask">{card.ask}</p>
       {card.why ? <p class="why">{card.why}</p> : null}
+      {card.warning ? (
+        <p class="why review-warning" role="status">
+          <Alert size={16} /> {card.warning}
+        </p>
+      ) : null}
       {card.brief ? (
         <div class={`brief${long && !open ? " clamped" : ""}`}>
           <Markdown text={card.brief} />
@@ -506,8 +511,19 @@ export function NeedsCard({
           <span>{card.done.text}</span>
         </p>
       ) : null}
-      {(can("merge") && card.mergeLabel) || card.pr ? (
+      {(can("merge") && card.mergeLabel) || can("pass") || card.pr ? (
         <footer class="card-actions">
+          {can("pass") ? (
+            <button
+              type="button"
+              class="btn primary"
+              disabled={busy !== null}
+              onClick={() => void run("pass")}
+            >
+              <Merge size={16} />
+              {busy === "pass" ? "Passing on…" : "Pass on to teammates"}
+            </button>
+          ) : null}
           {can("merge") && card.mergeLabel ? (
             <button
               type="button"
@@ -577,6 +593,7 @@ export function WorkRow({ row }: { row: Row }) {
         <span class="row-step">
           {row.behind ?? row.step}
           {row.inStep ? <span class="meta"> · {row.inStep}</span> : null}
+          {row.warning ? <span class="meta review-warning"> · {row.warning}</span> : null}
         </span>
       </span>
       {row.behind ? null : <Phases phases={row.phases} />}

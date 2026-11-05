@@ -4,6 +4,7 @@ import {
   apply,
   continueTo,
   EVENTS,
+  exitsOf,
   isWait,
   isWorking,
   type Next,
@@ -312,4 +313,18 @@ test("machine: steps and unverified transitions", () => {
   expect([u.stage, u.finished]).toEqual(["unverified", 100]);
   expect(apply(cx, dep({ liveNoneWhy: "docs only" }), { event: "skip" }).stage).toBe("done");
   expect(apply(cx, u, { event: "closed" }).stage).toBe("unverified");
+});
+
+test("machine: a teammate's review (PIP-142, PIP-143)", () => {
+  // `reviewed` ends a wait for the teammates (or the owner's pass-on): the gate, or the spec's checks, decide again.
+  expect(show(next("approval:merge", "reviewed"))).toBe("→ gate");
+  expect(show(next("approval:spec", "reviewed"))).toBe("→ design");
+  for (const s of ["approval:plan", "blocked", "build", "gate", "merge", "ci"] as Stage[]) {
+    expect(show(next(s, "reviewed")), s).toBe("ignore");
+  }
+  expect(waitInfo("teammate review").stage).toBe("approval:merge");
+  expect(waitInfo("teammate review of spec").stage).toBe("approval:spec");
+  // The teammates are waited for, not the owner: nothing to merge and nothing to answer meanwhile.
+  expect(exitsOf("teammate review").map((e) => e.do)).toEqual(["retry", "drop"]);
+  expect(exitsOf("teammate review of spec").map((e) => e.do)).toEqual(["retry", "drop"]);
 });

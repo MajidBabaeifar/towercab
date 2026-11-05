@@ -124,6 +124,15 @@ export interface PipeData {
   conflictRounds?: { n: number; seen: string | null };
   /** Review fix rounds sent back to build (PIP-98). */
   reviewFixes?: number;
+  /**
+   * PIP-143: `requested` = the head whose reviewers were asked; `passNeeded` = the code PR waits for the
+   * owner to pass it on; `passedOn` = the head the owner passed on.
+   */
+  teammate?: { requested?: string; passNeeded?: boolean; passedOn?: string };
+  /** PIP-147: why the host's review rule can't be met by the reviewers; shown, never sent. */
+  reviewWarning?: string;
+  /** PIP-145: what approving reviewers wrote, for the record. */
+  approvalNotes?: string[];
   /** PIP-119: outcomes only the owner can do, from the last review. */
   ownerSteps?: { bullet: string; why: string }[];
   /** The risk agent's assessment per gate (PIP-96, AUT-16); null = the run didn't finish. */

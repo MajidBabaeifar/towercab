@@ -5,10 +5,12 @@ import { existsSync, statSync } from "node:fs";
 import type { Config } from "./config.ts";
 import { appKeyPath, clonePath } from "./config.ts";
 import type { Db } from "./db.ts";
+import { readRequired } from "./github/teammates.ts";
 import type { GitHub } from "./handlers.ts";
 import type { Home } from "./home.ts";
 import { parseStored } from "./repo/readiness.ts";
 import { permissionLine } from "./settings/store.ts";
+import { tooFewListed } from "./teammates.ts";
 import type { Tools } from "./tools.ts";
 
 export const TOOLS = ["git", "gh", "claude", "bwrap", "systemd-inhibit", "systemctl", "journalctl"];
@@ -102,6 +104,26 @@ export async function doctor(o: {
         lines.push(
           `${name}: ${i.state === "waived" ? `waived ${i.item}: ${i.words}` : `${i.state} ${i.item}: ${i.words}`}`,
         );
+    }
+  }
+  // LOOP-84: a warning (never a failure) when the host needs approvals that Towercab isn't waiting for.
+  if (o.github) {
+    for (const [name, repo] of config.repos) {
+      const required = await readRequired(o.github, repo.github, repo.base);
+      if (required === null || required < 1) continue;
+      const plural = required === 1 ? "" : "s";
+      if (!repo.teammateReview) {
+        lines.push(
+          `${name}: GitHub requires ${required} approval${plural} but teammate review is off: run towercab repo set ${name} teammate_review=on reviewers=<logins>`,
+        );
+      } else if (
+        (repo.reviewers?.length ?? 0) > 0 &&
+        tooFewListed(repo.reviewers ?? [], config.github?.me ?? "", required)
+      ) {
+        lines.push(
+          `${name}: GitHub requires ${required} approvals but only ${repo.reviewers?.length} reviewers are listed: run towercab repo set ${name} reviewers=…`,
+        );
+      }
     }
   }
   for (const [name, why] of config.badRepos) lines.push(`${name}: ${why}`);

@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-92..93, LOOP-105..109, LOOP-110..112 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-92..93, LOOP-105..109, LOOP-110..112, LOOP-83..84 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -781,8 +781,8 @@ intents that waited for it start.
 
 - Keys: `teammate_review` (`on` or `off`, default `off`) and `reviewers` (comma-separated host logins,
   e.g. `reviewers=alice,bob`; `reviewers=` empties the list). Both live in Towercab's `repos` table
-  (LOOP-65), never in the shared repo. The build adds the columns `teammate_review INTEGER NOT NULL
-  DEFAULT 0` and `reviewers TEXT NOT NULL DEFAULT ''` and updates the **Schema** block then. `repo list`
+  (LOOP-65), never in the shared repo. Migration 6 adds the columns `teammate_review INTEGER NOT NULL
+  DEFAULT 0` and `reviewers TEXT NOT NULL DEFAULT ''` (additive, LOOP-37); the **Schema** block shows them. `repo list`
   shows `· teammate review: alice, bob` (or `· teammate review: CODEOWNERS`) for an `on` repo.
 - Refusals, in addition to LOOP-69's: `teammate_review must be on or off`; `reviewers: <login> is not a
   login` (logins are `[A-Za-z0-9-]`, up to 39 characters); `reviewers: <login> is you: the owner cannot
@@ -1121,7 +1121,8 @@ CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, 
   sent_at REAL, tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0);
 CREATE TABLE repos (name TEXT PRIMARY KEY, github TEXT NOT NULL, path TEXT NOT NULL DEFAULT '',
   base TEXT NOT NULL, workers INTEGER NOT NULL DEFAULT 1, ahead INTEGER NOT NULL DEFAULT 3,
-  env TEXT NOT NULL DEFAULT '{}', source TEXT NOT NULL, added REAL NOT NULL);
+  env TEXT NOT NULL DEFAULT '{}', source TEXT NOT NULL, added REAL NOT NULL,
+  teammate_review INTEGER NOT NULL DEFAULT 0, reviewers TEXT NOT NULL DEFAULT '');
 ```
 
 **Transitions** (`next(stage, event)`; "next" = the next stage of the order; `U` = unexpected, counted
@@ -1149,6 +1150,7 @@ like a crash; `–` = ignored)
 | intent_removed | → stopped | → stopped | → stopped | → stopped | → stopped |
 | retry_fresh | fresh | fresh | fresh | fresh | fresh |
 | recheck ([AUT-21](autonomy.md)) | – | → design | → plan | → review | – |
+| reviewed (PIP-142, PIP-143) | – | → design | – | → gate | – |
 | resume | merge (held) → again; else – | – | – | – | – |
 | owner_done (LOOP-76) | `steps` → done; else – | – | – | – | → done, only at a wait with the `done` exit (`no changes`) |
 | to_steps (PIP-113) | → `steps` with steps in the plan, else → plan; `steps` and plan – | → `steps` or plan | → `steps` or plan | → `steps` or plan | → `steps` or plan |
@@ -1168,6 +1170,8 @@ are stored in intent files and never change; each ask says plainly what the owne
 | `approve spec` | approval:spec | Decide if this is the right change to build: merge the spec PR to go ahead, or comment what to change. |
 | `approve plan` | approval:plan | Decide if it should be built this way, with the access it asks for: merge the plan PR to start, or comment what to change. |
 | `review and merge PR` | approval:merge | Decide if this change can go live: merge the PR to ship it, or comment what to fix. |
+| `teammate review` | approval:merge | Your teammates need to approve this change before it can merge: nothing to do until they have, or comment what to fix. |
+| `teammate review of spec` | approval:spec | Your teammates need to approve this spec before it can merge: nothing to do until they have, or comment what to change. |
 | `answer the question` | blocked | Answer a question so the work can go on: pick an option or write your own. |
 | `checks red` | blocked | The tests can't pass without your help. Reply with what to change, or start over. |
 | `allow check writes` | blocked | Decide if the tests may write to this machine's shared build cache: reply allow or no. |

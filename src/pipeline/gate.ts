@@ -4,13 +4,15 @@ import { gate } from "../autonomy.ts";
 import { conflictOutcome } from "../github/events.ts";
 import type { Ctx, Handler } from "../handlers.ts";
 import { ok, wait } from "../machine.ts";
-import type { Mission } from "../mission.ts";
+import { getMission, type Mission } from "../mission.ts";
 import { type Risk, riskMd } from "../risk.ts";
+import { PASS_ON_WHY } from "../teammates.ts";
 import { testGrantsOf } from "./access.ts";
 import { data, effectiveOf, gh, intentOf, prUrl, repoFiles } from "./common.ts";
 import { type Checks, codeBody } from "./prtext.ts";
 import { HOLD_SECS, holder } from "./ship.ts";
 import { stepsBeforeMerge } from "./steps.ts";
+import { teammateStep } from "./teammate.ts";
 import { changedTests } from "./verify.ts";
 
 /** PIP-110: why the PR waits for the owner beyond the gate table, in plain sentences. */
@@ -124,6 +126,20 @@ export const gateHandler: Handler = {
     const d = data(m);
     const unplanned = (d.unplanned?.domains.length ?? 0) + (d.unplanned?.paths.length ?? 0) > 0;
     await updateBody(cx, m);
+    // PIP-143, PIP-144: where a teammate's review is needed it comes right after CI and the review, at
+    // every autonomy level. A review that didn't approve goes to the owner first, who passes it on.
+    if (cx.repo(m).teammateReview && (d.ci?.result === "green" || d.ci?.result === "none") && d.review) {
+      if (!d.review.approved && d.teammate?.passedOn !== m.head) {
+        return {
+          done: wait("review and merge PR", PASS_ON_WHY, {
+            data: { teammate: { ...d.teammate, passNeeded: true } },
+          }),
+        };
+      }
+      const t = await teammateStep(cx, m, "code");
+      if (t) return t;
+      m = getMission(cx.db, m.id) ?? m;
+    }
     const g = gate({
       a: effectiveOf(m, intent, files),
       ciGreen: d.ci?.result === "green" || d.ci?.result === "none",
@@ -187,6 +203,11 @@ export const mergeHandler: Handler = {
     }
     if (v.headRefOid !== m.head)
       return { done: { event: "head_moved", why: "the PR's head moved after the gate" } };
+    // PIP-144: Towercab re-checks the teammate approval on the head it merges.
+    if (v.mergeStateStatus === "CLEAN" || v.mergeStateStatus === "HAS_HOOKS") {
+      const t = await teammateStep(cx, m, "code");
+      if (t) return t;
+    }
     switch (v.mergeStateStatus) {
       case "CLEAN":
       case "HAS_HOOKS": {

@@ -69,7 +69,7 @@ export interface TopBar {
   banner: string | null;
 }
 
-export type ActionKey = "merge" | "reply" | "retry" | "drop";
+export type ActionKey = "merge" | "pass" | "reply" | "retry" | "drop";
 export type CardKind = "spec" | "plan" | "code" | "question" | "blocked" | "release";
 
 export interface Question {
@@ -156,6 +156,8 @@ export interface Card {
   risk?: RiskView | null;
   /** PIP-97: the spec's open points for the owner (spec cards only). */
   openPoints?: { point: string; why: string }[];
+  /** PIP-147: the host asks for approvals the reviewers can't give (UI-168). */
+  warning?: string;
 }
 
 export type PhaseStatus = "done" | "current" | "todo" | "skipped";
@@ -178,6 +180,8 @@ export interface Row {
   model: string;
   /** For a queued row: what it waits behind, in words. */
   behind: string | null;
+  /** PIP-147: the host asks for approvals the reviewers can't give (UI-168). */
+  warning?: string;
 }
 
 export interface ProblemView {
@@ -655,6 +659,8 @@ export interface RepoView {
   settings: SettingsView;
   /** UI-156: what the repo is missing; absent when nothing is. */
   setup?: SetupView;
+  /** UI-168: the repo needs a teammate's review: who may give it, and a warning when the host wants more. */
+  teammate?: { reviewers: string[]; warning: string | null };
   repo: string;
   github: string;
   /** "1 of 3 ahead" (UI-100). */
