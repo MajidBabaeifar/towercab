@@ -535,13 +535,20 @@ Towercab opens the chosen draft as a small pull request in the repo, and the wai
   branch, and what it doesn't cover.
 - It goes through the repo's autonomy like any other change ([AUT-14](autonomy.md)), unlike a settings PR
   ([REPO-16](#repo-16--a-settings-change-is-a-pull-request)): at an autonomy that merges on its own Towercab merges
-  it after CI and review; otherwise it waits for the owner's approval. `CLAUDE.md` is protected
+  it after CI and review (at autonomy 4 or 5 with a low-risk review, [AUT-14](autonomy.md)); otherwise it
+  waits for the owner's approval. `CLAUDE.md` is protected
   ([REPO-8](#repo-8--protected-paths)), so this grant is made for this PR only.
-- One setup PR per repo is open at a time; intents for the same repo wait on it. The intent that
-  triggered it waits with the reason `setting up checks: #<n>` (shown with the PR). When the PR
-  merges and the base branch has a checks block, the intent continues at the next pass with no reply. A PR
-  closed without merging → REPO-37's ask, with the PR named.
-- Verified by: `repo: the setup PR changes only CLAUDE.md`, `repo: the setup PR follows the repo's autonomy`, `repo: one setup PR per repo`, `repo: a merged setup PR resumes the waiting intent`, `repo: a closed setup PR asks the owner`
+- The review of this PR gets two extra duties besides the usual passes ([PIP-4](pipeline.md)): it re-runs
+  the drafted `setup` and `checks` on the base branch and reports a **blocking** finding if they
+  don't pass, and it reports a blocking finding for any drafted command that deploys, publishes,
+  writes over the network or uses a secret: the checks may only verify. Such a finding keeps the PR from
+  merging itself at any autonomy.
+- One setup PR per repo is open at a time. Every intent of that repo that reaches the pick while it is open
+  waits on it, not only the first: none can be verified without checks. Each waits with the reason
+  `setting up checks: #<n>` (shown with the PR). When the PR merges and the base branch has a checks
+  block, all of them continue at the next pass with no reply. A PR closed without merging → REPO-37's ask
+  for each, with the PR named.
+- Verified by: `repo: the setup PR changes only CLAUDE.md`, `repo: the setup PR follows the repo's autonomy`, `repo: the setup PR review re-runs the drafted checks`, `repo: the setup PR review blocks a command that is not a check`, `repo: one setup PR per repo`, `repo: every intent of the repo waits on the setup PR`, `repo: a merged setup PR resumes the waiting intents`, `repo: a closed setup PR asks the owner`
 
 ### REPO-37 · Asking only when nothing passes
 
