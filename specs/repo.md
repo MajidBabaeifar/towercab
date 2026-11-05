@@ -240,13 +240,15 @@ plain words; a repo whose kind nobody confirmed only warns.
 
 The standard GitHub settings are checked with the same check that `ci` uses, so the two cannot disagree.
 
-- Towercab runs `bin/apply-settings --check <owner/name>` from the pinned release of the `ci` repo
-  ([REPO-30](#repo-30--a-daily-settings-check)), not its main head, through `Tools`, as the App; exit 0 is `settings` present, a non-zero exit is missing with the script's
-  first output line as the words. Towercab keeps no copy of the list of settings.
-- No `ci` clone, no such script, or a script that cannot run (not exit 0 or 1) → the item is `unknown`
+- Towercab runs `bin/apply-settings --check <owner/name>` through `Tools`, as the App, from the latest
+  `v*` tag of the `ci` repo (newest by version), never from the clone's working tree: after a fetch of
+  its tags it makes a worktree of that tag, runs the script there, removes the worktree and logs the tag
+  (`settings check of <repo>: bin/apply-settings from ci <tag>`). Exit 0 is `settings` present, exit 1 is
+  missing with the script's first output line as the words. Towercab keeps no copy of the list of settings.
+- No `ci` clone, no `v*` tag, no such script in the tag, or a script that cannot run (not exit 0 or 1) → the item is `unknown`
   with `The standard settings could not be checked: add the ci repo to Towercab` (or the reason). It is
   shown as a warning and never blocks. `ci` is a registered repo, so the clone is normally there.
-- Verified by: `repo: settings check runs ci's script`, `repo: settings check without a ci clone is unknown`
+- Verified by: `repo: settings check runs ci's script`, `repo: settings check without a ci clone is unknown`, `readiness: settings run from the latest v* tag of ci`, `readiness: settings without a ci release are unknown`
 
 ### REPO-26 · Which stages apply
 

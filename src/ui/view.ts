@@ -511,6 +511,8 @@ export interface SetupView {
   hint: string[];
   /** The repo's open setup intent (LOOP-71), if any. */
   intent: { id: string; title: string } | null;
+  /** The open pull request that proposes a setup intent for the repo (LOOP-71, LOOP-92), if any. */
+  proposal: { url: string; title: string } | null;
 }
 
 export interface RepoChip {

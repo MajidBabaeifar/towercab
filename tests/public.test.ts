@@ -149,7 +149,7 @@ test("public: example config", () => {
     github: ["app_id", "me", "api_base"],
     telegram: ["bot_token", "chat_id", "api_base"],
     ui: ["port"],
-    update: ["auto"],
+    update: ["auto", "drain_minutes"],
   };
   for (const [table, list] of Object.entries(keys)) {
     expect(Object.keys(raw[table] ?? {}).sort(), table).toEqual([...list].sort());

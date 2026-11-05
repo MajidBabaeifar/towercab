@@ -1,6 +1,7 @@
 // Repo readiness (REPO-20..27): the kind of a repo, the setup that kind needs, how each item is read
 // from files, and the plain words for what is missing. Pure: the loop gathers the data (src/readiness.ts).
 
+import type { ProposedPr } from "../github/proposed.ts";
 import type { Live } from "../ship/live.ts";
 
 export const KINDS = ["service", "site", "cli", "library", "spec-only", "infra"] as const;
@@ -301,4 +302,9 @@ export function parseStored(raw: string | null): Stored | null {
   } catch {
     return null;
   }
+}
+
+/** The open proposed PR that adds a setup intent for `repo` (LOOP-71, LOOP-92), whoever opened it. */
+export function openSetupPr(proposed: ProposedPr[], repo: string): ProposedPr | null {
+  return proposed.find((p) => p.intent?.repo === repo && p.intent.setup === true) ?? null;
 }

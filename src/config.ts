@@ -68,7 +68,8 @@ export interface Config {
   github: { appId: number; me: string; apiBase: string } | null;
   telegram: { botToken: string; chatId: string; apiBase: string } | null;
   ui: { port: number };
-  update: { auto: boolean };
+  /** `drainMinutes`: how long a drain for an update waits before cutting runs off (LOOP-109). */
+  update: { auto: boolean; drainMinutes: number };
 }
 
 export class ConfigError extends Error {}
@@ -152,7 +153,10 @@ export function parseConfig(raw: Record<string, unknown>, file: string): Config 
       apiBase: r.url(telegram, "telegram", "api_base", "https://api.telegram.org"),
     },
     ui: { port: r.int(ui, "ui", "port", 7311, 0, 65535) },
-    update: { auto: r.bool(update, "update", "auto", true) },
+    update: {
+      auto: r.bool(update, "update", "auto", true),
+      drainMinutes: r.int(update, "update", "drain_minutes", 60, 1, 1440),
+    },
   };
   if (config.telegram && (!config.telegram.botToken || !config.telegram.chatId)) {
     throw new ConfigError(`config: ${file}: telegram.bot_token and telegram.chat_id are required`);

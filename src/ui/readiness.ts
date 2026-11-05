@@ -2,8 +2,9 @@
 // Both read the stored result (REPO-24), never the network.
 
 import type { Db } from "../db.ts";
+import type { ProposedPr } from "../github/proposed.ts";
 import type { Listing } from "../intents/types.ts";
-import { missing, parseStored } from "../repo/readiness.ts";
+import { missing, openSetupPr, parseStored } from "../repo/readiness.ts";
 import type { ReadinessBadge, SetupView } from "./view.ts";
 
 /** UI-155: the badge, or undefined for a ready or unchecked repo. */
@@ -26,7 +27,12 @@ export function readinessBadge(db: Db, repo: string): ReadinessBadge | undefined
 }
 
 /** UI-156: what a repo is missing, in words, with the lines that fix it. */
-export function setupView(db: Db, repo: string, listing: Listing | null): SetupView | undefined {
+export function setupView(
+  db: Db,
+  repo: string,
+  listing: Listing | null,
+  proposed: ProposedPr[] = [],
+): SetupView | undefined {
   const r = parseStored(db.meta(`readiness:${repo}`))?.readiness;
   if (!r) return undefined;
   const shown = r.items.filter((i) => i.state !== "present");
@@ -37,6 +43,7 @@ export function setupView(db: Db, repo: string, listing: Listing | null): SetupV
   if (!r.confirmed && !r.suggested) hint.push("kind: service | site | cli | library | spec-only | infra");
   if (r.confirmed && !r.blocks && m > 0) hint.push("readiness: block");
   const setup = listing?.open.find((i) => i.repo === repo && i.setup === true) ?? null;
+  const pr = openSetupPr(proposed, repo);
   const sentence = r.blocks
     ? "New intents wait in this repo until these are done. The intent that sets it up can still run."
     : !r.confirmed
@@ -56,5 +63,6 @@ export function setupView(db: Db, repo: string, listing: Listing | null): SetupV
     sentence,
     hint,
     intent: setup ? { id: setup.id, title: setup.title } : null,
+    proposal: pr ? { url: pr.url, title: pr.intent?.title ?? pr.title } : null,
   };
 }

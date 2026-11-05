@@ -70,7 +70,7 @@ async function repoView(
   spend: RepoSpend | undefined,
   o: ReposOpts,
 ): Promise<RepoView> {
-  const setup = setupView(src.db, lane.repo, s.listing);
+  const setup = setupView(src.db, lane.repo, s.listing, src.proposed?.().list ?? []);
   return {
     ...(setup ? { setup } : {}),
     repo: lane.repo,

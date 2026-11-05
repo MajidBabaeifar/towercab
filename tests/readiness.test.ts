@@ -1,8 +1,8 @@
 // Reading a repo's readiness (REPO-23..25, REPO-27) and proposing the setup intent (LOOP-71), over local
 // bare repos for GitHub and a fake `gh`: never the network.
 
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import type { Config } from "../src/config.ts";
 import type { Db } from "../src/db.ts";
@@ -18,6 +18,7 @@ import {
   storedReadiness,
 } from "../src/readiness.ts";
 import { fakeGitHub } from "./github/fakes.ts";
+import { release } from "./helpers/ready.ts";
 import { FakeTools, failResult, okResult } from "./helpers/tools.ts";
 import { bareRepo, git, TestClock, tempDir, testConfig, testDb, testHome } from "./helpers/world.ts";
 import { at, listing } from "./intents/fixtures.ts";
@@ -130,15 +131,17 @@ test("repo: readiness is stored at fetch", async () => {
 
 test("repo: settings check runs ci's script", async () => {
   const r = rig({ web: WEB, ci: { "README.md": "ci\n" } });
-  const script = join(r.home, "repos", "ci", "bin", "apply-settings");
-  mkdirSync(dirname(script), { recursive: true });
-  writeFileSync(script, "#!/bin/sh\n");
-  chmodSync(script, 0o755);
+  // The script is run from the latest v* release of ci (a worktree of the tag), with the repo to check.
+  release(r.remotes.ci!, { "bin/apply-settings": "#!/bin/sh\n" }, "v1.0.0");
+  await refreshReadiness(r.deps, r.config.repos.get("ci")!, true);
+  const script = join(r.home, "tmp", "ci-settings-v1.0.0", "bin", "apply-settings");
   let answer = { code: 0, stdout: "", stderr: "" };
   r.tools.on(script, () => ({ ...answer, timedOut: false }));
   await refreshReadiness(r.deps, repo(r), true);
   expect(items(r).settings).toBe("present");
-  expect(r.tools.calls.find((c) => c.cmd === script)?.args).toEqual(["--check", "owner/web"]);
+  expect(r.tools.calls.filter((c) => c.cmd === script).map((c) => c.args.join(" "))).toContain(
+    "--check owner/web",
+  );
   // Exit 1: the standard settings differ; the script's first line is the words.
   answer = { code: 1, stdout: "branch protection is off\nmore\n", stderr: "" };
   await refreshReadiness(r.deps, repo(r), true);

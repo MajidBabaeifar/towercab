@@ -193,6 +193,14 @@ function SetupSection({ s }: { s: SetupView }) {
           ))}
         </p>
       ) : null}
+      {s.proposal ? (
+        <p>
+          Proposed setup, waiting for you to merge it:{" "}
+          <a href={s.proposal.url} target="_blank" rel="noreferrer">
+            {s.proposal.title}
+          </a>
+        </p>
+      ) : null}
       {s.intent ? (
         <p>
           Setting it up: <Link href={`/i/${s.intent.id}`}>{s.intent.title}</Link>

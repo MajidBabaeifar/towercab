@@ -2,12 +2,13 @@
 // through `Tools` and `GitHub`, keep the answer in `meta` `readiness:<repo>`, and propose the setup
 // intent. The rules themselves are pure and live in src/repo/readiness.ts.
 
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { ensureClone } from "./checkout.ts";
+import { ensureClone, git } from "./checkout.ts";
 import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db } from "./db.ts";
 import { prsOnBranch } from "./github/branches.ts";
+import type { ProposedPr } from "./github/proposed.ts";
 import type { Clock, GitHub } from "./handlers.ts";
 import type { Home } from "./home.ts";
 import { newId, slugOf } from "./intents/id.ts";
@@ -30,6 +31,7 @@ import {
   type Kind,
   type Manifests,
   missing,
+  openSetupPr,
   parseStored,
   type Readiness,
   repoReadiness,
@@ -37,7 +39,7 @@ import {
   suggestKind,
   wordsFor,
 } from "./repo/readiness.ts";
-import { check, type Tools } from "./tools.ts";
+import { check, type RunOpts, type Tools } from "./tools.ts";
 
 export interface ReadinessDeps {
   config: Config;
@@ -48,12 +50,55 @@ export interface ReadinessDeps {
   store: IntentStore;
   github: GitHub;
   log(line: string): void;
+  /** The whole check of one repo, fetch included (default {@link READINESS_LIMIT_MS}). */
+  limitMs?: number;
 }
 
 /** A repo is checked again after this long (REPO-24: whenever Towercab fetches it). */
 export const READINESS_EVERY_S = 600;
 /** The whole check of one repo (REPO-23). */
 export const READINESS_LIMIT_MS = 60_000;
+
+/** The tools and GitHub of one check, every call capped by what is left of its deadline. */
+export interface Scope {
+  tools: Tools;
+  github: GitHub;
+  /** After this every call fails with `timed out`, so a read in progress stops at its next step. */
+  abort(): void;
+}
+
+/**
+ * REPO-23: the 60 s of a check cover its fetch and every read. Each child process gets only the time
+ * left (so a hung `git` or `gh` is killed with the limit), and once the limit passes no new call starts.
+ */
+export function withDeadline(d: ReadinessDeps, ms: number, now: () => number = Date.now): Scope {
+  const end = now() + ms;
+  let aborted = false;
+  const left = (opts?: RunOpts): RunOpts => {
+    const remaining = end - now();
+    if (aborted || remaining <= 0) throw new Error("timed out");
+    return { ...opts, timeoutMs: Math.min(opts?.timeoutMs ?? remaining, remaining) };
+  };
+  const tools: Tools = {
+    run: async (cmd, args, opts) => d.tools.run(cmd, args, left(opts)),
+    spawn: (spec) => d.tools.spawn(spec),
+    which: (cmd) => d.tools.which(cmd),
+  };
+  const github: GitHub = {
+    me: d.github.me,
+    gh: async (repo, args, opts) => d.github.gh(repo, args, left(opts)),
+    owner: (args, opts) => d.github.owner(args, opts),
+    gitAuth: (repo) => d.github.gitAuth(repo),
+    bot: () => d.github.bot(),
+  };
+  return {
+    tools,
+    github,
+    abort: () => {
+      aborted = true;
+    },
+  };
+}
 
 const metaKey = (repo: string) => `readiness:${repo}`;
 
@@ -71,7 +116,10 @@ async function show(d: ReadinessDeps, clone: string, ref: string, path: string):
   }
 }
 
-/** REPO-25: the settings check is `ci`'s own script. */
+/**
+ * REPO-25: the settings check is `ci`'s own script, from the latest `v*` release of the ci repo (a
+ * worktree of that tag after a fetch), never from the clone's working tree. The tag is logged.
+ */
 async function settingsCheck(d: ReadinessDeps, repo: RepoConfig): Promise<Check> {
   const ci = d.config.repos.get(CI_REPO);
   const unknown = (why: string): Check => ({
@@ -80,13 +128,39 @@ async function settingsCheck(d: ReadinessDeps, repo: RepoConfig): Promise<Check>
   });
   if (!ci) return unknown("add the ci repo to Towercab");
   const dir = clonePath(ci, d.home.root);
-  const script = join(dir, "bin", "apply-settings");
-  if (!existsSync(script)) return unknown("the ci repo has no bin/apply-settings");
-  const r = await d.tools.run(script, ["--check", repo.github], { cwd: dir, timeoutMs: READINESS_LIMIT_MS });
-  if (r.code === 0) return { state: "present" };
-  if (r.code !== 1) return unknown((r.stderr || r.stdout).trim().split("\n")[0] || `exit ${r.code}`);
-  const first = r.stdout.trim().split("\n")[0] || r.stderr.trim().split("\n")[0];
-  return { state: "missing", words: first || wordsFor("settings") };
+  if (!existsSync(join(dir, ".git"))) return unknown("the ci repo has no clone yet");
+  await git(
+    d.tools,
+    dir,
+    ["fetch", "--quiet", "--tags", "--prune", "origin"],
+    await d.github.gitAuth(ci.github),
+  );
+  const tag = (await repoGit(d.tools, dir, ["tag", "--list", "v*", "--sort=-v:refname"]))
+    .split("\n")
+    .map((t) => t.trim())
+    .find(Boolean);
+  if (!tag) return unknown("the ci repo has no v* release yet");
+  d.log(`settings check of ${repo.name}: bin/apply-settings from ci ${tag}`);
+  const tree = join(d.home.root, "tmp", `ci-settings-${tag.replace(/[^\w.-]/g, "_")}`);
+  mkdirSync(join(d.home.root, "tmp"), { recursive: true });
+  await repoGit(d.tools, dir, ["worktree", "prune"]);
+  rmSync(tree, { recursive: true, force: true });
+  await repoGit(d.tools, dir, ["worktree", "add", "--quiet", "--detach", tree, `refs/tags/${tag}`]);
+  try {
+    const script = join(tree, "bin", "apply-settings");
+    if (!existsSync(script)) return unknown(`ci ${tag} has no bin/apply-settings`);
+    const r = await d.tools.run(script, ["--check", repo.github], {
+      cwd: tree,
+      timeoutMs: READINESS_LIMIT_MS,
+    });
+    if (r.code === 0) return { state: "present" };
+    if (r.code !== 1) return unknown((r.stderr || r.stdout).trim().split("\n")[0] || `exit ${r.code}`);
+    const first = r.stdout.trim().split("\n")[0] || r.stderr.trim().split("\n")[0];
+    return { state: "missing", words: first || wordsFor("settings") };
+  } finally {
+    await repoGit(d.tools, dir, ["worktree", "remove", "--force", tree]).catch(() => {});
+    rmSync(tree, { recursive: true, force: true });
+  }
 }
 
 /** REPO-23: does the base branch require a status check? null when GitHub can't say. */
@@ -215,20 +289,35 @@ export async function refreshReadiness(
 ): Promise<Stored | null> {
   const old = storedReadiness(d.db, repo.name);
   if (!force && old && d.clock.now() - old.at < READINESS_EVERY_S) return old;
+  const limit = d.limitMs ?? READINESS_LIMIT_MS;
+  const scope = withDeadline(d, limit);
+  const inner: ReadinessDeps = { ...d, tools: scope.tools, github: scope.github };
+  let timer: NodeJS.Timeout | undefined;
   try {
     const clone = clonePath(repo, d.home.root);
-    const auth = await d.github.gitAuth(repo.github);
-    await ensureClone(d.tools, clone, repo, auth);
-    const s = await Promise.race([
-      readRepo(d, repo),
-      new Promise<never>((_, no) => setTimeout(() => no(new Error("timed out")), READINESS_LIMIT_MS).unref()),
-    ]);
+    const auth = await scope.github.gitAuth(repo.github);
+    const read = (async () => {
+      await ensureClone(scope.tools, clone, repo, auth);
+      return readRepo(inner, repo);
+    })();
+    read.catch(() => {});
+    // The deadline covers the fetch too; on expiry no further call starts and the child in flight is killed.
+    const expiry = new Promise<never>((_, no) => {
+      timer = setTimeout(() => {
+        scope.abort();
+        no(new Error(`timed out after ${Math.round(limit / 1000)} s`));
+      }, limit);
+    });
+    const s = await Promise.race([read, expiry]);
     d.db.setMeta(metaKey(repo.name), JSON.stringify(s));
     return s;
   } catch (e) {
+    scope.abort();
     d.log(`readiness of ${repo.name}: ${(e as Error).message}; keeping the last result`);
     if (old) d.db.setMeta(metaKey(repo.name), JSON.stringify({ ...old, at: Math.floor(d.clock.now()) }));
     return old;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -254,10 +343,13 @@ export async function proposeSetup(
   repo: RepoConfig,
   r: Readiness,
   listing: Listing,
+  proposed: ProposedPr[] = [],
 ): Promise<boolean> {
   const gaps = missing(r);
   if (gaps.length === 0) return false;
   if (listing.open.some((i) => i.repo === repo.name && i.setup === true)) return false;
+  // LOOP-92: a setup PR from anywhere (the standards review, the owner) counts as open.
+  if (openSetupPr(proposed, repo.name)) return false;
   const intents = d.store.github();
   if (!intents) return false;
   const branch = setupBranch(repo.name);
@@ -323,6 +415,7 @@ export async function proposeSetup(
       ],
       {
         input: [
+          setupMark(repo.name),
           `Towercab found ${gaps.length} missing item${gaps.length === 1 ? "" : "s"} in ${repo.name} and wrote the intent that fixes ${gaps.length === 1 ? "it" : "them"}.`,
           "Merging this pull request accepts it as work. Closing it says no; Towercab may propose it again if the gaps are still there.",
         ].join("\n\n"),
@@ -333,4 +426,78 @@ export async function proposeSetup(
   const m = /\/pull\/(\d+)/.exec(out);
   d.log(`${repo.name}: proposed a setup intent${m ? ` ${prUrl(intents, Number(m[1]))}` : ""}`);
   return true;
+}
+
+/** LOOP-71: the mark in a setup PR's body, keyed by repo. */
+export const setupMark = (repo: string) => `<!-- towercab:setup repo=${repo} -->`;
+
+const DAY_S = 86_400;
+
+/** The missing items of a result as one comparable key; empty when nothing is missing. */
+export const missingKey = (r: Readiness): string =>
+  missing(r)
+    .map((i) => i.item)
+    .sort()
+    .join(",");
+
+/**
+ * LOOP-71: a proposal is tried only when the set of missing items differs from the one last tried
+ * (items, never the stored time), and at most once a day per repo. A closed proposal is a no: the same
+ * set is not proposed again. Nothing missing clears the memory, so a later gap is new.
+ */
+export function setupAttemptDue(db: Db, repo: string, r: Readiness, now: number): boolean {
+  const key = missingKey(r);
+  if (!key) {
+    db.delMeta(`setup-seen:${repo}`);
+    return false;
+  }
+  if (db.meta(`setup-seen:${repo}`) === key) return false;
+  const last = Number(db.meta(`setup-proposed:${repo}`) ?? 0);
+  return now - last >= DAY_S;
+}
+
+/** Remember the set tried; `opened` also starts the day's wait. */
+export function setupAttempted(db: Db, repo: string, r: Readiness, opened: boolean, now: number): void {
+  db.setMeta(`setup-seen:${repo}`, missingKey(r));
+  if (opened) db.setMeta(`setup-proposed:${repo}`, String(Math.floor(now)));
+}
+
+export interface CycleOpts {
+  /** The intents repo as last read; null before the first read. */
+  listing(): Listing | null;
+  /** The open proposed PRs (LOOP-92); null while unknown, then nothing is proposed. */
+  proposed(): ProposedPr[] | null;
+}
+
+/** The repo whose check is due and oldest (never checked first), or null. */
+export function nextDue(d: ReadinessDeps): RepoConfig | null {
+  let best: { repo: RepoConfig; at: number } | null = null;
+  for (const repo of d.config.repos.values()) {
+    const at = storedReadiness(d.db, repo.name)?.at ?? 0;
+    if (at !== 0 && d.clock.now() - at < READINESS_EVERY_S) continue;
+    if (!best || at < best.at) best = { repo, at };
+  }
+  return best?.repo ?? null;
+}
+
+/**
+ * One background step: check the oldest due repo, then propose its setup intent when the rules allow.
+ * Returns the repo's name, or null when none was due. Never throws.
+ */
+export async function readinessCycle(d: ReadinessDeps, o: CycleOpts): Promise<string | null> {
+  const repo = nextDue(d);
+  if (!repo) return null;
+  const s = await refreshReadiness(d, repo);
+  if (!s) return repo.name;
+  const listing = o.listing();
+  const proposed = o.proposed();
+  if (!listing || !proposed || !setupAttemptDue(d.db, repo.name, s.readiness, d.clock.now()))
+    return repo.name;
+  try {
+    const opened = await proposeSetup(d, repo, s.readiness, listing, proposed);
+    setupAttempted(d.db, repo.name, s.readiness, opened, d.clock.now());
+  } catch (e) {
+    d.log(`${repo.name}: couldn't propose a setup intent: ${(e as Error).message}`);
+  }
+  return repo.name;
 }
