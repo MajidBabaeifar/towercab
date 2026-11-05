@@ -14,6 +14,7 @@ import { ErrorNote, Freshness, Skeleton } from "./components.tsx";
 import { Alert, Logo, Pause, Play } from "./icons.tsx";
 import { ActivityPage } from "./pages/Activity.tsx";
 import { BoardPage } from "./pages/Board.tsx";
+import { FocusPage } from "./pages/Focus.tsx";
 import { IntentPage } from "./pages/Intent.tsx";
 import { OverviewPage } from "./pages/Overview.tsx";
 import { ReposPage } from "./pages/Repos.tsx";
@@ -22,6 +23,7 @@ import { Link, usePath } from "./router.tsx";
 const TABS = [
   ["/", "Overview"],
   ["/board", "Board"],
+  ["/focus", "Focus"],
   ["/repos", "Repos"],
   ["/activity", "Activity"],
 ] as const;
@@ -65,7 +67,8 @@ function PauseButton({ top }: { top: Top }) {
 function TopBar({ top, path }: { top: Top | null; path: string }) {
   // `/queue` is the Repos tab's old name (UI-140): old links land there.
   const at = path === "/queue" || path.startsWith("/queue/") ? "/repos" : path;
-  const section = ["/board", "/repos", "/activity"].find((p) => at === p || at.startsWith(`${p}/`)) ?? "/";
+  const section =
+    ["/board", "/focus", "/repos", "/activity"].find((p) => at === p || at.startsWith(`${p}/`)) ?? "/";
   return (
     <header class="topbar">
       <div class="topbar-inner">
@@ -167,11 +170,13 @@ function App() {
       ? intentTitle
       : pathname!.startsWith("/board")
         ? "Board"
-        : pathname!.startsWith("/repos") || pathname!.startsWith("/queue")
-          ? "Repos"
-          : pathname!.startsWith("/activity")
-            ? "Activity"
-            : null;
+        : pathname!.startsWith("/focus")
+          ? "Focus"
+          : pathname!.startsWith("/repos") || pathname!.startsWith("/queue")
+            ? "Repos"
+            : pathname!.startsWith("/activity")
+              ? "Activity"
+              : null;
     document.title = `${stopped ? "⏸ " : ""}${n ? `(${n}) ` : ""}Towercab${page ? ` · ${page}` : ""}`;
   }, [n, stopped, pathname, intent, intentTitle]);
   let page: JSX.Element;
@@ -185,6 +190,7 @@ function App() {
       />
     );
   } else if (pathname === "/board") page = <BoardRoute />;
+  else if (pathname === "/focus") page = <FocusPage readOnly={top?.readOnly ?? true} />;
   else if (pathname === "/repos" || pathname === "/queue")
     page = <ReposRoute search={search} readOnly={top?.readOnly ?? true} />;
   else if (pathname === "/activity") page = <ActivityPage search={search} />;
