@@ -555,6 +555,40 @@ export interface ProposedSection {
   stale: string | null;
 }
 
+/** UI-194: what one finished phase did, in its plain brief. */
+export interface FocusHistory {
+  label: "Spec" | "Plan" | "Code";
+  text: string;
+}
+
+/** UI-194: the one wait Focus shows: a needs-you card or a proposed intent, with its context. */
+export interface FocusItem {
+  /** The intent's ID, or `proposed-<PR number>`: what the page keys the item by. */
+  key: string;
+  repo: string;
+  title: string;
+  /** The first sentence of the intent's Problem; null when it has none. */
+  overview: string | null;
+  history: FocusHistory[];
+  card: Card | null;
+  proposed: ProposedCard | null;
+}
+
+/** UI-192, UI-196: `GET /api/focus`. */
+export interface FocusPage {
+  version: string;
+  item: FocusItem | null;
+  /** The other waits, without the one shown. */
+  more: number;
+  /** UI-195: the `skip` keys the server was asked to leave out. */
+  asked: string[];
+  /** UI-195: those of them that still wait on the owner. */
+  skipped: string[];
+  readOnly: boolean;
+  /** UI-188's notice when the proposed list may be old. */
+  stale: string | null;
+}
+
 /** UI-141: one repo's page. */
 export interface RepoView {
   repo: string;

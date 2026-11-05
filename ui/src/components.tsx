@@ -206,10 +206,13 @@ export function NeedsCard({
   card,
   readOnly,
   linkTitle = true,
+  onActed,
 }: {
   card: Card;
   readOnly: boolean;
   linkTitle?: boolean;
+  /** UI-195: called after an action the loop accepted, so Focus can move on at once. */
+  onActed?: (action: string) => void;
 }) {
   const key = card.intent;
   const [draft, setDraftState] = useState(drafts.get(key) ?? "");
@@ -232,6 +235,7 @@ export function NeedsCard({
     setResult(r);
     if (r.ok && action === "reply") setDraft("");
     if (action === "drop") setConfirm(false);
+    if (r.ok) onActed?.(action);
   };
   const can = (a: string) => !readOnly && card.actions.includes(a as Card["actions"][number]);
   // A plain brief is two to four sentences (PIP-106): shown whole up to about that, folded beyond.
@@ -687,7 +691,16 @@ export function Skeleton() {
 const proposedResults = new Map<number, ActionReply>();
 
 /** UI-184, UI-185: a proposed intent, with its PR, its text, Accept and Close. */
-export function ProposedCard({ card, readOnly }: { card: ProposedCardData; readOnly: boolean }) {
+export function ProposedCard({
+  card,
+  readOnly,
+  onActed,
+}: {
+  card: ProposedCardData;
+  readOnly: boolean;
+  /** UI-195: called after Accept or Close went through, so Focus can move on at once. */
+  onActed?: (action: string) => void;
+}) {
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<ActionReply | null>(proposedResults.get(card.pr) ?? null);
   const [closing, setClosing] = useState(false);
@@ -698,7 +711,10 @@ export function ProposedCard({ card, readOnly }: { card: ProposedCardData; readO
     proposedResults.set(card.pr, r);
     setResult(r);
     setBusy(null);
-    if (r.ok) setClosing(false);
+    if (r.ok) {
+      setClosing(false);
+      onActed?.(what);
+    }
   };
   const scores = [
     card.u !== null ? `u${card.u}` : "",

@@ -653,6 +653,11 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
       [2 * HOUR + 10 * MIN, "plan", "wait", "approval:plan"],
     ],
     data: {
+      // UI-194: what the finished spec did, for Focus.
+      design: {
+        brief:
+          "Every API key gets at most 600 requests a minute, and over the limit the API answers that it is busy instead of slowing down for everyone.",
+      },
       // PIP-106: the plain brief leads the card; the plan's technical text folds under Details.
       plan: {
         brief:
@@ -697,6 +702,15 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
       // PIP-106: the worker's plain brief of its question; the question's context folds under Details.
       brief:
         "Accountants will be able to download the invoices they filter as a spreadsheet. Before it is finished, decide what the totals line shows when the invoices are in different currencies.",
+      // UI-194: what the finished phases did, for Focus.
+      design: {
+        brief:
+          "Accountants get an Export button on the invoices page that downloads the filtered invoices as a spreadsheet, using each customer's own currency.",
+      },
+      plan: {
+        brief:
+          "The export is built as one new button and one server route, with a test for each currency rule. Nothing else on the page changes.",
+      },
       question: {
         context:
           "I'm adding the CSV export. Invoices in the same filter can be in different currencies (EUR, USD, GBP), and your earlier answer says to use the customer's own currency. The totals row at the bottom of the CSV can't add up amounts in different currencies.",
