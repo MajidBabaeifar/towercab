@@ -594,6 +594,11 @@ export class Loop {
     if (!replaced) await this.featureLine(m, intent);
     if (replaced) await this.closeReplaced(m);
     else if (m.stage === "stopped") await this.retireStopped(m);
+    await this.switchedToSteps(m);
+    // LOOP-76: the owner's note, ticked, goes to the plan of an intent they finished themselves.
+    if (m.stage === "done" && (dataOf(m) as PipeData).stepsDirty !== undefined) {
+      await writeTicks(this.ctx(), m);
+    }
     if (finished(m.stage)) removeCheckout(this.d.home.abs(m.checkout));
     const set: Record<string, SqlValue> = { step: "" };
     if (m.stage === "merge" && paused(db)) set.held = 1;
@@ -658,6 +663,29 @@ export class Loop {
     else if (last?.event === "intent_removed") {
       await this.closeAndRetire(m, "Towercab closed this PR because the intent was dropped.");
     }
+  }
+
+  /**
+   * PIP-113: a mission the owner switched to steps has no code to merge: its open code PR is closed with
+   * a comment saying why, and its branch goes. A failure leaves the step at `enter`: retried next pass.
+   */
+  private async switchedToSteps(m: Mission): Promise<void> {
+    if (!m.pr) return;
+    const last = this.d.db.get<{ event: string }>(
+      "SELECT event FROM transitions WHERE mission = ? ORDER BY id DESC LIMIT 1",
+      m.id,
+    );
+    const repo = this.d.config.repos.get(m.repo);
+    if (last?.event !== "to_steps" || !repo) return;
+    await closeIfOpen(
+      this.d.github,
+      repo.github,
+      m.pr,
+      "Closed: the owner will do this by hand, so there is nothing to merge.",
+    );
+    const gone = await retireBranch(this.d.github, repo.github, m.pr, this.d.store.github());
+    if (gone) this.d.log(`${label(m)}: deleted branch ${gone} of ${repo.github}#${m.pr}`);
+    update(this.d.db, m.id, { pr: null }, this.now);
   }
 
   private async closeAndRetire(m: Mission, why: string | null): Promise<void> {
@@ -1159,7 +1187,9 @@ export class Loop {
 
   move(m: Mission, o: Outcome): Mission {
     this.pollAt.delete(m.id);
-    if (o.event === "plan_merged" && this.slotTaken(m)) return this.markReady(m);
+    // PIP-113: a steps-delivered intent builds nothing, so it needs no build slot.
+    const byHand = (dataOf(m) as PipeData).delivery === "steps";
+    if (o.event === "plan_merged" && !byHand && this.slotTaken(m)) return this.markReady(m);
     const out = apply(this.applyCtx(), m, o);
     if (out.stage !== m.stage || out.id !== m.id) {
       this.lastPrPoll.delete(m.id);

@@ -83,9 +83,9 @@ test("pipeline: question comment has context, options, recommendation", async ()
         question: "Should the page say hello or bye?",
         options: [
           // biome-ignore lint/suspicious/noThenProperty: the spec's key; never awaited.
-          { option: "hello", then: "I change the test" },
+          { option: "hello", then: "I change the test", do: "continue" },
           // biome-ignore lint/suspicious/noThenProperty: the spec's key; never awaited.
-          { option: "bye", then: "I change the page" },
+          { option: "bye", then: "I change the page", do: "continue" },
         ],
         recommendation: "hello, as the intent says.",
       },

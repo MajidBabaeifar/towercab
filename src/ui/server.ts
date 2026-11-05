@@ -86,6 +86,8 @@ const ACTIONS = new Set([
   "drop",
   "start",
   "step",
+  "done",
+  "steps",
   "pause",
   "resume",
   "addRepo",
@@ -318,28 +320,35 @@ export function startUi(o: UiOptions): UiServer {
               ? await a.retry(intent)
               : action === "drop"
                 ? await a.drop(intent)
-                : action === "start"
-                  ? await a.start(intent)
-                  : action === "step"
-                    ? await (a.step ?? (() => Promise.reject(new Error("Ticking steps isn't available."))))(
-                        intent,
-                        Number(body.n),
-                        body.done !== false,
-                      )
-                    : action === "pause"
-                      ? await a.pause()
-                      : action === "addRepo"
-                        ? await a.addRepo(
-                            typeof body.github === "string" ? body.github : "",
-                            typeof body.name === "string" && body.name ? body.name : undefined,
-                          )
-                        : action === "features"
-                          ? await a.features(repo)
-                          : action === "accept"
-                            ? await a.accept(pr, head)
-                            : action === "close"
-                              ? await a.close(pr, typeof body.text === "string" ? body.text : undefined)
-                              : await a.resume();
+                : action === "done"
+                  ? await (a.done ?? (() => Promise.reject(new Error("Ending an intent isn't available."))))(
+                      intent,
+                      typeof body.text === "string" ? body.text : "",
+                    )
+                  : action === "steps"
+                    ? await (
+                        a.steps ?? (() => Promise.reject(new Error("Switching to steps isn't available.")))
+                      )(intent)
+                    : action === "start"
+                      ? await a.start(intent)
+                      : action === "step"
+                        ? await (
+                            a.step ?? (() => Promise.reject(new Error("Ticking steps isn't available.")))
+                          )(intent, Number(body.n), body.done !== false)
+                        : action === "pause"
+                          ? await a.pause()
+                          : action === "addRepo"
+                            ? await a.addRepo(
+                                typeof body.github === "string" ? body.github : "",
+                                typeof body.name === "string" && body.name ? body.name : undefined,
+                              )
+                            : action === "features"
+                              ? await a.features(repo)
+                              : action === "accept"
+                                ? await a.accept(pr, head)
+                                : action === "close"
+                                  ? await a.close(pr, typeof body.text === "string" ? body.text : undefined)
+                                  : await a.resume();
       reply = { ok: true, message };
     } catch (e) {
       reply = { ok: false, message: (e as Error).message };

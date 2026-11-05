@@ -2,7 +2,7 @@
 
 import type { Db } from "./db.ts";
 import type { Listing } from "./intents/types.ts";
-import { isWait, isWorking, waitInfo } from "./machine.ts";
+import { exitsOf, isWait, isWorking, waitInfo } from "./machine.ts";
 import { dataOf, type Mission, unfinished } from "./mission.ts";
 import { isBuilding } from "./slots.ts";
 import { leftOf, type OwnerStep } from "./steps.ts";
@@ -88,6 +88,11 @@ export function renderStatus(s: StatusInput): string {
       lines.push(
         `- ${title(m)} · ${waitInfo(m.waiting ?? "answer the question").ask}${left ? ` (${left} left)` : ""}${link ? ` ${link}` : ""}`,
       );
+      // LOOP-76, LOOP-77: every wait lists its ways out; a stuck one only the exits that change something.
+      const stuck = dataOf<{ stuck?: boolean }>(m).stuck === true;
+      if (stuck) lines.push("  stuck: this came back with nothing new");
+      const exits = exitsOf(m.waiting ?? "answer the question", stuck).map((e) => e.label);
+      lines.push(`  you can: ${exits.join(", ")}`);
     }
   }
   const ci = ms.filter((m) => m.stage === "ci");

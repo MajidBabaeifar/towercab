@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..69, LOOP-73..75, LOOP-92..93, LOOP-105..109 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..69, LOOP-73..77, LOOP-92..93, LOOP-105..109 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -990,7 +990,7 @@ CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT 
 CREATE TABLE transitions (id INTEGER PRIMARY KEY, mission INTEGER NOT NULL REFERENCES missions(id),
   at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT);
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start')),
+  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps')),
   arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
   created REAL NOT NULL, applied_at REAL, result TEXT);
 CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, created REAL NOT NULL,
@@ -1005,7 +1005,7 @@ like a crash; `–` = ignored)
 
 | Event | Working stages | approval:spec | approval:plan | approval:merge | blocked |
 |---|---|---|---|---|---|
-| ok | next (e2e → done; rollback → build; revert U) | U | U | U | U |
+| ok | next (e2e → done; rollback → build; `steps` with steps delivery → done; revert U) | U | U | U | U |
 | red | verify, proof, ci, review → build; deploy, e2e → rollback; else U | U | U | U | U |
 | skip | deploy → done; else U | U | U | U | U |
 | revert | rollback → revert; else U | U | U | U | U |
@@ -1015,7 +1015,7 @@ like a crash; `–` = ignored)
 | env_fail | backoff | backoff | backoff | backoff | backoff |
 | crash | recover | – | – | – | – |
 | spec_merged | design → plan; else – | → plan | – | – | from design → plan |
-| plan_merged | plan → build; else – | – | → build | – | from plan → build |
+| plan_merged | plan → build (steps delivery: `steps`); else – | – | → build (steps delivery: `steps`) | – | from plan → build (steps delivery: `steps`) |
 | code_merged | build … merge → deploy; else – | – | – | → deploy | → deploy, unless it came from deploy … revert |
 | closed | → stopped | → stopped | → stopped | → stopped | → stopped |
 | feedback | build … merge → build; else – | → design | → plan | → build | as answered |
@@ -1026,6 +1026,8 @@ like a crash; `–` = ignored)
 | retry_fresh | fresh | fresh | fresh | fresh | fresh |
 | recheck ([AUT-21](autonomy.md)) | – | → design | → plan | → review | – |
 | resume | merge (held) → again; else – | – | – | – | – |
+| owner_done (LOOP-76) | `steps` → done; else – | – | – | – | → done, only at a wait with the `done` exit (`no changes`) |
+| to_steps (PIP-113) | → `steps` with steps in the plan, else → plan; `steps` and plan – | → `steps` or plan | → `steps` or plan | → `steps` or plan | → `steps` or plan |
 
 - again = re-enter the step; cool = wait for the model's cooldown (LOOP-9); backoff = LOOP-10;
   recover = `unclean + 1`, 3 → `crashed at <stage>`; fresh = this mission `stopped` (why `replaced by
@@ -1051,7 +1053,7 @@ are stored in intent files and never change; each ask says plainly what the owne
 | `worker timeout` | blocked | The agent ran out of time before finishing. Reply to let it carry on, or start over. |
 | `worker budget` | blocked | The agent used up its budget before finishing. Reply to let it carry on, or start over. |
 | `no result` | blocked | The agent stopped without a usable answer. Reply to let it carry on, or start over. |
-| `no changes` | blocked | The agent finished without changing anything. Reply with what it should do, or drop the intent if nothing is needed. |
+| `no changes` | blocked | The agent finished without changing anything. Reply with what it should do, say you did it yourself, or drop the intent if nothing is needed. |
 | `crashed at <stage>` | blocked | Towercab failed three times at the same step. Reply to try again once the cause is fixed, or start over. |
 | `spec conflict` | blocked | The spec clashes with other changes and Towercab couldn't combine them. Resolve it in the spec PR, then reply. |
 | `merge failed` | blocked | GitHub refused to merge the change. Fix what GitHub objects to, then reply to try again. |

@@ -89,7 +89,16 @@ export interface PipeData {
     /** SHIP-17, SHIP-21: the owner's steps and the "nothing to check live" claim the plan made. */
     ownerSteps?: PlanStep[];
     liveNoneWhy?: string;
+    /** PIP-112: how the intent is delivered. */
+    delivery?: "code" | "steps";
   };
+  /** PIP-112, PIP-113: absent counts as `code`; `steps` means the owner does the work. */
+  delivery?: "code" | "steps";
+  /** LOOP-77: the last blocked wait (key, head, count of owner answers) and whether it came back unchanged. */
+  lastWait?: { key: string; head: string | null; answers: number };
+  stuck?: boolean;
+  /** Owner answers given so far (LOOP-77). */
+  answers?: number;
   /** SHIP-17: the owner's steps, read from the merged `plan.md` (the file is the record). */
   steps?: OwnerStep[];
   /** SHIP-21: the merged plan's claim that nothing about the change can be checked live. */
@@ -519,18 +528,14 @@ export async function refusedPush(cx: Ctx, m: Mission, e: PushRefused): Promise<
 export function branchInTheWay(branch: string, pr?: { number: number; url: string }): Question {
   const where = pr ? ` Its open PR is ${pr.url}, which Towercab did not open.` : "";
   return {
-    context: `Towercab can't push \`${branch}\`: GitHub already has commits on that branch that Towercab doesn't, and Towercab never overwrites commits.${where}`,
+    context: `Towercab can't push \`${branch}\`: GitHub already has commits on that branch that Towercab doesn't, and Towercab never overwrites commits.${where} To keep the old branch, use Start over in the card's menu (or \`/retry\` on the PR): the new attempt uses a new branch name.`,
     question: `What should happen to \`${branch}\` on GitHub?`,
     options: [
       {
         option: "Delete the branch on GitHub, then reply here",
+        do: "continue",
         // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
         then: "Towercab builds once more and pushes a fresh branch of that name. Anything on the old branch is lost.",
-      },
-      {
-        option: "Start the intent over with Retry on the page, or `/retry` on its spec PR",
-        // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
-        then: "The new attempt uses a new branch name, and the old branch stays as it is.",
       },
     ],
     recommendation:
@@ -602,9 +607,18 @@ export function currentPr(cx: Ctx, m: Mission, repo: RepoConfig): { github: stri
   return null;
 }
 
+/** PIP-114: what each kind of option does, in plain words. */
+export const EFFECTS = {
+  continue: "Carry on with the work",
+  steps: "I'll do this myself: give me the steps",
+  drop: "Drop the intent",
+} as const;
+
 /** A question in Markdown (PIP-41), led by its plain brief when it has one (PIP-106). */
 export function questionMd(q: Question, brief = ""): string {
-  const opts = q.options.map((o) => `- **${o.option}**: ${o.then}`).join("\n");
+  const opts = q.options
+    .map((o) => `- **${o.option}**: ${o.then}${o.do ? ` _(${EFFECTS[o.do]})_` : ""}`)
+    .join("\n");
   const plain = brief.trim() ? `**In plain words:** ${brief.trim()}\n\n` : "";
   return `${plain}${q.context.trim()}\n\n**${q.question.trim()}**\n\n${opts}\n\n**Recommendation:** ${q.recommendation.trim()}\n\nReply to this comment to answer; Towercab continues with your reply.`;
 }

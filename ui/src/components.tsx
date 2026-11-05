@@ -218,6 +218,7 @@ export function NeedsCard({
   const [menu, setMenu] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [open, setOpen] = useState(expanded.has(key));
+  const [note, setNote] = useState("");
   const menuRef = useOutside(menu, () => setMenu(false));
   const setDraft = (t: string) => {
     drafts.set(key, t);
@@ -242,6 +243,17 @@ export function NeedsCard({
     setOpen(!open);
   };
   const q = card.question;
+  // UI-164: the question's own options are buttons; the exits it doesn't cover get a button here.
+  const askedSteps = !!q?.options.some((o) => o.do === "steps");
+  const extra = card.exits.filter(
+    (e) => (e.do === "done" || e.do === "steps") && !(e.do === "steps" && askedSteps),
+  );
+  const pick = (o: { option: string; do?: string }) => {
+    if (o.do === "steps") void run("steps");
+    else if (o.do === "drop") setConfirm(true);
+    else if (o.do === "continue") void run("reply", o.option);
+    else setDraft(o.option);
+  };
   return (
     <article class={`card needs-card kind-${card.kind}`} data-intent={key}>
       <header class="card-head">
@@ -348,8 +360,8 @@ export function NeedsCard({
                     type="button"
                     class={`option${draft === o.option ? " picked" : ""}`}
                     aria-pressed={draft === o.option}
-                    disabled={!can("reply")}
-                    onClick={() => setDraft(o.option)}
+                    disabled={o.do === "steps" || o.do === "drop" ? readOnly : !can("reply")}
+                    onClick={() => pick(o)}
                   >
                     <span class="opt-name">
                       {o.option}
@@ -367,6 +379,42 @@ export function NeedsCard({
               <strong>Towercab recommends:</strong> {q.recommendation}
             </span>
           </p>
+        </div>
+      ) : null}
+      {card.stuck ? (
+        <p class="done-note stuck" role="status">
+          <Alert size={16} />
+          <span>Stuck: this came back with nothing new</span>
+        </p>
+      ) : null}
+      {extra.length && !readOnly && !card.done ? (
+        <div class="exits">
+          {extra.some((e) => e.do === "done") ? (
+            <>
+              <label class="sr-only" for={`note-${key}`}>
+                What you did (optional)
+              </label>
+              <input
+                id={`note-${key}`}
+                type="text"
+                maxLength={300}
+                placeholder="What you did (optional)"
+                value={note}
+                onInput={(e) => setNote((e.target as HTMLInputElement).value)}
+              />
+            </>
+          ) : null}
+          {extra.map((e) => (
+            <button
+              key={e.do}
+              type="button"
+              class="btn"
+              disabled={busy !== null}
+              onClick={() => void run(e.do, e.do === "done" ? note : undefined)}
+            >
+              {busy === e.do ? "Sending…" : e.label}
+            </button>
+          ))}
         </div>
       ) : null}
       {card.access ? (

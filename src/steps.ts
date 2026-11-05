@@ -24,6 +24,10 @@ export interface ShipFacts {
   steps: boolean;
   /** The plan says nothing about the change can be checked live (SHIP-21). */
   nothingLive: boolean;
+  /** PIP-113: the plan says the owner does the work; there is no build and no code PR. */
+  delivery?: boolean;
+  /** The mission has steps to tick (PIP-113). */
+  hasSteps?: boolean;
 }
 
 export const unticked = (steps: OwnerStep[] | undefined, when: "before" | "after"): OwnerStep[] =>
@@ -34,8 +38,11 @@ export function shipFacts(d: {
   steps?: OwnerStep[];
   liveNoneWhy?: string;
   ship?: { fixes?: number };
+  delivery?: string;
 }): ShipFacts {
   return {
+    delivery: d.delivery === "steps",
+    hasSteps: (d.steps ?? []).length > 0,
     steps: unticked(d.steps, "after").length > 0 && !(d.ship?.fixes ?? 0),
     nothingLive: !!d.liveNoneWhy?.trim(),
   };
@@ -158,6 +165,18 @@ export function leftOf(steps: OwnerStep[] | undefined, waiting: string | null): 
   if (!when) return null;
   const all = (steps ?? []).filter((s) => s.when === when);
   return all.length ? `${all.filter((s) => !s.done_at).length} of ${all.length}` : null;
+}
+
+/** The plan's `Delivery: code|steps` line (PIP-112); null when the plan has none. */
+export function parseDelivery(planMd: string): "code" | "steps" | null {
+  const m = /^Delivery:\s*(code|steps)\b/m.exec(planMd);
+  return m ? (m[1] as "code" | "steps") : null;
+}
+
+/** The plan file with its `Delivery:` line set to `delivery` (added under the IDs line when missing). */
+export function withDelivery(planMd: string, delivery: "code" | "steps"): string {
+  if (/^Delivery:.*$/m.test(planMd)) return planMd.replace(/^Delivery:.*$/m, `Delivery: ${delivery}`);
+  return planMd.replace(/^(Intent .*)$/m, `$1\nDelivery: ${delivery}`);
 }
 
 /** The plan file with its steps and claim replaced by `steps` and `noneLive` (SHIP-22's write). */
