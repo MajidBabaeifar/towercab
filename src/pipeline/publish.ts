@@ -28,7 +28,15 @@ import {
   repoFiles,
   takeRemote,
 } from "./common.ts";
-import { existingChanged, existingTests, lockedTests, publishRefusals, sameAsBase } from "./guard.ts";
+import {
+  existingChanged,
+  existingTests,
+  heldHelpers,
+  helperTests,
+  lockedTests,
+  publishRefusals,
+  sameAsBase,
+} from "./guard.ts";
 import { codeBody } from "./prtext.ts";
 
 export const publishHandler: Handler = {
@@ -56,16 +64,36 @@ export const publishHandler: Handler = {
     const touched = sinceHead.filter((c) => locked.includes(c.path)).map((c) => c.path);
     const fromBase = await sameAsBase(cx.tools, cx.checkout(m), `refs/remotes/origin/${repo.base}`, touched);
     // PIP-117: a test on the base branch that no grant covers can't be modified or deleted.
-    const blocked = blockedTests(
-      await existingTests(cx.tools, cx.checkout(m), repo.base, files.towercab.tests, files.towercab.live),
-      d,
+    const onBase = await existingTests(
+      cx.tools,
+      cx.checkout(m),
+      repo.base,
+      files.towercab.tests,
+      files.towercab.live,
+    );
+    const blocked = blockedTests(onBase, d);
+    // PIP-137: a helper (no test cases) may only have free changes; one the owner refused may have none.
+    const refused = (d.refusedTests ?? []).map((t) => t.path);
+    const helpers = (await helperTests(cx.tools, cx.checkout(m), repo.base, onBase)).filter(
+      (p) => !refused.includes(p),
     );
     const bad = publishRefusals(
       changed,
       new Protected([...CONTROL, ...files.towercab.protected], g.paths),
       sinceHead.filter((c) => !fromBase.includes(c.path)),
       locked,
-      await existingChanged(cx.tools, cx.checkout(m), repo.base, blocked),
+      await existingChanged(
+        cx.tools,
+        cx.checkout(m),
+        repo.base,
+        blocked.filter((p) => !helpers.includes(p)),
+      ),
+      await heldHelpers(
+        cx.tools,
+        cx.checkout(m),
+        repo.base,
+        blocked.filter((p) => helpers.includes(p)),
+      ),
     );
     if (bad.length)
       return { done: wait("answer the question", `the branch changes paths it may not: ${bad.join(", ")}`) };
