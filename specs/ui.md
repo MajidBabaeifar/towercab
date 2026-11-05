@@ -717,6 +717,48 @@ and shows it on each board row.
   runs read.
 - Verified by: `ui: spend per repo today, 7 days and all time`
 
+### UI-146 · Sort the Board's repos
+
+A sort control above the Board orders its repo rows by what needs the owner, by latest change, by open work, by name, or as configured.
+
+- A labelled select with five options: "Needs you" (the default), "Latest change", "Most to do", "Name",
+  "Config order". Only the rows move; the columns, the cards and the "Unknown repo" row stay as UI-133
+  has them, and "Unknown repo" stays last.
+- Needs you: most intents waiting on the owner first, i.e. those with a Needs you chip (UI-56). Latest
+  change: the repo whose intents moved most recently first. Most to do: most open intents first (the
+  open count of UI-134). Name: A to Z, ignoring case. Config order: UI-133's order.
+- Verified by: `ui: board sorts repos by the chosen order`
+
+### UI-147 · The server provides the sort keys
+
+`GET /api/board` carries what each sort needs, so the page only orders rows.
+
+- Each entry of `repos` gains `waiting` (intents waiting on the owner), `changedAt` (ISO time of the
+  latest move of any of its intents, `null` when none) and `index` (its position in config order); `open`
+  already exists (UI-133). The page computes none of these from cards.
+- `changedAt` is the latest `updated_at` of the repo's missions, finished and dropped ones included.
+- Verified by: `ui: board api gives each repo its sort keys`
+
+### UI-148 · Ties keep config order
+
+Repos that tie on the chosen sort keep their config order, so rows never jump between reloads.
+
+- Every sort falls back to `index` (UI-147) on equal keys; repos without `changedAt` sort after those
+  with one under Latest change. Live updates (UI-67) reorder rows only when the keys change.
+- Verified by: `ui: board sort ties fall back to config order`
+
+### UI-149 · The sort is remembered and accessible
+
+The page remembers the chosen sort in this browser and the control works by keyboard, by screen reader and on a phone.
+
+- Stored in `localStorage` under `towercab.board.sort` (one of `needs`, `latest`, `todo`, `name`,
+  `config`); every read and write is wrapped in `try`/`catch` as UI-135 does, so without storage the sort
+  still applies until the page reloads. A missing, unknown or unreadable value means `needs`.
+- A native `<select>` with a visible `<label>`, reachable by Tab and changed with the arrow keys; the
+  rows' new order is announced with a polite live region ("Sorted by Name"). At 360 px wide the control
+  fits without sideways scrolling of the page (UI-136).
+- Verified by: `ui: board sort is remembered without storage failing`, `ui: board sort works by keyboard and at 360px`
+
 ### UI-140 · Repos tab
 
 A Repos tab, where the Queue tab was, shows one repo at a time, picked from a row of chips.
