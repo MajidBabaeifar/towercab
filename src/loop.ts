@@ -77,6 +77,7 @@ import { missingText } from "./repo/readiness.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
 import { nextSettingsDue, settingsCycle } from "./settings/apply.ts";
+import { runReleases } from "./ship/releases.ts";
 import {
   aheadIn,
   bestReady,
@@ -96,6 +97,8 @@ import { checkUpdate, RESTART_CODE } from "./update.ts";
 
 export const PASS_MS = 5_000;
 const PR_POLL_S = 60;
+/** SHIP-30: release PRs are looked at every minute. */
+const RELEASE_POLL_S = 60;
 const INTENTS_POLL_S = 60;
 const UPDATE_POLL_S = 60;
 /** LOOP-108: a step that wanted to start a child during a drain is asked again after this long. */
@@ -177,6 +180,7 @@ export class Loop {
   private listingError: string | null = null;
   private lastIntentsPoll = 0;
   private lastIssuesPoll = 0;
+  private lastReleasePoll = 0;
   private issuesRun: Promise<void> | null = null;
   /** INT-39: the feature-list backfill running now, and how to stop it. */
   private featuresJob: Promise<void> | null = null;
@@ -403,6 +407,7 @@ export class Loop {
       report.woke = true;
       this.pollAt.clear();
       this.lastPrPoll.clear();
+      this.lastReleasePoll = 0;
       this.lastIntentsPoll = 0;
       this.lastProposedPoll = 0;
       this.lastIssuesPoll = 0;
@@ -438,6 +443,8 @@ export class Loop {
     // nothing new starts.
     if (this.codeMoved() === null && this.drain === null) this.startIssues(false);
     await this.pollPrs();
+    await this.pollReleases();
+    this.releaseReady();
     // LOOP-111: missions back from a wait ask for their run before a ready build takes the free slot.
     await this.stepDue(!report.woke);
     this.releaseReady();
@@ -1200,6 +1207,21 @@ export class Loop {
         this.d.log(`${label(m)}: reading its PRs failed: ${msg}`);
       }
     }
+  }
+
+  /** SHIP-30..32: the release PRs of every repo, every 60 s; not a mission, so outside `apply`. */
+  private async pollReleases(): Promise<void> {
+    if (this.now - this.lastReleasePoll < RELEASE_POLL_S) return;
+    this.lastReleasePoll = this.now;
+    const failure = await runReleases({
+      github: this.d.github,
+      db: this.d.db,
+      config: this.d.config,
+      now: this.now,
+      log: this.d.log,
+    });
+    if (failure === null) this.githubOk();
+    else this.health.fail("github", failure, this.now);
   }
 
   /** Missions whose step is due: their handler's `step` (LOOP-4). */

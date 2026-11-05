@@ -1,6 +1,6 @@
 # Ship
 
-**Status:** Live: SHIP-1..22 · **Prefix:** SHIP
+**Status:** Live: SHIP-1..22, SHIP-30..32 · **Prefix:** SHIP
 
 ## Purpose
 
@@ -413,19 +413,30 @@ A release pull request that is not plainly a release, or whose `main` is not gre
   `package-lock.json`, `Cargo.toml`, `Cargo.lock`, `pyproject.toml`, `version.txt`, plus every path in
   the `extra-files` of `release-please-config.json`, read from the default branch (never from the PR).
   There is no per-repo list in Towercab. `go.mod` is not a version file. In a version file the changed
-  lines may touch only the version. Any other file or changed line in the diff → held.
+  lines may touch only the version, and only the versions the release bumps: the ones its
+  `.release-please-manifest.json` diff names (without a manifest in the diff, one old and one new
+  version in all version files together). A dependency's `version` line in a lock file therefore holds
+  the PR. In an `extra-files` file every changed line must name such a version. Any other file or
+  changed line in the diff → held.
 - A major release or a release with a breaking change (see SHIP-30) is held the same way, with the
-  card's why saying "major release <old> → <new>" or "breaking change: <entry>". Patch and minor
+  card's why saying "Major release <old> → <new>." or "Breaking change: <entry>". Patch and minor
   releases without one merge on their own.
-- A repo with `releases: manual` gets the card at once, whose why says "<repo> merges its releases by
-  hand". It still clears as below; Towercab does not merge, comment on or edit the PR.
+- A repo with `releases: manual` gets the card at once, whose why says "This repo merges its releases
+  by hand." (the card's title names the repo). It still clears as below; Towercab does not merge,
+  comment on or edit the PR.
+- A `TOWERCAB.md` that doesn't parse (a mistyped `releases: Manual`, or any other front matter error)
+  holds the PR with a "Needs you" card at once, whose why names the error. It is never read as `auto`,
+  because it might hide `releases: manual`.
+- Release files and `releases` are read from the default branch. A failed read (anything but "not
+  found") is an error, never "no file": the pass for that repo stops, the held card and its 24-hour
+  clock stay as they were, and GitHub is reported unreachable.
 - `main` red, pending or without checks → held; the PR is looked at again each pass and merges when
   `main` turns green. No card at first.
 - A PR that is stale (SHIP-30) is held like a red `main`, and the same 24 hours apply; its card says
-  "behind main, release-please has not updated it".
+  "It is behind main and release-please has not updated it."
 - Held for 24 hours (from when Towercab first saw the PR held for this reason) → a "Needs you" card
   titled "Release PR #<n> of <repo> has waited a day", whose why names the checks: the red or pending
-  ones by name, or "<repo> runs no checks on main".
+  ones by name, or "This repo runs no checks on main."
 - A diff with other files, or a major release → a "Needs you" card at once (`{kind: "release", repo, pr}`),
   titled "Release PR #<n> of <repo> needs you", whose why lists the extra files or the major jump.
 - A card clears when the PR is merged or closed, or when what held it no longer applies (the diff is
@@ -440,6 +451,12 @@ A change counts as published only once the release that contains its merge exist
 - After an intent's merge (stage `done`, `unverified`), the mission gets the release that contains its
   merge commit: the first GitHub release of the repo whose tag commit descends from it. Towercab reads
   it on each pass until found; it adds no stage and does not hold the mission or its folder move.
+- At most 5 missions are looked up per pass, so a backlog of old ones is worked off over several
+  passes. If the oldest of the 100 latest releases already contains a merge (the first release is older
+  than that), no release line is shown for it rather than a wrong tag.
+- The lookup is cheap: it asks GitHub whether the newest of the latest 100 releases contains the merge
+  (one call), remembers the answer for that release, and asks again only when a newer release appears;
+  once the newest contains it, a binary search over the releases finds the first one.
 - The release is stored on the mission (`release`: tag and URL). The intent page shows "Published in
   <tag>" with the link; until then it shows "Merged, waiting for a release".
 - A repo with no release-please files ([REPO-23](repo.md)) has no release to wait for: the line is not shown.
