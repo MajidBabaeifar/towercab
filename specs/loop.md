@@ -696,6 +696,36 @@ intents that waited for it start.
   knows (towercab repo list)`.
 - Verified by: `repos: set changes a repo's settings`, `cli: repo commands`
 
+### LOOP-83 · A repo can require a reviewer other than the owner
+
+`towercab repo set <name> teammate_review=on` marks a repo whose changes need a teammate's approval, and `reviewers=` lists who may give it.
+
+- Keys: `teammate_review` (`on` or `off`, default `off`) and `reviewers` (comma-separated host logins,
+  e.g. `reviewers=alice,bob`; `reviewers=` empties the list). Both live in Towercab's `repos` table
+  (LOOP-65), never in the shared repo. The build adds the columns `teammate_review INTEGER NOT NULL
+  DEFAULT 0` and `reviewers TEXT NOT NULL DEFAULT ''` and updates the **Schema** block then. `repo list`
+  shows `· teammate review: alice, bob` (or `· teammate review: CODEOWNERS`) for an `on` repo.
+- Refusals, in addition to LOOP-69's: `teammate_review must be on or off`; `reviewers: <login> is not a
+  login` (logins are `[A-Za-z0-9-]`, up to 39 characters); `reviewers: <login> is you: the owner cannot
+  review their own change` (the owner is `[github].me`, case-insensitive; the App's bot is refused the
+  same way). A listed login is stored lowercase, once.
+- `reviewers` set while `teammate_review=off` is kept and does nothing. The running loop uses the new
+  values from its next pass (LOOP-68), including for missions already in flight.
+- Verified by: `repos: set teammate_review and reviewers`, `repos: reviewers refuses the owner and the bot`, `cli: repo list shows teammate review`
+
+### LOOP-84 · doctor warns when the host requires approvals and the setting is off
+
+`towercab doctor` tells the owner when a repo's host demands approvals that Towercab is not waiting for.
+
+- For each repo with `teammate_review=off`, `doctor` reads the base branch's protection (GitHub:
+  `gh api repos/<r>/branches/<base>/protection`, `required_pull_request_reviews.required_approving_review_count`,
+  and rulesets with a pull-request rule) and, when it requires 1 or more approvals, prints `<name>:
+  GitHub requires <n> approval(s) but teammate review is off: run towercab repo set <name>
+  teammate_review=on reviewers=<logins>`. It is a warning: the exit code does not change.
+- A repo whose protection cannot be read (no permission, 404) prints nothing for it and `doctor --quick`
+  (LOOP-35) skips the check; it never fails because of it.
+- Verified by: `doctor: a required approval with teammate review off is a warning`, `doctor: an unreadable branch protection is not a warning`
+
 ### LOOP-70 · A repo set to block starts no new intent
 
 Towercab holds back new intents only in a repo whose kind the owner confirmed, that is missing required setup and that is set to `readiness: block`; every other repo keeps starting intents and only warns.
