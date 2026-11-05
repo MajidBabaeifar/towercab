@@ -91,14 +91,12 @@ function TopBar({ top, path }: { top: Top | null; path: string }) {
             </span>
             <span>{top.queued} queued</span>
             {top.slotsText ? (
-              <>
+              <span class="slots-note" title={top.slotsText}>
                 <span class="dot-sep" aria-hidden="true">
                   ·
-                </span>
-                <span class="slots-note" title={top.slotsText}>
-                  {top.slotsText.split(" · ")[0]}
-                </span>
-              </>
+                </span>{" "}
+                {top.slotsText.split(" · ")[0]}
+              </span>
             ) : null}
           </p>
         ) : null}

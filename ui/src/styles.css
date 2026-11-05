@@ -394,6 +394,13 @@ code {
   color: var(--line-strong);
 }
 
+/* LOOP-104: the runs-going note stays off a phone's top bar, which has no room for it. */
+@media (max-width: 720px) {
+  .slots-note {
+    display: none;
+  }
+}
+
 .top-spend {
   white-space: nowrap;
   font-weight: 600;
