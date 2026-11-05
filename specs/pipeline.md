@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-133..147 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..147 · **Prefix:** PIP
 
 ## Purpose
 
@@ -664,6 +664,7 @@ Each design is told which requirement IDs other unmerged spec PRs of the repo al
 - A PR that cannot be read is skipped and logged, not a failure. No other open spec PR → the list is
   empty and the prompt says so.
 - Verified by: `pipeline: design is told the IDs other spec PRs add`, `pipeline: an unreadable spec PR does not stop the design`
+- PIP-130 extends this: any open PR that adds requirement headings counts, the design is checked again before the spec PR is pushed, and a clash is moved by Towercab itself.
 
 ### PIP-81 · A spec PR that conflicts with main is revised
 

@@ -21,7 +21,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:ui": "npm run build:ui && playwright test -c ui/playwright.config.ts",
-    "check": "npm run lint && npm run typecheck && npm run test"
+    "check": "npm run lint && npm run typecheck && npm run test && npm run towercab -- specs check-ids"
   },
   "dependencies": {
     "picomatch": "4.0.7",

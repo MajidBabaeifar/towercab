@@ -3,7 +3,7 @@
 // conflict with base up to two: PIP-133),
 // has the risk agent assess it, and then either waits for the owner or merges it itself.
 
-import { readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { riskWhy, specGate } from "../autonomy.ts";
 import { git, refreshBase } from "../checkout.ts";
@@ -15,6 +15,7 @@ import { plainLine, TITLE_MAX, titleProblem } from "../intents/naming.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { currentRisk, openPointsMd, openPointsWhy, type Risk, riskMd } from "../risk.ts";
+import { addedIds, applyMap, headingIds, moveIds, yields } from "../specids.ts";
 import { ciState, redLog } from "./ci.ts";
 import {
   asEnv,
@@ -48,58 +49,202 @@ export function reservedLine(outcome: string): string {
     : "Take the next free requirement IDs.";
 }
 
-/** PIP-80: the IDs other open spec PRs of the repo add (`### <ID> ·` headings in their `specs/` diff). */
-export async function claimedIds(cx: Ctx, m: Mission): Promise<string[]> {
+/** PIP-130: what the design treats as taken. */
+export interface Taken {
+  /** The IDs of the `### <ID> ·` headings on the base branch. */
+  base: Set<string>;
+  /** Every other open PR that adds requirement headings, with its IDs. */
+  open: { number: number; ids: string[] }[];
+  /** Why the open PRs couldn't be read (GitHub unreachable), else null. */
+  unchecked: string | null;
+}
+
+/** The `### <ID> ·` headings of `specs/` at `ref` of the clone. */
+async function baseIds(cx: Ctx, clone: string, ref: string): Promise<Set<string>> {
+  try {
+    return new Set(
+      headingIds(await git(cx.tools, clone, ["grep", "-h", "-E", "^### [A-Z]+-[0-9]+", ref, "--", "specs"])),
+    );
+  } catch {
+    // No match (or no specs/ yet): nothing is taken on base.
+    return new Set();
+  }
+}
+
+/**
+ * PIP-80, PIP-130: the IDs on the base branch and the IDs every other open PR of the repo adds (the
+ * `### <ID> ·` headings its `specs/` diff adds). A PR that can't be read is skipped and logged; open PRs
+ * that can't be listed at all leave `unchecked` set and the design goes on (the CI check is the backstop).
+ */
+export async function takenIds(cx: Ctx, m: Mission): Promise<Taken> {
   const repo = cx.repo(m);
   const clone = cloneOf(cx, m);
-  const prs = JSON.parse(
-    await gh(cx, repo.github, [
-      "pr",
-      "list",
-      "-R",
-      repo.github,
-      "--state",
-      "open",
-      "--json",
-      "number,headRefName",
-    ]),
-  ) as { number: number; headRefName: string }[];
-  const others = prs.filter(
-    (p) => /^towercab\/.+-spec$/.test(p.headRefName) && p.headRefName !== `${m.branch}-spec`,
-  );
-  if (!others.length) return [];
-  await git(
-    cx.tools,
-    clone,
-    ["fetch", "--quiet", "--prune", "origin"],
-    await cx.github.gitAuth(repo.github),
-  ).catch((e) => {
-    throw asEnv(e);
-  });
-  const ids = new Set<string>();
-  for (const p of others) {
-    try {
-      const diff = await git(cx.tools, clone, [
-        "diff",
-        `refs/remotes/origin/${repo.base}...refs/remotes/origin/${p.headRefName}`,
-        "--",
-        "specs",
-      ]);
-      for (const line of diff.split("\n")) {
-        const id = /^\+### ([A-Z]+-\d+)\b/.exec(line)?.[1];
-        if (id) ids.add(id);
+  const baseRef = `refs/remotes/origin/${repo.base}`;
+  const open: Taken["open"] = [];
+  let unchecked: string | null = null;
+  try {
+    const prs = JSON.parse(
+      await gh(cx, repo.github, [
+        "pr",
+        "list",
+        "-R",
+        repo.github,
+        "--state",
+        "open",
+        "--json",
+        "number,headRefName",
+      ]),
+    ) as { number: number; headRefName: string }[];
+    const others = prs.filter((p) => p.number !== m.spec_pr && p.headRefName !== `${m.branch}-spec`);
+    await git(
+      cx.tools,
+      clone,
+      ["fetch", "--quiet", "--prune", "origin"],
+      await cx.github.gitAuth(repo.github),
+    );
+    for (const p of others) {
+      try {
+        const diff = await git(cx.tools, clone, [
+          "diff",
+          `${baseRef}...refs/remotes/origin/${p.headRefName}`,
+          "--",
+          "specs",
+        ]);
+        const ids = addedIds(diff);
+        if (ids.length) open.push({ number: p.number, ids });
+      } catch (e) {
+        cx.log(`spec PR #${p.number}: can't read its IDs, skipped: ${(e as Error).message}`);
       }
-    } catch (e) {
-      cx.log(`spec PR #${p.number}: can't read its IDs, skipped: ${(e as Error).message}`);
     }
+  } catch (e) {
+    unchecked = (e as Error).message;
+    cx.log(`${m.intent}: IDs unchecked against open PRs: ${unchecked}`);
   }
-  return [...ids].sort();
+  return { base: await baseIds(cx, clone, baseRef), open, unchecked };
 }
 
 const claimedLine = (ids: string[]) =>
   ids.length
     ? `IDs already taken by other open spec PRs (do not use them): ${ids.join(", ")}.`
     : "No other open spec PR adds requirement IDs.";
+
+/** The highest number on the base branch per prefix, so the design knows where "next free" starts. */
+function baseLine(base: Set<string>): string {
+  const top = new Map<string, number>();
+  for (const id of base) {
+    const i = id.lastIndexOf("-");
+    const [p, n] = [id.slice(0, i), Number(id.slice(i + 1))];
+    if (n > (top.get(p) ?? 0)) top.set(p, n);
+  }
+  if (!top.size) return "";
+  return `\nThe highest requirement number on the base branch, per prefix: ${[...top].map(([p, n]) => `${p}-${n}`).join(", ")}. Take new IDs after the highest taken one unless the intent reserves some.`;
+}
+
+/** What the design is told when the open PRs could not be read (PIP-130). */
+export const IDS_UNCHECKED = "IDs unchecked against open PRs";
+
+/** PIP-130: whether a PR is approved (a review in state APPROVED); unreadable counts as not approved. */
+async function approvedPr(cx: Ctx, github: string, n: number | null): Promise<boolean> {
+  if (n === null) return false;
+  try {
+    const v = JSON.parse(
+      await gh(cx, github, ["pr", "view", String(n), "-R", github, "--json", "reviews"]),
+    ) as {
+      reviews?: { author?: { login?: string }; state?: string }[];
+    };
+    const last = new Map<string, string>();
+    for (const r of v.reviews ?? [])
+      if (r.state && r.state !== "COMMENTED") last.set(r.author?.login ?? "", r.state);
+    return [...last.values()].includes("APPROVED");
+  } catch (e) {
+    cx.log(`spec PR #${n}: can't read its reviews, counted as not approved: ${(e as Error).message}`);
+    return false;
+  }
+}
+
+async function specFiles(cx: Ctx, m: Mission): Promise<string[]> {
+  const dir = join(cx.checkout(m), "specs");
+  const names = await readdir(dir).catch(() => [] as string[]);
+  return names.filter((f) => f.endsWith(".md") && !f.startsWith("_") && f !== "README.md").sort();
+}
+
+/**
+ * PIP-130: before the spec PR is opened or updated, the IDs this spec adds are read again against the
+ * open PRs. A clash is resolved by the PR that is not approved (else the later one): this one moves its
+ * rows to the next free numbers and rewrites every reference it owns (the spec text, the stored design
+ * and so the PR body, the intent), in the same revision. Open PRs that can't be listed → noted, not stopped.
+ */
+async function recheckIds(cx: Ctx, m: Mission): Promise<Mission> {
+  const t = await takenIds(cx, m);
+  const d = data(m);
+  const withoutNote = (d.design?.concerns ?? []).filter((c) => c.what !== IDS_UNCHECKED);
+  if (t.unchecked !== null) {
+    if (!d.design || d.idsUnchecked) return m;
+    const concern = {
+      what: IDS_UNCHECKED,
+      why: `GitHub could not be read (${t.unchecked}); the CI check compares them when the PR is open.`,
+    };
+    return cx.record(
+      m,
+      m.step,
+      {},
+      { idsUnchecked: true, design: { ...d.design, concerns: [...withoutNote, concern] } },
+    );
+  }
+  let fresh = m;
+  if (d.idsUnchecked)
+    fresh = cx.record(
+      m,
+      m.step,
+      {},
+      { idsUnchecked: undefined, ...(d.design ? { design: { ...d.design, concerns: withoutNote } } : {}) },
+    );
+  const files = await specFiles(cx, fresh);
+  const texts = new Map<string, string>();
+  for (const f of files) texts.set(f, await readFile(join(cx.checkout(fresh), "specs", f), "utf8"));
+  const mine = [...new Set([...texts.values()].flatMap(headingIds))].filter((id) => !t.base.has(id));
+  const owners = new Map<string, number[]>();
+  for (const p of t.open) for (const id of p.ids) owners.set(id, [...(owners.get(id) ?? []), p.number]);
+  const repo = cx.repo(fresh);
+  const me = { number: fresh.spec_pr, approved: await approvedPr(cx, repo.github, fresh.spec_pr) };
+  const move: string[] = [];
+  for (const id of mine) {
+    for (const n of owners.get(id) ?? []) {
+      if (yields(me, { number: n, approved: await approvedPr(cx, repo.github, n) })) {
+        move.push(id);
+        break;
+      }
+    }
+  }
+  if (!move.length) return fresh;
+  const map = moveIds(move, [...t.base, ...owners.keys(), ...mine]);
+  const cur = data(fresh).design;
+  const swap = (text: string) => applyMap(text, map);
+  const next = cur && {
+    ...cur,
+    specIds: cur.specIds.map(swap),
+    pr: swap(cur.pr),
+    ...(cur.brief !== undefined ? { brief: swap(cur.brief) } : {}),
+    concerns: cur.concerns.map((c) => ({ what: swap(c.what), why: swap(c.why) })),
+    ...(cur.open ? { open: cur.open.map(swap) } : {}),
+  };
+  const renumbered = { ...(data(fresh).idsRenumbered ?? {}), ...Object.fromEntries(map) };
+  // Recorded first; the rewrite below is the side effect, and a replay finds nothing left to move.
+  fresh = cx.record(fresh, fresh.step, {}, { ...(next ? { design: next } : {}), idsRenumbered: renumbered });
+  for (const [f, text] of texts) {
+    const out = swap(text);
+    if (out !== text) await writeFile(join(cx.checkout(fresh), "specs", f), out);
+  }
+  cx.log(
+    `${fresh.intent}: spec IDs taken by other open PRs, moved: ${[...map].map(([a, b]) => `${a} → ${b}`).join(", ")}`,
+  );
+  try {
+    await cx.store.update(fresh.intent, "renumber spec IDs", (e) => e.replaceInBody(map));
+  } catch (e) {
+    cx.log(`${fresh.intent}: couldn't write the new IDs back to the intent: ${(e as Error).message}`);
+  }
+  return fresh;
+}
 
 /**
  * PIP-81: merge base into the spec branch. A clean merge needs nothing more; a conflict is left in the
@@ -237,12 +382,13 @@ async function prompt(
   const files2 = conflicts.length
     ? `\n\nThese files have conflict markers to resolve (keep both sides' rows): ${conflicts.join(", ")}.`
     : "";
-  const claimed = await claimedIds(cx, m);
+  const t = await takenIds(cx, m);
+  const claimed = [...new Set(t.open.flatMap((p) => p.ids))].sort();
   return {
     prompt: render("design", {
       intent: intentData(intent.text),
       earlier: answer + files2 + (await ciSection(cx, m)),
-      reserved: `${reservedLine(intent.sections.get("Proposed outcome") ?? "")}\n${claimedLine(claimed)}`,
+      reserved: `${reservedLine(intent.sections.get("Proposed outcome") ?? "")}\n${claimedLine(claimed)}${baseLine(t.base)}${t.unchecked === null ? "" : `\n${IDS_UNCHECKED}: the open PRs could not be read (${t.unchecked}). Take IDs after the highest on the base branch; Towercab checks them again before the spec PR is opened or updated.`}`,
     }),
     files,
   };
@@ -423,6 +569,7 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
     if (!m.spec_pr) return { done: ok({ why: "no behaviour change: no spec PR" }) };
     return gateStep(cx, cx.record(m, "gate"));
   }
+  m = await recheckIds(cx, m);
   const intent = await intentOf(cx, m);
   await coGit(cx, m, ["add", "-A", "--", "specs"]);
   await coGit(cx, m, [

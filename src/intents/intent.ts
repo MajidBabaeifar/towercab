@@ -3,6 +3,7 @@
 
 import { parse as parseYaml } from "yaml";
 import { isRepoName } from "../config.ts";
+import { applyMap } from "../specids.ts";
 import { isId } from "./id.ts";
 import type { Intent, IntentEdit } from "./types.ts";
 
@@ -442,6 +443,14 @@ export class IntentFile implements IntentEdit {
     checkFences(body, this.bodyLine);
     this.body = body;
     this.titleText = titleOf(body)!;
+  }
+
+  /** PIP-131: requirement IDs in the body replaced in place (`applyMap`); front matter and other text stay as they are. */
+  replaceInBody(map: ReadonlyMap<string, string>): void {
+    const body = applyMap(this.body, map);
+    if (body === this.body) return;
+    this.body = body;
+    this.titleText = titleOf(body) ?? this.titleText;
   }
 
   /** Append `- <YYYY-MM-DD HH:MM>: <text>` to `## Answers` (last). */
