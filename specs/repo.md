@@ -505,13 +505,17 @@ When a repo has no checks block, Towercab drafts one from what the repo already 
   `run:` steps in `.github/workflows/*.yml` that run on pull requests; `Cargo.toml`, `go.mod`,
   `pyproject.toml` with their usual test command. A repo of plain static files (an `index.html` or `*.html`,
   data files such as `*.json`, `*.ics`, `*.csv`) gets checks that parse each HTML file and validate each
-  data file, written as a small script under `scripts/` or an inline command with no network.
+  data file. Every command is written inline in the ` ```checks ` block, with no network, using only tools
+  the sandbox already has (`node`, `python3` or `sh`, as found there); no script file is ever added to the repo.
+  When no inline command can check a file type (say a format with no parser at hand), that type is left out
+  and the PR body says so.
 - Commands that need secrets, deploy, publish or reach the network in ` ```checks ` (`npm publish`, `curl`,
   `deploy*` targets, jobs that use `secrets.`) are never taken from CI. `setup` may use the network.
 - If the repo has a test folder (a directory matching PIP-30's globs, or `TOWERCAB.md` `tests`), the draft
   runs it. A repo with none gets a check that runs the globs' default folder and passes while it is empty,
   so a test added by a build runs ([PIP-30](pipeline.md)) and the proof can show it failing without the change.
-- The draft states the evidence for each line in plain words; it changes nothing but `CLAUDE.md`.
+- The draft states the evidence for each line in plain words; it changes nothing but `CLAUDE.md`: no
+  script, config or test file, and no `.gitignore` or lockfile change.
 - Verified by: `repo: draft from package scripts`, `repo: draft from a Makefile`, `repo: draft from CI workflows`, `repo: draft for a static site validates its files`, `repo: draft never takes deploy or secret commands`, `repo: draft runs the test folder`, `repo: draft runs a test folder added later`
 
 ### REPO-35 · A draft must pass first
@@ -529,8 +533,8 @@ Towercab proposes a draft only if its checks pass on the base branch.
 
 Towercab opens the chosen draft as a small pull request in the repo, and the waiting intent continues by itself once it merges.
 
-- The PR changes only `CLAUDE.md` (created, or given the section; text already there stays
-  byte-identical). Branch `towercab/setup-<repo>`, title `chore(towercab): add verifying checks`, a body to
+- The PR changes exactly one file, `CLAUDE.md` (created, or given the section; text already there stays
+  byte-identical). Any other changed path is a bug: Towercab refuses to push it. Branch `towercab/setup-<repo>`, title `chore(towercab): add verifying checks`, a body to
   `prompts/writing.md`: what the checks do, where each line came from, that it passed on the base
   branch, and what it doesn't cover.
 - It goes through the repo's autonomy like any other change ([AUT-14](autonomy.md)), unlike a settings PR
@@ -589,3 +593,9 @@ The owner is asked to add a verifying section only when Towercab found no check 
   runs that PR's checks block ([PIP-54](pipeline.md)); verify and CI still use the base's.
 - `fast` exists so a repo with CI doesn't run a slow full suite on every round locally; CI stays the
   gate.
+- Drafted checks (REPO-34..37) take the conservative default wherever the intent is silent: inline
+  commands in `CLAUDE.md` only, never a script or any second file; a drafted block has `checks` and,
+  only if a source needs it, `setup`, but no `fast` or `screenshots`; a file type without an inline
+  checker is left out and said so in the PR body, rather than guessed; a draft that cannot be shown to
+  pass is never proposed (the owner is asked instead); and no setup PR is merged by Towercab if its
+  review finds a command that is not a pure check.
