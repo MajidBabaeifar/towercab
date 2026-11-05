@@ -30,9 +30,12 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # PIP-132: the spec ID check needs the merge base with the base branch.
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -40,6 +43,23 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - name: Spec IDs against other open pull requests
+        # PIP-132: no ID this PR adds may also be added by another open PR. A PR whose diff gh can't
+        # show (too large) is left out of the comparison.
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          : > "$RUNNER_TEMP/added.txt"
+          for n in $(gh pr list --state open --json number --jq '.[].number'); do
+            [ "$n" = "$PR" ] && continue
+            { gh pr diff "$n" || true; } | { grep -oE '^\+### [A-Z]+-[0-9]+' || true; } | sed "s/^+### /$n /" >> "$RUNNER_TEMP/added.txt"
+          done
+          jq -Rn '[inputs | split(" ") | {number: (.[0] | tonumber), id: .[1]}] | group_by(.number) | map({number: .[0].number, ids: map(.id)})' "$RUNNER_TEMP/added.txt" > "$RUNNER_TEMP/prs.json"
+          npm run towercab -- specs check-ids --base "origin/$BASE" --prs "$RUNNER_TEMP/prs.json"
 
   screenshots:
     name: "Playwright: UI screenshots"

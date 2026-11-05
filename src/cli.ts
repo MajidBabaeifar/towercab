@@ -36,6 +36,7 @@ import { addRepo, loadRepos, removeRepo, repoLine, repoList, setRepo } from "./r
 import { checkoutRoot, down, logsArgv, restart, up } from "./service.ts";
 import { restoreBackup } from "./settings/backup.ts";
 import { grantPermission } from "./settings/store.ts";
+import { checkIds, readPrList } from "./specs-cli.ts";
 import { renderStatus } from "./status.ts";
 import { Telegram } from "./telegram.ts";
 import { realTools, type Tools } from "./tools.ts";
@@ -66,6 +67,7 @@ export const COMMANDS = [
   "repo",
   "settings",
   "hook",
+  "specs",
 ] as const;
 
 const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
@@ -88,6 +90,8 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   settings restore <repo>         put back the settings saved before the last apply
   settings granted                the GitHub App now has Administration (write)
   ui [--no-open]                  open the web page
+  specs check-ids [--base <ref>] [--prs <file>]
+                                  fail when a spec adds a requirement ID the base branch or another open PR has
   doctor [--quick]                what is missing
   update                          update this checkout to the latest main now
 `;
@@ -188,6 +192,8 @@ export async function main(argv: string[], tools: Tools = realTools()): Promise<
         "no-open": { type: "boolean" },
         quick: { type: "boolean" },
         name: { type: "string" },
+        base: { type: "string" },
+        prs: { type: "string" },
       },
     });
   } catch (e) {
@@ -235,6 +241,19 @@ async function run(
     if (args.length < n) throw new UsageError(`${cmd} needs ${what}`);
   };
   switch (cmd) {
+    case "specs": {
+      if (args[0] !== "check-ids" || args.length > 1)
+        throw new UsageError("specs check-ids [--base <ref>] [--prs <file>]");
+      const prs = typeof v.prs === "string" ? readPrList(readFileSync(v.prs, "utf8")) : null;
+      const r = await checkIds(tools, {
+        cwd: process.cwd(),
+        base: typeof v.base === "string" ? v.base : "origin/main",
+        prs,
+      });
+      if (r.problems.length)
+        throw new Error(`spec IDs clash:\n${r.problems.map((p) => `  ${p}`).join("\n")}`);
+      return r.notes.length ? r.notes.join("\n") : "spec IDs are unique";
+    }
     case "hook": {
       if (args[0] !== "guard" || !args[1]) throw new UsageError("hook guard <rules>");
       return guardMain([args[1]]);

@@ -96,6 +96,8 @@ export interface IntentEdit {
   addAnswer(text: string, at: Date): void;
   /** Replace the title line only (INT-34). */
   setTitle(title: string): void;
+  /** PIP-131: replace requirement IDs in the body (`PIP-130` → `PIP-142`, ranges too); other text stays byte-identical. */
+  replaceInBody(map: ReadonlyMap<string, string>): void;
   readonly intent: Intent;
 }
 

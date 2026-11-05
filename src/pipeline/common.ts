@@ -80,6 +80,10 @@ export interface PipeData {
     subject?: string;
   };
   specBranch?: string;
+  /** PIP-130: the open PRs couldn't be read when the design last looked, so its IDs are unchecked against them. */
+  idsUnchecked?: boolean;
+  /** PIP-130: spec IDs this mission moved because another open spec PR added them (old → new). */
+  idsRenumbered?: Record<string, string>;
   /** Spec-PR revisions made for a conflict with base (PIP-81). */
   specConflicts?: number;
   /** The next design run first merges base into the spec branch (PIP-81). */
