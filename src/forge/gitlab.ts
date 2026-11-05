@@ -1,9 +1,8 @@
 // GitLab as Towercab's forge (GL-2, GL-5..7): REST through the injectable `Http`, authenticated by the
 // project or group access token in a mode-600 file. The token's bot user is Towercab's identity.
 
-import { readFileSync } from "node:fs";
 import type { GitLabConfig } from "../config.ts";
-import { tokenFileProblem } from "../config.ts";
+import { readTokenFile } from "../config.ts";
 import type { Http } from "../github/app.ts";
 import { type Step, stageComment, stageMarker } from "../github/comments.ts";
 import type { PrComment, PrReview, PrState } from "../github/prs.ts";
@@ -82,9 +81,9 @@ export class GitLabForge {
 
   /** The token, read from its file now (never kept): the file must be 0600 and hold one line. */
   token(): string {
-    const why = tokenFileProblem(this.cfg.tokenFile);
-    if (why) throw new Error(`config: ${this.cfg.file ?? "config"}: gitlab.token_file ${why}`);
-    return readFileSync(this.cfg.tokenFile, "utf8").trim();
+    const r = readTokenFile(this.cfg.tokenFile);
+    if ("why" in r) throw new Error(`config: ${this.cfg.file ?? "config"}: gitlab.token_file ${r.why}`);
+    return r.token;
   }
 
   private async call(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: Obj) {

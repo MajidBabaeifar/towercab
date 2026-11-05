@@ -1,6 +1,6 @@
 // Config (LOOP-1, **Config**): ~/.config/towercab/config.toml, validated with errors that name the key.
 
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -238,22 +238,36 @@ function gitlabTokenFile(r: Reader, t: Record<string, unknown>): string {
   return p;
 }
 
-/** GL-1: why the token file can't be used, or null: it exists, is a 0600 regular file and holds one line. */
-export function tokenFileProblem(file: string): string | null {
-  let st: ReturnType<typeof statSync>;
+/**
+ * GL-1: the token in `file`, or why it can't be used. One open file is checked and read, so the file
+ * can't change between the check and the read: a regular file, mode 600, holding one line.
+ */
+export function readTokenFile(file: string): { token: string } | { why: string } {
+  let fd: number;
   try {
-    st = statSync(file);
+    fd = openSync(file, "r");
   } catch {
-    return "does not exist";
+    return { why: "does not exist" };
   }
-  if (!st.isFile()) return "is not a regular file";
-  if ((st.mode & 0o077) !== 0) return "is readable by group or others: chmod 600 it";
-  const lines = readFileSync(file, "utf8")
-    .split("\n")
-    .filter((l) => l.trim());
-  if (lines.length === 0) return "is empty";
-  if (lines.length > 1) return "must hold one line, the token";
-  return null;
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) return { why: "is not a regular file" };
+    if ((st.mode & 0o077) !== 0) return { why: "is readable by group or others: chmod 600 it" };
+    const lines = readFileSync(fd, "utf8")
+      .split("\n")
+      .filter((l) => l.trim());
+    if (lines.length === 0) return { why: "is empty" };
+    if (lines.length > 1) return { why: "must hold one line, the token" };
+    return { token: lines[0]!.trim() };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** GL-1: why the token file can't be used, or null. */
+export function tokenFileProblem(file: string): string | null {
+  const r = readTokenFile(file);
+  return "why" in r ? r.why : null;
 }
 
 /** REPO-31: `[github] settings` is `check` (default) or `apply`. */
