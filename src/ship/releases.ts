@@ -6,12 +6,15 @@ import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import { jsonStream } from "../github/prs.ts";
 import type { GitHub } from "../handlers.ts";
-import { dataOf, type Mission, patchData } from "../mission.ts";
+import { dataOf, getMission, type Mission, patchData } from "../mission.ts";
 import { parseTowercab } from "../repo/files.ts";
 import { DAY_S, decideRelease, type MainChecks, type PrFile } from "./release.ts";
 
 const BOT = "github-actions[bot]";
 const REFUSALS = 3;
+/** How many releases the lookup reads, and how many missions it looks up in one pass (SHIP-32). */
+const RELEASES_READ = 100;
+const LOOKUPS_PER_PASS = 5;
 const RAW = ["-H", "Accept: application/vnd.github.raw"];
 
 export interface ReleaseDeps {
@@ -239,18 +242,20 @@ async function releasePr(d: ReleaseDeps, name: string, github: string, base: str
   const config = await raw(d, github, base, "release-please-config.json");
   const towercab = await raw(d, github, base, "TOWERCAB.md");
   let manual = false;
+  let invalid: string | undefined;
   if (towercab !== null) {
     try {
       manual = parseTowercab(towercab).releases === "manual";
     } catch (e) {
-      d.log(
-        `release PR #${pr.number} of ${name}: TOWERCAB.md is invalid, treating releases as auto: ${(e as Error).message}`,
-      );
+      // A TOWERCAB.md that won't parse might hide `releases: manual`: hold, never merge.
+      invalid = (e as Error).message;
+      d.log(`release PR #${pr.number} of ${name}: TOWERCAB.md is invalid, holding it: ${invalid}`);
     }
   }
   const checks = await mainChecks(d, github, base, main.sha);
   const decision = decideRelease({
     manual,
+    ...(invalid === undefined ? {} : { invalid }),
     files,
     extraFiles: config ? extraFilesOf(config) : [],
     body: pr.body ?? "",
@@ -320,8 +325,10 @@ async function published(d: ReleaseDeps, name: string, github: string): Promise<
   const list = await json<{ tag_name: string; html_url: string; draft?: boolean; created_at?: string }[]>(
     d,
     github,
-    `repos/${github}/releases?per_page=20`,
+    `repos/${github}/releases?per_page=${RELEASES_READ}`,
   );
+  // Past this many, older releases exist that we didn't read.
+  const truncated = Array.isArray(list) && list.length >= RELEASES_READ;
   const releases = (Array.isArray(list) ? list : [])
     .filter((r) => !r.draft)
     .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""));
@@ -338,14 +345,24 @@ async function published(d: ReleaseDeps, name: string, github: string): Promise<
       return null;
     }
   };
+  // The mission as it is now: its data may have changed during the awaited calls.
+  const patch = (m: Mission, set: Record<string, unknown>) => {
+    const fresh = getMission(d.db, m.id);
+    if (fresh) patchData(d.db, fresh, set, d.now);
+  };
+  let looked = 0;
   for (const m of missions) {
+    const data = dataOf<{ releaseChecked?: string; releaseUnknown?: boolean }>(m);
     // A mission already found not to be in the newest release waits until a newer one appears:
     // this costs one compare per mission per new release, not per pass.
-    if (dataOf<{ releaseChecked?: string }>(m).releaseChecked === newest.tag_name) continue;
+    if (data.releaseChecked === newest.tag_name || data.releaseUnknown) continue;
+    // A backlog of old missions is worked off a few at a time, so a pass never stalls the loop.
+    if (looked >= LOOKUPS_PER_PASS) break;
+    looked++;
     const inNewest = await contains(m.merge_sha!, newest.tag_name);
     if (inNewest === null) continue;
     if (!inNewest) {
-      patchData(d.db, m, { releaseChecked: newest.tag_name }, d.now);
+      patch(m, { releaseChecked: newest.tag_name });
       continue;
     }
     // Releases are in order, so containing is monotone: a binary search finds the first one.
@@ -364,7 +381,13 @@ async function published(d: ReleaseDeps, name: string, github: string): Promise<
     }
     if (failed) continue;
     const r = releases[lo]!;
-    patchData(d.db, m, { release: { tag: r.tag_name, url: r.html_url }, releaseChecked: undefined }, d.now);
+    if (lo === 0 && truncated) {
+      // Even the oldest release read contains it: the first one is older than we can see, and a
+      // wrong tag is worse than none, so the page shows no release line for this change.
+      patch(m, { releaseUnknown: true, releaseChecked: undefined });
+      continue;
+    }
+    patch(m, { release: { tag: r.tag_name, url: r.html_url }, releaseChecked: undefined });
     d.log(`${m.intent}: published in ${r.tag_name} of ${name}`);
   }
 }
@@ -397,7 +420,9 @@ export async function runReleases(d: ReleaseDeps): Promise<string | null> {
 /** SHIP-32: what the intent page says about the release of a finished mission, or null. */
 export function releaseLine(db: Db, m: Mission): { text: string; url: string | null } | null {
   if (m.stage !== "done" && m.stage !== "unverified") return null;
-  const r = dataOf<{ release?: { tag: string; url: string } }>(m).release;
+  const data = dataOf<{ release?: { tag: string; url: string }; releaseUnknown?: boolean }>(m);
+  const r = data.release;
+  if (data.releaseUnknown) return null;
   if (r) return { text: `Published in ${r.tag}`, url: r.url };
   if (db.meta(`releasing:${m.repo}`) === "1") return { text: "Merged, waiting for a release", url: null };
   return null;

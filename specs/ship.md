@@ -424,6 +424,9 @@ A release pull request that is not plainly a release, or whose `main` is not gre
 - A repo with `releases: manual` gets the card at once, whose why says "This repo merges its releases
   by hand." (the card's title names the repo). It still clears as below; Towercab does not merge,
   comment on or edit the PR.
+- A `TOWERCAB.md` that doesn't parse (a mistyped `releases: Manual`, or any other front matter error)
+  holds the PR with a "Needs you" card at once, whose why names the error. It is never read as `auto`,
+  because it might hide `releases: manual`.
 - Release files and `releases` are read from the default branch. A failed read (anything but "not
   found") is an error, never "no file": the pass for that repo stops, the held card and its 24-hour
   clock stay as they were, and GitHub is reported unreachable.
@@ -448,7 +451,10 @@ A change counts as published only once the release that contains its merge exist
 - After an intent's merge (stage `done`, `unverified`), the mission gets the release that contains its
   merge commit: the first GitHub release of the repo whose tag commit descends from it. Towercab reads
   it on each pass until found; it adds no stage and does not hold the mission or its folder move.
-- The lookup is cheap: it asks GitHub whether the newest of the latest 20 releases contains the merge
+- At most 5 missions are looked up per pass, so a backlog of old ones is worked off over several
+  passes. If the oldest of the 100 latest releases already contains a merge (the first release is older
+  than that), no release line is shown for it rather than a wrong tag.
+- The lookup is cheap: it asks GitHub whether the newest of the latest 100 releases contains the merge
   (one call), remembers the answer for that release, and asks again only when a newer release appears;
   once the newest contains it, a binary search over the releases finds the first one.
 - The release is stored on the mission (`release`: tag and URL). The intent page shows "Published in

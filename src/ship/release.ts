@@ -17,6 +17,8 @@ export interface MainChecks {
 export interface ReleaseInput {
   /** `releases: manual` in TOWERCAB.md. */
   manual: boolean;
+  /** TOWERCAB.md can't be read or parsed: why. Treated like `manual`, never like `auto`. */
+  invalid?: string;
   files: PrFile[];
   /** `extra-files` paths of the default branch's `release-please-config.json`. */
   extraFiles: string[];
@@ -166,6 +168,14 @@ export function decideRelease(i: ReleaseInput): Decision {
     why,
     immediate,
   });
+  if (i.invalid !== undefined) {
+    return hold(
+      "manual",
+      "needs you",
+      `TOWERCAB.md is invalid (${i.invalid}), so Towercab doesn't merge this repo's releases.`,
+      true,
+    );
+  }
   if (i.manual) return hold("manual", "needs you", "This repo merges its releases by hand.", true);
   const extra = extraPaths(i.files, i.extraFiles);
   if (extra.length) {
