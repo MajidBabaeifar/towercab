@@ -18,6 +18,7 @@ import { isRepoName } from "../intents/features.ts";
 import type { IntentStore, Listing } from "../intents/types.ts";
 import type { UiActions } from "./actions.ts";
 import { board } from "./board.ts";
+import { focus } from "./focus.ts";
 import { repos } from "./repos.ts";
 import { activity, intentPage, overview, queue, RUN_NAME, redact, type UiSources } from "./state.ts";
 import type { ActionReply } from "./view.ts";
@@ -78,7 +79,7 @@ const TYPES: Record<string, string> = {
   ".webmanifest": "application/manifest+json",
 };
 
-const PAGES = /^\/(?:board|repos|queue|activity|i\/[A-Za-z0-9._-]+)?\/?$/;
+const PAGES = /^\/(?:board|focus|repos|queue|activity|i\/[A-Za-z0-9._-]+)?\/?$/;
 const ACTIONS = new Set([
   "merge",
   "reply",
@@ -381,6 +382,14 @@ export function startUi(o: UiOptions): UiServer {
     if (path === "/api/state") return json(res, 200, await overview(src));
     if (path === "/api/queue") return json(res, 200, await queue(src));
     if (path === "/api/board") return json(res, 200, await board(src));
+    if (path === "/api/focus") {
+      // UI-195: the waits the page has just acted on; anything that isn't a plain key is ignored.
+      const skip = (url.searchParams.get("skip") ?? "")
+        .split(",")
+        .filter((k) => /^[A-Za-z0-9._-]{1,40}$/.test(k))
+        .slice(0, 50);
+      return json(res, 200, await focus(src, skip));
+    }
     if (path === "/api/repos") {
       const a = o.actions;
       // UI-144: a repo's first look asks once for its backfill, while Towercab runs.
