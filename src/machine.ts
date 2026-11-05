@@ -155,7 +155,9 @@ export function next(
       return K("ignore");
     // LOOP-76: the owner did the work (a `no changes` wait, or the steps themselves).
     case "owner_done":
-      return stage === "blocked" || stage === "steps" ? go("done") : K("ignore");
+      // A merged code change still has to deploy: at `steps` only a steps delivery ends this way.
+      if (stage === "steps") return facts.delivery ? go("done") : K("ignore");
+      return stage === "blocked" ? go("done") : K("ignore");
     // PIP-113: switch to steps; with none in the plan yet, the plan is made again to add them.
     case "to_steps":
       if (stage === "steps" || stage === "plan") return K("ignore");
@@ -355,17 +357,21 @@ export interface Exit {
 }
 
 /**
- * The exits a wait offers, in plain words. A stuck wait (LOOP-77) leaves out `continue`: a reply would
+ * The exits a wait offers, in plain words (`code`: the mission's delivery is code). A stuck wait (LOOP-77) leaves out `continue`: a reply would
  * only land on the same wait again.
  */
-export function exitsOf(waiting: string, stuck = false): Exit[] {
+export function exitsOf(waiting: string, stuck = false, code = false): Exit[] {
   const kinds = EXITS[waitKey(waiting)] ?? BASIC;
-  return kinds
-    .filter((k) => !(stuck && k === "continue"))
-    .map((k) => ({
-      do: k,
-      label: k === "done" && waitKey(waiting) === "your steps" ? "I did all of it myself" : EXIT_LABELS[k],
-    }));
+  return (
+    kinds
+      .filter((k) => !(stuck && k === "continue"))
+      // A merged code change waiting for the owner's steps still has to deploy: no "I did it" there.
+      .filter((k) => !(code && k === "done" && waitKey(waiting) === "your steps"))
+      .map((k) => ({
+        do: k,
+        label: k === "done" && waitKey(waiting) === "your steps" ? "I did all of it myself" : EXIT_LABELS[k],
+      }))
+  );
 }
 
 /** The event an exit sends to the machine at a wait's stage (LOOP-76's walk uses it). */

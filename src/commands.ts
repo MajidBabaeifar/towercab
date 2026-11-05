@@ -197,9 +197,9 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       const intent = await store.get(row.arg);
       const m = unfinishedFor(db, intent.id);
       if (!m) throw new Error(`${intent.id} isn't waiting on you`);
-      const offered =
-        m.stage === "steps" ||
-        (m.stage === "blocked" && exitsOf(m.waiting ?? "").some((e) => e.do === "done"));
+      const code = (dataOf(m) as PipeData).delivery !== "steps";
+      const at0 = m.stage === "steps" ? "your steps" : m.stage === "blocked" ? (m.waiting ?? "") : "";
+      const offered = at0 !== "" && exitsOf(at0, false, code).some((e) => e.do === "done");
       if (!offered) throw new Error(`${intent.id} isn't at a wait where "I did it myself" applies`);
       const at = localTime(cx.now);
       const note = row.text.trim() || "Done by the owner";
@@ -208,8 +208,12 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
         ...old.map((s) => (s.done_at ? s : { ...s, done_at: at })),
         { n: old.length + 1, when: "after", text: note, why: "", done_at: at },
       ];
-      const fresh = patchData(db, m, { steps, stepsDirty: steps.length }, cx.now.getTime() / 1000);
-      apply(cx.applyCtx, fresh, { event: "owner_done", why: "the owner did it themselves" });
+      // One write: the steps go with the move, so a refused move leaves nothing behind.
+      apply(cx.applyCtx, m, {
+        event: "owner_done",
+        why: "the owner did it themselves",
+        data: { steps, stepsDirty: steps.length },
+      });
       return `${intent.id} is done: ${note}`;
     }
     case "steps": {

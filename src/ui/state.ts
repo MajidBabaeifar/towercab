@@ -661,7 +661,9 @@ export function missionCard(
       : stuck
         ? ["retry", "drop"]
         : ["reply", "retry", "drop"];
-  const exits = done ? [] : exitsOf(m.waiting ?? "", stuck);
+  const exits = done
+    ? []
+    : exitsOf(m.waiting ?? "", stuck, (dataOf(m) as { delivery?: string }).delivery !== "steps");
   const gate = kind === "spec" || kind === "plan" ? kind : kind === "code" ? "code" : null;
   const risk = riskView(m, gate);
   const points = kind === "spec" ? (currentRisk(m, "spec")?.openPoints ?? []) : [];

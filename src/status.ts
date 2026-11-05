@@ -91,7 +91,11 @@ export function renderStatus(s: StatusInput): string {
       // LOOP-76, LOOP-77: every wait lists its ways out; a stuck one only the exits that change something.
       const stuck = dataOf<{ stuck?: boolean }>(m).stuck === true;
       if (stuck) lines.push("  stuck: this came back with nothing new");
-      const exits = exitsOf(m.waiting ?? "answer the question", stuck).map((e) => e.label);
+      const exits = exitsOf(
+        m.waiting ?? "answer the question",
+        stuck,
+        dataOf<{ delivery?: string }>(m).delivery !== "steps",
+      ).map((e) => e.label);
       lines.push(`  you can: ${exits.join(", ")}`);
     }
   }

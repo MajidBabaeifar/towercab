@@ -89,8 +89,6 @@ export interface PipeData {
     /** SHIP-17, SHIP-21: the owner's steps and the "nothing to check live" claim the plan made. */
     ownerSteps?: PlanStep[];
     liveNoneWhy?: string;
-    /** PIP-112: how the intent is delivered. */
-    delivery?: "code" | "steps";
   };
   /** PIP-112, PIP-113: absent counts as `code`; `steps` means the owner does the work. */
   delivery?: "code" | "steps";

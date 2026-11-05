@@ -251,7 +251,6 @@ export const planHandler: Handler = {
             e2e: r.value.e2e ?? null,
             brief: r.value.brief,
             ownerSteps,
-            delivery,
             liveNoneWhy: (r.value.live_none_why ?? "").trim(),
           },
           access,
@@ -287,7 +286,7 @@ async function push(cx: Ctx, m: Mission): Promise<Progress> {
     d.plan!.md,
     keepUnticked(renderAccess(d.plan!.access, a, d.plan!.droppedTests), before),
     ownerText(d.plan!),
-    d.plan!.delivery ?? "code",
+    d.delivery ?? "code",
   );
   await commitToIntents(
     cx,
@@ -314,7 +313,7 @@ async function bodyOf(cx: Ctx, m: Mission): Promise<string> {
     },
     riskMd(currentRisk(m, "plan")),
     d.plan!.brief ?? "",
-    d.plan!.delivery ?? "code",
+    d.delivery ?? "code",
   );
 }
 
