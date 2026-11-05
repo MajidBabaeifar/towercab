@@ -88,6 +88,7 @@ const ACTIONS = new Set([
   "step",
   "pause",
   "resume",
+  "granted",
   "addRepo",
   "features",
   "accept",
@@ -290,7 +291,9 @@ export function startUi(o: UiOptions): UiServer {
     const repo = typeof body.repo === "string" ? body.repo : "";
     if (!ACTIONS.has(action)) return json(res, 400, { ok: false, message: `Unknown action “${action}”.` });
     const proposal = action === "accept" || action === "close";
-    const needsIntent = !["pause", "resume", "addRepo", "features", "accept", "close"].includes(action);
+    const needsIntent = !["pause", "resume", "granted", "addRepo", "features", "accept", "close"].includes(
+      action,
+    );
     if (needsIntent && !INTENT_ID.test(intent))
       return json(res, 400, { ok: false, message: "Which intent?" });
     const pr = typeof body.pr === "number" && Number.isSafeInteger(body.pr) && body.pr > 0 ? body.pr : 0;
@@ -339,7 +342,9 @@ export function startUi(o: UiOptions): UiServer {
                             ? await a.accept(pr, head)
                             : action === "close"
                               ? await a.close(pr, typeof body.text === "string" ? body.text : undefined)
-                              : await a.resume();
+                              : action === "granted"
+                                ? await (a.granted ?? (() => Promise.reject(new Error("Not available."))))()
+                                : await a.resume();
       reply = { ok: true, message };
     } catch (e) {
       reply = { ok: false, message: (e as Error).message };

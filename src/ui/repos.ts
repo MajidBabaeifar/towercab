@@ -2,13 +2,23 @@
 // progress, up next, waiting and parked, and its spend; with no repo chosen, a short summary per repo.
 // The lanes are the queue's (UI-63), the spend the board's (UI-137).
 
+import type { Db } from "../db.ts";
 import { featuresRun } from "../features.ts";
 import { type Feature, featuresPath, hasOwnLines, parseFeatures } from "../intents/features.ts";
+import { missingPermission, PERMISSION_STEP, storedSettings } from "../settings/store.ts";
 import { proposedFor, proposedSection } from "./proposed.ts";
 import { readinessBadge, setupView } from "./readiness.ts";
 import { type RepoSpend, repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
 import { ago, dbMark, lanesOf, type Snap, snapshot, type UiSources, versionOf } from "./state.ts";
-import type { FeaturesView, FeatureView, Lane, RepoSummary, ReposPage, RepoView } from "./view.ts";
+import type {
+  FeaturesView,
+  FeatureView,
+  Lane,
+  RepoSummary,
+  ReposPage,
+  RepoView,
+  SettingsView,
+} from "./view.ts";
 
 export interface ReposOpts {
   /**
@@ -76,6 +86,7 @@ async function repoView(
     repo: lane.repo,
     github: lane.github,
     ahead: lane.ahead,
+    settings: settingsView(src.db, lane.repo),
     proposed: proposedFor(proposedSection(src), src, lane.repo),
     features: await featuresView(src, s, lane, o),
     inProgress: lane.running,
@@ -85,6 +96,22 @@ async function repoView(
     done: lane.done,
     spend: repoSpendView(spend),
   };
+}
+
+/** REPO-30, REPO-32: the stored settings check in plain words; no network. */
+export function settingsView(db: Db, repo: string): SettingsView {
+  const s = storedSettings(db, repo);
+  const step = missingPermission(db) ? PERMISSION_STEP : null;
+  if (!s || (s.state === "unknown" && s.at === 0))
+    return { state: "unknown", summary: "Not checked yet", gaps: [], notes: [], at: 0, step };
+  const notes = [s.ruleset, s.note].filter((x): x is string => Boolean(x));
+  const summary =
+    s.state === "ok"
+      ? "Standard settings in place"
+      : s.state === "gaps"
+        ? `${s.gaps.length} standard setting${s.gaps.length === 1 ? " differs" : "s differ"}`
+        : "The standard settings could not be checked";
+  return { state: s.state, summary, gaps: s.gaps, notes, at: s.at, step };
 }
 
 const view = (f: Feature): FeatureView => ({ text: f.text, intent: f.intent });

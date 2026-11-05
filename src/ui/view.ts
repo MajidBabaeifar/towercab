@@ -586,8 +586,24 @@ export interface ProposedSection {
   stale: string | null;
 }
 
+/** REPO-30: the standard GitHub settings of a repo, as last checked. */
+export interface SettingsView {
+  /** `ok`, `gaps` or `unknown` (never checked). */
+  state: "ok" | "gaps" | "unknown";
+  /** The one line the page leads with. */
+  summary: string;
+  gaps: string[];
+  /** Why the ruleset or the apply was held back, or why the last check could not run. */
+  notes: string[];
+  /** When it was checked, unix seconds; 0 when never. */
+  at: number;
+  /** REPO-32: the one step the owner has, shared by every repo; null when nothing is missing. */
+  step: string | null;
+}
+
 /** UI-141: one repo's page. */
 export interface RepoView {
+  settings: SettingsView;
   /** UI-156: what the repo is missing; absent when nothing is. */
   setup?: SetupView;
   repo: string;

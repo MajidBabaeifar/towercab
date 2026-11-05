@@ -13,10 +13,11 @@ import type {
   RepoSpendView,
   RepoSummary,
   RepoView,
+  SettingsView,
   SetupView,
 } from "../../../src/ui/view.ts";
 import { AddRepoForm } from "../AddRepo.tsx";
-import { refreshFeatures } from "../api.ts";
+import { act, refreshFeatures } from "../api.ts";
 import { ErrorNote, ProposedList, ReadinessChip, StateChip, Time, WorkRow } from "../components.tsx";
 import { Alert, Check, External } from "../icons.tsx";
 import { Link } from "../router.tsx";
@@ -113,6 +114,45 @@ function RefreshButton({ repo }: { repo: string }) {
         </p>
       ) : null}
     </>
+  );
+}
+
+function Settings({ s }: { s: SettingsView }) {
+  const [result, setResult] = useState<ActionReply | null>(null);
+  const grant = async () => setResult(await act("granted"));
+  return (
+    <section class="card repo-settings" aria-labelledby="settings-h">
+      <header class="repo-sec-head">
+        <h2 id="settings-h">GitHub settings</h2>
+        {s.at ? <span class="meta">checked {new Date(s.at * 1000).toLocaleString()}</span> : null}
+      </header>
+      <p class={s.state === "gaps" ? "" : "meta"}>{s.summary}</p>
+      {s.gaps.length ? (
+        <ul class="repo-gaps">
+          {s.gaps.map((g) => (
+            <li key={g}>{g}</li>
+          ))}
+        </ul>
+      ) : null}
+      {s.notes.map((n) => (
+        <p class="meta" key={n}>
+          {n}
+        </p>
+      ))}
+      {s.step ? (
+        <p class="repo-step">
+          <span>{s.step}</span>{" "}
+          <button type="button" class="btn ghost small" onClick={() => void grant()}>
+            Done
+          </button>
+        </p>
+      ) : null}
+      {result ? (
+        <p class={`result ${result.ok ? "ok" : "err"}`} role="status">
+          <span>{result.message}</span>
+        </p>
+      ) : null}
+    </section>
   );
 }
 
@@ -221,6 +261,7 @@ function Repo({ r, readOnly }: { r: RepoView; readOnly: boolean }) {
         </span>
       </header>
       {r.setup ? <SetupSection s={r.setup} /> : null}
+      <Settings s={r.settings} />
       <Features repo={r.repo} f={r.features} />
       <Group title="In progress" count={r.inProgress.length}>
         {r.inProgress.length ? (

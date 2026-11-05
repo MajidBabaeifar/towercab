@@ -66,6 +66,8 @@ export interface Config {
   /** Repo tables Towercab ignores because the repo is in its database: name → what to do (LOOP-65). */
   ignoredRepos: Map<string, string>;
   github: { appId: number; me: string; apiBase: string } | null;
+  /** REPO-31: `[github] settings`: `check` (default) or `apply` the standard GitHub settings. */
+  githubSettings: "check" | "apply";
   telegram: { botToken: string; chatId: string; apiBase: string } | null;
   ui: { port: number };
   /** `drainMinutes`: how long a drain for an update waits before cutting runs off (LOOP-109). */
@@ -147,6 +149,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string): Config 
       me: r.login(github, "github", "me"),
       apiBase: r.url(github, "github", "api_base", "https://api.github.com"),
     },
+    githubSettings: settingsMode(r, github ?? {}),
     telegram: telegram && {
       botToken: r.str(telegram, "telegram", "bot_token", ""),
       chatId: String(telegram.chat_id ?? ""),
@@ -176,6 +179,14 @@ export function parseConfig(raw: Record<string, unknown>, file: string): Config 
     }
   }
   return config;
+}
+
+/** REPO-31: `[github] settings` is `check` (default) or `apply`. */
+function settingsMode(r: Reader, github: Record<string, unknown>): "check" | "apply" {
+  const v = github.settings;
+  if (v === undefined || v === "check") return "check";
+  if (v === "apply") return "apply";
+  throw r.err("settings must be check or apply");
 }
 
 function parseRepo(r: Reader, name: string, raw: unknown): RepoConfig {
