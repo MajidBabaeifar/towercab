@@ -1032,6 +1032,19 @@ Every way out of a wait is a button on the card that does exactly what it says.
 - After a click the card shows the done note of UI-105 ("Done by you · …").
 - Verified by: `ui: question options are buttons that do what they say`, `ui: no changes offers I did it myself`, `ui: a stuck wait offers only the other exits`, `ui: exits come from the API`
 
+### UI-168 · Teammate review on the card and the repo page
+
+The card shows who the change waits for and has a button to pass it on, and a repo's page and the card show a warning when the host asks for more approvals than the reviewers can give.
+
+- A mission at `approval:teammate_review` shows `Waiting for teammate review: alice, bob` (or `the code
+  owners`) in its card, the intent page and the Working view; it is not under Needs you, because the
+  owner has nothing to do. A mission whose Claude review did not approve shows the button **Pass on to teammates**
+  (`POST /api/missions/<id>/pass`, raising `passed_on`, PIP-143); the button is not shown otherwise.
+- `data.reviewWarning` (PIP-147) shows as a warning line on the card and the intent page. A repo with
+  teammate review on shows its reviewers on its page (UI-141) and a warning line when the host's
+  required approvals (LOOP-84) exceed the listed reviewers and no code owner is known.
+- Verified by: `ui: a card shows the teammate review wait`, `ui: pass on button raises passed_on`, `ui: the warning shows on the card and the repo page`
+
 ### UI-165 · The intent page shows each repo's part
 
 The page of a multi-repo intent lists its parts, each with its state and what it waits on.
