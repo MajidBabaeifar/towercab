@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-133..134, PIP-138..141 · **Prefix:** PIP
+**Status:** Live: PIP-1..44, PIP-46..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-133..134, PIP-138..141 · **Prefix:** PIP
 
 ## Purpose
 
@@ -426,8 +426,20 @@ Only the owner's reviews and comments move an intent; anyone else's are ignored.
 Two short commands cover what a GitHub action can't express.
 
 - `/retry` (alone in a comment by the owner on any of the intent's PRs): a fresh attempt.
-  `/release`: reserved for the ship stage (parked); today it gets a reply comment saying so.
-- Verified by: `events: retry command`, `events: release says it is parked`
+  `/release` (alone in a comment by the owner on any of the intent's PRs): Towercab answers once per
+  comment with a reply that says what the ship stage does with this PR. It starts nothing; releases
+  are made by release-please ([SHIP-30](ship.md)).
+- The reply has one line per repo of the intent, the lead first, each starting with the repo's name
+  (`owner/name`). A single-repo intent gets one line. The line depends on that repo's `live` block
+  ([SHIP-1](ship.md)) and the mission's stage:
+  - no `live` block: there is no live check, so merging the code PR is the last step;
+  - a `live` block, before the merge: after the merge Towercab waits for the deploy and runs the
+    e2e suites ([SHIP-20](ship.md));
+  - a `live` block, after the merge: what it is waiting for now (the owner's steps, the deploy, the
+    e2e suites, a rollback or a revert), in one sentence each;
+  - a `live` block, finished (`done`): it is live and passed its tests.
+  The text never says the ship stage is parked or switched off.
+- Verified by: `events: retry command`, `events: release without a live block says merging is the last step`, `events: release with a live block says what the ship stage does`, `events: release of a multi-repo intent has a line per repo`, `events: release after the merge says what it waits for`
 
 ### PIP-46 · plan.md
 
@@ -1277,6 +1289,35 @@ A refused test can be allowed later, for the running mission, without throwing t
   (PIP-116) is told it is now allowed on its next round. A mission blocked on the refusal continues. The
   intent page (PIP-118) shows the file as allowed by the owner. Towercab replies as in PIP-140.
 - Verified by: `cli: answer allow moves a refused test to allowed`, `cli: answer allow fails for a test that was not refused`, `pipeline: a reversed refusal leaves the test writable in the next guard rules`, `pipeline: a blocked mission continues after a refusal is reversed`
+
+### PIP-130 · The design treats IDs of other open spec PRs as taken
+
+Two open spec pull requests never get the same requirement numbers: the design leaves out every number another open one already added.
+
+- Before the design runs, and again before it pushes a revision, Towercab lists the open spec PRs of the repo (head `towercab/*-spec` or any PR touching `specs/`), reads the requirement headings each one adds (`### <ID> ·` lines in its diff against the base branch), and puts them in the design prompt as taken, with the IDs already on the base branch.
+- An ID the intent reserved is kept wherever it sits, gap or not, as long as nothing on `main` or in an open spec PR uses it (PIP-131). New IDs that are not reserved take the next free number after the highest taken one for the prefix. The design never renumbers a row that exists on `main` or in another PR.
+- If a check finds that an ID this PR added is also added by another open spec PR, one of the two yields: the one that is not yet approved; if neither or both are approved, the later one. The yielding PR moves its own rows to free numbers and, in the same revision, updates every reference it owns to them (its plan, its PR body, its intent).
+- If the open PRs cannot be listed (GitHub unreachable), spec writing goes on: the design is marked "IDs unchecked against open PRs", and Towercab lists the open PRs again before the spec PR is opened or updated. A clash found then is renumbered as above. The CI check (PIP-132) is the backstop.
+- Verified by: `pipeline: design prompt lists IDs added by other open spec PRs`, `pipeline: second design takes the next free ID`, `pipeline: a reserved ID in a gap is kept when free`, `pipeline: the unapproved spec PR yields a clashing ID`, `pipeline: the later spec PR yields when both are unapproved`, `pipeline: a renumbering updates the plan and PR body in the same revision`, `pipeline: design goes on and is re-checked when open spec PRs cannot be listed`
+
+### PIP-131 · Reserved IDs in an intent are checked when it is picked
+
+An intent that names requirement numbers in advance gets different ones, written back to the intent, when they are taken.
+
+- At pick, Towercab reads the IDs in the intent's `## Proposed outcome` (`spec IDs: PIP-130..132`, ranges and lists) and checks them against the base branch and the requirement IDs added by open spec PRs (PIP-130).
+- A reserved range that sits in a gap is valid when nothing on `main` or in an open spec PR uses its IDs; it is never renumbered just for being in a gap.
+- A clash renumbers the whole reserved range to the next free numbers of the same prefix, keeping its length, and rewrites that line and any other mention of the old IDs in the intent through `setField`-style edits that leave other lines byte-identical; the new numbers are what the design gets as its reserved IDs.
+- The change is committed to the intents repo like any intent edit (INT rules) and noted in the mission's log; nothing else in the intent changes. No clash → the intent is untouched.
+- Verified by: `pipeline: reserved IDs that clash are renumbered at pick`, `pipeline: renumbered IDs are written back to the intent`, `pipeline: free reserved IDs leave the intent untouched`, `pipeline: a reserved range in a gap is not renumbered`
+
+### PIP-132 · A check fails a spec PR that reuses a requirement ID
+
+A pull request that adds a requirement ID already taken fails a check, so duplicates are caught without reading diffs.
+
+- `towercab specs check-ids` (also run by `npm run check`) compares the requirement headings a PR adds with the base branch: an added `### <ID> ·` whose ID already exists there fails with the ID, the file and the reason. Repos that use this spec format run the same command in their CI.
+- In Towercab's own CI the check also fails when an ID the PR adds is added by another open PR, naming that PR. It needs the PR list from GitHub, so it is skipped with a note where none is available (a fork, a local run).
+- Moving or editing an existing heading is not an add; a heading that keeps `Removed: <why>` stays and its ID is still taken.
+- Verified by: `specs: an added ID that exists on main fails the check`, `specs: an added ID that another open PR adds fails the check`, `specs: editing an existing requirement passes the check`, `specs: the open PR comparison is skipped without a PR list`
 
 ### PIP-119 · An outcome only the owner can do doesn't block approval
 

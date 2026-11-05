@@ -1,0 +1,100 @@
+# Changelog
+
+## [2.0.0](https://github.com/MajidBabaeifar/towercab/compare/v1.0.0...v2.0.0) (2026-11-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **autonomy:** no `a` now means a5, and a4 plans merge without the owner when their risk is low.
+* Towercab v2 in TypeScript ([#58](https://github.com/MajidBabaeifar/towercab/issues/58))
+* **specs:** Towercab v2 ([#57](https://github.com/MajidBabaeifar/towercab/issues/57))
+* **pipeline:** bin/towercab and the Python package are gone; install the Rust binary with cargo install --path . --locked. The Python version stays on branch python.
+
+### Features
+
+* **agents:** review passes, plan files, score sections ([#88](https://github.com/MajidBabaeifar/towercab/issues/88)) ([7fb9173](https://github.com/MajidBabaeifar/towercab/commit/7fb9173ecc5a96f45e7999ad7cf2782e242871a4))
+* **autonomy:** a1-a3 wait for my plan review ([#42](https://github.com/MajidBabaeifar/towercab/issues/42)) ([f631182](https://github.com/MajidBabaeifar/towercab/commit/f631182ae4bb008716745a5104e03e829abf86c6))
+* **autonomy:** repo caps, gate, spec gate and lower_a ([#30](https://github.com/MajidBabaeifar/towercab/issues/30)) ([e182bf1](https://github.com/MajidBabaeifar/towercab/commit/e182bf159ef72734dcf8007599532dbd684e5edb))
+* **autonomy:** risk decides the gates ([#114](https://github.com/MajidBabaeifar/towercab/issues/114)) ([9eb49e9](https://github.com/MajidBabaeifar/towercab/commit/9eb49e9ab9f7c6167947dca395f20b2104c3ce3b))
+* **claude:** sandbox_unix_sockets for Ubuntu userns restriction ([#44](https://github.com/MajidBabaeifar/towercab/issues/44)) ([5b5dfbf](https://github.com/MajidBabaeifar/towercab/commit/5b5dfbf3b48ca1def05f68c7c408f0f7780e83dc))
+* **cli:** towercab add, migrate and --version ([fa7385f](https://github.com/MajidBabaeifar/towercab/commit/fa7385faf0ff90d6b02bab82b9c9d09e0512f43a))
+* **intents:** gitHub issues become scored intents on the queue ([#71](https://github.com/MajidBabaeifar/towercab/issues/71)) ([2f58653](https://github.com/MajidBabaeifar/towercab/commit/2f58653c9ab8d5e80dc02a58198eb5f1b5114010))
+* **intents:** Rust crate with the intent store, views and migrate ([b3bb41d](https://github.com/MajidBabaeifar/towercab/commit/b3bb41dbf6b4b7508100cee1662862bfa39eab75))
+* **loop:** design and plan the next intents while one builds ([#81](https://github.com/MajidBabaeifar/towercab/issues/81)) ([5f6c99c](https://github.com/MajidBabaeifar/towercab/commit/5f6c99ccf123684d87cdde0f82cd7929317e0de4))
+* **loop:** towercab run: state machine, limits, recovery, Telegram, GitHub App ([#29](https://github.com/MajidBabaeifar/towercab/issues/29)) ([1a4a0bd](https://github.com/MajidBabaeifar/towercab/commit/1a4a0bd4a813c7fe76152ae8ab6a5b0e554b9855))
+* **maintain:** bands, Western Electric detection, tiers and lessons ([#33](https://github.com/MajidBabaeifar/towercab/issues/33)) ([feb91b9](https://github.com/MajidBabaeifar/towercab/commit/feb91b94e40d450fd167f9c8d8a7124fa7b9f61b))
+* **metrics:** OTLP emitter, playbook indicators, towercab telemetry ([#32](https://github.com/MajidBabaeifar/towercab/issues/32)) ([292fbb9](https://github.com/MajidBabaeifar/towercab/commit/292fbb91cf7f05ee29b5c0a7fd056b45d5ad49d0))
+* **ops:** Grafana dashboard by playbook stage and Claude telemetry switch ([#25](https://github.com/MajidBabaeifar/towercab/issues/25)) ([7ad35fb](https://github.com/MajidBabaeifar/towercab/commit/7ad35fb3239ff8925de3842e59dcc53560e07793))
+* **pipeline:** auto-resolve spec conflicts ([#156](https://github.com/MajidBabaeifar/towercab/issues/156)) ([9b9c1fa](https://github.com/MajidBabaeifar/towercab/commit/9b9c1fa05ccf20ed4d7a057bb9ea2bb04790da11))
+* **pipeline:** design to release; Python leaves main ([#31](https://github.com/MajidBabaeifar/towercab/issues/31)) ([c94c2f6](https://github.com/MajidBabaeifar/towercab/commit/c94c2f66cc9417e3c292a0ac64857a98357867c9))
+* **pipeline:** Fast checks before publish, the full suite in CI ([#47](https://github.com/MajidBabaeifar/towercab/issues/47)) ([6d75a1e](https://github.com/MajidBabaeifar/towercab/commit/6d75a1e9b55cdab610158e0e578c89fe789001d7))
+* **pipeline:** guard existing tests ([#147](https://github.com/MajidBabaeifar/towercab/issues/147)) ([c45d374](https://github.com/MajidBabaeifar/towercab/commit/c45d374310ad3f6c078d29b38c076b1d7d6e61a2))
+* **pipeline:** one config file per stage agent ([#74](https://github.com/MajidBabaeifar/towercab/issues/74)) ([5bc28dc](https://github.com/MajidBabaeifar/towercab/commit/5bc28dca944c53971ad510a6524f366ccbbe0449))
+* **pipeline:** revise red spec PRs automatically, with failing CI logs in the prompt ([#89](https://github.com/MajidBabaeifar/towercab/issues/89)) ([c050f2d](https://github.com/MajidBabaeifar/towercab/commit/c050f2d9b61f9647944cd3cbfa6824acd7ef4546))
+* plain briefs and plain intent titles ([#117](https://github.com/MajidBabaeifar/towercab/issues/117)) ([e23c652](https://github.com/MajidBabaeifar/towercab/commit/e23c652a28b9554ea1f2ce0a086ebf5037c7f70e))
+* **priority:** pick order, cutoff and towercab review ([#27](https://github.com/MajidBabaeifar/towercab/issues/27)) ([d6ec216](https://github.com/MajidBabaeifar/towercab/commit/d6ec216d7912605a95464209bfcd9bc53d2b02d7))
+* **proof:** proof runs the PR's checks block when the PR changes it (unlocked CLAUDE.md), so a test added to checks can prove the change ([#66](https://github.com/MajidBabaeifar/towercab/issues/66)) ([3f7198f](https://github.com/MajidBabaeifar/towercab/commit/3f7198f672c26bf60985e60ec44d1dd14378967b))
+* **public:** issue and PR templates for the Towercab repo ([#108](https://github.com/MajidBabaeifar/towercab/issues/108)) ([b861b8d](https://github.com/MajidBabaeifar/towercab/commit/b861b8d491be38a26270a8be3b506e6e7ab8b0e6))
+* **repo:** repo files, protected paths and towercab protect ([#28](https://github.com/MajidBabaeifar/towercab/issues/28)) ([556db25](https://github.com/MajidBabaeifar/towercab/commit/556db2554bc28318aa7bc0ef5eee9cf929f743a3))
+* repos at runtime ([#113](https://github.com/MajidBabaeifar/towercab/issues/113)) ([68fb764](https://github.com/MajidBabaeifar/towercab/commit/68fb76474875bf763b97b3df23346863e10311fe))
+* **ship:** deploy, e2e, rollback and fix forward after merge ([#103](https://github.com/MajidBabaeifar/towercab/issues/103)) ([872e181](https://github.com/MajidBabaeifar/towercab/commit/872e18108dce06e2ec61b674d86318c64b82fa9f))
+* **ship:** done means works live ([#161](https://github.com/MajidBabaeifar/towercab/issues/161)) ([94363a5](https://github.com/MajidBabaeifar/towercab/commit/94363a54a8a9ef0b4d66b095ed5c6d354e49fd76))
+* **skills:** /intent skill, linked by install.sh ([dfdf792](https://github.com/MajidBabaeifar/towercab/commit/dfdf7925c7050b48fc987ae6a9366ee5bc3cd051))
+* Towercab v2 in TypeScript ([#58](https://github.com/MajidBabaeifar/towercab/issues/58)) ([5320f98](https://github.com/MajidBabaeifar/towercab/commit/5320f981dab254c43d147378ccd4584bc859fa20))
+* **ui:** airspace shows a paused loop as a ground stop ([#120](https://github.com/MajidBabaeifar/towercab/issues/120)) ([0cbdc84](https://github.com/MajidBabaeifar/towercab/commit/0cbdc849a93c08f7b8ce80e3c2b8db015c31aec2))
+* **ui:** airspace strip on the overview ([#79](https://github.com/MajidBabaeifar/towercab/issues/79)) ([53a5c9a](https://github.com/MajidBabaeifar/towercab/commit/53a5c9a100ecf7c313be344ae6a0bd52e0660178))
+* **ui:** board tab and spend per repo ([#112](https://github.com/MajidBabaeifar/towercab/issues/112)) ([b551f77](https://github.com/MajidBabaeifar/towercab/commit/b551f77d973152db19676a05a7b65826c4e42a4f))
+* **ui:** intents list and edits, intent pages, repos panel ([#39](https://github.com/MajidBabaeifar/towercab/issues/39)) ([3b613a6](https://github.com/MajidBabaeifar/towercab/commit/3b613a6268cfa4873773a3bed0e1f8512f138f1d))
+* **ui:** keep showing "Merged by you" on the card after reload until the loop moves on ([#119](https://github.com/MajidBabaeifar/towercab/issues/119)) ([17f8282](https://github.com/MajidBabaeifar/towercab/commit/17f8282850d1c32a177bf64e1b1161a93c970d8b))
+* **ui:** local web page with actions ([#35](https://github.com/MajidBabaeifar/towercab/issues/35)) ([fec0708](https://github.com/MajidBabaeifar/towercab/commit/fec070892ddd983a54f6fc4941db1a52092e976d))
+* **ui:** recently finished on the overview ([#41](https://github.com/MajidBabaeifar/towercab/issues/41)) ([e0e6a00](https://github.com/MajidBabaeifar/towercab/commit/e0e6a005aebe24e5e621486ccf3899febcde17e1))
+* **ui:** repos tab and feature lists ([#115](https://github.com/MajidBabaeifar/towercab/issues/115)) ([c464d96](https://github.com/MajidBabaeifar/towercab/commit/c464d96dd69fe058f783518c4926f14a340e029b))
+* **ui:** ship stages and every code PR on the intent page ([#109](https://github.com/MajidBabaeifar/towercab/issues/109)) ([1d97389](https://github.com/MajidBabaeifar/towercab/commit/1d973893d772c3acc80b04488cd6329b9fdf2187))
+* **ui:** ship stations stay; rollback and fix planes marked ([#110](https://github.com/MajidBabaeifar/towercab/issues/110)) ([b40e1fd](https://github.com/MajidBabaeifar/towercab/commit/b40e1fd4b9c2b4b3efaeec4422641cdc8f4a82af))
+* **ui:** stage map with each stage's logs on the intent page ([#94](https://github.com/MajidBabaeifar/towercab/issues/94)) ([edd55e1](https://github.com/MajidBabaeifar/towercab/commit/edd55e1955376c348263054c9b04544fa94f5ff3))
+
+
+### Bug Fixes
+
+* **build:** a worker stopped by a compound-command refusal is resumed once ([#54](https://github.com/MajidBabaeifar/towercab/issues/54)) ([b98e7f1](https://github.com/MajidBabaeifar/towercab/commit/b98e7f19a0555f369066290d9730d41602545515))
+* **commands:** my continue gives a red CI run one fresh rerun ([#50](https://github.com/MajidBabaeifar/towercab/issues/50)) ([6520895](https://github.com/MajidBabaeifar/towercab/commit/652089500250738c77346856392d12dd71639d3d))
+* **events:** conflict merges the base first ([#116](https://github.com/MajidBabaeifar/towercab/issues/116)) ([3119ce3](https://github.com/MajidBabaeifar/towercab/commit/3119ce35fec2aecabe183e8fc247d95a883706a8))
+* **github:** App git access to private repos ([#61](https://github.com/MajidBabaeifar/towercab/issues/61)) ([ecd9e85](https://github.com/MajidBabaeifar/towercab/commit/ecd9e85bb8b2b1b853ae7557272e0adce54ec28b))
+* **intents:** broken Markdown in an intent is reported, not read as empty ([#76](https://github.com/MajidBabaeifar/towercab/issues/76)) ([04ce28e](https://github.com/MajidBabaeifar/towercab/commit/04ce28e5a3f954120baba212e61cb9dd0bcc4940))
+* **intents:** every folder's ID is taken; suffixes resolve open first ([f3071ed](https://github.com/MajidBabaeifar/towercab/commit/f3071ed4b517c81f0228d5c76ae0109b76afd8b7))
+* **intents:** git in its own env; clone --; never follow symlinks ([2c04bc1](https://github.com/MajidBabaeifar/towercab/commit/2c04bc13fb16245da1cb5389456c8b7eb1290d60))
+* **intents:** issues become intent PRs the owner merges ([#143](https://github.com/MajidBabaeifar/towercab/issues/143)) ([3f9f1ff](https://github.com/MajidBabaeifar/towercab/commit/3f9f1ffa6df91a0283034f54cfa91cb8c496525e))
+* **intents:** migrate drops nothing; note waits only for [!]/[~] ([26e725a](https://github.com/MajidBabaeifar/towercab/commit/26e725adc4ec9854cc28850ed7f91f3496030f3d))
+* **intents:** one store op at a time; recover writes killed before push ([2ce65ed](https://github.com/MajidBabaeifar/towercab/commit/2ce65ed84a271db26c6561eebe675422b18cd8e9))
+* **intents:** set/remove only Towercab fields; safe repo names, after ids ([64bb82b](https://github.com/MajidBabaeifar/towercab/commit/64bb82b9bc3d5acb11118daf281dabfa528c0730))
+* **intents:** views put every value on one line ([e984c25](https://github.com/MajidBabaeifar/towercab/commit/e984c25633a8c35a1348a76f2351edf5c9060dfa))
+* **loop:** a run that waits for a slot keeps its prompt ([#90](https://github.com/MajidBabaeifar/towercab/issues/90)) ([a8595df](https://github.com/MajidBabaeifar/towercab/commit/a8595dfa9d6e6578d9eea94846b953a440d67a59))
+* **loop:** drain for self-update ([#170](https://github.com/MajidBabaeifar/towercab/issues/170)) ([39d04cf](https://github.com/MajidBabaeifar/towercab/commit/39d04cf0137a60fd932c51e8aeb59f388b02a8c8))
+* **loop:** gh 2.46 calls only; one-line log lines ([#34](https://github.com/MajidBabaeifar/towercab/issues/34)) ([45b50b1](https://github.com/MajidBabaeifar/towercab/commit/45b50b1c22ee043ce386765145748eb84cd395f8))
+* **loop:** my merge of the spec PR approves it; moves logged ([#40](https://github.com/MajidBabaeifar/towercab/issues/40)) ([9500196](https://github.com/MajidBabaeifar/towercab/commit/9500196d741a1adc59a6852b93977673f6c377cf))
+* **loop:** restart on code change ([#160](https://github.com/MajidBabaeifar/towercab/issues/160)) ([e807405](https://github.com/MajidBabaeifar/towercab/commit/e807405f1a62454884a019ce9b47132dad9cbc9c))
+* **pick:** parked intents wait for me ([#37](https://github.com/MajidBabaeifar/towercab/issues/37)) ([3f36177](https://github.com/MajidBabaeifar/towercab/commit/3f3617792b71d138a68abbee4efb2df2025eb741))
+* **pipeline:** a repair round that changes nothing asks the owner ([#91](https://github.com/MajidBabaeifar/towercab/issues/91)) ([9180e5b](https://github.com/MajidBabaeifar/towercab/commit/9180e5b421eaa22a75b8bc221c0f5282cf77a500))
+* **pipeline:** ask before checks write the build cache ([#107](https://github.com/MajidBabaeifar/towercab/issues/107)) ([f5f3b69](https://github.com/MajidBabaeifar/towercab/commit/f5f3b690499667f41610b817da7d845b15163acf))
+* **pipeline:** build rounds start from a clean checkout; protect AGENTS.md ([#92](https://github.com/MajidBabaeifar/towercab/issues/92)) ([01662f1](https://github.com/MajidBabaeifar/towercab/commit/01662f1969916e9790d30fb8fd857e7feea84eea))
+* **pipeline:** design keeps new spec rows out of the Live status line ([#65](https://github.com/MajidBabaeifar/towercab/issues/65)) ([b392bec](https://github.com/MajidBabaeifar/towercab/commit/b392beca36704fe1ec272fd74ac02cff13d54fee))
+* **pipeline:** design writes nothing else on the Status line ([#70](https://github.com/MajidBabaeifar/towercab/issues/70)) ([a0f79ee](https://github.com/MajidBabaeifar/towercab/commit/a0f79eef1bb776df2af08323fb19268f8f2319a6))
+* **pipeline:** owner steps don't block approval ([#152](https://github.com/MajidBabaeifar/towercab/issues/152)) ([f00ddde](https://github.com/MajidBabaeifar/towercab/commit/f00ddde0dbebb2b039926cd88d0d017460799abb))
+* **pipeline:** proof repair says what runs on base ([#93](https://github.com/MajidBabaeifar/towercab/issues/93)) ([34d805a](https://github.com/MajidBabaeifar/towercab/commit/34d805a8a2aa0eb468b133f75a6abd1cf7bc54f7))
+* **pipeline:** publish past leftover branches, and delete the branches of closed PRs ([#87](https://github.com/MajidBabaeifar/towercab/issues/87)) ([61d1bce](https://github.com/MajidBabaeifar/towercab/commit/61d1bcef53e9d8cd97d8c919dcabde0fb17550c9))
+* **pipeline:** read conditional yes as allow ([#162](https://github.com/MajidBabaeifar/towercab/issues/162)) ([40ca94e](https://github.com/MajidBabaeifar/towercab/commit/40ca94e222321b2779863d8c2f1d15c57e28c2b3))
+* **proof:** setup runs on the bare base, then the tests are laid ([#55](https://github.com/MajidBabaeifar/towercab/issues/55)) ([62c689e](https://github.com/MajidBabaeifar/towercab/commit/62c689eb9f699743f6a40d1ceee9c75a112cbdd2))
+* **publish:** an unchanged head after red CI gets an empty commit, so CI runs afresh ([#52](https://github.com/MajidBabaeifar/towercab/issues/52)) ([6a220e4](https://github.com/MajidBabaeifar/towercab/commit/6a220e4a9135fe0f5d2023f40a1d8c26255796c6))
+* **publish:** base merges may change pushed tests ([#118](https://github.com/MajidBabaeifar/towercab/issues/118)) ([e8f5362](https://github.com/MajidBabaeifar/towercab/commit/e8f53622fbfd222e9eaab7f673e97fd3e994d3b9))
+* **repo:** install the Playwright browser in Towercab missions so screenshots run ([#78](https://github.com/MajidBabaeifar/towercab/issues/78)) ([c12ee82](https://github.com/MajidBabaeifar/towercab/commit/c12ee82b76ea9cee04180be373137b30c239a4f9))
+* **ship:** fetch base before reading the live block ([#104](https://github.com/MajidBabaeifar/towercab/issues/104)) ([52d18a6](https://github.com/MajidBabaeifar/towercab/commit/52d18a62e768a2d1e880c6632d8137d1fd7bcd7a))
+* **skills:** /intent commits the title through a quoted heredoc ([#26](https://github.com/MajidBabaeifar/towercab/issues/26)) ([95d8d49](https://github.com/MajidBabaeifar/towercab/commit/95d8d491346c7510cf71b53cad341c6b238933bc))
+* Towercab resolves every wait itself; one intent per repo ([#49](https://github.com/MajidBabaeifar/towercab/issues/49)) ([3c4ea37](https://github.com/MajidBabaeifar/towercab/commit/3c4ea378fa69cf7ef630463f1739be336b5c8114))
+* **ui:** the loop retries a held UI port; a standalone ui yields to the loop ([#53](https://github.com/MajidBabaeifar/towercab/issues/53)) ([ec6175d](https://github.com/MajidBabaeifar/towercab/commit/ec6175d848aa46001614af396409f6863f2b79d2))
+* v2's first run on v1 leftovers ([#60](https://github.com/MajidBabaeifar/towercab/issues/60)) ([7595e21](https://github.com/MajidBabaeifar/towercab/commit/7595e21d0e2a24213cfec31a9980f3f258aad575))
+* workers get a writable cache; a check timeout waits on me ([#51](https://github.com/MajidBabaeifar/towercab/issues/51)) ([cc07499](https://github.com/MajidBabaeifar/towercab/commit/cc074991c402cb83c06df9dd736abf022b5a49c0))
+
+
+### Documentation
+
+* **specs:** Towercab v2 ([#57](https://github.com/MajidBabaeifar/towercab/issues/57)) ([c8b2326](https://github.com/MajidBabaeifar/towercab/commit/c8b2326e8c5d34e2aa27614d334f6619aae353cc))

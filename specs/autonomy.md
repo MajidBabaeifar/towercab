@@ -231,7 +231,7 @@ in the same attempt instead of starting over.
 ## Out of scope
 
 - Raising autonomy automatically.
-- Repo caps after a revert (parked with the ship stage).
+- Repo caps after a revert (not built; the ship stage itself is live, [SHIP-12](ship.md)).
 - Tracking how often the owner overrides the risk gate (parked for a later batch).
 
 ## Decisions
