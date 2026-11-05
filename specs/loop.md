@@ -722,9 +722,14 @@ intents that waited for it start.
   and rulesets with a pull-request rule) and, when it requires 1 or more approvals, prints `<name>:
   GitHub requires <n> approval(s) but teammate review is off: run towercab repo set <name>
   teammate_review=on reviewers=<logins>`. It is a warning: the exit code does not change.
+- For each repo with `teammate_review=on` and a non-empty list, when the host requires `n` approvals
+  and fewer than `n` reviewers are listed (the owner never counts), it prints `<name>: GitHub requires
+  <n> approvals but only <k> reviewers are listed: run towercab repo set <name> reviewers=…`. An empty
+  list is not warned here: code owners may supply them (PIP-142); the PR's card warns when they don't
+  (PIP-147).
 - A repo whose protection cannot be read (no permission, 404) prints nothing for it and `doctor --quick`
   (LOOP-35) skips the check; it never fails because of it.
-- Verified by: `doctor: a required approval with teammate review off is a warning`, `doctor: an unreadable branch protection is not a warning`
+- Verified by: `doctor: a required approval with teammate review off is a warning`, `doctor: an unreadable branch protection is not a warning`, `doctor: fewer listed reviewers than required approvals is a warning`
 
 ### LOOP-70 · A repo set to block starts no new intent
 

@@ -1287,37 +1287,49 @@ In a repo that needs a teammate's review, only an approval from someone other th
   is stale and does not count), whose author is not `[github].me`, not the App's bot and not the PR's
   author when that is the owner. The Claude review (PIP-4) and the owner's own Approve (PIP-43) never
   count; a later `CHANGES_REQUESTED` from the same reviewer replaces their earlier approval.
-- With a non-empty `reviewers` list, only a listed login counts, and one is enough. With an empty list
-  and CODEOWNERS (or any reviewer the host requested), the approval counts when the host reports the
-  PR `APPROVED` (`reviewDecision`) and the approving login passes the rules above. With an empty list,
-  no CODEOWNERS and no reviewer the host requested, nobody is known to review: the mission asks the
-  owner to list reviewers (`towercab repo set <name> reviewers=…`, LOOP-83) and does not merge.
-- Verified by: `pipeline: only a listed reviewer's approval counts`, `pipeline: the owner's approval is not a teammate approval`, `pipeline: an approval of an older head is stale`, `pipeline: an empty list uses the host's decision`, `pipeline: no reviewers and no CODEOWNERS asks the owner`
+- The PR's **reviewers** are the logins in `reviewers` (LOOP-83) plus every login the host has
+  requested review from, code owners included (`reviewRequests`, read with the PR, PIP-21). The host
+  drops a request once that person reviews, so Towercab keeps every requested login it has seen in
+  `data.requestedReviewers`. The owner and the bot are never reviewers. One approval from a reviewer is
+  enough for Towercab; the host's own rules must also be met (PIP-147).
+- With no listed login, no requested login and none seen earlier, nobody is known to review: the
+  mission asks the owner to list reviewers (`towercab repo set <name> reviewers=…`, LOOP-83) and does
+  not merge.
+- Verified by: `pipeline: a reviewer's approval counts`, `pipeline: the owner's approval is not a teammate approval`, `pipeline: an approval of an older head is stale`, `pipeline: a code owner's approval counts with an empty list`, `pipeline: a requested reviewer is remembered after reviewing`, `pipeline: no reviewers and no CODEOWNERS asks the owner`, `pipeline: someone neither listed nor requested does not approve`
 
 ### PIP-143 · Review is requested once the PR is ready
 
-When the code PR is ready, Towercab asks the listed reviewers (or the code owners) to review and shows who it is waiting for.
+When the code PR is ready, Towercab asks the listed reviewers (or the code owners) to review and shows who it is waiting for; if the automated review did not approve, the owner looks first.
 
-- "Ready" = not draft, CI green (PIP-3) and the Claude review approved (PIP-5), or used up its fix
-  rounds and handed over (PIP-98). Then, once per head, Towercab requests review from the `reviewers`
-  list (`gh api -X POST repos/<r>/pulls/<n>/requested_reviewers`); with an empty list it requests
-  nobody and leaves it to CODEOWNERS. A reviewer whose request fails (not a collaborator) is named in
-  an owner step; the others are still requested.
+- "Ready" = not draft, CI green (PIP-3) and the Claude review approved (PIP-5). Then, once per head,
+  Towercab requests review from the `reviewers` list (`gh api -X POST
+  repos/<r>/pulls/<n>/requested_reviewers`); with an empty list it requests nobody and leaves it to
+  CODEOWNERS. A reviewer whose request fails (not a collaborator) is named in an owner step; the
+  others are still requested.
+- A PR the Claude review did not approve (after its fix rounds, PIP-98) waits for the owner as the
+  gate says (PIP-7, `approval:merge`, worded for this case as "look at it, then pass it on to your
+  teammates"). Teammates are asked only after the owner **passes it on**: the owner's Approve review
+  on the PR, a comment that is exactly `/pass` (alongside PIP-45's commands), or the card's button
+  (UI-168) raises `passed_on`. Pass-on holds for the head it was given on; a new head is reviewed
+  by Claude again and, if not approved, comes back to the owner. Passing on is not a merge: the owner's
+  Approve never merges here (PIP-144).
 - The mission waits as `approval:teammate_review` (`waiting: teammate review from alice, bob`, or
   `from the code owners`, worded plainly per PIP-110). `status`, `next`, the intent page and the
   stage comment (PIP-42) show the same wait. It does not use a build place (LOOP-100) and has a way out
   (LOOP-76): the owner can `/retry`, change the list, or close the PR.
 - A new head (after a repair round) asks again and drops the wait on the old approval (PIP-142).
-- Verified by: `pipeline: a ready PR requests the listed reviewers`, `pipeline: an empty list leaves the request to CODEOWNERS`, `pipeline: the wait names the reviewers`, `pipeline: a draft PR requests nobody`, `pipeline: a new head asks again`
+- Verified by: `pipeline: a ready PR requests the listed reviewers`, `pipeline: an empty list leaves the request to CODEOWNERS`, `pipeline: the wait names the reviewers`, `pipeline: a draft PR requests nobody`, `pipeline: a new head asks again`, `pipeline: an unapproved review goes to the owner before the teammates`, `pipeline: the owner passing it on requests the teammates`, `events: pass comment and approve review pass it on`
 
 ### PIP-144 · Nothing merges without the teammate's approval
 
 In such a repo the gate never merges before a teammate approval, at any autonomy level.
 
-- PIP-7's table gets one row, checked first of the rows that decide who merges: no teammate approval
-  on the gated head (PIP-142) → `approval:teammate_review` (PIP-143), at `a` 4 and 5 too, whatever the
-  risk level (AUT-18) or caps. Once approved, the rest of the table applies unchanged; at `a` ≤ 3
-  the owner still merges, and an Approve by the owner on the PR does not merge it (PIP-43).
+- PIP-7's table gets one row, right after its rows for CI and the review: no teammate approval on the
+  gated head (PIP-142) → `approval:teammate_review` (PIP-143), at `a` 4 and 5 too, whatever the risk
+  level (AUT-18) or caps. In this repo the "review not approved" row holds for the owner until the
+  owner passes it on (PIP-143); after that the teammate row applies. Once approved, the rest of the
+  table applies unchanged; at `a` ≤ 3 the owner still merges, and an Approve by the owner on the PR
+  passes it on but does not merge it (PIP-43).
 - Towercab merging (PIP-22) re-checks the approval on the head it merges. If the host refuses the
   merge for the review rule, the mission goes back to this wait; Towercab never works around the host's
   rules, and the host's rules and the list are both required (a listed approval does not override a
@@ -1327,19 +1339,20 @@ In such a repo the gate never merges before a teammate approval, at any autonomy
   owner's own.
 - Verified by: `pipeline: gate waits for a teammate approval at a4 and a5`, `pipeline: owner approve does not merge in a teammate review repo`, `pipeline: merge re-checks the approval on the head`, `pipeline: a spec PR waits for a teammate approval`, `pipeline: a plan PR does not wait for a teammate`
 
-### PIP-145 · A listed reviewer's feedback starts a repair round
+### PIP-145 · A reviewer's feedback starts a repair round
 
-A listed reviewer's request for changes or comment is treated like the owner's feedback, and nobody else's is.
+A request for changes or comment from a listed reviewer or a reviewer the host requested (code owners included) is treated like the owner's feedback, and nobody else's is.
 
-- Extends PIP-44 for repos with `teammate_review=on`: reviews and comments by a login in `reviewers`
-  (case-insensitive, never the bot) raise `feedback` (PIP-43) with their text, prefixed with who wrote
+- Extends PIP-44 for repos with `teammate_review=on`: reviews and comments by one of the PR's reviewers
+  (PIP-142: listed, or requested by the host and remembered; case-insensitive, never the bot
+  or the owner) raise `feedback` (PIP-43) with their text, prefixed with who wrote
   it (`alice asked for changes: …`). A review in state `CHANGES_REQUESTED`, or a non-empty comment or
   review body, counts; a plain `APPROVED` with no body does not. Inline review comments (PIP-21) count.
   They follow `feedback_seen` as the owner's do.
 - The feedback starts a repair round like the owner's, goes into the continue prompt (PIP-37) and
   clears the teammate approval of the old head. Slash commands (PIP-45) and `allow` replies still
-  need the owner. Anyone not listed, and any commenter when the list is empty, is ignored as before.
-- Verified by: `events: a listed reviewer's request for changes is feedback`, `events: a listed reviewer's comment is feedback`, `events: an unlisted reviewer is ignored`, `events: a reviewer cannot send slash commands`, `pipeline: reviewer feedback names who wrote it`
+  need the owner. Anyone who is neither listed nor requested by the host is ignored as before.
+- Verified by: `events: a listed reviewer's request for changes is feedback`, `events: a listed reviewer's comment is feedback`, `events: a code owner's request for changes is feedback`, `events: someone neither listed nor requested is ignored`, `events: a reviewer cannot send slash commands`, `pipeline: reviewer feedback names who wrote it`
 
 ### PIP-146 · The owner answers for the PR
 
@@ -1349,6 +1362,22 @@ In a repo that needs a teammate's review, the PR is assigned to the owner.
   them (`gh pr edit --add-assignee`, once; a failure is logged, not a wait). Plan PRs in the owner's
   intents repo are not assigned. A repo with the setting off is unchanged.
 - Verified by: `pipeline: the owner is assigned to the code and spec PRs`, `pipeline: plan PRs are not assigned`
+
+### PIP-147 · A warning when the host asks for more approvals than the reviewers can give
+
+When the host's rules need approvals the reviewers can't supply, Towercab says so on the PR's card and the repo page so the owner can fix the list.
+
+- Both the reviewers' approval (PIP-142) and the host's rules must be met; Towercab never merges around
+  the host. The mission carries `data.reviewWarning` (text, or none) while either holds, for a PR
+  waiting at `approval:teammate_review` or refused by the host for its review rule (PIP-144):
+  the host requires `n` approvals (branch protection or ruleset, as in LOOP-84) and the reviewers
+  (PIP-142, minus the PR's author) number fewer than `n`; or the PR has the reviewers' approval but the
+  host still reports it `REVIEW_REQUIRED` or the merge is refused for approvals.
+- Text, plain (PIP-110): `GitHub needs <n> approvals and your reviewers can give <k>: add reviewers
+  with towercab repo set <name> reviewers=…`, or `GitHub still wants an approval you have not got: …
+  from <who the host asks, e.g. the code owners>`. It clears when the cause is gone. It does not
+  stop the wait and is shown, not sent as a message (LOOP-14).
+- Verified by: `pipeline: too few reviewers for the host's rule sets a warning`, `pipeline: a host that still wants approval after the reviewers' sets a warning`, `pipeline: the warning clears when the list is fixed`
 
 ### PIP-119 · An outcome only the owner can do doesn't block approval
 
