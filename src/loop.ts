@@ -65,12 +65,15 @@ import {
   unfinishedFor,
   update,
 } from "./mission.ts";
+import { Mutex } from "./mutex.ts";
 import { sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import type { PipeData } from "./pipeline/common.ts";
 import { writeTicks } from "./pipeline/steps.ts";
 import { isParked, priority } from "./priority.ts";
+import { blockingRepos, startReadiness as startReadinessCheck } from "./readiness.ts";
+import { missingText } from "./repo/readiness.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
 import { runReleases } from "./ship/releases.ts";
@@ -109,6 +112,10 @@ export interface LoopDeps {
   readProposed?: () => Promise<ProposedPr[]>;
   /** Self-update (LOOP-35); off in tests. */
   selfUpdate?: boolean;
+  /** REPO-24: check each repo's setup when it is fetched, and propose setup intents (LOOP-71); off in tests. */
+  readiness?: boolean;
+  /** The limit of one readiness check (default 60 s); tests shorten it. */
+  readinessLimitMs?: number;
   /** The checkout this loop's code runs from (LOOP-105); default the one this file is in. */
   codeRoot?: string;
   /** INT-39: when a backfill run's time is up (default a real timer; tests resolve it themselves). */
@@ -165,6 +172,9 @@ export class Loop {
   private issuesRun: Promise<void> | null = null;
   /** INT-39: the feature-list backfill running now, and how to stop it. */
   private featuresJob: Promise<void> | null = null;
+  private readinessJob: Promise<void> | null = null;
+  /** Held by every handler call and by the readiness fetch: two fetches of one clone never overlap. */
+  private readonly cloneLock = new Mutex();
   private featuresStop: (() => void) | null = null;
   /** Why the last issue poll failed (INT-21); while set, the other GitHub reads don't close the fault. */
   private issuesError: string | null = null;
@@ -267,7 +277,14 @@ export class Loop {
   private restartIfMoved(): void {
     if (this.stopping) return;
     const to = this.codeMoved();
-    if (to === null || this.children.size > 0 || this.featuresJob !== null || this.issuesRun !== null) return;
+    if (
+      to === null ||
+      this.children.size > 0 ||
+      this.featuresJob !== null ||
+      this.readinessJob !== null ||
+      this.issuesRun !== null
+    )
+      return;
     this.d.log(
       `the checkout moved from ${this.startCommit} to ${to}; restarting so the loop and its guard run the same code`,
     );
@@ -279,6 +296,7 @@ export class Loop {
     await this.issuesIdle();
     this.stopFeatures();
     await this.featuresIdle();
+    await this.readinessIdle();
     for (const [id, r] of this.children) {
       r.handle.kill("SIGTERM");
       const done = await Promise.race([
@@ -402,6 +420,7 @@ export class Loop {
     await this.pollIntents(false);
     await this.pollProposed(false);
     await this.requeueKnownRepos();
+    this.startReadiness();
     this.enforceDrain();
     // LOOP-105, LOOP-108: with the checkout moved or an update waiting, running children finish but
     // nothing new starts.
@@ -431,7 +450,11 @@ export class Loop {
 
     const live = unfinished(db).filter((m) => working(m) && !this.cooling(m));
     report.idle =
-      this.children.size === 0 && this.featuresJob === null && live.length === 0 && report.picked === null;
+      this.children.size === 0 &&
+      this.featuresJob === null &&
+      this.readinessJob === null &&
+      live.length === 0 &&
+      report.picked === null;
     if (this.targetId) {
       const m = db.get<Mission>(
         "SELECT * FROM missions WHERE intent = ? ORDER BY id DESC LIMIT 1",
@@ -528,7 +551,7 @@ export class Loop {
   private async enterDue(): Promise<void> {
     for (const m of this.d.db.all<Mission>("SELECT * FROM missions WHERE step = 'enter' ORDER BY id")) {
       try {
-        await this.enter(m);
+        await this.cloneLock.run(() => this.enter(m));
       } catch (e) {
         this.d.log(`${label(m)}: entering ${m.stage} failed, retrying next pass: ${(e as Error).message}`);
       }
@@ -792,6 +815,44 @@ export class Loop {
       }
     }
     if (queued > 0) await this.pollIntents(true);
+  }
+
+  /**
+   * REPO-24, LOOP-71: the readiness check of the oldest due repo runs as a background job, one repo at a
+   * time, so a pass never waits for it. Its fetch of a shared clone holds the clone lock that every mission
+   * step also holds (`cloneLock`), so the two never fetch the same clone at once; the reads that follow only
+   * read. A failure keeps the last result.
+   */
+  private startReadiness(): void {
+    if (!this.d.readiness || this.readinessJob || this.drain !== null || this.codeMoved() !== null) return;
+    const deps = {
+      config: this.d.config,
+      home: this.d.home,
+      db: this.d.db,
+      tools: this.d.tools,
+      clock: this.d.clock,
+      store: this.d.store,
+      github: this.d.github,
+      log: this.d.log,
+      exclusive: <T>(fn: () => Promise<T>) => this.cloneLock.run(fn),
+      ...(this.d.readinessLimitMs ? { limitMs: this.d.readinessLimitMs } : {}),
+    };
+    this.readinessJob = (async () => {
+      const job = await startReadinessCheck(deps, {
+        listing: () => this.listing,
+        proposed: () => this.proposed,
+      });
+      if (job) await job.run();
+    })()
+      .catch((e: Error) => this.d.log(`readiness: ${e.message}`))
+      .finally(() => {
+        this.readinessJob = null;
+      });
+  }
+
+  /** Resolves when no readiness check is running (tests and shutdown wait for it). */
+  async readinessIdle(): Promise<void> {
+    while (this.readinessJob) await this.readinessJob;
   }
 
   /** A GitHub read worked; the fault closes unless the issue poll is still failing (INT-21). */
@@ -1098,7 +1159,7 @@ export class Loop {
   ): Promise<void> {
     let p: import("./handlers.ts").Progress;
     try {
-      p = await call();
+      p = await this.cloneLock.run(call);
     } catch (e) {
       const cur = getMission(this.d.db, m.id) ?? m;
       if (e instanceof EnvError) {
@@ -1273,6 +1334,7 @@ export class Loop {
       repos: new Set(config.repos.keys()),
       full,
       started,
+      notReady: new Map([...blockingRepos(db, config)].map(([name, r]) => [name, missingText(r)] as const)),
       cooling,
       active: new Set(unfinished(db).map((m) => m.intent)),
       defaultModel: config.agent.model,
@@ -1341,7 +1403,7 @@ export class Loop {
       this.endDrain();
       return;
     }
-    const idle = () => this.children.size === 0 && this.featuresJob === null;
+    const idle = () => this.children.size === 0 && this.featuresJob === null && this.readinessJob === null;
     // A drain whose children are gone updates at once instead of at the next minute.
     if (!(this.drain !== null && idle()) && this.now - this.lastUpdate < UPDATE_POLL_S) return;
     this.lastUpdate = this.now;

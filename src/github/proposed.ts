@@ -14,6 +14,8 @@ export interface ProposedIntent {
   i: number | null;
   a: number | null;
   source: string | null;
+  /** LOOP-71: `setup: true`; absent for an ordinary intent. */
+  setup?: true;
 }
 
 export interface ProposedPr {
@@ -83,7 +85,17 @@ export function classifyFiles(files: FileChange[]): Classified | null {
 export function parseProposed(text: string): { intent: ProposedIntent } | { error: string } {
   try {
     const i = parseIntent(text);
-    return { intent: { title: i.title, repo: i.repo, u: i.u, i: i.i, a: i.a, source: i.source } };
+    return {
+      intent: {
+        title: i.title,
+        repo: i.repo,
+        u: i.u,
+        i: i.i,
+        a: i.a,
+        source: i.source,
+        ...(i.setup === true ? { setup: true as const } : {}),
+      },
+    };
   } catch (e) {
     return { error: `Can't read the intent file: ${(e as Error).message}` };
   }

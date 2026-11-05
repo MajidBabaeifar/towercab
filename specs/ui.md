@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..145, UI-160..163, UI-184..188 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..145, UI-155..163, UI-184..188 · **Prefix:** UI
 
 ## Purpose
 
@@ -846,10 +846,11 @@ A not-ready repo's page lists each missing item in plain words, above everything
   block` to start holding work back), and one sentence saying whether new intents wait (LOOP-70) or only
   a warning is shown. Nothing missing or unknown and nothing waived → no section.
 - Waived items are listed there too, each with the owner's reason (`Waived: <reason>`).
-- It links to the repo's setup intent, or to the pull request that proposes it, when one is open
-  (LOOP-71), so the owner can act without leaving Towercab for another tool to find it.
+- It links to the repo's setup intent, and to the open pull request that proposes it (LOOP-71, from the
+  proposed pull requests of LOOP-92), so the owner can act without leaving Towercab for another tool to
+  find it.
 - The new intents of this repo that wait for it read `Waiting: repo not ready` in the Waiting list (UI-61).
-- Verified by: `ui: a not-ready repo page lists what is missing`, `ui: a repo page shows waived items with their reason`, `ui: screenshots light, dark and mobile`
+- Verified by: `ui: a not-ready repo page lists what is missing`, `ui: a repo page shows waived items with their reason`, `ui: a repo page links the open setup proposal`, `ui: readiness screenshots light, dark and mobile`, `ui: screenshots light, dark and mobile`
 
 ### UI-157 · Not-ready badge on the Board
 

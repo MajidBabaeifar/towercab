@@ -11,6 +11,7 @@ import type {
   ProblemView,
   ProposedCard as ProposedCardData,
   ProposedSection as ProposedData,
+  ReadinessBadge,
   RiskView,
   Row,
   SpendView,
@@ -674,6 +675,21 @@ export function SpendCard({ spend }: { spend: SpendView }) {
         <span class="num">{spend.week}</span> in the last 7 days
       </p>
     </div>
+  );
+}
+
+/** UI-155, UI-157: a repo missing setup. Warning colour, never the "Needs you" one. */
+export function ReadinessChip({ badge }: { badge: ReadinessBadge | undefined }) {
+  if (!badge) return null;
+  return (
+    <span
+      class={`ready-badge${badge.blocks ? " blocks" : ""}`}
+      title={badge.detail}
+      role="img"
+      aria-label={badge.name}
+    >
+      {badge.label}
+    </span>
   );
 }
 
