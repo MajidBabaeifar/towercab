@@ -1429,6 +1429,50 @@ When the host's rules need approvals the reviewers can't supply, Towercab says s
   stop the wait and is shown, not sent as a message (LOOP-14).
 - Verified by: `pipeline: too few reviewers for the host's rule sets a warning`, `pipeline: a host that still wants approval after the reviewers' sets a warning`, `pipeline: the warning clears when the list is fixed`
 
+### PIP-148 · A repair round sees the code scanning alerts that failed the pull request
+
+When a failed check has no Actions run log, such as `CodeQL`, the repair round gets the open code scanning alerts of the pull request, each with its rule, file, line and message.
+
+- Applies wherever PIP-83's log tails are built for a red pull request (the code PR's repair rounds in
+  `ci.ts` and the spec PR's revisions, PIP-83). A red check has no run log when its `run` is null.
+- For such checks the `Forge` reads the open alerts of the merge ref: `gh api
+  repos/<repo>/code-scanning/alerts?ref=refs/pull/<n>/merge&state=open`, like the other host reads only
+  `GitHubForge` builds the arguments. A host without code scanning returns no alerts.
+- The read uses the GitHub App's token, like the other host reads (not the owner's `gh` login).
+- Only alerts in files the pull request changes are kept: an alert is kept when its path is one of the
+  files the PR's diff touches (the PR's changed-file list, read through the `Forge`). Alerts in other
+  files, such as old ones on the base branch, are left out and not counted.
+- Each kept alert becomes one line after the check list: `- <rule id> at <path>:<line>: <message>`, in
+  the alerts' order, at most 20; more are summarised as `and <k> more`. The block is passed as fenced
+  data (PIP-39), with the tail limit of the run logs. Checks that do have a run keep their log tail as today.
+- No open alerts in the PR's files, or all checks have a run → no alert block, and the details are as before.
+- Verified by: `pipeline: a red CodeQL check without a run gives the repair round the alert's rule, file and line`, `pipeline: a check with a run log gets no alert block`, `pipeline: alerts in files the pull request did not change are left out`
+
+### PIP-149 · Unreadable code scanning alerts are noted, not fatal
+
+When the alerts can't be read, the repair details say so in one line and the repair round goes on.
+
+- A failure of the read in PIP-148 (the host unreachable, an error from `gh`) adds
+  `(the code scanning alerts couldn't be read: <reason>)` to the details, as an unreadable run log does
+  (PIP-83); it neither throws nor counts as a crash (LOOP-6), and the repair round starts.
+- A refusal by the host (403, "Resource not accessible by integration") is the missing App permission
+  and gets its own line instead: `(the code scanning alerts couldn't be read: the GitHub App needs the
+  Code scanning alerts: read permission)`. PIP-150 adds the owner step.
+- Verified by: `pipeline: unreadable code scanning alerts are noted in the repair details`, `pipeline: a refused alert read names the missing permission`
+
+### PIP-150 · A missing code scanning permission is one owner step
+
+If the GitHub App can't read code scanning alerts, the owner gets one step to grant it, shown once, and no mission waits on it.
+
+- The first refusal in PIP-149 stores `code-scanning-permission` and adds one owner step, shown with the
+  repo's other steps and not once per repo or per pull request: `Grant the Towercab GitHub App the Code
+  scanning alerts: read permission`, ticked by the owner (as REPO-32 does for Administration).
+- While the flag is set, the repair details carry the one line of PIP-149 and the read is not retried.
+  Ticking the step clears the flag so the next red check reads again; a read that is refused again sets
+  it and shows the step again.
+- No mission waits on it and nothing is sent as a message (LOOP-14).
+- Verified by: `pipeline: a refused alert read becomes one owner step`, `pipeline: a refused alert read is not retried until the step is ticked`
+
 ### PIP-130 · The design treats IDs of other open spec PRs as taken
 
 Two open spec pull requests never get the same requirement numbers: the design leaves out every number another open one already added.
