@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..44, PIP-46..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-133..147 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-133..147 · **Prefix:** PIP
 
 ## Purpose
 

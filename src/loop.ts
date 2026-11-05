@@ -24,6 +24,7 @@ import {
   approveRequested,
   intentEvents,
   prEvents,
+  type ReleaseRepo,
   releaseRequested,
   reversalMarker,
   reversalRequested,
@@ -76,6 +77,7 @@ import { writeTicks } from "./pipeline/steps.ts";
 import { evaluate } from "./pipeline/teammate.ts";
 import { isParked, priority } from "./priority.ts";
 import { blockingRepos, startReadiness as startReadinessCheck } from "./readiness.ts";
+import { loadRepoFiles } from "./repo/files.ts";
 import { missingText } from "./repo/readiness.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
@@ -1174,7 +1176,19 @@ export class Loop {
           continue;
         }
         const bot = (await this.d.github.bot()).login;
-        for (const ask of releaseRequested(m, prs, this.d.github.me, bot)) {
+        let asks = releaseRequested(m, prs, this.d.github.me, bot, []);
+        if (asks.length > 0) {
+          // PIP-45: the lead repo's `live` block, read from the base branch of Towercab's clone.
+          let entry: ReleaseRepo;
+          try {
+            const files = await loadRepoFiles(this.d.tools, clonePath(repo, this.d.home.root), repo.base);
+            entry = { name: m.repo, live: files.towercab.live ? { url: files.towercab.live.url } : null };
+          } catch (e) {
+            entry = { name: m.repo, live: null, unreadable: (e as Error).message };
+          }
+          asks = releaseRequested(m, prs, this.d.github.me, bot, [entry]);
+        }
+        for (const ask of asks) {
           const target = ask.kind === "plan" ? intentsRepo! : repo.github;
           await this.d.github.gh(
             target,
