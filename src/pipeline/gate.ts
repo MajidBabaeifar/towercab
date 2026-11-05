@@ -140,6 +140,14 @@ export const gateHandler: Handler = {
       if (t) return t;
       m = getMission(cx.db, m.id) ?? m;
     }
+    // The teammate check above runs only once CI is green and a review is in; any other hold for the owner
+    // leaves the approval unchecked, which the owner's merge then checks itself (PIP-144).
+    const skipped = Boolean(
+      cx.repo(m).teammateReview && !((d.ci?.result === "green" || d.ci?.result === "none") && d.review),
+    );
+    const teammate = cx.repo(m).teammateReview
+      ? { data: { teammate: { ...data(m).teammate, unchecked: skipped } } }
+      : {};
     const g = gate({
       a: effectiveOf(m, intent, files),
       ciGreen: d.ci?.result === "green" || d.ci?.result === "none",
@@ -152,12 +160,12 @@ export const gateHandler: Handler = {
     const steps = d.ownerSteps?.length
       ? ` For you to do: ${d.ownerSteps.map((s) => s.bullet).join("; ")}.`
       : "";
-    if (!g.merge) return { done: wait("review and merge PR", g.why + steps) };
+    if (!g.merge) return { done: wait("review and merge PR", g.why + steps, teammate) };
     // Beyond the gate table: work Towercab didn't check itself goes to the owner.
     const a = effectiveOf(m, intent, files);
-    if (d.foreignHead) return { done: wait("review and merge PR", GATE_HOLD.foreign) };
+    if (d.foreignHead) return { done: wait("review and merge PR", GATE_HOLD.foreign, teammate) };
     if (d.build?.planChanged && a !== 5) {
-      return { done: wait("review and merge PR", GATE_HOLD.planChanged) };
+      return { done: wait("review and merge PR", GATE_HOLD.planChanged, teammate) };
     }
     // SHIP-8: in a live repo a change brings an e2e test, or its plan says why it needs none.
     const live = files.towercab.live;
@@ -167,7 +175,7 @@ export const gateHandler: Handler = {
         m,
         live.suites.flatMap((s) => s.tests),
       );
-      if (e2e.length === 0) return { done: wait("review and merge PR", GATE_HOLD.noE2e) };
+      if (e2e.length === 0) return { done: wait("review and merge PR", GATE_HOLD.noE2e, teammate) };
     }
     return { done: ok({ set: { head: m.head } }) };
   },

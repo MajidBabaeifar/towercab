@@ -1371,6 +1371,10 @@ In such a repo the gate never merges before a teammate approval, at any autonomy
   here): it never counts as a teammate approval, never merges and never passes the PR on. Towercab
   replies once, "Reply `/pass` to ask your teammates" before they are asked, or "Merge with the card's
   button or `towercab approve`" after.
+- The owner's own merge (the card's Merge, `towercab approve`) re-checks too: it is refused until the
+  change is passed on, and, where the gate did not check for a teammate approval (the review or CI had
+  not finished, or any wait on a spec PR), until the owner's `gh` reads a counted approval on the PR's
+  head. A PR that can't be read is refused.
 - Towercab merging (PIP-22) re-checks the approval on the head it merges. If the host refuses the
   merge for the review rule, the mission goes back to this wait; Towercab never works around the host's
   rules, and the host's rules and the list are both required (a listed approval does not override a
@@ -1378,7 +1382,7 @@ In such a repo the gate never merges before a teammate approval, at any autonomy
 - Spec PRs follow the same rule: Towercab merges one at a4 and a5 (PIP-50) only after a teammate
   approval, and waits as above. Plan PRs in the owner's intents repo (PIP-51) do not: that repo is the
   owner's own.
-- Verified by: `pipeline: gate waits for a teammate approval at a4 and a5`, `pipeline: owner approve does not merge in a teammate review repo`, `pipeline: the owner merges at a3 once the teammates approved`, `pipeline: merge and approve are refused before the teammates approved` (the page's Merge; the approve command gives the same refusal)
+- Verified by: `pipeline: gate waits for a teammate approval at a4 and a5`, `pipeline: owner approve does not merge in a teammate review repo`, `pipeline: the owner merges at a3 once the teammates approved`, `pipeline: merge and approve are refused before the teammates approved` (the page's Merge; the approve command gives the same refusal), `pipeline: the owner's merge needs the pass-on first`, `pipeline: the owner's merge is refused where the gate skipped the teammate check`, `pipeline: the owner's merge of a spec PR checks for a teammate approval`, `pipeline: the owner's merge is untouched where no teammate review is needed`, `pipeline: the owner's merge is refused when the PR can't be read`
 
 ### PIP-145 · A reviewer's feedback starts a repair round
 

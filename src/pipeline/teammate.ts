@@ -21,6 +21,7 @@ import {
   type TeamInput,
   type Teammate,
   waitWhy,
+  whoText,
 } from "../teammates.ts";
 import type { Tools } from "../tools.ts";
 import { cloneOf, data } from "./common.ts";
@@ -48,7 +49,8 @@ const REQUIRED_TTL = 600;
 
 export interface EvalDeps {
   github: GitHub;
-  tools: Tools;
+  /** Absent where git isn't at hand (the owner's own merge): an older approval is then stale. */
+  tools?: Tools;
   clone: string;
 }
 
@@ -62,16 +64,18 @@ export async function evaluate(
   const pr: PrState = { ...read, ...(await readPrExtra(d.github, repo.github, o.n)) };
   const team = await readTeamInput(d.github, repo, repo.github, o.n, pr, o.bot);
   const commits = pr.reviews.filter((r) => r.state === "APPROVED" && r.commit).map((r) => r.commit!);
-  const sameDiff = await sameDiffCommits({
-    tools: d.tools,
-    github: d.github,
-    repo: repo.github,
-    clone: d.clone,
-    base: repo.base,
-    branch: o.branch,
-    head: pr.head,
-    commits,
-  });
+  const sameDiff = d.tools
+    ? await sameDiffCommits({
+        tools: d.tools,
+        github: d.github,
+        repo: repo.github,
+        clone: d.clone,
+        base: repo.base,
+        branch: o.branch,
+        head: pr.head,
+        commits,
+      })
+    : new Set<string>();
   const result = approval(team, { head: pr.head, reviews: pr.reviews, sameDiff });
   const counted = result.kind === "approved" && pr.reviewDecision !== "REVIEW_REQUIRED";
   const approvedReviewIds = await readApprovedReviewIds(d.github, repo.github, o.n);
@@ -148,4 +152,45 @@ export async function teammateStep(cx: Ctx, m: Mission, kind: TeamKind): Promise
       },
     }),
   };
+}
+
+/** PIP-143: the owner's merge of a change the automated review didn't approve comes after the pass-on. */
+export const PASS_FIRST = "Pass it on to your teammates first: they need to review it before it can merge.";
+
+/**
+ * PIP-144: why the owner's own merge (the page's Merge, `towercab approve`) is refused in a repo that
+ * needs a teammate's review, or null. It is refused until the change is passed on, and, where the gate
+ * did not check for a teammate approval (the review or CI didn't finish; any wait on a spec PR), until a
+ * counted approval is on the PR's head. The owner's `gh` reads the PR, so no stored state is trusted.
+ */
+export async function ownerMergeRefusal(o: {
+  owner: GitHub["owner"];
+  me: string;
+  repo: RepoConfig;
+  m: Mission;
+}): Promise<string | null> {
+  const { repo, m } = o;
+  if (!repo.teammateReview) return null;
+  const kind: TeamKind | null =
+    m.stage === "approval:spec" ? "spec" : m.stage === "approval:merge" ? "code" : null;
+  if (!kind) return null;
+  const d = data(m);
+  if (d.teammate?.passNeeded === true) return PASS_FIRST;
+  if (kind === "code" && d.teammate?.unchecked !== true) return null;
+  const n = kind === "code" ? m.pr : m.spec_pr;
+  if (n === null) return null;
+  const gh: GitHub = {
+    me: o.me,
+    owner: o.owner,
+    gh: (_repo, args, opts) => o.owner(args, opts),
+    gitAuth: async () => ({ args: [], env: {} }),
+    bot: async () => ({ login: "", id: 0, email: "" }),
+  };
+  try {
+    const e = await evaluate({ github: gh, clone: "" }, repo, { n, branch: m.branch, bot: "" });
+    if (e.counted) return null;
+  } catch (err) {
+    return `Towercab can't tell whether a teammate approved yet (${(err as Error).message}): try again in a moment.`;
+  }
+  return `A teammate has not approved yet (${whoText(repo.reviewers ?? [])}): you can merge once they have.`;
 }

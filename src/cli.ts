@@ -30,6 +30,7 @@ import { type Mission, unfinishedFor } from "./mission.ts";
 import { decide, nextText } from "./pick.ts";
 import { guardMain } from "./pipeline/guard.ts";
 import { handlers } from "./pipeline/index.ts";
+import { ownerMergeRefusal } from "./pipeline/teammate.ts";
 import { parseScores } from "./priority.ts";
 import { addRepo, loadRepos, removeRepo, repoLine, repoList, setRepo } from "./repos.ts";
 import { checkoutRoot, down, logsArgv, restart, up } from "./service.ts";
@@ -434,6 +435,13 @@ async function run(
           `${intent.id} is waiting for teammate review (${repo.reviewers?.join(", ") || "the code owners"}): it can be merged once they have approved`,
         );
       }
+      const refusal = await ownerMergeRefusal({
+        owner: w.github.owner,
+        me: w.config.github?.me ?? "",
+        repo,
+        m,
+      });
+      if (refusal) throw new Error(`${intent.id}: ${refusal}`);
       const [gh, n] =
         m.stage === "approval:plan"
           ? [store.github()!, m.plan_pr!]

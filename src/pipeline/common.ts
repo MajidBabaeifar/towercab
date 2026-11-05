@@ -142,7 +142,7 @@ export interface PipeData {
    * PIP-143: `requested` = the head whose reviewers were asked; `passNeeded` = the code PR waits for the
    * owner to pass it on; `passedOn` = the head the owner passed on.
    */
-  teammate?: { requested?: string; passNeeded?: boolean; passedOn?: string };
+  teammate?: { requested?: string; passNeeded?: boolean; passedOn?: string; unchecked?: boolean };
   /** PIP-147: why the host's review rule can't be met by the reviewers; shown, never sent. */
   reviewWarning?: string;
   /** PIP-145: what approving reviewers wrote, for the record. */

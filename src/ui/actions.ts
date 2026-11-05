@@ -9,6 +9,7 @@ import { classifyFiles, fetchFiles, type ProposedPr } from "../github/proposed.t
 import type { Clock, GitHub } from "../handlers.ts";
 import type { IntentStore } from "../intents/types.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
+import { ownerMergeRefusal } from "../pipeline/teammate.ts";
 import { grantPermission } from "../settings/store.ts";
 import { approveSecret } from "../ship/secret-steps.ts";
 import { currentPr, type DoneNote, validNote } from "./state.ts";
@@ -203,6 +204,12 @@ export function createActions(d: ActionDeps): UiActions {
           `Waiting for teammate review (${repo?.reviewers?.join(", ") || "the code owners"}): you can merge once they have approved.`,
         );
       }
+      // PIP-144: where the gate didn't check for a teammate approval, the owner's merge does.
+      const cfg = d.config.repos.get(m.repo);
+      const refusal = cfg
+        ? await ownerMergeRefusal({ owner: d.github.owner, me: d.config.github?.me ?? "", repo: cfg, m })
+        : null;
+      if (refusal) throw new Error(refusal);
       const p = pr(m);
       if (!p) throw new Error("Nothing to merge: its PR isn't open yet.");
       const again = repeated(m, p, "merge");
