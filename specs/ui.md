@@ -894,6 +894,43 @@ Proposed intents are listed by the priority they would have, and the page says w
   may be out of date.` above the cards it kept.
 - Verified by: `ui: proposed intents are sorted by priority`, `ui: a failed read says the list may be out of date`
 
+### UI-189 · Fold a Needs you card
+
+Each Needs you card on the overview folds to one line with a toggle, and opens again.
+
+- A button on the card's header with `aria-expanded` and an accessible name (`Fold <title>` / `Open
+  <title>`), reachable and operable by keyboard like the stage map's toggles (UI-73). It applies to
+  the overview only; the card on the intent page (UI-62) stays open.
+- Folding only hides: the brief, risk block, open points, options, access list, reply box and menu
+  are hidden, not removed, so the card's content, actions and order (UI-58) do not change and a draft
+  reply typed in the box is kept while folded.
+- Cards start open.
+- Verified by: `ui: needs-you card folds and opens`, `ui: fold toggle is keyboard operable`
+
+### UI-190 · A folded card's line
+
+A folded Needs you card still shows what it is, what it asks and how long it has waited.
+
+- One line: the intent's title, its repo, the ask in the same words as the open card's (LOOP-14
+  **Waits**; an open question shows its first line cut with an ellipsis) and the wait's age in the
+  same form as the open card ("2 h"). The line ends with the toggle; it does not wrap on a 720 px
+  screen (the title is cut with an ellipsis first).
+- Verified by: `ui: folded needs-you card shows title, repo, ask and age`
+
+### UI-191 · Remember folded cards
+
+The page remembers which Needs you cards are folded in this browser, keeps them folded through live updates, and opens a card again when it changes.
+
+- Folded cards are kept in `localStorage` under `towercab.needs.folded` as a JSON object from intent
+  ID to the wait's key (the kind of wait and its round: the `Waits` kind plus the PR number or
+  question round it belongs to). Every read and write is wrapped in `try`/`catch` as UI-135 does, so
+  without storage a card still folds until the page reloads.
+- A card is folded only while its stored key equals its current wait's key. A new ask or a new round
+  gives a different key, so the card renders open and the stale entry is removed. An entry for an
+  intent that no longer waits is removed. A live update (UI-66) that leaves the key unchanged leaves
+  the card folded and its place in the order.
+- Verified by: `ui: folded needs-you cards are remembered`, `ui: a changed ask opens a folded card again`, `ui: live updates keep a card folded`
+
 ### UI-160 · Your steps on the intent page
 
 The intent page shows the owner's steps as a checklist they tick off.
@@ -965,6 +1002,43 @@ The card shows who the change waits for and has a button to pass it on, and a re
   teammate review on shows its reviewers on its page (UI-141) and a warning line when the host's
   required approvals (LOOP-84) exceed the listed reviewers and no code owner is known.
 - Verified by: `ui: a card shows the teammate review wait`, `ui: pass on button raises passed_on`, `ui: the warning shows on the card and the repo page`
+
+### UI-165 · The intent page shows each repo's part
+
+The page of a multi-repo intent lists its parts, each with its state and what it waits on.
+
+- Under the stage map (UI-158) a list with one row per repo, the lead first: the repo, the part's
+  stage, a link to its PR, and "waiting for <what>" in plain words: the owner's answer, a check, the
+  part it merges after (INT-43), or "the freeze of <repo>" (LOOP-79). Parts that ran into trouble show
+  the reason as the stage map does.
+- While the freeze is held it shows "Merges frozen in <repos>" with how long and the time limit
+  (LOOP-81). A single-repo intent shows no list.
+- Verified by: `ui: a multi-repo intent lists a part per repo`, `ui: a part says what it waits on`, `ui: the page shows the freeze and its age`, `ui: a single-repo intent has no parts list`
+
+### UI-166 · The Board shows repos and the freeze
+
+A multi-repo intent's card on the Board says how many repos it spans, and a frozen repo says so.
+
+- The card shows "3 repos" and the state of the part furthest behind; a part that needs the owner
+  makes the card a needs-you card (UI-58) naming the repo. A frozen repo's lane shows "Merges frozen for
+  <title>"; other intents' cards waiting at their merge show "waiting for the freeze".
+- Verified by: `ui: a multi-repo card shows the repo count and the slowest part`, `ui: a frozen repo is marked on the Board`, `ui: an intent held by a freeze says so`
+
+### UI-167 · Freeze exits and the API
+
+A freeze that ran past its limit shows buttons to keep waiting or to lift it, and the API carries the parts.
+
+- The needs-you card, the intent page and the plane card (UI-164) show, for the `freeze` wait (LOOP-81),
+  "Keep waiting" (posts `continue`), "Unfreeze" (the `unfreeze` action, UI-66, with a confirm saying
+  the intent will end as merged, not verified live, if a part is already merged) and drop.
+- After an unfreeze with no part merged, the card shows "Merges are unfrozen" and a "Freeze again"
+  button (posts `continue`, LOOP-81) next to drop; nothing refreezes without the click.
+- After an unfreeze with merged parts, the card of the unverified end lists each part as "merged" or
+  "not merged" with its PR, says nothing was rolled back, and has a "Land the rest" button that posts
+  `retry` (LOOP-81).
+- `GET /api/state` (UI-65) carries per mission `parts` (a list of `{repo, stage, pr, waitsOn, merged}`)
+  and per repo `frozenBy` (mission id or null).
+- Verified by: `ui: a freeze past its limit offers keep waiting and unfreeze`, `ui: unfreeze confirms when a part is merged`, `ui: a lifted freeze waits for the freeze again button`, `ui: the unverified card lists merged and unmerged parts with a retry`, `ui: parts and frozen repos come from the API`
 
 ### UI-192 · Focus tab
 
