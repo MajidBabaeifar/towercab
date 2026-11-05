@@ -87,6 +87,7 @@ import {
   bestReady,
   buildingIn,
   capOf,
+  isAnswered,
   isBuilding,
   isIdle,
   isReady,
@@ -101,6 +102,9 @@ import { APPROVE_NOTICE } from "./teammates.ts";
 import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
 import { budgetReached } from "./ui/state.ts";
 import { checkUpdate, RESTART_CODE } from "./update.ts";
+
+/** LOOP-115: the stages a change reaches when its CI is green; it holds no slot while it waits in them. */
+const LATER_THAN_CI: ReadonlySet<string> = new Set(["review", "gate", "merge"]);
 
 export const PASS_MS = 5_000;
 const PR_POLL_S = 60;
@@ -1309,7 +1313,10 @@ export class Loop {
     // LOOP-111: missions waiting for a slot for their next run go first, best priority first.
     const all = unfinished(db);
     const back = [...new Set(all.map((m) => m.repo))].flatMap((r) => returningIn(all, r, this.listing));
-    const order = [...back, ...all.filter((m) => !back.includes(m))];
+    // LOOP-115: a mission the owner answered goes before the rest (the sort is stable).
+    const order = [...back, ...all.filter((m) => !back.includes(m))].sort(
+      (a, b) => Number(isAnswered(b)) - Number(isAnswered(a)),
+    );
     for (const m of order) {
       if (!isWorking(m.stage) || m.step === "enter" || m.held || this.children.has(m.id)) continue;
       // LOOP-105: no step of a loop whose checkout moved under it runs.
@@ -1320,6 +1327,19 @@ export class Loop {
       if (this.opts.intent && this.targetId && m.intent !== this.targetId) continue;
       const h = this.d.handlers[m.stage];
       if (!h) continue;
+      // LOOP-115: a change back at build (or CI) from outside the slots takes a free slot before its
+      // first step, so it never works on the repo without holding one; with none free it waits.
+      if ((m.stage === "build" || m.stage === "ci") && isBuilding(m) && isIdle(m)) {
+        const workers = this.d.config.repos.get(m.repo)?.workers ?? 1;
+        const taken = workingIn(unfinished(db), m.repo).filter((x) => x.id !== m.id);
+        if (taken.length >= workers) {
+          if (returningSince(m) === null) patchData(db, m, { returning: this.now }, this.now);
+          this.pollAt.set(m.id, this.now + 1);
+          continue;
+        }
+        const { idle: _i, returning: _r, ...rest } = dataOf(m);
+        update(db, m.id, { data: JSON.stringify(rest) }, this.now);
+      }
       const fresh = update(db, m.id, { busy: 1 }, this.now);
       await this.drive(fresh, () => h.step(this.ctx(timeouts), fresh));
     }
@@ -1357,8 +1377,8 @@ export class Loop {
       if (returningSince(cur) !== null) {
         patchData(this.d.db, getMission(this.d.db, m.id) ?? cur, { returning: undefined }, this.now);
       }
-      // LOOP-110: polling CI or a review with no run going holds no slot.
-      if ((cur.stage === "ci" || cur.stage === "review") && isBuilding(cur) && !isIdle(cur)) {
+      // LOOP-110, LOOP-115: polling a review with no run going holds no slot; polling CI still does.
+      if (cur.stage === "review" && isBuilding(cur) && !isIdle(cur)) {
         patchData(this.d.db, getMission(this.d.db, m.id) ?? cur, { idle: true }, this.now);
       }
     } else {
@@ -1444,6 +1464,18 @@ export class Loop {
     let out = apply(this.applyCtx(), m, o);
     // LOOP-111: a mission back from a wait for the owner was outside the slots; its next run takes one.
     if (out.id === m.id && out.stage !== m.stage && isIdle(m) && isWorking(out.stage) && isBuilding(out)) {
+      out = patchData(this.d.db, out, { idle: true }, this.now);
+    }
+    // LOOP-115: CI is green on the current head: the change frees its slot while it waits for review, the
+    // gate or the merge.
+    if (
+      out.id === m.id &&
+      m.stage === "ci" &&
+      out.stage !== "ci" &&
+      LATER_THAN_CI.has(out.stage) &&
+      isBuilding(out) &&
+      dataOf<{ idle?: boolean }>(out).idle !== true
+    ) {
       out = patchData(this.d.db, out, { idle: true }, this.now);
     }
     // LOOP-111: a mission that moves on without starting its run no longer asks for a slot.

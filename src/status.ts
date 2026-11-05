@@ -5,7 +5,7 @@ import type { Listing } from "./intents/types.ts";
 import { exitsOf, isWait, isWorking, waitInfo } from "./machine.ts";
 import { dataOf, type Mission, unfinished } from "./mission.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
-import { buildingIn, capOf, idleIn, returningIn, returningSince, workingIn } from "./slots.ts";
+import { buildingIn, capOf, idleIn, returningIn, returningSince, waitsForCi, workingIn } from "./slots.ts";
 import { leftOf, type OwnerStep } from "./steps.ts";
 
 export interface Problem {
@@ -125,7 +125,8 @@ export function renderStatus(s: StatusInput): string {
         continue;
       }
       const holder = workingIn(ms, m.repo)[0] ?? returningIn(ms, m.repo, s.listing)[0];
-      lines.push(`- ${title(m)} · ready to build${holder ? `, behind ${holder.intent}` : ""}`);
+      const ci = holder && waitsForCi(holder) ? ", waiting for CI" : "";
+      lines.push(`- ${title(m)} · ready to build${holder ? `, behind ${holder.intent}${ci}` : ""}`);
     }
     for (const m of back) {
       const line = returningIn(ms, m.repo, s.listing);
@@ -141,6 +142,9 @@ export function renderStatus(s: StatusInput): string {
     lines.push(
       `build slots: ${repo} ${building.length - idle} of ${w} used, ${idle} waiting outside slots (cap ${capOf(w)})`,
     );
+    // LOOP-116: who holds the slots, and whether they wait for GitHub's checks.
+    for (const m of workingIn(ms, repo))
+      lines.push(`holds the slot: ${m.intent} (${m.stage})${waitsForCi(m) ? ", waiting for CI" : ""}`);
   }
   for (const w of s.waits ?? []) lines.push(`waiting: ${w}`);
   // LOOP-72: a repo missing setup, and whether that holds its new work back.

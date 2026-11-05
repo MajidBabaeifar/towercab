@@ -689,6 +689,9 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
         if (o.text) data.answer = o.text;
         // LOOP-77: an answer is new, with words or without (the owner removed `waiting`).
         if (o.text || o.counted) data.answers = (Number(data.answers) || 0) + 1;
+        // LOOP-115: back at build after the owner's answer, the change goes first in line for a slot and
+        // merges the base branch before it builds.
+        if (cur.stage === "blocked" && to === "build") data.answered = true;
         move(to, { repairs: 0, ci_repairs: 0, unclean: 0 }, o.why ?? null);
         break;
       }

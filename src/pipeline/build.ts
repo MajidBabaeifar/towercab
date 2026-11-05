@@ -172,6 +172,20 @@ async function spawnWorker(cx: Ctx, m: Mission, prompt?: string): Promise<Progre
   );
 }
 
+/** Merge the base branch into the checkout: null when it merged cleanly, else the conflicting files. */
+async function mergeBaseBranch(cx: Ctx, m: Mission): Promise<string[] | null> {
+  const repo = cx.repo(m);
+  const clone = cloneOf(cx, m);
+  await git(cx.tools, clone, ["fetch", "--quiet", "origin"], await cx.github.gitAuth(repo.github));
+  await refreshBase(cx.tools, clone, cx.checkout(m), repo.base);
+  const author = await botAuthor(cx);
+  const merged = await coGit(cx, m, [...author, "merge", "--no-edit", `refs/remotes/origin/${repo.base}`])
+    .then(() => true)
+    .catch(() => false);
+  if (merged) return null;
+  return (await coGit(cx, m, ["diff", "--name-only", "--diff-filter=U"])).trim().split("\n");
+}
+
 export const buildHandler: Handler = {
   async step(cx, m) {
     const d = data(m);
@@ -216,22 +230,14 @@ export const buildHandler: Handler = {
               {},
               { conflictRounds: { n: conflictRoundsDone(m) + 1, seen: m.feedback_seen } },
             );
-          const repo = cx.repo(m);
-          const clone = cloneOf(cx, m);
-          await git(cx.tools, clone, ["fetch", "--quiet", "origin"], await cx.github.gitAuth(repo.github));
-          await refreshBase(cx.tools, clone, cx.checkout(m), repo.base);
-          const author = await botAuthor(cx);
-          const merged = await coGit(cx, m, [
-            ...author,
-            "merge",
-            "--no-edit",
-            `refs/remotes/origin/${repo.base}`,
-          ])
-            .then(() => true)
-            .catch(() => false);
-          if (merged)
-            return { done: ok({ why: "merged the base branch cleanly", data: { repair: undefined } }) };
-          const files = (await coGit(cx, m, ["diff", "--name-only", "--diff-filter=U"])).trim().split("\n");
+          const files = await mergeBaseBranch(cx, m);
+          if (files === null)
+            return {
+              done: ok({
+                why: "merged the base branch cleanly",
+                data: { repair: undefined, answered: undefined },
+              }),
+            };
           m = cx.record(
             m,
             "setup",
@@ -261,13 +267,30 @@ export const buildHandler: Handler = {
                 },
               },
             );
+          } else if (d.answered && !resumed) {
+            // LOOP-115: after the owner's answer the change takes the base branch in before it builds.
+            const files = await mergeBaseBranch(cx, m);
+            m = cx.record(
+              m,
+              "setup",
+              {},
+              files === null
+                ? {}
+                : {
+                    repair: {
+                      what: "Merging the base branch conflicts. Resolve the conflicts in these files, keeping both sides' intent, then run the checks:",
+                      details: files.join("\n"),
+                      kind: "conflict",
+                    },
+                  },
+            );
           } else {
             m = cx.record(m, "setup");
           }
         }
         // Where this round starts, so commit can tell a round that changed nothing (PIP-1).
         const from = (await coGit(cx, m, ["rev-parse", "HEAD"])).trim();
-        m = cx.record(m, m.step, {}, { roundFrom: from });
+        m = cx.record(m, m.step, {}, { roundFrom: from, answered: undefined });
         return setupOrWorker(cx, m);
       }
       case "setup":

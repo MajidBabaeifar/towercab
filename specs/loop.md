@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..102, LOOP-105..109, LOOP-110..112 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..102, LOOP-105..109, LOOP-110..112, LOOP-115..116 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -657,7 +657,7 @@ A mission that has its checks green and only waits for a person's review, the ga
 - A slot is free when fewer than `workers` missions are working. The free slot goes to the ready mission
   with the highest priority, as in LOOP-61, unless a returning mission wants it (LOOP-111).
 - `[agent].parallel` (LOOP-4) is unchanged and still caps every Claude run and check.
-- Verified by: `loop: missions waiting on CI do not hold build slots`, `loop: missions waiting on the owner do not hold build slots`, `loop: at the cap of three times workers nothing new builds`, `loop: a repair at ci holds a slot`
+- Verified by: `loop: missions with green CI waiting on review do not hold build slots`, `loop: missions waiting on the owner do not hold build slots`, `loop: at the cap of three times workers nothing new builds`, `loop: a repair at ci holds a slot`
 
 ### LOOP-111 · A returning mission goes before a new build
 
