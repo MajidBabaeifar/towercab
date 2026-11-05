@@ -20,7 +20,7 @@ test("gitlab: the fake enforces the token and the merge sha", async () => {
   });
   expect(await good.merge("gitlab:g/p", m.iid, m.sha)).toEqual({ merged: true });
   expect(gl.requests.every((r) => r.path.length > 0)).toBe(true);
-  expect(GL_BASE.startsWith("https://gitlab.test")).toBe(true);
+  expect(new URL(GL_BASE).host).toBe("gitlab.test");
 });
 
 test("gitlab: the fake paginates", async () => {
