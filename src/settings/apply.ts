@@ -4,7 +4,7 @@
 import { ensureClone } from "../checkout.ts";
 import { clonePath, type RepoConfig } from "../config.ts";
 import { parseTowercab } from "../repo/files.ts";
-import { saveBackup } from "./backup.ts";
+import { ForbiddenError, saveBackup } from "./backup.ts";
 import { mainGreen, parsePlan } from "./guard.ts";
 import {
   CI_REPO,
@@ -39,7 +39,7 @@ async function mayApply(d: SettingsDeps, repo: RepoConfig): Promise<boolean> {
   if (d.config.githubSettings !== "apply") return false;
   const r = await d.github.gh(repo.github, [
     "api",
-    `repos/${repo.github}/contents/TOWERCAB.md?ref=${repo.base}`,
+    `repos/${repo.github}/contents/TOWERCAB.md?ref=${encodeURIComponent(repo.base)}`,
     "-H",
     "Accept: application/vnd.github.raw",
   ]);
@@ -78,6 +78,11 @@ export async function settingsPass(d: SettingsDeps, repo: RepoConfig): Promise<S
       try {
         await saveBackup(d, repo, plan?.branches ?? []);
       } catch (e) {
+        // An App without Administration can't read protection or alerts: that is the missing permission.
+        if (e instanceof ForbiddenError) {
+          setMissingPermission(d.db, repo.name, now);
+          return { ...found, note: "Nothing applied: the GitHub App lacks Administration (write)" };
+        }
         return { ...found, note: `Nothing applied: no backup (${(e as Error).message})` };
       }
       const r = await s.run(guard.ok ? "apply" : "skip-ruleset");

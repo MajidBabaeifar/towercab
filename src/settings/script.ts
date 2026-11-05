@@ -129,7 +129,7 @@ export async function withScript<T>(
 
 /** GitHub said no because the App can't change settings (not a network failure). */
 export const forbidden = (r: RunResult): boolean =>
-  /\b403\b|Resource not accessible|Must have admin rights/i.test(`${r.stderr}\n${r.stdout}`);
+  /HTTP 403|Resource not accessible|Must have admin rights/i.test(`${r.stderr}\n${r.stdout}`);
 
 export const firstLine = (r: RunResult): string =>
   (r.stdout.trim().split("\n")[0] || r.stderr.trim().split("\n")[0] || `exit ${r.code}`).trim();

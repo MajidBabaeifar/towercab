@@ -599,6 +599,8 @@ export interface SettingsView {
   at: number;
   /** REPO-32: the one step the owner has, shared by every repo; null when nothing is missing. */
   step: string | null;
+  /** The step's button works: Towercab runs (a read-only page can't act). */
+  canGrant: boolean;
 }
 
 /** UI-194: what one finished phase did, in its plain brief. */
@@ -681,6 +683,8 @@ export interface ReposPage {
   all: RepoSummary[];
   /** The totals over every repo (UI-137). */
   spend: RepoSpendView;
+  /** REPO-32: the one settings step the owner has (the same on every repo page), or null. */
+  settingsStep: { text: string; canGrant: boolean } | null;
   /** What went wrong: the intents repo can't be read, or the asked-for repo doesn't exist. */
   error: string | null;
 }

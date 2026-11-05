@@ -9,6 +9,9 @@ import { forbidden, type SettingsDeps } from "./script.ts";
 
 export const KEEP = 5;
 
+/** GitHub refused a read the backup needs: the App lacks the permission (REPO-32). */
+export class ForbiddenError extends Error {}
+
 // biome-ignore lint/suspicious/noExplicitAny: GitHub's JSON, read field by field
 type Json = Record<string, any>;
 
@@ -57,6 +60,7 @@ async function read(d: SettingsDeps, repo: RepoConfig, path: string): Promise<Js
     }
   }
   if (notFound(r)) return null;
+  if (forbidden(r)) throw new ForbiddenError(`${path || "repository"}: forbidden`);
   throw new Error(
     `${path || "repository"}: ${(r.stderr || r.stdout).trim().split("\n")[0] || `exit ${r.code}`}`,
   );
@@ -83,6 +87,7 @@ export async function saveBackup(
   }
   const workflow = await read(d, repo, "/actions/permissions/workflow");
   const va = await api(d, repo, "/vulnerability-alerts");
+  if (forbidden(va)) throw new ForbiddenError("vulnerability-alerts: forbidden");
   if (va.code !== 0 && !notFound(va))
     throw new Error(`vulnerability-alerts: ${va.stderr.trim().split("\n")[0]}`);
   const at = new Date(d.clock.now() * 1000);

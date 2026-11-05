@@ -117,9 +117,30 @@ function RefreshButton({ repo }: { repo: string }) {
   );
 }
 
-function Settings({ s }: { s: SettingsView }) {
+/** REPO-32: the one step for a missing permission, with its button when the page can act. */
+function SettingsStep({ text, canGrant }: { text: string; canGrant: boolean }) {
   const [result, setResult] = useState<ActionReply | null>(null);
   const grant = async () => setResult(await act("granted"));
+  return (
+    <>
+      <p class="repo-step">
+        <span>{text}</span>{" "}
+        {canGrant ? (
+          <button type="button" class="btn ghost small" onClick={() => void grant()}>
+            Done
+          </button>
+        ) : null}
+      </p>
+      {result ? (
+        <p class={`result ${result.ok ? "ok" : "err"}`} role="status">
+          <span>{result.message}</span>
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+function Settings({ s }: { s: SettingsView }) {
   return (
     <section class="card repo-settings" aria-labelledby="settings-h">
       <header class="repo-sec-head">
@@ -139,19 +160,7 @@ function Settings({ s }: { s: SettingsView }) {
           {n}
         </p>
       ))}
-      {s.step ? (
-        <p class="repo-step">
-          <span>{s.step}</span>{" "}
-          <button type="button" class="btn ghost small" onClick={() => void grant()}>
-            Done
-          </button>
-        </p>
-      ) : null}
-      {result ? (
-        <p class={`result ${result.ok ? "ok" : "err"}`} role="status">
-          <span>{result.message}</span>
-        </p>
-      ) : null}
+      {s.step ? <SettingsStep text={s.step} canGrant={s.canGrant} /> : null}
     </section>
   );
 }
@@ -346,6 +355,11 @@ function counts(s: RepoSummary): string {
 function All({ data }: { data: Data }) {
   return (
     <div class="repo-all">
+      {data.settingsStep ? (
+        <section class="card repo-settings" aria-label="GitHub settings">
+          <SettingsStep text={data.settingsStep.text} canGrant={data.settingsStep.canGrant} />
+        </section>
+      ) : null}
       {data.all.map((s) => (
         <Link key={s.repo} class="card repo-card" href={repoHref(s.repo)}>
           <span class="repo-card-name">{s.repo}</span>

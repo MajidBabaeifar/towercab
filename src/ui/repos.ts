@@ -68,6 +68,7 @@ export async function repos(src: UiSources, selected: string | null, o: ReposOpt
     repo,
     all,
     spend: repoSpendView(spendTotals(by)),
+    settingsStep: missingPermission(src.db) ? { text: PERMISSION_STEP, canGrant: src.running } : null,
     error,
   };
   return { version: versionOf(body, `${dbMark(src.db)}:${s.listing?.head ?? ""}`), ...body };
@@ -86,7 +87,7 @@ async function repoView(
     repo: lane.repo,
     github: lane.github,
     ahead: lane.ahead,
-    settings: settingsView(src.db, lane.repo),
+    settings: settingsView(src.db, lane.repo, src.running),
     proposed: proposedFor(proposedSection(src), src, lane.repo),
     features: await featuresView(src, s, lane, o),
     inProgress: lane.running,
@@ -99,11 +100,11 @@ async function repoView(
 }
 
 /** REPO-30, REPO-32: the stored settings check in plain words; no network. */
-export function settingsView(db: Db, repo: string): SettingsView {
+export function settingsView(db: Db, repo: string, canGrant = true): SettingsView {
   const s = storedSettings(db, repo);
   const step = missingPermission(db) ? PERMISSION_STEP : null;
   if (!s || (s.state === "unknown" && s.at === 0))
-    return { state: "unknown", summary: "Not checked yet", gaps: [], notes: [], at: 0, step };
+    return { state: "unknown", summary: "Not checked yet", gaps: [], notes: [], at: 0, step, canGrant };
   const notes = [s.ruleset, s.note].filter((x): x is string => Boolean(x));
   const summary =
     s.state === "ok"
@@ -111,7 +112,7 @@ export function settingsView(db: Db, repo: string): SettingsView {
       : s.state === "gaps"
         ? `${s.gaps.length} standard setting${s.gaps.length === 1 ? " differs" : "s differ"}`
         : "The standard settings could not be checked";
-  return { state: s.state, summary, gaps: s.gaps, notes, at: s.at, step };
+  return { state: s.state, summary, gaps: s.gaps, notes, at: s.at, step, canGrant };
 }
 
 const view = (f: Feature): FeatureView => ({ text: f.text, intent: f.intent });
