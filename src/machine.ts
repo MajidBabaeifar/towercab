@@ -294,6 +294,11 @@ export const WAITS: Record<string, { stage: Stage; ask: string }> = {
     stage: "blocked",
     ask: "Fix which repos this intent changes: Towercab doesn't know one of the repos it names. Add the repo, or fix the intent's repos list.",
   },
+  // INT-44: until one pull request per repo is built (LOOP-78), an intent with `repos:` is not built or merged.
+  "several repos": {
+    stage: "blocked",
+    ask: "This change spans several repos and Towercab can't build those yet, so nothing was built. Do the change yourself and say so, or drop the intent.",
+  },
   "rolled back, revise": {
     stage: "blocked",
     ask: "The change broke the live app, two fixes didn't hold, and it was taken back out. Revise the intent, then start over (/retry).",
@@ -342,6 +347,7 @@ export const EXITS: Record<string, ExitKind[]> = {
   "unknown repo": BASIC,
   "bad after:": BASIC,
   "bad repos:": BASIC,
+  "several repos": ["done", "retry", "drop"],
   "rolled back, revise": BASIC,
   "rollback failed": BASIC,
   "your steps first": BASIC,
