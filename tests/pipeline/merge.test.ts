@@ -94,7 +94,7 @@ test("pipeline: dirty is a conflict round", () => {
 test("pipeline: merge on the gated head", () => {
   // Each merge attempt read the PR first; the only merge call names the head the last gate passed.
   const merges = p.tools.lines("gh").filter((l) => l.startsWith(`pr merge ${m.pr} `));
-  expect(merges).toEqual([`pr merge ${m.pr} -R owner/web --squash --match-head-commit ${m.head}`]);
+  expect(merges).toEqual([`pr merge ${m.pr} --squash --match-head-commit ${m.head} -R owner/web`]);
   expect(m.head).toBe(p.headSha("owner/web", BRANCH));
   expect(gates()).toBe(3);
 });

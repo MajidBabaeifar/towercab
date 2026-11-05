@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { Db } from "../src/db.ts";
 import { doctor } from "../src/doctor.ts";
+import { GitHubForge } from "../src/github/forge.ts";
 import type { GitHub } from "../src/handlers.ts";
 import { Home } from "../src/home.ts";
 import {
@@ -54,10 +55,12 @@ afterEach(() => {
  * A GitHub whose App reaches `reach` and nothing else: owner/name → its default branch, or
  * `"<full_name> <branch>"` when GitHub spells the name differently.
  */
-function fakeGitHub(reach: Record<string, string>): Pick<GitHub, "gh" | "gitAuth"> & { calls: string[][] } {
+function fakeGitHub(reach: Record<string, string>) {
   const calls: string[][] = [];
-  return {
-    calls,
+  const raw: GitHub = {
+    me: "owner",
+    owner: async () => okResult(),
+    bot: async () => ({ login: "towercab[bot]", id: 9, email: "9+towercab[bot]@users.noreply.github.com" }),
     async gh(github, args): Promise<RunResult> {
       calls.push([github, ...args]);
       const answer = reach[github];
@@ -66,13 +69,14 @@ function fakeGitHub(reach: Record<string, string>): Pick<GitHub, "gh" | "gitAuth
     },
     gitAuth: async () => ({ args: [], env: {} }),
   };
+  return { calls, raw, forge: new GitHubForge(raw) };
 }
 
 function world(reach: Record<string, string> = { "owner/api": "trunk" }) {
   const db = Db.memory();
   const config = testConfig();
   const home = new Home(tempDir("tc-home-"));
-  const github = fakeGitHub(reach);
+  const { calls, raw, forge: github } = fakeGitHub(reach);
   const tools = new FakeTools();
   loadRepos(config, db, T0);
   const deps = (source: AddRepoDeps["source"] = "cli"): AddRepoDeps => ({
@@ -85,7 +89,7 @@ function world(reach: Record<string, string> = { "owner/api": "trunk" }) {
     source,
   });
   const add = (text: string, name?: string) => addRepo(deps(), text, name);
-  return { db, config, home, github, tools, add, deps };
+  return { db, config, home, github, raw, calls, tools, add, deps };
 }
 
 const mission = (db: Db, repo: string, stage: string, step = "enter") =>
@@ -166,7 +170,7 @@ test("repos: add checks GitHub, reads the base and clones", async () => {
     ahead: 3,
     env: {},
   });
-  expect(w.github.calls).toEqual([
+  expect(w.calls).toEqual([
     ["owner/api", "api", "repos/owner/api", "--jq", '.full_name + " " + .default_branch'],
   ]);
   // Stored, and in the same Map everything reads.
@@ -198,16 +202,16 @@ test("repos: add refuses an unreachable repo", async () => {
     "Towercab can't reach owner/secret: the GitHub App isn't installed on owner/secret",
   );
   // GitHub's own refusal is the reason too.
-  const gh = w.github.gh;
-  w.github.gh = async () => failResult("gh: Not Found (HTTP 404)");
+  const gh = w.raw.gh;
+  w.raw.gh = async () => failResult("gh: Not Found (HTTP 404)");
   await expect(w.add("owner/gone")).rejects.toThrow(
     "Towercab can't reach owner/gone: gh: Not Found (HTTP 404)",
   );
-  w.github.gh = async () => okResult("owner/empty \n");
+  w.raw.gh = async () => okResult("owner/empty \n");
   await expect(w.add("owner/empty")).rejects.toThrow(
     "GitHub didn't say which branch is owner/empty's default",
   );
-  w.github.gh = gh;
+  w.raw.gh = gh;
   for (const bad of ["not-a-repo", "./x", "owner/..", "a/b/c"]) {
     await expect(w.add(bad), bad).rejects.toThrow(`${bad} isn't a GitHub repo: write it as owner/name`);
   }

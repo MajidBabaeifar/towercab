@@ -5,7 +5,9 @@ import { tickSteps } from "../commands.ts";
 import type { Config, RepoConfig } from "../config.ts";
 import type { Db } from "../db.ts";
 import { askFeatures } from "../features.ts";
-import { classifyFiles, fetchFiles, type ProposedPr } from "../github/proposed.ts";
+import { ForgeBadReply, MERGE_METHOD, type PrBrief, type Result } from "../forge.ts";
+import { ownerForge } from "../github/forge.ts";
+import { classifyFiles, type ProposedPr } from "../github/proposed.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { IntentStore } from "../intents/types.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
@@ -98,9 +100,9 @@ export function createActions(d: ActionDeps): UiActions {
     );
   };
   const pr = (m: Mission | undefined) => (m ? currentPr(m, d.config, d.store.github()) : null);
-  const owner = async (args: string[], what: string) => {
-    const r = await d.github.owner(args);
-    if (r.code !== 0) throw new Error(`GitHub refused to ${what}: ${firstLine(r.stderr || r.stdout)}`);
+  const of = ownerForge(d.github.owner);
+  const refused = (r: Result, what: string) => {
+    if (!r.ok) throw new Error(`GitHub refused to ${what}: ${firstLine(r.reason)}`);
   };
 
   /** UI-105, UI-106: remember the action for display and ask the loop to read the PR on its next pass. */
@@ -128,28 +130,18 @@ export function createActions(d: ActionDeps): UiActions {
   const look = async (n: number) => {
     const repo = d.store.github();
     if (!repo) throw new Error("Towercab doesn't know the intents repo's GitHub name.");
-    const view = await d.github.owner([
-      "pr",
-      "view",
-      String(n),
-      "-R",
-      repo,
-      "--json",
-      "state,isDraft,headRefOid",
-    ]);
-    if (view.code !== 0)
-      throw new Error(`GitHub refused to read PR #${n}: ${firstLine(view.stderr || view.stdout)}`);
-    let v: { state?: unknown; isDraft?: unknown; headRefOid?: unknown };
+    let v: PrBrief;
     try {
-      v = JSON.parse(view.stdout) as typeof v;
-    } catch {
-      throw new Error(`GitHub gave no state for PR #${n}.`);
+      v = await of.prBrief(repo, n);
+    } catch (e) {
+      if (e instanceof ForgeBadReply) throw new Error(`GitHub gave no state for PR #${n}.`);
+      throw new Error(`GitHub refused to read PR #${n}: ${firstLine((e as Error).message)}`);
     }
-    return { repo, state: String(v.state), draft: v.isDraft === true, head: String(v.headRefOid ?? "") };
+    return { repo, state: v.state, draft: v.draft, head: v.head };
   };
   const files = async (repo: string, n: number) => {
     try {
-      return classifyFiles(await fetchFiles((a) => d.github.owner(a), repo, n));
+      return classifyFiles(await of.prFiles(repo, n));
     } catch (e) {
       throw new Error(`GitHub refused to read PR #${n}'s files: ${firstLine((e as Error).message)}`);
     }
@@ -166,11 +158,8 @@ export function createActions(d: ActionDeps): UiActions {
       if (!c || c.reason !== null) throw changed(n);
       const known = d.proposed?.().find((p) => p.number === n);
       if (known && !known.acceptable) throw changed(n);
-      if (now.draft) await owner(["pr", "ready", String(n), "-R", now.repo], `mark PR #${n} ready`);
-      await owner(
-        ["pr", "merge", String(n), "--squash", "--match-head-commit", head, "-R", now.repo],
-        `merge PR #${n}`,
-      );
+      if (now.draft) refused(await of.markReady(now.repo, n), `mark PR #${n} ready`);
+      refused(await of.mergePr(now.repo, n, { method: MERGE_METHOD, head }), `merge PR #${n}`);
       readNow();
       return `Merged PR #${n} as you. The intent is on main; Towercab picks it up within a minute.`;
     },
@@ -184,7 +173,7 @@ export function createActions(d: ActionDeps): UiActions {
       if (!(await files(now.repo, n)))
         throw new Error(`PR #${n} doesn't add an intent, so it isn't closed from here.`);
       const why = text?.trim() || DEFAULT_CLOSE_REASON;
-      await owner(["pr", "close", String(n), "-R", now.repo, "--comment", why], `close PR #${n}`);
+      refused(await of.closePr(now.repo, n, why), `close PR #${n}`);
       readNow();
       return `Closed PR #${n}. The intent never reaches main.`;
     },
@@ -214,35 +203,25 @@ export function createActions(d: ActionDeps): UiActions {
       if (!p) throw new Error("Nothing to merge: its PR isn't open yet.");
       const again = repeated(m, p, "merge");
       if (again) return again;
-      const view = await d.github.owner([
-        "pr",
-        "view",
-        String(p.number),
-        "-R",
-        p.github,
-        "--json",
-        "state,mergedAt",
-      ]);
-      if (view.code !== 0) {
+      let state: PrBrief;
+      try {
+        state = await of.prBrief(p.github, p.number);
+      } catch (e) {
+        if (e instanceof ForgeBadReply)
+          throw new Error(`GitHub gave no state for the ${p.label} #${p.number}.`);
         throw new Error(
-          `GitHub refused to read the ${p.label} #${p.number}: ${firstLine(view.stderr || view.stdout)}`,
+          `GitHub refused to read the ${p.label} #${p.number}: ${firstLine((e as Error).message)}`,
         );
       }
-      let state: { state?: unknown; mergedAt?: unknown };
-      try {
-        state = JSON.parse(view.stdout) as typeof state;
-      } catch {
-        throw new Error(`GitHub gave no state for the ${p.label} #${p.number}.`);
-      }
-      if (state.state === "MERGED" || state.mergedAt) {
+      if (state.state === "MERGED" || state.merged) {
         done(m, p, "merge");
         return "Already merged; Towercab is moving on.";
       }
       if (state.state === "CLOSED") {
         throw new Error(`The ${p.label} #${p.number} is closed, so there is nothing to merge.`);
       }
-      await owner(
-        ["pr", "merge", String(p.number), "--squash", "-R", p.github],
+      refused(
+        await of.mergePr(p.github, p.number, { method: MERGE_METHOD }),
         `merge the ${p.label} #${p.number}`,
       );
       done(m, p, "merge");
@@ -260,7 +239,7 @@ export function createActions(d: ActionDeps): UiActions {
       const p = pr(m);
       if (!p) throw new Error("Nothing to pass on: its PR isn't open yet.");
       // The same comment the owner can write on GitHub, so there is one way in (PIP-143).
-      await owner(["pr", "comment", String(p.number), "-R", p.github, "--body", "/pass"], "pass it on");
+      refused(await of.commentOnPr(p.github, p.number, "/pass", { inline: true }), "pass it on");
       d.db.setMeta(`poll:${m.id}`, "1");
       return `Passed on: Towercab asks your teammates within a minute.`;
     },
@@ -272,8 +251,8 @@ export function createActions(d: ActionDeps): UiActions {
       const m = unfinishedFor(d.db, intent);
       const p = pr(m);
       if (p) {
-        await owner(
-          ["pr", "comment", String(p.number), "-R", p.github, "--body", body],
+        refused(
+          await of.commentOnPr(p.github, p.number, body, { inline: true }),
           `comment on the ${p.label}`,
         );
         return `Replied on the ${p.label} #${p.number}. Towercab picks it up within a minute.`;
@@ -294,8 +273,8 @@ export function createActions(d: ActionDeps): UiActions {
       if (m && p) {
         const again = repeated(m, p, "retry");
         if (again) return again;
-        await owner(
-          ["pr", "comment", String(p.number), "-R", p.github, "--body", "/retry"],
+        refused(
+          await of.commentOnPr(p.github, p.number, "/retry", { inline: true }),
           `comment on the ${p.label}`,
         );
         done(m, p, "retry");
@@ -311,7 +290,7 @@ export function createActions(d: ActionDeps): UiActions {
       if (m && p) {
         const again = repeated(m, p, "drop");
         if (again) return again;
-        await owner(["pr", "close", String(p.number), "-R", p.github], `close the ${p.label} #${p.number}`);
+        refused(await of.closePr(p.github, p.number), `close the ${p.label} #${p.number}`);
         done(m, p, "drop");
         return `Closed the ${p.label} #${p.number}; the intent is dropped.`;
       }

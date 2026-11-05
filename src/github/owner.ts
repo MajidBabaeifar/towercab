@@ -1,9 +1,8 @@
 // Acting as the owner (LOOP-38): what the owner starts from the UI or the CLI happens on GitHub
 // under the owner's own `gh` login, never the App's.
 
-import type { GitHub } from "../handlers.ts";
+import { type Forge, MERGE_METHOD, must } from "../forge.ts";
 import type { IntentStore } from "../intents/types.ts";
-import { check } from "../tools.ts";
 
 /** The active github.com login in `gh auth status` output (gh 2.46 and older wordings). */
 export function parseAuthStatus(text: string): string | null {
@@ -22,9 +21,8 @@ export function parseAuthStatus(text: string): string | null {
 }
 
 /** The owner's `gh` login; throws unless it is `[github].me` (case-insensitive). */
-export async function ownerLogin(gh: GitHub): Promise<string> {
-  const r = await gh.owner(["auth", "status", "--hostname", "github.com"]);
-  const who = parseAuthStatus(`${r.stdout}\n${r.stderr}`);
+export async function ownerLogin(gh: Forge): Promise<string> {
+  const who = await gh.activeOwnerLogin();
   if (!who) throw new Error(`gh isn't logged in to github.com as ${gh.me}: gh auth login`);
   if (who.toLowerCase() !== gh.me.toLowerCase()) {
     throw new Error(`gh is logged in as ${who}, not ${gh.me}: gh auth switch -u ${gh.me}`);
@@ -33,24 +31,21 @@ export async function ownerLogin(gh: GitHub): Promise<string> {
 }
 
 /** `approve`: squash-merge PR `pr` of `repo` as the owner. */
-export async function approve(gh: GitHub, repo: string, pr: number): Promise<void> {
+export async function approve(gh: Forge, repo: string, pr: number): Promise<void> {
   await ownerLogin(gh);
-  check(await gh.owner(["pr", "merge", String(pr), "-R", repo, "--squash"]), "gh pr merge");
+  must(await gh.asOwner().mergePr(repo, pr, { method: MERGE_METHOD }), "gh pr merge");
 }
 
 /** A reply from the UI: a comment on PR `pr` of `repo` as the owner. */
-export async function reply(gh: GitHub, repo: string, pr: number, text: string): Promise<void> {
+export async function reply(gh: Forge, repo: string, pr: number, text: string): Promise<void> {
   await ownerLogin(gh);
-  check(
-    await gh.owner(["pr", "comment", String(pr), "-R", repo, "--body-file", "-"], { input: text }),
-    "gh pr comment",
-  );
+  must(await gh.asOwner().commentOnPr(repo, pr, text), "gh pr comment");
 }
 
 /** Drop from the UI: close PR `pr` of `repo` as the owner. */
-export async function closePr(gh: GitHub, repo: string, pr: number): Promise<void> {
+export async function closePr(gh: Forge, repo: string, pr: number): Promise<void> {
   await ownerLogin(gh);
-  check(await gh.owner(["pr", "close", String(pr), "-R", repo]), "gh pr close");
+  must(await gh.asOwner().closePr(repo, pr), "gh pr close");
 }
 
 /**
@@ -59,7 +54,7 @@ export async function closePr(gh: GitHub, repo: string, pr: number): Promise<voi
  * the caller applies `answered` with the text. Returns where it went.
  */
 export async function answer(
-  o: { gh: GitHub; store: IntentStore },
+  o: { gh: Forge; store: IntentStore },
   intent: string,
   pr: { repo: string; number: number } | null,
   text: string,

@@ -2,21 +2,14 @@
 // Actions run once, send a red to the worker as a repair (2 at most), else wait for the owner.
 
 import { git, refreshBase } from "../checkout.ts";
+import type { Check } from "../forge.ts";
 import { conflictOutcome } from "../github/events.ts";
 import type { Ctx, Handler, Progress } from "../handlers.ts";
 import { ok, red, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
-import { asEnv, cloneOf, coGit, data, gh, tail } from "./common.ts";
+import { asEnv, cloneOf, coGit, data, tail, viaForge } from "./common.ts";
 
-export interface Check {
-  name: string;
-  kind: "run" | "status";
-  status: string;
-  conclusion: string;
-  startedAt: number | null;
-  run: number | null;
-  url: string;
-}
+export type { Check };
 
 export type Bucket =
   | { kind: "pending" }
@@ -26,49 +19,6 @@ export type Bucket =
   | { kind: "cancel"; checks: Check[] };
 
 export const MAX_CI_REPAIRS = 2;
-
-const unix = (s: unknown) => {
-  const t = typeof s === "string" ? Date.parse(s) : Number.NaN;
-  return Number.isNaN(t) ? null : t / 1000;
-};
-const str = (v: Record<string, unknown>, k: string) => (typeof v[k] === "string" ? (v[k] as string) : "");
-
-/** The Actions run of a check's `detailsUrl`. */
-export function runId(url: string): number | null {
-  const m = /\/actions\/runs\/(\d+)(?:\/|$)/.exec(url);
-  return m ? Number(m[1]) : null;
-}
-
-/** `statusCheckRollup` → checks. */
-export function checksOf(rollup: unknown): Check[] {
-  if (!Array.isArray(rollup)) return [];
-  return rollup.map((raw) => {
-    const c = raw as Record<string, unknown>;
-    const startedAt = unix(c.startedAt) ?? unix(c.createdAt);
-    if (c.__typename === "StatusContext" || (c.context !== undefined && c.name === undefined)) {
-      const state = str(c, "state");
-      return {
-        name: str(c, "context"),
-        kind: "status" as const,
-        status: ["PENDING", "EXPECTED", ""].includes(state) ? "PENDING" : "COMPLETED",
-        conclusion: state,
-        startedAt,
-        run: null,
-        url: str(c, "targetUrl"),
-      };
-    }
-    const url = str(c, "detailsUrl");
-    return {
-      name: str(c, "name"),
-      kind: "run" as const,
-      status: str(c, "status"),
-      conclusion: str(c, "conclusion"),
-      startedAt,
-      run: runId(url),
-      url,
-    };
-  });
-}
 
 const passed = (c: Check) =>
   c.kind === "run"
@@ -113,20 +63,10 @@ export async function ciState(
   head: string | null,
   pushedAt: number,
 ): Promise<CiState> {
-  const v = JSON.parse(
-    await gh(cx, github, [
-      "pr",
-      "view",
-      String(pr),
-      "-R",
-      github,
-      "--json",
-      "headRefOid,mergeable,statusCheckRollup",
-    ]),
-  ) as { headRefOid: string; mergeable: string; statusCheckRollup: unknown };
-  if (head && v.headRefOid !== head) return { kind: "moved", head: v.headRefOid };
+  const v = await viaForge(cx.github.readChecks(github, pr));
+  if (head && v.head !== head) return { kind: "moved", head: v.head };
   if (v.mergeable === "CONFLICTING") return { kind: "conflict" };
-  return bucket(checksOf(v.statusCheckRollup), pushedAt, cx.clock.now(), cx.config.agent.ciGrace);
+  return bucket(v.checks, pushedAt, cx.clock.now(), cx.config.agent.ciGrace);
 }
 
 /**
@@ -134,10 +74,8 @@ export async function ciState(
  * Unlike `ciState` a conflict or a moved head hides nothing: the checks are read as they stand.
  */
 export async function redLog(cx: Ctx, github: string, pr: number, pushedAt: number): Promise<string | null> {
-  const v = JSON.parse(
-    await gh(cx, github, ["pr", "view", String(pr), "-R", github, "--json", "statusCheckRollup"]),
-  ) as { statusCheckRollup: unknown };
-  const b = bucket(checksOf(v.statusCheckRollup), pushedAt, cx.clock.now(), cx.config.agent.ciGrace);
+  const v = await viaForge(cx.github.readChecks(github, pr));
+  const b = bucket(v.checks, pushedAt, cx.clock.now(), cx.config.agent.ciGrace);
   return b.kind === "red" ? failedLog(cx, github, b.checks) : null;
 }
 
@@ -147,9 +85,7 @@ async function failedLog(cx: Ctx, github: string, checks: Check[]): Promise<stri
   const parts: string[] = [];
   for (const run of runs.slice(0, 3)) {
     try {
-      parts.push(
-        tail(await gh(cx, github, ["run", "view", String(run), "-R", github, "--log-failed"]), 6000),
-      );
+      parts.push(tail(await viaForge(cx.github.failedLog(github, run)), 6000));
     } catch (e) {
       parts.push(`(the log of run ${run} couldn't be read: ${(e as Error).message})`);
     }
@@ -213,8 +149,7 @@ export const ciHandler: Handler = {
         const reruns = { ...(d.ci?.reruns ?? {}) };
         const runs = [...new Set(s.checks.map((c) => c.run).filter((r): r is number => r !== null))];
         if (!reruns[m.head ?? ""] && runs.length) {
-          for (const run of runs)
-            await gh(cx, repo.github, ["run", "rerun", String(run), "-R", repo.github, "--failed"]);
+          for (const run of runs) await viaForge(cx.github.rerunFailed(repo.github, run));
           cx.record(
             m,
             m.step,

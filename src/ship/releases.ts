@@ -4,7 +4,8 @@
 
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
-import { jsonStream } from "../github/prs.ts";
+import { MERGE_METHOD } from "../forge.ts";
+import { forgeOf } from "../github/forge.ts";
 import type { GitHub } from "../handlers.ts";
 import { dataOf, getMission, type Mission, patchData } from "../mission.ts";
 import { parseTowercab } from "../repo/files.ts";
@@ -15,7 +16,6 @@ const REFUSALS = 3;
 /** How many releases the lookup reads, and how many missions it looks up in one pass (SHIP-32). */
 const RELEASES_READ = 100;
 const LOOKUPS_PER_PASS = 5;
-const RAW = ["-H", "Accept: application/vnd.github.raw"];
 
 export interface ReleaseDeps {
   github: GitHub;
@@ -77,28 +77,9 @@ export function releaseTitle(h: Held): string {
   return `Release PR #${h.pr} of ${h.repo} ${h.title}`;
 }
 
-async function api(d: ReleaseDeps, github: string, path: string, extra: string[] = []) {
-  return d.github.gh(github, ["api", ...extra, path]);
-}
-
-async function json<T>(d: ReleaseDeps, github: string, path: string): Promise<T> {
-  const r = await api(d, github, path);
-  if (r.code !== 0) throw new Error(`gh api ${path}: ${r.stderr.trim() || `exit ${r.code}`}`);
-  try {
-    return JSON.parse(r.stdout) as T;
-  } catch (e) {
-    throw new Error(`gh api ${path}: ${(e as Error).message}`);
-  }
-}
-
 /** A file of the default branch as text, or null when it isn't there. */
-async function raw(d: ReleaseDeps, github: string, base: string, file: string): Promise<string | null> {
-  const r = await api(d, github, `repos/${github}/contents/${file}?ref=${encodeURIComponent(base)}`, RAW);
-  if (r.code === 0) return r.stdout;
-  // Only "not found" means the file is absent; any other failure is an error, never "no file".
-  if (/\b404\b|not found/i.test(r.stderr)) return null;
-  throw new Error(`gh api ${file}: ${r.stderr.trim() || `exit ${r.code}`}`);
-}
+const raw = (d: ReleaseDeps, github: string, base: string, file: string) =>
+  forgeOf(d.github).readFile(github, file, base);
 
 function isJsonObject(text: string): boolean {
   try {
@@ -142,47 +123,9 @@ export function extraFilesOf(configText: string): string[] {
   return out;
 }
 
-interface CheckRun {
-  name: string;
-  status: string;
-  conclusion: string | null;
-}
-
 /** Main's head commit: its checks, judged against the required ones (SHIP-30). */
 async function mainChecks(d: ReleaseDeps, github: string, base: string, sha: string): Promise<MainChecks> {
-  const runs = await json<{ check_runs?: CheckRun[] }>(
-    d,
-    github,
-    `repos/${github}/commits/${sha}/check-runs?per_page=100`,
-  );
-  const statuses = await json<{ statuses?: { context: string; state: string }[] }>(
-    d,
-    github,
-    `repos/${github}/commits/${sha}/status`,
-  );
-  const seen = new Map<string, "green" | "pending" | "red">();
-  for (const c of runs.check_runs ?? []) {
-    const ok = c.status === "completed";
-    const good = ["success", "neutral", "skipped"].includes(c.conclusion ?? "");
-    seen.set(c.name, !ok ? "pending" : good ? "green" : "red");
-  }
-  for (const s of statuses.statuses ?? []) {
-    seen.set(s.context, s.state === "success" ? "green" : s.state === "pending" ? "pending" : "red");
-  }
-  const req = await api(
-    d,
-    github,
-    `repos/${github}/branches/${encodeURIComponent(base)}/protection/required_status_checks`,
-  );
-  let required: string[] = [];
-  if (req.code === 0) {
-    try {
-      const v = JSON.parse(req.stdout) as { contexts?: string[]; checks?: { context: string }[] };
-      required = [...new Set([...(v.contexts ?? []), ...(v.checks ?? []).map((c) => c.context)])];
-    } catch {
-      required = [];
-    }
-  }
+  const { seen, required } = await forgeOf(d.github).commitChecks(github, sha, base);
   const names = required.length ? required : [...seen.keys()];
   if (names.length === 0) return { state: "none", names: [] };
   const bad: string[] = [];
@@ -197,48 +140,18 @@ async function mainChecks(d: ReleaseDeps, github: string, base: string, sha: str
   return { state: red ? "red" : "pending", names: bad };
 }
 
-async function prFiles(d: ReleaseDeps, github: string, n: number): Promise<PrFile[]> {
-  const r = await api(d, github, `repos/${github}/pulls/${n}/files?per_page=100`, ["--paginate"]);
-  if (r.code !== 0) throw new Error(`gh api pulls/${n}/files: ${r.stderr.trim() || `exit ${r.code}`}`);
-  const out: PrFile[] = [];
-  for (const page of jsonStream(r.stdout, "gh api files")) {
-    if (!Array.isArray(page)) continue;
-    for (const f of page as { filename?: string; patch?: string }[]) {
-      if (typeof f.filename === "string") out.push({ name: f.filename, patch: f.patch ?? null });
-    }
-  }
-  return out;
-}
-
-interface Pr {
-  number: number;
-  body: string | null;
-  user: { login: string };
-  head: { sha: string };
-}
-
 /** One repo: the release PR, if any, decided and acted on (SHIP-30, SHIP-31). */
 async function releasePr(d: ReleaseDeps, name: string, github: string, base: string): Promise<void> {
-  const owner = github.split("/")[0]!;
   const branch = `release-please--branches--${base}`;
-  const list = await json<Pr[]>(
-    d,
-    github,
-    `repos/${github}/pulls?state=open&head=${encodeURIComponent(`${owner}:${branch}`)}&per_page=10`,
-  );
-  const pr = Array.isArray(list) ? list.find((p) => p.user?.login === BOT) : undefined;
+  const pr = (await forgeOf(d.github).openPrsFrom(github, branch)).find((p) => p.author === BOT);
   const prev = readRow(d.db, name);
   if (!pr) {
     if (prev) d.db.delMeta(KEY + name);
     return;
   }
-  const main = await json<{ sha: string }>(d, github, `repos/${github}/commits/${encodeURIComponent(base)}`);
-  const cmp = await json<{ merge_base_commit?: { sha: string } }>(
-    d,
-    github,
-    `repos/${github}/compare/${main.sha}...${pr.head.sha}`,
-  );
-  const files = await prFiles(d, github, pr.number);
+  const main = { sha: await forgeOf(d.github).branchHead(github, base) };
+  const mergeBase = await forgeOf(d.github).mergeBase(github, main.sha, pr.head);
+  const files: PrFile[] = await forgeOf(d.github).prPatches(github, pr.number);
   const config = await raw(d, github, base, "release-please-config.json");
   const towercab = await raw(d, github, base, "TOWERCAB.md");
   let manual = false;
@@ -259,7 +172,7 @@ async function releasePr(d: ReleaseDeps, name: string, github: string, base: str
     files,
     extraFiles: config ? extraFilesOf(config) : [],
     body: pr.body ?? "",
-    stale: cmp.merge_base_commit?.sha !== main.sha,
+    stale: (mergeBase ?? undefined) !== main.sha,
     checks,
   });
   if (decision.kind === "hold") {
@@ -278,24 +191,15 @@ async function releasePr(d: ReleaseDeps, name: string, github: string, base: str
     return;
   }
   // Main is read again just before the merge; the merge names the PR head that was inspected.
-  const again = await json<{ sha: string }>(d, github, `repos/${github}/commits/${encodeURIComponent(base)}`);
+  const again = { sha: await forgeOf(d.github).branchHead(github, base) };
   if (again.sha !== main.sha) return;
-  const m = await d.github.gh(github, [
-    "pr",
-    "merge",
-    String(pr.number),
-    "--squash",
-    "--match-head-commit",
-    pr.head.sha,
-    "-R",
-    github,
-  ]);
-  if (m.code === 0) {
+  const m = await forgeOf(d.github).mergePr(github, pr.number, { method: MERGE_METHOD, head: pr.head });
+  if (m.ok) {
     d.db.delMeta(KEY + name);
     d.log(`merged release PR #${pr.number} of ${name}`);
     return;
   }
-  const reason = m.stderr.trim() || `exit ${m.code}`;
+  const reason = m.reason || "failed";
   // Refusals count in a row, and their clock starts at the first one, not at an earlier hold.
   const before = prev && prev.pr === pr.number && prev.reason === "refused" ? prev : null;
   const refusals = (before?.refusals ?? 0) + 1;
@@ -322,29 +226,14 @@ async function published(d: ReleaseDeps, name: string, github: string): Promise<
     )
     .filter((m) => !dataOf<{ release?: unknown }>(m).release);
   if (missions.length === 0) return;
-  const list = await json<{ tag_name: string; html_url: string; draft?: boolean; created_at?: string }[]>(
-    d,
-    github,
-    `repos/${github}/releases?per_page=${RELEASES_READ}`,
-  );
+  const list = await forgeOf(d.github).listReleases(github, RELEASES_READ);
   // Past this many, older releases exist that we didn't read.
-  const truncated = Array.isArray(list) && list.length >= RELEASES_READ;
-  const releases = (Array.isArray(list) ? list : [])
-    .filter((r) => !r.draft)
-    .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""));
+  const truncated = list.length >= RELEASES_READ;
+  const releases = list.filter((r) => !r.draft).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const newest = releases[releases.length - 1];
   if (!newest) return;
   // Does the release's tag contain the commit? null: GitHub couldn't say.
-  const contains = async (sha: string, tag: string): Promise<boolean | null> => {
-    const c = await api(d, github, `repos/${github}/compare/${sha}...${encodeURIComponent(tag)}`);
-    if (c.code !== 0) return null;
-    try {
-      const status = (JSON.parse(c.stdout) as { status?: string }).status ?? "";
-      return status === "ahead" || status === "identical";
-    } catch {
-      return null;
-    }
-  };
+  const contains = (sha: string, tag: string) => forgeOf(d.github).tagContains(github, sha, tag);
   // The mission as it is now: its data may have changed during the awaited calls.
   const patch = (m: Mission, set: Record<string, unknown>) => {
     const fresh = getMission(d.db, m.id);
@@ -355,14 +244,14 @@ async function published(d: ReleaseDeps, name: string, github: string): Promise<
     const data = dataOf<{ releaseChecked?: string; releaseUnknown?: boolean }>(m);
     // A mission already found not to be in the newest release waits until a newer one appears:
     // this costs one compare per mission per new release, not per pass.
-    if (data.releaseChecked === newest.tag_name || data.releaseUnknown) continue;
+    if (data.releaseChecked === newest.tag || data.releaseUnknown) continue;
     // A backlog of old missions is worked off a few at a time, so a pass never stalls the loop.
     if (looked >= LOOKUPS_PER_PASS) break;
     looked++;
-    const inNewest = await contains(m.merge_sha!, newest.tag_name);
+    const inNewest = await contains(m.merge_sha!, newest.tag);
     if (inNewest === null) continue;
     if (!inNewest) {
-      patch(m, { releaseChecked: newest.tag_name });
+      patch(m, { releaseChecked: newest.tag });
       continue;
     }
     // Releases are in order, so containing is monotone: a binary search finds the first one.
@@ -371,7 +260,7 @@ async function published(d: ReleaseDeps, name: string, github: string): Promise<
     let failed = false;
     while (lo < hi) {
       const mid = Math.floor((lo + hi) / 2);
-      const has = await contains(m.merge_sha!, releases[mid]!.tag_name);
+      const has = await contains(m.merge_sha!, releases[mid]!.tag);
       if (has === null) {
         failed = true;
         break;
@@ -387,8 +276,8 @@ async function published(d: ReleaseDeps, name: string, github: string): Promise<
       patch(m, { releaseUnknown: true, releaseChecked: undefined });
       continue;
     }
-    patch(m, { release: { tag: r.tag_name, url: r.html_url }, releaseChecked: undefined });
-    d.log(`${m.intent}: published in ${r.tag_name} of ${name}`);
+    patch(m, { release: { tag: r.tag, url: r.url }, releaseChecked: undefined });
+    d.log(`${m.intent}: published in ${r.tag} of ${name}`);
   }
 }
 

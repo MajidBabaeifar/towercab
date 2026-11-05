@@ -3,9 +3,10 @@
 
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { loadAgent } from "../../src/agents.ts";
+import { checksOf } from "../../src/github/checks.ts";
 import type { Ctx, Progress } from "../../src/handlers.ts";
 import { insertMission, type Mission, update } from "../../src/mission.ts";
-import { bucket, type Check, checksOf, ciHandler } from "../../src/pipeline/ci.ts";
+import { bucket, type Check, ciHandler } from "../../src/pipeline/ci.ts";
 import { ask } from "../../src/pipeline/common.ts";
 import { gateHandler } from "../../src/pipeline/gate.ts";
 import { approvedOf, reviewComment } from "../../src/pipeline/review.ts";

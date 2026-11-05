@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 import { parseConfig } from "../src/config.ts";
 import { Db } from "../src/db.ts";
+import { GitHubForge } from "../src/github/forge.ts";
 import { MORE_THAN_FILE, MORE_THAN_ONE, type ProposedPr, readProposed } from "../src/github/proposed.ts";
-import type { GitHub } from "../src/handlers.ts";
 import { Home } from "../src/home.ts";
 import { Loop } from "../src/loop.ts";
 import { createActions } from "../src/ui/actions.ts";
@@ -83,13 +83,13 @@ function world(prs: FakePr[]) {
     }
     return failResult(`fake gh: unhandled ${args.join(" ")}`);
   });
-  const github: GitHub = {
+  const github = new GitHubForge({
     me: "owner",
     gh: (_repo, args, opts) => tools.run("gh", args, opts),
     owner: (args, opts) => tools.run("gh", ["--as-owner", ...args], opts),
     gitAuth: async () => ({ args: [], env: {} }),
     bot: async () => ({ login: "towercab", id: 9, email: "9+towercab@users.noreply.github.com" }),
-  };
+  });
   return { tools, github, calls, prs, read: () => readProposed(github, REPO, new Map(), "towercab") };
 }
 

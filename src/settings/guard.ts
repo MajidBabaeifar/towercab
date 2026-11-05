@@ -2,6 +2,7 @@
 // applied only when each has run green on the base branch's head. Towercab writes no check name.
 
 import type { RepoConfig } from "../config.ts";
+import { forgeOf } from "../github/forge.ts";
 import type { RunResult } from "../tools.ts";
 import type { SettingsDeps } from "./script.ts";
 
@@ -65,29 +66,8 @@ export async function mainGreen(d: SettingsDeps, repo: RepoConfig, plan: Plan | 
   const no = (why: string): Guard => ({ ok: false, words: `Ruleset not applied: ${why}` });
   if (!plan || plan.required.length === 0) return no("the settings plan names no required check to confirm");
   const names = plan.required.join(", ");
-  const head = await d.github.gh(repo.github, [
-    "api",
-    `repos/${repo.github}/commits/${repo.base}`,
-    "--jq",
-    ".sha",
-  ]);
-  const sha = head.stdout.trim();
-  if (head.code !== 0 || !sha) return no(`${names} could not be confirmed on ${repo.base}`);
-  const runs = await d.github.gh(repo.github, [
-    "api",
-    `repos/${repo.github}/commits/${sha}/check-runs?per_page=100`,
-    "--paginate",
-    "--jq",
-    ".check_runs[] | [.name, .conclusion] | @tsv",
-  ]);
-  if (runs.code !== 0) return no(`${names} could not be confirmed on ${repo.base}`);
-  const green = new Set(
-    runs.stdout
-      .split("\n")
-      .map((l) => l.split("\t"))
-      .filter((p) => p[1]?.trim() === "success")
-      .map((p) => p[0]!.trim()),
-  );
+  const green = await forgeOf(d.github).greenChecks(repo.github, repo.base);
+  if (!green) return no(`${names} could not be confirmed on ${repo.base}`);
   const red = plan.required.filter((n) => !green.has(n));
   return red.length ? no(`${red.join(", ")} has not run green on ${repo.base}`) : { ok: true, words: "" };
 }
