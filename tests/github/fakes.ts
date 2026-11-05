@@ -4,7 +4,8 @@
 import { generateKeyPairSync, type KeyObject, verify } from "node:crypto";
 import { chmodSync, writeFileSync } from "node:fs";
 import type { HttpRequest, HttpResponse } from "../../src/github/app.ts";
-import type { Clock, GitHub } from "../../src/handlers.ts";
+import { GitHubForge } from "../../src/github/forge.ts";
+import type { Clock, Host } from "../../src/handlers.ts";
 import type { FakeTools } from "../helpers/tools.ts";
 
 export const BOT = "towercab[bot]";
@@ -91,15 +92,15 @@ export class FakeApi {
   }
 }
 
-/** A `GitHub` over `tools`: App calls carry `GH_TOKEN=app`, the owner's none. */
-export function fakeGitHub(tools: FakeTools, me = "owner"): GitHub {
-  return {
+/** A `GitHubForge` over `tools`: App calls carry `GH_TOKEN=app`, the owner's none. */
+export function fakeGitHub(tools: FakeTools, me = "owner"): Host {
+  return new GitHubForge({
     me,
     gh: (_repo, args, opts = {}) => tools.run("gh", args, { ...opts, env: { GH_TOKEN: "app" } }),
     owner: (args, opts = {}) => tools.run("gh", args, { ...opts, env: {} }),
     gitAuth: async () => ({ args: [], env: { GH_TOKEN: "app" } }),
     bot: async () => ({ login: BOT, id: 42, email: BOT_EMAIL }),
-  };
+  });
 }
 
 /** `gh auth status` as gh 2.46 prints it for `login`. */

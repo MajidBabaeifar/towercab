@@ -2,6 +2,7 @@
 // and the PR poll. Nothing about reviewers is stored: it is read again before every decision.
 
 import type { RepoConfig } from "../config.ts";
+import { ownerForge } from "../github/forge.ts";
 import { type PrState, readPr, readPrExtra } from "../github/prs.ts";
 import {
   readApprovedReviewIds,
@@ -113,8 +114,8 @@ export async function teammateStep(cx: Ctx, m: Mission, kind: TeamKind): Promise
   });
   if (kind === "code" && e.pr.isDraft) {
     // PIP-143: nobody is asked about a draft; it is marked ready first.
-    const r = await cx.github.gh(repo.github, ["pr", "ready", String(n), "-R", repo.github]);
-    if (r.code !== 0) cx.log(`${m.intent}: couldn't mark PR ${n} ready: ${r.stderr.trim()}`);
+    const r = await cx.github.markReady(repo.github, n);
+    if (!r.ok) cx.log(`${m.intent}: couldn't mark PR ${n} ready: ${r.reason}`);
     return { poll: 10 };
   }
   const required = await requiredApprovals(cx, repo);
@@ -179,13 +180,7 @@ export async function ownerMergeRefusal(o: {
   if (kind === "code" && d.teammate?.unchecked !== true) return null;
   const n = kind === "code" ? m.pr : m.spec_pr;
   if (n === null) return null;
-  const gh: GitHub = {
-    me: o.me,
-    owner: o.owner,
-    gh: (_repo, args, opts) => o.owner(args, opts),
-    gitAuth: async () => ({ args: [], env: {} }),
-    bot: async () => ({ login: "", id: 0, email: "" }),
-  };
+  const gh = ownerForge(o.owner, o.me);
   try {
     const e = await evaluate({ github: gh, clone: "" }, repo, { n, branch: m.branch, bot: "" });
     if (e.counted) return null;

@@ -8,6 +8,8 @@ import { ensureClone, git } from "../checkout.ts";
 import { tickSteps } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
+import { MERGE_METHOD, must } from "../forge.ts";
+import { forgeOf } from "../github/forge.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import { dataOf, getMission, type Mission, patchData, unfinishedFor } from "../mission.ts";
@@ -158,44 +160,16 @@ async function writeSecret(
         ["push", "--quiet", "--force", "origin", `HEAD:refs/heads/${branch}`],
         auth,
       );
-      const found = await env.github.gh(c.github, [
-        "pr",
-        "list",
-        "-R",
-        c.github,
-        "--head",
-        branch,
-        "--state",
-        "open",
-        "--json",
-        "number",
-        "--jq",
-        ".[0].number",
-      ]);
-      let pr = Number(found.stdout.trim());
-      if (found.code !== 0 || !Number.isInteger(pr) || pr < 1) {
-        const made = check(
-          await env.github.gh(
-            c.github,
-            [
-              "pr",
-              "create",
-              "-R",
-              c.github,
-              "--base",
-              c.base,
-              "--head",
-              branch,
-              "--title",
-              `chore(secrets): add ${spec.key} to ${spec.file}`,
-              "--body-file",
-              "-",
-            ],
-            { input: prBody(intent, spec) },
-          ),
-          "gh pr create",
-        );
-        pr = Number(/\/pull\/(\d+)/.exec(made)?.[1]);
+      const forge = forgeOf(env.github);
+      let pr = (await forge.openPrOn(c.github, branch).catch(() => null)) ?? 0;
+      if (!Number.isInteger(pr) || pr < 1) {
+        pr =
+          (await forge.openPr(c.github, {
+            base: c.base,
+            head: branch,
+            title: `chore(secrets): add ${spec.key} to ${spec.file}`,
+            body: prBody(intent, spec),
+          })) ?? 0;
         if (!Number.isInteger(pr) || pr < 1) throw new Error("GitHub gave no pull request number");
       }
       return { pr, branch };
@@ -262,24 +236,12 @@ async function advanceOne(env: SecretEnv, m: Mission, s: OwnerStep & { secret: S
       return;
     }
     if (st.pr) {
-      const v = await env.github.gh(c.github, [
-        "pr",
-        "view",
-        String(st.pr),
-        "-R",
-        c.github,
-        "--json",
-        "state",
-      ]);
-      const state = (JSON.parse(check(v, "gh pr view")) as { state?: string }).state;
+      const state = (await forgeOf(env.github).prBrief(c.github, st.pr)).state;
       if (state === "CLOSED") {
         setState(env.db, env.clock, m.id, s.n, null);
         env.log(`${m.intent}: the pull request for ${key} was closed; starting over`);
       } else if (state === "OPEN" && st.approved) {
-        check(
-          await env.github.gh(c.github, ["pr", "merge", String(st.pr), "-R", c.github, "--squash"]),
-          "gh pr merge",
-        );
+        must(await forgeOf(env.github).mergePr(c.github, st.pr, { method: MERGE_METHOD }), "gh pr merge");
         env.log(`${m.intent}: merged the pull request for ${key}`);
       }
       return;

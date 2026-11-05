@@ -29,14 +29,14 @@ describe("owner", () => {
     const tools = ownerTools("Owner");
     const gh = fakeGitHub(tools, "owner");
     await approve(gh, "me/web", 7);
-    expect(tools.lines("gh")).toEqual(["auth status --hostname github.com", "pr merge 7 -R me/web --squash"]);
+    expect(tools.lines("gh")).toEqual(["auth status --hostname github.com", "pr merge 7 --squash -R me/web"]);
     // Under the owner's login: no App token in any call.
     expect(tools.calls.every((c) => c.opts.env?.GH_TOKEN === undefined)).toBe(true);
 
     await reply(gh, "me/web", 7, "Use the other table.");
     await closePr(gh, "me/web", 7);
     expect(tools.lines("gh").filter((l) => !l.startsWith("auth"))).toEqual([
-      "pr merge 7 -R me/web --squash",
+      "pr merge 7 --squash -R me/web",
       "pr comment 7 -R me/web --body-file -",
       "pr close 7 -R me/web",
     ]);

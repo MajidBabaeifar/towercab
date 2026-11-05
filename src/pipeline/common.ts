@@ -10,8 +10,9 @@ import { git, gitSane } from "../checkout.ts";
 import { type ClaudeRun, freshContext, parseRun, prepareRun, type RunEnd, type RunKind } from "../claude.ts";
 import { clonePath, type RepoConfig } from "../config.ts";
 import { classifyFailure, classifyRun } from "../faults.ts";
+import { must, type Result } from "../forge.ts";
 import { type Step, upsertStageComment } from "../github/comments.ts";
-import { type ChildEnd, type Ctx, EnvError, type Progress } from "../handlers.ts";
+import { type ChildEnd, type Ctx, EnvError, type GitHub, type Progress } from "../handlers.ts";
 import { plainLine, SUBJECT_MAX } from "../intents/naming.ts";
 import type { Intent } from "../intents/types.ts";
 import { cooldown } from "../limits.ts";
@@ -21,7 +22,6 @@ import { loadRepoFiles, RepoError, type RepoFiles } from "../repo/files.ts";
 import type { Risk } from "../risk.ts";
 import { checkoutRoot } from "../service.ts";
 import { combine, type OwnerStep, type PlanStep, parseNoneLive, parseSteps } from "../steps.ts";
-import { check } from "../tools.ts";
 import { grantsFor, parseAccess, type TestAsk } from "./access.ts";
 import { cacheEnv } from "./sandbox.ts";
 import { type Access, type Question, SCHEMAS } from "./schemas.ts";
@@ -525,7 +525,7 @@ export async function coGit(cx: Ctx, m: Mission, args: string[]): Promise<string
 }
 
 /** `-c user.name=… -c user.email=…` of the App's bot, for Towercab's commits. */
-export async function botAuthor(cx: Pick<Ctx, "github">): Promise<string[]> {
+export async function botAuthor(cx: { github: Pick<GitHub, "bot"> }): Promise<string[]> {
   const bot = await cx.github.bot();
   return ["-c", `user.name=${bot.login}`, "-c", `user.email=${bot.email}`, "-c", "commit.gpgsign=false"];
 }
@@ -613,11 +613,19 @@ export function asEnv(e: unknown): Error {
   return classifyFailure(msg) || /unable to access/i.test(msg) ? new EnvError("github", msg) : (e as Error);
 }
 
-/** `gh` as the App for the mission's repo, checked. */
-export async function gh(cx: Ctx, github: string, args: string[], input?: string): Promise<string> {
-  const r = await cx.github.gh(github, args, input === undefined ? {} : { input });
+/** A call to the forge: network and auth failures become an `EnvError` (LOOP-10). */
+export async function viaForge<T>(call: Promise<T>): Promise<T> {
   try {
-    return check(r, `gh ${args.slice(0, 2).join(" ")}`);
+    return await call;
+  } catch (e) {
+    throw asEnv(e);
+  }
+}
+
+/** The forge's answer to a change that must have worked: its failure is read as `viaForge` reads it. */
+export function mustForge(o: Result, what: string): void {
+  try {
+    must(o, what);
   } catch (e) {
     throw asEnv(e);
   }

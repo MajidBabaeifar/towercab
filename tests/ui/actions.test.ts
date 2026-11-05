@@ -76,11 +76,11 @@ test("ui: actions go through GitHub as the owner", async () => {
   expect(await w.actions.retry("a-ask")).toMatch(/^Asked for a fresh start on the code PR #58/);
   expect(await w.actions.drop("a-drop")).toBe("Closed the code PR #60; the intent is dropped.");
   expect(w.calls).toEqual([
-    ["pr", "view", "11", "-R", "owner/web", "--json", "state,mergedAt"],
+    ["pr", "view", "11", "-R", "owner/web", "--json", "state,isDraft,headRefOid,mergedAt"],
     ["pr", "merge", "11", "--squash", "-R", "owner/web"],
-    ["pr", "view", "31", "-R", "acme/intents", "--json", "state,mergedAt"],
+    ["pr", "view", "31", "-R", "acme/intents", "--json", "state,isDraft,headRefOid,mergedAt"],
     ["pr", "merge", "31", "--squash", "-R", "acme/intents"],
-    ["pr", "view", "57", "-R", "owner/web", "--json", "state,mergedAt"],
+    ["pr", "view", "57", "-R", "owner/web", "--json", "state,isDraft,headRefOid,mergedAt"],
     ["pr", "merge", "57", "--squash", "-R", "owner/web"],
     ["pr", "comment", "58", "-R", "owner/web", "--body", "The flaky test is known; skip it."],
     ["pr", "comment", "58", "-R", "owner/web", "--body", "/retry"],

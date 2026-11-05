@@ -5,6 +5,7 @@
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { git, refreshBase } from "../checkout.ts";
 import { classifyRun } from "../faults.ts";
+import { MERGE_METHOD } from "../forge.ts";
 import { prsOnBranch } from "../github/branches.ts";
 import { type ChildEnd, type Ctx, EnvError, type Handler, type Progress } from "../handlers.ts";
 import { type Outcome, ok, red, wait } from "../machine.ts";
@@ -19,7 +20,6 @@ import {
   cloneOf,
   coGit,
   data,
-  gh,
   intentOf,
   nextN,
   type PipeData,
@@ -28,6 +28,7 @@ import {
   repoFilesWait,
   type ShipData,
   tail,
+  viaForge,
 } from "./common.ts";
 
 export const MAX_FIXES = 2;
@@ -492,26 +493,14 @@ export const revertHandler: Handler = {
       if (!pr) {
         const intent = await intentOf(cx, m);
         const body = revertBody(sc, intent.title);
-        const out = await gh(
-          cx,
-          repo.github,
-          [
-            "pr",
-            "create",
-            "-R",
-            repo.github,
-            "--head",
-            branch,
-            "--base",
-            repo.base,
-            "--title",
-            `Revert: ${intent.title}`,
-            "--body-file",
-            "-",
-          ],
-          body,
+        pr = await viaForge(
+          cx.github.openPr(repo.github, {
+            base: repo.base,
+            head: branch,
+            title: `Revert: ${intent.title}`,
+            body,
+          }),
         );
-        pr = Number(/\/pull\/(\d+)/.exec(out)?.[1] ?? 0) || null;
         if (!pr) return { done: frozen("GitHub didn't return the revert PR's number") };
       }
       m = cx.record(m, "ci", {}, { ship: { ...sc.ship, revert: { ...r, pr }, since: cx.clock.now() } });
@@ -522,19 +511,10 @@ export const revertHandler: Handler = {
       const st = await ciState(cx, repo.github, r.pr!, r.head, m.pushed_at ?? cx.clock.now());
       if (st.kind === "green" || st.kind === "none") {
         const fresh = cx.record(m, "merge");
-        const res = await cx.github.gh(repo.github, [
-          "pr",
-          "merge",
-          String(r.pr),
-          "-R",
-          repo.github,
-          "--squash",
-          "--match-head-commit",
-          r.head!,
-        ]);
-        if (res.code !== 0)
+        const res = await cx.github.mergePr(repo.github, r.pr!, { method: MERGE_METHOD, head: r.head! });
+        if (!res.ok)
           return {
-            done: frozen(`GitHub refused to merge the revert PR: ${res.stderr.trim().split("\n")[0]}`),
+            done: frozen(`GitHub refused to merge the revert PR: ${res.reason.split("\n")[0]}`),
           };
         m = fresh;
       } else if (st.kind === "red" || st.kind === "cancel" || st.kind === "conflict" || st.kind === "moved") {
@@ -547,23 +527,13 @@ export const revertHandler: Handler = {
     }
     if (m.step === "merge") {
       const r = sc.ship.revert!;
-      const v = JSON.parse(
-        await gh(cx, repo.github, [
-          "pr",
-          "view",
-          String(r.pr),
-          "-R",
-          repo.github,
-          "--json",
-          "state,mergeCommit",
-        ]),
-      ) as { state: string; mergeCommit: { oid: string } | null };
+      const v = await viaForge(cx.github.mergeStatus(repo.github, r.pr!));
       if (v.state !== "MERGED" || !v.mergeCommit) return { poll: 5 };
       m = cx.record(
         m,
         "live",
         {},
-        { ship: { ...sc.ship, revert: { ...r, sha: v.mergeCommit.oid }, since: cx.clock.now() } },
+        { ship: { ...sc.ship, revert: { ...r, sha: v.mergeCommit }, since: cx.clock.now() } },
       );
       sc.ship = data(m).ship!;
     }

@@ -19,7 +19,6 @@ import {
   coGit,
   commitTitle,
   data,
-  gh,
   grants,
   intentOf,
   PushRefused,
@@ -28,6 +27,7 @@ import {
   refusedPush,
   repoFiles,
   takeRemote,
+  viaForge,
 } from "./common.ts";
 import {
   existingChanged,
@@ -188,21 +188,7 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
   const repo = cx.repo(m);
   const intent = await intentOf(cx, m);
   const d = data(m);
-  const existing = JSON.parse(
-    await gh(cx, repo.github, [
-      "pr",
-      "list",
-      "-R",
-      repo.github,
-      "--head",
-      m.branch,
-      "--state",
-      "open",
-      "--json",
-      "number",
-    ]),
-  ) as { number: number }[];
-  let n = existing[0]?.number;
+  let n = await viaForge(cx.github.openPrOn(repo.github, m.branch));
   if (!n) {
     const body = codeBody({
       worker: d.build?.pr ?? null,
@@ -222,26 +208,15 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
       footer: { intentUrl: cx.store.url(intent), costUsd: m.cost_usd, secs: m.agent_secs },
       issue: { url: intent.issue, repo: repo.github },
     });
-    const url = await gh(
-      cx,
-      repo.github,
-      [
-        "pr",
-        "create",
-        "-R",
-        repo.github,
-        "--base",
-        repo.base,
-        "--head",
-        m.branch,
-        "--title",
-        commitTitle(m, intent),
-        "--body-file",
-        "-",
-      ],
-      body,
+    n = await viaForge(
+      cx.github.openPr(repo.github, {
+        base: repo.base,
+        head: m.branch,
+        title: commitTitle(m, intent),
+        body,
+      }),
     );
-    n = Number(/\/pull\/(\d+)/.exec(url)?.[1]);
+    if (!n) throw new Error("GitHub gave no pull request number");
     // PIP-146: the owner answers for the PR.
     if (repo.teammateReview && !(await assignOwner(cx.github, repo.github, n))) {
       cx.log(`${m.intent}: couldn't assign ${cx.github.me} to PR ${n}`);

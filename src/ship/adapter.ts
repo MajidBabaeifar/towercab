@@ -3,10 +3,11 @@
 
 import { homedir } from "node:os";
 import { git } from "../checkout.ts";
+import { ForgeDenied } from "../forge.ts";
 import { type Ctx, EnvError } from "../handlers.ts";
 import type { Mission } from "../mission.ts";
 import { checksMayWrite } from "../pipeline/checks.ts";
-import { gh } from "../pipeline/common.ts";
+import { viaForge } from "../pipeline/common.ts";
 import { cacheEnv, sandboxArgv, sandboxEnv } from "../pipeline/sandbox.ts";
 import type { RunResult } from "../tools.ts";
 import type { Live } from "./live.ts";
@@ -59,30 +60,10 @@ async function contains(e: AdapterEnv, newer: string, sha: string): Promise<bool
   return r.code === 0;
 }
 
-interface Deployment {
-  id: number;
-  sha: string;
-  task: string;
-  created_at: string;
-  payload: unknown;
-}
-
 function githubAdapter(e: AdapterEnv): Adapter {
   const github = e.cx.repo(e.m).github;
-  const env = encodeURIComponent(e.live.environment);
-  const list = async (sha?: string): Promise<Deployment[]> =>
-    JSON.parse(
-      await gh(e.cx, github, [
-        "api",
-        `repos/${github}/deployments?environment=${env}&per_page=30${sha ? `&sha=${sha}` : ""}`,
-      ]),
-    ) as Deployment[];
-  const latest = async (id: number): Promise<{ state: string; description: string } | null> => {
-    const s = JSON.parse(
-      await gh(e.cx, github, ["api", `repos/${github}/deployments/${id}/statuses?per_page=1`]),
-    ) as { state: string; description: string | null }[];
-    return s[0] ? { state: s[0].state, description: s[0].description ?? "" } : null;
-  };
+  const list = (sha?: string) => viaForge(e.cx.github.listDeployments(github, e.live.environment, sha));
+  const latest = (id: number) => viaForge(e.cx.github.deploymentStatus(github, id));
   const current = async () => {
     for (const d of await list()) if ((await latest(d.id))?.state === "success") return d.sha;
     return null;
@@ -106,11 +87,11 @@ function githubAdapter(e: AdapterEnv): Adapter {
         if (
           d.task === "deploy:rollback" &&
           p?.intent === ask.intent &&
-          Date.parse(d.created_at) / 1000 >= ask.since - 1
+          Date.parse(d.createdAt) / 1000 >= ask.since - 1
         )
           return d.id;
       }
-      const body = JSON.stringify({
+      const body = {
         ref: ask.sha,
         environment: e.live.environment,
         task: "deploy:rollback",
@@ -118,20 +99,14 @@ function githubAdapter(e: AdapterEnv): Adapter {
         required_contexts: [],
         description: `Towercab: roll back ${ask.from.slice(0, 7)} for ${ask.intent}`.slice(0, 140),
         payload: { intent: ask.intent, from: ask.from, reason: ask.reason.slice(0, 500) },
-      });
-      const r = await e.cx.github.gh(
-        github,
-        ["api", "-X", "POST", `repos/${github}/deployments`, "--input", "-"],
-        {
-          input: body,
-        },
-      );
-      if (r.code !== 0) {
-        if (/HTTP 403|Resource not accessible/i.test(r.stderr))
+      };
+      try {
+        return await e.cx.github.createDeployment(github, body);
+      } catch (err) {
+        if (err instanceof ForgeDenied)
           throw new RollbackRefused("Towercab's GitHub App needs read and write access to Deployments");
-        throw new EnvError("github", `gh api POST deployments: ${r.stderr.trim().split("\n")[0]}`);
+        throw new EnvError("github", (err as Error).message);
       }
-      return (JSON.parse(r.stdout) as { id: number }).id;
     },
   };
 }

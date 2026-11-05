@@ -1,6 +1,7 @@
 // The `gate` (PIP-7, AUT-3, AUT-4, AUT-15, AUT-18) and `merge` (PIP-22) stages, in code only.
 
 import { gate } from "../autonomy.ts";
+import { MERGE_METHOD } from "../forge.ts";
 import { conflictOutcome } from "../github/events.ts";
 import type { Ctx, Handler } from "../handlers.ts";
 import { ok, wait } from "../machine.ts";
@@ -8,7 +9,7 @@ import { getMission, type Mission } from "../mission.ts";
 import { type Risk, riskMd } from "../risk.ts";
 import { PASS_ON_WHY } from "../teammates.ts";
 import { testGrantsOf } from "./access.ts";
-import { data, effectiveOf, gh, intentOf, prUrl, repoFiles } from "./common.ts";
+import { data, effectiveOf, intentOf, mustForge, prUrl, repoFiles, viaForge } from "./common.ts";
 import { type Checks, codeBody } from "./prtext.ts";
 import { HOLD_SECS, holder } from "./ship.ts";
 import { stepsBeforeMerge } from "./steps.ts";
@@ -98,12 +99,7 @@ async function updateBody(cx: Ctx, m: Mission): Promise<void> {
     issue: { url: intent.issue, repo: repo.github },
   });
   try {
-    await gh(
-      cx,
-      repo.github,
-      ["api", "-X", "PATCH", `repos/${repo.github}/pulls/${m.pr}`, "-F", "body=@-"],
-      body,
-    );
+    await viaForge(cx.github.updatePrBody(repo.github, m.pr!, body));
   } catch (e) {
     cx.log(`${m.intent}: couldn't update the PR text: ${(e as Error).message}`);
   }
@@ -195,59 +191,33 @@ export const mergeHandler: Handler = {
     }
     const repo = cx.repo(m);
     const d = data(m);
-    const v = JSON.parse(
-      await gh(cx, repo.github, [
-        "pr",
-        "view",
-        String(m.pr),
-        "-R",
-        repo.github,
-        "--json",
-        "headRefOid,mergeStateStatus,state,mergeCommit",
-      ]),
-    ) as { headRefOid: string; mergeStateStatus: string; state: string; mergeCommit: { oid: string } | null };
+    const v = await viaForge(cx.github.mergeStatus(repo.github, m.pr!));
     if (v.state === "MERGED") {
       return {
         done: {
           event: "code_merged",
-          set: { merge_sha: v.mergeCommit?.oid ?? null, merged_by: m.merged_by ?? "towercab" },
+          set: { merge_sha: v.mergeCommit, merged_by: m.merged_by ?? "towercab" },
         },
       };
     }
-    if (v.headRefOid !== m.head)
+    if (v.head !== m.head)
       return { done: { event: "head_moved", why: "the PR's head moved after the gate" } };
     // PIP-144: Towercab re-checks the teammate approval on the head it merges.
-    if (v.mergeStateStatus === "CLEAN" || v.mergeStateStatus === "HAS_HOOKS") {
+    if (v.mergeState === "CLEAN" || v.mergeState === "HAS_HOOKS") {
       const t = await teammateStep(cx, m, "code");
       if (t) return t;
     }
-    switch (v.mergeStateStatus) {
+    switch (v.mergeState) {
       case "CLEAN":
       case "HAS_HOOKS": {
         const fresh = cx.record(m, "merging", { merged_by: "towercab" });
-        const r = await cx.github.gh(repo.github, [
-          "pr",
-          "merge",
-          String(m.pr),
-          "-R",
-          repo.github,
-          "--squash",
-          "--match-head-commit",
-          m.head!,
-        ]);
-        if (r.code !== 0) return { done: wait("merge failed", r.stderr.trim().split("\n")[0]) };
+        const r = await cx.github.mergePr(repo.github, m.pr!, { method: MERGE_METHOD, head: m.head! });
+        if (!r.ok) return { done: wait("merge failed", r.reason.split("\n")[0]) };
         void fresh;
         return { poll: 1 };
       }
       case "BEHIND":
-        await gh(cx, repo.github, [
-          "api",
-          "-X",
-          "PUT",
-          `repos/${repo.github}/pulls/${m.pr}/update-branch`,
-          "-f",
-          `expected_head_sha=${m.head}`,
-        ]);
+        await viaForge(cx.github.updateBranch(repo.github, m.pr!, m.head!));
         return {
           done: {
             event: "head_moved",
@@ -262,13 +232,13 @@ export const mergeHandler: Handler = {
         const tries = (d.mergeTries ?? 0) + 1;
         if (tries >= MAX_BLOCKED_READS)
           return {
-            done: wait("review and merge PR", mergeStateWhy(v.mergeStateStatus)),
+            done: wait("review and merge PR", mergeStateWhy(v.mergeState)),
           };
         cx.record(m, m.step, {}, { mergeTries: tries });
         return { poll: cx.config.agent.ciPoll };
       }
       case "DRAFT":
-        await gh(cx, repo.github, ["pr", "ready", String(m.pr), "-R", repo.github]);
+        mustForge(await cx.github.markReady(repo.github, m.pr!), "gh pr ready");
         return { poll: 10 };
       default:
         return { poll: cx.config.agent.ciPoll };

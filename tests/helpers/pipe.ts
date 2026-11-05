@@ -8,7 +8,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseConfig } from "../../src/config.ts";
 import { Db } from "../../src/db.ts";
-import type { GitHub, Handlers } from "../../src/handlers.ts";
+import { GitHubForge } from "../../src/github/forge.ts";
+import type { Handlers, Host } from "../../src/handlers.ts";
 import { Home } from "../../src/home.ts";
 import { findOpen, openStore } from "../../src/intents/store.ts";
 import type { Intent, IntentEdit, IntentStore, Listing, NewIntent } from "../../src/intents/types.ts";
@@ -370,14 +371,14 @@ export class Pipe {
     );
   }
 
-  github(): GitHub {
-    return {
+  github(): Host {
+    return new GitHubForge({
       me: "owner",
       gh: (_repo, args, opts) => this.tools.run("gh", args, opts),
       owner: (args, opts) => this.tools.run("gh", ["--as-owner", ...args], opts),
       gitAuth: async () => ({ args: [], env: {} }),
       bot: async () => ({ login: "towercab[bot]", id: 9, email: "9+towercab[bot]@users.noreply.github.com" }),
-    };
+    });
   }
 
   async start(extra: Record<string, unknown> = {}, opts: StartOpts = {}): Promise<Loop> {

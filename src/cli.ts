@@ -18,7 +18,7 @@ import { Db } from "./db.ts";
 import { doctor } from "./doctor.ts";
 import { createGitHub } from "./github/gh.ts";
 import { approve as ownerApprove } from "./github/owner.ts";
-import type { GitHub } from "./handlers.ts";
+import type { Host } from "./handlers.ts";
 import { systemClock } from "./handlers.ts";
 import { Home } from "./home.ts";
 import { openStore } from "./intents/store.ts";
@@ -112,7 +112,7 @@ interface World {
   home: Home;
   db: Db;
   tools: Tools;
-  github: GitHub | null;
+  github: Host | null;
   store(): Promise<IntentStore>;
 }
 
