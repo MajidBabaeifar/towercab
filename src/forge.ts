@@ -85,6 +85,14 @@ export interface FileChange {
   status: string;
 }
 
+/** PIP-148: one open code scanning alert. */
+export interface CodeScanningAlert {
+  rule: string;
+  path: string;
+  line: number | null;
+  message: string;
+}
+
 export interface Deployment {
   id: number;
   sha: string;
@@ -180,6 +188,11 @@ export interface Forge {
   rerunFailed(repo: string, run: number): Promise<void>;
   /** The log of the failed jobs of a run. */
   failedLog(repo: string, run: number): Promise<string>;
+  /**
+   * PIP-148: the open code scanning alerts of a change request's merge ref (none for a host without
+   * code scanning). Throws `ForgeDenied` when the bot may not read them.
+   */
+  codeScanningAlerts(repo: string, n: number): Promise<CodeScanningAlert[]>;
 
   listDeployments(repo: string, environment: string, sha?: string): Promise<Deployment[]>;
   /** The newest status of a deployment, or null. */

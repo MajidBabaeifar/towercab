@@ -751,6 +751,8 @@ export interface ReposPage {
   spend: RepoSpendView;
   /** REPO-32: the one settings step the owner has (the same on every repo page), or null. */
   settingsStep: { text: string; canGrant: boolean } | null;
+  /** PIP-150: the one step for the code scanning alerts permission. */
+  scanningStep: { text: string; canGrant: boolean } | null;
   /** What went wrong: the intents repo can't be read, or the asked-for repo doesn't exist. */
   error: string | null;
 }

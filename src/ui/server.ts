@@ -95,6 +95,7 @@ const ACTIONS = new Set([
   "pause",
   "resume",
   "granted",
+  "scanningGranted",
   "addRepo",
   "features",
   "accept",
@@ -306,6 +307,7 @@ export function startUi(o: UiOptions): UiServer {
       "pause",
       "resume",
       "granted",
+      "scanningGranted",
       "addRepo",
       "features",
       "accept",
@@ -396,7 +398,12 @@ export function startUi(o: UiOptions): UiServer {
                                                   a.granted ??
                                                   (() => Promise.reject(new Error("Not available.")))
                                                 )()
-                                              : await a.resume();
+                                              : action === "scanningGranted"
+                                                ? await (
+                                                    a.scanningGranted ??
+                                                    (() => Promise.reject(new Error("Not available.")))
+                                                  )()
+                                                : await a.resume();
       reply = { ok: true, message };
     } catch (e) {
       reply = { ok: false, message: (e as Error).message };

@@ -6,6 +6,7 @@ import type {
   Bot,
   CheckState,
   ChecksRead,
+  CodeScanningAlert,
   Deployment,
   DeploymentStatus,
   FileChange,
@@ -174,6 +175,10 @@ export class FakeForge implements Forge {
   }
   async failedLog(_repo: string, run: number) {
     return `run ${run}: failed\n`;
+  }
+
+  async codeScanningAlerts(): Promise<CodeScanningAlert[]> {
+    return [];
   }
 
   async listDeployments(repo: string, environment: string, sha?: string) {

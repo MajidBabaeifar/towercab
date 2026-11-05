@@ -5,6 +5,7 @@
 import type { Db } from "../db.ts";
 import { featuresRun } from "../features.ts";
 import { type Feature, featuresPath, hasOwnLines, parseFeatures } from "../intents/features.ts";
+import { SCANNING_STEP, scanningPermissionMissing } from "../pipeline/alerts.ts";
 import { missingPermission, PERMISSION_STEP, storedSettings } from "../settings/store.ts";
 import { fileErrorOf, limitsView } from "./limits.ts";
 import { proposedFor, proposedSection } from "./proposed.ts";
@@ -71,6 +72,7 @@ export async function repos(src: UiSources, selected: string | null, o: ReposOpt
     all,
     spend: repoSpendView(spendTotals(by)),
     settingsStep: missingPermission(src.db) ? { text: PERMISSION_STEP, canGrant: src.running } : null,
+    scanningStep: scanningPermissionMissing(src.db) ? { text: SCANNING_STEP, canGrant: src.running } : null,
     error,
   };
   return { version: versionOf(body, `${dbMark(src.db)}:${s.listing?.head ?? ""}`), ...body };

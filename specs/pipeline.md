@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..147 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..150 · **Prefix:** PIP
 
 ## Purpose
 
@@ -327,6 +327,8 @@ green by weakening the test.
   them and publish refuses a diff that changes or deletes them. New test files are fine. A locked
   test that reads at the new head exactly as on the base branch came in with a merge of the base (a
   conflict round), so publish lets it through.
+- Which tests stay locked is narrowed by PIP-151 (tests the PR added or its plan allowed are not locked),
+  PIP-152 (an owner's allow unlocks a path) and PIP-153 (a forced edit that comes with a merge of the base).
 - Verified by: `pipeline: repair can't edit pushed tests`, `pipeline: a merge of the base may change pushed tests`
 
 ### PIP-32 · Verifier
@@ -1428,6 +1430,135 @@ When the host's rules need approvals the reviewers can't supply, Towercab says s
   from <who the host asks, e.g. the code owners>`. It clears when the cause is gone. It does not
   stop the wait and is shown, not sent as a message (LOOP-14).
 - Verified by: `pipeline: too few reviewers for the host's rule sets a warning`, `pipeline: a host that still wants approval after the reviewers' sets a warning`, `pipeline: the warning clears when the list is fixed`
+
+### PIP-148 · A repair round sees the code scanning alerts that failed the pull request
+
+When a failed check has no Actions run log, such as `CodeQL`, the repair round gets the open code scanning alerts of the pull request, each with its rule, file, line and message.
+
+- Applies wherever PIP-83's log tails are built for a red pull request (the code PR's repair rounds in
+  `ci.ts` and the spec PR's revisions, PIP-83). A red check has no run log when its `run` is null.
+- For such checks the `Forge` reads the open alerts of the merge ref: `gh api
+  repos/<repo>/code-scanning/alerts?ref=refs/pull/<n>/merge&state=open`, like the other host reads only
+  `GitHubForge` builds the arguments. A host without code scanning returns no alerts.
+- The read uses the GitHub App's token, like the other host reads (not the owner's `gh` login).
+- Only alerts in files the pull request changes are kept: an alert is kept when its path is one of the
+  files the PR's diff touches (the PR's changed-file list, read through the `Forge`). Alerts in other
+  files, such as old ones on the base branch, are left out and not counted.
+- Each kept alert becomes one line after the check list: `- <rule id> at <path>:<line>: <message>`, in
+  the alerts' order, at most 20; more are summarised as `and <k> more`. The block is passed as fenced
+  data (PIP-39), with the tail limit of the run logs. Checks that do have a run keep their log tail as today.
+- No open alerts in the PR's files, or all checks have a run → no alert block, and the details are as before.
+- Verified by: `pipeline: a red CodeQL check without a run gives the repair round the alert's rule, file and line`, `pipeline: a check with a run log gets no alert block`, `pipeline: alerts in files the pull request did not change are left out`
+
+### PIP-149 · Unreadable code scanning alerts are noted, not fatal
+
+When the alerts can't be read, the repair details say so in one line and the repair round goes on.
+
+- A failure of the read in PIP-148 (the host unreachable, an error from `gh`) adds
+  `(the code scanning alerts couldn't be read: <reason>)` to the details, as an unreadable run log does
+  (PIP-83); it neither throws nor counts as a crash (LOOP-6), and the repair round starts.
+- A refusal by the host (403, "Resource not accessible by integration") is the missing App permission
+  and gets its own line instead: `(the code scanning alerts couldn't be read: the GitHub App needs the
+  Code scanning alerts: read permission)`. PIP-150 adds the owner step.
+- Verified by: `pipeline: unreadable code scanning alerts are noted in the repair details`, `pipeline: a refused alert read names the missing permission`
+
+### PIP-150 · A missing code scanning permission is one owner step
+
+If the GitHub App can't read code scanning alerts, the owner gets one step to grant it, shown once, and no mission waits on it.
+
+- The first refusal in PIP-149 stores `code-scanning-permission` and adds one owner step, shown with the
+  repo's other steps and not once per repo or per pull request: `Grant the Towercab GitHub App the Code
+  scanning alerts: read permission`, ticked by the owner (as REPO-32 does for Administration).
+- While the flag is set, the repair details carry the one line of PIP-149 and the read is not retried.
+  Ticking the step clears the flag so the next red check reads again; a read that is refused again sets
+  it and shows the step again.
+- No mission waits on it and nothing is sent as a message (LOOP-14).
+- Verified by: `pipeline: a refused alert read becomes one owner step`, `pipeline: a refused alert read is not retried until the step is ticked`
+
+### PIP-151 · A change keeps editing the tests it added itself
+
+Repair rounds can edit a test file the pull request created or its plan allowed; only tests that already exist on the base branch stay locked.
+
+- The lock of PIP-31 covers a test file (PIP-30's globs) only when it exists on `origin/<base>` and is
+  not granted. A file absent on the base (the PR added it), or granted by the plan or the owner (REPO-13,
+  PIP-116, PIP-141), is never locked, in the guard rules (`locked` in `guard.json`, PIP-29) and in
+  publish's check, in every later round: CI fixes, review fixes, answers and conflict rounds.
+- "Absent on the base" is read at the base branch tip fetched for the round, so a file whose path was
+  added to the base by someone else meanwhile counts as a base file and is locked.
+- A test file that exists on the base stays locked even if the PR edited it in its first push.
+- The looser lock keeps its two safeguards: the red→green proof (PIP-30) runs again after every round that
+  changes a test, so the PR's tests must still fail without the change, and the review sees the test
+  diff. `agents/review.md` gets one line: flag a fix round that weakens the PR's own tests (it counts as
+  `tests_weakened`, PIP-5).
+- Verified by: `pipeline: a repair round may edit a test the pull request added`, `pipeline: a repair round that edits a test from the base still waits`, `pipeline: a granted test is not locked in a repair round`, `pipeline: proof runs again after a round that edited a test`, `pipeline: the review prompt asks to flag a fix round that weakens the PR's own tests`
+
+### PIP-152 · An owner's allow also unlocks a test locked by the repair lock
+
+`towercab answer <id> allow <path>` (or a reply `allow <path>` on the PR) lets the worker edit a test that PIP-31 locked, for the rest of that mission.
+
+- `allow <path>` is valid for a path that is in `data.refusedTests` (PIP-141) or that a repair round was
+  stopped on because of the lock (guard or publish). A stop on the lock records the path as
+  `data.lockedTests` and the question or wait names it, with the line "Reply `allow <path>` to let the
+  worker edit it."
+- An allow moves the path to the grants (`by: owner`); the next guard rules and publish check leave it
+  unlocked in every later round of the mission, and the command fails for any other path with the error
+  of PIP-141 listing the refused and locked paths. Towercab replies as in PIP-140 and the blocked
+  mission continues.
+- The grant is for this mission only; it does not outlast a merge or a new mission.
+- Verified by: `cli: answer allow unlocks a test locked in a repair round`, `pipeline: an allowed locked test passes publish in later rounds`, `pipeline: a stop on the repair lock names the path and how to allow it`
+
+### PIP-153 · A merge of the base may force an edit to a locked test
+
+A conflict round may change a locked test where the base's own changes force it, and publish accepts that as part of the merge.
+
+- In a conflict round (PIP-134, PIP-22), edits to a locked test (PIP-31) are accepted by publish and the
+  guard when the base changed, since the merge base, that test file or a file under `src/` that the test
+  imports (directly, by its relative `import`s). There is no matching of lines or hunks: the whole file is
+  open for that round.
+- A locked test whose own file and imported `src/` files are unchanged on the base stays locked in the
+  conflict round. Only the conflict round gets this; a CI, review or answer round does not.
+- Proof and review (PIP-151) apply to these edits like to any other.
+- Verified by: `pipeline: a merge of the base may edit a pushed test whose imported source changed on the base`, `pipeline: a merge of the base may edit a pushed test that changed on the base`, `pipeline: a conflict round can't edit a pushed test the base did not touch`
+
+### PIP-154 · A repair round reads the log of the job that failed
+
+When a run's failed-jobs log is only a summary job's, the repair round gets the own log of each job that really failed.
+
+- Applies wherever PIP-83's log tails are built for a red pull request (the code PR's repair rounds in
+  `ci.ts` and the spec PR's revisions). For a failed check with a `run`, the job id is the number after
+  `/job/` in the check's details URL (`Check.url`). The `Forge` gets `jobLog(repo, job)`, which reads
+  `gh api repos/<repo>/actions/jobs/<job id>/logs`; like the other host reads only `GitHubForge` builds the
+  arguments.
+- A check is a summary job when its name's last segment (after the final ` / `) is `ci-ok`, or when the
+  run's `--log-failed` output holds only lines of such jobs. When at least one failed check is not a
+  summary job, summary checks are skipped and only the others are read. When every failed check is a
+  summary job, the log is read as before (PIP-83).
+- Each job's tail is the last 6000 characters of its log (PIP-83's limit) under the line `Job <check name>:`;
+  at most 3 jobs are read per round, in the order of the checks. The run-level `--log-failed` read of
+  PIP-83 is kept for a check whose URL holds no job id and for the all-summary case.
+- Verified by: `pipeline: a red run whose failed log is only the summary job gives the repair round the failed job's finding`, `pipeline: summary jobs are skipped when another check failed`, `pipeline: a check without a job id in its URL keeps the run log`
+
+### PIP-155 · A long job log is cut around the finding, never the secret
+
+A long log from a secret scanner or Semgrep is cut to the findings, and a secret's value never reaches the repair round.
+
+- A job log longer than the tail limit (PIP-154) is cut before the tail is taken: for gitleaks, to the
+  finding blocks (the `RuleID`, `File`, `Line` and `Fingerprint` lines of each block); for Semgrep, to
+  the block that starts at `Findings:` or `Code Finding` and ends at the summary line. Other logs keep
+  their last 6000 characters.
+- Lines that carry the secret are dropped for gitleaks: `Secret:`, `Match:` and the `Finding:` line,
+  whatever the log level prefix. The rule applies to a log of any length, also one that is short enough
+  to pass whole. A repair round is told the file and line, not the value.
+- If no block is recognised, the tail applies as before, with the same lines dropped.
+- Verified by: `pipeline: a long gitleaks log is cut to its RuleID, File and Line blocks`, `pipeline: a gitleaks secret value never reaches the repair details`, `pipeline: a long Semgrep log is cut to its findings block`, `pipeline: a log without a known finding block keeps its tail`
+
+### PIP-156 · An unreadable job log is noted, not fatal
+
+When one job's log can't be read, the repair details say so in one line and the round goes on.
+
+- A failure of the read in PIP-154 adds `(the log of job <name> couldn't be read: <reason>)` and the run's
+  `--log-failed` output is used for that check instead; it neither throws nor counts as a crash (LOOP-6).
+- Verified by: `pipeline: an unreadable job log is noted and the run log is used`
 
 ### PIP-130 · The design treats IDs of other open spec PRs as taken
 
