@@ -191,6 +191,13 @@ A Telegram message is acted on exactly once, even across crashes and restarts.
   outbox (LOOP-16), so a crash after an action neither repeats it nor loses the reply.
 - Verified by: `shadow: an update is handled once after a crash`, `shadow: the reply is not lost after a crash`
 
+### SHD-21 · It stays out of owner-only intents
+
+The shadow cannot answer, approve, start, boost or drop an intent set to `a0`.
+
+- Before running any action on an intent whose effective `a` is 0 (AUT-31), the shadow's action layer refuses it with "this intent is only yours", records it as refused in `shadow_actions` (SHD-19) and tells the owner in its reply. This holds whatever `free` says (SHD-11) and after a `yes` (SHD-10). It may still read and talk about the intent.
+- Verified by: `shadow: an a0 intent is refused`, `shadow: a yes does not unlock an a0 intent`
+
 ## Out of scope
 
 - A shell, or any file access on the host, for the shadow (SHD-5).

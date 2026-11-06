@@ -1249,6 +1249,13 @@ The owner can reset the shadow from the panel.
   `POST /api/actions` (UI-65); the reply says what happened as in SHD-17. At 360 px it is at least 44 px tall.
 - Verified by: `ui: shadow reset asks first and resets`
 
+### UI-239 · Owner-only intents say "only you"
+
+Intents set to `a0` show "only you" in the page and in `towercab status`.
+
+- Cards, lists, the intent page and the status output show the label "only you" (text, not colour alone) where they show autonomy, with the line "Only you can answer or approve this." Waits on such an intent read as waiting for you in the needs-you list. Notes of ignored replies (AUT-32) show on the timeline. The shadow panel (UI-237) lists a refused action on an a0 intent as refused.
+- Verified by: `ui: a0 intents show only you`, `status: a0 intents show only you`
+
 ## Out of scope
 
 - Editing intents in the page: the owner edits them in the intents repo or with `/intent`.

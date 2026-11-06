@@ -251,6 +251,26 @@ Every grant of network access, from a plan, a request or an intent, is a domain 
 - The code PR switches AUT-14 and AUT-15 (and replaces the a1–a3 test `autonomy: unplanned access at a1-a3 is granted`), PIP-24 (no `WebFetch(domain:*)`, repo variables), PIP-95 and PIP-116 (wording), LOOP-34 (cache env), LOOP-69 (the `env` refusal) and the config table of loop.md (ignored keys), each in the same commit as the code.
 - Verified by: `autonomy: an invalid grant in a plan waits for the owner`, `autonomy: an invalid mid-build request is refused`, `autonomy: unplanned access asks the owner at every level`, `autonomy: allowing unplanned access grants it`, `autonomy: a refused access stays refused`
 
+### AUT-31 · a0: only the owner decides
+
+An intent set to `a0` is decided by the owner alone: every wait goes to them and nothing goes ahead without them.
+
+- `a: 0` is valid in the intent's front matter like any other level (the range is 0–5). At a0 every wait goes to the owner: a question (PIP-110), the spec gate (AUT-11), the plan gate (AUT-12), a test change or unplanned access (PIP-116, AUT-15), the merge (AUT-3) and the owner's steps (SHIP-17). Towercab never merges, approves or answers on its own at a0, whatever the risk level or the repo's cap (AUT-8).
+- Validation does not shrink (AUT-6): the checks, the proof, CI and the review all run at a0, as at a1.
+- `effective` still takes the lowest `a` present (AUT-7), so nothing can raise an a0 intent; a worker may still lower to a0, never out of it. An `a` of 0 is not "unset": AUT-9 applies only when `a` is missing.
+- Access (AUT-14) at a0 is that of a1–a3.
+- The code PR switches AUT-3, AUT-7, AUT-8 and AUT-9 where they say 1–5, in the same commit as the code.
+- Verified by: `autonomy: a0 waits at every gate`, `autonomy: a0 is never raised`, `autonomy: a0 ignores risk and cap`, `intents: a is 0 to 5`
+
+### AUT-32 · At a0 only the owner's own replies count
+
+On an a0 intent only the owner's own replies and actions count; the shadow, other agents and other accounts cannot answer or approve.
+
+- The owner's own channels count: their GitHub login as in PIP-44, and the page and Telegram messages the owner sends themselves. A shadow action (SHD-19) of kind `reply`, `merge`, `start`, `boost` or `drop` aimed at an a0 intent is refused with the reason "this intent is only yours" and recorded as refused (SHD-12, UI-237). It is not held for a `yes`: a `yes` from the owner does not turn a shadow action into the owner's own.
+- A comment, review or reply from any other account, the App's bot or an agent is ignored as in PIP-44 and, at a0, also noted once on the intent's timeline (who, where, that it was ignored). Notes are not repeated for the same comment.
+- Nothing the shadow or an agent says is read as an answer to a question, an approval of a spec or plan, a choice for test or network access, or a merge.
+- Verified by: `autonomy: a0 ignores replies from other accounts and notes them`, `shadow: an a0 intent is refused`, `events: only the owner's comments count`
+
 ## Out of scope
 
 - Raising autonomy automatically.
