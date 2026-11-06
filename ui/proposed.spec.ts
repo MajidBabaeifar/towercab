@@ -39,8 +39,8 @@ test("ui: screenshots light, dark and mobile", async ({ browser }) => {
       await settle(page);
       const section = page.locator("#proposed");
       await expect(section).toContainText("Proposed");
-      await expect(section.locator(".proposed-card")).toHaveCount(5);
-      await expect(section.locator(".proposed-card").first()).toContainText(
+      await expect(section.locator(".proposed-row")).toHaveCount(5);
+      await expect(section.locator(".proposed-row").first()).toContainText(
         "Export invoices as a spreadsheet",
       );
       await expect(section.locator("#proposed-202")).toContainText("Draft");
@@ -54,7 +54,7 @@ test("ui: screenshots light, dark and mobile", async ({ browser }) => {
       await page.goto(`${base}/repos?repo=web`);
       await settle(page);
       await expect(page.locator(".repo-page")).toContainText("Proposed");
-      await expect(page.locator(".proposed-card")).toHaveCount(2);
+      await expect(page.locator(".proposed-row")).toHaveCount(2);
       expect(await noSideways(), `repo ${m.mode} scrolls sideways`).toBeLessThanOrEqual(0);
       await page.screenshot({ path: join(SHOTS, `proposed-repo-${m.mode}.png`), fullPage: true });
 

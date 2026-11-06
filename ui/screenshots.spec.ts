@@ -391,6 +391,8 @@ test("ui: airspace dims held stations and tags a plane waiting at merge", async 
         isMobile: m.mode === "mobile",
         hasTouch: m.mode === "mobile",
       });
+      // UI-246: the airspace starts folded on a phone; this test is about the open strip.
+      await ctx.addInitScript(() => localStorage.setItem("towercab.airspace", "shown"));
       const page = await ctx.newPage();
       const air = page.locator(".air-section");
       const noSideways = () => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
