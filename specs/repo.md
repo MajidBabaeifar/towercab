@@ -560,9 +560,10 @@ Towercab opens the chosen draft as a small pull request in the repo, and the wai
 The owner is asked to add a verifying section only when Towercab found no check that passes on the base branch.
 
 - All drafts of REPO-35 failed, or nothing was found to draft from → `waiting: add CLAUDE.md verifying
-  block`, with the ask of LOOP's message table amended to say what was tried and the last failure
-  (`Towercab tried <sources> and none passed on <base>: <last failure>. Add a verifying section to its
-  CLAUDE.md, then reply.`). A reply continues as today.
+  block`. The ask in [LOOP](loop.md)'s message table is fixed (`Towercab couldn't find checks that pass on
+  this repo. Add a verifying section to its CLAUDE.md, then reply.`); the wait's reason says what was tried
+  and the last failure (`Towercab tried <sources> and none passed on <base>: <last failure>.`). A reply
+  starts one new try; a base that has a checks block by then needs nothing.
 - A repo whose base branch fails its own CI checks does not count as "no check found": the failing draft is
   reported in that ask, not proposed.
 - Verified by: `repo: no passing draft asks the owner`, `repo: the ask names what was tried`
