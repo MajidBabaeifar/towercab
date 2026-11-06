@@ -230,11 +230,11 @@ Every Claude run is headless, sandboxed, and gets only the tools and access its 
   <m> --tools <list> [--allowedTools …] [--disallowedTools …] [--session-id|--resume <uuid>]
   [--max-budget-usd <n>] [--json-schema <schema>]`, the prompt on stdin. The system file = the base
   branch's `CLAUDE.md` + the writing guide (PIP-39). Env: HOME, PATH, LANG, the repo cache's
-  variables (LOOP-34), the repo's `[repos.<r>].env` under the rule of PIP-159; never a GitHub token.
+  variables (LOOP-34), `[agent].env`; never a GitHub token.
 - Settings: `sandbox {enabled, failIfUnavailable, allowUnsandboxedCommands: false, filesystem
   {denyRead: secret paths, denyWrite: <checkout>/.git + blocked protected paths, allowWrite: the repo
   cache}, network {allowedDomains: the granted domains}}`, `permissions.allow: WebFetch(domain:<d>)`
-  per granted domain (never `*`, AUT-26), the guard hook for workers (PIP-29). Secret paths:
+  per granted domain (`WebFetch(domain:*)` at a5), the guard hook for workers (PIP-29). Secret paths:
   `~/.ssh`, `~/.config/gh`, `~/.aws`, `~/.gnupg`, `~/.config/towercab`, `~/.claude/.credentials.json`,
   `~/.netrc`, `~/.git-credentials`, `~/.config/sops`, `~/.config/restic`, `~/.config/age`,
   `~/.password-store`, `~/.docker`, `~/.kube`, `~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials*`,
@@ -243,6 +243,9 @@ Every Claude run is headless, sandboxed, and gets only the tools and access its 
 - Tools by agent: **Agents** table. Disallowed for every run: `Bash(git push:*)`,
   `Bash(git remote:*)`, `Bash(git config:*)`, `Bash(gh:*)`, `Bash(ssh:*)`, `Bash(sudo:*)`, `Read` of
   each secret path. A denied push or secret read fails the step.
+- Draft change: PIP-157..159 and AUT-26 fix the sandbox settings, the environment and the granted
+  domains in code (no `WebFetch(domain:*)`, no `[agent].env`). The code PR switches this row, PIP-23,
+  PIP-95 and PIP-116 (wording), LOOP-34 and LOOP-69 in the same commit as the code.
 - Verified by: `claude: worker argv`, `claude: review argv`, `claude: settings by autonomy`, `claude: result parse`, `claude: no token in env`, `claude: other missions are unreadable`
 
 ### PIP-25 · Design
@@ -893,7 +896,7 @@ the worker, because it is not a code problem.
   read-only and that the code is not at fault. The options: `Allow` (Towercab remembers it for the
   repo and runs the checks again; later missions of the repo do not ask) and `Don't allow` (the
   mission waits `checks red`, and the owner can make the checks write inside the checkout, for example
-  `CARGO_TARGET_DIR` under `[repos.<r>].env`, a name PIP-159 allows, then reply, or drop the intent). It recommends allowing,
+  `CARGO_TARGET_DIR` under `[repos.<r>].env`, then reply, or drop the intent). It recommends allowing,
   since setup and the worker already write there.
 - An answer that starts with `allow`, `yes` or `ok` (any case) allows; any other answer does not. The
   answer continues the mission at the stage that asked, not at `build`.
@@ -1135,7 +1138,7 @@ owner, naming the test and why, and the owner's answer decides.
 
 - The worker returns `status: access` with `access.tests: [{path, why}]` (**Schemas** `build`); the
   guard's block reason for a protected existing test ends `if you need it, finish what you can and
-  return status access with this test and why`. Like all unplanned access (AUT-15) this is never
+  return status access with this test and why`. Unlike other unplanned access (AUT-15) this is never
   granted by Towercab itself, at any autonomy: the mission waits with a question that names the test
   and the reason (PIP-110), with the options `Allow this change` and `No, keep the test as it is` (PIP-138), and a
   recommendation.
@@ -1776,6 +1779,13 @@ score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outc
   machine safe.
 - Spec rows are `Draft` in the spec PR and the code PR flips them to `Live`, so `main` never claims
   something is built before it is.
+- Sandbox locked in code (the owner's call, 2026-11-06; PIP-157..164): built rows stay true to today's
+  code and the new behaviour is Draft until the code PR switches both together. Conservative defaults
+  taken where the intent was silent: the only configurable sandbox input is a repo's named variables
+  (no token-like name, no secret-looking value); the registry list is the same for setup, checks, e2e
+  and Claude runs; escape tests skip with a note where bwrap is missing but CI must have it; a
+  mid-build access request is asked, never granted, for paths as well as domains; an invalid domain
+  is refused without asking.
 - The agent files were compared with Anthropic's AI-Native SDLC Playbook (2026-10-28). Taken: findings
   name their pass (PIP-92), the plan names its files (PIP-93), the review gets a cost cap (PIP-94), the
   scorer fills the intent's other sections ([INT-32](intents.md)), and the review skips what the
