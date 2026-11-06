@@ -1726,6 +1726,37 @@ After two rounds, the second reviewer may still raise a point when leaving it op
 - A labelled point is an open point as PIP-97 describes: the spec gate waits for it and the spec PR body lists it under `## Open points for you`. It is the only kind the gate keeps after two rounds.
 - Verified by: `pipeline: after two rounds the reviewer may still raise an unsafe gap, labelled`, `pipeline: after two rounds an unlabelled reviewer point is dropped`, `pipeline: the design never asks after two rounds, even for an unsafe gap`
 
+### PIP-167 · A conflict where both sides only added is resolved by code
+
+Before a conflict round goes to the worker, Towercab tries to merge the base into the PR by itself when both sides only added lines.
+
+- Applies to every conflict round (PIP-134, PIP-31, PIP-22, and the merge of commits pushed to the PR in PIP-2), before the worker runs. Towercab merges `origin/<base>` into the checkout and looks at each conflict hunk.
+- A hunk is additive when neither side removed or changed a line the other kept: relative to the merge base, each side only inserted lines. An additive hunk keeps both sides, ours (the PR's) first, then theirs (the base's).
+- Two import lines from the same module (`import { a } from "./x.ts"` and `import { b } from "./x.ts"`) become one import with the names merged, sorted and without duplicates. Other import hunks keep both sides as above.
+- A spec file's Status line (`**Status:** Live: …`) where both sides added IDs becomes one line: the `Live:` lists are united and ID ranges of one prefix are merged and sorted (`PIP-1..54, PIP-167` and `PIP-1..54, PIP-160..166` give `PIP-1..54, PIP-160..167`).
+- If any hunk is not additive (one side deleted or edited a line the other kept), or the resolved tree fails the full checks of [repo.md](repo.md) (the repo's `checks` block, run as in PIP-23, not the `fast` subset), or the merge review of PIP-169 says a side was lost, the resolution is dropped without trace: the merge is aborted and the conflict round goes to the worker as before. No commit is pushed, and the failed attempt is not counted as one of the 2 automatic conflict rounds of PIP-134.
+- Verified by: `pipeline: a conflict where both sides added imports is resolved without a worker`, `pipeline: a conflict where both sides added keys to a list is resolved without a worker`, `pipeline: a conflict where one side deleted a line goes to the worker`, `pipeline: a mechanical resolution that fails the full checks goes to the worker`, `pipeline: spec Status lines from both sides are merged`
+
+### PIP-168 · A conflict that splits a block is resolved by applying the PR's own diff
+
+When a conflict hunk cuts through a block (CSS rules, say), Towercab takes the base branch's file and applies the PR's own change to it.
+
+- Applies per file, after PIP-167's hunk rule: a file where a hunk is not additive only because it splits a block, or where the hunk rule cannot decide, is resolved with the PR's diff for that file (merge base → PR head) applied onto the file as it is on `origin/<base>`. The patch must apply with no conflict and no fuzz (plain `git apply`, no three-way merge).
+- Other files of the same merge keep the result of PIP-167. If the patch does not apply cleanly to any such file, or the result fails the full checks or the merge review (PIP-167, PIP-169), the whole attempt is dropped and the worker's conflict round runs as before.
+- A file the base deleted or renamed is never resolved this way; it goes to the worker.
+- Verified by: `pipeline: a conflict that splits a CSS block is resolved by applying the PR's diff`, `pipeline: a PR diff that does not apply cleanly goes to the worker`
+
+### PIP-169 · The mechanical resolution is Towercab's own merge commit, reviewed only as a merge
+
+A conflict that code resolved is committed as Towercab's merge commit, checked in full and reviewed for the merge alone, so the gate never reads it as someone else's work and the whole PR is not reviewed again.
+
+- The commit is a merge of `origin/<base>` into the PR branch with Towercab's commit identity, the same as the worker's merge in a conflict round, and a message that says the base was merged and no files needed a worker. Both parents are kept; no force-push (PIP-2).
+- The gate's check for someone else's commits (PIP-7) does not count this commit, nor the base commits it brings in. Publish then pushes it, the mission goes on to `ci` on the new head, and no worker round or fix round is used.
+- The test lock of PIP-31 treats the files it changed as a merge of the base (PIP-153).
+- Merge review: after the full checks pass and before the push, a read-only session of the review model (PIP-4) is given only the diff of the merge commit against its first parent (the PR head before the merge) and the hunks Towercab resolved. It answers one question: did the combination keep both sides, nothing lost and nothing duplicated? Its result is `kept_both` (boolean) and `lost` (what was dropped or doubled, with file). `kept_both` false → the attempt is dropped (PIP-167). The verdict is posted as a short comment on the PR, written for the owner (PIP-39).
+- No full review follows: the review of the previous head (PIP-4) stands for the merge head, because the merge brings in no new content of the PR's own. The mission goes from the push to `ci`, and the review stage records the carried-over review instead of running again. The risk agent's assessment (PIP-96) is likewise carried over. A later push that changes the PR's own diff is reviewed in full as PIP-4 says.
+- Verified by: `pipeline: a mechanical merge commit is Towercab's own at the gate`, `pipeline: a mechanical resolution uses no worker round`, `pipeline: a mechanical merge is reviewed on its own diff only`, `pipeline: a merge review that finds a lost side goes to the worker`, `pipeline: a mechanical merge does not trigger a full review`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
