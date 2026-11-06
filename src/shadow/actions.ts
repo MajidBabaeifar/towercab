@@ -122,7 +122,9 @@ export class Executor {
       recordAction(db, { at: now, turn, idx, action, intent, pr: 0, outcome: "refused", detail: bad.why });
       return `I didn't ${action} ${intent || req.title}: ${bad.why}.`;
     }
-    const free = config.shadow.free as string[];
+    // SHD-9: freeing `merge` frees only the code PR's own merge; a spec or a plan still waits for a yes.
+    const codeOnly = action !== "merge" || unfinishedFor(db, intent)?.waiting === "review and merge PR";
+    const free = (config.shadow.free as string[]).filter((f) => f !== action || codeOnly);
     if (HELD.has(action) && (action === "confirm" || !free.includes(action))) {
       const have = pendingActions(db).find((p) => p.action === action && p.intent === intent);
       if (have) return `Still waiting for your yes: ${this.ask(have)}`;

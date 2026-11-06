@@ -19,7 +19,7 @@ import { section } from "../pipeline/prtext.ts";
 import { type Kind, parseStored, stageSkip } from "../repo/readiness.ts";
 import { usualOwner } from "../repos.ts";
 import { currentRisk, type RiskGate, riskWords } from "../risk.ts";
-import { actionSentence, actionsFor } from "../shadow/store.ts";
+import { actionSentence, actionsFor, shadowCosts } from "../shadow/store.ts";
 import { type Held, heldReleases, releaseLine, releaseTitle } from "../ship/releases.ts";
 import { MAX_FAILS } from "../ship/secret-steps.ts";
 import {
@@ -1245,11 +1245,8 @@ export function spend(db: Db, now: number): Spend {
     }
   }
   // SHD-18: the shadow's turns are part of the spend.
-  for (const r of db.all<{ at: number; cost: number }>(
-    "SELECT at, cost FROM shadow_turns WHERE cost > 0 AND at >= ? AND at <= ?",
-    now - 8 * DAY,
-    now,
-  )) {
+  for (const r of shadowCosts(db, now - 8 * DAY)) {
+    if (r.at > now) continue;
     const k = localDate(r.at);
     byDay.set(k, (byDay.get(k) ?? 0) + r.cost);
   }

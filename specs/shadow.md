@@ -88,6 +88,7 @@ The shadow merges, boosts or drops only after the owner says yes in the chat to 
 
 An action the owner's yes allows is still refused where the intent itself forbids it.
 
+- Listing `merge` in `[shadow] free` frees only the merge of a code PR; a spec or plan merge still asks.
 - A `merge` is refused while the intent's checks are not green or its autonomy asks for a human
   (AUT-1..8); the shadow's yes does not stand in for the owner on a wait that only the owner may clear.
   The refusal reaches the chat in one sentence.
@@ -166,7 +167,8 @@ When the conversation grows long, older turns are folded into a summary so the s
 The owner can wipe the conversation and start fresh.
 
 - `/reset` in the chat, `towercab shadow reset` or the page's Reset button (UI-238) clears the session id,
-  summary and turns, and drops any pending action. The action log (SHD-19) is kept. The reply says so in
+  summary and turns, and drops any pending action. The action log (SHD-19) is kept, unlinked from the turns it came from, and what the turns cost stays in
+  the day's spend and the cap (SHD-18). The reply says so in
   one sentence.
 - Verified by: `shadow: reset clears the conversation and keeps the action log`
 

@@ -100,12 +100,34 @@ export function liveTurns(db: Db): Turn[] {
   return db.all<Turn>("SELECT * FROM shadow_turns WHERE folded = 0 ORDER BY id");
 }
 
+/** SHD-17: the cost of turns a reset removed, kept as `[at, usd]` so the cap and the spend still count it. */
+const LEDGER = "shadow.ledger";
+
+function ledger(db: Db): [number, number][] {
+  try {
+    const v = JSON.parse(db.meta(LEDGER) ?? "[]") as unknown;
+    return Array.isArray(v) ? (v as [number, number][]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** The runs' costs, `{at, cost}`, from `since` on: the turns' and those a reset kept (SHD-18). */
+export function shadowCosts(db: Db, since: number): { at: number; cost: number }[] {
+  return [
+    ...db.all<{ at: number; cost: number }>(
+      "SELECT at, cost FROM shadow_turns WHERE cost > 0 AND at >= ?",
+      since,
+    ),
+    ...ledger(db)
+      .filter(([at]) => at >= since)
+      .map(([at, cost]) => ({ at, cost })),
+  ];
+}
+
 /** Today's shadow cost (every turn's runs). */
 export function costToday(db: Db, now: number): number {
-  return (
-    db.get<{ n: number | null }>("SELECT SUM(cost) AS n FROM shadow_turns WHERE at >= ?", dayStart(now))?.n ??
-    0
-  );
+  return shadowCosts(db, dayStart(now)).reduce((n, r) => n + r.cost, 0);
 }
 
 /** A message for the owner, through the outbox (LOOP-16): sent once per `key`, retried until it is. */
@@ -213,6 +235,19 @@ export function prune(db: Db, now: number): void {
 /** SHD-17: the conversation, summary, session and pending actions go; the action log stays. */
 export function resetShadow(db: Db): void {
   db.tx(() => {
+    // The log keeps its rows but no longer points at turns: new turns are numbered from 1 again.
+    db.run("UPDATE shadow_actions SET turn = NULL");
+    // What the turns cost stays in the spend for the week it is shown.
+    const all = [
+      ...ledger(db),
+      ...db
+        .all<{ at: number; cost: number }>("SELECT at, cost FROM shadow_turns WHERE cost > 0")
+        .map((r): [number, number] => [r.at, r.cost]),
+    ];
+    const newest = Math.max(0, ...all.map(([at]) => at));
+    const kept = all.filter(([at]) => at >= newest - 8 * 86_400);
+    if (kept.length) db.setMeta(LEDGER, JSON.stringify(kept));
+    else db.delMeta(LEDGER);
     db.run("DELETE FROM shadow_turns");
     for (const k of [SESSION, SUMMARY, PENDING, STARTED, CAPPED]) db.delMeta(k);
     db.setMeta(EPOCH, String(epoch(db) + 1));
@@ -228,7 +263,7 @@ function ago(s: number): string {
 
 /** LOOP-131: what `/status` and `towercab shadow status` say. */
 export function statusText(db: Db, cfg: Config["shadow"], now: number): string {
-  const turns = db.get<{ n: number }>("SELECT COUNT(*) AS n FROM shadow_turns")?.n ?? 0;
+  const turns = db.get<{ n: number }>("SELECT COUNT(*) AS n FROM shadow_turns WHERE folded = 0")?.n ?? 0;
   const started = Number(db.meta(STARTED) ?? 0);
   const pending = pendingActions(db);
   const spent = costToday(db, now);
