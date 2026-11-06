@@ -1,4 +1,4 @@
-# Synced from MajidBabaeifar/ci@f88c443ce6ac .github/workflows/checks.yml; edit there, not here.
+# Synced from MajidBabaeifar/ci@5d4ee8802c76 .github/workflows/checks.yml; edit there, not here.
 # CI-1: checks every repo runs.
 name: checks
 
@@ -11,6 +11,7 @@ jobs:
   pr-title:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       pull-requests: read
     steps:
@@ -20,6 +21,7 @@ jobs:
 
   secrets:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -34,10 +36,14 @@ jobs:
           tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
       - name: gitleaks
         # CI-9: --verbose prints each finding's file, rule, commit and line; --redact keeps the secret out of the log.
-        run: gitleaks git --redact --verbose --no-banner .
+        # CI-11: --log-opts limits the scan to the PR's commits (or the checked-out branch), not every branch.
+        env:
+          LOG_OPTS: ${{ github.event_name == 'pull_request' && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || 'HEAD' }}
+        run: gitleaks git --redact --verbose --no-banner --log-opts "$LOG_OPTS" .
 
   actions:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -72,6 +78,7 @@ jobs:
 
   deps:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
