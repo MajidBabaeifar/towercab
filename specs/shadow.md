@@ -1,6 +1,6 @@
 # Shadow
 
-**Status:** Live · **Prefix:** SHD
+**Status:** Live: SHD-1..20 · **Prefix:** SHD
 
 ## Purpose
 
