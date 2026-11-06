@@ -34,7 +34,10 @@ const GOOD = [
 
 /** The tools and allowed rules each agent had in the `KINDS` table before the agent files (PIP-77). */
 const BEFORE: Record<string, { tools: string; allowed: string[] }> = {
-  design: { tools: "Read,Glob,Grep,Edit,Write", allowed: ["Read", "Glob", "Grep", "Edit(specs/**)"] },
+  design: {
+    tools: "Read,Glob,Grep,Edit,Write",
+    allowed: ["Read", "Glob", "Grep", "Edit(specs/**)", "Edit(README.md)"],
+  },
   plan: {
     tools: "Read,Glob,Grep,Bash",
     allowed: [

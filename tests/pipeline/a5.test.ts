@@ -80,7 +80,7 @@ test("pipeline: design edits only specs", () => {
     "Read,Glob,Grep,Edit,Write",
   ]);
   const allowed = d.slice(d.indexOf("--allowedTools") + 1, d.indexOf("--disallowedTools"));
-  expect(allowed).toEqual(["Read", "Glob", "Grep", "Edit(specs/**)"]);
+  expect(allowed).toEqual(["Read", "Glob", "Grep", "Edit(specs/**)", "Edit(README.md)"]);
   // The spec PR's commit holds only specs/, and the design's stray edit never reaches the code PR.
   const branch = `towercab/${ID}-${SLUG}-spec`;
   expect(git(p.bares.web!, "diff", "--name-only", seed, branch).trim()).toBe("specs/web.md");
