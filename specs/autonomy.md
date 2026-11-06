@@ -251,6 +251,37 @@ Every grant of network access, from a plan, a request or an intent, is a domain 
 - The code PR switches AUT-14 and AUT-15 (and replaces the a1–a3 test `autonomy: unplanned access at a1-a3 is granted`), PIP-24 (no `WebFetch(domain:*)`, repo variables), PIP-95 and PIP-116 (wording), LOOP-34 (cache env), LOOP-69 (the `env` refusal) and the config table of loop.md (ignored keys), each in the same commit as the code.
 - Verified by: `autonomy: an invalid grant in a plan waits for the owner`, `autonomy: an invalid mid-build request is refused`, `autonomy: unplanned access asks the owner at every level`, `autonomy: allowing unplanned access grants it`, `autonomy: a refused access stays refused`
 
+### AUT-31 · a0: only the owner decides
+
+An intent set to `a0` is decided by the owner alone: every wait goes to them and nothing goes ahead without them.
+
+- `a: 0` is valid in the intent's front matter like any other level (the range is 0–5). At a0 every wait goes to the owner: a question (PIP-110), the spec gate (AUT-11), the plan gate (AUT-12), a test change or unplanned access (PIP-116, AUT-15), the merge (AUT-3) and the owner's steps (SHIP-17). Towercab never merges, approves or answers on its own at a0, whatever the risk level or the repo's cap (AUT-8).
+- a0 is a rule that Towercab's own shadow, agents and CLI follow, not a security boundary: see Decisions.
+- Validation does not shrink (AUT-6): the checks, the proof, CI and the review all run at a0, as at a1.
+- `effective` still takes the lowest `a` present (AUT-7), so nothing can raise an a0 intent; a worker may still lower to a0, never out of it. An `a` of 0 is not "unset": AUT-9 applies only when `a` is missing.
+- Access (AUT-14) at a0 is that of a1–a3.
+- The code PR switches AUT-3, AUT-7, AUT-8 and AUT-9 where they say 1–5, in the same commit as the code.
+- Verified by: `autonomy: a0 waits at every gate`, `autonomy: a0 is never raised`, `autonomy: a0 ignores risk and cap`, `intents: a is 0 to 5`
+
+### AUT-32 · At a0 only the owner's own replies count
+
+On an a0 intent only the owner's own replies and actions count; the shadow, other agents and other accounts cannot answer or approve.
+
+- Two channels count: the owner's GitHub login as in PIP-44, and the local page (`POST /api/actions` with `actor: owner`, UI-65). Telegram never counts, because it goes through the shadow: a message there, a `yes` included (SHD-10), is not an answer, an approval, a merge, a drop, a start or a boost of an a0 intent. The command line never counts either (AUT-33). The shadow may tell the owner where to answer and link the intent's page or PR (SHD-21).
+- A shadow action (SHD-19) aimed at an a0 intent is refused with the reason "this intent is only yours" and recorded as refused (SHD-12, UI-237), except the pause of SHD-22. It is never held for a `yes`.
+- A comment, review or reply from any other account, the App's bot or an agent is ignored as in PIP-44 and, at a0, also noted once on the intent's timeline (who, where, that it was ignored). Notes are not repeated for the same comment.
+- Nothing the shadow or an agent says is read as an answer to a question, an approval of a spec or plan, a choice for test or network access, or a merge.
+- Verified by: `autonomy: a0 ignores replies from other accounts and notes them`, `autonomy: telegram never answers an a0 intent`, `shadow: an a0 intent is refused`, `events: only the owner's comments count`
+
+### AUT-33 · The command line cannot decide for an a0 intent
+
+The command line refuses to answer, approve, start, drop or tick steps on an a0 intent, because it cannot tell the owner from an agent using it.
+
+- On an intent whose effective `a` is 0 (AUT-31), these commands (LOOP-15) print one line and change nothing: `answer`, `approve`, `start`, `drop`, `step`, plus `done`, `retry` and the per-intent `resume` (SHD-22). The line is `towercab: <id> is only yours: use GitHub or the page`, exit 1 (LOOP-15). The check runs before any `commands` row is written, with a loop running or not.
+- The loop applies a `commands` row for an a0 intent only when it came from the page (`by: page`); a row from the CLI is dropped and noted on the intent's timeline (AUT-32), so a row written straight into the database does not get around the check.
+- Still allowed on an a0 intent: `status`, `next`, `logs`, `ui`, `doctor` and `towercab pause` (global, or for the intent as in SHD-22), since none of them answers, approves or advances anything.
+- Verified by: `cli: an a0 intent refuses answer approve start drop and step`, `cli: pause and status work on an a0 intent`, `commands: an a0 command row from the cli is dropped`
+
 ## Out of scope
 
 - Raising autonomy automatically.
@@ -283,5 +314,18 @@ Every grant of network access, from a plan, a request or an intent, is a domain 
 - The level has a floor in code so that a one-way door or a red line can't be talked down to low by
   the agent. A red line is the repo owner's own list of what must not change unseen, so touching one
   is high, which waits even at a5.
+- Owner-only means GitHub or the page (the owner's calls, 2026-11-06): Telegram goes through the
+  shadow and the CLI is used by agents acting for the owner, so neither can tell the owner from an
+  agent. Conservative defaults taken: `done`, `retry` and per-intent `resume` are refused on the CLI
+  like `answer` (they clear a wait the owner should clear); `status`, `next`, `logs`, `ui`, `doctor` and
+  `pause` stay open because they only read or stop things; a `commands` row from the CLI is dropped by
+  the loop, not only refused up front, so the database is not a back door. A pause is the only thing
+  the shadow may do on an a0 intent, and only when the owner asks.
+- a0 is a rule, not a security boundary (the owner's call, 2026-11-06): Towercab's own shadow, agents
+  and CLI follow it and are refused. Any agent on this machine can also act on GitHub through the
+  owner's `gh` login, which Towercab cannot tell from the owner, and a confirmation step on GitHub
+  would be no stronger. So the page and GitHub count, and no extra proof of identity is built for
+  them. a0 does not stop a process that deliberately uses that login or edits the intents repo or the
+  database by hand.
 - a3 counts like a4 at the spec gate: a lower `a` must never be looser than a higher one, and a3's
   spec used to merge on its own whenever nothing stopped it.
