@@ -266,6 +266,7 @@ The worker's first run turns the intent into spec changes, and Towercab opens th
 - The owner's review comments on the spec PR → a design revision in the same session, a new commit
   on the same PR. Red checks on the spec PR start one too (PIP-82), and every revision sees their
   logs (PIP-83).
+- PIP-172 widens "`specs/**` only" by one table: the README's docs index, when the design adds a spec file.
 - Verified by: `pipeline: design edits only specs`, `pipeline: spec PR is opened`, `pipeline: no behaviour change skips the spec PR`, `pipeline: feedback revises the spec`
 
 ### PIP-26 · Spec approval
@@ -1775,6 +1776,17 @@ On any repo, when a check stays pending past the CI wait, Towercab cancels that 
 - A check that is not an Actions run is never cancelled or rerun: pending past `ci_wait` is stuck at once.
 - A new head starts again with no run used.
 - Verified by: `pipeline: a hung Actions run is cancelled and rerun once`, `pipeline: a rerun that hangs too waits for the owner`, `pipeline: a pending check that is not an Actions run is stuck at ci_wait`, `pipeline: a hung spec PR check is cancelled and rerun`
+
+### PIP-172 · A spec that adds a spec file also links it from the README
+
+When a spec PR adds a new spec file in a repo whose README indexes its specs, the design adds the link to that index too, so the repo's own docs check stays green.
+
+- Applies when the design creates a `specs/*.md` that `main` does not have, and the repo's root `README.md` has a docs index: a Markdown table under a `## Docs` heading that links `specs/*.md` files (as Towercab's own PUB-4). No such table, or no new spec file → the design edits only `specs/**`, as PIP-25 says.
+- The design's prompt says so when a new spec file is possible: add one row for each new, non-removed spec file to that table, in the table's own style (`| [specs/<name>.md](specs/<name>.md) | <what it covers> |`), and touch nothing else in `README.md`.
+- Design guard: of `README.md`, Towercab keeps only changes inside the docs table (the rows of the table under `## Docs`; the rest of the file is byte-identical to base) and only when the diff adds a `specs/*.md` file. Any other change to `README.md`, or any other path outside `specs/`, is discarded as in PIP-25. Revisions (PIP-81, PIP-82, PIP-133) follow the same rule.
+- Publish guard: the spec PR's diff may touch `specs/**` and, under the conditions above, the README's docs table; a README change outside the table fails the guard like any path outside `specs/`.
+- The design's requirement IDs stay checked against `main` before publishing (PIP-80, PIP-130).
+- Verified by: `pipeline: a design that adds a spec file may edit the README docs table`, `pipeline: the publish guard accepts the README docs table for a new spec file`, `pipeline: other README edits in a design are still refused`, `pipeline: a README docs table edit without a new spec file is refused`
 
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
