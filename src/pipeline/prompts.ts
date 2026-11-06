@@ -13,6 +13,7 @@ export const AGENT_VARS: Record<AgentName, string[]> = {
   risk: ["gate", "intent", "change", "context", "open_points"],
   score: ["issue", "product"],
   features: ["repo", "current", "listed"],
+  shadow: ["earlier", "state", "results", "message"],
 };
 
 /** An agent's prompt filled with `vars`; an unknown `{{key}}` is a bug, a missing var an empty string. */

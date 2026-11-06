@@ -4,7 +4,17 @@
 import { useState } from "preact/hooks";
 import type { IntentPage as Data, PrView, StepView } from "../../../src/ui/view.ts";
 import { approveSecret, sendSecret, tickStep } from "../api.ts";
-import { Details, Id, NeedsCard, RiskBlock, Section, StartButton, StateChip, Time } from "../components.tsx";
+import {
+  Details,
+  Id,
+  NeedsCard,
+  RiskBlock,
+  Section,
+  ShadowTag,
+  StartButton,
+  StateChip,
+  Time,
+} from "../components.tsx";
 import { ChevronLeft, External, PullRequest } from "../icons.tsx";
 import { Markdown } from "../md.tsx";
 import { Link } from "../router.tsx";
@@ -166,7 +176,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
               </span>
               <span class="tl-dot" aria-hidden="true" />
               <div class="tl-body">
-                <p class="tl-text">{t.text}</p>
+                <p class={`tl-text${t.shadow ? " tl-shadow" : ""}`}>{t.text}</p>
                 {t.why ? <p class="tl-why">{t.why}</p> : null}
               </div>
               <span class="tl-lasted meta">
@@ -188,7 +198,10 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
       </Link>
       <header class="intent-head">
         <div class="intent-title">
-          <h1>{data.title}</h1>
+          <h1>
+            {data.title}
+            {data.shadow ? <ShadowTag /> : null}
+          </h1>
           <p class="meta">
             {data.repo} · <Id id={data.id} />
             {data.scores ? ` · ${data.scores}` : ""}

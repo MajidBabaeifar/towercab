@@ -181,3 +181,10 @@ in the "Needs you" amber, unreached stages dashed). The open stage and file live
 beyond the spinner.
 
 Repos and Activity: one repo at a time / one list grouped by day, same chips and rows.
+
+## The shadow
+
+What the shadow wrote or did carries a `[shadow]` tag: beside the title of a draft of its, in front of its
+moves on an intent's timeline, and on every row of its panel. The tag is text, so it doesn't depend on
+colour. The panel sits under Spend, shows only while the shadow is on, lists the last ten actions with
+links to what they touched, and has one Reset button that asks before it clears the conversation.

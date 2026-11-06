@@ -1,6 +1,6 @@
 # Shadow
 
-**Status:** Draft · **Prefix:** SHD
+**Status:** Live · **Prefix:** SHD
 
 ## Purpose
 
@@ -51,10 +51,12 @@ Each turn, the shadow sees Towercab's current state without being told.
 
 The shadow can only do what Towercab's actions API offers, and it runs without a shell on the host.
 
-- The session runs in the sandbox (the same sandbox as builds) with no network except the loopback actions
-  API, no `Bash` tool and no access to `~/.config/towercab` or the home outside `runs/`. Reads are
-  `GET /api/…` (UI-65); writes are `POST /api/actions` with `actor: shadow`. An action outside the list
-  in SHD-6..9 is refused with a reason the shadow can relay.
+- The session has no tools at all (`agents/shadow.md`: `tools: []`) and runs with the sandbox settings of
+  every run, so it has no shell, no network of its own and no token. It answers with a result `{reply, reads,
+  actions}`; Towercab runs the reads (`intent`, `queue`, `activity`, `repos`, `pr`, `runfile`: the page's
+  `GET` data, at most 3 rounds of 3 reads, each cut to 6 000 characters) and the actions, which are the page's
+  own actions (UI-66) with `actor: shadow`. An action outside the list in SHD-6..9 is refused with a reason
+  the shadow can relay.
 - Verified by: `shadow: the session runs in the sandbox without a shell`, `shadow: an unknown action is refused`
 
 ### SHD-6 · Reading, answering and drafting are free
@@ -115,8 +117,9 @@ The owner sets what the shadow does freely, in the config file.
 Whatever the shadow writes shows `[shadow]`, so the owner can tell it from their own words.
 
 - PR and issue comments start with `[shadow] `; commits it causes (an intent file) carry the trailer
-  `Shadow: true` and the subject prefix `[shadow]`; Telegram replies start with `[shadow] `. The comments are
-  posted by the same identity as other stage comments, not as the owner.
+  `Shadow: true` and the subject prefix `[shadow]`; Telegram replies start with `[shadow] `. A reply is posted
+  as the owner, like the page's reply, because only the owner's comments reach the pipeline; the tag marks
+  it. A merge or a drop adds a `[shadow]` comment on the PR.
 - Verified by: `shadow: comments commits and replies carry the tag`
 
 ### SHD-13 · Intents it writes are not the owner's
@@ -167,7 +170,8 @@ The owner can wipe the conversation and start fresh.
 
 The shadow's runs are part of the spend and have their own daily cap.
 
-- Each turn's cost is added to `data.runs` as in MET-29 (labelled `shadow`) and shown in the spend. When
+- Each turn's cost is kept on the turn (`shadow_turns.cost`) and added to the day's spend as MET-29 does for
+  runs, so it shows in the spend and counts against the overall budget. When
   today's shadow cost reaches `[shadow] daily_budget_usd`, the shadow answers once "I've reached today's
   cap" and does nothing until midnight; it never pauses the rest of Towercab for it. The overall daily
   budget (MET-29) still applies to the sum.
@@ -177,9 +181,10 @@ The shadow's runs are part of the spend and have their own daily cap.
 
 Each action the shadow takes or is refused is written down, linked to what it touched.
 
-- Table `shadow_actions` (`id`, `at`, `action`, `intent`, `pr`, `outcome` `done`, `refused` or `held`,
-  `detail`) written before the effect (`ctx.record` rule). The dashboard, the timeline and the API read it.
-  Rows are kept 30 days.
+- Table `shadow_actions` (`id`, `at`, `action`, `intent`, `pr`, `outcome` `started` while it runs, then
+  `done` or `refused`, or `held` while it waits for a yes; `detail`) written before the effect (`ctx.record`
+  rule). A `started` row found after a restart is closed as interrupted and reported, never run again. The
+  dashboard, the timeline and the API read it. Rows are kept 30 days.
 - Verified by: `shadow: an action is recorded before it runs`, `shadow: refused and held actions are recorded`
 
 ### SHD-20 · Each message is handled once

@@ -20,6 +20,7 @@ import type { UiActions } from "./actions.ts";
 import { board } from "./board.ts";
 import { focus } from "./focus.ts";
 import { repos } from "./repos.ts";
+import { shadowView } from "./shadow.ts";
 import { activity, intentPage, overview, queue, RUN_NAME, redact, type UiSources } from "./state.ts";
 import type { ActionReply } from "./view.ts";
 
@@ -100,6 +101,7 @@ const ACTIONS = new Set([
   "features",
   "accept",
   "close",
+  "shadowReset",
   "repo-settings",
   "repo-move",
 ]);
@@ -312,6 +314,7 @@ export function startUi(o: UiOptions): UiServer {
       "features",
       "accept",
       "close",
+      "shadowReset",
       "repo-settings",
       "repo-move",
     ].includes(action);
@@ -403,7 +406,12 @@ export function startUi(o: UiOptions): UiServer {
                                                     a.scanningGranted ??
                                                     (() => Promise.reject(new Error("Not available.")))
                                                   )()
-                                                : await a.resume();
+                                                : action === "shadowReset"
+                                                  ? await (
+                                                      a.shadowReset ??
+                                                      (() => Promise.reject(new Error("Not available.")))
+                                                    )()
+                                                  : await a.resume();
       reply = { ok: true, message };
     } catch (e) {
       reply = { ok: false, message: (e as Error).message };
@@ -440,6 +448,7 @@ export function startUi(o: UiOptions): UiServer {
     if (path === "/api/state") return json(res, 200, await overview(src));
     if (path === "/api/queue") return json(res, 200, await queue(src));
     if (path === "/api/board") return json(res, 200, await board(src));
+    if (path === "/api/shadow") return json(res, 200, shadowView(src));
     if (path === "/api/focus") {
       // UI-195: the waits the page has just acted on; anything that isn't a plain key is ignored.
       const skip = (url.searchParams.get("skip") ?? "")

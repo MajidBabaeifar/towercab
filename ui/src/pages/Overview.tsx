@@ -16,6 +16,7 @@ import {
 import { pruneFolds } from "../folds.ts";
 import { Check, ListIcon, Moon } from "../icons.tsx";
 import { Link } from "../router.tsx";
+import { ShadowPanel } from "../Shadow.tsx";
 
 function headline(n: number): string {
   if (n === 0) return "Nothing needs you.";
@@ -112,6 +113,7 @@ export function OverviewPage({ data }: { data: Data }) {
           <Section title="Spend">
             <SpendCard spend={spend} />
           </Section>
+          <ShadowPanel readOnly={top.readOnly} />
           <Section title="Towercab">
             <dl class="facts">
               <div>

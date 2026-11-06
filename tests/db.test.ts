@@ -19,6 +19,8 @@ test("db: schema matches the spec", () => {
     "missions",
     "outbox",
     "repos",
+    "shadow_actions",
+    "shadow_turns",
     "transitions",
   ]);
 });

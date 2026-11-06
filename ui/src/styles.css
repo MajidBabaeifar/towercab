@@ -4161,3 +4161,59 @@ a.pr-tile:hover {
   gap: 8px;
   justify-items: start;
 }
+
+/* The shadow (UI-236 to UI-238) */
+
+.shadow-tag {
+  display: inline-block;
+  margin-left: var(--s1);
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.shadow-actions {
+  display: grid;
+  gap: var(--s1);
+  margin: var(--s1) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shadow-action .shadow-tag {
+  margin-left: 0;
+}
+
+.shadow-refused .shadow-text {
+  color: var(--text-2);
+  text-decoration: line-through;
+  text-decoration-color: var(--line-strong);
+}
+
+.shadow-pending {
+  margin: var(--s1) 0;
+  color: var(--needs);
+  font-size: var(--t-sm);
+}
+
+.shadow-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1);
+}
+
+.shadow-panel .btn {
+  min-height: 44px;
+}
+
+.tl-shadow {
+  font-style: italic;
+}

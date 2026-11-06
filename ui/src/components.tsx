@@ -110,6 +110,11 @@ export function Id({ id }: { id: string }) {
   return <span class="id">{id}</span>;
 }
 
+/** UI-236: marks what the shadow wrote or did; a text label, not colour alone. */
+export function ShadowTag() {
+  return <span class="shadow-tag">[shadow]</span>;
+}
+
 export function Section(props: {
   title: string;
   count?: number;
@@ -384,6 +389,7 @@ export function NeedsCard({
             ) : (
               <Link href={`/i/${key}`}>{card.title}</Link>
             )}
+            {card.shadow ? <ShadowTag /> : null}
           </h3>
           <p class="meta">
             {card.repo}
@@ -639,7 +645,10 @@ export function WorkRow({ row }: { row: Row }) {
   return (
     <Link class="row" href={`/i/${row.intent}`}>
       <span class="row-main">
-        <span class="row-title">{row.title}</span>
+        <span class="row-title">
+          {row.title}
+          {row.shadow ? <ShadowTag /> : null}
+        </span>
         <span class="meta">
           {row.repo} · <Id id={row.intent} />
         </span>

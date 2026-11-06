@@ -166,6 +166,13 @@ export const SCORE_SCHEMA = object({
 /** INT-39: a repo's live features, as short business sentences. */
 export const FEATURES_SCHEMA = object({ features: list(S) });
 
+/** SHD-5: what a shadow turn answers: the reply, reads of Towercab's state, and actions Towercab runs. */
+export const SHADOW_SCHEMA = object({
+  reply: S,
+  reads: list(object({ kind: S, ref: S })),
+  actions: list(object({ action: S, intent: S, repo: S, title: S, text: S })),
+});
+
 export const SCHEMAS = {
   design: DESIGN_SCHEMA,
   plan: PLAN_SCHEMA,
@@ -174,6 +181,7 @@ export const SCHEMAS = {
   risk: RISK_SCHEMA,
   score: SCORE_SCHEMA,
   features: FEATURES_SCHEMA,
+  shadow: SHADOW_SCHEMA,
 };
 
 export interface Access {
@@ -292,6 +300,14 @@ export interface Results {
   risk: RiskResult;
   score: ScoreResult;
   features: { features: string[] };
+  shadow: ShadowResult;
+}
+
+export interface ShadowResult {
+  reply: string;
+  reads: { kind: string; ref: string }[];
+  /** `intent` for most actions; `repo`, `title` and `text` (the body) for `draft`. */
+  actions: { action: string; intent: string; repo: string; title: string; text: string }[];
 }
 
 /** Why `value` doesn't fit `schema` (the subset these schemas use), or null when it does. */

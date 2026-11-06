@@ -19,6 +19,7 @@ import { section } from "../pipeline/prtext.ts";
 import { type Kind, parseStored, stageSkip } from "../repo/readiness.ts";
 import { usualOwner } from "../repos.ts";
 import { currentRisk, type RiskGate, riskWords } from "../risk.ts";
+import { actionSentence, actionsFor } from "../shadow/store.ts";
 import { type Held, heldReleases, releaseLine, releaseTitle } from "../ship/releases.ts";
 import { MAX_FAILS } from "../ship/secret-steps.ts";
 import {
@@ -1243,6 +1244,15 @@ export function spend(db: Db, now: number): Spend {
       byDay.set(k, (byDay.get(k) ?? 0) + run.cost);
     }
   }
+  // SHD-18: the shadow's turns are part of the spend.
+  for (const r of db.all<{ at: number; cost: number }>(
+    "SELECT at, cost FROM shadow_turns WHERE cost > 0 AND at >= ? AND at <= ?",
+    now - 8 * DAY,
+    now,
+  )) {
+    const k = localDate(r.at);
+    byDay.set(k, (byDay.get(k) ?? 0) + r.cost);
+  }
   const days: Spend["days"] = [];
   const t = new Date(now * 1000);
   for (let i = 6; i >= 0; i--) {
@@ -1372,7 +1382,12 @@ export function dbMark(db: Db): string {
     db.get<{ q: string | null }>(
       "SELECT group_concat(key || '=' || value, ',') AS q FROM meta WHERE key LIKE 'readiness:%'",
     )?.q ?? "";
-  return `${t}:${c}:${u}:${r}:${f}:${q}`;
+  // The shadow acted, answered or asked (UI-237) shows on open pages too.
+  const s =
+    db.get<{ s: string }>(
+      "SELECT (SELECT COALESCE(MAX(id), 0) FROM shadow_actions) || '.' || (SELECT COUNT(*) FROM shadow_actions WHERE outcome = 'held') || '.' || (SELECT COALESCE(MAX(id), 0) FROM shadow_turns) || '.' || COALESCE((SELECT value FROM meta WHERE key = 'shadow.pending'), '') AS s",
+    )?.s ?? "";
+  return `${t}:${c}:${u}:${r}:${f}:${q}:${s}`;
 }
 
 /** One thing waiting on the owner (UI-58): its card, its intent's priority and when the wait began. */
@@ -1463,9 +1478,13 @@ export async function overview(src: UiSources): Promise<Overview> {
     else if (!isWait(m.stage) || onTeammates(m)) working.push(missionRow(src, s, m));
   }
   const needs = waitsOf(src, s).map((w) => w.card);
+  // UI-236: a draft of the shadow's is tagged wherever it shows.
+  const drafted = (id: string) => s.intents.get(id)?.source === "shadow";
+  for (const c of needs) if (drafted(c.intent)) c.shadow = true;
   const withMission = new Set(s.missions.map((m) => m.intent));
   const list = src.upNext().filter((u) => !withMission.has(u.intent));
   const queued = [...ready, ...list.filter((u) => u.skip?.kind !== "parked").map((u) => queuedRow(s, u))];
+  for (const r of [...working, ...queued]) if (drafted(r.intent)) r.shadow = true;
   const upNext: UpNextView[] = list.slice(0, 5).map((u) => {
     const i = s.intents.get(u.intent);
     return {
@@ -2141,6 +2160,19 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
       });
     });
   }
+  // UI-236: what the shadow did on this intent, among its moves.
+  const shadowRows = actionsFor(src.db, realId).filter((a) => a.outcome !== "started");
+  for (const a of shadowRows) {
+    timeline.push({
+      at: when(a.at, s.now),
+      text: `[shadow] ${actionSentence(a)}`,
+      why: null,
+      lasted: null,
+      tone: a.outcome === "refused" ? "error" : "move",
+      shadow: true,
+    });
+  }
+  if (shadowRows.length) timeline.sort((x, y) => x.at.at - y.at.at);
   const found = findRunFiles(src.home, realId);
   const attempts: AttemptView[] = missions.map((m, n) => {
     const nextCreated = missions[n + 1]?.created ?? Infinity;
@@ -2174,6 +2206,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     title: intent?.title ?? realId,
     repo: intent?.repo ?? last?.repo ?? "",
     scores,
+    ...(intent?.source === "shadow" ? { shadow: true } : {}),
     canStart,
     state: st,
     sentence: sentenceOf(
