@@ -230,7 +230,7 @@ Every Claude run is headless, sandboxed, and gets only the tools and access its 
   <m> --tools <list> [--allowedTools …] [--disallowedTools …] [--session-id|--resume <uuid>]
   [--max-budget-usd <n>] [--json-schema <schema>]`, the prompt on stdin. The system file = the base
   branch's `CLAUDE.md` + the writing guide (PIP-39). Env: HOME, PATH, LANG, the repo cache's
-  variables (LOOP-34), `[agent].env`; never a GitHub token.
+  variables (LOOP-34), the repo's `[repos.<r>].env` under the rule of PIP-159; never a GitHub token.
 - Settings: `sandbox {enabled, failIfUnavailable, allowUnsandboxedCommands: false, filesystem
   {denyRead: secret paths, denyWrite: <checkout>/.git + blocked protected paths, allowWrite: the repo
   cache}, network {allowedDomains: the granted domains}}`, `permissions.allow: WebFetch(domain:<d>)`
@@ -893,7 +893,7 @@ the worker, because it is not a code problem.
   read-only and that the code is not at fault. The options: `Allow` (Towercab remembers it for the
   repo and runs the checks again; later missions of the repo do not ask) and `Don't allow` (the
   mission waits `checks red`, and the owner can make the checks write inside the checkout, for example
-  `CARGO_TARGET_DIR` under `[repos.<r>].env`, then reply, or drop the intent). It recommends allowing,
+  `CARGO_TARGET_DIR` under `[repos.<r>].env`, a name PIP-159 allows, then reply, or drop the intent). It recommends allowing,
   since setup and the worker already write there.
 - An answer that starts with `allow`, `yes` or `ok` (any case) allows; any other answer does not. The
   answer continues the mission at the stage that asked, not at `build`.
@@ -1565,7 +1565,7 @@ When one job's log can't be read, the repair details say so in one line and the 
 Nothing a person or a repo writes can loosen the sandbox: its arguments, mounts, masked files, environment and network are decided by Towercab's code alone.
 
 - `sandboxArgv`, the Claude run's sandbox settings (PIP-24) and the sandbox environment are built from the mission only (checkout, cache, granted domains). No config key, no `TOWERCAB.md`, `CLAUDE.md` or agent file, no intent field and no plan text adds a mount, removes a mask, adds a variable, passes a bwrap or Claude sandbox argument or turns the sandbox off.
-- There is no "unsafe" switch, flag or environment variable. `[agent].toolchain`, `[agent].path`, `[agent].env`, `[repos.<r>].env` and `[agent].sandbox_unix_sockets` no longer reach a sandboxed command: the toolchain directories, `PATH` and the masked files are constants of `src/pipeline/sandbox.ts`, the environment is the fixed set of PIP-159 plus the cache variables (LOOP-34), and unix sockets are never bound in. A config that still sets one of them loads, and `towercab doctor` names the key as ignored.
+- There is no "unsafe" switch, flag or environment variable. `[agent].toolchain`, `[agent].path`, `[agent].env` and `[agent].sandbox_unix_sockets` no longer reach a sandboxed command: the toolchain directories, `PATH` and the masked files are constants of `src/pipeline/sandbox.ts`, and unix sockets are never bound in. The one setting that stays is a repo's named variables, `[repos.<r>].env`, under the narrow rule of PIP-159. A config that still sets an ignored key loads, and `towercab doctor` names the key as ignored.
 - A repo file that asks for more (a `TOWERCAB.md` setting, an agent file with `sandbox: none` for a tool-using agent, PIP-78) is refused with the reason or ignored, and never changes the argv.
 - Verified by: `sandbox: config keys do not change the argv`, `sandbox: repo and intent files do not change the argv`, `sandbox: no unsafe switch exists`, `sandbox: ignored config keys are named by doctor`
 
@@ -1575,33 +1575,35 @@ A sandboxed command has no network of its own: it reaches only the domains the r
 
 - The sandbox always runs with `--unshare-net`. A proxy run by Towercab outside the sandbox listens on a unix socket bound into it; the sandbox sets `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` for it (and their lower-case forms) and has no other route out.
 - The proxy allows a `CONNECT` or request only to a granted domain (AUT-14, AUT-26; `*.d` matches subdomains). It refuses IP literals, a name that resolves to a loopback, private or link-local address, a port other than 80 and 443, and any host not granted; a refusal is logged with the domain.
-- With no grant, no proxy socket is bound and nothing is reachable. Setup (PIP-23) and Claude runs get their grants; checks and e2e commands get none beyond what the plan grants for them.
+- The built-in package-registry list (AUT-14, AUT-26) is the same for setup (PIP-23), checks, proof, screenshots and e2e commands and Claude runs, and nothing more: any other domain reaches a command only as a plan grant (AUT-14). Nothing else changes by command or by autonomy level. With no domain at all, no proxy socket is bound and nothing is reachable.
 - Verified by: `sandbox: network is always unshared`, `sandbox: the proxy allows a granted domain`, `sandbox: the proxy refuses a domain that is not granted`, `sandbox: the proxy refuses IP literals and private addresses`, `sandbox: no grant binds no proxy`
 
 ### PIP-159 · A repo's commands never see a credential
 
 Setup, checks and e2e commands of a repo run with no token, key or login of the person running Towercab, nor of Towercab itself.
 
-- The environment is built from an allowlist: `HOME` (an empty tmpfs), `PATH`, `LANG`, `TMPDIR`, the proxy variables (PIP-158) and the cache variables (LOOP-34). No variable of Towercab's own environment passes by default, so `GH_TOKEN`, `GITHUB_TOKEN`, `ANTHROPIC_*`, `SSH_AUTH_SOCK`, `AWS_*`, `SOPS_*` and `AGE_*` are never set.
+- The environment is built from an allowlist: `HOME` (an empty tmpfs), `PATH`, `LANG`, `TMPDIR`, the proxy variables (PIP-158), the cache variables (LOOP-34) and the repo's own named variables `[repos.<r>].env`. No variable of Towercab's own environment passes, so `GH_TOKEN`, `GITHUB_TOKEN`, `ANTHROPIC_*`, `SSH_AUTH_SOCK`, `AWS_*`, `SOPS_*` and `AGE_*` are never set.
+- A repo variable in `[repos.<r>].env` passes only if its name is not token-like (it contains none of `TOKEN`, `KEY`, `SECRET`, `PASSWORD`, `AUTH`, any case) and its value is not a secret pattern (a GitHub, Anthropic, AWS, Slack or similar token prefix, a JWT, or a PEM block). It cannot be `PATH`, `HOME`, `LD_*`, `SOPS_*`, `AGE_*` or a proxy variable. `towercab repo set` refuses such a pair with the reason (LOOP-69); one already in the config is left out of the sandbox, and `towercab doctor` names it and the rule. Variables that fit stay allowed, for example `CARGO_TARGET_DIR` (PIP-95).
 - Secret paths are not visible: `~/.ssh`, `~/.config/gh`, `~/.claude`, `~/.config/towercab` (the App key, secrets files), the other secret paths of PIP-24 and Towercab's home outside this mission. They are hidden by the tmpfs home and the masks, not by a permission the command could change.
 - No credential helper, agent socket or `gh` login is reachable. The `claude` run keeps its own credentials only for the Claude process, never for the commands it starts (PIP-24).
-- Verified by: `sandbox: a repo command sees no credential variable`, `sandbox: ssh keys and the app key are unreadable`, `sandbox: gh and claude credentials are unreadable`
+- Verified by: `sandbox: a repo command sees no credential variable`, `sandbox: ssh keys and the app key are unreadable`, `sandbox: gh and claude credentials are unreadable`, `sandbox: a token-like repo variable name is left out`, `sandbox: a secret-looking repo variable value is left out`, `sandbox: a repo variable that fits the rule passes`, `sandbox: PATH and HOME cannot be set by a repo`
 
 ### PIP-160 · Escape attempts run in CI and all fail
 
 A suite of real escape attempts runs in CI against the real sandbox, and every attempt must fail.
 
 - Each attempt runs a command through the same builder as production (`sandboxArgv` and the Claude settings) and passes only if the attempt fails: reading `~/.ssh` and the App key, writing outside the checkout, writing into `<checkout>/.git`, reaching a host without a grant (direct, by IP, by a non-granted name, through a granted name that resolves to a private address), reading a secret environment variable, listing host processes (`/proc` shows only the sandbox's own), and a signal or `ptrace` to a host process.
-- The suite is part of `npm run check` and of the CI workflow. It fails when bwrap is missing, not skips; a leak fails with the attempt and what it read or wrote.
-- Verified by: `sandbox escape: ssh keys cannot be read`, `sandbox escape: the app key cannot be read`, `sandbox escape: a write outside the checkout fails`, `sandbox escape: a write into .git fails`, `sandbox escape: the network is unreachable without a grant`, `sandbox escape: secret variables are not set`, `sandbox escape: host processes are not visible`, `sandbox escape: the suite fails when bwrap is missing`
+- The suite is part of `npm run check` and of the CI workflow. Where bwrap is not installed, each attempt is skipped with the note `skipped: no bwrap`, so a local run still passes. The CI workflow installs bwrap and the AppArmor profile of PIP-162 and fails if bwrap is missing there, so the suite always runs in CI. A leak fails with the attempt and what it read or wrote.
+- Verified by: `sandbox escape: ssh keys cannot be read`, `sandbox escape: the app key cannot be read`, `sandbox escape: a write outside the checkout fails`, `sandbox escape: a write into .git fails`, `sandbox escape: the network is unreachable without a grant`, `sandbox escape: secret variables are not set`, `sandbox escape: host processes are not visible`, `sandbox escape: without bwrap the attempts are skipped with a note`, `sandbox escape: CI installs bwrap and fails when it is missing`
 
 ### PIP-161 · No sandbox, no run
 
 When the sandbox cannot start, the run stops as a fault; Towercab never falls back to running without it.
 
 - A bwrap that is missing, refused (user namespaces denied) or that fails before the command starts is a fault ([LOOP-10](loop.md)) naming the reason, for setup, checks, e2e, proof and Claude runs alike. The Claude settings keep `failIfUnavailable: true` and `allowUnsandboxedCommands: false`.
+- The fault text never tells the owner to set a config key or variable that loosens the sandbox (it replaces `set [agent] sandbox_unix_sockets = true`); where user namespaces are restricted it gives the profile fix of PIP-162, else "check bwrap".
 - No config key, flag or retry path runs the command unsandboxed. A fault does not count as a repair round or a red check.
-- Verified by: `sandbox: a missing bwrap is a fault, not a run`, `sandbox: a refused namespace is a fault, not a repair`, `sandbox: no path runs a command unsandboxed`
+- Verified by: `sandbox: a missing bwrap is a fault, not a run`, `sandbox: a refused namespace is a fault, not a repair`, `sandbox: no path runs a command unsandboxed`, `sandbox: the fault text names no setting that loosens the sandbox`
 
 ### PIP-162 · It works on Ubuntu's restricted user namespaces
 

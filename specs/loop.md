@@ -308,7 +308,7 @@ scratch.
   proof, screenshots and e2e unless the owner allowed them to write ([PIP-95](pipeline.md)). Env for those runs:
   `XDG_CACHE_HOME=<cache>/xdg`, `npm_config_cache=<cache>/npm`, `CARGO_HOME=<cache>/cargo`,
   `CARGO_TARGET_DIR=<cache>/target`, `GOCACHE=<cache>/go`, `PIP_CACHE_DIR=<cache>/pip`, then
-  `[agent].env` and `[repos.<r>].env`. With one worker per repo (LOOP-4) two missions never share it
+  `[repos.<r>].env` under the rule of [PIP-159](pipeline.md). With one worker per repo (LOOP-4) two missions never share it
   at once.
 - Verified by: `cache: one cache per repo across missions`
 
@@ -898,7 +898,7 @@ intents that waited for it start.
 - `base` and `path` change only while no mission needs the repo (as for `repo remove`): `<name> has
   unfinished intents (<ids>): change base or path once they are done`.
 - Other refusals: `<key> must be an integer 1-16`; `base: <value> is not a branch name`; `path must be
-  absolute or start with ~/`; `env must be NAME=value or a JSON object of strings`; `unknown setting
+  absolute or start with ~/`; `env must be NAME=value or a JSON object of strings`; `env <NAME>: <reason>` for a name or value the sandbox rule refuses ([PIP-159](pipeline.md)); `unknown setting
   <key>: use workers, ahead, base, path or env`; `<pair> isn't key=value`; `<name> isn't a repo Towercab
   knows (towercab repo list)`.
 - Verified by: `repos: set changes a repo's settings`, `cli: repo commands`
@@ -1203,11 +1203,7 @@ If a part fails after the merges, that part and every part that landed after it 
 | `agent.max_budget_usd`, `agent.daily_budget_usd` | number > 0 | 10; none |
 | `agent.ci_poll`, `ci_grace`, `ci_wait` | seconds | 30, 120, 1800 |
 | `agent.freeze_wait` | minutes 1–1440 (LOOP-81) | 120 |
-| `agent.path` | `PATH` for runs and checks | the loop's `PATH` |
-| `agent.toolchain` | list of absolute dirs (`~/` expanded) | `~/.local/bin` |
-| `agent.env` | table of strings | `{}` |
-| `agent.network` | list of domains | AUT-14's default list |
-| `agent.sandbox_unix_sockets` | bool | false |
+| `agent.path`, `agent.toolchain`, `agent.env`, `agent.network`, `agent.sandbox_unix_sockets` | ignored since PIP-157 and AUT-26: the values are fixed in code; `towercab doctor` names a key that is still set | none |
 | `repos.<r>.github`, `path`, `base`, `workers`, `env` | `owner/name`; path; branch; int 1–16; table | required; `<home>/repos/<r>`; `main`; 1; `{}` |
 | `repos.<r>.ahead` | int 1–16 | 3 |
 | `github.app_id`, `github.me`, `github.api_base` | int; login; URL | required; required; `https://api.github.com` |
