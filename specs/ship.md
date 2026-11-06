@@ -82,7 +82,7 @@ A platform that doesn't react to GitHub Deployments is wired in with two command
   `outcome(sha)` is live when that commit is `sha` or contains it, else pending (such a platform is
   red only by the timeout). `rollback_command` runs with `TOWERCAB_ROLLBACK_SHA` and
   `TOWERCAB_REASON`; exit 0 means the request was taken.
-- Both run like the suites (SHIP-9): in the sandbox with network, the secrets, `BASE_URL`,
+- Both run like the suites (SHIP-9): in the sandbox with the network of [PIP-158](pipeline.md) (the registry list, the plan's grants and the live URL's host), the secrets, `BASE_URL`,
   `TOWERCAB_ENVIRONMENT`, in the checkout at the shipped commit, 5 minutes each. A non-zero exit of
   `live_command` is pending; of `rollback_command`, a failed rollback.
 - Verified by: `ship: command adapter`
@@ -128,8 +128,8 @@ In an opted-in repo, a change comes with end-to-end tests for what it adds.
 
 Once the merge is live, Towercab runs the repo's e2e suites against the live URL.
 
-- In the mission's checkout, detached at the shipped commit: the `setup` block (with network), then
-  each suite's command in the sandbox ([PIP-23](pipeline.md)) with network, `BASE_URL=<url>`,
+- In the mission's checkout, detached at the shipped commit: the `setup` block (with the network of PIP-158), then
+  each suite's command in the sandbox ([PIP-23](pipeline.md)) with the network of PIP-158 (which includes the live URL's host), `BASE_URL=<url>`,
   `TOWERCAB_SHA` and the secrets, `check_timeout_min` each.
 - Order: suites whose `tests` globs match a file the intent's merges added or changed, then suites
   whose `paths` match a changed file, then the rest, each group in file order.

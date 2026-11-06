@@ -27,6 +27,20 @@ export interface Live {
 
 export const DEFAULT_TIMEOUT_MIN = 20;
 
+/**
+ * The live app's host, the one domain the ship stage's commands may reach beyond the registry list and the
+ * plan's grants (SHIP-5, SHIP-9): it is the app the change was just shipped to. A platform's API is a plan
+ * grant, not a repo-file setting. [] when the URL has no usable host.
+ */
+export function liveDomains(live: Pick<Live, "url">): string[] {
+  try {
+    const host = new URL(live.url).hostname;
+    return host ? [host] : [];
+  } catch {
+    return [];
+  }
+}
+
 const LIVE_KEYS = ["url", "environment", "adapter", "live_command", "rollback_command", "timeout", "suites"];
 const SUITE_KEYS = ["name", "command", "tests", "paths", "smoke"];
 

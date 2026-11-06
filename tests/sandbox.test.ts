@@ -562,3 +562,13 @@ test("sandbox: a plan's domains reach commands too", async () => {
     ),
   ).toEqual([...DEFAULT_NETWORK, "api.example.com", "fonts.example.org"]);
 });
+
+test("sandbox: the ship stage reaches the live app's host", async () => {
+  const { liveDomains } = await import("../src/ship/live.ts");
+  expect(liveDomains({ url: "https://app.example.com/path" })).toEqual(["app.example.com"]);
+  expect(liveDomains({ url: "https://app.example.com:8443" })).toEqual(["app.example.com"]);
+  expect(liveDomains({ url: "not a url" })).toEqual([]);
+  // A host that is an IP address or a bare name is no grant (PIP-164), so the proxy never gets it.
+  expect(splitDomains(liveDomains({ url: "http://10.0.0.5" })).valid).toEqual([]);
+  expect(splitDomains(liveDomains({ url: "http://localhost:3000" })).valid).toEqual([]);
+});

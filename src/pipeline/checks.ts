@@ -27,6 +27,8 @@ export interface SandboxRun {
   log: string;
   timeoutMs: number;
   extraEnv?: Record<string, string>;
+  /** Domains beyond `commandDomains`: the ship stage adds the live app's host (SHIP-5, SHIP-9). */
+  domains?: string[];
 }
 
 /**
@@ -54,7 +56,7 @@ export function sandboxSpec(cx: Ctx, m: Mission, r: SandboxRun): ChildSpec {
       home,
       cache,
       // PIP-158: the same domains for every command, through the allowlist proxy.
-      proxy: proxySocket(commandDomains(m), (l) => cx.log(l)),
+      proxy: proxySocket([...commandDomains(m), ...splitDomains(r.domains ?? []).valid], (l) => cx.log(l)),
       cacheWritable: r.cacheWritable,
       line: script(r.lines),
     }),
