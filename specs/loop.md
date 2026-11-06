@@ -1315,7 +1315,8 @@ are stored in intent files and never change; each ask says plainly what the owne
 | `crashed at <stage>` | blocked | Towercab failed three times at the same step. Reply to try again once the cause is fixed, or start over. |
 | `spec conflict` | blocked | The spec clashes with other changes and Towercab couldn't combine them. Resolve it in the spec PR, then reply. |
 | `merge failed` | blocked | GitHub refused to merge the change. Fix what GitHub objects to, then reply to try again. |
-| `add CLAUDE.md verifying block` | blocked | Towercab doesn't know how to test this repo yet. Add a verifying section to its CLAUDE.md, then reply. |
+| `add CLAUDE.md verifying block` | blocked | Towercab couldn't find checks that pass on this repo. Add a verifying section to its CLAUDE.md, then reply. |
+| `setting up checks` | blocked | Towercab is adding checks to this repo in a pull request, and this goes on by itself once it is merged. Nothing to do unless you want to start over. |
 | `fix repo files` | blocked | One of the repo's files for Towercab can't be read. Fix it, then reply. |
 | `unknown repo` | (intent only) | Tell Towercab which repo this is for: add the repo, or fix the repo name in the intent. |
 | `bad after:` | (intent only) | Fix what this intent waits for: Towercab can't find one of the intents it names, or it was dropped. |

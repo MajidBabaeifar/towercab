@@ -90,6 +90,7 @@ import { recordParser } from "./repo/settings.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
 import { nextSettingsDue, settingsCycle } from "./settings/apply.ts";
+import { dropMerged, resumable, setupChecksPass, setupWork } from "./setup-checks.ts";
 import { runReleases } from "./ship/releases.ts";
 import { advanceSecrets } from "./ship/secret-steps.ts";
 import {
@@ -214,6 +215,7 @@ export class Loop {
   private limitsJob: Promise<void> | null = null;
   /** REPO-30: the daily settings check of one repo, running now. */
   private settingsJob: Promise<void> | null = null;
+  private setupJob: Promise<void> | null = null;
   /** Held by every handler call and by the readiness fetch: two fetches of one clone never overlap. */
   private readonly cloneLock = new Mutex();
   private featuresStop: (() => void) | null = null;
@@ -366,6 +368,7 @@ export class Loop {
       this.featuresJob !== null ||
       this.readinessJob !== null ||
       this.settingsJob !== null ||
+      this.setupJob !== null ||
       this.issuesRun !== null
     )
       return;
@@ -382,6 +385,7 @@ export class Loop {
     await this.featuresIdle();
     await this.readinessIdle();
     await this.settingsIdle();
+    await this.setupChecksIdle();
     await this.limitsIdle();
     for (const [id, r] of this.children) {
       r.handle.kill("SIGTERM");
@@ -509,6 +513,8 @@ export class Loop {
     await this.requeueKnownRepos();
     this.startReadiness();
     this.startSettings();
+    this.resumeSetupWaits();
+    this.startSetupChecks();
     this.enforceDrain();
     // LOOP-105, LOOP-108: with the checkout moved or an update waiting, running children finish but
     // nothing new starts.
@@ -545,6 +551,7 @@ export class Loop {
       this.featuresJob === null &&
       this.readinessJob === null &&
       this.settingsJob === null &&
+      this.setupJob === null &&
       live.length === 0 &&
       report.picked === null;
     if (this.targetId) {
@@ -1019,6 +1026,45 @@ export class Loop {
       .finally(() => {
         this.settingsJob = null;
       });
+  }
+
+  /**
+   * REPO-34..36: the setup of a repo that has no checks (draft, prove, open and drive the PR), as a background
+   * job like the settings check, one repo at a time; its fetch holds the clone lock.
+   */
+  private startSetupChecks(): void {
+    if (this.setupJob || this.drain !== null || this.codeMoved() !== null) return;
+    if (!setupWork(this.d.db, this.d.config, this.d.clock.now())) return;
+    this.setupJob = setupChecksPass({
+      config: this.d.config,
+      home: this.d.home,
+      db: this.d.db,
+      tools: this.d.tools,
+      clock: this.d.clock,
+      store: this.d.store,
+      github: this.d.github,
+      log: this.d.log,
+      exclusive: <T>(fn: () => Promise<T>) => this.cloneLock.run(fn),
+    })
+      .then(() => undefined)
+      .catch((e: Error) => this.d.log(`setting up checks: ${e.message}`))
+      .finally(() => {
+        this.setupJob = null;
+      });
+  }
+
+  /** REPO-36: intents waiting for a setup PR that merged, closed or failed carry on, with no reply. */
+  private resumeSetupWaits(): void {
+    for (const m of resumable(this.d.db)) {
+      this.d.log(`${m.intent}: the checks of ${m.repo} are settled; carrying on`);
+      this.move(m, { event: "answered", counted: true });
+    }
+    dropMerged(this.d.db, this.d.config);
+  }
+
+  /** Resolves when no setup job is running (tests and shutdown wait for it). */
+  async setupChecksIdle(): Promise<void> {
+    while (this.setupJob) await this.setupJob;
   }
 
   /** Resolves when no settings check is running (tests and shutdown wait for it). */
@@ -1776,7 +1822,8 @@ export class Loop {
       this.children.size === 0 &&
       this.featuresJob === null &&
       this.readinessJob === null &&
-      this.settingsJob === null;
+      this.settingsJob === null &&
+      this.setupJob === null;
     // A drain whose children are gone updates at once instead of at the next minute.
     if (!(this.drain !== null && idle()) && this.now - this.lastUpdate < UPDATE_POLL_S) return;
     this.lastUpdate = this.now;
