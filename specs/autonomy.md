@@ -1,6 +1,6 @@
 # Autonomy
 
-**Status:** Live · **Prefix:** AUT
+**Status:** Live: AUT-1..21 · **Prefix:** AUT
 
 ## Purpose
 
@@ -121,7 +121,7 @@ What a worker may reach without asking depends on the effective autonomy.
 
 | | a1–a3 (owner merges) | a4 | a5 |
 |---|---|---|---|
-| Network | default list + plan + requests | default list + plan | open |
+| Network | default list + plan + requests | default list + plan | default list + plan + requests (never open, AUT-26) |
 | Protected paths ([REPO-8](repo.md)) | writable, listed in the PR | only those the plan grants | writable |
 | Mid-build request | granted, noted in the PR | granted, PR goes to the owner (AUT-15) | not needed |
 
@@ -227,6 +227,22 @@ in the same attempt instead of starting over.
   run the gate's checks and risk check, not a new design or plan), code → `review` (the review
   stands, the risk check runs). Any other retry starts a fresh attempt as before ([LOOP-15](loop.md)).
 - Verified by: `pipeline: a retry runs a risk check that didn't finish again`, `machine: every stage and event pair is defined`
+
+### AUT-26 · The network is never fully open
+
+At no autonomy level can a worker reach the whole internet; it reaches the domains it is granted and no others.
+
+- The "open" network of a5 in AUT-14 is removed: a5 gets the default list, the plan's grants and mid-build requests, like a1–a3, all through the allowlist proxy ([PIP-158](pipeline.md)). `WebFetch(domain:*)` is no longer written to a Claude run's settings (PIP-24).
+- The default list is a constant in code, no longer `[agent].network`; a config that still sets it loads, and `towercab doctor` names the key as ignored ([PIP-157](pipeline.md)). With no grant at all, the network is off.
+- Verified by: `autonomy: a5 has no open network`, `autonomy: the default network list is fixed in code`, `claude: settings never allow every domain`
+
+### AUT-27 · A grant can only name a domain
+
+Every grant of network access, from a plan, a request or an intent, is a domain name and nothing wider.
+
+- A grant that fails the rule of [PIP-164](pipeline.md) is not added to the mission's grants. A plan with one waits at the plan gate with the reason; a mid-build request with one is answered as refused and the worker continues without it, noted in the PR.
+- At a4 and a5 an invalid grant never merges on its own: the gate waits for the owner.
+- Verified by: `autonomy: an invalid grant in a plan waits for the owner`, `autonomy: an invalid mid-build request is refused`
 
 ## Out of scope
 
