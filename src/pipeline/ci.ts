@@ -9,6 +9,7 @@ import { ok, red, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { alertsBlock } from "./alerts.ts";
 import { asEnv, cloneOf, coGit, data, tail, viaForge } from "./common.ts";
+import { cutLog, isSummary, jobId, LOG_TAIL } from "./job-log.ts";
 
 export type { Check };
 
@@ -81,18 +82,42 @@ export async function redLog(cx: Ctx, github: string, pr: number, pushedAt: numb
 }
 
 /**
- * The failed jobs' log, cut to what matters (`gh run view --log-failed`), then the open code scanning
- * alerts for a failed check that has no run (PIP-148).
+ * The failed jobs' log, cut to what matters (PIP-154): each real failed job's own log, else the run's
+ * `gh run view --log-failed` (summary jobs only, no job id, or an unreadable job). Then the open code
+ * scanning alerts for a failed check that has no run (PIP-148).
  */
 async function failedLog(cx: Ctx, github: string, pr: number, checks: Check[]): Promise<string> {
-  const runs = [...new Set(checks.map((c) => c.run).filter((r): r is number => r !== null))];
+  const withRun = checks.filter((c) => c.run !== null);
+  const real = withRun.filter((c) => !isSummary(c.name));
   const parts: string[] = [];
-  for (const run of runs.slice(0, 3)) {
+  const seen = new Set<number>();
+  const runLog = async (run: number) => {
+    if (seen.has(run)) return;
+    seen.add(run);
     try {
-      parts.push(tail(await viaForge(cx.github.failedLog(github, run)), 6000));
+      parts.push(tail(await viaForge(cx.github.failedLog(github, run)), LOG_TAIL));
     } catch (e) {
       parts.push(`(the log of run ${run} couldn't be read: ${(e as Error).message})`);
     }
+  };
+  if (real.length === 0) {
+    const runs = [...new Set(withRun.map((c) => c.run as number))];
+    for (const run of runs.slice(0, 3)) await runLog(run);
+  }
+  for (const c of real.slice(0, 3)) {
+    const job = jobId(c.url);
+    if (job !== null) {
+      try {
+        const text = tail(cutLog(await viaForge(cx.github.jobLog(github, job))), LOG_TAIL).trim();
+        if (text) {
+          parts.push(`Job ${c.name}:\n${text}`);
+          continue;
+        }
+      } catch (e) {
+        parts.push(`(the log of job ${c.name} couldn't be read: ${(e as Error).message})`);
+      }
+    }
+    await runLog(c.run as number);
   }
   const named = checks.map((c) => `- ${c.name}: ${c.conclusion.toLowerCase()} ${c.url}`).join("\n");
   const alerts = await alertsBlock(cx, github, pr, checks);

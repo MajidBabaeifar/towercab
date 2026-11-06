@@ -255,6 +255,10 @@ export class GitHubForge implements Forge, GitHub {
     return this.ok(repo, ["run", "view", String(run), "-R", repo, "--log-failed"]);
   }
 
+  jobLog(repo: string, job: number): Promise<string> {
+    return this.ok(repo, ["api", `repos/${repo}/actions/jobs/${job}/logs`]);
+  }
+
   async codeScanningAlerts(repo: string, n: number): Promise<CodeScanningAlert[]> {
     const r = await this.raw.gh(repo, [
       "api",

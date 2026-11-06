@@ -266,6 +266,8 @@ export class Pipe {
   newPrChecks: FakePr["checks"] = () => [];
   /** `gh run view` fails, as for a log GitHub no longer has. */
   runViewFails = false;
+  /** The own log of an Actions job by id (PIP-154); a job not in the map is a 404. */
+  readonly jobLogs = new Map<number, string>();
   /** Open code scanning alerts the fake `gh api …/code-scanning/alerts` serves (PIP-148). */
   alerts: { rule: string; path: string; line: number; message: string }[] = [];
   /** The alerts read is refused with a 403 (the App lacks the permission). */
@@ -929,6 +931,11 @@ export class Pipe {
               .map((label) => JSON.stringify({ label, actor: it.labeledBy?.[label] ?? "someone" }))
               .join("\n"),
           );
+        }
+        const jobLog = /^repos\/([^/]+\/[^/]+)\/actions\/jobs\/(\d+)\/logs$/.exec(path);
+        if (jobLog) {
+          const text = this.jobLogs.get(Number(jobLog[2]));
+          return text === undefined ? failResult("gh: Not Found (HTTP 404)") : okResult(text);
         }
         const scan = /^repos\/([^/]+\/[^/]+)\/code-scanning\/alerts\?/.exec(path);
         if (scan) {
