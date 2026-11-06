@@ -1641,17 +1641,18 @@ Once the owner has answered a spec PR twice, the design and the second reviewer 
 - A round is one owner answer on the spec PR that starts a design revision (PIP-97's `data.specAnswers`; Towercab's own conflict and red-check revisions don't count). Rounds = the number of kept answers.
 - From the third design run on (rounds ≥ 2) the design prompt says: no new `open_questions` left unanswered, and each point it would have asked is decided with the conservative option (the one that is easiest to undo, changes least, or keeps today's behaviour). The result's `open_questions` then all carry an `answer`.
 - Every such choice is listed in the spec PR body under `## Decisions`, one line each: the point, the option taken, and why it is the conservative one. The section is added by the design run in `pr`; the earlier rounds' entries are kept.
-- At the spec gate the second reviewer's `open_points` (PIP-97) are dropped when rounds ≥ 2, apart from the contradiction in PIP-166: its prompt is told the spec is settled. The gate then decides on risk alone, and the spec PR body has no `## Open points for you` section.
-- Verified by: `pipeline: a third design run after two answered rounds leaves no open points and lists its decisions`, `pipeline: after two rounds the spec gate ignores new open points`, `pipeline: before two rounds open questions still go to the owner`
+- This includes a point that contradicts an earlier owner answer: the design decides it, keeps the earlier answer where it can, and records the choice under `## Decisions`. It is not asked.
+- At the spec gate the second reviewer's `open_points` (PIP-97) are dropped when rounds ≥ 2, apart from the unsafe gap in PIP-166: its prompt is told the spec is settled. The gate then decides on risk alone, and the spec PR body has no `## Open points for you` section.
+- Verified by: `pipeline: a third design run after two answered rounds leaves no open points and lists its decisions`, `pipeline: a contradiction with an earlier answer after two rounds is decided and listed`, `pipeline: after two rounds the spec gate ignores new open points`, `pipeline: before two rounds open questions still go to the owner`
 
-### PIP-166 · A contradiction with an earlier answer is asked once
+### PIP-166 · After two rounds only an unsafe gap can still be raised
 
-After two rounds, the design may still ask about a real contradiction with one of the owner's earlier answers, once, and says so.
+After two rounds, the second reviewer may still raise a point when leaving it open would make the spec unsafe, and says so.
 
-- The question is labelled `Contradiction with your earlier answer:` followed by the answer it conflicts with and the new fact that conflicts. A detail the design could decide, a preference, or an unclear intent is not a contradiction and follows PIP-165.
-- It is asked at most once per spec PR: after an answer to it (`data.specAnswers` holds the answer, tagged as a contradiction round), the design decides any further point itself, with no new contradiction question.
-- A contradiction question is an open point as PIP-97 describes (the spec gate waits for it) and is the only kind the gate keeps after two rounds.
-- Verified by: `pipeline: a contradiction with an earlier answer is asked once after two rounds`, `pipeline: a second contradiction after its answer is decided, not asked`, `pipeline: a detail question after two rounds is decided, not labelled as a contradiction`
+- Unsafe means a gap in security, a risk of data loss, or an irreversible action. A detail, a preference, an unclear intent or a contradiction with an earlier answer is not unsafe and follows PIP-165.
+- The reviewer labels such a point `Unsafe:` with the kind (`security`, `data loss` or `irreversible action`) and why; `open_points` entries carry that label in `point`. An unlabelled point is dropped as in PIP-165. The design run itself never asks after two rounds, unsafe or not; it records how it covered the gap under `## Decisions`.
+- A labelled point is an open point as PIP-97 describes: the spec gate waits for it and the spec PR body lists it under `## Open points for you`. It is the only kind the gate keeps after two rounds.
+- Verified by: `pipeline: after two rounds the reviewer may still raise an unsafe gap, labelled`, `pipeline: after two rounds an unlabelled reviewer point is dropped`, `pipeline: the design never asks after two rounds, even for an unsafe gap`
 
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
