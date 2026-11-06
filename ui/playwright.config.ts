@@ -17,6 +17,7 @@ export default defineConfig({
     "board-sort.spec.ts",
     "limits.spec.ts",
     "shadow.spec.ts",
+    "overview-order.spec.ts",
   ],
   outputDir: "screenshots/.results",
   fullyParallel: false,

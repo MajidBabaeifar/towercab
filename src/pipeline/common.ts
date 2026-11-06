@@ -12,7 +12,7 @@ import { type ClaudeRun, freshContext, parseRun, prepareRun, type RunEnd, type R
 import { clonePath, type RepoConfig } from "../config.ts";
 import { classifyFailure, classifyRun } from "../faults.ts";
 import { must, type Result } from "../forge.ts";
-import { type Step, upsertStageComment } from "../github/comments.ts";
+import { agentOf, answeredByLine, type By, type Step, upsertStageComment } from "../github/comments.ts";
 import { type ChildEnd, type Ctx, EnvError, type GitHub, type Progress } from "../handlers.ts";
 import { plainLine, SUBJECT_MAX } from "../intents/naming.ts";
 import type { Intent } from "../intents/types.ts";
@@ -671,6 +671,9 @@ export const EFFECTS = {
   drop: "Drop the intent",
 } as const;
 
+/** PIP-182: who a stage comment of mission `m` is from: the agent of the step, and the intent. */
+const byOf = (m: Mission, step: Step): By => ({ agent: agentOf(step, m.stage), intent: m.intent });
+
 /** A question in Markdown (PIP-41), led by its plain brief when it has one (PIP-106). */
 export function questionMd(q: Question, brief = ""): string {
   const opts = q.options
@@ -694,7 +697,16 @@ export async function ask(
   const repo = cx.repo(m);
   const pr = currentPr(cx, m, repo);
   const body = questionMd(q, brief);
-  if (pr) await upsertStageComment(cx.github, pr.github, pr.n, "Question", m.continued + 1, body);
+  if (pr)
+    await upsertStageComment(
+      cx.github,
+      pr.github,
+      pr.n,
+      "Question",
+      m.continued + 1,
+      body,
+      byOf(m, "Question"),
+    );
   else await cx.store.update(m.intent, "question", (e) => e.setSection("Towercab", body));
   return wait(waiting, q.question, { data: { question: q, brief: brief.trim() || undefined } });
 }
@@ -704,7 +716,7 @@ export async function note(cx: Ctx, m: Mission, step: Step, round: number, body:
   const pr = currentPr(cx, m, cx.repo(m));
   if (!pr) return;
   try {
-    await upsertStageComment(cx.github, pr.github, pr.n, step, round, body);
+    await upsertStageComment(cx.github, pr.github, pr.n, step, round, body, byOf(m, step));
   } catch (e) {
     cx.log(`${m.intent}: couldn't post the ${step} comment: ${(e as Error).message}`);
   }
@@ -717,11 +729,14 @@ export async function note(cx: Ctx, m: Mission, step: Step, round: number, body:
  */
 export async function tellOwner(cx: Ctx, m: Mission, body: string, keep = ""): Promise<void> {
   const pr = currentPr(cx, m, cx.repo(m));
+  // PIP-185: an answer an agent gave for the owner says so.
+  const agent = dataOf<{ answeredBy?: string | null }>(m).answeredBy;
+  const said = agent ? `${answeredByLine(agent)}\n\n${body}` : body;
   try {
     if (pr) {
-      await upsertStageComment(cx.github, pr.github, pr.n, "Answer", m.continued, body);
+      await upsertStageComment(cx.github, pr.github, pr.n, "Answer", m.continued, said, byOf(m, "Answer"));
     } else {
-      const text = keep ? `${body}\n\n${keep}` : body;
+      const text = keep ? `${said}\n\n${keep}` : said;
       await cx.store.update(m.intent, "answer", (e) => e.setSection("Towercab", text));
     }
   } catch (e) {

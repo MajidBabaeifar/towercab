@@ -131,6 +131,33 @@ export function noteIgnored(db: Db, intent: string, key: string, text: string, n
   return true;
 }
 
+/** PIP-185, PIP-186: a comment under the owner's login that an agent marked. */
+export interface AgentCommentNote {
+  agent: string;
+  url: string;
+  /** Epoch seconds. */
+  at: number;
+  excerpt: string;
+  /** Whether the intent acted on it (false at a0). */
+  actedOn: boolean;
+}
+
+/** PIP-185: record the agent's comment once per `key` (the comment's id). */
+export function recordAgentComment(db: Db, intent: string, key: string, c: AgentCommentNote): boolean {
+  const k = `agentcomment:${intent}:${key}`;
+  if (db.meta(k) !== null) return false;
+  db.setMeta(k, JSON.stringify(c));
+  return true;
+}
+
+/** PIP-186: the agent comments recorded on an intent, oldest first. */
+export function agentCommentNotes(db: Db, intent: string): AgentCommentNote[] {
+  return db
+    .all<{ value: string }>("SELECT value FROM meta WHERE key LIKE ? ESCAPE '\\'", `agentcomment:${intent}:%`)
+    .map((r) => JSON.parse(r.value) as AgentCommentNote)
+    .sort((a, b) => a.at - b.at);
+}
+
 /** The notes of ignored replies on an intent, oldest first. */
 export function ignoredNotes(db: Db, intent: string): IgnoredNote[] {
   return db

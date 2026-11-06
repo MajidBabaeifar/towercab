@@ -4229,3 +4229,131 @@ a.pr-tile:hover {
 .pause-intent .btn {
   min-height: 44px;
 }
+
+/* UI-247: a proposed intent takes one compact row. */
+.proposed-rows {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.proposed-row {
+  padding: 8px var(--s2);
+  border-bottom: 1px solid var(--line);
+  scroll-margin-top: 72px;
+}
+
+.proposed-row:last-child {
+  border-bottom: 0;
+}
+
+.proposed-line {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 12px;
+}
+
+.proposed-line .proposed-title {
+  grid-column: 1;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proposed-line .chip-draft {
+  grid-column: 1;
+  justify-self: start;
+}
+
+.proposed-gh {
+  display: none;
+}
+
+.proposed-facts {
+  grid-column: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proposed-line .proposed-actions {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  gap: 6px;
+}
+
+.proposed-line .proposed-actions .btn {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 4px 10px;
+}
+
+.proposed-row .proposed-close,
+.proposed-row .proposed-why,
+.proposed-row .result {
+  margin: 6px 0 0;
+}
+
+.proposed-more {
+  margin-top: var(--s1);
+}
+
+/* UI-248: the risk and the open points fold to one line each. */
+.risk-fold > summary,
+.points-fold > summary {
+  cursor: pointer;
+  margin: 0;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.risk-fold {
+  padding: 10px var(--s2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.risk-fold[open] > summary,
+.points-fold[open] > summary {
+  margin-bottom: var(--s1);
+}
+
+.risk-fold .risk {
+  padding: 0;
+  background: none;
+}
+
+.points-fold li > details > summary {
+  cursor: pointer;
+}
+
+.card-steps {
+  padding: 12px var(--s2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.up-shared {
+  margin: 0 0 var(--s1);
+}
+
+@media (min-width: 720px) {
+  .proposed-line {
+    grid-template-columns: 1fr auto auto;
+  }
+
+  .proposed-gh {
+    display: inline-flex;
+    grid-column: 2;
+  }
+
+  .proposed-line .proposed-actions {
+    grid-column: 3;
+  }
+}

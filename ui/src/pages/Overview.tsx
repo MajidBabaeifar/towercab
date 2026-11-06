@@ -18,9 +18,12 @@ import { Check, ListIcon, Moon } from "../icons.tsx";
 import { Link } from "../router.tsx";
 import { ShadowPanel } from "../Shadow.tsx";
 
-function headline(n: number): string {
+/** UI-244: the one count, split into what the owner sees as cards and what is proposed. */
+function headline(n: number, proposed: number): string {
   if (n === 0) return "Nothing needs you.";
-  return n === 1 ? "1 thing needs you" : `${n} things need you`;
+  const rest = n - proposed;
+  if (proposed === 0) return n === 1 ? "1 thing needs you" : `${n} things need you`;
+  return `${n} things need you: ${rest} waiting · ${proposed} proposed`;
 }
 
 export function OverviewPage({ data }: { data: Data }) {
@@ -31,10 +34,10 @@ export function OverviewPage({ data }: { data: Data }) {
   useEffect(() => pruneFolds(waiting ? waiting.split(",") : []), [waiting]);
   return (
     <main class="page overview" id="main">
-      <section class={`hero${needs.length ? " hero-needs" : " hero-calm"}`}>
-        <h1>{headline(needs.length)}</h1>
+      <section class={`hero${top.needs ? " hero-needs" : " hero-calm"}`}>
+        <h1>{headline(top.needs, top.proposed)}</h1>
         <p class="hero-sub">
-          {needs.length
+          {top.needs
             ? oldest
               ? `The oldest has waited since ${oldest.short}.`
               : "Each card says what is asked and offers only the actions that answer it."
@@ -62,7 +65,6 @@ export function OverviewPage({ data }: { data: Data }) {
       <Airspace data={airspace} />
       <div class="cols">
         <div class="col-main">
-          {data.proposed ? <ProposedList data={data.proposed} readOnly={top.readOnly} id="proposed" /> : null}
           {needs.length ? (
             <div class="cards">
               {needs.map((c) => (
@@ -87,6 +89,7 @@ export function OverviewPage({ data }: { data: Data }) {
               </ul>
             </Section>
           ) : null}
+          {data.proposed ? <ProposedList data={data.proposed} readOnly={top.readOnly} id="proposed" /> : null}
           <Section title="Working" count={working.length}>
             {working.length ? (
               <div class="rows">

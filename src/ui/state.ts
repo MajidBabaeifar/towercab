@@ -6,7 +6,7 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ownerOnly } from "../autonomy.ts";
 import { slotsText } from "../capacity.ts";
-import { ignoredNotes, intentPaused } from "../commands.ts";
+import { agentCommentNotes, ignoredNotes, intentPaused } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import type { ProposedState } from "../github/proposed.ts";
@@ -20,7 +20,7 @@ import type { SecretState } from "../pipeline/common.ts";
 import { section } from "../pipeline/prtext.ts";
 import { type Kind, parseStored, stageSkip } from "../repo/readiness.ts";
 import { usualOwner } from "../repos.ts";
-import { currentRisk, type RiskGate, riskWords } from "../risk.ts";
+import { currentRisk, type Risk, type RiskGate, riskWords } from "../risk.ts";
 import { actionSentence, actionsFor, shadowCosts } from "../shadow/store.ts";
 import { type Held, heldReleases, releaseLine, releaseTitle } from "../ship/releases.ts";
 import { MAX_FAILS } from "../ship/secret-steps.ts";
@@ -75,6 +75,7 @@ import type {
   StageNodeView,
   StateView,
   StationKey,
+  StepView,
   TimelineItem,
   TopBar,
   UpNextView,
@@ -367,6 +368,8 @@ export function stateOf(m: Mission, now: number, o: StateOpts = {}): StateView {
   if (m.waiting === "your steps first" || (m.stage === "steps" && m.waiting))
     return state("needs", "Your steps");
   if (isReady(m)) return state("queued", "ready to build");
+  // UI-249: back from a wait and waiting for a free build slot is queued, not working.
+  if (returningSince(m) !== null) return state("queued", "waiting for a build slot");
   // LOOP-118: held by `after:` is a quiet wait of Towercab's own, never stalled.
   if (heldByAfter(m))
     return state("queued", dataOf<{ afterHold?: { text: string } }>(m).afterHold?.text ?? null);
@@ -603,6 +606,12 @@ export function existingTestsOf(m: Mission): ExistingTestView[] {
   return [...testGrantsOf(d), ...(d.refusedTests ?? []).map((t) => ({ ...t, by: "refused" as const }))];
 }
 
+/** UI-248: the risk in one line: `Medium risk · easy to undo · fairly sure it works`. */
+function riskLine(r: Risk, label: string): string {
+  const sure = { high: "sure", medium: "fairly sure", low: "not very sure" }[r.certainty.level];
+  return `${label} · ${r.door.kind === "two-way" ? "easy to undo" : "hard to undo"} · ${sure} it works`;
+}
+
 /**
  * AUT-20: the risk judged at `gate`, else the latest one (code, plan, spec), in plain words; only an
  * assessment of the current spec head, plan or diff counts (PIP-96).
@@ -620,6 +629,7 @@ export function riskView(m: Mission, gate: RiskGate | null = null): RiskView | n
       blast: w.blast,
       door: w.door,
       certainty: w.certainty,
+      line: riskLine(r, w.label),
       summary: r.summary,
       raised: r.raised,
     };
@@ -715,6 +725,28 @@ function askOf(waiting: string | null): string {
   }
 }
 
+/** UI-160: a mission's owner steps, before-merge ones first, each with when it was ticked. */
+function stepViewsOf(src: UiSources, m: Mission, now: number): StepView[] {
+  const sd = dataOf<{ steps?: OwnerStep[]; secrets?: Record<string, SecretState> }>(m);
+  return [...(sd.steps ?? [])]
+    .sort((a, b) => (a.when === b.when ? a.n - b.n : a.when === "before" ? -1 : 1))
+    .map((x) => {
+      const at = x.done_at ? Date.parse(x.done_at) / 1000 : Number.NaN;
+      return {
+        n: x.n,
+        when: x.when,
+        text: x.text,
+        why: x.why,
+        doneAt: x.done_at ? when(Number.isFinite(at) ? at : m.updated, now) : null,
+        ...(x.secret ? { secret: secretView(x.secret, sd.secrets?.[String(x.n)], src) } : {}),
+      };
+    });
+}
+
+/** UI-245: the owner's steps are what the mission waits on. */
+const onSteps = (m: Pick<Mission, "waiting">) =>
+  m.waiting === "your steps" || m.waiting === "your steps first";
+
 /** UI-58: the card for a mission waiting on the owner. */
 export function missionCard(
   src: UiSources,
@@ -748,7 +780,7 @@ export function missionCard(
         : pr
           ? ["merge", "retry", "drop"]
           : ["retry", "drop"]
-      : stuck
+      : stuck || onSteps(m)
         ? ["retry", "drop"]
         : ["reply", "retry", "drop"];
   const exits = done
@@ -760,11 +792,13 @@ export function missionCard(
   return {
     ...(risk ? { risk } : {}),
     ...(points.length ? { openPoints: points } : {}),
+    // UI-245: the checklist of UI-160 rides on the card.
+    ...(onSteps(m) && stepViewsOf(src, m, now).length ? { steps: stepViewsOf(src, m, now) } : {}),
     intent: m.intent,
     title: intent?.title ?? m.intent,
     repo: m.repo,
     kind,
-    kindLabel: KIND_LABELS[kind],
+    kindLabel: onSteps(m) ? "Your steps" : KIND_LABELS[kind],
     ask: askOf(m.waiting),
     since: since === null ? null : when(since, now),
     brief,
@@ -781,6 +815,9 @@ export function missionCard(
     addRepo: null,
     ...(d.reviewWarning ? { warning: d.reviewWarning } : {}),
     ...(ownerOnly(intent?.a ?? null, m.a_at_pick) ? { onlyYou: true } : {}),
+    ...(dataOf<{ answeredBy?: string | null }>(m).answeredBy
+      ? { decided_by_agent: dataOf<{ answeredBy?: string | null }>(m).answeredBy }
+      : {}),
   };
 }
 
@@ -1083,7 +1120,7 @@ export function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: numbe
   const counts = {
     parked: count(["parked"]),
     queued: count(["queue", "gate"]),
-    flying: s.missions.filter((m) => !isWait(m.stage)).length,
+    flying: s.missions.filter((m) => !isOwnerWait(m)).length,
     needs,
     landed: landed.length,
   };
@@ -1403,11 +1440,50 @@ export interface Wait {
   intent: Intent | undefined;
 }
 
+/** UI-244, UI-245: a mission waits on the owner at a wait stage, or at `steps` with the steps to do. */
+export function isOwnerWait(m: Pick<Mission, "stage" | "waiting">): boolean {
+  return isWait(m.stage) || (m.stage === "steps" && !!m.waiting);
+}
+
+/** UI-244: the one count of what needs the owner, read by every screen. */
+export interface NeedCounts {
+  /** Waiting missions and intents (UI-58) that the owner has not just answered. */
+  missions: number;
+  /** Proposed intents (UI-184). */
+  proposed: number;
+  total: number;
+  /** Per repo name; an unknown repo's proposals are under "" (UI-187). */
+  byRepo: Map<string, { missions: number; proposed: number }>;
+}
+
+/** UI-244: every wait on the owner, missions and proposals, counted once. */
+export function needCounts(src: UiSources, s: Snap): NeedCounts {
+  const byRepo = new Map<string, { missions: number; proposed: number }>();
+  const at = (repo: string) => {
+    let c = byRepo.get(repo);
+    if (!c) {
+      c = { missions: 0, proposed: 0 };
+      byRepo.set(repo, c);
+    }
+    return c;
+  };
+  let missions = 0;
+  for (const w of waitsOf(src, s)) {
+    // UI-105: the owner already acted from the page; the wait only lingers until the loop moves on.
+    if (w.card.done) continue;
+    missions++;
+    at(w.card.repo).missions++;
+  }
+  const cards = proposedSection(src).cards;
+  for (const c of cards) at(src.config.repos.has(c.repo) ? c.repo : "").proposed++;
+  return { missions, proposed: cards.length, total: missions + cards.length, byRepo };
+}
+
 /** UI-58: every wait on the owner, oldest first; the overview and Focus (UI-193) read the same list. */
 export function waitsOf(src: UiSources, s: Snap): Wait[] {
   const waits: Wait[] = [];
   for (const m of s.missions) {
-    if (isReady(m) || !isWait(m.stage) || onTeammates(m)) continue;
+    if (isReady(m) || !isOwnerWait(m) || onTeammates(m)) continue;
     const since = s.entered.get(m.id) ?? m.created;
     const intent = s.intents.get(m.intent);
     waits.push({
@@ -1475,13 +1551,14 @@ export async function overview(src: UiSources): Promise<Overview> {
   const working: Row[] = [];
   const ready: Row[] = [];
   for (const m of s.missions) {
-    if (isReady(m)) ready.push(missionRow(src, s, m));
-    else if (!isWait(m.stage) || onTeammates(m)) working.push(missionRow(src, s, m));
+    if (isReady(m) || returningSince(m) !== null) ready.push(missionRow(src, s, m));
+    else if (!isOwnerWait(m) || onTeammates(m)) working.push(missionRow(src, s, m));
   }
   const needs = waitsOf(src, s).map((w) => w.card);
   // UI-236: a draft of the shadow's is tagged wherever it shows.
   const drafted = (id: string) => s.intents.get(id)?.source === "shadow";
   for (const c of needs) if (drafted(c.intent)) c.shadow = true;
+  const need = needCounts(src, s);
   const withMission = new Set(s.missions.map((m) => m.intent));
   const list = src.upNext().filter((u) => !withMission.has(u.intent));
   const queued = [...ready, ...list.filter((u) => u.skip?.kind !== "parked").map((u) => queuedRow(s, u))];
@@ -1501,7 +1578,7 @@ export async function overview(src: UiSources): Promise<Overview> {
   const problems = problemsOf(src, s, sp.today);
   const { health, note } = healthOf(src, problems, s.paused);
   const counts = [
-    `${needs.length} need${needs.length === 1 ? "s" : ""} you`,
+    `${need.total} need${need.total === 1 ? "s" : ""} you`,
     `${working.length} working`,
     `${queued.length} queued`,
   ];
@@ -1509,7 +1586,8 @@ export async function overview(src: UiSources): Promise<Overview> {
   const top: TopBar = {
     health,
     healthNote: note,
-    needs: needs.length,
+    needs: need.total,
+    proposed: need.proposed,
     working: working.length,
     queued: queued.length,
     countsText: counts.join(" · "),
@@ -1531,7 +1609,7 @@ export async function overview(src: UiSources): Promise<Overview> {
     queued,
     upNext,
     spend: spendView(sp, budget),
-    airspace: airspaceOf(src, s, list, needs.length),
+    airspace: airspaceOf(src, s, list, need.total),
   };
   return { version: versionOf(body, `${dbMark(src.db)}:${s.listing?.head ?? ""}`), ...body };
 }
@@ -2236,26 +2314,23 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     e2eLog: e2eLogOf(src.home.root, id),
     ...(only ? { onlyYou: "Only you can answer or approve this." } : {}),
     ...(intentPaused(src.db, realId) ? { paused: true } : {}),
+    agent_comments: agentCommentNotes(src.db, realId).map((c) => ({
+      agent: c.agent,
+      url: c.url,
+      at: when(c.at, s.now),
+      excerpt: c.excerpt,
+      acted_on: c.actedOn,
+    })),
   };
+  const decidedBy = last ? dataOf<{ answeredBy?: string | null }>(last).answeredBy : null;
+  if (decidedBy && !only) body.decided_by_agent = decidedBy;
   // UI-160, UI-162: the owner's steps, and the plan's claim that nothing could be checked live.
   const shown = live ?? last;
   const sd = shown
     ? dataOf<{ steps?: OwnerStep[]; liveNoneWhy?: string; secrets?: Record<string, SecretState> }>(shown)
     : {};
   if (sd.steps?.length) {
-    body.steps = [...sd.steps]
-      .sort((a, b) => (a.when === b.when ? a.n - b.n : a.when === "before" ? -1 : 1))
-      .map((x) => {
-        const at = x.done_at ? Date.parse(x.done_at) / 1000 : Number.NaN;
-        return {
-          n: x.n,
-          when: x.when,
-          text: x.text,
-          why: x.why,
-          doneAt: x.done_at ? when(Number.isFinite(at) ? at : (shown?.updated ?? s.now), s.now) : null,
-          ...(x.secret ? { secret: secretView(x.secret, sd.secrets?.[String(x.n)], src) } : {}),
-        };
-      });
+    body.steps = stepViewsOf(src, shown!, s.now);
     body.stepsWait =
       shown?.waiting === "your steps first" ? "before" : shown?.waiting === "your steps" ? "after" : null;
   }

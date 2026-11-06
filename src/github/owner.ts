@@ -3,6 +3,7 @@
 
 import { type Forge, MERGE_METHOD, must } from "../forge.ts";
 import type { IntentStore } from "../intents/types.ts";
+import { agentMarker } from "./comments.ts";
 
 /** The active github.com login in `gh auth status` output (gh 2.46 and older wordings). */
 export function parseAuthStatus(text: string): string | null {
@@ -67,4 +68,39 @@ export async function answer(
   }
   await o.store.update(intent, "answer", (e) => e.addAnswer(text.trim(), at));
   return "intent";
+}
+
+/** PIP-184: an agent name is plain: letters, digits and `-`, up to 32 characters. */
+export const AGENT_NAME = /^[A-Za-z0-9-]{1,32}$/;
+
+/** PIP-184: the marker line, `🤖 <agent> (for <owner>)`, a blank line, then the text. */
+export function agentReplyBody(agent: string, owner: string, text: string): string {
+  return `${agentMarker(agent)}\n🤖 ${agent} (for ${owner})\n\n${text.trim()}\n`;
+}
+
+/** PIP-184: where `towercab reply` posts: the intent's current PR, else its issue; null when neither. */
+export function replyTarget(
+  pr: { repo: string; number: number } | null,
+  issue: string | null,
+): { kind: "pr" | "issue"; repo: string; number: number } | null {
+  if (pr) return { kind: "pr", ...pr };
+  const m = /github\.com\/([^/]+\/[^/]+)\/issues\/(\d+)/.exec(issue ?? "");
+  return m ? { kind: "issue", repo: m[1]!, number: Number(m[2]) } : null;
+}
+
+/** PIP-184: post an agent's words under the owner's login, marked as the agent's. */
+export async function agentReply(
+  gh: Forge,
+  to: { kind: "pr" | "issue"; repo: string; number: number },
+  agent: string,
+  owner: string,
+  text: string,
+): Promise<void> {
+  if (!AGENT_NAME.test(agent))
+    throw new Error(`--by wants a plain name (letters, digits, -; up to 32), got "${agent}"`);
+  if (!text.trim()) throw new Error("a reply needs text");
+  await ownerLogin(gh);
+  const body = agentReplyBody(agent, owner, text);
+  if (to.kind === "pr") must(await gh.asOwner().commentOnPr(to.repo, to.number, body), "gh pr comment");
+  else await gh.asOwner().commentOnIssue(to.repo, to.number, body);
 }

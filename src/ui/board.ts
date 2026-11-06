@@ -13,6 +13,7 @@ import {
   dbMark,
   finishedState,
   localDate,
+  needCounts,
   snapshot,
   type UiSources,
   versionOf,
@@ -39,7 +40,9 @@ export async function board(src: UiSources): Promise<BoardPage> {
   const s = await snapshot(src);
   const withMission = new Set(s.missions.map((m) => m.intent));
   const list = src.upNext().filter((u) => !withMission.has(u.intent));
-  const air = airspaceOf(src, s, list, 0);
+  // UI-244: the count every screen shares.
+  const need = needCounts(src, s);
+  const air = airspaceOf(src, s, list, need.total);
 
   const repos: string[] = [...src.config.repos.keys()];
   const cells = new Map<string, Partial<Record<BoardColumnKey, BoardCard[]>>>();
@@ -129,10 +132,7 @@ export async function board(src: UiSources): Promise<BoardPage> {
       ...(fileError ? { fileError } : {}),
       repo,
       github: src.config.repos.get(repo)?.github ?? "",
-      waiting: Object.values(cells.get(repo) ?? {}).reduce(
-        (n, list) => n + (list ?? []).filter((c) => c.state.key === "needs").length,
-        0,
-      ),
+      waiting: need.byRepo.get(repo)?.missions ?? 0,
       changedAt: at === undefined ? null : new Date(at * 1000).toISOString(),
       index,
       open: counts.get(repo)?.open ?? 0,

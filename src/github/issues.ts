@@ -27,6 +27,7 @@ import { isParked, pickOrder } from "../priority.ts";
 import { checkoutRoot } from "../service.ts";
 import { check, type Tools } from "../tools.ts";
 import { prsOnBranch } from "./branches.ts";
+import { stageComment } from "./comments.ts";
 import { forgeOf } from "./forge.ts";
 
 /** The label that makes another author's issue eligible (INT-20). */
@@ -121,6 +122,14 @@ export function autonomyFrom(labels: string[], dflt: number): number {
     return m ? [Number(m[1])] : [];
   });
   return as.length ? Math.min(...as) : dflt;
+}
+
+/**
+ * PIP-183: an intake note with the header and marker every Towercab comment has. `n` says which note it
+ * is (1 written up, 2 queued, 3 proposal closed, 4 failed); `who` is the intent, or `#<issue>` before it exists.
+ */
+export function intakeNote(n: number, who: string, text: string): string {
+  return stageComment("Intake", n, text, { agent: "scorer", intent: who });
 }
 
 /** INT-61: said when an earlier merged proposal left no intent file behind. */
@@ -386,7 +395,7 @@ async function announce(
     place,
     lost,
   });
-  await host(d, repo).commentOnIssue(repo.github, issue.number, body);
+  await host(d, repo).commentOnIssue(repo.github, issue.number, intakeNote(2, cur.id, body));
   await addLabel(d, repo, issue.number, QUEUED_LABEL, "0e8a16");
 }
 
@@ -494,7 +503,11 @@ async function propose(
 
 /** INT-25: tell the issue its intent PR waits for the owner, then label it. */
 async function proposed(d: IssueDeps, repo: RepoConfig, issue: Listed, url: string): Promise<void> {
-  await host(d, repo).commentOnIssue(repo.github, issue.number, proposedComment(url));
+  await host(d, repo).commentOnIssue(
+    repo.github,
+    issue.number,
+    intakeNote(1, `#${issue.number}`, proposedComment(url)),
+  );
   await addLabel(d, repo, issue.number, PROPOSED_LABEL, "fbca04");
 }
 
@@ -568,7 +581,7 @@ async function pollIssue(
       await host(d, repo).commentOnIssue(
         repo.github,
         issue.number,
-        closedProposalComment(prUrl(intents, latest!.number)),
+        intakeNote(3, `#${issue.number}`, closedProposalComment(prUrl(intents, latest!.number))),
       );
       await removeLabels(
         d,
@@ -602,7 +615,11 @@ async function pollIssue(
   }
   if (scored.kind === "bad") {
     d.log(`${issue.url}: scoring failed twice: ${scored.why}`);
-    await host(d, repo).commentOnIssue(repo.github, issue.number, failedComment());
+    await host(d, repo).commentOnIssue(
+      repo.github,
+      issue.number,
+      intakeNote(4, `#${issue.number}`, failedComment()),
+    );
     await addLabel(d, repo, issue.number, FAILED_LABEL, "d93f0b");
     return;
   }

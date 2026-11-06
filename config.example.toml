@@ -53,6 +53,8 @@ EXAMPLE_VARIABLE = "placeholder"
 app_id = 123456
 # Your GitHub login.
 me = "your-login"
+# Your first name, for the line `towercab reply` puts on an agent's comments (default: your login).
+# name = "Your Name"
 # GitHub API address (change it only for GitHub Enterprise).
 api_base = "https://api.github.com"
 

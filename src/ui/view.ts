@@ -53,6 +53,8 @@ export interface TopBar {
   /** One sentence under the health pill's hover. */
   healthNote: string;
   needs: number;
+  /** UI-244: of `needs`, the proposed intents; the rest are missions and intents waiting (`needs - proposed`). */
+  proposed: number;
   working: number;
   queued: number;
   /** "2 need you · 1 working · 3 queued". */
@@ -119,6 +121,8 @@ export interface RiskView {
   blast: string;
   door: string;
   certainty: string;
+  /** UI-248: the three in one line: "Medium risk · easy to undo · fairly sure it works". */
+  line: string;
   summary: string;
   /** Why the floor raised the level (AUT-17), or null. */
   raised: string | null;
@@ -156,6 +160,8 @@ export interface Card {
   addRepo: { name: string; github: string } | null;
   /** AUT-20: the risk of what it waits on; null when none was judged (or the check didn't finish). */
   risk?: RiskView | null;
+  /** UI-245: the owner's steps, when the wait is on them (the checklist of UI-160). */
+  steps?: StepView[];
   /** PIP-97: the spec's open points for the owner (spec cards only). */
   openPoints?: { point: string; why: string }[];
   /** PIP-147: the host asks for approvals the reviewers can't give (UI-168). */
@@ -164,6 +170,8 @@ export interface Card {
   shadow?: boolean;
   /** UI-239: the intent is a0: only the owner can answer or approve it, shown as "only you". */
   onlyYou?: boolean;
+  /** PIP-186: an agent answered for the owner and the intent acted on it: the agent's name. */
+  decided_by_agent?: string | null;
 }
 
 export type PhaseStatus = "done" | "current" | "todo" | "skipped";
@@ -293,7 +301,7 @@ export interface AirspaceView {
 export interface Overview {
   version: string;
   top: TopBar;
-  /** UI-184: every proposed intent, before the needs-you cards; absent when Towercab isn't reading them. */
+  /** UI-184: every proposed intent, after the needs-you cards; absent when Towercab isn't reading them. */
   proposed?: ProposedSection;
   needs: Card[];
   problems: ProblemView[];
@@ -456,6 +464,16 @@ export interface AttemptView {
   map: StageMapView;
 }
 
+/** PIP-186: a comment an agent wrote under the owner's login. */
+export interface AgentCommentView {
+  agent: string;
+  url: string;
+  at: When;
+  excerpt: string;
+  /** False when the intent ignored it (a0). */
+  acted_on: boolean;
+}
+
 export interface IntentPage {
   version: string;
   id: string;
@@ -497,6 +515,10 @@ export interface IntentPage {
   /** UI-239: set for an a0 intent, with the line to show; `paused` is this intent's own pause (SHD-22). */
   onlyYou?: string;
   paused?: boolean;
+  /** PIP-186: the comments agents wrote under the owner's login, oldest first. */
+  agent_comments: AgentCommentView[];
+  /** PIP-186: the agent that answered for the owner, when the intent acted on it. */
+  decided_by_agent?: string | null;
   /** SHIP-32: "Published in v1.2.0" with its link, or "Merged, waiting for a release"; absent when the repo has no releases. */
   release?: { text: string; url: string | null };
 }
@@ -590,7 +612,7 @@ export interface RepoChip {
   repo: string;
   /** Open intents: in progress, up next, waiting and parked. */
   open: number;
-  /** Of them, waiting on the owner. */
+  /** Of them, waiting on the owner, proposed intents included (UI-244). */
   needs: number;
 }
 
