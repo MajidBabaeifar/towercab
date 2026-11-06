@@ -1757,6 +1757,24 @@ A conflict that code resolved is committed as Towercab's merge commit, checked i
 - No full review follows: the review of the previous head (PIP-4) stands for the merge head, because the merge brings in no new content of the PR's own. The mission goes from the push to `ci`, and the review stage records the carried-over review instead of running again. The risk agent's assessment (PIP-96) is likewise carried over. A later push that changes the PR's own diff is reviewed in full as PIP-4 says.
 - Verified by: `pipeline: a mechanical merge commit is Towercab's own at the gate`, `pipeline: a mechanical resolution uses no worker round`, `pipeline: a mechanical merge is reviewed on its own diff only`, `pipeline: a merge review that finds a lost side goes to the worker`, `pipeline: a mechanical merge does not trigger a full review`
 
+### PIP-170 · Every job in Towercab's CI has a time limit
+
+A job in Towercab's own CI that hangs fails within minutes instead of holding up a pull request for hours.
+
+- Every job in `.github/workflows/ci.yml` sets `timeout-minutes`, sized to its normal run: 15 for `Playwright: UI screenshots` and `Node 22: lint, typecheck, tests`, 10 for every other job, including `ci-ok` and the jobs that call the shared workflows (PIP-90). GitHub's 6-hour default never applies.
+- A job that hits its limit ends as a failure; Towercab reads it as red (PIP-3) and the first-red rerun of PIP-18 takes over.
+- Verified by: `public: every CI job sets timeout-minutes`
+
+### PIP-171 · A check that hangs is rerun by Towercab, not left to the owner
+
+When a check on a PR is still pending long after its job's time limit, Towercab waits for the limit to fail it and reruns it, and asks the owner only if that does not happen.
+
+- A check still pending past `ci_wait` that is an Actions run (PIP-18) is not yet `waiting: CI stuck` (PIP-3). Towercab waits a further 15 minutes (the longest job limit of PIP-170) with the checks read as before. If the run fails in that time, it is the first red of its head and `gh run rerun <run> --failed` runs once (PIP-18), no repair counted. A cancel is handled the same way.
+- Still pending after the extra 15 minutes → `waiting: CI stuck` as before, and on a spec PR `waiting: approve spec` (PIP-82); the reason says the run did not end within its time limit. Towercab never cancels a run.
+- A check that is not an Actions run has no extension: pending past `ci_wait` is stuck at once.
+- A run that was already rerun for its head and hangs again follows the same extension, then waits; there is no second rerun.
+- Verified by: `pipeline: a hung Actions run gets a further wait before CI is stuck`, `pipeline: a hung run that fails is rerun once`, `pipeline: a run still pending after the extra wait is stuck`, `pipeline: a pending check that is not an Actions run is stuck at ci_wait`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
