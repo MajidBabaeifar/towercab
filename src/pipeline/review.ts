@@ -137,6 +137,21 @@ export const reviewHandler: Handler = {
     if (m.step === "risk") return spawnRisk(cx, m, "code");
     const d = data(m);
     const pid = await patchId(cx, m);
+    // PIP-169: a merge made by code, read on its own diff, brings none of the PR's own change: the review
+    // and the risk assessment of the head before it stand for the new head.
+    if (d.mech?.reviewed && d.review) {
+      const carried = { ...d.review, patchId: pid };
+      if (d.riskOf?.code === d.review.patchId) {
+        return {
+          done: ok({
+            why: "the merge made by code adds none of the PR's own change: the earlier review stands",
+            data: { review: carried, riskOf: { ...d.riskOf, code: pid }, mech: undefined },
+          }),
+        };
+      }
+      return spawnRisk(cx, cx.record(m, m.step, {}, { review: carried, mech: undefined }), "code");
+    }
+    if (d.mech) m = cx.record(m, m.step, {}, { mech: undefined });
     if (d.review && d.review.patchId === pid) {
       if (currentRisk(m, "code") === undefined) return spawnRisk(cx, m, "code");
       return { done: ok({ why: "the diff is unchanged: the review stands" }) };

@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..156, PIP-165..166, PIP-182..186 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..156, PIP-165..169, PIP-182..186 · **Prefix:** PIP
 
 ## Purpose
 
@@ -1744,6 +1744,7 @@ When a conflict hunk cuts through a block (CSS rules, say), Towercab takes the b
 
 - Applies per file, after PIP-167's hunk rule: a file where a hunk is not additive only because it splits a block, or where the hunk rule cannot decide, is resolved with the PR's diff for that file (merge base → PR head) applied onto the file as it is on `origin/<base>`. The patch must apply with no conflict and no fuzz (plain `git apply`, no three-way merge).
 - Other files of the same merge keep the result of PIP-167. If the patch does not apply cleanly to any such file, or the result fails the full checks or the merge review (PIP-167, PIP-169), the whole attempt is dropped and the worker's conflict round runs as before.
+- Only when the PR's own change to the file removes or edits no line: a PR that deleted a line the base kept always goes to the worker. The context of the patch is the check that the base's side did not change what the PR's lines sit next to.
 - A file the base deleted or renamed is never resolved this way; it goes to the worker.
 - Verified by: `pipeline: a conflict that splits a CSS block is resolved by applying the PR's diff`, `pipeline: a PR diff that does not apply cleanly goes to the worker`
 
@@ -1848,6 +1849,7 @@ The intent page lists the owner-account comments that agents wrote, so the owner
 | [repair](../agents/repair.md) | Fixes red checks, a conflict, a review finding or an owner's answer in the worker's session. | The worker's tools and permissions, no more. | mission's | mission |
 | [review](../agents/review.md) | Reviews the code PR against the intent, plan and `REVIEW.md`; reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [risk](../agents/risk.md) | Judges the risk of the spec, plan and code at their gates, and reviews the spec a second time (PIP-96, PIP-97); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
+| [merge-review](../agents/merge-review.md) | Checks that a merge Towercab made by code kept both sides (PIP-169); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [score](../agents/score.md) | Turns a GitHub issue into a scored intent ([INT-22](intents.md)); runs outside any mission in an empty folder. | Nothing: no tools. | none | `[agent].model` |
 | [features](../agents/features.md) | Writes a repo's live features from its README and specs ([INT-39](intents.md)); runs outside any mission in a fresh checkout of base. | Read, Glob, Grep in the sandbox; no network. | none | `[agent].model` |
 

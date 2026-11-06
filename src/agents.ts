@@ -14,6 +14,7 @@ export const AGENT_NAMES = [
   "repair",
   "review",
   "risk",
+  "merge-review",
   "score",
   "features",
 ] as const;

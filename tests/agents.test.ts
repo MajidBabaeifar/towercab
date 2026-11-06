@@ -61,6 +61,8 @@ const BEFORE: Record<string, { tools: string; allowed: string[] }> = {
 BEFORE.repair = BEFORE.worker!;
 // PIP-96: the risk agent reads exactly as the review does, no more.
 BEFORE.risk = BEFORE.review!;
+// PIP-169: the merge review reads exactly as the review does, no more.
+BEFORE["merge-review"] = BEFORE.review!;
 
 test("agents: every agent has a file", () => {
   const files = readdirSync(AGENTS_DIR)
@@ -218,7 +220,9 @@ test("agents: review has a cost cap", () => {
 
 test("agents: spec table lists every agent", () => {
   const spec = readFileSync(join(AGENTS_DIR, "..", "specs", "pipeline.md"), "utf8");
-  const linked = [...spec.matchAll(/^\|\s*\[[^\]]+\]\(\.\.\/agents\/(\w+)\.md\)/gm)].map((m) => m[1]!).sort();
+  const linked = [...spec.matchAll(/^\|\s*\[[^\]]+\]\(\.\.\/agents\/([\w-]+)\.md\)/gm)]
+    .map((m) => m[1]!)
+    .sort();
   expect(linked).toEqual([...AGENT_NAMES].sort());
   for (const n of linked) expect(existsSync(join(AGENTS_DIR, `${n}.md`))).toBe(true);
 });
