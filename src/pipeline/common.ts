@@ -355,6 +355,7 @@ const STAGE_OF_KIND: Record<RunKind, string> = {
   risk: "review",
   score: "design",
   features: "design",
+  shadow: "design",
 };
 
 /** Record the step, then spawn a Claude run (LOOP-6, LOOP-7, PIP-13, PIP-24). */

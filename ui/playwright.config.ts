@@ -16,6 +16,7 @@ export default defineConfig({
     "needs-fold.spec.ts",
     "board-sort.spec.ts",
     "limits.spec.ts",
+    "shadow.spec.ts",
     "overview-order.spec.ts",
   ],
   outputDir: "screenshots/.results",

@@ -15,6 +15,7 @@ import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
 import { grantScanning } from "../pipeline/alerts.ts";
 import { ownerMergeRefusal } from "../pipeline/teammate.ts";
 import { grantPermission } from "../settings/store.ts";
+import { resetShadow } from "../shadow/store.ts";
 import { approveSecret } from "../ship/secret-steps.ts";
 import { currentPr, type DoneNote, validNote } from "./state.ts";
 
@@ -58,6 +59,8 @@ export interface UiActions {
   accept(pr: number, head: string): Promise<string>;
   /** INT-53: comment `text` (default `Not going ahead.`) and close the proposed intent's PR. */
   close(pr: number, text?: string): Promise<string>;
+  /** UI-238, SHD-17: clear the shadow's conversation, summary and pending actions; its action log stays. */
+  shadowReset?(): Promise<string>;
 }
 
 export interface ActionDeps {
@@ -80,7 +83,12 @@ export interface ActionDeps {
   proposed?: () => ProposedPr[];
   /** SHIP-35: writes a typed secret; none: the page can't take one. */
   supplySecret?: (intent: string, n: number, value: string) => Promise<string>;
+  /** SHD-12: the shadow's own actions: what it writes on GitHub starts with `[shadow] `. */
+  actor?: "shadow";
 }
+
+/** SHD-12: the tag on whatever the shadow writes. */
+export const SHADOW_TAG = "[shadow] ";
 
 export const DEFAULT_CLOSE_REASON = "Not going ahead.";
 
@@ -117,6 +125,7 @@ export function createActions(d: ActionDeps): UiActions {
   };
   const pr = (m: Mission | undefined) => (m ? currentPr(m, d.config, d.store.github()) : null);
   const of = ownerForge(d.github.owner);
+  const tag = d.actor === "shadow" ? SHADOW_TAG : "";
   const refused = (r: Result, what: string) => {
     if (!r.ok) throw new Error(`GitHub refused to ${what}: ${firstLine(r.reason)}`);
   };
@@ -236,6 +245,9 @@ export function createActions(d: ActionDeps): UiActions {
       if (state.state === "CLOSED") {
         throw new Error(`The ${p.label} #${p.number} is closed, so there is nothing to merge.`);
       }
+      // SHD-12: the PR says who asked for the merge.
+      if (tag)
+        await of.commentOnPr(p.github, p.number, `${tag}Merging on your yes in Telegram.`, { inline: true });
       refused(
         await of.mergePr(p.github, p.number, { method: MERGE_METHOD }),
         `merge the ${p.label} #${p.number}`,
@@ -261,8 +273,8 @@ export function createActions(d: ActionDeps): UiActions {
     },
 
     async reply(intent, text) {
-      const body = text.trim();
-      if (!body) throw new Error("Write a reply first.");
+      const body = `${tag}${text.trim()}`;
+      if (!text.trim()) throw new Error("Write a reply first.");
       if (body.length > MAX_REPLY) throw new Error(`The reply is too long: at most ${MAX_REPLY} characters.`);
       const m = unfinishedFor(d.db, intent);
       const p = pr(m);
@@ -312,7 +324,10 @@ export function createActions(d: ActionDeps): UiActions {
       if (m && p) {
         const again = repeated(m, p, "drop");
         if (again) return again;
-        refused(await of.closePr(p.github, p.number), `close the ${p.label} #${p.number}`);
+        refused(
+          await of.closePr(p.github, p.number, tag ? `${tag}Dropped on your yes in Telegram.` : undefined),
+          `close the ${p.label} #${p.number}`,
+        );
         done(m, p, "drop");
         return `Closed the ${p.label} #${p.number}; the intent is dropped.`;
       }
@@ -393,6 +408,11 @@ export function createActions(d: ActionDeps): UiActions {
     async repoMove(repo) {
       if (!d.limits) throw new Error("Towercab isn't running, so it can't open a pull request now.");
       return d.limits.move(repo);
+    },
+
+    async shadowReset() {
+      resetShadow(d.db);
+      return "Cleared the shadow's conversation. Its log of actions stays.";
     },
 
     async features(repo) {

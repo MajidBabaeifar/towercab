@@ -17,6 +17,7 @@ export const AGENT_NAMES = [
   "merge-review",
   "score",
   "features",
+  "shadow",
 ] as const;
 export type AgentName = (typeof AGENT_NAMES)[number];
 

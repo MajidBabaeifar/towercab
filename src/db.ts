@@ -18,6 +18,14 @@ const REPOS_V3 = REPOS.replace(
   ");",
 );
 
+/** SHD-15, SHD-19: the shadow's conversation and the log of what it did. */
+const SHADOW = `CREATE TABLE shadow_turns (id INTEGER PRIMARY KEY, update_id INTEGER UNIQUE, at REAL NOT NULL,
+  role TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'done', cost REAL NOT NULL DEFAULT 0,
+  folded INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE shadow_actions (id INTEGER PRIMARY KEY, at REAL NOT NULL, turn INTEGER, idx INTEGER NOT NULL DEFAULT 0,
+  action TEXT NOT NULL, intent TEXT NOT NULL DEFAULT '', pr INTEGER NOT NULL DEFAULT 0, outcome TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '', UNIQUE (turn, idx));`;
+
 /** LOOP-37 **Schema**, as written in specs/loop.md (a test compares them). */
 export const SCHEMA = `CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE missions (
@@ -43,11 +51,12 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY,
   created REAL NOT NULL, applied_at REAL, result TEXT);
 CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, created REAL NOT NULL,
   sent_at REAL, tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0);
-${REPOS}`;
+${REPOS}
+${SHADOW}`;
 
 /** Migration i takes `user_version` from i to i+1. Later changes append. */
 export const MIGRATIONS: string[] = [
-  SCHEMA.replace("'resume','start','done','steps'", "'resume'").replace(`\n${REPOS}`, ""),
+  SCHEMA.replace("'resume','start','done','steps'", "'resume'").replace(`\n${REPOS}\n${SHADOW}`, ""),
   // 2: `start` joins the commands (LOOP-63); the CHECK can't be altered, so the table is rebuilt.
   `CREATE TABLE commands_new (id INTEGER PRIMARY KEY,
   name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start')),
@@ -73,13 +82,15 @@ ALTER TABLE commands_new RENAME TO commands;`,
   // 6: a repo can need a teammate's review (LOOP-83). Additive.
   `ALTER TABLE repos ADD COLUMN teammate_review INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE repos ADD COLUMN reviewers TEXT NOT NULL DEFAULT '';`,
+  // 7: the shadow's turns and actions (SHD-15, SHD-19). Additive; `IF NOT EXISTS` for a re-upgrade after a manual rollback.
+  SHADOW.replaceAll("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS "),
 ];
 
 /**
  * Versions reached by migrations that only add (tables, columns, keys older code doesn't read): a
  * Towercab older than them can still use the database (LOOP-37).
  */
-export const ADDITIVE = new Set([3, 6]);
+export const ADDITIVE = new Set([3, 6, 7]);
 
 /** The oldest Towercab (by its migration count) that can open a database at `version`. */
 export function compatibleFrom(version: number): number {

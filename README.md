@@ -84,7 +84,7 @@ flowchart LR
 You steer with ordinary GitHub actions. Merge to approve, close to drop, comment or request changes
 to send it back with your notes, and reply to a question to answer it. `/retry` starts over. A local
 web page shows what needs you, what is stuck, what is moving and what it costs
-([specs/ui.md](specs/ui.md)), and Telegram tells you when something waits on you.
+([specs/ui.md](specs/ui.md)), and Telegram tells you when something waits on you. With `[shadow] enabled` you can also talk to Towercab there: ask what is going on, think something through and have it act within limits you set ([specs/shadow.md](specs/shadow.md)).
 
 <table>
   <tr>

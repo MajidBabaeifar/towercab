@@ -16,6 +16,7 @@ import {
 import { pruneFolds } from "../folds.ts";
 import { Check, ListIcon, Moon } from "../icons.tsx";
 import { Link } from "../router.tsx";
+import { ShadowPanel } from "../Shadow.tsx";
 
 /** UI-244: the one count, split into what the owner sees as cards and what is proposed. */
 function headline(n: number, proposed: number): string {
@@ -115,6 +116,7 @@ export function OverviewPage({ data }: { data: Data }) {
           <Section title="Spend">
             <SpendCard spend={spend} />
           </Section>
+          <ShadowPanel readOnly={top.readOnly} />
           <Section title="Towercab">
             <dl class="facts">
               <div>

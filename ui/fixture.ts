@@ -1347,3 +1347,41 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   process.on("SIGINT", bye);
   process.on("SIGTERM", bye);
 }
+
+/**
+ * UI-236 to UI-238: the shadow is on. It drafted the up-next intent (`source: shadow`), replied on and
+ * asked to merge the intent whose plan waits, spent some of its cap, and the page's Reset works.
+ */
+export function seedShadow(f: Fixture, now: number): void {
+  f.sources.config.shadow.enabled = true;
+  const draft = f.store.open.find((i) => i.id === IDS.upnext);
+  if (draft) draft.source = "shadow";
+  const row = (ago: number, action: string, intent: string, outcome: string, detail = "") =>
+    f.db.run(
+      "INSERT INTO shadow_actions (at, turn, idx, action, intent, pr, outcome, detail) VALUES (?, NULL, 0, ?, ?, 0, ?, ?)",
+      now - ago,
+      action,
+      intent,
+      outcome,
+      detail,
+    );
+  row(3600, "draft", IDS.upnext, "done");
+  row(1800, "reply", IDS.question, "done");
+  row(600, "merge", IDS.plan, "held", "waiting for your yes");
+  row(300, "start", IDS.queued, "refused", "it has already started");
+  f.db.setMeta(
+    "shadow.pending",
+    JSON.stringify([
+      { row: 3, action: "merge", intent: IDS.plan, repo: "", title: "", text: "", at: now - 600 },
+    ]),
+  );
+  f.db.run(
+    "INSERT INTO shadow_turns (at, role, text, state, cost) VALUES (?, 'owner', 'hi', 'done', 1.25)",
+    now - 120,
+  );
+  f.actions.shadowReset = async () => {
+    f.db.run("DELETE FROM shadow_turns");
+    f.db.delMeta("shadow.pending");
+    return "Cleared the shadow's conversation. Its log of actions stays.";
+  };
+}

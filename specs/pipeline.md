@@ -1851,6 +1851,7 @@ The intent page lists the owner-account comments that agents wrote, so the owner
 | [risk](../agents/risk.md) | Judges the risk of the spec, plan and code at their gates, and reviews the spec a second time (PIP-96, PIP-97); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [merge-review](../agents/merge-review.md) | Checks that a merge Towercab made by code kept both sides (PIP-169); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [score](../agents/score.md) | Turns a GitHub issue into a scored intent ([INT-22](intents.md)); runs outside any mission in an empty folder. | Nothing: no tools. | none | `[agent].model` |
+| [shadow](../agents/shadow.md) | The owner's shadow in Telegram ([SHD-1](shadow.md)); one long-lived session, outside any mission, in an empty folder. | Nothing: no tools; Towercab runs its reads and actions. | resume | `[shadow].model`, else `[agent].model` |
 | [features](../agents/features.md) | Writes a repo's live features from its README and specs ([INT-39](intents.md)); runs outside any mission in a fresh checkout of base. | Read, Glob, Grep in the sandbox; no network. | none | `[agent].model` |
 
 Each file's front matter also holds the time and cost limits and the result schema (PIP-71). `repair`
