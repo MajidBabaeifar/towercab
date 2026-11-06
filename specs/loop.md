@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-115..119 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-115..119, LOOP-129..131 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -1249,6 +1249,12 @@ CREATE TABLE repos (name TEXT PRIMARY KEY, github TEXT NOT NULL, path TEXT NOT N
   base TEXT NOT NULL, workers INTEGER NOT NULL DEFAULT 1, ahead INTEGER NOT NULL DEFAULT 3,
   env TEXT NOT NULL DEFAULT '{}', source TEXT NOT NULL, added REAL NOT NULL,
   teammate_review INTEGER NOT NULL DEFAULT 0, reviewers TEXT NOT NULL DEFAULT '');
+CREATE TABLE shadow_turns (id INTEGER PRIMARY KEY, update_id INTEGER UNIQUE, at REAL NOT NULL,
+  role TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'done', cost REAL NOT NULL DEFAULT 0,
+  folded INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE shadow_actions (id INTEGER PRIMARY KEY, at REAL NOT NULL, turn INTEGER, idx INTEGER NOT NULL DEFAULT 0,
+  action TEXT NOT NULL, intent TEXT NOT NULL DEFAULT '', pr INTEGER NOT NULL DEFAULT 0, outcome TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '', UNIQUE (turn, idx));
 ```
 
 **Transitions** (`next(stage, event)`; "next" = the next stage of the order; `U` = unexpected, counted

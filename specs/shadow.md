@@ -1,6 +1,6 @@
 # Shadow
 
-**Status:** Draft · **Prefix:** SHD
+**Status:** Live: SHD-1..22 · **Prefix:** SHD
 
 ## Purpose
 
@@ -51,10 +51,12 @@ Each turn, the shadow sees Towercab's current state without being told.
 
 The shadow can only do what Towercab's actions API offers, and it runs without a shell on the host.
 
-- The session runs in the sandbox (the same sandbox as builds) with no network except the loopback actions
-  API, no `Bash` tool and no access to `~/.config/towercab` or the home outside `runs/`. Reads are
-  `GET /api/…` (UI-65); writes are `POST /api/actions` with `actor: shadow`. An action outside the list
-  in SHD-6..9 is refused with a reason the shadow can relay.
+- The session has no tools at all (`agents/shadow.md`: `tools: []`) and runs with the sandbox settings of
+  every run, so it has no shell, no network of its own and no token. It answers with a result `{reply, reads,
+  actions}`; Towercab runs the reads (`intent`, `queue`, `activity`, `repos`, `pr`, `runfile`: the page's
+  `GET` data, at most 3 rounds of 3 reads, each cut to 6 000 characters) and the actions, which are the page's
+  own actions (UI-66) with `actor: shadow`. An action outside the list in SHD-6..9 is refused with a reason
+  the shadow can relay.
 - Verified by: `shadow: the session runs in the sandbox without a shell`, `shadow: an unknown action is refused`
 
 ### SHD-6 · Reading, answering and drafting are free
@@ -86,10 +88,15 @@ The shadow merges, boosts or drops only after the owner says yes in the chat to 
 
 An action the owner's yes allows is still refused where the intent itself forbids it.
 
+- Listing `merge` in `[shadow] free` frees only the merge of a code PR; a spec or plan merge still asks.
+- A code PR is merged only when nothing but the owner's approval holds it: checks green, an approving
+  review, the PR's head unchanged since, and none of the holds Towercab can't judge itself (someone else's
+  commits, tests not shown to fail, a changed plan, access beyond the plan, a pending teammate pass). Any
+  other hold refuses with one line saying why, before asking and again after a yes.
 - A `merge` is refused while the intent's checks are not green or its autonomy asks for a human
   (AUT-1..8); the shadow's yes does not stand in for the owner on a wait that only the owner may clear.
   The refusal reaches the chat in one sentence.
-- Verified by: `shadow: merge is refused where autonomy needs the owner`
+- Verified by: `shadow: merge is refused where autonomy needs the owner`, `shadow: a merge waiting only on the owner asks for a yes`, `shadow: a yes does not merge a PR that changed while it waited`
 
 ### SHD-10 · Asking first
 
@@ -99,6 +106,10 @@ For an action above its limits, the shadow sends one message that names the acti
   "Merge 261105-2152-8? Reply yes or no." A `yes` or `no` (or the same in plain words) from the chat
   resolves it; any other message leaves it open and is answered normally. A pending action expires after
   24 hours and is dropped with a note. Only one is pending per intent and action.
+  With one action waiting, a bare yes or no answers it; with several, a bare answer does none of them and
+  the shadow lists them, and the owner names one (`yes merge <id>`, `no drop <id>`). The yes takes the action
+  off the list, marks its row and links the answering message in one transaction before anything runs, so a
+  restart reports what happened and never lets the same yes approve another action.
 - A restart keeps the pending action. An answer resolves it once.
 - Verified by: `shadow: a held action waits for the chat`, `shadow: yes runs it once`, `shadow: no cancels it`, `shadow: a pending action survives a restart`, `shadow: a pending action expires after a day`
 
@@ -115,8 +126,9 @@ The owner sets what the shadow does freely, in the config file.
 Whatever the shadow writes shows `[shadow]`, so the owner can tell it from their own words.
 
 - PR and issue comments start with `[shadow] `; commits it causes (an intent file) carry the trailer
-  `Shadow: true` and the subject prefix `[shadow]`; Telegram replies start with `[shadow] `. The comments are
-  posted by the same identity as other stage comments, not as the owner.
+  `Shadow: true` and the subject prefix `[shadow]`; Telegram replies start with `[shadow] `. A reply is posted
+  as the owner, like the page's reply, because only the owner's comments reach the pipeline; the tag marks
+  it. A merge or a drop adds a `[shadow]` comment on the PR.
 - Verified by: `shadow: comments commits and replies carry the tag`
 
 ### SHD-13 · Intents it writes are not the owner's
@@ -159,7 +171,8 @@ When the conversation grows long, older turns are folded into a summary so the s
 The owner can wipe the conversation and start fresh.
 
 - `/reset` in the chat, `towercab shadow reset` or the page's Reset button (UI-238) clears the session id,
-  summary and turns, and drops any pending action. The action log (SHD-19) is kept. The reply says so in
+  summary and turns, and drops any pending action. The action log (SHD-19) is kept, unlinked from the turns it came from, and what the turns cost stays in
+  the day's spend and the cap (SHD-18). The reply says so in
   one sentence.
 - Verified by: `shadow: reset clears the conversation and keeps the action log`
 
@@ -167,7 +180,8 @@ The owner can wipe the conversation and start fresh.
 
 The shadow's runs are part of the spend and have their own daily cap.
 
-- Each turn's cost is added to `data.runs` as in MET-29 (labelled `shadow`) and shown in the spend. When
+- Each turn's cost is kept on the turn (`shadow_turns.cost`) and added to the day's spend as MET-29 does for
+  runs, so it shows in the spend and counts against the overall budget. When
   today's shadow cost reaches `[shadow] daily_budget_usd`, the shadow answers once "I've reached today's
   cap" and does nothing until midnight; it never pauses the rest of Towercab for it. The overall daily
   budget (MET-29) still applies to the sum.
@@ -177,9 +191,10 @@ The shadow's runs are part of the spend and have their own daily cap.
 
 Each action the shadow takes or is refused is written down, linked to what it touched.
 
-- Table `shadow_actions` (`id`, `at`, `action`, `intent`, `pr`, `outcome` `done`, `refused` or `held`,
-  `detail`) written before the effect (`ctx.record` rule). The dashboard, the timeline and the API read it.
-  Rows are kept 30 days.
+- Table `shadow_actions` (`id`, `at`, `action`, `intent`, `pr`, `outcome` `started` while it runs, then
+  `done` or `refused`, or `held` while it waits for a yes; `detail`) written before the effect (`ctx.record`
+  rule). A `started` row found after a restart is closed as interrupted and reported, never run again. The
+  dashboard, the timeline and the API read it. Rows are kept 30 days.
 - Verified by: `shadow: an action is recorded before it runs`, `shadow: refused and held actions are recorded`
 
 ### SHD-20 · Each message is handled once
@@ -196,8 +211,8 @@ A Telegram message is acted on exactly once, even across crashes and restarts.
 The shadow cannot answer, approve, merge, start, boost or drop an intent set to `a0`; it sends the owner to the page or the PR instead.
 
 - Before running any action on an intent whose effective `a` is 0 (AUT-31), the shadow's action layer refuses it with "this intent is only yours", records it as refused in `shadow_actions` (SHD-19) and tells the owner in its reply. This holds whatever `free` says (SHD-11) and after a `yes` (SHD-10); the one exception is the pause of SHD-22. It may still read and talk about the intent.
-- The reply says where to act and links it: the intent's page (`http://127.0.0.1:<ui port>/intent/<id>`, UI-65) and, when a PR is waiting, the PR's URL. A Telegram message never answers or approves for the owner (AUT-32).
-- Verified by: `shadow: an a0 intent is refused`, `shadow: a yes does not unlock an a0 intent`, `shadow: a refusal links the page and the PR`
+- The reply is one line naming the intent and saying where the owner acts: `<id> is only yours: use GitHub or the page` (the line `towercab` prints, AUT-33). A Telegram message never answers or approves for the owner (AUT-32). `pause` is an action like the others of SHD-6..8 (free), run through the page's per-intent pause (UI-239).
+- Verified by: `shadow: an a0 intent is refused`, `shadow: a yes does not unlock an a0 intent`
 
 ### SHD-22 · It may pause an owner-only intent
 

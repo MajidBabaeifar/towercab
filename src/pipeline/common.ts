@@ -97,6 +97,8 @@ export interface PipeData {
   specRed?: boolean;
   /** Heads of the spec PR whose red checks were rerun (PIP-18). */
   specReruns?: Record<string, boolean>;
+  /** Heads of the spec PR whose hung runs were cancelled (PIP-171). */
+  specHung?: Record<string, boolean>;
   plan?: {
     md: string;
     access: Access;
@@ -208,7 +210,13 @@ export interface PipeData {
   /** The lines the proof ran on base, and whether they are the PR's checks block (PIP-54). */
   proofLines?: { lines: string[]; fromPr: boolean };
   unproven?: boolean;
-  ci?: { result: "green" | "none" | "pending"; reruns?: Record<string, boolean>; since?: number };
+  ci?: {
+    result: "green" | "none" | "pending";
+    reruns?: Record<string, boolean>;
+    /** Heads whose hung runs were cancelled (PIP-171). */
+    hung?: Record<string, boolean>;
+    since?: number;
+  };
   review?: {
     approved: boolean;
     door: "one-way" | "two-way";
@@ -360,6 +368,7 @@ const STAGE_OF_KIND: Record<RunKind, string> = {
   risk: "review",
   score: "design",
   features: "design",
+  shadow: "design",
 };
 
 /** Record the step, then spawn a Claude run (LOOP-6, LOOP-7, PIP-13, PIP-24). */

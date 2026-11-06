@@ -76,6 +76,16 @@ chat_id = "123456789"
 # Telegram API address.
 api_base = "https://api.telegram.org"
 
+[shadow]
+# Whether the shadow, one Claude session you talk to in Telegram, is on. It needs [telegram] above.
+enabled = false
+# Actions it may take without asking you first. It always asks before the others; "confirm" always asks.
+free = []
+# What the shadow may spend per day (USD); it stops until midnight at the cap and never pauses other work.
+daily_budget_usd = 5
+# The model it uses (default: [agent] model).
+# model = "opus"
+
 [ui]
 # Port of the local web page (0 turns it off).
 port = 7311

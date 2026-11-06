@@ -46,6 +46,8 @@ import { addRepo, loadRepos, removeRepo, repoLine, repoList, setRepo } from "./r
 import { checkoutRoot, down, logsArgv, restart, up } from "./service.ts";
 import { restoreBackup } from "./settings/backup.ts";
 import { grantPermission } from "./settings/store.ts";
+import { resetShadow, statusText } from "./shadow/store.ts";
+import { buildShadow } from "./shadow/wire.ts";
 import { checkIds, readPrList } from "./specs-cli.ts";
 import { renderStatus } from "./status.ts";
 import { Telegram } from "./telegram.ts";
@@ -76,6 +78,7 @@ export const COMMANDS = [
   "doctor",
   "update",
   "repo",
+  "shadow",
   "settings",
   "hook",
   "specs",
@@ -99,6 +102,7 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   pause [id] | resume [id]
   repo add <owner/name> [--name <short>] | repo remove <name> | repo list
   repo set <name> key=value…      workers, ahead, base, path, env (NAME=value or a JSON object)
+  shadow reset | shadow status    clear the shadow's conversation; what it is doing and what it cost today
   settings restore <repo>         put back the settings saved before the last apply
   settings granted                the GitHub App now has Administration (write)
   settings scanning-granted       the GitHub App now has Code scanning alerts (read)
@@ -354,7 +358,26 @@ async function run(
       const lock = w.home.lock();
       log.init(w.home.logFile);
       const store = await w.store();
-      const loop = new Loop(
+      const telegram = w.config.telegram ? new Telegram(w.config.telegram) : null;
+      // SHD-1: the shadow reads the owner's chat only in a watching loop, with `[shadow] enabled`.
+      const shadow =
+        v.watch && w.config.shadow.enabled
+          ? buildShadow(
+              {
+                config: w.config,
+                home: w.home,
+                db: w.db,
+                tools,
+                clock: systemClock,
+                store,
+                github: w.github!,
+                log: (l) => log.emit(l),
+              },
+              telegram,
+              () => loop,
+            )
+          : undefined;
+      const loop: Loop = new Loop(
         {
           config: w.config,
           home: w.home,
@@ -366,7 +389,8 @@ async function run(
           gitlab: w.gitlab,
           handlers: handlers(),
           log: (l) => log.emit(l),
-          sender: w.config.telegram ? new Telegram(w.config.telegram) : null,
+          sender: telegram,
+          shadow,
           selfUpdate: Boolean(v.watch),
           readiness: true,
           limits: true,
@@ -541,6 +565,15 @@ async function run(
             : [repo.github, m.pr!];
       await ownerApprove(w.github, gh, n);
       return `merged ${gh}#${n} as ${w.config.github?.me}; Towercab continues on its next read`;
+    }
+    case "shadow": {
+      // LOOP-131: the same as `/reset` and `/status` in the chat; a running loop sees the reset at its next turn.
+      if (args[0] === "reset") {
+        resetShadow(w.db);
+        return "the shadow's conversation is cleared; its action log is kept";
+      }
+      if (args[0] === "status") return statusText(w.db, w.config.shadow, systemClock.now());
+      throw new UsageError("shadow reset | shadow status");
     }
     case "repo":
       return repo(w, args, v.name as string | undefined);

@@ -579,7 +579,10 @@ export class GitStore implements IntentStore {
       this.writeFile(`${dir}/intent.md`, text);
       const f = IntentFile.parse(text);
       [f.id, f.slug, f.dir] = [id, slug, dir];
-      return { msg: `towercab: add ${id}${n.mark ? `\n\n${n.mark}` : ""}`, out: f.intent };
+      return {
+        msg: `towercab: ${n.by === "shadow" ? "[shadow] " : ""}add ${id}${n.mark ? `\n\n${n.mark}` : ""}`,
+        out: f.intent,
+      };
     });
   }
 

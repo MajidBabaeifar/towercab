@@ -166,6 +166,8 @@ export interface LoopDeps {
   sandboxProbe?: () => Promise<{ ok: boolean; why: string }>;
   /** INT-39: when a backfill run's time is up (default a real timer; tests resolve it themselves). */
   featuresDeadline?: (ms: number) => Promise<void>;
+  /** LOOP-129, LOOP-130: the shadow, passed each pass; none: no shadow. */
+  shadow?: { pass(): Promise<void>; busy(): boolean; stop(): Promise<void> };
 }
 
 export interface LoopOpts {
@@ -400,7 +402,8 @@ export class Loop {
       this.readinessJob !== null ||
       this.settingsJob !== null ||
       this.setupJob !== null ||
-      this.issuesRun !== null
+      this.issuesRun !== null ||
+      this.d.shadow?.busy()
     )
       return;
     this.d.log(
@@ -418,6 +421,7 @@ export class Loop {
     await this.settingsIdle();
     await this.setupChecksIdle();
     await this.limitsIdle();
+    await this.d.shadow?.stop();
     for (const [id, r] of this.children) {
       r.handle.kill("SIGTERM");
       const done = await Promise.race([
@@ -574,6 +578,8 @@ export class Loop {
     }
     await this.selfUpdate();
     this.restartIfMoved();
+    // LOOP-130: the shadow reads the chat and reaps or starts a turn; its child runs beside the pass.
+    await this.d.shadow?.pass();
     await this.sendMessages();
 
     // A change waiting days on the owner's steps is not work: the machine may sleep and the loop is idle.
@@ -588,6 +594,7 @@ export class Loop {
       this.readinessJob === null &&
       this.settingsJob === null &&
       this.setupJob === null &&
+      !this.d.shadow?.busy() &&
       live.length === 0 &&
       report.picked === null;
     if (this.targetId) {
@@ -1906,7 +1913,8 @@ export class Loop {
       this.featuresJob === null &&
       this.readinessJob === null &&
       this.settingsJob === null &&
-      this.setupJob === null;
+      this.setupJob === null &&
+      !this.d.shadow?.busy();
     // A drain whose children are gone updates at once instead of at the next minute.
     if (!(this.drain !== null && idle()) && this.now - this.lastUpdate < UPDATE_POLL_S) return;
     this.lastUpdate = this.now;

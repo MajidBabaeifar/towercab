@@ -10,6 +10,7 @@ import {
   PauseButton,
   RiskBlock,
   Section,
+  ShadowTag,
   StartButton,
   StateChip,
   StepsChecklist,
@@ -74,7 +75,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
               </span>
               <span class="tl-dot" aria-hidden="true" />
               <div class="tl-body">
-                <p class="tl-text">{t.text}</p>
+                <p class={`tl-text${t.shadow ? " tl-shadow" : ""}`}>{t.text}</p>
                 {t.why ? <p class="tl-why">{t.why}</p> : null}
               </div>
               <span class="tl-lasted meta">
@@ -98,6 +99,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
         <div class="intent-title">
           <h1>
             {data.title} {data.onlyYou ? <OnlyYou /> : null}
+            {data.shadow ? <ShadowTag /> : null}
           </h1>
           <p class="meta">
             {data.repo} · <Id id={data.id} />

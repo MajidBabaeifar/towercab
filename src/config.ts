@@ -74,10 +74,16 @@ export interface Config {
   /** REPO-31: `[github] settings`: `check` (default) or `apply` the standard GitHub settings. */
   githubSettings: "check" | "apply";
   telegram: { botToken: string; chatId: string; apiBase: string } | null;
+  /** SHD-11: `[shadow]`: the owner's Claude session in Telegram and what it may do without asking. */
+  shadow: { enabled: boolean; free: ShadowFree[]; dailyBudgetUsd: number; model: string | null };
   ui: { port: number };
   /** `drainMinutes`: how long a drain for an update waits before cutting runs off (LOOP-109). */
   update: { auto: boolean; drainMinutes: number };
 }
+
+/** SHD-8: the actions `[shadow].free` may list; confirming a draft always asks (SHD-14). */
+export const SHADOW_FREE = ["merge", "boost", "drop"] as const;
+export type ShadowFree = (typeof SHADOW_FREE)[number];
 
 export class ConfigError extends Error {}
 
@@ -128,6 +134,13 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
   const telegram = raw.telegram === undefined ? null : r.table(raw.telegram, "telegram");
   const ui = r.table(raw.ui, "ui");
   const update = r.table(raw.update, "update");
+  const shadow = r.table(raw.shadow, "shadow");
+  const free = r.strList(shadow, "shadow", "free", []);
+  for (const f of free) {
+    if (!(SHADOW_FREE as readonly string[]).includes(f)) {
+      throw r.err(`shadow.free: ${f} is not one of ${SHADOW_FREE.join(", ")}`);
+    }
+  }
 
   const config: Config = {
     file,
@@ -178,6 +191,12 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       chatId: String(telegram.chat_id ?? ""),
       apiBase: r.url(telegram, "telegram", "api_base", "https://api.telegram.org"),
     },
+    shadow: {
+      enabled: r.bool(shadow, "shadow", "enabled", false),
+      free: free as ShadowFree[],
+      dailyBudgetUsd: r.num(shadow, "shadow", "daily_budget_usd", 5, 0, 100000),
+      model: r.optWord(shadow, "shadow", "model"),
+    },
     ui: { port: r.int(ui, "ui", "port", 7311, 0, 65535) },
     update: {
       auto: r.bool(update, "update", "auto", true),
@@ -186,6 +205,9 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
   };
   if (config.telegram && (!config.telegram.botToken || !config.telegram.chatId)) {
     throw new ConfigError(`config: ${file}: telegram.bot_token and telegram.chat_id are required`);
+  }
+  if (config.shadow.enabled && !config.telegram) {
+    throw new ConfigError(`config: ${file}: shadow.enabled needs a [telegram] section`);
   }
 
   const repos = raw.repos;

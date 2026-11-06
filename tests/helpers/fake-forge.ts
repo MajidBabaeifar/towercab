@@ -173,6 +173,9 @@ export class FakeForge implements Forge {
   async rerunFailed(repo: string, run: number) {
     this.log(`rerun ${repo} ${run}`);
   }
+  async cancelRun(repo: string, run: number) {
+    this.log(`cancel ${repo} ${run}`);
+  }
   async failedLog(_repo: string, run: number) {
     return `run ${run}: failed\n`;
   }

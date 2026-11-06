@@ -39,7 +39,8 @@ Every Claude run adds its cost and duration to its mission.
 
 The UI shows what Towercab spent today and in the last 7 days, against an optional daily budget.
 
-- Sums of run costs by local day (`data.runs`: `{at, cost}` per run, kept 30 days). `daily_budget_usd`
+- Sums of run costs by local day (`data.runs`: `{at, cost}` per run, kept 30 days), plus the shadow's turns
+  (`shadow_turns.cost`, [SHD-18](shadow.md)). `daily_budget_usd`
   set and reached → picks pause until midnight, shown under Problems ([UI-60](ui.md)).
 - Verified by: `metrics: spend today and 7 days`, `metrics: daily budget pauses picks`
 

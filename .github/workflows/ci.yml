@@ -8,6 +8,9 @@ on:
 
 permissions: {}
 
+# PIP-170: every job that runs steps has a time limit, so a hung job fails instead of running for GitHub's
+# 6 hours. `checks` and `sast` call shared workflows, where `timeout-minutes` is not allowed on the caller;
+# Towercab cancels and reruns a run that hangs (PIP-171).
 jobs:
   checks:
     name: "Checks: PR title, secrets, actions, dependencies"
@@ -28,6 +31,7 @@ jobs:
   check:
     name: "Node 22: lint, typecheck, tests"
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: read
@@ -81,6 +85,7 @@ jobs:
   screenshots:
     name: "Playwright: UI screenshots"
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -105,6 +110,7 @@ jobs:
     if: always()
     needs: [checks, sast, check, screenshots]
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions: {}
     steps:
       - name: All jobs passed or were skipped

@@ -166,6 +166,8 @@ export interface Card {
   openPoints?: { point: string; why: string }[];
   /** PIP-147: the host asks for approvals the reviewers can't give (UI-168). */
   warning?: string;
+  /** UI-236: the intent is a draft of the shadow's (`source: shadow`). */
+  shadow?: boolean;
   /** UI-239: the intent is a0: only the owner can answer or approve it, shown as "only you". */
   onlyYou?: boolean;
   /** PIP-186: an agent answered for the owner and the intent acted on it: the agent's name. */
@@ -194,6 +196,8 @@ export interface Row {
   behind: string | null;
   /** PIP-147: the host asks for approvals the reviewers can't give (UI-168). */
   warning?: string;
+  /** UI-236: the intent is a draft of the shadow's. */
+  shadow?: boolean;
 }
 
 export interface ProblemView {
@@ -325,6 +329,31 @@ export interface TimelineItem {
   /** How long it stayed after this move ("12 min"), null for the current one. */
   lasted: string | null;
   tone: "move" | "wait" | "error" | "done";
+  /** UI-236: the shadow did this. */
+  shadow?: boolean;
+}
+
+/** UI-237: one thing the shadow did, asked or refused. */
+export interface ShadowActionView {
+  id: number;
+  at: When;
+  /** A sentence, without the tag. */
+  text: string;
+  outcome: "done" | "refused" | "held";
+  intent: string | null;
+  pr: { number: number; url: string } | null;
+}
+
+/** UI-237: `GET /api/shadow`. */
+export interface ShadowView {
+  enabled: boolean;
+  actions: ShadowActionView[];
+  /** Asked, waiting for the owner's yes in Telegram. */
+  pending: { action: string; intent: string }[];
+  spentToday: string;
+  cap: string;
+  spentUsd: number;
+  capUsd: number;
 }
 
 /** The stages of the map, in pipeline order (UI-72). `other` only holds files no stage claims (LOOP-42). */
@@ -452,6 +481,8 @@ export interface IntentPage {
   repo: string;
   /** "Priority 11 · urgency 3, importance 4". */
   scores: string;
+  /** UI-236: a draft of the shadow's (`source: shadow`). */
+  shadow?: boolean;
   /** The "Start now" button is offered (UI-101). */
   canStart: boolean;
   state: StateView;
