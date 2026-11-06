@@ -262,6 +262,7 @@ export class Pipe {
   readonly sandboxRuns: { kind: string; argv: string[]; cwd: string }[] = [];
   /** `gh run rerun` run IDs. */
   readonly reruns: number[] = [];
+  readonly cancels: number[] = [];
   /** `statusCheckRollup` of every PR Towercab opens from now on (default: no checks). */
   newPrChecks: FakePr["checks"] = () => [];
   /** `gh run view` fails, as for a log GitHub no longer has. */
@@ -837,6 +838,10 @@ export class Pipe {
         };
         this.prs.push(p);
         return okResult(`https://github.com/${repo}/pull/${p.number}\n`);
+      }
+      if (a === "run" && b === "cancel") {
+        this.cancels.push(Number(args[2]));
+        return okResult();
       }
       if (a === "run" && b === "rerun") {
         this.reruns.push(Number(args[2]));

@@ -186,6 +186,8 @@ export interface Forge {
 
   readChecks(repo: string, n: number): Promise<ChecksRead>;
   rerunFailed(repo: string, run: number): Promise<void>;
+  /** Cancel a run that hangs (PIP-171). */
+  cancelRun(repo: string, run: number): Promise<void>;
   /** The log of the failed jobs of a run. */
   failedLog(repo: string, run: number): Promise<string>;
   /** The whole log of one job of a run (PIP-154). */

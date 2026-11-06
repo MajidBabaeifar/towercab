@@ -17,7 +17,7 @@ import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { currentRisk, openPointsMd, openPointsWhy, type Risk, riskMd } from "../risk.ts";
 import { addedIds, applyMap, headingIds, moveIds, yields } from "../specids.ts";
-import { ciState, redLog } from "./ci.ts";
+import { cancelHung, ciState, hungReason, redLog } from "./ci.ts";
 import {
   asEnv,
   botAuthor,
@@ -714,14 +714,26 @@ async function specCi(cx: Ctx, m: Mission): Promise<Progress> {
   const d = data(m);
   const pushedAt = m.pushed_at ?? cx.clock.now();
   const s = await ciState(cx, repo.github, m.spec_pr!, m.head, pushedAt);
+  const hung = d.specHung ?? {};
+  const hungWait = (again: boolean, error?: string): Progress => ({
+    done: wait(
+      "approve spec",
+      `The spec PR's automatic checks didn't finish (${hungReason(cx, again, error)}). Check that they run on GitHub, then merge the spec if it reads right.`,
+    ),
+  });
   if (s.kind === "pending") {
-    if (cx.timeouts && cx.clock.now() - pushedAt > cx.config.agent.ciWait)
-      return {
-        done: wait(
-          "approve spec",
-          `The spec PR's automatic checks didn't finish within ${Math.round(cx.config.agent.ciWait / 60)} minutes. Check that they run on GitHub, then merge the spec if it reads right.`,
-        ),
-      };
+    if (cx.timeouts && cx.clock.now() - pushedAt > cx.config.agent.ciWait) {
+      const head = m.head ?? "";
+      const again = hung[head] === true;
+      if (!again && !d.specReruns?.[head]) {
+        const c = await cancelHung(cx, repo.github, s.runs, () =>
+          cx.record(m, m.step, { pushed_at: cx.clock.now() }, { specHung: { ...hung, [head]: true } }),
+        );
+        if (c && "poll" in c) return c;
+        if (c) return hungWait(false, c.error);
+      }
+      return hungWait(again);
+    }
     return { poll: cx.config.agent.ciPoll };
   }
   if (s.kind === "moved")
@@ -756,6 +768,7 @@ async function specCi(cx: Ctx, m: Mission): Promise<Progress> {
       return { poll: cx.config.agent.ciPoll };
     }
     const names = s.checks.map((c) => c.name).join(", ");
+    if (s.kind === "cancel" && hung[head]) return hungWait(true);
     // A cancelled run has no failing log to fix.
     if (s.kind === "cancel")
       return {
