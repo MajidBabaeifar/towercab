@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..149, UI-150..154, UI-155..164, UI-168, UI-184..191, UI-192..197 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..149, UI-150..154, UI-155..164, UI-168, UI-184..191, UI-192..197, UI-239 · **Prefix:** UI
 
 ## Purpose
 
@@ -953,8 +953,8 @@ A stage that does not apply to the repo's kind says why, in the map itself.
 
 The overview shows each proposed intent as a "Proposed" card, so the owner sees what waits for a yes.
 
-- A "Proposed" section on the overview, only when there is one, before the needs-you cards of
-  missions. Each card (INT-52) carries: the title; the repo; `u`, `i`, `a`; the priority it would get or
+- A "Proposed" section on the overview, only when there is one, after the needs-you cards of
+  missions and the problems (UI-246; it was before them), shown as UI-247's rows. Each card (INT-52) carries: the title; the repo; `u`, `i`, `a`; the priority it would get or
   "would be parked"; "from <proposer>"; "waiting <duration>" (the PR's age); a "Draft" chip when it is
   one; "Open on GitHub" (the PR); and "Read the intent" (the intent file at the PR's head). It has the
   anchor `#proposed-<PR number>`, which LOOP-93's message links.
@@ -1253,10 +1253,91 @@ The owner can reset the shadow from the panel.
 
 Intents set to `a0` show "only you" in the page and in `towercab status`.
 
-- Cards, lists, the intent page and the status output show the label "only you" (text, not colour alone) where they show autonomy, with the line "Only you can answer or approve this." Waits on such an intent read as waiting for you in the needs-you list. The page is where the owner answers and approves such an intent, and it offers Pause and Resume per intent (SHD-22). Notes of ignored replies (AUT-32) show on the timeline. The shadow panel (UI-237) lists a refused action on an a0 intent as refused.
+- Cards, lists, the intent page and the status output show the label "only you" (text, not colour alone) where they show autonomy, with the line "Only you can answer or approve this." Waits on such an intent read as waiting for you in the needs-you list. The page is where the owner answers and approves such an intent, and it offers Pause and Resume for that intent (SHD-22), and Resume for any intent paused that way. Notes of ignored replies (AUT-32) show on the timeline. The shadow panel (UI-237) lists a refused action on an a0 intent as refused.
 - Verified by: `ui: a0 intents show only you`, `ui: an intent can be paused and resumed from the page`, `status: a0 intents show only you`
 
-### UI-240 · The intent page shows the level of checks and review
+### UI-244 · One count of what needs you
+
+Every screen shows the same number of things that need the owner, and the parts add up.
+
+- One server-side function defines a wait on the owner: approvals (spec, plan, code), questions, blocked
+  waits, owner steps before or after merge (UI-160, UI-162), and proposed intents (UI-184). `GET
+  /api/state`, `/api/focus`, `/api/board` and the repo views (UI-141) all use it; none keeps its own
+  rule (`waitsOf` and the working list of `overview()` no longer disagree on the `steps` stage).
+- The count is `needs` = `missions + proposed`. The top bar (UI-57), the tab title `(<n>)`, the overview
+  headline, Focus (`1 + more`, UI-196) and the Board's "Needs you" chips (plus its `<n> proposed`,
+  UI-187) all equal it. The headline may split it ("4 need you · 11 proposed") but the parts sum to `needs`.
+- A repo's view counts the same waits for that repo only; the repos' counts sum to the total, unknown
+  repos included.
+- Verified by: `ui: every screen counts the same things that need you`, `ui: the headline parts add up to the focus and board counts`
+
+### UI-245 · Owner steps are a Needs you card
+
+A mission waiting for the owner's own steps shows as a Needs you card, not as work in progress.
+
+- A mission at the `steps` stage (and any other wait on the owner's steps) leaves the Working list and
+  appears among the Needs you cards, with its checklist (UI-160) and its exits (UI-164), ordered by wait
+  like other cards (UI-58). The "working" count (UI-57) and pill count only missions Towercab is working on.
+- Verified by: `ui: a mission waiting on owner steps is a needs-you card`, `ui: the working count excludes owner waits`
+
+### UI-246 · Needs you comes first on the overview
+
+The overview puts what waits for the owner above everything else.
+
+- Order: headline → Needs you cards → Problems → Proposed → Working (then Up next and the rest as
+  today). The airspace keeps its place and starts folded below 640 px wide; the owner can open it.
+- Verified by: `ui: overview puts needs-you cards before proposals`, `ui: the airspace starts folded on a phone`
+
+### UI-247 · Proposed intents take one line
+
+Each proposed intent is one compact row, so ten fit on a phone screen.
+
+- A row shows: the title (a link that opens the intent file, UI-184's "Read the intent", with "Open on
+  GitHub" beside it in the same menu or link target list), the repo, the priority (or "would be parked"),
+  the age, and Accept and Close (UI-185; a GitHub-only PR still offers Close only). The `#proposed-<PR
+  number>` anchor, the Draft chip and the stale-list note (UI-188) stay.
+- The first 5 rows show; the rest fold under a button "Show <n> more proposals" (`aria-expanded`),
+  with `n` the number folded. Order is UI-188's. Repo pages (UI-186) use the same rows.
+- Verified by: `ui: proposed intents are one line each`, `ui: proposals after the fifth fold under a button`
+
+### UI-248 · The ask and its button come first on a card
+
+A Needs you card shows what is asked, the brief and the main button before the detail.
+
+- Order in the card: title and repo; the ask; the brief (UI-126); the main action (for example "Merge
+  spec PR"); then the risk as one line (`Medium risk · easy to undo · fairly sure it works`, from AUT-20's
+  fields) and the open points as `<n> open points for you`, each opening on tap; then the rest
+  (access list, menu, reply box). The same card is used on the overview, on Focus (UI-194) and on the
+  intent page (UI-62). The fold of UI-189 still applies on the overview.
+- On a 375 px wide screen the ask, the brief and the main button fit in the first 700 px of the card.
+- Verified by: `ui: the main button sits under the brief`, `ui: risk and open points are folded to one line each`, `ui: screenshots light, dark and mobile`
+
+### UI-249 · Waiting for a build slot says Queued
+
+A mission that only waits for a build slot shows "Queued", not "Working".
+
+- Its chip is `Queued` (UI-56) with the sentence "waiting for a build slot behind <title>" (UI-59);
+  it is not counted as working (UI-57).
+- Verified by: `ui: a mission waiting for a build slot shows queued`
+
+### UI-250 · Up next says a shared reason once
+
+When every row of "Up next" has the same reason, the reason is written once above the list.
+
+- If all rows share one reason text (for example the repo's limit before build), it shows once above the
+  list and the rows omit it; rows whose reason differs keep their own. One row alone keeps its reason.
+- Verified by: `ui: up next states a shared reason once`
+
+### UI-251 · The screenshots show the crowded overview
+
+The screenshot fixture has the cases that made the overview hard to use.
+
+- `ui/fixture.ts` gains several proposed intents (at least 6, so the fold of UI-247 shows) and a
+  mission waiting on the owner's steps. The overview screenshots (light, dark, mobile) are taken with
+  them and a test checks the first Needs you card sits above the first proposal.
+- Verified by: `ui: screenshots light, dark and mobile`, `ui: fixture overview has the first needs-you card above the proposals`
+
+### UI-252 · The intent page shows the level of checks and review
 
 The intent page and its card show how hard the change is checked and reviewed, and who chose that.
 

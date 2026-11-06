@@ -150,6 +150,39 @@ function ownerSaid(prs: Prs, me: string, botLogin: string): Said[] {
   return out.sort((a, b) => (newer(a.at, b.at) ? 1 : newer(b.at, a.at) ? -1 : 0));
 }
 
+/** A reply on a PR that doesn't count (AUT-32): who, where, and a stable key so it is noted once. */
+export interface IgnoredReply {
+  key: string;
+  author: string;
+  kind: PrKind;
+  pr: number | null;
+  what: string;
+}
+
+/**
+ * AUT-32: on an owner-only intent, the comments and reviews from anyone but the owner or Towercab's own
+ * bot. PIP-44 already ignores them; this lists them so the loop can note each once on the intent.
+ */
+export function ignoredReplies(m: Mission, prs: Prs, me: string, botLogin: string): IgnoredReply[] {
+  const out: IgnoredReply[] = [];
+  for (const kind of KINDS) {
+    const pr = prs[kind];
+    if (!pr) continue;
+    const base = { kind, pr: prNumber(m, kind) };
+    for (const c of pr.comments) {
+      if (isOwner(c.author, me) || isBot(c.author, botLogin) || !c.body.trim()) continue;
+      out.push({ ...base, key: `${kind}:comment:${c.id}`, author: c.author, what: "comment" });
+    }
+    for (const r of pr.reviews) {
+      if (isOwner(r.author, me) || isBot(r.author, botLogin)) continue;
+      const counts = r.state === "APPROVED" || r.state === "CHANGES_REQUESTED" || r.body.trim() !== "";
+      if (!counts || r.state === "PENDING" || r.state === "DISMISSED") continue;
+      out.push({ ...base, key: `${kind}:review:${r.author}:${r.at}`, author: r.author, what: "review" });
+    }
+  }
+  return out;
+}
+
 const latest = (xs: Said[]) => xs.reduce((a, b) => (newer(b.at, a.at) ? b : a)).at;
 
 /**

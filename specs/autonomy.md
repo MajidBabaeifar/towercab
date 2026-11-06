@@ -1,11 +1,11 @@
 # Autonomy
 
-**Status:** Live: AUT-1..21 · **Prefix:** AUT
+**Status:** Live: AUT-1..21, AUT-31..33 · **Prefix:** AUT
 
 ## Purpose
 
 How far Towercab may take an intent before the owner decides, and what a worker may touch. The
-owner sets `a` (1–5) per intent; a repo can cap it. Validation never shrinks with trust: every
+owner sets `a` (0–5) per intent; a repo can cap it. Validation never shrinks with trust: every
 intent goes through the same checks, and autonomy only decides who merges and how much access the
 worker has without asking.
 
@@ -53,7 +53,7 @@ Every intent runs verify, the red→green proof, CI, the review and the gate, wh
 
 A worker that finds the change riskier than the intent says may lower `a`, never raise it.
 
-- From the build result (`lower_a`, `lower_why`, [PIP-1](pipeline.md)): `lower_a` below the current
+- From the build result (`lower_a`, `lower_why`, [PIP-1](pipeline.md)): `lower_a` (0–5) below the current
   `a` (no `a` counts as 5, AUT-9) → written to the intent with `lower_why`; anything else → nothing
   written.
 - Verified by: `autonomy: a worker only lowers a`
@@ -260,7 +260,7 @@ An intent set to `a0` is decided by the owner alone: every wait goes to them and
 - Validation does not shrink (AUT-6): the checks, the proof, CI and the review all run at a0, as at a1.
 - `effective` still takes the lowest `a` present (AUT-7), so nothing can raise an a0 intent; a worker may still lower to a0, never out of it. An `a` of 0 is not "unset": AUT-9 applies only when `a` is missing.
 - Access (AUT-14) at a0 is that of a1–a3.
-- The code PR switches AUT-3, AUT-7, AUT-8 and AUT-9 where they say 1–5, in the same commit as the code.
+- The repo cap (AUT-8) stays 1–5: a repo cannot set a0 for others. The field list in `intents.md` still says `a` is 1–5; it is switched to 0–5 in a later spec commit, and the code already reads 0.
 - Verified by: `autonomy: a0 waits at every gate`, `autonomy: a0 is never raised`, `autonomy: a0 ignores risk and cap`, `intents: a is 0 to 5`
 
 ### AUT-32 · At a0 only the owner's own replies count

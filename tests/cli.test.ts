@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { COMMANDS, main } from "../src/cli.ts";
 import { FakeTools, okResult } from "./helpers/tools.ts";
 import { bareRepo, tempDir } from "./helpers/world.ts";
+import { intentMd } from "./intents/fixtures.ts";
 
 let out = "";
 let err = "";
@@ -89,6 +90,59 @@ test("cli: commands", async () => {
   ]) {
     expect(COMMANDS).toContain(c);
   }
+});
+
+const A0_ID = "261106-0001";
+
+/** A home whose intents repo already holds an owner-only intent (`a: 0`). */
+function setupA0(): { g: string[]; id: string } {
+  const intents = bareRepo({
+    "intents/.keep": "",
+    [`intents/${A0_ID}-only-mine/intent.md`]: intentMd("web", "u: 4\ni: 5\na: 0\n", "Only mine"),
+  });
+  const dir = tempDir();
+  const config = join(dir, "config.toml");
+  writeFileSync(
+    config,
+    `[intents]\nremote = "${intents}"\n\n[github]\napp_id = 1\nme = "owner"\n\n[repos.web]\ngithub = "owner/web"\n`,
+  );
+  return { g: ["--config", config, "--home", join(dir, "home")], id: A0_ID };
+}
+
+test("cli: an a0 intent refuses answer approve start drop and step", async () => {
+  const t = new FakeTools();
+  const { g, id } = setupA0();
+  for (const argv of [
+    ["answer", id, "yes"],
+    ["approve", id],
+    ["start", id],
+    ["drop", id],
+    ["step", id, "1"],
+    ["done", id],
+    ["retry", id],
+    ["resume", id],
+  ]) {
+    out = "";
+    err = "";
+    expect(await main([...g, ...argv], t), argv.join(" ")).toBe(1);
+    expect(err.trim(), argv.join(" ")).toBe(`towercab: ${id} is only yours: use GitHub or the page`);
+    expect(out).toBe("");
+  }
+});
+
+test("cli: pause and status work on an a0 intent", async () => {
+  const t = new FakeTools();
+  const { g, id } = setupA0();
+  out = "";
+  expect(await main([...g, "pause", id], t)).toBe(0);
+  expect(out).toContain(`paused ${id}`);
+  out = "";
+  expect(await main([...g, "pause"], t)).toBe(0);
+  expect(out).toContain("paused: nothing new starts");
+  out = "";
+  expect(await main([...g, "status"], t)).toBe(0);
+  expect(out).toMatch(/towercab \S+ .*paused/);
+  expect(await main([...g, "next"], t)).toBe(0);
 });
 
 test("ui: the ui command", async () => {
