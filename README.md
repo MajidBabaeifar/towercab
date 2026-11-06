@@ -179,6 +179,7 @@ author. Version 1 (Rust) is on branch `rust`.
 | [specs/metrics.md](specs/metrics.md) | Cost and time |
 | [specs/public.md](specs/public.md) | What this repo shows |
 | [specs/gitlab.md](specs/gitlab.md) | Projects hosted on GitLab |
+| [specs/shadow.md](specs/shadow.md) | The owner's shadow assistant on Telegram |
 
 Want to help? Read [CONTRIBUTING.md](CONTRIBUTING.md); everyone taking part follows the
 [code of conduct](CODE_OF_CONDUCT.md).
