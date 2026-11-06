@@ -1813,26 +1813,28 @@ An agent session that speaks on GitHub as the owner posts through Towercab, whic
 - `towercab reply <intent id> --by <agent> "<text>"` posts `<text>` on the intent's current PR (or its issue when it has no PR yet) through the owner's login, as UI-66 does for the page. `--by` is required, a plain name of letters, digits and `-`, up to 32 characters (for example `claude-code`, `shadow`); a missing or invalid name, an unknown intent, a blank text or an intent with nowhere to comment is refused with the reason and nothing is posted.
 - The comment's first visible line is `🤖 <agent> (for <owner>)`, where `<owner>` is the owner's first name from config, or their login when none is set; then a blank line and the text. A hidden marker `<!-- towercab:agent:<agent> -->` is on the line before it, so it is the first line of the body.
 - The shadow's own comments keep `[shadow]` (SHD-12) and also carry the marker with the name `shadow`.
-- The command is allowed on every intent, an `a0` one included: it only posts, and what it posts never counts as the owner's word (PIP-185). The sandbox's `gh` stays as it is (PIP-70); the agent prompts and `prompts/writing.md` tell a session that talks on GitHub for the owner to use this command instead of `gh pr comment`.
+- The command is allowed on every intent, an `a0` one included: it only posts, and on an `a0` intent what it posts is ignored as input (PIP-185). The agents' tools and the sandbox's `gh` stay as they are (PIP-70): the rule is an instruction in the agent prompts and `prompts/writing.md`, which tell a session that talks on GitHub for the owner to use this command instead of `gh pr comment`. Blocking raw `gh` for such sessions is a later option (see Decisions).
 - Verified by: `cli: reply --by writes the first line and marker`, `cli: reply refuses a missing or invalid agent name`, `cli: reply works on an a0 intent`, `shadow: shadow comments carry the agent marker`
 
-### PIP-185 · An agent's comment under the owner's login is not the owner's word
+### PIP-185 · An agent's comment under the owner's login is recorded, and ignored on an a0 intent
 
-A comment under the owner's login that carries the agent marker is recorded as an agent's, and only an unmarked comment counts as the owner's.
+A comment under the owner's login that carries the agent marker is recorded as an agent's; an `a0` intent ignores it, and on any other intent it still counts, shown as "agent for owner".
 
-- Reading owner events (PIP-43, PIP-44), a comment by `[github].me` whose body contains `<!-- towercab:agent:<name> -->` anywhere in its first line raises no event: it does not steer, answer, approve or retry, and `/retry` inside it does nothing. Towercab records it once on the intent's timeline (who: the agent, where, that it was an agent's comment, with its time) and `feedback_seen` moves past it.
+- A comment by `[github].me` whose first line holds `<!-- towercab:agent:<name> -->` is an agent's comment. Towercab records it once on the intent's timeline (who: the agent, where, with its time), whatever the autonomy level.
+- Intent at `a0` (AUT-31): the comment raises no event: it does not steer, answer, approve or retry, `/retry` inside it does nothing, and `feedback_seen` moves past it. It is noted once as AUT-32 says, with the same wording as other ignored replies, and never answers a wait.
+- Intent at any other level: the comment is read as the owner's word as before (PIP-43, PIP-44), so it answers, steers or retries. Towercab keeps the agent's name with the event, so the next stage comment on that PR (PIP-42) adds the line `Answered by <agent>, for the owner` where it would have said the owner answered, and the card and the page show "agent for owner" (PIP-186). Which agent decided is visible and the work is not held up.
 - A comment by `[github].me` without the marker counts as the owner's, as before. Towercab cannot tell an agent that posts with a raw `gh pr comment` from the owner, and this requirement does not claim to (see Decisions).
-- Applies to every autonomy level. At `a0` the ignored comment is noted once as AUT-32 says, with the same wording as other ignored replies, and it never answers a wait.
 - Reviews with a state (Approve, Request changes) are always the owner's and are not affected.
-- Verified by: `events: an agent-marked comment under the owner's login is not an event`, `events: an unmarked comment under the owner's login still counts`, `autonomy: an a0 mission ignores a marked agent reply`
+- Verified by: `events: an agent-marked comment on an a0 intent is not an event`, `events: an agent-marked comment on another intent still counts and names the agent`, `events: an unmarked comment under the owner's login still counts`, `autonomy: an a0 mission ignores a marked agent reply`, `github: a stage comment says an agent answered for the owner`
 
 ### PIP-186 · The intent page shows which comments an agent wrote
 
 The intent page lists the owner-account comments that agents wrote, so the owner can see what was said in their name.
 
-- For each marked comment recorded by PIP-185 the page's timeline shows one line: the agent's name, the PR or issue with a link to the comment, the time, and the first 200 characters of its text. They are marked "agent, for you", apart from the owner's own comments.
-- `GET /api/intents/<id>` includes them as `agent_comments: [{agent, url, at, excerpt}]` in time order, an empty list when there are none.
-- Verified by: `ui: the intent page lists agent comments written under the owner's login`, `ui: the intent api returns agent comments`
+- For each marked comment recorded by PIP-185 the page's timeline shows one line: the agent's name, the PR or issue with a link to the comment, the time, and the first 200 characters of its text. They are marked "agent, for you", apart from the owner's own comments, and show whether the intent ignored them (`a0`) or acted on them.
+- When a marked comment on a non-`a0` intent answered or steered it (PIP-185), the intent's card shows the tag "agent for owner" with the agent's name until the next owner or agent decision.
+- `GET /api/intents/<id>` includes the comments as `agent_comments: [{agent, url, at, excerpt, acted_on}]` in time order, an empty list when there are none; the card's data has `decided_by_agent: <name> | null`.
+- Verified by: `ui: the intent page lists agent comments written under the owner's login`, `ui: the intent api returns agent comments`, `ui: a card shows agent for owner after an agent's answer`
 
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
@@ -1907,8 +1909,11 @@ score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outc
 - Spec rows are `Draft` in the spec PR and the code PR flips them to `Live`, so `main` never claims
   something is built before it is.
 - Agent comments (PIP-182..186, from intent 261106-0530-1): the marker is a label for readers and for the
-  owner-event filter, not a security boundary, in line with a0 (AUT-31). A session that posts with raw `gh`
-  still reads as the owner. Chosen without asking: the agent is named by the stage that wrote the text;
+  a0 filter, not a security boundary, in line with a0 (AUT-31). A session that posts with raw `gh`
+  still reads as the owner. The owner's calls: the marker is ignored only on a0 intents and elsewhere a
+  marked reply still counts but is shown as "agent for owner"; agents are told to use `towercab reply` by
+  prompt only. Later option: a Claude Code hook in the owner's own settings that blocks raw
+  `gh pr comment` for agent sessions; it is the owner's to add and is not a requirement here. Chosen without asking: the agent is named by the stage that wrote the text;
   the command posts on the current PR (or the issue); old comments keep their headers; the marker only
   excludes comments, it never grants anything.
 - Hung CI (PIP-170, PIP-171, the owner's calls, 2026-11-06): limits only on Towercab's own step-running jobs; the
