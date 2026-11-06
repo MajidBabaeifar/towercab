@@ -1394,10 +1394,18 @@ The top bar shows how much of the budget is used and turns amber at 80%.
 Each intent's page and card have one control that shows its autonomy, a0 to a5, and changes it.
 
 - A segmented control with six choices `a0`..`a5`, the current one marked (text and state, not colour alone), on the intent's page and on its card (INT-52, UI-244's cards) in the overview, queue and working rows. Choosing one posts `{action: "autonomy", id, a}` with `actor: owner` (UI-66's actions) and applies AUT-34: one commit, `a` only. The reply is `Saved. Applies from the next gate.`
-- Raising the level asks for no confirmation; AUT-35 holds that it counts because it comes from the page. a0 and a5 carry a one-line hint (AUT-31, AUT-13). An intent whose repo cap (AUT-8) is lower shows `capped at a<n> by the repo` beside the control.
+- Lowering is one click and applies at once (AUT-34). Raising opens a confirm step first: it names the new level (`Raise to a<n>?`) and says in one or two sentences what Towercab may then do without asking (from AUT-3, AUT-4, AUT-13: who merges, which gates it passes alone, what access a worker has), with "Raise" and "Cancel". Nothing is written until "Raise"; "Cancel" and Escape leave the level as it was. The confirm step is the same on the page and on cards. An intent whose repo cap (AUT-8) is lower shows `capped at a<n> by the repo` beside the control.
 - A refusal (the intents repo cannot be pushed, an unknown id, a level outside 0–5) keeps the control on the old level and shows the reason (UI-67). Done or dropped intents show the level without the control.
 - The change is recorded in the Activity page (UI-64) as kind `settings`, `a: a3 → a4`, with the time. `GET /api/state` and the intent's API carry `a` for the control. Fits 360 px, light and dark, and works by keyboard (arrow keys move between levels).
-- Verified by: `ui: the intent page changes autonomy`, `ui: a card changes autonomy`, `ui: autonomy shows the current level and the repo cap`, `ui: a refused autonomy change keeps the old level`, `ui: an autonomy change shows in activity`, `ui: screenshots light, dark and mobile`
+- Verified by: `ui: the intent page changes autonomy`, `ui: a card changes autonomy`, `ui: raising autonomy asks for a confirmation that names the level`, `ui: lowering autonomy is one click`, `ui: cancelling the confirmation writes nothing`, `ui: autonomy shows the current level and the repo cap`, `ui: a refused autonomy change keeps the old level`, `ui: an autonomy change shows in activity`, `ui: screenshots light, dark and mobile`
+
+### UI-258 · A raise from elsewhere is a Needs-you card
+
+When someone other than the owner raises an intent's autonomy, a card at the top says who, and lets the owner accept it or set it back.
+
+- A card among the Needs you cards (UI-244: it counts in `needs`, once per flagged intent) from AUT-35's flag: `<who> raised <intent> from a<from> to a<to>`, with the line `It still runs at a<from> until you decide.` `<who>` is the GitHub account, or `an unknown account`.
+- Buttons: "Accept a<to>" (posts `{action: "autonomy", id, a: <to>}` with `actor: owner`; its confirm step is UI-257's, so it names the level and what it allows) and "Set back to a<from>" (one click, writes `a: <from>` with AUT-34). Either removes the card. The intent's page and card also show the flag beside the control.
+- Verified by: `ui: a flagged raise shows a card naming who raised it`, `ui: the flag card counts as needing you`, `ui: accepting a flagged raise asks for a confirmation`, `ui: setting a flagged raise back removes the card`
 
 ## Out of scope
 

@@ -63,9 +63,11 @@ A worker that finds the change riskier than the intent says may lower `a`, never
 A repo can cap the autonomy of every intent in it.
 
 - `max_autonomy` (1–5, default 5) in the base branch's `TOWERCAB.md` ([REPO-1](repo.md)).
-  Effective `a` = the minimum of `a` at pick, `a` now, and the cap; no `a` anywhere → 5 (AUT-9),
-  then the cap.
-- Verified by: `autonomy: repo cap`
+  Effective `a` = the minimum of `a` now (the intent's current level, AUT-34) and the cap; no `a` → 5
+  (AUT-9), then the cap. While a raise is flagged (AUT-35), `a` now means the level before that raise.
+  A raise therefore applies from the mission's next gate, and a lowering applies at once. It no longer
+  looks at `a` at pick.
+- Verified by: `autonomy: repo cap`, `autonomy: a running mission uses the new level at its next gate`
 
 ### AUT-9 · No autonomy set
 
@@ -73,8 +75,8 @@ An intent without `a` counts as a5: full autonomy, still limited by the repo's c
 the owner didn't write, by AUT-13.
 
 - `effectiveA`: no `a` at pick and none now → `DEFAULT_A` = 5, then the minimum with the repo cap
-  (AUT-8), then at most 4 when `source` isn't `me` (AUT-13). An `a` present at pick or now still counts,
-  so removing it mid-flight can't loosen a gate.
+  (AUT-8), then at most 4 when `source` isn't `me` (AUT-13). Removing `a` mid-flight leaves a5 (the
+  owner's current choice, AUT-34); the risk gate (AUT-18), not the number, protects the change.
 - Verified by: `autonomy: no a counts as a5`, `pipeline: an intent without a runs as a5`
 
 ### AUT-10 · Caps after a revert
@@ -288,21 +290,23 @@ An intent's autonomy can be moved to any level from a0 to a5 and back, and the r
 
 - The change sets `a` in the intent file with `setField` (INT-24's front matter; every other line stays byte-identical) and is one commit to the intents repo, pushed like any intent edit. Setting the level it already has writes nothing.
 - Any level 0–5 is valid, including from and to a0 (AUT-31). The repo cap (AUT-8) still applies at the gate, so a5 on a repo capped lower behaves as the cap says.
-- The mission reads `a` from the intent when a gate decides (the spec gate, the plan gate, the merge gate), never from a copy taken at start. A gate already waiting is decided again with the new level on the next loop pass: lowering to a1 keeps it waiting for the owner, raising to a4 or a5 lets it go on if AUT-4 or AUT-13 would. Work already done is not redone.
-- `effective` (AUT-7) is unchanged: the lowest `a` present counts, so a worker's `lower_a` and the owner's change both write the same field and the last one written wins.
+- The effective level (AUT-8) is the intent's current `a`, read when a gate decides (the spec, plan and merge gates), never a copy taken at start or pick. A raise applies from the mission's next gate; a lowering applies at once. A gate already waiting is decided again on the next loop pass: lowering to a1 keeps it waiting for the owner, raising to a4 or a5 lets it go on if AUT-4 or AUT-13 would. Work already done is not redone.
+- A worker's `lower_a` (AUT-7) and the owner's change write the same field; the last one written wins.
 - Each change is recorded on the intent's timeline (who, from → to, through which channel).
-- Verified by: `autonomy: changing a writes only the a line in one commit`, `autonomy: a running mission uses the new level at its next gate`, `autonomy: a waiting gate is decided again after a change`, `autonomy: setting the same level writes nothing`
+- Verified by: `autonomy: changing a writes only the a line in one commit`, `autonomy: a running mission uses the new level at its next gate`, `autonomy: a lowering applies at once`, `autonomy: a waiting gate is decided again after a change`, `autonomy: setting the same level writes nothing`
 
-### AUT-35 · Raising autonomy counts only from the page or GitHub
+### AUT-35 · Raising autonomy counts only from the page or the owner's GitHub account
 
-A raise of an intent's autonomy counts only when the owner makes it on the web page or on GitHub; the shadow, agents and the command line cannot raise it, and anyone can lower it.
+A raise of an intent's autonomy counts only when the owner makes it on the web page or pushes it to the intents repo from their own GitHub account; any other raise is flagged and does not take effect.
 
-- Lowering (to any level below the current one) is allowed from every channel: the page, GitHub, the CLI (`towercab autonomy <id> <level>`, only for a lower level), the shadow (SHD-19) and a worker (AUT-7). A lowered intent is never held for a `yes`.
-- A raise counts when it comes from the local page (`POST /api/actions` with `actor: owner`, UI-65, as in AUT-32) or is a commit on the intents repo's main branch made on GitHub by the owner's login (as PIP-44). Raising from a0 is no different from any other raise.
-- A raise from the CLI is refused with `towercab: only you can raise autonomy: use GitHub or the page`, exit 1 (LOOP-15), before any `commands` row is written. A shadow action that raises is refused with the reason "only you can raise autonomy" and recorded as refused (SHD-12, UI-237). A `commands` row that raises and did not come from the page (`by: page`) is dropped and noted on the timeline (AUT-32).
-- When the loop syncs the intents repo and finds `a` raised by a commit that is neither the page's change nor a commit by the owner's GitHub login, it writes the previous level back in one commit and notes it on the timeline (who, from → to, that it was undone). A first value on a new intent, and an `a` that was missing and is set, are not raises.
+- The channels for raising are the local page (`POST /api/actions` with `actor: owner`, UI-65, as in AUT-32) and GitHub. There is no command for it on the command line and no shadow action: the shadow (SHD-19) refuses a request to raise with the reason "only you can raise autonomy", recorded as refused (SHD-12, UI-237). A `commands` row that raises and did not come from the page (`by: page`) is dropped and noted on the timeline (AUT-32). Raising from a0 is no different from any other raise.
+- A push to the intents repo counts as the owner's raise when the pushing GitHub account is the owner's login (PIP-44), wherever the push was made. Towercab checks the account, from the verified login of the commit's author or pusher as GitHub reports it, never the local `user.name` or e-mail in the commit, which anyone can set. A commit whose account cannot be verified does not count.
+- When the loop syncs the intents repo and finds `a` higher than the last level it accepted, and the commit that raised it does not count, it flags the raise and writes no commit back. The flag keeps who raised it (account, or `unknown`), from → to, and the commit. A first value on a new intent, and an `a` that was missing and is set, are not raises.
+- While a raise is flagged the mission uses the lower level (the one before the raise, AUT-8). Flagging is noted once on the intent's timeline (AUT-32) and shows a Needs-you card naming who raised it (UI-258).
+- A flag ends when the owner accepts the raise or sets the level back on the page (UI-257, UI-258), or when `a` is lowered to or below the accepted level by any channel. Accepting makes the raise count from the next gate.
+- Lowering is done by the owner on the page or on GitHub, like a raise, and applies at once (AUT-34); it is not held for a confirmation or a `yes`. A worker's `lower_a` (AUT-7) stays as it is. No new command-line command or shadow action lowers.
 - Like a0, this is a rule Towercab's own shadow, agents and CLI follow, not a security boundary (see Decisions): the owner's `gh` login on this machine cannot be told from the owner.
-- Verified by: `autonomy: the page raises a`, `autonomy: a raise from the cli is refused`, `autonomy: a lower from the cli is allowed`, `autonomy: a shadow raise is refused and a lower is done`, `autonomy: a raise by another account is undone and noted`, `autonomy: a raise by the owner on github counts`, `commands: a raising command row from the cli is dropped`
+- Verified by: `autonomy: the page raises a`, `autonomy: a shadow raise is refused`, `autonomy: a raising command row from the cli is dropped`, `autonomy: a raise by the owner on github counts`, `autonomy: a push is judged by the verified github account`, `autonomy: a raise by another account is flagged and not written back`, `autonomy: a flagged raise runs at the lower level`, `autonomy: accepting a flagged raise lifts the flag`
 
 ## Out of scope
 
