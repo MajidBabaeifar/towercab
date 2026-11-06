@@ -41,6 +41,23 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: bwrap and its AppArmor profile
+        # PIP-160, PIP-162: the escape suite always runs here, so a bwrap that is missing or can't start fails
+        # the job. Ubuntu 24.04 restricts unprivileged user namespaces; the profile lets only this bwrap use
+        # them, the restriction itself stays on.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo tee /etc/apparmor.d/towercab-bwrap >/dev/null <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile towercab-bwrap $(command -v bwrap) flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r /etc/apparmor.d/towercab-bwrap
+          bwrap --version
+          bwrap --unshare-net --ro-bind / / true
       - run: npm ci
       - run: npm run check
       - name: Spec IDs against other open pull requests

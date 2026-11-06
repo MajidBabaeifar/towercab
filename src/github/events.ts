@@ -258,7 +258,8 @@ export function prEvents(
     : ownerSaid(prs, me, botLogin);
   const fresh = said.filter((s) => newer(s.at, m.feedback_seen));
   // PIP-141: `allow <path>` reverses a refusal (not feedback), unless a test question is open.
-  const asking = Boolean(dataOf<{ testAsk?: unknown }>(m).testAsk);
+  const asked = dataOf<{ testAsk?: unknown; accessAsk?: unknown }>(m);
+  const asking = Boolean(asked.testAsk || asked.accessAsk);
   const isCommand = (s: Said) =>
     s.text === RETRY ||
     s.text === RELEASE ||
@@ -478,7 +479,8 @@ export const reversalMarker = (commentId: string) => `<!-- towercab:allow:${comm
  * their marker answers; none while a test question is open (then they are its answer).
  */
 export function reversalRequested(m: Mission, prs: Prs, me: string, botLogin: string): ReversalAsk[] {
-  if (finished(m.stage) || dataOf<{ testAsk?: unknown }>(m).testAsk) return [];
+  const open = dataOf<{ testAsk?: unknown; accessAsk?: unknown }>(m);
+  if (finished(m.stage) || open.testAsk || open.accessAsk) return [];
   const out: ReversalAsk[] = [];
   for (const kind of KINDS) {
     const pr = prs[kind];

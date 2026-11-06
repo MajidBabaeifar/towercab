@@ -50,7 +50,7 @@ export function fixFor(kind: string): string {
   if (kind === "github") return "check the network and the GitHub App (ops/github-app.json, app.pem)";
   if (kind === "claude") return "run claude and /login, or check the network";
   if (kind === "sandbox")
-    return "the sandbox can't start: on Ubuntu set [agent] sandbox_unix_sockets = true (towercab doctor), else check bwrap";
+    return "the sandbox can't start, so nothing runs: check bwrap with towercab doctor; where Ubuntu restricts user namespaces, install the AppArmor profile for bwrap that doctor prints";
   if (kind.startsWith("tool:")) return `install ${kind.slice(5)} on the service's PATH`;
   return "see towercab doctor";
 }

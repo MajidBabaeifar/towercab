@@ -32,6 +32,7 @@ import {
   subjectOf,
   viaForge,
 } from "./common.ts";
+import { splitDomains } from "./domains.ts";
 import { existingTests } from "./guard.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { planBody, planFile, section } from "./prtext.ts";
@@ -372,6 +373,18 @@ async function gateStep(cx: Ctx, m: Mission): Promise<Progress> {
   const level = risk?.level ?? null;
   // PIP-115: a plan that lists existing tests to change is the owner's to merge, at every a.
   const tests = (data(m).plan?.access.tests?.length ?? 0) > 0;
+  // AUT-27, PIP-164: a network grant that is not a real domain is the owner's to see, at every a. The worker
+  // never gets it (`grantsFor` leaves it out), whether the owner revises the plan or merges it as it is.
+  const invalid = splitDomains((data(m).plan?.access.domains ?? []).map((d) => d.domain)).invalid;
+  if (invalid.length) {
+    const list = invalid.map((i) => `${i.domain} (${i.why})`).join("; ");
+    return {
+      done: wait(
+        "approve plan",
+        `The plan asks for network access that is not a domain, so the worker won't get it: ${list}.`,
+      ),
+    };
+  }
   if (planGate(a, level, tests)) {
     const why = tests ? TESTS_WHY : a <= 3 ? undefined : riskWhy(a, level);
     return { done: wait("approve plan", why) };

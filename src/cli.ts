@@ -37,6 +37,7 @@ import { decide, nextText } from "./pick.ts";
 import { grantScanning } from "./pipeline/alerts.ts";
 import { guardMain } from "./pipeline/guard.ts";
 import { handlers } from "./pipeline/index.ts";
+import { sandboxProbe } from "./pipeline/probe.ts";
 import { ownerMergeRefusal } from "./pipeline/teammate.ts";
 import { parseScores } from "./priority.ts";
 import { addRepo, loadRepos, removeRepo, repoLine, repoList, setRepo } from "./repos.ts";
@@ -364,6 +365,7 @@ async function run(
           selfUpdate: Boolean(v.watch),
           readiness: true,
           limits: true,
+          sandboxProbe: () => sandboxProbe(tools),
         },
         { watch: Boolean(v.watch), intent: v.intent as string | undefined },
       );

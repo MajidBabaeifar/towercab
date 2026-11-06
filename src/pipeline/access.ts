@@ -2,24 +2,25 @@
 // grants a worker run gets at its effective autonomy.
 
 import { accessPolicy } from "../autonomy.ts";
+import { splitDomains } from "./domains.ts";
 import type { Access, Question } from "./schemas.ts";
 
-/** What a worker run may reach: domains for the sandbox and WebFetch, writable protected globs, open network. */
+/** What a worker run may reach: domains for the sandbox and WebFetch, writable protected globs. `open` is never true (AUT-26). */
 export interface Grants {
   domains: string[];
   paths: string[];
-  open: boolean;
+  open?: false;
 }
 
 /** What the level grants without asking, in one sentence for the owner (AUT-14, AUT-18). */
 export function levelSentence(a: number): string {
   if (a <= 3) {
-    return `At a${a} you merge the code PR yourself, so the worker can reach the default package registries and docs plus the boxes ticked here, may change protected files (the PR lists them), and gets anything else it asks for while building.`;
+    return `At a${a} you merge the code PR yourself, so the worker can reach the default package registries and docs plus the boxes ticked here, may change protected files (the PR lists them), and asks you for anything else while building.`;
   }
   if (a === 4) {
-    return "At a4 the worker can reach the default package registries and docs plus the boxes ticked here, and may change only the protected paths ticked here; if it needs more while building, it gets it, but you merge the code PR. Otherwise Towercab merges the code PR itself when its risk is low.";
+    return "At a4 the worker can reach the default package registries and docs plus the boxes ticked here, and may change only the protected paths ticked here; if it needs more while building, it asks you, and you then merge the code PR. Otherwise Towercab merges the code PR itself when its risk is low.";
   }
-  return "At a5 the worker has open network and may change protected files, and Towercab merges the code PR once every check passes, unless its risk is high.";
+  return "At a5 the worker can reach the default package registries and docs plus the boxes ticked here, may change protected files, and asks you for any other domain; Towercab merges the code PR once every check passes, unless its risk is high.";
 }
 
 /**
@@ -368,6 +369,89 @@ export function answerTest(
   return { patch, note: notes.join(" "), read };
 }
 
+/** Network domains and protected paths a worker asked for mid-build (AUT-15). */
+export interface NetAsk {
+  domains: { domain: string; why: string }[];
+  paths: { glob: string; why: string }[];
+}
+
+/** Union of two requests; a domain or glob once. */
+export function mergeNet(a: NetAsk | undefined, b: NetAsk): NetAsk {
+  return {
+    domains: [
+      ...(a?.domains ?? []),
+      ...b.domains.filter((d) => !a?.domains.some((x) => x.domain === d.domain)),
+    ],
+    paths: [...(a?.paths ?? []), ...b.paths.filter((p) => !a?.paths.some((x) => x.glob === p.glob))],
+  };
+}
+
+/** What a `NetAsk` names, one string per domain and glob: the words a reply may use to pick some. */
+export function netIds(a: NetAsk): string[] {
+  return [...a.domains.map((d) => d.domain), ...a.paths.map((p) => p.glob)];
+}
+
+/** AUT-15: the question naming each domain or path the worker asked for and why, with the two answers (PIP-110). */
+export function accessQuestion(a: NetAsk): Question {
+  const lines = [
+    ...a.domains.map((d) => `- network: \`${d.domain}\`: ${oneLine(d.why) || "no reason given"}`),
+    ...a.paths.map((p) => `- writing \`${p.glob}\`: ${oneLine(p.why) || "no reason given"}`),
+  ];
+  const many = lines.length > 1;
+  return {
+    context: `The worker needs access the approved plan did not grant:\n${lines.join("\n")}`,
+    question: many ? "May the worker have this access?" : `May the worker have ${netIds(a)[0]}?`,
+    options: [
+      {
+        option: "Allow this access",
+        do: "continue",
+        // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
+        then: "The worker gets exactly this access and carries on; the code PR lists it, and at a4 you merge it yourself.",
+      },
+      {
+        option: "No, finish without it",
+        do: "continue",
+        // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
+        then: "The worker has to finish without it; the request stays refused for the rest of the build.",
+      },
+    ],
+    recommendation:
+      "Allow it only if the reason shows the change cannot work without it; a plan that missed a domain is better fixed in the plan.",
+  };
+}
+
+/**
+ * AUT-15: the owner's reply to the access asked → the data patch: a yes joins `unplanned` (what the PR lists
+ * and a4 holds), a no is recorded in `refusedAccess` for good, and a reply that is neither decides nothing.
+ */
+export function answerAccess(
+  ask: NetAsk,
+  d: { unplanned?: NetAsk; refusedAccess?: NetAsk },
+  reply: string | null | undefined,
+): { patch: { unplanned?: NetAsk; refusedAccess?: NetAsk }; note: string; read: Reading } {
+  const read = readReply(reply, netIds(ask));
+  const pick = (ids: string[]): NetAsk => ({
+    domains: ask.domains.filter((x) => ids.includes(x.domain)),
+    paths: ask.paths.filter((x) => ids.includes(x.glob)),
+  });
+  const yes = pick(read.allowed);
+  const no = pick(read.refused);
+  const patch: { unplanned?: NetAsk; refusedAccess?: NetAsk } = {};
+  const notes: string[] = [];
+  if (netIds(yes).length) {
+    patch.unplanned = mergeNet(d.unplanned, yes);
+    const on = read.conditions ? `, on these conditions: ${oneLine(read.conditions)}` : "";
+    notes.push(`The owner allowed you this access: ${netIds(yes).join(", ")}${on}.`);
+  }
+  if (netIds(no).length) {
+    patch.refusedAccess = mergeNet(d.refusedAccess, no);
+    notes.push(
+      `The owner refused this access: ${netIds(no).join(", ")}. Finish without it; if that is impossible, return status blocked and explain.`,
+    );
+  }
+  return { patch, note: notes.join(" "), read };
+}
+
 /** Inputs of `grantsFor`. */
 export interface GrantInput {
   /** Effective `a` (`effectiveA`). */
@@ -388,7 +472,8 @@ export interface GrantInput {
 /**
  * A worker run's grants (AUT-14): the default list, the plan's and the intent's domains and any
  * granted mid-build; protected paths: all (but `.git`) at a1–a3 and a5, else the plan's, the
- * intent's `unlock` and those granted mid-build; open network only at a5 for the owner's intents.
+ * intent's `unlock` and those granted mid-build. Never the whole network, and a grant that is not a real
+ * domain (PIP-164) is left out.
  */
 export function grantsFor(g: GrantInput): Grants {
   const policy = accessPolicy(g.a);
@@ -406,8 +491,7 @@ export function grantsFor(g: GrantInput): Grants {
           ...g.unlock,
           ...(g.unplanned?.paths.map((p) => p.glob) ?? []),
         ]);
-  const own = g.source === null || g.source === "" || g.source === "me";
-  return { domains, paths, open: policy.network === "open" && own };
+  return { domains: splitDomains(domains).valid, paths };
 }
 
 function uniq(xs: string[]): string[] {

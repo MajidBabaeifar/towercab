@@ -16,6 +16,8 @@ import type { GitHub } from "./handlers.ts";
 export { ghVersionOk };
 
 import type { Home } from "./home.ts";
+import { apparmorProfile, type ProbeResult, sandboxProbe, userNamespaceDenied } from "./pipeline/probe.ts";
+import { refusedRepoEnv } from "./pipeline/sandbox.ts";
 import { parseStored } from "./repo/readiness.ts";
 import { isMoved, readRecord } from "./repo/settings.ts";
 import { permissionLine } from "./settings/store.ts";
@@ -42,6 +44,8 @@ export async function doctor(o: {
   /** Unix seconds and the machine's cores and memory, for the slots line (LOOP-104); real ones when absent. */
   now?: number;
   capacity?: Capacity;
+  /** The sandbox probe (PIP-163); the real one when absent. */
+  probe?: () => Promise<ProbeResult>;
 }): Promise<DoctorResult> {
   const { config, home, tools } = o;
   const lines: string[] = [`config: ${config.file}`, `home: ${home.root}`, `node: ${process.version}`];
@@ -61,7 +65,34 @@ export async function doctor(o: {
     lines.push(`glab: ${p ?? "missing"}`);
     if (!p) ok = false;
   }
+  // PIP-157, PIP-159: keys that no longer reach the sandbox, and repo variables it leaves out.
+  for (const k of config.agent.ignored) {
+    lines.push(`config: [agent] ${k} is ignored: the sandbox's settings are fixed in code`);
+  }
+  for (const [name, repo] of config.repos) {
+    for (const r of refusedRepoEnv(repo.env)) {
+      lines.push(`${name}: env ${r.name} is left out of the sandbox: ${r.why}`);
+    }
+  }
   if (o.quick) return { lines, ok };
+
+  // PIP-163: the sandbox probe; PIP-162: the narrow fix where user namespaces are restricted.
+  const bwrapPath = tools.which("bwrap");
+  if (bwrapPath) {
+    const version = await tools.run(bwrapPath, ["--version"]).catch(() => null);
+    lines.push(`bwrap version: ${version?.stdout.trim() || "unknown"}`);
+    const probe = await (o.probe ?? (() => sandboxProbe(tools)))();
+    lines.push(`sandbox: ${probe.ok ? "the probe held" : `the probe failed: ${probe.why}`}`);
+    if (!probe.ok) {
+      ok = false;
+      if (userNamespaceDenied(probe.why)) {
+        lines.push(
+          "sandbox: Ubuntu may restrict user namespaces; allow only this bwrap with this AppArmor profile:",
+          ...apparmorProfile(bwrapPath).map((l) => `  ${l}`),
+        );
+      }
+    }
+  }
 
   const v = await ghVersion(tools);
   lines.push(`gh version: ${v.version}${v.ok ? "" : ": Towercab needs 2.46 or newer"}`);

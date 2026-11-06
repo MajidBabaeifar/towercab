@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..156, PIP-165..166 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..166 · **Prefix:** PIP
 
 ## Purpose
 
@@ -207,17 +207,19 @@ After each build or repair, code runs the repo's setup and checks in a sandbox a
 back to the worker.
 
 - ` ```setup ` (base branch's) runs first, with network and the repo cache writable; non-zero → once
-  more after 60 s, then red. The run set ([REPO-9](repo.md)) runs in order without network, each
-  bounded by `check_timeout`. Logs: `runs/<id>/verify-<n>.log` (`$ <command>` before each output); under LOOP-39 they move to `runs/<id>/verify/check-<n>.log`.
+  more after 60 s, then red. The run set ([REPO-9](repo.md)) runs in order, each bounded by
+  `check_timeout`. Setup and the run set both reach only the built-in registry list, through the allowlist
+  proxy (PIP-158). Logs: `runs/<id>/verify-<n>.log` (`$ <command>` before each output); under LOOP-39 they move to `runs/<id>/verify/check-<n>.log`.
 - Red → a repair round in `build` with the log tail (at most 2 for verify and proof together,
   `repairs`), then `waiting: checks red`. A log that shows a missing tool or a sandbox failure is a
   fault ([LOOP-10](loop.md)), not a repair.
   A log that shows the checks could not write to the repo cache is a question for the owner
   (PIP-95), not a repair.
-- **Sandbox**: `bwrap [--unshare-net] --unshare-pid --unshare-ipc --unshare-uts --new-session
-  --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /run --tmpfs <HOME> --tmpfs /tmp`,
-  the toolchain dirs read-only with credential files masked, the repo cache (LOOP-34), `--bind
-  <checkout>` with its `.git` read-only, `--chdir <checkout>`, `sh -c <line>`.
+- **Sandbox**: `bwrap --unshare-net --unshare-pid --unshare-ipc --unshare-uts --new-session
+  --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /run [the proxy's node, bridge and socket,
+  PIP-158] --tmpfs <HOME> --tmpfs /tmp`, the toolchain dirs read-only with credential files masked, the repo
+  cache (LOOP-34), `--bind <checkout>` with its `.git` read-only, `--chdir <checkout>`, `sh -c <line>`. Every
+  part is fixed in code (PIP-157).
 - Verified by: `pipeline: verify runs setup then checks`, `pipeline: verify red repairs then waits`, `pipeline: sandbox argv`
 
 ### PIP-24 · Claude runs
@@ -229,12 +231,12 @@ Every Claude run is headless, sandboxed, and gets only the tools and access its 
   move into the stage folder under LOOP-39) --model
   <m> --tools <list> [--allowedTools …] [--disallowedTools …] [--session-id|--resume <uuid>]
   [--max-budget-usd <n>] [--json-schema <schema>]`, the prompt on stdin. The system file = the base
-  branch's `CLAUDE.md` + the writing guide (PIP-39). Env: HOME, PATH, LANG, the repo cache's
-  variables (LOOP-34), `[agent].env`; never a GitHub token.
+  branch's `CLAUDE.md` + the writing guide (PIP-39). Env: HOME, PATH (a constant, PIP-157), LANG, the repo
+  cache's variables (LOOP-34) and the repo's own variables that pass PIP-159; never a GitHub token.
 - Settings: `sandbox {enabled, failIfUnavailable, allowUnsandboxedCommands: false, filesystem
   {denyRead: secret paths, denyWrite: <checkout>/.git + blocked protected paths, allowWrite: the repo
   cache}, network {allowedDomains: the granted domains}}`, `permissions.allow: WebFetch(domain:<d>)`
-  per granted domain (`WebFetch(domain:*)` at a5), the guard hook for workers (PIP-29). Secret paths:
+  per granted domain (never `*`, AUT-26), the guard hook for workers (PIP-29). Secret paths:
   `~/.ssh`, `~/.config/gh`, `~/.aws`, `~/.gnupg`, `~/.config/towercab`, `~/.claude/.credentials.json`,
   `~/.netrc`, `~/.git-credentials`, `~/.config/sops`, `~/.config/restic`, `~/.config/age`,
   `~/.password-store`, `~/.docker`, `~/.kube`, `~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials*`,
@@ -243,9 +245,6 @@ Every Claude run is headless, sandboxed, and gets only the tools and access its 
 - Tools by agent: **Agents** table. Disallowed for every run: `Bash(git push:*)`,
   `Bash(git remote:*)`, `Bash(git config:*)`, `Bash(gh:*)`, `Bash(ssh:*)`, `Bash(sudo:*)`, `Read` of
   each secret path. A denied push or secret read fails the step.
-- Draft change: PIP-157..159 and AUT-26 fix the sandbox settings, the environment and the granted
-  domains in code (no `WebFetch(domain:*)`, no `[agent].env`). The code PR switches this row, PIP-23,
-  PIP-95 and PIP-116 (wording), LOOP-34 and LOOP-69 in the same commit as the code.
 - Verified by: `claude: worker argv`, `claude: review argv`, `claude: settings by autonomy`, `claude: result parse`, `claude: no token in env`, `claude: other missions are unreadable`
 
 ### PIP-25 · Design
@@ -897,7 +896,7 @@ the worker, because it is not a code problem.
   read-only and that the code is not at fault. The options: `Allow` (Towercab remembers it for the
   repo and runs the checks again; later missions of the repo do not ask) and `Don't allow` (the
   mission waits `checks red`, and the owner can make the checks write inside the checkout, for example
-  `CARGO_TARGET_DIR` under `[repos.<r>].env`, then reply, or drop the intent). It recommends allowing,
+  `CARGO_TARGET_DIR` under `[repos.<r>].env` (a name PIP-159 allows), then reply, or drop the intent). It recommends allowing,
   since setup and the worker already write there.
 - An answer that starts with `allow`, `yes` or `ok` (any case) allows; any other answer does not. The
   answer continues the mission at the stage that asked, not at `build`.
@@ -1139,7 +1138,7 @@ owner, naming the test and why, and the owner's answer decides.
 
 - The worker returns `status: access` with `access.tests: [{path, why}]` (**Schemas** `build`); the
   guard's block reason for a protected existing test ends `if you need it, finish what you can and
-  return status access with this test and why`. Unlike other unplanned access (AUT-15) this is never
+  return status access with this test and why`. Like all unplanned access (AUT-15) this is never
   granted by Towercab itself, at any autonomy: the mission waits with a question that names the test
   and the reason (PIP-110), with the options `Allow this change` and `No, keep the test as it is` (PIP-138), and a
   recommendation.
@@ -1568,7 +1567,7 @@ When one job's log can't be read, the repair details say so in one line and the 
 Nothing a person or a repo writes can loosen the sandbox: its arguments, mounts, masked files, environment and network are decided by Towercab's code alone.
 
 - `sandboxArgv`, the Claude run's sandbox settings (PIP-24) and the sandbox environment are built from the mission only (checkout, cache, granted domains). No config key, no `TOWERCAB.md`, `CLAUDE.md` or agent file, no intent field and no plan text adds a mount, removes a mask, adds a variable, passes a bwrap or Claude sandbox argument or turns the sandbox off.
-- There is no "unsafe" switch, flag or environment variable. `[agent].toolchain`, `[agent].path`, `[agent].env` and `[agent].sandbox_unix_sockets` no longer reach a sandboxed command: the toolchain directories, `PATH` and the masked files are constants of `src/pipeline/sandbox.ts`, and unix sockets are never bound in. The one setting that stays is a repo's named variables, `[repos.<r>].env`, under the narrow rule of PIP-159. A config that still sets an ignored key loads, and `towercab doctor` names the key as ignored.
+- There is no "unsafe" switch, flag or environment variable. `[agent].toolchain`, `[agent].path`, `[agent].env` and `[agent].sandbox_unix_sockets` no longer reach a sandboxed command: the toolchain directories (`~/.local/bin`, and the directory of the Node running Towercab when it lives under HOME), `PATH` and the masked files are decided in `src/pipeline/sandbox.ts`, and unix sockets are never bound in. The one setting that stays is a repo's named variables, `[repos.<r>].env`, under the narrow rule of PIP-159. A config that still sets an ignored key loads, and `towercab doctor` names the key as ignored.
 - A repo file that asks for more (a `TOWERCAB.md` setting, an agent file with `sandbox: none` for a tool-using agent, PIP-78) is refused with the reason or ignored, and never changes the argv.
 - Verified by: `sandbox: config keys do not change the argv`, `sandbox: repo and intent files do not change the argv`, `sandbox: no unsafe switch exists`, `sandbox: ignored config keys are named by doctor`
 
@@ -1579,7 +1578,7 @@ A sandboxed command has no network of its own: it reaches only the domains the r
 - The sandbox always runs with `--unshare-net`. A proxy run by Towercab outside the sandbox listens on a unix socket bound into it; the sandbox sets `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` for it (and their lower-case forms) and has no other route out.
 - The proxy allows a `CONNECT` or request only to a granted domain (AUT-14, AUT-26; `*.d` matches subdomains). It refuses IP literals, a name that resolves to a loopback, private or link-local address, a port other than 80 and 443, and any host not granted; a refusal is logged with the domain.
 - The built-in package-registry list (AUT-14, AUT-26) is the same for setup (PIP-23), checks, proof, screenshots and e2e commands and Claude runs, and nothing more: any other domain reaches a command only as a plan grant (AUT-14). Nothing else changes by command or by autonomy level. With no domain at all, no proxy socket is bound and nothing is reachable.
-- Verified by: `sandbox: network is always unshared`, `sandbox: the proxy allows a granted domain`, `sandbox: the proxy refuses a domain that is not granted`, `sandbox: the proxy refuses IP literals and private addresses`, `sandbox: no grant binds no proxy`
+- Verified by: `sandbox: network is always unshared`, `sandbox: the proxy allows a granted domain`, `sandbox: the proxy refuses a domain that is not granted`, `sandbox: the proxy refuses IP literals and private addresses`, `sandbox: no grant binds no proxy`, `sandbox: a plan's domains reach commands too`
 
 ### PIP-159 · A repo's commands never see a credential
 
@@ -1595,7 +1594,7 @@ Setup, checks and e2e commands of a repo run with no token, key or login of the 
 
 A suite of real escape attempts runs in CI against the real sandbox, and every attempt must fail.
 
-- Each attempt runs a command through the same builder as production (`sandboxArgv` and the Claude settings) and passes only if the attempt fails: reading `~/.ssh` and the App key, writing outside the checkout, writing into `<checkout>/.git`, reaching a host without a grant (direct, by IP, by a non-granted name, through a granted name that resolves to a private address), reading a secret environment variable, listing host processes (`/proc` shows only the sandbox's own), and a signal or `ptrace` to a host process.
+- Each attempt runs a command through the same builder as production (`sandboxArgv` and the Claude settings) and passes only if the attempt fails: reading `~/.ssh` and the App key, writing outside the checkout, writing into `<checkout>/.git`, reaching a host without a grant (direct, by IP, by a non-granted name, through a granted name that resolves to a private address), reading a secret environment variable and listing host processes (`/proc` shows only the sandbox's own). What the proxy refuses (a granted name that resolves to a private address, an IP literal, a port) is checked by its own tests (PIP-158).
 - The suite is part of `npm run check` and of the CI workflow. Where bwrap is not installed, each attempt is skipped with the note `skipped: no bwrap`, so a local run still passes. The CI workflow installs bwrap and the AppArmor profile of PIP-162 and fails if bwrap is missing there, so the suite always runs in CI. A leak fails with the attempt and what it read or wrote.
 - Verified by: `sandbox escape: ssh keys cannot be read`, `sandbox escape: the app key cannot be read`, `sandbox escape: a write outside the checkout fails`, `sandbox escape: a write into .git fails`, `sandbox escape: the network is unreachable without a grant`, `sandbox escape: secret variables are not set`, `sandbox escape: host processes are not visible`, `sandbox escape: without bwrap the attempts are skipped with a note`, `sandbox escape: CI installs bwrap and fails when it is missing`
 

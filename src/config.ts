@@ -5,23 +5,10 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { type Capacity, defaultParallel, readCapacity } from "./capacity.ts";
+import { DEFAULT_NETWORK } from "./pipeline/sandbox.ts";
 
-export const DEFAULT_NETWORK = [
-  "registry.npmjs.org",
-  "*.npmjs.org",
-  "pypi.org",
-  "files.pythonhosted.org",
-  "crates.io",
-  "*.crates.io",
-  "proxy.golang.org",
-  "sum.golang.org",
-  "github.com",
-  "*.github.com",
-  "*.githubusercontent.com",
-  "docs.rs",
-  "nodejs.org",
-  "developer.mozilla.org",
-];
+/** PIP-157: `[agent]` keys that still parse so an old file loads, but no longer reach the sandbox. */
+export const IGNORED_AGENT_KEYS = ["path", "toolchain", "env", "network", "sandbox_unix_sockets"];
 
 export interface RepoConfig {
   name: string;
@@ -68,6 +55,8 @@ export interface Config {
     env: Record<string, string>;
     network: string[];
     sandboxUnixSockets: boolean;
+    /** PIP-157: the sandbox keys above that the file sets; they parse but are never read. */
+    ignored: string[];
   };
   /**
    * The repos Towercab works on. Filled from the file by `parseConfig`, then from the database by
@@ -164,8 +153,9 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       path: r.str(agent, "agent", "path", process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"),
       toolchain: r.dirs(agent, "agent", "toolchain", ["~/.local/bin"]),
       env: r.env(agent, "agent", "env"),
-      network: r.strList(agent, "agent", "network", DEFAULT_NETWORK),
+      network: r.strList(agent, "agent", "network", [...DEFAULT_NETWORK]),
       sandboxUnixSockets: r.bool(agent, "agent", "sandbox_unix_sockets", false),
+      ignored: IGNORED_AGENT_KEYS.filter((k) => k in agent),
     },
     repos: new Map(),
     fileRepos: new Map(),

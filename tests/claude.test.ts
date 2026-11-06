@@ -10,13 +10,14 @@ import {
   claudeEnv,
   claudeSettings,
   freshContext,
+  HOST_SOCKETS,
   parseRun,
   prepareRun,
   type RunKind,
   runEndLine,
 } from "../src/claude.ts";
 import { grantsFor } from "../src/pipeline/access.ts";
-import { cacheEnv } from "../src/pipeline/sandbox.ts";
+import { cacheEnv, sandboxPath } from "../src/pipeline/sandbox.ts";
 import { tempDir, testConfig } from "./helpers/world.ts";
 
 const U = "6f1c1b7e-3f61-4d7c-9a7a-2b1f0c9d8e01";
@@ -285,6 +286,8 @@ test("claude: review argv", () => {
           "towercab.db-shm",
           "towercab.log",
         ].map((f) => join(root, f)),
+        // PIP-157: the host's sockets are hidden whatever the config says.
+        ...HOST_SOCKETS,
       ],
       denyWrite: [cwd, join(cwd, ".git")],
     },
@@ -346,15 +349,23 @@ test("claude: settings by autonomy", () => {
     join(checkout, ".git"),
     join(checkout, ".claude"),
   ]);
-  // a5: any domain for WebFetch.
-  expect(settings(5).permissions?.allow).toContain("WebFetch(domain:*)");
-  expect(settings(4).permissions?.allow).not.toContain("WebFetch(domain:*)");
-  // Unix sockets allowed: the host's sockets hidden.
+  // a5: the same domains as every level (AUT-26).
+  expect(settings(5).permissions?.allow).toEqual(a3.permissions?.allow);
+  expect(settings(5).sandbox.network).toEqual(a3.sandbox.network);
+});
+
+test("claude: settings never allow every domain", () => {
+  // Not at a5, not for a `*` grant, a bare TLD or an IP address (PIP-164); never every unix socket either,
+  // even when the config still sets the ignored key.
   const sock = testConfig({ agent: { sandbox_unix_sockets: true } }, "/cfg/config.toml");
-  const s = claudeSettings(run("worker", { config: sock }), O) as {
+  const g = { domains: ["*", "*.com", "10.0.0.1", "ok.example.com"], paths: [] };
+  const s = claudeSettings(run("worker", { config: sock, grants: g }), O) as {
     sandbox: { network: Record<string, unknown>; filesystem: { denyRead: string[] } };
+    permissions: { allow: string[] };
   };
-  expect(s.sandbox.network).toEqual({ allowAllUnixSockets: true });
+  expect(s.sandbox.network).toEqual({ allowedDomains: ["ok.example.com"] });
+  expect(s.permissions.allow).toEqual(["WebFetch(domain:ok.example.com)"]);
+  expect(JSON.stringify(s)).not.toMatch(/allowAllUnixSockets|WebFetch\(domain:\*\)/);
   expect(s.sandbox.filesystem.denyRead).toContain("/run/user");
 });
 
@@ -488,11 +499,11 @@ test("claude: no token in env", () => {
   const c = testConfig(
     {
       agent: { path: "/usr/bin:/bin", env: { GH_TOKEN: "ghs_app", CRATE_CC_NO_DEFAULTS: "1" } },
-      repos: { web: { github: "owner/web", env: { GITHUB_TOKEN: "mine" } } },
+      repos: { web: { github: "owner/web", env: { GITHUB_TOKEN: "mine", KEEP_ME: "yes" } } },
     },
     "/cfg/config.toml",
   );
-  const cache = cacheEnv("/h/cache/web", c, c.repos.get("web")!);
+  const cache = cacheEnv("/h/cache/web", c.repos.get("web")!);
   const env = claudeEnv(run("worker", { config: c, cacheEnv: cache }), "/home/me");
   expect(Object.keys(env)).toEqual([
     "HOME",
@@ -504,8 +515,10 @@ test("claude: no token in env", () => {
     "CARGO_TARGET_DIR",
     "GOCACHE",
     "PIP_CACHE_DIR",
-    "CRATE_CC_NO_DEFAULTS",
+    "KEEP_ME",
   ]);
-  expect(env).toMatchObject({ HOME: "/home/me", PATH: "/usr/bin:/bin" });
+  // PIP-157: `[agent].path` and `[agent].env` are ignored; PATH is a constant.
+  expect(env).toMatchObject({ HOME: "/home/me", PATH: sandboxPath("/home/me") });
+  expect(env.CRATE_CC_NO_DEFAULTS).toBeUndefined();
   expect(JSON.stringify(env)).not.toMatch(/ghs_app|mine/);
 });

@@ -35,17 +35,17 @@ ci_poll = 30
 ci_grace = 120
 # Seconds CI may stay pending before the intent waits on it (60-86400).
 ci_wait = 1800
-# PATH for sandboxed commands.
+# Ignored: the sandbox's PATH is fixed in code (it is not a setting). Kept so an older file still loads.
 path = "/usr/local/bin:/usr/bin:/bin"
-# Absolute directories (or ~/...) with your tools, such as claude, added to PATH.
+# Ignored: the sandbox's tool directories are fixed in code. Kept so an older file still loads.
 toolchain = ["~/.local/bin"]
-# Network domains a worker may reach by default.
+# Ignored: the default network list is fixed in code; other domains come from a plan or your answer.
 network = ["registry.npmjs.org", "*.npmjs.org", "github.com", "*.github.com", "*.githubusercontent.com"]
-# Whether the sandbox may use Unix sockets.
+# Ignored: the sandbox never binds Unix sockets in. Kept so an older file still loads.
 sandbox_unix_sockets = false
 
 [agent.env]
-# Environment variables passed to every worker (name = "value").
+# Ignored: use a repo's own variables instead (towercab repo set <name> env=NAME=value). Kept so an older file still loads.
 EXAMPLE_VARIABLE = "placeholder"
 
 [github]

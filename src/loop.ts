@@ -158,6 +158,8 @@ export interface LoopDeps {
   readinessLimitMs?: number;
   /** The checkout this loop's code runs from (LOOP-105); default the one this file is in. */
   codeRoot?: string;
+  /** PIP-163: proves the sandbox holds before a mission is picked (default none; the `run` command sets it). */
+  sandboxProbe?: () => Promise<{ ok: boolean; why: string }>;
   /** INT-39: when a backfill run's time is up (default a real timer; tests resolve it themselves). */
   featuresDeadline?: (ms: number) => Promise<void>;
 }
@@ -202,6 +204,9 @@ export class Loop {
   readonly d: LoopDeps;
   readonly health = new Health();
   readonly inhibitor: Inhibitor;
+  /** PIP-163: when the sandbox probe last ran (null = not yet) and whether it passed. */
+  private probedAt: number | null = null;
+  private probeOk = false;
   private children = new Map<number, Running>();
   private pollAt = new Map<number, number>();
   private listing: Listing | null = null;
@@ -311,6 +316,26 @@ export class Loop {
    * minute, as a background job like the readiness check: the pass never waits on it, and its fetch
    * holds the clone lock.
    */
+  /**
+   * PIP-163, PIP-161: at start, and every minute while it fails, proves the sandbox holds. A failed probe is a
+   * `sandbox` fault, which blocks picking (there is no running without the sandbox); a pass clears it.
+   */
+  private async probeSandbox(): Promise<void> {
+    const probe = this.d.sandboxProbe;
+    if (!probe) return;
+    if (this.probeOk || (this.probedAt !== null && this.now - this.probedAt < 60)) return;
+    this.probedAt = this.now;
+    const r = await probe();
+    this.probeOk = r.ok;
+    if (r.ok) {
+      this.health.ok("sandbox");
+      this.d.log("sandbox: the start probe passed");
+    } else {
+      this.health.fail("sandbox", r.why, this.now);
+      this.d.log(`sandbox: the start probe failed: ${r.why}`);
+    }
+  }
+
   private pollSettings(): void {
     if (!this.d.limits || this.limitsJob || this.drain !== null || this.codeMoved() !== null) return;
     const forced = this.d.db.meta("repo-poll") !== null;
@@ -528,7 +553,11 @@ export class Loop {
     // LOOP-111: missions back from a wait ask for their run before a ready build takes the free slot.
     await this.stepDue(!report.woke);
     this.releaseReady();
+    await this.probeSandbox();
     if (
+      // PIP-163: with a probe, nothing is picked until the sandbox has held (no waiting for the 15 minutes
+      // a fault takes to block picks).
+      (!this.d.sandboxProbe || this.probeOk) &&
       !paused(db) &&
       !this.health.blocked(this.now) &&
       !budgetReached(db, this.d.config, this.now) &&

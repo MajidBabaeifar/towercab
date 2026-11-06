@@ -10,6 +10,7 @@ import type { Db } from "./db.ts";
 import type { GitLabForge } from "./forge/gitlab.ts";
 import { gitlabPath, isGitlab, parseGitlabProject } from "./forge/types.ts";
 import type { Forge } from "./forge.ts";
+import { envRefusal } from "./pipeline/sandbox.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
 import { isMoved, readFileValues } from "./repo/settings.ts";
 import type { Tools } from "./tools.ts";
@@ -513,8 +514,15 @@ export function setRepo(db: Db, config: Config, name: string, pairs: string[], b
         const p = value === "" ? "" : expand(value);
         if (p !== "" && !isAbsolute(p)) throw new Error("path must be absolute or start with ~/");
         r.path = p;
-      } else if (key === "env") r.env = envOf(r.env, value);
-      else if (key === "teammate_review") {
+      } else if (key === "env") {
+        const next = envOf(r.env, value);
+        // PIP-159: a variable the sandbox would leave out is refused when it is set, with the reason.
+        for (const [k, v] of Object.entries(next)) {
+          const why = r.env[k] === v ? null : envRefusal(k, v);
+          if (why) throw new Error(`env ${k}: ${why}`);
+        }
+        r.env = next;
+      } else if (key === "teammate_review") {
         if (value !== "on" && value !== "off") throw new Error("teammate_review must be on or off");
         if (value === "on") r.teammateReview = true;
         else delete r.teammateReview;
