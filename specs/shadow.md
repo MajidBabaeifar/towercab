@@ -101,6 +101,10 @@ For an action above its limits, the shadow sends one message that names the acti
   "Merge 261105-2152-8? Reply yes or no." A `yes` or `no` (or the same in plain words) from the chat
   resolves it; any other message leaves it open and is answered normally. A pending action expires after
   24 hours and is dropped with a note. Only one is pending per intent and action.
+  With one action waiting, a bare yes or no answers it; with several, a bare answer does none of them and
+  the shadow lists them, and the owner names one (`yes merge <id>`, `no drop <id>`). The yes takes the action
+  off the list, marks its row and links the answering message in one transaction before anything runs, so a
+  restart reports what happened and never lets the same yes approve another action.
 - A restart keeps the pending action. An answer resolves it once.
 - Verified by: `shadow: a held action waits for the chat`, `shadow: yes runs it once`, `shadow: no cancels it`, `shadow: a pending action survives a restart`, `shadow: a pending action expires after a day`
 

@@ -21,6 +21,7 @@ import {
   isNo,
   isYes,
   KEEP_TURNS,
+  namedAnswer,
   resultsText,
   SUMMARY_MAX,
   seedText,
@@ -215,15 +216,21 @@ export class Shadow {
       finishTurn(db, t.id, t.update_id, `[shadow] ${statusText(db, config.shadow, now)}`, now);
       return;
     }
-    if ((isYes(t.text) || isNo(t.text)) && pendingActions(db).length) {
-      const line = await this.d.exec.answer(isYes(t.text));
-      finishTurn(db, t.id, t.update_id, `[shadow] ${line}`, now);
-      return;
-    }
-    // SHD-20: a turn that already acted is closed with what happened, never run again.
+    // SHD-20: a turn that already acted (a yes taken off the waiting list, a run that started) is closed
+    // with what happened, never run or answered again.
     const done = this.d.exec.recover(t.id);
     if (done !== null) {
       finishTurn(db, t.id, t.update_id, `[shadow] ${done}`, now);
+      return;
+    }
+    const named = namedAnswer(t.text);
+    if ((named || isYes(t.text) || isNo(t.text)) && pendingActions(db).length) {
+      const yes = named ? named.yes : isYes(t.text);
+      const line = await this.d.exec.answer(yes, {
+        turn: t.id,
+        ...(named ? { target: { action: named.action, intent: named.intent } } : {}),
+      });
+      finishTurn(db, t.id, t.update_id, `[shadow] ${line}`, now);
       return;
     }
     // SHD-18: the shadow's own daily cap.

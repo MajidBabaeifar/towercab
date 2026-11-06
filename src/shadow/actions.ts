@@ -230,33 +230,62 @@ export class Executor {
   }
 
   /**
-   * SHD-10: the owner's yes or no, from the chat, for the oldest held action. A yes runs it once
-   * (checked again, since things may have moved); a no cancels it.
+   * SHD-10: the owner's yes or no, from the chat. With one action waiting it answers that one; with several
+   * a bare yes or no answers none and asks which (`yes merge <id>`), so a yes can't land on a question it
+   * wasn't meant for. The action is taken off the waiting list, its row set and the answering turn linked
+   * to it in one transaction before anything runs (SHD-20): a restart reports it and never answers again.
+   * A yes runs it once, checked again since things may have moved; a no cancels it.
    */
-  async answer(yes: boolean): Promise<string> {
+  async answer(
+    yes: boolean,
+    o: { turn?: number; target?: { action: string; intent: string } } = {},
+  ): Promise<string> {
     const { db } = this.d;
     const list = pendingActions(db);
-    const p = list[0];
-    if (!p) return "There is nothing waiting for your yes.";
-    savePending(db, list.slice(1));
+    if (!list.length) return "There is nothing waiting for your yes.";
+    const mine = o.target
+      ? list.filter(
+          (x) =>
+            x.action === o.target!.action &&
+            (x.intent === o.target!.intent || x.intent.endsWith(o.target!.intent)),
+        )
+      : list;
+    if (o.target && mine.length !== 1) {
+      return `Nothing is waiting for “${o.target.action} ${o.target.intent}”. Waiting: ${list.map((x) => this.ask(x)).join(" ")}`;
+    }
+    if (mine.length > 1) {
+      const say = yes ? "yes" : "no";
+      return `More than one thing is waiting, so I haven't done any of them. ${list.map((x) => this.ask(x)).join(" ")} Say, for example, “${say} ${list[0]!.action} ${list[0]!.intent}”.`;
+    }
+    const p = mine[0]!;
+    db.tx(() => {
+      savePending(
+        db,
+        list.filter((x) => x !== p && x.row !== p.row),
+      );
+      db.run(
+        "UPDATE shadow_actions SET outcome = ?, detail = ? WHERE id = ?",
+        yes ? "started" : "refused",
+        yes ? "" : "you said no",
+        p.row,
+      );
+      if (o.turn !== undefined)
+        db.run("UPDATE shadow_actions SET turn = ?, idx = 0 WHERE id = ?", o.turn, p.row);
+    });
     const rest =
       list.length > 1
         ? ` Still waiting: ${list
-            .slice(1)
+            .filter((x) => x.row !== p.row)
             .map((x) => this.ask(x))
             .join(" ")}`
         : "";
-    if (!yes) {
-      setOutcome(db, p.row, "refused", "you said no");
-      return `Okay, I won't ${p.action} ${p.intent}.${rest}`;
-    }
+    if (!yes) return `Okay, I won't ${p.action} ${p.intent}.${rest}`;
     const req: ActionReq = { action: p.action, intent: p.intent, repo: p.repo, title: p.title, text: p.text };
     const bad = await this.refusal(req);
     if (bad) {
       setOutcome(db, p.row, "refused", bad.why);
       return `I didn't ${p.action} ${p.intent}: ${bad.why}.${rest}`;
     }
-    db.run("UPDATE shadow_actions SET outcome = 'started', detail = '' WHERE id = ?", p.row);
     return `${await this.run(p.row, p.action as Action, req)}${rest}`;
   }
 

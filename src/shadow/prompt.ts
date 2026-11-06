@@ -27,6 +27,16 @@ export function isNo(text: string): boolean {
   return NO.test(text);
 }
 
+const NAMED =
+  /^\s*(yes|y|ok|okay|sure|no|n|nope|cancel)[,:]?\s+(merge|boost|drop|confirm)\s+(\S+?)\s*[.!]*\s*$/i;
+
+/** SHD-10: "yes merge <id>" or "no drop <id>": an answer that names the action it is for. */
+export function namedAnswer(text: string): { yes: boolean; action: string; intent: string } | null {
+  const m = NAMED.exec(text);
+  if (!m) return null;
+  return { yes: !/^(no|n|nope|cancel)$/i.test(m[1]!), action: m[2]!.toLowerCase(), intent: m[3]! };
+}
+
 function cut(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }
