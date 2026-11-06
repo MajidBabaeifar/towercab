@@ -193,10 +193,20 @@ A Telegram message is acted on exactly once, even across crashes and restarts.
 
 ### SHD-21 · It stays out of owner-only intents
 
-The shadow cannot answer, approve, start, boost or drop an intent set to `a0`.
+The shadow cannot answer, approve, merge, start, boost or drop an intent set to `a0`; it sends the owner to the page or the PR instead.
 
-- Before running any action on an intent whose effective `a` is 0 (AUT-31), the shadow's action layer refuses it with "this intent is only yours", records it as refused in `shadow_actions` (SHD-19) and tells the owner in its reply. This holds whatever `free` says (SHD-11) and after a `yes` (SHD-10). It may still read and talk about the intent.
-- Verified by: `shadow: an a0 intent is refused`, `shadow: a yes does not unlock an a0 intent`
+- Before running any action on an intent whose effective `a` is 0 (AUT-31), the shadow's action layer refuses it with "this intent is only yours", records it as refused in `shadow_actions` (SHD-19) and tells the owner in its reply. This holds whatever `free` says (SHD-11) and after a `yes` (SHD-10); the one exception is the pause of SHD-22. It may still read and talk about the intent.
+- The reply says where to act and links it: the intent's page (`http://127.0.0.1:<ui port>/intent/<id>`, UI-65) and, when a PR is waiting, the PR's URL. A Telegram message never answers or approves for the owner (AUT-32).
+- Verified by: `shadow: an a0 intent is refused`, `shadow: a yes does not unlock an a0 intent`, `shadow: a refusal links the page and the PR`
+
+### SHD-22 · It may pause an owner-only intent
+
+On the owner's explicit request, the shadow may pause an `a0` intent, because a pause is safe and the owner can undo it.
+
+- A new shadow action `pause` stops Towercab starting any further stage for one intent until it is resumed; work already running finishes its step. It is allowed on an a0 intent only when the owner's latest Telegram message asks for it, naming the intent; the shadow never pauses one on its own. It needs no `yes` and is recorded (SHD-19) with the owner's message.
+- Resuming, like drop, start, boost, answers and approvals, is the owner's own, on the page or GitHub only (AUT-32). The shadow has no `resume` for an a0 intent.
+- On an intent that is not a0, `pause` follows SHD-7 (free). The code PR adds the per-intent pause to the `pause` command (LOOP-15) and the page (UI-239).
+- Verified by: `shadow: pause on an a0 intent needs the owner's request`, `shadow: the shadow cannot resume an a0 intent`
 
 ## Out of scope
 

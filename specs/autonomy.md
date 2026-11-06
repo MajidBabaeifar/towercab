@@ -266,10 +266,11 @@ An intent set to `a0` is decided by the owner alone: every wait goes to them and
 
 On an a0 intent only the owner's own replies and actions count; the shadow, other agents and other accounts cannot answer or approve.
 
-- The owner's own channels count: their GitHub login as in PIP-44, and the page and Telegram messages the owner sends themselves. A shadow action (SHD-19) of kind `reply`, `merge`, `start`, `boost` or `drop` aimed at an a0 intent is refused with the reason "this intent is only yours" and recorded as refused (SHD-12, UI-237). It is not held for a `yes`: a `yes` from the owner does not turn a shadow action into the owner's own.
+- Two channels count: the owner's GitHub login as in PIP-44, and the local page (`POST /api/actions` with `actor: owner`, UI-65). Telegram never counts, because it goes through the shadow: a message there, a `yes` included (SHD-10), is not an answer, an approval, a merge, a drop, a start or a boost of an a0 intent. The shadow may tell the owner where to answer and link the intent's page or PR (SHD-21).
+- A shadow action (SHD-19) aimed at an a0 intent is refused with the reason "this intent is only yours" and recorded as refused (SHD-12, UI-237), except the pause of SHD-22. It is never held for a `yes`.
 - A comment, review or reply from any other account, the App's bot or an agent is ignored as in PIP-44 and, at a0, also noted once on the intent's timeline (who, where, that it was ignored). Notes are not repeated for the same comment.
 - Nothing the shadow or an agent says is read as an answer to a question, an approval of a spec or plan, a choice for test or network access, or a merge.
-- Verified by: `autonomy: a0 ignores replies from other accounts and notes them`, `shadow: an a0 intent is refused`, `events: only the owner's comments count`
+- Verified by: `autonomy: a0 ignores replies from other accounts and notes them`, `autonomy: telegram never answers an a0 intent`, `shadow: an a0 intent is refused`, `events: only the owner's comments count`
 
 ## Out of scope
 
