@@ -282,6 +282,28 @@ The command line refuses to answer, approve, start, drop or tick steps on an a0 
 - Still allowed on an a0 intent: `status`, `next`, `logs`, `ui`, `doctor` and `towercab pause` (global, or for the intent as in SHD-22), since none of them answers, approves or advances anything.
 - Verified by: `cli: an a0 intent refuses answer approve start drop and step`, `cli: pause and status work on an a0 intent`, `commands: an a0 command row from the cli is dropped`
 
+### AUT-34 · The owner changes an intent's autonomy
+
+An intent's autonomy can be moved to any level from a0 to a5 and back, and the running mission follows from its next gate.
+
+- The change sets `a` in the intent file with `setField` (INT-24's front matter; every other line stays byte-identical) and is one commit to the intents repo, pushed like any intent edit. Setting the level it already has writes nothing.
+- Any level 0–5 is valid, including from and to a0 (AUT-31). The repo cap (AUT-8) still applies at the gate, so a5 on a repo capped lower behaves as the cap says.
+- The mission reads `a` from the intent when a gate decides (the spec gate, the plan gate, the merge gate), never from a copy taken at start. A gate already waiting is decided again with the new level on the next loop pass: lowering to a1 keeps it waiting for the owner, raising to a4 or a5 lets it go on if AUT-4 or AUT-13 would. Work already done is not redone.
+- `effective` (AUT-7) is unchanged: the lowest `a` present counts, so a worker's `lower_a` and the owner's change both write the same field and the last one written wins.
+- Each change is recorded on the intent's timeline (who, from → to, through which channel).
+- Verified by: `autonomy: changing a writes only the a line in one commit`, `autonomy: a running mission uses the new level at its next gate`, `autonomy: a waiting gate is decided again after a change`, `autonomy: setting the same level writes nothing`
+
+### AUT-35 · Raising autonomy counts only from the page or GitHub
+
+A raise of an intent's autonomy counts only when the owner makes it on the web page or on GitHub; the shadow, agents and the command line cannot raise it, and anyone can lower it.
+
+- Lowering (to any level below the current one) is allowed from every channel: the page, GitHub, the CLI (`towercab autonomy <id> <level>`, only for a lower level), the shadow (SHD-19) and a worker (AUT-7). A lowered intent is never held for a `yes`.
+- A raise counts when it comes from the local page (`POST /api/actions` with `actor: owner`, UI-65, as in AUT-32) or is a commit on the intents repo's main branch made on GitHub by the owner's login (as PIP-44). Raising from a0 is no different from any other raise.
+- A raise from the CLI is refused with `towercab: only you can raise autonomy: use GitHub or the page`, exit 1 (LOOP-15), before any `commands` row is written. A shadow action that raises is refused with the reason "only you can raise autonomy" and recorded as refused (SHD-12, UI-237). A `commands` row that raises and did not come from the page (`by: page`) is dropped and noted on the timeline (AUT-32).
+- When the loop syncs the intents repo and finds `a` raised by a commit that is neither the page's change nor a commit by the owner's GitHub login, it writes the previous level back in one commit and notes it on the timeline (who, from → to, that it was undone). A first value on a new intent, and an `a` that was missing and is set, are not raises.
+- Like a0, this is a rule Towercab's own shadow, agents and CLI follow, not a security boundary (see Decisions): the owner's `gh` login on this machine cannot be told from the owner.
+- Verified by: `autonomy: the page raises a`, `autonomy: a raise from the cli is refused`, `autonomy: a lower from the cli is allowed`, `autonomy: a shadow raise is refused and a lower is done`, `autonomy: a raise by another account is undone and noted`, `autonomy: a raise by the owner on github counts`, `commands: a raising command row from the cli is dropped`
+
 ## Out of scope
 
 - Raising autonomy automatically.

@@ -1389,9 +1389,19 @@ The top bar shows how much of the budget is used and turns amber at 80%.
   The tightest repo cap (MET-33) shows only on its repo page and card, not in the bar.
 - Verified by: `ui: top bar shows spend against the budget`, `ui: top bar turns amber at 80 percent`, `ui: top bar says budget reached`
 
+### UI-257 · One control for an intent's autonomy
+
+Each intent's page and card have one control that shows its autonomy, a0 to a5, and changes it.
+
+- A segmented control with six choices `a0`..`a5`, the current one marked (text and state, not colour alone), on the intent's page and on its card (INT-52, UI-244's cards) in the overview, queue and working rows. Choosing one posts `{action: "autonomy", id, a}` with `actor: owner` (UI-66's actions) and applies AUT-34: one commit, `a` only. The reply is `Saved. Applies from the next gate.`
+- Raising the level asks for no confirmation; AUT-35 holds that it counts because it comes from the page. a0 and a5 carry a one-line hint (AUT-31, AUT-13). An intent whose repo cap (AUT-8) is lower shows `capped at a<n> by the repo` beside the control.
+- A refusal (the intents repo cannot be pushed, an unknown id, a level outside 0–5) keeps the control on the old level and shows the reason (UI-67). Done or dropped intents show the level without the control.
+- The change is recorded in the Activity page (UI-64) as kind `settings`, `a: a3 → a4`, with the time. `GET /api/state` and the intent's API carry `a` for the control. Fits 360 px, light and dark, and works by keyboard (arrow keys move between levels).
+- Verified by: `ui: the intent page changes autonomy`, `ui: a card changes autonomy`, `ui: autonomy shows the current level and the repo cap`, `ui: a refused autonomy change keeps the old level`, `ui: an autonomy change shows in activity`, `ui: screenshots light, dark and mobile`
+
 ## Out of scope
 
-- Editing intents in the page: the owner edits them in the intents repo or with `/intent`.
+- Editing intents in the page, except their autonomy (UI-257): the owner edits them in the intents repo or with `/intent`.
 - Remote access: the page is for this machine only.
 
 ## Decisions
