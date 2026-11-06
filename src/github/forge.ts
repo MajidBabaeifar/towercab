@@ -251,6 +251,10 @@ export class GitHubForge implements Forge, GitHub {
     await this.ok(repo, ["run", "rerun", String(run), "-R", repo, "--failed"]);
   }
 
+  async cancelRun(repo: string, run: number): Promise<void> {
+    await this.ok(repo, ["run", "cancel", String(run), "-R", repo]);
+  }
+
   failedLog(repo: string, run: number): Promise<string> {
     return this.ok(repo, ["run", "view", String(run), "-R", repo, "--log-failed"]);
   }

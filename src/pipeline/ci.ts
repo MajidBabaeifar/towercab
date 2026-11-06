@@ -14,7 +14,7 @@ import { cutLog, isSummary, jobId, LOG_TAIL } from "./job-log.ts";
 export type { Check };
 
 export type Bucket =
-  | { kind: "pending" }
+  | { kind: "pending"; runs: number[] }
   | { kind: "green" }
   | { kind: "none" }
   | { kind: "red"; checks: Check[] }
@@ -43,7 +43,7 @@ export function bucket(checks: Check[], pushedAt: number, now: number, grace: nu
   const counted = checks
     .filter((c) => !c.name.startsWith("towercab/"))
     .filter((c) => !(within && c.startedAt !== null && c.startedAt < pushedAt));
-  if (counted.length === 0) return within ? { kind: "pending" } : { kind: "none" };
+  if (counted.length === 0) return within ? { kind: "pending", runs: [] } : { kind: "none" };
   const busy = new Set(
     counted.filter((c) => c.kind === "run" && c.status !== "COMPLETED" && c.run).map((c) => c.run),
   );
@@ -52,7 +52,37 @@ export function bucket(checks: Check[], pushedAt: number, now: number, grace: nu
   if (r.length) return { kind: "red", checks: r };
   const x = counted.filter((c) => cancelled(c) && settled(c));
   if (x.length) return { kind: "cancel", checks: x };
-  return counted.every(passed) ? { kind: "green" } : { kind: "pending" };
+  return counted.every(passed) ? { kind: "green" } : { kind: "pending", runs: [...busy] as number[] };
+}
+
+/**
+ * PIP-171: a check pending past `ci_wait` whose Actions runs were not yet cancelled for this head nor
+ * rerun for a red: `mark` records that first, then the runs are cancelled (the cancel branch reruns them).
+ * Null when there is nothing to cancel; `error` when `gh` refuses.
+ */
+export async function cancelHung(
+  cx: Ctx,
+  github: string,
+  runs: number[],
+  mark: () => void,
+): Promise<{ poll: number } | { error: string } | null> {
+  if (runs.length === 0) return null;
+  mark();
+  try {
+    for (const run of runs) await cx.github.cancelRun(github, run);
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
+  return { poll: cx.config.agent.ciPoll };
+}
+
+/** PIP-171: why the owner is asked after a hang (twice, or a cancel `gh` refused). */
+export function hungReason(cx: Ctx, again: boolean, error?: string): string {
+  const min = Math.round(cx.config.agent.ciWait / 60);
+  if (error) return `no result after ${min} min, and the run could not be cancelled: ${error}`;
+  return again
+    ? `the run hung twice: no result within ${min} min, and again after a rerun`
+    : `no result after ${min} min`;
 }
 
 export type CiState = Bucket | { kind: "moved"; head: string } | { kind: "conflict" };
@@ -167,7 +197,22 @@ export const ciHandler: Handler = {
         return { done: conflictOutcome(m) };
       case "pending": {
         if (cx.timeouts && cx.clock.now() - pushedAt > cx.config.agent.ciWait) {
-          return { done: wait("CI stuck", `no result after ${Math.round(cx.config.agent.ciWait / 60)} min`) };
+          const head = m.head ?? "";
+          const hung = d.ci?.hung ?? {};
+          const again = hung[head] === true;
+          if (!again && !d.ci?.reruns?.[head]) {
+            const c = await cancelHung(cx, repo.github, s.runs, () =>
+              cx.record(
+                m,
+                m.step,
+                { pushed_at: cx.clock.now() },
+                { ci: { ...d.ci, result: "pending", hung: { ...hung, [head]: true } } },
+              ),
+            );
+            if (c && "poll" in c) return c;
+            if (c) return { done: wait("CI stuck", hungReason(cx, false, c.error)) };
+          }
+          return { done: wait("CI stuck", hungReason(cx, again)) };
         }
         return { poll: cx.config.agent.ciPoll };
       }
@@ -185,16 +230,19 @@ export const ciHandler: Handler = {
             m,
             m.step,
             { pushed_at: cx.clock.now() },
-            { ci: { result: "pending", reruns: { ...reruns, [m.head ?? ""]: true } } },
+            { ci: { ...d.ci, result: "pending", reruns: { ...reruns, [m.head ?? ""]: true } } },
           );
           return { poll: cx.config.agent.ciPoll };
         }
+        // A rerun of a run Towercab cancelled for hanging, cancelled again: nothing failed in a log.
+        if (s.kind === "cancel" && d.ci?.hung?.[m.head ?? ""])
+          return { done: wait("CI stuck", hungReason(cx, true)) };
         if (s.kind === "cancel" && !reruns[`${m.head}:cancel`]) {
           cx.record(
             m,
             m.step,
             {},
-            { ci: { result: "pending", reruns: { ...reruns, [`${m.head}:cancel`]: true } } },
+            { ci: { ...d.ci, result: "pending", reruns: { ...reruns, [`${m.head}:cancel`]: true } } },
           );
           return { poll: cx.config.agent.ciPoll };
         }
