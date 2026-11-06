@@ -39,6 +39,7 @@ An intent's priority is twice its importance plus its urgency.
 | [intents.md](intents.md) | INT | Intent files, IDs, the intents repo, lifecycle fields, generated views |
 | [priority.md](priority.md) | PRI | Scores, order, cutoff, dropping |
 | [autonomy.md](autonomy.md) | AUT | Where an intent waits for the owner, and what access a worker gets |
+| [kinds.md](kinds.md) | KND | Kinds of work (bugfix, refactor, infra, feature, spec) and the lighter path of each |
 | [loop.md](loop.md) | LOOP | The program: service, state machine, crash recovery, limits, commands, messages, updates |
 | [pipeline.md](pipeline.md) | PIP | Spec, plan and code PRs; build, verify, proof, CI, review, gate, merge; GitHub interactions; writing |
 | [ship.md](ship.md) | SHIP | After the merge: wait for the deploy, run e2e against the live app, roll back and fix forward |
