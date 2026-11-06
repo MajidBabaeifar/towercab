@@ -6,7 +6,7 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ownerOnly } from "../autonomy.ts";
 import { slotsText } from "../capacity.ts";
-import { ignoredNotes, intentPaused } from "../commands.ts";
+import { agentCommentNotes, ignoredNotes, intentPaused } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import type { ProposedState } from "../github/proposed.ts";
@@ -780,6 +780,9 @@ export function missionCard(
     addRepo: null,
     ...(d.reviewWarning ? { warning: d.reviewWarning } : {}),
     ...(ownerOnly(intent?.a ?? null, m.a_at_pick) ? { onlyYou: true } : {}),
+    ...(dataOf<{ answeredBy?: string | null }>(m).answeredBy
+      ? { decided_by_agent: dataOf<{ answeredBy?: string | null }>(m).answeredBy }
+      : {}),
   };
 }
 
@@ -2206,7 +2209,16 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     e2eLog: e2eLogOf(src.home.root, id),
     ...(only ? { onlyYou: "Only you can answer or approve this." } : {}),
     ...(intentPaused(src.db, realId) ? { paused: true } : {}),
+    agent_comments: agentCommentNotes(src.db, realId).map((c) => ({
+      agent: c.agent,
+      url: c.url,
+      at: when(c.at, s.now),
+      excerpt: c.excerpt,
+      acted_on: c.actedOn,
+    })),
   };
+  const decidedBy = last ? dataOf<{ answeredBy?: string | null }>(last).answeredBy : null;
+  if (decidedBy && !only) body.decided_by_agent = decidedBy;
   // UI-160, UI-162: the owner's steps, and the plan's claim that nothing could be checked live.
   const shown = live ?? last;
   const sd = shown

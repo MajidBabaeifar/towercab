@@ -103,7 +103,7 @@ test("pipeline: question comment has context, options, recommendation", async ()
   const q = plan.comments.filter((c) => c.author === "towercab[bot]");
   expect(q).toHaveLength(1);
   const body = q[0]!.body;
-  expect(body).toMatch(/^<!-- towercab:question:\d+ -->\n\*\*Question\*\* · round \d+\n\n/);
+  expect(body).toMatch(/^<!-- towercab:question:\d+ -->\n\*\*Question\*\* · builder · \S+ · round \d+\n\n/);
   expect(body).toContain("The test wants bye, but the intent says the page says hello.");
   expect(body).toContain("**Should the page say hello or bye?**");
   expect(body).toContain("- **hello**: I change the test");

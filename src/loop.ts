@@ -7,7 +7,7 @@ import { ownerOnly } from "./autonomy.ts";
 import { Inhibitor, woke } from "./awake.ts";
 import { slotStep } from "./capacity.ts";
 import { removeCheckout } from "./checkout.ts";
-import { applyPending, intentPaused, noteIgnored, paused } from "./commands.ts";
+import { applyPending, intentPaused, noteIgnored, paused, recordAgentComment } from "./commands.ts";
 import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
 import { fixFor, Health } from "./faults.ts";
@@ -26,6 +26,7 @@ import { isGitlab } from "./forge/types.ts";
 import { MERGE_METHOD } from "./forge.ts";
 import { retireBranch } from "./github/branches.ts";
 import {
+  agentComments,
   approveNotices,
   approveRequested,
   ignoredReplies,
@@ -80,7 +81,7 @@ import { Mutex } from "./mutex.ts";
 import { sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
-import type { PipeData } from "./pipeline/common.ts";
+import { type PipeData, prUrl as prLink } from "./pipeline/common.ts";
 import { writeTicks } from "./pipeline/steps.ts";
 import { evaluate } from "./pipeline/teammate.ts";
 import { isParked, priority } from "./priority.ts";
@@ -1350,8 +1351,34 @@ export class Loop {
             );
           }
         }
-        const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot, team);
+        // PIP-185: comments an agent marked under the owner's login are recorded once, at any level.
+        const only = ownerOnly(listed?.a ?? null, m.a_at_pick);
+        for (const c of agentComments(m, prs, this.d.github.me, bot)) {
+          const target = c.kind === "plan" ? intentsRepo : repo.github;
+          recordAgentComment(this.d.db, m.intent, c.key, {
+            agent: c.agent,
+            url: c.pr && target ? prLink(target, c.pr) : "",
+            at: Date.parse(c.at) / 1000 || this.now,
+            excerpt: c.excerpt,
+            actedOn: !only,
+          });
+          if (only) {
+            noteIgnored(
+              this.d.db,
+              m.intent,
+              c.key,
+              `ignored a comment from ${c.agent}, an agent writing under your login, on the ${c.kind} PR${c.pr ? ` #${c.pr}` : ""}: this intent is only yours`,
+              this.now,
+            );
+          }
+        }
+        const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot, team, only);
         if (!o) continue;
+        if (o.event === "feedback" || o.event === "answered") {
+          // A later answer by the owner clears the agent's name.
+          const d = (o.data ?? {}) as { answeredBy?: string | null };
+          o.data = { ...d, answeredBy: d.answeredBy ?? null };
+        }
         const running = this.children.has(m.id);
         if (running && !["code_merged", "spec_merged", "plan_merged", "closed"].includes(o.event)) continue;
         // PIP-145: what an approving reviewer wrote goes to the PR's record, nothing more.

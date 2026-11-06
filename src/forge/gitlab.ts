@@ -5,7 +5,7 @@ import type { GitLabConfig } from "../config.ts";
 import { readTokenFile } from "../config.ts";
 import type { IssueRow, IssueText } from "../forge.ts";
 import type { Http } from "../github/app.ts";
-import { type Step, stageComment, stageMarker } from "../github/comments.ts";
+import { type By, type Step, stageComment, stageMarker } from "../github/comments.ts";
 import type { PrComment, PrReview, PrState } from "../github/prs.ts";
 import { gitlabPath } from "./types.ts";
 
@@ -218,8 +218,9 @@ export class GitLabForge {
     step: Step,
     round: number,
     body: string,
+    by?: By,
   ): Promise<{ edited: boolean }> {
-    const text = stageComment(step, round, body);
+    const text = stageComment(step, round, body, by);
     const marker = stageMarker(step, round);
     const bot = (await this.bot()).login.toLowerCase();
     let id: number | null = null;
