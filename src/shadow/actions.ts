@@ -2,10 +2,11 @@
 // Towercab's own actions. Free actions run; merge, boost and drop wait for the owner's yes unless
 // `[shadow].free` lists them; confirm always waits. Every action is recorded before it runs.
 
+import { ownerOnly, ownerOnlyLine } from "../autonomy.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import type { Clock } from "../handlers.ts";
-import type { IntentStore } from "../intents/types.ts";
+import type { Intent, IntentStore } from "../intents/types.ts";
 import { dataOf, type Mission, unfinishedFor } from "../mission.ts";
 import type { UiActions } from "../ui/actions.ts";
 import {
@@ -18,7 +19,7 @@ import {
   setOutcome,
 } from "./store.ts";
 
-export const ACTIONS = ["reply", "start", "draft", "merge", "boost", "drop", "confirm"] as const;
+export const ACTIONS = ["reply", "start", "draft", "merge", "boost", "drop", "confirm", "pause"] as const;
 type Action = (typeof ACTIONS)[number];
 
 /** SHD-8: held for a yes unless `[shadow].free` lists them. SHD-14: `confirm` is always held. */
@@ -60,7 +61,7 @@ export class Executor {
   }
 
   /** Why `req` can't be done at all (before asking the owner), or null. */
-  private async refusal(req: ActionReq): Promise<{ id: string; why: string } | null> {
+  private async refusal(req: ActionReq, ownerText = ""): Promise<{ id: string; why: string } | null> {
     const { store, db } = this.d;
     if (req.action === "draft") {
       if (!this.d.config.repos.has(req.repo))
@@ -70,10 +71,18 @@ export class Executor {
       return null;
     }
     let id: string;
+    let found: Intent;
     try {
-      id = (await store.get(req.intent)).id;
+      found = await store.get(req.intent);
+      id = found.id;
     } catch {
       return { id: "", why: `there is no open intent “${req.intent}”` };
+    }
+    // SHD-21, SHD-22: an a0 intent is the owner's alone, whatever `free` says and after a yes; the one
+    // exception is a pause the owner's own latest message asked for.
+    if (ownerOnly(found.a ?? null, unfinishedFor(db, id)?.a_at_pick ?? null)) {
+      const asked = /\bpause\b/i.test(ownerText) && ownerText.includes(id);
+      if (!(req.action === "pause" && asked)) return { id, why: ownerOnlyLine(id) };
     }
     if (req.action === "merge") {
       const m = unfinishedFor(db, id);
@@ -143,7 +152,7 @@ export class Executor {
    * SHD-6..10: one requested action. A free one runs now; a held one is stored and asked about. Returns one
    * line for the owner. The row is written first (SHD-19).
    */
-  async request(turn: number, idx: number, req: ActionReq): Promise<string> {
+  async request(turn: number, idx: number, req: ActionReq, ownerText = ""): Promise<string> {
     const { db, clock, config } = this.d;
     const now = clock.now();
     if (!(ACTIONS as readonly string[]).includes(req.action)) {
@@ -160,7 +169,7 @@ export class Executor {
       return `I can't “${req.action}”: that isn't something I'm allowed to do.`;
     }
     const action = req.action as Action;
-    const bad = await this.refusal(req);
+    const bad = await this.refusal(req, ownerText);
     const intent = bad?.id || req.intent;
     if (bad) {
       recordAction(db, { at: now, turn, idx, action, intent, pr: 0, outcome: "refused", detail: bad.why });
@@ -214,6 +223,9 @@ export class Executor {
           break;
         case "start":
           said = await ui.start(req.intent);
+          break;
+        case "pause":
+          said = await ui.pause(req.intent);
           break;
         case "merge":
           said = await ui.merge(req.intent);

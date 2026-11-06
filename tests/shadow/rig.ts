@@ -121,6 +121,7 @@ export class Rig {
       start: log("start"),
       merge: log("merge"),
       drop: log("drop"),
+      pause: log("pause"),
     } as unknown as UiActions;
   }
 

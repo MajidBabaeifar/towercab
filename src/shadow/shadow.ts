@@ -400,7 +400,7 @@ export class Shadow {
       });
     }
     const lines: string[] = [];
-    for (const [i, a] of out.actions.entries()) lines.push(await this.d.exec.request(t.id, i, a));
+    for (const [i, a] of out.actions.entries()) lines.push(await this.d.exec.request(t.id, i, a, t.text));
     const reply = out.reply.trim();
     say([reply, ...lines].filter(Boolean).join("\n\n") || "Done.");
     this.maybeFold(t);

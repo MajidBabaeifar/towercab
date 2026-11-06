@@ -1,6 +1,6 @@
 # Shadow
 
-**Status:** Live: SHD-1..20 · **Prefix:** SHD
+**Status:** Live: SHD-1..22 · **Prefix:** SHD
 
 ## Purpose
 
@@ -211,8 +211,8 @@ A Telegram message is acted on exactly once, even across crashes and restarts.
 The shadow cannot answer, approve, merge, start, boost or drop an intent set to `a0`; it sends the owner to the page or the PR instead.
 
 - Before running any action on an intent whose effective `a` is 0 (AUT-31), the shadow's action layer refuses it with "this intent is only yours", records it as refused in `shadow_actions` (SHD-19) and tells the owner in its reply. This holds whatever `free` says (SHD-11) and after a `yes` (SHD-10); the one exception is the pause of SHD-22. It may still read and talk about the intent.
-- The reply says where to act and links it: the intent's page (`http://127.0.0.1:<ui port>/intent/<id>`, UI-65) and, when a PR is waiting, the PR's URL. A Telegram message never answers or approves for the owner (AUT-32).
-- Verified by: `shadow: an a0 intent is refused`, `shadow: a yes does not unlock an a0 intent`, `shadow: a refusal links the page and the PR`
+- The reply is one line naming the intent and saying where the owner acts: `<id> is only yours: use GitHub or the page` (the line `towercab` prints, AUT-33). A Telegram message never answers or approves for the owner (AUT-32). `pause` is an action like the others of SHD-6..8 (free), run through the page's per-intent pause (UI-239).
+- Verified by: `shadow: an a0 intent is refused`, `shadow: a yes does not unlock an a0 intent`
 
 ### SHD-22 · It may pause an owner-only intent
 

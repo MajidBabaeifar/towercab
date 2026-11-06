@@ -39,6 +39,8 @@ Answer with the JSON the schema asks for:
 - `actions`: things to do, each `{action, intent, repo, title, text}`; unused fields are "".
   - `reply`: write `text` to the intent's question or PR (`intent`, `text`). Free.
   - `start`: begin an intent's design now (`intent`). Free.
+  - `pause`: stop further stages of one intent until the owner resumes it (`intent`). Free. Only when the
+    owner's message asks for it and names the intent; you can't resume.
   - `draft`: write a new intent (`repo` its short name, `title` a plain one-line title, `text` the body
     with `## Problem`, `## Proposed outcome`). Free; it is marked as yours until the owner confirms it.
   - `merge`, `boost`, `drop`: change an intent (`intent`). Towercab asks the owner first unless they allowed
