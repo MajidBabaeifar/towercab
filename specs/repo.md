@@ -487,11 +487,14 @@ An intent whose whole outcome is a GitHub settings change is delivered as steps 
 - A plan with `delivery: steps` ([PIP-112](pipeline.md)) whose steps are all the standard settings (the
   plan marks them `by: towercab`) is not handed to the owner: with `settings = "apply"`, the repo not
   set to `settings: check` and the permission present, Towercab runs REPO-31 (guard and backup
-  included) for the intent's repo, and ticks the steps itself once the re-check is `ok`; the intent
-  then ends done as in [PIP-113](pipeline.md). A ruleset step held back by the guard stays unticked and
+  included) for the intent's repo with the pinned `ci` tool, and ticks each step itself once its
+  `--check` is `ok`; the intent then ends done as in [PIP-113](pipeline.md), with no branch and no
+  code pull request. A ruleset step held back by the guard stays unticked and
   is listed for the owner with the guard's words.
 - With `check` (global or in the repo's `TOWERCAB.md`), or with the permission missing (REPO-32), the same steps are listed for the owner as
-  ordinary owner steps ([SHIP-17](ship.md)) with the gaps as their text, so the intent has an exit. A
+  ordinary owner steps ([SHIP-17](ship.md)) with the gaps as their text, so the intent has an exit
+  and never waits without one: a forbidden apply during the run turns the remaining steps into owner
+  steps the same way. A
   setting outside the standard list (not in `ci`'s script) stays an owner step.
 - Verified by: `repo: a settings-only intent is applied and ticked by Towercab`, `repo: a settings-only intent falls back to owner steps`
 
