@@ -89,6 +89,8 @@ export interface TestState {
   granted?: { tests?: { path: string; why: string }[] };
   testAllowed?: { path: string; why: string }[];
   refusedTests?: { path: string; why: string }[];
+  /** PIP-152: tests the last run was blocked from; the owner may allow them. */
+  lockedTests?: string[];
 }
 
 /** The existing tests granted by the merged plan and by the owner's answers; a path once. */
@@ -187,27 +189,41 @@ export function reverseRefusals(
   patch: {
     testAllowed: { path: string; why: string }[];
     refusedTests: { path: string; why: string }[] | undefined;
+    lockedTests: string[] | undefined;
     testNote: string;
   };
   moved: string[];
 } {
   const refused = d.refusedTests ?? [];
-  const bad = paths.filter((p) => !refused.some((r) => r.path === p));
+  const locked = d.lockedTests ?? [];
+  const bad = paths.filter((p) => !refused.some((r) => r.path === p) && !locked.includes(p));
   if (bad.length) {
     throw new Error(
       `${bad.join(", ")} ${bad.length > 1 ? "were" : "was"} not refused; ${
         refused.length ? `refused: ${refused.map((r) => r.path).join(", ")}` : "no test is refused"
-      }`,
+      }${locked.length ? `; locked: ${locked.join(", ")}` : ""}`,
     );
   }
-  const moved = refused.filter((r) => paths.includes(r.path));
+  const movedRefused = refused.filter((r) => paths.includes(r.path));
+  // PIP-152: a path the repair lock stopped is allowed like a refused one.
+  const movedLocked = paths
+    .filter((p) => !movedRefused.some((r) => r.path === p))
+    .map((path) => ({ path, why: "the owner allowed the locked test" }));
+  const moved = [...movedRefused, ...movedLocked];
   const left = refused.filter((r) => !paths.includes(r.path));
-  const note = `The owner now allows you to change ${moved.map((r) => r.path).join(", ")}: the earlier refusal is lifted.`;
+  const stillLocked = locked.filter((p) => !paths.includes(p));
+  const note = `The owner now allows you to change ${moved.map((r) => r.path).join(", ")}: ${
+    movedRefused.length ? "the earlier refusal is lifted" : "it is no longer locked"
+  }.`;
   return {
     moved: moved.map((r) => r.path),
     patch: {
-      testAllowed: [...(d.testAllowed ?? []), ...moved],
+      testAllowed: [
+        ...(d.testAllowed ?? []),
+        ...moved.filter((r) => !(d.testAllowed ?? []).some((a) => a.path === r.path)),
+      ],
       refusedTests: left.length ? left : undefined,
+      lockedTests: stillLocked.length ? stillLocked : undefined,
       testNote: [d.testNote, note].filter(Boolean).join(" "),
     },
   };

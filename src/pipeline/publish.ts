@@ -34,11 +34,27 @@ import {
   existingTests,
   heldHelpers,
   helperTests,
+  lockableTests,
   lockedTests,
   publishRefusals,
   sameAsBase,
 } from "./guard.ts";
 import { codeBody } from "./prtext.ts";
+
+/**
+ * The wait for a diff that touches paths it may not (PIP-29, PIP-31). PIP-152: the tests among them are
+ * recorded as locked and the wait says how the owner allows them for the rest of the mission.
+ */
+export function refusalWait(bad: string[], lockedBefore: string[]): Outcome {
+  const reason = `the branch changes paths it may not: ${bad.join(", ")}`;
+  const paths = bad
+    .filter((b) => /\((?:a test already pushed|an existing test|an existing helper)\)$/.test(b))
+    .map((b) => b.replace(/ \([^()]*\)$/, ""));
+  if (!paths.length) return wait("answer the question", reason);
+  return wait("answer the question", `${reason}. Reply \`allow <path>\` to let the worker edit it.`, {
+    data: { lockedTests: [...new Set([...lockedBefore, ...paths])] },
+  });
+}
 
 export const publishHandler: Handler = {
   async step(cx, m) {
@@ -60,10 +76,6 @@ export const publishHandler: Handler = {
             return { status: status ?? "", path: p[p.length - 1] ?? "" };
           })
       : [];
-    const locked = await lockedTests(cx.tools, cx.checkout(m), d.lockHead ?? null, files.towercab.tests);
-    // PIP-31: a locked test that now reads as on the base came in with a merge of the base, not from the worker.
-    const touched = sinceHead.filter((c) => locked.includes(c.path)).map((c) => c.path);
-    const fromBase = await sameAsBase(cx.tools, cx.checkout(m), `refs/remotes/origin/${repo.base}`, touched);
     // PIP-117: a test on the base branch that no grant covers can't be modified or deleted.
     const onBase = await existingTests(
       cx.tools,
@@ -72,7 +84,17 @@ export const publishHandler: Handler = {
       files.towercab.tests,
       files.towercab.live,
     );
-    const blocked = blockedTests(onBase, d);
+    // PIP-151: only tests on the base that no grant covers stay locked; PIP-153: not those a merge opened.
+    const opened = d.mergeOpened ?? [];
+    const locked = lockableTests(
+      await lockedTests(cx.tools, cx.checkout(m), d.lockHead ?? null, files.towercab.tests),
+      onBase,
+      d,
+    ).filter((p) => !opened.includes(p));
+    // PIP-31: a locked test that now reads as on the base came in with a merge of the base, not from the worker.
+    const touched = sinceHead.filter((c) => locked.includes(c.path)).map((c) => c.path);
+    const fromBase = await sameAsBase(cx.tools, cx.checkout(m), `refs/remotes/origin/${repo.base}`, touched);
+    const blocked = blockedTests(onBase, d).filter((p) => !opened.includes(p));
     // PIP-137: a helper (no test cases) may only have free changes; one the owner refused may have none.
     const refused = (d.refusedTests ?? []).map((t) => t.path);
     const helpers = (await helperTests(cx.tools, cx.checkout(m), repo.base, onBase)).filter(
@@ -96,8 +118,7 @@ export const publishHandler: Handler = {
         blocked.filter((p) => helpers.includes(p)),
       ),
     );
-    if (bad.length)
-      return { done: wait("answer the question", `the branch changes paths it may not: ${bad.join(", ")}`) };
+    if (bad.length) return { done: refusalWait(bad, d.lockedTests ?? []) };
     if (m.pr && (await takeRemote(cx, m, m.branch)) === "conflict") {
       await coGit(cx, m, ["merge", "--abort"]).catch(() => "");
       return {
