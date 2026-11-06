@@ -147,7 +147,7 @@ When a worker needs access the plan didn't grant, it asks the owner and gets it 
 - Allowed requests are recorded in `data.unplanned` (what and why). The code PR lists them under "Access
   beyond the plan". At a4 the gate still goes to `approval:merge`, why `The agent needed access the approved
   plan didn't grant.`, even though the owner allowed it: the plan the owner approved is not the plan that was built.
-- Verified by: `autonomy: unplanned access asks the owner at every level`, `autonomy: allowing unplanned access grants it`, `autonomy: a refused access stays refused`, `autonomy: unplanned access at a4 goes to the owner`
+- Verified by: `autonomy: unplanned access at a4 goes to the owner`, `autonomy: unplanned access at a1-a3 is granted`
 
 ### AUT-16 · Every change gets a risk level
 
@@ -247,7 +247,8 @@ Every grant of network access, from a plan, a request or an intent, is a domain 
 
 - A grant that fails the rule of [PIP-164](pipeline.md) is not added to the mission's grants. A plan with one waits at the plan gate with the reason; a mid-build request with one is refused without asking the owner, and the worker continues without it, noted in the PR.
 - At a4 and a5 an invalid grant never merges on its own: the gate waits for the owner.
-- Verified by: `autonomy: an invalid grant in a plan waits for the owner`, `autonomy: an invalid mid-build request is refused`
+- A valid mid-build request is never granted by Towercab itself (AUT-15): at every level, a5 included, the mission waits with a question, an allow answer grants it, and a refused one stays refused. The code PR changes the a1–a3 test of AUT-15 to match.
+- Verified by: `autonomy: an invalid grant in a plan waits for the owner`, `autonomy: an invalid mid-build request is refused`, `autonomy: unplanned access asks the owner at every level`, `autonomy: allowing unplanned access grants it`, `autonomy: a refused access stays refused`
 
 ## Out of scope
 
