@@ -203,6 +203,24 @@ export class Rig {
       waiting,
       pr,
     );
+    // A code PR at its merge wait is ready: checks green, an approving review (SHD-9).
+    if (waiting === "review and merge PR") {
+      this.db.run(
+        "UPDATE missions SET data = ? WHERE intent = ?",
+        JSON.stringify({
+          ci: { result: "green" },
+          review: {
+            approved: true,
+            door: "two-way",
+            redLines: false,
+            summary: "",
+            details: "",
+            patchId: "p",
+          },
+        }),
+        intent,
+      );
+    }
   }
 
   prompts(): string[] {

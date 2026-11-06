@@ -6,7 +6,7 @@ import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import type { Clock } from "../handlers.ts";
 import type { IntentStore } from "../intents/types.ts";
-import { unfinishedFor } from "../mission.ts";
+import { dataOf, type Mission, unfinishedFor } from "../mission.ts";
 import type { UiActions } from "../ui/actions.ts";
 import {
   type ActionRow,
@@ -46,6 +46,8 @@ export interface ExecDeps {
   /** The page's actions with `actor: "shadow"`: replies carry the tag (SHD-12). */
   ui: UiActions;
   log(line: string): void;
+  /** SHD-9: the PR's head commit now (read as the owner); none: the head isn't compared. */
+  headOf?: (github: string, pr: number) => Promise<string>;
 }
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -81,11 +83,53 @@ export class Executor {
           why: "it isn't waiting on a merge that is yours to make (checks, a question or teammates come first)",
         };
       }
+      // SHD-9: a code PR is merged only when nothing but the owner's approval holds it.
+      if (m.waiting === "review and merge PR") {
+        const why = await this.codeHold(m);
+        if (why) return { id, why };
+      }
     }
     if (req.action === "confirm" && (await store.get(id)).source !== "shadow") {
       return { id, why: "it isn't a draft of mine" };
     }
     if (req.action === "reply" && !req.text.trim()) return { id, why: "there is nothing to say" };
+    return null;
+  }
+
+  /**
+   * SHD-9: one line on why a code PR at "review and merge PR" is held by more than the owner's approval (CI
+   * not green, no approving review, the head moved since, work Towercab didn't check), or null.
+   */
+  private async codeHold(m: Mission): Promise<string | null> {
+    const d = dataOf<{
+      ci?: { result?: string };
+      review?: { approved?: boolean } | null;
+      unproven?: boolean;
+      foreignHead?: boolean;
+      unplanned?: { domains: string[]; paths: string[] };
+      build?: { planChanged?: string | null };
+      teammate?: { passNeeded?: boolean };
+    }>(m);
+    if (d.ci?.result !== "green" && d.ci?.result !== "none") return "its checks aren't green yet";
+    if (!d.review) return "it hasn't been reviewed yet";
+    if (!d.review.approved) return "the review didn't approve it";
+    if (d.teammate?.passNeeded) return "it still has to be passed on to your teammates";
+    if (d.unproven) return "its tests weren't shown to fail before the change";
+    if (d.foreignHead) return "someone else added commits to the PR";
+    if (d.build?.planChanged) return "the build changed course from the approved plan";
+    if ((d.unplanned?.domains.length ?? 0) + (d.unplanned?.paths.length ?? 0) > 0) {
+      return "the build reached beyond the access the plan listed";
+    }
+    const repo = this.d.config.repos.get(m.repo)?.github;
+    if (m.pr && repo && this.d.headOf) {
+      let now: string;
+      try {
+        now = await this.d.headOf(repo, m.pr);
+      } catch {
+        return "I couldn't read the PR to check it hasn't changed";
+      }
+      if (m.head && now !== m.head) return "the PR changed after it was reviewed";
+    }
     return null;
   }
 

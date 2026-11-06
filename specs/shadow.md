@@ -89,10 +89,14 @@ The shadow merges, boosts or drops only after the owner says yes in the chat to 
 An action the owner's yes allows is still refused where the intent itself forbids it.
 
 - Listing `merge` in `[shadow] free` frees only the merge of a code PR; a spec or plan merge still asks.
+- A code PR is merged only when nothing but the owner's approval holds it: checks green, an approving
+  review, the PR's head unchanged since, and none of the holds Towercab can't judge itself (someone else's
+  commits, tests not shown to fail, a changed plan, access beyond the plan, a pending teammate pass). Any
+  other hold refuses with one line saying why, before asking and again after a yes.
 - A `merge` is refused while the intent's checks are not green or its autonomy asks for a human
   (AUT-1..8); the shadow's yes does not stand in for the owner on a wait that only the owner may clear.
   The refusal reaches the chat in one sentence.
-- Verified by: `shadow: merge is refused where autonomy needs the owner`
+- Verified by: `shadow: merge is refused where autonomy needs the owner`, `shadow: a merge waiting only on the owner asks for a yes`, `shadow: a yes does not merge a PR that changed while it waited`
 
 ### SHD-10 · Asking first
 

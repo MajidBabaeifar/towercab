@@ -122,7 +122,15 @@ export function buildShadow(w: ShadowWorld, telegram: Telegram | null, loop: () 
     actor: "shadow",
     proposed: () => loop().proposedState().list,
   });
-  const exec = new Executor({ db: w.db, clock: w.clock, config: w.config, store: w.store, ui, log: w.log });
+  const exec = new Executor({
+    db: w.db,
+    clock: w.clock,
+    config: w.config,
+    store: w.store,
+    ui,
+    log: w.log,
+    headOf: async (github, pr) => (await ownerForge(w.github.owner).prBrief(github, pr)).head,
+  });
   return new Shadow({
     ...w,
     telegram,
