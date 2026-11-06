@@ -1256,6 +1256,13 @@ Intents set to `a0` show "only you" in the page and in `towercab status`.
 - Cards, lists, the intent page and the status output show the label "only you" (text, not colour alone) where they show autonomy, with the line "Only you can answer or approve this." Waits on such an intent read as waiting for you in the needs-you list. The page is where the owner answers and approves such an intent, and it offers Pause and Resume per intent (SHD-22). Notes of ignored replies (AUT-32) show on the timeline. The shadow panel (UI-237) lists a refused action on an a0 intent as refused.
 - Verified by: `ui: a0 intents show only you`, `ui: an intent can be paused and resumed from the page`, `status: a0 intents show only you`
 
+### UI-240 · The intent page shows the level of checks and review
+
+The intent page and its card show how hard the change is checked and reviewed, and who chose that.
+
+- Once a level is chosen ([PIP-187](pipeline.md)), the page shows `Checks and review: <level>` with its reason and "set by you" or "chosen by Towercab". `GET /api/intents/<id>` includes `intensity: {level, why, by} | null`; the card shows a small tag only for light and thorough.
+- Verified by: `ui: the intent page shows the level and who chose it`, `ui: the intent api returns the intensity`
+
 ## Out of scope
 
 - Editing intents in the page: the owner edits them in the intents repo or with `/intent`.
