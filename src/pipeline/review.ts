@@ -114,9 +114,9 @@ export function reviewPolicy(review: Review): string {
 }
 
 /** The PR diff's `git patch-id --stable` (line numbers and whitespace don't change it); "" for none. */
-async function patchId(cx: Ctx, m: Mission): Promise<string> {
+async function patchId(cx: Ctx, m: Mission, range?: string): Promise<string> {
   const repo = cx.repo(m);
-  const diff = await coGit(cx, m, ["diff", `refs/remotes/origin/${repo.base}...HEAD`]);
+  const diff = await coGit(cx, m, ["diff", range ?? `refs/remotes/origin/${repo.base}...HEAD`]);
   if (!diff.trim()) return "";
   const r = await cx.tools.run("git", [...NO_HOOKS, "patch-id", "--stable"], {
     cwd: cx.checkout(m),
@@ -139,7 +139,10 @@ export const reviewHandler: Handler = {
     const pid = await patchId(cx, m);
     // PIP-169: a merge made by code, read on its own diff, brings none of the PR's own change: the review
     // and the risk assessment of the head before it stand for the new head.
-    if (d.mech?.reviewed && d.review) {
+    // Only when that review is of the PR as it was just before the merge: a review of an older head (a fix
+    // round came after it) is stale, and the PR is reviewed in full.
+    const before = d.mech ? await patchId(cx, m, `${d.mech.theirs}...${d.mech.ours}`) : "";
+    if (d.mech?.reviewed && d.review && before !== "" && d.review.patchId === before) {
       const carried = { ...d.review, patchId: pid };
       if (d.riskOf?.code === d.review.patchId) {
         return {

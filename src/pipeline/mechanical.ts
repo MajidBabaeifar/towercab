@@ -19,6 +19,8 @@ export type Git = (args: string[]) => Promise<string>;
 export interface Mech {
   /** The PR's head before the merge: what a failed attempt goes back to. */
   ours: string;
+  /** The base-side head it merged in: with `ours`, the PR's own diff before the merge (`theirs...ours`). */
+  theirs: string;
   files: string[];
   /** One line per file: how it was resolved. */
   notes: string[];
@@ -123,7 +125,7 @@ export async function resolveConflicts(
       `Merge ${label}: both sides only added, resolved by Towercab`,
     ]);
     committed = true;
-    return { ours, files, notes };
+    return { ours, theirs, files, notes };
   } catch {
     return null;
   } finally {
