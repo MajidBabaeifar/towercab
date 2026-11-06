@@ -1757,6 +1757,25 @@ A conflict that code resolved is committed as Towercab's merge commit, checked i
 - No full review follows: the review of the previous head (PIP-4) stands for the merge head, because the merge brings in no new content of the PR's own. The mission goes from the push to `ci`, and the review stage records the carried-over review instead of running again. The risk agent's assessment (PIP-96) is likewise carried over. A later push that changes the PR's own diff is reviewed in full as PIP-4 says.
 - Verified by: `pipeline: a mechanical merge commit is Towercab's own at the gate`, `pipeline: a mechanical resolution uses no worker round`, `pipeline: a mechanical merge is reviewed on its own diff only`, `pipeline: a merge review that finds a lost side goes to the worker`, `pipeline: a mechanical merge does not trigger a full review`
 
+### PIP-170 · Every job in Towercab's CI has a time limit
+
+A job in Towercab's own CI that hangs fails within minutes instead of holding up a pull request for hours.
+
+- Every job in `.github/workflows/ci.yml` that runs steps sets `timeout-minutes`, sized to its normal run: 15 for `Playwright: UI screenshots` and `Node 22: lint, typecheck, tests`, 10 for every other such job, including `ci-ok`. GitHub's 6-hour default never applies to them.
+- The jobs that call a shared workflow (`uses:`, PIP-90) set no limit and the test skips them; they rely on the cancel and rerun of PIP-171. A limit inside the shared workflows is a separate change in `MajidBabaeifar/ci`, not part of this requirement.
+- A job that hits its limit ends as a failure; Towercab reads it as red (PIP-3) and the first-red rerun of PIP-18 takes over.
+- Verified by: `public: every CI job that runs steps sets timeout-minutes`, `public: jobs that call a shared workflow are exempt from the limit`
+
+### PIP-171 · A check that hangs is cancelled and rerun by Towercab, not left to the owner
+
+On any repo, when a check stays pending past the CI wait, Towercab cancels that run and reruns it, and asks the owner only if the rerun hangs too.
+
+- A check still pending past `ci_wait` (PIP-3) whose run is an Actions run (run ID from `detailsUrl`, PIP-18) is, once per head: recorded first, then `gh run cancel <run>`, and when the run has ended `gh run rerun <run> --failed`. This replaces the owner's ask for the first hang; no repair is counted and the run's timer (`ci_wait`) starts again from the rerun. The same applies to the spec PR's checks (PIP-82). Only `GitHubForge` builds these `gh` arguments (the owner allowed the cancel here; an agent session still may not cancel runs).
+- The rerun pending past `ci_wait` again, a cancel or rerun that `gh` refuses, or a head that was already rerun for a red (PIP-18) → `waiting: CI stuck` (on a spec PR `waiting: approve spec`, PIP-82); the reason says the run hung twice, or why `gh` refused.
+- A check that is not an Actions run is never cancelled or rerun: pending past `ci_wait` is stuck at once.
+- A new head starts again with no run used.
+- Verified by: `pipeline: a hung Actions run is cancelled and rerun once`, `pipeline: a rerun that hangs too waits for the owner`, `pipeline: a pending check that is not an Actions run is stuck at ci_wait`, `pipeline: a hung spec PR check is cancelled and rerun`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
@@ -1829,6 +1848,12 @@ score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outc
   machine safe.
 - Spec rows are `Draft` in the spec PR and the code PR flips them to `Live`, so `main` never claims
   something is built before it is.
+- Hung CI (PIP-170, PIP-171, the owner's calls, 2026-11-06): limits only on Towercab's own step-running jobs; the
+  shared-workflow callers have none and rely on cancel and rerun; a hung check is cancelled and rerun by Towercab
+  on any repo, once per head. Decided without asking: the rerun waits `ci_wait` again before the owner is asked;
+  a check that is not an Actions run is never touched; the rerun counts no repair; a new head starts again with
+  the run unused; the stuck wait on a spec PR follows the same path. The flaky UI test is fixed in UI-190, not
+  by a new row.
 - Sandbox locked in code (the owner's call, 2026-11-06; PIP-157..164): built rows stay true to today's
   code and the new behaviour is Draft until the code PR switches both together. Conservative defaults
   taken where the intent was silent: the only configurable sandbox input is a repo's named variables
