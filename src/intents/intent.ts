@@ -23,6 +23,7 @@ type Kind =
   | "repo"
   | "repos"
   | "score"
+  | "level"
   | "str"
   | "after"
   | "list"
@@ -37,7 +38,7 @@ const KINDS: Record<string, Kind> = {
   repo: "repo",
   u: "score",
   i: "score",
-  a: "score",
+  a: "level",
   model: "str",
   review: "str",
   source: "str",
@@ -65,6 +66,7 @@ const KINDS: Record<string, Kind> = {
 const DESCRIBE: Record<Kind, string> = {
   repo: "a repo name ([A-Za-z0-9._-], no leading -, not . or ..)",
   score: "an integer 1-5",
+  level: "an integer 0-5",
   str: "a string",
   after: "a list of ids",
   repos: "a list of repo names (or one name)",
@@ -118,6 +120,9 @@ function check(key: string, kind: Kind, v: unknown, reading: boolean): Value {
       throw bad();
     case "score":
       if (isInt(v) && v >= 1 && v <= 5) return v;
+      throw bad();
+    case "level":
+      if (isInt(v) && v >= 0 && v <= 5) return v;
       throw bad();
     case "str":
       if (typeof v === "string") return v;

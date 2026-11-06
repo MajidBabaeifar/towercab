@@ -4161,3 +4161,15 @@ a.pr-tile:hover {
   gap: 8px;
   justify-items: start;
 }
+
+/* Owner-only intents (UI-239): a text label, and a Pause button that is easy to hit on a phone. */
+.chip-only-you {
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.pause-intent .btn {
+  min-height: 44px;
+}

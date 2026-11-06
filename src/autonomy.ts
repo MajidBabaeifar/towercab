@@ -4,6 +4,19 @@
 /** The highest `a` at which the owner merges every code PR. */
 export const OWNER_MERGES = 3;
 
+/** The owner-only level (AUT-31): every wait goes to the owner, and only they decide. */
+export const OWNER_ONLY = 0;
+
+/** AUT-31: whether an intent is owner-only: its `a` now or at pick is 0, so nothing can raise it. */
+export function ownerOnly(aNow: number | null, aAtPick: number | null = null): boolean {
+  return aNow === OWNER_ONLY || aAtPick === OWNER_ONLY;
+}
+
+/** AUT-33: the one line the command line prints for an a0 intent. */
+export function ownerOnlyLine(id: string): string {
+  return `${id} is only yours: use GitHub or the page`;
+}
+
 /** The source that may reach a5 (AUT-13): the owner's own intents (a missing source is the owner's file). */
 function ownSource(source: string | null): boolean {
   return source === null || source === "" || source === "me";
@@ -105,18 +118,39 @@ export function gate(g: GateInput): { merge: true } | { merge: false; why: strin
   if (!g.review.approved) return hold(GATE_WHY.review);
   if (g.unplanned && g.a === 4) return hold(GATE_WHY.access);
   if (!g.proven) return hold(GATE_WHY.proof);
+  if (g.a === OWNER_ONLY) return hold("This intent is only yours: you merge it yourself.");
   if (g.a <= OWNER_MERGES) return hold(`At autonomy a${g.a} you merge every change yourself.`);
   if (riskWaits(g.a, g.risk)) return hold(riskWhy(g.a, g.risk));
   return { merge: true };
 }
 
 /**
- * The `a` a worker's `lower_a` sets, if any (AUT-7): only lower, within 1–5; an intent without `a`
- * counts as a5 (AUT-9). Null = nothing is written.
+ * The `a` a worker's `lower_a` sets, if any (AUT-7, AUT-31): only lower, within 0–5; an intent without
+ * `a` counts as a5 (AUT-9). Null = nothing is written.
  */
 export function lowered(a: number | null, lowerA: number | null): number | null {
-  if (lowerA === null || !Number.isInteger(lowerA) || lowerA < 1 || lowerA > 5) return null;
+  if (lowerA === null || !Number.isInteger(lowerA) || lowerA < 0 || lowerA > 5) return null;
   return lowerA < (a ?? DEFAULT_A) ? lowerA : null;
+}
+
+/** What the shadow asks to do to an intent (SHD-21, SHD-22). */
+export type ShadowAction = "reply" | "merge" | "start" | "boost" | "drop" | "pause" | "resume";
+
+/**
+ * SHD-21, SHD-22: whether the shadow may act on an intent. Only an a0 intent is guarded: everything is
+ * refused, even after a `yes`, except a pause the owner's latest message asked for. The refusal says
+ * where to act. Its action layer must call this before it runs anything.
+ */
+export function shadowVerdict(
+  a: { aNow: number | null; aAtPick?: number | null },
+  action: ShadowAction,
+  ownerAsked: boolean,
+  links: { page: string; pr?: string | null },
+): { ok: true } | { ok: false; reason: string } {
+  if (!ownerOnly(a.aNow, a.aAtPick ?? null)) return { ok: true };
+  if (action === "pause" && ownerAsked) return { ok: true };
+  const where = links.pr ? `${links.page} or ${links.pr}` : links.page;
+  return { ok: false, reason: `this intent is only yours: act on it at ${where}` };
 }
 
 /** What a worker may reach without asking at an effective `a` (AUT-14). */

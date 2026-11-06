@@ -45,7 +45,7 @@ export interface Scores {
   a?: number;
 }
 
-/** PRI-1: `uN`, `iN`, `aN` words (N 1–5), each key at most once. */
+/** PRI-1: `uN`, `iN`, `aN` words (N 1–5), each key at most once. `a0` is set in front matter only (AUT-31). */
 export function parseScores(words: string[]): Scores {
   const out: Scores = {};
   for (const w of words) {

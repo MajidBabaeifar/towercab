@@ -24,7 +24,7 @@ test("priority: scores are 1 to 5", () => {
     ["u: 0\n", "u must be an integer 1-5"],
     ["u: 6\n", "u must be an integer 1-5"],
     ["i: 7\n", "i must be an integer 1-5"],
-    ["a: 0\n", "a must be an integer 1-5"],
+    ["a: 6\n", "a must be an integer 0-5"],
     ["u: -1\n", "u must be an integer 1-5"],
     ["u: x\n", "u must be an integer 1-5"],
     ["i: 2.5\n", "i must be an integer 1-5"],
@@ -45,7 +45,7 @@ test("priority: scores are 1 to 5", () => {
     ["a", -1],
     ["u", 2.5],
   ] as const) {
-    expect(() => f.setField(key, n)).toThrow(`${key} must be an integer 1-5`);
+    expect(() => f.setField(key, n)).toThrow(`${key} must be an integer ${key === "a" ? "0-5" : "1-5"}`);
     expect(f.render()).toBe(before);
   }
   // Score words for `add`: `[uia][1-5]`, each key at most once.

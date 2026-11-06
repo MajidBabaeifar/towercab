@@ -4,7 +4,18 @@
 import { useState } from "preact/hooks";
 import type { IntentPage as Data, PrView, StepView } from "../../../src/ui/view.ts";
 import { approveSecret, sendSecret, tickStep } from "../api.ts";
-import { Details, Id, NeedsCard, RiskBlock, Section, StartButton, StateChip, Time } from "../components.tsx";
+import {
+  Details,
+  Id,
+  NeedsCard,
+  OnlyYou,
+  PauseButton,
+  RiskBlock,
+  Section,
+  StartButton,
+  StateChip,
+  Time,
+} from "../components.tsx";
 import { ChevronLeft, External, PullRequest } from "../icons.tsx";
 import { Markdown } from "../md.tsx";
 import { Link } from "../router.tsx";
@@ -188,7 +199,9 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
       </Link>
       <header class="intent-head">
         <div class="intent-title">
-          <h1>{data.title}</h1>
+          <h1>
+            {data.title} {data.onlyYou ? <OnlyYou /> : null}
+          </h1>
           <p class="meta">
             {data.repo} · <Id id={data.id} />
             {data.scores ? ` · ${data.scores}` : ""}
@@ -213,6 +226,8 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
         <StateChip state={data.state} />
       </header>
       <p class="sentence">{data.sentence}</p>
+      {data.onlyYou ? <p class="meta only-you-line">{data.onlyYou}</p> : null}
+      {!readOnly ? <PauseButton intent={data.id} paused={data.paused === true} /> : null}
       {data.canStart ? <StartButton intent={data.id} /> : null}
       <section class="prs" aria-label="Pull requests">
         {data.prs.map((p) => (

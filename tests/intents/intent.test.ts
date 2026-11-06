@@ -103,7 +103,7 @@ test("intents: parse a full intent", () => {
   expect(bad("u: 3\n")).toBe("repo is missing");
   expect(bad("repo: x\nu: 6\n")).toBe("u must be an integer 1-5");
   expect(bad("repo: x\ni: high\n")).toBe("i must be an integer 1-5");
-  expect(bad("repo: x\na: 2.5\n")).toBe("a must be an integer 1-5");
+  expect(bad("repo: x\na: 2.5\n")).toBe("a must be an integer 0-5");
   for (const repo of ["bad name!", "42", "..", '"."', "-x", "a/b"]) {
     expect(bad(`repo: ${repo}\n`)).toBe(
       "repo must be a repo name ([A-Za-z0-9._-], no leading -, not . or ..)",
@@ -347,4 +347,17 @@ test("intents: answers are appended", () => {
     "- 2026-10-21 09:05: use the cache not the db\n- 2026-10-21 10:00: redis",
   );
   expect(() => f.addAnswer("  ", at)).toThrow();
+});
+
+test("intents: a is 0 to 5", () => {
+  // 0 is the owner-only level (AUT-31); u and i still start at 1.
+  for (let n = 0; n <= 5; n++) expect(parseIntent(intentMd("towercab", `a: ${n}\n`, "X")).a).toBe(n);
+  expect(() => parseIntent(intentMd("towercab", "a: 6\n", "X"))).toThrow("a must be an integer 0-5");
+  expect(() => parseIntent(intentMd("towercab", "a: -1\n", "X"))).toThrow("a must be an integer 0-5");
+  expect(() => parseIntent(intentMd("towercab", "u: 0\n", "X"))).toThrow("u must be an integer 1-5");
+  // A write checks the same and keeps the other lines.
+  const f = IntentFile.parse(intentMd("towercab", "u: 4\n", "X"));
+  f.setField("a", 0);
+  expect(f.render()).toContain("\na: 0\n");
+  expect(() => f.setField("a", 7)).toThrow("a must be an integer 0-5");
 });
