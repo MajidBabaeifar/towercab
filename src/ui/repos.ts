@@ -7,6 +7,7 @@ import { featuresRun } from "../features.ts";
 import { type Feature, featuresPath, hasOwnLines, parseFeatures } from "../intents/features.ts";
 import { SCANNING_STEP, scanningPermissionMissing } from "../pipeline/alerts.ts";
 import { missingPermission, PERMISSION_STEP, storedSettings } from "../settings/store.ts";
+import { fileErrorOf, limitsView } from "./limits.ts";
 import { proposedFor, proposedSection } from "./proposed.ts";
 import { readinessBadge, setupView } from "./readiness.ts";
 import { type RepoSpend, repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
@@ -62,6 +63,7 @@ export async function repos(src: UiSources, selected: string | null, o: ReposOpt
         parked: l.parked.length,
         spend: repoSpendView(by.get(l.repo)),
         ...badge(l.repo),
+        ...fileNotice(src, l.repo),
       }));
   const body = {
     chips,
@@ -110,6 +112,7 @@ async function repoView(
     repo: lane.repo,
     github: lane.github,
     ahead: lane.ahead,
+    limits: limitsView(src, lane.repo, s.now),
     settings: settingsView(src.db, lane.repo, src.running),
     proposed: proposedFor(proposedSection(src), src, lane.repo),
     features: await featuresView(src, s, lane, o),
@@ -217,4 +220,10 @@ function noteOf(
 function at(t: number, now: number): string {
   const a = ago(t, now);
   return a.endsWith("ago") || a === "just now" || a.startsWith("yesterday") ? a : `on ${a}`;
+}
+
+/** UI-153: the notice for a repo whose file can't be read, as spread into a card. */
+function fileNotice(src: UiSources, repo: string): { fileError?: string } {
+  const e = fileErrorOf(src, repo);
+  return e ? { fileError: e } : {};
 }

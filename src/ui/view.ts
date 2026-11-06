@@ -671,8 +671,36 @@ export interface FocusPage {
   stale: string | null;
 }
 
+/** UI-150 to UI-154: a repo's limits (`workers`, `ahead`) as its `TOWERCAB.md` holds them. */
+export interface LimitsView {
+  values: { workers: number; ahead: number };
+  defaults: { workers: number; ahead: number };
+  /** Set in the file (so "Back to default" applies). */
+  inFile: { workers: boolean; ahead: boolean };
+  /** UI-152: the open settings PR and what it changes (null: a key back to the default). */
+  pending: { pr: number; url: string; changes: { workers?: number | null; ahead?: number | null } } | null;
+  moved: boolean;
+  /** UI-150: variable names kept on this machine; never the values. */
+  envNames: string[];
+  /** UI-154: hours before Towercab moves the limits on its own; null once the wait is over. */
+  waitHours: number | null;
+  /** UI-153: `TOWERCAB.md in <repo> can't be read: <reason>`, or null. */
+  fileError: string | null;
+  fileUrl: string | null;
+  move: {
+    state: "waiting" | "open" | "closed" | "moved";
+    pr: number | null;
+    url: string | null;
+    /** "Open the move PR again" works. */
+    canOpen: boolean;
+  };
+  canSave: boolean;
+}
+
 /** UI-141: one repo's page. */
 export interface RepoView {
+  /** UI-150: the limits form. */
+  limits: LimitsView;
   settings: SettingsView;
   /** UI-156: what the repo is missing; absent when nothing is. */
   setup?: SetupView;
@@ -696,6 +724,8 @@ export interface RepoView {
 
 /** UI-142: one repo on the All overview. */
 export interface RepoSummary {
+  /** UI-153: the file's reason when `TOWERCAB.md` can't be read; absent otherwise. */
+  fileError?: string;
   readiness?: ReadinessBadge;
   repo: string;
   github: string;
@@ -757,6 +787,8 @@ export interface BoardCard {
 
 /** UI-133: one repo's row. */
 export interface BoardRepo {
+  /** UI-153: the file's reason when `TOWERCAB.md` can't be read; absent otherwise. */
+  fileError?: string;
   readiness?: ReadinessBadge;
   /** "" for intents the listing doesn't know (the "unknown repo" lane). */
   repo: string;

@@ -861,6 +861,10 @@ intents that waited for it start.
   `env={"NAME":"value",…}`, a JSON object of strings, replaces them all). Several pairs at once; one bad
   pair changes nothing. Prints the repo's `repo list` line after `set `. The running loop uses the new
   values from its next pass (LOOP-68).
+- `workers` and `ahead` are read from the repo's `TOWERCAB.md` once it has one ([REPO-14](repo.md),
+  [REPO-15](repo.md)): `repo list` and the loop use the value in force, and after the repo has moved,
+  `set` refuses both with `workers and ahead for <name> now live in TOWERCAB.md; change them on the
+  repo's page or in the file.`
 - `base` and `path` change only while no mission needs the repo (as for `repo remove`): `<name> has
   unfinished intents (<ids>): change base or path once they are done`.
 - Other refusals: `<key> must be an integer 1-16`; `base: <value> is not a branch name`; `path must be
@@ -1180,6 +1184,8 @@ If a part fails after the merges, that part and every part that landed after it 
 | `telegram.bot_token`, `telegram.chat_id`, `telegram.api_base` | strings; URL | none (no Telegram); `https://api.telegram.org` |
 | `ui.port` | int 0–65535 (0 = off) | 7311 |
 | `update.auto` | bool | true |
+
+`workers` and `ahead` are the repo's own `TOWERCAB.md` keys too (REPO-14): the file wins, and after the repo has moved the database value is no longer read (REPO-15).
 
 v1's `[tasks]` is read as `[intents]` when `[intents]` is absent.
 

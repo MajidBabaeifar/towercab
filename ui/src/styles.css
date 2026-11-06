@@ -4123,3 +4123,41 @@ a.pr-tile:hover {
 .setup-item.waived .setup-state {
   color: inherit;
 }
+
+/* UI-150 to UI-154: a repo's limits form. */
+.limits-form {
+  display: grid;
+  gap: 12px;
+  max-width: 560px;
+}
+.limit-row {
+  display: grid;
+  gap: 4px;
+}
+.limit-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.limit-field input {
+  width: 6rem;
+  min-height: 40px;
+}
+.limit-pending {
+  overflow-wrap: anywhere;
+}
+.limits-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.file-notice {
+  overflow-wrap: anywhere;
+}
+.limit-move {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}

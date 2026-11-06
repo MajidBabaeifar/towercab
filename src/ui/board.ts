@@ -3,6 +3,7 @@
 // intent can't be found (no repo) goes to an "unknown repo" lane, last.
 
 import type { Intent } from "../intents/types.ts";
+import { fileErrorOf } from "./limits.ts";
 import { proposedSection } from "./proposed.ts";
 import { readinessBadge } from "./readiness.ts";
 import { lastSevenDays, repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
@@ -122,8 +123,10 @@ export async function board(src: UiSources): Promise<BoardPage> {
   const rows: BoardRepo[] = repos.map((repo, index) => {
     const readiness = readinessBadge(src.db, repo);
     const at = changed.get(repo);
+    const fileError = fileErrorOf(src, repo);
     return {
       ...(readiness ? { readiness } : {}),
+      ...(fileError ? { fileError } : {}),
       repo,
       github: src.config.repos.get(repo)?.github ?? "",
       waiting: Object.values(cells.get(repo) ?? {}).reduce(

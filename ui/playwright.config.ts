@@ -15,6 +15,7 @@ export default defineConfig({
     "exits.spec.ts",
     "needs-fold.spec.ts",
     "board-sort.spec.ts",
+    "limits.spec.ts",
   ],
   outputDir: "screenshots/.results",
   fullyParallel: false,
