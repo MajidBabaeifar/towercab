@@ -8,6 +8,7 @@ import type { Home } from "./home.ts";
 import type { IntentStore } from "./intents/types.ts";
 import type { Outcome } from "./machine.ts";
 import type { Mission } from "./mission.ts";
+import type { HostState } from "./pipeline/hostcheck.ts";
 import type { ChildExit, ChildSpec, RunOpts, RunResult, Tools } from "./tools.ts";
 
 export interface Clock {
@@ -70,6 +71,8 @@ export interface Ctx {
   github: Host;
   /** False right after a wake from suspend: no wait timeout may fire before its poll (LOOP-11). */
   timeouts: boolean;
+  /** PIP-162: the host's user-namespace state; absent in tests and when not checked. */
+  host?: () => HostState;
   log(line: string): void;
   /** The mission's repo config (throws `unknown repo <r>`). */
   repo(m: Mission): RepoConfig;

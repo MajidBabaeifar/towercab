@@ -138,8 +138,6 @@ export interface ClaudeRun {
   cacheEnv: Record<string, string>;
   /** The repo cache directory: writable in the sandbox. */
   cache?: string | null;
-  /** PIP-162: let Claude's own sandbox use Unix sockets; set only while the AppArmor step is undone (`claudeUnixSockets`). */
-  unixSockets?: boolean;
   config: Config;
 }
 
@@ -278,7 +276,6 @@ export function claudeSettings(
   const domains = splitDomains(run.grants.domains).valid;
   const network: Record<string, unknown> = {};
   if (domains.length) network.allowedDomains = domains;
-  if (run.unixSockets) network.allowAllUnixSockets = true;
   if (Object.keys(network).length) sandbox.network = network;
   const s: Record<string, unknown> = { sandbox };
   const allow = domains.map((d) => `WebFetch(domain:${d})`);

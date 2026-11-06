@@ -38,19 +38,26 @@ export function hostState(reader: HostReader = realReader): HostState {
   };
 }
 
-/** Whether Claude runs get `allowAllUnixSockets`: only while the restriction is on and the profile is missing. */
-export function claudeUnixSockets(s: HostState): boolean {
+/** Whether the owner still has to install the profile: the restriction is on and the profile is missing. Then no Claude run starts. */
+export function needsProfile(s: HostState): boolean {
   return s.restricted && !s.profile;
 }
 
 /** The owner's one step, or null when there is none: the exact commands to install the profile. */
-export function profileStep(s: HostState, bwrap: string): { title: string; commands: string } | null {
-  if (!claudeUnixSockets(s)) return null;
+export function profileStep(
+  s: HostState,
+  bwrap: string,
+): { title: string; commands: string; oneLine: string } | null {
+  if (!needsProfile(s)) return null;
   const file = apparmorProfile(bwrap)
     .filter((l) => !l.startsWith("#"))
     .join("\n");
   return {
     title: "Allow Towercab's sandbox on this machine",
+    oneLine: `printf '%s\\n' ${file
+      .split("\n")
+      .map((l) => `'${l}'`)
+      .join(" ")} | sudo tee ${PROFILE_FILE} >/dev/null && sudo apparmor_parser -r ${PROFILE_FILE}`,
     commands: `sudo tee ${PROFILE_FILE} >/dev/null <<'EOF'\n${file}\nEOF\nsudo apparmor_parser -r ${PROFILE_FILE}`,
   };
 }

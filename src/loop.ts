@@ -82,6 +82,7 @@ import { sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import { type PipeData, prUrl as prLink } from "./pipeline/common.ts";
+import type { HostState } from "./pipeline/hostcheck.ts";
 import { writeTicks } from "./pipeline/steps.ts";
 import { evaluate } from "./pipeline/teammate.ts";
 import { isParked, priority } from "./priority.ts";
@@ -159,6 +160,8 @@ export interface LoopDeps {
   readinessLimitMs?: number;
   /** The checkout this loop's code runs from (LOOP-105); default the one this file is in. */
   codeRoot?: string;
+  /** PIP-162: the host's user-namespace state, checked before every Claude run (the `run` command sets it). */
+  hostState?: () => HostState;
   /** PIP-163: proves the sandbox holds before a mission is picked (default none; the `run` command sets it). */
   sandboxProbe?: () => Promise<{ ok: boolean; why: string }>;
   /** INT-39: when a backfill run's time is up (default a real timer; tests resolve it themselves). */
@@ -469,6 +472,7 @@ export class Loop {
       store: d.store,
       github: d.github,
       timeouts,
+      ...(d.hostState ? { host: d.hostState } : {}),
       log: d.log,
       repo: (m) => {
         const r = d.config.repos.get(m.repo);

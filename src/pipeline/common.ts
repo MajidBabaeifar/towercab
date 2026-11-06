@@ -24,7 +24,7 @@ import type { Risk } from "../risk.ts";
 import { checkoutRoot } from "../service.ts";
 import { combine, type OwnerStep, type PlanStep, parseNoneLive, parseSteps } from "../steps.ts";
 import { grantsFor, parseAccess, type TestAsk } from "./access.ts";
-import { claudeUnixSockets, hostState } from "./hostcheck.ts";
+import { profileStep } from "./hostcheck.ts";
 import type { Mech } from "./mechanical.ts";
 import { cacheEnv, DEFAULT_NETWORK } from "./sandbox.ts";
 import { type Access, type Question, SCHEMAS } from "./schemas.ts";
@@ -364,6 +364,11 @@ const STAGE_OF_KIND: Record<RunKind, string> = {
 
 /** Record the step, then spawn a Claude run (LOOP-6, LOOP-7, PIP-13, PIP-24). */
 export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string): Progress {
+  // PIP-162: where user namespaces are restricted and Towercab's AppArmor profile is missing, no Claude run
+  // starts: the owner gets the one step, and a retry after installing it carries on fully locked down.
+  const host = cx.host?.();
+  const step = host ? profileStep(host, cx.tools.which("bwrap") ?? "/usr/bin/bwrap") : null;
+  if (step) return { done: wait("install sandbox profile", `${step.title}. Run: ${step.oneLine}`) };
   const repo = cx.repo(m);
   const runs = cx.runs(m);
   const cache = cx.home.cache(repo.name);
@@ -412,7 +417,6 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
         : { domains: [...DEFAULT_NETWORK], paths: [] },
     guardRules: p.guard ?? null,
     cacheEnv: cacheEnv(cache, repo),
-    unixSockets: claudeUnixSockets(hostState()),
     cache,
     config: cx.config,
   };

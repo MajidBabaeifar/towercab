@@ -89,7 +89,7 @@ export function problemsOf(loop: Loop): Problem[] {
       title: step.title,
       detail:
         "User namespaces are restricted on this machine and Towercab's AppArmor profile for bwrap is not installed.",
-      fix: `Run: ${step.commands.replaceAll("\n", "; ")}`,
+      fix: `Run: ${step.oneLine}`,
     });
   }
   out.push(...addProblems(loop.d.db));
