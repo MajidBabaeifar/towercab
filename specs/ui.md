@@ -1337,6 +1337,13 @@ The screenshot fixture has the cases that made the overview hard to use.
   them and a test checks the first Needs you card sits above the first proposal.
 - Verified by: `ui: screenshots light, dark and mobile`, `ui: fixture overview has the first needs-you card above the proposals`
 
+### UI-252 · The intent page shows the level of checks and review
+
+The intent page and its card show how hard the change is checked and reviewed, and who chose that.
+
+- Once a level is chosen ([PIP-187](pipeline.md)), the page shows `Checks and review: <level>` with its reason and "set by you" or "chosen by Towercab". `GET /api/intents/<id>` includes `intensity: {level, why, by} | null`; the card shows a small tag only for light and thorough.
+- Verified by: `ui: the intent page shows the level and who chose it`, `ui: the intent api returns the intensity`
+
 ## Out of scope
 
 - Editing intents in the page: the owner edits them in the intents repo or with `/intent`.

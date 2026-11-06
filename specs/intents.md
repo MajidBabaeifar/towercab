@@ -672,6 +672,14 @@ A GitLab issue is scored, proposed as an intent PR, deduplicated and label-check
 - A GitHub and a GitLab issue never share an intent, because dedupe is on the full `issue:` URL.
 - Verified by: `gitlab issues: an issue becomes one intent PR`, `gitlab issues: a done intent blocks its issue`, `gitlab issues: a labelled issue with no intent is proposed once`, `gitlab issues: the scoring run gets no tools`
 
+### INT-70 · An intent can set its intensity
+
+The owner can write how hard an intent is checked and reviewed in the intent file.
+
+- Optional front matter field `intensity`: one of `light`, `standard`, `thorough` (any case). It sets the level of both the checks and the review of that intent ([PIP-187](pipeline.md)..[PIP-191](pipeline.md)). Without it Towercab picks the level (PIP-189).
+- Any other value, or a non-string, makes the file unreadable (INT-11) with the reason `intensity must be light, standard or thorough`. The field is read and written like the other owner fields: edited with `setField`/`removeField`, other lines byte-identical.
+- Verified by: `intents: intensity is read from the front matter`, `intents: a wrong intensity makes the file unreadable`
+
 ## Out of scope
 
 - Other stores (Notion, Jira).
