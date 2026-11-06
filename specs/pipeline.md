@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..150 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..150, PIP-154..156 · **Prefix:** PIP
 
 ## Purpose
 
@@ -1529,14 +1529,13 @@ When a run's failed-jobs log is only a summary job's, the repair round gets the 
   `/job/` in the check's details URL (`Check.url`). The `Forge` gets `jobLog(repo, job)`, which reads
   `gh api repos/<repo>/actions/jobs/<job id>/logs`; like the other host reads only `GitHubForge` builds the
   arguments.
-- A check is a summary job when its name's last segment (after the final ` / `) is `ci-ok`, or when the
-  run's `--log-failed` output holds only lines of such jobs. When at least one failed check is not a
-  summary job, summary checks are skipped and only the others are read. When every failed check is a
-  summary job, the log is read as before (PIP-83).
+- A check is a summary job when its name's last segment (after the final ` / `) is `ci-ok`. When at least
+  one failed check is not a summary job, summary checks are skipped and only the others are read. When
+  every failed check is a summary job, the log is read as before (PIP-83).
 - Each job's tail is the last 6000 characters of its log (PIP-83's limit) under the line `Job <check name>:`;
   at most 3 jobs are read per round, in the order of the checks. The run-level `--log-failed` read of
   PIP-83 is kept for a check whose URL holds no job id and for the all-summary case.
-- Verified by: `pipeline: a red run whose failed log is only the summary job gives the repair round the failed job's finding`, `pipeline: summary jobs are skipped when another check failed`, `pipeline: a check without a job id in its URL keeps the run log`
+- Verified by: `pipeline: a red run whose failed log is only the summary job gives the repair round the failed job's finding`, `pipeline: summary jobs are skipped when another check failed`, `pipeline: a check without a job id in its URL keeps the run log`, `forge: jobLog reads the job's own log through the api`
 
 ### PIP-155 · A long job log is cut around the finding, never the secret
 
