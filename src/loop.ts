@@ -1302,7 +1302,11 @@ export class Loop {
         // PIP-141: the owner's `allow <path>` reverses a refusal, when no worker holds the mission's data.
         let reversed = false;
         if (!this.children.has(m.id)) {
-          for (const ask of reversalRequested(m, prs, this.d.github.me, bot)) {
+          const onlyYou = ownerOnly(
+            this.listing?.open.find((i) => i.id === m.intent)?.a ?? null,
+            m.a_at_pick,
+          );
+          for (const ask of reversalRequested(m, prs, this.d.github.me, bot, onlyYou)) {
             let said: string;
             try {
               const r = reverseRefusals(dataOf(m) as PipeData, ask.paths);

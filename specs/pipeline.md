@@ -1825,8 +1825,9 @@ A comment under the owner's login that carries the agent marker is recorded as a
 - Intent at `a0` (AUT-31): the comment raises no event: it does not steer, answer, approve or retry, `/retry` inside it does nothing. It is noted once as AUT-32 says, with the same wording as other ignored replies, and never answers a wait.
 - Intent at any other level: the comment is read as the owner's word as before (PIP-43, PIP-44), so it answers, steers or retries. Towercab keeps the agent's name with the event, so the Answer comment that says how the reply was read (PIP-140) starts with `Answered by <agent>, for the owner.`, and the card and the page show "agent for owner" (PIP-186). Which agent decided is visible and the work is not held up.
 - A comment by `[github].me` without the marker counts as the owner's, as before. Towercab cannot tell an agent that posts with a raw `gh pr comment` from the owner, and this requirement does not claim to (see Decisions).
+- At `a0` this includes the `allow <path>` reply of PIP-141: a marked one does not lift a refusal.
 - Reviews with a state (Approve, Request changes) are always the owner's and are not affected.
-- Verified by: `events: an agent-marked comment on an a0 intent is not an event`, `events: an agent-marked comment on another intent still counts and names the agent`, `events: an unmarked comment under the owner's login still counts`, `autonomy: an a0 mission ignores a marked agent reply`, `github: a stage comment says an agent answered for the owner`
+- Verified by: `events: an agent-marked comment on an a0 intent is not an event`, `events: an agent-marked comment on another intent still counts and names the agent`, `events: an unmarked comment under the owner's login still counts`, `autonomy: an a0 mission ignores a marked agent reply`, `autonomy: an a0 mission does not let a marked agent reply lift a refusal`, `github: a stage comment says an agent answered for the owner`
 
 ### PIP-186 · The intent page shows which comments an agent wrote
 

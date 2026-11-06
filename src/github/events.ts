@@ -528,7 +528,13 @@ export const reversalMarker = (commentId: string) => `<!-- towercab:allow:${comm
  * PIP-141: the owner's `allow <path>` comments, newer than `feedback_seen`, that no bot reply carrying
  * their marker answers; none while a test question is open (then they are its answer).
  */
-export function reversalRequested(m: Mission, prs: Prs, me: string, botLogin: string): ReversalAsk[] {
+export function reversalRequested(
+  m: Mission,
+  prs: Prs,
+  me: string,
+  botLogin: string,
+  ownerOnlyIntent = false,
+): ReversalAsk[] {
   if (finished(m.stage) || dataOf<{ testAsk?: unknown }>(m).testAsk) return [];
   const out: ReversalAsk[] = [];
   for (const kind of KINDS) {
@@ -537,6 +543,8 @@ export function reversalRequested(m: Mission, prs: Prs, me: string, botLogin: st
     if (!pr || n === null) continue;
     for (const c of pr.comments) {
       if (!isOwner(c.author, me) || !c.id || !newer(c.at, m.feedback_seen)) continue;
+      // PIP-185: on an a0 intent an agent's marked comment cannot lift a refusal.
+      if (ownerOnlyIntent && agentOfBody(c.body)) continue;
       const paths = parseAllow(c.body);
       if (!paths) continue;
       const marker = reversalMarker(c.id);
