@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-115..116 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-115..119 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -1315,11 +1315,13 @@ are stored in intent files and never change; each ask says plainly what the owne
 | `crashed at <stage>` | blocked | Towercab failed three times at the same step. Reply to try again once the cause is fixed, or start over. |
 | `spec conflict` | blocked | The spec clashes with other changes and Towercab couldn't combine them. Resolve it in the spec PR, then reply. |
 | `merge failed` | blocked | GitHub refused to merge the change. Fix what GitHub objects to, then reply to try again. |
-| `add CLAUDE.md verifying block` | blocked | Towercab doesn't know how to test this repo yet. Add a verifying section to its CLAUDE.md, then reply. |
+| `add CLAUDE.md verifying block` | blocked | Towercab couldn't find checks that pass on this repo. Add a verifying section to its CLAUDE.md, then reply. |
+| `setting up checks` | blocked | Towercab is adding checks to this repo in a pull request, and this goes on by itself once it is merged. Nothing to do unless you want to start over. |
 | `fix repo files` | blocked | One of the repo's files for Towercab can't be read. Fix it, then reply. |
 | `unknown repo` | (intent only) | Tell Towercab which repo this is for: add the repo, or fix the repo name in the intent. |
 | `bad after:` | (intent only) | Fix what this intent waits for: Towercab can't find one of the intents it names, or it was dropped. |
 | `several repos` | blocked | This change spans several repos and Towercab can't build those yet, so nothing was built. Do the change yourself and say so, or drop the intent. |
+| `dependency stalled` | blocked | An intent this one waits for was rolled back or dropped, or has not finished in 3 days. Take it out of `after:`, start over or drop this intent; it carries on by itself once the other one is done. |
 | `bad repos:` | (intent only) | Fix which repos this intent changes: Towercab doesn't know one of the repos it names. Add the repo, or fix the intent's repos list. |
 | `rolled back, revise` | blocked | The change broke the live app, two fixes didn't hold, and it was taken back out. Revise the intent, then start over (/retry). |
 | `rollback failed` | blocked | Taking the broken change back out failed, so nothing more goes live in this repo until you fix it. |

@@ -1028,6 +1028,9 @@ A folded Needs you card still shows what it is, what it asks and how long it has
   **Waits**; an open question shows its first line cut with an ellipsis) and the wait's age in the
   same form as the open card ("2 h"). The line ends with the toggle; it does not wrap on a 720 px
   screen (the title is cut with an ellipsis first).
+- The browser test measures the line only after fonts have loaded and layout has settled (two
+  animation frames with an unchanged size), and compares sizes with a tolerance of 1 px, so a slow
+  runner does not fail it. It must pass 20 repeats in a row.
 - Verified by: `ui: folded needs-you card shows title, repo, ask and age`
 
 ### UI-191 · Remember folded cards

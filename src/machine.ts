@@ -288,9 +288,15 @@ export const WAITS: Record<string, { stage: Stage; ask: string }> = {
     stage: "blocked",
     ask: "GitHub refused to merge the change. Fix what GitHub objects to, then reply to try again.",
   },
+  // REPO-37: asked only when no check could be drafted that passes; the why says what was tried.
   "add CLAUDE.md verifying block": {
     stage: "blocked",
-    ask: "Towercab doesn't know how to test this repo yet. Add a verifying section to its CLAUDE.md, then reply.",
+    ask: "Towercab couldn't find checks that pass on this repo. Add a verifying section to its CLAUDE.md, then reply.",
+  },
+  // REPO-36: `setting up checks: #<n>`; the intent carries on by itself when the PR merges.
+  "setting up checks": {
+    stage: "blocked",
+    ask: "Towercab is adding checks to this repo in a pull request, and this goes on by itself once it is merged. Nothing to do unless you want to start over.",
   },
   "fix repo files": {
     stage: "blocked",
@@ -303,6 +309,11 @@ export const WAITS: Record<string, { stage: Stage; ask: string }> = {
   "bad after:": {
     stage: "blocked",
     ask: "Fix what this intent waits for: Towercab can't find one of the intents it names, or it was dropped.",
+  },
+  // LOOP-119: the intent this one waits for was rolled back or dropped, or is unfinished after 3 days.
+  "dependency stalled": {
+    stage: "blocked",
+    ask: "An intent this one waits for was rolled back or dropped, or has not finished in 3 days. Take it out of `after:`, start over or drop this intent; it carries on by itself once the other one is done.",
   },
   // INT-42: a repo named in `repos:` that Towercab doesn't know.
   "bad repos:": {
@@ -361,10 +372,13 @@ export const EXITS: Record<string, ExitKind[]> = {
   "spec conflict": BASIC,
   "merge failed": BASIC,
   "add CLAUDE.md verifying block": BASIC,
+  "setting up checks": ["retry", "drop"],
   "fix repo files": BASIC,
   "unknown repo": BASIC,
   "bad after:": BASIC,
   "bad repos:": BASIC,
+  // LOOP-119: a reply would only come back to the same hold.
+  "dependency stalled": ["retry", "drop"],
   "several repos": ["done", "retry", "drop"],
   "rolled back, revise": BASIC,
   "rollback failed": BASIC,
@@ -434,6 +448,7 @@ export function waitKey(waiting: string): string {
   if (waiting.startsWith("crashed at")) return "crashed at";
   if (waiting.startsWith("bad after:")) return "bad after:";
   if (waiting.startsWith("bad repos:")) return "bad repos:";
+  if (waiting.startsWith("setting up checks")) return "setting up checks";
   return waiting;
 }
 

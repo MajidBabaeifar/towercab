@@ -25,6 +25,7 @@ import {
   aheadIn,
   buildingIn,
   capOf,
+  heldByAfter,
   idleIn,
   isAhead,
   isBuilding,
@@ -363,6 +364,9 @@ export function stateOf(m: Mission, now: number, o: StateOpts = {}): StateView {
   if (m.waiting === "your steps first" || (m.stage === "steps" && m.waiting))
     return state("needs", "Your steps");
   if (isReady(m)) return state("queued", "ready to build");
+  // LOOP-118: held by `after:` is a quiet wait of Towercab's own, never stalled.
+  if (heldByAfter(m))
+    return state("queued", dataOf<{ afterHold?: { text: string } }>(m).afterHold?.text ?? null);
   // UI-168: waiting for the teammates is not waiting for the owner.
   if (onTeammates(m)) return state("working", "waiting for teammates");
   if (isWait(m.stage)) {
@@ -2084,6 +2088,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
       cooldownUntil: live.limit_model ? (s.cooldowns.get(live.limit_model) ?? null) : null,
       config: src.config,
     });
+    if (heldByAfter(live)) reason = dataOf<{ afterHold?: { text: string } }>(live).afterHold?.text ?? null;
   } else if (intent?.done) {
     st =
       s.listing?.droppedIds.has(realId) || intent.stage === "dropped"

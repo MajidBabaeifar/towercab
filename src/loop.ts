@@ -2,6 +2,7 @@
 // work, sends messages. Single-threaded: children run detached and are reaped on the next pass.
 
 import { readFileSync, rmSync, statSync } from "node:fs";
+import { type AfterHold, afterState, heldText, holdTrigger, nextHold } from "./after.ts";
 import { Inhibitor, woke } from "./awake.ts";
 import { slotStep } from "./capacity.ts";
 import { removeCheckout } from "./checkout.ts";
@@ -59,6 +60,7 @@ import {
   type Outcome,
   phaseOf,
   type Subject,
+  wait,
   waitInfo,
 } from "./machine.ts";
 import {
@@ -88,6 +90,7 @@ import { recordParser } from "./repo/settings.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
 import { checkoutRoot } from "./service.ts";
 import { nextSettingsDue, settingsCycle } from "./settings/apply.ts";
+import { dropMerged, resumable, setupChecksPass, setupWork } from "./setup-checks.ts";
 import { runReleases } from "./ship/releases.ts";
 import { advanceSecrets } from "./ship/secret-steps.ts";
 import {
@@ -212,6 +215,7 @@ export class Loop {
   private limitsJob: Promise<void> | null = null;
   /** REPO-30: the daily settings check of one repo, running now. */
   private settingsJob: Promise<void> | null = null;
+  private setupJob: Promise<void> | null = null;
   /** Held by every handler call and by the readiness fetch: two fetches of one clone never overlap. */
   private readonly cloneLock = new Mutex();
   private featuresStop: (() => void) | null = null;
@@ -364,6 +368,7 @@ export class Loop {
       this.featuresJob !== null ||
       this.readinessJob !== null ||
       this.settingsJob !== null ||
+      this.setupJob !== null ||
       this.issuesRun !== null
     )
       return;
@@ -380,6 +385,7 @@ export class Loop {
     await this.featuresIdle();
     await this.readinessIdle();
     await this.settingsIdle();
+    await this.setupChecksIdle();
     await this.limitsIdle();
     for (const [id, r] of this.children) {
       r.handle.kill("SIGTERM");
@@ -502,10 +508,13 @@ export class Loop {
     await this.enterDue();
     this.enforceTimeouts();
     await this.pollIntents(false);
+    this.releaseStalled();
     await this.pollProposed(false);
     await this.requeueKnownRepos();
     this.startReadiness();
     this.startSettings();
+    this.resumeSetupWaits();
+    this.startSetupChecks();
     this.enforceDrain();
     // LOOP-105, LOOP-108: with the checkout moved or an update waiting, running children finish but
     // nothing new starts.
@@ -542,6 +551,7 @@ export class Loop {
       this.featuresJob === null &&
       this.readinessJob === null &&
       this.settingsJob === null &&
+      this.setupJob === null &&
       live.length === 0 &&
       report.picked === null;
     if (this.targetId) {
@@ -1018,6 +1028,45 @@ export class Loop {
       });
   }
 
+  /**
+   * REPO-34..36: the setup of a repo that has no checks (draft, prove, open and drive the PR), as a background
+   * job like the settings check, one repo at a time; its fetch holds the clone lock.
+   */
+  private startSetupChecks(): void {
+    if (this.setupJob || this.drain !== null || this.codeMoved() !== null) return;
+    if (!setupWork(this.d.db, this.d.config, this.d.clock.now())) return;
+    this.setupJob = setupChecksPass({
+      config: this.d.config,
+      home: this.d.home,
+      db: this.d.db,
+      tools: this.d.tools,
+      clock: this.d.clock,
+      store: this.d.store,
+      github: this.d.github,
+      log: this.d.log,
+      exclusive: <T>(fn: () => Promise<T>) => this.cloneLock.run(fn),
+    })
+      .then(() => undefined)
+      .catch((e: Error) => this.d.log(`setting up checks: ${e.message}`))
+      .finally(() => {
+        this.setupJob = null;
+      });
+  }
+
+  /** REPO-36: intents waiting for a setup PR that merged, closed or failed carry on, with no reply. */
+  private resumeSetupWaits(): void {
+    for (const m of resumable(this.d.db)) {
+      this.d.log(`${m.intent}: the checks of ${m.repo} are settled; carrying on`);
+      this.move(m, { event: "answered", counted: true });
+    }
+    dropMerged(this.d.db, this.d.config);
+  }
+
+  /** Resolves when no setup job is running (tests and shutdown wait for it). */
+  async setupChecksIdle(): Promise<void> {
+    while (this.setupJob) await this.setupJob;
+  }
+
   /** Resolves when no settings check is running (tests and shutdown wait for it). */
   async settingsIdle(): Promise<void> {
     while (this.settingsJob) await this.settingsJob;
@@ -1364,7 +1413,8 @@ export class Loop {
     const order = [...back, ...all.filter((m) => !back.includes(m))].sort(
       (a, b) => Number(isAnswered(b)) - Number(isAnswered(a)),
     );
-    for (const m of order) {
+    for (const listed of order) {
+      let m = listed;
       if (!isWorking(m.stage) || m.step === "enter" || m.held || this.children.has(m.id)) continue;
       // LOOP-105: no step of a loop whose checkout moved under it runs.
       if (this.codeMoved() !== null) break;
@@ -1374,6 +1424,12 @@ export class Loop {
       if (this.opts.intent && this.targetId && m.intent !== this.targetId) continue;
       const h = this.d.handlers[m.stage];
       if (!h) continue;
+      // LOOP-117: before a build starts or goes on, the intent's current `after` is read again.
+      if (m.stage === "build" && m.pr === null && m.step !== "commit") {
+        const checked = this.holdByAfter(m);
+        if (checked === null) continue;
+        m = checked;
+      }
       // LOOP-115: a change back at build (or CI) from outside the slots takes a free slot before its
       // first step, so it never works on the repo without holding one; with none free it waits.
       if ((m.stage === "build" || m.stage === "ci") && isBuilding(m) && isIdle(m)) {
@@ -1389,6 +1445,51 @@ export class Loop {
       }
       const fresh = update(db, m.id, { busy: 1 }, this.now);
       await this.drive(fresh, () => h.step(this.ctx(timeouts), fresh));
+    }
+  }
+
+  /**
+   * LOOP-117..119: the mission at build, read against the intent's current `after`. Null: it is held (or
+   * moved to a wait) and starts nothing; else the mission, free to go on.
+   */
+  private holdByAfter(m: Mission): Mission | null {
+    const { db } = this.d;
+    const hold = dataOf<{ afterHold?: AfterHold }>(m).afterHold;
+    const listing = this.listing;
+    const intent = listing?.open.find((i) => i.id === m.intent);
+    // Without a read of the intents repo nothing is decided: a held mission stays held.
+    if (!listing || !intent) return hold ? null : m;
+    const s = afterState(listing, intent);
+    if (s.bad.length > 0) {
+      this.move(m, wait("bad after:", s.bad.join(", "), { data: { afterHold: undefined } }));
+      return null;
+    }
+    if (s.blockers.length === 0) return hold ? patchData(db, m, { afterHold: undefined }, this.now) : m;
+    const read = nextHold(hold, intent.after, heldText(s.blockers), this.now);
+    const why = holdTrigger(read, s, this.now);
+    if (why) {
+      this.move(m, wait("dependency stalled", why, { data: { afterHold: { ...read, notified: true } } }));
+      return null;
+    }
+    const d = dataOf<{ idle?: boolean; returning?: number }>(m);
+    if (JSON.stringify(hold) !== JSON.stringify(read) || d.idle !== true || d.returning !== undefined) {
+      patchData(db, m, { afterHold: read, idle: true, returning: undefined }, this.now);
+    }
+    return null;
+  }
+
+  /** LOOP-119: a mission that waited for the owner about a dependency goes on once none is left. */
+  private releaseStalled(): void {
+    const listing = this.listing;
+    if (!listing) return;
+    for (const m of unfinished(this.d.db)) {
+      if (m.stage !== "blocked" || m.waiting !== "dependency stalled" || m.step === "enter") continue;
+      const intent = listing.open.find((i) => i.id === m.intent);
+      if (!intent) continue;
+      const s = afterState(listing, intent);
+      if (s.blockers.length === 0 && s.bad.length === 0) {
+        this.move(m, { event: "answered", why: "the intents it waited for are done" });
+      }
     }
   }
 
@@ -1721,7 +1822,8 @@ export class Loop {
       this.children.size === 0 &&
       this.featuresJob === null &&
       this.readinessJob === null &&
-      this.settingsJob === null;
+      this.settingsJob === null &&
+      this.setupJob === null;
     // A drain whose children are gone updates at once instead of at the next minute.
     if (!(this.drain !== null && idle()) && this.now - this.lastUpdate < UPDATE_POLL_S) return;
     this.lastUpdate = this.now;

@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..156 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..156, PIP-165..166 · **Prefix:** PIP
 
 ## Purpose
 
@@ -243,6 +243,9 @@ Every Claude run is headless, sandboxed, and gets only the tools and access its 
 - Tools by agent: **Agents** table. Disallowed for every run: `Bash(git push:*)`,
   `Bash(git remote:*)`, `Bash(git config:*)`, `Bash(gh:*)`, `Bash(ssh:*)`, `Bash(sudo:*)`, `Read` of
   each secret path. A denied push or secret read fails the step.
+- Draft change: PIP-157..159 and AUT-26 fix the sandbox settings, the environment and the granted
+  domains in code (no `WebFetch(domain:*)`, no `[agent].env`). The code PR switches this row, PIP-23,
+  PIP-95 and PIP-116 (wording), LOOP-34 and LOOP-69 in the same commit as the code.
 - Verified by: `claude: worker argv`, `claude: review argv`, `claude: settings by autonomy`, `claude: result parse`, `claude: no token in env`, `claude: other missions are unreadable`
 
 ### PIP-25 · Design
@@ -1559,6 +1562,75 @@ When one job's log can't be read, the repair details say so in one line and the 
   `--log-failed` output is used for that check instead; it neither throws nor counts as a crash (LOOP-6).
 - Verified by: `pipeline: an unreadable job log is noted and the run log is used`
 
+### PIP-157 · The sandbox is fixed in code
+
+Nothing a person or a repo writes can loosen the sandbox: its arguments, mounts, masked files, environment and network are decided by Towercab's code alone.
+
+- `sandboxArgv`, the Claude run's sandbox settings (PIP-24) and the sandbox environment are built from the mission only (checkout, cache, granted domains). No config key, no `TOWERCAB.md`, `CLAUDE.md` or agent file, no intent field and no plan text adds a mount, removes a mask, adds a variable, passes a bwrap or Claude sandbox argument or turns the sandbox off.
+- There is no "unsafe" switch, flag or environment variable. `[agent].toolchain`, `[agent].path`, `[agent].env` and `[agent].sandbox_unix_sockets` no longer reach a sandboxed command: the toolchain directories, `PATH` and the masked files are constants of `src/pipeline/sandbox.ts`, and unix sockets are never bound in. The one setting that stays is a repo's named variables, `[repos.<r>].env`, under the narrow rule of PIP-159. A config that still sets an ignored key loads, and `towercab doctor` names the key as ignored.
+- A repo file that asks for more (a `TOWERCAB.md` setting, an agent file with `sandbox: none` for a tool-using agent, PIP-78) is refused with the reason or ignored, and never changes the argv.
+- Verified by: `sandbox: config keys do not change the argv`, `sandbox: repo and intent files do not change the argv`, `sandbox: no unsafe switch exists`, `sandbox: ignored config keys are named by doctor`
+
+### PIP-158 · Network goes through an allowlist proxy
+
+A sandboxed command has no network of its own: it reaches only the domains the run is granted, through a proxy that checks every connection.
+
+- The sandbox always runs with `--unshare-net`. A proxy run by Towercab outside the sandbox listens on a unix socket bound into it; the sandbox sets `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` for it (and their lower-case forms) and has no other route out.
+- The proxy allows a `CONNECT` or request only to a granted domain (AUT-14, AUT-26; `*.d` matches subdomains). It refuses IP literals, a name that resolves to a loopback, private or link-local address, a port other than 80 and 443, and any host not granted; a refusal is logged with the domain.
+- The built-in package-registry list (AUT-14, AUT-26) is the same for setup (PIP-23), checks, proof, screenshots and e2e commands and Claude runs, and nothing more: any other domain reaches a command only as a plan grant (AUT-14). Nothing else changes by command or by autonomy level. With no domain at all, no proxy socket is bound and nothing is reachable.
+- Verified by: `sandbox: network is always unshared`, `sandbox: the proxy allows a granted domain`, `sandbox: the proxy refuses a domain that is not granted`, `sandbox: the proxy refuses IP literals and private addresses`, `sandbox: no grant binds no proxy`
+
+### PIP-159 · A repo's commands never see a credential
+
+Setup, checks and e2e commands of a repo run with no token, key or login of the person running Towercab, nor of Towercab itself.
+
+- The environment is built from an allowlist: `HOME` (an empty tmpfs), `PATH`, `LANG`, `TMPDIR`, the proxy variables (PIP-158), the cache variables (LOOP-34) and the repo's own named variables `[repos.<r>].env`. No variable of Towercab's own environment passes, so `GH_TOKEN`, `GITHUB_TOKEN`, `ANTHROPIC_*`, `SSH_AUTH_SOCK`, `AWS_*`, `SOPS_*` and `AGE_*` are never set.
+- A repo variable in `[repos.<r>].env` passes only if its name is not token-like (it contains none of `TOKEN`, `KEY`, `SECRET`, `PASSWORD`, `AUTH`, any case) and its value is not a secret pattern (a GitHub, Anthropic, AWS, Slack or similar token prefix, a JWT, or a PEM block). It cannot be `PATH`, `HOME`, `LD_*`, `SOPS_*`, `AGE_*` or a proxy variable. `towercab repo set` refuses such a pair with the reason (LOOP-69); one already in the config is left out of the sandbox, and `towercab doctor` names it and the rule. Variables that fit stay allowed, for example `CARGO_TARGET_DIR` (PIP-95).
+- Secret paths are not visible: `~/.ssh`, `~/.config/gh`, `~/.claude`, `~/.config/towercab` (the App key, secrets files), the other secret paths of PIP-24 and Towercab's home outside this mission. They are hidden by the tmpfs home and the masks, not by a permission the command could change.
+- No credential helper, agent socket or `gh` login is reachable. The `claude` run keeps its own credentials only for the Claude process, never for the commands it starts (PIP-24).
+- Verified by: `sandbox: a repo command sees no credential variable`, `sandbox: ssh keys and the app key are unreadable`, `sandbox: gh and claude credentials are unreadable`, `sandbox: a token-like repo variable name is left out`, `sandbox: a secret-looking repo variable value is left out`, `sandbox: a repo variable that fits the rule passes`, `sandbox: PATH and HOME cannot be set by a repo`
+
+### PIP-160 · Escape attempts run in CI and all fail
+
+A suite of real escape attempts runs in CI against the real sandbox, and every attempt must fail.
+
+- Each attempt runs a command through the same builder as production (`sandboxArgv` and the Claude settings) and passes only if the attempt fails: reading `~/.ssh` and the App key, writing outside the checkout, writing into `<checkout>/.git`, reaching a host without a grant (direct, by IP, by a non-granted name, through a granted name that resolves to a private address), reading a secret environment variable, listing host processes (`/proc` shows only the sandbox's own), and a signal or `ptrace` to a host process.
+- The suite is part of `npm run check` and of the CI workflow. Where bwrap is not installed, each attempt is skipped with the note `skipped: no bwrap`, so a local run still passes. The CI workflow installs bwrap and the AppArmor profile of PIP-162 and fails if bwrap is missing there, so the suite always runs in CI. A leak fails with the attempt and what it read or wrote.
+- Verified by: `sandbox escape: ssh keys cannot be read`, `sandbox escape: the app key cannot be read`, `sandbox escape: a write outside the checkout fails`, `sandbox escape: a write into .git fails`, `sandbox escape: the network is unreachable without a grant`, `sandbox escape: secret variables are not set`, `sandbox escape: host processes are not visible`, `sandbox escape: without bwrap the attempts are skipped with a note`, `sandbox escape: CI installs bwrap and fails when it is missing`
+
+### PIP-161 · No sandbox, no run
+
+When the sandbox cannot start, the run stops as a fault; Towercab never falls back to running without it.
+
+- A bwrap that is missing, refused (user namespaces denied) or that fails before the command starts is a fault ([LOOP-10](loop.md)) naming the reason, for setup, checks, e2e, proof and Claude runs alike. The Claude settings keep `failIfUnavailable: true` and `allowUnsandboxedCommands: false`.
+- The fault text never tells the owner to set a config key or variable that loosens the sandbox (it replaces `set [agent] sandbox_unix_sockets = true`); where user namespaces are restricted it gives the profile fix of PIP-162, else "check bwrap".
+- No config key, flag or retry path runs the command unsandboxed. A fault does not count as a repair round or a red check.
+- Verified by: `sandbox: a missing bwrap is a fault, not a run`, `sandbox: a refused namespace is a fault, not a repair`, `sandbox: no path runs a command unsandboxed`, `sandbox: the fault text names no setting that loosens the sandbox`
+
+### PIP-162 · It works on Ubuntu's restricted user namespaces
+
+The sandbox runs on Ubuntu with unprivileged user namespaces restricted, without asking the owner to switch that protection off.
+
+- Towercab never tells the owner to set `kernel.apparmor_restrict_unprivileged_userns=0` or `kernel.unprivileged_userns_clone`. Where the restriction blocks bwrap, `towercab doctor` and the fault of PIP-161 say it and give the narrow fix: an AppArmor profile that allows only the `bwrap` binary Towercab uses to create user namespaces.
+- The self-test of PIP-163 runs the real argv, so a restricted host is found before a mission starts.
+- Verified by: `sandbox: a restricted user namespace gives the apparmor profile fix`, `sandbox: doctor never suggests turning the restriction off`
+
+### PIP-163 · The sandbox is tested at start
+
+Towercab proves the sandbox holds on this machine before it runs a mission, and again in `doctor`.
+
+- At service start and in `towercab doctor`, a probe runs through the production builder: a read of a planted canary outside the checkout fails, a write into `.git` fails, and a request without a grant fails. A failed probe is a fault (PIP-161) and the loop takes no mission until the next successful probe.
+- The probe's result and the bwrap version show in `doctor`.
+- Verified by: `sandbox: the start probe passes on a sound sandbox`, `sandbox: a failed probe stops the loop taking missions`, `doctor: shows the sandbox probe`
+
+### PIP-164 · Granted domains are the only widening, and are checked
+
+The only thing a plan or a request can widen in a sandbox is a domain, and a domain that would open the whole internet is refused.
+
+- A grant (plan Access section, mid-build request, an intent's `network` field, AUT-14) must be a host name or `*.<name>` with at least two labels. `*`, a bare TLD, `*.com`, an IP literal, a URL or a name with a port is refused with the reason; a plan with one waits for the owner as an invalid grant, and a mid-build request is refused without asking (AUT-27). A grant is added only from an approved plan, the intent or an owner's answer (AUT-15); a worker's request never adds one by itself.
+- A path or test grant (REPO-8, PIP-151) never reaches the sandbox arguments beyond the checkout: protected paths stay inside the checkout, and `.git` stays read-only.
+- Verified by: `sandbox: a wildcard or TLD grant is refused`, `sandbox: an IP literal grant is refused`, `sandbox: a path grant does not widen the mounts`
+
 ### PIP-130 · The design treats IDs of other open spec PRs as taken
 
 Two open spec pull requests never get the same requirement numbers: the design leaves out every number another open one already added.
@@ -1634,6 +1706,76 @@ The verdict line of the Review comment always matches what Towercab does with th
   overrode it, in plain words.
 - Verified by: `pipeline: the review comment says a fix round is coming`, `pipeline: the review comment never approves above a fix round`, `pipeline: the review comment names the check that overrode the agent`
 
+### PIP-165 · A spec settles after two rounds of answers
+
+Once the owner has answered a spec PR twice, the design and the second reviewer stop raising new open points and decide them.
+
+- A round is one owner answer on the spec PR that starts a design revision (PIP-97's `data.specAnswers`; Towercab's own conflict and red-check revisions don't count). Rounds = the number of kept answers.
+- From the third design run on (rounds ≥ 2) the design prompt says: no new `open_questions` left unanswered, and each point it would have asked is decided with the conservative option (the one that is easiest to undo, changes least, or keeps today's behaviour). The result's `open_questions` then all carry an `answer`.
+- Every such choice is listed in the spec PR body under `## Decisions`, one line each: the point, the option taken, and why it is the conservative one. The section is added by the design run in `pr`; the earlier rounds' entries are kept.
+- This includes a point that contradicts an earlier owner answer: the design decides it, keeps the earlier answer where it can, and records the choice under `## Decisions`. It is not asked.
+- At the spec gate the second reviewer's `open_points` (PIP-97) are dropped when rounds ≥ 2, apart from the unsafe gap in PIP-166: its prompt is told the spec is settled. The gate then decides on risk alone, and the spec PR body has no `## Open points for you` section.
+- Verified by: `pipeline: a third design run after two answered rounds leaves no open points and lists its decisions`, `pipeline: a contradiction with an earlier answer after two rounds is decided and listed`, `pipeline: after two rounds the spec gate ignores new open points`, `pipeline: before two rounds open questions still go to the owner`
+
+### PIP-166 · After two rounds only an unsafe gap can still be raised
+
+After two rounds, the second reviewer may still raise a point when leaving it open would make the spec unsafe, and says so.
+
+- Unsafe means a gap in security, a risk of data loss, or an irreversible action. A detail, a preference, an unclear intent or a contradiction with an earlier answer is not unsafe and follows PIP-165.
+- The reviewer labels such a point `Unsafe:` with the kind (`security`, `data loss` or `irreversible action`) and why; `open_points` entries carry that label in `point`. An unlabelled point is dropped as in PIP-165. The design run itself never asks after two rounds, unsafe or not; it records how it covered the gap under `## Decisions`.
+- A labelled point is an open point as PIP-97 describes: the spec gate waits for it and the spec PR body lists it under `## Open points for you`. It is the only kind the gate keeps after two rounds.
+- Verified by: `pipeline: after two rounds the reviewer may still raise an unsafe gap, labelled`, `pipeline: after two rounds an unlabelled reviewer point is dropped`, `pipeline: the design never asks after two rounds, even for an unsafe gap`
+
+### PIP-167 · A conflict where both sides only added is resolved by code
+
+Before a conflict round goes to the worker, Towercab tries to merge the base into the PR by itself when both sides only added lines.
+
+- Applies to every conflict round (PIP-134, PIP-31, PIP-22, and the merge of commits pushed to the PR in PIP-2), before the worker runs. Towercab merges `origin/<base>` into the checkout and looks at each conflict hunk.
+- A hunk is additive when neither side removed or changed a line the other kept: relative to the merge base, each side only inserted lines. An additive hunk keeps both sides, ours (the PR's) first, then theirs (the base's).
+- Two import lines from the same module (`import { a } from "./x.ts"` and `import { b } from "./x.ts"`) become one import with the names merged, sorted and without duplicates. Other import hunks keep both sides as above.
+- A spec file's Status line (`**Status:** Live: …`) where both sides added IDs becomes one line: the `Live:` lists are united and ID ranges of one prefix are merged and sorted (`PIP-1..54, PIP-167` and `PIP-1..54, PIP-160..166` give `PIP-1..54, PIP-160..167`).
+- If any hunk is not additive (one side deleted or edited a line the other kept), or the resolved tree fails the full checks of [repo.md](repo.md) (the repo's `checks` block, run as in PIP-23, not the `fast` subset), or the merge review of PIP-169 says a side was lost, the resolution is dropped without trace: the merge is aborted and the conflict round goes to the worker as before. No commit is pushed, and the failed attempt is not counted as one of the 2 automatic conflict rounds of PIP-134.
+- Verified by: `pipeline: a conflict where both sides added imports is resolved without a worker`, `pipeline: a conflict where both sides added keys to a list is resolved without a worker`, `pipeline: a conflict where one side deleted a line goes to the worker`, `pipeline: a mechanical resolution that fails the full checks goes to the worker`, `pipeline: spec Status lines from both sides are merged`
+
+### PIP-168 · A conflict that splits a block is resolved by applying the PR's own diff
+
+When a conflict hunk cuts through a block (CSS rules, say), Towercab takes the base branch's file and applies the PR's own change to it.
+
+- Applies per file, after PIP-167's hunk rule: a file where a hunk is not additive only because it splits a block, or where the hunk rule cannot decide, is resolved with the PR's diff for that file (merge base → PR head) applied onto the file as it is on `origin/<base>`. The patch must apply with no conflict and no fuzz (plain `git apply`, no three-way merge).
+- Other files of the same merge keep the result of PIP-167. If the patch does not apply cleanly to any such file, or the result fails the full checks or the merge review (PIP-167, PIP-169), the whole attempt is dropped and the worker's conflict round runs as before.
+- A file the base deleted or renamed is never resolved this way; it goes to the worker.
+- Verified by: `pipeline: a conflict that splits a CSS block is resolved by applying the PR's diff`, `pipeline: a PR diff that does not apply cleanly goes to the worker`
+
+### PIP-169 · The mechanical resolution is Towercab's own merge commit, reviewed only as a merge
+
+A conflict that code resolved is committed as Towercab's merge commit, checked in full and reviewed for the merge alone, so the gate never reads it as someone else's work and the whole PR is not reviewed again.
+
+- The commit is a merge of `origin/<base>` into the PR branch with Towercab's commit identity, the same as the worker's merge in a conflict round, and a message that says the base was merged and no files needed a worker. Both parents are kept; no force-push (PIP-2).
+- The gate's check for someone else's commits (PIP-7) does not count this commit, nor the base commits it brings in. Publish then pushes it, the mission goes on to `ci` on the new head, and no worker round or fix round is used.
+- The test lock of PIP-31 treats the files it changed as a merge of the base (PIP-153).
+- Merge review: after the full checks pass and before the push, a read-only session of the review model (PIP-4) is given only the diff of the merge commit against its first parent (the PR head before the merge) and the hunks Towercab resolved. It answers one question: did the combination keep both sides, nothing lost and nothing duplicated? Its result is `kept_both` (boolean) and `lost` (what was dropped or doubled, with file). `kept_both` false → the attempt is dropped (PIP-167). The verdict is posted as a short comment on the PR, written for the owner (PIP-39).
+- No full review follows: the review of the previous head (PIP-4) stands for the merge head, because the merge brings in no new content of the PR's own. The mission goes from the push to `ci`, and the review stage records the carried-over review instead of running again. The risk agent's assessment (PIP-96) is likewise carried over. A later push that changes the PR's own diff is reviewed in full as PIP-4 says.
+- Verified by: `pipeline: a mechanical merge commit is Towercab's own at the gate`, `pipeline: a mechanical resolution uses no worker round`, `pipeline: a mechanical merge is reviewed on its own diff only`, `pipeline: a merge review that finds a lost side goes to the worker`, `pipeline: a mechanical merge does not trigger a full review`
+
+### PIP-170 · Every job in Towercab's CI has a time limit
+
+A job in Towercab's own CI that hangs fails within minutes instead of holding up a pull request for hours.
+
+- Every job in `.github/workflows/ci.yml` that runs steps sets `timeout-minutes`, sized to its normal run: 15 for `Playwright: UI screenshots` and `Node 22: lint, typecheck, tests`, 10 for every other such job, including `ci-ok`. GitHub's 6-hour default never applies to them.
+- The jobs that call a shared workflow (`uses:`, PIP-90) set no limit and the test skips them; they rely on the cancel and rerun of PIP-171. A limit inside the shared workflows is a separate change in `MajidBabaeifar/ci`, not part of this requirement.
+- A job that hits its limit ends as a failure; Towercab reads it as red (PIP-3) and the first-red rerun of PIP-18 takes over.
+- Verified by: `public: every CI job that runs steps sets timeout-minutes`, `public: jobs that call a shared workflow are exempt from the limit`
+
+### PIP-171 · A check that hangs is cancelled and rerun by Towercab, not left to the owner
+
+On any repo, when a check stays pending past the CI wait, Towercab cancels that run and reruns it, and asks the owner only if the rerun hangs too.
+
+- A check still pending past `ci_wait` (PIP-3) whose run is an Actions run (run ID from `detailsUrl`, PIP-18) is, once per head: recorded first, then `gh run cancel <run>`, and when the run has ended `gh run rerun <run> --failed`. This replaces the owner's ask for the first hang; no repair is counted and the run's timer (`ci_wait`) starts again from the rerun. The same applies to the spec PR's checks (PIP-82). Only `GitHubForge` builds these `gh` arguments (the owner allowed the cancel here; an agent session still may not cancel runs).
+- The rerun pending past `ci_wait` again, a cancel or rerun that `gh` refuses, or a head that was already rerun for a red (PIP-18) → `waiting: CI stuck` (on a spec PR `waiting: approve spec`, PIP-82); the reason says the run hung twice, or why `gh` refused.
+- A check that is not an Actions run is never cancelled or rerun: pending past `ci_wait` is stuck at once.
+- A new head starts again with no run used.
+- Verified by: `pipeline: a hung Actions run is cancelled and rerun once`, `pipeline: a rerun that hangs too waits for the owner`, `pipeline: a pending check that is not an Actions run is stuck at ci_wait`, `pipeline: a hung spec PR check is cancelled and rerun`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
@@ -1706,6 +1848,19 @@ score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outc
   machine safe.
 - Spec rows are `Draft` in the spec PR and the code PR flips them to `Live`, so `main` never claims
   something is built before it is.
+- Hung CI (PIP-170, PIP-171, the owner's calls, 2026-11-06): limits only on Towercab's own step-running jobs; the
+  shared-workflow callers have none and rely on cancel and rerun; a hung check is cancelled and rerun by Towercab
+  on any repo, once per head. Decided without asking: the rerun waits `ci_wait` again before the owner is asked;
+  a check that is not an Actions run is never touched; the rerun counts no repair; a new head starts again with
+  the run unused; the stuck wait on a spec PR follows the same path. The flaky UI test is fixed in UI-190, not
+  by a new row.
+- Sandbox locked in code (the owner's call, 2026-11-06; PIP-157..164): built rows stay true to today's
+  code and the new behaviour is Draft until the code PR switches both together. Conservative defaults
+  taken where the intent was silent: the only configurable sandbox input is a repo's named variables
+  (no token-like name, no secret-looking value); the registry list is the same for setup, checks, e2e
+  and Claude runs; escape tests skip with a note where bwrap is missing but CI must have it; a
+  mid-build access request is asked, never granted, for paths as well as domains; an invalid domain
+  is refused without asking.
 - The agent files were compared with Anthropic's AI-Native SDLC Playbook (2026-10-28). Taken: findings
   name their pass (PIP-92), the plan names its files (PIP-93), the review gets a cost cap (PIP-94), the
   scorer fills the intent's other sections ([INT-32](intents.md)), and the review skips what the
