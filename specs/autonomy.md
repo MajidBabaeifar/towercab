@@ -266,11 +266,20 @@ An intent set to `a0` is decided by the owner alone: every wait goes to them and
 
 On an a0 intent only the owner's own replies and actions count; the shadow, other agents and other accounts cannot answer or approve.
 
-- Two channels count: the owner's GitHub login as in PIP-44, and the local page (`POST /api/actions` with `actor: owner`, UI-65). Telegram never counts, because it goes through the shadow: a message there, a `yes` included (SHD-10), is not an answer, an approval, a merge, a drop, a start or a boost of an a0 intent. The shadow may tell the owner where to answer and link the intent's page or PR (SHD-21).
+- Two channels count: the owner's GitHub login as in PIP-44, and the local page (`POST /api/actions` with `actor: owner`, UI-65). Telegram never counts, because it goes through the shadow: a message there, a `yes` included (SHD-10), is not an answer, an approval, a merge, a drop, a start or a boost of an a0 intent. The command line never counts either (AUT-33). The shadow may tell the owner where to answer and link the intent's page or PR (SHD-21).
 - A shadow action (SHD-19) aimed at an a0 intent is refused with the reason "this intent is only yours" and recorded as refused (SHD-12, UI-237), except the pause of SHD-22. It is never held for a `yes`.
 - A comment, review or reply from any other account, the App's bot or an agent is ignored as in PIP-44 and, at a0, also noted once on the intent's timeline (who, where, that it was ignored). Notes are not repeated for the same comment.
 - Nothing the shadow or an agent says is read as an answer to a question, an approval of a spec or plan, a choice for test or network access, or a merge.
 - Verified by: `autonomy: a0 ignores replies from other accounts and notes them`, `autonomy: telegram never answers an a0 intent`, `shadow: an a0 intent is refused`, `events: only the owner's comments count`
+
+### AUT-33 · The command line cannot decide for an a0 intent
+
+The command line refuses to answer, approve, start, drop or tick steps on an a0 intent, because it cannot tell the owner from an agent using it.
+
+- On an intent whose effective `a` is 0 (AUT-31), these commands (LOOP-15) print one line and change nothing: `answer`, `approve`, `start`, `drop`, `step`, plus `done`, `retry` and the per-intent `resume` (SHD-22). The line is `towercab: <id> is only yours: use GitHub or the page`, exit 1 (LOOP-15). The check runs before any `commands` row is written, with a loop running or not.
+- The loop applies a `commands` row for an a0 intent only when it came from the page (`by: page`); a row from the CLI is dropped and noted on the intent's timeline (AUT-32), so a row written straight into the database does not get around the check.
+- Still allowed on an a0 intent: `status`, `next`, `logs`, `ui`, `doctor` and `towercab pause` (global, or for the intent as in SHD-22), since none of them answers, approves or advances anything.
+- Verified by: `cli: an a0 intent refuses answer approve start drop and step`, `cli: pause and status work on an a0 intent`, `commands: an a0 command row from the cli is dropped`
 
 ## Out of scope
 
@@ -304,5 +313,12 @@ On an a0 intent only the owner's own replies and actions count; the shadow, othe
 - The level has a floor in code so that a one-way door or a red line can't be talked down to low by
   the agent. A red line is the repo owner's own list of what must not change unseen, so touching one
   is high, which waits even at a5.
+- Owner-only means GitHub or the page (the owner's calls, 2026-11-06): Telegram goes through the
+  shadow and the CLI is used by agents acting for the owner, so neither can tell the owner from an
+  agent. Conservative defaults taken: `done`, `retry` and per-intent `resume` are refused on the CLI
+  like `answer` (they clear a wait the owner should clear); `status`, `next`, `logs`, `ui`, `doctor` and
+  `pause` stay open because they only read or stop things; a `commands` row from the CLI is dropped by
+  the loop, not only refused up front, so the database is not a back door. A pause is the only thing
+  the shadow may do on an a0 intent, and only when the owner asks.
 - a3 counts like a4 at the spec gate: a lower `a` must never be looser than a higher one, and a3's
   spec used to merge on its own whenever nothing stopped it.
