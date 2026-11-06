@@ -579,6 +579,8 @@ An intent that waits only for the owner no longer takes one of a repo's `ahead` 
 
 ### LOOP-101 · Cap on intents before build
 
+Superseded in part by LOOP-132: the cap is removed; an intent that outranks every intent ahead still starts at once.
+
 A repo's normal pick stops at `2 × ahead` intents before build, and an intent that outranks every intent ahead starts right away, below the cap and at it.
 
 - The cap is `2 × [repos.<r>].ahead` (6 with the default), counting every intent ahead of build
@@ -809,7 +811,24 @@ The owner can reset the shadow and see its state from the command line and from 
   goes to the shadow as ordinary text. `status` lists pending actions.
 - Verified by: `cli: shadow reset and status`, `telegram: slash reset and status`
 
-### LOOP-65 · Repos live in the database
+### LOOP-132 · Waiting on the owner never holds a repo back
+
+Intents that wait for the owner at the spec or plan stage take no place and count toward no limit, so a third intent starts even when two others wait on the owner.
+
+- Supersedes the cap of LOOP-101 and the cap text of LOOP-102: the cap of `2 × ahead` counted intents
+  waiting on the owner (LOOP-100) and held a repo back although nothing was being designed or planned. It
+  is removed. `heldBack` (LOOP-5) skips an intent only when the repo has `ahead` *working* intents ahead
+  (LOOP-100), and an intent that outranks every intent ahead still goes over that limit (LOOP-101, kept).
+- An intent waiting on the owner is as LOOP-100 defines it (`approval:spec`, `approval:plan`, or `blocked`
+  in the spec or plan phase on a question, an open point, an a0 decision or a missing permission).
+  Nothing else counts as waiting.
+- `status` and `next` never say `waiting: repo is at the cap of <cap> intents before build …`. A skipped
+  intent reads only `waiting: repo has <w> intents working ahead (start <id> to go now)` (LOOP-102), and
+  only while `ahead` working intents hold the places. Intents waiting on the owner show as `waiting on you`
+  (the card's wait of UI-61) with no mention of the repo's limit.
+- Nothing running or waiting is stopped or dropped; an intent that stops waiting counts as working again
+  (LOOP-100).
+- Verified by: `loop: with ahead 2 and two intents waiting on the owner at spec a third is picked`, `loop: owner waits at plan do not count toward ahead`, `loop: the cap of twice ahead no longer holds a repo back`, `status: intents waiting on the owner show without the cap`
 
 The repos Towercab works on are kept in its database, so they can be added and removed while it
 runs; the config file's repo tables are only read once, to bring them in.
