@@ -1343,13 +1343,18 @@ The owner sets the daily and monthly budget, and each repo's caps, in the page.
 
 - Overview: a "Budget" section with two fields, "Per day" and "Per month" (USD, empty = no limit), each
   showing what is spent so far in that period. A repo's page has the same two fields as "Caps" inside
-  Settings (UI-150), saved apart from the settings form because they apply at once and open no PR.
-- "Save" posts `{action: "budgets", scope: "all" | <repo>, daily, monthly}` (UI-66's actions); an empty
-  field sends `null`. An invalid amount is refused in the form and by the server with MET-31's reason;
-  a refusal keeps the typed values (UI-67). Reply: `Saved. Applies now.`
+  Settings (UI-150), saved apart from the settings form because they apply at once and open no PR. A
+  line under them says `Saved in config.toml on this machine.`
+- "Save" posts `{action: "budgets", scope: "all" | <repo>, daily, monthly}` (UI-66's actions); the
+  server writes the changed keys to `config.toml` (MET-31); an empty field removes the key. An invalid
+  amount is refused in the form and by the server with MET-31's reason; a refusal keeps the typed values
+  (UI-67). Reply: `Saved. Applies now.`
+- Each change is recorded in the Activity page (UI-64) as kind `settings`, naming the key and the old →
+  new value (`daily budget: $80 → $100`, `none` for unset), with the time. A save that changes nothing
+  records nothing.
 - `GET /api/state` carries `budgets` (`{daily, monthly, spentDay, spentMonth}`) and
   `GET /api/repos?repo=<name>` carries the repo's own. Fits 360 px, works in light and dark and by keyboard.
-- Verified by: `ui: the budget section saves daily and monthly amounts`, `ui: a repo page has its own caps`, `ui: an invalid budget is refused in the form and by the server`, `ui: screenshots light, dark and mobile`
+- Verified by: `ui: the budget section saves daily and monthly amounts`, `ui: a repo page has its own caps`, `ui: an invalid budget is refused in the form and by the server`, `ui: a budget save is written to config.toml`, `ui: a budget change shows in activity as old to new`, `ui: an unchanged save records nothing`, `ui: screenshots light, dark and mobile`
 
 ### UI-254 · A reached cap is a card that offers to raise it
 

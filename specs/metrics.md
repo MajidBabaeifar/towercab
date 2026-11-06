@@ -56,14 +56,19 @@ The intent page shows how long each step took, from the moves.
 The owner sets a daily and a monthly budget for all of Towercab, and a daily and monthly cap for each repo.
 
 - Four optional amounts in USD (> 0, at most 2 decimals; none = no limit): `daily`, `monthly`, and per
-  repo `daily` and `monthly`. Kept in Towercab's own database (`data.budgets`) on this machine, not in
-  the repo's `TOWERCAB.md`; a change applies at once, with no PR.
-- A day is the local day and a month the local calendar month, as in MET-29. Until the owner saves a
-  daily budget, `[agent].daily_budget_usd` is the daily budget; once saved, the saved value wins.
+  repo `daily` and `monthly`. Kept in `config.toml` on this machine (backed up with it), not in the
+  database and not in the repo's `TOWERCAB.md`, so a change needs no PR and no merge.
+- Keys: the overall daily budget stays `[agent].daily_budget_usd` (LOOP-1); new are
+  `[agent].monthly_budget_usd` and, per repo, `[budget.<repo>]` with `daily_usd` and `monthly_usd`. The
+  loop re-reads these keys each pass, so an edit applies without a restart. A key it cannot read (not a
+  positive number) is ignored with a Problem naming the key (UI-60), and the last good value stays.
+- A day is the local day and a month the local calendar month, as in MET-29.
 - A repo's spend is the cost of runs of missions of that repo; a part of a multi-repo intent (LOOP-78)
   counts for its own repo. Runs are kept 62 days (was 30) so the month is complete.
-- A value that is not a positive number is refused with the reason `a budget is a positive amount in USD`.
-- Verified by: `metrics: budgets are saved and read back`, `metrics: the saved daily budget wins over the config`, `metrics: a part's runs count for its own repo`, `metrics: an invalid budget is refused`
+- Writing a value (UI-253) changes only that key: the rest of the file stays byte-identical, comments
+  included. A value that is not a positive number (at most 2 decimals) is refused with the reason `a
+  budget is a positive amount in USD`.
+- Verified by: `metrics: budgets are read from config.toml`, `metrics: a budget edit applies without a restart`, `metrics: writing a budget leaves the rest of config.toml untouched`, `metrics: a bad budget key is ignored and shown as a problem`, `metrics: a part's runs count for its own repo`, `metrics: an invalid budget is refused`
 
 ### MET-32 · Spend this month and per repo
 
@@ -71,7 +76,11 @@ Towercab can say what it spent this month, and what each repo cost today and thi
 
 - Sums of `data.runs` by local day, local month and repo, alongside MET-29's; the 7-day and today sums
   are unchanged.
-- Verified by: `metrics: spend this month and per repo`
+- The shadow's runs (SHD-18, labelled `shadow`) count toward the overall sums, so toward the overall
+  budgets, MET-33's pause and the top bar (UI-256). They count toward a repo's sums only when the shadow
+  acted on one of that repo's intents in that turn (its action log, SHD-19, names the intent); a turn with
+  no such action counts for no repo.
+- Verified by: `metrics: spend this month and per repo`, `metrics: shadow spend counts overall`, `metrics: shadow spend counts for a repo only when it acted on its intent`
 
 ### MET-33 · Reaching a cap pauses work
 
@@ -80,12 +89,16 @@ When a budget or a repo cap is reached, Towercab starts no new work that it woul
 - Reached = spend ≥ the amount. Daily and monthly budgets stop all picks; a repo's cap stops picks and
   new runs for that repo only. Other repos carry on. This extends MET-29's pause, which is now the
   daily case.
-- A run already going finishes its step. Work resumes by itself at local midnight (daily) or on the
+- One rule for the overall budgets and for a repo's cap: no new intent is picked, and an intent already
+  underway (affected by the cap) finishes its current run and carries on until its next wait on the
+  owner, never stopping mid-build. There it stays after the owner answers until the cap is lifted or the
+  period ends; its new runs start then. Waits that need no run (a merge, an owner step) are not held.
+- Work resumes by itself at local midnight (daily) or on the
   first of the month (monthly), or at once when the owner raises the cap or removes it.
 - The pause is recorded once per cap and period as a notice with `{scope: "all" | <repo>, period:
   "day" | "month", spent, cap}`, not once per 5 s pass. Up next gives the reason `daily budget reached`
   or `<repo> reached its monthly cap` in plain words (UI-61).
-- Verified by: `metrics: a repo cap pauses only that repo`, `metrics: the monthly budget pauses all picks until the 1st`, `metrics: raising a cap resumes at once`, `metrics: a run in progress finishes its step`, `metrics: a reached cap is noticed once`
+- Verified by: `metrics: a repo cap pauses only that repo`, `metrics: the monthly budget pauses all picks until the 1st`, `metrics: raising a cap resumes at once`, `metrics: an intent underway finishes its run and stops at its next owner wait`, `metrics: the overall budget and a repo cap use the same rule`, `metrics: a reached cap is noticed once`
 
 ### MET-34 · Cost estimate for an intent
 
