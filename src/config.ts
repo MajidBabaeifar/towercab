@@ -80,7 +80,7 @@ export interface Config {
   badRepos: Map<string, string>;
   /** Repo tables Towercab ignores because the repo is in its database: name → what to do (LOOP-65). */
   ignoredRepos: Map<string, string>;
-  github: { appId: number; me: string; apiBase: string } | null;
+  github: { appId: number; me: string; apiBase: string; name?: string } | null;
   gitlab: GitLabConfig | null;
   /** REPO-31: `[github] settings`: `check` (default) or `apply` the standard GitHub settings. */
   githubSettings: "check" | "apply";
@@ -175,6 +175,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       appId: r.int(github, "github", "app_id", 0, 1, Number.MAX_SAFE_INTEGER),
       me: r.login(github, "github", "me"),
       apiBase: r.url(github, "github", "api_base", "https://api.github.com"),
+      ...(r.str(github, "github", "name", "") ? { name: r.str(github, "github", "name", "") } : {}),
     },
     gitlab: gitlab && {
       apiBase: gitlabApiBase(r, gitlab),

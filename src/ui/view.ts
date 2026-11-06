@@ -162,6 +162,8 @@ export interface Card {
   warning?: string;
   /** UI-239: the intent is a0: only the owner can answer or approve it, shown as "only you". */
   onlyYou?: boolean;
+  /** PIP-186: an agent answered for the owner and the intent acted on it: the agent's name. */
+  decided_by_agent?: string | null;
 }
 
 export type PhaseStatus = "done" | "current" | "todo" | "skipped";
@@ -427,6 +429,16 @@ export interface AttemptView {
   map: StageMapView;
 }
 
+/** PIP-186: a comment an agent wrote under the owner's login. */
+export interface AgentCommentView {
+  agent: string;
+  url: string;
+  at: When;
+  excerpt: string;
+  /** False when the intent ignored it (a0). */
+  acted_on: boolean;
+}
+
 export interface IntentPage {
   version: string;
   id: string;
@@ -466,6 +478,10 @@ export interface IntentPage {
   /** UI-239: set for an a0 intent, with the line to show; `paused` is this intent's own pause (SHD-22). */
   onlyYou?: string;
   paused?: boolean;
+  /** PIP-186: the comments agents wrote under the owner's login, oldest first. */
+  agent_comments: AgentCommentView[];
+  /** PIP-186: the agent that answered for the owner, when the intent acted on it. */
+  decided_by_agent?: string | null;
   /** SHIP-32: "Published in v1.2.0" with its link, or "Merged, waiting for a release"; absent when the repo has no releases. */
   release?: { text: string; url: string | null };
 }

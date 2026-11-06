@@ -230,7 +230,7 @@ test("pipeline: review comment is posted", () => {
   const c = code().comments.filter((x) => x.body.startsWith("<!-- towercab:review:1 -->"));
   expect(c).toHaveLength(1);
   expect(c[0]!.author).toBe("towercab[bot]");
-  expect(c[0]!.body).toContain("**Review** · round 1");
+  expect(c[0]!.body).toMatch(/\n\*\*Review\*\* · reviewer · \S+ · round 1\n/);
   expect(c[0]!.body).toContain("Approve: small and tested.");
   expect(c[0]!.body).toContain("Met: The page says hello (greeting.txt)");
 });
