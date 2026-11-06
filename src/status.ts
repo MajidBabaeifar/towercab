@@ -6,7 +6,16 @@ import type { Listing } from "./intents/types.ts";
 import { exitsOf, isWait, isWorking, waitInfo } from "./machine.ts";
 import { dataOf, type Mission, unfinished } from "./mission.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
-import { buildingIn, capOf, idleIn, returningIn, returningSince, waitsForCi, workingIn } from "./slots.ts";
+import {
+  buildingIn,
+  capOf,
+  heldByAfter,
+  idleIn,
+  returningIn,
+  returningSince,
+  waitsForCi,
+  workingIn,
+} from "./slots.ts";
 import { leftOf, type OwnerStep } from "./steps.ts";
 
 export interface Problem {
@@ -78,7 +87,13 @@ export function renderStatus(s: StatusInput): string {
   const onSteps = (m: Mission) => m.stage === "steps" && m.waiting !== null;
   const returning = (m: Mission) => returningSince(m) !== null;
   const working = ms.filter(
-    (m) => isWorking(m.stage) && !s.queued.has(m.id) && m.stage !== "ci" && !onSteps(m) && !returning(m),
+    (m) =>
+      isWorking(m.stage) &&
+      !s.queued.has(m.id) &&
+      m.stage !== "ci" &&
+      !onSteps(m) &&
+      !returning(m) &&
+      !heldByAfter(m),
   );
   lines.push(working.length ? "working:" : "working: nothing");
   for (const m of working) {
@@ -106,6 +121,16 @@ export function renderStatus(s: StatusInput): string {
         dataOf<{ delivery?: string }>(m).delivery !== "steps",
       ).map((e) => e.label);
       lines.push(`  you can: ${exits.join(", ")}`);
+    }
+  }
+  // LOOP-117, LOOP-118: held by `after:`; Towercab's own wait, nothing for the owner to do.
+  const held = ms.filter(heldByAfter);
+  if (held.length) {
+    lines.push("waiting for other intents:");
+    for (const m of held) {
+      const text =
+        dataOf<{ afterHold?: { text: string } }>(m).afterHold?.text ?? "waiting for another intent";
+      lines.push(`- ${title(m)} · ${text}`);
     }
   }
   const ci = ms.filter((m) => m.stage === "ci" && !returning(m));

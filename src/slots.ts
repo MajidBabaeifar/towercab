@@ -67,10 +67,15 @@ export function isIdle(m: Mission): boolean {
   return dataOf<{ idle?: boolean }>(m).idle === true;
 }
 
+/** LOOP-117: at build, waiting for the intents its intent file says it comes after: asks for no slot. */
+export function heldByAfter(m: Mission): boolean {
+  return m.stage === "build" && isBuilding(m) && dataOf<{ afterHold?: unknown }>(m).afterHold !== undefined;
+}
+
 /** LOOP-111: an idle mission whose next run was asked for while every slot was taken. */
 export function returningSince(m: Mission): number | null {
   const v = dataOf<{ returning?: number }>(m).returning;
-  return isBuilding(m) && isWorking(m.stage) && typeof v === "number" ? v : null;
+  return isBuilding(m) && isWorking(m.stage) && !heldByAfter(m) && typeof v === "number" ? v : null;
 }
 
 /** Building through merge and doing work: these fill a repo's `workers` slots (LOOP-110). */
@@ -95,7 +100,10 @@ export function isAnswered(m: Mission): boolean {
 /** A mission at `build` outside the slots whose step has not yet asked for one (LOOP-115). */
 function wantsBuild(m: Mission): boolean {
   return (
-    (m.stage === "build" || m.stage === "ci") && isIdle(m) && dataOf<{ idle?: boolean }>(m).idle === true
+    (m.stage === "build" || m.stage === "ci") &&
+    !heldByAfter(m) &&
+    isIdle(m) &&
+    dataOf<{ idle?: boolean }>(m).idle === true
   );
 }
 

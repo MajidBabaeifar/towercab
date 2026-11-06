@@ -2,6 +2,7 @@
 // work, sends messages. Single-threaded: children run detached and are reaped on the next pass.
 
 import { readFileSync, rmSync, statSync } from "node:fs";
+import { type AfterHold, afterState, heldText, holdTrigger, nextHold } from "./after.ts";
 import { Inhibitor, woke } from "./awake.ts";
 import { slotStep } from "./capacity.ts";
 import { removeCheckout } from "./checkout.ts";
@@ -59,6 +60,7 @@ import {
   type Outcome,
   phaseOf,
   type Subject,
+  wait,
   waitInfo,
 } from "./machine.ts";
 import {
@@ -502,6 +504,7 @@ export class Loop {
     await this.enterDue();
     this.enforceTimeouts();
     await this.pollIntents(false);
+    this.releaseStalled();
     await this.pollProposed(false);
     await this.requeueKnownRepos();
     this.startReadiness();
@@ -1364,7 +1367,8 @@ export class Loop {
     const order = [...back, ...all.filter((m) => !back.includes(m))].sort(
       (a, b) => Number(isAnswered(b)) - Number(isAnswered(a)),
     );
-    for (const m of order) {
+    for (const listed of order) {
+      let m = listed;
       if (!isWorking(m.stage) || m.step === "enter" || m.held || this.children.has(m.id)) continue;
       // LOOP-105: no step of a loop whose checkout moved under it runs.
       if (this.codeMoved() !== null) break;
@@ -1374,6 +1378,12 @@ export class Loop {
       if (this.opts.intent && this.targetId && m.intent !== this.targetId) continue;
       const h = this.d.handlers[m.stage];
       if (!h) continue;
+      // LOOP-117: before a build starts or goes on, the intent's current `after` is read again.
+      if (m.stage === "build" && m.pr === null && m.step !== "commit") {
+        const checked = this.holdByAfter(m);
+        if (checked === null) continue;
+        m = checked;
+      }
       // LOOP-115: a change back at build (or CI) from outside the slots takes a free slot before its
       // first step, so it never works on the repo without holding one; with none free it waits.
       if ((m.stage === "build" || m.stage === "ci") && isBuilding(m) && isIdle(m)) {
@@ -1389,6 +1399,51 @@ export class Loop {
       }
       const fresh = update(db, m.id, { busy: 1 }, this.now);
       await this.drive(fresh, () => h.step(this.ctx(timeouts), fresh));
+    }
+  }
+
+  /**
+   * LOOP-117..119: the mission at build, read against the intent's current `after`. Null: it is held (or
+   * moved to a wait) and starts nothing; else the mission, free to go on.
+   */
+  private holdByAfter(m: Mission): Mission | null {
+    const { db } = this.d;
+    const hold = dataOf<{ afterHold?: AfterHold }>(m).afterHold;
+    const listing = this.listing;
+    const intent = listing?.open.find((i) => i.id === m.intent);
+    // Without a read of the intents repo nothing is decided: a held mission stays held.
+    if (!listing || !intent) return hold ? null : m;
+    const s = afterState(listing, intent);
+    if (s.bad.length > 0) {
+      this.move(m, wait("bad after:", s.bad.join(", "), { data: { afterHold: undefined } }));
+      return null;
+    }
+    if (s.blockers.length === 0) return hold ? patchData(db, m, { afterHold: undefined }, this.now) : m;
+    const read = nextHold(hold, intent.after, heldText(s.blockers), this.now);
+    const why = holdTrigger(read, s, this.now);
+    if (why) {
+      this.move(m, wait("dependency stalled", why, { data: { afterHold: { ...read, notified: true } } }));
+      return null;
+    }
+    const d = dataOf<{ idle?: boolean; returning?: number }>(m);
+    if (JSON.stringify(hold) !== JSON.stringify(read) || d.idle !== true || d.returning !== undefined) {
+      patchData(db, m, { afterHold: read, idle: true, returning: undefined }, this.now);
+    }
+    return null;
+  }
+
+  /** LOOP-119: a mission that waited for the owner about a dependency goes on once none is left. */
+  private releaseStalled(): void {
+    const listing = this.listing;
+    if (!listing) return;
+    for (const m of unfinished(this.d.db)) {
+      if (m.stage !== "blocked" || m.waiting !== "dependency stalled" || m.step === "enter") continue;
+      const intent = listing.open.find((i) => i.id === m.intent);
+      if (!intent) continue;
+      const s = afterState(listing, intent);
+      if (s.blockers.length === 0 && s.bad.length === 0) {
+        this.move(m, { event: "answered", why: "the intents it waited for are done" });
+      }
     }
   }
 

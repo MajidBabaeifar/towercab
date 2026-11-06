@@ -304,6 +304,11 @@ export const WAITS: Record<string, { stage: Stage; ask: string }> = {
     stage: "blocked",
     ask: "Fix what this intent waits for: Towercab can't find one of the intents it names, or it was dropped.",
   },
+  // LOOP-119: the intent this one waits for was rolled back or dropped, or is unfinished after 3 days.
+  "dependency stalled": {
+    stage: "blocked",
+    ask: "An intent this one waits for was rolled back or dropped, or has not finished in 3 days. Take it out of `after:`, start over or drop this intent; it carries on by itself once the other one is done.",
+  },
   // INT-42: a repo named in `repos:` that Towercab doesn't know.
   "bad repos:": {
     stage: "blocked",
@@ -365,6 +370,8 @@ export const EXITS: Record<string, ExitKind[]> = {
   "unknown repo": BASIC,
   "bad after:": BASIC,
   "bad repos:": BASIC,
+  // LOOP-119: a reply would only come back to the same hold.
+  "dependency stalled": ["retry", "drop"],
   "several repos": ["done", "retry", "drop"],
   "rolled back, revise": BASIC,
   "rollback failed": BASIC,

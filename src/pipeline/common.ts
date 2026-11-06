@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { AfterHold } from "../after.ts";
 import { type Agent, type AgentName, agentBudgetUsd, loadAgent } from "../agents.ts";
 import { effectiveA } from "../autonomy.ts";
 import { git, gitSane } from "../checkout.ts";
@@ -169,6 +170,8 @@ export interface PipeData {
   roundFrom?: string;
   /** LOOP-115: the owner answered a wait; the next build round merges the base branch first. */
   answered?: boolean;
+  /** LOOP-117: the mission waits at build for the intents its intent file says it comes after. */
+  afterHold?: AfterHold;
   /** Head at the end of the last non-repair round (PIP-31). */
   lockHead?: string;
   /** `brief`: the worker's plain brief of what changed (PIP-106). */
