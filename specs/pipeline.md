@@ -1135,7 +1135,7 @@ owner, naming the test and why, and the owner's answer decides.
 
 - The worker returns `status: access` with `access.tests: [{path, why}]` (**Schemas** `build`); the
   guard's block reason for a protected existing test ends `if you need it, finish what you can and
-  return status access with this test and why`. Unlike other unplanned access (AUT-15) this is never
+  return status access with this test and why`. Like all unplanned access (AUT-15) this is never
   granted by Towercab itself, at any autonomy: the mission waits with a question that names the test
   and the reason (PIP-110), with the options `Allow this change` and `No, keep the test as it is` (PIP-138), and a
   recommendation.
@@ -1625,7 +1625,7 @@ Towercab proves the sandbox holds on this machine before it runs a mission, and 
 
 The only thing a plan or a request can widen in a sandbox is a domain, and a domain that would open the whole internet is refused.
 
-- A grant (plan Access section, mid-build request, an intent's `network` field, AUT-14) must be a host name or `*.<name>` with at least two labels. `*`, a bare TLD, `*.com`, an IP literal, a URL or a name with a port is refused with the reason; the plan or request waits for the owner as an invalid grant.
+- A grant (plan Access section, mid-build request, an intent's `network` field, AUT-14) must be a host name or `*.<name>` with at least two labels. `*`, a bare TLD, `*.com`, an IP literal, a URL or a name with a port is refused with the reason; a plan with one waits for the owner as an invalid grant, and a mid-build request is refused without asking (AUT-27). A grant is added only from an approved plan, the intent or an owner's answer (AUT-15); a worker's request never adds one by itself.
 - A path or test grant (REPO-8, PIP-151) never reaches the sandbox arguments beyond the checkout: protected paths stay inside the checkout, and `.git` stays read-only.
 - Verified by: `sandbox: a wildcard or TLD grant is refused`, `sandbox: an IP literal grant is refused`, `sandbox: a path grant does not widen the mounts`
 

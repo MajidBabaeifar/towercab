@@ -123,7 +123,7 @@ What a worker may reach without asking depends on the effective autonomy.
 |---|---|---|---|
 | Network | default list + plan + requests | default list + plan | default list + plan + requests (never open, AUT-26) |
 | Protected paths ([REPO-8](repo.md)) | writable, listed in the PR | only those the plan grants | writable |
-| Mid-build request | granted, noted in the PR | granted, PR goes to the owner (AUT-15) | not needed |
+| Mid-build request | asks the owner (AUT-15), noted in the PR | asks the owner (AUT-15), PR goes to the owner | asks the owner (AUT-15), noted in the PR |
 
 - Default network list: `[agent].network` (default: `registry.npmjs.org`, `*.npmjs.org`,
   `pypi.org`, `files.pythonhosted.org`, `crates.io`, `*.crates.io`, `proxy.golang.org`,
@@ -135,14 +135,19 @@ What a worker may reach without asking depends on the effective autonomy.
 
 ### AUT-15 · Unplanned access
 
-When a worker needs access the plan didn't grant, Towercab grants it and keeps building; at a4 the
-code PR then waits for the owner instead of merging.
+When a worker needs access the plan didn't grant, it asks the owner and gets it only on the owner's answer; Towercab never widens a worker's access by itself, at any level.
 
 - The worker returns `status: access` with the domains or paths and why ([PIP-1](pipeline.md)).
-  Towercab adds them to the mission's grants, records `data.unplanned` (what and why), and resumes
-  the worker. The code PR lists them under "Access beyond the plan". At a4 the gate then goes to
-  `approval:merge`, why `The agent needed access the approved plan didn't grant.`
-- Verified by: `autonomy: unplanned access at a4 goes to the owner`, `autonomy: unplanned access at a1-a3 is granted`
+  Like an unplanned test change (PIP-116), the mission waits with a question (PIP-110) that names each
+  domain or path and why, with the options `Allow this access` and `No, finish without it` and a
+  recommendation. The answer is read as a choice (PIP-138, PIP-139): allow → the grants join the mission's
+  (`by: owner`) and the worker resumes with them; refusal → they are recorded in `data.refusedAccess`, the
+  worker resumes told it must finish without them, and asking again for a refused one is refused at once.
+  A domain that fails PIP-164 is refused without asking.
+- Allowed requests are recorded in `data.unplanned` (what and why). The code PR lists them under "Access
+  beyond the plan". At a4 the gate still goes to `approval:merge`, why `The agent needed access the approved
+  plan didn't grant.`, even though the owner allowed it: the plan the owner approved is not the plan that was built.
+- Verified by: `autonomy: unplanned access asks the owner at every level`, `autonomy: allowing unplanned access grants it`, `autonomy: a refused access stays refused`, `autonomy: unplanned access at a4 goes to the owner`
 
 ### AUT-16 · Every change gets a risk level
 
@@ -232,7 +237,7 @@ in the same attempt instead of starting over.
 
 At no autonomy level can a worker reach the whole internet; it reaches the domains it is granted and no others.
 
-- The "open" network of a5 in AUT-14 is removed: a5 gets the default list, the plan's grants and mid-build requests, like a1–a3, all through the allowlist proxy ([PIP-158](pipeline.md)). `WebFetch(domain:*)` is no longer written to a Claude run's settings (PIP-24).
+- The "open" network of a5 in AUT-14 is removed: a5 gets the default list and the plan's grants, like every level, all through the allowlist proxy ([PIP-158](pipeline.md)). Every domain beyond the default list comes from an approved plan, the intent's own `network` field or an owner's answer (AUT-15); no level grants a mid-build request on its own. `WebFetch(domain:*)` is no longer written to a Claude run's settings (PIP-24).
 - The default list is a constant in code, no longer `[agent].network`; a config that still sets it loads, and `towercab doctor` names the key as ignored ([PIP-157](pipeline.md)). With no grant at all, the network is off.
 - Verified by: `autonomy: a5 has no open network`, `autonomy: the default network list is fixed in code`, `claude: settings never allow every domain`
 
@@ -240,7 +245,7 @@ At no autonomy level can a worker reach the whole internet; it reaches the domai
 
 Every grant of network access, from a plan, a request or an intent, is a domain name and nothing wider.
 
-- A grant that fails the rule of [PIP-164](pipeline.md) is not added to the mission's grants. A plan with one waits at the plan gate with the reason; a mid-build request with one is answered as refused and the worker continues without it, noted in the PR.
+- A grant that fails the rule of [PIP-164](pipeline.md) is not added to the mission's grants. A plan with one waits at the plan gate with the reason; a mid-build request with one is refused without asking the owner, and the worker continues without it, noted in the PR.
 - At a4 and a5 an invalid grant never merges on its own: the gate waits for the owner.
 - Verified by: `autonomy: an invalid grant in a plan waits for the owner`, `autonomy: an invalid mid-build request is refused`
 
@@ -253,6 +258,11 @@ Every grant of network access, from a plan, a request or an intent, is a domain 
 ## Decisions
 
 - Urgency and importance set the order; autonomy only moves gates and access.
+- No automatic mid-build grants (the owner's call, 2026-11-06): a worker cannot widen its own network
+  or path access. Every domain beyond the registry list comes from an approved plan, the intent or an
+  owner's answer. Conservative defaults taken: the same holds for paths, not only domains; an access
+  the owner allowed mid-build still sends an a4 PR to the owner; a refused request stays refused for
+  the mission; and an invalid domain is refused without asking.
 - Access follows who merges: when the owner reads every diff before it lands (a1–a3), asking for
   access mid-build only costs time. The locks matter when Towercab merges on its own.
 - Access is asked for in the plan, so the wait happens before the build, when the owner is reviewing
