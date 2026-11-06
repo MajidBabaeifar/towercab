@@ -256,6 +256,7 @@ Every grant of network access, from a plan, a request or an intent, is a domain 
 An intent set to `a0` is decided by the owner alone: every wait goes to them and nothing goes ahead without them.
 
 - `a: 0` is valid in the intent's front matter like any other level (the range is 0–5). At a0 every wait goes to the owner: a question (PIP-110), the spec gate (AUT-11), the plan gate (AUT-12), a test change or unplanned access (PIP-116, AUT-15), the merge (AUT-3) and the owner's steps (SHIP-17). Towercab never merges, approves or answers on its own at a0, whatever the risk level or the repo's cap (AUT-8).
+- a0 is a rule that Towercab's own shadow, agents and CLI follow, not a security boundary: see Decisions.
 - Validation does not shrink (AUT-6): the checks, the proof, CI and the review all run at a0, as at a1.
 - `effective` still takes the lowest `a` present (AUT-7), so nothing can raise an a0 intent; a worker may still lower to a0, never out of it. An `a` of 0 is not "unset": AUT-9 applies only when `a` is missing.
 - Access (AUT-14) at a0 is that of a1–a3.
@@ -320,5 +321,11 @@ The command line refuses to answer, approve, start, drop or tick steps on an a0 
   `pause` stay open because they only read or stop things; a `commands` row from the CLI is dropped by
   the loop, not only refused up front, so the database is not a back door. A pause is the only thing
   the shadow may do on an a0 intent, and only when the owner asks.
+- a0 is a rule, not a security boundary (the owner's call, 2026-11-06): Towercab's own shadow, agents
+  and CLI follow it and are refused. Any agent on this machine can also act on GitHub through the
+  owner's `gh` login, which Towercab cannot tell from the owner, and a confirmation step on GitHub
+  would be no stronger. So the page and GitHub count, and no extra proof of identity is built for
+  them. a0 does not stop a process that deliberately uses that login or edits the intents repo or the
+  database by hand.
 - a3 counts like a4 at the spec gate: a lower `a` must never be looser than a higher one, and a3's
   spec used to merge on its own whenever nothing stopped it.
