@@ -231,6 +231,18 @@ export interface PipeData {
 
 export const data = (m: Mission): PipeData => dataOf(m) as PipeData;
 
+/** PIP-165: owner answers on a spec PR after which the spec is settled: no new open points. */
+export const SETTLED_ROUNDS = 2;
+
+/**
+ * PIP-165: the rounds of owner answers on the spec PR: the kept ones (`specAnswers`) plus the one the
+ * current design run is handling (not Towercab's own conflict or red-check revisions).
+ */
+export function specRounds(d: PipeData): number {
+  const pending = d.answer && !d.mergeMain && !d.specRed ? 1 : 0;
+  return (d.specAnswers?.length ?? 0) + pending;
+}
+
 export const TAIL = 12_000;
 
 export function tail(text: string, max = TAIL): string {
