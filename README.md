@@ -150,6 +150,10 @@ web page shows what needs you, what is stuck, what is moving and what it costs
 
 ## Safety
 
+Towercab's work arrives as pull requests, and code decides whether they may merge: at a1–a3 you merge
+every change yourself, and at a4–a5 Towercab merges only what passes every check and its risk rules allow.
+Each run is sandboxed and can't touch your keys, other repos or protected files.
+
 | Layer | What it does |
 | --- | --- |
 | **Sandbox** | Every check and every Claude Code run is sandboxed: no access to your keys, tokens or other repos, and a worker reaches only the network domains it is granted. |
@@ -162,6 +166,9 @@ web page shows what needs you, what is stuck, what is moving and what it costs
 
 Early, and built for one person: it runs on one machine, for one owner, and is used daily by its
 author. Version 1 (Rust) is on branch `rust`.
+
+Cost: Towercab itself is free; the Claude Code runs it starts use your own Claude subscription or API
+key, and the web page shows what each intent cost.
 
 ## Docs
 

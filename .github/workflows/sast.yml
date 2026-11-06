@@ -1,4 +1,4 @@
-# Synced from MajidBabaeifar/ci@f88c443ce6ac .github/workflows/sast.yml; edit there, not here.
+# Synced from MajidBabaeifar/ci@5d4ee8802c76 .github/workflows/sast.yml; edit there, not here.
 # CI-6: CodeQL on public repos (free), Semgrep CE on private ones.
 name: sast
 
@@ -16,6 +16,7 @@ jobs:
   codeql:
     if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
       security-events: write
@@ -32,6 +33,7 @@ jobs:
   semgrep:
     if: ${{ github.event.repository.private }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
