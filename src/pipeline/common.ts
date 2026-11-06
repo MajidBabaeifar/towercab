@@ -132,6 +132,10 @@ export interface PipeData {
   testAsk?: TestAsk;
   /** What the resumed worker is told about the owner's answer on a test. */
   testNote?: string;
+  /** PIP-152: the existing tests the last worker run was blocked from, which the owner may allow. */
+  lockedTests?: string[];
+  /** PIP-153: the tests a conflict round may edit, because the base changed them or what they import. */
+  mergeOpened?: string[];
   /** The owner's last words for the worker (an answer, feedback). */
   answer?: string;
   /** Why the next build round runs: a repair's what and details. */

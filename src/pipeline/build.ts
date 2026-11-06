@@ -49,7 +49,9 @@ import {
   HELPER_WHY,
   heldHelpers,
   helperTests,
+  lockableTests,
   lockedTests,
+  openedByMerge,
   readGuardReasons,
   readSkew,
   type SkewLine,
@@ -134,9 +136,6 @@ async function spawnWorker(cx: Ctx, m: Mission, prompt?: string): Promise<Progre
   const d = data(m);
   const g = grants(m, intent, files, cx);
   const repairRound = Boolean(d.repair && d.repair.kind !== "conflict");
-  const locked = repairRound
-    ? await lockedTests(cx.tools, cx.checkout(m), d.lockHead ?? null, files.towercab.tests)
-    : [];
   // LOOP-106, LOOP-107: what the guard logs from here on is about this run alone.
   clearGuardLogs(cx.runs(m, "build"));
   // REPO-13: every round, repairs included, the base branch's tests no grant covers are write-blocked.
@@ -148,8 +147,28 @@ async function spawnWorker(cx: Ctx, m: Mission, prompt?: string): Promise<Progre
     files.towercab.tests,
     files.towercab.live,
   );
+  // PIP-151: the repair lock holds only tests that exist on the base and that no grant covers.
+  const locked = lockableTests(
+    repairRound ? await lockedTests(cx.tools, cx.checkout(m), d.lockHead ?? null, files.towercab.tests) : [],
+    onBase,
+    d,
+  );
   const free = await openHelpers(cx, m, onBase);
-  const existing = blockedTests(onBase, d).filter((p) => !free.includes(p));
+  const guarded = blockedTests(onBase, d).filter((p) => !free.includes(p));
+  // PIP-153: a conflict round may edit a guarded test the base changed, or whose imported source it changed.
+  const mergeOpened =
+    d.repair?.kind === "conflict"
+      ? await openedByMerge(cx.tools, cx.checkout(m), cx.repo(m).base, guarded, d.roundFrom)
+      : [];
+  const existing = guarded.filter((p) => !mergeOpened.includes(p));
+  // PIP-152: what this run is blocked from, so the owner can allow it; PIP-153: what this round opened.
+  const lockedNow = [...new Set([...locked, ...existing])];
+  if (
+    JSON.stringify(lockedNow) !== JSON.stringify(d.lockedTests ?? []) ||
+    JSON.stringify(mergeOpened) !== JSON.stringify(d.mergeOpened ?? [])
+  ) {
+    m = cx.record(m, m.step, {}, { lockedTests: lockedNow, mergeOpened });
+  }
   return spawnRun(
     cx,
     m,

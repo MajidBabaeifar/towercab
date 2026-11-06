@@ -43,7 +43,8 @@ Check, in this order:
 2. Each pass in `REVIEW.md`, reporting findings with severity `important` or `nit` as that file
    defines them, at the file and line, each with the `pass` that found it (its name as `REVIEW.md`
    writes it). Leave out what it says not to report.
-3. Were any tests weakened, deleted or skipped to make the checks pass?
+3. Were any tests weakened, deleted or skipped to make the checks pass? Flag a fix round that weakens
+   the PR's own tests too: the PR may edit the tests it added, but not to make a check pass.
 4. Does the change follow the plan? Where it doesn't, is the difference explained?
 5. In a plan with a `## Repos` section (a change to several repos): does each part work live with only the
    parts before it landed? A part that would break the live app until a later part lands is an `important`
