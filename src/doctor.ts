@@ -21,6 +21,7 @@ import { refusedRepoEnv } from "./pipeline/sandbox.ts";
 import { parseStored } from "./repo/readiness.ts";
 import { isMoved, readRecord } from "./repo/settings.ts";
 import { permissionLine } from "./settings/store.ts";
+import { shipNetwork } from "./ship/live.ts";
 import { tooFewListed } from "./teammates.ts";
 import type { Tools } from "./tools.ts";
 
@@ -68,6 +69,10 @@ export async function doctor(o: {
   // PIP-157, PIP-159: keys that no longer reach the sandbox, and repo variables it leaves out.
   for (const k of config.agent.ignored) {
     lines.push(`config: [agent] ${k} is ignored: the sandbox's settings are fixed in code`);
+  }
+  for (const name of config.repos.keys()) {
+    const extra = o.db ? shipNetwork(o.db, name) : [];
+    if (extra.length) lines.push(`${name}: ship commands may also reach ${extra.join(", ")}`);
   }
   for (const [name, repo] of config.repos) {
     for (const r of refusedRepoEnv(repo.env)) {

@@ -12,7 +12,7 @@ import { splitDomains } from "../pipeline/domains.ts";
 import { proxySocket } from "../pipeline/proxy.ts";
 import { cacheEnv, sandboxArgv, sandboxEnv } from "../pipeline/sandbox.ts";
 import type { RunResult } from "../tools.ts";
-import { type Live, liveDomains } from "./live.ts";
+import { type Live, liveDomains, shipNetwork } from "./live.ts";
 import type { Secrets } from "./secrets.ts";
 
 export type DeployOutcome = { state: "live" } | { state: "failed"; why: string } | { state: "pending" };
@@ -163,8 +163,12 @@ async function runCommand(e: AdapterEnv, line: string, extra: Record<string, str
     checkout: e.dir,
     home,
     cache,
-    proxy: proxySocket([...commandDomains(e.m), ...splitDomains(liveDomains(e.live)).valid], (l) =>
-      e.cx.log(l),
+    proxy: proxySocket(
+      [
+        ...commandDomains(e.m),
+        ...splitDomains([...liveDomains(e.live), ...shipNetwork(e.cx.db, repo.name)]).valid,
+      ],
+      (l) => e.cx.log(l),
     ),
     cacheWritable: checksMayWrite(e.cx, e.m),
     line,

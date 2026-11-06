@@ -10,9 +10,11 @@ import type { Db } from "./db.ts";
 import type { GitLabForge } from "./forge/gitlab.ts";
 import { gitlabPath, isGitlab, parseGitlabProject } from "./forge/types.ts";
 import type { Forge } from "./forge.ts";
+import { splitDomains } from "./pipeline/domains.ts";
 import { envRefusal } from "./pipeline/sandbox.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
 import { isMoved, readFileValues } from "./repo/settings.ts";
+import { shipNetworkKey } from "./ship/live.ts";
 import type { Tools } from "./tools.ts";
 
 /** Where a row came from: a config table, or `repo add` from the CLI or the page. */
@@ -495,6 +497,7 @@ export function setRepo(db: Db, config: Config, name: string, pairs: string[], b
     const row = db.get<RepoRow>("SELECT * FROM repos WHERE name = ?", name);
     if (!row) throw new Error(`${name} isn't a repo Towercab knows (towercab repo list)`);
     const r = toRepo(row);
+    let shipNet: string[] | null = null;
     for (const pair of pairs) {
       const eq = pair.indexOf("=");
       if (eq < 1) throw new Error(`${pair} isn't key=value`);
@@ -530,8 +533,18 @@ export function setRepo(db: Db, config: Config, name: string, pairs: string[], b
         const list = reviewersOf(value, config.github?.me ?? "", bot);
         if (list.length > 0) r.reviewers = list;
         else delete r.reviewers;
+      } else if (key === "ship_network") {
+        // The platform domains the repo's deploy and rollback commands may reach (SHIP-5): the owner's, kept
+        // in the database, never in a repo file.
+        shipNet = value
+          .split(",")
+          .map((d) => d.trim())
+          .filter(Boolean);
+        const bad = splitDomains(shipNet).invalid[0];
+        if (bad) throw new Error(`ship_network: ${bad.domain} ${bad.why}`);
       } else throw new Error(`unknown setting ${key}: use ${SETTINGS}`);
     }
+    if (shipNet) db.setMeta(shipNetworkKey(name), JSON.stringify(shipNet));
     if (r.base !== row.base || r.path !== row.path) {
       const busy = needing(db, name);
       if (busy.length > 0) {

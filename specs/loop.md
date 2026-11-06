@@ -887,7 +887,7 @@ intents that waited for it start.
 `towercab repo set <name> key=value…` changes a repo's settings; config tables no longer do.
 
 - Keys: `workers`, `ahead` (integers 1–16), `base` (a branch name), `path` (absolute or `~/`; empty =
-  `<home>/repos/<name>`), `env` (`env=NAME=value` sets one variable, `env=NAME=` sets it empty;
+  `<home>/repos/<name>`), `ship_network` (`ship_network=a.com,*.b.com` sets the platform domains the repo's ship commands may reach, [PIP-158](pipeline.md); empty clears them), `env` (`env=NAME=value` sets one variable, `env=NAME=` sets it empty;
   `env={"NAME":"value",…}`, a JSON object of strings, replaces them all). Several pairs at once; one bad
   pair changes nothing. Prints the repo's `repo list` line after `set `. The running loop uses the new
   values from its next pass (LOOP-68).

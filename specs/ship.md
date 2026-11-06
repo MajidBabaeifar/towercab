@@ -82,7 +82,7 @@ A platform that doesn't react to GitHub Deployments is wired in with two command
   `outcome(sha)` is live when that commit is `sha` or contains it, else pending (such a platform is
   red only by the timeout). `rollback_command` runs with `TOWERCAB_ROLLBACK_SHA` and
   `TOWERCAB_REASON`; exit 0 means the request was taken.
-- Both run like the suites (SHIP-9): in the sandbox with the network of [PIP-158](pipeline.md) (the registry list, the plan's grants and the live URL's host), the secrets, `BASE_URL`,
+- Both run like the suites (SHIP-9): in the sandbox with the network of [PIP-158](pipeline.md) (the registry list, the plan's grants, the live URL's host and the repo's `ship_network` domains), the secrets, `BASE_URL`,
   `TOWERCAB_ENVIRONMENT`, in the checkout at the shipped commit, 5 minutes each. A non-zero exit of
   `live_command` is pending; of `rollback_command`, a failed rollback.
 - Verified by: `ship: command adapter`

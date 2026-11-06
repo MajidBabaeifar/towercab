@@ -11,7 +11,7 @@ import { type ChildEnd, type Ctx, EnvError, type Handler, type Progress } from "
 import { type Outcome, ok, red, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { type Adapter, adapterOf, RollbackRefused, shipEnv } from "../ship/adapter.ts";
-import { type Live, liveDomains, smokeSuites, suiteOrder } from "../ship/live.ts";
+import { type Live, liveDomains, shipNetwork, smokeSuites, suiteOrder } from "../ship/live.ts";
 import { readSecrets, type Secrets, secretsPath } from "../ship/secrets.ts";
 import { checksMayWrite, logPath, sandboxSpec } from "./checks.ts";
 import { ciState } from "./ci.ts";
@@ -109,7 +109,7 @@ async function startSuites(
       log: logPath(cx, at, "e2e", `${n}-setup.log`),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
       extraEnv: shipEnv(sc, sha),
-      domains: liveDomains(sc.live),
+      domains: [...liveDomains(sc.live), ...shipNetwork(cx.db, cx.repo(at).name)],
     }),
   };
 }
@@ -130,7 +130,7 @@ async function nextSuite(cx: Ctx, m: Mission, sc: ShipCx): Promise<Progress> {
       log: logPath(cx, at, "e2e", `${n}-${suite.name}.log`),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
       extraEnv: shipEnv(sc, sha),
-      domains: liveDomains(sc.live),
+      domains: [...liveDomains(sc.live), ...shipNetwork(cx.db, cx.repo(at).name)],
     }),
   };
 }
