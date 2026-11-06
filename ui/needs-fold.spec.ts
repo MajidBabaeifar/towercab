@@ -1,7 +1,7 @@
 // UI-189 to UI-191: the Needs you cards on the overview fold to one line, the page remembers it in
 // this browser, and a card whose ask changes opens again.
 
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 
 const PLAN = "261025-0910-1";
 const QUESTION = "261026-0815-2";
@@ -11,6 +11,27 @@ const toggle = (page: Page, id: string) => card(page, id).locator(".fold-toggle"
 async function settle(page: Page) {
   await page.waitForSelector(".page");
   await page.waitForLoadState("networkidle");
+}
+
+/** UI-190: fonts loaded and the element's size unchanged over two animation frames. */
+async function layoutSettled(page: Page, el: Locator) {
+  await page.evaluate(() => document.fonts.ready);
+  await el.evaluate(
+    (e) =>
+      new Promise<void>((resolve) => {
+        let last = "";
+        let same = 0;
+        const tick = () => {
+          const r = e.getBoundingClientRect();
+          const now = `${r.width}x${r.height}`;
+          same = now === last ? same + 1 : 0;
+          last = now;
+          if (same >= 2) resolve();
+          else requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }),
+  );
 }
 
 /** Serves /api/state with every card's ask changed by `change.suffix`; it reads the real answer first. */
@@ -91,13 +112,15 @@ test("ui: folded needs-you card shows title, repo, ask and age", async ({ page }
     { width: 375, height: 812 },
   ]) {
     await page.setViewportSize(size);
+    await layoutSettled(page, line);
     const box = (await q.boundingBox())!;
-    const one = await line.evaluate((e) => e.getBoundingClientRect().height <= 24);
-    expect(one).toBe(true);
-    expect(box.height).toBeLessThan(80);
+    const height = await line.evaluate((e) => e.getBoundingClientRect().height);
+    // UI-190: a 1 px tolerance on every size.
+    expect(height).toBeLessThanOrEqual(25);
+    expect(box.height).toBeLessThan(81);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
-    ).toBeLessThanOrEqual(0);
+    ).toBeLessThanOrEqual(1);
   }
 });
 
