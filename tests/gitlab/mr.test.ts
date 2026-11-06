@@ -67,6 +67,20 @@ test("gitlab: edits its own stage comment by marker", async () => {
   expect(m.notes[0]!.body).toContain("second");
 });
 
+test("gitlab: a stage note names the agent and the intent", async () => {
+  const { gl, f } = world();
+  const m = gl.mr("group/sub/project");
+  const by = { agent: "planner", intent: "261106-0530" };
+  await f.upsertStageComment(SLUG, 1, "Question", 1, "which?", by);
+  expect(m.notes[0]!.body.split("\n").slice(0, 2)).toEqual([
+    stageMarker("Question", 1),
+    "**Question** · planner · 261106-0530 · round 1",
+  ]);
+  // A note from before the header changed is still found by its marker and edited.
+  expect(await f.upsertStageComment(SLUG, 1, "Question", 1, "again", by)).toEqual({ edited: true });
+  expect(m.notes).toHaveLength(1);
+});
+
 test("gitlab: never edits a note it did not write", async () => {
   const { gl, f } = world();
   const m = gl.mr("group/sub/project");

@@ -22,8 +22,9 @@ import { GitLabForge } from "./forge/gitlab.ts";
 import { parseGitlabProject } from "./forge/types.ts";
 import type { Forge } from "./forge.ts";
 import { fetchHttp } from "./github/app.ts";
+import { currentPr } from "./github/events.ts";
 import { createGitHub } from "./github/gh.ts";
-import { approve as ownerApprove } from "./github/owner.ts";
+import { agentReply, approve as ownerApprove, replyTarget } from "./github/owner.ts";
 import type { Host } from "./handlers.ts";
 import { systemClock } from "./handlers.ts";
 import { Home } from "./home.ts";
@@ -60,6 +61,7 @@ export const COMMANDS = [
   "next",
   "add",
   "answer",
+  "reply",
   "retry",
   "drop",
   "start",
@@ -86,6 +88,7 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   add "<repo>: <title>" [uN iN aN]
   answer <id> <text>              answer a question (when there is no PR to reply on)
   answer <id> allow <path>…       allow a test you refused earlier, for the running mission
+  reply <id> --by <agent> <text>  an agent speaks for you on the PR (or issue): marked as the agent's
   approve <id>                    merge the PR the intent waits on, as you
   retry <id> | drop <id>
   start <id>                      begin that intent's design now, even when the repo is full
@@ -222,6 +225,7 @@ export async function main(argv: string[], tools: Tools = realTools()): Promise<
         name: { type: "string" },
         base: { type: "string" },
         prs: { type: "string" },
+        by: { type: "string" },
       },
     });
   } catch (e) {
@@ -441,6 +445,27 @@ async function run(
     case "answer":
       need(2, "<id> <text>");
       return submit(w, "answer", args[0], args.slice(1).join(" "));
+    case "reply": {
+      // PIP-184: allowed on every intent, an a0 one included: it only posts, and a0 ignores what it posts.
+      need(2, "<id> --by <agent> <text>");
+      if (v.by === undefined) throw new UsageError("reply needs --by <agent>");
+      if (!w.github) throw new Error(`reply needs [github] in ${w.config.file} (app_id, me)`);
+      const intent = await (await w.store()).get(args[0]!);
+      const m = unfinishedFor(w.db, intent.id);
+      const repo = w.config.repos.get(m?.repo ?? intent.repo);
+      const cur = m ? currentPr(m) : null;
+      const where = cur
+        ? {
+            repo: cur.kind === "plan" ? ((await w.store()).github() ?? "") : (repo?.github ?? ""),
+            number: cur.number,
+          }
+        : null;
+      const to = replyTarget(where?.repo ? where : null, intent.issue);
+      if (!to) throw new Error(`${intent.id} has no PR or issue to comment on yet`);
+      const owner = w.config.github?.name || w.config.github?.me || "the owner";
+      await agentReply(w.github, to, v.by as string, owner, args.slice(1).join(" "));
+      return `posted on ${to.repo}#${to.number} as ${v.by}, for ${owner}`;
+    }
     case "retry":
       need(1, "<id>");
       return submit(w, "retry", args[0]);

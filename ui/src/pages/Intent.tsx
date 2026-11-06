@@ -236,6 +236,30 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
           <PrTile key={p.label} pr={p} />
         ))}
       </section>
+      {data.agent_comments.length ? (
+        <section class="card pad agent-comments" aria-label="Written in your name by agents">
+          <p class="access-head">Written in your name by agents</p>
+          <ul>
+            {data.agent_comments.map((c, n) => (
+              <li key={n}>
+                <span class="chip">agent, for you</span> <strong>{c.agent}</strong>
+                {" · "}
+                {c.url ? (
+                  <a href={c.url} target="_blank" rel="noopener noreferrer">
+                    comment <External size={12} />
+                  </a>
+                ) : (
+                  "comment"
+                )}
+                {" · "}
+                <Time when={c.at} short />
+                {c.acted_on ? "" : " · ignored: this intent is only yours"}
+                <p class="meta">{c.excerpt}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       {data.card ? <NeedsCard card={data.card} readOnly={readOnly} linkTitle={false} /> : null}
       {data.steps?.length ? <StepsBlock data={data} readOnly={readOnly} /> : null}
       {data.nothingLive ? <p class="meta">Nothing to check live: {data.nothingLive}</p> : null}

@@ -2,6 +2,7 @@
 // grants a worker run gets at its effective autonomy.
 
 import { accessPolicy } from "../autonomy.ts";
+import { stripAgentHeader } from "../github/agent-header.ts";
 import { splitDomains } from "./domains.ts";
 import type { Access, Question } from "./schemas.ts";
 
@@ -131,7 +132,7 @@ export interface Reading {
  * paths decides those; one that names none decides them all. Later words never change the reading.
  */
 export function readReply(text: string | null | undefined, asked: string[]): Reading {
-  const raw = (text ?? "").trim();
+  const raw = stripAgentHeader(text ?? "").trim();
   const body = raw.replace(NOT_LETTERS, "");
   const allow = ALLOW_WORD.test(body);
   if (!allow && !REFUSE_WORD.test(body)) {
@@ -169,7 +170,7 @@ export function readingReply(r: Pick<Reading, "allowed" | "refused" | "undecided
 
 /** PIP-141: `allow <path> …` (every word a file path) → the paths; else null. */
 export function parseAllow(text: string | null | undefined): string[] | null {
-  const m = /^\s*allow\s+(.+)$/is.exec(text ?? "");
+  const m = /^\s*allow\s+(.+)$/is.exec(stripAgentHeader(text ?? ""));
   if (!m) return null;
   const tokens = m[1]!
     .split(/[\s,]+/)

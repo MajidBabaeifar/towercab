@@ -324,6 +324,7 @@ export function NeedsCard({
           <span>{card.kindLabel}</span>
         </span>
         {card.onlyYou ? <OnlyYou /> : null}
+        {card.decided_by_agent ? <span class="chip">agent for owner: {card.decided_by_agent}</span> : null}
         <span class="grow" />
         {card.since ? (
           <span class="meta">
