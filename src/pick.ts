@@ -69,8 +69,11 @@ export interface Decision {
   writes: { id: string; waiting: string; why: string }[];
 }
 
-/** Queued intents whose `after` names an unknown, dropped or cyclic intent → their bad IDs, sorted. */
-export function badAfter(listing: Listing): { id: string; ids: string[] }[] {
+/**
+ * LOOP-5, LOOP-117: for an intent and its `after` list, the IDs that are unknown or cyclic, sorted;
+ * dropped ones too unless `dropped` is false (a mission that already runs tells the owner of those itself).
+ */
+export function afterChecker(listing: Listing): (id: string, after: string[], dropped?: boolean) => string[] {
   const open = new Map(listing.open.map((i) => [i.id, i.after]));
   const done = new Set([...listing.doneIds, ...listing.done.map((i) => i.id)]);
   // `target` reachable from `from` over `after` edges among open intents.
@@ -86,14 +89,23 @@ export function badAfter(listing: Listing): { id: string; ids: string[] }[] {
     }
     return false;
   };
-  const out: { id: string; ids: string[] }[] = [];
-  for (const i of listing.open.filter(isQueued)) {
-    const bad = [...new Set(i.after)]
+  return (id, after, dropped = true) =>
+    [...new Set(after)]
       .filter(
         (a) =>
-          listing.droppedIds.has(a) || (!open.has(a) && !done.has(a)) || (open.has(a) && reaches(a, i.id)),
+          (dropped && listing.droppedIds.has(a)) ||
+          (!listing.droppedIds.has(a) && !open.has(a) && !done.has(a)) ||
+          (open.has(a) && reaches(a, id)),
       )
       .sort();
+}
+
+/** Queued intents whose `after` names an unknown, dropped or cyclic intent → their bad IDs, sorted. */
+export function badAfter(listing: Listing): { id: string; ids: string[] }[] {
+  const check = afterChecker(listing);
+  const out: { id: string; ids: string[] }[] = [];
+  for (const i of listing.open.filter(isQueued)) {
+    const bad = check(i.id, i.after);
     if (bad.length) out.push({ id: i.id, ids: bad });
   }
   return out;
