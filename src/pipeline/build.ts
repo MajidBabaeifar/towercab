@@ -61,6 +61,7 @@ import {
   readSkew,
   type SkewLine,
 } from "./guard.ts";
+import { mechanicalMerge, testsOf } from "./mechanical.ts";
 import { writePlanToMain } from "./plan.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { type Access, parseResult, type Question } from "./schemas.ts";
@@ -247,21 +248,39 @@ export const buildHandler: Handler = {
             { granted: await grantedFromPlan(cx, intent), ...(await stepsFromPlan(cx, m)) },
           );
         } else if (d.repair?.kind === "conflict") {
-          // PIP-134: the round is counted before it runs; the owner's next comment starts the count over.
-          // A re-entry of the same round (`roundFrom` is set) is not a new one.
-          if (!d.roundFrom)
+          const files = await mergeBaseBranch(cx, m);
+          // PIP-167: where both sides only added, code resolves it; unless that failed its checks once.
+          const label = `${cx.repo(m).base} into ${m.branch}`;
+          const mech = files !== null && !d.mechFailed ? await mechanicalMerge(cx, m, files, label) : null;
+          // PIP-134: the round is counted before the worker runs; the owner's next comment starts the count
+          // over. A re-entry of the same round (`roundFrom` is set) is not a new one, and a resolution by
+          // code is not a round (PIP-167).
+          if (!d.roundFrom && !mech)
             m = cx.record(
               m,
               m.step,
               {},
               { conflictRounds: { n: conflictRoundsDone(m) + 1, seen: m.feedback_seen } },
             );
-          const files = await mergeBaseBranch(cx, m);
+          if (mech) {
+            return {
+              done: ok({
+                why: "merged the base branch: both sides only added, so no worker was needed",
+                data: {
+                  repair: undefined,
+                  answered: undefined,
+                  mech,
+                  mechFailed: undefined,
+                  mergeOpened: await testsOf(cx, m, mech.files),
+                },
+              }),
+            };
+          }
           if (files === null)
             return {
               done: ok({
                 why: "merged the base branch cleanly",
-                data: { repair: undefined, answered: undefined },
+                data: { repair: undefined, answered: undefined, mechFailed: undefined },
               }),
             };
           m = cx.record(
@@ -269,6 +288,7 @@ export const buildHandler: Handler = {
             "setup",
             {},
             {
+              mechFailed: undefined,
               repair: {
                 what: "Merging the base branch conflicts. Resolve the conflicts in these files, keeping both sides' intent, then run the checks:",
                 details: files.join("\n"),
@@ -281,27 +301,38 @@ export const buildHandler: Handler = {
           const r = m.pr ? await takeRemote(cx, m, m.branch) : "none";
           if (r === "conflict") {
             const files = (await coGit(cx, m, ["diff", "--name-only", "--diff-filter=U"])).trim().split("\n");
+            // PIP-167: the commits pushed to the PR too are taken in by code when both sides only added.
+            const mech = await mechanicalMerge(cx, m, files, `origin/${m.branch} into ${m.branch}`);
             m = cx.record(
               m,
               "setup",
               {},
-              {
-                repair: {
-                  what: "Commits pushed to the PR conflict with this branch. Resolve the conflicts in these files, keeping both sides' intent, then run the checks:",
-                  details: files.join("\n"),
-                  kind: "conflict",
-                },
-              },
+              mech
+                ? { mergeOpened: await testsOf(cx, m, mech.files) }
+                : {
+                    repair: {
+                      what: "Commits pushed to the PR conflict with this branch. Resolve the conflicts in these files, keeping both sides' intent, then run the checks:",
+                      details: files.join("\n"),
+                      kind: "conflict",
+                    },
+                  },
             );
           } else if (d.answered && !resumed) {
             // LOOP-115: after the owner's answer the change takes the base branch in before it builds.
-            const files = await mergeBaseBranch(cx, m);
+            let files = await mergeBaseBranch(cx, m);
+            const mech =
+              files === null
+                ? null
+                : await mechanicalMerge(cx, m, files, `${cx.repo(m).base} into ${m.branch}`);
+            if (mech) files = null;
             m = cx.record(
               m,
               "setup",
               {},
               files === null
-                ? {}
+                ? mech
+                  ? { mergeOpened: await testsOf(cx, m, mech.files) }
+                  : {}
                 : {
                     repair: {
                       what: "Merging the base branch conflicts. Resolve the conflicts in these files, keeping both sides' intent, then run the checks:",
@@ -740,7 +771,14 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
     }
   }
   const head = (await coGit(cx, m, ["rev-parse", "HEAD"])).trim();
-  const patch: Partial<PipeData> = { repair: undefined, answer: undefined, roundFrom: undefined };
+  // A worker round ends any mechanical merge (PIP-167): its checks and review are the ordinary ones.
+  const patch: Partial<PipeData> = {
+    repair: undefined,
+    answer: undefined,
+    roundFrom: undefined,
+    mech: undefined,
+    mechFailed: undefined,
+  };
   if (head === d.roundFrom && d.repair && d.repair.kind !== "conflict") {
     // A repair that changed nothing would only run the same red check again: ask the owner now.
     if (!d.answer) {

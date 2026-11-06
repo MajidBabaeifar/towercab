@@ -149,6 +149,13 @@ export const RISK_SCHEMA = object({
   open_points: list(object({ point: S, why: S })),
 });
 
+/** PIP-169: the short review of a mechanical merge: did the combination keep both sides? */
+export const MERGE_REVIEW_SCHEMA = object({
+  kept_both: BOOL,
+  lost: list(object({ file: S, what: S })),
+  summary: S,
+});
+
 /** The scoring of a GitHub issue (INT-22). */
 export const SCORE_SCHEMA = object({
   u: { type: "integer", minimum: 1, maximum: 5 },
@@ -172,6 +179,7 @@ export const SCHEMAS = {
   build: BUILD_SCHEMA,
   review: REVIEW_SCHEMA,
   risk: RISK_SCHEMA,
+  merge_review: MERGE_REVIEW_SCHEMA,
   score: SCORE_SCHEMA,
   features: FEATURES_SCHEMA,
 };
@@ -270,6 +278,14 @@ export interface RiskResult {
   open_points: { point: string; why: string }[];
 }
 
+export interface MergeReviewResult {
+  /** Nothing from either side was dropped or doubled. */
+  kept_both: boolean;
+  lost: { file: string; what: string }[];
+  /** For the owner, in plain words. */
+  summary: string;
+}
+
 export interface ScoreResult {
   u: number;
   u_why: string;
@@ -290,6 +306,7 @@ export interface Results {
   build: BuildResult;
   review: ReviewResult;
   risk: RiskResult;
+  merge_review: MergeReviewResult;
   score: ScoreResult;
   features: { features: string[] };
 }

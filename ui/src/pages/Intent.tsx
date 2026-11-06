@@ -1,9 +1,7 @@
 // One intent's whole story (UI-62): state, the three PRs, the stage map with its logs (UI-73 to UI-77),
 // the folded list of moves, cost and the intent's own text.
 
-import { useState } from "preact/hooks";
-import type { IntentPage as Data, PrView, StepView } from "../../../src/ui/view.ts";
-import { approveSecret, sendSecret, tickStep } from "../api.ts";
+import type { IntentPage as Data, PrView } from "../../../src/ui/view.ts";
 import {
   Details,
   Id,
@@ -14,6 +12,7 @@ import {
   Section,
   StartButton,
   StateChip,
+  StepsChecklist,
   Time,
 } from "../components.tsx";
 import { ChevronLeft, External, PullRequest } from "../icons.tsx";
@@ -50,114 +49,12 @@ function PrTile({ pr }: { pr: PrView }) {
   );
 }
 
-/** SHIP-35: the field for a supplied secret; the value is sent once and the field cleared. */
-function SecretField({ intent, step }: { intent: string; step: StepView }) {
-  const [value, setValue] = useState("");
-  const [note, setNote] = useState("");
-  const sec = step.secret!;
-  const send = async () => {
-    const v = value;
-    setValue("");
-    const r = await sendSecret(intent, step.n, v);
-    setNote(r.message);
-  };
-  return (
-    <div class="secret-field">
-      {sec.source === "supply" && !sec.pr ? (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void send();
-          }}
-        >
-          <input
-            type="password"
-            autocomplete="off"
-            aria-label={`Value for ${sec.key} in ${sec.file}`}
-            value={value}
-            onInput={(e) => setValue((e.currentTarget as HTMLInputElement).value)}
-          />
-          <button type="submit" disabled={!value}>
-            Save {sec.key}
-          </button>
-        </form>
-      ) : null}
-      {sec.pr ? (
-        <p>
-          <a href={sec.pr.url} target="_blank" rel="noopener noreferrer">
-            Pull request #{sec.pr.number}
-          </a>{" "}
-          {sec.approved ? (
-            "approved; Towercab merges it."
-          ) : (
-            <button
-              type="button"
-              onClick={() => void approveSecret(intent, step.n).then((r) => setNote(r.message))}
-            >
-              Approve secret {sec.key} for {sec.file}
-            </button>
-          )}
-        </p>
-      ) : null}
-      {sec.error ? (
-        <p class="step-why">
-          {sec.error}
-          {sec.stopped ? (
-            <button
-              type="button"
-              onClick={() => void approveSecret(intent, step.n).then((r) => setNote(r.message))}
-            >
-              Try again
-            </button>
-          ) : null}
-        </p>
-      ) : null}
-      {note ? <p class="step-why">{note}</p> : null}
-    </div>
-  );
-}
-
 /** UI-160: the owner's steps as a checklist; ticking one posts the step action. */
 function StepsBlock({ data, readOnly }: { data: Data; readOnly: boolean }) {
-  const steps = data.steps ?? [];
-  const group = (when: StepView["when"], title: string) => {
-    const list = steps.filter((s) => s.when === when);
-    if (!list.length) return null;
-    return (
-      <>
-        <h3>{title}</h3>
-        <ul>
-          {list.map((s) => (
-            <li key={s.n}>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={s.doneAt !== null}
-                  disabled={readOnly || !!s.secret}
-                  onChange={(e) => void tickStep(data.id, s.n, (e.currentTarget as HTMLInputElement).checked)}
-                />
-                <span>
-                  {s.text}
-                  {s.why ? <span class="step-why">{s.why}</span> : null}
-                  {s.doneAt ? (
-                    <span class="step-time">
-                      Ticked <Time when={s.doneAt} />
-                    </span>
-                  ) : null}
-                </span>
-              </label>
-              {s.secret && !readOnly && s.doneAt === null ? <SecretField intent={data.id} step={s} /> : null}
-            </li>
-          ))}
-        </ul>
-      </>
-    );
-  };
   return (
     <section class={`card pad steps-block${data.stepsWait ? " waiting" : ""}`} aria-label="Your steps">
       <p class="access-head">Your steps</p>
-      {group("before", "Before the change merges")}
-      {group("after", "After the change merges")}
+      <StepsChecklist intent={data.id} steps={data.steps ?? []} readOnly={readOnly} />
     </section>
   );
 }
@@ -260,7 +157,9 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
           </ul>
         </section>
       ) : null}
-      {data.card ? <NeedsCard card={data.card} readOnly={readOnly} linkTitle={false} /> : null}
+      {data.card ? (
+        <NeedsCard card={data.card} readOnly={readOnly} linkTitle={false} showSteps={false} />
+      ) : null}
       {data.steps?.length ? <StepsBlock data={data} readOnly={readOnly} /> : null}
       {data.nothingLive ? <p class="meta">Nothing to check live: {data.nothingLive}</p> : null}
       {data.release ? (

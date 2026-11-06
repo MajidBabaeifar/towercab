@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..149, UI-150..154, UI-155..164, UI-168, UI-184..191, UI-192..197, UI-239 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..149, UI-150..154, UI-155..164, UI-168, UI-184..191, UI-192..197, UI-239, UI-244..251 · **Prefix:** UI
 
 ## Purpose
 
@@ -1336,6 +1336,58 @@ The screenshot fixture has the cases that made the overview hard to use.
   mission waiting on the owner's steps. The overview screenshots (light, dark, mobile) are taken with
   them and a test checks the first Needs you card sits above the first proposal.
 - Verified by: `ui: screenshots light, dark and mobile`, `ui: fixture overview has the first needs-you card above the proposals`
+
+### UI-253 · Budgets are edited in the page
+
+The owner sets the daily and monthly budget, and each repo's caps, in the page.
+
+- Overview: a "Budget" section with two fields, "Per day" and "Per month" (USD, empty = no limit), each
+  showing what is spent so far in that period. A repo's page has the same two fields as "Caps" inside
+  Settings (UI-150), saved apart from the settings form because they apply at once and open no PR. A
+  line under them says `Saved in config.toml on this machine.`
+- "Save" posts `{action: "budgets", scope: "all" | <repo>, daily, monthly}` (UI-66's actions); the
+  server writes the changed keys to `config.toml` (MET-31); an empty field removes the key. An invalid
+  amount is refused in the form and by the server with MET-31's reason; a refusal keeps the typed values
+  (UI-67). Reply: `Saved. Applies now.`
+- Each change is recorded in the Activity page (UI-64) as kind `settings`, naming the key and the old →
+  new value (`daily budget: $80 → $100`, `none` for unset), with the time. A save that changes nothing
+  records nothing.
+- `GET /api/state` carries `budgets` (`{daily, monthly, spentDay, spentMonth}`) and
+  `GET /api/repos?repo=<name>` carries the repo's own. Fits 360 px, works in light and dark and by keyboard.
+- Verified by: `ui: the budget section saves daily and monthly amounts`, `ui: a repo page has its own caps`, `ui: an invalid budget is refused in the form and by the server`, `ui: a budget save is written to config.toml`, `ui: a budget change shows in activity as old to new`, `ui: an unchanged save records nothing`, `ui: screenshots light, dark and mobile`
+
+### UI-254 · A reached cap is a card that offers to raise it
+
+When a cap pauses work, a card at the top says which one and lets the owner raise it in one tap.
+
+- A card among the Needs you cards (UI-244: it counts in `needs`, once per reached cap): `Daily budget
+  reached: $<spent> of $<cap>`, or `<repo> reached its monthly cap: …`, with the line "Work for <scope>
+  is paused until <midnight | the 1st>." and the number of intents waiting behind it.
+- Buttons: "Raise to $<cap + 10>" (a rounded step: 10 % of the cap, at least $5, rounded up to whole
+  dollars) and "Set a different amount…" (a field; it posts UI-253's action). "Wait" needs no button:
+  the card goes when the period ends. Raising to a value above the spend removes the card and work resumes
+  (MET-33).
+- Verified by: `ui: a reached cap shows a card with the amounts`, `ui: raising the cap from the card resumes work`, `ui: the cap card counts as needing you`, `ui: the cap card goes when the period ends`
+
+### UI-255 · Estimate and spend on an intent
+
+Each intent shows what it is expected to cost, and while it runs, what it has spent against that.
+
+- Before start (proposed, queued, up next, the intent page): `Estimated $<low>–$<high>, about $<median>`
+  from MET-34, or `No estimate yet` when there is none. Working rows and the intent page (UI-59, UI-62)
+  show `$<spent> of about $<median>` and a bar that turns amber above `high` and says `over the usual
+  range`. The bar never blocks work.
+- Verified by: `ui: an unstarted intent shows its estimate`, `ui: a running intent shows spent against the estimate`, `ui: no estimate says so`, `ui: the over-estimate bar turns amber`
+
+### UI-256 · The top bar shows spend against the budget
+
+The top bar shows how much of the budget is used and turns amber at 80%.
+
+- Replaces UI-57's spend-today text: `$<spent today> of $<daily>` and, when a monthly budget is set,
+  `· $<spent month> of $<monthly> this month`; with no budget, `$<spent today> today`. Amber (a class and
+  text `80% used`, not colour alone) at spend ≥ 80% of either budget, red with `Budget reached` at 100%.
+  The tightest repo cap (MET-33) shows only on its repo page and card, not in the bar.
+- Verified by: `ui: top bar shows spend against the budget`, `ui: top bar turns amber at 80 percent`, `ui: top bar says budget reached`
 
 ## Out of scope
 

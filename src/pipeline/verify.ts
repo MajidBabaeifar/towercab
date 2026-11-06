@@ -20,7 +20,21 @@ import {
   readOnlyCachePath,
   sandboxSpec,
 } from "./checks.ts";
-import { ask, cloneOf, coGit, data, nextN, repoFiles, tail } from "./common.ts";
+import {
+  ask,
+  cloneOf,
+  coGit,
+  data,
+  ended,
+  intentOf,
+  nextN,
+  note,
+  repoFiles,
+  spawnRun,
+  tail,
+} from "./common.ts";
+import { intentData, render } from "./prompts.ts";
+import { parseResult } from "./schemas.ts";
 
 export const MAX_REPAIRS = 2;
 export const MAX_SHOTS = 20;
@@ -96,10 +110,12 @@ export const verifyHandler: Handler = {
     }
     if (m.step === "checks") return checks(cx, m);
     if (m.step === "shots") return shots(cx, m);
+    if (m.step === "merge-review") return mergeReview(cx, m);
     return { done: { event: "bad_result", why: `unknown verify step ${m.step}` } };
   },
 
   async finish(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
+    if (m.step === "merge-review") return mergeReviewEnd(cx, m, end);
     const log = `${read(end.stdout)}${read(end.stderr)}`;
     if (m.step === "setup") {
       if (end.code !== 0) {
@@ -124,6 +140,12 @@ export const verifyHandler: Handler = {
         return failed(cx, m, "The checks failed.", log);
       }
       const files = await repoFiles(cx, m);
+      // PIP-169: a merge made by code is read on its own diff before it goes on; no screenshots for it.
+      if (data(m).mech)
+        return mergeReview(
+          cx,
+          cx.record(m, "merge-review", {}, { verify: { log: tail(log, 2000), result: "green" } }),
+        );
       if (files.verifying.screenshots)
         return shots(cx, cx.record(m, "shots", {}, { verify: { log: tail(log, 2000), result: "green" } }));
       return { done: ok({ data: { verify: { log: tail(log, 2000), result: "green" } } }) };
@@ -154,7 +176,8 @@ export const verifyHandler: Handler = {
 };
 
 async function checks(cx: Ctx, m: Mission): Promise<Progress> {
-  const lines = await runLines(cx, m);
+  // PIP-167: a merge made by code runs the repo's full checks, not the fast subset.
+  const lines = data(m).mech ? (await repoFiles(cx, m)).verifying.checks : await runLines(cx, m);
   const n = data(m).n?.verify ?? 1;
   if (lines.length === 0) return { done: ok({ why: "no local checks: CI runs the suite" }) };
   return {
@@ -188,9 +211,70 @@ async function shots(cx: Ctx, m: Mission): Promise<Progress> {
   };
 }
 
+/**
+ * PIP-167, PIP-169: a merge made by code that didn't pass is thrown away (it was never pushed) and the
+ * worker's conflict round runs; the failed attempt is not a round or a repair.
+ */
+async function dropMechanical(cx: Ctx, m: Mission, why: string): Promise<Progress> {
+  await coGit(cx, m, ["reset", "--hard", "--quiet", data(m).mech!.ours]);
+  cx.log(`${m.intent}: the merge made by code is dropped: ${why}`);
+  return {
+    done: red(`the merge made by code is dropped (${why}); the worker resolves the conflict`, {
+      data: {
+        mech: undefined,
+        mechFailed: true,
+        repair: { what: "The PR conflicts with its base branch.", details: "", kind: "conflict" },
+      },
+    }),
+  };
+}
+
+/** PIP-169: the short review of the merge commit alone (its diff against the PR head before the merge). */
+async function mergeReview(cx: Ctx, m: Mission): Promise<Progress> {
+  const mech = data(m).mech!;
+  const intent = await intentOf(cx, m);
+  return spawnRun(cx, m, {
+    kind: "review",
+    agent: "merge-review",
+    step: "merge-review",
+    stage: "verify",
+    prompt: render("merge-review", {
+      intent: intentData(intent.text),
+      diff_cmd: `git diff ${mech.ours} HEAD`,
+      resolved: mech.notes.map((n) => `- ${n}`).join("\n"),
+    }),
+    files: await repoFiles(cx, m),
+    intent,
+  });
+}
+
+async function mergeReviewEnd(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
+  const mech = data(m).mech!;
+  const r = ended(cx, m, "review", end, (v) => parseResult("merge_review", v));
+  if (!r.ok) {
+    // A review that can't finish is no yes: the worker takes the conflict as before.
+    if ("done" in r.progress && r.progress.done.event === "wait")
+      return dropMechanical(cx, m, "its review didn't finish");
+    return r.progress;
+  }
+  const v = r.value;
+  const round = data(m).n?.review ?? 1;
+  const plain = v.summary.trim();
+  const lost = v.lost.map((l) => `- \`${l.file}\`: ${l.what}`).join("\n");
+  await note(
+    cx,
+    m,
+    "Verify",
+    round,
+    `**Merge review:** ${v.kept_both ? "both sides kept" : "a side was lost, so the worker resolves the conflict"}\n\n${plain}${lost ? `\n\n${lost}` : ""}`,
+  );
+  if (!v.kept_both) return dropMechanical(cx, m, "the merge review found a side lost");
+  return { done: ok({ why: "the merge kept both sides", data: { mech: { ...mech, reviewed: true } } }) };
+}
+
 /** A red verify: a repair round, or after the repairs `checks red`. */
-function failed(cx: Ctx, m: Mission, what: string, log: string): Progress {
-  void cx;
+async function failed(cx: Ctx, m: Mission, what: string, log: string): Promise<Progress> {
+  if (data(m).mech) return dropMechanical(cx, m, `${what.replace(/\.$/, "").toLowerCase()}`);
   if (m.repairs >= MAX_REPAIRS)
     return { done: wait("checks red", `Still failing after ${MAX_REPAIRS} fix attempts: ${what}`) };
   return {

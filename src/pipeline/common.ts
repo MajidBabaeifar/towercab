@@ -25,6 +25,7 @@ import { checkoutRoot } from "../service.ts";
 import { combine, type OwnerStep, type PlanStep, parseNoneLive, parseSteps } from "../steps.ts";
 import { grantsFor, parseAccess, type TestAsk } from "./access.ts";
 import { claudeUnixSockets, hostState } from "./hostcheck.ts";
+import type { Mech } from "./mechanical.ts";
 import { cacheEnv, DEFAULT_NETWORK } from "./sandbox.ts";
 import { type Access, type Question, SCHEMAS } from "./schemas.ts";
 
@@ -152,6 +153,10 @@ export interface PipeData {
   };
   /** Conflict rounds of the code PR since the owner last commented (`seen` = `feedback_seen`; PIP-134). */
   conflictRounds?: { n: number; seen: string | null };
+  /** PIP-167..169: a conflict resolved by code, until the review carries over or a worker round starts. */
+  mech?: Mech;
+  /** PIP-167: the mechanical resolution failed its checks; the next conflict round goes to the worker. */
+  mechFailed?: boolean;
   /** Review fix rounds sent back to build (PIP-98). */
   reviewFixes?: number;
   /**

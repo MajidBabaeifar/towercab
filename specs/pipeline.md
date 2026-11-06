@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..166, PIP-182..186 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..169, PIP-182..186 · **Prefix:** PIP
 
 ## Purpose
 
@@ -1744,6 +1744,7 @@ When a conflict hunk cuts through a block (CSS rules, say), Towercab takes the b
 
 - Applies per file, after PIP-167's hunk rule: a file where a hunk is not additive only because it splits a block, or where the hunk rule cannot decide, is resolved with the PR's diff for that file (merge base → PR head) applied onto the file as it is on `origin/<base>`. The patch must apply with no conflict and no fuzz (plain `git apply`, no three-way merge).
 - Other files of the same merge keep the result of PIP-167. If the patch does not apply cleanly to any such file, or the result fails the full checks or the merge review (PIP-167, PIP-169), the whole attempt is dropped and the worker's conflict round runs as before.
+- Only when the PR's own change to the file removes or edits no line: a PR that deleted a line the base kept always goes to the worker. The context of the patch is the check that the base's side did not change what the PR's lines sit next to.
 - A file the base deleted or renamed is never resolved this way; it goes to the worker.
 - Verified by: `pipeline: a conflict that splits a CSS block is resolved by applying the PR's diff`, `pipeline: a PR diff that does not apply cleanly goes to the worker`
 
@@ -1755,8 +1756,8 @@ A conflict that code resolved is committed as Towercab's merge commit, checked i
 - The gate's check for someone else's commits (PIP-7) does not count this commit, nor the base commits it brings in. Publish then pushes it, the mission goes on to `ci` on the new head, and no worker round or fix round is used.
 - The test lock of PIP-31 treats the files it changed as a merge of the base (PIP-153).
 - Merge review: after the full checks pass and before the push, a read-only session of the review model (PIP-4) is given only the diff of the merge commit against its first parent (the PR head before the merge) and the hunks Towercab resolved. It answers one question: did the combination keep both sides, nothing lost and nothing duplicated? Its result is `kept_both` (boolean) and `lost` (what was dropped or doubled, with file). `kept_both` false → the attempt is dropped (PIP-167). The verdict is posted as a short comment on the PR, written for the owner (PIP-39).
-- No full review follows: the review of the previous head (PIP-4) stands for the merge head, because the merge brings in no new content of the PR's own. The mission goes from the push to `ci`, and the review stage records the carried-over review instead of running again. The risk agent's assessment (PIP-96) is likewise carried over. A later push that changes the PR's own diff is reviewed in full as PIP-4 says.
-- Verified by: `pipeline: a mechanical merge commit is Towercab's own at the gate`, `pipeline: a mechanical resolution uses no worker round`, `pipeline: a mechanical merge is reviewed on its own diff only`, `pipeline: a merge review that finds a lost side goes to the worker`, `pipeline: a mechanical merge does not trigger a full review`
+- No full review follows: the review of the previous head (PIP-4) stands for the merge head, because the merge brings in no new content of the PR's own. The mission goes from the push to `ci`, and the review stage records the carried-over review instead of running again. The risk agent's assessment (PIP-96) is likewise carried over. A later push that changes the PR's own diff is reviewed in full as PIP-4 says. It stands only when that review is of the PR as it was just before the merge (the patch id of the PR's own diff against the merged-in base matches); an older review, from before a fix round, is not carried over and the PR is reviewed in full.
+- Verified by: `pipeline: a mechanical merge commit is Towercab's own at the gate`, `pipeline: a mechanical resolution uses no worker round`, `pipeline: a mechanical merge is reviewed on its own diff only`, `pipeline: a merge review that finds a lost side goes to the worker`, `pipeline: a mechanical merge does not trigger a full review`, `pipeline: a review of an older head is not carried over a mechanical merge`
 
 ### PIP-170 · Every job in Towercab's CI has a time limit
 
@@ -1848,6 +1849,7 @@ The intent page lists the owner-account comments that agents wrote, so the owner
 | [repair](../agents/repair.md) | Fixes red checks, a conflict, a review finding or an owner's answer in the worker's session. | The worker's tools and permissions, no more. | mission's | mission |
 | [review](../agents/review.md) | Reviews the code PR against the intent, plan and `REVIEW.md`; reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [risk](../agents/risk.md) | Judges the risk of the spec, plan and code at their gates, and reviews the spec a second time (PIP-96, PIP-97); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
+| [merge-review](../agents/merge-review.md) | Checks that a merge Towercab made by code kept both sides (PIP-169); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [score](../agents/score.md) | Turns a GitHub issue into a scored intent ([INT-22](intents.md)); runs outside any mission in an empty folder. | Nothing: no tools. | none | `[agent].model` |
 | [features](../agents/features.md) | Writes a repo's live features from its README and specs ([INT-39](intents.md)); runs outside any mission in a fresh checkout of base. | Read, Glob, Grep in the sandbox; no network. | none | `[agent].model` |
 

@@ -15,11 +15,16 @@ const KEY = "towercab.airspace";
 const CLOSE_MS = 250;
 const CARD_W = 264;
 
+/** UI-246: below this width the airspace starts folded, until the owner opens it. */
+const PHONE_PX = 640;
+
 function readHidden(): boolean {
   try {
-    return localStorage.getItem(KEY) === "hidden";
+    const stored = localStorage.getItem(KEY);
+    if (stored === null) return window.innerWidth < PHONE_PX;
+    return stored === "hidden";
   } catch {
-    return false;
+    return window.innerWidth < PHONE_PX;
   }
 }
 
