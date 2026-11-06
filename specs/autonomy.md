@@ -47,7 +47,7 @@ Every intent runs verify, the red→green proof, CI, the review and the gate, wh
 
 - The stage order ([LOOP-3](loop.md)) has no stage chosen by `a`. The gate merges only with CI green
   and the review approved.
-- Draft change: the stages an intent skips are chosen by its kind ([KND-3](kinds.md)), never by `a`;
+- Draft change: the stages an intent skips are chosen by its kind ([PIP-175](pipeline.md)), never by `a`;
   the stages that remain are not shortened. The code PR adjusts this row in the same commit as the code.
 - Verified by: `autonomy: every stage runs at every level`
 
@@ -252,47 +252,6 @@ Every grant of network access, from a plan, a request or an intent, is a domain 
 - Allowed requests are recorded in `data.unplanned` and listed under "Access beyond the plan". At a4 the gate still goes to `approval:merge` with AUT-15's reason, even though the owner allowed it: the plan the owner approved is not the plan that was built.
 - The code PR switches AUT-14 and AUT-15 (and replaces the a1–a3 test `autonomy: unplanned access at a1-a3 is granted`), PIP-24 (no `WebFetch(domain:*)`, repo variables), PIP-95 and PIP-116 (wording), LOOP-34 (cache env), LOOP-69 (the `env` refusal) and the config table of loop.md (ignored keys), each in the same commit as the code.
 - Verified by: `autonomy: an invalid grant in a plan waits for the owner`, `autonomy: an invalid mid-build request is refused`, `autonomy: unplanned access asks the owner at every level`, `autonomy: allowing unplanned access grants it`, `autonomy: a refused access stays refused`
-
-### AUT-28 · a0: only the owner decides
-
-An intent at autonomy a0 is decided by the owner alone: every spec, plan and merge waits for them, whatever the risk.
-
-- `a: 0` is a valid value of the intent's `a` ([INT-69](intents.md)). A present `0` counts as 0, never as
-  a missing `a` (AUT-9), and nothing raises it: the repo cap (AUT-8) and AUT-13 only lower, the worker
-  may not raise it (AUT-7), and the shadow may not change it (AUT-30).
-- Every gate waits: spec gate → `approval:spec`, plan gate → `approval:plan`, merge gate →
-  `approval:merge`, even for a low-risk change and with no open point (AUT-11, AUT-12, AUT-18). The
-  why is `This intent is yours alone to decide.` CI, the review and the risk check still run first;
-  their results are shown to the owner. Gates a kind skips (KND-3) do not appear.
-- Access follows the a1–a3 column of AUT-14 for the build, but no mid-build request is allowed except
-  by the owner's own answer (AUT-27, AUT-29).
-- Verified by: `autonomy: a0 is not a missing a`, `autonomy: a0 waits at spec, plan and merge`, `autonomy: a0 is never raised`
-
-### AUT-29 · At a0 only the owner answers
-
-Every question on an a0 intent is answered by the owner themself, and no agent answers it or settles it in their place.
-
-- The design's `open_questions` are all left to the owner (`answer: null`), and the second reviewer
-  ([PIP-97](pipeline.md)) keeps every concern as an open point. A question (PIP-110), an access request
-  (AUT-27), an unplanned test change (PIP-116) and a failed risk check (AUT-19) wait until the owner
-  replies; an answer is accepted only from the owner's own action: the page, the owner's Telegram chat
-  as the owner, `towercab` commands, or the owner's GitHub account on the PR.
-- A reply carrying the shadow's tag (SHD-12), from the shadow's `actor`, or from any other account is
-  ignored and the question stays open. No timeout, default or recommendation is applied for the owner.
-- Verified by: `autonomy: a0 leaves every question to the owner`, `autonomy: a0 ignores an answer from the shadow`, `autonomy: a0 ignores a comment from another account`
-
-### AUT-30 · The shadow and agents may not stand in at a0
-
-The shadow can read and explain an a0 intent, but any action on it that approves, answers or merges is refused.
-
-- On an a0 intent, [SHD-7](shadow.md)'s `reply` and [SHD-8](shadow.md)'s `merge`, `boost` and `drop` are refused
-  with one plain sentence the shadow relays (`This intent is yours alone to decide.`), even with the
-  owner's yes in the chat (SHD-9, SHD-10): the yes held for an action does not make the shadow the owner.
-  `start` and the reads stay allowed. A draft the shadow writes at a0 is not an a0 intent unless the
-  owner sets it (SHD-13); the shadow can never clear or raise an `a: 0`.
-- The worker, the reviewers and the risk agent only produce text and findings; none of their output is
-  read as an approval or an answer on an a0 intent.
-- Verified by: `shadow: an a0 intent refuses reply merge boost and drop`, `shadow: a yes does not unlock an a0 action`, `shadow: the shadow cannot change a`
 
 ## Out of scope
 

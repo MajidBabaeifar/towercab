@@ -1788,6 +1788,130 @@ When a spec PR adds a new spec file in a repo whose README indexes its specs, th
 - The design's requirement IDs stay checked against `main` before publishing (PIP-80, PIP-130).
 - Verified by: `pipeline: a design that adds a spec file may edit the README docs table`, `pipeline: the publish guard accepts the README docs table for a new spec file`, `pipeline: other README edits in a design are still refused`, `pipeline: a README docs table edit without a new spec file is refused`
 
+### PIP-173 · An intent has a kind
+
+Every intent is one of five kinds of work, and the kind decides which steps it goes through.
+
+- Kinds: `bugfix` (behaviour that a spec row already promises is broken), `refactor` (structure
+  changes, behaviour doesn't), `infra` (CI, build, deploy or other configuration), `feature` (new or
+  changed behaviour), `spec` (spec-only or settings-only: no program code changes).
+- The owner may write `kind: <name>` in the intent's front matter ([INT-69](intents.md)). Without it
+  Towercab infers it (PIP-174). The kind in use is kept in `missions.data.kind` (`kind`, `by`: `owner`,
+  `towercab` or `escalated`, `why`) and fixed for the mission; a change to the field applies to the
+  next attempt ([LOOP-15](loop.md) `retry`).
+- Autonomy never picks the kind or the path: `a` only decides who approves each gate that remains
+  ([AUT-6](autonomy.md)). Owner-only intents (intent 261106-0500) are a separate change; a kind works
+  with them as with any autonomy.
+- Verified by: `kinds: the owner's kind field is used`, `kinds: an unknown kind makes the intent unreadable`
+
+### PIP-174 · Towercab infers the kind
+
+When the owner didn't set a kind, a short read-only run reads the intent and the repo's specs and picks one, and any doubt means `feature`.
+
+- One run at pick, on the review model, tools Read, Glob and Grep, like the risk agent
+  ([AUT-16](autonomy.md)); result `kind` and `why` (one plain sentence). A run that fails after its one
+  continue, an unknown value or a missing answer → `feature`.
+- It picks `bugfix` only when a spec row already describes the behaviour the intent says is broken, and
+  `spec` only when the outcome names no change to program code. Its cost counts in the intent's metrics
+  ([MET-1](metrics.md)).
+- The default is `feature` because the full path is the safe one: a wrong guess toward a lighter kind
+  would skip the spec and the plan the owner may want.
+- Verified by: `kinds: an intent without a kind is inferred`, `kinds: doubt means feature`
+
+### PIP-175 · Each kind has its own path
+
+The stages a mission goes through depend on its kind; the stages that remain run as they do today.
+
+| Kind | Spec PR | Plan PR | Build | Proof | Code PR, CI, review, gate, merge |
+|---|---|---|---|---|---|
+| feature | yes | yes | yes | red→green (PIP-30) | yes |
+| bugfix | no | no | yes | red→green | yes |
+| refactor | no | yes | yes | behaviour unchanged (PIP-177) | yes |
+| infra | no | yes | yes | apply (PIP-178) | yes |
+| spec | yes | no | no | none | none; the spec PR is the only PR (PIP-179) |
+
+- A skipped stage is recorded (`ctx.record`) with the reason and the kind, and the mission moves to the
+  next stage that runs, so the page and the log say why no spec PR was made. The order of
+  [LOOP-3](loop.md) is unchanged; a kind only leaves stages out.
+- The kind never changes the checks that remain: verify, CI, the review, the risk check and the gate
+  run as for a feature, and autonomy (AUT-3..AUT-12) decides who approves each. A skipped gate has no
+  risk assessment.
+- Draft change: the stages an intent skips are chosen by its kind, never by `a` (AUT-6). The code PR
+  adjusts AUT-6, PIP-25, PIP-30 and LOOP-3 in the same commit as the code.
+- Verified by: `kinds: each kind runs its own stages`, `kinds: a skipped stage is recorded`, `machine: every stage and event pair is defined`
+
+### PIP-176 · A bugfix has no spec PR and no plan PR
+
+A bugfix goes straight to build with only the access every intent has, and it still proves its test failed before the fix.
+
+- The worker gets the intent and the spec rows it names; no spec PR and no plan PR are made, so there is
+  no plan to grant access: the grants are the default network list, the intent's own `unlock` and
+  `network`, and owner-allowed requests ([AUT-27](autonomy.md)). A protected path is blocked at a4 and
+  needs the owner's answer. A bugfix has no plan because asking for more mid-build already goes to the
+  owner.
+- The red→green proof applies whatever the design's `type` (PIP-30); a bugfix whose test doesn't fail
+  without the fix is repaired as any failed proof.
+- Verified by: `kinds: a bugfix skips the spec and the plan`, `kinds: a bugfix still needs a failing test first`
+
+### PIP-177 · A refactor keeps its behaviour and its tests
+
+A refactor has no spec PR, and instead of a failing test it proves that the existing tests still pass untouched.
+
+- No spec PR. The plan PR stays: a refactor's blast radius is what the plan is for, and it lists the
+  files the change moves and the access it needs (PIP-28).
+- Proof: the test files of the base branch are locked as in [PIP-31](pipeline.md) and a diff that
+  changes, adds or removes a test file is refused; a refactor that truly needs a test change asks the
+  owner as in [PIP-116](pipeline.md). Proof passes when the checks are green with those files
+  unchanged; it records `behaviour unchanged`.
+- Verified by: `kinds: a refactor skips the spec and keeps the plan`, `kinds: a refactor may not change tests`, `kinds: a refactor proves its tests pass untouched`
+
+### PIP-178 · Infra and config apply their change instead of a proof
+
+A change to CI, build or other configuration has no spec PR and, instead of a failing-test proof, is applied once to show it works.
+
+- No spec PR. The plan PR stays, because configuration lives in protected paths (REPO-8) and the plan
+  is where they are granted.
+- Instead of proof, the step runs the ` ```apply ` block of the base branch's `TOWERCAB.md`
+  ([REPO-1](repo.md)) in the sandbox (the commands that dry-run or validate the change, such as a workflow
+  linter); a failing line is repaired like a failed check. No block → nothing is run and the PR's own
+  CI is the apply: the step records `applied by CI` and the mission goes on; the gate still waits for
+  green CI.
+- Verified by: `kinds: infra skips the spec and keeps the plan`, `kinds: infra runs the apply block instead of the proof`, `kinds: infra without an apply block relies on CI`
+
+### PIP-179 · A spec-only or settings-only change is one PR
+
+An intent that changes only the specs or the settings files of a repo produces a single pull request, and the intent is done when it merges.
+
+- Kind `spec`: the design (PIP-25) runs; no plan, build, proof or code PR follows. Besides `specs/**`
+  the design may edit `TOWERCAB.md`, `REVIEW.md` and `CLAUDE.md` at the repo root. Any other path is
+  discarded as in PIP-25, and the publish guard (PIP-172) accepts only these.
+- The spec PR's merge ends the mission: `done`, and the intent's `stage` becomes `done`. Its gate is
+  AUT-11; a PR that touches a settings file always goes to the owner (`approval:spec`, why: `This
+  changes the settings Towercab reads from the repo, so you decide.`), at every autonomy.
+- Settings that live outside the repo (Towercab's own `config.toml`, an account) are not files in a PR;
+  they are delivered as steps for the owner ([PIP-112](pipeline.md)).
+- Verified by: `kinds: a spec-only change ends at the merged spec PR`, `kinds: a settings file in the spec PR goes to the owner`, `kinds: the design of a spec kind may edit settings files only`
+
+### PIP-180 · A lighter path can step up to a feature
+
+When a bugfix, refactor or infra mission finds that it changes behaviour a spec doesn't describe, it stops and restarts as a feature.
+
+- The build result may return `needs_spec: true` with `why`. No code PR exists yet, so Towercab drops
+  the branch, records `data.kind = feature` with `by: escalated` and the reason, and moves the mission
+  to `design`. Anything else in the result is ignored and the kind stays.
+- It never steps down: a feature never becomes lighter on its own, and the owner's `kind` field is
+  not overruled by Towercab's inference, only by this escalation.
+- Verified by: `kinds: a bugfix that needs a spec becomes a feature`, `kinds: a kind never steps down`
+
+### PIP-181 · The owner sees the kind
+
+The kind and how it was chosen are shown on the intent's page and in the pull request, in plain words.
+
+- A kind chip on the card and intent page (`Bugfix`, `Refactor`, `Infra / config`, `Feature`,
+  `Spec only`) with `You set this`, `Towercab chose this: <why>` or `Moved up to a feature: <why>`;
+  the PR body of each PR the path still makes names the kind in its `## What this does` section.
+- Verified by: `ui: the card shows the kind`, `pipeline: PR texts name the kind`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
