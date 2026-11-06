@@ -78,7 +78,7 @@ async function settingUp(cx: Ctx, m: Mission): Promise<Progress> {
       ? `The pull request that adds checks (#${rec.pr}) was closed without merging.`
       : rec.tried.length
         ? `Towercab tried ${rec.tried.join(", ")} and none passed on ${rec.base}: ${rec.lastFailure}.`
-        : `Towercab found nothing in the repo to draft checks from, so none passed on ${rec.base}.`;
+        : `Towercab couldn't set up checks on ${rec.base}: ${rec.lastFailure ?? "nothing in the repo to draft checks from"}.`;
   return { done: wait("add CLAUDE.md verifying block", why) };
 }
 

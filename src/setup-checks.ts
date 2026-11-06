@@ -53,6 +53,9 @@ export interface SetupRecord {
   head?: string;
   pushedAt?: number;
   polledAt?: number;
+  /** Errors in a row, and when the next try is due. */
+  errors?: number;
+  retryAt?: number;
   /** The head a review passed on, and the head it blocked. */
   reviewedHead?: string;
   blockedHead?: string;
@@ -465,23 +468,37 @@ async function drivePr(d: SetupDeps, repo: RepoConfig, rec: SetupRecord): Promis
 
 // -- the job -------------------------------------------------------------------------------------------
 
-/** Is there a setup that needs a step now? (An open PR is read at most every `POLL_S`.) */
+/** Errors in a row (a failed fetch, an auth fault) before a setup gives up and the owner is asked. */
+export const MAX_ERRORS = 3;
+/** Back-off after an error, per error in a row (s). */
+const RETRY_S = 30;
+
+/** Does this record need a step now? An open PR is read at most every `POLL_S`; an error backs off. */
+function due(rec: SetupRecord, now: number): boolean {
+  if (rec.state === "drafting" || rec.state === "pushing")
+    return rec.retryAt === undefined || now >= rec.retryAt;
+  if (rec.state === "open") return rec.polledAt === undefined || now - rec.polledAt >= POLL_S;
+  return false;
+}
+
+/** Is there a setup that needs a step now? */
 export function setupWork(db: Db, config: Config, now: number): boolean {
   for (const repo of config.repos.values()) {
     const rec = getSetup(db, repo.name);
-    if (!rec) continue;
-    if (rec.state === "drafting" || rec.state === "pushing") return true;
-    if (rec.state === "open" && (rec.polledAt === undefined || now - rec.polledAt >= POLL_S)) return true;
+    if (rec && due(rec, now)) return true;
   }
   return false;
 }
 
-/** One step of the oldest repo with work to do; true when a repo was worked on. */
+/**
+ * One step of the first repo whose setup is due; true when a repo was worked on. A repo that isn't due (a PR
+ * read a moment ago, an error backing off) never holds up the repos after it.
+ */
 export async function setupChecksPass(d: SetupDeps): Promise<boolean> {
   for (const repo of d.config.repos.values()) {
     if (isGitlab(repo.github)) continue;
     const rec = getSetup(d.db, repo.name);
-    if (!rec || !["drafting", "pushing", "open"].includes(rec.state)) continue;
+    if (!rec || !due(rec, d.clock.now())) continue;
     try {
       let next: SetupRecord = rec;
       if (rec.state === "drafting") {
@@ -491,9 +508,26 @@ export async function setupChecksPass(d: SetupDeps): Promise<boolean> {
       }
       if (next.state === "pushing") next = await pushPhase(d, repo, next);
       else if (next.state === "open") next = await drivePr(d, repo, next);
-      putSetup(d.db, repo.name, next);
+      putSetup(d.db, repo.name, { ...next, errors: 0, retryAt: undefined });
     } catch (e) {
-      d.log(`setting up checks for ${repo.name}: ${(e as Error).message}`);
+      const msg = (e as Error).message;
+      d.log(`setting up checks for ${repo.name}: ${msg}`);
+      const cur = getSetup(d.db, repo.name) ?? rec;
+      const now = d.clock.now();
+      if (cur.state === "open") {
+        // An unreadable PR is looked at again at the next poll, not on every pass.
+        putSetup(d.db, repo.name, { ...cur, polledAt: now });
+      } else {
+        const errors = (cur.errors ?? 0) + 1;
+        // Repeated errors end the setup, so the owner is asked instead of the intents waiting without a reason.
+        putSetup(
+          d.db,
+          repo.name,
+          errors >= MAX_ERRORS
+            ? { ...cur, state: "failed", errors, lastFailure: `${msg}`, retryAt: undefined }
+            : { ...cur, errors, retryAt: now + RETRY_S * errors },
+        );
+      }
     }
     return true;
   }
