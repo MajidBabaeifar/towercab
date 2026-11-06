@@ -176,6 +176,12 @@ export class FakeForge implements Forge {
   async failedLog(_repo: string, run: number) {
     return `run ${run}: failed\n`;
   }
+  readonly jobLogs = new Map<number, string>();
+  async jobLog(_repo: string, job: number) {
+    const text = this.jobLogs.get(job);
+    if (text === undefined) throw new Error(`gh api: Not Found (HTTP 404)`);
+    return text;
+  }
 
   async codeScanningAlerts(): Promise<CodeScanningAlert[]> {
     return [];

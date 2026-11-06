@@ -188,6 +188,8 @@ export interface Forge {
   rerunFailed(repo: string, run: number): Promise<void>;
   /** The log of the failed jobs of a run. */
   failedLog(repo: string, run: number): Promise<string>;
+  /** The whole log of one job of a run (PIP-154). */
+  jobLog(repo: string, job: number): Promise<string>;
   /**
    * PIP-148: the open code scanning alerts of a change request's merge ref (none for a host without
    * code scanning). Throws `ForgeDenied` when the bot may not read them.
