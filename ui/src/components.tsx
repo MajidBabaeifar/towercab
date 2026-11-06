@@ -323,6 +323,7 @@ export function NeedsCard({
           <StateIcon state="needs" size={14} />
           <span>{card.kindLabel}</span>
         </span>
+        {card.onlyYou ? <OnlyYou /> : null}
         <span class="grow" />
         {card.since ? (
           <span class="meta">
@@ -700,6 +701,34 @@ export function StartButton({ intent }: { intent: string }) {
       ) : null}
     </span>
   );
+}
+
+/** SHD-22, UI-239: pause or resume one intent; at least 44 px tall. */
+export function PauseButton({ intent, paused }: { intent: string; paused: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ActionReply | null>(null);
+  const go = async () => {
+    setBusy(true);
+    setResult(await act(paused ? "resume" : "pause", intent));
+    setBusy(false);
+  };
+  return (
+    <span class="pause-intent">
+      <button type="button" class="btn" disabled={busy} onClick={go}>
+        {paused ? "Resume this intent" : "Pause this intent"}
+      </button>
+      {result ? (
+        <span class={result.ok ? "meta" : "meta error"} role="status">
+          {result.message}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** UI-239: the "only you" label: text, not colour alone. */
+export function OnlyYou() {
+  return <span class="chip chip-only-you">only you</span>;
 }
 
 export function UpNextList({ items, start = 1 }: { items: UpNextView[]; start?: number }) {
