@@ -1253,7 +1253,7 @@ The owner can reset the shadow from the panel.
 
 Intents set to `a0` show "only you" in the page and in `towercab status`.
 
-- Cards, lists, the intent page and the status output show the label "only you" (text, not colour alone) where they show autonomy, with the line "Only you can answer or approve this." Waits on such an intent read as waiting for you in the needs-you list. The page is where the owner answers and approves such an intent, and it offers Pause and Resume per intent (SHD-22). Notes of ignored replies (AUT-32) show on the timeline. The shadow panel (UI-237) lists a refused action on an a0 intent as refused.
+- Cards, lists, the intent page and the status output show the label "only you" (text, not colour alone) where they show autonomy, with the line "Only you can answer or approve this." Waits on such an intent read as waiting for you in the needs-you list. The page is where the owner answers and approves such an intent, and it offers Pause and Resume for that intent (SHD-22), and Resume for any intent paused that way. Notes of ignored replies (AUT-32) show on the timeline. The shadow panel (UI-237) lists a refused action on an a0 intent as refused.
 - Verified by: `ui: a0 intents show only you`, `ui: an intent can be paused and resumed from the page`, `status: a0 intents show only you`
 
 ## Out of scope

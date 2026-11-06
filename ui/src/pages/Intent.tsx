@@ -227,7 +227,9 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
       </header>
       <p class="sentence">{data.sentence}</p>
       {data.onlyYou ? <p class="meta only-you-line">{data.onlyYou}</p> : null}
-      {!readOnly ? <PauseButton intent={data.id} paused={data.paused === true} /> : null}
+      {!readOnly && (data.onlyYou || data.paused) ? (
+        <PauseButton intent={data.id} paused={data.paused === true} />
+      ) : null}
       {data.canStart ? <StartButton intent={data.id} /> : null}
       <section class="prs" aria-label="Pull requests">
         {data.prs.map((p) => (
