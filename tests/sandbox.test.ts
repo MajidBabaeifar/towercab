@@ -572,3 +572,62 @@ test("sandbox: the ship stage reaches the live app's host", async () => {
   expect(splitDomains(liveDomains({ url: "http://10.0.0.5" })).valid).toEqual([]);
   expect(splitDomains(liveDomains({ url: "http://localhost:3000" })).valid).toEqual([]);
 });
+
+test("sandbox: an upstream reset mid-download does not stop the proxy", async () => {
+  const errors: Error[] = [];
+  const onError = (e: Error) => errors.push(e);
+  process.on("uncaughtException", onError);
+  // An upstream that sends half of a body and then resets the connection; later, a normal one.
+  let reset = true;
+  const upstream = createServer((c) => {
+    c.on("error", () => {});
+    c.once("data", () => {
+      if (reset) {
+        c.write("HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\nhalf");
+        setTimeout(() => c.resetAndDestroy(), 20);
+      } else c.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi");
+    });
+  });
+  await new Promise<void>((r) => upstream.listen(0, "127.0.0.1", r));
+  const port = (upstream.address() as { port: number }).port;
+  const socket = join(tempDir(), "p.sock");
+  const logs: string[] = [];
+  const server = proxyServer({
+    domains: ["example.com"],
+    lookup: async () => [PUBLIC],
+    dial: () => connect({ host: "127.0.0.1", port }),
+    log: (l) => logs.push(l),
+  });
+  await new Promise<void>((r) => server.listen(socket, r));
+  try {
+    // The client sees its response cut short, not a crash.
+    const first = await new Promise<string>((resolve) => {
+      const req = request(
+        { socketPath: socket, path: "http://example.com/x", headers: { host: "example.com" } },
+        (res) => {
+          let body = "";
+          res.on("data", (c) => {
+            body += c;
+          });
+          res.on("error", () => resolve(`cut: ${body}`));
+          res.on("close", () => resolve(`closed: ${body}`));
+        },
+      );
+      req.on("error", (e) => resolve(`error: ${e.message}`));
+      req.end();
+    });
+    expect(first).not.toContain("hi");
+    // A client that vanishes in the middle of a tunnel setup is no crash either.
+    const t = await connectTo("example.com:443")(socket).catch(() => ({ status: 0 }));
+    expect([200, 0]).toContain(t.status);
+    // The proxy still answers, and what it refuses it still refuses.
+    reset = false;
+    expect((await get("example.com")(socket)).body).toBe("hi");
+    expect((await get("evil.test")(socket)).status).toBe(403);
+    expect(errors).toEqual([]);
+  } finally {
+    process.off("uncaughtException", onError);
+    server.close();
+    upstream.close();
+  }
+});

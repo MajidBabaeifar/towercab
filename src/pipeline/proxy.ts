@@ -9,6 +9,7 @@ import {
   createServer as httpServer,
   type IncomingMessage,
   type Server,
+  type ServerResponse,
 } from "node:http";
 import { connect, isIP, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -93,7 +94,18 @@ export async function checkTarget(
 export function proxyServer(o: ProxyOpts): Server {
   const dial: Dial = o.dial ?? ((address, port) => connect({ host: address, port }));
   const refuse = (what: string, why: string) => o.log?.(`proxy refused ${what}: ${why}`);
-  const server = httpServer(async (req: IncomingMessage, res) => {
+  // No error of a client or an upstream may leave the proxy: each one ends only its own connection.
+  const server = httpServer((req: IncomingMessage, res) => {
+    const fail = (e: unknown) => {
+      refuse(req.url ?? "?", `failed: ${(e as Error).message}`);
+      if (!res.headersSent) res.writeHead(502).end("upstream failed");
+      else res.destroy();
+    };
+    plain(req, res).catch(fail);
+  });
+  const plain = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    req.on("error", () => res.destroy());
+    res.on("error", () => res.destroy());
     let url: URL;
     try {
       url = new URL(req.url ?? "");
@@ -122,38 +134,55 @@ export function proxyServer(o: ProxyOpts): Server {
         headers,
       },
       (r) => {
+        // A reset in the middle of the body ends the client's response; the proxy goes on.
+        r.on("error", () => res.destroy());
+        r.on("aborted", () => res.destroy());
+        res.on("close", () => r.destroy());
         res.writeHead(r.statusCode ?? 502, r.headers);
         r.pipe(res);
       },
     );
-    up.on("error", () => res.writeHead(502).end("upstream failed"));
+    up.on("error", (e) => {
+      refuse(url.hostname, `upstream failed: ${e.message}`);
+      if (!res.headersSent) res.writeHead(502).end("upstream failed");
+      else res.destroy();
+    });
+    res.on("close", () => up.destroy());
     req.pipe(up);
+  };
+  server.on("error", (e) => o.log?.(`proxy server error: ${e.message}`));
+  server.on("clientError", (_e, sock) => sock.destroy());
+  server.on("connect", (req, client: Socket, head) => {
+    client.on("error", () => client.destroy());
+    tunnel(req.url ?? "", client, head).catch((e: Error) => {
+      refuse(req.url ?? "?", `failed: ${e.message}`);
+      client.destroy();
+    });
   });
-  server.on("connect", async (req, client: Socket, head) => {
-    const m = /^(\[[^\]]+\]|[^:]+):(\d+)$/.exec(req.url ?? "");
+  const tunnel = async (target: string, client: Socket, head: Buffer): Promise<void> => {
+    const m = /^(\[[^\]]+\]|[^:]+):(\d+)$/.exec(target);
     const deny = (why: string) => {
-      refuse(req.url ?? "?", why);
+      refuse(target || "?", why);
       client.end(`HTTP/1.1 403 Forbidden\r\n\r\nrefused: ${why}\r\n`);
     };
     if (!m) return deny("not a host:port");
     const t = await checkTarget(o, m[1]!, Number(m[2]));
     if ("refuse" in t) return deny(t.refuse);
     const up = dial(t.address, Number(m[2]));
+    const end = () => {
+      up.destroy();
+      client.destroy();
+    };
+    up.on("error", end);
+    up.on("close", end);
+    client.on("close", end);
     up.on("connect", () => {
       client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       if (head.length) up.write(head);
       up.pipe(client);
       client.pipe(up);
     });
-    const end = () => {
-      up.destroy();
-      client.destroy();
-    };
-    up.on("error", end);
-    client.on("error", end);
-    up.on("close", end);
-    client.on("close", end);
-  });
+  };
   return server;
 }
 
