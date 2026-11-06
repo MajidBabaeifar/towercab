@@ -83,7 +83,7 @@ test(
     // Only the loopback exists, and a direct connection by IP has no route.
     const r = inSandbox(
       p,
-      `[ "$(ls /sys/class/net)" = lo ] || exit 3; curl -sS -m 5 http://1.1.1.1/ || exit 4`,
+      `[ "$(tail -n +3 /proc/net/dev | wc -l)" = 1 ] || exit 3; curl -sS -m 5 http://1.1.1.1/ || exit 4`,
     );
     expect(r.code).not.toBe(0);
     expect(r.code).not.toBe(3);

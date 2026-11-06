@@ -17,7 +17,7 @@ export interface ProbeResult {
 const SCRIPT = [
   `cat "$HOME/.ssh/canary" 2>/dev/null && exit 21`,
   `(echo x > .git/probe) 2>/dev/null && exit 22`,
-  `[ "$(ls /sys/class/net)" = lo ] || exit 23`,
+  `[ "$(tail -n +3 /proc/net/dev | wc -l)" = 1 ] || exit 23`,
   `echo held`,
 ].join("\n");
 

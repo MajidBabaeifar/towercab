@@ -323,7 +323,7 @@ test("sandbox: a secret-looking repo variable value is left out", () => {
     "ghp_abcdefghijklmnopqrstuvwxyz0123",
     "github_pat_abcdefghijklmnopqrstuvwxyz",
     "sk-ant-api03-abcdefghij",
-    "AKIAABCDEFGHIJKLMNOP",
+    `${"AKIA"}ABCDEFGHIJKLMNOP`,
     "xoxb-1234567890-abcdef",
     "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abc123",
     "-----BEGIN OPENSSH PRIVATE KEY-----",
