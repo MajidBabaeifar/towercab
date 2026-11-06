@@ -5,12 +5,13 @@
 // reason to block. It fails closed. Publish refuses what got past it (`publishRefusals`).
 
 import { appendFileSync, lstatSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative as relPath, resolve } from "node:path";
+import { dirname, isAbsolute, join, posix, relative as relPath, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readHead } from "../head.ts";
 import { CONTROL, glob, Protected } from "../repo/protected.ts";
 import { type Live, withoutE2e } from "../ship/live.ts";
 import type { Tools } from "../tools.ts";
+import { blockedTests, type TestState } from "./access.ts";
 
 /** What the guard knows of one worker run. */
 export interface GuardRules {
@@ -357,6 +358,68 @@ export async function lockedTests(
   if (r.code !== 0)
     throw new Error(`git ls-tree ${head}: ${r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`}`);
   return r.stdout.split("\0").filter((p) => p !== "" && matchers.some((m) => m(p)));
+}
+
+/**
+ * PIP-151: among the tests at the pushed head (`locked`), those that stay locked in repair rounds: the
+ * ones on the base branch (`onBase`) that no grant covers. A test the PR added is never locked.
+ */
+export function lockableTests(locked: string[], onBase: string[], d: TestState): string[] {
+  const guarded = new Set(blockedTests(onBase, d));
+  return locked.filter((p) => guarded.has(p));
+}
+
+/** Relative module specifiers in a source file: `from "./a"`, `import "./a"`, `import("./a")`, `require("./a")`. */
+const IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)(["'])(\.{1,2}\/[^"'\n]*)\1/g;
+
+/** The paths a relative specifier of `file` may name. */
+function importCandidates(file: string, spec: string): string[] {
+  const target = posix.normalize(posix.join(posix.dirname(file), spec));
+  const swapped = target.replace(/\.(?:js|jsx|mjs|cjs)$/, "");
+  return [target, `${swapped}.ts`, `${swapped}.tsx`, `${target}.ts`, `${target}.js`, `${target}/index.ts`];
+}
+
+/**
+ * PIP-153: in a conflict round, the paths among `paths` (locked tests) that the merge of the base opens:
+ * the base changed that file since the round began, or a `src/` file it imports directly by a relative
+ * path. No line matching. `from` is the head the round began at (default `HEAD`).
+ */
+export async function openedByMerge(
+  tools: Tools,
+  checkout: string,
+  base: string,
+  paths: string[],
+  from = "HEAD",
+): Promise<string[]> {
+  if (!paths.length) return [];
+  const ref = `refs/remotes/origin/${base}`;
+  const run = (args: string[]) =>
+    tools.run("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], {
+      cwd: checkout,
+      timeoutMs: 300_000,
+    });
+  const mb = await run(["merge-base", from, ref]);
+  if (mb.code !== 0) return [];
+  const diff = await run(["diff", "--name-only", "-z", mb.stdout.trim(), ref]);
+  if (diff.code !== 0) return [];
+  const changed = new Set(diff.stdout.split("\0").filter(Boolean));
+  if (!changed.size) return [];
+  const opened: string[] = [];
+  for (const p of paths) {
+    if (changed.has(p)) {
+      opened.push(p);
+      continue;
+    }
+    let text: string;
+    try {
+      text = readFileSync(join(checkout, p), "utf8");
+    } catch {
+      continue;
+    }
+    const imports = [...text.matchAll(IMPORT)].flatMap((x) => importCandidates(p, x[2]!));
+    if (imports.some((i) => i.startsWith("src/") && changed.has(i))) opened.push(p);
+  }
+  return opened;
 }
 
 /**

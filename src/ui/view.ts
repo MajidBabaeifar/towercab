@@ -162,6 +162,8 @@ export interface Card {
   warning?: string;
   /** UI-236: the intent is a draft of the shadow's (`source: shadow`). */
   shadow?: boolean;
+  /** UI-239: the intent is a0: only the owner can answer or approve it, shown as "only you". */
+  onlyYou?: boolean;
 }
 
 export type PhaseStatus = "done" | "current" | "todo" | "skipped";
@@ -492,6 +494,9 @@ export interface IntentPage {
   stepsWait?: "before" | "after" | null;
   /** UI-162: why the plan said nothing could be checked live, for a change that shows as done. */
   nothingLive?: string | null;
+  /** UI-239: set for an a0 intent, with the line to show; `paused` is this intent's own pause (SHD-22). */
+  onlyYou?: string;
+  paused?: boolean;
   /** SHIP-32: "Published in v1.2.0" with its link, or "Merged, waiting for a release"; absent when the repo has no releases. */
   release?: { text: string; url: string | null };
 }

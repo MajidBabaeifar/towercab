@@ -221,7 +221,7 @@ The CLI covers running the service and the few actions that have no GitHub gestu
 - `up`, `down`, `restart`, `logs` (LOOP-2); `run [--watch] [--intent <id>]`; `status`, `next`
   (LOOP-13); `add` ([INT-2](intents.md)); `answer <id> <text>` (LOOP-38); `start <id>` (LOOP-63); `step <id> <n…|all>` ([SHIP-22](ship.md)); `retry <id>` (a fresh
   attempt); `drop <id>` ([PRI-9](priority.md)); `approve <id>` (merges the PR the intent waits on, as
-  the owner, LOOP-38); `pause`, `resume`; `repo add | remove | set | list` (LOOP-66, LOOP-67, LOOP-69); `ui` (opens
+  the owner, LOOP-38); `pause [id]`, `resume [id]` (one intent, SHD-22; the command line refuses `resume <id>` on an a0 intent, AUT-33); `repo add | remove | set | list` (LOOP-66, LOOP-67, LOOP-69); `ui` (opens
   the page); `doctor`; `update` (LOOP-35);
   `hook guard <rules>` (internal, [PIP-29](pipeline.md)); `--version`.
 - One loop per home: a lock file; a second `run` → `towercab is running (pid N): towercab down

@@ -1,6 +1,7 @@
 // The page's buttons (UI-66): each does what the owner would do on GitHub (as the owner, LOOP-38) or
 // in the CLI (a `commands` row the loop applies, LOOP-15).
 
+import { ownerOnly, ownerOnlyLine } from "../autonomy.ts";
 import { tickSteps } from "../commands.ts";
 import type { Config, RepoConfig } from "../config.ts";
 import type { Db } from "../db.ts";
@@ -37,8 +38,11 @@ export interface UiActions {
   done?(intent: string, note: string): Promise<string>;
   /** UI-164, PIP-113: the owner does it by hand; the intent becomes steps. */
   steps?(intent: string): Promise<string>;
-  pause(): Promise<string>;
-  resume(): Promise<string>;
+  /** SHD-22: pause everything, or one intent when `intent` is given. */
+  pause(intent?: string): Promise<string>;
+  resume(intent?: string): Promise<string>;
+  /** AUT-32: refuse an action on an a0 intent from any actor but the owner (the page and GitHub). */
+  guard?(intent: string, action: string, actor: string): Promise<void>;
   /** UI-130: add `owner/name` as a repo (`name` = its short name, default the repo part). */
   addRepo(github: string, name?: string): Promise<string>;
   /** UI-144: read the repo again for its feature list (INT-39). */
@@ -337,9 +341,20 @@ export function createActions(d: ActionDeps): UiActions {
       return "Starting its design on the next pass, even if the repo is full.";
     },
 
-    async pause() {
-      command("pause");
-      return "Paused: nothing new starts until you resume.";
+    async pause(intent = "") {
+      command("pause", intent);
+      return intent
+        ? "Paused: no further stage of this intent starts until you resume it."
+        : "Paused: nothing new starts until you resume.";
+    },
+
+    async guard(intent, action, actor) {
+      if (actor === "owner" || actor === "") return;
+      if (action === "pause") return;
+      const found = await d.store.get(intent).catch(() => null);
+      if (found && ownerOnly(found.a, unfinishedFor(d.db, found.id)?.a_at_pick ?? null)) {
+        throw new Error(ownerOnlyLine(found.id));
+      }
     },
 
     async step(intent, n, done) {
@@ -372,9 +387,11 @@ export function createActions(d: ActionDeps): UiActions {
       return "Switched to steps for you to do. Towercab sets it up on its next pass.";
     },
 
-    async resume() {
-      command("resume");
-      return "Resumed: Towercab picks up work again.";
+    async resume(intent = "") {
+      command("resume", intent);
+      return intent
+        ? "Resumed: Towercab goes on with this intent."
+        : "Resumed: Towercab picks up work again.";
     },
 
     async addRepo(github, name) {

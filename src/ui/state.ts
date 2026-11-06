@@ -4,7 +4,9 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { ownerOnly } from "../autonomy.ts";
 import { slotsText } from "../capacity.ts";
+import { ignoredNotes, intentPaused } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import type { ProposedState } from "../github/proposed.ts";
@@ -778,6 +780,7 @@ export function missionCard(
     done,
     addRepo: null,
     ...(d.reviewWarning ? { warning: d.reviewWarning } : {}),
+    ...(ownerOnly(intent?.a ?? null, m.a_at_pick) ? { onlyYou: true } : {}),
   };
 }
 
@@ -817,6 +820,7 @@ export function intentCard(i: Intent, config: Config): Card {
     mergeLabel: null,
     done: null,
     addRepo,
+    ...(ownerOnly(i.a) ? { onlyYou: true } : {}),
   };
 }
 
@@ -2170,6 +2174,13 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     });
   }
   if (shadowRows.length) timeline.sort((x, y) => x.at.at - y.at.at);
+  // AUT-32: replies Towercab ignored on an owner-only intent, noted once each.
+  const only = ownerOnly(intent?.a ?? null, last?.a_at_pick ?? null);
+  if (only) {
+    for (const n of ignoredNotes(src.db, realId)) {
+      timeline.push({ at: when(n.at, s.now), text: n.text, why: null, lasted: null, tone: "move" });
+    }
+  }
   const found = findRunFiles(src.home, realId);
   const attempts: AttemptView[] = missions.map((m, n) => {
     const nextCreated = missions[n + 1]?.created ?? Infinity;
@@ -2196,7 +2207,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     if (title !== "Answers" && text.trim()) sections.push({ title, text });
   }
   const scores = intent
-    ? `Priority ${priority(intent.u, intent.i)} · urgency ${intent.u ?? 3}, importance ${intent.i ?? 3}${intent.a !== null ? `, autonomy ${intent.a}` : ""}`
+    ? `Priority ${priority(intent.u, intent.i)} · urgency ${intent.u ?? 3}, importance ${intent.i ?? 3}${intent.a === null ? "" : ownerOnly(intent.a) ? ", only you" : `, autonomy ${intent.a}`}`
     : "";
   const body: Omit<IntentPage, "version"> = {
     id: realId,
@@ -2223,6 +2234,8 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     file: intent ? src.intentUrl(intent) : null,
     issue: intent?.issue ?? null,
     e2eLog: e2eLogOf(src.home.root, id),
+    ...(only ? { onlyYou: "Only you can answer or approve this." } : {}),
+    ...(intentPaused(src.db, realId) ? { paused: true } : {}),
   };
   // UI-160, UI-162: the owner's steps, and the plan's claim that nothing could be checked live.
   const shown = live ?? last;

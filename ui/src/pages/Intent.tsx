@@ -8,6 +8,8 @@ import {
   Details,
   Id,
   NeedsCard,
+  OnlyYou,
+  PauseButton,
   RiskBlock,
   Section,
   ShadowTag,
@@ -199,7 +201,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
       <header class="intent-head">
         <div class="intent-title">
           <h1>
-            {data.title}
+            {data.title} {data.onlyYou ? <OnlyYou /> : null}
             {data.shadow ? <ShadowTag /> : null}
           </h1>
           <p class="meta">
@@ -226,6 +228,10 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
         <StateChip state={data.state} />
       </header>
       <p class="sentence">{data.sentence}</p>
+      {data.onlyYou ? <p class="meta only-you-line">{data.onlyYou}</p> : null}
+      {!readOnly && (data.onlyYou || data.paused) ? (
+        <PauseButton intent={data.id} paused={data.paused === true} />
+      ) : null}
       {data.canStart ? <StartButton intent={data.id} /> : null}
       <section class="prs" aria-label="Pull requests">
         {data.prs.map((p) => (

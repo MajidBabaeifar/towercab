@@ -3,10 +3,11 @@
 
 import { readFileSync, rmSync, statSync } from "node:fs";
 import { type AfterHold, afterState, heldText, holdTrigger, nextHold } from "./after.ts";
+import { ownerOnly } from "./autonomy.ts";
 import { Inhibitor, woke } from "./awake.ts";
 import { slotStep } from "./capacity.ts";
 import { removeCheckout } from "./checkout.ts";
-import { applyPending, paused } from "./commands.ts";
+import { applyPending, intentPaused, noteIgnored, paused } from "./commands.ts";
 import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
 import { fixFor, Health } from "./faults.ts";
@@ -27,6 +28,7 @@ import { retireBranch } from "./github/branches.ts";
 import {
   approveNotices,
   approveRequested,
+  ignoredReplies,
   intentEvents,
   prEvents,
   type ReleaseRepo,
@@ -1342,6 +1344,19 @@ export class Loop {
             await this.d.github.commentOnPr(repo.github, ask.pr, `${ask.marker}\n${text}`);
           }
         }
+        // AUT-32: on an owner-only intent a reply from anyone else is ignored (PIP-44) and noted once.
+        const listed = this.listing?.open.find((i) => i.id === m.intent);
+        if (ownerOnly(listed?.a ?? null, m.a_at_pick)) {
+          for (const r of ignoredReplies(m, prs, this.d.github.me, bot)) {
+            noteIgnored(
+              this.d.db,
+              m.intent,
+              r.key,
+              `ignored a ${r.what} from ${r.author} on the ${r.kind} PR${r.pr ? ` #${r.pr}` : ""}: this intent is only yours`,
+              this.now,
+            );
+          }
+        }
         const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot, team);
         if (!o) continue;
         const running = this.children.has(m.id);
@@ -1423,6 +1438,8 @@ export class Loop {
     for (const listed of order) {
       let m = listed;
       if (!isWorking(m.stage) || m.step === "enter" || m.held || this.children.has(m.id)) continue;
+      // SHD-22: a paused intent starts no further stage until it is resumed.
+      if (intentPaused(db, m.intent)) continue;
       // LOOP-105: no step of a loop whose checkout moved under it runs.
       if (this.codeMoved() !== null) break;
       if (queued.has(m.id) || this.cooling(m)) continue;
@@ -1779,6 +1796,8 @@ export class Loop {
       l = { ...listing, open: listing.open.filter((i) => i.id === target.id) };
       state = { ...state, cutoff: 1 };
     }
+    // SHD-22: a paused intent is not picked either.
+    l = { ...l, open: l.open.filter((i) => !intentPaused(this.d.db, i.id)) };
     const decision = decide(l, state);
     for (const w of decision.writes) {
       try {

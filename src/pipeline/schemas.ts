@@ -114,7 +114,7 @@ export const BUILD_SCHEMA = object({
   question: nullable(QUESTION),
   access: nullable(ACCESS),
   plan_changed: S_NULL,
-  lower_a: { type: ["integer", "null"], minimum: 1, maximum: 5 },
+  lower_a: { type: ["integer", "null"], minimum: 0, maximum: 5 },
   lower_why: S_NULL,
 });
 

@@ -281,6 +281,7 @@ export function startUi(o: UiOptions): UiServer {
       return json(res, 413, { ok: false, message: "The request is too large." });
     }
     let body: {
+      actor?: unknown;
       action?: unknown;
       intent?: unknown;
       text?: unknown;
@@ -320,6 +321,9 @@ export function startUi(o: UiOptions): UiServer {
     ].includes(action);
     if (needsIntent && !INTENT_ID.test(intent))
       return json(res, 400, { ok: false, message: "Which intent?" });
+    // SHD-22: a pause or resume may name one intent.
+    if ((action === "pause" || action === "resume") && intent && !INTENT_ID.test(intent))
+      return json(res, 400, { ok: false, message: "Which intent?" });
     const pr = typeof body.pr === "number" && Number.isSafeInteger(body.pr) && body.pr > 0 ? body.pr : 0;
     if (proposal && !pr) return json(res, 400, { ok: false, message: "Which pull request?" });
     const head = typeof body.head === "string" ? body.head : "";
@@ -336,6 +340,8 @@ export function startUi(o: UiOptions): UiServer {
     const a = o.actions;
     let reply: ActionReply;
     try {
+      // AUT-32: the page is the owner; an actor that says otherwise can't act on an a0 intent.
+      if (intent) await a.guard?.(intent, action, typeof body.actor === "string" ? body.actor : "");
       const no = () => Promise.reject(new Error("Secrets aren't available."));
       const noLimits = () => Promise.reject(new Error("Changing settings isn't available."));
       const message =
@@ -381,7 +387,7 @@ export function startUi(o: UiOptions): UiServer {
                                       (() => Promise.reject(new Error("Ticking steps isn't available.")))
                                     )(intent, Number(body.n), body.done !== false)
                                   : action === "pause"
-                                    ? await a.pause()
+                                    ? await a.pause(intent)
                                     : action === "addRepo"
                                       ? await a.addRepo(
                                           typeof body.github === "string" ? body.github : "",
@@ -411,7 +417,7 @@ export function startUi(o: UiOptions): UiServer {
                                                       a.shadowReset ??
                                                       (() => Promise.reject(new Error("Not available.")))
                                                     )()
-                                                  : await a.resume();
+                                                  : await a.resume(intent);
       reply = { ok: true, message };
     } catch (e) {
       reply = { ok: false, message: (e as Error).message };

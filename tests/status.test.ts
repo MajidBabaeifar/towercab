@@ -136,3 +136,29 @@ test("status: the cap names the intents waiting on the owner", () => {
     "skipped: 261026-2000 web: New · repo is at the cap of 6 intents before build, 1 working and 5 waiting on the owner (start 261026-2000 to go now)",
   );
 });
+
+test("status: a0 intents show only you", () => {
+  const db = Db.memory();
+  const now = 1_793_000_000;
+  const cx = { db, now, subject: () => ({ title: "t", repo: "web", link: null }) };
+  let a = db.tx(() =>
+    insertMission(db, { intent: "261026-1000", slug: "a", repo: "web", model: "opus", a: 0 }, now),
+  );
+  a = apply(cx, a, { event: "ok" });
+  apply(cx, a, { event: "wait", waiting: "approve spec" });
+  const text = renderStatus({
+    db,
+    listing: listing([at("intents/261026-1000-log-in", "a: 0\n", "web", "Log in")]),
+    listingError: null,
+    running: null,
+    version: "1.0.0",
+    now,
+    problems: [],
+    next: "next: nothing can run now",
+    prLink: () => null,
+    queued: new Set(),
+  });
+  expect(text).toContain("waiting on you:\n- 261026-1000 web: Log in (only you) · ");
+  // The wait lists no way for anyone else to clear it beyond the usual exits.
+  expect(text).toContain("you can:");
+});

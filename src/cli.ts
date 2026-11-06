@@ -5,11 +5,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { ownerOnly, ownerOnlyLine } from "./autonomy.ts";
 import {
   applyCommand,
   type CommandName,
   commandResult,
   insertCommand,
+  OWNER_ONLY_COMMANDS,
   pendingCommands,
   tickSteps,
 } from "./commands.ts";
@@ -92,7 +94,7 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   step <id> <n…|all>              tick off steps the plan lists for you (the change then goes on)
   done <id> [note]                you did the work yourself: ends the intent; the note is kept as a ticked step
   steps <id>                      you will do it by hand: the intent becomes steps for you to tick
-  pause | resume
+  pause [id] | resume [id]
   repo add <owner/name> [--name <short>] | repo remove <name> | repo list
   repo set <name> key=value…      workers, ahead, base, path, env (NAME=value or a JSON object)
   shadow reset | shadow status    clear the shadow's conversation; what it is doing and what it cost today
@@ -178,8 +180,18 @@ function applyCtx(db: Db): ApplyCtx {
   };
 }
 
+/** AUT-33: the command line can't tell the owner from an agent, so it refuses to decide for an a0 intent. */
+async function refuseOwnerOnly(w: World, intent: string): Promise<void> {
+  if (intent === "") return;
+  const found = await (await w.store()).get(intent).catch(() => null);
+  if (found && ownerOnly(found.a, unfinishedFor(w.db, found.id)?.a_at_pick ?? null)) {
+    throw new Error(ownerOnlyLine(found.id));
+  }
+}
+
 /** Queue a command for the loop, or apply it here when no loop runs (LOOP-15). */
 async function submit(w: World, name: CommandName, arg = "", text = ""): Promise<string> {
+  if (OWNER_ONLY_COMMANDS.includes(name)) await refuseOwnerOnly(w, arg);
   const id = insertCommand(w.db, { name, arg, text, source: "cli" }, Date.now() / 1000);
   if (w.home.holder() === null) {
     const store = await w.store();
@@ -470,19 +482,21 @@ async function run(
       need(2, "<id> <n…|all>");
       const store = await w.store();
       const id = (await store.get(args[0]!)).id;
+      await refuseOwnerOnly(w, id);
       const which = args.slice(1).length === 1 && args[1] === "all" ? "all" : args.slice(1).map(Number);
       if (which !== "all" && which.some((n) => !Number.isInteger(n) || n < 1))
         throw new UsageError(`want step numbers or all, got "${args.slice(1).join(" ")}"`);
       return tickSteps(w.db, id, which, true, new Date());
     }
     case "pause":
-      return submit(w, "pause");
+      return submit(w, "pause", args[0] ?? "");
     case "resume":
-      return submit(w, "resume");
+      return submit(w, "resume", args[0] ?? "");
     case "approve": {
       need(1, "<id>");
       const store = await w.store();
       const intent = await store.get(args[0]!);
+      await refuseOwnerOnly(w, intent.id);
       const m = unfinishedFor(w.db, intent.id);
       if (!m || !isWait(m.stage) || m.stage === "blocked") {
         throw new Error(
