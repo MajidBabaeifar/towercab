@@ -11,6 +11,7 @@ export const AGENT_VARS: Record<AgentName, string[]> = {
   repair: ["what", "details"],
   review: ["intent", "spec_ids", "plan", "review_md", "ci", "screenshots", "diff_cmd", "e2e"],
   risk: ["gate", "intent", "change", "context", "open_points"],
+  "merge-review": ["intent", "diff_cmd", "resolved"],
   score: ["issue", "product"],
   features: ["repo", "current", "listed"],
 };
