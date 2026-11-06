@@ -16,6 +16,7 @@ import type { GitHub } from "./handlers.ts";
 export { ghVersionOk };
 
 import type { Home } from "./home.ts";
+import { type HostState, hostState, profileStep } from "./pipeline/hostcheck.ts";
 import { apparmorProfile, type ProbeResult, sandboxProbe, userNamespaceDenied } from "./pipeline/probe.ts";
 import { refusedRepoEnv } from "./pipeline/sandbox.ts";
 import { parseStored } from "./repo/readiness.ts";
@@ -47,6 +48,8 @@ export async function doctor(o: {
   capacity?: Capacity;
   /** The sandbox probe (PIP-163); the real one when absent. */
   probe?: () => Promise<ProbeResult>;
+  /** The host's user-namespace state (PIP-162); the real one when absent. */
+  host?: () => HostState;
 }): Promise<DoctorResult> {
   const { config, home, tools } = o;
   const lines: string[] = [`config: ${config.file}`, `home: ${home.root}`, `node: ${process.version}`];
@@ -98,6 +101,10 @@ export async function doctor(o: {
       }
     }
   }
+
+  // PIP-162: the one owner step while the restriction is on and the profile is missing.
+  const step = bwrapPath ? profileStep((o.host ?? hostState)(), bwrapPath) : null;
+  if (step) lines.push(`owner step: ${step.title}; run:`, ...step.commands.split("\n").map((l) => `  ${l}`));
 
   const v = await ghVersion(tools);
   lines.push(`gh version: ${v.version}${v.ok ? "" : ": Towercab needs 2.46 or newer"}`);

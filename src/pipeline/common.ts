@@ -24,6 +24,7 @@ import type { Risk } from "../risk.ts";
 import { checkoutRoot } from "../service.ts";
 import { combine, type OwnerStep, type PlanStep, parseNoneLive, parseSteps } from "../steps.ts";
 import { grantsFor, parseAccess, type TestAsk } from "./access.ts";
+import { claudeUnixSockets, hostState } from "./hostcheck.ts";
 import { cacheEnv, DEFAULT_NETWORK } from "./sandbox.ts";
 import { type Access, type Question, SCHEMAS } from "./schemas.ts";
 
@@ -406,6 +407,7 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
         : { domains: [...DEFAULT_NETWORK], paths: [] },
     guardRules: p.guard ?? null,
     cacheEnv: cacheEnv(cache, repo),
+    unixSockets: claudeUnixSockets(hostState()),
     cache,
     config: cx.config,
   };
