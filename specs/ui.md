@@ -1218,6 +1218,33 @@ Focus adds no new way to act, and it works on a phone and by keyboard.
   tab moves to when the next one arrives, and the change is announced politely (`aria-live="polite"`).
 - Verified by: `ui: focus has no action the needs-you card lacks`, `ui: focus works by keyboard`, `ui: screenshots light, dark and mobile`
 
+### UI-236 · The shadow's tag shows everywhere
+
+Anything the shadow did shows a `[shadow]` tag in the page, on the intent's timeline and on cards.
+
+- An intent with `source: shadow` shows the tag beside its title in lists, the card and the intent page;
+  a timeline entry caused by the shadow (a reply, a start, a draft, a confirmed action) shows it too, from
+  `shadow_actions` (SHD-19). The tag has a text label, not colour alone.
+- Verified by: `ui: shadow actions are tagged on the timeline and cards`
+
+### UI-237 · The shadow's recent actions
+
+The overview lists the shadow's recent actions, each linked to what it touched.
+
+- A "Shadow" panel shows the last 10 rows of `shadow_actions` via `GET /api/shadow` (`{enabled, actions,
+  pending, spentToday, cap}`): the time, a sentence, the outcome (done, refused, held), and a link to the
+  intent or PR. Held actions show a "waiting for your yes in Telegram" line. With the shadow off the panel
+  is not shown. Today's shadow spend against its cap shows in the same panel.
+- Verified by: `ui: shadow panel lists recent actions with links`, `ui: shadow panel is hidden when off`
+
+### UI-238 · Reset from the page
+
+The owner can reset the shadow from the panel.
+
+- A Reset button in the Shadow panel asks to confirm, then posts `{action: "shadowReset"}` to
+  `POST /api/actions` (UI-65); the reply says what happened as in SHD-17. At 360 px it is at least 44 px tall.
+- Verified by: `ui: shadow reset asks first and resets`
+
 ## Out of scope
 
 - Editing intents in the page: the owner edits them in the intents repo or with `/intent`.

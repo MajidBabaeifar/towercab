@@ -232,7 +232,8 @@ The CLI covers running the service and the few actions that have no GitHub gestu
 
 ### LOOP-16 · Telegram
 
-Telegram only delivers Towercab's messages; the owner acts on GitHub or in the UI.
+Telegram delivers Towercab's messages; the owner acts on GitHub or in the UI, or, with the shadow on,
+talks to it ([LOOP-129](loop.md), [shadow.md](shadow.md)).
 
 - `POST <api_base>/bot<token>/sendMessage` `{chat_id, text, disable_web_page_preview: true}` (≤ 4000
   characters, 10 s timeout). Unsent rows go oldest first, stop at the first failure and retry with
@@ -778,6 +779,35 @@ A mission held by `after:` (LOOP-117) tells the owner once, with one "Needs you"
   LOOP-117. The owner may instead remove the intent from `after:` (the same effect), `retry` or `drop`
   (LOOP-76).
 - Verified by: `loop: a rolled back dependency shows one needs-you card`, `loop: a dropped dependency shows one needs-you card`, `loop: a dependency unfinished after 3 days shows one needs-you card`, `loop: a held mission asks nothing before 3 days`, `loop: the card of a held mission goes when the dependency is done`
+
+### LOOP-129 · Telegram messages from the owner reach the shadow
+
+When the shadow is enabled, the loop reads the owner's Telegram messages and hands each to the shadow once.
+
+- `GET <api_base>/bot<token>/getUpdates?offset=<next>&timeout=0` once per pass (10 s timeout), only
+  with `[shadow] enabled` and `[telegram]`. The offset is kept in `meta` (`telegram.offset`) and advances
+  as SHD-20 says. Failures are logged once per outage without the token and retried with LOOP-10's backoff.
+  Updates from other chats are dropped (SHD-2). Beyond the shadow, Telegram still only notifies: the commands
+  of LOOP-15 are not read from it.
+- Verified by: `telegram: owner messages reach the shadow once`, `telegram: update failures never raise`, `telegram: no shadow no polling`
+
+### LOOP-130 · The shadow runs between passes, not inside them
+
+A shadow turn runs as a detached child, so a long answer never delays the loop's polling.
+
+- The turn is started like a build (LOOP-3 children): the loop records it, spawns `claude` in the sandbox
+  and reaps it on exit; a crash mid-turn re-runs the turn from its stored message (SHD-20). A turn that takes
+  more than 10 minutes is stopped and the owner is told so in one message.
+- Verified by: `loop: a shadow turn does not block a pass`, `loop: a shadow turn is re-run after a crash`, `loop: a shadow turn over 10 minutes is stopped`
+
+### LOOP-131 · Shadow commands
+
+The owner can reset the shadow and see its state from the command line and from the chat.
+
+- `towercab shadow reset` (SHD-17) and `towercab shadow status` (enabled or not, session age, turns, pending
+  action, today's cost against the cap). In the chat, `/reset` and `/status` do the same; any other `/…` text
+  goes to the shadow as ordinary text. `status` lists pending actions.
+- Verified by: `cli: shadow reset and status`, `telegram: slash reset and status`
 
 ### LOOP-65 · Repos live in the database
 
@@ -1328,7 +1358,8 @@ WantedBy=default.target
 ## Out of scope
 
 - Running on more than one machine.
-- Telegram commands (v1 had them; no one used them: the owner acts on GitHub or in the UI).
+- Telegram commands (v1 had them; no one used them: the owner acts on GitHub or in the UI). Talking to the
+  shadow in plain words is the exception (LOOP-129).
 
 ## Decisions
 
