@@ -11,7 +11,7 @@ import { fileErrorOf, limitsView } from "./limits.ts";
 import { proposedFor, proposedSection } from "./proposed.ts";
 import { readinessBadge, setupView } from "./readiness.ts";
 import { type RepoSpend, repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
-import { ago, dbMark, lanesOf, type Snap, snapshot, type UiSources, versionOf } from "./state.ts";
+import { ago, dbMark, lanesOf, needCounts, type Snap, snapshot, type UiSources, versionOf } from "./state.ts";
 import type {
   FeaturesView,
   FeatureView,
@@ -34,6 +34,12 @@ export interface ReposOpts {
 export async function repos(src: UiSources, selected: string | null, o: ReposOpts = {}): Promise<ReposPage> {
   const s = await snapshot(src);
   const lanes = lanesOf(src, s);
+  // UI-244: the count every screen shares, for the repo.
+  const need = needCounts(src, s);
+  const needsOf = (repo: string) => {
+    const c = need.byRepo.get(repo);
+    return (c?.missions ?? 0) + (c?.proposed ?? 0);
+  };
   const by = spendByRepo(src.db, s.now);
   const badge = (repo: string) => {
     const readiness = readinessBadge(src.db, repo);
@@ -42,7 +48,7 @@ export async function repos(src: UiSources, selected: string | null, o: ReposOpt
   const chips = lanes.map((l) => ({
     repo: l.repo,
     open: l.running.length + l.upNext.length + l.waiting.length + l.parked.length,
-    needs: l.running.filter((r) => r.state.key === "needs").length,
+    needs: needsOf(l.repo),
     ...badge(l.repo),
   }));
   let error = s.listError
@@ -57,7 +63,7 @@ export async function repos(src: UiSources, selected: string | null, o: ReposOpt
         repo: l.repo,
         github: l.github,
         inProgress: l.running.length,
-        needs: l.running.filter((r) => r.state.key === "needs").length,
+        needs: needsOf(l.repo),
         upNext: l.upNext.length,
         waiting: l.waiting.length,
         parked: l.parked.length,

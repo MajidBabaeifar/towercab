@@ -265,10 +265,13 @@ export const IDS = {
   done4: "261020-0830-1",
   landed: "261026-0640-1",
   dropped: "261022-1010-1",
+  /** UI-251: only in the crowded fixture. */
+  stepsWait: "261026-1330-1",
+  specReview: "261026-1340-1",
 } as const;
 
 /** UI-184: the fixture's proposed intents: a draft, a parked one, a GitHub-only one and an unknown repo. */
-export function proposals(now: number): ProposedPr[] {
+export function proposals(now: number, crowded = false): ProposedPr[] {
   const mk = (
     n: number,
     title: string,
@@ -300,6 +303,14 @@ export function proposals(now: number): ProposedPr[] {
       reason: "Changes more than one intent",
     }),
     mk(205, "Billing portal for the CRM", "crm", 4, 4),
+    // UI-251: the live page's crowd: many proposals of one shape.
+    ...(crowded
+      ? ["web", "api", "docs", "mobile", "infra", "blog", "web"].map((repo, n) =>
+          mk(230 + n, `${repo} is set up as a repo and ready for work`, repo, 3, 3, {
+            createdAt: now - (3 + n) * HOUR,
+          }),
+        )
+      : []),
   ];
 }
 
@@ -363,7 +374,15 @@ function storeReadiness(db: Db, now: number): void {
 /** Build the fixture home; `now` defaults to the real clock so relative times read naturally. `empty`
  * gives a home with nothing in it (UI-70). */
 export function buildFixture(
-  o: { now?: number; root?: string; empty?: boolean; proposed?: boolean; readiness?: boolean } = {},
+  o: {
+    now?: number;
+    root?: string;
+    empty?: boolean;
+    proposed?: boolean;
+    readiness?: boolean;
+    /** UI-251: many proposals and a mission waiting on the owner's steps, as on the live page. */
+    crowded?: boolean;
+  } = {},
 ): Fixture {
   const now = o.now ?? Date.now() / 1000;
   const root = o.root ?? mkdtempSync(join(tmpdir(), "tc-ui-fixture-"));
@@ -388,6 +407,7 @@ export function buildFixture(
 
   const store = new MemStore();
   if (!o.empty) seed(db, store, home, now);
+  if (o.crowded && !o.empty) crowdScene(db, store, now);
   const state: Fixture["state"] = {
     proposed: { list: [], error: null, failedAt: null },
     paused: false,
@@ -407,7 +427,7 @@ export function buildFixture(
   };
   state.proposed = {
     list: [
-      ...(o.proposed && !o.empty ? proposals(now) : []),
+      ...((o.proposed || o.crowded) && !o.empty ? proposals(now, o.crowded) : []),
       ...(o.readiness && !o.empty ? [setupProposal(now)] : []),
     ],
     error: null,
@@ -446,7 +466,7 @@ export function buildFixture(
         : state.upNext,
     prUrl: (repo, n) => `https://github.com/${repo}/pull/${n}`,
     intentUrl: (i) => store.url(i),
-    ...(o.proposed || o.readiness ? { proposed: () => state.proposed } : {}),
+    ...(o.proposed || o.readiness || o.crowded ? { proposed: () => state.proposed } : {}),
     logs: () => logs,
   };
 
@@ -530,6 +550,101 @@ export function buildFixture(
       rmSync(root, { recursive: true, force: true });
     },
   };
+}
+
+/** UI-251: a mission merged and waiting for the owner's steps (UI-245). */
+function crowdScene(db: Db, store: MemStore, now: number): void {
+  store.open.push(
+    makeIntent({
+      id: IDS.stepsWait,
+      title: "Send invoice emails from the new domain",
+      repo: "web",
+      u: 3,
+      i: 4,
+      stage: "code",
+      waiting: "your steps",
+    }),
+  );
+  // UI-248: a spec review with a risk and open points, the tall card of the live page.
+  store.open.push(
+    makeIntent({
+      id: IDS.specReview,
+      title: "Let teams share saved reports",
+      repo: "api",
+      u: 4,
+      i: 4,
+      stage: "spec",
+      waiting: "approve spec",
+    }),
+  );
+  addMission(db, now, {
+    intent: IDS.specReview,
+    repo: "api",
+    stage: "approval:spec",
+    from: "design",
+    waiting: "approve spec",
+    spec: 120,
+    cost: 0.9,
+    agent: 600,
+    created: 2 * HOUR,
+    moves: [
+      [2 * HOUR - 20, "pick", "ok", "design"],
+      [HOUR, "design", "wait", "approval:spec"],
+    ],
+    data: {
+      design: { brief: "Teams can share a saved report with each other instead of mailing a file around." },
+      riskOf: { spec: "" },
+      risk: {
+        spec: {
+          level: "medium",
+          said: "medium",
+          raised: null,
+          blast: { size: "medium", who: "Every team that saves reports." },
+          door: { kind: "two-way", why: "The sharing switch can be turned off again." },
+          certainty: { level: "medium", why: "The sharing rules are new and only read in review." },
+          summary: "Sharing is new, but it can be switched off.",
+          openPoints: [
+            {
+              point: "Who may see a shared report?",
+              why: "Teams or the whole company changes the privacy rules.",
+            },
+            { point: "Do shared reports expire?", why: "Without expiry they pile up." },
+            { point: "Can a viewer copy a report?", why: "Copies escape later edits." },
+          ],
+          of: "",
+        },
+      },
+    },
+  });
+  addMission(db, now, {
+    intent: IDS.stepsWait,
+    repo: "web",
+    stage: "steps",
+    waiting: "your steps",
+    pr: 230,
+    plan: 40,
+    cost: 2.1,
+    agent: 1800,
+    created: 6 * HOUR,
+    moves: [
+      [6 * HOUR - 20, "pick", "ok", "design"],
+      [5 * HOUR, "design", "ok", "plan"],
+      [4 * HOUR, "plan", "wait", "approval:plan"],
+      [3 * HOUR + 30 * MIN, "approval:plan", "plan_merged", "build"],
+      [3 * HOUR, "merge", "ok", "steps"],
+    ],
+    data: {
+      steps: [
+        {
+          n: 1,
+          when: "after",
+          text: "Add the DNS records for mail.acme.test",
+          why: "Mail from the new domain is rejected without them.",
+          done_at: null,
+        },
+      ],
+    },
+  });
 }
 
 /** The fixture's intents, missions and run files. */
@@ -1201,7 +1316,7 @@ function exitsScene(f: Fixture): void {
 
 export async function serveFixture(
   port = 0,
-  o: { empty?: boolean; proposed?: boolean; readiness?: boolean; exits?: boolean } = {},
+  o: { empty?: boolean; proposed?: boolean; readiness?: boolean; exits?: boolean; crowded?: boolean } = {},
 ): Promise<{ fixture: Fixture; server: UiServer }> {
   const fixture = buildFixture(o);
   if (o.exits && !o.empty) exitsScene(fixture);
