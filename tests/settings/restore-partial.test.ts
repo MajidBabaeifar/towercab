@@ -2,11 +2,10 @@
 
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { settingsCommand } from "../../src/cli.ts";
-import { settingsPass } from "../../src/settings/apply.ts";
 import { newestBackup } from "../../src/settings/backup.ts";
 import { fakeGitHub } from "../github/fakes.ts";
 import { failResult, okResult } from "../helpers/tools.ts";
-import { ghHandler, settingsRig } from "./helpers.ts";
+import { checkThenApply, ghHandler, settingsRig } from "./helpers.ts";
 
 let saved: string | undefined;
 beforeEach(() => {
@@ -18,8 +17,8 @@ afterEach(() => {
 });
 
 test("repo: restore lists a failed read and still restores the rest", async () => {
-  const s = await settingsRig({ apply: true });
-  await settingsPass(s.deps, s.web);
+  const s = await settingsRig();
+  await checkThenApply(s);
   const real = ghHandler(s.gh);
   s.r.tools.on("gh", (args, opts) =>
     args[1] === "repos/owner/web/rulesets" ? failResult("gh: Server Error (HTTP 500)") : real(args, opts),
@@ -38,8 +37,8 @@ test("repo: restore lists a failed read and still restores the rest", async () =
 });
 
 test("repo: a refused restore still shows what was restored before it", async () => {
-  const s = await settingsRig({ apply: true });
-  await settingsPass(s.deps, s.web);
+  const s = await settingsRig();
+  await checkThenApply(s);
   const real = ghHandler(s.gh);
   s.r.tools.on("gh", (args, opts) =>
     args.includes("PUT") && String(args[1]).includes("branches")
@@ -54,12 +53,12 @@ test("repo: a refused restore still shows what was restored before it", async ()
     github: fakeGitHub(s.r.tools),
   };
   await expect(settingsCommand(w, ["restore", "web"])).rejects.toThrow(
-    /Restored the repository settings[\s\S]*lacks Administration/,
+    /Restored the repository settings[\s\S]*login can't change this repo's settings/,
   );
 });
 
 test("repo: rulesets are read page by page and only the repo's own are kept", async () => {
-  const s = await settingsRig({ apply: true });
+  const s = await settingsRig();
   const real = ghHandler(s.gh);
   const lines = [
     { id: 1, name: "main rules", source_type: "Repository" },
@@ -74,6 +73,6 @@ test("repo: rulesets are read page by page and only the repo's own are kept", as
     }
     return real(args, opts);
   });
-  await settingsPass(s.deps, s.web);
+  await checkThenApply(s);
   expect(newestBackup(s.deps, s.web)!.rulesets.map((r) => r.id)).toEqual([1]);
 });

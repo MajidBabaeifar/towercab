@@ -1,5 +1,5 @@
-// What Towercab remembers of the standard GitHub settings (REPO-30..32), in `meta`: the last check of
-// each repo (`settings:<repo>`) and the one installation-wide missing permission (`settings-permission`).
+// What Towercab remembers of the standard GitHub settings (REPO-30, REPO-38), in `meta`: the last check of
+// each repo (`settings:<repo>`).
 
 import type { Db } from "../db.ts";
 
@@ -15,6 +15,15 @@ export interface StoredSettings {
   note?: string;
   /** REPO-31: why the ruleset was not applied. */
   ruleset?: string;
+  /** REPO-38: what Apply would change; absent when this `ci` release gave no readable plan. */
+  plan?: PlanChange[];
+}
+
+/** One line of the plan: a setting, its value now and the value after Apply. */
+export interface PlanChange {
+  what: string;
+  now?: string;
+  after?: string;
 }
 
 export const DAY_S = 86_400;
@@ -34,6 +43,7 @@ export function storedSettings(db: Db, repo: string): StoredSettings | null {
       at: Number(v.at) || 0,
       ...(typeof v.note === "string" ? { note: v.note } : {}),
       ...(typeof v.ruleset === "string" ? { ruleset: v.ruleset } : {}),
+      ...(Array.isArray(v.plan) ? { plan: v.plan as PlanChange[] } : {}),
     };
   } catch {
     return null;
@@ -42,47 +52,4 @@ export function storedSettings(db: Db, repo: string): StoredSettings | null {
 
 export function saveSettings(db: Db, repo: string, s: StoredSettings): void {
   db.setMeta(key(repo), JSON.stringify(s));
-}
-
-/** REPO-32: the App could not change settings; one flag for the installation, with the first repo it hit. */
-export interface MissingPermission {
-  at: number;
-  repo: string;
-}
-
-export function missingPermission(db: Db): MissingPermission | null {
-  const raw = db.meta("settings-permission");
-  if (!raw) return null;
-  try {
-    const v = JSON.parse(raw) as MissingPermission;
-    return { at: Number(v.at) || 0, repo: String(v.repo ?? "") };
-  } catch {
-    return { at: 0, repo: "" };
-  }
-}
-
-export function setMissingPermission(db: Db, repo: string, at: number): void {
-  if (!db.meta("settings-permission"))
-    db.setMeta("settings-permission", JSON.stringify({ at, repo } satisfies MissingPermission));
-}
-
-/** The owner's one step for it; ticking clears the flag and makes repos with gaps due again. */
-export const PERMISSION_STEP = "Grant the Towercab GitHub App the Administration (write) permission";
-
-export function grantPermission(db: Db): boolean {
-  const had = db.meta("settings-permission") !== null;
-  db.delMeta("settings-permission");
-  for (const row of db.all<{ key: string }>("SELECT key FROM meta WHERE key LIKE 'settings:%'")) {
-    const repo = row.key.slice("settings:".length);
-    const s = storedSettings(db, repo);
-    if (s?.state === "gaps") saveSettings(db, repo, { ...s, at: 0 });
-  }
-  return had;
-}
-
-/** The permission line `doctor` prints, or null. */
-export function permissionLine(db: Db): string | null {
-  return missingPermission(db)
-    ? "GitHub App lacks Administration (write): grant it at https://github.com/settings/apps so Towercab can apply settings"
-    : null;
 }
