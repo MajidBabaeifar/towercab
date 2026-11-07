@@ -8,8 +8,9 @@ import type { Ctx, Handler, Progress } from "../handlers.ts";
 import { ok, red, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { alertsBlock } from "./alerts.ts";
-import { asEnv, cloneOf, coGit, data, tail, viaForge } from "./common.ts";
+import { asEnv, ask, cloneOf, coGit, data, tail, viaForge } from "./common.ts";
 import { cutLog, isSummary, jobId, LOG_TAIL } from "./job-log.ts";
+import { classify, ignoreDetails, oldFindingQuestion, type Verdict } from "./old-finding.ts";
 
 export type { Check };
 
@@ -108,18 +109,25 @@ export async function ciState(
 export async function redLog(cx: Ctx, github: string, pr: number, pushedAt: number): Promise<string | null> {
   const v = await viaForge(cx.github.readChecks(github, pr));
   const b = bucket(v.checks, pushedAt, cx.clock.now(), cx.config.agent.ciGrace);
-  return b.kind === "red" ? failedLog(cx, github, pr, b.checks) : null;
+  return b.kind === "red" ? (await failedLog(cx, github, pr, b.checks)).text : null;
 }
 
 /**
  * The failed jobs' log, cut to what matters (PIP-154): each real failed job's own log, else the run's
  * `gh run view --log-failed` (summary jobs only, no job id, or an unreadable job). Then the open code
- * scanning alerts for a failed check that has no run (PIP-148).
+ * scanning alerts for a failed check that has no run (PIP-148). `jobs` are the cut logs of the failed
+ * jobs' own logs, empty unless every failed check was read that way and nothing else failed (PIP-193).
  */
-async function failedLog(cx: Ctx, github: string, pr: number, checks: Check[]): Promise<string> {
+async function failedLog(
+  cx: Ctx,
+  github: string,
+  pr: number,
+  checks: Check[],
+): Promise<{ text: string; jobs: string[] }> {
   const withRun = checks.filter((c) => c.run !== null);
   const real = withRun.filter((c) => !isSummary(c.name));
   const parts: string[] = [];
+  const jobs: string[] = [];
   const seen = new Set<number>();
   const runLog = async (run: number) => {
     if (seen.has(run)) return;
@@ -141,6 +149,7 @@ async function failedLog(cx: Ctx, github: string, pr: number, checks: Check[]): 
         const text = tail(cutLog(await viaForge(cx.github.jobLog(github, job))), LOG_TAIL).trim();
         if (text) {
           parts.push(`Job ${c.name}:\n${text}`);
+          jobs.push(text);
           continue;
         }
       } catch (e) {
@@ -152,7 +161,13 @@ async function failedLog(cx: Ctx, github: string, pr: number, checks: Check[]): 
   const named = checks.map((c) => `- ${c.name}: ${c.conclusion.toLowerCase()} ${c.url}`).join("\n");
   const alerts = await alertsBlock(cx, github, pr, checks);
   if (alerts) parts.push(alerts);
-  return `${named}\n\n${parts.join("\n\n")}`.trim();
+  // Every failed check must be a job read on its own: a summary-only or run-level log proves nothing.
+  const whole =
+    !alerts &&
+    real.length > 0 &&
+    jobs.length === real.length &&
+    checks.every((c) => isSummary(c.name) || c.run !== null);
+  return { text: `${named}\n\n${parts.join("\n\n")}`.trim(), jobs: whole ? jobs : [] };
 }
 
 /** Move the mission's checkout to the PR's `head` (fetched through Towercab's clone). */
@@ -246,13 +261,37 @@ export const ciHandler: Handler = {
           );
           return { poll: cx.config.agent.ciPoll };
         }
-        const log = await failedLog(cx, repo.github, m.pr!, s.checks);
+        const { text: log, jobs } = await failedLog(cx, repo.github, m.pr!, s.checks);
+        // PIP-192, PIP-193, PIP-196: a finding only in older commits, gone at the head, is ignored by
+        // fingerprint or asked about; once per head, and anything unclear is a normal repair.
+        const head = m.head ?? "";
+        const verdict: Verdict =
+          head && m.ci_repairs < MAX_CI_REPAIRS
+            ? await classify((args) => coGit(cx, m, args), head, jobs, d.ci?.ignored)
+            : { kind: "normal" };
+        const handled = { ci: { ...d.ci, ignored: { ...d.ci?.ignored, [head]: true } } };
+        if (verdict.kind === "ask") {
+          const o = await ask(cx, m, oldFindingQuestion(verdict.findings));
+          return { done: { ...o, data: { ...o.data, ...handled } } };
+        }
         if (m.ci_repairs >= MAX_CI_REPAIRS)
           return { done: wait("CI red", s.checks.map((c) => c.name).join(", ")) };
+        const what = "CI failed on the PR.";
         return {
           done: red(`CI failed: ${s.checks.map((c) => c.name).join(", ")}`, {
             set: { ci_repairs: m.ci_repairs + 1 },
-            data: { repair: { what: "CI failed on the PR.", details: log, kind: "ci" } },
+            data:
+              verdict.kind === "ignore"
+                ? {
+                    ...handled,
+                    repair: {
+                      what,
+                      details: ignoreDetails(verdict.findings),
+                      kind: "ci",
+                      ignore: { fingerprints: verdict.findings.map((f) => f.fingerprint), fallback: log },
+                    },
+                  }
+                : { repair: { what, details: log, kind: "ci" } },
           }),
         };
       }

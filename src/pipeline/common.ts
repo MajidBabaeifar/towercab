@@ -147,6 +147,8 @@ export interface PipeData {
     what: string;
     details: string;
     kind: "verify" | "proof" | "ci" | "conflict" | "e2e" | "review";
+    /** PIP-192: an ignore round: the only lines it may add to `.gitleaksignore`, and the details to fall back to. */
+    ignore?: { fingerprints: string[]; fallback: string };
   };
   /** Conflict rounds of the code PR since the owner last commented (`seen` = `feedback_seen`; PIP-134). */
   conflictRounds?: { n: number; seen: string | null };
@@ -210,6 +212,8 @@ export interface PipeData {
     reruns?: Record<string, boolean>;
     /** Heads whose hung runs were cancelled (PIP-171). */
     hung?: Record<string, boolean>;
+    /** Heads that were given an ignore round or an owner question for an old secrets finding (PIP-192, PIP-196). */
+    ignored?: Record<string, boolean>;
     since?: number;
   };
   review?: {
