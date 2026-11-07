@@ -5,6 +5,8 @@
 // Merge states (`MergeStatus.mergeState`) keep GitHub's words (`CLEAN`, `BEHIND`, `DIRTY`, `BLOCKED`,
 // `UNSTABLE`, `DRAFT`, `HAS_HOOKS`): another host maps its own into them.
 
+import type { ProposedCache, ProposedPr } from "./github/proposed.ts";
+
 /** How a change request is merged. */
 export type MergeMethod = "squash";
 
@@ -160,6 +162,56 @@ export interface CommitProof {
   verified: boolean;
 }
 
+export interface PrReview {
+  author: string;
+  /** `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, `DISMISSED`, `PENDING`. */
+  state: string;
+  body: string;
+  /** RFC 3339. */
+  at: string;
+  /** The head it reviewed, when the host says. */
+  commit: string | null;
+}
+
+export interface PrComment {
+  author: string;
+  body: string;
+  /** RFC 3339. */
+  at: string;
+  id: string;
+  /** Review comments: the file and line they are on. */
+  path?: string;
+  line?: number;
+  /** Review comments: the review they belong to (PIP-145: an approval's comments are not feedback). */
+  reviewId?: string;
+}
+
+/** One change request as the loop reads it (PIP-21). */
+export interface PrState {
+  state: "OPEN" | "MERGED" | "CLOSED";
+  mergedAt: string | null;
+  mergeCommit: string | null;
+  head: string;
+  /** `MERGEABLE`, `CONFLICTING` or `UNKNOWN`. */
+  mergeable: string;
+  body: string;
+  isDraft: boolean;
+  /** PIP-142: the PR's author, the host's review decision and the base branch, when the host says. */
+  author?: string;
+  reviewDecision?: string;
+  base?: string;
+  reviews: PrReview[];
+  /** Conversation comments, then review comments. */
+  comments: PrComment[];
+}
+
+export interface BranchPr {
+  number: number;
+  state: "OPEN" | "MERGED" | "CLOSED";
+  /** The login as the host prints it (`app/x`, `x`, `x[bot]`). */
+  author: string;
+}
+
 export interface Forge {
   /** `[github].me`: the owner's login. */
   readonly me: string;
@@ -272,4 +324,35 @@ export interface Forge {
   /** Put a label on an issue, creating the label (with `color`) first. */
   addLabel(repo: string, n: number, label: string, color: string): Promise<void>;
   removeLabels(repo: string, n: number, labels: string[]): Promise<void>;
+  /** Who put `label` on issue `n`, oldest first (`actor` null: unknown). */
+  labelEvents(repo: string, n: number, label: string): Promise<{ label: string; actor: string | null }[]>;
+
+  /** The branch and title of the open change requests, at most `limit`. */
+  openPrTitles(repo: string, limit: number): Promise<{ branch: string; title: string }[]>;
+  /** A change request with its reviews and comments (PIP-21). */
+  readPr(repo: string, n: number): Promise<PrState>;
+  /** PIP-142: the author, review decision and base branch of a change request. */
+  readPrExtra(repo: string, n: number): Promise<Pick<PrState, "author" | "reviewDecision" | "base">>;
+  /** The change requests, in any state, whose branch is `branch`. */
+  prsOnBranch(repo: string, branch: string): Promise<BranchPr[]>;
+  /** Delete a branch of Towercab's (PIP-89); one already gone counts as deleted. */
+  deleteBranch(repo: string, branch: string, intentsRepo: string | null): Promise<void>;
+  /** After a change request was closed unmerged, delete its branch if it is Towercab's alone (PIP-87, PIP-88). */
+  retireBranch(repo: string, n: number, intentsRepo: string | null): Promise<string | null>;
+  /** Edit the bot's comment whose first line is `marker`, else post `text`; whether it edited. */
+  upsertPrComment(repo: string, n: number, marker: string, text: string): Promise<{ edited: boolean }>;
+  /** PIP-146: make the owner the assignee; false when the host refuses. */
+  assignOwner(repo: string, n: number): Promise<boolean>;
+  /** `CODEOWNERS` from `base`; null when it can't be read. */
+  codeowners(repo: string, base: string): Promise<string | null>;
+  /** A change request's changed paths; null when unreadable or possibly cut off. */
+  changedPaths(repo: string, n: number): Promise<string[] | null>;
+  /** The ids of a change request's approving reviews. */
+  approvedReviewIds(repo: string, n: number): Promise<Set<string>>;
+  /** The approvals `base` requires; null when that can't be read. */
+  requiredApprovals(repo: string, base: string): Promise<number | null>;
+  /** PIP-143: ask each login for a review, one by one; the ones that failed. */
+  requestReviewers(repo: string, n: number, logins: string[]): Promise<{ failed: string[] }>;
+  /** The open change requests that propose intents (INT-*). Throws when the host can't be read. */
+  readProposed(repo: string, cache: ProposedCache, bot: string): Promise<ProposedPr[]>;
 }

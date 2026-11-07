@@ -138,6 +138,9 @@ export interface UiSources {
   paused(): boolean;
   /** UI-111: when the owner paused (unix seconds); null for a pause made before the time was stored. */
   pausedAt(): number | null;
+  /** LOOP-113: the runs going now while paused (default 0), and whether `pause --now` is stopping them. */
+  runningSteps?(): number;
+  pausedNow?(): boolean;
   problems(): Problem[];
   version(): { commit: string; behind: number | null };
   /** The picker's whole list; the overview shows the first 5. */
@@ -1071,12 +1074,21 @@ const NOT_STARTED: Phase[] = [
 export function groundStopOf(src: UiSources, s: Snap): GroundStop | null {
   if (s.paused) {
     const since = src.pausedAt();
+    // LOOP-113, LOOP-114: runs still going are told after the pause.
+    const running = src.runningSteps?.() ?? 0;
+    const stopping = running > 0 && (src.pausedNow?.() ?? false);
+    const tail =
+      running === 0
+        ? ""
+        : stopping
+          ? `: stopping ${running} running steps`
+          : `: ${running} running steps finishing`;
     return {
       kind: "owner",
       text:
         since === null
-          ? "GROUND STOP · paused"
-          : `GROUND STOP · paused since ${shortTime(since, s.now)} by you`,
+          ? `GROUND STOP · paused${tail}`
+          : `GROUND STOP · paused${tail} since ${shortTime(since, s.now)} by you`,
       since,
       canResume: src.running,
     };

@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-115..119, LOOP-129..132 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..119, LOOP-129..132 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -35,6 +35,7 @@ and its settings in one TOML file.
   run --watch`), then `systemctl --user daemon-reload` and `enable --now`. `down` = `disable --now`
   (missions stay). `restart` = `systemctl --user restart towercab` (a few seconds: no build).
   `logs` execs `journalctl --user -u towercab -f`. A failing `systemctl` → exit 1 with its stderr.
+- Not built yet: the unit will set `TimeoutStopSec=60`, so systemd waits a minute for a stop before killing the service; the loop's own stop budget stays far below it (LOOP-136). The **Unit** block below still shows the built value (30), because `service: unit file` compares it with the file `up` writes. The code PR changes the block and the unit to 60 together.
 - Verified by: `service: unit file`, `service: up, down, restart, logs`
 
 ### LOOP-3 · State machine
@@ -239,7 +240,7 @@ buttons, replies and commands ([telegram.md](telegram.md), LOOP-126..128), or, w
 - `POST <api_base>/bot<token>/sendMessage` `{chat_id, text, disable_web_page_preview: true}` (≤ 4000
   characters, 10 s timeout). Unsent rows go oldest first, stop at the first failure and retry with
   LOOP-10's backoff. Failures are logged once per outage without the token. No `[telegram]` → rows
-  are written and never sent.
+  are written and never sent. Webhooks can be added alongside it (LOOP-146).
 - Verified by: `telegram: retries until sent`, `telegram: failures never raise`
 
 ### LOOP-17 · Idle
@@ -863,6 +864,178 @@ Boosting an intent sets its autonomy to a5 and, when it has not started, starts 
 - There is no command-line command for `a` or for boost: raising autonomy stays on the page and GitHub (AUT-35) and `boost` rows from the command line are dropped (LOOP-134). An a0 intent refuses `score` like `start` (AUT-33), because the command line cannot tell the owner from an agent: only the page and GitHub change it.
 - Verified by: `cli: score changes u and i`, `cli: score needs a value`, `cli: score refuses a bad value`, `cli: score is refused on an a0 intent`, `commands: score applied without a loop`
 
+### LOOP-136 · A hanging `gh` or `git` call does not hold up stopping
+
+When Towercab is told to stop, it gives running `gh` and `git` calls 10 seconds to finish, then kills them and exits.
+
+- On SIGTERM or SIGINT the loop starts no new pass, poll, check or Claude run, and waits for the `gh` and `git` processes it started (through `Tools`) for at most 10 seconds (fixed, not a setting). Then it sends SIGTERM to each one's process group and SIGKILL 2 s later. A call cut off this way fails with `stopped: <command> was cut off at shutdown`. Its mission is not counted as a failure: the step is re-entered at the next start (LOOP-6).
+- The idle waits of `shutdown` (issues, features, readiness, settings, setup checks, limits, shadow) share this one deadline instead of waiting without limit; whatever is still running at the deadline is cut off the same way.
+- Claude runs keep their treatment: SIGTERM to the group, SIGKILL after 10 s, `interrupted` (LOOP-7); their sessions resume at the next start. All children are signalled at the same moment and waited for together, not one after another.
+- The whole stop therefore takes at most about 15 s (10 s grace + 2 s kill wait + a few seconds to write state), well under the `TimeoutStopSec=60` the unit will get (LOOP-2).
+- Verified by: `shutdown: a gh call that never exits is killed after the grace period`, `shutdown: children are stopped together`, `shutdown: a git call that never exits is killed after the grace period`, `shutdown: no new work starts once stopping`, `shutdown: a cut-off call does not count as a failure`
+
+### LOOP-137 · A stop that cut off a hanging call is a clean exit
+
+After a stop that had to kill a hanging `gh` or `git` call, the next start finds nothing to recover.
+
+- `shutdown` ends by removing `meta.running` and exiting 0 (LOOP-7), whether or not LOOP-136 had to kill a child. The next start does not log "the last run didn't exit cleanly; recovering" and does not add to any mission's `unclean` count.
+- The loop logs one line at the stop naming each call it cut off: `stop: cut off <command> after <n>s`.
+- Verified by: `shutdown: the next start after a cut-off call reports a clean exit`, `shutdown: the stop logs the calls it cut off`
+
+### LOOP-138 · Stale git locks are removed at start
+
+At start, Towercab removes git lock files left in its own clones and checkouts by a process that no longer exists.
+
+- After crash recovery (LOOP-7) and before the first pass, the loop looks for `index.lock` and every other `*.lock` file inside the git directories of `repos/<name>/`, `work/*/` (including a checkout's `.git/worktrees/<name>/` entry in its clone) and the intents clone (`intents/`). Files outside git directories, and `towercab.lock` in the home, are never touched.
+- A lock is removed only when both hold: it is older than 2 minutes (by its modification time against the loop's clock), and no lock-holding `git` process is around. A lock fails the second test when any running `git` process (found through `Tools`) has its working directory anywhere inside the lock's checkout, in any other checkout that shares the same clone (the clone itself and all its worktrees), or in a subfolder of any of them. A process whose working directory cannot be read counts as inside.
+- A lock that fails either test stays, and the log says which: `start: kept lock <path> (younger than 2 minutes)` or `start: kept lock <path> (git process <pid> running in <dir>)`. A kept lock is not retried at start; the step that meets it fails and is retried as for any other git error.
+- Only regular files named `*.lock` are removed; symbolic links are left alone.
+- Each removal is logged on its own line: `start: removed stale lock <path>`. A start with no lock found logs nothing. A removal that fails is logged and does not stop the start.
+- Verified by: `start: a stale index.lock in a clone is removed and logged`, `start: stale locks in a checkout and its worktree entry are removed`, `start: a lock younger than 2 minutes is kept`, `start: a lock is kept while a git process runs in a subfolder of its checkout`, `start: a lock is kept while a git process runs in another worktree of the same clone`, `start: a lock is kept when a process directory cannot be read`, `start: files outside git directories are never removed`, `start: a symbolic link named like a lock is kept`
+
+### LOOP-139 · The intents repo is synced before the first pass
+
+Before the first pass, Towercab re-syncs the intents repo, so a write cut off by a killed stop is repaired or redone.
+
+- The sync runs after LOOP-138 and before any pass, on every start: fetch, then reconcile with the remote as the normal sync does. A sync failure is logged, retried in the first pass and does not stop the start.
+- Verified by: `start: the intents repo is synced before the first pass`, `start: a failed intents sync does not stop the start`
+
+### LOOP-140 · Entering an end state does not need the intent file to be open
+
+When a mission enters an end state (`done`, `unverified` or `stopped`) and its intent file has already been moved to `done/` or is gone, the move completes in one pass without writing the intent file again.
+
+- Only these three mission stages are covered (they are the ones that end an intent: finished, merged but unchecked, and stopped or dropped). Entering any other stage with no open intent file stays an error and is retried next pass (LOOP-6), as today.
+- For an end-state entry, the entry effect that writes the intent file (stage, waiting, links, cost) looks the intent up in the intents clone at that moment, not in the listing taken at the start of the pass. An intent found in `done/` or not found at all is skipped, as LOOP-6 already skips one it knows to be closed; the remaining entry effects (feature list, PRs, branches, checkout) still run.
+- For an end-state entry, `store.update` refusing with `no open intent matches <id>` is not a failure of the entry: the write is skipped and the entry carries on to its other effects. Any other error (a sync failure, a push rejected) still retries the entry next pass.
+- No `entering <stage> failed, retrying next pass` line is logged for the skipped write.
+- Verified by: `loop: done on a blocked mission whose intent file was already moved settles in one pass`, `loop: a sync failure still retries the entry of a finished mission`, `loop: entering an active stage with the intent file missing is still retried`
+
+### LOOP-141 · Dropping an intent whose file is already gone settles the mission
+
+When the owner drops an intent by hand and the mission then enters `stopped`, the move completes in one pass with no retry.
+
+- Applies LOOP-140 to `towercab drop`, whether the file is in `done/` (stage `dropped`) or gone: the entry writes nothing to it and still closes the mission's open PRs and retires its branches (PIP-87).
+- Verified by: `loop: drop on a blocked mission whose intent file was already moved settles in one pass`
+
+### LOOP-142 · Stay awake under WSL
+
+On Windows through WSL2, Towercab keeps Windows from sleeping while missions are in a working stage.
+
+- WSL is detected when the kernel release (`/proc/sys/kernel/osrelease`) contains `microsoft`, case-insensitively. The check goes through `Tools`, so tests fake it.
+- In WSL the inhibitor of LOOP-11 is a `powershell.exe` child instead of `systemd-inhibit`: it calls `SetThreadExecutionState` from `kernel32.dll` with `ES_CONTINUOUS | ES_SYSTEM_REQUIRED` (`0x80000001`) and then sleeps until killed. The child is started, killed and restarted under the same rules as in LOOP-11 (working stage, nothing driven, shutdown), and the wake check applies unchanged.
+- The execution state belongs to the PowerShell process's thread, so Windows drops it when the child ends, however it ends.
+- Outside WSL the inhibitor stays `systemd-inhibit` as in LOOP-11.
+- A missing `powershell.exe` is not fatal: the loop runs without the inhibitor and `doctor` warns (LOOP-143).
+- Verified by: `awake: wsl uses a powershell child with ES_SYSTEM_REQUIRED`, `awake: wsl child is killed when nothing is driven`, `awake: outside wsl keeps systemd-inhibit`, `awake: wsl without powershell runs unprotected`
+
+### LOOP-143 · doctor checks WSL
+
+Under WSL, `towercab doctor` checks the things that commonly break there and says how to fix each.
+
+- On every platform: a key or secrets file (the GitHub App key, token files, `config.toml` when it holds a secret) whose mode allows any access to group or others is a failure (exit code 1), except in the self-update check (LOOP-145), where it is a warning. The line names the file and gives the exact fix: `chmod 600 <path>`. Under WSL, a path under `/mnt/` cannot hold the mode, so its `/mnt/` failure (below) is printed first and the line says to move the file rather than to `chmod`.
+- The rest runs only when WSL is detected (LOOP-142); elsewhere `doctor` prints none of these lines. `doctor` prints `wsl: <kernel release>` first.
+- Failures (exit code 1), each on one line with the fix:
+  - systemd is not PID 1 (`/proc/1/comm` is not `systemd`): `enable it with [boot] systemd=true in /etc/wsl.conf, then run wsl --shutdown`.
+  - bwrap cannot start a sandbox: the sandbox probe of PIP-163 failed. The line gives the probe's reason and the existing fix pointer of PIP-161/PIP-162 (the AppArmor profile fix where user namespaces are restricted, else "check bwrap"). Nothing WSL-specific is added, and `sandbox_unix_sockets` is not involved.
+  - The config directory, the home directory of Towercab or any repo's clone path is under `/mnt/`: `keep it in the Linux file system (for example under ~)`.
+- Warnings (exit code unchanged):
+  - `powershell.exe` is not on `PATH`, so Windows may sleep while missions run.
+  - No keep-alive: systemd is PID 1 but `vmIdleTimeout` is not set under `[wsl2]` in the Windows user's `.wslconfig` (read through `powershell.exe`), so WSL may stop its VM and the service with it. The line gives the fix: `set vmIdleTimeout=-1 under [wsl2] in %UserProfile%\.wslconfig, then run wsl --shutdown`. If `.wslconfig` cannot be read, the line says so and gives the same fix.
+- `doctor --quick` runs the file, path and `.wslconfig` checks and skips the bwrap probe.
+- Verified by: `doctor: wsl prints the kernel release`, `doctor: wsl without systemd as pid 1 fails`, `doctor: wsl failed sandbox probe fails`, `doctor: wsl paths under /mnt fail`, `doctor: a secrets file not mode 600 fails with the chmod`, `doctor: a loose secrets file fails outside wsl`, `doctor: wsl without powershell warns`, `doctor: wsl without vmIdleTimeout warns`, `doctor: wsl with vmIdleTimeout is quiet`, `doctor: outside wsl prints no wsl lines`
+
+### LOOP-145 · Loose permissions never block a self-update
+
+The self-update check only warns about a secrets file that others can read, so a permissions slip can't keep Towercab from updating.
+
+- The check of LOOP-35 runs `bin/towercab doctor --quick --for-update`. With that flag the loose-secrets line of LOOP-143 prints as a warning (`warning: <path> is readable by others: chmod 600 <path>`) and does not change the exit code. Every other failure of `doctor --quick` still fails the update and rolls it back.
+- A warning in that check does not stop the update and sends no `self-update failed` message. The full `doctor` (without the flag) and the Problems block (UI-277) still show it as a failure with the `chmod 600` fix, on every platform.
+- Verified by: `update: a loose secrets file only warns`, `update: another doctor failure still rolls back`, `doctor: --for-update turns a loose secrets file into a warning`, `doctor: a loose secrets file fails without the flag`
+
+### LOOP-144 · A guide for Windows through WSL2
+
+A written guide takes someone on a fresh Windows machine to a running Towercab, and the README claims Windows support only after the guide has been tried end to end.
+
+- `docs/windows-wsl.md` covers, in order: installing Ubuntu in WSL2; enabling systemd; keeping everything in the Linux file system; installing and logging in to `claude` and `gh` inside WSL; installing bwrap and what to do if user namespaces are restricted (it follows PIP-162, not turning the restriction off); keeping the WSL VM running while Windows is idle (`vmIdleTimeout=-1` under `[wsl2]` in `.wslconfig`, which `doctor` warns about, LOOP-143); running `towercab doctor`; opening the UI at `http://localhost:7311` from Windows.
+- The guide says what is not supported: config, clones or the build cache under `/mnt/`.
+- The README's Requirements say Windows works through WSL2 only once the guide's steps have been run end to end on a Windows machine and the result is noted in the pull request. Until then the README does not mention Windows.
+- Verified by: `manual: follow docs/windows-wsl.md on a fresh Windows machine to a mission opened from the UI`, `public: README claims Windows only with the guide present`
+
+### LOOP-146 · Several places for waiting-on-you messages
+
+Towercab's messages go to every place the owner set up, Telegram and any number of webhooks together, and a setup with only Telegram keeps working untouched.
+
+- The destinations are `[telegram]` (when set) and each `[[notify.webhook]]` table (LOOP-147). With neither, rows are written and never sent (LOOP-16). There is no channel switch: removing a section turns that destination off.
+- Every destination gets every outbox row (LOOP-14), independently. The outbox keeps, per row and destination, whether it was sent (`outbox_sent`, keyed by row key and destination: `telegram` or `webhook:<name>`). A row leaves the queue when every destination has it or its wait is over. Each destination sends oldest first, stops at its own first failure and backs off on its own (LOOP-10), so a failing webhook never delays Telegram or another webhook. The loop's pass and the rows are unchanged.
+- A webhook added later sends only rows written after it was added, so a new webhook does not replay old waits: its first appearance is stored in `meta` (`notify.added.webhook:<name>`, the time of the first pass that sees it) and older rows are skipped for it. Removing a webhook and adding it again under the same name keeps the first time.
+- On upgrade, the `outbox_sent` table is created and seeded once from the outbox as it was: every row whose `sent_at` is set gets a `telegram` entry with that `sent_at`, and the Telegram backoff state (`tries`, `next_try`) of unsent rows is copied too. Telegram's rows keep their old meaning, so nothing Telegram already sent is sent again, and a row still waiting for Telegram is still sent. The seed runs in the same transaction as the migration and is a no-op when repeated. Telegram has no "added" time: its unsent rows stay eligible as today.
+- Reading the owner's chat (LOOP-129, LOOP-130), buttons, replies and the shadow stay tied to `[telegram]`; `shadow.enabled` still needs `[telegram]`. Rows that only edit a Telegram message (TG-5) are sent to Telegram only.
+- Telegram's text is unchanged (the full text of LOOP-14); it has no detail setting.
+- Verified by: `notify: telegram only keeps working unchanged`, `notify: no destination sends nothing`, `notify: telegram and two webhooks each get every row`, `notify: a failing webhook does not delay the others`, `notify: a row stays queued until every destination has it`, `notify: a new webhook skips older rows`, `notify: a re-added webhook keeps its first time`, `notify: upgrade marks rows telegram sent as sent`, `notify: upgrade keeps rows telegram has not sent`, `notify: the seed is run once`, `notify: edit rows go to telegram only`, `notify: a webhook keeps the telegram reading`
+
+### LOOP-147 · Webhook delivery
+
+Each webhook the owner sets up gets every message as JSON, posted to a secret URL kept in a file only the owner can read, and failures retry quietly without ever printing the URL.
+
+- `[[notify.webhook]]` is a list of tables with `name` (required, unique, `[a-z0-9_-]+`; it names the webhook in logs, `doctor` and LOOP-146), `url_file`, `template` (LOOP-148) and `detail` (LOOP-149). A duplicate or missing name fails the config load with `config: <file>: notify.webhook name …`.
+- `url_file` is an absolute path or starts with `~/`; the file is a regular file, mode 600, holding one line with a URL (the same file checks as `gitlab.token_file`, [gitlab.md](gitlab.md)).
+- The URL is `https://`, except that `http://` is allowed when the host is written as a local address: `localhost`, an IPv4 address in `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12` or `192.168.0.0/16`, `[::1]`, or a name ending in `.local`, for a self-hosted Mattermost. The host is judged as written; no name is looked up, so a public name that resolves to a private address still needs `https://`. Any other scheme, a URL with no host, or a plain `http://` to another host is refused with `url_file: http is only allowed for local addresses` (or `url_file: not an https url`), without the URL in the message. The URL is read from the file at each send and never kept in memory between sends, in `meta`, in the outbox or in the UI.
+- `POST <url>` with `Content-Type: application/json` and the body of LOOP-148, 10 s timeout. A 2xx answer marks the row sent. Anything else (other status, timeout, network error) is a failure; redirects are not followed.
+- Unsent rows go oldest first, stop at the first failure and retry with LOOP-10's backoff, exactly like Telegram (LOOP-16). A failure is logged once per outage as `webhook <name>: <reason>` and once again when it recovers; the reason is a status code, `timeout` or an error class, and never contains the URL, the response body or a text from the URL's host. Failures never raise out of the pass.
+- A url file that is missing, loose or malformed counts as a failure with the reason `url_file <why>` (the path, not the URL) and is retried at the next backoff; a loose or missing file at config load fails with `config: <file>: notify.webhook.<name>.url_file <why>`. `doctor` checks every webhook's file like the other secrets files (LOOP-143).
+- Verified by: `webhook: names must be unique`, `webhook: posts json with the default body`, `webhook: retries until sent`, `webhook: failures never raise`, `webhook: oldest first and stops at the first failure`, `webhook: one log line per outage`, `webhook: the url never appears in a log line`, `webhook: a redirect is a failure`, `webhook: a loose url file is refused`, `webhook: https is accepted`, `webhook: http is accepted for localhost and private addresses`, `webhook: http to a public host is refused`, `webhook: a name that resolves privately still needs https`, `webhook: other schemes are refused`, `webhook: a refusal never shows the url`, `webhook: the url is read at each send`, `doctor: a loose webhook url file fails with the chmod`
+
+### LOOP-148 · Webhook body template
+
+The owner can change the shape of the webhook body for chat services that expect something other than `{"text": "…"}`.
+
+- A webhook's `template` is a TOML string holding a JSON document; the default is `{"text": "{text}"}`. Two placeholders are replaced wherever they appear inside a JSON string: `{text}` (the whole message, as LOOP-149 builds it for that webhook) and `{link}` (the link alone, or an empty string). The value is inserted JSON-escaped, so quotes, newlines and non-ASCII characters in a title cannot break the document. Written in TOML: `template = '{"channel": "ops", "content": "{text}"}'`.
+- No other placeholder exists; any other `{…}` text stays as written. A placeholder outside a JSON string, or a template that is not valid JSON once both placeholders are replaced with a sample, fails the config load with `config: <file>: notify.webhook.<name>.template <why>`.
+- The message is capped at 4000 characters before it is inserted (LOOP-16).
+- Verified by: `webhook: the default body is {"text": …}`, `webhook: a template fills text and link`, `webhook: a title with quotes and newlines stays valid json`, `webhook: an unknown placeholder stays as written`, `webhook: an invalid template fails the config`
+
+### LOOP-149 · Webhook detail: full or minimal
+
+Each webhook says only how many things wait for the owner, with a link, unless the owner turns on the full text for that webhook.
+
+- A webhook's `detail` is `"minimal"` (the default) or `"full"`, set per webhook. `minimal` is `<N> things wait for you in Towercab: <link>`, or `1 thing waits for you in Towercab: <link>` when N is 1. N is the number of missions waiting on the owner when the message is sent (LOOP-14's **Waits**), so a queued message always shows the current count. When N is 0 (a row about GitHub, Claude or a failed update) the text is `Towercab needs a look: <link>`. The link is the address of Towercab's local page (UI-1). The text has no intent title, repo, reason, PR link or intent id. `{link}` (LOOP-148) is that same address.
+- `full` is the text of LOOP-14, as Telegram gets it.
+- An unknown `detail` fails the config load with `config: <file>: notify.webhook.<name>.detail …`.
+- Telegram is unchanged and has no `detail` setting.
+- Verified by: `webhook: detail defaults to minimal`, `webhook: minimal counts the waits at send time`, `webhook: minimal with one wait is singular`, `webhook: minimal with no waits says Towercab needs a look`, `webhook: minimal has no title, repo, reason or id`, `webhook: full detail sends the usual text`, `webhook: each webhook uses its own detail`, `webhook: an unknown detail fails the config`
+
+### LOOP-150 · Update channel
+
+The owner chooses whether Towercab updates on every change to `main` or only on a new release.
+
+- `[update].channel` is `"main"` (the default) or `"release"`. Anything else fails the config load with `config: <file>: update.channel must be "main" or "release"`.
+- `"main"` is LOOP-35 as it is: nothing changes for a config without the key.
+- `[update].auto = false` still turns every update off, whatever the channel.
+- On `"main"`, a clean checkout sitting on a release tag (a detached HEAD at a `v` tag, for example after the owner left the release channel) moves back to `main` at the next update check, so an owner is never left on a version that no longer updates. It goes through the same drain (LOOP-108..109), `git checkout main` then `git merge --ff-only origin/main`, install, `bin/towercab doctor --quick --for-update` and exit 75, and the same rollback and `self-update to <short commit> failed: <why>` message (LOOP-35, LOOP-108). A failure puts the checkout back on the tag. A dirty checkout is left alone.
+- Verified by: `update: channel defaults to main`, `update: an unknown channel fails the config`, `update: auto false stops updates on the release channel`, `update: the main channel moves a checkout on a tag back to main`, `update: moving back to main drains first`, `update: a failed move back to main returns to the tag`, `update: a dirty checkout on a tag is left alone on the main channel`
+
+### LOOP-151 · Update to the newest release
+
+On the release channel, Towercab moves only to a newer release tag, never to a new commit on `main`.
+
+- A release tag is `v<major>.<minor>.<patch>` (for example `v1.1.0`), with no prefix before the `v` and no suffix after the patch. Any other tag is ignored, so pre-release tags such as `v1.2.0-rc1` are never installed: the channel is for final versions only. Tags are compared as numbers, so `v1.10.0` is newer than `v1.9.0`.
+- A release tag counts only when its commit is an ancestor of `origin/main` (`git merge-base --is-ancestor <tag> origin/main`). Any other release tag is skipped, and the log says why (`release <tag> skipped: its commit is not on main`), once per tag while the loop runs. The check then takes the newest tag that counts.
+- The check of LOOP-35 runs `git fetch --tags` and takes the newest release tag that counts. It acts only when that tag is newer than the running version (LOOP-152). A tag equal to or older than it does nothing, so the checkout never moves to an older release, and a new commit on `main` alone does nothing.
+- With no release tag that counts, the check does nothing and the running version stays; it is not an error and sends no message.
+- The checkout may be clean and on `main`, or clean and on a release tag (a detached HEAD at a `v` tag); either is acceptable for updating.
+- The update then goes as LOOP-35 and LOOP-108..109 describe, with the tag as the target: drain, `git checkout --detach <tag>`, `npm ci` when `package-lock.json` changed, `npm run build:ui` when `ui/` changed, `bin/towercab doctor --quick --for-update` (LOOP-145), exit 75. A failure puts the checkout back where it was (the previous commit, on its branch when it was on one, or the previous tag), keeps running and sends one message `self-update to <tag> failed: <why>`. The loop does not drain for that tag again while it runs (LOOP-108), but does for a newer one.
+- `towercab update` does the same now on this channel.
+- Verified by: `update: release channel ignores a new commit on main`, `update: release channel moves to a newer tag`, `update: release channel never moves to an older tag`, `update: tags compare as numbers`, `update: tags that are not vMAJOR.MINOR.PATCH are ignored`, `update: a pre-release tag is never installed`, `update: a tag not on main is skipped and logged`, `update: the newest tag on main is chosen over a newer tag off main`, `update: no release tags keeps the running version`, `update: a checkout on a release tag is updated`, `update: a failed check on a tag rolls back to the previous position`, `update: a failed tag is not drained for again`
+
+### LOOP-152 · Running version and waiting release
+
+`status` shows which version is running and, on the release channel, whether a newer release is waiting.
+
+- The running version is the release tag the checkout sits on (`v1.1.0`), or `git describe --tags --match 'v[0-9]*'` of HEAD when it is past a tag (`v1.1.0-3-g<short commit>`), with the short commit as well. With no release tag in the history it is the short commit alone.
+- On the release channel, `status` adds `update: <tag> is available` when the newest release tag (LOOP-151) is newer than the highest release tag reachable from HEAD, and `up to date` otherwise. On the `"main"` channel the line of LOOP-35 (behind `main` or not) is unchanged and the version is shown beside it.
+- The newest tag is the one found by the last check (LOOP-151); `status` runs no fetch of its own.
+- Verified by: `status: shows the running version on a tag`, `status: shows the version past a tag with the commit`, `status: shows the commit when there are no tags`, `status: release channel says a newer release is available`, `status: release channel says up to date`
+
 ### LOOP-120 · Telegram message when a reply is posted
 
 When Towercab has answered the owner's comment and the PR waits for the owner again, the owner gets a short Telegram message with a link to the reply.
@@ -934,9 +1107,14 @@ While Towercab is paused, no mission starts anything new, but steps already runn
 - `status` and the page (UI-109) say `paused: <n> running steps finishing` while `n > 0` children run, and
   `paused` once none do. `n` counts running children, whichever mission they belong to.
 - `resume` lifts the hold; every mission continues from the step where it stopped, with no change to its counters.
+- How it is held: the loop's forge, `git push` and intents store refuse changes while `meta.paused` is set
+  (`held while paused: <what>`, never a failure or a health fault); a stage's entry effects, the settings and
+  release polls and the ticked steps wait for resume. A result whose write was held is kept and applied again after
+  resume. The owner's own commands still apply, but `towercab approve` and `towercab reply` answer
+  `paused: resume first`.
 - This is the global pause only. The per-intent pause (SHD-22, UI-239) keeps its meaning: it holds only that
   intent's next step and never stops running work.
-- Verified by: `loop: a paused loop does not start the next step of a mission`, `loop: a running step finishes and is applied while paused`, `loop: a paused loop makes no GitHub writes`, `loop: polling continues while paused`, `status: paused counts running steps finishing`, `loop: resume continues missions where they stopped`
+- Verified by: `loop: a paused loop does not start the next step of a mission`, `loop: a running step finishes and is applied while paused`, `loop: a paused loop makes no GitHub writes`, `loop: held git pushes`, `loop: polling continues while paused`, `status: paused counts running steps finishing`, `loop: resume continues missions where they stopped`
 
 ### LOOP-114 · Pause now stops running children
 
@@ -1124,6 +1302,37 @@ intents that waited for it start.
 - A repo whose protection cannot be read (no permission, 404) prints nothing for it and `doctor --quick`
   (LOOP-35) skips the check; it never fails because of it.
 - Verified by: `doctor: a required approval with teammate review off is a warning`, `doctor: an unreadable branch protection is not a warning`, `doctor: fewer listed reviewers than required approvals is a warning`
+
+### LOOP-153 · A repo has a merge method
+
+`towercab repo set <name> merge_method=<method>` chooses how Towercab merges that repo's pull requests: `squash` (the default), `merge`, `auto`, or `rebase` for a repo whose rules allow nothing else.
+
+- Keys: `merge_method` is `squash`, `merge`, `rebase` or `auto`, default `squash`. It lives in Towercab's `repos` table (LOOP-65), never in the shared repo. Migration adds `merge_method TEXT NOT NULL DEFAULT 'squash'` (additive, LOOP-37); the **Schema** block shows it. `repo list` shows `· merge: <method>` for a repo that is not `squash`.
+- `auto` is opt-in and follows what the host allows: when Towercab merges, it reads the repo's allowed methods and takes the first allowed of `squash`, `merge`. It takes `rebase` only when neither is allowed. If the settings cannot be read, or no method is allowed, it uses `squash`.
+- Rebase is a last resort. `repo set merge_method=rebase` is accepted only when the host allows rebase merges and neither squash nor merge; otherwise it refuses with `merge_method: rebase is only for repos that allow nothing else (<allowed>): use squash, merge or auto`, and when the settings cannot be read, with `merge_method: can't read <owner/name>'s merge settings to check that rebase is the only method allowed`.
+- The allowed methods come from a new `Forge` read, `allowedMergeMethods(repo)` (GitHub: `allow_squash_merge`, `allow_merge_commit`, `allow_rebase_merge` of `gh api repos/<r>`). `Forge.mergePr` takes the resolved method in its `method` option, which grows from `"squash"` to `"squash" | "merge" | "rebase"`; callers pass the repo's resolved method instead of the `MERGE_METHOD` constant.
+- Other refusals, in addition to LOOP-69's: `merge_method must be squash, merge, rebase or auto`. The unknown-key refusal of LOOP-69 lists `merge_method`. The running loop uses the new value from its next pass (LOOP-68), including for missions already in flight.
+- Only GitHub repos use it. A GitLab repo keeps squashing (GL-5) and `repo set` on it refuses `merge_method` with `merge_method is only for GitHub repos`.
+- Verified by: `repos: set merge_method`, `repos: merge_method refuses an unknown value`, `repos: merge_method auto takes the first allowed method`, `repos: merge_method auto takes rebase only when nothing else is allowed`, `repos: merge_method auto falls back to squash`, `repos: merge_method rebase is refused when squash or merge is allowed`, `repos: merge_method rebase is refused when the settings can't be read`, `cli: repo list shows a merge method other than squash`, `repos: merge_method is refused on a GitLab repo`
+
+### LOOP-154 · Every merge uses the repo's method
+
+Each merge Towercab or the owner's page makes uses the repo's merge method instead of a fixed squash.
+
+- The `Forge` merge call (`mergePr`, src/forge.ts) takes the method from LOOP-153 (`auto` resolved first) as its `method` option and `GitHubForge` maps it to `--squash`, `--merge` or `--rebase`. This covers the pipeline's merge (PIP-22), the spec and plan merges (PIP-50, PIP-51), release PRs (SHIP), the owner's `approve` (LOOP-38) and the page's merge and accept buttons (UI-107, INT-53), with the head check unchanged. Wherever another spec says "squash-merge" or `--squash` for a GitHub repo, it now means the repo's method.
+- With `squash` or `merge`, the commit title is the PR's Conventional Commit title (PIP-111), passed as the subject, so release tooling that reads history sees it. With `rebase` the host keeps each commit's own message and Towercab sets no title.
+- When the host refuses the method (`Merge commits are not allowed on this repository`, `Squash merges are not allowed…`, `Rebase merges are not allowed…`), the mission records `merge failed: <method> merges are not allowed on <repo>: run towercab repo set <name> merge_method=<other>` instead of the host's text alone. It does not retry with another method.
+- Verified by: `merge: uses the repo's method`, `merge: squash keeps the PR title as the commit title`, `merge: merge commit keeps the PR title as the subject`, `merge: rebase sets no title`, `merge: a refused method names the setting to change`, `merge: auto uses the method the repo allows`, `owner: approve merges with the repo's method`
+
+### LOOP-155 · repo add and doctor warn about a method the repo forbids
+
+`towercab repo add` and `towercab doctor` warn when the chosen merge method is not allowed on that repo.
+
+- After the checks of LOOP-66, `repo add` reads the repo's allowed methods (LOOP-153). When the repo's method (`squash` for a new repo) is not allowed it prints `warning: <owner/name> does not allow <method> merges (allowed: <list>): run towercab repo set <name> merge_method=auto`, still adds the repo and exits 0. The line always names `auto` as the fix; `auto` is never refused.
+- When the method in force (a set one, or what `auto` resolves to) is `rebase`, `repo add` and `doctor` print `warning: <name> merges by rebase: release notes rely on the repo's own commits following Conventional Commits`. It does not change the exit code.
+- `doctor` prints the not-allowed line for each GitHub repo whose method is not allowed, and says which methods are allowed. `auto` is never warned unless no method is allowed at all. It is a warning: the exit code does not change.
+- A repo whose settings cannot be read prints nothing for it, and `doctor --quick` (LOOP-35) skips the check; it never fails because of it.
+- Verified by: `cli: repo add warns when squash is not allowed`, `cli: repo add is quiet when the method is allowed`, `cli: repo add names auto as the fix`, `cli: repo add warns about rebase`, `doctor: rebase warns about conventional commits`, `doctor: a method the repo forbids is a warning`, `doctor: unreadable merge settings are not a warning`, `doctor: auto with no allowed method is a warning`
 
 ### LOOP-70 · A repo set to block starts no new intent
 
@@ -1419,6 +1628,7 @@ If a part fails after the merges, that part and every part that landed after it 
 | `telegram.ui_url` | URL (TG-14) | none (messages link to the PR) |
 | `ui.port` | int 0–65535 (0 = off) | 7311 |
 | `update.auto` | bool | true |
+| `update.channel` | `"main"` or `"release"` (LOOP-150) | `"main"` |
 
 `workers` and `ahead` are the repo's own `TOWERCAB.md` keys too (REPO-14): the file wins, and after the repo has moved the database value is no longer read (REPO-15).
 

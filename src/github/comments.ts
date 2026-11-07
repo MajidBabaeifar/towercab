@@ -1,6 +1,7 @@
 // Stage comments (PIP-42): a visible `**<Step>** · round <n>` header and a hidden first-line marker,
 // so a comment for the same step and round is edited instead of added again.
 
+import type { Forge } from "../forge.ts";
 import type { GitHub } from "../handlers.ts";
 import { check } from "../tools.ts";
 import { isBot } from "./events.ts";
@@ -77,10 +78,10 @@ export const answeredByLine = (agent: string) => `Answered by ${agent}, for the 
 
 /**
  * Post the step's comment on PR `pr` of `repo` as the App, or edit the bot's comment that already
- * carries its marker (`gh api repos/<r>/issues/<n>/comments`, PATCH). Returns whether it edited.
+ * carries its marker. Returns whether it edited.
  */
 export async function upsertStageComment(
-  gh: GitHub,
+  forge: Forge,
   repo: string,
   pr: number,
   step: Step,
@@ -88,10 +89,11 @@ export async function upsertStageComment(
   body: string,
   by?: By,
 ): Promise<{ edited: boolean }> {
-  return upsertComment(gh, repo, pr, stageMarker(step, round), stageComment(step, round, body, by));
+  return forge.upsertPrComment(repo, pr, stageMarker(step, round), stageComment(step, round, body, by));
 }
 
-async function upsertComment(
+/** The `gh` side of `Forge.upsertPrComment` (`gh api repos/<r>/issues/<n>/comments`, PATCH). */
+export async function upsertComment(
   gh: GitHub,
   repo: string,
   pr: number,

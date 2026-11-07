@@ -2,6 +2,7 @@
 
 import { join } from "node:path";
 import { capReason, capsOf } from "../budgets.ts";
+import { pausedNow, runningSteps } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import { fixFor } from "../faults.ts";
@@ -111,12 +112,14 @@ export function sourcesOf(loop: Loop, home: Home): UiSources {
   });
   return {
     db: loop.d.db,
-    store: loop.d.store,
+    store: loop.ownerStore,
     config: loop.d.config,
     clock: loop.d.clock,
     home,
     running: true,
     paused: () => loop.d.db.meta("paused") === "1",
+    runningSteps: () => runningSteps(loop.d.db),
+    pausedNow: () => pausedNow(loop.d.db),
     pausedAt: () => pausedAt(loop.d.db),
     problems: () => problemsOf(loop),
     version: () => version,
@@ -239,6 +242,7 @@ export async function serveReadOnly(
       home,
       running: false,
       paused: () => db.meta("paused") === "1",
+      runningSteps: () => 0,
       pausedAt: () => pausedAt(db),
       problems: () => [],
       version: () => version,

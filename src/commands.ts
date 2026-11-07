@@ -102,6 +102,27 @@ export function paused(db: Db): boolean {
   return db.meta("paused") === "1";
 }
 
+/** LOOP-114: `pause --now` was asked and the runs are still being stopped. */
+export function pausedNow(db: Db): boolean {
+  return db.meta("paused_now") === "1";
+}
+
+/** LOOP-113: the runs going now, whichever mission they belong to. */
+export function runningSteps(db: Db): number {
+  return (
+    db.get<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM missions WHERE child_pid IS NOT NULL AND stage NOT IN ('done','stopped','unverified')",
+    )?.n ?? 0
+  );
+}
+
+/** LOOP-113, LOOP-114: the words after "paused" while runs are going; empty when none. */
+export function pausedSuffix(db: Db): string {
+  const n = runningSteps(db);
+  if (n === 0) return "";
+  return pausedNow(db) ? `stopping ${n} running steps` : `${n} running steps finishing`;
+}
+
 /** SHD-22: whether one intent is paused (`pause <id>`): no further stage starts until it is resumed. */
 export function intentPaused(db: Db, intent: string): boolean {
   return db.meta(`paused:${intent}`) === "1";
@@ -229,6 +250,11 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       // UI-111: the time of the first pause, so the page can say since when.
       if (!paused(db)) db.setMeta("paused_at", cx.now.toISOString());
       db.setMeta("paused", "1");
+      // LOOP-114: `--now` also stops the runs going; the loop does it on its next pass and forgets the flag.
+      if (row.text === "now") {
+        db.setMeta("paused_now", "1");
+        return "paused now: nothing new starts, running steps are stopped, and GitHub is left alone until you resume";
+      }
       return "paused: nothing new starts, and merges wait until you resume";
     }
     case "resume": {
@@ -239,6 +265,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       }
       db.delMeta("paused");
       db.delMeta("paused_at");
+      db.delMeta("paused_now");
       const held = db.all<Mission>(
         "SELECT * FROM missions WHERE held = 1 AND stage NOT IN ('done','stopped','unverified')",
       );

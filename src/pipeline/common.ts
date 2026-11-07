@@ -14,6 +14,7 @@ import { clonePath, type RepoConfig } from "../config.ts";
 import { classifyFailure, classifyRun } from "../faults.ts";
 import { must, type Result } from "../forge.ts";
 import { agentOf, answeredByLine, type By, type Step, upsertStageComment } from "../github/comments.ts";
+import { PausedHold } from "../github/paused.ts";
 import { type ChildEnd, type Ctx, EnvError, type GitHub, type Progress } from "../handlers.ts";
 import { plainLine, SUBJECT_MAX } from "../intents/naming.ts";
 import type { Intent } from "../intents/types.ts";
@@ -752,6 +753,8 @@ export async function note(cx: Ctx, m: Mission, step: Step, round: number, body:
   try {
     await upsertStageComment(cx.github, pr.github, pr.n, step, round, body, byOf(m, step));
   } catch (e) {
+    // LOOP-113: held by the pause, not failed: the step is asked again after resume.
+    if (e instanceof PausedHold) throw e;
     cx.log(`${m.intent}: couldn't post the ${step} comment: ${(e as Error).message}`);
   }
 }
@@ -774,6 +777,7 @@ export async function tellOwner(cx: Ctx, m: Mission, body: string, keep = ""): P
       await cx.store.update(m.intent, "answer", (e) => e.setSection("Towercab", text));
     }
   } catch (e) {
+    if (e instanceof PausedHold) throw e;
     cx.log(`${m.intent}: couldn't say how the answer was read: ${(e as Error).message}`);
   }
 }

@@ -2,12 +2,14 @@
 // `GitHubForge` also still offers the raw `gh`/`owner` calls (`GitHub`) to the code that has not moved yet.
 
 import type {
+  BranchPr,
   CheckState,
   CodeScanningAlert,
   CommitProof,
   IssueRow,
   IssueText,
   Json,
+  PrState,
   ReleaseInfo,
   SettingsSnapshot,
 } from "../forge.ts";
@@ -29,11 +31,21 @@ import {
 } from "../forge.ts";
 import type { GitHub, Host } from "../handlers.ts";
 import { check, type RunOpts } from "../tools.ts";
+import { deleteBranch, prsOnBranch, retireBranch } from "./branches.ts";
 import { checksOf } from "./checks.ts";
+import { upsertComment } from "./comments.ts";
 import { parseAuthStatus } from "./owner.ts";
-import { fetchFiles } from "./proposed.ts";
-import { jsonStream } from "./prs.ts";
+import { fetchFiles, type ProposedCache, type ProposedPr, readProposed } from "./proposed.ts";
+import { jsonStream, readPr, readPrExtra } from "./prs.ts";
 import { readSettings, restoreSettings } from "./settings.ts";
+import {
+  assignOwner,
+  readApprovedReviewIds,
+  readCodeowners,
+  readFiles,
+  readRequired,
+  requestReviewers,
+} from "./teammates.ts";
 
 const MERGE_FLAG: Record<MergeMethod, string> = { squash: "--squash" };
 
@@ -627,6 +639,93 @@ export class GitHubForge implements Forge, GitHub {
     ]);
   }
 
+  async labelEvents(
+    repo: string,
+    n: number,
+    label: string,
+  ): Promise<{ label: string; actor: string | null }[]> {
+    const out = await this.ok(
+      repo,
+      [
+        "api",
+        `repos/${repo}/issues/${n}/events`,
+        "--paginate",
+        "--jq",
+        '.[] | select(.event == "labeled") | {label: .label.name, actor: .actor.login}',
+      ],
+      undefined,
+      "gh api issue events",
+    );
+    return out
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as { label: string; actor: string | null })
+      .filter((e) => e.label === label);
+  }
+
+  async openPrTitles(repo: string, limit: number): Promise<{ branch: string; title: string }[]> {
+    const rows = JSON.parse(
+      await this.ok(
+        repo,
+        [
+          "pr",
+          "list",
+          "-R",
+          repo,
+          "--state",
+          "open",
+          "--limit",
+          String(limit),
+          "--json",
+          "headRefName,title",
+        ],
+        undefined,
+        "gh pr list",
+      ),
+    ) as { headRefName: string; title?: string }[];
+    return rows.map((r) => ({ branch: r.headRefName, title: r.title ?? "" }));
+  }
+
+  readPr(repo: string, n: number): Promise<PrState> {
+    return readPr(this.raw, repo, n);
+  }
+  readPrExtra(repo: string, n: number): Promise<Pick<PrState, "author" | "reviewDecision" | "base">> {
+    return readPrExtra(this.raw, repo, n);
+  }
+  prsOnBranch(repo: string, branch: string): Promise<BranchPr[]> {
+    return prsOnBranch(this.raw, repo, branch);
+  }
+  deleteBranch(repo: string, branch: string, intentsRepo: string | null): Promise<void> {
+    return deleteBranch(this.raw, repo, branch, intentsRepo);
+  }
+  retireBranch(repo: string, n: number, intentsRepo: string | null): Promise<string | null> {
+    return retireBranch(this.raw, repo, n, intentsRepo);
+  }
+  upsertPrComment(repo: string, n: number, marker: string, text: string): Promise<{ edited: boolean }> {
+    return upsertComment(this.raw, repo, n, marker, text);
+  }
+  assignOwner(repo: string, n: number): Promise<boolean> {
+    return assignOwner(this.raw, repo, n);
+  }
+  codeowners(repo: string, base: string): Promise<string | null> {
+    return readCodeowners(this.raw, repo, base);
+  }
+  changedPaths(repo: string, n: number): Promise<string[] | null> {
+    return readFiles(this.raw, repo, n);
+  }
+  approvedReviewIds(repo: string, n: number): Promise<Set<string>> {
+    return readApprovedReviewIds(this.raw, repo, n);
+  }
+  requiredApprovals(repo: string, base: string): Promise<number | null> {
+    return readRequired(this.raw, repo, base);
+  }
+  requestReviewers(repo: string, n: number, logins: string[]): Promise<{ failed: string[] }> {
+    return requestReviewers(this.raw, repo, n, logins);
+  }
+  readProposed(repo: string, cache: ProposedCache, bot: string): Promise<ProposedPr[]> {
+    return readProposed(this.raw, repo, cache, bot);
+  }
+
   async ownerLogins(): Promise<string[]> {
     const r = await this.raw.owner(["auth", "status"], { timeoutMs: 20_000 });
     const text = `${r.stdout}\n${r.stderr}`;
@@ -657,6 +756,7 @@ export function limitedForge(github: GitHub, limit: (opts?: RunOpts) => RunOpts)
 }
 
 /** The forge over raw `gh` calls; a `GitHubForge` is returned as it is. */
-export function forgeOf(github: GitHub): Host {
-  return github instanceof GitHubForge ? github : new GitHubForge(github);
+export function forgeOf(github: GitHub | Forge): Host {
+  // Anything that already answers `Forge` (`GitHubForge`, a test's fake) is used as it is.
+  return "readIssue" in github ? (github as Host) : new GitHubForge(github);
 }

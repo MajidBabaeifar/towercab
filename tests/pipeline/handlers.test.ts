@@ -41,13 +41,7 @@ beforeAll(async () => {
   expect(r).toMatchObject({ done: { event: "ok" } });
   p.pushTo("web", "main", { "greeting.txt": "hello\n" }, "base moves");
   head = p.headSha("owner/web", "main");
-  await p.tools.run(
-    "gh",
-    ["pr", "create", "-R", "owner/web", "--base", "main", "--head", "main", "--title", "t"],
-    {
-      input: "worker text",
-    },
-  );
+  await p.forge.openPr("owner/web", { base: "main", head: "main", title: "t", body: "worker text" });
   pr = p.prs[0]!;
 }, 30_000);
 
@@ -307,18 +301,7 @@ test("pipeline: stale green is ignored", async () => {
   git(co, "push", "-q", p.bares.web!, `HEAD:refs/heads/${m.branch}`);
   const theirs = git(co, "rev-parse", "HEAD").trim();
   git(co, "reset", "-q", "--hard", "HEAD~1");
-  await p.tools.run("gh", [
-    "pr",
-    "create",
-    "-R",
-    "owner/web",
-    "--base",
-    "main",
-    "--head",
-    m.branch,
-    "--title",
-    "t",
-  ]);
+  await p.forge.openPr("owner/web", { base: "main", head: m.branch, title: "t", body: "" });
   const pr2 = p.prs.at(-1)!;
   pr2.checks = () => [checkRun("test", "SUCCESS")];
   const stale = update(
@@ -340,7 +323,7 @@ test("pipeline: red is rerun once", async () => {
   const first = await ciHandler.step(cx, m);
   expect(first).toEqual({ poll: 5 });
   expect(p.reruns).toEqual([42]);
-  expect(p.tools.lines("gh")).toContain(`run rerun 42 -R owner/web --failed`);
+  expect(p.forge.calls).toContain("rerun owner/web 42");
   const m2 = p.mission(m.id)!;
   expect(m2.ci_repairs).toBe(0);
   // The same head red again: now it counts, as a repair round with the failed log.

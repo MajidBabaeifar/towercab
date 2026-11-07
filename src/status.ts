@@ -3,6 +3,7 @@
 import { ownerOnly } from "./autonomy.ts";
 import { levelNow } from "./autonomy-change.ts";
 import { slotLines } from "./capacity.ts";
+import { pausedSuffix } from "./commands.ts";
 import type { Db } from "./db.ts";
 import type { Listing } from "./intents/types.ts";
 import { exitsOf, isWait, isWorking, waitInfo } from "./machine.ts";
@@ -79,7 +80,10 @@ export function renderStatus(s: StatusInput): string {
   };
   const head = [
     `towercab ${s.version} · ${s.running ? `running (pid ${s.running})` : "not running"}`,
-    s.db.meta("paused") === "1" ? "paused" : "",
+    // LOOP-113, LOOP-114: how many runs are still finishing (or being stopped) while paused.
+    s.db.meta("paused") === "1"
+      ? `paused${s.running && pausedSuffix(s.db) ? `: ${pausedSuffix(s.db)}` : ""}`
+      : "",
     s.running && s.db.meta("draining") ? `draining for update to ${s.db.meta("draining")}` : "",
     s.problems.length ? "problems" : "",
   ]
