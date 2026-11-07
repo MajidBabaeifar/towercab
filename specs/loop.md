@@ -594,8 +594,9 @@ An intent that outranks every intent ahead of build starts right away, over the 
   every intent, whatever its priority.
 - `[repos.<r>].workers` (LOOP-61) is unchanged: a ready mission is not ahead and does not count toward
   `ahead`.
-- Verified by: `loop: an intent that outranks every intent ahead starts below the cap`, `loop: at the working limit only a higher priority intent starts`, `loop: an equal priority intent does not pass the working limit`, `loop: a ready intent does not count toward ahead`
-- Removed with the cap: `loop: at the cap only a higher priority intent starts`, `loop: an equal priority intent does not pass the cap`, `loop: the cap is twice ahead`, `loop: a ready intent does not count toward the cap` (renamed above where the behaviour holds).
+- LOOP-132's code PR rewrites the tests below for the rule above and renames them where the behaviour changes
+  (new titles under LOOP-132); this list names the tests that exist today.
+- Verified by: `loop: an intent that outranks every intent ahead starts below the cap`, `loop: at the cap only a higher priority intent starts`, `loop: an equal priority intent does not pass the cap`, `loop: the cap is twice ahead`, `loop: a ready intent does not count toward the cap`
 
 ### LOOP-102 · status names the rule that held an intent back
 
@@ -611,8 +612,9 @@ An intent that outranks every intent ahead of build starts right away, over the 
   has a mission and shows its stage as usual.
 - This replaces the text `waiting: repo has <n> intents ahead` of LOOP-60 and LOOP-64, which counted
   intents waiting on the owner.
-- Verified by: `status: the working limit and the owner-waits limit are told apart`
-- Removed with the cap: `status: the working limit and the cap are told apart`, `status: the cap names the intents waiting on the owner`.
+- LOOP-132's code PR rewrites the tests below and renames them where the behaviour changes (new titles
+  under LOOP-132); this list names the tests that exist today.
+- Verified by: `status: the working limit and the cap are told apart`, `status: the cap names the intents waiting on the owner`
 
 ### LOOP-103 · The default for how much runs at once fits the machine
 
@@ -832,7 +834,7 @@ A repo holds at most `owner_waits` (default 4) specs and plans waiting on the ow
 - Texts (replacing the cap text of LOOP-102): `waiting: repo has <o> intents waiting on you (start <id> to go
   now)` at the owner-waits limit. `status` and `next` never say `repo is at the cap`. Below the limit, intents
   waiting on the owner show as `waiting on you` (UI-61) with no mention of any repo limit.
-- Verified by: `loop: with ahead 2 and two intents waiting on the owner at spec a third is picked`, `loop: owner waits at plan do not count toward ahead`, `loop: a repo at owner_waits waiting intents starts no new one`, `loop: an outranking intent does not pass owner_waits`, `loop: the cap of twice ahead no longer holds a repo back`, `config: owner_waits default and range`, `status: intents waiting on the owner show without the cap`
+- Verified by: `loop: with ahead 2 and two intents waiting on the owner at spec a third is picked`, `loop: owner waits at plan do not count toward ahead`, `loop: a repo at owner_waits waiting intents starts no new one`, `loop: an outranking intent does not pass owner_waits`, `loop: the cap of twice ahead no longer holds a repo back`, `config: owner_waits default and range`, `loop: at the working limit only a higher priority intent starts`, `loop: an equal priority intent does not pass the working limit`, `loop: a ready intent does not count toward ahead`, `status: the working limit and the owner-waits limit are told apart`, `status: intents waiting on the owner show without the cap`
 
 ### LOOP-65 · Repos live in the database
 
