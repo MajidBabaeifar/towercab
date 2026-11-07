@@ -1487,7 +1487,12 @@ export function dbMark(db: Db): string {
     db.get<{ s: string }>(
       "SELECT (SELECT COALESCE(MAX(id), 0) FROM shadow_actions) || '.' || (SELECT COUNT(*) FROM shadow_actions WHERE outcome = 'held') || '.' || (SELECT COALESCE(MAX(id), 0) FROM shadow_turns) || '.' || COALESCE((SELECT value FROM meta WHERE key = 'shadow.pending'), '') AS s",
     )?.s ?? "";
-  return `${t}:${c}:${u}:${r}:${f}:${q}:${s}`;
+  // The owner's last visit and snoozes (UI-264) show on every open screen.
+  const i =
+    db.get<{ i: string | null }>(
+      "SELECT group_concat(key || '=' || value, ',') AS i FROM meta WHERE key LIKE 'inbox:%'",
+    )?.i ?? "";
+  return `${t}:${c}:${u}:${r}:${f}:${q}:${s}:${i}`;
 }
 
 /** One thing waiting on the owner (UI-58): its card, its intent's priority and when the wait began. */

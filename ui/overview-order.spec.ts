@@ -1,5 +1,5 @@
-// UI-246 to UI-248, UI-251: the overview puts what waits on the owner first, proposals take one line each,
-// and a card shows its ask, brief and main button before the detail.
+// UI-246 to UI-248, UI-251, UI-266: the overview links to the Inbox, proposals take one line each, and a card shows
+// its ask, brief and main button before the detail.
 
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -23,10 +23,16 @@ async function crowded() {
 const top = async (page: Page, selector: string) =>
   (await page.locator(selector).first().boundingBox())?.y ?? Number.NaN;
 
-test("ui: fixture overview has the first needs-you card above the proposals", async ({ browser }) => {
+test("ui: the crowded fixture has the waits, proposals and queue of the live page", async ({ browser }) => {
   mkdirSync(SHOTS, { recursive: true });
   const { fixture, server, base } = await crowded();
   try {
+    const state = await (await fetch(`${base}/api/state`)).json();
+    const inbox = await (await fetch(`${base}/api/inbox`)).json();
+    expect(state.top.queued).toBeGreaterThanOrEqual(36);
+    expect(state.top.proposed).toBeGreaterThanOrEqual(18);
+    expect(state.top.needs - state.top.proposed).toBeGreaterThanOrEqual(5);
+    expect(inbox.items.length).toBe(state.top.needs);
     for (const m of [
       { mode: "light", scheme: "light", viewport: { width: 1280, height: 900 } },
       { mode: "dark", scheme: "dark", viewport: { width: 1280, height: 900 } },
@@ -34,13 +40,16 @@ test("ui: fixture overview has the first needs-you card above the proposals", as
     ] as const) {
       const ctx = await browser.newContext({ colorScheme: m.scheme, viewport: m.viewport });
       const page = await ctx.newPage();
-      await page.goto(`${base}/`);
-      await settle(page);
-      expect(await top(page, ".needs-card")).toBeLessThan(await top(page, "#proposed"));
-      await expect(page.locator(".needs-card", { hasText: "Send invoice emails" })).toBeVisible();
-      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-      expect(overflow, `overview ${m.mode} scrolls sideways`).toBeLessThanOrEqual(0);
-      await page.screenshot({ path: join(SHOTS, `overview-crowded-${m.mode}.png`), fullPage: true });
+      for (const [name, path] of [
+        ["inbox", "/"],
+        ["overview", "/overview"],
+      ] as const) {
+        await page.goto(`${base}${path}`);
+        await settle(page);
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        expect(overflow, `${name} ${m.mode} scrolls sideways`).toBeLessThanOrEqual(0);
+        await page.screenshot({ path: join(SHOTS, `${name}-crowded-${m.mode}.png`), fullPage: true });
+      }
       await ctx.close();
     }
   } finally {
@@ -49,30 +58,50 @@ test("ui: fixture overview has the first needs-you card above the proposals", as
   }
 });
 
-test("ui: overview puts needs-you cards before proposals", async ({ browser }) => {
+test("ui: the crowded overview is shorter than with its cards", async ({ browser }) => {
   const { fixture, server, base } = await crowded();
   try {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     const page = await ctx.newPage();
-    await page.goto(`${base}/`);
+    await page.goto(`${base}/overview`);
     await settle(page);
+    const height = await page.evaluate(() => document.documentElement.scrollHeight);
+    expect(height).toBeLessThanOrEqual(2300);
+    await ctx.close();
+  } finally {
+    await server.stop();
+    fixture.cleanup();
+  }
+});
+
+test("ui: the overview links to the inbox instead of listing cards", async ({ browser }) => {
+  const { fixture, server, base } = await crowded();
+  try {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const page = await ctx.newPage();
+    await page.goto(`${base}/overview`);
+    await settle(page);
+    await expect(page.locator(".needs-card")).toHaveCount(0);
+    await expect(page.locator(".proposed-row")).toHaveCount(0);
+    const link = page.locator(".inbox-link a");
+    await expect(link).toHaveText(/^\d+ need you · \d+ proposed$/);
     const y = {
       hero: await top(page, ".hero"),
-      needs: await top(page, ".needs-card"),
+      link: await top(page, ".inbox-link"),
       problems: await top(page, "#problems"),
-      proposed: await top(page, "#proposed"),
     };
-    const working = await page.locator("section", { has: page.getByRole("heading", { name: /^Working/ }) });
+    const working = page.locator("section", { has: page.getByRole("heading", { name: /^Working/ }) });
     const workingY = (await working.first().boundingBox())?.y ?? Number.NaN;
-    expect(y.hero).toBeLessThan(y.needs);
-    expect(y.needs).toBeLessThan(y.problems);
-    expect(y.problems).toBeLessThan(y.proposed);
-    expect(y.proposed).toBeLessThan(workingY);
-    // One number: the headline and the top bar agree, and the parts add up.
-    const n = Number(/^(\d+) things? need/.exec((await page.locator("h1").first().textContent()) ?? "")?.[1]);
-    const proposed = await page.locator(".proposed-row, .proposed-card").count();
-    expect(n).toBeGreaterThan(proposed);
-    await expect(page.locator("h1").first()).toContainText("proposed");
+    expect(y.hero).toBeLessThan(y.link);
+    expect(y.link).toBeLessThan(workingY);
+    if (!Number.isNaN(y.problems)) expect(y.link).toBeLessThan(y.problems);
+    // One number: the headline, the link and the top bar agree.
+    const top1 = Number(
+      /^(\d+) need/.exec((await page.locator(".counts a").first().textContent()) ?? "")?.[1],
+    );
+    expect(await link.textContent()).toContain(`${top1} need you`);
+    await link.click();
+    await expect(page).toHaveURL(`${base}/`);
     await ctx.close();
   } finally {
     await server.stop();
@@ -85,7 +114,7 @@ test("ui: the airspace starts folded on a phone", async ({ browser }) => {
   try {
     const phone = await browser.newContext({ viewport: PHONE });
     const p = await phone.newPage();
-    await p.goto(`${base}/`);
+    await p.goto(`${base}/overview`);
     await settle(p);
     await expect(p.getByRole("button", { name: "Show airspace" })).toBeVisible();
     await p.getByRole("button", { name: "Show airspace" }).click();
@@ -93,7 +122,7 @@ test("ui: the airspace starts folded on a phone", async ({ browser }) => {
     await phone.close();
     const wide = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     const w = await wide.newPage();
-    await w.goto(`${base}/`);
+    await w.goto(`${base}/overview`);
     await settle(w);
     await expect(w.getByRole("button", { name: "Hide airspace" })).toBeVisible();
     await wide.close();
@@ -108,9 +137,9 @@ test("ui: proposed intents are one line each", async ({ browser }) => {
   try {
     const ctx = await browser.newContext({ viewport: PHONE });
     const page = await ctx.newPage();
-    await page.goto(`${base}/`);
+    await page.goto(`${base}/repos?repo=web`);
     await settle(page);
-    const rows = page.locator("#proposed .proposed-row");
+    const rows = page.locator(".proposed-row");
     const n = await rows.count();
     expect(n).toBeGreaterThan(0);
     for (let k = 0; k < n; k++) {
@@ -130,37 +159,12 @@ test("ui: proposed intents are one line each", async ({ browser }) => {
   }
 });
 
-test("ui: proposals after the fifth fold under a button", async ({ browser }) => {
-  const { fixture, server, base } = await crowded();
-  try {
-    const ctx = await browser.newContext({ viewport: PHONE });
-    const page = await ctx.newPage();
-    await page.goto(`${base}/`);
-    await settle(page);
-    const total = fixture.state.proposed.list.length;
-    expect(total).toBeGreaterThan(5);
-    await expect(page.locator("#proposed .proposed-row")).toHaveCount(5);
-    const more = page.getByRole("button", { name: `Show ${total - 5} more proposals` });
-    await expect(more).toHaveAttribute("aria-expanded", "false");
-    await more.click();
-    await expect(page.locator("#proposed .proposed-row")).toHaveCount(total);
-    await expect(page.getByRole("button", { name: "Show fewer proposals" })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
-    await ctx.close();
-  } finally {
-    await server.stop();
-    fixture.cleanup();
-  }
-});
-
 test("ui: the main button sits under the brief", async ({ browser }) => {
   const { fixture, server, base } = await crowded();
   try {
     const ctx = await browser.newContext({ viewport: PHONE });
     const page = await ctx.newPage();
-    await page.goto(`${base}/`);
+    await page.goto(`${base}/inbox/261025-0910-1`);
     await settle(page);
     // The plan card has a brief and a merge button; the button comes right after the brief, before the access list.
     const card = page.locator('.needs-card[data-intent="261025-0910-1"]');
@@ -184,7 +188,7 @@ test("ui: risk and open points are folded to one line each", async ({ browser })
   try {
     const ctx = await browser.newContext({ viewport: PHONE });
     const page = await ctx.newPage();
-    await page.goto(`${base}/`);
+    await page.goto(`${base}/inbox/261024-1130-1`);
     await settle(page);
     const code = page.locator('.needs-card[data-intent="261024-1130-1"]');
     const fold = code.locator("details.risk-fold");
@@ -194,6 +198,8 @@ test("ui: risk and open points are folded to one line each", async ({ browser })
     await fold.locator("summary").click();
     await expect(fold.locator(".risk-head")).toBeVisible();
     // The spec card: three open points fold to one line, each opening on tap, below the merge button.
+    await page.goto(`${base}/inbox/261026-1340-1`);
+    await settle(page);
     const spec = page.locator('.needs-card[data-intent="261026-1340-1"]');
     const points = spec.locator("details.points-fold");
     await expect(points.locator("summary").first()).toHaveText("3 open points for you");

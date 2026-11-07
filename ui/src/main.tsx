@@ -12,18 +12,20 @@ import type {
 import { act, useLive } from "./api.ts";
 import { ErrorNote, Freshness, Skeleton } from "./components.tsx";
 import { Alert, Logo, Pause, Play } from "./icons.tsx";
+import { Palette } from "./Palette.tsx";
 import { ActivityPage } from "./pages/Activity.tsx";
 import { BoardPage } from "./pages/Board.tsx";
-import { FocusPage } from "./pages/Focus.tsx";
+import { InboxPage } from "./pages/Inbox.tsx";
 import { IntentPage } from "./pages/Intent.tsx";
 import { OverviewPage } from "./pages/Overview.tsx";
 import { ReposPage } from "./pages/Repos.tsx";
 import { Link, usePath } from "./router.tsx";
+import { Shortcuts } from "./Shortcuts.tsx";
 
 const TABS = [
-  ["/", "Overview"],
+  ["/", "Inbox"],
+  ["/overview", "Overview"],
   ["/board", "Board"],
-  ["/focus", "Focus"],
   ["/repos", "Repos"],
   ["/activity", "Activity"],
 ] as const;
@@ -68,11 +70,11 @@ function TopBar({ top, path }: { top: Top | null; path: string }) {
   // `/queue` is the Repos tab's old name (UI-140): old links land there.
   const at = path === "/queue" || path.startsWith("/queue/") ? "/repos" : path;
   const section =
-    ["/board", "/focus", "/repos", "/activity"].find((p) => at === p || at.startsWith(`${p}/`)) ?? "/";
+    ["/overview", "/board", "/repos", "/activity"].find((p) => at === p || at.startsWith(`${p}/`)) ?? "/";
   return (
     <header class="topbar">
       <div class="topbar-inner">
-        <Link href="/" class="brand" aria-label="Towercab overview">
+        <Link href="/" class="brand" aria-label="Towercab inbox">
           <Logo size={28} />
           <span>Towercab</span>
         </Link>
@@ -153,7 +155,7 @@ function IntentRoute({ id, readOnly, onTitle }: { id: string; readOnly: boolean;
       <main class="page" id="main">
         <ErrorNote text={live.error} />
         <p>
-          <Link href="/">Back to the overview</Link>
+          <Link href="/overview">Back to the overview</Link>
         </p>
       </main>
     );
@@ -190,8 +192,8 @@ function App() {
       ? intentTitle
       : pathname!.startsWith("/board")
         ? "Board"
-        : pathname!.startsWith("/focus")
-          ? "Focus"
+        : pathname!.startsWith("/overview")
+          ? "Overview"
           : pathname!.startsWith("/repos") || pathname!.startsWith("/queue")
             ? "Repos"
             : pathname!.startsWith("/activity")
@@ -199,6 +201,11 @@ function App() {
               : null;
     document.title = `${stopped ? "⏸ " : ""}${n ? `(${n}) ` : ""}Towercab${page ? ` · ${page}` : ""}`;
   }, [n, stopped, pathname, intent, intentTitle]);
+  // UI-266: the Inbox is the home page; the Overview has its own address.
+  const inboxId =
+    pathname === "/" || pathname === "/inbox" || pathname === "/inbox/"
+      ? ""
+      : /^\/inbox\/([^/]+)\/?$/.exec(pathname!)?.[1];
   let page: JSX.Element;
   if (intent) {
     page = (
@@ -210,10 +217,17 @@ function App() {
       />
     );
   } else if (pathname === "/board") page = <BoardRoute />;
-  else if (pathname === "/focus") page = <FocusPage readOnly={top?.readOnly ?? true} />;
   else if (pathname === "/repos" || pathname === "/queue")
     page = <ReposRoute search={search} readOnly={top?.readOnly ?? true} />;
   else if (pathname === "/activity") page = <ActivityPage search={search} />;
+  else if (inboxId !== undefined)
+    page = (
+      <InboxPage
+        readOnly={top?.readOnly ?? true}
+        selected={inboxId ? decodeURIComponent(inboxId) : null}
+        search={search}
+      />
+    );
   else if (state.error && !state.data) page = <ErrorNote text={state.error} />;
   else page = state.data ? <OverviewPage data={state.data} /> : <Skeleton />;
   return (
@@ -230,6 +244,8 @@ function App() {
       ) : null}
       {state.error && state.data ? <div class="banner banner-err">{state.error}</div> : null}
       {page}
+      <Shortcuts />
+      <Palette top={top} />
     </>
   );
 }

@@ -85,9 +85,13 @@ export function AutonomyControl({
         {view.cap !== null ? <span class="meta">capped at a{view.cap} by the repo</span> : null}
       </span>
       {view.flag ? (
-        <span class="meta autonomy-flag">
-          {`${view.flag.who === "unknown" ? "An unknown account" : view.flag.who} raised it to a${view.flag.to}; it keeps running at a${view.flag.from}.`}
-        </span>
+        <>
+          <span class="meta autonomy-flag">
+            {`${view.flag.who === "unknown" ? "An unknown account" : view.flag.who} raised it to a${view.flag.to}; it keeps running at a${view.flag.from}.`}
+          </span>
+          {/* UI-258: where the card is folded into its intent's wait, the two ways out sit here. */}
+          <FlagButtons intent={intent} view={view} readOnly={readOnly} />
+        </>
       ) : null}
       {pending !== null ? (
         <span

@@ -308,10 +308,11 @@ export function proposals(now: number, crowded = false): ProposedPr[] {
     mk(205, "Billing portal for the CRM", "crm", 4, 4),
     // UI-251: the live page's crowd: many proposals of one shape.
     ...(crowded
-      ? ["web", "api", "docs", "mobile", "infra", "blog", "web"].map((repo, n) =>
-          mk(230 + n, `${repo} is set up as a repo and ready for work`, repo, 3, 3, {
-            createdAt: now - (3 + n) * HOUR,
-          }),
+      ? Array.from({ length: 13 }, (_, n) => ["web", "api", "docs", "mobile", "infra", "blog"][n % 6]!).map(
+          (repo, n) =>
+            mk(230 + n, `${repo} is set up as a repo and ready for work`, repo, 3, 3, {
+              createdAt: now - (3 + n) * HOUR,
+            }),
         )
       : []),
   ];
@@ -426,6 +427,9 @@ export function buildFixture(
           { intent: IDS.held, priority: 8, skip: { kind: "after", intent: IDS.ci } },
           { intent: IDS.parked2, priority: 6, skip: { kind: "parked" } },
           { intent: IDS.parked1, priority: 5, skip: { kind: "parked" } },
+          ...(o.crowded
+            ? CROWD_QUEUE.map((intent) => ({ intent, priority: 9, skip: { kind: "ahead", n: 3, limit: 3 } }))
+            : []),
         ]) as UpNext[],
   };
   state.proposed = {
@@ -568,7 +572,20 @@ export function buildFixture(
 }
 
 /** UI-251: a mission merged and waiting for the owner's steps (UI-245). */
+/** UI-266: the 36 queued of the live page: four up next as in the plain fixture and these 32 behind them. */
+const CROWD_QUEUE = Array.from({ length: 32 }, (_, n) => `261015-${1000 + n}-1`);
+
 function crowdScene(db: Db, store: MemStore, now: number): void {
+  for (const [n, id] of CROWD_QUEUE.entries())
+    store.open.push(
+      makeIntent({
+        id,
+        title: `Queued job ${n + 1}: tidy the ${["web", "api", "docs"][n % 3]} settings`,
+        repo: ["web", "api", "docs"][n % 3]!,
+        u: 3,
+        i: 3,
+      }),
+    );
   store.open.push(
     makeIntent({
       id: IDS.stepsWait,
