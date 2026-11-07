@@ -863,6 +863,24 @@ Boosting an intent sets its autonomy to a5 and, when it has not started, starts 
 - There is no command-line command for `a` or for boost: raising autonomy stays on the page and GitHub (AUT-35) and `boost` rows from the command line are dropped (LOOP-134). An a0 intent refuses `score` like `start` (AUT-33), because the command line cannot tell the owner from an agent: only the page and GitHub change it.
 - Verified by: `cli: score changes u and i`, `cli: score needs a value`, `cli: score refuses a bad value`, `cli: score is refused on an a0 intent`, `commands: score applied without a loop`
 
+### LOOP-136 · A hanging `gh` or `git` call does not hold up stopping
+
+When Towercab is told to stop, it gives running `gh` and `git` calls 10 seconds to finish, then kills them and exits.
+
+- On SIGTERM or SIGINT the loop starts no new pass, poll, check or Claude run, and waits for the `gh` and `git` processes it started (through `Tools`) for at most `[agent].stop_grace_secs` (default 10, whole seconds, 1–60). Then it sends SIGTERM to each one's process group and SIGKILL 2 s later. A call cut off this way fails with `stopped: <command> was cut off at shutdown`. Its mission is not counted as a failure: the step is re-entered at the next start (LOOP-6).
+- The idle waits of `shutdown` (issues, features, readiness, settings, setup checks, limits, shadow) share this one deadline instead of waiting without limit; whatever is still running at the deadline is cut off the same way.
+- Claude runs are unchanged: SIGTERM to the group, SIGKILL after 10 s, `interrupted` (LOOP-7). Their sessions resume at the next start.
+- The whole stop takes at most the grace period plus the Claude kill wait plus a few seconds, which stays under systemd's default stop timeout of 90 s (LOOP-2).
+- Verified by: `shutdown: a gh call that never exits is killed after the grace period`, `shutdown: a git call that never exits is killed after the grace period`, `shutdown: no new work starts once stopping`, `shutdown: a cut-off call does not count as a failure`
+
+### LOOP-137 · A stop that cut off a hanging call is a clean exit
+
+After a stop that had to kill a hanging `gh` or `git` call, the next start finds nothing to recover.
+
+- `shutdown` ends by removing `meta.running` and exiting 0 (LOOP-7), whether or not LOOP-136 had to kill a child. The next start does not log "the last run didn't exit cleanly; recovering" and does not add to any mission's `unclean` count.
+- The loop logs one line at the stop naming each call it cut off: `stop: cut off <command> after <n>s`.
+- Verified by: `shutdown: the next start after a cut-off call reports a clean exit`, `shutdown: the stop logs the calls it cut off`
+
 ### LOOP-120 · Telegram message when a reply is posted
 
 When Towercab has answered the owner's comment and the PR waits for the owner again, the owner gets a short Telegram message with a link to the reply.
