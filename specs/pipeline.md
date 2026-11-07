@@ -2118,6 +2118,35 @@ A spec row that says it is removed because something is parked must name that pa
 - The build that adds the check also fixes every row it flags, so the check starts green: rows citing 261026-2204-4 (the ship stage, now live: AUT-5, REPO-3, PIP-8, PIP-34 and the other removed rows that cite it) say what replaced them (a SHIP row) or lose the word parked; `maintain.md`, its README line and any row citing 261026-2204-2 say it is closed, not parked; rows that say parked with no ID (such as the ship notes on migration-aware rollback) cite a listed intent or are reworded. Their IDs and headings stay.
 - Verified by: `specs: parked rows cite a parked intent`
 
+### PIP-216 · A large plan is built over several runs
+
+When a build run ends with plan steps still open, the next run carries on from the first open step, and the review runs once every step is built.
+
+- Total = the numbered items under `## Steps` of the merged `plan.md` (PIP-46), read by code. The build result gains `steps_done` (int, the count of steps built from step 1 in order, so far; `null` is read as "all", which keeps a plan without numbered steps one run). Towercab keeps `data.build.steps_done` and `steps_total` on the mission, recorded before the next run starts.
+- A run that ends `done` with `steps_done < steps_total`, and made progress (PIP-217), is not finished: Towercab commits and verifies it as today (PIP-1, PIP-23), pushes it to the same branch and PR (PIP-2), then starts a new build run in the same session, which is told the steps already built and to start at the first open step. The review, and the gate after it, start only when `steps_done = steps_total`.
+- The intermediate rounds count no repair (PIP-18) and no fix round: only red checks and review findings do. The code PR text is written on the last run and covers the whole intent.
+- One intent, one PR, one branch: no extra intent and no extra PR is made for later runs.
+- A run that ends `done` with `steps_done` lower than before is read as no change in `steps_done`.
+- Verified by: `pipeline: a six-step plan builds in three runs and then goes to review`, `pipeline: open steps send the mission back to build, not review`, `pipeline: the build prompt names the steps already built`, `pipeline: intermediate runs count no repair`
+
+### PIP-217 · A run makes progress when it adds a passing commit
+
+A build run counts as progress only if it adds new commits to the branch and its checks pass; two runs in a row without it stop the build and ask the owner.
+
+- Progress = the branch head moved since the run started (the run's commit, PIP-1) and verify (PIP-23) is green on it. A run with no new commit, or whose checks stay red after their repair rounds, is no progress. Red checks are repaired first, as today (PIP-18); progress is judged after them.
+- `data.build.stalled` counts runs in a row without progress and is reset by a run with progress. At 1 the next run starts as above. At 2 the mission waits as a blocked wait, `answer the question`, with a question naming the steps built (`steps_done of steps_total`), what the last two runs did, the options (carry on for two more runs, change the plan, drop) and a recommendation. A run with no new commit while steps are open does not end in `waiting: no changes` (PIP-1) before this count is reached; with all steps built it does, as today.
+- The owner's answer to that question resets `stalled` to 0.
+- Verified by: `pipeline: a run with no new commits counts as no progress`, `pipeline: two runs without progress ask the owner`, `pipeline: a run with progress resets the stall count`, `pipeline: a run with red checks after repairs is no progress`
+
+### PIP-218 · A long build spends against the same caps
+
+All runs of a long build count toward the intent's spending, the repo's caps and the monthly budget, and the caps pause it like any other work.
+
+- Each run keeps its own time limit and its own share of the intent's cap `[agent].max_budget_usd` (LOOP-1): a run is limited to what is left of the intent's total, and the total is the sum over every run, not per run.
+- A run that reaches the intent's total with steps still open ends in the blocked wait `worker budget` (LOOP-1), as any intent does; the owner's reply to carry on lets the build continue from the first open step.
+- A daily or monthly budget or a repo cap reached (MET-33) lets a run already going finish and starts no further run; the mission waits at its next owner wait and resumes when the cap is raised or a new period starts. The next run is not skipped, and `steps_done` is kept.
+- Verified by: `pipeline: all runs of a long build count in the intent's spend`, `pipeline: the intent cap stops a long build with steps open`, `pipeline: a repo cap pauses a long build between runs`, `pipeline: a long build resumes at the first open step after a pause`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |

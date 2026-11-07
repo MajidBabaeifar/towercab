@@ -1488,6 +1488,14 @@ The stage map lists the stages this intent will go through, folds the rest, and 
 - A run of two or more stages not reached yet folds into one row, `<n> more stages to go`, that opens to list them. A merged code PR is never shown as `skipped`.
 - Verified by: `ui: stage map leaves out stages that cannot apply and says so`, `ui: unreached stages fold into one row`, `ui: a merged change does not show merging as skipped`
 
+### UI-279 · The intent page shows how many plan steps are built
+
+While a long plan builds, the intent page and its card say "step 3 of 6".
+
+- Shown from the mission's `data.build` (PIP-216) as `step <steps_done + 1> of <steps_total>` while the build runs (the step being worked on), and `<steps_done> of <steps_total> steps built` while it waits between runs or on the owner. Absent for a plan with no numbered steps or a single-step plan, and once the review starts.
+- `GET /api/state` and the intent's API carry `build: {stepsDone, stepsTotal}` (null when absent). Fits 360 px, light and dark.
+- Verified by: `ui: the intent page shows the plan step being built`, `ui: no step count for a one-run plan`
+
 ### UI-273 · An owner wait stage says what the owner did
 
 Opening a stage that was a wait on the owner shows the owner's answer, not "it wrote no files".
