@@ -841,13 +841,19 @@ While Towercab is paused, no mission starts anything new, but steps already runn
   A mission due for its next step stays at its recorded step, not counted as a crash, repair or timeout.
 - A child already running is left alone: it finishes, and its result is applied through `machine.apply` as usual.
   The mission then holds at the next step. A health pause (LOOP-10) is unchanged.
-- Polling continues while paused: PR and CI state, owner events and the outbox (LOOP-16) are still read and
-  delivered, so state is current on resume. Only the starting of children is held.
+- Nothing that changes GitHub happens while paused: no push, no pull request opened or updated, no comment, no
+  review, no merge (PIP-22 already holds merges). A finished step's result is recorded and applied, and the
+  mission then waits at the step that would write, with nothing lost or repeated (LOOP-6: the handler records
+  before any side effect). On resume the write happens as it would have.
+- Reading continues while paused: PR and CI state and owner events are polled (read-only), so the page stays current
+  and an owner's reply is recorded. Replies and other effects that need a write wait for resume. Telegram
+  messages (LOOP-16) are not GitHub and still go out.
 - `status` and the page (UI-109) say `paused: <n> running steps finishing` while `n > 0` children run, and
   `paused` once none do. `n` counts running children, whichever mission they belong to.
 - `resume` lifts the hold; every mission continues from the step where it stopped, with no change to its counters.
-- Per-intent pause (SHD-22) keeps its meaning: it holds that intent's next steps the same way.
-- Verified by: `loop: a paused loop does not start the next step of a mission`, `loop: a running step finishes and is applied while paused`, `loop: polling continues while paused`, `status: paused counts running steps finishing`, `loop: resume continues missions where they stopped`
+- This is the global pause only. The per-intent pause (SHD-22, UI-239) keeps its meaning: it holds only that
+  intent's next step and never stops running work.
+- Verified by: `loop: a paused loop does not start the next step of a mission`, `loop: a running step finishes and is applied while paused`, `loop: a paused loop makes no GitHub writes`, `loop: polling continues while paused`, `status: paused counts running steps finishing`, `loop: resume continues missions where they stopped`
 
 ### LOOP-114 · Pause now stops running children
 
@@ -862,8 +868,9 @@ While Towercab is paused, no mission starts anything new, but steps already runn
 - On `resume`, a cut-off Claude run continues its own session (`--resume <uuid>`, prompt `Continue where you
   stopped.`, LOOP-7); a cut-off check or other non-Claude step runs again from its start.
 - `status` shows `paused: stopping <n> running steps` until they have exited, then `paused`.
-- `pause --now <id>` applies to one intent's children the same way.
-- Verified by: `cli: pause now is a command with the now flag`, `loop: pause now stops running children`, `loop: a child stopped by pause now is not counted as a crash`, `loop: resume continues the sessions stopped by pause now`
+- `--now` exists only for the global pause. `pause <id> --now` is refused with `--now stops everything: use it
+  without an intent`; a per-intent stop is a later intent.
+- Verified by: `cli: pause now is a command with the now flag`, `cli: pause now is refused for one intent`, `loop: pause now stops running children`, `loop: a child stopped by pause now is not counted as a crash`, `loop: resume continues the sessions stopped by pause now`
 
 ### LOOP-65 · Repos live in the database
 
