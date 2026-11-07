@@ -149,6 +149,8 @@ test("ui: r focuses the reply box and o opens the PR", async ({ page }) => {
     await page.goto(`${f.base}/inbox/${PLAN}`);
     await settle(page);
     await page.locator("body").click({ position: { x: 5, y: 400 } });
+    // The PR opens on GitHub; answer it locally so the test needs no network.
+    await page.context().route("https://github.com/**", (r) => r.fulfill({ body: "" }));
     const popup = page.waitForEvent("popup");
     await page.keyboard.press("o");
     expect((await popup).url()).toMatch(/\/pull\/\d+/);
