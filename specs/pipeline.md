@@ -2024,10 +2024,14 @@ Several comments taken in one revision, and a comment arriving while a reply is 
 
 An outcome the owner has put off to another intent is not held against the code PR, so it never overrides a reviewer's Approve.
 
-- An outcome is deferred when (a) an owner answer or comment on the intent or its PRs names it and says it moves to a follow-up intent (by id), or (b) the intent file marks the bullet `deferred: <intent id>`. An agent's comment (PIP-182) or a non-owner never defers an outcome. The named intent must exist in the intents repo; otherwise the outcome stays as judged.
+- An outcome is deferred in exactly three ways, and nothing else defers one:
+  (a) an owner comment or answer on the intent or its PRs has a line that starts with `defer`, names the outcome, and names an intent id, for example `defer "Stage tests use a FakeForge" to 261105-2120`. The outcome is named by its text in quotes (matched to a `Proposed outcome` bullet or a spec row name, ignoring case and surrounding space) or by its number (`defer 3 to 261105-2120`, the bullet's position, counting from 1);
+  (b) the intent file marks the bullet `deferred: <intent id>`;
+  (c) the plan (the approved plan PR's text) says an outcome is for a later slice and names the follow-up intent id. A plan that names no intent id, or only says "later", defers nothing.
+  A line in any other wording is not a deferral, however clear it reads to a person. An agent's comment (PIP-182) or a non-owner never defers an outcome in (a). The named intent must exist in the intents repo; otherwise the outcome stays as judged.
 - `review.outcomes[]` gets no new key: Towercab sets `met` true for a deferred outcome after the review returns, and keeps the follow-up id and the reason on the mission (`data.deferred`). PIP-5's "every outcome met" and PIP-120's fix-round test then read it as met, so a deferred outcome starts no fix round.
 - The prompt (`agents/review.md`) lists the deferred outcomes as data and says not to judge them; a review that marks one `met` false is overridden as above.
-- Verified by: `pipeline: a deferred outcome does not override an Approve`, `pipeline: an outcome marked deferred in the intent counts as met`, `pipeline: an owner answer naming an outcome defers it`, `pipeline: a deferral by an agent or a non-owner is ignored`, `pipeline: a deferral to an unknown intent is ignored`, `pipeline: a deferred outcome starts no fix round`
+- Verified by: `pipeline: a deferred outcome does not override an Approve`, `pipeline: an outcome marked deferred in the intent counts as met`, `pipeline: a defer line naming an outcome by its quoted text defers it`, `pipeline: a defer line naming an outcome by its number defers it`, `pipeline: a comment not in the defer form defers nothing`, `pipeline: a plan that names a follow-up intent for a later slice defers the outcome`, `pipeline: a plan that names no intent defers nothing`, `pipeline: a deferral by an agent or a non-owner is ignored`, `pipeline: a deferral to an unknown intent is ignored`, `pipeline: a deferred outcome starts no fix round`
 
 ### PIP-209 · A deferred outcome is shown, not hidden
 
