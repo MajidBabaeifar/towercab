@@ -184,6 +184,12 @@ export interface Forge {
   prBrief(repo: string, n: number): Promise<PrBrief>;
   prFiles(repo: string, n: number): Promise<FileChange[]>;
 
+  /**
+   * AUT-35: the GitHub logins the host reports for a commit's author and committer (null: no account is
+   * linked to it). Never the name or e-mail written in the commit.
+   */
+  commitLogins(repo: string, sha: string): Promise<(string | null)[]>;
+
   readChecks(repo: string, n: number): Promise<ChecksRead>;
   rerunFailed(repo: string, run: number): Promise<void>;
   /** Cancel a run that hangs (PIP-171). */

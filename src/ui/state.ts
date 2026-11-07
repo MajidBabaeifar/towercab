@@ -4,7 +4,8 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ownerOnly } from "../autonomy.ts";
+import { ownerOnly, RAISE_NOTES } from "../autonomy.ts";
+import { changesOf, flagOf, levelNow, type RaiseFlag, writtenLevel } from "../autonomy-change.ts";
 import { slotsText } from "../capacity.ts";
 import { agentCommentNotes, ignoredNotes, intentPaused } from "../commands.ts";
 import type { Config } from "../config.ts";
@@ -48,6 +49,7 @@ import type {
   ActivityPage,
   AirspaceView,
   AttemptView,
+  AutonomyView,
   Card,
   CardKind,
   ExistingTestView,
@@ -687,7 +689,48 @@ const KIND_LABELS: Record<CardKind, string> = {
   question: "Question",
   blocked: "Blocked",
   release: "Release PR",
+  autonomy: "Autonomy raised",
 };
+
+/** UI-257: the autonomy control's data for an intent. */
+export function autonomyView(src: UiSources, i: Intent): AutonomyView {
+  const f = flagOf(src.db, i.id);
+  const cap = Number(src.db.meta(`a-cap:${i.repo}`) ?? 5);
+  return {
+    a: f ? f.from : writtenLevel(i),
+    cap: cap < 5 ? cap : null,
+    ...(f ? { flag: { who: f.who, from: f.from, to: f.to } } : {}),
+    notes: [...RAISE_NOTES],
+    locked: !src.running,
+  };
+}
+
+/** UI-258: a raise somebody else made, as a "Needs you" card with its two ways out. */
+export function flagCard(src: UiSources, i: Intent, f: RaiseFlag, now: number): Card {
+  const who = f.who === "unknown" ? "an unknown account" : f.who;
+  return {
+    intent: i.id,
+    title: i.title,
+    repo: i.repo,
+    kind: "autonomy",
+    kindLabel: KIND_LABELS.autonomy,
+    ask: `Accept a${f.to} or set it back to a${f.from}.`,
+    since: when(f.at, now),
+    brief: null,
+    why: `${who} raised ${i.title} from a${f.from} to a${f.to}. It still runs at a${f.from} until you decide.`,
+    details: null,
+    question: null,
+    access: null,
+    pr: null,
+    actions: [],
+    exits: [],
+    stuck: false,
+    mergeLabel: null,
+    done: null,
+    addRepo: null,
+    autonomy: autonomyView(src, i),
+  };
+}
 
 /** SHIP-31: a held release PR as a "Needs you" card. It has no intent; its key is `release:<repo>`. */
 export function releaseCard(h: Held, now: number): Card {
@@ -814,7 +857,7 @@ export function missionCard(
     done,
     addRepo: null,
     ...(d.reviewWarning ? { warning: d.reviewWarning } : {}),
-    ...(ownerOnly(intent?.a ?? null, m.a_at_pick) ? { onlyYou: true } : {}),
+    ...(ownerOnly(intent ? levelNow(src.db, intent) : null) ? { onlyYou: true } : {}),
     ...(dataOf<{ answeredBy?: string | null }>(m).answeredBy
       ? { decided_by_agent: dataOf<{ answeredBy?: string | null }>(m).answeredBy }
       : {}),
@@ -1505,6 +1548,20 @@ export function waitsOf(src: UiSources, s: Snap): Wait[] {
         intent: i,
       });
   }
+  // UI-257: every wait about an intent carries its autonomy control.
+  for (const w of waits) if (w.intent) w.card.autonomy = autonomyView(src, w.intent);
+  // UI-258: a raise somebody else made waits for the owner, one card per flagged intent.
+  for (const i of s.listing?.open ?? []) {
+    const f = flagOf(src.db, i.id);
+    if (f)
+      waits.push({
+        card: flagCard(src, i, f, s.now),
+        priority: priority(i.u, i.i),
+        order: f.at,
+        mission: null,
+        intent: i,
+      });
+  }
   // SHIP-31: a held release PR has no intent or mission; its priority is the default one (PRI-3).
   for (const h of heldReleases(src.db, s.now)) {
     if (h.card)
@@ -1562,7 +1619,11 @@ export async function overview(src: UiSources): Promise<Overview> {
   const withMission = new Set(s.missions.map((m) => m.intent));
   const list = src.upNext().filter((u) => !withMission.has(u.intent));
   const queued = [...ready, ...list.filter((u) => u.skip?.kind !== "parked").map((u) => queuedRow(s, u))];
-  for (const r of [...working, ...queued]) if (drafted(r.intent)) r.shadow = true;
+  for (const r of [...working, ...queued]) {
+    if (drafted(r.intent)) r.shadow = true;
+    const i = s.intents.get(r.intent);
+    if (i) r.autonomy = autonomyView(src, i);
+  }
   const upNext: UpNextView[] = list.slice(0, 5).map((u) => {
     const i = s.intents.get(u.intent);
     return {
@@ -2235,7 +2296,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
         text: moveWords(t),
         why: t.to_stage === "stopped" ? null : t.why,
         lasted: next ? duration(next.at - t.at) : null,
-        tone: t.to_stage === "done" ? "done" : kind === "log" ? "move" : kind,
+        tone: t.to_stage === "done" ? "done" : kind === "log" || kind === "settings" ? "move" : kind,
       });
     });
   }
@@ -2253,11 +2314,21 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
   }
   if (shadowRows.length) timeline.sort((x, y) => x.at.at - y.at.at);
   // AUT-32: replies Towercab ignored on an owner-only intent, noted once each.
-  const only = ownerOnly(intent?.a ?? null, last?.a_at_pick ?? null);
-  if (only) {
+  const only = ownerOnly(intent ? levelNow(src.db, intent) : null);
+  if (only || flagOf(src.db, realId)) {
     for (const n of ignoredNotes(src.db, realId)) {
       timeline.push({ at: when(n.at, s.now), text: n.text, why: null, lasted: null, tone: "move" });
     }
+  }
+  // AUT-34: a change made on the page, who and from → to.
+  for (const c of changesOf(src.db, realId)) {
+    timeline.push({
+      at: when(c.at, s.now),
+      text: `You changed autonomy from a${c.from} to a${c.to} on the page`,
+      why: null,
+      lasted: null,
+      tone: "move",
+    });
   }
   const found = findRunFiles(src.home, realId);
   const attempts: AttemptView[] = missions.map((m, n) => {
@@ -2313,6 +2384,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     issue: intent?.issue ?? null,
     e2eLog: e2eLogOf(src.home.root, id),
     ...(only ? { onlyYou: "Only you can answer or approve this." } : {}),
+    ...(intent && !intent.done ? { autonomy: autonomyView(src, intent) } : {}),
     ...(intentPaused(src.db, realId) ? { paused: true } : {}),
     agent_comments: agentCommentNotes(src.db, realId).map((c) => ({
       agent: c.agent,
@@ -2454,7 +2526,12 @@ export interface ActivityFilters {
   limit?: number;
 }
 
-const KIND_FILTER: Record<string, ActivityKind> = { moves: "move", waits: "wait", errors: "error" };
+const KIND_FILTER: Record<string, ActivityKind> = {
+  moves: "move",
+  waits: "wait",
+  errors: "error",
+  settings: "settings",
+};
 
 export function sinceOf(since: string | undefined, now: number): number | null {
   if (!since) return null;
@@ -2529,6 +2606,24 @@ export async function activity(src: UiSources, f: ActivityFilters = {}): Promise
     detail: t.to_stage === "stopped" ? null : t.why,
   }));
   const intentRepo = (id: string) => s.intents.get(id)?.repo ?? null;
+  // UI-257: an autonomy change made on the page, `a: a3 → a4`.
+  for (const c of changesOf(src.db)) {
+    if (f.intent && c.intent !== f.intent) continue;
+    if (f.repo && intentRepo(c.intent) !== f.repo) continue;
+    if (since !== null && c.at < since) continue;
+    items.push({
+      key: `a${c.intent}:${c.at}`,
+      at: when(c.at, s.now),
+      time: clock(c.at),
+      day: dayWords(c.at, s.now),
+      kind: "settings",
+      intent: c.intent,
+      title: titleOf(s, c.intent),
+      repo: intentRepo(c.intent),
+      text: `a: a${c.from} → a${c.to}`,
+      detail: null,
+    });
+  }
   logLines(src).forEach((l, n) => {
     if (MOVE_LOG.test(l.text)) return;
     const id = ID_IN_LOG.exec(l.text)?.[1] ?? null;

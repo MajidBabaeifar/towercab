@@ -4,6 +4,8 @@
 import { readFileSync, rmSync, statSync } from "node:fs";
 import { type AfterHold, afterState, heldText, holdTrigger, nextHold } from "./after.ts";
 import { ownerOnly } from "./autonomy.ts";
+import { levelNow } from "./autonomy-change.ts";
+import { watchAutonomy } from "./autonomy-watch.ts";
 import { Inhibitor, woke } from "./awake.ts";
 import { slotStep } from "./capacity.ts";
 import { removeCheckout } from "./checkout.ts";
@@ -919,6 +921,10 @@ export class Loop {
     }
     const listing = this.listing;
     const db = this.d.db;
+    await watchAutonomy(
+      { db, store: this.d.store, forge: this.d.github, now: this.now, log: this.d.log },
+      listing,
+    );
     for (const m of unfinished(db)) {
       if (m.step === "enter") continue;
       const intent = listing.open.find((i) => i.id === m.intent) ?? null;
@@ -1309,10 +1315,8 @@ export class Loop {
         // PIP-141: the owner's `allow <path>` reverses a refusal, when no worker holds the mission's data.
         let reversed = false;
         if (!this.children.has(m.id)) {
-          const onlyYou = ownerOnly(
-            this.listing?.open.find((i) => i.id === m.intent)?.a ?? null,
-            m.a_at_pick,
-          );
+          const listedNow = this.listing?.open.find((i) => i.id === m.intent);
+          const onlyYou = ownerOnly(listedNow ? levelNow(this.d.db, listedNow) : null);
           for (const ask of reversalRequested(m, prs, this.d.github.me, bot, onlyYou)) {
             let said: string;
             try {
@@ -1351,7 +1355,8 @@ export class Loop {
         }
         // AUT-32: on an owner-only intent a reply from anyone else is ignored (PIP-44) and noted once.
         const listed = this.listing?.open.find((i) => i.id === m.intent);
-        if (ownerOnly(listed?.a ?? null, m.a_at_pick)) {
+        const levelListed = listed ? levelNow(this.d.db, listed) : null;
+        if (ownerOnly(levelListed)) {
           for (const r of ignoredReplies(m, prs, this.d.github.me, bot)) {
             noteIgnored(
               this.d.db,
@@ -1363,7 +1368,7 @@ export class Loop {
           }
         }
         // PIP-185: comments an agent marked under the owner's login are recorded once, at any level.
-        const only = ownerOnly(listed?.a ?? null, m.a_at_pick);
+        const only = ownerOnly(levelListed);
         for (const c of agentComments(m, prs, this.d.github.me, bot)) {
           const target = c.kind === "plan" ? intentsRepo : repo.github;
           recordAgentComment(this.d.db, m.intent, c.key, {

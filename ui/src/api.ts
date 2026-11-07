@@ -66,6 +66,11 @@ export function openMove(repo: string): Promise<ActionReply> {
   return post({ action: "repo-move", repo });
 }
 
+/** UI-257: set an intent's autonomy (0–5); the page is the owner (AUT-35). */
+export function setAutonomy(id: string, a: number): Promise<ActionReply> {
+  return post({ action: "autonomy", id, a, actor: "owner" });
+}
+
 /** UI-144: read the repo again for its feature list. */
 export function refreshFeatures(repo: string): Promise<ActionReply> {
   return post({ action: "features", repo });

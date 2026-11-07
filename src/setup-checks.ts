@@ -7,6 +7,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { effectiveA, gate, OWNER_MERGES } from "./autonomy.ts";
+import { levelNow } from "./autonomy-change.ts";
 import { ensureClone, git, gitEnv, NO_HOOKS } from "./checkout.ts";
 import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db } from "./db.ts";
@@ -358,7 +359,7 @@ async function autonomyOf(d: SetupDeps, repo: RepoConfig): Promise<number> {
   for (const m of waiting) {
     try {
       const i = await d.store.get(m.intent);
-      as.push(effectiveA(m.a_at_pick, i.a, cap, i.source));
+      as.push(effectiveA(levelNow(d.db, i), cap, i.source));
     } catch {
       as.push(OWNER_MERGES);
     }

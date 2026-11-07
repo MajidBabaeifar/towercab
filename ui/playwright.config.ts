@@ -18,6 +18,7 @@ export default defineConfig({
     "limits.spec.ts",
     "shadow.spec.ts",
     "overview-order.spec.ts",
+    "autonomy.spec.ts",
   ],
   outputDir: "screenshots/.results",
   fullyParallel: false,

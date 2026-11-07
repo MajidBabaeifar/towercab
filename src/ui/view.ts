@@ -74,7 +74,21 @@ export interface TopBar {
 }
 
 export type ActionKey = "merge" | "pass" | "reply" | "retry" | "drop";
-export type CardKind = "spec" | "plan" | "code" | "question" | "blocked" | "release";
+export type CardKind = "spec" | "plan" | "code" | "question" | "blocked" | "release" | "autonomy";
+
+/** UI-257: the one control for an intent's autonomy. */
+export interface AutonomyView {
+  /** The level the intent runs at now (a flagged raise doesn't count yet). */
+  a: number;
+  /** The repo's cap when it is below a5 (AUT-8). */
+  cap: number | null;
+  /** AUT-35, UI-258: a raise somebody else made, waiting for the owner. */
+  flag?: { who: string; from: number; to: number };
+  /** What each level lets Towercab do without asking, for the confirm step (index = level). */
+  notes: string[];
+  /** The page is read-only, or the intent is finished. */
+  locked: boolean;
+}
 
 export interface Question {
   context: string;
@@ -170,6 +184,8 @@ export interface Card {
   shadow?: boolean;
   /** UI-239: the intent is a0: only the owner can answer or approve it, shown as "only you". */
   onlyYou?: boolean;
+  /** UI-257: the autonomy control. */
+  autonomy?: AutonomyView;
   /** PIP-186: an agent answered for the owner and the intent acted on it: the agent's name. */
   decided_by_agent?: string | null;
 }
@@ -198,6 +214,8 @@ export interface Row {
   warning?: string;
   /** UI-236: the intent is a draft of the shadow's. */
   shadow?: boolean;
+  /** UI-257: the autonomy control. */
+  autonomy?: AutonomyView;
 }
 
 export interface ProblemView {
@@ -514,6 +532,8 @@ export interface IntentPage {
   nothingLive?: string | null;
   /** UI-239: set for an a0 intent, with the line to show; `paused` is this intent's own pause (SHD-22). */
   onlyYou?: string;
+  /** UI-257: the autonomy control. */
+  autonomy?: AutonomyView;
   paused?: boolean;
   /** PIP-186: the comments agents wrote under the owner's login, oldest first. */
   agent_comments: AgentCommentView[];
@@ -878,7 +898,7 @@ export interface BoardPage {
   error: string | null;
 }
 
-export type ActivityKind = "move" | "wait" | "error" | "log";
+export type ActivityKind = "move" | "wait" | "error" | "log" | "settings";
 
 export interface ActivityItem {
   key: string;

@@ -1,6 +1,6 @@
 # Autonomy
 
-**Status:** Live: AUT-1..21, AUT-31..33 · **Prefix:** AUT
+**Status:** Live: AUT-1..21, AUT-31..35 · **Prefix:** AUT
 
 ## Purpose
 
@@ -261,7 +261,7 @@ An intent set to `a0` is decided by the owner alone: every wait goes to them and
 - `a: 0` is valid in the intent's front matter like any other level (the range is 0–5). At a0 every wait goes to the owner: a question (PIP-110), the spec gate (AUT-11), the plan gate (AUT-12), a test change or unplanned access (PIP-116, AUT-15), the merge (AUT-3) and the owner's steps (SHIP-17). Towercab never merges, approves or answers on its own at a0, whatever the risk level or the repo's cap (AUT-8).
 - a0 is a rule that Towercab's own shadow, agents and CLI follow, not a security boundary: see Decisions.
 - Validation does not shrink (AUT-6): the checks, the proof, CI and the review all run at a0, as at a1.
-- `effective` still takes the lowest `a` present (AUT-7), so nothing can raise an a0 intent; a worker may still lower to a0, never out of it. An `a` of 0 is not "unset": AUT-9 applies only when `a` is missing.
+- Only the owner raises an a0 intent, on the page or from their GitHub account (AUT-35); any other raise is flagged and the mission stays at a0. A worker may still lower to a0, never out of it. An `a` of 0 is not "unset": AUT-9 applies only when `a` is missing.
 - Access (AUT-14) at a0 is that of a1–a3.
 - The repo cap (AUT-8) stays 1–5: a repo cannot set a0 for others. The field list in `intents.md` still says `a` is 1–5; it is switched to 0–5 in a later spec commit, and the code already reads 0.
 - Verified by: `autonomy: a0 waits at every gate`, `autonomy: a0 is never raised`, `autonomy: a0 ignores risk and cap`, `intents: a is 0 to 5`
@@ -331,7 +331,7 @@ A raise of an intent's autonomy counts only when the owner makes it on the web p
 - a5 is limited to `source: me` because open network, editable CI and auto-merge together would let a
   planted instruction in an issue change CI and merge itself.
 - The decisions are pure functions in `src/autonomy.ts`; the pipeline's handlers do the I/O.
-- `effective` takes the minimum of the `a`s present, so removing `a` mid-flight can't loosen a gate.
+- Effective `a` follows the intent's current `a` (AUT-8), so a raise applies from the next gate. Removing `a` mid-flight is a raise to the default (AUT-35), flagged unless the owner did it, so it can't loosen a gate.
 - Risk instead of concerns (the owner's call, 2026-10-30): any design concern used to stop the spec,
   so most specs waited. Now an independent agent judges the risk at every gate, and the level, not the
   existence of a concern, decides at a4 and a5. No `a` means a5 for the same reason: the risk gate is

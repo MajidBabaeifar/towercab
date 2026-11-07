@@ -57,6 +57,8 @@ export class FakeForge implements Forge {
   readonly issues: FakeForgeIssue[] = [];
   readonly deployments: (Deployment & { repo: string; statuses: DeploymentStatus[] })[] = [];
   readonly files = new Map<string, string>();
+  /** AUT-35: the logins the host reports per commit sha (author, committer); none: no account. */
+  readonly commitAccounts = new Map<string, (string | null)[]>();
   private next = 1;
 
   constructor(me = "owner") {
@@ -81,6 +83,11 @@ export class FakeForge implements Forge {
   }
   asOwner(): Forge {
     return this;
+  }
+
+  async commitLogins(repo: string, sha: string): Promise<(string | null)[]> {
+    this.log(`commit ${repo} ${sha}`);
+    return this.commitAccounts.get(sha) ?? [null, null];
   }
 
   async openPr(repo: string, o: { base: string; head: string; title: string; body: string }) {

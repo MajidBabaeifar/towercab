@@ -569,6 +569,15 @@ export class GitStore implements IntentStore {
     return findOpen(await this.list(), idOrSuffix);
   }
 
+  async lastAChange(idOrSuffix: string): Promise<string | null> {
+    return this.locked(async () => {
+      const found = findOpen(scan(this.path).listing, idOrSuffix);
+      const r = await this.git(["log", "-n1", "--format=%H", "-G^a:", "--", `${found.dir}/intent.md`]);
+      const sha = r.stdout.trim();
+      return r.code === 0 && /^[0-9a-f]{40,64}$/.test(sha) ? sha : null;
+    });
+  }
+
   async add(n: NewIntent, now: Date): Promise<Intent> {
     const title = n.title.trim();
     const text = intentText(n, now);

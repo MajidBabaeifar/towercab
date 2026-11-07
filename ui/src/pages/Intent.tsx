@@ -2,6 +2,7 @@
 // the folded list of moves, cost and the intent's own text.
 
 import type { IntentPage as Data, PrView } from "../../../src/ui/view.ts";
+import { AutonomyControl } from "../AutonomyControl.tsx";
 import {
   Details,
   Id,
@@ -126,6 +127,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
       </header>
       <p class="sentence">{data.sentence}</p>
       {data.onlyYou ? <p class="meta only-you-line">{data.onlyYou}</p> : null}
+      {data.autonomy ? <AutonomyControl intent={data.id} view={data.autonomy} readOnly={readOnly} /> : null}
       {!readOnly && (data.onlyYou || data.paused) ? (
         <PauseButton intent={data.id} paused={data.paused === true} />
       ) : null}

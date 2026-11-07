@@ -82,6 +82,7 @@ const TYPES: Record<string, string> = {
 
 const PAGES = /^\/(?:board|focus|repos|queue|activity|i\/[A-Za-z0-9._-]+)?\/?$/;
 const ACTIONS = new Set([
+  "autonomy",
   "merge",
   "pass",
   "reply",
@@ -289,6 +290,9 @@ export function startUi(o: UiOptions): UiServer {
       name?: unknown;
       repo?: unknown;
       n?: unknown;
+      /** AUT-34: the level to set (`autonomy`). */
+      a?: unknown;
+      id?: unknown;
       done?: unknown;
       value?: unknown;
       pr?: unknown;
@@ -302,7 +306,8 @@ export function startUi(o: UiOptions): UiServer {
       return json(res, 400, { ok: false, message: "The request isn't JSON." });
     }
     const action = typeof body.action === "string" ? body.action : "";
-    const intent = typeof body.intent === "string" ? body.intent : "";
+    // UI-257: `{action: "autonomy", id, a}`; `intent` works too, like every other action.
+    const intent = typeof body.intent === "string" ? body.intent : typeof body.id === "string" ? body.id : "";
     const repo = typeof body.repo === "string" ? body.repo : "";
     if (!ACTIONS.has(action)) return json(res, 400, { ok: false, message: `Unknown action “${action}”.` });
     const proposal = action === "accept" || action === "close";
@@ -345,79 +350,87 @@ export function startUi(o: UiOptions): UiServer {
       const no = () => Promise.reject(new Error("Secrets aren't available."));
       const noLimits = () => Promise.reject(new Error("Changing settings isn't available."));
       const message =
-        action === "repo-settings"
-          ? await (a.repoSettings ?? noLimits)(repo, body.changes, body.confirmed === true)
-          : action === "repo-move"
-            ? await (a.repoMove ?? noLimits)(repo)
-            : action === "secret"
-              ? await (a.secret ?? no)(
-                  intent,
-                  Number(body.n),
-                  typeof body.value === "string" ? body.value : "",
-                )
-              : action === "approve-secret"
-                ? await (a.approveSecret ?? no)(intent, Number(body.n))
-                : action === "merge"
-                  ? await a.merge(intent)
-                  : action === "pass"
-                    ? await (a.pass ?? (() => Promise.reject(new Error("Passing on isn't available."))))(
-                        intent,
-                      )
-                    : action === "reply"
-                      ? await a.reply(intent, typeof body.text === "string" ? body.text : "")
-                      : action === "retry"
-                        ? await a.retry(intent)
-                        : action === "drop"
-                          ? await a.drop(intent)
-                          : action === "done"
-                            ? await (
-                                a.done ??
-                                (() => Promise.reject(new Error("Ending an intent isn't available.")))
-                              )(intent, typeof body.text === "string" ? body.text : "")
-                            : action === "steps"
+        action === "autonomy"
+          ? await (a.autonomy ?? noLimits)(
+              intent,
+              typeof body.a === "number" ? body.a : Number.NaN,
+              typeof body.actor === "string" ? body.actor : "",
+            )
+          : action === "repo-settings"
+            ? await (a.repoSettings ?? noLimits)(repo, body.changes, body.confirmed === true)
+            : action === "repo-move"
+              ? await (a.repoMove ?? noLimits)(repo)
+              : action === "secret"
+                ? await (a.secret ?? no)(
+                    intent,
+                    Number(body.n),
+                    typeof body.value === "string" ? body.value : "",
+                  )
+                : action === "approve-secret"
+                  ? await (a.approveSecret ?? no)(intent, Number(body.n))
+                  : action === "merge"
+                    ? await a.merge(intent)
+                    : action === "pass"
+                      ? await (a.pass ?? (() => Promise.reject(new Error("Passing on isn't available."))))(
+                          intent,
+                        )
+                      : action === "reply"
+                        ? await a.reply(intent, typeof body.text === "string" ? body.text : "")
+                        : action === "retry"
+                          ? await a.retry(intent)
+                          : action === "drop"
+                            ? await a.drop(intent)
+                            : action === "done"
                               ? await (
-                                  a.steps ??
-                                  (() => Promise.reject(new Error("Switching to steps isn't available.")))
-                                )(intent)
-                              : action === "start"
-                                ? await a.start(intent)
-                                : action === "step"
-                                  ? await (
-                                      a.step ??
-                                      (() => Promise.reject(new Error("Ticking steps isn't available.")))
-                                    )(intent, Number(body.n), body.done !== false)
-                                  : action === "pause"
-                                    ? await a.pause(intent)
-                                    : action === "addRepo"
-                                      ? await a.addRepo(
-                                          typeof body.github === "string" ? body.github : "",
-                                          typeof body.name === "string" && body.name ? body.name : undefined,
-                                        )
-                                      : action === "features"
-                                        ? await a.features(repo)
-                                        : action === "accept"
-                                          ? await a.accept(pr, head)
-                                          : action === "close"
-                                            ? await a.close(
-                                                pr,
-                                                typeof body.text === "string" ? body.text : undefined,
-                                              )
-                                            : action === "granted"
-                                              ? await (
-                                                  a.granted ??
-                                                  (() => Promise.reject(new Error("Not available.")))
-                                                )()
-                                              : action === "scanningGranted"
+                                  a.done ??
+                                  (() => Promise.reject(new Error("Ending an intent isn't available.")))
+                                )(intent, typeof body.text === "string" ? body.text : "")
+                              : action === "steps"
+                                ? await (
+                                    a.steps ??
+                                    (() => Promise.reject(new Error("Switching to steps isn't available.")))
+                                  )(intent)
+                                : action === "start"
+                                  ? await a.start(intent)
+                                  : action === "step"
+                                    ? await (
+                                        a.step ??
+                                        (() => Promise.reject(new Error("Ticking steps isn't available.")))
+                                      )(intent, Number(body.n), body.done !== false)
+                                    : action === "pause"
+                                      ? await a.pause(intent)
+                                      : action === "addRepo"
+                                        ? await a.addRepo(
+                                            typeof body.github === "string" ? body.github : "",
+                                            typeof body.name === "string" && body.name
+                                              ? body.name
+                                              : undefined,
+                                          )
+                                        : action === "features"
+                                          ? await a.features(repo)
+                                          : action === "accept"
+                                            ? await a.accept(pr, head)
+                                            : action === "close"
+                                              ? await a.close(
+                                                  pr,
+                                                  typeof body.text === "string" ? body.text : undefined,
+                                                )
+                                              : action === "granted"
                                                 ? await (
-                                                    a.scanningGranted ??
+                                                    a.granted ??
                                                     (() => Promise.reject(new Error("Not available.")))
                                                   )()
-                                                : action === "shadowReset"
+                                                : action === "scanningGranted"
                                                   ? await (
-                                                      a.shadowReset ??
+                                                      a.scanningGranted ??
                                                       (() => Promise.reject(new Error("Not available.")))
                                                     )()
-                                                  : await a.resume(intent);
+                                                  : action === "shadowReset"
+                                                    ? await (
+                                                        a.shadowReset ??
+                                                        (() => Promise.reject(new Error("Not available.")))
+                                                      )()
+                                                    : await a.resume(intent);
       reply = { ok: true, message };
     } catch (e) {
       reply = { ok: false, message: (e as Error).message };
