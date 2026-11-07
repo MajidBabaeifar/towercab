@@ -17,7 +17,7 @@ Every person has one of four roles: admin, maintainer, contributor or viewer, an
 - Actions, each allowed from the role named and every role above it (admin > maintainer > contributor > viewer):
   - viewer: read everything (board, cards, intent pages, timelines, costs); change nothing.
   - contributor: create intents, and answer the questions they were asked (USR-9: a question is asked of the person who wrote the intent, and of the repo's maintainers and admins).
-  - maintainer: approve and merge, reply, start, boost, drop and edit intents, change an intent's autonomy within AUT-24, retry, pause and resume.
+  - maintainer: approve and merge, reply, start, boost, drop and edit intents, confirm an intent whose writer has a lower role or no role (AUT-23), change an intent's autonomy within AUT-24, retry, pause and resume.
   - admin: manage users, roles, repo access and settings (USR-14), plus everything a maintainer can do.
 - One pure function `can(user, action, repo)` in `src/users.ts` answers it; the page, the API, the GitHub events and Telegram all call it, so no channel has rules of its own.
 - Verified by: `users: each role may do exactly its actions`, `users: a viewer changes nothing`
@@ -83,6 +83,7 @@ Each action Towercab takes for a person records their GitHub login and role, and
 
 - The action record gains `actor` (login) and `via` (`page`, `github`, `telegram`, `cli`); the timeline entries, the cards and the intent page show "<name> · <via>". With no `[auth]` the actor is `[github].me`.
 - A person's display name is their GitHub name, falling back to the login.
+- The actor of a new intent is its writer (AUT-23): the verified account of the push, the person behind a Telegram chat, the signed-in person, or the owner for the command line. An account that maps to no person is shown by its GitHub login as "unknown".
 - Actions Towercab takes by itself are recorded as `towercab`.
 - Verified by: `users: an action records its actor and channel`, `users: the timeline names who acted`, `users: an action by towercab is recorded as towercab`
 
@@ -155,6 +156,7 @@ All users share one set of repos, intents and one cost view; there are no separa
 
 ## Decisions
 
+- The writer of an intent comes from the channel, not the file (the owner's call, 2026-11-07), because `source: me` is a line anyone can type. Conservative defaults taken: an unverifiable push has no writer and is treated like an unmapped account; the writer is kept with the mission, so no intent file is rewritten; a later edit never changes the writer; intents from before sign-in count as the owner's, so turning it on changes nothing for work in flight; a viewer or unmapped writer's intent waits as a card and nothing runs, and dropping it needs the same role as confirming.
 - Towercab comments as itself with the person's name, instead of posting as them: it has no token of theirs and the comment must be traceable to the Towercab action.
 - Roles are ordered, not a set of ticks: four levels are easy to explain and check; the repo scope adds the only other dimension.
 - The team can lift people no higher than contributor (the owner's call, 2026-11-07), so a large GitHub team can't grant approval rights by membership alone.

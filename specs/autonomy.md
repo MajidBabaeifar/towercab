@@ -249,8 +249,15 @@ When users are set up, a gate that waits for "the owner" waits for any maintaine
 Full autonomy (a5) applies only to intents written or confirmed by an admin or a maintainer of that repo.
 
 - Replaces AUT-13's "source is `me`" when `[auth]` is set. Effective `a` = 5 only when the intent's author, or the person who confirmed it on the page, GitHub or Telegram, is an admin or has the maintainer role on the intent's repo at the time of the gate; an intent from a contributor or from any other source stays at most a4 until one of them confirms it. The confirmation is recorded on the timeline (USR-8).
+- Who wrote an intent (the writer) is found from the channel, never from the file's `source` or `u`/`i` lines, which anyone can type:
+  - From the intents repo: the verified GitHub login of the account that pushed the commit adding the intent file, judged as in AUT-35 (GitHub's verified login, never the commit's local name or e-mail). A commit whose account can't be verified has no writer.
+  - From Telegram: the person whose linked chat sent it (USR-11). From the page: the signed-in person. From the command line: the owner (the first admin, USR-6).
+  - Intents that existed before `[auth]` was set count as written by the owner.
+- The writer is kept with the mission (not written into the intent file) and shown on its timeline (USR-8). A later edit by another account never changes the writer.
+- The writer's role on the intent's repo (USR-5) sets how it starts: admin or maintainer, as AUT-13 says above; contributor, it runs but at most as a4; viewer, or an account that maps to no person (or has no writer), counts as the lowest role: the intent waits as a card for a maintainer or admin of that repo to confirm it, and nothing runs (no design, no worker, no cost) until one does. Dropping it instead needs the same role.
+- A confirmation is its own action (`confirm`, maintainer and above, USR-1) on the page, GitHub or Telegram; it is recorded with the person, and an intent confirmed by a maintainer is judged as one a maintainer wrote.
 - Without `[auth]`, AUT-13 is unchanged.
-- Verified by: `autonomy: a5 needs an admin or maintainer author or confirmer`, `autonomy: a contributor's intent is at most a4`, `autonomy: a confirmation by a maintainer lifts it to a5`, `autonomy: a5 follows the role at the gate`
+- Verified by: `autonomy: a5 needs an admin or maintainer author or confirmer`, `autonomy: a contributor's intent is at most a4`, `autonomy: a confirmation by a maintainer lifts it to a5`, `autonomy: a5 follows the role at the gate`, `autonomy: the writer is the verified account that pushed the file`, `autonomy: a source line in the file does not make a writer`, `autonomy: an unmapped account's intent waits for confirmation and nothing runs`, `autonomy: a viewer's intent waits for confirmation`, `autonomy: a telegram intent has the linked person as writer`, `autonomy: a cli intent has the owner as writer`, `autonomy: intents from before auth count as the owner's`
 
 ### AUT-24 · Raising autonomy needs a maintainer of that repo
 
