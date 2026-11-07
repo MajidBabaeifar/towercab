@@ -62,7 +62,11 @@ function usePhone(): boolean {
 
 function Detail({ item, readOnly, onSnooze }: { item: InboxItem; readOnly: boolean; onSnooze(): void }) {
   return (
-    <article class="inbox-detail" aria-labelledby="inbox-detail-title" data-item={item.key}>
+    <article
+      class="inbox-detail needs-card inbox-detail-card"
+      aria-labelledby="inbox-detail-title"
+      data-item={item.key}
+    >
       <p class="focus-repo">{item.repo || (item.kind === "cap" ? "Budget" : "Repo unknown")}</p>
       <h2 id="inbox-detail-title" class="focus-title" tabIndex={-1}>
         {item.title}

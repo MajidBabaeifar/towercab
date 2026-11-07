@@ -4817,3 +4817,24 @@ kbd {
 .palette-row[aria-selected="true"] {
   background: var(--accent-soft);
 }
+
+/* The inbox detail is one card around the intent's story; a flag box inside a card is not a second card. */
+.needs-card.inbox-detail-card,
+.needs-card.nested {
+  display: block;
+  padding: 0;
+}
+
+.needs-card.inbox-detail-card::before,
+.needs-card.nested::before {
+  content: none;
+}
+
+.needs-card.autonomy-flagbox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--needs-edge);
+  border-radius: var(--radius-sm);
+}

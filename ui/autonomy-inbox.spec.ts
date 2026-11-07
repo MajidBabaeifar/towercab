@@ -34,7 +34,7 @@ test("ui: the inbox shows a flagged raise and accepts or sets it back", async ({
     await page.goto(base);
     // One inbox item per intent: the flag shows inside the plan's own card.
     const detail = page.locator(".inbox-detail");
-    await expect(detail).toContainText("mallory raised it to a5; it keeps running at a2.");
+    await expect(detail).toContainText("mallory raised it to a5. It still runs at a2 until you decide.");
     await detail.getByRole("button", { name: "Accept a5" }).click();
     await expect(detail.getByRole("alertdialog")).toContainText("Raise to a5?");
     expect(fixture.calls.filter((c) => c.action === "autonomy")).toEqual([]);
