@@ -416,7 +416,7 @@ Towercab checks the standard GitHub settings of every registered repo once a day
   `Standard settings in place`. A check that cannot run is `unknown` and keeps the last result
   ([REPO-27](#repo-27--a-check-that-cannot-run)). The check never blocks work: it only warns, and
   [REPO-24](#repo-24--readiness)'s `settings` item reads the same stored result.
-- Verified by: `repo: settings run from the latest ci release tag on main`, `repo: no ci release tag is unknown, never the head`, `repo: the settings run is logged with its tag`, `repo: settings are checked daily for every repo`, `repo: settings gaps are stored and shown on the repo page`, `repo: a settings check that cannot run keeps the last result`, `repo: the daily check never applies`
+- Verified by: `repo: settings run from the latest ci release tag on main`, `repo: no ci release tag is unknown, never the head`, `repo: the settings run is logged with its tag`, `repo: settings are checked daily for every repo`, `repo: settings gaps are stored and shown on the repo page`, `repo: a settings check that cannot run keeps the last result`
 
 ### REPO-31 · Applying the settings
 
@@ -464,7 +464,7 @@ When the owner clicks Apply, Towercab applies the standard settings to that repo
   backup, left as it is: <what>`. It prints what it restored and the backup's time; no backup → `<repo>
   has no saved settings`; unknown repo → as in [LOOP-69](loop.md)'s text; a forbidden write is
   [REPO-40](#repo-40--an-apply-the-owner-cannot-make)'s message. It does not need the loop to be running.
-- Verified by: `repo: apply runs the script then checks again`, `repo: a gap that survives the apply is not retried until the next click`, `repo: an old settings key is ignored`, `repo: the required check names come from the plan`, `repo: a green main gets the whole apply`, `repo: a main not green gets everything but the ruleset`, `repo: a release without skip-ruleset applies nothing to a repo not green`, `repo: apply backs up everything the script can change and keeps 5`, `repo: the backup includes another branch the plan names`, `repo: no backup, no apply`, `cli: settings restore writes back what was saved`, `cli: settings restore lists what was added since and leaves it`
+- Verified by: `repo: apply runs the script then checks again`, `repo: the required check names come from the plan`, `repo: a green main gets the whole apply`, `repo: a main not green gets everything but the ruleset`, `repo: a release without skip-ruleset applies nothing to a repo not green`, `repo: apply backs up everything the script can change and keeps 5`, `repo: the backup includes another branch the plan names`, `repo: no backup, no apply`, `cli: settings restore writes back what was saved`, `cli: settings restore lists what was added since and leaves it`
 
 ### REPO-32 · A missing permission is said once
 
@@ -513,7 +513,7 @@ Apply runs the standard settings script for that one repo with the owner's own G
   with the repo, the `ci` tag and the outcome.
 - Nothing else applies: the daily check, a fetch, a mission or `doctor` never runs `apply-settings`
   without `--check` or `--plan`.
-- Verified by: `repo: apply runs as the owner for one repo only`, `repo: apply is refused for a repo without gaps`, `repo: two applies for one repo do not overlap`, `repo: nothing applies without the click`, `ui: Apply posts the action and shows the new check`
+- Verified by: `repo: apply runs as the owner for one repo only`, `repo: apply is refused for a repo without gaps`, `repo: two applies for one repo do not overlap`, `repo: nothing applies without the click`, `repo: the daily check never applies`, `repo: a gap that survives the apply is not retried until the next click`, `repo: an old settings key is ignored`, `ui: Apply posts the action and shows the new check`
 
 ### REPO-40 · An apply the owner cannot make
 
