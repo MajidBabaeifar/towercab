@@ -35,7 +35,7 @@ and its settings in one TOML file.
   run --watch`), then `systemctl --user daemon-reload` and `enable --now`. `down` = `disable --now`
   (missions stay). `restart` = `systemctl --user restart towercab` (a few seconds: no build).
   `logs` execs `journalctl --user -u towercab -f`. A failing `systemctl` → exit 1 with its stderr.
-- The unit sets `TimeoutStopSec=60`, so systemd waits a minute for a stop before killing the service; the loop's own stop budget stays far below it (LOOP-136).
+- Not built yet: the unit will set `TimeoutStopSec=60`, so systemd waits a minute for a stop before killing the service; the loop's own stop budget stays far below it (LOOP-136). The **Unit** block below still shows the built value (30), because `service: unit file` compares it with the file `up` writes. The code PR changes the block and the unit to 60 together.
 - Verified by: `service: unit file`, `service: up, down, restart, logs`
 
 ### LOOP-3 · State machine
@@ -871,7 +871,7 @@ When Towercab is told to stop, it gives running `gh` and `git` calls 10 seconds 
 - On SIGTERM or SIGINT the loop starts no new pass, poll, check or Claude run, and waits for the `gh` and `git` processes it started (through `Tools`) for at most 10 seconds (fixed, not a setting). Then it sends SIGTERM to each one's process group and SIGKILL 2 s later. A call cut off this way fails with `stopped: <command> was cut off at shutdown`. Its mission is not counted as a failure: the step is re-entered at the next start (LOOP-6).
 - The idle waits of `shutdown` (issues, features, readiness, settings, setup checks, limits, shadow) share this one deadline instead of waiting without limit; whatever is still running at the deadline is cut off the same way.
 - Claude runs keep their treatment: SIGTERM to the group, SIGKILL after 10 s, `interrupted` (LOOP-7); their sessions resume at the next start. All children are signalled at the same moment and waited for together, not one after another.
-- The whole stop therefore takes at most about 15 s (10 s grace + 2 s kill wait + a few seconds to write state), well under the unit's `TimeoutStopSec=60` (LOOP-2).
+- The whole stop therefore takes at most about 15 s (10 s grace + 2 s kill wait + a few seconds to write state), well under the `TimeoutStopSec=60` the unit will get (LOOP-2).
 - Verified by: `shutdown: a gh call that never exits is killed after the grace period`, `shutdown: children are stopped together`, `shutdown: a git call that never exits is killed after the grace period`, `shutdown: no new work starts once stopping`, `shutdown: a cut-off call does not count as a failure`
 
 ### LOOP-137 · A stop that cut off a hanging call is a clean exit
@@ -1589,7 +1589,7 @@ Environment=PATH=<node dir>:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Restart=always
 RestartSec=5
 KillMode=mixed
-TimeoutStopSec=60
+TimeoutStopSec=30
 
 [Install]
 WantedBy=default.target
