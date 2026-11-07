@@ -240,7 +240,7 @@ buttons, replies and commands ([telegram.md](telegram.md), LOOP-126..128), or, w
 - `POST <api_base>/bot<token>/sendMessage` `{chat_id, text, disable_web_page_preview: true}` (≤ 4000
   characters, 10 s timeout). Unsent rows go oldest first, stop at the first failure and retry with
   LOOP-10's backoff. Failures are logged once per outage without the token. No `[telegram]` → rows
-  are written and never sent. Another channel can replace it (LOOP-146).
+  are written and never sent. Webhooks can be added alongside it (LOOP-146).
 - Verified by: `telegram: retries until sent`, `telegram: failures never raise`
 
 ### LOOP-17 · Idle
@@ -961,42 +961,46 @@ A written guide takes someone on a fresh Windows machine to a running Towercab, 
 - The README's Requirements say Windows works through WSL2 only once the guide's steps have been run end to end on a Windows machine and the result is noted in the pull request. Until then the README does not mention Windows.
 - Verified by: `manual: follow docs/windows-wsl.md on a fresh Windows machine to a mission opened from the UI`, `public: README claims Windows only with the guide present`
 
-### LOOP-146 · Choose where waiting-on-you messages go
+### LOOP-146 · Several places for waiting-on-you messages
 
-The owner picks one place for Towercab's messages: Telegram, a webhook, or nowhere, and a setup that only has Telegram keeps working untouched.
+Towercab's messages go to every place the owner set up, Telegram and any number of webhooks together, and a setup with only Telegram keeps working untouched.
 
-- `[notify] channel = "telegram" | "webhook" | "none"`. Without `[notify]` the channel is `telegram` when `[telegram]` is set and `none` otherwise, so existing configs behave as before (LOOP-16).
-- One channel at a time: Telegram and the webhook are never both sent to. `channel = "telegram"` needs `[telegram]`; `channel = "webhook"` needs `[notify.webhook]` (LOOP-147). A missing section or an unknown value fails the config load with `config: <file>: notify.channel …`.
-- The channel only decides where outbox rows (LOOP-14) are sent; the loop's pass, the rows and their order are unchanged. Reading the owner's chat (LOOP-129, LOOP-130), buttons, replies and the shadow stay tied to `[telegram]` and work as before, even when the channel is `webhook`; `shadow.enabled` still needs `[telegram]`. Rows that only edit a Telegram message (TG-5) are not sent to a webhook.
-- With `none`, rows are written and never sent, like a missing `[telegram]` in LOOP-16.
-- Verified by: `notify: no section and telegram set keeps telegram`, `notify: no section and no telegram sends nothing`, `notify: channel none sends nothing`, `notify: channel webhook sends to the webhook only`, `notify: an unknown channel fails the config`, `notify: channel without its section fails the config`, `notify: webhook keeps the telegram reading`
+- The destinations are `[telegram]` (when set) and each `[[notify.webhook]]` table (LOOP-147). With neither, rows are written and never sent (LOOP-16). There is no channel switch: removing a section turns that destination off.
+- Every destination gets every outbox row (LOOP-14), independently. The outbox keeps, per row and destination, whether it was sent (`outbox_sent`, keyed by row key and destination: `telegram` or `webhook:<name>`). A row leaves the queue when every destination has it or its wait is over. Each destination sends oldest first, stops at its own first failure and backs off on its own (LOOP-10), so a failing webhook never delays Telegram or another webhook. The loop's pass and the rows are unchanged.
+- A destination added later sends only rows written after it was added, so a new webhook does not replay old waits.
+- Reading the owner's chat (LOOP-129, LOOP-130), buttons, replies and the shadow stay tied to `[telegram]`; `shadow.enabled` still needs `[telegram]`. Rows that only edit a Telegram message (TG-5) are sent to Telegram only.
+- Telegram's text is unchanged (the full text of LOOP-14); it has no detail setting.
+- Verified by: `notify: telegram only keeps working unchanged`, `notify: no destination sends nothing`, `notify: telegram and two webhooks each get every row`, `notify: a failing webhook does not delay the others`, `notify: a row stays queued until every destination has it`, `notify: a new webhook skips older rows`, `notify: edit rows go to telegram only`, `notify: a webhook keeps the telegram reading`
 
 ### LOOP-147 · Webhook delivery
 
-With the webhook channel, each message is posted as JSON to a secret URL kept in a file only the owner can read, and failures retry quietly without ever printing the URL.
+Each webhook the owner sets up gets every message as JSON, posted to a secret URL kept in a file only the owner can read, and failures retry quietly without ever printing the URL.
 
-- `[notify.webhook] url_file` is an absolute path or starts with `~/`; the file is a regular file, mode 600, holding one line with an `http://` or `https://` URL (the same checks as `gitlab.token_file`, [gitlab.md](gitlab.md)). The URL is read from the file at each send and never kept in memory between sends, in `meta`, in the outbox or in the UI.
+- `[[notify.webhook]]` is a list of tables with `name` (required, unique, `[a-z0-9_-]+`; it names the webhook in logs, `doctor` and LOOP-146), `url_file`, `template` (LOOP-148) and `detail` (LOOP-149). A duplicate or missing name fails the config load with `config: <file>: notify.webhook name …`.
+- `url_file` is an absolute path or starts with `~/`; the file is a regular file, mode 600, holding one line with an `http://` or `https://` URL (the same checks as `gitlab.token_file`, [gitlab.md](gitlab.md)). The URL is read from the file at each send and never kept in memory between sends, in `meta`, in the outbox or in the UI.
 - `POST <url>` with `Content-Type: application/json` and the body of LOOP-148, 10 s timeout. A 2xx answer marks the row sent. Anything else (other status, timeout, network error) is a failure; redirects are not followed.
-- Unsent rows go oldest first, stop at the first failure and retry with LOOP-10's backoff, exactly like Telegram (LOOP-16). A failure is logged once per outage as `webhook: <reason>` and once again when it recovers; the reason is a status code, `timeout` or an error class, and never contains the URL, the response body or a text from the URL's host. Failures never raise out of the pass.
-- A url file that is missing, loose or malformed counts as a failure with the reason `url_file <why>` (the path, not the URL) and is retried at the next backoff; a loose or missing file at config load fails with `config: <file>: notify.webhook.url_file <why>`. `doctor` checks the file like the other secrets files (LOOP-143).
-- Verified by: `webhook: posts json with the default body`, `webhook: retries until sent`, `webhook: failures never raise`, `webhook: oldest first and stops at the first failure`, `webhook: one log line per outage`, `webhook: the url never appears in a log line`, `webhook: a redirect is a failure`, `webhook: a loose url file is refused`, `webhook: the url is read at each send`, `doctor: a loose webhook url file fails with the chmod`
+- Unsent rows go oldest first, stop at the first failure and retry with LOOP-10's backoff, exactly like Telegram (LOOP-16). A failure is logged once per outage as `webhook <name>: <reason>` and once again when it recovers; the reason is a status code, `timeout` or an error class, and never contains the URL, the response body or a text from the URL's host. Failures never raise out of the pass.
+- A url file that is missing, loose or malformed counts as a failure with the reason `url_file <why>` (the path, not the URL) and is retried at the next backoff; a loose or missing file at config load fails with `config: <file>: notify.webhook.<name>.url_file <why>`. `doctor` checks every webhook's file like the other secrets files (LOOP-143).
+- Verified by: `webhook: names must be unique`, `webhook: posts json with the default body`, `webhook: retries until sent`, `webhook: failures never raise`, `webhook: oldest first and stops at the first failure`, `webhook: one log line per outage`, `webhook: the url never appears in a log line`, `webhook: a redirect is a failure`, `webhook: a loose url file is refused`, `webhook: the url is read at each send`, `doctor: a loose webhook url file fails with the chmod`
 
 ### LOOP-148 · Webhook body template
 
 The owner can change the shape of the webhook body for chat services that expect something other than `{"text": "…"}`.
 
-- `[notify.webhook] template` is a TOML string holding a JSON document; the default is `{"text": "{text}"}`. Two placeholders are replaced wherever they appear inside a JSON string: `{text}` (the whole message, as LOOP-149 builds it) and `{link}` (the link alone, or an empty string). The value is inserted JSON-escaped, so quotes, newlines and non-ASCII characters in a title cannot break the document. Written in TOML: `template = '{"channel": "ops", "content": "{text}"}'`.
-- No other placeholder exists; any other `{…}` text stays as written. A placeholder outside a JSON string, or a template that is not valid JSON once both placeholders are replaced with a sample, fails the config load with `config: <file>: notify.webhook.template <why>`.
+- A webhook's `template` is a TOML string holding a JSON document; the default is `{"text": "{text}"}`. Two placeholders are replaced wherever they appear inside a JSON string: `{text}` (the whole message, as LOOP-149 builds it for that webhook) and `{link}` (the link alone, or an empty string). The value is inserted JSON-escaped, so quotes, newlines and non-ASCII characters in a title cannot break the document. Written in TOML: `template = '{"channel": "ops", "content": "{text}"}'`.
+- No other placeholder exists; any other `{…}` text stays as written. A placeholder outside a JSON string, or a template that is not valid JSON once both placeholders are replaced with a sample, fails the config load with `config: <file>: notify.webhook.<name>.template <why>`.
 - The message is capped at 4000 characters before it is inserted (LOOP-16).
 - Verified by: `webhook: the default body is {"text": …}`, `webhook: a template fills text and link`, `webhook: a title with quotes and newlines stays valid json`, `webhook: an unknown placeholder stays as written`, `webhook: an invalid template fails the config`
 
 ### LOOP-149 · Webhook detail: full or minimal
 
-The owner chooses whether a webhook message carries the work item's details or only says that something waits.
+Each webhook says only how many things wait for the owner, with a link, unless the owner turns on the full text for that webhook.
 
-- `[notify.webhook] detail = "full" | "minimal"`, default `full`. `full` is the text of LOOP-14 as sent to Telegram. `minimal` is exactly `Something waits on you in Towercab: <link>`, where the link is the address of Towercab's local page (UI-1), with no intent title, repo, reason, PR link or intent id. `{link}` (LOOP-148) is that same address.
-- `detail` applies to the webhook only; Telegram messages are unchanged.
-- Verified by: `webhook: full detail sends the usual text`, `webhook: minimal says only that something waits`, `webhook: minimal has no title, repo, reason or id`, `webhook: an unknown detail fails the config`
+- A webhook's `detail` is `"minimal"` (the default) or `"full"`, set per webhook. `minimal` is `<N> things wait for you in Towercab: <link>`, or `1 thing waits for you in Towercab: <link>` when N is 1. N is the number of missions waiting on the owner when the message is sent (LOOP-14's **Waits**), so a queued message always shows the current count. When N is 0 (a row about GitHub, Claude or a failed update) the text is `Towercab needs a look: <link>`. The link is the address of Towercab's local page (UI-1). The text has no intent title, repo, reason, PR link or intent id. `{link}` (LOOP-148) is that same address.
+- `full` is the text of LOOP-14, as Telegram gets it.
+- An unknown `detail` fails the config load with `config: <file>: notify.webhook.<name>.detail …`.
+- Telegram is unchanged and has no `detail` setting.
+- Verified by: `webhook: detail defaults to minimal`, `webhook: minimal counts the waits at send time`, `webhook: minimal with one wait is singular`, `webhook: minimal with no waits says Towercab needs a look`, `webhook: minimal has no title, repo, reason or id`, `webhook: full detail sends the usual text`, `webhook: each webhook uses its own detail`, `webhook: an unknown detail fails the config`
 
 ### LOOP-120 · Telegram message when a reply is posted
 
