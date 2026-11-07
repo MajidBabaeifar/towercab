@@ -121,9 +121,12 @@ export class PipeTools extends FakeTools {
   readonly routes = new Map<string, (spec: ChildSpec) => ChildExit | Promise<ChildExit>>();
   /** After a simulated crash every call fails (the process is gone). */
   dead: (() => Error) | null = null;
+  /** `git grep` fails for real (not "no match"), as when the base branch can't be read. */
+  grepFails = false;
 
   override async run(cmd: string, args: string[], opts: RunOpts = {}): Promise<RunResult> {
     if (this.dead) throw this.dead();
+    if (this.grepFails && cmd === "git" && args.includes("grep")) return failResult("fatal: bad object", 128);
     return super.run(cmd, args, opts);
   }
 
