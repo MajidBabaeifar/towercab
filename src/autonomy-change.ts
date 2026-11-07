@@ -42,16 +42,24 @@ export function clearFlag(db: Db, id: string): void {
   db.delMeta(flagKey(id));
 }
 
-/** AUT-8, AUT-35: the level the intent runs at now: the one before a flagged raise, else its own `a`. */
-export function levelNow(db: Db, i: Pick<Intent, "id" | "a">): number | null {
+type Leveled = Pick<Intent, "id" | "a"> & { source?: string | null };
+
+/**
+ * AUT-8, AUT-35: the level the intent runs at now. A written level above the accepted one is a raise nobody
+ * has judged yet (no flag until the next poll, none at all while GitHub can't answer): the accepted level
+ * holds until the owner's raise is recognised or the owner accepts it. Else the intent's own `a`.
+ */
+export function levelNow(db: Db, i: Leveled): number | null {
+  const acc = acceptedOf(db, i.id);
+  if (acc !== null && writtenLevel({ a: i.a, source: i.source ?? null }) > acc) return acc;
   const f = flagOf(db, i.id);
   return f ? f.from : i.a;
 }
 
-/** The intent as the pipeline sees it: a flagged raise does not count yet. */
-export function withFlag<T extends Pick<Intent, "id" | "a">>(db: Db, i: T): T {
-  const f = flagOf(db, i.id);
-  return f ? { ...i, a: f.from } : i;
+/** The intent as the pipeline sees it: a raise that isn't judged the owner's yet does not count. */
+export function withFlag<T extends Leveled>(db: Db, i: T): T {
+  const a = levelNow(db, i);
+  return a === i.a ? i : { ...i, a };
 }
 
 /** UI-257, AUT-34: a change made on the page, for the Activity page and the intent's timeline. */

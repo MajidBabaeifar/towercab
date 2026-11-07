@@ -276,3 +276,28 @@ test("autonomy: deleting the a line by the owner counts", async () => {
   expect(acceptedOf(w.db, ID)).toBe(5);
   expect(await levelOf(w)).toBe(5);
 });
+
+test("autonomy: a raise holds back at a gate that runs before it is judged", async () => {
+  const w = await world();
+  // A stranger's push is read by the next gate before the watch has looked at it.
+  w.push(file("u: 3\ni: 3\na: 5\n"), ["mallory", null]);
+  expect(flagOf(w.db, ID)).toBeNull();
+  expect(await levelOf(w)).toBe(2);
+  // Once the owner's account is confirmed it counts.
+  w.forge.commitAccounts.set(w.head(), ["owner", null]);
+  await w.watch();
+  expect(await levelOf(w)).toBe(5);
+});
+
+test("autonomy: a raise stays held while github can't say who made it", async () => {
+  const w = await world();
+  w.push(file("u: 3\ni: 3\na: 5\n"), ["owner", null]);
+  w.forge.commitLogins = async () => {
+    throw new Error("rate limited");
+  };
+  await w.watch();
+  await w.watch();
+  expect(flagOf(w.db, ID)).toBeNull();
+  expect(acceptedOf(w.db, ID)).toBe(2);
+  expect(await levelOf(w)).toBe(2);
+});
