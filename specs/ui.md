@@ -1552,6 +1552,20 @@ Admins can see each person's open sessions and end one or all of them.
 - On the admin page (UI-222): per person, each session with its created and last-seen time and a Revoke button, plus "Revoke all" (USR-4). The next request of a revoked session returns to sign-in (UI-219).
 - Verified by: `ui: an admin revokes a session`, `ui: a revoked person returns to sign-in`
 
+### UI-242 · The observer panel
+
+The overview shows what the observer did lately: its last run, this week's proposals and what it spent today.
+
+- An "Observer" panel via `GET /api/observer` (`{enabled, lastRun, proposalsThisWeek, maxPerWeek, spentToday, cap, lastReport}`): the last run's time, trigger (daily or the event), outcome and proposal count, the proposals made in the last 7 days against `[observer].max_proposals_per_week` (OBV-7), today's observer spend against its cap (OBV-10) and when the last weekly report went out (OBV-8). With the observer off the panel is not shown. A reached cap says so in words.
+- Verified by: `ui: the observer panel shows its last run, proposals and spend`, `ui: the observer panel is hidden when off`
+
+### UI-243 · Observer proposals are tagged and show their evidence
+
+An intent the observer proposed shows an `[observer]` tag, and its evidence is one click away.
+
+- An intent with `source: observer` shows the tag (a text label, not colour alone) beside its title on proposed cards (UI-184), lists, the intent page and the timeline. On the card and the intent page, the evidence links and the expected gain (OBV-5) appear above the rest of the text. A run link opens that run in the page.
+- Verified by: `ui: an observer proposal is tagged and shows its evidence`
+
 ## Out of scope
 
 - Editing intents in the page, except their autonomy (UI-257): the owner edits them in the intents repo or with `/intent`.
