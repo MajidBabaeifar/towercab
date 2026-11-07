@@ -1530,6 +1530,14 @@ The Overview's Problems block names each secrets file that others can read and t
 - The rows come from the same check as `doctor`, through the API's problems list, not from the page's own guess.
 - Verified by: `ui: problems show a loose secrets file with its chmod`, `ui: no loose secrets file shows no row`
 
+### UI-278 · Running version and waiting release
+
+The top bar shows which version of Towercab is running and, when the owner updates on releases, whether a newer release is waiting.
+
+- The top bar's version is the running version of LOOP-152. On the release channel it adds `<tag> available` when a newer release waits (LOOP-152) and nothing when up to date. On the `"main"` channel it still says whether the checkout is behind `main`.
+- The values come from the same API field as `status`, not from the page.
+- Verified by: `ui: top bar shows the running version`, `ui: top bar shows a waiting release`, `ui: top bar shows no release note when up to date`
+
 ### UI-219 · Sign in with GitHub
 
 When people are set up, the page opens on a sign-in screen with one button, "Sign in with GitHub".
