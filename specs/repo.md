@@ -541,6 +541,19 @@ Towercab and `doctor` work with the GitHub App as it is, without the Administrat
   stays, the item is `unknown` ([REPO-27](#repo-27--a-check-that-cannot-run)), not an error.
 - Verified by: `doctor: no Administration line whatever the App has`, `repo: a check the App cannot read is read as the owner`, `repo: a read as the owner never writes`, `repo: a check nobody can read is unknown`
 
+### REPO-42 · A repo adds its own specialist paths
+
+A repo can say in `REVIEW.md` which of its files call in a specialist reviewer, on top of the shared default list.
+
+- `## Specialist paths` in `REVIEW.md` (REPO-4): bullets `security: <glob>, <glob>` and `infra: <glob>, <glob>`
+  (area name case-insensitive, globs as in `protected`). Several bullets for one area add up. An unknown
+  area name or an empty glob is ignored, not an error. No section → the default list only
+  ([PIP-197](pipeline.md)).
+- The globs extend the shared default, never replace it, and come from the base branch only (REPO-1).
+- Towercab's own `REVIEW.md` lists its own files there (the sandbox, guard and access code, the GitHub
+  code under `src/github/`, the `agents/` prompts and its deploy files); the shared default does not.
+- Verified by: `repo: REVIEW.md specialist paths`, `repo: REVIEW.md without specialist paths`, `repo: unknown specialist area is ignored`
+
 ### REPO-34 · Drafting a verifying section
 
 When a repo has no checks block, Towercab drafts one from what the repo already holds.
