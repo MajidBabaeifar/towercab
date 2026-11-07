@@ -1506,6 +1506,52 @@ The airspace's count badges (such as "+21") never cover a label or a plane, and 
 - `ui/fixture.ts` carries more than 8 repos, several of them not ready (some missing the same item, UI-269), and a CLI repo with a finished intent; the Repos, Board, intent and airspace screenshots (light, dark, mobile) use it.
 - Verified by: `ui: airspace count badges do not overlap at 360, 768 and 1280px`, `ui: screenshots light, dark and mobile`
 
+### UI-219 · Sign in with GitHub
+
+When people are set up, the page opens on a sign-in screen with one button, "Sign in with GitHub".
+
+- With `[auth]` set ([USR-3](users.md)) every route except the sign-in ones shows it until a session exists; after sign-in the person lands on the page they asked for. With no `[auth]` there is no sign-in and the page opens as before.
+- A refused account sees "This Towercab doesn't know your GitHub account. Ask an admin to add you." with the login shown and a sign-out link; an expired or revoked session returns here with "You were signed out".
+- Verified by: `ui: signed-out visitors see the sign-in screen`, `ui: an unknown account sees why it was refused`, `ui: without auth config there is no sign-in`
+
+### UI-220 · The page offers only what the role can do
+
+Buttons the signed-in person's role does not allow are not shown, or are disabled and say why.
+
+- Per intent and repo (USR-5): a viewer has no action buttons; a contributor sees Create, and Answer only on a question they were asked (USR-9); a maintainer sees Approve, Merge, Reply, Start, Boost, Drop, Edit, Confirm (on an intent waiting for confirmation, AUT-23) and autonomy; the admin page link shows for admins only. A disabled button's tooltip reads "Needs maintainer on <repo> (you are viewer)".
+- A 403 from the API (USR-7) shows its reason in the page's error line, never a blank failure.
+- Verified by: `ui: a viewer sees no action buttons`, `ui: a contributor sees only answer and create`, `ui: a disabled action says which role it needs`, `ui: the admin link shows for admins only`
+
+### UI-221 · Cards and timeline show who did it
+
+Every card's last action and every timeline entry names the person and the channel.
+
+- "Approved by Ana · page", "Answered by Ben · Telegram", "Merged by Cy · GitHub" (USR-8); Towercab's own steps read "Towercab". Names come from GitHub's display name or the login.
+- The Needs-you card shows who else can decide it (maintainers of that repo) and whether another person has already handled it.
+- Verified by: `ui: a card shows who acted and how`, `ui: the timeline names every actor`, `ui: a handled card shows who handled it`
+
+### UI-222 · Admin page: people, roles and repos
+
+Admins get a page that lists people with their roles and repo access, and adds or removes people.
+
+- A table: login and name, default role, repo roles, source (added or team), last seen, open sessions. Add person (GitHub login, role, repo roles), change role or repos, disable, remove with a confirmation, name or clear the GitHub team and its role (USR-2, USR-14; the team role list stops at contributor). A Settings section lets an admin change the non-security settings, and shows the security ones read-only with "Edit the config file" (USR-14). Changes show at once; the history of changes (`user_events`) is listed below.
+- A removal that would leave no admin is refused with the reason (USR-6).
+- Verified by: `ui: the admin page lists people with roles and repos`, `ui: an admin adds a person and sets repo roles`, `ui: removing the last admin is refused in the page`, `ui: the admin page lists the change history`, `ui: the team role list stops at contributor`, `ui: security settings are read-only in the page`
+
+### UI-223 · My account
+
+The account menu shows who I am, my role, and lets me link Telegram or sign out.
+
+- Top-right menu: name, login, role (with repo roles), Link Telegram (shows the one-time code and the bot to send it to, USR-11; or "Linked" with Unlink), Sign out. Reads only the person's own data.
+- Verified by: `ui: the account menu shows my role and signs out`, `ui: linking telegram shows a one-time code`
+
+### UI-224 · Admins end sessions
+
+Admins can see each person's open sessions and end one or all of them.
+
+- On the admin page (UI-222): per person, each session with its created and last-seen time and a Revoke button, plus "Revoke all" (USR-4). The next request of a revoked session returns to sign-in (UI-219).
+- Verified by: `ui: an admin revokes a session`, `ui: a revoked person returns to sign-in`
+
 ## Out of scope
 
 - Editing intents in the page, except their autonomy (UI-257): the owner edits them in the intents repo or with `/intent`.
