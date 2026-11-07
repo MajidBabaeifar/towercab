@@ -1358,6 +1358,16 @@ The owner can close an intent at any stage as done when another intent already c
 - Both timelines get `reopened (was covered by <other id>)` on this intent and `no longer covers <id>` on the other. The covering intent's work is not touched. An `after:` intent that already started because of the cover keeps running.
 - Verified by: `cli: reopen puts a covered intent back at its old stage`, `cli: reopen refuses an intent that was not covered`, `machine: reopen moves a covered done mission to its old stage and wait`, `loop: reopen reopens closed PRs whose branches still exist`, `loop: reopen names a PR it could not reopen`, `store: reopen removes covered_by and the file leaves done`, `features: reopen restores the feature line`, `timeline: reopen shows on both intents`
 
+### LOOP-158 · A covering intent that ends unfinished is flagged
+
+When the intent that covered another is dropped or stopped, the owner is told once and can reopen the covered intent in one click, and nothing is reopened for them.
+
+- Trigger: a mission enters `dropped` or `stopped` (LOOP-6 entry effects) for an intent that others were closed as covered by (`covered_by`, LOOP-156). A `stopped` that is only a replaced attempt (`replaced by attempt <n>`, LOOP-9 `fresh`) does not trigger it. For each covered intent still `done`, the covered intent stays done: no event moves it.
+- One outbox row per covering intent (key: the covering intent and its end), in the move's transaction like LOOP-14: `<covering title> was <dropped|stopped>, so <n> intent(s) it covered are not delivered: <titles>`, with the page link, and one button `Reopen` per covered intent (`towercab reopen <id>`, LOOP-157), through the same confirm-free path as the CLI. It is sent once; a second end of the same covering intent (after a reopen and drop) sends a new one.
+- The Inbox (UI-259) gets one item of kind `not delivered` per covered intent, with the text above and a `Reopen` button (UI-280's action) and `Dismiss`. It stays until the owner reopens, dismisses, or the covering intent is reopened and ends done. It counts as an Inbox item but no wait: no mission is blocked and `status` (LOOP-13) lists it under Notices.
+- The covered intent's timeline gets `covering intent <other id> was <dropped|stopped>` and its feature line is marked not delivered (INT-75). Nothing is reopened, dropped or started by this: the owner may have dropped the covering intent because the request is no longer wanted.
+- Verified by: `loop: a dropped covering intent flags the covered one once`, `loop: a replaced attempt of the covering intent flags nothing`, `loop: the covered intent stays done when its covering intent is dropped`, `outbox: the not delivered message has a reopen button per covered intent`, `status: not delivered intents are listed as notices`, `timeline: the covered intent shows its covering intent ended`
+
 ### LOOP-70 · A repo set to block starts no new intent
 
 Towercab holds back new intents only in a repo whose kind the owner confirmed, that is missing required setup and that is set to `readiness: block`; every other repo keeps starting intents and only warns.

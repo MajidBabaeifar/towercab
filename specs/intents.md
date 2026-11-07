@@ -714,8 +714,9 @@ The owner can add what they wrote to an existing open or parked intent instead o
 An intent closed as covered by another keeps its line in the feature list, marked with the intent that covered it.
 
 - Replaces INT-38's removal for this case only: entering `done` by `covered_by` (LOOP-156) keeps the line and appends `(covered by <id>)`, the ID linked as `DONE.md` links it (INT-6). The status is `live` once the covering intent's line is live and `in progress` before, and the line follows the covering line from then on. The owner's wording stays; only the status word and the mark change (INT-37).
-- `reopen` (LOOP-157) removes the mark and restores the status the line had before the cover. Entering `stopped` still removes the line (INT-38).
-- Verified by: `features: a covered intent keeps its line marked covered by the other`, `features: a covered line follows the covering intent's status`, `features: reopen restores the feature line`
+- When the covering intent is dropped or stopped (LOOP-158), the covered intent stays done and its line goes back to its own wording, without the covered mark, as `- [planned] <sentence> (not delivered) <!-- intent <id> -->`; it is not removed. If the covering intent later ends done again (a reopen that finishes), the line is marked covered again.
+- `reopen` (LOOP-157) removes the mark and restores the status the line had before the cover; a `(not delivered)` line becomes `in progress`. Entering `stopped` still removes the line (INT-38).
+- Verified by: `features: a covered intent keeps its line marked covered by the other`, `features: a covered line follows the covering intent's status`, `features: reopen restores the feature line`, `features: a dropped covering intent marks the line not delivered`
 
 ## Out of scope
 
