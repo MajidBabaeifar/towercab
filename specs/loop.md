@@ -917,6 +917,40 @@ When the owner drops an intent by hand and the mission then enters `stopped`, th
 - Applies LOOP-140 to `towercab drop`, whether the file is in `done/` (stage `dropped`) or gone: the entry writes nothing to it and still closes the mission's open PRs and retires its branches (PIP-87).
 - Verified by: `loop: drop on a blocked mission whose intent file was already moved settles in one pass`
 
+### LOOP-142 · Stay awake under WSL
+
+On Windows through WSL2, Towercab keeps Windows from sleeping while missions are in a working stage.
+
+- WSL is detected when the kernel release (`/proc/sys/kernel/osrelease`) contains `microsoft`, case-insensitively. The check goes through `Tools`, so tests fake it.
+- In WSL the inhibitor of LOOP-11 is a `powershell.exe` child instead of `systemd-inhibit`: it calls `SetThreadExecutionState` from `kernel32.dll` with `ES_CONTINUOUS | ES_SYSTEM_REQUIRED` (`0x80000001`) and then sleeps until killed. The child is started, killed and restarted under the same rules as in LOOP-11 (working stage, nothing driven, shutdown), and the wake check applies unchanged.
+- The execution state belongs to the PowerShell process's thread, so Windows drops it when the child ends, however it ends.
+- Outside WSL nothing changes: `systemd-inhibit` as in LOOP-11.
+- A missing `powershell.exe` is not fatal: the loop runs without the inhibitor and `doctor` warns (LOOP-143).
+- Verified by: `awake: wsl uses a powershell child with ES_SYSTEM_REQUIRED`, `awake: wsl child is killed when nothing is driven`, `awake: outside wsl keeps systemd-inhibit`, `awake: wsl without powershell runs unprotected`
+
+### LOOP-143 · doctor checks WSL
+
+Under WSL, `towercab doctor` checks the things that commonly break there and says how to fix each.
+
+- Only when WSL is detected (LOOP-142); elsewhere `doctor` prints none of these lines and its output is unchanged. `doctor` prints `wsl: <kernel release>` first.
+- Failures (exit code 1), each on one line with the fix:
+  - systemd is not PID 1 (`/proc/1/comm` is not `systemd`): `enable it with [boot] systemd=true in /etc/wsl.conf, then run wsl --shutdown`.
+  - bwrap cannot start a sandbox: the sandbox probe of PIP-163 failed; the line gives the reason and, if user namespaces are blocked, the kernel setting to check.
+  - The config directory, the home directory of Towercab or any repo's clone path is under `/mnt/`: `keep it in the Linux file system (for example under ~)`.
+  - A key or secrets file (the GitHub App key, token files, `config.toml` when it holds a secret) is not mode 600: `chmod 600 <path>`. This is a failure on every platform for the files the config names; the WSL-specific part is that a `/mnt/` path cannot hold the mode, so the `/mnt/` line comes first.
+- A warning (exit code unchanged): `powershell.exe` is not on `PATH`, so Windows may sleep while missions run.
+- `doctor --quick` runs the file and path checks and skips the bwrap probe.
+- Verified by: `doctor: wsl prints the kernel release`, `doctor: wsl without systemd as pid 1 fails`, `doctor: wsl failed sandbox probe fails`, `doctor: wsl paths under /mnt fail`, `doctor: wsl key file not mode 600 fails`, `doctor: wsl without powershell warns`, `doctor: outside wsl prints no wsl lines`
+
+### LOOP-144 · A guide for Windows through WSL2
+
+A written guide takes someone on a fresh Windows machine to a running Towercab, and the README claims Windows support only after the guide has been tried end to end.
+
+- `docs/windows-wsl.md` covers, in order: installing Ubuntu in WSL2; enabling systemd; keeping everything in the Linux file system; installing and logging in to `claude` and `gh` inside WSL; installing bwrap and what to do if user namespaces are restricted (it follows PIP-162, not turning the restriction off); keeping the WSL VM running while Windows is idle; running `towercab doctor`; opening the UI at `http://localhost:7311` from Windows.
+- The guide says what is not supported: config, clones or the build cache under `/mnt/`.
+- The README's Requirements say Windows works through WSL2 only once the guide's steps have been run end to end on a Windows machine and the result is noted in the pull request. Until then the README does not mention Windows.
+- Verified by: `manual: follow docs/windows-wsl.md on a fresh Windows machine to a mission opened from the UI`, `public: README claims Windows only with the guide present`
+
 ### LOOP-120 · Telegram message when a reply is posted
 
 When Towercab has answered the owner's comment and the PR waits for the owner again, the owner gets a short Telegram message with a link to the reply.
