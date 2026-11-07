@@ -46,6 +46,10 @@ What to do:
    naming the file or behaviour that makes it necessary. Don't list tests the build only adds to or
    expects to leave alone; a helper that only gets new exported functions, types or constants needs no
    entry. Asking for them now saves the worker from stopping to ask later.
+   A plan that adds an owner wait or a new question needs a `WAITS` entry and an `EXITS` entry in the
+   wait table of `src/machine.ts`. For every such wait or ask, put `src/machine.ts` in `access.paths`
+   with the `why` `wait table entries only`. If the plan also changes transitions or `apply`, give a
+   `why` that says so instead.
 
 Return the JSON result:
 
