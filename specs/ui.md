@@ -934,6 +934,8 @@ The Board marks the repos that are not ready, so the owner sees it without openi
 
 Every task's stage map shows the same full list of stages, whatever the repo, so maps look alike.
 
+- Changed by [UI-272](#ui-272--the-stage-map-shows-the-path-this-intent-takes): stages that cannot apply are left out and summed up in one line, and unreached ones fold.
+
 - Replaces the "listed only when the attempt visited them" rule of UI-123: the map lists the stages of
   UI-72 and all of the ship stages for every attempt. A stage the attempt never reached is `not reached`
   as before; one that does not apply is `skipped` with its reason (UI-159).
@@ -1438,6 +1440,70 @@ Every list that can grow long has a header with a toggle that folds and opens it
 - A folded list still shows its header with the count (`Working · 12`). The count is the list's real length (the filter of UI-263 applied to the Inbox's list; the Inbox heading keeps UI-244's `needs`).
 - Lists start open. The state is remembered per browser (one `localStorage` entry for all lists, like UI-146's sort; a storage failure leaves the list working, and it stays as the owner set it until the page reloads). It survives live updates (UI-67): a refresh of data neither opens a folded list nor folds an open one, and focus stays on the toggle. A link to a proposal (`#proposed-<PR>`) opens a folded Proposed list.
 - Verified by: `ui: every long list has a header with a count and a toggle`, `ui: a folded list still shows its count`, `ui: lists start open`, `ui: fold state is remembered per browser`, `ui: fold state survives a live update`, `ui: fold toggle works by keyboard and on a phone`, `ui: fold state works without browser storage`
+
+### UI-268 · Not-ready looks different from needs-you
+
+A repo that lacks setup has its own colour and a badge that fits its text, so it is never mistaken for a wait on the owner.
+
+- This covers intent 261106-0820-1. `--warn` gets a hue distinct from `--needs` in light and dark mode, each at least 4.5:1 against the surface it is drawn on; `ui/DESIGN.md` and the comment above `.ready-badge` say so.
+- `.ready-badge` sizes to its text on every card (the Repos "All" view, the Board lane header, UI-155, UI-157), never the card's full width.
+- Verified by: `ui: warn and needs colours differ with enough contrast`, `ui: the not-ready badge fits its text`
+
+### UI-269 · A gap shared by most repos is said once
+
+When most repos lack the same setup item, the Repos page says so once at the top and drops the badge from each card.
+
+- Over the repos with a readiness result (UI-155): when an item is missing on at least 3 repos and on more than half of them, a line at the top reads `<n> of <m> repos have <item in plain words>` (for example `9 of 11 repos have no release job`). One line per such item.
+- A repo whose only missing items are shared ones shows no not-ready badge on the Repos tab or the Board (UI-157); the badge shows for any other missing item, with only those items in its tooltip. The repo's own page still lists every gap (UI-270).
+- Verified by: `ui: a shared gap is summed up once on the repos page`, `ui: no badge for a repo missing only shared items`
+
+### UI-270 · Setup gaps in plain words
+
+The "Set up this repo" section says each gap in plain words with what to do, and keeps the raw error under "Details".
+
+- Each missing item shows a sentence and an action (for example `Towercab's GitHub App can't read this repo's workflow settings: give it the Actions permission`). The raw command error (such as `gh api …: HTTP 403`) is inside a folded "Details" and appears once, not again under "GitHub settings". Unknown errors say `Towercab could not check this` with the raw text under "Details".
+- The check time is relative and exact on hover (UI-71). The section has the same card padding as the other cards, in the spacing tokens, so text does not touch its border.
+- Verified by: `ui: setup gaps are plain words with the error under details`, `ui: setup check time is relative`, `ui: setup section has card padding`
+
+### UI-271 · A readable Board at laptop widths
+
+Empty stations on the Board take little room, so busy ones are wide enough to read every chip.
+
+- A station column with no cards collapses to a narrow strip showing its name and `0`; a column with cards is at least 180 px wide. At 1,280 px wide every chip's text is fully visible (no clipping, no horizontal overflow of a chip).
+- A card title is cut after three lines; the full title is its tooltip and its accessible name.
+- The Board is as wide as the top bar and the other pages (1,120 px max), so the edges line up; a Board that needs more room scrolls sideways inside that width.
+- Verified by: `ui: empty board stations collapse to a strip`, `ui: busy board stations are at least 180px`, `ui: board chips are not clipped at 1280px`, `ui: board titles cut after three lines with the full title on hover`, `ui: board is as wide as the top bar`
+
+### UI-272 · The stage map shows the path this intent takes
+
+The stage map lists the stages this intent will go through, folds the rest, and names what does not apply.
+
+- Replaces UI-158 and changes UI-159: stages that cannot apply to the repo (deploy, live tests, rollback and revert for a repo with nothing to deploy, REPO-26) are left out and summed up in one line, `Not part of this repo's path: <stages in plain words>`, with the kind's reason as its tooltip. A stage the attempt visited is always listed, with its own outcome.
+- A run of two or more stages not reached yet folds into one row, `<n> more stages to go`, that opens to list them. A merged code PR is never shown as `skipped`.
+- Verified by: `ui: stage map leaves out stages that cannot apply and says so`, `ui: unreached stages fold into one row`, `ui: a merged change does not show merging as skipped`
+
+### UI-273 · An owner wait stage says what the owner did
+
+Opening a stage that was a wait on the owner shows the owner's answer, not "it wrote no files".
+
+- For a wait stage (plan review, code review and the like) the detail shows who decided, what (approved, changes requested, answered, closed) and when (relative, exact on hover), taken from the recorded event; while still waiting it says what it waits for. Without a recorded event it says `The owner decided on GitHub`. `This was a wait for you; it wrote no files.` is removed.
+- Verified by: `ui: a wait stage shows the owner's decision`, `ui: a wait stage still open says what it waits for`
+
+### UI-274 · A phone top bar that leaves room
+
+On a phone the top bar is short and the airspace starts folded.
+
+- At 375 px wide the sticky top bar is at most 100 px tall: `Updated <time>` joins the counts line instead of its own line.
+- On a phone the airspace starts folded to its one-line summary; the owner opens it (the state is remembered like UI-267's). On wider screens it starts open as before.
+- Verified by: `ui: phone top bar is at most 100px`, `ui: phone airspace starts folded`
+
+### UI-275 · Airspace badges never overlap
+
+The airspace's count badges (such as "+21") never cover a label or a plane, and the screenshots show these cases.
+
+- The boxes of the count badges do not intersect the stage labels or the planes at 360, 768 and 1,280 px wide.
+- `ui/fixture.ts` carries more than 8 repos, several of them not ready (some missing the same item, UI-269), and a CLI repo with a finished intent; the Repos, Board, intent and airspace screenshots (light, dark, mobile) use it.
+- Verified by: `ui: airspace count badges do not overlap at 360, 768 and 1280px`, `ui: screenshots light, dark and mobile`
 
 ## Out of scope
 
