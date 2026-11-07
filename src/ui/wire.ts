@@ -11,7 +11,6 @@ import type { Home } from "../home.ts";
 import type { Intent } from "../intents/types.ts";
 import type { Loop } from "../loop.ts";
 import { heldBack } from "../pick.ts";
-import { hostState, profileStep } from "../pipeline/hostcheck.ts";
 import { isParked, pickOrder, priorityOf } from "../priority.ts";
 import { proposeSettings, reopenMove, type SettingsEnv } from "../repo/settings.ts";
 import { addFailures, beginAddRepo } from "../repos.ts";
@@ -89,17 +88,6 @@ export function problemsOf(loop: Loop): Problem[] {
     out.push({
       title: "The budget is spent",
       fix: "Nothing new starts until the period ends. Raise the budget on the overview to go on now.",
-    });
-  }
-  // PIP-162: one owner step while Claude's sandbox needs Unix sockets for want of the AppArmor profile.
-  const bwrap = loop.d.tools.which("bwrap");
-  const step = bwrap ? profileStep(hostState(), bwrap) : null;
-  if (step) {
-    out.push({
-      title: step.title,
-      detail:
-        "User namespaces are restricted on this machine and Towercab's AppArmor profile for bwrap is not installed.",
-      fix: `Run: ${step.oneLine}`,
     });
   }
   out.push(...addProblems(loop.d.db));

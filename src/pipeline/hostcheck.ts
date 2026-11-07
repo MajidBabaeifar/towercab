@@ -4,7 +4,8 @@
 // Unix sockets only while that step is still undone.
 
 import { readFileSync } from "node:fs";
-import { apparmorProfile } from "./probe.ts";
+import type { Tools } from "../tools.ts";
+import { apparmorProfile, type ProbeResult, sandboxProbe } from "./probe.ts";
 
 export const RESTRICT_FILE = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
 export const PROFILE_FILE = "/etc/apparmor.d/towercab-bwrap";
@@ -59,5 +60,24 @@ export function profileStep(
       .map((l) => `'${l}'`)
       .join(" ")} | sudo tee ${PROFILE_FILE} >/dev/null && sudo apparmor_parser -r ${PROFILE_FILE}`,
     commands: `sudo tee ${PROFILE_FILE} >/dev/null <<'EOF'\n${file}\nEOF\nsudo apparmor_parser -r ${PROFILE_FILE}`,
+  };
+}
+
+/**
+ * The failure text the owner sees (PIP-162, PIP-163): the probe's own error, and, only when user namespaces are
+ * restricted and Towercab's profile is missing, the one step with the exact install command.
+ */
+export function sandboxFailure(probe: ProbeResult, host: HostState, bwrap: string): string {
+  const step = profileStep(host, bwrap);
+  return step ? `${step.title}: ${probe.why}. Run: ${step.oneLine}` : probe.why;
+}
+
+/** Runs the real probe first; refuses only when it fails (a working sandbox never gets the card). */
+export async function checkSandbox(tools: Tools, reader: HostReader = realReader): Promise<ProbeResult> {
+  const probe = await sandboxProbe(tools);
+  if (probe.ok) return probe;
+  return {
+    ok: false,
+    why: sandboxFailure(probe, hostState(reader), tools.which("bwrap") ?? "/usr/bin/bwrap"),
   };
 }

@@ -1497,7 +1497,7 @@ are stored in intent files and never change; each ask says plainly what the owne
 | `answer the question` | blocked | Answer a question so the work can go on: pick an option or write your own. |
 | `checks red` | blocked | The tests can't pass without your help. Reply with what to change, or start over. |
 | `allow check writes` | blocked | Decide if the tests may write to this machine's shared build cache: reply allow or no. |
-| `install sandbox profile` | blocked | Install Towercab's AppArmor profile for the sandbox with the command shown, then retry: no Claude run starts until it is installed. |
+| `fix sandbox` | blocked | Towercab's sandbox can't start, so no Claude run does: fix what the message says (for the AppArmor profile, run the command shown), then retry. |
 | `tests don't prove the change` | blocked | No test shows the change works. Reply with what a test should check, or say go on to continue without one. |
 | `CI red` | blocked | GitHub's checks still fail after two fix attempts. Reply with a hint on what to change, or start over. |
 | `CI stuck` | blocked | GitHub's checks didn't finish in time. Make sure they run, then reply so Towercab looks again. |

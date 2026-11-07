@@ -92,6 +92,10 @@ export async function doctor(o: {
     lines.push(`sandbox: ${probe.ok ? "the probe held" : `the probe failed: ${probe.why}`}`);
     if (!probe.ok) {
       ok = false;
+      // PIP-162: the one owner step, only when the probe failed and the restriction is on without the profile.
+      const step = profileStep((o.host ?? hostState)(), bwrapPath);
+      if (step)
+        lines.push(`owner step: ${step.title}; run:`, ...step.commands.split("\n").map((l) => `  ${l}`));
       if (userNamespaceDenied(probe.why)) {
         lines.push(
           "sandbox: Ubuntu may restrict user namespaces; allow only this bwrap with this AppArmor profile:",
@@ -100,10 +104,6 @@ export async function doctor(o: {
       }
     }
   }
-
-  // PIP-162: the one owner step while the restriction is on and the profile is missing.
-  const step = bwrapPath ? profileStep((o.host ?? hostState)(), bwrapPath) : null;
-  if (step) lines.push(`owner step: ${step.title}; run:`, ...step.commands.split("\n").map((l) => `  ${l}`));
 
   const v = await ghVersion(tools);
   lines.push(`gh version: ${v.version}${v.ok ? "" : ": Towercab needs 2.46 or newer"}`);

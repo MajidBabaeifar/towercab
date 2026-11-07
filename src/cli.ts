@@ -37,9 +37,8 @@ import { type Mission, unfinishedFor } from "./mission.ts";
 import { decide, nextText } from "./pick.ts";
 import { grantScanning } from "./pipeline/alerts.ts";
 import { guardMain } from "./pipeline/guard.ts";
-import { hostState, profileStep } from "./pipeline/hostcheck.ts";
+import { checkSandbox } from "./pipeline/hostcheck.ts";
 import { handlers } from "./pipeline/index.ts";
-import { sandboxProbe } from "./pipeline/probe.ts";
 import { ownerMergeRefusal } from "./pipeline/teammate.ts";
 import { parseScores } from "./priority.ts";
 import { addRepo, loadRepos, removeRepo, repoLine, repoList, setRepo } from "./repos.ts";
@@ -392,18 +391,8 @@ async function run(
           selfUpdate: Boolean(v.watch),
           readiness: true,
           limits: true,
-          hostState: () => hostState(),
-          // PIP-162: the sandbox must hold, and where user namespaces are restricted Towercab's profile must be
-          // installed, before anything is picked; the card with the step comes from doctor and the overview.
-          sandboxProbe: async () => {
-            const step = profileStep(hostState(), tools.which("bwrap") ?? "/usr/bin/bwrap");
-            if (step)
-              return {
-                ok: false,
-                why: `${step.title}: user namespaces are restricted and the profile is missing`,
-              };
-            return sandboxProbe(tools);
-          },
+          // PIP-163, PIP-162: the sandbox must hold before anything is picked or any Claude run starts.
+          sandboxProbe: () => checkSandbox(tools),
         },
         { watch: Boolean(v.watch), intent: v.intent as string | undefined },
       );

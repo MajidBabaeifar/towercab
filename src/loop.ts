@@ -83,7 +83,6 @@ import { sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import { type PipeData, prUrl as prLink } from "./pipeline/common.ts";
-import type { HostState } from "./pipeline/hostcheck.ts";
 import { writeTicks } from "./pipeline/steps.ts";
 import { evaluate } from "./pipeline/teammate.ts";
 import { isParked, priority } from "./priority.ts";
@@ -161,8 +160,6 @@ export interface LoopDeps {
   readinessLimitMs?: number;
   /** The checkout this loop's code runs from (LOOP-105); default the one this file is in. */
   codeRoot?: string;
-  /** PIP-162: the host's user-namespace state, checked before every Claude run (the `run` command sets it). */
-  hostState?: () => HostState;
   /** PIP-163: proves the sandbox holds before a mission is picked (default none; the `run` command sets it). */
   sandboxProbe?: () => Promise<{ ok: boolean; why: string }>;
   /** INT-39: when a backfill run's time is up (default a real timer; tests resolve it themselves). */
@@ -214,6 +211,8 @@ export class Loop {
   /** PIP-163: when the sandbox probe last ran (null = not yet) and whether it passed. */
   private probedAt: number | null = null;
   private probeOk = false;
+  /** The last probe's result; null before the first one. */
+  private lastProbe: { ok: boolean; why: string } | null = null;
   private children = new Map<number, Running>();
   /** MET-33: the budgets and caps reached now, and the missions they hold back. */
   private caps: Cap[] = [];
@@ -337,6 +336,7 @@ export class Loop {
     this.probedAt = this.now;
     const r = await probe();
     this.probeOk = r.ok;
+    this.lastProbe = r;
     if (r.ok) {
       this.health.ok("sandbox");
       this.d.log("sandbox: the start probe passed");
@@ -480,7 +480,7 @@ export class Loop {
       store: d.store,
       github: d.github,
       timeouts,
-      ...(d.hostState ? { host: d.hostState } : {}),
+      ...(d.sandboxProbe ? { sandbox: () => this.lastProbe } : {}),
       log: d.log,
       repo: (m) => {
         const r = d.config.repos.get(m.repo);
