@@ -1,6 +1,6 @@
 // AUT-35: a raise of `a` in the intents repo counts only when the owner's GitHub account made it.
 
-import { acceptedOf, clearFlag, flagOf, judgeRaise, seen, setAccepted, setFlag } from "./autonomy-change.ts";
+import { acceptedOf, clearFlag, flagOf, judgeProof, seen, setAccepted, setFlag } from "./autonomy-change.ts";
 import { noteIgnored } from "./commands.ts";
 import type { Db } from "./db.ts";
 import type { Forge } from "./forge.ts";
@@ -9,7 +9,7 @@ import type { IntentStore, Listing } from "./intents/types.ts";
 export interface WatchDeps {
   db: Db;
   store: IntentStore;
-  forge: Pick<Forge, "commitLogins" | "me">;
+  forge: Pick<Forge, "commitProof" | "me">;
   /** Unix seconds. */
   now: number;
   log(line: string): void;
@@ -36,17 +36,17 @@ export async function watchAutonomy(d: WatchDeps, listing: Listing): Promise<voi
     const flag = flagOf(db, i.id);
     if (flag && flag.commit === commit && flag.to === s.now) continue;
     const repo = d.store.github();
-    let logins: (string | null)[] | null = null;
+    let proof: Awaited<ReturnType<WatchDeps["forge"]["commitProof"]>> | null = null;
     if (commit && repo) {
       try {
-        logins = await d.forge.commitLogins(repo, commit);
+        proof = await d.forge.commitProof(repo, commit);
       } catch (e) {
         // GitHub can't say right now: look again on the next poll; nothing loosens meanwhile.
         d.log(`autonomy ${i.id}: couldn't read the commit's account: ${(e as Error).message}`);
         continue;
       }
     }
-    const v = judgeRaise(logins, d.forge.me);
+    const v = judgeProof(proof, d.forge.me);
     if (v.owner) {
       setAccepted(db, i.id, s.now);
       clearFlag(db, i.id);

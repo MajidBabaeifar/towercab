@@ -94,14 +94,26 @@ export interface RaiseVerdict {
   who: string;
 }
 
+/** The host's web committer: it signs what is made on its web page or through its API. */
+export const WEB_COMMITTER = "web-flow";
+
 /**
- * AUT-35: whether the GitHub accounts GitHub reports for the commit include the owner's. The commit's own
- * name and e-mail are never read. No account (null, or the host couldn't say) is not the owner.
+ * AUT-35: a raise is the owner's only when it is provably theirs: the host verified the commit's signature,
+ * and either it is signed for the owner's account (committer = the owner), or it was made through the host's
+ * web page or API (committer `web-flow`) with the owner as author. An unsigned push, however it names the
+ * owner (the commit's e-mail or name), a commit nobody can attribute, and no answer at all are not.
  */
-export function judgeRaise(logins: (string | null)[] | null, me: string): RaiseVerdict {
-  const named = (logins ?? []).filter((l): l is string => !!l);
-  const owner = named.some((l) => l.toLowerCase() === me.toLowerCase());
-  return { owner, who: owner ? me : (named[0] ?? "unknown") };
+export function judgeProof(
+  proof: { author: string | null; committer: string | null; verified: boolean } | null,
+  me: string,
+): RaiseVerdict {
+  const is = (l: string | null) => l !== null && l.toLowerCase() === me.toLowerCase();
+  if (proof?.verified && (is(proof.committer) || (proof.committer === WEB_COMMITTER && is(proof.author)))) {
+    return { owner: true, who: me };
+  }
+  const who = [proof?.committer, proof?.author].find((l) => !!l && l !== WEB_COMMITTER) ?? null;
+  // The owner's own account on a commit nobody can prove is theirs: the card says it is unverified.
+  return { owner: false, who: !who ? "unknown" : is(who) ? `${who} (unverified)` : who };
 }
 
 export interface Seen {

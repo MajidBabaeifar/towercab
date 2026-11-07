@@ -333,3 +333,53 @@ test("autonomy: a raise hidden in a merge commit is judged by the merge", async 
   // A commit that doesn't set the level now (unrelated history) is never credited either.
   expect(await w.store.lastAChange!(ID)).toBe(w.head());
 });
+
+test("autonomy: an unsigned push naming the owner is flagged", async () => {
+  const w = await world();
+  // The commit carries the owner's e-mail and GitHub links it to the owner's account, but nobody signed it.
+  w.push(file("u: 3\ni: 3\na: 5\n"), ["owner", "owner"]);
+  w.forge.commitProofs.set(w.head(), { author: "owner", committer: "owner", verified: false });
+  await w.watch();
+  expect(flagOf(w.db, ID)).toMatchObject({ who: "owner (unverified)", from: 2, to: 5 });
+  expect(await levelOf(w)).toBe(2);
+  // A commit made on the web page, but not verified, is no better.
+  w.push(file("u: 3\ni: 3\na: 4\n"), ["owner", null]);
+  w.forge.commitProofs.set(w.head(), { author: "owner", committer: "web-flow", verified: false });
+  await w.watch();
+  expect(flagOf(w.db, ID)).toMatchObject({ to: 4 });
+  expect(await levelOf(w)).toBe(2);
+  // One confirmed click on the card accepts it.
+  await w.actions().autonomy!(ID, 4, "owner");
+  expect(flagOf(w.db, ID)).toBeNull();
+  expect(await levelOf(w)).toBe(4);
+});
+
+test("autonomy: a verified web commit by the owner counts", async () => {
+  const w = await world();
+  w.push(file("u: 3\ni: 3\na: 4\n"), ["owner", null]);
+  w.forge.commitProofs.set(w.head(), { author: "owner", committer: "web-flow", verified: true });
+  await w.watch();
+  expect(flagOf(w.db, ID)).toBeNull();
+  expect(await levelOf(w)).toBe(4);
+  // The host's committer with somebody else as author is not the owner's.
+  w.push(file("u: 3\ni: 3\na: 5\n"), ["mallory", null]);
+  w.forge.commitProofs.set(w.head(), { author: "mallory", committer: "web-flow", verified: true });
+  await w.watch();
+  expect(flagOf(w.db, ID)).toMatchObject({ who: "mallory", to: 5 });
+  expect(await levelOf(w)).toBe(4);
+});
+
+test("autonomy: a commit signed by the owner and verified counts", async () => {
+  const w = await world();
+  w.push(file("u: 3\ni: 3\na: 5\n"), ["owner", "owner"]);
+  w.forge.commitProofs.set(w.head(), { author: "owner", committer: "owner", verified: true });
+  await w.watch();
+  expect(flagOf(w.db, ID)).toBeNull();
+  expect(await levelOf(w)).toBe(5);
+  // Lowered, then raised again by a commit signed and verified for somebody else's account: flagged.
+  await w.actions().autonomy!(ID, 2, "owner");
+  w.push(file("u: 3\ni: 3\na: 3\n"), ["mallory", "mallory"]);
+  w.forge.commitProofs.set(w.head(), { author: "owner", committer: "mallory", verified: true });
+  await w.watch();
+  expect(flagOf(w.db, ID)).toMatchObject({ who: "mallory", to: 3 });
+});

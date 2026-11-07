@@ -7,6 +7,7 @@ import type {
   CheckState,
   ChecksRead,
   CodeScanningAlert,
+  CommitProof,
   Deployment,
   DeploymentStatus,
   FileChange,
@@ -59,6 +60,8 @@ export class FakeForge implements Forge {
   readonly files = new Map<string, string>();
   /** AUT-35: the logins the host reports per commit sha (author, committer); none: no account. */
   readonly commitAccounts = new Map<string, (string | null)[]>();
+  /** AUT-35: what the host says about a commit when a test needs the signature too; else derived from `commitAccounts`. */
+  readonly commitProofs = new Map<string, CommitProof>();
   private next = 1;
 
   constructor(me = "owner") {
@@ -88,6 +91,15 @@ export class FakeForge implements Forge {
   async commitLogins(repo: string, sha: string): Promise<(string | null)[]> {
     this.log(`commit ${repo} ${sha}`);
     return this.commitAccounts.get(sha) ?? [null, null];
+  }
+
+  async commitProof(repo: string, sha: string): Promise<CommitProof> {
+    const given = this.commitProofs.get(sha);
+    if (given) return given;
+    // Derived: the author is the first account and, with no committer named, the host's web committer
+    // signed it (what a commit made on the host's page looks like).
+    const [author, committer] = await this.commitLogins(repo, sha);
+    return { author: author ?? null, committer: committer ?? "web-flow", verified: true };
   }
 
   async openPr(repo: string, o: { base: string; head: string; title: string; body: string }) {

@@ -153,6 +153,13 @@ export interface IssueText {
   confidential?: boolean;
 }
 
+/** AUT-35: what the host says about a commit. */
+export interface CommitProof {
+  author: string | null;
+  committer: string | null;
+  verified: boolean;
+}
+
 export interface Forge {
   /** `[github].me`: the owner's login. */
   readonly me: string;
@@ -191,6 +198,12 @@ export interface Forge {
    * linked to it). Never the name or e-mail written in the commit.
    */
   commitLogins(repo: string, sha: string): Promise<(string | null)[]>;
+  /**
+   * AUT-35: who made a commit, as the host reports it: the author's and the committer's login, and whether
+   * the host verified the commit's signature (a commit made through the host's web page or API is signed by
+   * the host itself, committer `web-flow`).
+   */
+  commitProof(repo: string, sha: string): Promise<CommitProof>;
 
   readChecks(repo: string, n: number): Promise<ChecksRead>;
   rerunFailed(repo: string, run: number): Promise<void>;
