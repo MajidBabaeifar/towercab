@@ -898,6 +898,23 @@ On the command line, the install steps print under the error, and running the sa
 - Running `repo add <owner/name>` again after the install adds the repo with nothing else typed or changed.
 - Verified by: `cli: repo add prints the install steps after the error`, `cli: repo add works again once the App is installed`, `repos: add carries the install help in its refusal`
 
+### LOOP-124 · `towercab add` checks for overlap and asks
+
+`towercab add` at a terminal reports intents that overlap the new one and asks before writing; in a script it writes as before and runs the paid check only when asked.
+
+- **At a terminal** (stdin and stdout are a TTY): `add` runs the overlap check (INT-73) and, with no match, writes straight away as INT-71 says. With matches it prints one line each: `<kind> <ref> <title>`, then `  <how>`, and a `Title: <titleNote>` line if there is one, then asks `Create anyway (y), add to one of them (its number), or cancel (n)? [y/n/<number>]`. Only matches that `canAddTo` (INT-74) are numbered; a match past design is printed with `already past design: write a new intent and link <id>` and has no number. `y` writes a new intent; a number applies INT-74 with the text given (the command line has only the title, so the title is added as a line under `## Proposed outcome`); anything else, or an end of input, cancels: exit 1, nothing written, `towercab: cancelled`. `--no-check` skips the check and the question; it is also accepted outside a terminal, where it changes nothing.
+- **Not at a terminal** (a script, a pipe): `add` does not run the check, writes the intent at once and prints what INT-2 says, exactly as before, so no script changes. `--check` runs the check anyway; matches are then printed to stderr as a warning (`towercab: warning: this may overlap <kind> <ref> <title>`, one line each, `  <how>` under it) and the intent is written regardless, exit 0. There is no question and no refusal.
+- A failed check (INT-73) prints `towercab: the overlap check failed: <reason> (skipped)` on stderr; at a terminal it asks whether to create anyway the same way, and with `--check` in a script it writes anyway. With `--no-check` the check never runs.
+- Verified by: `cli: add with no overlap writes straight away`, `cli: add lists overlaps and asks`, `cli: add creates anyway on y`, `cli: add adds to the chosen intent`, `cli: add offers no number for an intent past design`, `cli: add cancels on n or end of input`, `cli: add without a terminal writes and runs no check`, `cli: add --check without a terminal warns and writes`, `cli: add --no-check skips the check`, `cli: add says the check failed and asks`
+
+### LOOP-125 · The overlap check is a side run, outside any mission
+
+An overlap check runs when the owner asks for it, takes no slot, and its cost shows in the spend.
+
+- It runs in the process that serves the request (the page's server or the command), not in a pass, and takes no build slot (LOOP-110); at most 2 run at once, a third waits. Pause (LOOP-113) does not stop it, because the owner asked for it, but a draining service (LOOP-108) refuses it with `Towercab is restarting; try again in a minute`.
+- Its cost is stored as a run with no mission and kind `overlap`, and counts in the day's spend and in the caps' totals (MET-29, MET-33); the Spend view lists it as `Overlap checks`.
+- Verified by: `overlap: a check takes no build slot`, `overlap: a check runs while paused`, `overlap: a draining service refuses a check`, `overlap: its cost counts in the day's spend`, `overlap: two checks at most run at once`
+
 ### LOOP-113 · Pause stops all new work
 
 While Towercab is paused, no mission starts anything new, but steps already running finish and are applied.
