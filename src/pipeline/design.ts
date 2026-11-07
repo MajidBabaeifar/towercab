@@ -9,6 +9,7 @@ import { riskWhy, specGate } from "../autonomy.ts";
 import { git, refreshBase } from "../checkout.ts";
 import { MERGE_METHOD } from "../forge.ts";
 import { SPEC_CONFLICT_REVISIONS, SPEC_CONFLICT_TEXT } from "../github/events.ts";
+import { PausedHold } from "../github/paused.ts";
 import { assignOwner } from "../github/teammates.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import { renameFeature } from "../intents/features.ts";
@@ -528,8 +529,9 @@ export const designHandler: Handler = {
     if (m.step === "risk") {
       const e = endRisk(cx, m, end, "spec");
       if ("progress" in e) return e.progress;
+      // LOOP-113: the text goes first, so a write held by the pause leaves the step as it was.
+      await patchBody(cx, { ...m, step: "spec_ci", data: JSON.stringify({ ...data(m), ...e.data }) });
       const fresh = cx.record(m, "spec_ci", {}, e.data);
-      await patchBody(cx, fresh);
       return decide(cx, fresh);
     }
     const r = ended(cx, m, "design", end, (v) => parseResult("design", v));
@@ -724,6 +726,7 @@ async function patchBody(cx: Ctx, m: Mission): Promise<void> {
   try {
     await viaForge(cx.github.updatePrBody(repo.github, m.spec_pr!, await bodyOf(cx, m)));
   } catch (e) {
+    if (e instanceof PausedHold) throw e;
     cx.log(`${m.intent}: couldn't update the spec PR text: ${(e as Error).message}`);
   }
 }
