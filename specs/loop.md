@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-115..119, LOOP-129..132 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..119, LOOP-129..132 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -988,9 +988,14 @@ While Towercab is paused, no mission starts anything new, but steps already runn
 - `status` and the page (UI-109) say `paused: <n> running steps finishing` while `n > 0` children run, and
   `paused` once none do. `n` counts running children, whichever mission they belong to.
 - `resume` lifts the hold; every mission continues from the step where it stopped, with no change to its counters.
+- How it is held: the loop's forge, `git push` and intents store refuse changes while `meta.paused` is set
+  (`held while paused: <what>`, never a failure or a health fault); a stage's entry effects, the settings and
+  release polls and the ticked steps wait for resume. A result whose write was held is kept and applied again after
+  resume. The owner's own commands still apply, but `towercab approve` and `towercab reply` answer
+  `paused: resume first`.
 - This is the global pause only. The per-intent pause (SHD-22, UI-239) keeps its meaning: it holds only that
   intent's next step and never stops running work.
-- Verified by: `loop: a paused loop does not start the next step of a mission`, `loop: a running step finishes and is applied while paused`, `loop: a paused loop makes no GitHub writes`, `loop: polling continues while paused`, `status: paused counts running steps finishing`, `loop: resume continues missions where they stopped`
+- Verified by: `loop: a paused loop does not start the next step of a mission`, `loop: a running step finishes and is applied while paused`, `loop: a paused loop makes no GitHub writes`, `loop: held git pushes`, `loop: polling continues while paused`, `status: paused counts running steps finishing`, `loop: resume continues missions where they stopped`
 
 ### LOOP-114 · Pause now stops running children
 
