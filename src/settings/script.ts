@@ -30,9 +30,12 @@ export const SCRIPT_TIMEOUT_MS = 120_000;
 
 export type Mode = "check" | "plan" | "apply" | "skip-ruleset";
 
+/** Who the script runs as: the App with its token, or the owner with their own `gh` login (REPO-39). */
+export type As = "app" | "owner";
+
 export interface Script {
   tag: string;
-  run(mode: Mode): Promise<RunResult>;
+  run(mode: Mode, as?: As): Promise<RunResult>;
 }
 
 /** The highest `v*` tag reachable from `origin/<base>` of the ci clone, or null. */
@@ -61,8 +64,9 @@ const ARGS: Record<Mode, (github: string) => string[]> = {
 };
 
 /**
- * Run `fn` with the pinned script of `repo`'s checks. It runs as the App with its token for the repo and
- * nothing else of the loop's environment, is given only that repo, and each run is logged with its tag.
+ * Run `fn` with the pinned script of `repo`'s checks. A run is as the App (its token for the repo) or as
+ * the owner (no token: `gh` uses the owner's own login), with nothing else of the loop's environment, is
+ * given only that repo, and is logged with its tag.
  */
 export async function withScript<T>(
   d: SettingsDeps,
@@ -104,19 +108,18 @@ export async function withScript<T>(
     }
     const script = join(tree, "bin", "apply-settings");
     if (!existsSync(script)) throw new SettingsUnknown(`ci ${tag} has no bin/apply-settings`);
-    const auth = await d.github.gitAuth(repo.github);
-    const env: Record<string, string> = {
+    const base: Record<string, string> = {
       PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
       HOME: process.env.HOME ?? "",
       GH_PROMPT_DISABLED: "1",
       NO_COLOR: "1",
-      ...auth.env,
     };
     return await fn({
       tag,
-      run: (mode) => {
+      run: async (mode, as = "app") => {
+        const env = as === "owner" ? base : { ...base, ...(await d.github.gitAuth(repo.github)).env };
         d.log(
-          `apply-settings ${tag} ${mode === "skip-ruleset" ? "apply --skip-ruleset" : mode} ${repo.github}`,
+          `apply-settings ${tag} ${mode === "skip-ruleset" ? "apply --skip-ruleset" : mode} ${repo.github}${as === "owner" ? " as owner" : ""}`,
         );
         return d.tools.run(script, ARGS[mode](repo.github), { cwd: tree, env, timeoutMs: SCRIPT_TIMEOUT_MS });
       },

@@ -43,7 +43,6 @@ import { parseScores } from "./priority.ts";
 import { addRepo, loadRepos, removeRepo, repoLine, repoList, setRepo } from "./repos.ts";
 import { checkoutRoot, down, logsArgv, restart, up } from "./service.ts";
 import { restoreBackup } from "./settings/backup.ts";
-import { grantPermission } from "./settings/store.ts";
 import { resetShadow, statusText } from "./shadow/store.ts";
 import { buildShadow } from "./shadow/wire.ts";
 import { checkIds, readPrList } from "./specs-cli.ts";
@@ -102,7 +101,6 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   repo set <name> key=value…      workers, ahead, base, path, env (NAME=value or a JSON object)
   shadow reset | shadow status    clear the shadow's conversation; what it is doing and what it cost today
   settings restore <repo>         put back the settings saved before the last apply
-  settings granted                the GitHub App now has Administration (write)
   settings scanning-granted       the GitHub App now has Code scanning alerts (read)
   ui [--no-open]                  open the web page
   specs check-ids [--base <ref>] [--prs <file>]
@@ -590,24 +588,19 @@ async function run(
   }
 }
 
-/** `settings restore <repo>` (REPO-31) and `settings granted` (REPO-32). */
+/** `settings restore <repo>` (REPO-31) and `settings scanning-granted`. */
 export async function settingsCommand(
   w: Pick<World, "config" | "home" | "db" | "tools" | "github">,
   args: string[],
 ): Promise<string> {
   const [sub, name] = args;
-  if (sub === "granted" && args.length === 1) {
-    return grantPermission(w.db)
-      ? "noted: Towercab applies settings again at its next check"
-      : "nothing to clear: the GitHub App was not missing the permission";
-  }
   if (sub === "scanning-granted" && args.length === 1) {
     return grantScanning(w.db)
       ? "noted: Towercab reads code scanning alerts again on the next red check"
       : "nothing to clear: the GitHub App was not missing the permission";
   }
   if (sub !== "restore" || !name || args.length !== 2)
-    throw new UsageError("settings restore <repo> | settings granted | settings scanning-granted");
+    throw new UsageError("settings restore <repo> | settings scanning-granted");
   const repo = w.config.repos.get(name);
   if (!repo) throw new Error(`${name} isn't a repo Towercab knows (towercab repo list)`);
   if (!w.github) throw new Error(`settings restore needs [github] in ${w.config.file} (app_id, me)`);

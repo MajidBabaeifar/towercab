@@ -61,6 +61,11 @@ export function closeProposed(pr: number, text: string): Promise<ActionReply> {
   return post({ action: "close", pr, text: text.trim() || undefined });
 }
 
+/** REPO-39: apply the standard settings of one repo with the owner's own login. */
+export function applySettings(repo: string): Promise<ActionReply> {
+  return post({ action: "apply-settings", repo });
+}
+
 /** UI-151: open (or update) the PR that changes a repo's limits; `null` takes a key out of the file. */
 export function saveLimits(
   repo: string,
