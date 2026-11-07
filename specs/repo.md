@@ -411,7 +411,7 @@ Towercab checks the standard GitHub settings of every registered repo once a day
   falls back to the head.
 - The daily run only reads: it is always `apply-settings --check <owner/name>`, never without `--check`, with
   `GH_TOKEN` set to the App's installation token for the repo's owner, and for one repo named. Nothing
-  here applies anything; applying is the owner's click ([REPO-39](#repo-39--apply-by-the-owners-click)).
+  here applies anything (a read the App is refused is repeated as the owner, [REPO-41](#repo-41--the-app-needs-no-administration-permission)); applying is the owner's click ([REPO-39](#repo-39--apply-by-the-owners-click)).
 - The repo page lists the gaps in plain words and the time of the last check; `ok` says
   `Standard settings in place`. A check that cannot run is `unknown` and keeps the last result
   ([REPO-27](#repo-27--a-check-that-cannot-run)). The check never blocks work: it only warns, and
@@ -489,7 +489,8 @@ When a repo has settings gaps, its card shows exactly what Apply would change.
 
 - Right after a daily check that ends `gaps` (and on a page load with a stored result but no plan), Towercab
   runs the pinned `apply-settings --plan <owner/name>` ([REPO-31](#repo-31--applying-the-settings)'s
-  guard reads the same output) with the App's token, which only reads, and stores its JSON beside the
+  guard reads the same output) with the App's token, which only reads, or as the owner when the App is refused
+  ([REPO-41](#repo-41--the-app-needs-no-administration-permission)), and stores its JSON beside the
   result in `settings:<repo>` (`plan`). A release without `--plan`, or a failing run, stores no plan
   and the card says `The plan is not available from this ci release`; Apply stays offered.
 - The card lists each change in plain words (setting, now → after) with a primary **Apply** button.
@@ -532,9 +533,13 @@ If the owner's login is not allowed to change a repo's settings, the card says s
 Towercab and `doctor` work with the GitHub App as it is, without the Administration permission.
 
 - The App's needed permissions no longer list Administration; `doctor` prints nothing about it, whether it is
-  granted or not. Where the daily check or the plan cannot read a setting with the App's token (a 403), the
-  item is `unknown` ([REPO-27](#repo-27--a-check-that-cannot-run)), not an error.
-- Verified by: `doctor: no Administration line whatever the App has`, `repo: a check the App cannot read is unknown`
+  granted or not.
+- Some settings (branch protection rules, for one) cannot be read with the App's token (a 403 or "Resource not
+  accessible"). The daily check and the plan then run once more, still only with `--check` or `--plan`, as the
+  owner ([REPO-39](#repo-39--apply-by-the-owners-click)'s identity), so those gaps are found and Apply is offered for
+  them too. This read-only retry writes nothing and needs no click. With no owner login, or a refusal that
+  stays, the item is `unknown` ([REPO-27](#repo-27--a-check-that-cannot-run)), not an error.
+- Verified by: `doctor: no Administration line whatever the App has`, `repo: a check the App cannot read is read as the owner`, `repo: a read as the owner never writes`, `repo: a check nobody can read is unknown`
 
 ### REPO-34 · Drafting a verifying section
 
