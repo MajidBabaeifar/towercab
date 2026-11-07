@@ -1855,18 +1855,9 @@ table, so the build does not stop to ask for it.
 
 ### PIP-195 · A wait table edit is covered by a plan that adds a wait
 
-An edit to `src/machine.ts` that only adds wait table entries needs no extra approval when the plan
-adds a wait.
-
-- When the diff of `src/machine.ts` only adds keys to `WAITS` and `EXITS` (no removed or changed line,
-  nothing outside those two objects, so no transition and no `apply` change), the file counts as
-  granted for a mission whose plan adds a wait (below), even if the plan did not list it. No
-  `data.unplanned` is recorded and the gate does not go to `approval:merge` because of it (AUT-15).
-- Any other change to the file, or the same entries on a mission whose plan adds no wait, stays
-  unplanned access (AUT-15). A plan that lists the file keeps its own grant.
-- A plan "adds a wait" when every key the diff adds to `WAITS` appears verbatim in the approved plan's
-  text. The check reads the diff against the base branch.
-- Verified by: `pipeline: an edit adding only wait table entries is covered by a plan that adds a wait`, `pipeline: an edit that changes a transition is still unplanned access`, `pipeline: wait table entries without a planned wait are unplanned access`
+Removed: the owner decided that an edit to `src/machine.ts` the plan did not list still waits for the
+owner as unplanned access (AUT-15), even when it only adds wait table entries. PIP-194 is the whole
+fix: the plan lists the file up front.
 
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
