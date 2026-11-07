@@ -1648,7 +1648,7 @@ An intent that names requirement numbers in advance gets different ones, written
 
 - At pick, Towercab reads the IDs in the intent's `## Proposed outcome` (`spec IDs: PIP-130..132`, ranges and lists) and checks them against the base branch and the requirement IDs added by open spec PRs (PIP-130).
 - A reserved range that sits in a gap is valid when nothing on `main` or in an open spec PR uses its IDs; it is never renumbered just for being in a gap.
-- An ID is taken only when it exists on the base branch or in an open spec PR of another intent; an ID written by this intent's own merged or open spec PR is never taken (PIP-202).
+- An ID is taken only when it exists on the base branch or in an open spec PR of another intent; an ID that is the intent's own (written by its own merged or open spec PR, or named by the intent file as already written) is never taken (PIP-202).
 - A clash renumbers the whole reserved range to the next free numbers of the same prefix, keeping its length, and rewrites that line and any other mention of the old IDs in the intent through `setField`-style edits that leave other lines byte-identical; the new numbers are what the design gets as its reserved IDs.
 - The change is committed to the intents repo like any intent edit (INT rules) and noted in the mission's log; nothing else in the intent changes. No clash → the intent is untouched.
 - Verified by: `pipeline: reserved IDs that clash are renumbered at pick`, `pipeline: renumbered IDs are written back to the intent`, `pipeline: free reserved IDs leave the intent untouched`, `pipeline: a reserved range in a gap is not renumbered`
@@ -1966,13 +1966,14 @@ A stage can only call the code host through the `Forge` interface; the raw `gh` 
 
 ### PIP-202 · An intent's own spec rows are never renumbered
 
-Towercab never moves an ID that the intent's own spec pull request already wrote, merged or open.
+Towercab never moves an ID that is the intent's own: one its own spec pull request wrote (merged or open), or one the intent file itself names as already written.
 
-- At pick (PIP-131) and in the checks before the design runs and before it publishes (PIP-130), a reserved ID is counted as taken only if it exists on the base branch or is added by an open spec PR of another intent. Rows are matched to their intent by the spec PR's head (`towercab/<intent id>-spec`) and, for a merged one, by the `### <ID> ·` headings its merge commit added.
-- A reserved ID on the base branch that this intent's own earlier spec PR added stays as written, and the design gets it as an existing row to build or make Live, not as a new one. An open spec PR of the same intent never makes its own IDs a clash.
-- A reserved ID that exists on the base branch from another intent's rows, or from no spec PR Towercab can match to this intent, is still moved by PIP-131.
-- If the merged spec PRs cannot be read, the reserved IDs are left unmoved and the mission's log notes "IDs unchecked against merged spec PRs" rather than guessing; PIP-132 stays the backstop.
-- Verified by: `pipeline: reserved IDs from the intent's own merged spec PR are kept`, `pipeline: reserved IDs from the intent's own open spec PR are kept`, `pipeline: reserved IDs that belong to another intent's rows are still moved`, `pipeline: unreadable merged spec PRs leave reserved IDs unmoved`
+- At pick (PIP-131) and in the checks before the design runs and before it publishes (PIP-130), a reserved ID is counted as taken only if it exists on the base branch or is added by an open spec PR of another intent, and is not the intent's own.
+- An ID is the intent's own when either holds: (a) its row on the base branch, or in an open spec PR, was added by a spec PR of this intent; or (b) the intent file names it as already written (for example "already written; make them Live"). A spec PR belongs to the intent when its head branch starts with `towercab/<intent id>-` and ends with `-spec` (the real form is `towercab/<intent id>-<short title>-spec`; the shorter `towercab/<intent id>-spec` also matches). For a merged PR, the IDs are the `### <ID> ·` headings its merge adds.
+- An own ID on the base branch stays as written, and the design gets it as an existing row to build or make Live, not as a new one. An open spec PR of the same intent never makes its own IDs a clash.
+- A reserved ID whose rows on the base branch belong to another intent, or to no intent (no matching spec PR and not named as already written by the intent), is still moved by PIP-131.
+- If the merged spec PRs cannot be read, the reserved IDs are left unmoved except those that exist on the base branch with no own-ID evidence from the intent file; the mission's log notes "IDs unchecked against merged spec PRs", and PIP-132 stays the backstop.
+- Verified by: `pipeline: reserved IDs from the intent's own merged spec PR are kept`, `pipeline: reserved IDs from the intent's own open spec PR are kept`, `pipeline: reserved IDs the intent names as already written are kept`, `pipeline: a spec PR head is matched by the intent id prefix and the -spec suffix`, `pipeline: reserved IDs that belong to another intent's rows are still moved`, `pipeline: reserved IDs on main that belong to no intent are still moved`, `pipeline: unreadable merged spec PRs leave reserved IDs unmoved`
 
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
