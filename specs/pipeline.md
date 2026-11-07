@@ -1839,6 +1839,35 @@ The intent page lists the owner-account comments that agents wrote, so the owner
 - `GET /api/intents/<id>` includes the comments as `agent_comments: [{agent, url, at, excerpt, acted_on}]` in time order, an empty list when there are none; the card's data (and the page's) has `decided_by_agent: <name>` when an agent answered for the owner, and no such key otherwise.
 - Verified by: `ui: the intent page lists agent comments written under the owner's login`, `ui: the intent api returns agent comments`, `ui: a card shows agent for owner after an agent's answer`
 
+### PIP-194 · A plan that adds a wait lists the wait table in its access
+
+When a plan adds an owner wait or a new question, it asks up front for the file that holds the wait
+table, so the build does not stop to ask for it.
+
+- A "new wait" is a `waiting:` text a handler can set that `WAITS` in `src/machine.ts` does not yet have
+  (REPO-13's guard covers the file; AUT-15 is what the worker hit in 261105-2210 and 261105-2250).
+  Each needs a `WAITS` entry (its stage and ask) and an `EXITS` entry (its exit kinds).
+- The planner's agent file (`agents/plan.md`) tells it to check, for every wait or ask the plan adds,
+  that `src/machine.ts` is in `access.paths`, with the `why` `wait table entries only`. A plan that
+  also changes transitions or `apply` lists the file with a `why` that says so instead.
+- PIP-115's rules apply unchanged: the owner can untick the box, and an unticked path is not granted.
+- Verified by: `pipeline: plan prompt tells the planner to list the wait table for a new wait`, `pipeline: plan access lists the wait table with a wait table reason`
+
+### PIP-195 · A wait table edit is covered by a plan that adds a wait
+
+An edit to `src/machine.ts` that only adds wait table entries needs no extra approval when the plan
+adds a wait.
+
+- When the diff of `src/machine.ts` only adds keys to `WAITS` and `EXITS` (no removed or changed line,
+  nothing outside those two objects, so no transition and no `apply` change), the file counts as
+  granted for a mission whose plan adds a wait (below), even if the plan did not list it. No
+  `data.unplanned` is recorded and the gate does not go to `approval:merge` because of it (AUT-15).
+- Any other change to the file, or the same entries on a mission whose plan adds no wait, stays
+  unplanned access (AUT-15). A plan that lists the file keeps its own grant.
+- A plan "adds a wait" when every key the diff adds to `WAITS` appears verbatim in the approved plan's
+  text. The check reads the diff against the base branch.
+- Verified by: `pipeline: an edit adding only wait table entries is covered by a plan that adds a wait`, `pipeline: an edit that changes a transition is still unplanned access`, `pipeline: wait table entries without a planned wait are unplanned access`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
