@@ -75,8 +75,9 @@ An intent without `a` counts as a5: full autonomy, still limited by the repo's c
 the owner didn't write, by AUT-13.
 
 - `effectiveA`: no `a` at pick and none now → `DEFAULT_A` = 5, then the minimum with the repo cap
-  (AUT-8), then at most 4 when `source` isn't `me` (AUT-13). Removing `a` mid-flight leaves a5 (the
-  owner's current choice, AUT-34); the risk gate (AUT-18), not the number, protects the change.
+  (AUT-8), then at most 4 when `source` isn't `me` (AUT-13). Removing `a` mid-flight is a raise to
+  that default (AUT-35): it counts when the owner does it and is flagged otherwise, so a stranger deleting
+  the line can't loosen a gate. The risk gate (AUT-18) protects the change either way.
 - Verified by: `autonomy: no a counts as a5`, `pipeline: an intent without a runs as a5`
 
 ### AUT-10 · Caps after a revert
@@ -302,11 +303,12 @@ A raise of an intent's autonomy counts only when the owner makes it on the web p
 - The channels for raising are the local page (`POST /api/actions` with `actor: owner`, UI-65, as in AUT-32) and GitHub. There is no command for it on the command line and no shadow action: the shadow (SHD-19) refuses a request to raise with the reason "only you can raise autonomy", recorded as refused (SHD-12, UI-237). A `commands` row that raises and did not come from the page (`by: page`) is dropped and noted on the timeline (AUT-32). Raising from a0 is no different from any other raise.
 - A push to the intents repo counts as the owner's raise when the pushing GitHub account is the owner's login (PIP-44), wherever the push was made. Towercab checks the account, from the verified login of the commit's author or pusher as GitHub reports it, never the local `user.name` or e-mail in the commit, which anyone can set. A commit whose account cannot be verified does not count.
 - When the loop syncs the intents repo and finds `a` higher than the last level it accepted, and the commit that raised it does not count, it flags the raise and writes no commit back. The flag keeps who raised it (account, or `unknown`), from → to, and the commit. A first value on a new intent, and an `a` that was missing and is set, are not raises.
+- Deleting the `a:` line from an intent that had one is a raise to the level the intent then gets (a5, or a4 when `source` isn't `me`, AUT-9, AUT-13), and is judged like any other raise: from the owner's account it counts, from any other it is flagged and the mission keeps the level it had. Deleting the line when the intent already runs at that default, or a level above it, raises nothing. The page never deletes the line: it always writes a level (UI-257).
 - While a raise is flagged the mission uses the lower level (the one before the raise, AUT-8). Flagging is noted once on the intent's timeline (AUT-32) and shows a Needs-you card naming who raised it (UI-258).
 - A flag ends when the owner accepts the raise or sets the level back on the page (UI-257, UI-258), or when `a` is lowered to or below the accepted level by any channel. Accepting makes the raise count from the next gate.
 - Lowering is done by the owner on the page or on GitHub, like a raise, and applies at once (AUT-34); it is not held for a confirmation or a `yes`. A worker's `lower_a` (AUT-7) stays as it is. No new command-line command or shadow action lowers.
 - Like a0, this is a rule Towercab's own shadow, agents and CLI follow, not a security boundary (see Decisions): the owner's `gh` login on this machine cannot be told from the owner.
-- Verified by: `autonomy: the page raises a`, `autonomy: a shadow raise is refused`, `autonomy: a raising command row from the cli is dropped`, `autonomy: a raise by the owner on github counts`, `autonomy: a push is judged by the verified github account`, `autonomy: a raise by another account is flagged and not written back`, `autonomy: a flagged raise runs at the lower level`, `autonomy: accepting a flagged raise lifts the flag`
+- Verified by: `autonomy: the page raises a`, `autonomy: a shadow raise is refused`, `autonomy: a raising command row from the cli is dropped`, `autonomy: a raise by the owner on github counts`, `autonomy: a push is judged by the verified github account`, `autonomy: a raise by another account is flagged and not written back`, `autonomy: deleting the a line by another account is flagged as a raise to the default`, `autonomy: deleting the a line by the owner counts`, `autonomy: a flagged raise runs at the lower level`, `autonomy: accepting a flagged raise lifts the flag`
 
 ## Out of scope
 
@@ -353,5 +355,12 @@ A raise of an intent's autonomy counts only when the owner makes it on the web p
   would be no stronger. So the page and GitHub count, and no extra proof of identity is built for
   them. a0 does not stop a process that deliberately uses that login or edits the intents repo or the
   database by hand.
+- Changing autonomy (the owner's calls, 2026-11-07): a raise applies from the next gate and a lowering
+  at once; a raise by another account is flagged, not written back, and the mission keeps the lower
+  level; the pushing GitHub account is checked, not the commit's local name; no command-line command
+  for either direction; raising is confirmed on the page, lowering is one click; deleting the `a` line
+  is a raise to the default. Conservative defaults taken: a worker's `lower_a` stays; a commit whose
+  account can't be verified doesn't count as the owner's; the page never deletes the line; and a
+  deletion that doesn't raise the level (the intent already runs at the default or above) is not flagged.
 - a3 counts like a4 at the spec gate: a lower `a` must never be looser than a higher one, and a3's
   spec used to merge on its own whenever nothing stopped it.
