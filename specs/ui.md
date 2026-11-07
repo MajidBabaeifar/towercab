@@ -1588,7 +1588,7 @@ The API has a `scores` action that changes urgency and importance.
 A plane's card in the airspace has a "Boost" button that gives the intent full autonomy and starts it now if it has not started.
 
 - "Boost" on the plane card (UI-80) posts `{action: "boost", id}` with `actor: owner` and applies LOOP-134. Its confirm step is UI-257's raise confirm: `Boost?` / `Raise to a5?`, naming that Towercab may then pass the spec and plan gates and merge on its own unless the change is high risk, the repo's cap or access rules stop it, with "Boost" and "Cancel"; nothing is written until "Boost". For an intent not yet started the confirm also says it starts now.
-- Shown only when the intent is not done or dropped, `source` is `me` (AUT-13; with `[auth]` when the person may set a5, AUT-23, AUT-24) and its level is below a5 or it has no mission yet; hidden otherwise, never disabled. For an unstarted, unparked intent the button replaces nothing: "Start now" (UI-101) stays beside it. The reply says in one sentence what happened: `Boosted: a5 and design started.` or `Boosted: a5. It runs from the next gate.` or the error.
+- Shown only when the intent is not done or dropped, `source` is `me` (AUT-13; with `[auth]` when the person may set a5, AUT-23, AUT-24) and its level is below a5 or it has no mission yet; hidden otherwise, never disabled. A parked intent without a mission is started by Boost as well (LOOP-134). "Start now" (UI-101) stays beside the button where it is shown and does not change autonomy. The reply says in one sentence what happened: `Boosted: a5 and design started.` or `Boosted: a5. It runs from the next gate.` or the error.
 - Verified by: `ui: boost appears on the plane card for an own intent below a5`, `ui: boost asks for a confirmation that names a5`, `ui: boost on an unstarted intent starts it`, `ui: boost is not shown for another source`, `ui: boost is not shown at a5 for a started intent`
 
 ### UI-206 · The highest level offered depends on the source
@@ -1609,8 +1609,8 @@ A boosted plane that waits for the owner says in the card which rule held it, in
 
 When a worker lowered an intent's `a` after a boost, the card says so and why.
 
-- If the intent's `lower_a` and `lower_why` are set (AUT-7, INT-24's front matter), the card and the intent page show `Lowered to a<n> by the worker: <lower_why>` beside the autonomy control (UI-257). The line stays until the owner sets `a` again on the page, GitHub or a boost; it never hides the level the control shows. An unrelated `lower_a` before a boost is not shown after the boost sets `a` to 5 again.
-- Verified by: `ui: a card shows that the worker lowered autonomy and why`, `ui: a boost clears the lowered note`
+- If the intent's `lower_a` and `lower_why` are set (AUT-7, INT-24's front matter), the card and the intent page show `Lowered to a<n> by the worker: <lower_why>` beside the autonomy control (UI-257). The line stays until the owner sets `a` again on the page, GitHub or a boost; it never hides the level the control shows. Boost clears the note, since the owner raised the level on purpose: it removes `lower_a` and `lower_why` from the file in the same commit that sets `a: 5` (LOOP-134). A later lowering by a worker shows its own note.
+- Verified by: `ui: a card shows that the worker lowered autonomy and why`, `ui: a boost clears the lowered note`, `ui: a later lowering after a boost shows its own note`
 
 ## Out of scope
 
