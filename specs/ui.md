@@ -1451,11 +1451,12 @@ A repo that lacks setup has its own colour and a badge that fits its text, so it
 
 ### UI-269 · A gap shared by most repos is said once
 
-When most repos lack the same setup item, the Repos page says so once at the top and drops the badge from each card.
+When most repos lack the same setup item, the Repos page and the Board each say so once at the top and drop the badge from each repo.
 
-- Over the repos with a readiness result (UI-155): when an item is missing on at least 3 repos and on more than half of them, a line at the top reads `<n> of <m> repos have <item in plain words>` (for example `9 of 11 repos have no release job`). One line per such item.
-- A repo whose only missing items are shared ones shows no not-ready badge on the Repos tab or the Board (UI-157); the badge shows for any other missing item, with only those items in its tooltip. The repo's own page still lists every gap (UI-270).
-- Verified by: `ui: a shared gap is summed up once on the repos page`, `ui: no badge for a repo missing only shared items`
+- Over the repos with a readiness result (UI-155): an item is shared when it is missing on at least 3 repos and on more than half of them (the owner confirmed this rule). The Repos page shows a line at the top, `<n> of <m> repos have <item in plain words>` (for example `9 of 11 repos have no release job`), one line per shared item.
+- The Board shows the same shared items as one small line above the columns, in the short form `<n> repos: <item>` (for example `9 repos: no kind set`), one line per item or items joined on one line; it is absent when nothing is shared. It counts the same repos as the Repos page, and lists shared items for all repos, folded ones (UI-135) included.
+- A repo whose only missing items are shared ones shows no not-ready badge on the Repos tab or in its Board lane header (UI-157); the badge shows for any other missing item, with only those items in its tooltip. The repo's own page still lists every gap (UI-270).
+- Verified by: `ui: a shared gap is summed up once on the repos page`, `ui: the board sums up shared gaps in one line above the columns`, `ui: no badge for a repo missing only shared items`
 
 ### UI-270 · Setup gaps in plain words
 
@@ -1471,7 +1472,7 @@ Empty stations on the Board take little room, so busy ones are wide enough to re
 
 - A station column with no cards collapses to a narrow strip showing its name and `0`; a column with cards is at least 180 px wide. At 1,280 px wide every chip's text is fully visible (no clipping, no horizontal overflow of a chip).
 - A card title is cut after three lines; the full title is its tooltip and its accessible name.
-- The Board is as wide as the top bar and the other pages (1,120 px max), so the edges line up; a Board that needs more room scrolls sideways inside that width.
+- The Board stays as wide as the top bar and the other pages (1,120 px max), so the edges line up (the top bar does not widen); a Board that needs more room scrolls sideways inside that width.
 - Verified by: `ui: empty board stations collapse to a strip`, `ui: busy board stations are at least 180px`, `ui: board chips are not clipped at 1280px`, `ui: board titles cut after three lines with the full title on hover`, `ui: board is as wide as the top bar`
 
 ### UI-272 · The stage map shows the path this intent takes
