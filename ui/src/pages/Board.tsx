@@ -211,7 +211,7 @@ export function BoardPage({ data }: { data: Data }) {
           {data.proposed ? (
             <>
               {" "}
-              <Link href="/#proposed">{data.proposed} proposed</Link>
+              <Link href="/">{data.proposed} proposed</Link>
             </>
           ) : null}
         </p>

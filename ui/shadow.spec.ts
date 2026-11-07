@@ -28,13 +28,13 @@ async function settle(page: Page) {
 }
 
 test("ui: shadow panel is hidden when off", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/overview");
   await settle(page);
   await expect(page.locator("#shadow")).toHaveCount(0);
 });
 
 test("ui: shadow reset asks first and resets", async ({ page }) => {
-  await page.goto(url);
+  await page.goto(`${url}overview`);
   await settle(page);
   const panel = page.locator("#shadow");
   await expect(panel).toContainText("[shadow]");
@@ -76,7 +76,7 @@ test("ui: shadow panel on a phone", async ({ browser }) => {
       hasTouch: mode === "mobile",
     });
     const page = await ctx.newPage();
-    await page.goto(url);
+    await page.goto(`${url}overview`);
     await settle(page);
     await expect(page.locator("#shadow")).toBeVisible();
     expect(

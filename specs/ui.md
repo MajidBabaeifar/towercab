@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..149, UI-150..154, UI-155..164, UI-168, UI-184..191, UI-192..197, UI-239, UI-244..251, UI-236..238, UI-253..256 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..149, UI-150..154, UI-155..164, UI-168, UI-184..191, UI-192..197, UI-239, UI-244..251, UI-236..238, UI-253..256, UI-259..267 · **Prefix:** UI
 
 ## Purpose
 
@@ -1009,43 +1009,15 @@ Proposed intents are listed by the priority they would have, and the page says w
 
 ### UI-189 · Fold a Needs you card
 
-Each Needs you card on the overview folds to one line with a toggle, and opens again.
-
-- A button on the card's header with `aria-expanded` and an accessible name (`Fold <title>` / `Open
-  <title>`), reachable and operable by keyboard like the stage map's toggles (UI-73). It applies to
-  the overview only; the card on the intent page (UI-62) stays open.
-- Folding only hides: the brief, risk block, open points, options, access list, reply box and menu
-  are hidden, not removed, so the card's content, actions and order (UI-58) do not change and a draft
-  reply typed in the box is kept while folded.
-- Cards start open.
-- Verified by: `ui: needs-you card folds and opens`, `ui: fold toggle is keyboard operable`
+Removed: the Needs you cards are items of the Inbox (UI-259), one shown at a time, so there is nothing to fold; lists fold under their headers (UI-267).
 
 ### UI-190 · A folded card's line
 
-A folded Needs you card still shows what it is, what it asks and how long it has waited.
-
-- One line: the intent's title, its repo, the ask in the same words as the open card's (LOOP-14
-  **Waits**; an open question shows its first line cut with an ellipsis) and the wait's age in the
-  same form as the open card ("2 h"). The line ends with the toggle; it does not wrap on a 720 px
-  screen (the title is cut with an ellipsis first).
-- The browser test measures the line only after fonts have loaded and layout has settled (two
-  animation frames with an unchanged size), and compares sizes with a tolerance of 1 px, so a slow
-  runner does not fail it. It must pass 20 repeats in a row.
-- Verified by: `ui: folded needs-you card shows title, repo, ask and age`
+Removed: the Needs you cards are items of the Inbox (UI-259), one shown at a time, so there is nothing to fold; lists fold under their headers (UI-267).
 
 ### UI-191 · Remember folded cards
 
-The page remembers which Needs you cards are folded in this browser, keeps them folded through live updates, and opens a card again when it changes.
-
-- Folded cards are kept in `localStorage` under `towercab.needs.folded` as a JSON object from intent
-  ID to the wait's key (the kind of wait and its round: the `Waits` kind plus the PR number or
-  question round it belongs to). Every read and write is wrapped in `try`/`catch` as UI-135 does, so
-  without storage a card still folds until the page reloads.
-- A card is folded only while its stored key equals its current wait's key. A new ask or a new round
-  gives a different key, so the card renders open and the stale entry is removed. An entry for an
-  intent that no longer waits is removed. A live update (UI-66) that leaves the key unchanged leaves
-  the card folded and its place in the order.
-- Verified by: `ui: folded needs-you cards are remembered`, `ui: a changed ask opens a folded card again`, `ui: live updates keep a card folded`, `ui: needs-you folds are kept per intent in localStorage`, `ui: a new ask or round gives a card a new wait key`, `ui: folds of intents that no longer wait are forgotten`, `ui: folds work without storage`
+Removed: the Needs you cards are items of the Inbox (UI-259), one shown at a time, so there is nothing to fold; lists fold under their headers (UI-267).
 
 ### UI-160 · Your steps on the intent page
 
@@ -1158,29 +1130,22 @@ A freeze that ran past its limit shows buttons to keep waiting or to lift it, an
 
 ### UI-192 · Focus tab
 
-A Focus tab shows the one thing that needs the owner most, and nothing else.
-
-- `/focus`, a top tab after Board (UI-133); Repos (UI-140) follows, so it becomes the fourth tab.
-  `GET /api/focus` returns `{item, more}`: `item` is the top wait (UI-193) or `null`, `more` the number
-  of other waits (UI-196). It is part of the page's version (UI-67), so the page updates when a wait
-  comes or goes, without losing input.
-- The tab label carries no count; the top bar (UI-57) already does.
-- Verified by: `ui: the focus tab shows one wait`, `ui: focus is served from its own API`
+Removed: Focus is replaced by the Inbox (UI-259, UI-266): `/focus` redirects to `/` and `GET /api/focus` is gone.
 
 ### UI-193 · The most important wait comes first
 
-Focus picks the wait with the highest priority; between equals, the one waiting longest.
+The Inbox lists the wait with the highest priority first; between equals, the one waiting longest.
 
-- Every wait counts: approvals (spec, plan, code), questions, blocked waits (UI-58), and proposed
+- Every wait counts: approvals (spec, plan, code), questions, blocked waits (UI-58), reached caps (UI-254), and proposed
   intents (UI-184). Priority is the intent's `2i + u` (PRI-3); a proposed intent uses the priority it
-  would get (INT-52), and one that would be parked comes after every other wait.
+  would get (INT-52), and one that would be parked comes after every other wait. A reached cap comes first.
 - Ties: oldest wait first (the time the wait began, the PR's age for a proposal), then the intent ID, so
-  the pick never flips between two reads.
-- Verified by: `ui: focus picks the highest priority wait`, `ui: focus breaks ties by oldest wait`, `ui: focus includes questions, blocked waits and proposed intents`
+  the order never flips between two reads.
+- Verified by: `ui: the inbox lists every wait in priority order`
 
-### UI-194 · What Focus shows
+### UI-194 · What an Inbox item shows
 
-Focus shows enough to act without opening anything else: where the work is, what it is, what happened,
+An Inbox item shows enough to act without opening anything else: where the work is, what it is, what happened,
 and what is asked now.
 
 - Top to bottom: the repo; the intent in one line (its title and a one-sentence overview, the first
@@ -1190,37 +1155,26 @@ and what is asked now.
   and the PR link. A proposed intent shows its fields and Accept/Close (UI-185) in the same place.
 - A phase not yet reached is not listed. A mission from before briefs shows the review's summary
   (UI-126's fallback) in place of the history.
-- Verified by: `ui: focus shows repo, overview, history and the ask`, `ui: focus offers the actions of the needs-you card`, `ui: focus shows a proposed intent`
+- Verified by: `ui: the inbox shows the repo, overview, history and the ask of each item`
 
 ### UI-195 · The next one takes its place
 
-When the owner acts, or the wait ends for any other reason, Focus moves on to the next.
-
-- The page replaces the item as soon as `GET /api/focus` names another (after the owner's action, or
-  when the loop moves the mission), with a short fade of at most 300 ms, none under
-  `prefers-reduced-motion`. Text the owner is typing in a reply box belongs to the item it was typed on
-  and is not carried to the next (UI-67).
-- With no wait left, Focus says "Nothing needs you."
-- Verified by: `ui: focus moves to the next wait after an action`, `ui: focus moves on when a wait ends elsewhere`, `ui: focus says nothing needs you when empty`
+Removed: the Inbox moves to the next row when a wait ends (UI-259), without Focus's skip list.
 
 ### UI-196 · How many more
 
-Focus says how many other waits there are, without listing them.
-
-- `more` is the count of waits other than the one shown, proposed intents included: "3 more waiting",
-  "1 more waiting"; nothing is shown at 0. No titles, links or list; the Overview has them.
-- Verified by: `ui: focus counts the other waits without listing them`
+Removed: the Inbox lists every wait and its heading counts them (UI-259).
 
 ### UI-197 · Same actions, any screen
 
-Focus adds no new way to act, and it works on a phone and by keyboard.
+The Inbox adds no new way to act, and it works on a phone and by keyboard.
 
-- Every action posts to `POST /api/actions` (UI-65), exactly as on the Needs you card; Focus has no
+- Every action posts to `POST /api/actions` (UI-65), exactly as on the Needs you card; the Inbox has no
   action of its own. The same refusals and errors show in the same words.
 - At 360 px wide the item is one column with no sideways scroll; buttons are at least 44 px tall. Every
   action is reachable by Tab in reading order with a visible focus ring; the item has a heading the
-  tab moves to when the next one arrives, and the change is announced politely (`aria-live="polite"`).
-- Verified by: `ui: focus has no action the needs-you card lacks`, `ui: focus works by keyboard`, `ui: screenshots light, dark and mobile`
+  Enter key moves the focus to (UI-261), and the change is announced politely (`aria-live="polite"`).
+- Verified by: `ui: the inbox card has the actions of the needs-you card`, `ui: on a phone the inbox is a list that opens the card`, `ui: screenshots light, dark and mobile`
 
 ### UI-236 · The shadow's tag shows everywhere
 
@@ -1262,10 +1216,10 @@ Every screen shows the same number of things that need the owner, and the parts 
 
 - One server-side function defines a wait on the owner: approvals (spec, plan, code), questions, blocked
   waits, owner steps before or after merge (UI-160, UI-162), and proposed intents (UI-184). `GET
-  /api/state`, `/api/focus`, `/api/board` and the repo views (UI-141) all use it; none keeps its own
+  /api/state`, `/api/inbox`, `/api/board` and the repo views (UI-141) all use it; none keeps its own
   rule (`waitsOf` and the working list of `overview()` no longer disagree on the `steps` stage).
 - The count is `needs` = `missions + proposed`. The top bar (UI-57), the tab title `(<n>)`, the overview
-  headline, Focus (`1 + more`, UI-196) and the Board's "Needs you" chips (plus its `<n> proposed`,
+  headline, the Inbox (its list and `needs`, UI-259) and the Board's "Needs you" chips (plus its `<n> proposed`,
   UI-187) all equal it. The headline may split it ("4 need you · 11 proposed") but the parts sum to `needs`.
 - A repo's view counts the same waits for that repo only; the repos' counts sum to the total, unknown
   repos included.
@@ -1280,13 +1234,13 @@ A mission waiting for the owner's own steps shows as a Needs you card, not as wo
   like other cards (UI-58). The "working" count (UI-57) and pill count only missions Towercab is working on.
 - Verified by: `ui: a mission waiting on owner steps is a needs-you card`, `ui: the working count excludes owner waits`
 
-### UI-246 · Needs you comes first on the overview
+### UI-246 · The overview links to the Inbox first
 
-The overview puts what waits for the owner above everything else.
+The overview sends the owner to the Inbox for what waits, and keeps what is moving.
 
-- Order: headline → Needs you cards → Problems → Proposed → Working (then Up next and the rest as
-  today). The airspace keeps its place and starts folded below 640 px wide; the owner can open it.
-- Verified by: `ui: overview puts needs-you cards before proposals`, `ui: the airspace starts folded on a phone`
+- Order: headline → one line `<n> need you · <p> proposed` linking to the Inbox (UI-266) → Problems → Working (then Up
+  next and the rest as today). The airspace keeps its place and starts folded below 640 px wide; the owner can open it.
+- Verified by: `ui: the overview links to the inbox instead of listing cards`, `ui: the airspace starts folded on a phone`
 
 ### UI-247 · Proposed intents take one line
 
@@ -1296,9 +1250,8 @@ Each proposed intent is one compact row, so ten fit on a phone screen.
   GitHub" beside it in the same menu or link target list), the repo, the priority (or "would be parked"),
   the age, and Accept and Close (UI-185; a GitHub-only PR still offers Close only). The `#proposed-<PR
   number>` anchor, the Draft chip and the stale-list note (UI-188) stay.
-- The first 5 rows show; the rest fold under a button "Show <n> more proposals" (`aria-expanded`),
-  with `n` the number folded. Order is UI-188's. Repo pages (UI-186) use the same rows.
-- Verified by: `ui: proposed intents are one line each`, `ui: proposals after the fifth fold under a button`
+- Repo pages (UI-186) use the same rows under a header that folds them (UI-267); the first-5 fold and its "Show <n> more proposals" button are gone. In the Inbox a proposal is a list row (UI-259).
+- Verified by: `ui: proposed intents are one line each`
 
 ### UI-248 · The ask and its button come first on a card
 
@@ -1307,8 +1260,8 @@ A Needs you card shows what is asked, the brief and the main button before the d
 - Order in the card: title and repo; the ask; the brief (UI-126); the main action (for example "Merge
   spec PR"); then the risk as one line (`Medium risk · easy to undo · fairly sure it works`, from AUT-20's
   fields) and the open points as `<n> open points for you`, each opening on tap; then the rest
-  (access list, menu, reply box). The same card is used on the overview, on Focus (UI-194) and on the
-  intent page (UI-62). The fold of UI-189 still applies on the overview.
+  (access list, menu, reply box). The same card is used in the Inbox (UI-259) and on the
+  intent page (UI-62).
 - On a 375 px wide screen the ask, the brief and the main button fit in the first 700 px of the card.
 - Verified by: `ui: the main button sits under the brief`, `ui: risk and open points are folded to one line each`, `ui: screenshots light, dark and mobile`
 
@@ -1332,10 +1285,9 @@ When every row of "Up next" has the same reason, the reason is written once abov
 
 The screenshot fixture has the cases that made the overview hard to use.
 
-- `ui/fixture.ts` gains several proposed intents (at least 6, so the fold of UI-247 shows) and a
-  mission waiting on the owner's steps. The overview screenshots (light, dark, mobile) are taken with
-  them and a test checks the first Needs you card sits above the first proposal.
-- Verified by: `ui: screenshots light, dark and mobile`, `ui: fixture overview has the first needs-you card above the proposals`
+- `ui/fixture.ts` has a crowded scene: at least 5 waits (one on the owner's steps), 18 proposed intents and 36 queued
+  intents. The Inbox and Overview screenshots (light, dark, mobile) are taken with it.
+- Verified by: `ui: screenshots light, dark and mobile`, `ui: the crowded fixture has the waits, proposals and queue of the live page`
 
 ### UI-253 · Budgets are edited in the page
 
@@ -1412,16 +1364,16 @@ When someone other than the owner raises an intent's autonomy, a card at the top
 
 One Inbox page lists every wait, with the list on the left and the selected card on the right.
 
-- `/` is the Inbox, the page the app lands on, and its top tab comes first and replaces Focus (UI-133, UI-266). The list holds the waits UI-244 counts: approvals, questions, blocked waits, owner steps, proposed intents, reached caps (UI-254) and flagged raises (UI-258). Order is UI-193's (priority, then oldest wait, then intent ID). `GET /api/inbox` returns `{items, needs}` with `needs` equal to UI-244's count; it is part of the page's version (UI-67), so the page updates without losing typed text.
-- A list row is one line (UI-247's compactness): kind chip, title, repo, age. The selected row is marked (`aria-selected`) and its card shows on the right: the Needs you card of UI-248, the proposal view of UI-194 and UI-185, or the cap and flag cards. The URL is `/inbox/<item id>`, so a link opens that item. With no item in the URL the first row is selected, so a card is always visible; selecting is not acting: nothing is posted until the owner uses a button or the confirm of UI-261.
-- Every action posts to `POST /api/actions` (UI-65) exactly as the Needs you card does; the Inbox has no action of its own (UI-197's rule). When the selected item's wait ends, the selection moves to the next row (UI-195's rule: fade of at most 300 ms, none under `prefers-reduced-motion`). With no wait left, the page says "Nothing needs you."
+- `/` is the Inbox, the page the app lands on, and its top tab comes first and replaces Focus (UI-133, UI-266). The list holds the waits UI-244 counts: approvals, questions, blocked waits, owner steps, proposed intents and reached caps (UI-254); flagged raises (UI-258) join it when they are built. Order is UI-193's (priority, then oldest wait, then intent ID). `GET /api/inbox` returns `{items, needs, lastVisit, readOnly, stale, version}` with `needs` equal to UI-244's count; it is part of the page's version (UI-67), so the page updates without losing typed text.
+- A list row is one line (UI-247's compactness): kind chip, title, repo, age. The selected row is marked (`aria-selected`) and its card shows on the right: the Needs you card of UI-248, the proposal view of UI-194 and UI-185, or the cap card. The URL is `/inbox/<item id>`, so a link opens that item. With no item in the URL the first row is selected, so a card is always visible; selecting is not acting: nothing is posted until the owner uses a button or the confirm of UI-261.
+- Every action posts to `POST /api/actions` (UI-65) exactly as the Needs you card does; the Inbox has no action of its own (UI-197's rule). When the selected item's wait ends, the selection moves to the next row (a fade of at most 300 ms, none under `prefers-reduced-motion`). With no wait left, the page says "Nothing needs you."
 - Verified by: `ui: the inbox lists every wait in priority order`, `ui: the inbox count equals the needs count`, `ui: the inbox card has the actions of the needs-you card`, `ui: the inbox moves on when a wait ends`, `ui: an inbox link opens its item`, `ui: the inbox opens with the first item selected and posts nothing`
 
 ### UI-260 · The Inbox on a phone is a list that opens the card
 
 Below 640 px wide the Inbox shows the list, and a tap opens the card full screen.
 
-- Below 640 px: the list alone; a row opens the card on its own screen (`/inbox/<id>`) with a "Back to the inbox" button, and the browser's back button does the same. The list keeps its scroll position and selection on return. No sideways scroll at 360 px; rows and buttons are at least 44 px tall.
+- Below 640 px: the list alone; a row opens the card on its own screen (`/inbox/<id>`) with a "Back to the inbox" button, and the browser's back button does the same. The list keeps its scroll position on return. No sideways scroll at 360 px; rows and buttons are at least 44 px tall.
 - Verified by: `ui: on a phone the inbox is a list that opens the card`, `ui: going back keeps the inbox scroll position`, `ui: screenshots light, dark and mobile`
 
 ### UI-261 · Move through the Inbox by keyboard
@@ -1430,61 +1382,61 @@ Single keys move through the Inbox and act on the selected item, and no key acts
 
 - `j` selects the next row, `k` the previous (no wrap), `Enter` opens the card and moves focus into it, `Escape` returns focus to the list. `r` focuses the reply box of the card (the answer or the reply for a question), `o` opens the PR in a new tab (the proposal's PR for a proposed intent; nothing for an item with no PR), `s` opens the snooze choices (UI-264), `/` focuses the list's filter (UI-263), `?` opens the shortcuts list.
 - `Enter` only opens: it never posts an action, even on the first item the page selected by itself. No other key posts either, except as below.
-- `m` offers the merge the card's main action offers (UI-248), only for a merge (spec, plan or code PR); it always opens a confirm that names the PR and its target (`Merge <PR title>?`) with "Merge" and "Cancel", with no setting to skip it. Nothing is posted until "Merge" is clicked or Enter is pressed on it inside the confirm; the confirm opens with focus on "Cancel", so the same key press that opened it cannot confirm it. Escape cancels. It posts the same action with the head SHA the card showed (UI-65). On any other item `m` does nothing and the shortcuts list says so.
+- `m` offers the merge the card's main action offers (UI-248), only for a merge (spec, plan or code PR); it always opens a confirm that names the PR and the repo (`Merge <PR label>: <title>?`) with "Merge" and "Cancel", with no setting to skip it. Nothing is posted until "Merge" is clicked or Enter is pressed on it inside the confirm; the confirm opens with focus on "Cancel", so the same key press that opened it cannot confirm it. Escape cancels. It posts the card's own merge action (UI-65). On any other item `m` does nothing and says so.
 - Keys do nothing while the focus is in a field, a select or a dialog, and ignore combinations with Ctrl, Cmd or Alt. A shortcut that does not apply to the item shows a short polite message (`aria-live="polite"`), not an error.
-- Verified by: `ui: j and k move the inbox selection`, `ui: enter opens the card and escape returns to the list`, `ui: m asks before merging and posts nothing until confirmed`, `ui: enter only opens and never posts an action`, `ui: the merge confirm opens on cancel and needs its own click or enter`, `ui: m does nothing on an item that is not a merge`, `ui: r focuses the reply box and o opens the PR`, `ui: shortcuts are ignored while typing`
+- Verified by: `ui: j and k move the inbox selection`, `ui: enter opens the card and escape returns to the list`, `ui: enter only opens and never posts an action`, `ui: m asks before merging and posts nothing until confirmed`, `ui: the merge confirm opens on cancel and needs its own click or enter`, `ui: m does nothing on an item that is not a merge`, `ui: r focuses the reply box and o opens the PR`, `ui: shortcuts are ignored while typing`
 
 ### UI-262 · A list of the shortcuts
 
 `?` shows every shortcut, and the page says it exists.
 
-- `?` opens a dialog listing UI-261's keys and Cmd-K (UI-265), with Escape to close and focus returned to where it was. A hint `? shortcuts` sits in the Inbox heading, and in the footer on a phone-sized screen it is a button.
+- `?` opens a dialog listing UI-261's keys and Cmd-K (UI-265), with Escape to close and focus returned to where it was. A `? shortcuts` button sits in the Inbox heading.
 - Verified by: `ui: the question mark shows the shortcuts`, `ui: the shortcuts dialog returns focus`
 
 ### UI-263 · Filter the list
 
 A field above the Inbox list narrows it to matching items.
 
-- Case-insensitive match on title, repo, intent ID and PR number; the count reads `<shown> of <n>`. Filtering changes the view only: `needs` (UI-244) is unchanged. The filter is kept in the URL (`?q=`).
+- Case-insensitive match on title, repo, intent ID and PR number (`#203` or `203`); while a filter is set the count reads `<shown> of <n>`. Filtering changes the view only: `needs` (UI-244) is unchanged. The filter is kept in the URL (`?q=`).
 - Verified by: `ui: the inbox filter matches title, repo, id and PR number`, `ui: filtering does not change the needs count`
 
 ### UI-264 · New since your last visit, and snoozing
 
 The Inbox marks what arrived since the owner last looked, and lets them put an item aside for a while.
 
-- **State is on the server, per owner, not per browser,** so the phone and the laptop agree. A table `inbox_state` in Towercab's database holds one `last_visit` time and one row per snoozed item (`item`, `until`); it is added by a schema migration (an older database gains it empty). It touches no mission: the loop and the state machine ignore it. `GET /api/inbox` carries `lastVisit` and each item's `new` and `snoozedUntil`, and a change moves the page's version (UI-67), so every open screen updates.
-- **New:** a row carries a `New` marker (text, not colour alone) when its wait began after `last_visit`. The page posts `{action: "seen"}` (UI-66's actions) once the Inbox has been visible for 3 seconds, and the server sets `last_visit` to its own clock then; a reload closed at once marks nothing as seen. The marker stays on screen until the page is left or reloaded, so rows do not change under the owner's eyes; opening an item clears its own marker at once. The heading says `<n> new`. With no `last_visit` yet (first visit), nothing is marked new.
-- **Snooze:** `s` or a "Snooze" button offers "1 hour", "Until tomorrow 08:00" and "Until Monday 08:00" in the browser's time zone; the page sends the chosen instant as `{action: "snooze", item, until}`, and the server refuses a time in the past or more than 30 days away, with the reason (UI-67). `{action: "unsnooze", item}` clears it. A snoozed item leaves the main list and shows under a "Snoozed <n>" list (UI-267) with its wake time and "Unsnooze". It returns when `until` passes, by the server's clock, with the `New` marker. A snooze whose wait ends is dropped. `s` only opens the choices; it does not pick one (UI-261's second step).
+- **State is on the server, per owner, not per browser,** so the phone and the laptop agree. It is kept in the database's `meta` table: `inbox:last_visit` (unix seconds) and one `inbox:snooze:<item>` per snoozed item (the wake time). No migration is needed: a database from before the Inbox simply has none of these keys, and an older Towercab ignores them. It touches no mission: the loop and the state machine never read it. `GET /api/inbox` carries `lastVisit` and each item's `new` and `snoozedUntil`, and a change moves the page's version (UI-67), so every open screen updates.
+- **New:** a row carries a `New` marker (text, not colour alone) when its wait began after `last_visit`, or a snooze ran out after it. The page posts `{action: "seen"}` (UI-66's actions) once the Inbox has been visible for 3 seconds, and the server sets `last_visit` to its own clock then and forgets snoozes that have run out; a reload closed at once marks nothing as seen. The marker stays on screen until the page is left or reloaded, so rows do not change under the owner's eyes; opening an item clears its own marker at once. The heading says `<n> new`. With no `last_visit` yet (first visit), nothing is marked new.
+- **Snooze:** `s` or a "Snooze" button opens the choices "1 hour", "Until tomorrow 08:00" and "Until Monday 08:00" in the browser's time zone; the page sends the chosen instant as `{action: "snooze", item, until}`, and the server refuses a time in the past or more than 30 days away, or an item that is not waiting, with the reason (UI-67). `{action: "unsnooze", item}` clears it. A snoozed item leaves the main list and shows under a "Snoozed <n>" list (UI-267) with its wake time and "Unsnooze". It returns when `until` passes, by the server's clock, with the `New` marker. A snooze whose wait ends is dropped. `s` only opens the choices; it does not pick one (UI-261's second step).
 - A snoozed item still counts in `needs` (UI-244), so the top bar and the tab title do not hide it; the Inbox heading reads `<n> need you · <k> snoozed`.
-- Verified by: `ui: a wait newer than the last visit is marked new`, `ui: the last visit is set on the server after the page was visible for 3 seconds`, `ui: the first visit marks nothing new`, `ui: a snoozed item moves under snoozed and returns when due`, `ui: a snooze is shared between two clients`, `ui: a snooze in the past or beyond 30 days is refused`, `ui: a snoozed item still counts as needing you`, `ui: inbox state survives a restart and an older database gains it`
+- Verified by: `ui: a wait newer than the last visit is marked new`, `ui: a wait newer than the last visit shows a new marker`, `ui: the last visit is set on the server after the page was visible for 3 seconds`, `ui: the page sends seen only after it was visible for 3 seconds`, `ui: the first visit marks nothing new`, `ui: a snoozed item moves under snoozed and returns when due`, `ui: snoozing from the inbox moves the item under snoozed`, `ui: a snooze is shared between two clients`, `ui: a snooze in the past or beyond 30 days is refused`, `ui: a snoozed item still counts as needing you`, `ui: inbox state survives a restart and an older database gains it`
 
 ### UI-265 · Cmd-K search and commands
 
 Cmd-K (Ctrl-K elsewhere) opens one box that finds intents, repos and PRs and runs commands.
 
-- Opens on any page, as a dialog with a labelled field; Escape closes and returns focus. Typing lists matches in groups: **Intents** (ID or title words), **Repos** (name), **PRs** (a number, `#123` or `123`, matching the open PRs Towercab knows of), and **Commands**. Arrow keys move, Enter runs, results are announced politely. A match opens the intent's page (UI-62), the repo's page (UI-141) or the PR's intent.
-- Commands: `pause` and `resume` (the actions of SHD-22 / UI-238 for all work, with the confirm those actions already have), `go to inbox | overview | board | repos | activity`, `go to repo <name>`, and `open settings`. The box offers a command only when it applies (no `resume` while not paused). A command posts through `POST /api/actions` (UI-65) or navigates; it has no action of its own, and a refusal shows in the box in the same words (UI-67).
-- The search runs in the page over `GET /api/state` data and the repo list; it makes no request per keystroke and loads no extra service.
+- Opens on any page, as a dialog with a labelled field; Escape closes and returns focus. Typing lists matches in groups: **Intents** (ID or title words), **Repos** (name), **PRs** (a number, `#123` or `123`, matching the pull requests of the Inbox's items), and **Commands**. Arrow keys move, Enter runs, results are announced politely. A match opens the intent's page (UI-62), the repo's page (UI-141) or the PR's item in the Inbox.
+- Commands: `pause` and `resume` (UI-65's actions for all work; the top bar's button has no confirm, so the box asks once itself: `Pause?` with "Cancel" focused, then the action), `go to inbox | overview | board | repos | activity`, `go to repo <name>`, and `open settings` (the Repos page, where each repo's settings are, UI-150). The box offers a command only when it applies (no `resume` while not paused, none of the actions while Towercab is not running). A command posts through `POST /api/actions` or navigates; it has no action of its own, and a refusal shows in the box in the same words (UI-67).
+- The search runs in the page over data it already reads (`/api/state`, `/api/inbox`, `/api/repos`, loaded once when the box opens); it makes no request per keystroke and loads no extra service.
 - Verified by: `ui: cmd-k finds an intent, a repo and a PR number`, `ui: cmd-k runs go to repo`, `ui: cmd-k pause asks for the usual confirm`, `ui: cmd-k offers only applicable commands`, `ui: cmd-k opens and closes by keyboard`
 
 ### UI-266 · The Inbox is the home page, and the Overview stays one tab away
 
 The Inbox replaces Focus as the page Towercab opens on; the Overview keeps its own address and every old link still works.
 
-- This covers intent 261105-2152-14. `/` is the Inbox (UI-259). The tabs read Inbox, Overview, Board, Repos, then the rest as today; Focus is gone. The Overview moves to `/overview`. `GET /api/focus` goes away. This replaces UI-192, UI-195 and UI-196; UI-193's pick order, UI-194's content and UI-197's actions and phone rules live on in UI-259..261.
-- Old links keep working: `/focus` redirects to `/`, and an old Overview link with a fragment (`/#proposed-<PR number>`, `/#needs-<id>`) opens the Inbox on that item (or, if the item is no longer a wait, the Overview). Repo, intent and Board links are unchanged. The tab bar marks the current page.
-- The tab title keeps the needs-you count, `(<n>) Towercab`, with `n` equal to UI-244's `needs` on every page (snoozed items included); it is `Towercab` at 0.
-- The Overview keeps its headline, Problems, Working, Up next and airspace (UI-246's order, without the Needs you cards and Proposed); in their place one line `<n> need you · <p> proposed` links to the Inbox. The Board's "Needs you" chips and `<n> proposed` (UI-244, UI-187) link to the Inbox. The Overview at the screenshot fixture's size (UI-251) is no taller than 1,400 px at 1280 px wide.
+- This covers intent 261105-2152-14. `/` is the Inbox (UI-259). The tabs read Inbox, Overview, Board, Repos, Activity; Focus is gone. The Overview moves to `/overview`. `GET /api/focus` goes away. This replaces UI-192, UI-195 and UI-196; UI-193's pick order, UI-194's content and UI-197's actions and phone rules live on for the Inbox.
+- Old links keep working: `/focus` redirects to `/`, and an old Overview link with a fragment (`/#proposed-<PR number>`, `/#needs-<id>`) opens the Inbox on that item (or, if the item is no longer a wait, the Overview with the fragment). Repo, intent and Board links are unchanged. The tab bar marks the current page.
+- The tab title keeps the needs-you count, `(<n>) Towercab` plus the page's name after the first tab, with `n` equal to UI-244's `needs` on every page (snoozed items included); it is `Towercab` at 0.
+- The Overview keeps its headline, Problems, Working, Up next and airspace (UI-246's order, without the Needs you cards and Proposed); in their place one line `<n> need you · <p> proposed` links to the Inbox. The Board's "Needs you" chips and `<n> proposed` (UI-244, UI-187) link to the Inbox. The crowded Overview (UI-251) is no taller than 2,300 px at 1280 px wide (3,334 px with the cards); its rows are still tall, so a shorter page needs the rows themselves redesigned.
 - `ui/fixture.ts` carries at least 5 waits, 18 proposals and 36 queued; the Inbox and Overview screenshots (light, dark, mobile) use it.
-- Verified by: `ui: the root page is the inbox and the overview has its own address`, `ui: focus redirects to the inbox`, `ui: old overview fragments open the inbox item`, `ui: the tab title keeps the needs count`, `ui: the overview links to the inbox instead of listing cards`, `ui: the crowded overview fits 1400 px`, `ui: screenshots light, dark and mobile`
+- Verified by: `ui: the root page is the inbox and the overview has its own address`, `ui: focus redirects to the inbox`, `ui: old overview fragments open the inbox item`, `ui: the tab title keeps the needs count`, `ui: the overview links to the inbox instead of listing cards`, `ui: the crowded overview is shorter than with its cards`, `ui: screenshots light, dark and mobile`
 
 ### UI-267 · Long lists fold under a header
 
 Every list that can grow long has a header with a toggle that folds and opens it, and remembers its state.
 
-- This covers intent 261105-2152-12. A "long list" is any list the page builds from data without a fixed size: the Inbox's list and its Snoozed list (UI-264), Proposed (UI-247) where shown, Working, Up next, Problems, the Repos list, the Board's lanes of a repo, the Activity page's sections, and the timelines and file lists on the intent page. Each has a header: its name, a count, and a button toggle (`aria-expanded`, `aria-controls`) that works by Enter and Space and is at least 44 px tall on a phone.
-- A folded list still shows its header with the count (`Working · 12`). The count is the list's real length, filter applied (UI-263), and equals the count shown elsewhere (UI-244).
-- Lists start open. The state is remembered per browser (a key per list, like UI-146's sort; a storage failure leaves the list working and open). It survives live updates (UI-67): a refresh of data neither opens a folded list nor folds an open one, and focus stays on the toggle. This replaces the "first 5, then Show n more" of UI-247 for Proposed on the Overview, which is now a list with a header like the others; UI-247's one-line rows stay.
+- This covers intent 261105-2152-12. The lists with a header are: the Inbox's list and its Snoozed list (UI-264), Proposed on a repo's page (UI-247), Working, Up next and Problems on the Overview, and In progress, Up next and Waiting on a repo's page. Each has a header: its name, a count, and a button toggle (`aria-expanded`, `aria-controls`) that works by Enter and Space and is at least 44 px tall on a phone. The Board's repo lanes keep their own fold (UI-135); Parked and Recently done on a repo's page stay native `details` elements.
+- A folded list still shows its header with the count (`Working · 12`). The count is the list's real length (the filter of UI-263 applied to the Inbox's list; the Inbox heading keeps UI-244's `needs`).
+- Lists start open. The state is remembered per browser (one `localStorage` entry for all lists, like UI-146's sort; a storage failure leaves the list working, and it stays as the owner set it until the page reloads). It survives live updates (UI-67): a refresh of data neither opens a folded list nor folds an open one, and focus stays on the toggle. A link to a proposal (`#proposed-<PR>`) opens a folded Proposed list.
 - Verified by: `ui: every long list has a header with a count and a toggle`, `ui: a folded list still shows its count`, `ui: lists start open`, `ui: fold state is remembered per browser`, `ui: fold state survives a live update`, `ui: fold toggle works by keyboard and on a phone`, `ui: fold state works without browser storage`
 
 ## Out of scope

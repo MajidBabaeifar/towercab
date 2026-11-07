@@ -745,29 +745,42 @@ export interface FocusHistory {
   text: string;
 }
 
-/** UI-194: the one wait Focus shows: a needs-you card or a proposed intent, with its context. */
-export interface FocusItem {
-  /** The intent's ID, or `proposed-<PR number>`: what the page keys the item by. */
+/** UI-259: one row of the Inbox: a needs-you card, a reached cap or a proposed intent, with its context. */
+export interface InboxItem {
+  /** The intent's ID, `proposed-<PR number>` or `cap-<scope>-<period>`: what the URL and the page key it by. */
   key: string;
+  kind: "card" | "cap" | "proposed";
   repo: string;
   title: string;
+  /** "Plan review", "Proposed", "Budget". */
+  kindLabel: string;
+  /** When the wait began (unix s); null when unknown. */
+  since: number | null;
   /** The first sentence of the intent's Problem; null when it has none. */
   overview: string | null;
   history: FocusHistory[];
   card: Card | null;
   proposed: ProposedCard | null;
+  cap: CapCard | null;
+  /** The PR the item is about, for `o` (UI-261). */
+  pr: number | null;
+  prUrl: string | null;
+  /** The card's main action is a merge, so `m` applies (UI-261). */
+  merge: boolean;
+  /** UI-264: began after the owner's last visit, or a snooze ran out after it. */
+  new: boolean;
+  /** UI-264: the wake time (unix s) while snoozed. */
+  snoozedUntil: number | null;
 }
 
-/** UI-192, UI-196: `GET /api/focus`. */
-export interface FocusPage {
+/** UI-259: `GET /api/inbox`. */
+export interface InboxPage {
   version: string;
-  item: FocusItem | null;
-  /** The other waits, without the one shown. */
-  more: number;
-  /** UI-195: the `skip` keys the server was asked to leave out. */
-  asked: string[];
-  /** UI-195: those of them that still wait on the owner. */
-  skipped: string[];
+  items: InboxItem[];
+  /** UI-244's count; snoozed items are in it. */
+  needs: number;
+  /** UI-264: the owner's last visit (unix s) as the server holds it; null before the first. */
+  lastVisit: number | null;
   readOnly: boolean;
   /** UI-188's notice when the proposed list may be old. */
   stale: string | null;

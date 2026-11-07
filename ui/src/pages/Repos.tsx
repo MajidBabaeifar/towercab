@@ -19,7 +19,7 @@ import type {
 import { AddRepoForm } from "../AddRepo.tsx";
 import { act, refreshFeatures } from "../api.ts";
 import { BudgetForm } from "../budgets.tsx";
-import { ErrorNote, ProposedList, ReadinessChip, StateChip, Time, WorkRow } from "../components.tsx";
+import { ErrorNote, ProposedList, ReadinessChip, Section, StateChip, Time, WorkRow } from "../components.tsx";
 import { Alert, Check, External } from "../icons.tsx";
 import { FileNotice, Limits } from "../Limits.tsx";
 import { Link } from "../router.tsx";
@@ -202,11 +202,21 @@ function Features({ repo, f }: { repo: string; f: FeaturesView }) {
 }
 
 function Group({ title, count, children }: { title: string; count?: number; children: ComponentChildren }) {
+  // UI-267: a list of the repo (not the spend or caps lines) has a header that folds it.
+  if (count !== undefined)
+    return (
+      <Section
+        title={title}
+        count={count}
+        class="repo-group"
+        fold={`repo-${title.toLowerCase().replace(/\s+/g, "-")}`}
+      >
+        {children}
+      </Section>
+    );
   return (
     <section class="repo-group" aria-label={title}>
-      <h2>
-        {title} {count === undefined ? null : <span class="num meta">{count}</span>}
-      </h2>
+      <h2>{title}</h2>
       {children}
     </section>
   );
