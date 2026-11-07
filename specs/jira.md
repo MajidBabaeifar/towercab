@@ -37,10 +37,12 @@ Towercab never reads a ticket the owner's filter does not return.
   is that JQL `AND key = <KEY>`, so a ticket outside the filter looks absent.
   No call fetches a ticket by key alone, and none lists projects or other tickets.
 - Towercab asks only for the fields it needs: key, summary, description, project, components, labels.
-  Comments by others and attachments are never fetched or put in a prompt.
+- Towercab fetches a ticket's comments only to look for its own hidden marker (JIRA-7, JIRA-8). It
+  never reads, stores, logs, puts in a prompt or acts on what anyone else wrote: the only thing kept
+  from that response is whether a marker was found. Attachments are never fetched.
 - A ticket the search stops returning is left alone: its intent is not dropped, and nothing is written
   to it, except the links and comments of JIRA-6 and JIRA-7 on an intent that already exists.
-- Verified by: `jira: a ticket outside the filter is never fetched`, `jira: a lookup repeats the filter`, `jira: only the needed fields are requested`
+- Verified by: `jira: a ticket outside the filter is never fetched`, `jira: a lookup repeats the filter`, `jira: only the needed fields are requested`, `jira: ticket comments are read only for the marker`
 
 ### JIRA-3 · Which repo a ticket belongs to
 
@@ -90,43 +92,54 @@ A short Claude run with no tools reads the ticket's summary and description and 
   ([AUT-13](autonomy.md)).
 - Verified by: `jira: the scoring run gets no tools`, `jira: a description becomes plain text`, `jira: an empty description scores from the summary`, `jira: two bad results ask the owner to write it by hand`, `jira: a3 by default`
 
-### JIRA-7 · Telling the ticket it is queued
+### JIRA-7 · Telling the ticket where the work stands
 
-Towercab comments once on the ticket with a link to the intent and its place in the queue.
+Towercab comments on the ticket when its work is queued, started and done, and says only where the work stands.
 
-- Once the intent is on `main`: one comment gives the intent's link, `u` and `i` with their reasons and
-  its place in the queue ([PRI-4](priority.md)), in the [writing guide](../prompts/writing.md)'s style.
-- Once means once: before posting, Towercab looks for its own earlier comment (it carries a hidden
-  marker line with the intent ID) and a failed comment is retried without a second one.
-- Verified by: `jira: the queued comment names scores and place`, `jira: a ticket is commented once`, `jira: a failed comment is retried once`
+- Three comments, each posted once: **queued** (the intent is on `main`), **in progress** (the mission
+  starts) and **done** (the code PR is merged). Each is a few plain sentences in the
+  [writing guide](../prompts/writing.md)'s style.
+- A comment never shows scores, their reasons, the place in the queue, the intent's link or any text
+  from the intent file; those stay on the owner's own page. The only links are the PR links of JIRA-8.
+- Once means once: each comment carries a hidden marker line (kind and intent ID). Before posting,
+  Towercab reads the ticket's comments only to look for that marker (JIRA-2), and a failed comment is
+  retried without a second one. Comments are only ever created, never edited or deleted.
+- Verified by: `jira: the queued comment says only where the work stands`, `jira: the in-progress and done comments are posted at their step`, `jira: a comment never shows scores or queue place`, `jira: a ticket is commented once`, `jira: a failed comment is retried once`
 
 ### JIRA-8 · Pull requests link back to the ticket
 
 Each pull request Towercab opens for a ticket's intent is linked on the ticket.
 
-- When the code PR is opened, Towercab adds one comment on the ticket with the PR link (a second
-  comment only for a different PR, never twice for the same one), found by a hidden marker with the PR URL.
+- When a spec, plan or code PR is opened, Towercab adds one comment on the ticket with the PR link (a
+  second comment only for a different PR, never twice for the same one), found by a hidden marker with
+  the PR URL, read as in JIRA-2.
 - A failed link never stops the pipeline: it is logged and retried on a later pass.
-- Verified by: `jira: the code PR is linked on the ticket`, `jira: a PR is linked once`, `jira: a failed link does not stop the mission`
+- Verified by: `jira: each PR is linked on the ticket`, `jira: a PR is linked once`, `jira: a failed link does not stop the mission`
 
 ### JIRA-9 · The ticket key in branches and titles
 
-When an intent has a ticket key, the key is in its branch name and is the scope of the code PR's title and commits.
+When an intent has a ticket key, the key is in its branch name, starts every pull request title Towercab opens for it, and is the scope of its commits.
 
-- Branch `towercab/<id>-<KEY>-<slug>` instead of `towercab/<id>-<slug>`; every rule that matches
-  `towercab/` still holds (PIP-2, cleanup).
-- Title, commits and the squash merge of the code PR: `<type>(<KEY>)!: <subject>`, for example
-  `feat(ABC-123): export invoices`. The key replaces the scope the design returned. The spec and plan
-  PRs keep `docs(specs):` and `docs(plan):`, and the PR bodies carry the key as a link.
+- Branch `towercab/<id>-<KEY>-<slug>` instead of `towercab/<id>-<slug>` (the spec and plan branches
+  likewise); every rule that matches `towercab/` still holds (PIP-2, cleanup).
+- **Every PR title** is prefixed `<KEY>: `: the intent PR (`ABC-123: docs(intents): add <id> <title>`),
+  the spec PR (`ABC-123: docs(specs): <subject>`), the plan PR (`ABC-123: docs(plan): <subject>`) and
+  the code PR (`ABC-123: <type>(<scope>)!: <subject>`).
+- **Commits** (spec, plan and code) and the squash merge: `<type>(<KEY>)!: <subject>`, for example
+  `feat(ABC-123): export invoices`; the key replaces the scope the design returned. The squash
+  commit does not take the PR title, so Conventional Commit tooling still reads it.
+- Stages find their PRs by the head branch and the URLs recorded on the mission, never by title; the
+  one title match that exists (the intents PR, INT-26) accepts an optional `<KEY>: ` prefix. No
+  stage's behaviour depends on how a title begins.
 - The key must match `[A-Z][A-Z0-9_]+-[0-9]+` to be used; anything else is left out of branches and titles.
 - Without a `jira:` field everything is as before.
-- Verified by: `jira: the key is in the branch name`, `jira: the key is the scope of the code PR title`, `jira: commits use the key as scope`, `jira: an intent without a key keeps its branch and titles`, `jira: a malformed key is left out`
+- Verified by: `jira: the key is in the branch name`, `jira: every PR title starts with the key`, `jira: commits use the key as scope`, `jira: the squash commit uses the key as scope`, `jira: stages find a PR whose title has the key prefix`, `jira: an intent without a key keeps its branch and titles`, `jira: a malformed key is left out`
 
 ### JIRA-10 · No status changes
 
 Towercab never moves a ticket to another status; the team's workflow decides that.
 
-- The only calls Towercab makes that write to Jira are comments (JIRA-6..8). No transition, assignment,
+- The only calls Towercab makes that write to Jira are comments (JIRA-6, JIRA-7, JIRA-8). No transition, assignment,
   field edit or label change is ever sent.
 - Verified by: `jira: only comments are written to Jira`
 
@@ -143,11 +156,11 @@ Everything about Jira is tested against a fake Jira that speaks HTTP, never the 
 
 Status transitions, assignment, and any change to a ticket other than comments. Tickets closed in Jira
 dropping their intent (INT-28 is for issues only). Several Jira sites. OAuth, and Jira Server's older
-API. Reading ticket comments, attachments or linked tickets.
+API. Acting on ticket comments written by others, and reading attachments or linked tickets.
 
 ## Decisions
 
-- The key is the scope in titles rather than a suffix, so teams' Jira smart commits and Conventional
-  Commit tooling both see it, and `type` keeps its meaning.
-- Spec and plan PRs keep their `docs(...)` scope because other steps recognise them by it (PIP-111).
+- PR titles start with the key so a tool that checks every title for a ticket key is satisfied; commits
+  and the squash commit use it as the scope so Conventional Commit tooling still parses them.
+- The ticket comments show progress only; scores and queue place stay on the owner's page.
 - A ticket ambiguous between repos is skipped, not guessed, as a wrong repo costs a wrong PR.
