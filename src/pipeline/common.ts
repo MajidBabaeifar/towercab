@@ -27,7 +27,7 @@ import { grantsFor, parseAccess, type TestAsk } from "./access.ts";
 import { profileStep } from "./hostcheck.ts";
 import type { Mech } from "./mechanical.ts";
 import { cacheEnv, DEFAULT_NETWORK } from "./sandbox.ts";
-import { type Access, type Question, SCHEMAS } from "./schemas.ts";
+import { type Access, type Question, type ReviewResult, SCHEMAS } from "./schemas.ts";
 
 /** `missions.data`, as the pipeline uses it. */
 export interface ShipData {
@@ -230,6 +230,18 @@ export interface PipeData {
     patchId: string;
     /** PIP-106: the review's plain brief. */
     brief?: string;
+  } | null;
+  /**
+   * PIP-197: a review waiting for its specialists. `pid` = the diff reviewed, `round` = the Review comment's
+   * number, `general` = the general review's result, `areas` = the specialists called in, in run order,
+   * `done` = the results in so far.
+   */
+  specialists?: {
+    pid: string;
+    round: number;
+    general: ReviewResult;
+    areas: ("security" | "infra")[];
+    done: Partial<Record<"security" | "infra", ReviewResult>>;
   } | null;
   /** Session cost already counted (MET-28). */
   sessionCost?: Record<string, number>;

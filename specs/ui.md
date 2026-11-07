@@ -1641,9 +1641,56 @@ After installing the App, the owner presses "Try again" and the add goes through
 - Next to the error the form and the unknown-repo card show a "Try again" button; the steps end with "then press Try again". It posts the same `addRepo` action (UI-130) with the field's current `github` and `name`, which are kept after a refusal. A problem card (UI-211) offers "Try again" the same way. A new success replaces the error and clears the problem (UI-130).
 - Verified by: `ui: try again adds the repo with the same text`, `ui: the field keeps its text after a refusal`, `ui: a problem card offers try again for a failed add`
 
+### UI-213 · A "New intent" form
+
+The dashboard has a "New intent" button that opens a form shaped like the intent template.
+
+- Fields, in order: repo (a picker of Towercab's repos), title, urgency, importance, autonomy (segmented 1–5 and `a0`..`a5` as UI-203 and UI-257 build them, none chosen by default), then the text boxes Problem, Proposed outcome, Affected users and systems, Constraints, Open questions. Only repo and title are required (INT-2); a score left alone is not written (INT-71).
+- Next to the title the form shows the naming rule of INT-33 in plain words (`Write it as a user story: the product, then what someone can do or see, 4 to 20 words`) with its example; it does not change what is typed.
+- The button is in the top bar and in Cmd-K (UI-265). With `[auth]` a maintainer of the repo writes straight to the intents repo and a contributor proposes (INT-71); this is the Create of UI-220. The repo picker lists the repos where the person is at least a contributor; a viewer has no button. A contributor's form says `A maintainer will accept or close your intent.` under the buttons, and its autonomy choices stop at a4 (UI-206).
+- Verified by: `ui: the new intent form has the template's fields`, `ui: the form needs only a repo and a title`, `ui: the form shows the naming rule beside the title`, `ui: the new intent button is in the top bar and in search`, `ui: the repo picker lists only allowed repos`, `ui: a contributor's form says a maintainer will review it`, `ui: a viewer has no new intent button`
+
+### UI-214 · Create runs the overlap check first
+
+Pressing Create makes an agent look for overlaps and shows what it found before anything is written.
+
+- Create posts `{action: "checkIntent", ...draft}` (UI-216) and the form shows `Checking your intent against the existing ones…` with the fields locked and the button disabled. The answer lists each match: its kind in words (`Open intent`, `Parked`, `Done`, `Dropped`, `Intent PR`), its title as a link (intent page, or the PR), and the `how` line (INT-73). A `titleNote` shows under the title field as a note.
+- Verified by: `ui: create shows that the check is running`, `ui: matches list kind, link and how`, `ui: a title note shows under the title`
+
+### UI-215 · Decide: create anyway, add to one, or cancel
+
+With matches, the owner chooses; with none, the intent is created at once.
+
+- With matches the form offers `Create anyway` (for a contributor, `Propose anyway`), `Add my text to this one` on each match that `canAddTo` (INT-74) and only to a maintainer, and `Cancel` (back to the form, text kept). Done, dropped and PR matches only link. A match past design shows `Already past design. Write a new intent and link <id>.` with the ID as a link, and no add button. With no match the intent is created without a question, and with only a title note it is too.
+- A failed check (INT-73) shows its error with `Create without the check` and `Cancel`; the text says the check was skipped if the owner goes on.
+- Verified by: `ui: with no match the intent is created at once`, `ui: matches offer create anyway, add to this one and cancel`, `ui: done and PR matches offer no add`, `ui: a match past design offers no add and says to write a new intent`, `ui: a contributor is offered propose anyway and no add`, `ui: cancel keeps the typed text`, `ui: a failed check offers create without the check`
+
+### UI-216 · Check and create actions
+
+The API has `checkIntent` and `createIntent` actions behind the form.
+
+- `POST /api/actions` (UI-65, UI-66) accepts `{action: "checkIntent", repo, title, u?, i?, a?, problem?, outcome?, affected?, constraints?, questions?}` with `actor: owner` and returns `{matches, titleNote?}` (INT-73); and `{action: "createIntent", ...same, addTo?: <id>}` which applies INT-72 and then INT-71, or INT-74 when `addTo` is set, and returns `{id, path, added: boolean, reply}`. `createIntent` does not run the check itself: the form decides after `checkIntent`.
+- A bad value, an unknown repo or id, or an intent that cannot be added to (INT-74, with its text) returns the error text and nothing is written. With `[auth]` both actions need the contributor role on the repo (UI-220, USR-5); `createIntent` uses `mode: "direct"` for a maintainer and `"proposal"` for a contributor, chosen by the server from the role, never by the request, and `addTo` needs the maintainer role. For a proposal the reply carries `proposal: true` and the PR's URL instead of a path. A refusal is a 403 with its reason (USR-7).
+- A repeated press cannot make two intents: `createIntent` with the same repo and title as one the same person created in the last 2 minutes (an intent, or an open proposal) is refused with `Already created as <id>`, and nothing is written; the form also disables Create while a request runs.
+- Verified by: `ui: checkIntent returns matches`, `ui: createIntent writes the intent and returns its id`, `ui: createIntent with addTo appends to the intent`, `ui: createIntent refuses a bad value and writes nothing`, `ui: createIntent refuses addTo for an intent past design`, `ui: a contributor's createIntent opens a proposal`, `ui: the mode follows the role, not the request`, `ui: addTo needs the maintainer role`, `ui: a repeated create is refused as already created`, `ui: the new intent actions need the contributor role`, `ui: API shapes`
+
+### UI-217 · The page opens the new intent
+
+After the intent is written, the page opens it.
+
+- On success the page goes to the new intent's page (UI-67 updates keep the page live) and shows `Created <id>.` once; after `addTo` it opens the existing intent and shows `Added to <id>.`. A contributor's proposal is not an intent yet: the page shows `Proposed <id>. A maintainer will accept or close it.` with a link to the pull request and opens the Inbox, where it shows as a proposed card (UI-184). The new intent shows in the Inbox and Board as any intent does, at the next state refresh, which the action's reply waits for (at most 5 s) so the page does not open on a missing intent.
+- Verified by: `ui: a created intent opens its page`, `ui: adding to an intent opens that intent`, `ui: a proposal shows its pull request and the Inbox`, `ui: the page does not open on a missing intent`
+
+### UI-218 · The form is safe to leave and works everywhere
+
+The form keeps what was typed after a refusal, fits a phone and works by keyboard.
+
+- After a refusal or Cancel the fields keep their text; the text is dropped after a success. The form fits 360 px, light and dark, every field has a label, Tab and Enter work, and the error line is announced. The screenshots (UI-275) include the empty form and the overlap list.
+- Verified by: `ui: the form keeps its text after a refusal`, `ui: the new intent form works by keyboard`, `ui: screenshots light, dark and mobile`
+
 ## Out of scope
 
-- Editing intents in the page, except their autonomy (UI-257) and scores (UI-203): the owner edits other fields in the intents repo or with `/intent`.
+- Editing intents in the page, except their autonomy (UI-257), scores (UI-203) and adding text to an open one (INT-74, UI-215): the owner edits other fields in the intents repo or with `/intent`.
 - Remote access: the page is for this machine only.
 
 ## Decisions

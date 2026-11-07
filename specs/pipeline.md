@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..193, PIP-196, PIP-202 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..193, PIP-196..199, PIP-202 · **Prefix:** PIP
 
 ## Purpose
 
@@ -2029,7 +2029,8 @@ Several comments taken in one revision, and a comment arriving while a reply is 
 | [worker](../agents/worker.md) | Writes tests and code, and the code PR's text. | Read, Edit, Write, Glob, Grep, Bash in the sandbox; WebFetch for granted domains; protected paths per the grants. | mission's | mission |
 | [repair](../agents/repair.md) | Fixes red checks, a conflict, a review finding or an owner's answer in the worker's session. | The worker's tools and permissions, no more. | mission's | mission |
 | [review](../agents/review.md) | Reviews the code PR against the intent, plan and `REVIEW.md`; reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
-| review-security, review-infra (PIP-197) | Specialist reviews of a code PR that touches security or infra files; Important findings only; read only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
+| [review-security](../agents/review-security.md) | The security specialist's review of a code PR that touches security files (PIP-197); Important findings only; reads only. | Specialist reviews of a code PR that touches security or infra files; Important findings only; read only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
+| [review-infra](../agents/review-infra.md) | The infra specialist's review of a code PR that touches infra files (PIP-197); Important findings only; reads only. | Specialist reviews of a code PR that touches security or infra files; Important findings only; read only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [risk](../agents/risk.md) | Judges the risk of the spec, plan and code at their gates, and reviews the spec a second time (PIP-96, PIP-97); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [merge-review](../agents/merge-review.md) | Checks that a merge Towercab made by code kept both sides (PIP-169); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [score](../agents/score.md) | Turns a GitHub issue into a scored intent ([INT-22](intents.md)); runs outside any mission in an empty folder. | Nothing: no tools. | none | `[agent].model` |

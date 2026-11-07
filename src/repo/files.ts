@@ -44,6 +44,14 @@ export interface Review {
   doNotReport: string[];
   /** `## Red lines` bullets. */
   redLines: string[];
+  /** `## Specialist paths` (REPO-42): the repo's own globs that call in a specialist review. */
+  specialistPaths: SpecialistPaths;
+}
+
+/** The areas a specialist review exists for (PIP-197). */
+export interface SpecialistPaths {
+  security: string[];
+  infra: string[];
 }
 
 /** `TOWERCAB.md` front matter (REPO-1). */
@@ -141,6 +149,7 @@ export function defaultReview(): Review {
     nitCap: DEFAULT_NIT_CAP,
     doNotReport: [...DEFAULT_DO_NOT_REPORT],
     redLines: [],
+    specialistPaths: { security: [], infra: [] },
   };
 }
 
@@ -206,12 +215,51 @@ export function parseVerifying(claude: string): Verifying {
   });
 }
 
-const REVIEW_SECTIONS = ["Passes", "What Important means here", "Cap the nits", "Do not report", "Red lines"];
+const REVIEW_SECTIONS = [
+  "Passes",
+  "What Important means here",
+  "Cap the nits",
+  "Do not report",
+  "Red lines",
+  "Specialist paths",
+];
+
+/** Split a bullet's globs at commas outside `{…}`, dropping backticks and empty ones. */
+function splitGlobs(s: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const c of s) {
+    if (c === "{") depth++;
+    if (c === "}") depth = Math.max(0, depth - 1);
+    if (c === "," && depth === 0) {
+      out.push(cur);
+      cur = "";
+    } else cur += c;
+  }
+  out.push(cur);
+  return out.map((g) => g.replace(/`/g, "").trim()).filter(Boolean);
+}
+
+/** REPO-42: `## Specialist paths` bullets `security: <glob>, …`; an unknown area is ignored. */
+function parseSpecialistPaths(bs: string[]): SpecialistPaths {
+  const out: SpecialistPaths = { security: [], infra: [] };
+  for (const b of bs) {
+    const at = b.indexOf(":");
+    if (at < 0) continue;
+    const area = b
+      .slice(0, at)
+      .replace(/^[\s*_`]+|[\s*_`]+$/g, "")
+      .toLowerCase();
+    if (area === "security" || area === "infra") out[area].push(...splitGlobs(b.slice(at + 1)));
+  }
+  return out;
+}
 
 /** `REVIEW.md` → the review policy. */
 export function parseReview(file: string): Review {
   const its = items(lines(file));
-  const [passes, important, cap, doNot, red] = sections(its, REVIEW_SECTIONS);
+  const [passes, important, cap, doNot, red, specialist] = sections(its, REVIEW_SECTIONS);
   const b = passes ? bullets(passes) : [];
   let nitCap = DEFAULT_NIT_CAP;
   if (cap) {
@@ -232,6 +280,7 @@ export function parseReview(file: string): Review {
     nitCap,
     doNotReport: skip.length ? skip : [...DEFAULT_DO_NOT_REPORT],
     redLines: red ? bullets(red) : [],
+    specialistPaths: specialist ? parseSpecialistPaths(bullets(specialist)) : { security: [], infra: [] },
   };
 }
 
