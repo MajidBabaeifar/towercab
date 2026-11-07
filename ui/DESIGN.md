@@ -17,14 +17,21 @@ two taps. They never want to read a table to find that out.
 4. **What does it cost?** Spend today, the last 7 days, the budget.
 
 The headline of the overview answers question 1 in words: "2 things need you" or "Nothing needs
-you." Everything else is one click away (the intent page), never on the overview.
+you." The things themselves are in the Inbox, one click away; everything else is one more click away (the
+intent page), never on the overview.
 
 ## Hierarchy per page
 
 - **Top bar** (every page): logo, health pill, counts, spend today, Pause/Resume. Nav tabs below.
-- **Overview**: headline and stat pills → airspace strip (full width, hideable) → needs-you cards →
-  problems → working → (side) up next (the queue, each with why it waits), spend, version. Phone:
-  one column in that order, the strip running top to bottom.
+- **Inbox** (`/`, the page the app opens on): a heading with the count, `? shortcuts` and a filter; on the left a
+  list of rows (kind chip, title, repo, age, a `New` marker), on the right the selected item's card. Snoozed
+  items fold under their own header. Phone: the list alone; a row opens the card on its own screen with
+  "Back to the inbox". Keys: j/k, Enter, m (asks first), r, o, s, `/`, `?`; Cmd-K searches and runs commands.
+- **Overview** (`/overview`): headline and stat pills → airspace strip (full width, hideable) → one line
+  linking to the Inbox → problems → working → (side) up next (the queue, each with why it waits), spend,
+  version. Phone: one column in that order, the strip running top to bottom.
+- **Folding lists**: a long list has a header with its name, a count and a toggle; folded, the header and
+  count stay. Lists start open, and the owner's choice is kept in the browser.
 - **Intent**: title + state sentence → the three PRs → needs-you card (when waiting) → stage map (the
   path taken, rounds and steps back, totals, the open stage's files and log, then "All moves" folded)
   → cost per attempt → the intent's own text. Phone: the map is a vertical stepper and a stage's files
@@ -118,7 +125,7 @@ Overview, desktop:
 ```
 +--------------------------------------------------------------------------------------+
 | [◎] Towercab   ● Running    2 need you · 1 working · 3 queued     $4.12 today  [Pause] |
-|  Overview   Board   Repos   Activity                                                 |
+|  Inbox   Overview   Board   Repos   Activity                                          |
 +--------------------------------------------------------------------------------------+
 | 2 things need you                                    | UP NEXT                       |
 | Updated 3 s ago                                      | 1 Add dark mode      web  11  |
@@ -143,7 +150,7 @@ Overview, phone (375 px):
 +-----------------------------+
 | [◎] Towercab  ● Running [⏸] |
 | 2 need you · $4.12 today    |
-| Overview Board Repos Activ… |
+| Inbox Overview Board Repo… |
 +-----------------------------+
 | 2 things need you           |
 | [card, full width]          |
@@ -181,3 +188,10 @@ in the "Needs you" amber, unreached stages dashed). The open stage and file live
 beyond the spinner.
 
 Repos and Activity: one repo at a time / one list grouped by day, same chips and rows.
+
+## The shadow
+
+What the shadow wrote or did carries a `[shadow]` tag: beside the title of a draft of its, in front of its
+moves on an intent's timeline, and on every row of its panel. The tag is text, so it doesn't depend on
+colour. The panel sits under Spend, shows only while the shadow is on, lists the last ten actions with
+links to what they touched, and has one Reset button that asks before it clears the conversation.

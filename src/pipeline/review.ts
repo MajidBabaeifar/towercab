@@ -1,7 +1,8 @@
 // The `review` stage (PIP-4, PIP-5, PIP-49, PIP-96, PIP-98): a fresh read-only Claude session reviews
 // the code PR against the intent, the plan and REVIEW.md; code decides approval; the verdict is posted.
 // A review that doesn't approve goes back to build as a fix round (2 at most); then the risk agent
-// assesses the change for the gate.
+// assesses the change for the gate. A change in a specialist area (PIP-197) is also read by that
+// specialist after the general review; code joins the results before it decides (PIP-198).
 
 import { gitEnv, NO_HOOKS } from "../checkout.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
@@ -15,6 +16,7 @@ import { coGit, data, ended, intentOf, note, repoFiles, spawnRun } from "./commo
 import { fence, intentData, render } from "./prompts.ts";
 import { endRisk, spawnRisk } from "./risk.ts";
 import { parseResult, type ReviewResult } from "./schemas.ts";
+import { AREA_AGENT, AREAS, type Area, mergeSpecialists, specialistsFor } from "./specialists.ts";
 
 /** PIP-98: fix rounds a review that doesn't approve gets before the gate holds for the owner. */
 export const MAX_REVIEW_FIXES = 2;
@@ -114,9 +116,9 @@ export function reviewPolicy(review: Review): string {
 }
 
 /** The PR diff's `git patch-id --stable` (line numbers and whitespace don't change it); "" for none. */
-async function patchId(cx: Ctx, m: Mission): Promise<string> {
+async function patchId(cx: Ctx, m: Mission, range?: string): Promise<string> {
   const repo = cx.repo(m);
-  const diff = await coGit(cx, m, ["diff", `refs/remotes/origin/${repo.base}...HEAD`]);
+  const diff = await coGit(cx, m, ["diff", range ?? `refs/remotes/origin/${repo.base}...HEAD`]);
   if (!diff.trim()) return "";
   const r = await cx.tools.run("git", [...NO_HOOKS, "patch-id", "--stable"], {
     cwd: cx.checkout(m),
@@ -137,29 +139,39 @@ export const reviewHandler: Handler = {
     if (m.step === "risk") return spawnRisk(cx, m, "code");
     const d = data(m);
     const pid = await patchId(cx, m);
+    // PIP-169: a merge made by code, read on its own diff, brings none of the PR's own change: the review
+    // and the risk assessment of the head before it stand for the new head.
+    // Only when that review is of the PR as it was just before the merge: a review of an older head (a fix
+    // round came after it) is stale, and the PR is reviewed in full.
+    const before = d.mech ? await patchId(cx, m, `${d.mech.theirs}...${d.mech.ours}`) : "";
+    if (d.mech?.reviewed && d.review && before !== "" && d.review.patchId === before) {
+      const carried = { ...d.review, patchId: pid };
+      if (d.riskOf?.code === d.review.patchId) {
+        return {
+          done: ok({
+            why: "the merge made by code adds none of the PR's own change: the earlier review stands",
+            data: { review: carried, riskOf: { ...d.riskOf, code: pid }, mech: undefined },
+          }),
+        };
+      }
+      return spawnRisk(cx, cx.record(m, m.step, {}, { review: carried, mech: undefined }), "code");
+    }
+    if (d.mech) m = cx.record(m, m.step, {}, { mech: undefined });
+    // PIP-197: a specialist still to run on this diff; one for an older diff is dropped below.
+    const sp = d.specialists;
+    if (m.step.startsWith("review-") && sp && sp.pid === pid) {
+      const next = sp.areas.find((a) => !sp.done[a]);
+      if (next) return spawnSpecialist(cx, m, next);
+    }
     if (d.review && d.review.patchId === pid) {
       if (currentRisk(m, "code") === undefined) return spawnRisk(cx, m, "code");
       return { done: ok({ why: "the diff is unchanged: the review stands" }) };
     }
     const intent = await intentOf(cx, m);
     const files = await repoFiles(cx, m);
-    const repo = cx.repo(m);
-    const plan = (await cx.store.readFile(`${intent.dir}/plan.md`)) ?? d.plan?.md ?? "(no plan)";
-    const shots = d.shots?.length
-      ? `Screenshots of the UI after the change (read them with the Read tool):\n${d.shots.map((s) => `- ${s}`).join("\n")}`
-      : "";
-    const prompt = render("review", {
-      intent: intentData(intent.text),
-      spec_ids: d.design?.specIds.join(", ") || "none",
-      plan: fence(plan, "plan"),
-      review_md: fence(reviewPolicy(files.review), "review_md"),
-      ci: d.ci?.result === "none" ? "no CI on this repo" : "green",
-      screenshots: shots,
-      diff_cmd: `git diff refs/remotes/origin/${repo.base}...HEAD`,
-      e2e: [e2eText(files.towercab.live, "review"), noneLiveText(d.liveNoneWhy)].filter(Boolean).join("\n\n"),
-    });
+    const prompt = await reviewPrompt(cx, m, "review", intent, files);
     // A run cut off by a crash runs again as the same round, so its comment is edited, not added.
-    const at = m.step === "review" ? m : cx.record(m, "pending", {}, { review: null });
+    const at = m.step === "review" ? m : cx.record(m, "pending", {}, { review: null, specialists: null });
     return spawnRun(cx, at, {
       kind: "review",
       step: "review",
@@ -177,6 +189,7 @@ export const reviewHandler: Handler = {
       if ("progress" in e) return e.progress;
       return { done: ok({ data: e.data }) };
     }
+    if (m.step.startsWith("review-")) return specialistEnd(cx, m, end);
     const r = ended(cx, m, "review", end, (v) => parseResult("review", v));
     if (!r.ok) {
       // A review that can't finish never blocks: the gate sends the PR to the owner.
@@ -187,37 +200,112 @@ export const reviewHandler: Handler = {
     }
     const v = r.value;
     const files = await repoFiles(cx, m);
-    const fixes = data(m).reviewFixes ?? 0;
-    const decision = reviewDecision(v, fixes);
-    const approved = decision.approved;
-    const body = reviewComment(v, files.review);
     const round = data(m).n?.review ?? 1;
-    // PIP-108: the comment a person reads opens with the plain brief; PIP-121: the verdict comes before it.
-    const plain = v.brief.trim() ? `**In plain words:** ${v.brief.trim()}\n\n` : "";
-    await note(cx, m, "Review", round, `${verdictLine(decision)}\n\n${plain}${body}`);
-    const pid = await patchId(cx, m);
-    const review = {
-      approved,
-      door: v.door,
-      redLines: v.red_lines.length > 0,
-      summary: v.summary,
-      details: body,
-      patchId: pid,
-      brief: v.brief,
-    };
-    const ownerSteps = decision.ownerSteps;
-    if (decision.round !== null) {
-      return {
-        done: red(`the review didn't approve: fix round ${decision.round} of ${MAX_REVIEW_FIXES}`, {
-          data: {
-            review,
-            ownerSteps,
-            reviewFixes: decision.round,
-            repair: { what: REVIEW_FIX, details: body, kind: "review" },
-          },
-        }),
-      };
+    // PIP-197: a change in a specialist area waits for each specialist before the verdict.
+    const changed = (
+      await coGit(cx, m, ["diff", "--name-only", `refs/remotes/origin/${cx.repo(m).base}...HEAD`])
+    )
+      .split("\n")
+      .filter(Boolean);
+    const areas = specialistsFor(changed, files.review.specialistPaths);
+    if (areas.length) {
+      const pid = await patchId(cx, m);
+      const waiting = cx.record(m, m.step, {}, { specialists: { pid, round, general: v, areas, done: {} } });
+      return spawnSpecialist(cx, waiting, areas[0]!);
     }
-    return spawnRisk(cx, cx.record(m, m.step, {}, { review, ownerSteps }), "code");
+    return conclude(cx, m, v, round);
   },
 };
+
+/** PIP-197: the general review's prompt, or a specialist's: the same inputs under another agent file. */
+async function reviewPrompt(
+  cx: Ctx,
+  m: Mission,
+  agent: "review" | "review-security" | "review-infra",
+  intent: Awaited<ReturnType<typeof intentOf>>,
+  files: Awaited<ReturnType<typeof repoFiles>>,
+): Promise<string> {
+  const d = data(m);
+  const repo = cx.repo(m);
+  const plan = (await cx.store.readFile(`${intent.dir}/plan.md`)) ?? d.plan?.md ?? "(no plan)";
+  const shots = d.shots?.length
+    ? `Screenshots of the UI after the change (read them with the Read tool):\n${d.shots.map((s) => `- ${s}`).join("\n")}`
+    : "";
+  return render(agent, {
+    intent: intentData(intent.text),
+    spec_ids: d.design?.specIds.join(", ") || "none",
+    plan: fence(plan, "plan"),
+    review_md: fence(reviewPolicy(files.review), "review_md"),
+    ci: d.ci?.result === "none" ? "no CI on this repo" : "green",
+    screenshots: shots,
+    diff_cmd: `git diff refs/remotes/origin/${repo.base}...HEAD`,
+    e2e: [e2eText(files.towercab.live, "review"), noneLiveText(d.liveNoneWhy)].filter(Boolean).join("\n\n"),
+  });
+}
+
+/** PIP-197: start one specialist's run (step `review-<area>`), on a session of its own. */
+async function spawnSpecialist(cx: Ctx, m: Mission, area: Area): Promise<Progress> {
+  const intent = await intentOf(cx, m);
+  const files = await repoFiles(cx, m);
+  return spawnRun(cx, m, {
+    kind: "review",
+    step: `review-${area}`,
+    prompt: await reviewPrompt(cx, m, AREA_AGENT[area], intent, files),
+    agent: AREA_AGENT[area],
+    files,
+    intent,
+  });
+}
+
+/** PIP-197, PIP-198: a specialist's run ended; the next one starts, or the joined review is decided. */
+async function specialistEnd(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
+  const sp = data(m).specialists;
+  const area = AREAS.find((a) => m.step === `review-${a}`);
+  if (!sp || !area) throw new Error(`step ${m.step} has no review waiting for its specialists`);
+  // A specialist that can't finish is not skipped: the owner is asked, with the reason.
+  const r = ended(cx, m, "review", end, (v) => parseResult("review", v));
+  if (!r.ok) return r.progress;
+  const done = { ...sp.done, [area]: r.value };
+  const rec = cx.record(m, m.step, {}, { specialists: { ...sp, done } });
+  const next = sp.areas.find((a) => !done[a]);
+  if (next) return spawnSpecialist(cx, rec, next);
+  const results = sp.areas.map((a) => ({ area: a, result: done[a]! }));
+  return conclude(cx, rec, mergeSpecialists(sp.general, results), sp.round);
+}
+
+/** The review's result (joined with its specialists') → the comment, and the fix round or the risk run. */
+async function conclude(cx: Ctx, m: Mission, v: ReviewResult, round: number): Promise<Progress> {
+  const files = await repoFiles(cx, m);
+  const fixes = data(m).reviewFixes ?? 0;
+  const decision = reviewDecision(v, fixes);
+  const approved = decision.approved;
+  const body = reviewComment(v, files.review);
+  // PIP-108: the comment a person reads opens with the plain brief; PIP-121: the verdict comes before it.
+  const plain = v.brief.trim() ? `**In plain words:** ${v.brief.trim()}\n\n` : "";
+  await note(cx, m, "Review", round, `${verdictLine(decision)}\n\n${plain}${body}`);
+  const pid = await patchId(cx, m);
+  const review = {
+    approved,
+    door: v.door,
+    redLines: v.red_lines.length > 0,
+    summary: v.summary,
+    details: body,
+    patchId: pid,
+    brief: v.brief,
+  };
+  const ownerSteps = decision.ownerSteps;
+  if (decision.round !== null) {
+    return {
+      done: red(`the review didn't approve: fix round ${decision.round} of ${MAX_REVIEW_FIXES}`, {
+        data: {
+          review,
+          ownerSteps,
+          reviewFixes: decision.round,
+          repair: { what: REVIEW_FIX, details: body, kind: "review" },
+          specialists: null,
+        },
+      }),
+    };
+  }
+  return spawnRisk(cx, cx.record(m, m.step, {}, { review, ownerSteps, specialists: null }), "code");
+}

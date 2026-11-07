@@ -172,6 +172,8 @@ export interface Forge {
   openPrOn(repo: string, head: string): Promise<number | null>;
   /** Every open change request: number and branch. */
   openPrBranches(repo: string): Promise<{ number: number; branch: string }[]>;
+  /** Merged change requests (the latest 300): number, branch and merge commit (null when the host did not say). */
+  mergedPrBranches(repo: string): Promise<{ number: number; branch: string; mergeCommit: string | null }[]>;
   reviews(repo: string, n: number): Promise<Review[]>;
   updatePrBody(repo: string, n: number, body: string): Promise<void>;
   commentOnPr(repo: string, n: number, text: string, how?: { inline?: boolean }): Promise<Result>;
@@ -186,6 +188,8 @@ export interface Forge {
 
   readChecks(repo: string, n: number): Promise<ChecksRead>;
   rerunFailed(repo: string, run: number): Promise<void>;
+  /** Cancel a run that hangs (PIP-171). */
+  cancelRun(repo: string, run: number): Promise<void>;
   /** The log of the failed jobs of a run. */
   failedLog(repo: string, run: number): Promise<string>;
   /** The whole log of one job of a run (PIP-154). */

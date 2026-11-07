@@ -22,6 +22,15 @@ export function act(action: string, intent?: string, text?: string): Promise<Act
   return post({ action, intent, text });
 }
 
+/** UI-253: save a scope's budget (`all`) or a repo's caps; an amount left out stays, null removes it. */
+export function saveBudgets(
+  scope: string,
+  daily?: number | null,
+  monthly?: number | null,
+): Promise<ActionReply> {
+  return post({ action: "budgets", scope, daily, monthly });
+}
+
 /** UI-160, SHIP-22: tick (or untick) one of the owner's steps. */
 export function tickStep(intent: string, n: number, done: boolean): Promise<ActionReply> {
   return post({ action: "step", intent, n, done });
@@ -50,6 +59,11 @@ export function acceptProposed(pr: number, head: string): Promise<ActionReply> {
 /** UI-185: close a proposed intent's PR with a reason (empty: the default). */
 export function closeProposed(pr: number, text: string): Promise<ActionReply> {
   return post({ action: "close", pr, text: text.trim() || undefined });
+}
+
+/** REPO-39: apply the standard settings of one repo with the owner's own login. */
+export function applySettings(repo: string): Promise<ActionReply> {
+  return post({ action: "apply-settings", repo });
 }
 
 /** UI-151: open (or update) the PR that changes a repo's limits; `null` takes a key out of the file. */
@@ -168,4 +182,18 @@ export function useLive<T>(path: string): Live<T> {
     };
   }, [load]);
   return state;
+}
+
+/** UI-264: the owner looked at the Inbox; the server stamps its own clock. */
+export function markSeen(): Promise<ActionReply> {
+  return post({ action: "seen" });
+}
+
+/** UI-264: put an item aside until `until` (unix seconds). */
+export function snoozeItem(item: string, until: number): Promise<ActionReply> {
+  return post({ action: "snooze", item, until });
+}
+
+export function unsnoozeItem(item: string): Promise<ActionReply> {
+  return post({ action: "unsnooze", item });
 }

@@ -114,6 +114,11 @@ export class FakeForge implements Forge {
       .filter((p) => p.repo === repo && p.state === "OPEN")
       .map((p) => ({ number: p.number, branch: p.branch }));
   }
+  async mergedPrBranches(repo: string) {
+    return this.prs
+      .filter((p) => p.repo === repo && p.state === "MERGED")
+      .map((p) => ({ number: p.number, branch: p.branch, mergeCommit: p.mergeCommit }));
+  }
   async reviews(repo: string, n: number) {
     return this.pr(repo, n).reviews;
   }
@@ -172,6 +177,9 @@ export class FakeForge implements Forge {
   }
   async rerunFailed(repo: string, run: number) {
     this.log(`rerun ${repo} ${run}`);
+  }
+  async cancelRun(repo: string, run: number) {
+    this.log(`cancel ${repo} ${run}`);
   }
   async failedLog(_repo: string, run: number) {
     return `run ${run}: failed\n`;

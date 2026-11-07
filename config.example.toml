@@ -11,6 +11,8 @@ path = "~/intents"
 cutoff = 7
 # Autonomy level (1-5) of an intent filed as a GitHub issue without an a1..a5 label.
 issue_a = 3
+# Most specs and plans per repo that may wait on you at once; a repo at this limit starts no new intent.
+owner_waits = 4
 
 [agent]
 # Claude model for the work.
@@ -53,6 +55,8 @@ EXAMPLE_VARIABLE = "placeholder"
 app_id = 123456
 # Your GitHub login.
 me = "your-login"
+# Your first name, for the line `towercab reply` puts on an agent's comments (default: your login).
+# name = "Your Name"
 # GitHub API address (change it only for GitHub Enterprise).
 api_base = "https://api.github.com"
 
@@ -73,6 +77,16 @@ bot_token = "123456:replace-me"
 chat_id = "123456789"
 # Telegram API address.
 api_base = "https://api.telegram.org"
+
+[shadow]
+# Whether the shadow, one Claude session you talk to in Telegram, is on. It needs [telegram] above.
+enabled = false
+# Actions it may take without asking you first. It always asks before the others; "confirm" always asks.
+free = []
+# What the shadow may spend per day (USD); it stops until midnight at the cap and never pauses other work.
+daily_budget_usd = 5
+# The model it uses (default: [agent] model).
+# model = "opus"
 
 [ui]
 # Port of the local web page (0 turns it off).

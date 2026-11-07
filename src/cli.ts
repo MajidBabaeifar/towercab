@@ -5,11 +5,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { ownerOnly, ownerOnlyLine } from "./autonomy.ts";
 import {
   applyCommand,
   type CommandName,
   commandResult,
   insertCommand,
+  OWNER_ONLY_COMMANDS,
   pendingCommands,
   tickSteps,
 } from "./commands.ts";
@@ -20,8 +22,9 @@ import { GitLabForge } from "./forge/gitlab.ts";
 import { parseGitlabProject } from "./forge/types.ts";
 import type { Forge } from "./forge.ts";
 import { fetchHttp } from "./github/app.ts";
+import { currentPr } from "./github/events.ts";
 import { createGitHub } from "./github/gh.ts";
-import { approve as ownerApprove } from "./github/owner.ts";
+import { agentReply, approve as ownerApprove, replyTarget } from "./github/owner.ts";
 import type { Host } from "./handlers.ts";
 import { systemClock } from "./handlers.ts";
 import { Home } from "./home.ts";
@@ -40,7 +43,8 @@ import { parseScores } from "./priority.ts";
 import { addRepo, loadRepos, removeRepo, repoLine, repoList, setRepo } from "./repos.ts";
 import { checkoutRoot, down, logsArgv, restart, up } from "./service.ts";
 import { restoreBackup } from "./settings/backup.ts";
-import { grantPermission } from "./settings/store.ts";
+import { resetShadow, statusText } from "./shadow/store.ts";
+import { buildShadow } from "./shadow/wire.ts";
 import { checkIds, readPrList } from "./specs-cli.ts";
 import { renderStatus } from "./status.ts";
 import { Telegram } from "./telegram.ts";
@@ -57,6 +61,7 @@ export const COMMANDS = [
   "next",
   "add",
   "answer",
+  "reply",
   "retry",
   "drop",
   "start",
@@ -70,6 +75,7 @@ export const COMMANDS = [
   "doctor",
   "update",
   "repo",
+  "shadow",
   "settings",
   "hook",
   "specs",
@@ -83,17 +89,18 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   add "<repo>: <title>" [uN iN aN]
   answer <id> <text>              answer a question (when there is no PR to reply on)
   answer <id> allow <path>…       allow a test you refused earlier, for the running mission
+  reply <id> --by <agent> <text>  an agent speaks for you on the PR (or issue): marked as the agent's
   approve <id>                    merge the PR the intent waits on, as you
   retry <id> | drop <id>
   start <id>                      begin that intent's design now, even when the repo is full
   step <id> <n…|all>              tick off steps the plan lists for you (the change then goes on)
   done <id> [note]                you did the work yourself: ends the intent; the note is kept as a ticked step
   steps <id>                      you will do it by hand: the intent becomes steps for you to tick
-  pause | resume
+  pause [id] | resume [id]
   repo add <owner/name> [--name <short>] | repo remove <name> | repo list
   repo set <name> key=value…      workers, ahead, base, path, env (NAME=value or a JSON object)
+  shadow reset | shadow status    clear the shadow's conversation; what it is doing and what it cost today
   settings restore <repo>         put back the settings saved before the last apply
-  settings granted                the GitHub App now has Administration (write)
   settings scanning-granted       the GitHub App now has Code scanning alerts (read)
   ui [--no-open]                  open the web page
   specs check-ids [--base <ref>] [--prs <file>]
@@ -174,8 +181,18 @@ function applyCtx(db: Db): ApplyCtx {
   };
 }
 
+/** AUT-33: the command line can't tell the owner from an agent, so it refuses to decide for an a0 intent. */
+async function refuseOwnerOnly(w: World, intent: string): Promise<void> {
+  if (intent === "") return;
+  const found = await (await w.store()).get(intent).catch(() => null);
+  if (found && ownerOnly(found.a, unfinishedFor(w.db, found.id)?.a_at_pick ?? null)) {
+    throw new Error(ownerOnlyLine(found.id));
+  }
+}
+
 /** Queue a command for the loop, or apply it here when no loop runs (LOOP-15). */
 async function submit(w: World, name: CommandName, arg = "", text = ""): Promise<string> {
+  if (OWNER_ONLY_COMMANDS.includes(name)) await refuseOwnerOnly(w, arg);
   const id = insertCommand(w.db, { name, arg, text, source: "cli" }, Date.now() / 1000);
   if (w.home.holder() === null) {
     const store = await w.store();
@@ -209,6 +226,7 @@ export async function main(argv: string[], tools: Tools = realTools()): Promise<
         name: { type: "string" },
         base: { type: "string" },
         prs: { type: "string" },
+        by: { type: "string" },
       },
     });
   } catch (e) {
@@ -336,7 +354,26 @@ async function run(
       const lock = w.home.lock();
       log.init(w.home.logFile);
       const store = await w.store();
-      const loop = new Loop(
+      const telegram = w.config.telegram ? new Telegram(w.config.telegram) : null;
+      // SHD-1: the shadow reads the owner's chat only in a watching loop, with `[shadow] enabled`.
+      const shadow =
+        v.watch && w.config.shadow.enabled
+          ? buildShadow(
+              {
+                config: w.config,
+                home: w.home,
+                db: w.db,
+                tools,
+                clock: systemClock,
+                store,
+                github: w.github!,
+                log: (l) => log.emit(l),
+              },
+              telegram,
+              () => loop,
+            )
+          : undefined;
+      const loop: Loop = new Loop(
         {
           config: w.config,
           home: w.home,
@@ -348,7 +385,8 @@ async function run(
           gitlab: w.gitlab,
           handlers: handlers(),
           log: (l) => log.emit(l),
-          sender: w.config.telegram ? new Telegram(w.config.telegram) : null,
+          sender: telegram,
+          shadow,
           selfUpdate: Boolean(v.watch),
           readiness: true,
           limits: true,
@@ -427,6 +465,27 @@ async function run(
     case "answer":
       need(2, "<id> <text>");
       return submit(w, "answer", args[0], args.slice(1).join(" "));
+    case "reply": {
+      // PIP-184: allowed on every intent, an a0 one included: it only posts, and a0 ignores what it posts.
+      need(2, "<id> --by <agent> <text>");
+      if (v.by === undefined) throw new UsageError("reply needs --by <agent>");
+      if (!w.github) throw new Error(`reply needs [github] in ${w.config.file} (app_id, me)`);
+      const intent = await (await w.store()).get(args[0]!);
+      const m = unfinishedFor(w.db, intent.id);
+      const repo = w.config.repos.get(m?.repo ?? intent.repo);
+      const cur = m ? currentPr(m) : null;
+      const where = cur
+        ? {
+            repo: cur.kind === "plan" ? ((await w.store()).github() ?? "") : (repo?.github ?? ""),
+            number: cur.number,
+          }
+        : null;
+      const to = replyTarget(where?.repo ? where : null, intent.issue);
+      if (!to) throw new Error(`${intent.id} has no PR or issue to comment on yet`);
+      const owner = w.config.github?.name || w.config.github?.me || "the owner";
+      await agentReply(w.github, to, v.by as string, owner, args.slice(1).join(" "));
+      return `posted on ${to.repo}#${to.number} as ${v.by}, for ${owner}`;
+    }
     case "retry":
       need(1, "<id>");
       return submit(w, "retry", args[0]);
@@ -446,19 +505,21 @@ async function run(
       need(2, "<id> <n…|all>");
       const store = await w.store();
       const id = (await store.get(args[0]!)).id;
+      await refuseOwnerOnly(w, id);
       const which = args.slice(1).length === 1 && args[1] === "all" ? "all" : args.slice(1).map(Number);
       if (which !== "all" && which.some((n) => !Number.isInteger(n) || n < 1))
         throw new UsageError(`want step numbers or all, got "${args.slice(1).join(" ")}"`);
       return tickSteps(w.db, id, which, true, new Date());
     }
     case "pause":
-      return submit(w, "pause");
+      return submit(w, "pause", args[0] ?? "");
     case "resume":
-      return submit(w, "resume");
+      return submit(w, "resume", args[0] ?? "");
     case "approve": {
       need(1, "<id>");
       const store = await w.store();
       const intent = await store.get(args[0]!);
+      await refuseOwnerOnly(w, intent.id);
       const m = unfinishedFor(w.db, intent.id);
       if (!m || !isWait(m.stage) || m.stage === "blocked") {
         throw new Error(
@@ -489,6 +550,15 @@ async function run(
       await ownerApprove(w.github, gh, n);
       return `merged ${gh}#${n} as ${w.config.github?.me}; Towercab continues on its next read`;
     }
+    case "shadow": {
+      // LOOP-131: the same as `/reset` and `/status` in the chat; a running loop sees the reset at its next turn.
+      if (args[0] === "reset") {
+        resetShadow(w.db);
+        return "the shadow's conversation is cleared; its action log is kept";
+      }
+      if (args[0] === "status") return statusText(w.db, w.config.shadow, systemClock.now());
+      throw new UsageError("shadow reset | shadow status");
+    }
     case "repo":
       return repo(w, args, v.name as string | undefined);
     case "settings":
@@ -518,24 +588,19 @@ async function run(
   }
 }
 
-/** `settings restore <repo>` (REPO-31) and `settings granted` (REPO-32). */
+/** `settings restore <repo>` (REPO-31) and `settings scanning-granted`. */
 export async function settingsCommand(
   w: Pick<World, "config" | "home" | "db" | "tools" | "github">,
   args: string[],
 ): Promise<string> {
   const [sub, name] = args;
-  if (sub === "granted" && args.length === 1) {
-    return grantPermission(w.db)
-      ? "noted: Towercab applies settings again at its next check"
-      : "nothing to clear: the GitHub App was not missing the permission";
-  }
   if (sub === "scanning-granted" && args.length === 1) {
     return grantScanning(w.db)
       ? "noted: Towercab reads code scanning alerts again on the next red check"
       : "nothing to clear: the GitHub App was not missing the permission";
   }
   if (sub !== "restore" || !name || args.length !== 2)
-    throw new UsageError("settings restore <repo> | settings granted | settings scanning-granted");
+    throw new UsageError("settings restore <repo> | settings scanning-granted");
   const repo = w.config.repos.get(name);
   if (!repo) throw new Error(`${name} isn't a repo Towercab knows (towercab repo list)`);
   if (!w.github) throw new Error(`settings restore needs [github] in ${w.config.file} (app_id, me)`);

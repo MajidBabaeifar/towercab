@@ -16,8 +16,17 @@ import { plainLine, TITLE_MAX, titleProblem } from "../intents/naming.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { currentRisk, openPointsMd, openPointsWhy, type Risk, riskMd } from "../risk.ts";
-import { addedIds, applyMap, headingIds, moveIds, yields } from "../specids.ts";
-import { ciState, redLog } from "./ci.ts";
+import {
+  addedIds,
+  applyMap,
+  headingIds,
+  moveIds,
+  namedAsWritten,
+  ownSpecBranch,
+  parseIds,
+  yields,
+} from "../specids.ts";
+import { cancelHung, ciState, hungReason, redLog } from "./ci.ts";
 import {
   asEnv,
   botAuthor,
@@ -39,6 +48,7 @@ import {
   subjectOf,
   viaForge,
 } from "./common.ts";
+import { docsTableOnly } from "./docsindex.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { specBody } from "./prtext.ts";
 import { endRisk, spawnRisk } from "./risk.ts";
@@ -61,6 +71,10 @@ export interface Taken {
   open: { number: number; ids: string[] }[];
   /** Why the open PRs couldn't be read (GitHub unreachable), else null. */
   unchecked: string | null;
+  /** PIP-202: the IDs the intent's own spec PRs added, merged or open (never moved, never "taken"). */
+  own: Set<string>;
+  /** Why the intent's merged spec PRs couldn't be read, else null. */
+  ownUnchecked: string | null;
 }
 
 /** The `### <ID> ·` headings of `specs/` at `ref` of the clone. */
@@ -85,19 +99,44 @@ export async function takenIds(cx: Ctx, m: Mission): Promise<Taken> {
   const clone = cloneOf(cx, m);
   const baseRef = `refs/remotes/origin/${repo.base}`;
   const open: Taken["open"] = [];
+  const own = new Set<string>();
   let unchecked: string | null = null;
-  try {
-    const prs = (await viaForge(cx.github.openPrBranches(repo.github))).map((p) => ({
-      number: p.number,
-      headRefName: p.branch,
-    }));
-    const others = prs.filter((p) => p.number !== m.spec_pr && p.headRefName !== `${m.branch}-spec`);
+  let ownUnchecked: string | null = null;
+  let fetched = false;
+  const fetchAll = async () => {
     await git(
       cx.tools,
       clone,
       ["fetch", "--quiet", "--prune", "origin"],
       await cx.github.gitAuth(repo.github),
     );
+    fetched = true;
+  };
+  try {
+    const prs = (await viaForge(cx.github.openPrBranches(repo.github))).map((p) => ({
+      number: p.number,
+      headRefName: p.branch,
+    }));
+    const mine = (p: { number: number; headRefName: string }) =>
+      p.number === m.spec_pr ||
+      p.headRefName === `${m.branch}-spec` ||
+      ownSpecBranch(m.intent, p.headRefName);
+    const others = prs.filter((p) => !mine(p));
+    await fetchAll();
+    // PIP-202: the intent's own open spec PRs are never a clash, and their rows are the intent's own.
+    for (const p of prs.filter(mine)) {
+      try {
+        const diff = await git(cx.tools, clone, [
+          "diff",
+          `${baseRef}...refs/remotes/origin/${p.headRefName}`,
+          "--",
+          "specs",
+        ]);
+        for (const id of addedIds(diff)) own.add(id);
+      } catch (e) {
+        cx.log(`spec PR #${p.number}: can't read its IDs, skipped: ${(e as Error).message}`);
+      }
+    }
     for (const p of others) {
       try {
         const diff = await git(cx.tools, clone, [
@@ -116,7 +155,21 @@ export async function takenIds(cx: Ctx, m: Mission): Promise<Taken> {
     unchecked = (e as Error).message;
     cx.log(`${m.intent}: IDs unchecked against open PRs: ${unchecked}`);
   }
-  return { base: await baseIds(cx, clone, baseRef), open, unchecked };
+  // PIP-202: the rows the intent's own merged spec PRs added are the intent's own too.
+  try {
+    const merged = (await viaForge(cx.github.mergedPrBranches(repo.github))).filter(
+      (p) => p.mergeCommit && ownSpecBranch(m.intent, p.branch),
+    );
+    if (merged.length && !fetched) await fetchAll();
+    for (const p of merged) {
+      const diff = await git(cx.tools, clone, ["diff", `${p.mergeCommit}^`, p.mergeCommit!, "--", "specs"]);
+      for (const id of addedIds(diff)) own.add(id);
+    }
+  } catch (e) {
+    ownUnchecked = (e as Error).message;
+    cx.log(`${m.intent}: ${IDS_UNCHECKED_MERGED}: ${ownUnchecked}`);
+  }
+  return { base: await baseIds(cx, clone, baseRef), open, unchecked, own, ownUnchecked };
 }
 
 const claimedLine = (ids: string[]) =>
@@ -138,6 +191,9 @@ function baseLine(base: Set<string>): string {
 
 /** What the design is told when the open PRs could not be read (PIP-130). */
 export const IDS_UNCHECKED = "IDs unchecked against open PRs";
+
+/** The log note when the intent's merged spec PRs could not be read (PIP-202). */
+export const IDS_UNCHECKED_MERGED = "IDs unchecked against merged spec PRs";
 
 /** PIP-130: whether a PR is approved (a review in state APPROVED); unreadable counts as not approved. */
 async function approvedPr(cx: Ctx, github: string, n: number | null): Promise<boolean> {
@@ -379,11 +435,18 @@ async function prompt(
     : "";
   const t = await takenIds(cx, m);
   const claimed = [...new Set(t.open.flatMap((p) => p.ids))].sort();
+  const outcome = intent.sections.get("Proposed outcome") ?? "";
+  const line = /spec IDs:\s*([^\n]+)/i.exec(outcome);
+  const written = [...new Set([...t.own, ...namedAsWritten(outcome)])];
+  const existing = (line ? parseIds(line[1]!) : []).filter((id) => t.base.has(id) && written.includes(id));
+  const existingLine = existing.length
+    ? `\nThese reserved IDs are already rows on the base branch, written by this intent's own earlier spec PR: ${existing.join(", ")}. They are existing rows to build or make Live, not new ones; do not rewrite or renumber them.`
+    : "";
   return {
     prompt: render("design", {
       intent: intentData(intent.text),
       earlier: answer + settled + files2 + (await ciSection(cx, m)),
-      reserved: `${reservedLine(intent.sections.get("Proposed outcome") ?? "")}\n${claimedLine(claimed)}${baseLine(t.base)}${t.unchecked === null ? "" : `\n${IDS_UNCHECKED}: the open PRs could not be read (${t.unchecked}). Take IDs after the highest on the base branch; Towercab checks them again before the spec PR is opened or updated.`}`,
+      reserved: `${reservedLine(outcome)}${existingLine}\n${claimedLine(claimed)}${baseLine(t.base)}${t.unchecked === null ? "" : `\n${IDS_UNCHECKED}: the open PRs could not be read (${t.unchecked}). Take IDs after the highest on the base branch; Towercab checks them again before the spec PR is opened or updated.`}`,
     }),
     files,
   };
@@ -553,10 +616,29 @@ async function renameFeatureLine(cx: Ctx, m: Mission, from: string, to: string):
   }
 }
 
+/**
+ * PIP-172: keep the design's change to README.md only when it adds rows to the docs table and the spec
+ * PR adds a spec file that base lacks; any other README change is restored to what HEAD has.
+ */
+async function guardReadme(cx: Ctx, m: Mission): Promise<void> {
+  const base = `refs/remotes/origin/${cx.repo(m).base}`;
+  const mine = await readFile(join(cx.checkout(m), "README.md"), "utf8").catch(() => null);
+  const was = await coGit(cx, m, ["show", `${base}:README.md`]).catch(() => null);
+  if (mine !== null && was !== null && mine !== was && docsTableOnly(was, mine)) {
+    const onBase = new Set(
+      (await coGit(cx, m, ["ls-tree", "--name-only", base, "specs/"])).split("\n").filter(Boolean),
+    );
+    const now = await readdir(join(cx.checkout(m), "specs")).catch(() => [] as string[]);
+    if (now.some((f) => f.endsWith(".md") && !onBase.has(`specs/${f}`))) return;
+  }
+  await coGit(cx, m, ["checkout", "--quiet", "HEAD", "--", "README.md"]).catch(() => undefined);
+}
+
 /** Commit the spec change; no change → straight to plan. Edits outside specs/ are dropped. */
 async function commit(cx: Ctx, m: Mission): Promise<Progress> {
   await rename(cx, m);
-  const changed = (await coGit(cx, m, ["status", "--porcelain", "--", "specs"])).trim();
+  await guardReadme(cx, m);
+  const changed = (await coGit(cx, m, ["status", "--porcelain", "--", "specs", "README.md"])).trim();
   if (!changed) {
     await dropOthers(cx, m);
     // A spec commit made before a crash, not yet on the spec PR: push it now (LOOP-6).
@@ -570,7 +652,7 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
   }
   m = await recheckIds(cx, m);
   const intent = await intentOf(cx, m);
-  await coGit(cx, m, ["add", "-A", "--", "specs"]);
+  await coGit(cx, m, ["add", "-A", "--", "specs", "README.md"]);
   await coGit(cx, m, [
     ...(await botAuthor(cx)),
     "commit",
@@ -595,7 +677,7 @@ async function pushSpec(cx: Ctx, m: Mission): Promise<Progress> {
   return openPr(cx, cx.record(m, "pr", { head, pushed_at: cx.clock.now() }, { specBranch, pushRefusals: 0 }));
 }
 
-/** The design may edit only specs/ (PIP-25): anything else it left in the checkout is discarded. */
+/** The design may edit only specs/ and the README's docs table (PIP-25, PIP-172): anything else it left is discarded. */
 async function dropOthers(cx: Ctx, m: Mission): Promise<void> {
   await coGit(cx, m, ["reset", "--hard", "--quiet"]);
   await coGit(cx, m, ["clean", "-fdq"]);
@@ -714,14 +796,26 @@ async function specCi(cx: Ctx, m: Mission): Promise<Progress> {
   const d = data(m);
   const pushedAt = m.pushed_at ?? cx.clock.now();
   const s = await ciState(cx, repo.github, m.spec_pr!, m.head, pushedAt);
+  const hung = d.specHung ?? {};
+  const hungWait = (again: boolean, error?: string): Progress => ({
+    done: wait(
+      "approve spec",
+      `The spec PR's automatic checks didn't finish (${hungReason(cx, again, error)}). Check that they run on GitHub, then merge the spec if it reads right.`,
+    ),
+  });
   if (s.kind === "pending") {
-    if (cx.timeouts && cx.clock.now() - pushedAt > cx.config.agent.ciWait)
-      return {
-        done: wait(
-          "approve spec",
-          `The spec PR's automatic checks didn't finish within ${Math.round(cx.config.agent.ciWait / 60)} minutes. Check that they run on GitHub, then merge the spec if it reads right.`,
-        ),
-      };
+    if (cx.timeouts && cx.clock.now() - pushedAt > cx.config.agent.ciWait) {
+      const head = m.head ?? "";
+      const again = hung[head] === true;
+      if (!again && !d.specReruns?.[head]) {
+        const c = await cancelHung(cx, repo.github, s.runs, () =>
+          cx.record(m, m.step, { pushed_at: cx.clock.now() }, { specHung: { ...hung, [head]: true } }),
+        );
+        if (c && "poll" in c) return c;
+        if (c) return hungWait(false, c.error);
+      }
+      return hungWait(again);
+    }
     return { poll: cx.config.agent.ciPoll };
   }
   if (s.kind === "moved")
@@ -756,6 +850,7 @@ async function specCi(cx: Ctx, m: Mission): Promise<Progress> {
       return { poll: cx.config.agent.ciPoll };
     }
     const names = s.checks.map((c) => c.name).join(", ");
+    if (s.kind === "cancel" && hung[head]) return hungWait(true);
     // A cancelled run has no failing log to fix.
     if (s.kind === "cancel")
       return {

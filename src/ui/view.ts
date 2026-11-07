@@ -53,6 +53,8 @@ export interface TopBar {
   /** One sentence under the health pill's hover. */
   healthNote: string;
   needs: number;
+  /** UI-244: of `needs`, the proposed intents; the rest are missions and intents waiting (`needs - proposed`). */
+  proposed: number;
   working: number;
   queued: number;
   /** "2 need you · 1 working · 3 queued". */
@@ -63,6 +65,8 @@ export interface TopBar {
   /** "of $20.00" when a daily budget is set. */
   budget: string | null;
   overBudget: boolean;
+  /** UI-256: spend against the budgets; `note` is the words that go with amber or red. */
+  budgetChip?: { text: string; level: "ok" | "amber" | "red"; note: string | null };
   version: { commit: string; behind: string | null };
   paused: boolean;
   /** No actions: the CLI serves the page without a loop (UI-2). */
@@ -119,6 +123,8 @@ export interface RiskView {
   blast: string;
   door: string;
   certainty: string;
+  /** UI-248: the three in one line: "Medium risk · easy to undo · fairly sure it works". */
+  line: string;
   summary: string;
   /** Why the floor raised the level (AUT-17), or null. */
   raised: string | null;
@@ -156,10 +162,18 @@ export interface Card {
   addRepo: { name: string; github: string } | null;
   /** AUT-20: the risk of what it waits on; null when none was judged (or the check didn't finish). */
   risk?: RiskView | null;
+  /** UI-245: the owner's steps, when the wait is on them (the checklist of UI-160). */
+  steps?: StepView[];
   /** PIP-97: the spec's open points for the owner (spec cards only). */
   openPoints?: { point: string; why: string }[];
   /** PIP-147: the host asks for approvals the reviewers can't give (UI-168). */
   warning?: string;
+  /** UI-236: the intent is a draft of the shadow's (`source: shadow`). */
+  shadow?: boolean;
+  /** UI-239: the intent is a0: only the owner can answer or approve it, shown as "only you". */
+  onlyYou?: boolean;
+  /** PIP-186: an agent answered for the owner and the intent acted on it: the agent's name. */
+  decided_by_agent?: string | null;
 }
 
 export type PhaseStatus = "done" | "current" | "todo" | "skipped";
@@ -184,6 +198,45 @@ export interface Row {
   behind: string | null;
   /** PIP-147: the host asks for approvals the reviewers can't give (UI-168). */
   warning?: string;
+  /** UI-236: the intent is a draft of the shadow's. */
+  shadow?: boolean;
+  estimate?: EstimateLine;
+}
+
+/** UI-255: what an intent is expected to cost, or what it has spent against that. */
+export interface EstimateLine {
+  text: string;
+  /** Spent so far as a share of the estimate, 0–100; null before it starts. */
+  pct: number | null;
+  /** Spent is above the usual range (the bar turns amber). */
+  over: boolean;
+}
+
+/** UI-253: a scope's budget amounts (`all`, or a repo) and what is spent so far. */
+export interface BudgetsView {
+  scope: string;
+  daily: number | null;
+  monthly: number | null;
+  spentDay: string;
+  spentMonth: string;
+  spentDayUsd: number;
+  spentMonthUsd: number;
+  where: string;
+}
+
+/** UI-254: a reached cap, as a Needs you card. */
+export interface CapCard {
+  key: string;
+  scope: string;
+  period: "day" | "month";
+  title: string;
+  line: string;
+  reason: string;
+  capUsd: number;
+  spentUsd: number;
+  raiseTo: number;
+  /** Intents that would start but wait behind it. */
+  waiting: number;
 }
 
 export interface ProblemView {
@@ -207,6 +260,7 @@ export interface UpNextView {
   reason: string | null;
   /** The "Start now" button is offered (UI-101). */
   canStart: boolean;
+  estimate?: EstimateLine;
 }
 
 export interface SpendDay {
@@ -223,6 +277,10 @@ export interface SpendView {
   todayUsd: number;
   budgetUsd: number | null;
   days: SpendDay[];
+  /** UI-253: the overall budget; present on the overview (`GET /api/state`). */
+  budgets?: BudgetsView;
+  /** UI-254: a card for each reached budget or cap, among the Needs you cards. */
+  caps?: CapCard[];
 }
 
 /** UI-78: the airspace's stations, in line order. */
@@ -287,7 +345,7 @@ export interface AirspaceView {
 export interface Overview {
   version: string;
   top: TopBar;
-  /** UI-184: every proposed intent, before the needs-you cards; absent when Towercab isn't reading them. */
+  /** UI-184: every proposed intent, after the needs-you cards; absent when Towercab isn't reading them. */
   proposed?: ProposedSection;
   needs: Card[];
   problems: ProblemView[];
@@ -315,6 +373,31 @@ export interface TimelineItem {
   /** How long it stayed after this move ("12 min"), null for the current one. */
   lasted: string | null;
   tone: "move" | "wait" | "error" | "done";
+  /** UI-236: the shadow did this. */
+  shadow?: boolean;
+}
+
+/** UI-237: one thing the shadow did, asked or refused. */
+export interface ShadowActionView {
+  id: number;
+  at: When;
+  /** A sentence, without the tag. */
+  text: string;
+  outcome: "done" | "refused" | "held";
+  intent: string | null;
+  pr: { number: number; url: string } | null;
+}
+
+/** UI-237: `GET /api/shadow`. */
+export interface ShadowView {
+  enabled: boolean;
+  actions: ShadowActionView[];
+  /** Asked, waiting for the owner's yes in Telegram. */
+  pending: { action: string; intent: string }[];
+  spentToday: string;
+  cap: string;
+  spentUsd: number;
+  capUsd: number;
 }
 
 /** The stages of the map, in pipeline order (UI-72). `other` only holds files no stage claims (LOOP-42). */
@@ -425,6 +508,16 @@ export interface AttemptView {
   map: StageMapView;
 }
 
+/** PIP-186: a comment an agent wrote under the owner's login. */
+export interface AgentCommentView {
+  agent: string;
+  url: string;
+  at: When;
+  excerpt: string;
+  /** False when the intent ignored it (a0). */
+  acted_on: boolean;
+}
+
 export interface IntentPage {
   version: string;
   id: string;
@@ -432,6 +525,8 @@ export interface IntentPage {
   repo: string;
   /** "Priority 11 · urgency 3, importance 4". */
   scores: string;
+  /** UI-236: a draft of the shadow's (`source: shadow`). */
+  shadow?: boolean;
   /** The "Start now" button is offered (UI-101). */
   canStart: boolean;
   state: StateView;
@@ -461,6 +556,13 @@ export interface IntentPage {
   stepsWait?: "before" | "after" | null;
   /** UI-162: why the plan said nothing could be checked live, for a change that shows as done. */
   nothingLive?: string | null;
+  /** UI-239: set for an a0 intent, with the line to show; `paused` is this intent's own pause (SHD-22). */
+  onlyYou?: string;
+  paused?: boolean;
+  /** PIP-186: the comments agents wrote under the owner's login, oldest first. */
+  agent_comments: AgentCommentView[];
+  /** PIP-186: the agent that answered for the owner, when the intent acted on it. */
+  decided_by_agent?: string | null;
   /** SHIP-32: "Published in v1.2.0" with its link, or "Merged, waiting for a release"; absent when the repo has no releases. */
   release?: { text: string; url: string | null };
 }
@@ -554,7 +656,7 @@ export interface RepoChip {
   repo: string;
   /** Open intents: in progress, up next, waiting and parked. */
   open: number;
-  /** Of them, waiting on the owner. */
+  /** Of them, waiting on the owner, proposed intents included (UI-244). */
   needs: number;
 }
 
@@ -631,10 +733,14 @@ export interface SettingsView {
   notes: string[];
   /** When it was checked, unix seconds; 0 when never. */
   at: number;
-  /** REPO-32: the one step the owner has, shared by every repo; null when nothing is missing. */
-  step: string | null;
-  /** The step's button works: Towercab runs (a read-only page can't act). */
-  canGrant: boolean;
+  /** REPO-38: what Apply would change; empty when the plan has no lines to show. */
+  plan: { what: string; now?: string; after?: string }[];
+  /** REPO-38: why there is no plan to show, or null. */
+  planNote: string | null;
+  /** REPO-39: an Apply is running for this repo now. */
+  applying: boolean;
+  /** REPO-39: the Apply button is offered (gaps, and Towercab runs). */
+  canApply: boolean;
 }
 
 /** UI-194: what one finished phase did, in its plain brief. */
@@ -643,29 +749,42 @@ export interface FocusHistory {
   text: string;
 }
 
-/** UI-194: the one wait Focus shows: a needs-you card or a proposed intent, with its context. */
-export interface FocusItem {
-  /** The intent's ID, or `proposed-<PR number>`: what the page keys the item by. */
+/** UI-259: one row of the Inbox: a needs-you card, a reached cap or a proposed intent, with its context. */
+export interface InboxItem {
+  /** The intent's ID, `proposed-<PR number>` or `cap-<scope>-<period>`: what the URL and the page key it by. */
   key: string;
+  kind: "card" | "cap" | "proposed";
   repo: string;
   title: string;
+  /** "Plan review", "Proposed", "Budget". */
+  kindLabel: string;
+  /** When the wait began (unix s); null when unknown. */
+  since: number | null;
   /** The first sentence of the intent's Problem; null when it has none. */
   overview: string | null;
   history: FocusHistory[];
   card: Card | null;
   proposed: ProposedCard | null;
+  cap: CapCard | null;
+  /** The PR the item is about, for `o` (UI-261). */
+  pr: number | null;
+  prUrl: string | null;
+  /** The card's main action is a merge, so `m` applies (UI-261). */
+  merge: boolean;
+  /** UI-264: began after the owner's last visit, or a snooze ran out after it. */
+  new: boolean;
+  /** UI-264: the wake time (unix s) while snoozed. */
+  snoozedUntil: number | null;
 }
 
-/** UI-192, UI-196: `GET /api/focus`. */
-export interface FocusPage {
+/** UI-259: `GET /api/inbox`. */
+export interface InboxPage {
   version: string;
-  item: FocusItem | null;
-  /** The other waits, without the one shown. */
-  more: number;
-  /** UI-195: the `skip` keys the server was asked to leave out. */
-  asked: string[];
-  /** UI-195: those of them that still wait on the owner. */
-  skipped: string[];
+  items: InboxItem[];
+  /** UI-244's count; snoozed items are in it. */
+  needs: number;
+  /** UI-264: the owner's last visit (unix s) as the server holds it; null before the first. */
+  lastVisit: number | null;
   readOnly: boolean;
   /** UI-188's notice when the proposed list may be old. */
   stale: string | null;
@@ -701,6 +820,8 @@ export interface LimitsView {
 export interface RepoView {
   /** UI-150: the limits form. */
   limits: LimitsView;
+  /** UI-253: this repo's daily and monthly caps. */
+  budgets?: BudgetsView;
   settings: SettingsView;
   /** UI-156: what the repo is missing; absent when nothing is. */
   setup?: SetupView;
@@ -749,8 +870,6 @@ export interface ReposPage {
   all: RepoSummary[];
   /** The totals over every repo (UI-137). */
   spend: RepoSpendView;
-  /** REPO-32: the one settings step the owner has (the same on every repo page), or null. */
-  settingsStep: { text: string; canGrant: boolean } | null;
   /** PIP-150: the one step for the code scanning alerts permission. */
   scanningStep: { text: string; canGrant: boolean } | null;
   /** What went wrong: the intents repo can't be read, or the asked-for repo doesn't exist. */
@@ -820,7 +939,7 @@ export interface BoardPage {
   error: string | null;
 }
 
-export type ActivityKind = "move" | "wait" | "error" | "log";
+export type ActivityKind = "move" | "wait" | "error" | "log" | "settings";
 
 export interface ActivityItem {
   key: string;

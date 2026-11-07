@@ -1,4 +1,4 @@
-// The backup before every apply and the restore after it (REPO-31): everything the script can change,
+// The backup before every apply and the restore after it (REPO-31), both as the owner (REPO-39): everything the script can change,
 // saved as JSON under `<home>/settings-backups/<owner>/<name>/`, the last 5 kept.
 
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -10,7 +10,7 @@ import type { SettingsDeps } from "./script.ts";
 
 export const KEEP = 5;
 
-/** GitHub refused a read the backup needs: the App lacks the permission (REPO-32). */
+/** GitHub refused a read the backup needs: the owner's login can't see this repo's settings (REPO-40). */
 export { ForgeDenied as ForbiddenError };
 
 export interface Backup extends SettingsSnapshot {
@@ -28,7 +28,7 @@ export async function saveBackup(
   repo: RepoConfig,
   extraBranches: string[] = [],
 ): Promise<string> {
-  const snap = await forgeOf(d.github).readSettings(repo.github, repo.base, extraBranches);
+  const snap = await forgeOf(d.github).asOwner().readSettings(repo.github, repo.base, extraBranches);
   const at = new Date(d.clock.now() * 1000);
   const backup: Backup = { version: 1, repo: repo.github, at: at.toISOString(), ...snap };
   const dir = dirOf(d, repo);
@@ -66,7 +66,7 @@ export function newestBackup(d: SettingsDeps, repo: RepoConfig): Backup | null {
 export async function restoreBackup(d: SettingsDeps, repo: RepoConfig): Promise<string[]> {
   const b = newestBackup(d, repo);
   if (!b) throw new Error(`${repo.name} has no saved settings`);
-  const out = await forgeOf(d.github).restoreSettings(repo.github, b);
+  const out = await forgeOf(d.github).asOwner().restoreSettings(repo.github, b);
   out.push(`From the backup of ${b.at}`);
   return out;
 }

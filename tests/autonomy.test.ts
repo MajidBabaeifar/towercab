@@ -7,8 +7,11 @@ import {
   type GateInput,
   gate,
   lowered,
+  ownerOnly,
+  ownerOnlyLine,
   planGate,
   riskWaits,
+  shadowVerdict,
   specGate,
 } from "../src/autonomy.ts";
 import { grantsFor } from "../src/pipeline/access.ts";
@@ -167,7 +170,10 @@ test("autonomy: a worker only lowers a", () => {
   expect(lowered(4, 4)).toBeNull();
   expect(lowered(2, 3)).toBeNull();
   expect(lowered(4, null)).toBeNull();
-  expect(lowered(4, 0)).toBeNull();
+  expect(lowered(4, 0)).toBe(0);
+  expect(lowered(0, 0)).toBeNull();
+  expect(lowered(0, 3)).toBeNull();
+  expect(lowered(4, -1)).toBeNull();
   expect(lowered(5, 6)).toBeNull();
   expect(lowered(5, 2.5)).toBeNull();
   // No `a` counts as a5 (AUT-9): anything below it.
@@ -208,4 +214,101 @@ test("autonomy: access by level", () => {
   expect(grantsFor({ ...input, a: 4, plan: null, unplanned: null, unlock: [] }).paths).toEqual([]);
   // a5: open network, everything writable.
   expect(grantsFor({ ...input, a: 5 })).toMatchObject({ paths: ["**"], open: true });
+});
+
+test("autonomy: a0 waits at every gate", () => {
+  // The spec and the plan go to the owner whatever the risk, even with nothing open.
+  for (const risk of ["low", "medium", "high", null] as const) {
+    expect(specGate(0, 0, risk)).toBe(true);
+    expect(planGate(0, risk)).toBe(true);
+  }
+  // The merge goes to the owner with every check green, and says why.
+  expect(decide({ a: 0 })).toEqual({
+    merge: false,
+    why: "This intent is only yours: you merge it yourself.",
+  });
+  // Test and network access are the owner's at every level (AUT-27), and a0 gets a1-a3's policy.
+  expect(accessPolicy(0)).toEqual(accessPolicy(1));
+  expect(accessPolicy(0).request).toBe("granted");
+  expect(ownerOnly(0)).toBe(true);
+  expect(ownerOnly(4)).toBe(false);
+  expect(ownerOnly(null)).toBe(false);
+  expect(ownerOnlyLine("261106-0500")).toBe("261106-0500 is only yours: use GitHub or the page");
+});
+
+test("autonomy: a0 is never raised", () => {
+  // `a` at pick or now: either one at 0 keeps it at 0; removing `a` does not lift it.
+  expect(effectiveA(0, 5, 5, "me")).toBe(0);
+  expect(effectiveA(5, 0, 5, "me")).toBe(0);
+  expect(effectiveA(0, null, 5, "me")).toBe(0);
+  expect(effectiveA(null, 0, 5, null)).toBe(0);
+  expect(ownerOnly(5, 0)).toBe(true);
+  expect(ownerOnly(0, null)).toBe(true);
+  // A worker can lower to a0 but never out of it.
+  expect(lowered(3, 0)).toBe(0);
+  expect(lowered(0, 5)).toBeNull();
+  expect(lowered(0, 0)).toBeNull();
+});
+
+test("autonomy: a0 ignores risk and cap", () => {
+  // A repo cap of 5 or 1 changes nothing; neither does a low risk.
+  for (const cap of [1, 3, 5]) expect(effectiveA(0, 0, cap, "me")).toBe(0);
+  expect(decide({ a: 0, risk: "low" }).merge).toBe(false);
+  expect(decide({ a: 0, risk: "high" }).merge).toBe(false);
+  // The checks still come first, with their own reasons.
+  expect(decide({ a: 0, ciGreen: false })).toEqual({
+    merge: false,
+    why: "GitHub's automatic checks haven't passed.",
+  });
+});
+
+const LINKS = { page: "http://127.0.0.1:7399/intent/261106-0500", pr: "https://github.com/o/r/pull/9" };
+
+test("shadow: an a0 intent is refused", () => {
+  for (const action of ["reply", "merge", "start", "boost", "drop", "resume"] as const) {
+    const v = shadowVerdict({ aNow: 0 }, action, true, LINKS);
+    expect(v.ok, action).toBe(false);
+    expect(v.ok ? "" : v.reason).toContain("this intent is only yours");
+  }
+  // An intent that is not a0 is not guarded here.
+  expect(shadowVerdict({ aNow: 4 }, "merge", false, LINKS)).toEqual({ ok: true });
+  expect(shadowVerdict({ aNow: null }, "drop", false, LINKS)).toEqual({ ok: true });
+  // `a` at pick counts too.
+  expect(shadowVerdict({ aNow: 5, aAtPick: 0 }, "reply", true, LINKS).ok).toBe(false);
+});
+
+test("autonomy: telegram never answers an a0 intent", () => {
+  // Telegram reaches Towercab through the shadow, so its replies are shadow actions: all refused,
+  // whether or not the owner's message said yes or asked for it.
+  for (const asked of [false, true]) {
+    for (const action of ["reply", "merge", "drop", "start", "boost"] as const) {
+      expect(shadowVerdict({ aNow: 0 }, action, asked, LINKS).ok, `${action} ${asked}`).toBe(false);
+    }
+  }
+});
+
+test("shadow: a yes does not unlock an a0 intent", () => {
+  // `ownerAsked` is only about a pause: a yes to a held merge or drop changes nothing.
+  expect(shadowVerdict({ aNow: 0 }, "merge", true, LINKS).ok).toBe(false);
+  expect(shadowVerdict({ aNow: 0 }, "drop", true, LINKS).ok).toBe(false);
+});
+
+test("shadow: a refusal links the page and the PR", () => {
+  const v = shadowVerdict({ aNow: 0 }, "reply", false, LINKS);
+  expect(v).toEqual({
+    ok: false,
+    reason: `this intent is only yours: act on it at ${LINKS.page} or ${LINKS.pr}`,
+  });
+  const noPr = shadowVerdict({ aNow: 0 }, "reply", false, { page: LINKS.page });
+  expect(noPr.ok ? "" : noPr.reason).toBe(`this intent is only yours: act on it at ${LINKS.page}`);
+});
+
+test("shadow: pause on an a0 intent needs the owner's request", () => {
+  expect(shadowVerdict({ aNow: 0 }, "pause", true, LINKS)).toEqual({ ok: true });
+  expect(shadowVerdict({ aNow: 0 }, "pause", false, LINKS).ok).toBe(false);
+});
+
+test("shadow: the shadow cannot resume an a0 intent", () => {
+  expect(shadowVerdict({ aNow: 0 }, "resume", true, LINKS).ok).toBe(false);
+  expect(shadowVerdict({ aNow: 0 }, "resume", false, LINKS).ok).toBe(false);
 });

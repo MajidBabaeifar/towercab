@@ -6,12 +6,14 @@ import type { Db } from "../db.ts";
 import { featuresRun } from "../features.ts";
 import { type Feature, featuresPath, hasOwnLines, parseFeatures } from "../intents/features.ts";
 import { SCANNING_STEP, scanningPermissionMissing } from "../pipeline/alerts.ts";
-import { missingPermission, PERMISSION_STEP, storedSettings } from "../settings/store.ts";
+import { isApplying } from "../settings/apply.ts";
+import { storedSettings } from "../settings/store.ts";
+import { budgetsView } from "./budget-view.ts";
 import { fileErrorOf, limitsView } from "./limits.ts";
 import { proposedFor, proposedSection } from "./proposed.ts";
 import { readinessBadge, setupView } from "./readiness.ts";
 import { type RepoSpend, repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
-import { ago, dbMark, lanesOf, type Snap, snapshot, type UiSources, versionOf } from "./state.ts";
+import { ago, dbMark, lanesOf, needCounts, type Snap, snapshot, type UiSources, versionOf } from "./state.ts";
 import type {
   FeaturesView,
   FeatureView,
@@ -34,6 +36,12 @@ export interface ReposOpts {
 export async function repos(src: UiSources, selected: string | null, o: ReposOpts = {}): Promise<ReposPage> {
   const s = await snapshot(src);
   const lanes = lanesOf(src, s);
+  // UI-244: the count every screen shares, for the repo.
+  const need = needCounts(src, s);
+  const needsOf = (repo: string) => {
+    const c = need.byRepo.get(repo);
+    return (c?.missions ?? 0) + (c?.proposed ?? 0);
+  };
   const by = spendByRepo(src.db, s.now);
   const badge = (repo: string) => {
     const readiness = readinessBadge(src.db, repo);
@@ -42,7 +50,7 @@ export async function repos(src: UiSources, selected: string | null, o: ReposOpt
   const chips = lanes.map((l) => ({
     repo: l.repo,
     open: l.running.length + l.upNext.length + l.waiting.length + l.parked.length,
-    needs: l.running.filter((r) => r.state.key === "needs").length,
+    needs: needsOf(l.repo),
     ...badge(l.repo),
   }));
   let error = s.listError
@@ -57,7 +65,7 @@ export async function repos(src: UiSources, selected: string | null, o: ReposOpt
         repo: l.repo,
         github: l.github,
         inProgress: l.running.length,
-        needs: l.running.filter((r) => r.state.key === "needs").length,
+        needs: needsOf(l.repo),
         upNext: l.upNext.length,
         waiting: l.waiting.length,
         parked: l.parked.length,
@@ -71,7 +79,6 @@ export async function repos(src: UiSources, selected: string | null, o: ReposOpt
     repo,
     all,
     spend: repoSpendView(spendTotals(by)),
-    settingsStep: missingPermission(src.db) ? { text: PERMISSION_STEP, canGrant: src.running } : null,
     scanningStep: scanningPermissionMissing(src.db) ? { text: SCANNING_STEP, canGrant: src.running } : null,
     error,
   };
@@ -113,6 +120,7 @@ async function repoView(
     github: lane.github,
     ahead: lane.ahead,
     limits: limitsView(src, lane.repo, s.now),
+    budgets: budgetsView(src.db, src.config, s.now, lane.repo),
     settings: settingsView(src.db, lane.repo, src.running),
     proposed: proposedFor(proposedSection(src), src, lane.repo),
     features: await featuresView(src, s, lane, o),
@@ -125,12 +133,12 @@ async function repoView(
   };
 }
 
-/** REPO-30, REPO-32: the stored settings check in plain words; no network. */
-export function settingsView(db: Db, repo: string, canGrant = true): SettingsView {
+/** REPO-30, REPO-38: the stored settings check in plain words; no network. */
+export function settingsView(db: Db, repo: string, running = true): SettingsView {
   const s = storedSettings(db, repo);
-  const step = missingPermission(db) ? PERMISSION_STEP : null;
+  const none = { plan: [], planNote: null, applying: false, canApply: false };
   if (!s || (s.state === "unknown" && s.at === 0))
-    return { state: "unknown", summary: "Not checked yet", gaps: [], notes: [], at: 0, step, canGrant };
+    return { state: "unknown", summary: "Not checked yet", gaps: [], notes: [], at: 0, ...none };
   const notes = [s.ruleset, s.note].filter((x): x is string => Boolean(x));
   const summary =
     s.state === "ok"
@@ -138,7 +146,18 @@ export function settingsView(db: Db, repo: string, canGrant = true): SettingsVie
       : s.state === "gaps"
         ? `${s.gaps.length} standard setting${s.gaps.length === 1 ? " differs" : "s differ"}`
         : "The standard settings could not be checked";
-  return { state: s.state, summary, gaps: s.gaps, notes, at: s.at, step, canGrant };
+  const gaps = s.state === "gaps";
+  return {
+    state: s.state,
+    summary,
+    gaps: s.gaps,
+    notes,
+    at: s.at,
+    plan: gaps ? (s.plan ?? []) : [],
+    planNote: gaps && !s.plan ? "The plan is not available from this ci release" : null,
+    applying: isApplying(repo),
+    canApply: gaps && running,
+  };
 }
 
 const view = (f: Feature): FeatureView => ({ text: f.text, intent: f.intent });

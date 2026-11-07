@@ -80,7 +80,7 @@ test("pipeline: design edits only specs", () => {
     "Read,Glob,Grep,Edit,Write",
   ]);
   const allowed = d.slice(d.indexOf("--allowedTools") + 1, d.indexOf("--disallowedTools"));
-  expect(allowed).toEqual(["Read", "Glob", "Grep", "Edit(specs/**)"]);
+  expect(allowed).toEqual(["Read", "Glob", "Grep", "Edit(specs/**)", "Edit(README.md)"]);
   // The spec PR's commit holds only specs/, and the design's stray edit never reaches the code PR.
   const branch = `towercab/${ID}-${SLUG}-spec`;
   expect(git(p.bares.web!, "diff", "--name-only", seed, branch).trim()).toBe("specs/web.md");
@@ -230,7 +230,7 @@ test("pipeline: review comment is posted", () => {
   const c = code().comments.filter((x) => x.body.startsWith("<!-- towercab:review:1 -->"));
   expect(c).toHaveLength(1);
   expect(c[0]!.author).toBe("towercab[bot]");
-  expect(c[0]!.body).toContain("**Review** · round 1");
+  expect(c[0]!.body).toMatch(/\n\*\*Review\*\* · reviewer · \S+ · round 1\n/);
   expect(c[0]!.body).toContain("Approve: small and tested.");
   expect(c[0]!.body).toContain("Met: The page says hello (greeting.txt)");
 });

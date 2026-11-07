@@ -6,6 +6,8 @@ import { finished, next, type Outcome, type Stage } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
 import { parseAllow } from "../pipeline/access.ts";
 import { recheck } from "../risk.ts";
+import { stripAgentHeader } from "./agent-header.ts";
+import { agentOfBody } from "./comments.ts";
 import type { PrState } from "./prs.ts";
 
 export type PrKind = "spec" | "plan" | "code";
@@ -125,18 +127,28 @@ interface Said {
   kind: PrKind;
   at: string;
   text: string;
+  /** PIP-185: the agent whose marker the owner-account comment carries. */
+  agent?: string;
 }
 
 /** The owner's comments and steering reviews on the read PRs, oldest first (commands included). */
-function ownerSaid(prs: Prs, me: string, botLogin: string): Said[] {
+function ownerSaid(prs: Prs, me: string, botLogin: string, ownerOnlyIntent = false): Said[] {
   const out: Said[] = [];
   for (const kind of KINDS) {
     const pr = prs[kind];
     if (!pr) continue;
     for (const c of pr.comments) {
       if (!isOwner(c.author, me) || isBot(c.author, botLogin) || !c.body.trim()) continue;
+      // PIP-185: an agent's comment under the owner's login is ignored on an a0 intent, else it counts.
+      const agent = agentOfBody(c.body) ?? undefined;
+      if (agent && ownerOnlyIntent) continue;
       const where = c.path ? `${c.path}${c.line ? `:${c.line}` : ""}: ` : "";
-      out.push({ kind, at: c.at, text: `${where}${c.body.trim()}` });
+      out.push({
+        kind,
+        at: c.at,
+        text: `${where}${stripAgentHeader(c.body).trim()}`,
+        ...(agent ? { agent } : {}),
+      });
     }
     for (const r of pr.reviews) {
       if (!isOwner(r.author, me)) continue;
@@ -149,6 +161,77 @@ function ownerSaid(prs: Prs, me: string, botLogin: string): Said[] {
   }
   return out.sort((a, b) => (newer(a.at, b.at) ? 1 : newer(b.at, a.at) ? -1 : 0));
 }
+
+/** A reply on a PR that doesn't count (AUT-32): who, where, and a stable key so it is noted once. */
+export interface IgnoredReply {
+  key: string;
+  author: string;
+  kind: PrKind;
+  pr: number | null;
+  what: string;
+}
+
+/**
+ * AUT-32: on an owner-only intent, the comments and reviews from anyone but the owner or Towercab's own
+ * bot. PIP-44 already ignores them; this lists them so the loop can note each once on the intent.
+ */
+export function ignoredReplies(m: Mission, prs: Prs, me: string, botLogin: string): IgnoredReply[] {
+  const out: IgnoredReply[] = [];
+  for (const kind of KINDS) {
+    const pr = prs[kind];
+    if (!pr) continue;
+    const base = { kind, pr: prNumber(m, kind) };
+    for (const c of pr.comments) {
+      if (isOwner(c.author, me) || isBot(c.author, botLogin) || !c.body.trim()) continue;
+      out.push({ ...base, key: `${kind}:comment:${c.id}`, author: c.author, what: "comment" });
+    }
+    for (const r of pr.reviews) {
+      if (isOwner(r.author, me) || isBot(r.author, botLogin)) continue;
+      const counts = r.state === "APPROVED" || r.state === "CHANGES_REQUESTED" || r.body.trim() !== "";
+      if (!counts || r.state === "PENDING" || r.state === "DISMISSED") continue;
+      out.push({ ...base, key: `${kind}:review:${r.author}:${r.at}`, author: r.author, what: "review" });
+    }
+  }
+  return out;
+}
+
+/** PIP-185: an owner-account comment that carries an agent's marker. */
+export interface AgentComment {
+  key: string;
+  agent: string;
+  kind: PrKind;
+  pr: number | null;
+  at: string;
+  excerpt: string;
+}
+
+/** PIP-185: the comments under the owner's login that an agent marked, for the record (any level). */
+export function agentComments(m: Mission, prs: Prs, me: string, botLogin: string): AgentComment[] {
+  const out: AgentComment[] = [];
+  for (const kind of KINDS) {
+    for (const c of prs[kind]?.comments ?? []) {
+      if (!isOwner(c.author, me) || isBot(c.author, botLogin)) continue;
+      const agent = agentOfBody(c.body);
+      if (!agent) continue;
+      const text = c.body.split("\n").slice(1).join(" ").replace(/\s+/g, " ").trim();
+      out.push({
+        key: `${kind}:agent:${c.id}`,
+        agent,
+        kind,
+        pr: prNumber(m, kind),
+        at: c.at,
+        excerpt: text.slice(0, 200),
+      });
+    }
+  }
+  return out;
+}
+
+/** PIP-185: `answeredBy` is set, and so always replaces an earlier one, only on a marked agent's answer. */
+const answeredBy = (xs: Said[]): { answeredBy: string | null } | Record<string, never> =>
+  xs.some((s) => s.agent)
+    ? { answeredBy: xs.every((s) => s.agent) ? [...new Set(xs.map((s) => s.agent))].join(", ") : null }
+    : {};
 
 const latest = (xs: Said[]) => xs.reduce((a, b) => (newer(b.at, a.at) ? b : a)).at;
 
@@ -205,6 +288,7 @@ export function prEvents(
   me: string,
   botLogin: string,
   team?: TeamReads,
+  ownerOnlyIntent = false,
 ): Outcome | null {
   if (finished(m.stage)) return null;
   const cur = currentPr(m);
@@ -220,9 +304,8 @@ export function prEvents(
     if (prs[kind]?.state === "CLOSED" && prNumber(m, kind) !== null) return { event: "closed" };
   }
 
-  const said = team
-    ? [...ownerSaid(prs, me, botLogin), ...reviewerSaid(prs, team)]
-    : ownerSaid(prs, me, botLogin);
+  const mine = ownerSaid(prs, me, botLogin, ownerOnlyIntent);
+  const said = team ? [...mine, ...reviewerSaid(prs, team)] : mine;
   const fresh = said.filter((s) => newer(s.at, m.feedback_seen));
   // PIP-141: `allow <path>` reverses a refusal (not feedback), unless a test question is open.
   const asking = Boolean(dataOf<{ testAsk?: unknown }>(m).testAsk);
@@ -241,7 +324,8 @@ export function prEvents(
       event: m.stage === "blocked" ? "answered" : "feedback",
       text,
       set: { feedback_seen: latest(feedback) },
-      data: { answer: text },
+      // PIP-185: when every word came from marked agents, the answer says who gave it for the owner.
+      data: { answer: text, ...answeredBy(feedback) },
     };
   }
   const retries = fresh.filter((s) => s.text === RETRY);
@@ -444,7 +528,13 @@ export const reversalMarker = (commentId: string) => `<!-- towercab:allow:${comm
  * PIP-141: the owner's `allow <path>` comments, newer than `feedback_seen`, that no bot reply carrying
  * their marker answers; none while a test question is open (then they are its answer).
  */
-export function reversalRequested(m: Mission, prs: Prs, me: string, botLogin: string): ReversalAsk[] {
+export function reversalRequested(
+  m: Mission,
+  prs: Prs,
+  me: string,
+  botLogin: string,
+  ownerOnlyIntent = false,
+): ReversalAsk[] {
   if (finished(m.stage) || dataOf<{ testAsk?: unknown }>(m).testAsk) return [];
   const out: ReversalAsk[] = [];
   for (const kind of KINDS) {
@@ -453,6 +543,8 @@ export function reversalRequested(m: Mission, prs: Prs, me: string, botLogin: st
     if (!pr || n === null) continue;
     for (const c of pr.comments) {
       if (!isOwner(c.author, me) || !c.id || !newer(c.at, m.feedback_seen)) continue;
+      // PIP-185: on an a0 intent an agent's marked comment cannot lift a refusal.
+      if (ownerOnlyIntent && agentOfBody(c.body)) continue;
       const paths = parseAllow(c.body);
       if (!paths) continue;
       const marker = reversalMarker(c.id);

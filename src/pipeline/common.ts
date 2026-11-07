@@ -12,7 +12,7 @@ import { type ClaudeRun, freshContext, parseRun, prepareRun, type RunEnd, type R
 import { clonePath, type RepoConfig } from "../config.ts";
 import { classifyFailure, classifyRun } from "../faults.ts";
 import { must, type Result } from "../forge.ts";
-import { type Step, upsertStageComment } from "../github/comments.ts";
+import { agentOf, answeredByLine, type By, type Step, upsertStageComment } from "../github/comments.ts";
 import { type ChildEnd, type Ctx, EnvError, type GitHub, type Progress } from "../handlers.ts";
 import { plainLine, SUBJECT_MAX } from "../intents/naming.ts";
 import type { Intent } from "../intents/types.ts";
@@ -24,8 +24,9 @@ import type { Risk } from "../risk.ts";
 import { checkoutRoot } from "../service.ts";
 import { combine, type OwnerStep, type PlanStep, parseNoneLive, parseSteps } from "../steps.ts";
 import { grantsFor, parseAccess, type TestAsk } from "./access.ts";
+import type { Mech } from "./mechanical.ts";
 import { cacheEnv } from "./sandbox.ts";
-import { type Access, type Question, SCHEMAS } from "./schemas.ts";
+import { type Access, type Question, type ReviewResult, SCHEMAS } from "./schemas.ts";
 
 /** `missions.data`, as the pipeline uses it. */
 export interface ShipData {
@@ -95,6 +96,8 @@ export interface PipeData {
   specRed?: boolean;
   /** Heads of the spec PR whose red checks were rerun (PIP-18). */
   specReruns?: Record<string, boolean>;
+  /** Heads of the spec PR whose hung runs were cancelled (PIP-171). */
+  specHung?: Record<string, boolean>;
   plan?: {
     md: string;
     access: Access;
@@ -144,9 +147,15 @@ export interface PipeData {
     what: string;
     details: string;
     kind: "verify" | "proof" | "ci" | "conflict" | "e2e" | "review";
+    /** PIP-192: an ignore round: the only lines it may add to `.gitleaksignore`, and the details to fall back to. */
+    ignore?: { fingerprints: string[]; fallback: string };
   };
   /** Conflict rounds of the code PR since the owner last commented (`seen` = `feedback_seen`; PIP-134). */
   conflictRounds?: { n: number; seen: string | null };
+  /** PIP-167..169: a conflict resolved by code, until the review carries over or a worker round starts. */
+  mech?: Mech;
+  /** PIP-167: the mechanical resolution failed its checks; the next conflict round goes to the worker. */
+  mechFailed?: boolean;
   /** Review fix rounds sent back to build (PIP-98). */
   reviewFixes?: number;
   /**
@@ -198,7 +207,15 @@ export interface PipeData {
   /** The lines the proof ran on base, and whether they are the PR's checks block (PIP-54). */
   proofLines?: { lines: string[]; fromPr: boolean };
   unproven?: boolean;
-  ci?: { result: "green" | "none" | "pending"; reruns?: Record<string, boolean>; since?: number };
+  ci?: {
+    result: "green" | "none" | "pending";
+    reruns?: Record<string, boolean>;
+    /** Heads whose hung runs were cancelled (PIP-171). */
+    hung?: Record<string, boolean>;
+    /** Heads that were given an ignore round or an owner question for an old secrets finding (PIP-192, PIP-196). */
+    ignored?: Record<string, boolean>;
+    since?: number;
+  };
   review?: {
     approved: boolean;
     door: "one-way" | "two-way";
@@ -208,6 +225,18 @@ export interface PipeData {
     patchId: string;
     /** PIP-106: the review's plain brief. */
     brief?: string;
+  } | null;
+  /**
+   * PIP-197: a review waiting for its specialists. `pid` = the diff reviewed, `round` = the Review comment's
+   * number, `general` = the general review's result, `areas` = the specialists called in, in run order,
+   * `done` = the results in so far.
+   */
+  specialists?: {
+    pid: string;
+    round: number;
+    general: ReviewResult;
+    areas: ("security" | "infra")[];
+    done: Partial<Record<"security" | "infra", ReviewResult>>;
   } | null;
   /** Session cost already counted (MET-28). */
   sessionCost?: Record<string, number>;
@@ -350,6 +379,7 @@ const STAGE_OF_KIND: Record<RunKind, string> = {
   risk: "review",
   score: "design",
   features: "design",
+  shadow: "design",
 };
 
 /** Record the step, then spawn a Claude run (LOOP-6, LOOP-7, PIP-13, PIP-24). */
@@ -474,7 +504,7 @@ export function ended<T>(
       const before = d.sessionCost?.[sessionKey] ?? 0;
       const delta = Math.max(0, e.result.costUsd - before);
       const now = cx.clock.now();
-      const runs = [...(d.runs ?? []), { at: now, cost: delta }].filter((r) => r.at > now - 30 * 86400);
+      const runs = [...(d.runs ?? []), { at: now, cost: delta }].filter((r) => r.at > now - 62 * 86400);
       cx.db.run(
         "UPDATE missions SET cost_usd = cost_usd + ?, agent_secs = agent_secs + ?, data = json_set(data, '$.sessionCost', json(?), '$.continued', json(?), '$.runs', json(?)) WHERE id = ?",
         delta,
@@ -670,6 +700,9 @@ export const EFFECTS = {
   drop: "Drop the intent",
 } as const;
 
+/** PIP-182: who a stage comment of mission `m` is from: the agent of the step, and the intent. */
+const byOf = (m: Mission, step: Step): By => ({ agent: agentOf(step, m.stage), intent: m.intent });
+
 /** A question in Markdown (PIP-41), led by its plain brief when it has one (PIP-106). */
 export function questionMd(q: Question, brief = ""): string {
   const opts = q.options
@@ -693,7 +726,16 @@ export async function ask(
   const repo = cx.repo(m);
   const pr = currentPr(cx, m, repo);
   const body = questionMd(q, brief);
-  if (pr) await upsertStageComment(cx.github, pr.github, pr.n, "Question", m.continued + 1, body);
+  if (pr)
+    await upsertStageComment(
+      cx.github,
+      pr.github,
+      pr.n,
+      "Question",
+      m.continued + 1,
+      body,
+      byOf(m, "Question"),
+    );
   else await cx.store.update(m.intent, "question", (e) => e.setSection("Towercab", body));
   return wait(waiting, q.question, { data: { question: q, brief: brief.trim() || undefined } });
 }
@@ -703,7 +745,7 @@ export async function note(cx: Ctx, m: Mission, step: Step, round: number, body:
   const pr = currentPr(cx, m, cx.repo(m));
   if (!pr) return;
   try {
-    await upsertStageComment(cx.github, pr.github, pr.n, step, round, body);
+    await upsertStageComment(cx.github, pr.github, pr.n, step, round, body, byOf(m, step));
   } catch (e) {
     cx.log(`${m.intent}: couldn't post the ${step} comment: ${(e as Error).message}`);
   }
@@ -716,11 +758,14 @@ export async function note(cx: Ctx, m: Mission, step: Step, round: number, body:
  */
 export async function tellOwner(cx: Ctx, m: Mission, body: string, keep = ""): Promise<void> {
   const pr = currentPr(cx, m, cx.repo(m));
+  // PIP-185: an answer an agent gave for the owner says so.
+  const agent = dataOf<{ answeredBy?: string | null }>(m).answeredBy;
+  const said = agent ? `${answeredByLine(agent)}\n\n${body}` : body;
   try {
     if (pr) {
-      await upsertStageComment(cx.github, pr.github, pr.n, "Answer", m.continued, body);
+      await upsertStageComment(cx.github, pr.github, pr.n, "Answer", m.continued, said, byOf(m, "Answer"));
     } else {
-      const text = keep ? `${body}\n\n${keep}` : body;
+      const text = keep ? `${said}\n\n${keep}` : said;
       await cx.store.update(m.intent, "answer", (e) => e.setSection("Towercab", text));
     }
   } catch (e) {

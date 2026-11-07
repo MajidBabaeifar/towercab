@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..156, PIP-165..166 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..156, PIP-165..172, PIP-182..186, PIP-192..193, PIP-196, PIP-197..199, PIP-202 · **Prefix:** PIP
 
 ## Purpose
 
@@ -425,6 +425,7 @@ Only the owner's reviews and comments move an intent; anyone else's are ignored.
 - Author login = `[github].me` (case-insensitive), with a non-empty body or a review state. Comments
   by the App's bot or anyone else never raise an event. Comments older than `feedback_seen` are
   skipped; `feedback_seen` moves forward when an event is taken.
+- With `[auth]` set ([users.md](users.md)), [USR-9](users.md) decides who counts instead of the owner's login alone.
 - Verified by: `events: only the owner's comments count`
 
 ### PIP-45 · Slash commands
@@ -1648,6 +1649,7 @@ An intent that names requirement numbers in advance gets different ones, written
 
 - At pick, Towercab reads the IDs in the intent's `## Proposed outcome` (`spec IDs: PIP-130..132`, ranges and lists) and checks them against the base branch and the requirement IDs added by open spec PRs (PIP-130).
 - A reserved range that sits in a gap is valid when nothing on `main` or in an open spec PR uses its IDs; it is never renumbered just for being in a gap.
+- An ID is taken only when it exists on the base branch or in an open spec PR of another intent; an ID that is the intent's own (written by its own merged or open spec PR, or named by the intent file as already written) is never taken (PIP-202).
 - A clash renumbers the whole reserved range to the next free numbers of the same prefix, keeping its length, and rewrites that line and any other mention of the old IDs in the intent through `setField`-style edits that leave other lines byte-identical; the new numbers are what the design gets as its reserved IDs.
 - The change is committed to the intents repo like any intent edit (INT rules) and noted in the mission's log; nothing else in the intent changes. No clash → the intent is untouched.
 - Verified by: `pipeline: reserved IDs that clash are renumbered at pick`, `pipeline: renumbered IDs are written back to the intent`, `pipeline: free reserved IDs leave the intent untouched`, `pipeline: a reserved range in a gap is not renumbered`
@@ -1744,6 +1746,7 @@ When a conflict hunk cuts through a block (CSS rules, say), Towercab takes the b
 
 - Applies per file, after PIP-167's hunk rule: a file where a hunk is not additive only because it splits a block, or where the hunk rule cannot decide, is resolved with the PR's diff for that file (merge base → PR head) applied onto the file as it is on `origin/<base>`. The patch must apply with no conflict and no fuzz (plain `git apply`, no three-way merge).
 - Other files of the same merge keep the result of PIP-167. If the patch does not apply cleanly to any such file, or the result fails the full checks or the merge review (PIP-167, PIP-169), the whole attempt is dropped and the worker's conflict round runs as before.
+- Only when the PR's own change to the file removes or edits no line: a PR that deleted a line the base kept always goes to the worker. The context of the patch is the check that the base's side did not change what the PR's lines sit next to.
 - A file the base deleted or renamed is never resolved this way; it goes to the worker.
 - Verified by: `pipeline: a conflict that splits a CSS block is resolved by applying the PR's diff`, `pipeline: a PR diff that does not apply cleanly goes to the worker`
 
@@ -1755,8 +1758,8 @@ A conflict that code resolved is committed as Towercab's merge commit, checked i
 - The gate's check for someone else's commits (PIP-7) does not count this commit, nor the base commits it brings in. Publish then pushes it, the mission goes on to `ci` on the new head, and no worker round or fix round is used.
 - The test lock of PIP-31 treats the files it changed as a merge of the base (PIP-153).
 - Merge review: after the full checks pass and before the push, a read-only session of the review model (PIP-4) is given only the diff of the merge commit against its first parent (the PR head before the merge) and the hunks Towercab resolved. It answers one question: did the combination keep both sides, nothing lost and nothing duplicated? Its result is `kept_both` (boolean) and `lost` (what was dropped or doubled, with file). `kept_both` false → the attempt is dropped (PIP-167). The verdict is posted as a short comment on the PR, written for the owner (PIP-39).
-- No full review follows: the review of the previous head (PIP-4) stands for the merge head, because the merge brings in no new content of the PR's own. The mission goes from the push to `ci`, and the review stage records the carried-over review instead of running again. The risk agent's assessment (PIP-96) is likewise carried over. A later push that changes the PR's own diff is reviewed in full as PIP-4 says.
-- Verified by: `pipeline: a mechanical merge commit is Towercab's own at the gate`, `pipeline: a mechanical resolution uses no worker round`, `pipeline: a mechanical merge is reviewed on its own diff only`, `pipeline: a merge review that finds a lost side goes to the worker`, `pipeline: a mechanical merge does not trigger a full review`
+- No full review follows: the review of the previous head (PIP-4) stands for the merge head, because the merge brings in no new content of the PR's own. The mission goes from the push to `ci`, and the review stage records the carried-over review instead of running again. The risk agent's assessment (PIP-96) is likewise carried over. A later push that changes the PR's own diff is reviewed in full as PIP-4 says. It stands only when that review is of the PR as it was just before the merge (the patch id of the PR's own diff against the merged-in base matches); an older review, from before a fix round, is not carried over and the PR is reviewed in full.
+- Verified by: `pipeline: a mechanical merge commit is Towercab's own at the gate`, `pipeline: a mechanical resolution uses no worker round`, `pipeline: a mechanical merge is reviewed on its own diff only`, `pipeline: a merge review that finds a lost side goes to the worker`, `pipeline: a mechanical merge does not trigger a full review`, `pipeline: a review of an older head is not carried over a mechanical merge`
 
 ### PIP-170 · Every job in Towercab's CI has a time limit
 
@@ -1925,10 +1928,10 @@ Each comment Towercab posts on GitHub says in its first visible line which agent
 
 The notes Towercab writes on a GitHub issue (written up as an intent, queued, and the like) show the same header and a hidden marker, so they can be told from anyone else's.
 
-- Every issue comment from the intake (INT-22 and the notes that follow it) starts with `**Intake** · scorer · <intent id> · <n>` when the intent exists (before it, the issue number takes the place of the id) and the hidden marker `<!-- towercab:intake:<n> -->` on the first line. `<n>` counts the intake notes on that issue, from 1.
-- A note for the same step on the same issue is edited, not added again, when its text changes; a note that only repeats is not posted (as PIP-42). Notes already on the issue are left as they are.
+- Every issue comment from the intake (INT-22 and the notes that follow it) starts with the hidden marker `<!-- towercab:intake:<n> -->`, then the header `**Intake** · scorer · <intent id> · round <n>` (before the intent exists, `#<issue number>` takes the place of the id). `<n>` says which note it is: 1 written up, 2 queued, 3 proposal closed, 4 scoring failed.
+- Each note is written once, as today (the labels and the existing guards decide when); the marker makes a repeat of the same kind recognisable. Notes already on the issue are left as they are. On a GitLab issue the same text is posted as a note.
 - Towercab's own notes never raise an event (PIP-44).
-- Verified by: `github: an issue intake note has the header and marker`, `github: an intake note is edited rather than repeated`
+- Verified by: `github: an issue intake note has the header and marker`, `github: an intake note is written once`
 
 ### PIP-184 · Agents that act for the owner post through `towercab reply`
 
@@ -1936,41 +1939,226 @@ An agent session that speaks on GitHub as the owner posts through Towercab, whic
 
 - `towercab reply <intent id> --by <agent> "<text>"` posts `<text>` on the intent's current PR (or its issue when it has no PR yet) through the owner's login, as UI-66 does for the page. `--by` is required, a plain name of letters, digits and `-`, up to 32 characters (for example `claude-code`, `shadow`); a missing or invalid name, an unknown intent, a blank text or an intent with nowhere to comment is refused with the reason and nothing is posted.
 - The comment's first visible line is `🤖 <agent> (for <owner>)`, where `<owner>` is the owner's first name from config, or their login when none is set; then a blank line and the text. A hidden marker `<!-- towercab:agent:<agent> -->` is on the line before it, so it is the first line of the body.
-- The shadow's own comments keep `[shadow]` (SHD-12) and also carry the marker with the name `shadow`.
+- The shadow's own comments (SHD-12) will carry the same marker with the name `shadow` when the shadow is built; the code here has no shadow yet, so nothing is done for it.
 - The command is allowed on every intent, an `a0` one included: it only posts, and on an `a0` intent what it posts is ignored as input (PIP-185). The agents' tools and the sandbox's `gh` stay as they are (PIP-70): the rule is an instruction in the agent prompts and `prompts/writing.md`, which tell a session that talks on GitHub for the owner to use this command instead of `gh pr comment`. Blocking raw `gh` for such sessions is a later option (see Decisions).
-- Verified by: `cli: reply --by writes the first line and marker`, `cli: reply refuses a missing or invalid agent name`, `cli: reply works on an a0 intent`, `shadow: shadow comments carry the agent marker`
+- Readers of an answer (the yes/no and `allow` reading of PIP-138, PIP-141, and the feedback text of PIP-185) skip the leading agent lines: the marker, the `🤖 <agent> (for <owner>)` line and an older `[answered by … acting for the owner]` line. An agent's "Allow both." is read as an allow.
+- Verified by: `cli: reply --by writes the first line and marker`, `cli: reply refuses a missing or invalid agent name`, `cli: reply works on an a0 intent`, `pipeline: an agent reply is read for its answer`
 
 ### PIP-185 · An agent's comment under the owner's login is recorded, and ignored on an a0 intent
 
 A comment under the owner's login that carries the agent marker is recorded as an agent's; an `a0` intent ignores it, and on any other intent it still counts, shown as "agent for owner".
 
-- A comment by `[github].me` whose first line holds `<!-- towercab:agent:<name> -->` is an agent's comment. Towercab records it once on the intent's timeline (who: the agent, where, with its time), whatever the autonomy level.
-- Intent at `a0` (AUT-31): the comment raises no event: it does not steer, answer, approve or retry, `/retry` inside it does nothing, and `feedback_seen` moves past it. It is noted once as AUT-32 says, with the same wording as other ignored replies, and never answers a wait.
-- Intent at any other level: the comment is read as the owner's word as before (PIP-43, PIP-44), so it answers, steers or retries. Towercab keeps the agent's name with the event, so the next stage comment on that PR (PIP-42) adds the line `Answered by <agent>, for the owner` where it would have said the owner answered, and the card and the page show "agent for owner" (PIP-186). Which agent decided is visible and the work is not held up.
+- A comment by `[github].me` whose first line is `<!-- towercab:agent:<name> -->` is an agent's comment. Towercab records it once per comment for the intent page (PIP-186), whatever the autonomy level.
+- Intent at `a0` (AUT-31): the comment raises no event: it does not steer, answer, approve or retry, `/retry` inside it does nothing. It is noted once as AUT-32 says, with the same wording as other ignored replies, and never answers a wait.
+- Intent at any other level: the comment is read as the owner's word as before (PIP-43, PIP-44), so it answers, steers or retries. Towercab keeps the agent's name with the event, so the Answer comment that says how the reply was read (PIP-140) starts with `Answered by <agent>, for the owner.`, and the card and the page show "agent for owner" (PIP-186). Which agent decided is visible and the work is not held up.
 - A comment by `[github].me` without the marker counts as the owner's, as before. Towercab cannot tell an agent that posts with a raw `gh pr comment` from the owner, and this requirement does not claim to (see Decisions).
+- At `a0` this includes the `allow <path>` reply of PIP-141: a marked one does not lift a refusal.
 - Reviews with a state (Approve, Request changes) are always the owner's and are not affected.
-- Verified by: `events: an agent-marked comment on an a0 intent is not an event`, `events: an agent-marked comment on another intent still counts and names the agent`, `events: an unmarked comment under the owner's login still counts`, `autonomy: an a0 mission ignores a marked agent reply`, `github: a stage comment says an agent answered for the owner`
+- Verified by: `events: an agent-marked comment on an a0 intent is not an event`, `events: an agent-marked comment on another intent still counts and names the agent`, `events: an unmarked comment under the owner's login still counts`, `autonomy: an a0 mission ignores a marked agent reply`, `autonomy: an a0 mission does not let a marked agent reply lift a refusal`, `github: a stage comment says an agent answered for the owner`
 
 ### PIP-186 · The intent page shows which comments an agent wrote
 
 The intent page lists the owner-account comments that agents wrote, so the owner can see what was said in their name.
 
-- For each marked comment recorded by PIP-185 the page's timeline shows one line: the agent's name, the PR or issue with a link to the comment, the time, and the first 200 characters of its text. They are marked "agent, for you", apart from the owner's own comments, and show whether the intent ignored them (`a0`) or acted on them.
+- For each marked comment recorded by PIP-185 the page lists one line: the agent's name, a link to the PR it is on, the time, and the first 200 characters of its text. They are marked "agent, for you" in a section of their own, apart from the owner's own comments, and show whether the intent ignored them (`a0`) or acted on them.
 - When a marked comment on a non-`a0` intent answered or steered it (PIP-185), the intent's card shows the tag "agent for owner" with the agent's name until the next owner or agent decision.
-- `GET /api/intents/<id>` includes the comments as `agent_comments: [{agent, url, at, excerpt, acted_on}]` in time order, an empty list when there are none; the card's data has `decided_by_agent: <name> | null`.
+- `GET /api/intents/<id>` includes the comments as `agent_comments: [{agent, url, at, excerpt, acted_on}]` in time order, an empty list when there are none; the card's data (and the page's) has `decided_by_agent: <name>` when an agent answered for the owner, and no such key otherwise.
 - Verified by: `ui: the intent page lists agent comments written under the owner's login`, `ui: the intent api returns agent comments`, `ui: a card shows agent for owner after an agent's answer`
+
+### PIP-192 · A secret finding fixed in a later commit is ignored by fingerprint
+
+When a secrets check fails only on commits older than the pull request's head, in test or fixture files, and the head no longer has the flagged text, the repair round is told to add exactly those findings to `.gitleaksignore`.
+
+- Applies when every finding in the failed gitleaks job log (PIP-154, PIP-155) names a commit that is not the PR head, the file is a test or fixture path (PIP-196), and for each the flagged file at the head no longer holds the flagged line. Towercab checks the head with `git show <head>:<file>` through `Tools`, comparing the text of the finding's line in its own commit, never putting it in the details.
+- The repair details then say that the findings are only in older commits and are already fixed at the head, and ask for one `.gitleaksignore` line per finding, copying each `Fingerprint` (`commit:file:rule:line`) as the log gives it. They ask for nothing else: no code change, no `paths`, `rules` or other broad allowlist (PUB-8).
+- The details carry the fingerprints, file and line only, never the secret value (PIP-155).
+- The path ignore round runs once per head. If the secrets check is still red on the new head, the next round is a normal repair (PIP-193's details).
+- After the round, the new commit may be pushed only if it changes nothing but `.gitleaksignore`, by adding those fingerprints. Otherwise Towercab throws the round's changes away: it resets the branch to the head it had before the round, then runs the normal repair round (PIP-193's details), and pushes nothing from the discarded round.
+- Verified by: `pipeline: a red secrets log whose finding commit is not the head and whose line is gone at head asks for one gitleaksignore line`, `pipeline: a secrets repair that changes more than the listed fingerprints is reset and repaired normally`, `pipeline: a secrets repair that only adds the listed fingerprints is pushed`, `pipeline: a second red secrets round after an ignore commit is a normal repair`
+
+### PIP-193 · A secret finding still at the head is fixed in the code, never ignored
+
+A finding whose text is still in the head, or one Towercab cannot place, is fixed in the code as before.
+
+- If any finding is at the head commit, or its flagged line is still present in the file at the head, or the file or commit cannot be read, PIP-192 does not apply to the round: the details are the usual ones (PIP-154, PIP-155) and do not mention `.gitleaksignore`.
+- Mixed findings (some old and fixed, some at the head) count as still present: the round fixes the code, and the old ones are handled by PIP-192 only after the head is clean.
+- Verified by: `pipeline: a secrets finding still present at head is not offered for gitleaksignore`, `pipeline: a secrets log with a finding at the head asks for a code fix only`, `pipeline: an unreadable finding commit keeps the usual repair details`
+
+### PIP-196 · An old finding outside tests and fixtures stops and asks the owner
+
+An old secret finding in a file that is not a test or fixture is never ignored on its own: the mission asks the owner, because the value may be a real key that needs rotating.
+
+- Test or fixture path: starts with `tests/`, `test/`, `__tests__/` or `fixtures/`, has a `/tests/`, `/test/`, `/__tests__/` or `/fixtures/` segment, or its file name matches `*.test.*` or `*.spec.*`. Nothing else counts (no `mocks/`, `examples/`, `docs/`).
+- The path is taken as the log gives it and must have no `..` segment and no leading `/`; otherwise it is not a test path.
+- When every finding is older than the head and its line is gone at the head (PIP-192's test), but any finding's file is not a test or fixture path, no repair round runs and nothing is added to `.gitleaksignore`. The mission waits for the owner, with the reason.
+- The question names, for each finding, the rule, file, line and commit (never the value), says the value may be a real key that needs rotating, and offers the owner to rotate the key and then tell Towercab to ignore the fingerprint, or to fix it another way.
+- A finding still at the head is not affected: it is fixed in the code (PIP-193).
+- Verified by: `pipeline: an old finding outside tests asks the owner with rule, file, line and commit`, `pipeline: an old finding outside tests is not offered for gitleaksignore`, `pipeline: test and fixture paths are recognised`, `pipeline: a path with a parent segment is not a test path`
+
+### PIP-197 · A change in a specialist area also gets a specialist review
+
+A code PR that touches security or infrastructure files is also reviewed by a specialist for that
+area, next to the general review, so the risky parts are read by someone who knows what to look for.
+
+- Areas and the paths that call them in, matched by code on the PR's changed files, not by the agent.
+  The shared default list holds generic patterns only. `Security`: any path with a `sandbox`, `auth`,
+  `secret`, `token`, `credential`, `permission`, `crypto`, `session` or `password` segment or file-name
+  word (broad on purpose: a missed security issue costs more than an extra run). `Infra`: `ansible/**`,
+  `deploy/**`, `infra/**`, `terraform/**`, `Dockerfile*`, `docker-compose*`, `*.service`,
+  `.github/workflows/**`. No file of Towercab itself is in the default.
+- A repo adds its own paths per area in `REVIEW.md` under `## Specialist paths` ([REPO-42](repo.md)); they
+  extend the default, never replace it. A path may call in both areas. No path matches → no specialist
+  runs and the review is as in PIP-4.
+- Each called-in specialist runs after the general review, on the same head and with the same inputs
+  (intent, spec IDs, plan, diff, CI result, `REVIEW.md`), read-only and in a new session. Agents
+  `review-security` and `review-infra` (`agents/*.md`, PIP-76) differ from `review` only in their
+  brief: what to look for in that area.
+- A specialist's result is kept with what it judged and reused while the diff's `git patch-id` is
+  unchanged (as PIP-4). Its cost counts with the review's (MET-28).
+- A specialist that fails to finish ends as any run does (PIP-24): the mission waits for the owner
+  with the reason. It is not skipped.
+- Verified by: `pipeline: a repo's specialist paths also call in a specialist`, `pipeline: a security change gets a security review`, `pipeline: an infra change gets an infra review`, `pipeline: a change outside the specialist areas gets only the general review`, `pipeline: specialist review reused for an unchanged diff`
+
+### PIP-198 · Specialist findings follow the rules of the general review
+
+A specialist reports only Important findings, never nits, and its findings count toward approval and
+go back to the builder like any others.
+
+- Schema `review` (PIP-5) is used unchanged. The specialist's prompt asks only for `important`
+  findings, with `pass` set to `Security` or `Infra`; any `nit` it returns is dropped by code before
+  the verdict. `REVIEW.md`'s `## What Important means here` applies to it too.
+- The verdict (PIP-5) is computed over the general review and every specialist together: approved
+  only when each is approved, and with no important finding from any of them. The specialist's
+  `door` and `red_lines` are merged into the general review's (a one-way door from any wins).
+- Its findings appear in the Review comment (PIP-42, PIP-92) under their pass, and a specialist that
+  doesn't approve sends the change back to build in the same two fix rounds as PIP-98, not extra
+  ones. The general review's and every specialist's findings go into the same round: one repair
+  run with all of them as the details, then one new review pass (general and specialists) on the new diff.
+- Verified by: `pipeline: specialist nits are dropped`, `pipeline: a specialist's important finding stops approval`, `pipeline: specialist findings go back to the builder in the same fix rounds`, `pipeline: both reviewers' findings go into one fix round`, `pipeline: review comment shows specialist findings under their pass`
+
+### PIP-199 · A specialist review has the review's limits
+
+A specialist review runs under the same limits and permissions as the general review, so an extra
+reviewer cannot read more or spend more than the first.
+
+- `agents/review-security.md` and `agents/review-infra.md` carry the front matter of `agents/review.md`
+  (tools, `allow`, sandbox, model `review`, `session: new`, `timeout_min`, `max_cost_usd: 3`; PIP-94);
+  `[agent].max_budget_usd` can only lower it (PIP-71).
+- Both are listed in the agents table with the same permissions as `review`; this narrows nothing
+  and gains nothing (PIP-77).
+- Verified by: `agents: specialist reviews have the review's limits`
+
+### PIP-194 · A plan that adds a wait lists the wait table in its access
+
+When a plan adds an owner wait or a new question, it asks up front for the file that holds the wait
+table, so the build does not stop to ask for it.
+
+- A "new wait" is a `waiting:` text a handler can set that `WAITS` in `src/machine.ts` does not yet have
+  (REPO-13's guard covers the file; AUT-15 is what the worker hit in 261105-2210 and 261105-2250).
+  Each needs a `WAITS` entry (its stage and ask) and an `EXITS` entry (its exit kinds).
+- The planner's agent file (`agents/plan.md`) tells it to check, for every wait or ask the plan adds,
+  that `src/machine.ts` is in `access.paths`, with the `why` `wait table entries only`. A plan that
+  also changes transitions or `apply` lists the file with a `why` that says so instead.
+- PIP-115's rules apply unchanged: the owner can untick the box, and an unticked path is not granted.
+- Verified by: `pipeline: plan prompt tells the planner to list the wait table for a new wait`, `pipeline: plan access lists the wait table with a wait table reason`
+
+### PIP-195 · A wait table edit is covered by a plan that adds a wait
+
+Removed: the owner decided that an edit to `src/machine.ts` the plan did not list still waits for the
+owner as unplanned access (AUT-15), even when it only adds wait table entries. PIP-194 is the whole
+fix: the plan lists the file up front.
+
+### PIP-200 · Stage tests use a fake forge, not fake `gh` command lines
+
+The tests of the pipeline stages and the loop check what a stage asks the code host to do through a fake `Forge`, so they do not depend on how `GitHubForge` words its `gh` commands.
+
+- `FakeForge` (`tests/helpers/fake-forge.ts`) implements all of `Forge` (every host read and write) in memory: it records each call by method and arguments and answers from the test's setup. Tests that need a host failure make a method throw.
+- Tests under `tests/pipeline/` and the loop tests build their `Ctx` with `FakeForge`; none of them registers a `gh` command line on `FakeTools` or builds a `GitHubForge`.
+- `gh` command lines are faked only in the tests of `GitHubForge` and of `src/github/` itself, and in tests of code that still calls `GitHub` directly (settings, teammate review, releases, secrets, readiness) until it moves behind `Forge`.
+- A guard test fails when a file under `tests/pipeline/` mentions a `gh` argument list (an `args` check for `"gh"`, `"pr"`, `"api"` or `"run"` handed to `FakeTools`) or imports `GitHubForge`.
+- Behaviour does not change: every stage test keeps its title and asserts the same outcome.
+- Verified by: `forge: stage tests hold no fake gh command lines`, `forge: FakeForge records calls and answers from setup`, `forge: FakeForge fails a method on request`
+
+### PIP-201 · Stages reach the code host only through `Forge`
+
+A stage can only call the code host through the `Forge` interface; the raw `gh` calls are not within its reach.
+
+- `Ctx.github` is typed `Forge`, not `Forge & GitHub`; the `Host` type is removed from the stage contract (`src/handlers.ts`). The loop keeps the concrete object that is both, and gives stages only its `Forge` side.
+- A stage that today calls `gh`, `owner`, `gitAuth` or `bot` through `Ctx.github` reaches the same result through a `Forge` method (a new method where none fits), built by `GitHubForge` alone.
+- The code that still needs the raw calls (settings, teammate review, releases, secrets, readiness) takes a separate `GitHub` dependency from the loop, not from `Ctx`.
+- `npm run typecheck` fails when a stage reads a `GitHub` member from `Ctx.github`.
+- Verified by: `forge: Ctx.github is a Forge and nothing more`, `forge: stages make the same host calls through Forge`
+
+### PIP-202 · An intent's own spec rows are never renumbered
+
+Towercab never moves an ID that is the intent's own: one its own spec pull request wrote (merged or open), or one the intent file itself names as already written.
+
+- At pick (PIP-131) and in the checks before the design runs and before it publishes (PIP-130), a reserved ID is counted as taken only if it exists on the base branch or is added by an open spec PR of another intent, and is not the intent's own.
+- An ID is the intent's own when either holds: (a) its row on the base branch, or in an open spec PR, was added by a spec PR of this intent; or (b) the intent file names it as already written (for example "already written; make them Live"). A spec PR belongs to the intent when its head branch starts with `towercab/<intent id>-`, ends with `-spec`, and the segment right after the prefix is not a bare number (the real form is `towercab/<intent id>-<short title>-spec`; the shorter `towercab/<intent id>-spec` also matches). A bare number there marks a sibling intent: `towercab/261105-2152-2-…-spec` does not belong to `261105-2152`. For a merged PR, the IDs are the `### <ID> ·` headings its merge adds.
+- An own ID on the base branch stays as written, and the design gets it as an existing row to build or make Live, not as a new one. An open spec PR of the same intent never makes its own IDs a clash.
+- A reserved ID whose rows on the base branch belong to another intent, or to no intent (no matching spec PR and not named as already written by the intent), is still moved by PIP-131.
+- If the merged spec PRs cannot be read, the reserved IDs are left unmoved except those that exist on the base branch with no own-ID evidence from the intent file; the mission's log notes "IDs unchecked against merged spec PRs", and PIP-132 stays the backstop.
+- Verified by: `pipeline: reserved IDs from the intent's own merged spec PR are kept`, `pipeline: reserved IDs from the intent's own open spec PR are kept`, `pipeline: reserved IDs the intent names as already written are kept`, `pipeline: a spec PR head is matched by the intent id prefix and the -spec suffix`, `pipeline: a sibling intent's spec PR head is not matched`, `pipeline: reserved IDs that belong to another intent's rows are still moved`, `pipeline: reserved IDs on main that belong to no intent are still moved`, `pipeline: unreadable merged spec PRs leave reserved IDs unmoved`
+
+### PIP-203 · A revision started by the owner's comment is answered with a reply
+
+When a design, plan or build revision answers the owner's comments, the worker also writes a reply to them.
+
+- The result of a revision that the owner's feedback started (PIP-25, PIP-43; on the spec, plan or code PR) gains `reply`: Markdown written by the worker (PIP-40), and asked for in the prompt. A revision that changes nothing is asked to return one saying `Nothing to change: <why>`, and it is posted (PIP-204).
+- A missing, empty or unreadable `reply` never blocks, fails, repeats or delays the revision: the revision is applied and pushed as if the reply were there, and Towercab posts a generic reply in its place: `Revised in <short commit sha>`, the list of files the revision changed (at most 20, then "and <n> more"), and the line `Generated by Towercab: the worker wrote no reply.` It is built by code from facts it owns (PIP-40) and posted and threaded like a written reply (PIP-204). When nothing changed, it says `No files changed.` Towercab never starts another revision to get a better reply. The reply is not asked for on a revision Towercab started itself (red checks PIP-82, conflicts PIP-81, review or gate fixes, repairs) nor on a first run.
+- The prompt lists each comment of the feedback with its id, so the reply can answer them one by one (PIP-205). The PR description is still rewritten as before (PIP-48); `reply` is in addition.
+- Verified by: `pipeline: a feedback revision asks for a reply`, `pipeline: a missing reply gets a generic one with files and commit`, `pipeline: the generic reply is marked generated`, `pipeline: a missing reply never blocks or repeats a revision`, `pipeline: a revision Towercab started needs no reply`, `pipeline: a revision that changes nothing still replies`, `pipeline: the feedback prompt lists each comment with its id`
+
+### PIP-204 · The reply is one PR comment, with a pointer in each line thread
+
+Towercab posts the reply as one general comment on the PR the revision changed, and adds a one-line pointer in each line thread it answers, so no thread looks ignored.
+
+- Posted by `Forge` after the revision's commit is pushed. The general comment is a new PR comment that names the agent and answers every comment of the revision, quoting or linking each one (PIP-205). It is the only place the full reply is written.
+- For each owner comment of the revision that is a line comment or part of a review thread, `Forge` also posts a threaded reply in that thread: `Answered in <link to the general comment>`. Plain PR comments and review bodies (Approve or Request changes) cannot be threaded, so they get no pointer; the general comment quotes and links them.
+- The general comment has the header `**Reply** · round <n>` and the marker `<!-- towercab:reply:<n> -->`, as PIP-42; the pointers carry the header and the marker `<!-- towercab:reply-pointer:<n>:<comment id> -->`. The same round edits its general comment and its pointers instead of adding more. Nothing is posted before the commit it describes. Pointers are posted after the general comment, since they link to it.
+- A host failure while posting is retried on the next pass; it never loses the revision or sends the mission back. A pointer that fails does not hold back the general comment.
+- Verified by: `github: the reply is one general comment with header and marker`, `github: a line comment gets an answered-in pointer in its thread`, `github: a plain comment gets no pointer and is quoted`, `pipeline: the reply is posted after the revision is pushed`, `pipeline: a failed reply post is retried`, `pipeline: a failed pointer does not hold back the reply`
+
+### PIP-205 · What the reply says
+
+The reply tells the owner, in plain words, how Towercab read the comment, what it changed or left alone, and what is still open.
+
+- Written to `prompts/writing.md`: the outcome first; no step names, field names or other internal terms. Parts: how the comment was read; what changed in the PR (and what was not changed and why); new or still-open questions and points, each with a recommendation, or one line saying nothing is open.
+- Each comment of the revision gets its own part, quoted or linked (PIP-204), so that several comments handled in one revision get one reply that answers each of them (PIP-203). A comment the worker did not act on is still answered, with the reason.
+- A comment that needs no change is answered briefly in the form `Nothing to change: <why>`, so silence never reads as ignored.
+- `agents/design.md`, `agents/plan.md` and `agents/build.md` carry these rules for a feedback revision.
+- Verified by: `prompts: revision prompts ask for a reply that answers each comment`, `prompts: the reply rules follow the writing guide`, `prompts: a comment needing no change is answered Nothing to change`
+
+### PIP-206 · A reply is not feedback and does not replace the description
+
+Towercab's replies never start a revision, and the PR description is kept up to date as before.
+
+- A reply is a comment of the App's bot, so it never raises an event (PIP-42, PIP-44), including in a thread under the owner's comment, and never moves `feedback_seen`.
+- The PR description is rewritten by every revision as today (PIP-48); a reply does not stand in for it.
+- Verified by: `events: a reply under the owner's comment raises no event`, `pipeline: a revision still rewrites the PR description`
+
+### PIP-207 · One reply per revision, even when handled together
+
+Several comments taken in one revision, and a comment arriving while a reply is posted, never produce two replies for the same revision.
+
+- A revision takes every unseen owner comment on the PR (PIP-44) and returns one `reply` for them. The reply is posted once per revision round (PIP-204). A comment that arrives after the revision started waits for the next revision and gets its own reply then.
+- Verified by: `pipeline: several comments get one reply that answers each`, `pipeline: a comment that arrives during a revision gets the next reply`
 
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
 |---|---|---|---|---|
-| [design](../agents/design.md) | Turns the intent into spec changes and the spec PR's text. | Read, Glob, Grep; Edit only under `specs/**`; Write. | mission's | mission |
+| [design](../agents/design.md) | Turns the intent into spec changes and the spec PR's text. | Read, Glob, Grep; Edit only under `specs/**` and the README's docs table (PIP-172); Write. | mission's | mission |
 | [plan](../agents/plan.md) | Plans the build; reads only. | Read, Glob, Grep; Bash for `git log`, `git diff`, `git show`, `ls`. | mission's | mission |
 | [worker](../agents/worker.md) | Writes tests and code, and the code PR's text. | Read, Edit, Write, Glob, Grep, Bash in the sandbox; WebFetch for granted domains; protected paths per the grants. | mission's | mission |
 | [repair](../agents/repair.md) | Fixes red checks, a conflict, a review finding or an owner's answer in the worker's session. | The worker's tools and permissions, no more. | mission's | mission |
 | [review](../agents/review.md) | Reviews the code PR against the intent, plan and `REVIEW.md`; reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
+| [review-security](../agents/review-security.md) | The security specialist's review of a code PR that touches security files (PIP-197); Important findings only; reads only. | Specialist reviews of a code PR that touches security or infra files; Important findings only; read only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
+| [review-infra](../agents/review-infra.md) | The infra specialist's review of a code PR that touches infra files (PIP-197); Important findings only; reads only. | Specialist reviews of a code PR that touches security or infra files; Important findings only; read only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [risk](../agents/risk.md) | Judges the risk of the spec, plan and code at their gates, and reviews the spec a second time (PIP-96, PIP-97); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
+| [merge-review](../agents/merge-review.md) | Checks that a merge Towercab made by code kept both sides (PIP-169); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [score](../agents/score.md) | Turns a GitHub issue into a scored intent ([INT-22](intents.md)); runs outside any mission in an empty folder. | Nothing: no tools. | none | `[agent].model` |
+| [shadow](../agents/shadow.md) | The owner's shadow in Telegram ([SHD-1](shadow.md)); one long-lived session, outside any mission, in an empty folder. | Nothing: no tools; Towercab runs its reads and actions. | resume | `[shadow].model`, else `[agent].model` |
 | [features](../agents/features.md) | Writes a repo's live features from its README and specs ([INT-39](intents.md)); runs outside any mission in a fresh checkout of base. | Read, Glob, Grep in the sandbox; no network. | none | `[agent].model` |
 
 Each file's front matter also holds the time and cost limits and the result schema (PIP-71). `repair`

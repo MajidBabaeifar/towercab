@@ -27,6 +27,7 @@ import {
   until,
 } from "../../src/ui/state.ts";
 import { buildFixture, type Fixture, IDS } from "../../ui/fixture.ts";
+import { sharedReason } from "../../ui/src/up-next.ts";
 import { tempDir, testConfig } from "../helpers/world.ts";
 
 // Mon 26 Oct 2026, 23:00:00 local time.
@@ -234,6 +235,7 @@ test("ui: the card shows the risk", async () => {
     blast: "Affects many: Everyone who starts with the docs.",
     door: "Easy to undo: Reverting the PR brings the old guide back.",
     certainty: "Sure it works once live: Every link and code sample is checked in CI.",
+    line: "Medium risk · easy to undo · sure it works",
     summary: "A wrong step would stop new users early, but a revert undoes it at once.",
     raised: "Raised from low to medium: it could affect many people or systems.",
   });
@@ -1208,8 +1210,73 @@ test("ui: an older pause shows paused without a time", async () => {
   });
 });
 
-test("ui: the cap is worded for an Up next row", () => {
-  expect(skipWords({ kind: "cap", working: 1, owner: 5, cap: 6 }, () => "", 0)).toBe(
-    "This repo is at its limit of 6 intents before build (1 being worked on, 5 waiting on you); it starts when one moves on, when it outranks them all, or when you start it.",
+test("ui: the owner-waits limit is worded for an Up next row", () => {
+  expect(skipWords({ kind: "owner", n: 4, limit: 4 }, () => "", 0)).toBe(
+    "4 intents in this repo are waiting on you (the limit is 4); it starts when you answer one, or when you start it.",
   );
+});
+
+test("ui: a mission waiting on owner steps is a needs-you card", async () => {
+  const f = buildFixture({ now: NOW, crowded: true });
+  open.push(f);
+  const o = await overview(f.sources);
+  const card = o.needs.find((c) => c.intent === IDS.stepsWait)!;
+  expect(card).toBeTruthy();
+  expect(card.kindLabel).toBe("Your steps");
+  // The checklist of UI-160 and the exits of UI-164 ride on the card.
+  expect(card.steps?.map((s) => [s.n, s.when, s.text, s.doneAt])).toEqual([
+    [1, "after", "Add the DNS records for mail.acme.test", null],
+  ]);
+  expect(card.exits.map((e) => e.do)).toContain("tick");
+  expect(card.actions).toEqual(["retry", "drop"]);
+  expect(o.working.some((r) => r.intent === IDS.stepsWait)).toBe(false);
+  expect(o.queued.some((r) => r.intent === IDS.stepsWait)).toBe(false);
+  // A `steps` mission with nothing to wait on is not a wait.
+  f.db.run("UPDATE missions SET waiting = NULL WHERE intent = ?", IDS.stepsWait);
+  const after = await overview(f.sources);
+  expect(after.needs.some((c) => c.intent === IDS.stepsWait)).toBe(false);
+});
+
+test("ui: the working count excludes owner waits", async () => {
+  const plain = fixture();
+  const before = await overview(plain.sources);
+  const f = buildFixture({ now: NOW, crowded: true });
+  open.push(f);
+  const o = await overview(f.sources);
+  // The owner-steps and spec-review missions add cards and no working row.
+  expect(o.top.working).toBe(before.top.working);
+  expect(o.working).toHaveLength(before.working.length);
+  expect(o.top.needs).toBe(before.top.needs + 2 + o.top.proposed);
+  expect(o.airspace.counts.flying).toBe(before.airspace.counts.flying);
+  expect(o.top.countsText).toBe(
+    `${o.top.needs} need you · ${o.top.working} working · ${o.top.queued} queued`,
+  );
+});
+
+test("ui: a mission waiting for a build slot shows queued", async () => {
+  const f = fixture();
+  const before = await overview(f.sources);
+  expect(before.working.find((r) => r.intent === IDS.building)?.state.key).toBe("working");
+  f.db.run(
+    "UPDATE missions SET data = json_set(data, '$.returning', ?) WHERE intent = ?",
+    NOW - 100,
+    IDS.building,
+  );
+  const o = await overview(f.sources);
+  expect(o.working.some((r) => r.intent === IDS.building)).toBe(false);
+  const row = o.queued.find((r) => r.intent === IDS.building)!;
+  expect(row.state).toMatchObject({ key: "queued", label: "Queued" });
+  expect(row.behind).toMatch(/^Waiting for a build slot/);
+  expect(o.top.working).toBe(before.top.working - 1);
+  expect(o.top.queued).toBe(before.top.queued + 1);
+});
+
+test("ui: up next states a shared reason once", () => {
+  const row = (reason: string | null) => ({ reason });
+  const same = "This repo is at its limit of 2 intents before build.";
+  expect(sharedReason([row(same), row(same), row(same)])).toBe(same);
+  expect(sharedReason([row(same), row("Waits for another intent.")])).toBeNull();
+  expect(sharedReason([row(same)])).toBeNull();
+  expect(sharedReason([row(null), row(null)])).toBeNull();
+  expect(sharedReason([])).toBeNull();
 });

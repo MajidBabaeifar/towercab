@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-115..119 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-115..119, LOOP-129..132 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -221,7 +221,7 @@ The CLI covers running the service and the few actions that have no GitHub gestu
 - `up`, `down`, `restart`, `logs` (LOOP-2); `run [--watch] [--intent <id>]`; `status`, `next`
   (LOOP-13); `add` ([INT-2](intents.md)); `answer <id> <text>` (LOOP-38); `start <id>` (LOOP-63); `step <id> <n…|all>` ([SHIP-22](ship.md)); `retry <id>` (a fresh
   attempt); `drop <id>` ([PRI-9](priority.md)); `approve <id>` (merges the PR the intent waits on, as
-  the owner, LOOP-38); `pause`, `resume`; `repo add | remove | set | list` (LOOP-66, LOOP-67, LOOP-69); `ui` (opens
+  the owner, LOOP-38); `pause [id]`, `resume [id]` (one intent, SHD-22; the command line refuses `resume <id>` on an a0 intent, AUT-33); `repo add | remove | set | list` (LOOP-66, LOOP-67, LOOP-69); `ui` (opens
   the page); `doctor`; `update` (LOOP-35);
   `hook guard <rules>` (internal, [PIP-29](pipeline.md)); `--version`.
 - One loop per home: a lock file; a second `run` → `towercab is running (pid N): towercab down
@@ -232,8 +232,9 @@ The CLI covers running the service and the few actions that have no GitHub gestu
 
 ### LOOP-16 · Telegram
 
-Telegram delivers Towercab's messages; the owner acts on GitHub or in the UI, or, with the shadow on,
-talks to it ([LOOP-129](loop.md), [shadow.md](shadow.md)).
+Telegram delivers Towercab's messages; the owner acts on GitHub, in the UI, or in the chat itself with
+buttons, replies and commands ([telegram.md](telegram.md), LOOP-126..128), or, with the shadow on, talks to it
+([LOOP-129](loop.md), [shadow.md](shadow.md)).
 
 - `POST <api_base>/bot<token>/sendMessage` `{chat_id, text, disable_web_page_preview: true}` (≤ 4000
   characters, 10 s timeout). Unsent rows go oldest first, stop at the first failure and retry with
@@ -579,35 +580,38 @@ An intent that waits only for the owner no longer takes one of a repo's `ahead` 
 
 ### LOOP-101 · Cap on intents before build
 
-A repo's normal pick stops at `2 × ahead` intents before build, and an intent that outranks every intent ahead starts right away, below the cap and at it.
+An intent that outranks every intent ahead of build starts right away, over the working limit; the cap of `2 × ahead` that also held other intents is replaced by LOOP-132.
 
-- The cap is `2 × [repos.<r>].ahead` (6 with the default), counting every intent ahead of build
-  (LOOP-60), working or waiting on the owner (LOOP-100). It is not a new setting.
+- Superseded by LOOP-132: the cap `2 × [repos.<r>].ahead`, which counted every intent ahead of build
+  (LOOP-60), working or waiting on the owner (LOOP-100). `owner_waits` (LOOP-132) now bounds the intents
+  waiting on the owner, and the outranking rule below does not pass it.
 - An intent *outranks* the repo when its priority is higher than that of every intent ahead of build in
   the repo ([PRI-5](priority.md) order; a tie is not higher). With no intent ahead, the rule changes
-  nothing. An intent that outranks the repo starts at once: it goes over the working limit of LOOP-100
-  and over the cap. Nothing running or waiting is stopped, paused or dropped for it, so the repo can
-  hold more than the cap.
+  nothing. An intent that outranks the repo starts at once: it goes over the working limit of LOOP-100.
+  Nothing running or waiting is stopped, paused or dropped for it, so the repo can hold more than `ahead`
+  working intents.
 - An intent that does not outrank the repo is skipped when the repo has `ahead` working intents
-  (LOOP-100) or is at the cap (the text of LOOP-102). Other
-  skips of LOOP-5 still apply to every intent, whatever its priority.
+  (LOOP-100) or `owner_waits` intents waiting on the owner (LOOP-132). Other skips of LOOP-5 still apply to
+  every intent, whatever its priority.
 - `[repos.<r>].workers` (LOOP-61) is unchanged: a ready mission is not ahead and does not count toward
-  the cap.
-- Verified by: `loop: an intent that outranks every intent ahead starts below the cap`, `loop: at the cap only a higher priority intent starts`, `loop: an equal priority intent does not pass the cap`, `loop: the cap is twice ahead`, `loop: a ready intent does not count toward the cap`
+  `ahead`.
+- Verified by: `loop: an intent that outranks every intent ahead starts below the cap`, `loop: at the working limit only a higher priority intent starts`, `loop: an equal priority intent does not pass the working limit`, `loop: a ready intent does not count toward ahead`
 
 ### LOOP-102 · status names the rule that held an intent back
 
-`towercab status` and `next` say which rule kept an intent from starting: the places taken by working intents or the cap (an intent that outranks the repo is never held by either, LOOP-101).
+`towercab status` and `next` say which rule kept an intent from starting: the places taken by working intents or the limit on intents waiting on the owner (an intent that outranks the repo is never held by the first, LOOP-101).
 
 - A skipped intent reads `waiting: repo has <w> intents working ahead (start <id> to go now)` when
-  `ahead` working intents hold the places (LOOP-100), and `waiting: repo is at the cap of <cap> intents
-  before build, <w> working and <o> waiting on the owner (start <id> to go now)` at the cap (LOOP-101).
-  When both hold, the cap text is shown. UI-61 shows both in plain words.
+  `ahead` working intents hold the places (LOOP-100), and `waiting: repo has <o> intents waiting on you
+  (start <id> to go now)` at `owner_waits` (LOOP-132). When both hold, the second text is shown. UI-61
+  shows both in plain words.
+- Superseded by LOOP-132: the text `waiting: repo is at the cap of <cap> intents before build, <w> working
+  and <o> waiting on the owner`, which is no longer produced.
 - An intent that went ahead of others by priority (LOOP-101) is not marked as skipped; it
   has a mission and shows its stage as usual.
 - This replaces the text `waiting: repo has <n> intents ahead` of LOOP-60 and LOOP-64, which counted
   intents waiting on the owner.
-- Verified by: `status: the working limit and the cap are told apart`, `status: the cap names the intents waiting on the owner`
+- Verified by: `status: the working limit and the owner-waits limit are told apart`
 
 ### LOOP-103 · The default for how much runs at once fits the machine
 
@@ -787,8 +791,8 @@ When the shadow is enabled, the loop reads the owner's Telegram messages and han
 - `GET <api_base>/bot<token>/getUpdates?offset=<next>&timeout=0` once per pass (10 s timeout), only
   with `[shadow] enabled` and `[telegram]`. The offset is kept in `meta` (`telegram.offset`) and advances
   as SHD-20 says. Failures are logged once per outage without the token and retried with LOOP-10's backoff.
-  Updates from other chats are dropped (SHD-2). Beyond the shadow, Telegram still only notifies: the commands
-  of LOOP-15 are not read from it.
+  Updates from other chats are dropped (SHD-2). Reading without the shadow, and the chat's own commands, are
+  LOOP-126 and [telegram.md](telegram.md); the one-per-pass poll here becomes the long poll of LOOP-127.
 - Verified by: `telegram: owner messages reach the shadow once`, `telegram: update failures never raise`, `telegram: no shadow no polling`
 
 ### LOOP-130 · The shadow runs between passes, not inside them
@@ -805,9 +809,192 @@ A shadow turn runs as a detached child, so a long answer never delays the loop's
 The owner can reset the shadow and see its state from the command line and from the chat.
 
 - `towercab shadow reset` (SHD-17) and `towercab shadow status` (enabled or not, session age, turns, pending
-  action, today's cost against the cap). In the chat, `/reset` and `/status` do the same; any other `/…` text
-  goes to the shadow as ordinary text. `status` lists pending actions.
+  action, today's cost against the cap). In the chat, `/reset` resets the shadow; `/status` is TG-7's, whose
+  last line is the shadow's state as above (pending actions included). Any other `/…` text that TG-7..10
+  do not take goes to the shadow as ordinary text.
 - Verified by: `cli: shadow reset and status`, `telegram: slash reset and status`
+
+### LOOP-132 · Waiting on the owner has its own limit
+
+A repo holds at most `owner_waits` (default 4) specs and plans waiting on the owner, and those waits no longer count toward `ahead`, so a third intent starts even when two others wait on the owner.
+
+- Replaces the cap of `2 × ahead` of LOOP-101, which counted intents waiting on the owner (LOOP-100) with the
+  working ones and held a repo back while nothing was being designed or planned.
+- New setting `[intents].owner_waits`, int 1–16, default 4, the same for every repo. An intent is *waiting on
+  the owner* as LOOP-100 defines it (`approval:spec`, `approval:plan`, or `blocked` in the spec or plan phase
+  on a question, an open point, an a0 decision or a missing permission).
+- `heldBack` (LOOP-5) skips an intent of a repo when it has `ahead` *working* intents ahead (LOOP-100), or
+  `owner_waits` intents waiting on the owner. An intent that outranks every intent ahead (LOOP-101, kept) goes
+  over the working limit, not over `owner_waits`: that limit bounds the owner's review queue and the spend.
+  When both hold, the owner-waits text is shown.
+- `start` (LOOP-63) still goes over every limit. Nothing running or waiting is stopped or dropped; an intent
+  that stops waiting counts as working again (LOOP-100), so a repo can briefly exceed either limit.
+- Texts (replacing the cap text of LOOP-102): `waiting: repo has <o> intents waiting on you (start <id> to go
+  now)` at the owner-waits limit. `status` and `next` never say `repo is at the cap`. Below the limit, intents
+  waiting on the owner show as `waiting on you` (UI-61) with no mention of any repo limit.
+- Verified by: `loop: with ahead 2 and two intents waiting on the owner at spec a third is picked`, `loop: owner waits at plan do not count toward ahead`, `loop: a repo at owner_waits waiting intents starts no new one`, `loop: an outranking intent does not pass owner_waits`, `loop: the cap of twice ahead no longer holds a repo back`, `config: owner_waits default and range`, `loop: at the working limit only a higher priority intent starts`, `loop: an equal priority intent does not pass the working limit`, `loop: a ready intent does not count toward ahead`, `status: the working limit and the owner-waits limit are told apart`, `status: intents waiting on the owner show without the cap`
+
+### LOOP-133 · Changing an intent's urgency and importance
+
+The owner can change an intent's urgency and importance, and the new priority and order apply on the next pass.
+
+- A change sets `u` and/or `i` (integers 1–5) in the intent file with `setField` (INT-24's front matter; every other line stays byte-identical) in one commit to the intents repo, pushed like any intent edit; changing both is still one commit. Setting the values an intent already has writes nothing. A value outside 1–5, an unknown id, or an intent that is done or dropped is refused with the reason and writes nothing.
+- A missing `u` or `i` counts as 3 (PRI-2) and writing it is a change only when the value differs from 3.
+- Priority, the parked state (PRI-5) and the order (PRI-4, PRI-6) are computed from the file, so the next pass uses them. An intent that becomes parked and has no mission is not picked; one that rises above the cutoff can be picked (LOOP-5).
+- A running mission is never restarted, stopped or undone by a score change; only picks and ordering that have not happened yet change. A change is recorded on the intent's timeline (who, `u: 3 → 4`, through which channel) and in the Activity page as kind `settings` (UI-257).
+- Raising or lowering scores needs no confirmation and no proof of channel: they set order, not gates (AUT-35 concerns `a` only). Any channel of the owner may do it: the page, the command line (LOOP-135) and GitHub.
+- Verified by: `scores: changing u and i writes only those lines in one commit`, `scores: setting the same values writes nothing`, `scores: a value outside 1 to 5 is refused`, `scores: a done intent is refused`, `scores: the new priority reorders the queue on the next pass`, `scores: a score that parks an intent stops it being picked`, `scores: a running mission is not restarted by a change`, `scores: a change is on the timeline`
+
+### LOOP-134 · Boost: full autonomy and start now in one step
+
+Boosting an intent sets its autonomy to a5 and, when it has not started, starts its design now.
+
+- A `boost` row in `commands` (LOOP-15), applied by the loop only when it comes from the page (`by: page`, as AUT-35 says for a raise); a row from the command line or any other channel is dropped and noted on the timeline (AUT-32). The shadow has no boost of this kind (SHD-8's `boost` raises `u` and `i` and is unchanged; the page names this one "Boost" too, see UI-205).
+- Steps, in one `machine`/command application: (1) `a` is set to 5 as AUT-34 describes (one commit), and `lower_a` and `lower_why` (AUT-7) are removed with `removeField` in the same commit; when `a` is already 5 and there is no lowering note, nothing is written; (2) when the intent has no mission and is not done, dropped or paused, it is started as `start` does (LOOP-63), including over the limits and including a parked intent (PRI-5), since the owner named it by boosting it. A paused intent keeps its pause: only `a` is set, and it starts when it is resumed. Step 1 is written before step 2 is recorded. An intent that already has a mission is not restarted and not moved: it only gets `a: 5` from its next gate (AUT-34).
+- Refused with a reason, writing nothing: the intent is unknown, done or dropped; its `source` is not `me` (AUT-13), or, with `[auth]`, the person is not allowed a5 for that repo (AUT-23, AUT-24: `boost: a5 is only for the owner's own intents`); an `a0` intent is not refused (the page is an owner channel, AUT-32). A raise flagged by someone else (AUT-35) is accepted by the boost, as "Accept a5" does.
+- A boost is a raise: the page asks for the confirmation of UI-257 before posting it (UI-205). Boosting does not change the repo's cap, risk gates, access rules or the worker's right to lower `a` (AUT-7, AUT-8, AUT-14, AUT-18): effective `a` stays the minimum of `a` and the cap, and a high-risk spec, plan or merge still waits for the owner.
+- Verified by: `boost: sets a5 and starts an unstarted intent`, `boost: an intent already at a5 is only started`, `boost: a started intent only gets a5`, `boost: removes the lowered note in the same commit`, `boost: a command from the cli is dropped`, `boost: another source is refused`, `boost: a parked intent is started`, `boost: a paused intent only gets a5`, `boost: the cap and the risk gate still hold`
+
+### LOOP-135 · Command line: score
+
+`towercab score <id> [u=<1-5>] [i=<1-5>]` changes an intent's urgency and importance from the command line.
+
+- Inserts a `score` row in `commands` (LOOP-15; applied by the loop, or by the CLI with no loop) and applies LOOP-133. At least one of `u=`, `i=` is required; no argument or a bad value is a usage error (exit 2); a refusal prints `towercab: <reason>` and exits 1. It prints the new priority and whether the intent is parked.
+- There is no command-line command for `a` or for boost: raising autonomy stays on the page and GitHub (AUT-35) and `boost` rows from the command line are dropped (LOOP-134). An a0 intent refuses `score` like `start` (AUT-33), because the command line cannot tell the owner from an agent: only the page and GitHub change it.
+- Verified by: `cli: score changes u and i`, `cli: score needs a value`, `cli: score refuses a bad value`, `cli: score is refused on an a0 intent`, `commands: score applied without a loop`
+
+### LOOP-120 · Telegram message when a reply is posted
+
+When Towercab has answered the owner's comment and the PR waits for the owner again, the owner gets a short Telegram message with a link to the reply.
+
+- One message per posted reply (PIP-204), written when the reply is recorded and the mission waits for the owner on that PR (`waiting: approve …` or the equivalent for the spec, plan or code PR). It names the intent, the PR and the gist (first sentence) of the reply, and links to the general reply comment (PIP-204), not to the pointers in line threads; ≤ 4000 characters (LOOP-16). It replaces no other message for the same wait: the usual "ready for you" message, if any, is not sent twice (one message covers both).
+- Buttons and reply-to-answer follow [telegram.md](telegram.md). With no `[telegram]`, the row is written and never sent (LOOP-16).
+- Verified by: `telegram: a posted reply sends one message with a link`, `telegram: the message names the intent, the PR and the gist`, `telegram: a reply and the ready message are sent once`
+
+### LOOP-121 · No message for a revision Towercab started itself
+
+Telegram stays quiet for revisions the owner did not ask for, so it only goes out when the owner has something to do.
+
+- A revision started by red checks, a conflict or a review or gate fix writes no reply (PIP-203) and no LOOP-120 message. If such a revision ends with the PR waiting for the owner, the existing messages of LOOP-16 apply unchanged. Replies by Towercab never count as feedback (PIP-206), so they send nothing on their own.
+- Verified by: `telegram: a revision Towercab started sends no reply message`, `telegram: a reply that leaves the PR not waiting sends nothing`
+
+### LOOP-122 · A missing App install comes with the steps to fix it
+
+When the GitHub App isn't installed on a repo, the error stays one short line and carries plain steps with a direct link to fix it.
+
+- The 404 of `GET /repos/<owner/name>/installation` (LOOP-19) still throws `the GitHub App isn't installed on <owner/name>`, now as an `AppNotInstalled` error (an `Error`, so LOOP-66's text is unchanged) that carries `help: {app, url, steps[]}`. The help is looked up when the error is made, never before: `GET /app` (JWT) gives the App's `name` and `slug`; `GET /users/<owner>/installation` (JWT; works for users and organisations) says whether the App is installed on that account.
+- Not installed on the account: `url` is `https://github.com/apps/<slug>/installations/new`; steps: `Open <url>`, `Choose <owner> and pick <repo>`, `Install`, then `Try again`. Installed on the account with `repository_selection: selected`: `url` is the installation's settings page, `https://github.com/settings/installations/<id>` (an organisation: `https://github.com/organizations/<owner>/settings/installations/<id>`); steps: `Open <url>`, `Under Repository access, add <repo>`, `Save`, then `Try again`. Installed on all repos (the 404 is then odd): the settings link with `Check that <repo> isn't excluded`. Each step names the App as `<name>`, as GitHub shows it.
+- Stored install URL: whenever `GET /app` answers, Towercab stores the App's public install URL `https://github.com/apps/<slug>/installations/new` and its `name` in `meta` (`app-install-url`, `app-name`), replacing older values. Nothing else is configured.
+- Fallback: if either lookup fails (network, GitHub's refusal, no key), the help uses the stored name and install URL (the steps of a new install). Only if none was ever stored, it names the steps without the App's name and `url` is `https://github.com/settings/installations`. The lookup never changes the error's first line and never makes `repo add` fail differently.
+- The links and steps hold no token, key or JWT. The 404 itself is not cached, so the next try asks GitHub again and succeeds once the App is installed.
+- Verified by: `app: a missing install says how to install the App`, `app: a selected-repos install links to its settings`, `app: help falls back to the stored install URL`, `app: help falls back to the general settings link when nothing was stored`, `app: install help holds no token`
+
+### LOOP-123 · `repo add` prints the install steps and works again after them
+
+On the command line, the install steps print under the error, and running the same command after installing the App adds the repo.
+
+- `repo add` for a repo that fails with LOOP-122 prints `towercab: Towercab can't reach <owner/name>: the GitHub App isn't installed on <owner/name>` (LOOP-66, exit 1), then one line per step, indented two spaces, then `Then run the same command again.`. Any other refusal prints as before.
+- The steps travel with the error in the repo-add result (`help`), so the page (UI-209..212) and the problems built from a failed add (UI-60) read them from the same place; no copy of the text lives in the page.
+- Running `repo add <owner/name>` again after the install adds the repo with nothing else typed or changed.
+- Verified by: `cli: repo add prints the install steps after the error`, `cli: repo add works again once the App is installed`, `repos: add carries the install help in its refusal`
+
+### LOOP-124 · `towercab add` checks for overlap and asks
+
+`towercab add` at a terminal reports intents that overlap the new one and asks before writing; in a script it writes as before and runs the paid check only when asked.
+
+- **At a terminal** (stdin and stdout are a TTY): `add` runs the overlap check (INT-73) and, with no match, writes straight away as INT-71 says. With matches it prints one line each: `<kind> <ref> <title>`, then `  <how>`, and a `Title: <titleNote>` line if there is one, then asks `Create anyway (y), add to one of them (its number), or cancel (n)? [y/n/<number>]`. Only matches that `canAddTo` (INT-74) are numbered; a match past design is printed with `already past design: write a new intent and link <id>` and has no number. `y` writes a new intent; a number applies INT-74 with the text given (the command line has only the title, so the title is added as a line under `## Proposed outcome`); anything else, or an end of input, cancels: exit 1, nothing written, `towercab: cancelled`. `--no-check` skips the check and the question; it is also accepted outside a terminal, where it changes nothing.
+- **Not at a terminal** (a script, a pipe): `add` does not run the check, writes the intent at once and prints what INT-2 says, exactly as before, so no script changes. `--check` runs the check anyway; matches are then printed to stderr as a warning (`towercab: warning: this may overlap <kind> <ref> <title>`, one line each, `  <how>` under it) and the intent is written regardless, exit 0. There is no question and no refusal.
+- A failed check (INT-73) prints `towercab: the overlap check failed: <reason> (skipped)` on stderr; at a terminal it asks whether to create anyway the same way, and with `--check` in a script it writes anyway. With `--no-check` the check never runs.
+- Verified by: `cli: add with no overlap writes straight away`, `cli: add lists overlaps and asks`, `cli: add creates anyway on y`, `cli: add adds to the chosen intent`, `cli: add offers no number for an intent past design`, `cli: add cancels on n or end of input`, `cli: add without a terminal writes and runs no check`, `cli: add --check without a terminal warns and writes`, `cli: add --no-check skips the check`, `cli: add says the check failed and asks`
+
+### LOOP-125 · The overlap check is a side run, outside any mission
+
+An overlap check runs when the owner asks for it, takes no slot, and its cost shows in the spend.
+
+- It runs in the process that serves the request (the page's server or the command), not in a pass, and takes no build slot (LOOP-110); at most 2 run at once, a third waits. Pause (LOOP-113) does not stop it, because the owner asked for it, but a draining service (LOOP-108) refuses it with `Towercab is restarting; try again in a minute`.
+- Its cost is stored as a run with no mission and kind `overlap`, and counts in the day's spend and in the caps' totals (MET-29, MET-33); the Spend view lists it as `Overlap checks`.
+- Verified by: `overlap: a check takes no build slot`, `overlap: a check runs while paused`, `overlap: a draining service refuses a check`, `overlap: its cost counts in the day's spend`, `overlap: two checks at most run at once`
+
+### LOOP-113 · Pause stops all new work
+
+While Towercab is paused, no mission starts anything new, but steps already running finish and are applied.
+
+- Owner pause (`meta.paused`, LOOP-15) now holds every mission, not only picks and merges (LOOP-5, PIP-22). While
+  paused, no new child process starts for any mission: no Claude run, check, setup or screenshot, and no fix round.
+  A mission due for its next step stays at its recorded step, not counted as a crash, repair or timeout.
+- A child already running is left alone: it finishes, and its result is applied through `machine.apply` as usual.
+  The mission then holds at the next step. A health pause (LOOP-10) is unchanged.
+- Nothing that changes GitHub happens while paused: no push, no pull request opened or updated, no comment, no
+  review, no merge (PIP-22 already holds merges). A finished step's result is recorded and applied, and the
+  mission then waits at the step that would write, with nothing lost or repeated (LOOP-6: the handler records
+  before any side effect). On resume the write happens as it would have.
+- Reading continues while paused: PR and CI state and owner events are polled (read-only), so the page stays current
+  and an owner's reply is recorded. Replies and other effects that need a write wait for resume. Telegram
+  messages (LOOP-16) are not GitHub and still go out.
+- `status` and the page (UI-109) say `paused: <n> running steps finishing` while `n > 0` children run, and
+  `paused` once none do. `n` counts running children, whichever mission they belong to.
+- `resume` lifts the hold; every mission continues from the step where it stopped, with no change to its counters.
+- This is the global pause only. The per-intent pause (SHD-22, UI-239) keeps its meaning: it holds only that
+  intent's next step and never stops running work.
+- Verified by: `loop: a paused loop does not start the next step of a mission`, `loop: a running step finishes and is applied while paused`, `loop: a paused loop makes no GitHub writes`, `loop: polling continues while paused`, `status: paused counts running steps finishing`, `loop: resume continues missions where they stopped`
+
+### LOOP-114 · Pause now stops running children
+
+`towercab pause --now` also stops the children that are running, cleanly, and `resume` continues them from their session.
+
+- `pause --now` is `pause` (LOOP-113) plus: the loop sends SIGTERM to each running child's process group, then
+  SIGKILL after 10 s, as for a shutdown (LOOP-7). Each cut-off mission gets `interrupted`, which is not counted as
+  a crash (LOOP-7), a repair or a timeout, and no message goes to the owner.
+- It is a `pause` row in `commands` (LOOP-15) with a `now` flag, applied by the loop on its next pass; with no loop
+  running there is nothing to stop and it is a plain `pause`. The flag is not kept: a later plain `pause` stops
+  nothing.
+- On `resume`, a cut-off Claude run continues its own session (`--resume <uuid>`, prompt `Continue where you
+  stopped.`, LOOP-7); a cut-off check or other non-Claude step runs again from its start.
+- `status` shows `paused: stopping <n> running steps` until they have exited, then `paused`.
+- `--now` exists only for the global pause. `pause <id> --now` is refused with `--now stops everything: use it
+  without an intent`; a per-intent stop is a later intent.
+- Verified by: `cli: pause now is a command with the now flag`, `cli: pause now is refused for one intent`, `loop: pause now stops running children`, `loop: a child stopped by pause now is not counted as a crash`, `loop: resume continues the sessions stopped by pause now`
+
+### LOOP-126 · The loop reads Telegram with or without the shadow
+
+With `[telegram]` set, the loop reads the owner's chat for buttons, replies and commands, whether or not the shadow is enabled.
+
+- Replaces the condition of LOOP-129 (`[shadow] enabled`): updates are read whenever `[telegram]` is set. Without
+  `[telegram]` nothing is read. Each update is stored once (keyed by `update_id`, `meta` `telegram.offset` as
+  SHD-20 says) before the offset moves past it, then handled in a pass: a button press (TG-3..5, TG-10), a reply
+  to a question (TG-6), a command (TG-7..10) or text for the shadow (TG-15, LOOP-129). `allowed_updates` is
+  `message` and `callback_query`.
+- Updates from other chats are dropped and logged (TG-1). A failed read is logged once per outage without the
+  token and retried with LOOP-10's backoff; it never raises and never stops the pass.
+- A handled update's effect (an action, a reply, an edit) is recorded before it is applied (LOOP-6), so a
+  crash neither repeats an action nor loses its answer.
+- Verified by: `telegram: updates are read without the shadow`, `telegram: an update is stored once before the offset moves`, `telegram: no telegram config no polling`, `telegram: a crash after a button press does not repeat the action`
+
+### LOOP-127 · Telegram is long-polled beside the loop
+
+Towercab waits for Telegram on an open request, with no inbound port, and never slows the loop to do it.
+
+- The read of LOOP-126 is `getUpdates` with `timeout=25` (HTTP timeout 35 s), run beside the 5 s pass, not inside
+  it: the pass only handles updates already stored. A press or a command is therefore answered within about one
+  pass (5 s), not after a poll. Towercab opens no listening port for Telegram (no webhook): it runs on the
+  owner's laptop.
+- The poll stops when the loop stops (LOOP-7) and restarts from the stored offset; while paused (LOOP-113) it
+  continues, since reading is not a write. Tests use the injected clock and a fake Telegram API, never real
+  waiting.
+- Verified by: `telegram: a long poll does not delay a pass`, `telegram: the poll stops on shutdown and resumes from the offset`, `telegram: polling continues while paused`
+
+### LOOP-128 · Sent messages are remembered so they can be edited
+
+Each message Towercab sends is kept with its Telegram id, so it can be edited later instead of replaced.
+
+- An outbox row (LOOP-16) gets `kind` (`wait`, `info`), `intent`, `wait` (the id TG-5 names), `tg_message_id`
+  (set once `sendMessage` returns) and `ended` (outcome text or null). An edit is its own outbox row
+  (`editMessageText`, ≤ 4000 characters) sent in order, oldest first, retried with LOOP-10's backoff, and
+  skipped when Telegram refuses it (message gone or too old; logged once).
+- `answerCallbackQuery` for a press is sent first, ahead of other rows, so the button stops spinning at once.
+- Rows keep for 30 days after their wait ends, then are removed with the rest of the outbox's old rows. An
+  edit for a message whose id was never recorded (the send failed for good) is dropped.
+- Verified by: `telegram: a sent message records its id`, `telegram: edits are sent in order and retried`, `telegram: a press is answered before other rows`, `telegram: old rows are removed`
 
 ### LOOP-65 · Repos live in the database
 
@@ -1197,10 +1384,12 @@ If a part fails after the merges, that part and every part that landed after it 
 | `intents.remote`, `intents.path` | URL; path (`~/` expanded) | required; `<home>/intents` |
 | `intents.cutoff` | int 1–15 | 7 |
 | `intents.issue_a` | int 1–5 | 3 |
+| `intents.owner_waits` | int 1–16 (LOOP-132) | 4 |
 | `agent.model`, `agent.review_model` | model name | `opus`; one step above the worker's |
 | `agent.parallel` | int 1–16 | computed from cores and free memory, at most 4 (LOOP-103) |
 | `agent.build_timeout`, `review_timeout`, `check_timeout` | minutes 1–1440 | 60, 15, 10 |
 | `agent.max_budget_usd`, `agent.daily_budget_usd` | number > 0 | 10; none |
+| `agent.monthly_budget_usd`, `budget.<repo>.daily_usd`, `budget.<repo>.monthly_usd` | number > 0, at most 2 decimals | none |
 | `agent.ci_poll`, `ci_grace`, `ci_wait` | seconds | 30, 120, 1800 |
 | `agent.freeze_wait` | minutes 1–1440 (LOOP-81) | 120 |
 | `agent.path` | `PATH` for runs and checks | the loop's `PATH` |
@@ -1212,6 +1401,7 @@ If a part fails after the merges, that part and every part that landed after it 
 | `repos.<r>.ahead` | int 1–16 | 3 |
 | `github.app_id`, `github.me`, `github.api_base` | int; login; URL | required; required; `https://api.github.com` |
 | `telegram.bot_token`, `telegram.chat_id`, `telegram.api_base` | strings; URL | none (no Telegram); `https://api.telegram.org` |
+| `telegram.ui_url` | URL (TG-14) | none (messages link to the PR) |
 | `ui.port` | int 0–65535 (0 = off) | 7311 |
 | `update.auto` | bool | true |
 
@@ -1253,6 +1443,12 @@ CREATE TABLE repos (name TEXT PRIMARY KEY, github TEXT NOT NULL, path TEXT NOT N
   base TEXT NOT NULL, workers INTEGER NOT NULL DEFAULT 1, ahead INTEGER NOT NULL DEFAULT 3,
   env TEXT NOT NULL DEFAULT '{}', source TEXT NOT NULL, added REAL NOT NULL,
   teammate_review INTEGER NOT NULL DEFAULT 0, reviewers TEXT NOT NULL DEFAULT '');
+CREATE TABLE shadow_turns (id INTEGER PRIMARY KEY, update_id INTEGER UNIQUE, at REAL NOT NULL,
+  role TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'done', cost REAL NOT NULL DEFAULT 0,
+  folded INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE shadow_actions (id INTEGER PRIMARY KEY, at REAL NOT NULL, turn INTEGER, idx INTEGER NOT NULL DEFAULT 0,
+  action TEXT NOT NULL, intent TEXT NOT NULL DEFAULT '', pr INTEGER NOT NULL DEFAULT 0, outcome TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '', UNIQUE (turn, idx));
 ```
 
 **Transitions** (`next(stage, event)`; "next" = the next stage of the order; `U` = unexpected, counted

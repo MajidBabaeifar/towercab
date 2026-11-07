@@ -4,6 +4,7 @@ import { closeSync, fstatSync, openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
+import { applyBudgets, type Budgets, emptyBudgets } from "./budgets.ts";
 import { type Capacity, defaultParallel, readCapacity } from "./capacity.ts";
 
 export const DEFAULT_NETWORK = [
@@ -48,7 +49,7 @@ export interface GitLabConfig {
 
 export interface Config {
   file: string;
-  intents: { remote: string; path: string | null; cutoff: number; issueA: number };
+  intents: { remote: string; path: string | null; cutoff: number; issueA: number; ownerWaits: number };
   agent: {
     model: string;
     reviewModel: string | null;
@@ -74,21 +75,27 @@ export interface Config {
    * `loadRepos` (LOOP-65); the same Map all along, so a repo added at runtime is seen everywhere.
    */
   repos: Map<string, RepoConfig>;
+  /** MET-31: the monthly budget and the repos' caps, re-read from the file every pass. */
+  budgets: Budgets;
   /** The file's valid `[repos.<name>]` tables, imported into the database once (LOOP-65). */
   fileRepos: Map<string, RepoConfig>;
   /** Repo tables that failed to validate: name → reason. They fail only what uses that repo. */
   badRepos: Map<string, string>;
   /** Repo tables Towercab ignores because the repo is in its database: name → what to do (LOOP-65). */
   ignoredRepos: Map<string, string>;
-  github: { appId: number; me: string; apiBase: string } | null;
+  github: { appId: number; me: string; apiBase: string; name?: string } | null;
   gitlab: GitLabConfig | null;
-  /** REPO-31: `[github] settings`: `check` (default) or `apply` the standard GitHub settings. */
-  githubSettings: "check" | "apply";
   telegram: { botToken: string; chatId: string; apiBase: string } | null;
+  /** SHD-11: `[shadow]`: the owner's Claude session in Telegram and what it may do without asking. */
+  shadow: { enabled: boolean; free: ShadowFree[]; dailyBudgetUsd: number; model: string | null };
   ui: { port: number };
   /** `drainMinutes`: how long a drain for an update waits before cutting runs off (LOOP-109). */
   update: { auto: boolean; drainMinutes: number };
 }
+
+/** SHD-8: the actions `[shadow].free` may list; confirming a draft always asks (SHD-14). */
+export const SHADOW_FREE = ["merge", "boost", "drop"] as const;
+export type ShadowFree = (typeof SHADOW_FREE)[number];
 
 export class ConfigError extends Error {}
 
@@ -139,6 +146,13 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
   const telegram = raw.telegram === undefined ? null : r.table(raw.telegram, "telegram");
   const ui = r.table(raw.ui, "ui");
   const update = r.table(raw.update, "update");
+  const shadow = r.table(raw.shadow, "shadow");
+  const free = r.strList(shadow, "shadow", "free", []);
+  for (const f of free) {
+    if (!(SHADOW_FREE as readonly string[]).includes(f)) {
+      throw r.err(`shadow.free: ${f} is not one of ${SHADOW_FREE.join(", ")}`);
+    }
+  }
 
   const config: Config = {
     file,
@@ -147,6 +161,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       path: r.optPath(intents, "intents", "path"),
       cutoff: r.int(intents, "intents", "cutoff", 7, 1, 15),
       issueA: r.int(intents, "intents", "issue_a", 3, 1, 5),
+      ownerWaits: r.int(intents, "intents", "owner_waits", 4, 1, 16),
     },
     agent: {
       model: r.word(agent, "agent", "model", "opus"),
@@ -168,6 +183,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       sandboxUnixSockets: r.bool(agent, "agent", "sandbox_unix_sockets", false),
     },
     repos: new Map(),
+    budgets: emptyBudgets(),
     fileRepos: new Map(),
     badRepos: new Map(),
     ignoredRepos: new Map(),
@@ -175,17 +191,23 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       appId: r.int(github, "github", "app_id", 0, 1, Number.MAX_SAFE_INTEGER),
       me: r.login(github, "github", "me"),
       apiBase: r.url(github, "github", "api_base", "https://api.github.com"),
+      ...(r.str(github, "github", "name", "") ? { name: r.str(github, "github", "name", "") } : {}),
     },
     gitlab: gitlab && {
       apiBase: gitlabApiBase(r, gitlab),
       me: r.gitlabLogin(gitlab),
       tokenFile: gitlabTokenFile(r, gitlab),
     },
-    githubSettings: settingsMode(r, github ?? {}),
     telegram: telegram && {
       botToken: r.str(telegram, "telegram", "bot_token", ""),
       chatId: String(telegram.chat_id ?? ""),
       apiBase: r.url(telegram, "telegram", "api_base", "https://api.telegram.org"),
+    },
+    shadow: {
+      enabled: r.bool(shadow, "shadow", "enabled", false),
+      free: free as ShadowFree[],
+      dailyBudgetUsd: r.num(shadow, "shadow", "daily_budget_usd", 5, 0, 100000),
+      model: r.optWord(shadow, "shadow", "model"),
     },
     ui: { port: r.int(ui, "ui", "port", 7311, 0, 65535) },
     update: {
@@ -196,6 +218,11 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
   if (config.telegram && (!config.telegram.botToken || !config.telegram.chatId)) {
     throw new ConfigError(`config: ${file}: telegram.bot_token and telegram.chat_id are required`);
   }
+  if (config.shadow.enabled && !config.telegram) {
+    throw new ConfigError(`config: ${file}: shadow.enabled needs a [telegram] section`);
+  }
+
+  applyBudgets(config, raw);
 
   const repos = raw.repos;
   if (repos !== undefined && (typeof repos !== "object" || repos === null || Array.isArray(repos))) {
@@ -268,14 +295,6 @@ export function readTokenFile(file: string): { token: string } | { why: string }
 export function tokenFileProblem(file: string): string | null {
   const r = readTokenFile(file);
   return "why" in r ? r.why : null;
-}
-
-/** REPO-31: `[github] settings` is `check` (default) or `apply`. */
-function settingsMode(r: Reader, github: Record<string, unknown>): "check" | "apply" {
-  const v = github.settings;
-  if (v === undefined || v === "check") return "check";
-  if (v === "apply") return "apply";
-  throw r.err("settings must be check or apply");
 }
 
 function parseRepo(r: Reader, name: string, raw: unknown): RepoConfig {

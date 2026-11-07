@@ -1,9 +1,11 @@
 // The running loop's sources for the page (UI-1): what the UI reads from the loop, and its actions.
 
 import { join } from "node:path";
+import { capReason, capsOf } from "../budgets.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import { fixFor } from "../faults.ts";
+import { ownerLogin } from "../github/owner.ts";
 import { type Host, systemClock } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { Intent } from "../intents/types.ts";
@@ -13,6 +15,7 @@ import { isParked, pickOrder, priorityOf } from "../priority.ts";
 import { proposeSettings, reopenMove, type SettingsEnv } from "../repo/settings.ts";
 import { addFailures, beginAddRepo } from "../repos.ts";
 import { checkoutRoot } from "../service.ts";
+import { applySettings } from "../settings/apply.ts";
 import { supplySecret } from "../ship/secret-steps.ts";
 import { version as gitVersion } from "../update.ts";
 import { createActions } from "./actions.ts";
@@ -34,6 +37,12 @@ export function upNextOf(loop: Loop): UpNext[] {
   const config = loop.d.config;
   const state = loop.pickState();
   const doneIds = listing.doneIds;
+  // MET-33: a reached budget or the repo's cap, in plain words.
+  const caps = capsOf(loop.d.db, config, loop.now);
+  const capped = (repo: string) => {
+    const c = caps.find((x) => x.scope === "all" || x.scope === repo);
+    return c ? capReason(c) : null;
+  };
   return pickOrder(listing, 1)
     .filter((i) => !state.active.has(i.id))
     .map((i: Intent) => {
@@ -42,6 +51,7 @@ export function upNextOf(loop: Loop): UpNext[] {
       const blocker = i.after.find((a) => !doneIds.has(a));
       if (state.paused) skip = { kind: "paused" };
       else if (state.blocked) skip = { kind: "unreachable", what: state.blocked };
+      else if (capped(i.repo)) skip = { kind: "other", text: `Waiting: ${capped(i.repo)}.` };
       else if (isParked(p, config.intents.cutoff)) skip = { kind: "parked" };
       else if (blocker) skip = { kind: "after", intent: blocker };
       else if (state.notReady?.has(i.repo) && i.setup !== true) {
@@ -50,7 +60,7 @@ export function upNextOf(loop: Loop): UpNext[] {
       } else {
         const held = state.started?.has(i.id) ? null : heldBack(state.full.get(i.repo), i, listing);
         if (held?.kind === "working") skip = { kind: "ahead", n: held.working, limit: held.limit };
-        else if (held) skip = { kind: "cap", working: held.working, owner: held.owner, cap: held.cap };
+        else if (held) skip = { kind: "owner", n: held.owner, limit: held.limit };
         const model = i.model ?? config.agent.model;
         const until = loop.cooldownUntil(model);
         if (!skip && until) skip = { kind: "cooling", model, until };
@@ -76,8 +86,8 @@ export function problemsOf(loop: Loop): Problem[] {
   });
   if (budgetReached(loop.d.db, loop.d.config, now)) {
     out.push({
-      title: "Today's budget is spent",
-      fix: "Nothing new starts until midnight. Raise [agent].daily_budget_usd to go on today.",
+      title: "The budget is spent",
+      fix: "Nothing new starts until the period ends. Raise the budget on the overview to go on now.",
     });
   }
   out.push(...addProblems(loop.d.db));
@@ -140,6 +150,28 @@ export function startLoopUi(loop: Loop, config: Config, github: Host, home: Home
       limits: {
         propose: (repo, changes, confirmed) => proposeSettings(settingsEnv(), repo, changes, confirmed),
         move: (repo) => reopenMove(settingsEnv(), repo),
+      },
+      // REPO-39: Apply runs the settings script as the owner, for the one repo named.
+      applySettings: async (name) => {
+        const repo = config.repos.get(name);
+        if (!repo) throw new Error(`${name} isn't a repo Towercab knows`);
+        await ownerLogin(github);
+        const r = await applySettings(
+          {
+            config,
+            home,
+            db: loop.d.db,
+            tools: loop.d.tools,
+            clock: loop.d.clock,
+            github,
+            log: loop.d.log,
+          },
+          repo,
+        );
+        return r.state === "ok"
+          ? `Applied. The standard settings are in place on ${repo.github}.`
+          : (r.note ??
+              `Applied, but ${r.gaps.length} setting${r.gaps.length === 1 ? "" : "s"} still differ.`);
       },
       // SHIP-35: a typed secret goes straight to `sops`; the value stays in this request.
       supplySecret: (intent, n, value) =>

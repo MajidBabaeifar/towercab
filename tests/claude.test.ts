@@ -126,7 +126,7 @@ test("claude: worker argv", () => {
   ]);
   // Design starts the session with --session-id and may edit only specs/.
   const d = claudeArgv(run("design", { session: { mode: "new", id: U } }));
-  expect(d.slice(15, 22)).toEqual([
+  expect(d.slice(15, 23)).toEqual([
     "--tools",
     "Read,Glob,Grep,Edit,Write",
     "--allowedTools",
@@ -134,6 +134,7 @@ test("claude: worker argv", () => {
     "Glob",
     "Grep",
     "Edit(specs/**)",
+    "Edit(README.md)",
   ]);
   expect(d.slice(-2)).toEqual(["--session-id", U]);
   // Plan: read-only git and ls.

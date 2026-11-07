@@ -77,6 +77,9 @@ Return the JSON result:
   sentence. A step is anything the worker can't do: a secret, an apply on a server, an account or a
   setting on a platform. A step Towercab or CI can do is not one. Nothing needed: an empty list.
   Towercab lists the steps in `plan.md` and makes the owner tick them off.
+  A step that applies the repo's standard GitHub settings starts its text with `Apply the standard GitHub
+  settings`: the repo's page has an Apply button that does it with the owner's login, and ticks the step
+  once the settings are in place.
   A secret the change needs in a SOPS-encrypted file of a registered repo is a step with `secret`
   (otherwise `null`): `{repo, file, key, purpose, source, length, alphabet}`. `repo` is the repo's short
   name, `file` the path in it, `key` the name inside the file, `purpose` one sentence on what it is for.

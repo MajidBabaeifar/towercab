@@ -114,7 +114,7 @@ export const BUILD_SCHEMA = object({
   question: nullable(QUESTION),
   access: nullable(ACCESS),
   plan_changed: S_NULL,
-  lower_a: { type: ["integer", "null"], minimum: 1, maximum: 5 },
+  lower_a: { type: ["integer", "null"], minimum: 0, maximum: 5 },
   lower_why: S_NULL,
 });
 
@@ -149,6 +149,13 @@ export const RISK_SCHEMA = object({
   open_points: list(object({ point: S, why: S })),
 });
 
+/** PIP-169: the short review of a mechanical merge: did the combination keep both sides? */
+export const MERGE_REVIEW_SCHEMA = object({
+  kept_both: BOOL,
+  lost: list(object({ file: S, what: S })),
+  summary: S,
+});
+
 /** The scoring of a GitHub issue (INT-22). */
 export const SCORE_SCHEMA = object({
   u: { type: "integer", minimum: 1, maximum: 5 },
@@ -166,14 +173,23 @@ export const SCORE_SCHEMA = object({
 /** INT-39: a repo's live features, as short business sentences. */
 export const FEATURES_SCHEMA = object({ features: list(S) });
 
+/** SHD-5: what a shadow turn answers: the reply, reads of Towercab's state, and actions Towercab runs. */
+export const SHADOW_SCHEMA = object({
+  reply: S,
+  reads: list(object({ kind: S, ref: S })),
+  actions: list(object({ action: S, intent: S, repo: S, title: S, text: S })),
+});
+
 export const SCHEMAS = {
   design: DESIGN_SCHEMA,
   plan: PLAN_SCHEMA,
   build: BUILD_SCHEMA,
   review: REVIEW_SCHEMA,
   risk: RISK_SCHEMA,
+  merge_review: MERGE_REVIEW_SCHEMA,
   score: SCORE_SCHEMA,
   features: FEATURES_SCHEMA,
+  shadow: SHADOW_SCHEMA,
 };
 
 export interface Access {
@@ -270,6 +286,14 @@ export interface RiskResult {
   open_points: { point: string; why: string }[];
 }
 
+export interface MergeReviewResult {
+  /** Nothing from either side was dropped or doubled. */
+  kept_both: boolean;
+  lost: { file: string; what: string }[];
+  /** For the owner, in plain words. */
+  summary: string;
+}
+
 export interface ScoreResult {
   u: number;
   u_why: string;
@@ -290,8 +314,17 @@ export interface Results {
   build: BuildResult;
   review: ReviewResult;
   risk: RiskResult;
+  merge_review: MergeReviewResult;
   score: ScoreResult;
   features: { features: string[] };
+  shadow: ShadowResult;
+}
+
+export interface ShadowResult {
+  reply: string;
+  reads: { kind: string; ref: string }[];
+  /** `intent` for most actions; `repo`, `title` and `text` (the body) for `draft`. */
+  actions: { action: string; intent: string; repo: string; title: string; text: string }[];
 }
 
 /** Why `value` doesn't fit `schema` (the subset these schemas use), or null when it does. */

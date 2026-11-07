@@ -84,6 +84,8 @@ export interface NewIntent {
   body?: string;
   /** A commit trailer that `hasMark` finds (INT-12). */
   mark?: string;
+  /** SHD-12: written by the shadow; the commit subject says so. */
+  by?: "shadow";
 }
 
 /** One change to an intent through the store (INT-5's field writes, sections, answers). */

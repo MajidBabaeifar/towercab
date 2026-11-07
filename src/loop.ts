@@ -3,10 +3,12 @@
 
 import { readFileSync, rmSync, statSync } from "node:fs";
 import { type AfterHold, afterState, heldText, holdTrigger, nextHold } from "./after.ts";
+import { ownerOnly } from "./autonomy.ts";
 import { Inhibitor, woke } from "./awake.ts";
+import { type Cap, capKey, capReason, capsOf, needsRun, reloadBudgets } from "./budgets.ts";
 import { slotStep } from "./capacity.ts";
 import { removeCheckout } from "./checkout.ts";
-import { applyPending, paused } from "./commands.ts";
+import { applyPending, intentPaused, noteIgnored, paused, recordAgentComment } from "./commands.ts";
 import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
 import { fixFor, Health } from "./faults.ts";
@@ -25,8 +27,10 @@ import { isGitlab } from "./forge/types.ts";
 import { MERGE_METHOD } from "./forge.ts";
 import { retireBranch } from "./github/branches.ts";
 import {
+  agentComments,
   approveNotices,
   approveRequested,
+  ignoredReplies,
   intentEvents,
   prEvents,
   type ReleaseRepo,
@@ -78,7 +82,7 @@ import { Mutex } from "./mutex.ts";
 import { sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
-import type { PipeData } from "./pipeline/common.ts";
+import { type PipeData, prUrl as prLink } from "./pipeline/common.ts";
 import { writeTicks } from "./pipeline/steps.ts";
 import { evaluate } from "./pipeline/teammate.ts";
 import { isParked, priority } from "./priority.ts";
@@ -111,7 +115,7 @@ import {
 import { leftOf, type OwnerStep, parseDelivery, unticked } from "./steps.ts";
 import { APPROVE_NOTICE } from "./teammates.ts";
 import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
-import { budgetReached } from "./ui/state.ts";
+import { freezeEstimate } from "./ui/estimate.ts";
 import { checkUpdate, RESTART_CODE } from "./update.ts";
 
 /** LOOP-115: the stages a change reaches when its CI is green; it holds no slot while it waits in them. */
@@ -158,6 +162,8 @@ export interface LoopDeps {
   codeRoot?: string;
   /** INT-39: when a backfill run's time is up (default a real timer; tests resolve it themselves). */
   featuresDeadline?: (ms: number) => Promise<void>;
+  /** LOOP-129, LOOP-130: the shadow, passed each pass; none: no shadow. */
+  shadow?: { pass(): Promise<void>; busy(): boolean; stop(): Promise<void> };
 }
 
 export interface LoopOpts {
@@ -201,6 +207,9 @@ export class Loop {
   readonly health = new Health();
   readonly inhibitor: Inhibitor;
   private children = new Map<number, Running>();
+  /** MET-33: the budgets and caps reached now, and the missions they hold back. */
+  private caps: Cap[] = [];
+  private capHeld = new Set<number>();
   private pollAt = new Map<number, number>();
   private listing: Listing | null = null;
   private listingError: string | null = null;
@@ -369,7 +378,8 @@ export class Loop {
       this.readinessJob !== null ||
       this.settingsJob !== null ||
       this.setupJob !== null ||
-      this.issuesRun !== null
+      this.issuesRun !== null ||
+      this.d.shadow?.busy()
     )
       return;
     this.d.log(
@@ -387,6 +397,7 @@ export class Loop {
     await this.settingsIdle();
     await this.setupChecksIdle();
     await this.limitsIdle();
+    await this.d.shadow?.stop();
     for (const [id, r] of this.children) {
       r.handle.kill("SIGTERM");
       const done = await Promise.race([
@@ -492,6 +503,9 @@ export class Loop {
     db.setMeta("health", JSON.stringify(this.health.open()));
     // LOOP-68: repos added or removed since the last pass (by the CLI or the page).
     syncRepos(this.d.config, db);
+    // MET-31, MET-33: budgets are read from the file again, then the caps that are reached.
+    reloadBudgets(this.d.config);
+    this.refreshCaps();
 
     // Commands from the CLI and the UI.
     for (const c of await applyPending({
@@ -529,7 +543,7 @@ export class Loop {
     if (
       !paused(db) &&
       !this.health.blocked(this.now) &&
-      !budgetReached(db, this.d.config, this.now) &&
+      !this.caps.some((c) => c.scope === "all") &&
       this.codeMoved() === null &&
       this.drain === null
     ) {
@@ -538,6 +552,8 @@ export class Loop {
     }
     await this.selfUpdate();
     this.restartIfMoved();
+    // LOOP-130: the shadow reads the chat and reaps or starts a turn; its child runs beside the pass.
+    await this.d.shadow?.pass();
     await this.sendMessages();
 
     // A change waiting days on the owner's steps is not work: the machine may sleep and the loop is idle.
@@ -552,6 +568,7 @@ export class Loop {
       this.readinessJob === null &&
       this.settingsJob === null &&
       this.setupJob === null &&
+      !this.d.shadow?.busy() &&
       live.length === 0 &&
       report.picked === null;
     if (this.targetId) {
@@ -1299,7 +1316,11 @@ export class Loop {
         // PIP-141: the owner's `allow <path>` reverses a refusal, when no worker holds the mission's data.
         let reversed = false;
         if (!this.children.has(m.id)) {
-          for (const ask of reversalRequested(m, prs, this.d.github.me, bot)) {
+          const onlyYou = ownerOnly(
+            this.listing?.open.find((i) => i.id === m.intent)?.a ?? null,
+            m.a_at_pick,
+          );
+          for (const ask of reversalRequested(m, prs, this.d.github.me, bot, onlyYou)) {
             let said: string;
             try {
               const r = reverseRefusals(dataOf(m) as PipeData, ask.paths);
@@ -1335,8 +1356,47 @@ export class Loop {
             await this.d.github.commentOnPr(repo.github, ask.pr, `${ask.marker}\n${text}`);
           }
         }
-        const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot, team);
+        // AUT-32: on an owner-only intent a reply from anyone else is ignored (PIP-44) and noted once.
+        const listed = this.listing?.open.find((i) => i.id === m.intent);
+        if (ownerOnly(listed?.a ?? null, m.a_at_pick)) {
+          for (const r of ignoredReplies(m, prs, this.d.github.me, bot)) {
+            noteIgnored(
+              this.d.db,
+              m.intent,
+              r.key,
+              `ignored a ${r.what} from ${r.author} on the ${r.kind} PR${r.pr ? ` #${r.pr}` : ""}: this intent is only yours`,
+              this.now,
+            );
+          }
+        }
+        // PIP-185: comments an agent marked under the owner's login are recorded once, at any level.
+        const only = ownerOnly(listed?.a ?? null, m.a_at_pick);
+        for (const c of agentComments(m, prs, this.d.github.me, bot)) {
+          const target = c.kind === "plan" ? intentsRepo : repo.github;
+          recordAgentComment(this.d.db, m.intent, c.key, {
+            agent: c.agent,
+            url: c.pr && target ? prLink(target, c.pr) : "",
+            at: Date.parse(c.at) / 1000 || this.now,
+            excerpt: c.excerpt,
+            actedOn: !only,
+          });
+          if (only) {
+            noteIgnored(
+              this.d.db,
+              m.intent,
+              c.key,
+              `ignored a comment from ${c.agent}, an agent writing under your login, on the ${c.kind} PR${c.pr ? ` #${c.pr}` : ""}: this intent is only yours`,
+              this.now,
+            );
+          }
+        }
+        const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot, team, only);
         if (!o) continue;
+        if (o.event === "feedback" || o.event === "answered") {
+          // A later answer by the owner clears the agent's name.
+          const d = (o.data ?? {}) as { answeredBy?: string | null };
+          o.data = { ...d, answeredBy: d.answeredBy ?? null };
+        }
         const running = this.children.has(m.id);
         if (running && !["code_merged", "spec_merged", "plan_merged", "closed"].includes(o.event)) continue;
         // PIP-145: what an approving reviewer wrote goes to the PR's record, nothing more.
@@ -1416,6 +1476,10 @@ export class Loop {
     for (const listed of order) {
       let m = listed;
       if (!isWorking(m.stage) || m.step === "enter" || m.held || this.children.has(m.id)) continue;
+      // SHD-22: a paused intent starts no further stage until it is resumed.
+      if (intentPaused(db, m.intent)) continue;
+      // MET-33: a reached cap holds what was not underway when it was reached.
+      if (this.capHeld.has(m.id)) continue;
       // LOOP-105: no step of a loop whose checkout moved under it runs.
       if (this.codeMoved() !== null) break;
       if (queued.has(m.id) || this.cooling(m)) continue;
@@ -1715,6 +1779,43 @@ export class Loop {
     }
   }
 
+  /**
+   * MET-33: the caps reached now. When one is first reached, the missions working then are *underway*: they
+   * finish their run and go on until their next wait on the owner. After that wait (and any mission not
+   * underway) the cap holds their runs until it lifts. Kept in `meta.caps` so a restart keeps it.
+   */
+  private refreshCaps(): void {
+    const { db, config } = this.d;
+    this.caps = capsOf(db, config, this.now);
+    let saved: Record<string, number[]> = {};
+    try {
+      saved = JSON.parse(db.meta("caps") ?? "{}") as Record<string, number[]>;
+    } catch {
+      saved = {};
+    }
+    const mission = unfinished(db);
+    const held = new Set<number>();
+    const kept: Record<string, number[]> = {};
+    for (const c of this.caps) {
+      const key = capKey(c, this.now);
+      const mine = mission.filter((m) => c.scope === "all" || m.repo === c.scope);
+      let allow = saved[key];
+      if (!allow) {
+        allow = mine.filter((m) => isWorking(m.stage)).map((m) => m.id);
+        this.d.log(`${capReason(c)}: $${c.spent.toFixed(2)} of $${c.cap.toFixed(2)}; new work waits`);
+      }
+      allow = allow.filter((id) => {
+        const m = mine.find((x) => x.id === id);
+        return m !== undefined && !isWait(m.stage);
+      });
+      kept[key] = allow;
+      for (const m of mine) if (needsRun(m) && !allow.includes(m.id)) held.add(m.id);
+    }
+    this.capHeld = held;
+    const text = JSON.stringify(kept);
+    if (text !== (db.meta("caps") ?? "{}")) db.setMeta("caps", text);
+  }
+
   private cooling(m: Mission): boolean {
     return m.limit_model !== null && this.cooldownUntil(m.limit_model) !== null;
   }
@@ -1729,6 +1830,7 @@ export class Loop {
         working: workingAheadIn(ms, name).length,
         owner: ownerAheadIn(ms, name).length,
         limit: repo.ahead,
+        ownerLimit: config.intents.ownerWaits,
         ids: aheadIn(ms, name).map((m) => m.intent),
       });
     }
@@ -1772,6 +1874,11 @@ export class Loop {
       l = { ...listing, open: listing.open.filter((i) => i.id === target.id) };
       state = { ...state, cutoff: 1 };
     }
+    // SHD-22: a paused intent is not picked either.
+    l = { ...l, open: l.open.filter((i) => !intentPaused(this.d.db, i.id)) };
+    // MET-33: a repo whose cap is reached picks nothing; the other repos carry on.
+    const capped = new Set(this.caps.map((c) => c.scope));
+    l = { ...l, open: l.open.filter((i) => !capped.has(i.repo)) };
     const decision = decide(l, state);
     for (const w of decision.writes) {
       try {
@@ -1793,7 +1900,7 @@ export class Loop {
       // LOOP-68: the repo may have been removed since this pass read the repos (another process).
       if (!this.d.db.get("SELECT 1 FROM repos WHERE name = ?", pick.repo)) return null;
       this.d.db.delMeta(`start:${pick.id}`);
-      return insertMission(
+      const made = insertMission(
         this.d.db,
         {
           intent: pick.id,
@@ -1804,6 +1911,8 @@ export class Loop {
         },
         this.now,
       );
+      // MET-34: the estimate is frozen at start.
+      return freezeEstimate(this.d.db, made, this.now);
     });
     if (!m) {
       this.d.log(`${pick.id}: its repo ${pick.repo} was just removed; not picked`);
@@ -1823,7 +1932,8 @@ export class Loop {
       this.featuresJob === null &&
       this.readinessJob === null &&
       this.settingsJob === null &&
-      this.setupJob === null;
+      this.setupJob === null &&
+      !this.d.shadow?.busy();
     // A drain whose children are gone updates at once instead of at the next minute.
     if (!(this.drain !== null && idle()) && this.now - this.lastUpdate < UPDATE_POLL_S) return;
     this.lastUpdate = this.now;

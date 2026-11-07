@@ -1,6 +1,8 @@
 // The page's buttons (UI-66): each does what the owner would do on GitHub (as the owner, LOOP-38) or
 // in the CLI (a `commands` row the loop applies, LOOP-15).
 
+import { ownerOnly, ownerOnlyLine } from "../autonomy.ts";
+import { saveBudgets } from "../budgets.ts";
 import { tickSteps } from "../commands.ts";
 import type { Config, RepoConfig } from "../config.ts";
 import type { Db } from "../db.ts";
@@ -13,7 +15,7 @@ import type { IntentStore } from "../intents/types.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
 import { grantScanning } from "../pipeline/alerts.ts";
 import { ownerMergeRefusal } from "../pipeline/teammate.ts";
-import { grantPermission } from "../settings/store.ts";
+import { resetShadow } from "../shadow/store.ts";
 import { approveSecret } from "../ship/secret-steps.ts";
 import { currentPr, type DoneNote, validNote } from "./state.ts";
 
@@ -28,16 +30,19 @@ export interface UiActions {
   pass?(intent: string): Promise<string>;
   /** UI-160, SHIP-22: tick (or untick) one of the owner's steps. */
   step?(intent: string, n: number, done: boolean): Promise<string>;
-  /** REPO-32: the owner granted the App Administration (write); settings are applied again. */
-  granted?(): Promise<string>;
+  /** REPO-39: the owner's Apply: the standard settings of one repo, with their own login. */
+  applySettings?(repo: string): Promise<string>;
   /** PIP-150: the owner granted the App Code scanning alerts (read); alerts are read again. */
   scanningGranted?(): Promise<string>;
   /** UI-164, LOOP-76: "I did it myself": ends the intent; the note becomes a ticked step. */
   done?(intent: string, note: string): Promise<string>;
   /** UI-164, PIP-113: the owner does it by hand; the intent becomes steps. */
   steps?(intent: string): Promise<string>;
-  pause(): Promise<string>;
-  resume(): Promise<string>;
+  /** SHD-22: pause everything, or one intent when `intent` is given. */
+  pause(intent?: string): Promise<string>;
+  resume(intent?: string): Promise<string>;
+  /** AUT-32: refuse an action on an a0 intent from any actor but the owner (the page and GitHub). */
+  guard?(intent: string, action: string, actor: string): Promise<void>;
   /** UI-130: add `owner/name` as a repo (`name` = its short name, default the repo part). */
   addRepo(github: string, name?: string): Promise<string>;
   /** UI-144: read the repo again for its feature list (INT-39). */
@@ -48,12 +53,16 @@ export interface UiActions {
   approveSecret?(intent: string, n: number): Promise<string>;
   /** UI-151: open (or update) the PR that changes the repo's limits; `confirmed` in the first day (REPO-14). */
   repoSettings?(repo: string, changes: unknown, confirmed: boolean): Promise<string>;
+  /** UI-253: save the budget (`all`) or a repo's caps to `config.toml`; they apply at once. */
+  budgets?(scope: string, daily: unknown, monthly: unknown): Promise<string>;
   /** UI-154: open the move PR again (REPO-19). */
   repoMove?(repo: string): Promise<string>;
   /** INT-53: merge the proposed intent's PR `pr` as the owner, if it still is at `head`. */
   accept(pr: number, head: string): Promise<string>;
   /** INT-53: comment `text` (default `Not going ahead.`) and close the proposed intent's PR. */
   close(pr: number, text?: string): Promise<string>;
+  /** UI-238, SHD-17: clear the shadow's conversation, summary and pending actions; its action log stays. */
+  shadowReset?(): Promise<string>;
 }
 
 export interface ActionDeps {
@@ -72,11 +81,18 @@ export interface ActionDeps {
     propose(repo: string, changes: unknown, confirmed: boolean): Promise<string>;
     move(repo: string): Promise<string>;
   } | null;
+  /** REPO-39: Apply for one repo, bound to the loop's database, tools and forge; null: not available. */
+  applySettings?: ((repo: string) => Promise<string>) | null;
   /** The loop's last list of proposed intents (LOOP-92); Accept refuses one whose file can't be read. */
   proposed?: () => ProposedPr[];
   /** SHIP-35: writes a typed secret; none: the page can't take one. */
   supplySecret?: (intent: string, n: number, value: string) => Promise<string>;
+  /** SHD-12: the shadow's own actions: what it writes on GitHub starts with `[shadow] `. */
+  actor?: "shadow";
 }
+
+/** SHD-12: the tag on whatever the shadow writes. */
+export const SHADOW_TAG = "[shadow] ";
 
 export const DEFAULT_CLOSE_REASON = "Not going ahead.";
 
@@ -113,6 +129,7 @@ export function createActions(d: ActionDeps): UiActions {
   };
   const pr = (m: Mission | undefined) => (m ? currentPr(m, d.config, d.store.github()) : null);
   const of = ownerForge(d.github.owner);
+  const tag = d.actor === "shadow" ? SHADOW_TAG : "";
   const refused = (r: Result, what: string) => {
     if (!r.ok) throw new Error(`GitHub refused to ${what}: ${firstLine(r.reason)}`);
   };
@@ -232,6 +249,9 @@ export function createActions(d: ActionDeps): UiActions {
       if (state.state === "CLOSED") {
         throw new Error(`The ${p.label} #${p.number} is closed, so there is nothing to merge.`);
       }
+      // SHD-12: the PR says who asked for the merge.
+      if (tag)
+        await of.commentOnPr(p.github, p.number, `${tag}Merging on your yes in Telegram.`, { inline: true });
       refused(
         await of.mergePr(p.github, p.number, { method: MERGE_METHOD }),
         `merge the ${p.label} #${p.number}`,
@@ -257,8 +277,8 @@ export function createActions(d: ActionDeps): UiActions {
     },
 
     async reply(intent, text) {
-      const body = text.trim();
-      if (!body) throw new Error("Write a reply first.");
+      const body = `${tag}${text.trim()}`;
+      if (!text.trim()) throw new Error("Write a reply first.");
       if (body.length > MAX_REPLY) throw new Error(`The reply is too long: at most ${MAX_REPLY} characters.`);
       const m = unfinishedFor(d.db, intent);
       const p = pr(m);
@@ -271,12 +291,6 @@ export function createActions(d: ActionDeps): UiActions {
       }
       command("answer", intent, body);
       return "Answer saved to the intent. Towercab goes on with it on its next pass.";
-    },
-
-    async granted() {
-      return grantPermission(d.db)
-        ? "Noted. Towercab applies the standard settings again at its next check."
-        : "Nothing to clear: the GitHub App was not missing the permission.";
     },
 
     async scanningGranted() {
@@ -308,7 +322,10 @@ export function createActions(d: ActionDeps): UiActions {
       if (m && p) {
         const again = repeated(m, p, "drop");
         if (again) return again;
-        refused(await of.closePr(p.github, p.number), `close the ${p.label} #${p.number}`);
+        refused(
+          await of.closePr(p.github, p.number, tag ? `${tag}Dropped on your yes in Telegram.` : undefined),
+          `close the ${p.label} #${p.number}`,
+        );
         done(m, p, "drop");
         return `Closed the ${p.label} #${p.number}; the intent is dropped.`;
       }
@@ -322,9 +339,20 @@ export function createActions(d: ActionDeps): UiActions {
       return "Starting its design on the next pass, even if the repo is full.";
     },
 
-    async pause() {
-      command("pause");
-      return "Paused: nothing new starts until you resume.";
+    async pause(intent = "") {
+      command("pause", intent);
+      return intent
+        ? "Paused: no further stage of this intent starts until you resume it."
+        : "Paused: nothing new starts until you resume.";
+    },
+
+    async guard(intent, action, actor) {
+      if (actor === "owner" || actor === "") return;
+      if (action === "pause") return;
+      const found = await d.store.get(intent).catch(() => null);
+      if (found && ownerOnly(found.a, unfinishedFor(d.db, found.id)?.a_at_pick ?? null)) {
+        throw new Error(ownerOnlyLine(found.id));
+      }
     },
 
     async step(intent, n, done) {
@@ -357,9 +385,11 @@ export function createActions(d: ActionDeps): UiActions {
       return "Switched to steps for you to do. Towercab sets it up on its next pass.";
     },
 
-    async resume() {
-      command("resume");
-      return "Resumed: Towercab picks up work again.";
+    async resume(intent = "") {
+      command("resume", intent);
+      return intent
+        ? "Resumed: Towercab goes on with this intent."
+        : "Resumed: Towercab picks up work again.";
     },
 
     async addRepo(github, name) {
@@ -373,9 +403,23 @@ export function createActions(d: ActionDeps): UiActions {
       return d.limits.propose(repo, changes, confirmed);
     },
 
+    async budgets(scope, daily, monthly) {
+      return saveBudgets(d, scope, daily, monthly);
+    },
+
+    async applySettings(repo) {
+      if (!d.applySettings) throw new Error("Towercab isn't running, so it can't apply settings now.");
+      return d.applySettings(repo);
+    },
+
     async repoMove(repo) {
       if (!d.limits) throw new Error("Towercab isn't running, so it can't open a pull request now.");
       return d.limits.move(repo);
+    },
+
+    async shadowReset() {
+      resetShadow(d.db);
+      return "Cleared the shadow's conversation. Its log of actions stays.";
     },
 
     async features(repo) {

@@ -34,7 +34,10 @@ const GOOD = [
 
 /** The tools and allowed rules each agent had in the `KINDS` table before the agent files (PIP-77). */
 const BEFORE: Record<string, { tools: string; allowed: string[] }> = {
-  design: { tools: "Read,Glob,Grep,Edit,Write", allowed: ["Read", "Glob", "Grep", "Edit(specs/**)"] },
+  design: {
+    tools: "Read,Glob,Grep,Edit,Write",
+    allowed: ["Read", "Glob", "Grep", "Edit(specs/**)", "Edit(README.md)"],
+  },
   plan: {
     tools: "Read,Glob,Grep,Bash",
     allowed: [
@@ -57,10 +60,17 @@ const BEFORE: Record<string, { tools: string; allowed: string[] }> = {
   },
   score: { tools: "", allowed: [] },
   features: { tools: "Read,Glob,Grep", allowed: ["Read", "Glob", "Grep"] },
+  // SHD-5: the shadow has no tools at all; Towercab runs its reads and actions.
+  shadow: { tools: "", allowed: [] },
 };
 BEFORE.repair = BEFORE.worker!;
 // PIP-96: the risk agent reads exactly as the review does, no more.
 BEFORE.risk = BEFORE.review!;
+// PIP-169: the merge review reads exactly as the review does, no more.
+BEFORE["merge-review"] = BEFORE.review!;
+// PIP-199: the specialist reviews read exactly as the review does, no more.
+BEFORE["review-security"] = BEFORE.review!;
+BEFORE["review-infra"] = BEFORE.review!;
 
 test("agents: every agent has a file", () => {
   const files = readdirSync(AGENTS_DIR)
@@ -208,6 +218,29 @@ test("agents: score has no tools", () => {
   expect(s.timeoutMin).toBe(5);
 });
 
+test("agents: specialist reviews have the review's limits", () => {
+  const review = loadAgent("review");
+  for (const n of ["review-security", "review-infra"] as const) {
+    const a = loadAgent(n);
+    const limits = (x: typeof a) => [
+      x.tools,
+      x.allow,
+      x.sandbox,
+      x.model,
+      x.session,
+      x.timeoutMin,
+      x.maxCostUsd,
+      x.schema,
+    ];
+    expect(limits(a), n).toEqual(limits(review));
+    expect(a.maxCostUsd).toBe(3);
+    expect(a.session).toBe("new");
+    // `[agent].max_budget_usd` can only lower it (PIP-71).
+    expect(agentBudgetUsd(a, testConfig({ agent: { max_budget_usd: 2 } }))).toBe(2);
+    expect(agentBudgetUsd(a, testConfig({ agent: { max_budget_usd: 20 } }))).toBe(3);
+  }
+});
+
 test("agents: review has a cost cap", () => {
   const r = loadAgent("review");
   expect(r.maxCostUsd).toBe(3);
@@ -218,7 +251,9 @@ test("agents: review has a cost cap", () => {
 
 test("agents: spec table lists every agent", () => {
   const spec = readFileSync(join(AGENTS_DIR, "..", "specs", "pipeline.md"), "utf8");
-  const linked = [...spec.matchAll(/^\|\s*\[[^\]]+\]\(\.\.\/agents\/(\w+)\.md\)/gm)].map((m) => m[1]!).sort();
+  const linked = [...spec.matchAll(/^\|\s*\[[^\]]+\]\(\.\.\/agents\/([\w-]+)\.md\)/gm)]
+    .map((m) => m[1]!)
+    .sort();
   expect(linked).toEqual([...AGENT_NAMES].sort());
   for (const n of linked) expect(existsSync(join(AGENTS_DIR, `${n}.md`))).toBe(true);
 });

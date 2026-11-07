@@ -1,6 +1,6 @@
 ---
 tools: [Read, Glob, Grep, Edit, Write]
-allow: [Read, Glob, Grep, "Edit(specs/**)"]
+allow: [Read, Glob, Grep, "Edit(specs/**)", "Edit(README.md)"]
 sandbox: strict
 model: mission
 session: resume
@@ -34,7 +34,10 @@ What to do:
 3. Never reuse a requirement ID. A dropped requirement keeps its heading and says why it was removed.
 4. If the intent changes no behaviour (a refactor, docs, CI only), change nothing and return an empty
    `spec_ids` list.
-5. You may edit files under `specs/` only.
+5. You may edit files under `specs/` only, with one exception. When you add a new `specs/*.md` file and
+   the root `README.md` has a docs index (a table under `## Docs` that links the `specs/*.md` files),
+   add one row per new spec file to that table, in the table's own style, and change nothing else in
+   `README.md`. Towercab discards any other README change.
 
 Then return the JSON result:
 

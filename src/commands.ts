@@ -1,6 +1,7 @@
 // Commands (LOOP-15): answer, retry, drop, pause, resume, start. The CLI and the UI insert a `commands` row;
 // the loop applies it on its next pass, or the CLI applies it itself when no loop runs.
 
+import { ownerOnly, ownerOnlyLine } from "./autonomy.ts";
 import type { Db } from "./db.ts";
 import { localTime } from "./intents/intent.ts";
 import type { IntentStore } from "./intents/types.ts";
@@ -100,10 +101,90 @@ export function paused(db: Db): boolean {
   return db.meta("paused") === "1";
 }
 
+/** SHD-22: whether one intent is paused (`pause <id>`): no further stage starts until it is resumed. */
+export function intentPaused(db: Db, intent: string): boolean {
+  return db.meta(`paused:${intent}`) === "1";
+}
+
+/** AUT-33: the commands the command line refuses on an a0 intent, as the rows they would insert. */
+export const OWNER_ONLY_COMMANDS: readonly CommandName[] = [
+  "answer",
+  "start",
+  "drop",
+  "done",
+  "retry",
+  "steps",
+  "resume",
+];
+
+/** An ignored reply or command noted on an a0 intent (AUT-32, AUT-33). */
+export interface IgnoredNote {
+  at: number;
+  text: string;
+}
+
+/** AUT-32: note on the intent, once per `key` (a comment id, a command row), that something was ignored. */
+export function noteIgnored(db: Db, intent: string, key: string, text: string, now: number): boolean {
+  const k = `ignored:${intent}:${key}`;
+  if (db.meta(k) !== null) return false;
+  db.setMeta(k, JSON.stringify({ at: now, text } satisfies IgnoredNote));
+  return true;
+}
+
+/** PIP-185, PIP-186: a comment under the owner's login that an agent marked. */
+export interface AgentCommentNote {
+  agent: string;
+  url: string;
+  /** Epoch seconds. */
+  at: number;
+  excerpt: string;
+  /** Whether the intent acted on it (false at a0). */
+  actedOn: boolean;
+}
+
+/** PIP-185: record the agent's comment once per `key` (the comment's id). */
+export function recordAgentComment(db: Db, intent: string, key: string, c: AgentCommentNote): boolean {
+  const k = `agentcomment:${intent}:${key}`;
+  if (db.meta(k) !== null) return false;
+  db.setMeta(k, JSON.stringify(c));
+  return true;
+}
+
+/** PIP-186: the agent comments recorded on an intent, oldest first. */
+export function agentCommentNotes(db: Db, intent: string): AgentCommentNote[] {
+  return db
+    .all<{ value: string }>("SELECT value FROM meta WHERE key LIKE ? ESCAPE '\\'", `agentcomment:${intent}:%`)
+    .map((r) => JSON.parse(r.value) as AgentCommentNote)
+    .sort((a, b) => a.at - b.at);
+}
+
+/** The notes of ignored replies on an intent, oldest first. */
+export function ignoredNotes(db: Db, intent: string): IgnoredNote[] {
+  return db
+    .all<{ value: string }>("SELECT value FROM meta WHERE key LIKE ? ESCAPE '\\'", `ignored:${intent}:%`)
+    .map((r) => JSON.parse(r.value) as IgnoredNote)
+    .sort((a, b) => a.at - b.at);
+}
+
 /** Apply one command; its reply (or error text) is stored with it. */
 export async function applyCommand(cx: CommandCtx, row: CommandRow): Promise<string> {
   let result: string;
   try {
+    // AUT-33: only the page counts for an a0 intent; a row from anywhere else is dropped and noted.
+    if (row.source !== "ui" && row.arg !== "" && OWNER_ONLY_COMMANDS.includes(row.name)) {
+      const intent = await cx.store.get(row.arg).catch(() => null);
+      if (intent && ownerOnly(intent.a, unfinishedFor(cx.db, intent.id)?.a_at_pick ?? null)) {
+        const at = cx.now.getTime() / 1000;
+        noteIgnored(
+          cx.db,
+          intent.id,
+          `command:${row.id}`,
+          `ignored "${row.name}" from the ${row.source}: this intent is only yours`,
+          at,
+        );
+        throw new Error(ownerOnlyLine(intent.id));
+      }
+    }
     result = await run(cx, row);
   } catch (e) {
     result = `${row.name}: ${(e as Error).message}`;
@@ -126,12 +207,24 @@ export async function applyPending(cx: CommandCtx): Promise<{ id: number; result
 async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
   const { db, store } = cx;
   switch (row.name) {
-    case "pause":
+    case "pause": {
+      if (row.arg !== "") {
+        // SHD-22: one intent only; the rest of Towercab goes on.
+        const intent = await store.get(row.arg);
+        db.setMeta(`paused:${intent.id}`, "1");
+        return `paused ${intent.id}: no further stage starts until you resume it`;
+      }
       // UI-111: the time of the first pause, so the page can say since when.
       if (!paused(db)) db.setMeta("paused_at", cx.now.toISOString());
       db.setMeta("paused", "1");
       return "paused: nothing new starts, and merges wait until you resume";
+    }
     case "resume": {
+      if (row.arg !== "") {
+        const intent = await store.get(row.arg);
+        db.delMeta(`paused:${intent.id}`);
+        return `resumed ${intent.id}`;
+      }
       db.delMeta("paused");
       db.delMeta("paused_at");
       const held = db.all<Mission>(
