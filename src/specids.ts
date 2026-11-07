@@ -57,11 +57,22 @@ export function ownSpecBranch(intentId: string, branch: string): boolean {
   return first !== "" && !/^\d+$/.test(first);
 }
 
-/** PIP-202: the IDs on lines of an intent that say they are "already written". */
+/** PIP-210: wording that says the row already exists (whole words, any case). */
+const REFERENCE_WORDING = /\b(?:made true as written|already written|changed|exists|existing)\b/i;
+
+/**
+ * PIP-202, PIP-210: the IDs the intent words as already existing ("made true as written", "already
+ * written", "changed", "exists", "existing"). The wording covers the IDs of its own clause: a line
+ * split at `;`, except that a parenthesis is joined to the IDs before it.
+ */
 export function namedAsWritten(text: string): string[] {
   const out = new Set<string>();
-  for (const line of text.split("\n"))
-    if (/already written/i.test(line)) for (const id of parseIds(line)) out.add(id);
+  for (const line of text.split("\n")) {
+    // "WEB-1..2 (already written; make them Live)": the parenthesis belongs to the IDs before it.
+    const flat = line.replace(/\([^)]*\)/g, (p) => p.replaceAll(";", ","));
+    for (const clause of flat.split(";"))
+      if (REFERENCE_WORDING.test(clause)) for (const id of parseIds(clause)) out.add(id);
+  }
   return [...out];
 }
 
