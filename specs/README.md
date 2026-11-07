@@ -25,7 +25,9 @@ An intent's priority is twice its importance plus its urgency.
 - Verified by: `priority: score is 2i + u`
 ```
 
-- IDs are never reused. A dropped requirement keeps its heading and says `Removed: <why>`.
+- IDs are never reused. A dropped requirement keeps its heading and says `Removed: <why>`. The why
+  names what replaced it (`Removed: replaced by LOOP-4`) or the parked intent that holds it
+  (`Removed: parked as intent 261026-2204-2`), and that intent is in the Parked table below.
 - `Verified by` names tests (their exact `test(...)` titles in `tests/`), a command, or `manual` with
   what to look at.
 - **Status line:** `Draft` = agreed, not built. `Live: <IDs>` lists the built requirements
@@ -55,3 +57,17 @@ An intent's priority is twice its importance plus its urgency.
 | [scheduler.md](scheduler.md) | SCH | Removed: superseded by loop.md |
 | [tasks.md](tasks.md) | TSK | Removed: superseded by intents.md |
 | [runner.md](runner.md) | RUN | Removed: superseded by loop.md |
+
+## Parked
+
+Intents that hold a feature the specs do not build. A row may say `parked` only by citing one of
+these IDs ([PIP-215](pipeline.md)). When a feature is built, remove its ID here: the spec check then
+lists every row that still calls it parked.
+
+| Intent | What it holds |
+|---|---|
+| 261026-2204-2 | Self-monitoring of Towercab's runs with fixed bands (the observer replaces its idea) |
+| 261026-2204-3 | Review findings feeding a target repo's `CLAUDE.md` |
+| 261026-2204-5 | Grafana and OTLP export, eval pass rates, repo rulesets |
+| 261030-0401-2 | Staging and preview environments before production |
+| 261030-0401-3 | Watching the live app after green: alerts, incidents, the AI SRE |

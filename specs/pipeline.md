@@ -2105,6 +2105,17 @@ When a repo has setup secrets, the token is used only to install what the main b
 - No change to a manifest or lockfile → no pass 2. A repo with no setup secrets file runs setup once, as today.
 - Verified by: `pipeline: setup with secrets runs on a fresh export of the base commit's tree`, `pipeline: the secret pass does not mount the worker's checkout`, `pipeline: the secret pass binds its tree at the checkout path`, `pipeline: a branch that plants a fake node_modules bin tool does not run it in the secret pass`, `pipeline: the secret pass path is the system directories only`, `pipeline: install output is copied into the checkout after a clean scan`, `pipeline: only ignored untracked output is copied`, `pipeline: a scan hit copies nothing`, `pipeline: the copy never overwrites a tracked file`, `pipeline: the copy clears setuid bits and keeps links as links`, `pipeline: a branch that adds a postinstall script does not run it in the secret pass`, `pipeline: a branch that adds a postinstall script runs it in pass 2 with no secret in its environment`, `pipeline: a branch that changes a script the setup calls does not run it with the secret`, `pipeline: install scripts are switched off in the secret pass`, `pipeline: a setup tool with no scripts switch is refused with secrets`, `pipeline: a branch that changes a manifest gets a second pass without secrets`, `pipeline: an unchanged manifest gets no second pass`, `pipeline: the second pass gets no plan grant and no credentials folder`, `pipeline: a second pass that needs a private package asks the owner`, `pipeline: a second pass that fails otherwise is red`, `pipeline: a repo without setup secrets runs setup once`
 
+### PIP-215 · Spec rows that say parked cite a parked intent
+
+A spec row that says it is removed because something is parked must name that parked intent, and the specs README lists which intents are still parked, so a row cannot go on calling a built feature parked.
+
+- `specs/README.md` holds a `## Parked` table: one row per parked intent, its ID (`YYMMDD-HHMM-N`) in the first column and one line on what it holds in the second.
+- The check reads every `specs/*.md` row, removed ones included, and ignores the Status line. A row's text is its heading's section, and the table's own rows are not checked.
+- A row whose text says `parked` (any case, as a word) with no intent ID fails: `<ID>: says parked without an intent id`. An intent ID in a row that is not in the Parked table fails: `<ID>: cites <intent id>, which is not parked`. A `Removed: replaced by <ID>` row (or `superseded by`) whose `<ID>` is not a heading in any spec file fails: `<ID>: replaced by <other>, which does not exist`.
+- Taking an intent's ID out of the Parked table when its feature is built makes the check list every row that still cites it, so none is left calling it parked.
+- Rows about the priority cutoff's parked state (PRI-5) and the UI's Parked list are not removed rows: a row is checked only when it says `Removed:` or `parked as`, `parked with`, `is parked`, `are parked` or `stays parked` outside code spans.
+- Verified by: `specs: parked rows cite a parked intent`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
