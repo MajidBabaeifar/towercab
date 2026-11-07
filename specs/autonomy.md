@@ -67,7 +67,7 @@ A repo can cap the autonomy of every intent in it.
   (AUT-9), then the cap. While a raise is flagged (AUT-35), `a` now means the level before that raise.
   A raise therefore applies from the mission's next gate, and a lowering applies at once. It no longer
   looks at `a` at pick.
-- Verified by: `autonomy: repo cap`, `autonomy: a running mission uses the new level at its next gate`
+- Verified by: `autonomy: repo cap`
 
 ### AUT-9 · No autonomy set
 
