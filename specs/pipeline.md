@@ -1874,12 +1874,15 @@ An old secret finding in a file that is not a test or fixture is never ignored o
 A code PR that touches security or infrastructure files is also reviewed by a specialist for that
 area, next to the general review, so the risky parts are read by someone who knows what to look for.
 
-- Areas and the paths that call them in (matched by code on the PR's changed files, not by the
-  agent): `Security`: `src/pipeline/sandbox.ts`, `src/pipeline/guard.ts`, `src/pipeline/access.ts`,
-  `src/github/**`, and any path with a `sandbox`, `auth`, `secret`, `token`, `credential` or
-  `permission` segment or file-name word. `Infra`: `ansible/**`, `deploy/**`, `infra/**`,
-  `terraform/**`, `Dockerfile*`, `docker-compose*`, `*.service`, `.github/workflows/**`. A path may
-  call in both. No path matches → no specialist runs and the review is as in PIP-4.
+- Areas and the paths that call them in, matched by code on the PR's changed files, not by the agent.
+  The shared default list holds generic patterns only. `Security`: any path with a `sandbox`, `auth`,
+  `secret`, `token`, `credential`, `permission`, `crypto`, `session` or `password` segment or file-name
+  word (broad on purpose: a missed security issue costs more than an extra run). `Infra`: `ansible/**`,
+  `deploy/**`, `infra/**`, `terraform/**`, `Dockerfile*`, `docker-compose*`, `*.service`,
+  `.github/workflows/**`. No file of Towercab itself is in the default.
+- A repo adds its own paths per area in `REVIEW.md` under `## Specialist paths` ([REPO-42](repo.md)); they
+  extend the default, never replace it. A path may call in both areas. No path matches → no specialist
+  runs and the review is as in PIP-4.
 - Each called-in specialist runs after the general review, on the same head and with the same inputs
   (intent, spec IDs, plan, diff, CI result, `REVIEW.md`), read-only and in a new session. Agents
   `review-security` and `review-infra` (`agents/*.md`, PIP-76) differ from `review` only in their
@@ -1888,7 +1891,7 @@ area, next to the general review, so the risky parts are read by someone who kno
   unchanged (as PIP-4). Its cost counts with the review's (MET-28).
 - A specialist that fails to finish ends as any run does (PIP-24): the mission waits for the owner
   with the reason. It is not skipped.
-- Verified by: `pipeline: a security change gets a security review`, `pipeline: an infra change gets an infra review`, `pipeline: a change outside the specialist areas gets only the general review`, `pipeline: specialist review reused for an unchanged diff`
+- Verified by: `pipeline: a repo's specialist paths also call in a specialist`, `pipeline: a security change gets a security review`, `pipeline: an infra change gets an infra review`, `pipeline: a change outside the specialist areas gets only the general review`, `pipeline: specialist review reused for an unchanged diff`
 
 ### PIP-198 · Specialist findings follow the rules of the general review
 
@@ -1902,8 +1905,10 @@ go back to the builder like any others.
   only when each is approved, and with no important finding from any of them. The specialist's
   `door` and `red_lines` are merged into the general review's (a one-way door from any wins).
 - Its findings appear in the Review comment (PIP-42, PIP-92) under their pass, and a specialist that
-  doesn't approve sends the change back to build in the same fix rounds as PIP-98, not extra ones.
-- Verified by: `pipeline: specialist nits are dropped`, `pipeline: a specialist's important finding stops approval`, `pipeline: specialist findings go back to the builder in the same fix rounds`, `pipeline: review comment shows specialist findings under their pass`
+  doesn't approve sends the change back to build in the same two fix rounds as PIP-98, not extra
+  ones. The general review's and every specialist's findings go into the same round: one repair
+  run with all of them as the details, then one new review pass (general and specialists) on the new diff.
+- Verified by: `pipeline: specialist nits are dropped`, `pipeline: a specialist's important finding stops approval`, `pipeline: specialist findings go back to the builder in the same fix rounds`, `pipeline: both reviewers' findings go into one fix round`, `pipeline: review comment shows specialist findings under their pass`
 
 ### PIP-199 · A specialist review has the review's limits
 
