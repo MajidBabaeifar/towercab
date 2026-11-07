@@ -579,34 +579,41 @@ An intent that waits only for the owner no longer takes one of a repo's `ahead` 
 
 ### LOOP-101 · Cap on intents before build
 
-A repo's normal pick stops at `2 × ahead` intents before build, and an intent that outranks every intent ahead starts right away, below the cap and at it.
+An intent that outranks every intent ahead of build starts right away, over the working limit; the cap of `2 × ahead` that also held other intents is replaced by LOOP-132.
 
-- The cap is `2 × [repos.<r>].ahead` (6 with the default), counting every intent ahead of build
-  (LOOP-60), working or waiting on the owner (LOOP-100). It is not a new setting.
+- Superseded by LOOP-132: the cap `2 × [repos.<r>].ahead`, which counted every intent ahead of build
+  (LOOP-60), working or waiting on the owner (LOOP-100). `owner_waits` (LOOP-132) now bounds the intents
+  waiting on the owner, and the outranking rule below does not pass it.
 - An intent *outranks* the repo when its priority is higher than that of every intent ahead of build in
   the repo ([PRI-5](priority.md) order; a tie is not higher). With no intent ahead, the rule changes
-  nothing. An intent that outranks the repo starts at once: it goes over the working limit of LOOP-100
-  and over the cap. Nothing running or waiting is stopped, paused or dropped for it, so the repo can
-  hold more than the cap.
+  nothing. An intent that outranks the repo starts at once: it goes over the working limit of LOOP-100.
+  Nothing running or waiting is stopped, paused or dropped for it, so the repo can hold more than `ahead`
+  working intents.
 - An intent that does not outrank the repo is skipped when the repo has `ahead` working intents
-  (LOOP-100) or is at the cap (the text of LOOP-102). Other
-  skips of LOOP-5 still apply to every intent, whatever its priority.
+  (LOOP-100) or `owner_waits` intents waiting on the owner (LOOP-132). Other skips of LOOP-5 still apply to
+  every intent, whatever its priority.
 - `[repos.<r>].workers` (LOOP-61) is unchanged: a ready mission is not ahead and does not count toward
-  the cap.
+  `ahead`.
+- LOOP-132's code PR rewrites the tests below for the rule above and renames them where the behaviour changes
+  (new titles under LOOP-132); this list names the tests that exist today.
 - Verified by: `loop: an intent that outranks every intent ahead starts below the cap`, `loop: at the cap only a higher priority intent starts`, `loop: an equal priority intent does not pass the cap`, `loop: the cap is twice ahead`, `loop: a ready intent does not count toward the cap`
 
 ### LOOP-102 · status names the rule that held an intent back
 
-`towercab status` and `next` say which rule kept an intent from starting: the places taken by working intents or the cap (an intent that outranks the repo is never held by either, LOOP-101).
+`towercab status` and `next` say which rule kept an intent from starting: the places taken by working intents or the limit on intents waiting on the owner (an intent that outranks the repo is never held by the first, LOOP-101).
 
 - A skipped intent reads `waiting: repo has <w> intents working ahead (start <id> to go now)` when
-  `ahead` working intents hold the places (LOOP-100), and `waiting: repo is at the cap of <cap> intents
-  before build, <w> working and <o> waiting on the owner (start <id> to go now)` at the cap (LOOP-101).
-  When both hold, the cap text is shown. UI-61 shows both in plain words.
+  `ahead` working intents hold the places (LOOP-100), and `waiting: repo has <o> intents waiting on you
+  (start <id> to go now)` at `owner_waits` (LOOP-132). When both hold, the second text is shown. UI-61
+  shows both in plain words.
+- Superseded by LOOP-132: the text `waiting: repo is at the cap of <cap> intents before build, <w> working
+  and <o> waiting on the owner`, which is no longer produced.
 - An intent that went ahead of others by priority (LOOP-101) is not marked as skipped; it
   has a mission and shows its stage as usual.
 - This replaces the text `waiting: repo has <n> intents ahead` of LOOP-60 and LOOP-64, which counted
   intents waiting on the owner.
+- LOOP-132's code PR rewrites the tests below and renames them where the behaviour changes (new titles
+  under LOOP-132); this list names the tests that exist today.
 - Verified by: `status: the working limit and the cap are told apart`, `status: the cap names the intents waiting on the owner`
 
 ### LOOP-103 · The default for how much runs at once fits the machine
@@ -808,6 +815,26 @@ The owner can reset the shadow and see its state from the command line and from 
   action, today's cost against the cap). In the chat, `/reset` and `/status` do the same; any other `/…` text
   goes to the shadow as ordinary text. `status` lists pending actions.
 - Verified by: `cli: shadow reset and status`, `telegram: slash reset and status`
+
+### LOOP-132 · Waiting on the owner has its own limit
+
+A repo holds at most `owner_waits` (default 4) specs and plans waiting on the owner, and those waits no longer count toward `ahead`, so a third intent starts even when two others wait on the owner.
+
+- Replaces the cap of `2 × ahead` of LOOP-101, which counted intents waiting on the owner (LOOP-100) with the
+  working ones and held a repo back while nothing was being designed or planned.
+- New setting `[intents].owner_waits`, int 1–16, default 4, the same for every repo. An intent is *waiting on
+  the owner* as LOOP-100 defines it (`approval:spec`, `approval:plan`, or `blocked` in the spec or plan phase
+  on a question, an open point, an a0 decision or a missing permission).
+- `heldBack` (LOOP-5) skips an intent of a repo when it has `ahead` *working* intents ahead (LOOP-100), or
+  `owner_waits` intents waiting on the owner. An intent that outranks every intent ahead (LOOP-101, kept) goes
+  over the working limit, not over `owner_waits`: that limit bounds the owner's review queue and the spend.
+  When both hold, the owner-waits text is shown.
+- `start` (LOOP-63) still goes over every limit. Nothing running or waiting is stopped or dropped; an intent
+  that stops waiting counts as working again (LOOP-100), so a repo can briefly exceed either limit.
+- Texts (replacing the cap text of LOOP-102): `waiting: repo has <o> intents waiting on you (start <id> to go
+  now)` at the owner-waits limit. `status` and `next` never say `repo is at the cap`. Below the limit, intents
+  waiting on the owner show as `waiting on you` (UI-61) with no mention of any repo limit.
+- Verified by: `loop: with ahead 2 and two intents waiting on the owner at spec a third is picked`, `loop: owner waits at plan do not count toward ahead`, `loop: a repo at owner_waits waiting intents starts no new one`, `loop: an outranking intent does not pass owner_waits`, `loop: the cap of twice ahead no longer holds a repo back`, `config: owner_waits default and range`, `loop: at the working limit only a higher priority intent starts`, `loop: an equal priority intent does not pass the working limit`, `loop: a ready intent does not count toward ahead`, `status: the working limit and the owner-waits limit are told apart`, `status: intents waiting on the owner show without the cap`
 
 ### LOOP-65 · Repos live in the database
 
@@ -1197,6 +1224,7 @@ If a part fails after the merges, that part and every part that landed after it 
 | `intents.remote`, `intents.path` | URL; path (`~/` expanded) | required; `<home>/intents` |
 | `intents.cutoff` | int 1–15 | 7 |
 | `intents.issue_a` | int 1–5 | 3 |
+| `intents.owner_waits` | int 1–16 (LOOP-132) | 4 |
 | `agent.model`, `agent.review_model` | model name | `opus`; one step above the worker's |
 | `agent.parallel` | int 1–16 | computed from cores and free memory, at most 4 (LOOP-103) |
 | `agent.build_timeout`, `review_timeout`, `check_timeout` | minutes 1–1440 | 60, 15, 10 |
