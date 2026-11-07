@@ -1846,8 +1846,9 @@ When a secrets check fails only on commits older than the pull request's head, i
 - Applies when every finding in the failed gitleaks job log (PIP-154, PIP-155) names a commit that is not the PR head, the file is a test or fixture path (PIP-196), and for each the flagged file at the head no longer holds the flagged line. Towercab checks the head with `git show <head>:<file>` through `Tools`, comparing the text of the finding's line in its own commit, never putting it in the details.
 - The repair details then say that the findings are only in older commits and are already fixed at the head, and ask for one `.gitleaksignore` line per finding, copying each `Fingerprint` (`commit:file:rule:line`) as the log gives it. They ask for nothing else: no code change, no `paths`, `rules` or other broad allowlist (PUB-8).
 - The details carry the fingerprints, file and line only, never the secret value (PIP-155).
+- The path ignore round runs once per head. If the secrets check is still red on the new head, the next round is a normal repair (PIP-193's details).
 - After the round, the new commit may be pushed only if it changes nothing but `.gitleaksignore`, by adding those fingerprints. Otherwise Towercab throws the round's changes away: it resets the branch to the head it had before the round, then runs the normal repair round (PIP-193's details), and pushes nothing from the discarded round.
-- Verified by: `pipeline: a red secrets log whose finding commit is not the head and whose line is gone at head asks for one gitleaksignore line`, `pipeline: a secrets repair that changes more than the listed fingerprints is reset and repaired normally`, `pipeline: a secrets repair that only adds the listed fingerprints is pushed`
+- Verified by: `pipeline: a red secrets log whose finding commit is not the head and whose line is gone at head asks for one gitleaksignore line`, `pipeline: a secrets repair that changes more than the listed fingerprints is reset and repaired normally`, `pipeline: a secrets repair that only adds the listed fingerprints is pushed`, `pipeline: a second red secrets round after an ignore commit is a normal repair`
 
 ### PIP-193 · A secret finding still at the head is fixed in the code, never ignored
 
@@ -1861,11 +1862,12 @@ A finding whose text is still in the head, or one Towercab cannot place, is fixe
 
 An old secret finding in a file that is not a test or fixture is never ignored on its own: the mission asks the owner, because the value may be a real key that needs rotating.
 
-- Test or fixture path: starts with `tests/`, `test/`, `__tests__/` or `fixtures/`, has a `/tests/`, `/__tests__/` or `/fixtures/` segment, or its file name matches `*.test.*` or `*.spec.*`.
+- Test or fixture path: starts with `tests/`, `test/`, `__tests__/` or `fixtures/`, has a `/tests/`, `/test/`, `/__tests__/` or `/fixtures/` segment, or its file name matches `*.test.*` or `*.spec.*`. Nothing else counts (no `mocks/`, `examples/`, `docs/`).
+- The path is taken as the log gives it and must have no `..` segment and no leading `/`; otherwise it is not a test path.
 - When every finding is older than the head and its line is gone at the head (PIP-192's test), but any finding's file is not a test or fixture path, no repair round runs and nothing is added to `.gitleaksignore`. The mission waits for the owner, with the reason.
 - The question names, for each finding, the rule, file, line and commit (never the value), says the value may be a real key that needs rotating, and offers the owner to rotate the key and then tell Towercab to ignore the fingerprint, or to fix it another way.
 - A finding still at the head is not affected: it is fixed in the code (PIP-193).
-- Verified by: `pipeline: an old finding outside tests asks the owner with rule, file, line and commit`, `pipeline: an old finding outside tests is not offered for gitleaksignore`, `pipeline: test and fixture paths are recognised`
+- Verified by: `pipeline: an old finding outside tests asks the owner with rule, file, line and commit`, `pipeline: an old finding outside tests is not offered for gitleaksignore`, `pipeline: test and fixture paths are recognised`, `pipeline: a path with a parent segment is not a test path`
 
 ### PIP-194 · A plan that adds a wait lists the wait table in its access
 
