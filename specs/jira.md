@@ -94,17 +94,27 @@ A short Claude run with no tools reads the ticket's summary and description and 
 
 ### JIRA-7 · Telling the ticket where the work stands
 
-Towercab comments on the ticket when its work is queued, started and done, and says only where the work stands.
+Towercab comments on the ticket when its work is queued, started, done, or stopped without merging, and says only where the work stands.
 
-- Three comments, each posted once: **queued** (the intent is on `main`), **in progress** (the mission
-  starts) and **done** (the code PR is merged). Each is a few plain sentences in the
-  [writing guide](../prompts/writing.md)'s style.
+- Four kinds of comment, each posted once: **queued** (the intent is on `main`), **in progress** (the
+  mission starts), **done** (the code PR is merged) and **stopped, not merged** (see below). Each is a
+  few plain sentences in the [writing guide](../prompts/writing.md)'s style.
+- **Stopped, not merged:** posted when the intent is dropped ([PRI-9](priority.md)) or stops for good
+  before its code PR merges (the owner closes the code PR unmerged and the mission ends, or the
+  mission is cancelled or failed with no way on). It opens with `Stopped, not merged.`, gives the
+  reason in one plain sentence, and lists the links of the PRs opened for it (JIRA-8). It is posted
+  only if an earlier Towercab comment exists on the ticket (a ticket never told it was queued is not
+  told it stopped), and never after a done comment. The reason is chosen from a short fixed list of
+  sentences (`The owner dropped this work.`, `The owner closed the pull request without merging it.`,
+  `The work could not be completed.`), never copied from the intent, a drop note or a worker's text, so
+  nothing from the intent file reaches the ticket. A stopped mission that is later revived by the owner
+  gets a new in-progress comment (a new marker for the new run); the stopped comment stays.
 - A comment never shows scores, their reasons, the place in the queue, the intent's link or any text
   from the intent file; those stay on the owner's own page. The only links are the PR links of JIRA-8.
 - Once means once: each comment carries a hidden marker line (kind and intent ID). Before posting,
   Towercab reads the ticket's comments only to look for that marker (JIRA-2), and a failed comment is
   retried without a second one. Comments are only ever created, never edited or deleted.
-- Verified by: `jira: the queued comment says only where the work stands`, `jira: the in-progress and done comments are posted at their step`, `jira: a comment never shows scores or queue place`, `jira: a ticket is commented once`, `jira: a failed comment is retried once`
+- Verified by: `jira: the queued comment says only where the work stands`, `jira: the in-progress and done comments are posted at their step`, `jira: a dropped intent gets a stopped, not merged comment`, `jira: a closed unmerged code PR gets a stopped, not merged comment`, `jira: the stopped comment gives a plain reason and the PR links`, `jira: a ticket never told it was queued gets no stopped comment`, `jira: a merged intent never gets a stopped comment`, `jira: a comment never shows scores or queue place`, `jira: a ticket is commented once`, `jira: a failed comment is retried once`
 
 ### JIRA-8 · Pull requests link back to the ticket
 
@@ -163,4 +173,6 @@ API. Acting on ticket comments written by others, and reading attachments or lin
 - PR titles start with the key so a tool that checks every title for a ticket key is satisfied; commits
   and the squash commit use it as the scope so Conventional Commit tooling still parses them.
 - The ticket comments show progress only; scores and queue place stay on the owner's page.
+- The stopped comment's reason comes from a fixed list, not from the intent's drop note, so no
+  free text from the intent or a worker reaches the ticket.
 - A ticket ambiguous between repos is skipped, not guessed, as a wrong repo costs a wrong PR.
