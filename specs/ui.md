@@ -1496,6 +1496,15 @@ While a long plan builds, the intent page and its card say "step 3 of 6".
 - `GET /api/state` and the intent's API carry `build: {stepsDone, stepsTotal}` (null when absent). Fits 360 px, light and dark.
 - Verified by: `ui: the intent page shows the plan step being built`, `ui: no step count for a one-run plan`
 
+### UI-280 · "Covered by…" closes an intent as done
+
+The owner can pick another intent on an open intent's page and close the first as done, because the second covers it.
+
+- An intent that is not done, dropped or stopped shows a "Covered by…" action next to Drop, at any stage and in the board's card menu. It opens a picker of the other intents of the same repo first, then the others (search by ID or title), without the intent itself, dropped or stopped ones, and any that wait `after:` this one (LOOP-156).
+- Choosing one posts `{action: "done", id, by: <other id>}` (UI-66) with `actor: owner`, which runs the `done --by` command of LOOP-156 with its confirm for an open code PR with commits (UI-164). The page shows `Closed as done: covered by <other id>` with the ID as a link, and a refusal shows its reason.
+- Both intents' pages show the cover on their timelines ("Covered by 261106-1201" and "Covers 261105-2152-14"), each with the other as a link. A covered intent shows as done, not dropped, with the covering intent named. Fits 360 px, light and dark; hidden for `a0` intents the same way Drop is (AUT-31) and for a viewer (USR).
+- Verified by: `ui: covered by is offered at any open stage`, `ui: covered by picker leaves out itself and finished intents`, `ui: covered by closes the intent as done`, `ui: covered by shows on both timelines`, `ui: covered by asks to confirm an open code PR`
+
 ### UI-200 · Your own open pull requests are read
 
 Towercab reads the open pull requests the owner opened by hand in each registered repo.

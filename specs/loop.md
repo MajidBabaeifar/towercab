@@ -1334,6 +1334,18 @@ Each merge Towercab or the owner's page makes uses the repo's merge method inste
 - A repo whose settings cannot be read prints nothing for it, and `doctor --quick` (LOOP-35) skips the check; it never fails because of it.
 - Verified by: `cli: repo add warns when squash is not allowed`, `cli: repo add is quiet when the method is allowed`, `cli: repo add names auto as the fix`, `cli: repo add warns about rebase`, `doctor: rebase warns about conventional commits`, `doctor: a method the repo forbids is a warning`, `doctor: unreadable merge settings are not a warning`, `doctor: auto with no allowed method is a warning`
 
+### LOOP-156 · Close an intent as done because another one covered it
+
+The owner can close an intent at any stage as done when another intent already covers it, and both intents' timelines say so.
+
+- `towercab done <id> --by <other id>` (a `commands` row applied by the loop or by the CLI itself, LOOP-15) ends the mission `done` through `machine.apply` with the event `covered_by` at any stage, including `pick`, `design`, queued, a wait and a running build. The mission's `why` reads `covered by <other id>`. Plain `done <id> [note]` (LOOP-76) is unchanged and still only for a wait with the `done` exit. With `--by` a note is refused: `towercab: done --by takes no note`.
+- Refused with a reason, changing nothing: `<id>` is unknown, already `done`, `dropped` or `stopped`; `<other id>` is unknown, is `<id>` itself, or is `dropped` or `stopped` (a dropped intent covers nothing); and, for an `a0` intent, the line of AUT-31. The other intent may be open, waiting or done. When the other intent itself waits on this one with `after:` (LOOP-75), the refusal says so: it would never start.
+- Stops the work: a running child of the mission (agent session, checks, LOOP-114) is stopped without counting as a crash, queued work is removed, and an open spec, plan or code PR of the mission is closed with a comment naming the covering intent and its branch deleted, as for `drop` (PIP-43). Nothing is merged. The confirmation for an open code PR with commits (LOOP-76) applies unchanged (`--yes`).
+- The intent file gets `stage: done`, `finished: <now>` and `covered_by: <other id>` (edited with `setField`, INT-24), and moves to `done/`; `DONE.md` lists it as done, with "covered by <other id>". The feature line of a covered intent is removed, as for a dropped one, not marked live.
+- Both timelines get an event: `covered by <other id>` on the closed intent and `covers <id>` on the other (also when that one is already done). The covering intent's own work is not touched. A repeat of the same `--by` pair is a no-op that prints the same result.
+- Counts as done for `after:` (LOOP-75): an intent that waits `after:` the covered one starts. It does not count as cost-free: the spend so far stays on the intent (MET).
+- Verified by: `cli: done --by closes an intent at any stage as done`, `cli: done --by refuses an unknown, finished or same intent`, `cli: done --by refuses a covering intent that waits on this one`, `cli: done --by takes no note`, `machine: covered_by ends any stage done and stops its work`, `loop: done --by stops a running child without a crash`, `loop: done --by closes the open PR with a comment naming the covering intent`, `store: covered_by is written with setField and the file moves to done`, `timeline: both intents show the cover`, `pick: after accepts a covered intent`
+
 ### LOOP-70 · A repo set to block starts no new intent
 
 Towercab holds back new intents only in a repo whose kind the owner confirmed, that is missing required setup and that is set to `readiness: block`; every other repo keeps starting intents and only warns.
@@ -1708,6 +1720,7 @@ like a crash; `–` = ignored)
 | reviewed (PIP-142, PIP-143) | – | → design | – | → gate | – |
 | resume | merge (held) → again; else – | – | – | – | – |
 | owner_done (LOOP-76) | `steps` → done; else – | – | – | – | → done, only at a wait with the `done` exit (`no changes`, `your steps first`, `several repos`) |
+| covered_by (LOOP-156) | → done | → done | → done | → done | → done |
 | to_steps (PIP-113) | –; `steps` – | – | – | – | → `steps` with steps in the plan, else → plan; only at a wait with the `steps` exit |
 
 - again = re-enter the step; cool = wait for the model's cooldown (LOOP-9); backoff = LOOP-10;
