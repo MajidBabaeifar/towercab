@@ -1,6 +1,6 @@
 # Repo files
 
-**Status:** Live: REPO-1..13, REPO-14..19, REPO-20..27, REPO-30..33, REPO-38..42 · **Prefix:** REPO
+**Status:** Live: REPO-1..13, REPO-14..19, REPO-20..27, REPO-30, REPO-33, REPO-38..42 · **Prefix:** REPO
 
 ## Purpose
 
@@ -464,7 +464,13 @@ When the owner clicks Apply, Towercab applies the standard settings to that repo
   backup, left as it is: <what>`. It prints what it restored and the backup's time; no backup → `<repo>
   has no saved settings`; unknown repo → as in [LOOP-69](loop.md)'s text; a forbidden write is
   [REPO-40](#repo-40--an-apply-the-owner-cannot-make)'s message. It does not need the loop to be running.
-- Verified by: `repo: apply runs the script then checks again`, `repo: the required check names come from the plan`, `repo: a green main gets the whole apply`, `repo: a main not green gets everything but the ruleset`, `repo: a release without skip-ruleset applies nothing to a repo not green`, `repo: apply backs up everything the script can change and keeps 5`, `repo: the backup includes another branch the plan names`, `repo: no backup, no apply`, `cli: settings restore writes back what was saved`, `cli: settings restore lists what was added since and leaves it`
+- **Unreadable rulesets.** When the current rulesets cannot be read, restore skips the whole ruleset
+  part (no `PUT`, no `POST`) and lists `Could not read the current rulesets: <reason>; rulesets left as they are`, because a
+  ruleset that still exists would be created twice. The other parts are still restored.
+- **A refused apply after a partial one.** When a 403 ends an apply after the script already changed
+  something, Towercab runs `--check` again before it stores a result, so the card shows the gaps that really remain and
+  never `Nothing applied` over stale gaps. A re-check that cannot run keeps the last result and says the apply stopped part-way.
+- Verified by: `repo: apply runs the script then checks again`, `repo: the required check names come from the plan`, `repo: a green main gets the whole apply`, `repo: a main not green gets everything but the ruleset`, `repo: a release without skip-ruleset applies nothing to a repo not green`, `repo: apply backs up everything the script can change and keeps 5`, `repo: the backup includes another branch the plan names`, `repo: no backup, no apply`, `cli: settings restore writes back what was saved`, `cli: settings restore lists what was added since and leaves it`, `cli: settings restore skips rulesets it cannot read`, `repo: a refused apply after a partial one re-checks before storing`
 
 ### REPO-32 · A missing permission is said once
 

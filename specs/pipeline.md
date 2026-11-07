@@ -2020,6 +2020,27 @@ Several comments taken in one revision, and a comment arriving while a reply is 
 - A revision takes every unseen owner comment on the PR (PIP-44) and returns one `reply` for them. The reply is posted once per revision round (PIP-204). A comment that arrives after the revision started waits for the next revision and gets its own reply then.
 - Verified by: `pipeline: several comments get one reply that answers each`, `pipeline: a comment that arrives during a revision gets the next reply`
 
+### PIP-208 · An outcome the owner deferred counts as met
+
+An outcome the owner has put off to another intent is not held against the code PR, so it never overrides a reviewer's Approve.
+
+- An outcome is deferred in exactly three ways, and nothing else defers one:
+  (a) an owner comment or answer on the intent or its PRs has a line that starts with `defer`, names the outcome, and names an intent id, for example `defer "Stage tests use a FakeForge" to 261105-2120`. The outcome is named by its text in quotes (matched to a `Proposed outcome` bullet or a spec row name, ignoring case and surrounding space) or by its number (`defer 3 to 261105-2120`, the bullet's position, counting from 1);
+  (b) the intent file marks the bullet `deferred: <intent id>`;
+  (c) the plan (the plan PR's text) has its own line in the same strict form as (a): `defer "<outcome>" to <intent id>` or `defer <number> to <intent id>`. Merging the plan PR approves that line. Loose wording in a plan ("for a later slice", "follow-up") defers nothing, and a plan line in a plan PR that is not merged defers nothing.
+  A line in any other wording is not a deferral, however clear it reads to a person. An agent's comment (PIP-182) or a non-owner never defers an outcome in (a). The named intent must exist in the intents repo; otherwise the outcome stays as judged.
+- `review.outcomes[]` gets no new key: Towercab sets `met` true for a deferred outcome after the review returns, and keeps the follow-up id and the reason on the mission (`data.deferred`). PIP-5's "every outcome met" and PIP-120's fix-round test then read it as met, so a deferred outcome starts no fix round.
+- The prompt (`agents/review.md`) lists the deferred outcomes as data and says not to judge them; a review that marks one `met` false is overridden as above.
+- Verified by: `pipeline: a deferred outcome does not override an Approve`, `pipeline: an outcome marked deferred in the intent counts as met`, `pipeline: a defer line naming an outcome by its quoted text defers it`, `pipeline: a defer line naming an outcome by its number defers it`, `pipeline: a comment not in the defer form defers nothing`, `pipeline: a defer line in the plan defers the outcome`, `pipeline: loose wording in a plan defers nothing`, `pipeline: a defer line in an unmerged plan defers nothing`, `pipeline: a deferral by an agent or a non-owner is ignored`, `pipeline: a deferral to an unknown intent is ignored`, `pipeline: a deferred outcome starts no fix round`
+
+### PIP-209 · A deferred outcome is shown, not hidden
+
+Deferred outcomes are listed in the review comment and the code PR body with the intent they moved to.
+
+- The Review comment and the code PR's description (PIP-48) carry a "Deferred" list: the bullet, the follow-up intent id and who deferred it. Absent when nothing is deferred.
+- The verdict line (PIP-121) names the deferral: an Approve that stands because of one says so.
+- Verified by: `pipeline: the review comment lists deferred outcomes`, `pipeline: the PR body lists deferred outcomes`
+
 ### PIP-210 · An ID the intent says exists on main is a reference and is never moved
 
 Towercab leaves alone an ID that the intent's own wording says already exists, even when the row on `main` was written by another intent; any other ID that is already on `main` is a clash and is moved.
@@ -2116,6 +2137,7 @@ score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outc
   `gh pr comment` for agent sessions; it is the owner's to add and is not a requirement here. Chosen without asking: the agent is named by the stage that wrote the text;
   the command posts on the current PR (or the issue); old comments keep their headers; the marker only
   excludes comments, it never grants anything.
+- Deferred outcomes (PIP-208, PIP-209, from intent 261105-0810, the owner's calls): a deferral is a strict `defer "<outcome>" to <intent id>` line (or the bullet's number) in an owner comment or in a merged plan; loose wording defers nothing, because the review overrode on 1546, 1547 and 2152-2 only from that case. Decided without asking: a quoted outcome matches a bullet or spec row name ignoring case and space; an unmerged plan defers nothing; a deferral never turns a `met` false review into a weaker verdict, it only counts the outcome as met and shows it in the review and PR body. PIP-208 does not touch PIP-210: PIP-210 decides whether a reserved ID is a reference or a collision at pick, PIP-208 decides how the review counts an outcome, and the two never read the same text.
 - Reference IDs (PIP-210, from intent 261107-1130-1; the owner's call, 2026-11-07): the intent's wording, not
   the mere presence of a row on `main`, marks an ID as a reference; without such wording an ID on `main` is a
   collision and is moved as before. Decided without asking: the cue words are "made true as written",
