@@ -6,8 +6,8 @@ import { badAfter, decide, heldBack, nextText, orphans, type PickState, type Pla
 import { at, listing } from "./intents/fixtures.ts";
 
 /** A repo's intents ahead: `ids` work first, then wait on the owner. */
-function places(limit: number, ids: string[], working = ids.length): Places {
-  return { working, owner: ids.length - working, limit, ids };
+function places(limit: number, ids: string[], working = ids.length, ownerLimit = 4): Places {
+  return { working, owner: ids.length - working, limit, ownerLimit, ids };
 }
 
 function state(repos: string[], o: Partial<PickState> = {}): PickState {
@@ -195,7 +195,7 @@ test("pick: start goes first and over the ahead limit", () => {
 
 const I = (id: string, scores: string) => at(`intents/${id}-x`, scores, "web", id);
 
-test("pick: heldBack counts only working intents and caps at twice ahead", () => {
+test("pick: heldBack counts only working intents and stops at owner_waits", () => {
   const ids = ["261001-0001", "261001-0002", "261001-0003"];
   const l = listing([...ids.map((id) => I(id, "u: 4\ni: 4\n")), I("261002-0001", "u: 4\ni: 4\n")]);
   const x = l.open.find((i) => i.id === "261002-0001")!;
@@ -203,10 +203,12 @@ test("pick: heldBack counts only working intents and caps at twice ahead", () =>
   expect(heldBack(places(3, ids, 0), x, l)).toBeNull();
   // Three working take all of them; a tie does not outrank.
   expect(heldBack(places(3, ids), x, l)).toEqual({ kind: "working", working: 3, limit: 3 });
-  // At the cap the cap holds, even though working intents also fill the places.
+  // Waiting intents add nothing to the working count: three working and three waiting hold by `ahead`.
   const six = [...ids, "261001-0004", "261001-0005", "261001-0006"];
-  expect(heldBack(places(3, six, 3), x, l)).toEqual({ kind: "cap", working: 3, owner: 3, cap: 6 });
-  expect(heldBack(places(3, six, 0), x, l)).toEqual({ kind: "cap", working: 0, owner: 6, cap: 6 });
+  expect(heldBack(places(3, six, 3), x, l)).toEqual({ kind: "working", working: 3, limit: 3 });
+  // At `owner_waits` the owner-waits limit holds, whatever else is ahead.
+  expect(heldBack(places(3, six, 2, 4), x, l)).toEqual({ kind: "owner", owner: 4, limit: 4 });
+  expect(heldBack(places(3, six, 0, 6), x, l)).toEqual({ kind: "owner", owner: 6, limit: 6 });
   // Nothing ahead, or an unknown repo: nothing holds it.
   expect(heldBack(places(3, []), x, l)).toBeNull();
   expect(heldBack(undefined, x, l)).toBeNull();
@@ -216,8 +218,10 @@ test("pick: an intent that outranks every intent ahead is never held", () => {
   const ids = ["261001-0001", "261001-0002"];
   const l = listing([...ids.map((id) => I(id, "u: 4\ni: 4\n")), I("261002-0001", "u: 5\ni: 5\n")]);
   const top = l.open.find((i) => i.id === "261002-0001")!;
-  // Full of working intents, and over the cap: the higher priority starts.
+  // Full of working intents: the higher priority starts.
   expect(heldBack(places(1, ids), top, l)).toBeNull();
+  // But it does not pass `owner_waits` (LOOP-132).
+  expect(heldBack(places(1, ids, 0, 2), top, l)).toEqual({ kind: "owner", owner: 2, limit: 2 });
   const d = decide(l, state(["web"], { full: new Map([["web", places(1, ids)]]) }));
   expect(d.pick?.id).toBe("261002-0001");
   // The others are held, with their reason.
@@ -227,7 +231,5 @@ test("pick: an intent that outranks every intent ahead is never held", () => {
     state(["web"], { active: new Set(["261002-0001"]), full: new Map([["web", places(1, ids)]]) }),
   );
   expect(d2.pick).toBeNull();
-  expect(d2.skipped[0]!.reason).toBe(
-    "repo is at the cap of 2 intents before build, 2 working and 0 waiting on the owner (start 261001-0001 to go now)",
-  );
+  expect(d2.skipped[0]!.reason).toBe("repo has 2 intents working ahead (start 261001-0001 to go now)");
 });
