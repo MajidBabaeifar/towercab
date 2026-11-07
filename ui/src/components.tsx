@@ -31,6 +31,7 @@ import {
   tickStep,
   useFreshness,
 } from "./api.ts";
+import { EstimateBar } from "./budgets.tsx";
 import { foldedOn, forgetFold, setFolded, waitKey } from "./folds.ts";
 import {
   Alert,
@@ -828,6 +829,7 @@ export function WorkRow({ row, readOnly = false }: { row: Row; readOnly?: boolea
       {row.autonomy ? (
         <AutonomyControl intent={row.intent} view={row.autonomy} readOnly={readOnly} compact />
       ) : null}
+      {row.estimate ? <EstimateBar line={row.estimate} /> : null}
       <span class="row-num">
         <span class="num">{row.cost}</span>
         <span class="meta">{row.model}</span>
@@ -926,6 +928,7 @@ export function UpNextList({ items, start = 1 }: { items: UpNextView[]; start?: 
                 </span>
               </span>
               {u.reason && !shared ? <span class="up-reason">{u.reason}</span> : null}
+              {u.estimate ? <EstimateBar line={u.estimate} /> : null}
               {u.canStart ? <StartButton intent={u.intent} /> : null}
             </div>
           </li>

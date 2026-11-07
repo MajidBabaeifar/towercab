@@ -12,6 +12,7 @@ import {
   setFlag,
   writtenLevel,
 } from "../autonomy-change.ts";
+import { saveBudgets } from "../budgets.ts";
 import { tickSteps } from "../commands.ts";
 import type { Config, RepoConfig } from "../config.ts";
 import type { Db } from "../db.ts";
@@ -68,6 +69,8 @@ export interface UiActions {
   approveSecret?(intent: string, n: number): Promise<string>;
   /** UI-151: open (or update) the PR that changes the repo's limits; `confirmed` in the first day (REPO-14). */
   repoSettings?(repo: string, changes: unknown, confirmed: boolean): Promise<string>;
+  /** UI-253: save the budget (`all`) or a repo's caps to `config.toml`; they apply at once. */
+  budgets?(scope: string, daily: unknown, monthly: unknown): Promise<string>;
   /** UI-154: open the move PR again (REPO-19). */
   repoMove?(repo: string): Promise<string>;
   /** INT-53: merge the proposed intent's PR `pr` as the owner, if it still is at `head`. */
@@ -452,6 +455,10 @@ export function createActions(d: ActionDeps): UiActions {
     async repoSettings(repo, changes, confirmed) {
       if (!d.limits) throw new Error("Towercab isn't running, so it can't open a pull request now.");
       return d.limits.propose(repo, changes, confirmed);
+    },
+
+    async budgets(scope, daily, monthly) {
+      return saveBudgets(d, scope, daily, monthly);
     },
 
     async repoMove(repo) {

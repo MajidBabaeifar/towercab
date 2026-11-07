@@ -18,6 +18,7 @@ import type {
 } from "../../../src/ui/view.ts";
 import { AddRepoForm } from "../AddRepo.tsx";
 import { act, refreshFeatures } from "../api.ts";
+import { BudgetForm } from "../budgets.tsx";
 import { ErrorNote, ProposedList, ReadinessChip, StateChip, Time, WorkRow } from "../components.tsx";
 import { Alert, Check, External } from "../icons.tsx";
 import { FileNotice, Limits } from "../Limits.tsx";
@@ -360,6 +361,11 @@ function Repo({ r, readOnly }: { r: RepoView; readOnly: boolean }) {
       <Group title="Spend">
         <SpendLine spend={r.spend} />
       </Group>
+      {r.budgets ? (
+        <Group title="Caps">
+          <BudgetForm view={r.budgets} readOnly={false} title={`Caps for ${r.repo}`} label="Save caps" />
+        </Group>
+      ) : null}
       <Limits repo={r.repo} l={r.limits} />
     </div>
   );

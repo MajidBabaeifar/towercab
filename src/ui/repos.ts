@@ -7,6 +7,7 @@ import { featuresRun } from "../features.ts";
 import { type Feature, featuresPath, hasOwnLines, parseFeatures } from "../intents/features.ts";
 import { SCANNING_STEP, scanningPermissionMissing } from "../pipeline/alerts.ts";
 import { missingPermission, PERMISSION_STEP, storedSettings } from "../settings/store.ts";
+import { budgetsView } from "./budget-view.ts";
 import { fileErrorOf, limitsView } from "./limits.ts";
 import { proposedFor, proposedSection } from "./proposed.ts";
 import { readinessBadge, setupView } from "./readiness.ts";
@@ -119,6 +120,7 @@ async function repoView(
     github: lane.github,
     ahead: lane.ahead,
     limits: limitsView(src, lane.repo, s.now),
+    budgets: budgetsView(src.db, src.config, s.now, lane.repo),
     settings: settingsView(src.db, lane.repo, src.running),
     proposed: proposedFor(proposedSection(src), src, lane.repo),
     features: await featuresView(src, s, lane, o),

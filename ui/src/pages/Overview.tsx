@@ -3,6 +3,7 @@
 import { useEffect } from "preact/hooks";
 import type { Overview as Data } from "../../../src/ui/view.ts";
 import { Airspace } from "../Airspace.tsx";
+import { BudgetForm, CapCardView } from "../budgets.tsx";
 import {
   Empty,
   NeedsCard,
@@ -65,8 +66,11 @@ export function OverviewPage({ data }: { data: Data }) {
       <Airspace data={airspace} />
       <div class="cols">
         <div class="col-main">
-          {needs.length ? (
+          {needs.length || spend.caps?.length ? (
             <div class="cards">
+              {(spend.caps ?? []).map((c) => (
+                <CapCardView key={c.key} card={c} readOnly={top.readOnly} />
+              ))}
               {needs.map((c) => (
                 <NeedsCard key={c.intent} card={c} readOnly={top.readOnly} foldable />
               ))}
@@ -116,6 +120,11 @@ export function OverviewPage({ data }: { data: Data }) {
           <Section title="Spend">
             <SpendCard spend={spend} />
           </Section>
+          {spend.budgets ? (
+            <Section title="Budget">
+              <BudgetForm view={spend.budgets} readOnly={top.readOnly} title="Budget" />
+            </Section>
+          ) : null}
           <ShadowPanel readOnly={top.readOnly} />
           <Section title="Towercab">
             <dl class="facts">

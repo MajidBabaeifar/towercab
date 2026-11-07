@@ -394,7 +394,7 @@ export function buildFixture(
   const config = parseConfig(
     {
       intents: { remote: "https://github.com/acme/intents.git" },
-      agent: { daily_budget_usd: 40 },
+      agent: { daily_budget_usd: 40, monthly_budget_usd: 900 },
       github: { app_id: 1, me: "owner" },
       repos: {
         web: { github: "acme/web", workers: 2 },

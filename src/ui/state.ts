@@ -4,8 +4,10 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+
 import { ownerOnly, RAISE_NOTES } from "../autonomy.ts";
 import { changesOf, flagOf, levelNow, type RaiseFlag, writtenLevel } from "../autonomy-change.ts";
+import { budgetChanges, capsOf } from "../budgets.ts";
 import { slotsText } from "../capacity.ts";
 import { agentCommentNotes, ignoredNotes, intentPaused } from "../commands.ts";
 import type { Config } from "../config.ts";
@@ -41,7 +43,10 @@ import {
 } from "../slots.ts";
 import type { OwnerStep, SecretSpec } from "../steps.ts";
 import { whoText } from "../teammates.ts";
+import { budgetsView, capCards, topBudget } from "./budget-view.ts";
+import { estimateFor, estimateLine, frozenEstimate } from "./estimate.ts";
 import { proposedSection } from "./proposed.ts";
+import { spendPeriods } from "./spend.ts";
 import type {
   Access,
   ActivityItem,
@@ -1223,6 +1228,18 @@ function problemsOf(src: UiSources, s: Snap, todaySpend: number): ProblemView[] 
       code: false,
     });
   }
+  // MET-31: a budget key that can't be read; the last good value stays.
+  src.config.budgets.problems.forEach((why, n) => {
+    out.push({
+      key: `budgets:${n}`,
+      title: `A budget in config.toml can't be used: ${why}.`,
+      detail: null,
+      fix: "Set a positive amount of dollars, or remove the line.",
+      intent: null,
+      tone: "warn",
+      code: false,
+    });
+  });
   if (s.listError) {
     out.push({
       key: "intents",
@@ -1347,7 +1364,9 @@ export function spend(db: Db, now: number): Spend {
 /** MET-29: the daily budget is set and today's spend reached it. */
 export function budgetReached(db: Db, config: Config, now: number): boolean {
   const b = config.agent.dailyBudgetUsd;
-  return b !== null && spend(db, now).today >= b;
+  if (b !== null && spend(db, now).today >= b) return true;
+  // MET-33: the monthly budget pauses the same picks.
+  return capsOf(db, config, now).some((c) => c.scope === "all");
 }
 
 function spendView(sp: Spend, budget: number | null): SpendView {
@@ -1517,6 +1536,11 @@ export function needCounts(src: UiSources, s: Snap): NeedCounts {
     missions++;
     at(w.card.repo).missions++;
   }
+  // UI-254: each reached budget or cap is one thing that needs the owner.
+  for (const c of capCards(src.db, src.config, s)) {
+    missions++;
+    at(c.scope === "all" ? "" : c.scope).missions++;
+  }
   const cards = proposedSection(src).cards;
   for (const c of cards) at(src.config.repos.has(c.repo) ? c.repo : "").proposed++;
   return { missions, proposed: cards.length, total: missions + cards.length, byRepo };
@@ -1624,6 +1648,14 @@ export async function overview(src: UiSources): Promise<Overview> {
     const i = s.intents.get(r.intent);
     if (i) r.autonomy = autonomyView(src, i);
   }
+  // UI-255: the estimate before an intent starts, and spent against it while it runs.
+  for (const r of [...working, ...ready]) {
+    const m = s.missions.find((x) => x.intent === r.intent);
+    if (m) r.estimate = estimateLine(frozenEstimate(m), m.cost_usd);
+  }
+  for (const r of queued) {
+    if (!r.estimate) r.estimate = estimateLine(estimateFor(src.db, r.repo), null);
+  }
   const upNext: UpNextView[] = list.slice(0, 5).map((u) => {
     const i = s.intents.get(u.intent);
     return {
@@ -1633,6 +1665,7 @@ export async function overview(src: UiSources): Promise<Overview> {
       priority: u.priority,
       state: skipState(u.skip, false),
       reason: skipWords(u.skip, (id) => titleOf(s, id), s.now),
+      estimate: estimateLine(estimateFor(src.db, i?.repo ?? ""), null),
       canStart: src.running && u.skip?.kind !== "parked",
     };
   });
@@ -1644,6 +1677,7 @@ export async function overview(src: UiSources): Promise<Overview> {
     `${queued.length} queued`,
   ];
   const budget = src.config.agent.dailyBudgetUsd;
+  const periods = spendPeriods(src.db, s.now);
   const top: TopBar = {
     health,
     healthNote: note,
@@ -1656,6 +1690,7 @@ export async function overview(src: UiSources): Promise<Overview> {
     spendToday: money(sp.today),
     budget: budget === null ? null : `of ${money(budget)}`,
     overBudget: budget !== null && sp.today >= budget,
+    budgetChip: topBudget(src.config, sp.today, periods.all.month),
     version: versionText(src.version()),
     paused: s.paused,
     readOnly: !src.running,
@@ -1669,7 +1704,12 @@ export async function overview(src: UiSources): Promise<Overview> {
     working,
     queued,
     upNext,
-    spend: spendView(sp, budget),
+    // UI-253, UI-254: the budget and the reached caps travel with the spend.
+    spend: {
+      ...spendView(sp, budget),
+      budgets: budgetsView(src.db, src.config, s.now, "all"),
+      caps: capCards(src.db, src.config, s),
+    },
     airspace: airspaceOf(src, s, list, need.total),
   };
   return { version: versionOf(body, `${dbMark(src.db)}:${s.listing?.head ?? ""}`), ...body };
@@ -1799,7 +1839,7 @@ export function moveWords(t: Pick<Transition, "from_stage" | "event" | "to_stage
 
 const ERROR_EVENTS = new Set(["red", "crash", "timeout", "bad_result", "env_fail"]);
 
-function moveKind(t: Pick<Transition, "event" | "to_stage">): ActivityKind {
+function moveKind(t: Pick<Transition, "event" | "to_stage">): Exclude<ActivityKind, "settings"> {
   if (isWait(t.to_stage)) return "wait";
   if (ERROR_EVENTS.has(t.event)) return "error";
   return "move";
@@ -2296,7 +2336,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
         text: moveWords(t),
         why: t.to_stage === "stopped" ? null : t.why,
         lasted: next ? duration(next.at - t.at) : null,
-        tone: t.to_stage === "done" ? "done" : kind === "log" || kind === "settings" ? "move" : kind,
+        tone: t.to_stage === "done" ? "done" : kind === "log" ? "move" : kind,
       });
     });
   }
@@ -2640,6 +2680,22 @@ export async function activity(src: UiSources, f: ActivityFilters = {}): Promise
       title: id ? titleOf(s, id) : null,
       repo: id ? intentRepo(id) : null,
       text: id ? l.text.replace(id, "").replace(/^[\s:·-]+/, "") : l.text,
+      detail: null,
+    });
+  });
+  // UI-253: a budget changed from the page, old → new.
+  budgetChanges(src.db).forEach((c, n) => {
+    if (f.intent || (f.repo && c.repo !== f.repo) || (since !== null && c.at < since)) return;
+    items.push({
+      key: `b${n}:${c.at}`,
+      at: when(c.at, s.now),
+      time: clock(c.at),
+      day: dayWords(c.at, s.now),
+      kind: "settings",
+      intent: null,
+      title: null,
+      repo: c.repo === "all" ? null : c.repo,
+      text: c.text,
       detail: null,
     });
   });
