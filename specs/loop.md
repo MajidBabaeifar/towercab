@@ -1334,6 +1334,40 @@ Each merge Towercab or the owner's page makes uses the repo's merge method inste
 - A repo whose settings cannot be read prints nothing for it, and `doctor --quick` (LOOP-35) skips the check; it never fails because of it.
 - Verified by: `cli: repo add warns when squash is not allowed`, `cli: repo add is quiet when the method is allowed`, `cli: repo add names auto as the fix`, `cli: repo add warns about rebase`, `doctor: rebase warns about conventional commits`, `doctor: a method the repo forbids is a warning`, `doctor: unreadable merge settings are not a warning`, `doctor: auto with no allowed method is a warning`
 
+### LOOP-156 · Close an intent as done because another one covered it
+
+The owner can close an intent at any stage as done when another intent already covers it, and both intents' timelines say so.
+
+- `towercab done <id> --by <other id>` (a `commands` row applied by the loop or by the CLI itself, LOOP-15) ends the mission `done` through `machine.apply` with the event `covered_by` at any stage, including `pick`, `design`, queued, a wait and a running build. The mission's `why` reads `covered by <other id>`. Plain `done <id> [note]` (LOOP-76) is unchanged and still only for a wait with the `done` exit. With `--by` a note is refused: `towercab: done --by takes no note`.
+- Refused with a reason, changing nothing: `<id>` is unknown, already `done`, `dropped` or `stopped`; `<other id>` is unknown, is `<id>` itself, or is `dropped` or `stopped` (a dropped intent covers nothing); and, for an `a0` intent, the line of AUT-31. The other intent may be open, waiting or done. When the other intent itself waits on this one with `after:` (LOOP-75), the refusal says so: it would never start.
+- Stops the work: a running child of the mission (agent session, checks, LOOP-114) is stopped without counting as a crash, queued work is removed, and an open spec, plan or code PR of the mission is closed with a comment naming the covering intent. Unlike `drop`, no branch is deleted, so `reopen` (LOOP-157) can bring the work back. Nothing is merged. The confirmation for an open code PR with commits (LOOP-76) applies with its text changed to "This closes PR #12 (3 commits). Its branch stays; `towercab reopen` brings it back. Nothing is merged." (`--yes`).
+- Records what reopen needs, in the mission's `data` and the intent file's `covered_from: <stage>` (plus the wait key when it was waiting): the stage the intent was in, and the PRs it closed with their branch names.
+- The intent file gets `stage: done`, `finished: <now>` and `covered_by: <other id>` (edited with `setField`, INT-24), and moves to `done/`; `DONE.md` lists it as done, with "covered by <other id>". The feature line of a covered intent stays (INT-75): it is marked `covered by <other id>` with a link to that intent, and `DONE.md` shows the same link. The request was delivered, only by another intent.
+- Both timelines get an event: `covered by <other id>` on the closed intent and `covers <id>` on the other (also when that one is already done). The covering intent's own work is not touched. A repeat of the same `--by` pair is a no-op that prints the same result.
+- Counts as done for `after:` (LOOP-75): an intent that waits `after:` the covered one starts. It does not count as cost-free: the spend so far stays on the intent (MET).
+- Verified by: `cli: done --by closes an intent at any stage as done`, `cli: done --by refuses an unknown, finished or same intent`, `cli: done --by refuses a covering intent that waits on this one`, `cli: done --by takes no note`, `machine: covered_by ends any stage done and stops its work`, `loop: done --by stops a running child without a crash`, `loop: done --by closes the open PR with a comment naming the covering intent`, `loop: done --by keeps the branches and records the old stage`, `cli: done --by confirms an open code PR and says the branch stays`, `store: covered_by is written with setField and the file moves to done`, `timeline: both intents show the cover`, `pick: after accepts a covered intent`
+
+### LOOP-157 · Reopen an intent closed as covered
+
+`towercab reopen <id>` puts an intent that was closed as covered back where it was, so a wrong pick costs one command.
+
+- Only for an intent closed by `done --by` (LOOP-156). Refused with a reason, changing nothing: `<id>` is unknown, `reopen: <id> was not closed as covered` for any other intent (open, done by the owner or by a merge, dropped, stopped), or `reopen: <id> was already reopened`. A `commands` row applied by the loop or the CLI itself (LOOP-15); for an `a0` intent the line of AUT-31 applies.
+- The `reopen` event moves the mission from `done` back to the stage in `covered_from` (LOOP-156): a wait comes back as the same wait, any other stage is entered again (as `again`, LOOP-9) and queues like any intent, so the limits of LOOP-60 apply. It is one `machine.apply`, and the only way a `done` mission moves again.
+- The intent file loses `stage: done`'s `finished`, `covered_by` and `covered_from` (`setField`/`removeField`, INT-24) and moves back out of `done/`; `DONE.md` no longer lists it. Its feature line goes back to the status it had before the cover (INT-75), without the "covered by" mark.
+- Each PR LOOP-156 closed is reopened when it is still closed (not merged) and its branch still exists with the head it had; a reopened PR gets a comment saying why. A PR that cannot be reopened (branch gone, PR merged, the host refuses) is named in the output and in the timeline (`<n> PRs reopened, #12 could not be: branch deleted`), and the mission then re-enters the stage that makes a new PR when it needs one. A stage that has no PR needs none.
+- Both timelines get `reopened (was covered by <other id>)` on this intent and `no longer covers <id>` on the other. The covering intent's work is not touched. An `after:` intent that already started because of the cover keeps running.
+- Verified by: `cli: reopen puts a covered intent back at its old stage`, `cli: reopen refuses an intent that was not covered`, `machine: reopen moves a covered done mission to its old stage and wait`, `loop: reopen reopens closed PRs whose branches still exist`, `loop: reopen names a PR it could not reopen`, `store: reopen removes covered_by and the file leaves done`, `features: reopen restores the feature line`, `timeline: reopen shows on both intents`
+
+### LOOP-158 · A covering intent that ends unfinished is flagged
+
+When the intent that covered another is dropped or stopped, the owner is told once and can reopen the covered intent in one click, and nothing is reopened for them.
+
+- Trigger: a mission enters `dropped` or `stopped` (LOOP-6 entry effects) for an intent that others were closed as covered by (`covered_by`, LOOP-156). A `stopped` that is only a replaced attempt (`replaced by attempt <n>`, LOOP-9 `fresh`) does not trigger it. For each covered intent still `done`, the covered intent stays done: no event moves it.
+- One outbox row per covering intent (key: the covering intent and its end), in the move's transaction like LOOP-14: `<covering title> was <dropped|stopped>, so <n> intent(s) it covered are not delivered: <titles>`, with the page link, and one button `Reopen` per covered intent (`towercab reopen <id>`, LOOP-157), through the same confirm-free path as the CLI. It is sent once; a second end of the same covering intent (after a reopen and drop) sends a new one.
+- The Inbox (UI-259) gets one item of kind `not delivered` per covered intent, with the text above and a `Reopen` button (UI-280's action) and `Dismiss`. It stays until the owner reopens, dismisses, or the covering intent is reopened and ends done. It counts as an Inbox item but no wait: no mission is blocked and `status` (LOOP-13) lists it under Notices.
+- The covered intent's timeline gets `covering intent <other id> was <dropped|stopped>` and its feature line is marked not delivered (INT-75). Nothing is reopened, dropped or started by this: the owner may have dropped the covering intent because the request is no longer wanted.
+- Verified by: `loop: a dropped covering intent flags the covered one once`, `loop: a replaced attempt of the covering intent flags nothing`, `loop: the covered intent stays done when its covering intent is dropped`, `outbox: the not delivered message has a reopen button per covered intent`, `status: not delivered intents are listed as notices`, `timeline: the covered intent shows its covering intent ended`
+
 ### LOOP-70 · A repo set to block starts no new intent
 
 Towercab holds back new intents only in a repo whose kind the owner confirmed, that is missing required setup and that is set to `readiness: block`; every other repo keeps starting intents and only warns.
@@ -1708,6 +1742,8 @@ like a crash; `–` = ignored)
 | reviewed (PIP-142, PIP-143) | – | → design | – | → gate | – |
 | resume | merge (held) → again; else – | – | – | – | – |
 | owner_done (LOOP-76) | `steps` → done; else – | – | – | – | → done, only at a wait with the `done` exit (`no changes`, `your steps first`, `several repos`) |
+| covered_by (LOOP-156) | → done | → done | → done | → done | → done |
+| reopen (LOOP-157) | – | – | – | – | – (only a mission `done` by `covered_by` moves: → its `covered_from` stage) |
 | to_steps (PIP-113) | –; `steps` – | – | – | – | → `steps` with steps in the plan, else → plan; only at a wait with the `steps` exit |
 
 - again = re-enter the step; cool = wait for the model's cooldown (LOOP-9); backoff = LOOP-10;
