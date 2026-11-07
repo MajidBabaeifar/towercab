@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-115..119, LOOP-129..131 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-115..119, LOOP-129..132 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -594,9 +594,7 @@ An intent that outranks every intent ahead of build starts right away, over the 
   every intent, whatever its priority.
 - `[repos.<r>].workers` (LOOP-61) is unchanged: a ready mission is not ahead and does not count toward
   `ahead`.
-- LOOP-132's code PR rewrites the tests below for the rule above and renames them where the behaviour changes
-  (new titles under LOOP-132); this list names the tests that exist today.
-- Verified by: `loop: an intent that outranks every intent ahead starts below the cap`, `loop: at the cap only a higher priority intent starts`, `loop: an equal priority intent does not pass the cap`, `loop: the cap is twice ahead`, `loop: a ready intent does not count toward the cap`
+- Verified by: `loop: an intent that outranks every intent ahead starts below the cap`, `loop: at the working limit only a higher priority intent starts`, `loop: an equal priority intent does not pass the working limit`, `loop: a ready intent does not count toward ahead`
 
 ### LOOP-102 · status names the rule that held an intent back
 
@@ -612,9 +610,7 @@ An intent that outranks every intent ahead of build starts right away, over the 
   has a mission and shows its stage as usual.
 - This replaces the text `waiting: repo has <n> intents ahead` of LOOP-60 and LOOP-64, which counted
   intents waiting on the owner.
-- LOOP-132's code PR rewrites the tests below and renames them where the behaviour changes (new titles
-  under LOOP-132); this list names the tests that exist today.
-- Verified by: `status: the working limit and the cap are told apart`, `status: the cap names the intents waiting on the owner`
+- Verified by: `status: the working limit and the owner-waits limit are told apart`
 
 ### LOOP-103 · The default for how much runs at once fits the machine
 

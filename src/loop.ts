@@ -1784,6 +1784,7 @@ export class Loop {
         working: workingAheadIn(ms, name).length,
         owner: ownerAheadIn(ms, name).length,
         limit: repo.ahead,
+        ownerLimit: config.intents.ownerWaits,
         ids: aheadIn(ms, name).map((m) => m.intent),
       });
     }

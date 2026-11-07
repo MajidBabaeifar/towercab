@@ -1867,6 +1867,26 @@ An old secret finding in a file that is not a test or fixture is never ignored o
 - A finding still at the head is not affected: it is fixed in the code (PIP-193).
 - Verified by: `pipeline: an old finding outside tests asks the owner with rule, file, line and commit`, `pipeline: an old finding outside tests is not offered for gitleaksignore`, `pipeline: test and fixture paths are recognised`
 
+### PIP-194 · A plan that adds a wait lists the wait table in its access
+
+When a plan adds an owner wait or a new question, it asks up front for the file that holds the wait
+table, so the build does not stop to ask for it.
+
+- A "new wait" is a `waiting:` text a handler can set that `WAITS` in `src/machine.ts` does not yet have
+  (REPO-13's guard covers the file; AUT-15 is what the worker hit in 261105-2210 and 261105-2250).
+  Each needs a `WAITS` entry (its stage and ask) and an `EXITS` entry (its exit kinds).
+- The planner's agent file (`agents/plan.md`) tells it to check, for every wait or ask the plan adds,
+  that `src/machine.ts` is in `access.paths`, with the `why` `wait table entries only`. A plan that
+  also changes transitions or `apply` lists the file with a `why` that says so instead.
+- PIP-115's rules apply unchanged: the owner can untick the box, and an unticked path is not granted.
+- Verified by: `pipeline: plan prompt tells the planner to list the wait table for a new wait`, `pipeline: plan access lists the wait table with a wait table reason`
+
+### PIP-195 · A wait table edit is covered by a plan that adds a wait
+
+Removed: the owner decided that an edit to `src/machine.ts` the plan did not list still waits for the
+owner as unplanned access (AUT-15), even when it only adds wait table entries. PIP-194 is the whole
+fix: the plan lists the file up front.
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |

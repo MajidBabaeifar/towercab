@@ -56,7 +56,7 @@ test("status: next explains skips", () => {
     paused: false,
     blocked: null,
     repos: new Set(["web"]),
-    full: new Map([["web", { working: 1, owner: 0, limit: 1, ids: ["261026-1000"] }]]),
+    full: new Map([["web", { working: 1, owner: 0, limit: 1, ownerLimit: 4, ids: ["261026-1000"] }]]),
     cooling: new Map(),
     active: new Set(),
     defaultModel: "opus",
@@ -102,7 +102,7 @@ test("status: ready to build and ahead limit are shown", () => {
   expect(text).not.toContain("waiting on you");
 });
 
-const held = (working: number, owner: number, limit: number) => {
+const held = (working: number, owner: number, limit: number, ownerLimit = 4) => {
   const ids = Array.from({ length: working + owner }, (_, n) => `26102${n}-1000`);
   const l = listing([
     ...ids.map((id) => at(`intents/${id}-a`, "", "web", id)),
@@ -113,7 +113,7 @@ const held = (working: number, owner: number, limit: number) => {
     paused: false,
     blocked: null,
     repos: new Set(["web"]),
-    full: new Map([["web", { working, owner, limit, ids }]]),
+    full: new Map([["web", { working, owner, limit, ownerLimit, ids }]]),
     cooling: new Map(),
     active: new Set(ids),
     defaultModel: "opus",
@@ -121,20 +121,25 @@ const held = (working: number, owner: number, limit: number) => {
   return nextText(d, l, 7);
 };
 
-test("status: the working limit and the cap are told apart", () => {
+test("status: the working limit and the owner-waits limit are told apart", () => {
   expect(held(3, 0, 3)).toContain(
     "skipped: 261026-2000 web: New · repo has 3 intents working ahead (start 261026-2000 to go now)",
   );
-  expect(held(3, 3, 3)).toContain("repo is at the cap of 6 intents before build");
-  expect(held(3, 3, 3)).not.toContain("working ahead");
-  // Both rules hold at the cap: the cap text is shown.
-  expect(held(6, 0, 3)).toContain("repo is at the cap of 6");
+  expect(held(0, 4, 3)).toContain(
+    "skipped: 261026-2000 web: New · repo has 4 intents waiting on you (start 261026-2000 to go now)",
+  );
+  expect(held(0, 4, 3)).not.toContain("working ahead");
+  // Both rules hold: the owner-waits text is shown.
+  expect(held(3, 4, 3)).toContain("repo has 4 intents waiting on you");
 });
 
-test("status: the cap names the intents waiting on the owner", () => {
-  expect(held(1, 5, 3)).toContain(
-    "skipped: 261026-2000 web: New · repo is at the cap of 6 intents before build, 1 working and 5 waiting on the owner (start 261026-2000 to go now)",
-  );
+test("status: intents waiting on the owner show without the cap", () => {
+  // Below `owner_waits` they hold nothing and nothing says "at the cap".
+  const text = held(0, 3, 3);
+  expect(text).not.toContain("skipped: 261026-2000");
+  expect(text).not.toContain("at the cap");
+  expect(held(3, 3, 3)).toContain("repo has 3 intents working ahead");
+  expect(held(3, 3, 3)).not.toContain("at the cap");
 });
 
 test("status: a0 intents show only you", () => {
