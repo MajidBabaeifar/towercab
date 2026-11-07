@@ -25,13 +25,14 @@ export function emptyBudgets(): Budgets {
 }
 
 export const BAD_BUDGET = "a budget is a positive amount in USD";
-const MAX = 1_000_000;
+/** The same ceiling as `agent.daily_budget_usd` has when the config is loaded (src/config.ts), so a saved value always loads back. */
+export const MAX_BUDGET = 100_000;
 
 /** A typed amount: null for "none"; throws `BAD_BUDGET` for anything but a positive amount of at most 2 decimals. */
 export function parseAmount(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : Number.NaN;
-  if (!Number.isFinite(n) || n <= 0 || n > MAX || Math.abs(n * 100 - Math.round(n * 100)) > 1e-6) {
+  if (!Number.isFinite(n) || n <= 0 || n > MAX_BUDGET || Math.abs(n * 100 - Math.round(n * 100)) > 1e-6) {
     throw new Error(BAD_BUDGET);
   }
   return n;
@@ -264,7 +265,7 @@ export function capReason(c: Cap): string {
 /** UI-254: the amount "Raise to" offers: 10 % of the cap, at least $5, in whole dollars, and above the spend. */
 export function raiseTo(c: Cap): number {
   const step = Math.max(5, Math.ceil(c.cap * 0.1));
-  return Math.max(c.cap + step, Math.floor(c.spent) + step);
+  return Math.min(MAX_BUDGET, Math.max(c.cap + step, Math.floor(c.spent) + step));
 }
 
 /** A mission whose stage needs no Claude run is never held by a cap (merge, the owner's steps). */
