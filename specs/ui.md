@@ -1511,6 +1511,17 @@ The airspace's count badges (such as "+21") never cover a label or a plane, and 
 - `ui/fixture.ts` carries more than 8 repos, several of them not ready (some missing the same item, UI-269), and a CLI repo with a finished intent; the Repos, Board, intent and airspace screenshots (light, dark, mobile) use it.
 - Verified by: `ui: airspace count badges do not overlap at 360, 768 and 1280px`, `ui: screenshots light, dark and mobile`
 
+### UI-276 · The repo page shows where each setting comes from
+
+The repo's page says for each setting whether it came from the repo, the overlay or the default.
+
+- Each of `max_autonomy`, `protected`, the checks and the other keys in effect ([REPO-44](repo.md)) carries a small
+  label `repo`, `overlay` or `default`. An overlay-sourced value has no edit control; it says `Set in
+  <path to the overlay file>` ([REPO-48](repo.md)). A refused overlay key shows REPO-46's one line, a notice card shows REPO-49's replaced-checks notice naming both sets of checks, and an invalid
+  overlay shows its reason like an invalid `TOWERCAB.md` (UI-153). A repo without an overlay shows `repo` and `default` labels only.
+- The labels come from the API's repo view, not from the page's own guess.
+- Verified by: `ui: settings show repo, overlay or default`, `ui: an overlay setting has no edit control`, `ui: a refused overlay key shows its line`, `ui: replaced overlay checks show a notice`
+
 ### UI-219 · Sign in with GitHub
 
 When people are set up, the page opens on a sign-in screen with one button, "Sign in with GitHub".
