@@ -1305,19 +1305,21 @@ intents that waited for it start.
 
 ### LOOP-153 · A repo has a merge method
 
-`towercab repo set <name> merge_method=<method>` chooses how Towercab merges that repo's pull requests: `squash` (the default), `merge` or `rebase`.
+`towercab repo set <name> merge_method=<method>` chooses how Towercab merges that repo's pull requests: `squash` (the default), `merge`, `auto`, or `rebase` for a repo whose rules allow nothing else.
 
 - Keys: `merge_method` is `squash`, `merge`, `rebase` or `auto`, default `squash`. It lives in Towercab's `repos` table (LOOP-65), never in the shared repo. Migration adds `merge_method TEXT NOT NULL DEFAULT 'squash'` (additive, LOOP-37); the **Schema** block shows it. `repo list` shows `· merge: <method>` for a repo that is not `squash`.
-- `auto` follows what the host allows: the loop reads the repo's merge settings (GitHub: `allow_squash_merge`, `allow_merge_commit`, `allow_rebase_merge` of `gh api repos/<r>`) when it merges and takes the first allowed of squash, merge, rebase. If none can be read, or none is allowed, it uses `squash`.
-- Refusal, in addition to LOOP-69's: `merge_method must be squash, merge, rebase or auto`. The unknown-key refusal of LOOP-69 lists `merge_method`. The running loop uses the new value from its next pass (LOOP-68), including for missions already in flight.
+- `auto` is opt-in and follows what the host allows: when Towercab merges, it reads the repo's allowed methods and takes the first allowed of `squash`, `merge`. It takes `rebase` only when neither is allowed. If the settings cannot be read, or no method is allowed, it uses `squash`.
+- Rebase is a last resort. `repo set merge_method=rebase` is accepted only when the host allows rebase merges and neither squash nor merge; otherwise it refuses with `merge_method: rebase is only for repos that allow nothing else (<allowed>): use squash, merge or auto`, and when the settings cannot be read, with `merge_method: can't read <owner/name>'s merge settings to check that rebase is the only method allowed`.
+- The allowed methods come from a new `Forge` read, `allowedMergeMethods(repo)` (GitHub: `allow_squash_merge`, `allow_merge_commit`, `allow_rebase_merge` of `gh api repos/<r>`). `Forge.mergePr` takes the resolved method in its `method` option, which grows from `"squash"` to `"squash" | "merge" | "rebase"`; callers pass the repo's resolved method instead of the `MERGE_METHOD` constant.
+- Other refusals, in addition to LOOP-69's: `merge_method must be squash, merge, rebase or auto`. The unknown-key refusal of LOOP-69 lists `merge_method`. The running loop uses the new value from its next pass (LOOP-68), including for missions already in flight.
 - Only GitHub repos use it. A GitLab repo keeps squashing (GL-5) and `repo set` on it refuses `merge_method` with `merge_method is only for GitHub repos`.
-- Verified by: `repos: set merge_method`, `repos: merge_method refuses an unknown value`, `repos: merge_method auto takes the first allowed method`, `repos: merge_method auto falls back to squash`, `cli: repo list shows a merge method other than squash`, `repos: merge_method is refused on a GitLab repo`
+- Verified by: `repos: set merge_method`, `repos: merge_method refuses an unknown value`, `repos: merge_method auto takes the first allowed method`, `repos: merge_method auto takes rebase only when nothing else is allowed`, `repos: merge_method auto falls back to squash`, `repos: merge_method rebase is refused when squash or merge is allowed`, `repos: merge_method rebase is refused when the settings can't be read`, `cli: repo list shows a merge method other than squash`, `repos: merge_method is refused on a GitLab repo`
 
 ### LOOP-154 · Every merge uses the repo's method
 
 Each merge Towercab or the owner's page makes uses the repo's merge method instead of a fixed squash.
 
-- The `Forge` merge call (`mergePr`) takes the method from LOOP-153 (`auto` resolved first) and `GitHubForge` maps it to `--squash`, `--merge` or `--rebase`. This covers the pipeline's merge (PIP-22), the spec and plan merges (PIP-50, PIP-51), release PRs (SHIP), the owner's `approve` (LOOP-38) and the page's merge and accept buttons (UI-107, INT-53), with the head check unchanged. Wherever another spec says "squash-merge" or `--squash` for a GitHub repo, it now means the repo's method.
+- The `Forge` merge call (`mergePr`, src/forge.ts) takes the method from LOOP-153 (`auto` resolved first) as its `method` option and `GitHubForge` maps it to `--squash`, `--merge` or `--rebase`. This covers the pipeline's merge (PIP-22), the spec and plan merges (PIP-50, PIP-51), release PRs (SHIP), the owner's `approve` (LOOP-38) and the page's merge and accept buttons (UI-107, INT-53), with the head check unchanged. Wherever another spec says "squash-merge" or `--squash` for a GitHub repo, it now means the repo's method.
 - With `squash` or `merge`, the commit title is the PR's Conventional Commit title (PIP-111), passed as the subject, so release tooling that reads history sees it. With `rebase` the host keeps each commit's own message and Towercab sets no title.
 - When the host refuses the method (`Merge commits are not allowed on this repository`, `Squash merges are not allowed…`, `Rebase merges are not allowed…`), the mission records `merge failed: <method> merges are not allowed on <repo>: run towercab repo set <name> merge_method=<other>` instead of the host's text alone. It does not retry with another method.
 - Verified by: `merge: uses the repo's method`, `merge: squash keeps the PR title as the commit title`, `merge: merge commit keeps the PR title as the subject`, `merge: rebase sets no title`, `merge: a refused method names the setting to change`, `merge: auto uses the method the repo allows`, `owner: approve merges with the repo's method`
@@ -1326,10 +1328,11 @@ Each merge Towercab or the owner's page makes uses the repo's merge method inste
 
 `towercab repo add` and `towercab doctor` warn when the chosen merge method is not allowed on that repo.
 
-- After the checks of LOOP-66, `repo add` reads the repo's merge settings (LOOP-153). When the repo's method (`squash` for a new repo) is not allowed it prints `warning: <owner/name> does not allow <method> merges: run towercab repo set <name> merge_method=<allowed>` (or `merge_method=auto`), still adds the repo and exits 0.
-- `doctor` prints the same line for each GitHub repo whose method is not allowed, and says which methods are allowed. `auto` is never warned unless no method is allowed at all. It is a warning: the exit code does not change.
+- After the checks of LOOP-66, `repo add` reads the repo's allowed methods (LOOP-153). When the repo's method (`squash` for a new repo) is not allowed it prints `warning: <owner/name> does not allow <method> merges (allowed: <list>): run towercab repo set <name> merge_method=auto`, still adds the repo and exits 0. The line always names `auto` as the fix; `auto` is never refused.
+- When the method in force (a set one, or what `auto` resolves to) is `rebase`, `repo add` and `doctor` print `warning: <name> merges by rebase: release notes rely on the repo's own commits following Conventional Commits`. It does not change the exit code.
+- `doctor` prints the not-allowed line for each GitHub repo whose method is not allowed, and says which methods are allowed. `auto` is never warned unless no method is allowed at all. It is a warning: the exit code does not change.
 - A repo whose settings cannot be read prints nothing for it, and `doctor --quick` (LOOP-35) skips the check; it never fails because of it.
-- Verified by: `cli: repo add warns when squash is not allowed`, `cli: repo add is quiet when the method is allowed`, `doctor: a method the repo forbids is a warning`, `doctor: unreadable merge settings are not a warning`, `doctor: auto with no allowed method is a warning`
+- Verified by: `cli: repo add warns when squash is not allowed`, `cli: repo add is quiet when the method is allowed`, `cli: repo add names auto as the fix`, `cli: repo add warns about rebase`, `doctor: rebase warns about conventional commits`, `doctor: a method the repo forbids is a warning`, `doctor: unreadable merge settings are not a warning`, `doctor: auto with no allowed method is a warning`
 
 ### LOOP-70 · A repo set to block starts no new intent
 
