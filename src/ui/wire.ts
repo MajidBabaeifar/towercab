@@ -50,7 +50,7 @@ export function upNextOf(loop: Loop): UpNext[] {
       } else {
         const held = state.started?.has(i.id) ? null : heldBack(state.full.get(i.repo), i, listing);
         if (held?.kind === "working") skip = { kind: "ahead", n: held.working, limit: held.limit };
-        else if (held) skip = { kind: "cap", working: held.working, owner: held.owner, cap: held.cap };
+        else if (held) skip = { kind: "owner", n: held.owner, limit: held.limit };
         const model = i.model ?? config.agent.model;
         const until = loop.cooldownUntil(model);
         if (!skip && until) skip = { kind: "cooling", model, until };

@@ -48,7 +48,7 @@ export interface GitLabConfig {
 
 export interface Config {
   file: string;
-  intents: { remote: string; path: string | null; cutoff: number; issueA: number };
+  intents: { remote: string; path: string | null; cutoff: number; issueA: number; ownerWaits: number };
   agent: {
     model: string;
     reviewModel: string | null;
@@ -160,6 +160,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       path: r.optPath(intents, "intents", "path"),
       cutoff: r.int(intents, "intents", "cutoff", 7, 1, 15),
       issueA: r.int(intents, "intents", "issue_a", 3, 1, 5),
+      ownerWaits: r.int(intents, "intents", "owner_waits", 4, 1, 16),
     },
     agent: {
       model: r.word(agent, "agent", "model", "opus"),
