@@ -85,7 +85,7 @@ export interface Config {
   ignoredRepos: Map<string, string>;
   github: { appId: number; me: string; apiBase: string; name?: string } | null;
   gitlab: GitLabConfig | null;
-  telegram: { botToken: string; chatId: string; apiBase: string } | null;
+  telegram: { botToken: string; chatId: string; apiBase: string; uiUrl?: string } | null;
   /** SHD-11: `[shadow]`: the owner's Claude session in Telegram and what it may do without asking. */
   shadow: { enabled: boolean; free: ShadowFree[]; dailyBudgetUsd: number; model: string | null };
   ui: { port: number };
@@ -202,6 +202,8 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       botToken: r.str(telegram, "telegram", "bot_token", ""),
       chatId: String(telegram.chat_id ?? ""),
       apiBase: r.url(telegram, "telegram", "api_base", "https://api.telegram.org"),
+      // TG-14: where the owner reaches the page from the phone; absent unless set.
+      ...(telegram.ui_url === undefined ? {} : { uiUrl: r.url(telegram, "telegram", "ui_url", "") }),
     },
     shadow: {
       enabled: r.bool(shadow, "shadow", "enabled", false),

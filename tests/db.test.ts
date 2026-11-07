@@ -21,6 +21,7 @@ test("db: schema matches the spec", () => {
     "repos",
     "shadow_actions",
     "shadow_turns",
+    "telegram_updates",
     "transitions",
   ]);
 });

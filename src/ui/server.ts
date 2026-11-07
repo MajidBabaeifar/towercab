@@ -528,6 +528,12 @@ export function startUi(o: UiOptions): UiServer {
     if (path.startsWith("/api/")) return json(res, 404, { error: "Not found." });
     // UI-266: Focus is gone; its old address lands on the Inbox.
     if (/^\/focus\/?$/.test(path)) return send(res, 302, "text/plain; charset=utf-8", "", { Location: "/" });
+    // TG-14: a link from a Telegram message opens the intent's card.
+    const wanted = path === "/" ? url.searchParams.get("intent") : null;
+    if (wanted && INTENT_ID.test(wanted))
+      return send(res, 302, "text/plain; charset=utf-8", "", {
+        Location: `/inbox/${encodeURIComponent(wanted)}`,
+      });
     if (PAGES.test(path)) return send(res, 200, "text/html; charset=utf-8", indexHtml());
     if (staticFile(res, path)) return;
     send(res, 404, "text/plain; charset=utf-8", "Not found.");
