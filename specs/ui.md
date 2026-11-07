@@ -1552,9 +1552,69 @@ Admins can see each person's open sessions and end one or all of them.
 - On the admin page (UI-222): per person, each session with its created and last-seen time and a Revoke button, plus "Revoke all" (USR-4). The next request of a revoked session returns to sign-in (UI-219).
 - Verified by: `ui: an admin revokes a session`, `ui: a revoked person returns to sign-in`
 
+### UI-242 · The observer panel
+
+The overview shows what the observer did lately: its last run, this week's proposals and what it spent today.
+
+- An "Observer" panel via `GET /api/observer` (`{enabled, lastRun, proposalsThisWeek, maxPerWeek, spentToday, cap, lastReport}`): the last run's time, trigger (daily or the event), outcome and proposal count, the proposals made in the last 7 days against `[observer].max_proposals_per_week` (OBV-7), today's observer spend against its cap (OBV-10) and when the last weekly report went out (OBV-8). With the observer off the panel is not shown. A reached cap says so in words.
+- Verified by: `ui: the observer panel shows its last run, proposals and spend`, `ui: the observer panel is hidden when off`
+
+### UI-243 · Observer proposals are tagged and show their evidence
+
+An intent the observer proposed shows an `[observer]` tag, and its evidence is one click away.
+
+- An intent with `source: observer` shows the tag (a text label, not colour alone) beside its title on proposed cards (UI-184), lists, the intent page and the timeline. On the card and the intent page, the evidence links and the expected gain (OBV-5) appear above the rest of the text. A run link opens that run in the page.
+- Verified by: `ui: an observer proposal is tagged and shows its evidence`
+
+### UI-203 · Change urgency and importance on the intent page
+
+The intent page shows urgency and importance as two controls from 1 to 5 that change them, and the priority and parked state update at once.
+
+- Two segmented controls `u` and `i` (choices 1..5, the current one marked in text and state, not colour alone), next to the autonomy control of UI-257 and built like it. Choosing a value posts `{action: "scores", id, u?, i?}` (UI-204). No confirm step: LOOP-133 says scores set order only.
+- After the reply the page shows the new priority (PRI-3), `parked` with `raise u or i to run it` or not (PRI-5), and the intent's place in the queue (UI-61) without a reload; the reply is `Saved. The queue is reordered.` A refusal keeps the old values and shows the reason (UI-67). Done or dropped intents show the scores without the controls.
+- Fits 360 px, light and dark, works by keyboard (arrow keys).
+- Verified by: `ui: the intent page changes urgency and importance`, `ui: a score change shows the new priority and parked state`, `ui: a refused score change keeps the old values`, `ui: scores show without controls on a done intent`
+
+### UI-204 · Scores action
+
+The API has a `scores` action that changes urgency and importance.
+
+- `POST /api/actions` accepts `{action: "scores", id, u?, i?}` (UI-65, UI-66) with `actor: owner`, at least one of `u`, `i`; it applies LOOP-133 and returns the new `priority`, `parked` and the reply text. A missing value, one outside 1–5, a non-integer or an unknown id → the error text and nothing written. With `[auth]` it needs the maintainer role on the repo (UI-220, USR-5).
+- `GET /api/state`, the intent's API and the plane cards carry `u`, `i`, `priority` and `parked` for the controls.
+- Verified by: `ui: scores action writes u and i`, `ui: scores action refuses a bad value`, `ui: scores action needs the maintainer role`, `ui: API shapes`
+
+### UI-205 · Boost button on the plane card
+
+A plane's card in the airspace has a "Boost" button that gives the intent full autonomy and starts it now if it has not started.
+
+- "Boost" on the plane card (UI-80) posts `{action: "boost", id}` with `actor: owner` and applies LOOP-134. Its confirm step is UI-257's raise confirm: `Boost?` / `Raise to a5?`, naming that Towercab may then pass the spec and plan gates and merge on its own unless the change is high risk, the repo's cap or access rules stop it, with "Boost" and "Cancel"; nothing is written until "Boost". For an intent not yet started the confirm also says it starts now.
+- Shown only when the intent is not done or dropped, `source` is `me` (AUT-13; with `[auth]` when the person may set a5, AUT-23, AUT-24) and its level is below a5 or it has no mission yet; hidden otherwise, never disabled. A parked intent without a mission is started by Boost as well (LOOP-134). "Start now" (UI-101) stays beside the button where it is shown and does not change autonomy. The reply says in one sentence what happened: `Boosted: a5 and design started.` or `Boosted: a5. It runs from the next gate.` or the error.
+- Verified by: `ui: boost appears on the plane card for an own intent below a5`, `ui: boost asks for a confirmation that names a5`, `ui: boost on an unstarted intent starts it`, `ui: boost is not shown for another source`, `ui: boost is not shown at a5 for a started intent`
+
+### UI-206 · The highest level offered depends on the source
+
+For intents that are not the owner's own, the autonomy control stops at a4 and no Boost is shown.
+
+- The autonomy control of UI-257 on the page and on cards offers `a0`..`a5` for an intent with `source: me` (or missing), and `a0`..`a4` for any other source (AUT-13; with `[auth]` a5 is offered when the person may set it, AUT-23, AUT-24). The a5 choice is omitted, not disabled, and the control says `a5 is only for your own intents` as a tooltip on the a4 choice's group. The API refuses `a: 5` for such an intent with the same text (a defence, not the only guard).
+- Verified by: `ui: another source gets a0 to a4 only`, `ui: an own intent gets a0 to a5`, `ui: the api refuses a5 for another source`
+
+### UI-207 · The card says why a boosted plane stopped
+
+A boosted plane that waits for the owner says in the card which rule held it, in plain words.
+
+- On the plane card and the intent page, when the effective level is a5 (the intent's `a` is 5) and the mission waits on the owner, the card's wait sentence (UI-56, UI-59) adds one reason: `Waiting because this change is high risk (<risk reason>)` (AUT-18); `Waiting because the repo caps autonomy at a<n>` (AUT-8); `Waiting for access beyond the plan` or `Waiting for a decision on access` (AUT-14, AUT-15, AUT-30); the question or open point already shown (PIP-110) otherwise. The reasons come from the state `GET /api/state` already derives for the wait (`why`); no new decision is made by the page.
+- Verified by: `ui: a boosted plane says it waits for high risk`, `ui: a boosted plane says the repo cap holds it`, `ui: a boosted plane says it waits for access`
+
+### UI-208 · The card shows that a worker lowered autonomy
+
+When a worker lowered an intent's `a` after a boost, the card says so and why.
+
+- If the intent's `lower_a` and `lower_why` are set (AUT-7, INT-24's front matter), the card and the intent page show `Lowered to a<n> by the worker: <lower_why>` beside the autonomy control (UI-257). The line stays until the owner sets `a` again on the page, GitHub or a boost; it never hides the level the control shows. Boost clears the note, since the owner raised the level on purpose: it removes `lower_a` and `lower_why` from the file in the same commit that sets `a: 5` (LOOP-134). A later lowering by a worker shows its own note.
+- Verified by: `ui: a card shows that the worker lowered autonomy and why`, `ui: a boost clears the lowered note`, `ui: a later lowering after a boost shows its own note`
+
 ## Out of scope
 
-- Editing intents in the page, except their autonomy (UI-257): the owner edits them in the intents repo or with `/intent`.
+- Editing intents in the page, except their autonomy (UI-257) and scores (UI-203): the owner edits other fields in the intents repo or with `/intent`.
 - Remote access: the page is for this machine only.
 
 ## Decisions

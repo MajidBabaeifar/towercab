@@ -50,6 +50,7 @@ An intent's priority is twice its importance plus its urgency.
 | [shadow.md](shadow.md) | SHD | The shadow: a Claude session the owner talks to in Telegram, what it may do, how it is tagged and capped |
 | [telegram.md](telegram.md) | TG | Acting from Telegram: buttons on messages, answering by reply, commands, messages edited when handled |
 | [users.md](users.md) | USR | Several people signing in with GitHub, roles, repo access, who did what |
+| [observer.md](observer.md) | OBV | The observer: a read-only agent that watches how Towercab runs and proposes improvements as intents |
 | [maintain.md](maintain.md) | MNT | Removed: parked as intent 261026-2204-2 |
 | [scheduler.md](scheduler.md) | SCH | Removed: superseded by loop.md |
 | [tasks.md](tasks.md) | TSK | Removed: superseded by intents.md |

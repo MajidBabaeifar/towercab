@@ -267,6 +267,8 @@ export class Pipe {
   newPrChecks: FakePr["checks"] = () => [];
   /** `gh run view` fails, as for a log GitHub no longer has. */
   runViewFails = false;
+  /** `gh pr list --state merged` fails, as when GitHub can't be reached for merged PRs. */
+  mergedListFails = false;
   /** The own log of an Actions job by id (PIP-154); a job not in the map is a 404. */
   readonly jobLogs = new Map<number, string>();
   /** Open code scanning alerts the fake `gh api …/code-scanning/alerts` serves (PIP-148). */
@@ -801,6 +803,18 @@ export class Pipe {
       };
       const [a, b] = args;
       if (a === "issue" || a === "label") return this.issueGh(args, opts);
+      if (a === "pr" && b === "list" && flag("--state") === "merged") {
+        if (this.mergedListFails) return failResult("HTTP 502: bad gateway");
+        return json(
+          this.prs
+            .filter((x) => x.repo === repo && x.state === "MERGED")
+            .map((x) => ({
+              number: x.number,
+              headRefName: x.head,
+              mergeCommit: x.mergeCommit ? { oid: x.mergeCommit } : null,
+            })),
+        );
+      }
       if (a === "pr" && b === "list" && !args.includes("--head")) {
         return json(
           this.prs

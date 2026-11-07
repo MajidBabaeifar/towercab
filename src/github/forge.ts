@@ -137,6 +137,30 @@ export class GitHubForge implements Forge, GitHub {
     return rows.map((r) => ({ number: r.number, branch: r.headRefName }));
   }
 
+  async mergedPrBranches(
+    repo: string,
+  ): Promise<{ number: number; branch: string; mergeCommit: string | null }[]> {
+    const rows = JSON.parse(
+      await this.ok(repo, [
+        "pr",
+        "list",
+        "-R",
+        repo,
+        "--state",
+        "merged",
+        "--limit",
+        "300",
+        "--json",
+        "number,headRefName,mergeCommit",
+      ]),
+    ) as { number: number; headRefName: string; mergeCommit?: { oid?: string } | null }[];
+    return rows.map((r) => ({
+      number: r.number,
+      branch: r.headRefName,
+      mergeCommit: r.mergeCommit?.oid ?? null,
+    }));
+  }
+
   async reviews(repo: string, n: number): Promise<Review[]> {
     const v = await this.view<{ reviews?: { author?: { login?: string }; state?: string }[] }>(
       repo,
