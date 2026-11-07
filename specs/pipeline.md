@@ -1980,27 +1980,29 @@ Towercab never moves an ID that is the intent's own: one its own spec pull reque
 
 When a design, plan or build revision answers the owner's comments, the worker also writes a reply to them.
 
-- The result of a revision that the owner's feedback started (PIP-25, PIP-43; on the spec, plan or code PR) gains `reply`: Markdown written by the worker (PIP-40), non-empty, and the revision is refused as malformed without it. It is not asked for on a revision Towercab started itself (red checks PIP-82, conflicts PIP-81, review or gate fixes, repairs) nor on a first run.
+- The result of a revision that the owner's feedback started (PIP-25, PIP-43; on the spec, plan or code PR) gains `reply`: Markdown written by the worker (PIP-40), non-empty, and the revision is refused as malformed without it. A revision that changes nothing still returns one, saying `Nothing to change: <why>`, and it is posted (PIP-204). It is not asked for on a revision Towercab started itself (red checks PIP-82, conflicts PIP-81, review or gate fixes, repairs) nor on a first run.
 - The prompt lists each comment of the feedback with its id, so the reply can answer them one by one (PIP-205). The PR description is still rewritten as before (PIP-48); `reply` is in addition.
-- Verified by: `pipeline: a feedback revision must return a reply`, `pipeline: a revision Towercab started needs no reply`, `pipeline: the feedback prompt lists each comment with its id`
+- Verified by: `pipeline: a feedback revision must return a reply`, `pipeline: a revision Towercab started needs no reply`, `pipeline: a revision that changes nothing still replies`, `pipeline: the feedback prompt lists each comment with its id`
 
-### PIP-204 · The reply is posted on the PR, under the owner's comment where possible
+### PIP-204 · The reply is one PR comment, with a pointer in each line thread
 
-Towercab posts the reply on the PR the revision changed, as a comment that names the agent.
+Towercab posts the reply as one general comment on the PR the revision changed, and adds a one-line pointer in each line thread it answers, so no thread looks ignored.
 
-- Posted by `Forge` after the revision's commit is pushed. A comment that is a line comment or part of a review thread gets a threaded reply in that thread; a plain PR comment cannot be threaded, so the reply is a new PR comment that links and quotes the first line of the comment it answers. A review body (Approve or Request changes) is answered with a PR comment the same way.
-- Header `**Reply** · round <n>` and marker `<!-- towercab:reply:<n> -->`, as PIP-42; threaded replies carry the header and marker too. The same round edits its reply instead of adding another. The reply is never posted before the commit it describes, and never when the revision changed nothing and the worker returned no reply.
-- A host failure while posting is retried on the next pass; it never loses the revision or sends the mission back.
-- Verified by: `github: a reply to a line comment is threaded`, `github: a reply to a plain comment quotes it`, `github: reply has header and marker`, `pipeline: the reply is posted after the revision is pushed`, `pipeline: a failed reply post is retried`
+- Posted by `Forge` after the revision's commit is pushed. The general comment is a new PR comment that names the agent and answers every comment of the revision, quoting or linking each one (PIP-205). It is the only place the full reply is written.
+- For each owner comment of the revision that is a line comment or part of a review thread, `Forge` also posts a threaded reply in that thread: `Answered in <link to the general comment>`. Plain PR comments and review bodies (Approve or Request changes) cannot be threaded, so they get no pointer; the general comment quotes and links them.
+- The general comment has the header `**Reply** · round <n>` and the marker `<!-- towercab:reply:<n> -->`, as PIP-42; the pointers carry the header and the marker `<!-- towercab:reply-pointer:<n>:<comment id> -->`. The same round edits its general comment and its pointers instead of adding more. Nothing is posted before the commit it describes. Pointers are posted after the general comment, since they link to it.
+- A host failure while posting is retried on the next pass; it never loses the revision or sends the mission back. A pointer that fails does not hold back the general comment.
+- Verified by: `github: the reply is one general comment with header and marker`, `github: a line comment gets an answered-in pointer in its thread`, `github: a plain comment gets no pointer and is quoted`, `pipeline: the reply is posted after the revision is pushed`, `pipeline: a failed reply post is retried`, `pipeline: a failed pointer does not hold back the reply`
 
 ### PIP-205 · What the reply says
 
 The reply tells the owner, in plain words, how Towercab read the comment, what it changed or left alone, and what is still open.
 
 - Written to `prompts/writing.md`: the outcome first; no step names, field names or other internal terms. Parts: how the comment was read; what changed in the PR (and what was not changed and why); new or still-open questions and points, each with a recommendation, or one line saying nothing is open.
-- Each comment of the revision gets its own part, quoted or named by its first words, so that several comments handled in one revision get one reply that answers each of them (PIP-203). A comment the worker did not act on is still answered, with the reason.
+- Each comment of the revision gets its own part, quoted or linked (PIP-204), so that several comments handled in one revision get one reply that answers each of them (PIP-203). A comment the worker did not act on is still answered, with the reason.
+- A comment that needs no change is answered briefly in the form `Nothing to change: <why>`, so silence never reads as ignored.
 - `agents/design.md`, `agents/plan.md` and `agents/build.md` carry these rules for a feedback revision.
-- Verified by: `prompts: revision prompts ask for a reply that answers each comment`, `prompts: the reply rules follow the writing guide`
+- Verified by: `prompts: revision prompts ask for a reply that answers each comment`, `prompts: the reply rules follow the writing guide`, `prompts: a comment needing no change is answered Nothing to change`
 
 ### PIP-206 · A reply is not feedback and does not replace the description
 
