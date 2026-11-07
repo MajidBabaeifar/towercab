@@ -1612,6 +1612,34 @@ When a worker lowered an intent's `a` after a boost, the card says so and why.
 - If the intent's `lower_a` and `lower_why` are set (AUT-7, INT-24's front matter), the card and the intent page show `Lowered to a<n> by the worker: <lower_why>` beside the autonomy control (UI-257). The line stays until the owner sets `a` again on the page, GitHub or a boost; it never hides the level the control shows. Boost clears the note, since the owner raised the level on purpose: it removes `lower_a` and `lower_why` from the file in the same commit that sets `a: 5` (LOOP-134). A later lowering by a worker shows its own note.
 - Verified by: `ui: a card shows that the worker lowered autonomy and why`, `ui: a boost clears the lowered note`, `ui: a later lowering after a boost shows its own note`
 
+### UI-209 · The add-repo form shows how to install the App
+
+When the add-repo form is refused because the GitHub App isn't installed, a folded "See more" explains the fix under the one-line error.
+
+- The refusal of LOOP-66 stays one line on the form (UI-130). If it carries `help` (LOOP-122), a "See more" toggle follows, closed by default, holding: the App's name, a numbered list of the steps, and the link as a real link (`target="_blank"`, `rel="noopener"`). Without `help`, no toggle shows. The toggle stays as the owner left it while the form is used again.
+- Verified by: `ui: a refused add shows the install steps under See more`, `ui: the install steps are folded by default`, `ui: a refusal without help shows no See more`
+
+### UI-210 · The unknown-repo card shows how to install the App
+
+The unknown-repo card shows the same folded install help when adding its repo fails for a missing App install.
+
+- When "Add this repo" (UI-131) is refused with LOOP-122's `help`, the card's error line is followed by the same "See more" block as UI-209, built by the same component.
+- Verified by: `ui: the unknown-repo card shows the install steps under See more`
+
+### UI-211 · Any card that hits the missing install shows the help
+
+Every intent or problem card that reports a repo Towercab can't reach because the App isn't installed carries the folded install help.
+
+- A problem from a failed add (UI-60, `meta.repo-add-failed:<name>`) and an intent or problem card whose reason is LOOP-122's text show the "See more" block of UI-209 under their reason line. The state (`GET /api/state`) adds `installHelp: {app, url, steps[]}` to such a card, taken from the same lookup as LOOP-122; a card whose reason is another error has none.
+- Verified by: `ui: a failed add problem shows the install steps`, `ui: an intent card with the missing install shows the steps`, `state: installHelp is set only for a missing install`
+
+### UI-212 · "Try again" adds the repo without retyping
+
+After installing the App, the owner presses "Try again" and the add goes through with what was typed before.
+
+- Next to the error the form and the unknown-repo card show a "Try again" button; the steps end with "then press Try again". It posts the same `addRepo` action (UI-130) with the field's current `github` and `name`, which are kept after a refusal. A problem card (UI-211) offers "Try again" the same way. A new success replaces the error and clears the problem (UI-130).
+- Verified by: `ui: try again adds the repo with the same text`, `ui: the field keeps its text after a refusal`, `ui: a problem card offers try again for a failed add`
+
 ## Out of scope
 
 - Editing intents in the page, except their autonomy (UI-257) and scores (UI-203): the owner edits other fields in the intents repo or with `/intent`.
