@@ -68,6 +68,9 @@ BEFORE.repair = BEFORE.worker!;
 BEFORE.risk = BEFORE.review!;
 // PIP-169: the merge review reads exactly as the review does, no more.
 BEFORE["merge-review"] = BEFORE.review!;
+// PIP-199: the specialist reviews read exactly as the review does, no more.
+BEFORE["review-security"] = BEFORE.review!;
+BEFORE["review-infra"] = BEFORE.review!;
 
 test("agents: every agent has a file", () => {
   const files = readdirSync(AGENTS_DIR)
@@ -213,6 +216,29 @@ test("agents: score has no tools", () => {
   expect(s.allow).toEqual([]);
   expect(s.session).toBe("none");
   expect(s.timeoutMin).toBe(5);
+});
+
+test("agents: specialist reviews have the review's limits", () => {
+  const review = loadAgent("review");
+  for (const n of ["review-security", "review-infra"] as const) {
+    const a = loadAgent(n);
+    const limits = (x: typeof a) => [
+      x.tools,
+      x.allow,
+      x.sandbox,
+      x.model,
+      x.session,
+      x.timeoutMin,
+      x.maxCostUsd,
+      x.schema,
+    ];
+    expect(limits(a), n).toEqual(limits(review));
+    expect(a.maxCostUsd).toBe(3);
+    expect(a.session).toBe("new");
+    // `[agent].max_budget_usd` can only lower it (PIP-71).
+    expect(agentBudgetUsd(a, testConfig({ agent: { max_budget_usd: 2 } }))).toBe(2);
+    expect(agentBudgetUsd(a, testConfig({ agent: { max_budget_usd: 20 } }))).toBe(3);
+  }
 });
 
 test("agents: review has a cost cap", () => {
