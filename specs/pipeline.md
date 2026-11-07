@@ -1972,7 +1972,7 @@ Towercab never moves an ID that is the intent's own: one its own spec pull reque
 - At pick (PIP-131) and in the checks before the design runs and before it publishes (PIP-130), a reserved ID is counted as taken only if it exists on the base branch or is added by an open spec PR of another intent, and is not the intent's own.
 - An ID is the intent's own when either holds: (a) its row on the base branch, or in an open spec PR, was added by a spec PR of this intent; or (b) the intent file names it as already written (for example "already written; make them Live"). A spec PR belongs to the intent when its head branch starts with `towercab/<intent id>-`, ends with `-spec`, and the segment right after the prefix is not a bare number (the real form is `towercab/<intent id>-<short title>-spec`; the shorter `towercab/<intent id>-spec` also matches). A bare number there marks a sibling intent: `towercab/261105-2152-2-…-spec` does not belong to `261105-2152`. For a merged PR, the IDs are the `### <ID> ·` headings its merge adds.
 - An own ID on the base branch stays as written, and the design gets it as an existing row to build or make Live, not as a new one. An open spec PR of the same intent never makes its own IDs a clash.
-- A reserved ID whose rows on the base branch belong to another intent, or to no intent (no matching spec PR and not named as already written by the intent), is still moved by PIP-131.
+- A reserved ID whose rows on the base branch belong to another intent, or to no intent (no matching spec PR and not named as already written by the intent), is still moved by PIP-131. Replaced by PIP-210: any ID with a row on the base branch is a reference and is never moved.
 - If the merged spec PRs cannot be read, the reserved IDs are left unmoved except those that exist on the base branch with no own-ID evidence from the intent file; the mission's log notes "IDs unchecked against merged spec PRs", and PIP-132 stays the backstop.
 - Verified by: `pipeline: reserved IDs from the intent's own merged spec PR are kept`, `pipeline: reserved IDs from the intent's own open spec PR are kept`, `pipeline: reserved IDs the intent names as already written are kept`, `pipeline: a spec PR head is matched by the intent id prefix and the -spec suffix`, `pipeline: a sibling intent's spec PR head is not matched`, `pipeline: reserved IDs that belong to another intent's rows are still moved`, `pipeline: reserved IDs on main that belong to no intent are still moved`, `pipeline: unreadable merged spec PRs leave reserved IDs unmoved`
 
@@ -2019,6 +2019,17 @@ Several comments taken in one revision, and a comment arriving while a reply is 
 
 - A revision takes every unseen owner comment on the PR (PIP-44) and returns one `reply` for them. The reply is posted once per revision round (PIP-204). A comment that arrives after the revision started waits for the next revision and gets its own reply then.
 - Verified by: `pipeline: several comments get one reply that answers each`, `pipeline: a comment that arrives during a revision gets the next reply`
+
+### PIP-210 · An ID that exists on main is a reference and is never moved
+
+Towercab only moves an ID the intent reserves for new rows; an ID that already has a row on `main` is something the intent refers to, and it stays as written whoever wrote it.
+
+- At pick (PIP-131) and in the checks before the design runs and before it publishes (PIP-130), a reserved ID is a reservation only when no row with that ID exists on the base branch. Only a reservation can be moved, and only when an open spec PR of another intent adds the same ID.
+- An ID with a row on the base branch is a reference: it is never renumbered, whichever intent or spec PR wrote the row, and whether or not the intent file says "already written". This covers wording such as "LOOP-76, LOOP-77 are made true as written" or "REPO-30..32 made true as written". Another open spec PR adding the same ID does not make a reference a clash.
+- A range that mixes both is split: the IDs on `main` stay, and only the IDs that do not exist there are checked and, if taken, moved (to the next free numbers of the same prefix, as PIP-131). The design gets the references as existing rows to build or make Live, and the reservations as new rows.
+- The own-ID rules of PIP-202 stay as they are; they are now one case of this rule. The line of PIP-202 that moves IDs whose rows belong to another intent or to no intent no longer applies.
+- If the base branch cannot be read, no reserved ID is moved, the mission's log notes "IDs unchecked against main", and PIP-132 stays the backstop.
+- Verified by: `pipeline: reserved IDs the intent names as made true as written are kept`, `pipeline: an ID on main written by another intent is never moved`, `pipeline: an ID on main is kept when an open spec PR adds it too`, `pipeline: a reserved ID another open spec PR claims is still moved`, `pipeline: a range of references and reservations is split`, `pipeline: an unreadable base branch leaves reserved IDs unmoved`
 
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
