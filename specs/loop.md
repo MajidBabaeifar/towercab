@@ -1004,6 +1004,38 @@ Each webhook says only how many things wait for the owner, with a link, unless t
 - Telegram is unchanged and has no `detail` setting.
 - Verified by: `webhook: detail defaults to minimal`, `webhook: minimal counts the waits at send time`, `webhook: minimal with one wait is singular`, `webhook: minimal with no waits says Towercab needs a look`, `webhook: minimal has no title, repo, reason or id`, `webhook: full detail sends the usual text`, `webhook: each webhook uses its own detail`, `webhook: an unknown detail fails the config`
 
+### LOOP-150 · Update channel
+
+The owner chooses whether Towercab updates on every change to `main` or only on a new release.
+
+- `[update].channel` is `"main"` (the default) or `"release"`. Anything else fails the config load with `config: <file>: update.channel must be "main" or "release"`.
+- `"main"` is LOOP-35 as it is: nothing changes for a config without the key.
+- `[update].auto = false` still turns every update off, whatever the channel.
+- On `"main"`, a clean checkout sitting on a release tag (a detached HEAD at a `v` tag, for example after the owner left the release channel) moves back to `main` at the next update check, so an owner is never left on a version that no longer updates. It goes through the same drain (LOOP-108..109), `git checkout main` then `git merge --ff-only origin/main`, install, `bin/towercab doctor --quick --for-update` and exit 75, and the same rollback and `self-update to <short commit> failed: <why>` message (LOOP-35, LOOP-108). A failure puts the checkout back on the tag. A dirty checkout is left alone.
+- Verified by: `update: channel defaults to main`, `update: an unknown channel fails the config`, `update: auto false stops updates on the release channel`, `update: the main channel moves a checkout on a tag back to main`, `update: moving back to main drains first`, `update: a failed move back to main returns to the tag`, `update: a dirty checkout on a tag is left alone on the main channel`
+
+### LOOP-151 · Update to the newest release
+
+On the release channel, Towercab moves only to a newer release tag, never to a new commit on `main`.
+
+- A release tag is `v<major>.<minor>.<patch>` (for example `v1.1.0`), with no prefix before the `v` and no suffix after the patch. Any other tag is ignored, so pre-release tags such as `v1.2.0-rc1` are never installed: the channel is for final versions only. Tags are compared as numbers, so `v1.10.0` is newer than `v1.9.0`.
+- A release tag counts only when its commit is an ancestor of `origin/main` (`git merge-base --is-ancestor <tag> origin/main`). Any other release tag is skipped, and the log says why (`release <tag> skipped: its commit is not on main`), once per tag while the loop runs. The check then takes the newest tag that counts.
+- The check of LOOP-35 runs `git fetch --tags` and takes the newest release tag that counts. It acts only when that tag is newer than the running version (LOOP-152). A tag equal to or older than it does nothing, so the checkout never moves to an older release, and a new commit on `main` alone does nothing.
+- With no release tag that counts, the check does nothing and the running version stays; it is not an error and sends no message.
+- The checkout may be clean and on `main`, or clean and on a release tag (a detached HEAD at a `v` tag); either is acceptable for updating.
+- The update then goes as LOOP-35 and LOOP-108..109 describe, with the tag as the target: drain, `git checkout --detach <tag>`, `npm ci` when `package-lock.json` changed, `npm run build:ui` when `ui/` changed, `bin/towercab doctor --quick --for-update` (LOOP-145), exit 75. A failure puts the checkout back where it was (the previous commit, on its branch when it was on one, or the previous tag), keeps running and sends one message `self-update to <tag> failed: <why>`. The loop does not drain for that tag again while it runs (LOOP-108), but does for a newer one.
+- `towercab update` does the same now on this channel.
+- Verified by: `update: release channel ignores a new commit on main`, `update: release channel moves to a newer tag`, `update: release channel never moves to an older tag`, `update: tags compare as numbers`, `update: tags that are not vMAJOR.MINOR.PATCH are ignored`, `update: a pre-release tag is never installed`, `update: a tag not on main is skipped and logged`, `update: the newest tag on main is chosen over a newer tag off main`, `update: no release tags keeps the running version`, `update: a checkout on a release tag is updated`, `update: a failed check on a tag rolls back to the previous position`, `update: a failed tag is not drained for again`
+
+### LOOP-152 · Running version and waiting release
+
+`status` shows which version is running and, on the release channel, whether a newer release is waiting.
+
+- The running version is the release tag the checkout sits on (`v1.1.0`), or `git describe --tags --match 'v[0-9]*'` of HEAD when it is past a tag (`v1.1.0-3-g<short commit>`), with the short commit as well. With no release tag in the history it is the short commit alone.
+- On the release channel, `status` adds `update: <tag> is available` when the newest release tag (LOOP-151) is newer than the highest release tag reachable from HEAD, and `up to date` otherwise. On the `"main"` channel the line of LOOP-35 (behind `main` or not) is unchanged and the version is shown beside it.
+- The newest tag is the one found by the last check (LOOP-151); `status` runs no fetch of its own.
+- Verified by: `status: shows the running version on a tag`, `status: shows the version past a tag with the commit`, `status: shows the commit when there are no tags`, `status: release channel says a newer release is available`, `status: release channel says up to date`
+
 ### LOOP-120 · Telegram message when a reply is posted
 
 When Towercab has answered the owner's comment and the PR waits for the owner again, the owner gets a short Telegram message with a link to the reply.
@@ -1565,6 +1597,7 @@ If a part fails after the merges, that part and every part that landed after it 
 | `telegram.ui_url` | URL (TG-14) | none (messages link to the PR) |
 | `ui.port` | int 0–65535 (0 = off) | 7311 |
 | `update.auto` | bool | true |
+| `update.channel` | `"main"` or `"release"` (LOOP-150) | `"main"` |
 
 `workers` and `ahead` are the repo's own `TOWERCAB.md` keys too (REPO-14): the file wins, and after the repo has moved the database value is no longer read (REPO-15).
 
