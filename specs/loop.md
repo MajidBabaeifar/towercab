@@ -878,6 +878,26 @@ Telegram stays quiet for revisions the owner did not ask for, so it only goes ou
 - A revision started by red checks, a conflict or a review or gate fix writes no reply (PIP-203) and no LOOP-120 message. If such a revision ends with the PR waiting for the owner, the existing messages of LOOP-16 apply unchanged. Replies by Towercab never count as feedback (PIP-206), so they send nothing on their own.
 - Verified by: `telegram: a revision Towercab started sends no reply message`, `telegram: a reply that leaves the PR not waiting sends nothing`
 
+### LOOP-122 · A missing App install comes with the steps to fix it
+
+When the GitHub App isn't installed on a repo, the error stays one short line and carries plain steps with a direct link to fix it.
+
+- The 404 of `GET /repos/<owner/name>/installation` (LOOP-19) still throws `the GitHub App isn't installed on <owner/name>`, now as an `AppNotInstalled` error (an `Error`, so LOOP-66's text is unchanged) that carries `help: {app, url, steps[]}`. The help is looked up when the error is made, never before: `GET /app` (JWT) gives the App's `name` and `slug`; `GET /users/<owner>/installation` (JWT; works for users and organisations) says whether the App is installed on that account.
+- Not installed on the account: `url` is `https://github.com/apps/<slug>/installations/new`; steps: `Open <url>`, `Choose <owner> and pick <repo>`, `Install`, then `Try again`. Installed on the account with `repository_selection: selected`: `url` is the installation's settings page, `https://github.com/settings/installations/<id>` (an organisation: `https://github.com/organizations/<owner>/settings/installations/<id>`); steps: `Open <url>`, `Under Repository access, add <repo>`, `Save`, then `Try again`. Installed on all repos (the 404 is then odd): the settings link with `Check that <repo> isn't excluded`. Each step names the App as `<name>`, as GitHub shows it.
+- Stored install URL: whenever `GET /app` answers, Towercab stores the App's public install URL `https://github.com/apps/<slug>/installations/new` and its `name` in `meta` (`app-install-url`, `app-name`), replacing older values. Nothing else is configured.
+- Fallback: if either lookup fails (network, GitHub's refusal, no key), the help uses the stored name and install URL (the steps of a new install). Only if none was ever stored, it names the steps without the App's name and `url` is `https://github.com/settings/installations`. The lookup never changes the error's first line and never makes `repo add` fail differently.
+- The links and steps hold no token, key or JWT. The 404 itself is not cached, so the next try asks GitHub again and succeeds once the App is installed.
+- Verified by: `app: a missing install says how to install the App`, `app: a selected-repos install links to its settings`, `app: help falls back to the stored install URL`, `app: help falls back to the general settings link when nothing was stored`, `app: install help holds no token`
+
+### LOOP-123 · `repo add` prints the install steps and works again after them
+
+On the command line, the install steps print under the error, and running the same command after installing the App adds the repo.
+
+- `repo add` for a repo that fails with LOOP-122 prints `towercab: Towercab can't reach <owner/name>: the GitHub App isn't installed on <owner/name>` (LOOP-66, exit 1), then one line per step, indented two spaces, then `Then run the same command again.`. Any other refusal prints as before.
+- The steps travel with the error in the repo-add result (`help`), so the page (UI-209..212) and the problems built from a failed add (UI-60) read them from the same place; no copy of the text lives in the page.
+- Running `repo add <owner/name>` again after the install adds the repo with nothing else typed or changed.
+- Verified by: `cli: repo add prints the install steps after the error`, `cli: repo add works again once the App is installed`, `repos: add carries the install help in its refusal`
+
 ### LOOP-113 · Pause stops all new work
 
 While Towercab is paused, no mission starts anything new, but steps already running finish and are applied.
