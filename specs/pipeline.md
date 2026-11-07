@@ -425,6 +425,7 @@ Only the owner's reviews and comments move an intent; anyone else's are ignored.
 - Author login = `[github].me` (case-insensitive), with a non-empty body or a review state. Comments
   by the App's bot or anyone else never raise an event. Comments older than `feedback_seen` are
   skipped; `feedback_seen` moves forward when an event is taken.
+- With `[auth]` set ([users.md](users.md)), [USR-9](users.md) decides who counts instead of the owner's login alone.
 - Verified by: `events: only the owner's comments count`
 
 ### PIP-45 · Slash commands

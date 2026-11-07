@@ -188,6 +188,7 @@ key, and the web page shows what each intent cost.
 | [specs/gitlab.md](specs/gitlab.md) | Projects hosted on GitLab |
 | [specs/shadow.md](specs/shadow.md) | The owner's shadow assistant on Telegram |
 | [specs/telegram.md](specs/telegram.md) | Buttons, replies and commands in Telegram |
+| [specs/users.md](specs/users.md) | Several people with roles |
 
 Want to help? Read [CONTRIBUTING.md](CONTRIBUTING.md); everyone taking part follows the
 [code of conduct](CODE_OF_CONDUCT.md).
