@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { AfterHold } from "../after.ts";
 import { type Agent, type AgentName, agentBudgetUsd, loadAgent } from "../agents.ts";
 import { effectiveA } from "../autonomy.ts";
+import { withFlag } from "../autonomy-change.ts";
 import { git, gitSane } from "../checkout.ts";
 import { type ClaudeRun, freshContext, parseRun, prepareRun, type RunEnd, type RunKind } from "../claude.ts";
 import { clonePath, type RepoConfig } from "../config.ts";
@@ -286,7 +287,8 @@ export function tail(text: string, max = TAIL): string {
 
 /** The intent of a mission (open or done). */
 export async function intentOf(cx: Ctx, m: Mission): Promise<Intent> {
-  return cx.store.get(m.intent);
+  // AUT-8, AUT-35: the level is read now, at each gate; a raise nobody confirmed does not count yet.
+  return withFlag(cx.db, await cx.store.get(m.intent));
 }
 
 export function cloneOf(cx: Ctx, m: Mission): string {
@@ -296,7 +298,10 @@ export function cloneOf(cx: Ctx, m: Mission): string {
 /** The repo files from the base branch of Towercab's clone (REPO-1). */
 export async function repoFiles(cx: Ctx, m: Mission): Promise<RepoFiles> {
   try {
-    return await loadRepoFiles(cx.tools, cloneOf(cx, m), cx.repo(m).base);
+    const files = await loadRepoFiles(cx.tools, cloneOf(cx, m), cx.repo(m).base);
+    // UI-257: the page shows a repo's cap beside the autonomy control.
+    cx.db.setMeta(`a-cap:${m.repo}`, String(files.towercab.maxAutonomy));
+    return files;
   } catch (e) {
     if (e instanceof RepoError && e.kind === "git") throw new EnvError("github", e.message);
     throw e;
@@ -311,8 +316,8 @@ export function repoFilesWait(e: unknown): Outcome | null {
   return null;
 }
 
-export function effectiveOf(m: Mission, intent: Intent, files: RepoFiles): number {
-  return effectiveA(m.a_at_pick, intent.a, files.towercab.maxAutonomy, intent.source);
+export function effectiveOf(_m: Mission, intent: Intent, files: RepoFiles): number {
+  return effectiveA(intent.a, files.towercab.maxAutonomy, intent.source);
 }
 
 /** The worker's grants (AUT-14). */

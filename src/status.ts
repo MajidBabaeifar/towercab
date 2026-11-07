@@ -1,6 +1,7 @@
 // `towercab status` (LOOP-13): what is happening, in plain lines, with or without a running loop.
 
 import { ownerOnly } from "./autonomy.ts";
+import { levelNow } from "./autonomy-change.ts";
 import { slotLines } from "./capacity.ts";
 import type { Db } from "./db.ts";
 import type { Listing } from "./intents/types.ts";
@@ -73,7 +74,7 @@ export function renderStatus(s: StatusInput): string {
     const i =
       s.listing?.open.find((x) => x.id === m.intent) ?? s.listing?.done.find((x) => x.id === m.intent);
     // UI-239: an owner-only intent is marked wherever it is listed.
-    const only = ownerOnly(i?.a ?? null, m.a_at_pick) ? " (only you)" : "";
+    const only = ownerOnly(i ? levelNow(s.db, i) : null) ? " (only you)" : "";
     return `${m.intent} ${m.repo}: ${i?.title ?? "(title unknown)"}${only}`;
   };
   const head = [
