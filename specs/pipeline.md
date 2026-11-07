@@ -1839,6 +1839,24 @@ The intent page lists the owner-account comments that agents wrote, so the owner
 - `GET /api/intents/<id>` includes the comments as `agent_comments: [{agent, url, at, excerpt, acted_on}]` in time order, an empty list when there are none; the card's data (and the page's) has `decided_by_agent: <name>` when an agent answered for the owner, and no such key otherwise.
 - Verified by: `ui: the intent page lists agent comments written under the owner's login`, `ui: the intent api returns agent comments`, `ui: a card shows agent for owner after an agent's answer`
 
+### PIP-192 · A secret finding fixed in a later commit is ignored by fingerprint
+
+When a secrets check fails only on commits older than the pull request's head, and the head no longer has the flagged text, the repair round is told to add exactly those findings to `.gitleaksignore`.
+
+- Applies when every finding in the failed gitleaks job log (PIP-154, PIP-155) names a commit that is not the PR head, and for each the flagged file at the head no longer holds the flagged line. Towercab checks the head with `git show <head>:<file>` through `Tools`, comparing the text of the finding's line in its own commit, never putting it in the details.
+- The repair details then say that the findings are only in older commits and are already fixed at the head, and ask for one `.gitleaksignore` line per finding, copying each `Fingerprint` (`commit:file:rule:line`) as the log gives it. They ask for nothing else: no code change, no `paths`, `rules` or other broad allowlist (PUB-8).
+- The details carry the fingerprints, file and line only, never the secret value (PIP-155).
+- After the round, the repair is accepted only if the diff changes `.gitleaksignore` alone by adding those fingerprints; any other change falls back to a normal repair round.
+- Verified by: `pipeline: a red secrets log whose finding commit is not the head and whose line is gone at head asks for one gitleaksignore line`, `pipeline: a secrets repair that changes more than the listed fingerprints is a normal repair`
+
+### PIP-193 · A secret finding still at the head is fixed in the code, never ignored
+
+A finding whose text is still in the head, or one Towercab cannot place, is fixed in the code as before.
+
+- If any finding is at the head commit, or its flagged line is still present in the file at the head, or the file or commit cannot be read, PIP-192 does not apply to the round: the details are the usual ones (PIP-154, PIP-155) and do not mention `.gitleaksignore`.
+- Mixed findings (some old and fixed, some at the head) count as still present: the round fixes the code, and the old ones are handled by PIP-192 only after the head is clean.
+- Verified by: `pipeline: a secrets finding still present at head is not offered for gitleaksignore`, `pipeline: a secrets log with a finding at the head asks for a code fix only`, `pipeline: an unreadable finding commit keeps the usual repair details`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
