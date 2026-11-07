@@ -1,6 +1,7 @@
 // Changing an intent's autonomy (AUT-8, AUT-9, AUT-34, AUT-35): the page writes `a:` in one commit, a mission
 // reads the level at each gate, and a raise that isn't the owner's is flagged, not acted on.
 
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { effectiveA, gate } from "../src/autonomy.ts";
@@ -300,4 +301,35 @@ test("autonomy: a raise stays held while github can't say who made it", async ()
   expect(flagOf(w.db, ID)).toBeNull();
   expect(acceptedOf(w.db, ID)).toBe(2);
   expect(await levelOf(w)).toBe(2);
+});
+
+test("autonomy: a raise hidden in a merge commit is judged by the merge", async () => {
+  const w = await world();
+  // The owner's earlier commits all touch the file; then someone merges two branches and, while resolving
+  // the merge, changes `a: 2` to `a: 5`.
+  const me = join(tempDir(), "me");
+  git(tempDir(), "clone", "-q", w.remote, me);
+  git(me, "checkout", "-q", "-b", "side");
+  writeFileSync(join(me, "side.txt"), "side\n");
+  git(me, "add", "-A");
+  git(me, "commit", "-q", "-m", "side");
+  git(me, "checkout", "-q", "main");
+  writeFileSync(join(me, "main.txt"), "main\n");
+  git(me, "add", "-A");
+  git(me, "commit", "-q", "-m", "main");
+  git(me, "merge", "-q", "--no-ff", "--no-commit", "side");
+  writeFileSync(join(me, FILE), file("u: 3\ni: 3\na: 5\n"));
+  git(me, "add", "-A");
+  git(me, "commit", "-q", "-m", "merge side");
+  git(me, "push", "-q", "origin", "main");
+  // Every older commit is the owner's; GitHub says the merge is mallory's.
+  for (const sha of git(w.remote, "rev-list", "main").trim().split("\n")) {
+    w.forge.commitAccounts.set(sha, ["owner", "owner"]);
+  }
+  w.forge.commitAccounts.set(w.head(), ["mallory", "mallory"]);
+  await w.watch();
+  expect(flagOf(w.db, ID)).toMatchObject({ who: "mallory", from: 2, to: 5 });
+  expect(await levelOf(w)).toBe(2);
+  // A commit that doesn't set the level now (unrelated history) is never credited either.
+  expect(await w.store.lastAChange!(ID)).toBe(w.head());
 });
