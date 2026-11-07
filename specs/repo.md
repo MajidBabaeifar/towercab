@@ -679,16 +679,22 @@ When the repo sets a limit itself, the overlay can make it stricter but never lo
   the line below.
 - For a key the repo leaves out, the overlay is held to Towercab's default: it may be as strict or stricter, never
   looser. Accepted: `max_autonomy` 1–5 (the default 5 is the loosest), `protected` globs (any list only adds),
-  `releases: manual`, `workers` and `ahead` at or below their defaults, `kind` and `readiness`. Refused: `live`,
+  `releases: manual`, `workers` and `ahead` at or below their defaults, `readiness`, and `kind` only under the rule below. Refused: `live`,
   `waive` and `go_live` (they skip a requirement or state a way to go live on its own), `tests` other than the
   default list, `workers`/`ahead` above the default, and overlay checks that check nothing (REPO-35's rule: at
   least one command reading the repo's own files). A refused key is dropped, not the whole overlay.
+- An overlay `kind` (the repo has none) is accepted only when it equals `suggestKind` ([REPO-21](#repo-21--suggesting-a-kind)),
+  or when its `requiredSetup` ([REPO-22](#repo-22--required-setup-per-kind)) contains every item the suggested kind
+  requires, so deploy, live tests and the go-live statement are kept (`service` over `site`, `cli` or `library`;
+  `site` over `spec-only`). Otherwise it is refused with `overlay kind refused: <k> drops <items> that <inferred>
+  needs`, and the suggested kind is used. With no suggestion, any valid kind is accepted, since each adds to the
+  every-repo list. An accepted overlay kind stays unconfirmed (REPO-20): readiness only warns, as for a suggestion.
 - Every refusal, for a key the repo sets or leaves out, is one line: `overlay <key> refused: looser than <the repo's
   value|the default>`. It shows in `doctor` (REPO-47) and on the repo page (UI-276). The overlay never adds to the
   granted paths of a plan ([AUT-14](autonomy.md)), so a protected glob from it blocks like the repo's own.
 - The guard still protects the repo's own `CLAUDE.md`, `AGENTS.md`, `REVIEW.md` and `TOWERCAB.md` and `.git/**`
   whatever the overlay says (REPO-8); an overlay cannot remove a path from the protected list.
-- Verified by: `repo: the overlay lowers max_autonomy`, `repo: the overlay cannot raise max_autonomy`, `repo: overlay protected paths add to the repo's`, `repo: a loosening overlay key is refused with one line`, `repo: an omitted key is held to the default`, `repo: an overlay that loosens the default is refused`, `repo: overlay checks that check nothing are refused`, `repo: the overlay cannot unprotect the repo's own files`
+- Verified by: `repo: the overlay lowers max_autonomy`, `repo: the overlay cannot raise max_autonomy`, `repo: overlay protected paths add to the repo's`, `repo: a loosening overlay key is refused with one line`, `repo: an omitted key is held to the default`, `repo: an overlay that loosens the default is refused`, `repo: overlay checks that check nothing are refused`, `repo: an overlay kind matching the inferred one is accepted`, `repo: an overlay kind that keeps the inferred setup is accepted`, `repo: an overlay kind that drops inferred setup is refused`, `repo: an overlay kind stays unconfirmed`, `repo: the overlay cannot unprotect the repo's own files`
 
 ### REPO-47 · Doctor shows where settings come from
 
@@ -754,3 +760,10 @@ When a repo starts to have checks of its own and an overlay's checks exist, the 
   checker is left out and said so in the PR body, rather than guessed; a draft that cannot be shown to
   pass is never proposed (the owner is asked instead); and no setup PR is merged by Towercab if its
   review finds a command that is not a pure check.
+- The overlay (REPO-43..49) only ever tightens: where it conflicts with the repo or with Towercab's default,
+  the value is refused and the stricter one stands. A refused key is dropped alone, the rest of the overlay applies.
+- An overlay `kind` that is accepted stays unconfirmed (REPO-20), so it can warn but never hold work back; only
+  a `kind` committed to the repo does that, as today. With no inferred kind any valid kind is accepted, because
+  every kind only adds required setup.
+- A repo that gains its own checks overrides the overlay's at once, with one notice (REPO-49) and no question;
+  running intents keep the checks they started with.
