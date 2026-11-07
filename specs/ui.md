@@ -1511,8 +1511,8 @@ The repo page and the Board show the owner's open pull requests as "Yours", with
 
 - `GET /api/state` carries `yours: [{repo, number, title, url, ageSeconds, checks, draft}]`, oldest first. They do not count in "Needs you" (UI-244) and carry no stage or Approve buttons: a click opens the PR on GitHub.
 - The repo page lists them under `Yours`; the Board shows them in a separate `Yours` group per repo, away from Towercab's planes. The age reads `3 d` (exact on hover); the check status is a word and a colour, not colour alone. Hidden when empty. Fits 360 px, light and dark.
-- Visible to the owner and to admins; other roles see only repos they have access to (USR roles), and never PRs of repos they cannot open.
-- Verified by: `ui: a fake owner pull request is listed as Yours on the repo page and the Board`, `ui: Yours is not counted in Needs you`
+- Visible to everyone who can see the repo in Towercab, whatever their role (USR-1, USR-5: a per-repo role never hides a repo's list). The PRs are already visible on GitHub to the same people, so hiding them would only make the page disagree with GitHub. A read-only role sees them and the links, and has no action to take on them.
+- Verified by: `ui: a fake owner pull request is listed as Yours on the repo page and the Board`, `ui: Yours is not counted in Needs you`, `ui: Yours is shown to a viewer and to a maintainer with a lower role on that repo`
 
 ### UI-202 · A warning when your pull request touches the same spec
 
