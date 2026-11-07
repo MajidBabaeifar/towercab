@@ -834,6 +834,35 @@ A repo holds at most `owner_waits` (default 4) specs and plans waiting on the ow
   waiting on the owner show as `waiting on you` (UI-61) with no mention of any repo limit.
 - Verified by: `loop: with ahead 2 and two intents waiting on the owner at spec a third is picked`, `loop: owner waits at plan do not count toward ahead`, `loop: a repo at owner_waits waiting intents starts no new one`, `loop: an outranking intent does not pass owner_waits`, `loop: the cap of twice ahead no longer holds a repo back`, `config: owner_waits default and range`, `loop: at the working limit only a higher priority intent starts`, `loop: an equal priority intent does not pass the working limit`, `loop: a ready intent does not count toward ahead`, `status: the working limit and the owner-waits limit are told apart`, `status: intents waiting on the owner show without the cap`
 
+### LOOP-133 · Changing an intent's urgency and importance
+
+The owner can change an intent's urgency and importance, and the new priority and order apply on the next pass.
+
+- A change sets `u` and/or `i` (integers 1–5) in the intent file with `setField` (INT-24's front matter; every other line stays byte-identical) in one commit to the intents repo, pushed like any intent edit; changing both is still one commit. Setting the values an intent already has writes nothing. A value outside 1–5, an unknown id, or an intent that is done or dropped is refused with the reason and writes nothing.
+- A missing `u` or `i` counts as 3 (PRI-2) and writing it is a change only when the value differs from 3.
+- Priority, the parked state (PRI-5) and the order (PRI-4, PRI-6) are computed from the file, so the next pass uses them. An intent that becomes parked and has no mission is not picked; one that rises above the cutoff can be picked (LOOP-5).
+- A running mission is never restarted, stopped or undone by a score change; only picks and ordering that have not happened yet change. A change is recorded on the intent's timeline (who, `u: 3 → 4`, through which channel) and in the Activity page as kind `settings` (UI-257).
+- Raising or lowering scores needs no confirmation and no proof of channel: they set order, not gates (AUT-35 concerns `a` only). Any channel of the owner may do it: the page, the command line (LOOP-135) and GitHub.
+- Verified by: `scores: changing u and i writes only those lines in one commit`, `scores: setting the same values writes nothing`, `scores: a value outside 1 to 5 is refused`, `scores: a done intent is refused`, `scores: the new priority reorders the queue on the next pass`, `scores: a score that parks an intent stops it being picked`, `scores: a running mission is not restarted by a change`, `scores: a change is on the timeline`
+
+### LOOP-134 · Boost: full autonomy and start now in one step
+
+Boosting an intent sets its autonomy to a5 and, when it has not started, starts its design now.
+
+- A `boost` row in `commands` (LOOP-15), applied by the loop only when it comes from the page (`by: page`, as AUT-35 says for a raise); a row from the command line or any other channel is dropped and noted on the timeline (AUT-32). The shadow has no boost of this kind (SHD-8's `boost` raises `u` and `i` and is unchanged; the page names this one "Boost" too, see UI-205).
+- Steps, in one `machine`/command application: (1) `a` is set to 5 as AUT-34 describes (one commit, `a` only), unless `a` is already 5, which writes nothing; (2) when the intent has no mission and is not done, dropped or paused, it is started as `start` does (LOOP-63), including over the limits. Step 1 is written before step 2 is recorded. An intent that already has a mission is not restarted and not moved: it only gets `a: 5` from its next gate (AUT-34).
+- Refused with a reason, writing nothing: the intent is unknown, done or dropped; its `source` is not `me` (AUT-13), or, with `[auth]`, the person is not allowed a5 for that repo (AUT-23, AUT-24: `boost: a5 is only for the owner's own intents`); an `a0` intent is not refused (the page is an owner channel, AUT-32). A raise flagged by someone else (AUT-35) is accepted by the boost, as "Accept a5" does.
+- A boost is a raise: the page asks for the confirmation of UI-257 before posting it (UI-205). Boosting does not change the repo's cap, risk gates, access rules or the worker's right to lower `a` (AUT-7, AUT-8, AUT-14, AUT-18): effective `a` stays the minimum of `a` and the cap, and a high-risk spec, plan or merge still waits for the owner.
+- Verified by: `boost: sets a5 and starts an unstarted intent`, `boost: an intent already at a5 is only started`, `boost: a started intent only gets a5`, `boost: a command from the cli is dropped`, `boost: another source is refused`, `boost: a paused or parked intent is not started`, `boost: the cap and the risk gate still hold`
+
+### LOOP-135 · Command line: score
+
+`towercab score <id> [u=<1-5>] [i=<1-5>]` changes an intent's urgency and importance from the command line.
+
+- Inserts a `score` row in `commands` (LOOP-15; applied by the loop, or by the CLI with no loop) and applies LOOP-133. At least one of `u=`, `i=` is required; no argument or a bad value is a usage error (exit 2); a refusal prints `towercab: <reason>` and exits 1. It prints the new priority and whether the intent is parked.
+- There is no command-line command for `a` or for boost: raising autonomy stays on the page and GitHub (AUT-35) and `boost` rows from the command line are dropped (LOOP-134). An a0 intent refuses `score` like `start` (AUT-33), because the command line cannot tell the owner from an agent: only the page and GitHub change it.
+- Verified by: `cli: score changes u and i`, `cli: score needs a value`, `cli: score refuses a bad value`, `cli: score is refused on an a0 intent`, `commands: score applied without a loop`
+
 ### LOOP-113 · Pause stops all new work
 
 While Towercab is paused, no mission starts anything new, but steps already running finish and are applied.
