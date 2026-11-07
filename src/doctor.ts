@@ -160,7 +160,7 @@ export async function doctor(o: {
     }
   }
   lines.push(
-    `telegram: ${config.telegram ? `chat ${config.telegram.chatId}` : "not configured (no messages)"}`,
+    `telegram: ${config.telegram ? `chat ${config.telegram.chatId}${config.telegram.uiUrl ? `, links to ${config.telegram.uiUrl}` : ", links to the PR (no ui_url)"}` : "not configured (no messages)"}`,
   );
   return { lines, ok };
 }

@@ -10,7 +10,7 @@ import type { Clock, GitHub, Host } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { IntentStore } from "../intents/types.ts";
 import type { Loop } from "../loop.ts";
-import type { Telegram } from "../telegram.ts";
+import type { TelegramUpdate } from "../telegram.ts";
 import type { Tools } from "../tools.ts";
 import { createActions } from "../ui/actions.ts";
 import { repos } from "../ui/repos.ts";
@@ -111,7 +111,11 @@ export interface ShadowWorld {
 }
 
 /** The shadow for `towercab run --watch`: `loop` is read when a turn needs the state, not before. */
-export function buildShadow(w: ShadowWorld, telegram: Telegram | null, loop: () => Loop): Shadow {
+export function buildShadow(
+  w: ShadowWorld,
+  telegram: { updates(offset: number): Promise<TelegramUpdate[]> } | null,
+  loop: () => Loop,
+): Shadow {
   const src = () => sourcesOf(loop(), w.home);
   const ui = createActions({
     db: w.db,

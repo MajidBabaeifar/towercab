@@ -1,6 +1,6 @@
 # Telegram
 
-**Status:** Draft · **Prefix:** TG
+**Status:** Live · **Prefix:** TG
 
 ## Purpose
 
@@ -103,7 +103,7 @@ Replying to a question's message in Telegram answers that question.
 
 `/focus` sends the one most important wait, with the buttons of its card.
 
-- The pick is the Focus tab's (UI-193): highest priority, then oldest wait, then intent ID, proposed
+- The pick is the Inbox's first item (UI-193, UI-259; it replaced the Focus tab), skipping snoozed items and caps: highest priority, then oldest wait, then intent ID, proposed
   intents included. The message is built like a needs-you message (TG-3): title, one-line ask, plain
   reason, buttons, link. Proposed intents get Accept and Close (UI-185). A line `<n> more waiting` follows
   when there are others (UI-196). With none: `Nothing needs you.`

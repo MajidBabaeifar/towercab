@@ -78,7 +78,7 @@ import {
   update,
 } from "./mission.ts";
 import { Mutex } from "./mutex.ts";
-import { sendDue } from "./outbox.ts";
+import { type Sender, sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import { type PipeData, prUrl as prLink } from "./pipeline/common.ts";
@@ -144,7 +144,7 @@ export interface LoopDeps {
   handlers: Handlers;
   log(line: string): void;
   /** Delivers outbox rows (Telegram), or null. */
-  sender: { send(text: string): Promise<void> } | null;
+  sender: Sender | null;
   /** Read one PR (tests fake it). */
   readPr?: (repo: string, n: number) => Promise<PrState>;
   /** Read the intents repo's proposed intents (LOOP-92; tests fake it). */
@@ -161,6 +161,8 @@ export interface LoopDeps {
   codeRoot?: string;
   /** INT-39: when a backfill run's time is up (default a real timer; tests resolve it themselves). */
   featuresDeadline?: (ms: number) => Promise<void>;
+  /** LOOP-126: the owner's Telegram chat, handled each pass (even while paused); none: no chat. */
+  chat?: { pass(): Promise<void>; stop(): void };
   /** LOOP-129, LOOP-130: the shadow, passed each pass; none: no shadow. */
   shadow?: { pass(): Promise<void>; busy(): boolean; stop(): Promise<void> };
 }
@@ -421,6 +423,7 @@ export class Loop {
     await this.settingsIdle();
     await this.setupChecksIdle();
     await this.limitsIdle();
+    this.d.chat?.stop();
     await this.d.shadow?.stop();
     for (const [id, r] of this.children) {
       r.handle.kill("SIGTERM");
@@ -583,6 +586,7 @@ export class Loop {
     await this.selfUpdate();
     this.restartIfMoved();
     // LOOP-130: the shadow reads the chat and reaps or starts a turn; its child runs beside the pass.
+    await this.d.chat?.pass();
     await this.d.shadow?.pass();
     await this.sendMessages();
 
