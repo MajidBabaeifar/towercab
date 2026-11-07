@@ -16,7 +16,7 @@ Every person has one of four roles: admin, maintainer, contributor or viewer, an
 
 - Actions, each allowed from the role named and every role above it (admin > maintainer > contributor > viewer):
   - viewer: read everything (board, cards, intent pages, timelines, costs); change nothing.
-  - contributor: create intents, answer questions (UI action `answer`, GitHub comment or review text, Telegram reply).
+  - contributor: create intents, and answer the questions they were asked (USR-9: a question is asked of the person who wrote the intent, and of the repo's maintainers and admins).
   - maintainer: approve and merge, reply, start, boost, drop and edit intents, change an intent's autonomy within AUT-24, retry, pause and resume.
   - admin: manage users, roles, repo access and settings (USR-14), plus everything a maintainer can do.
 - One pure function `can(user, action, repo)` in `src/users.ts` answers it; the page, the API, the GitHub events and Telegram all call it, so no channel has rules of its own.
@@ -27,9 +27,9 @@ Every person has one of four roles: admin, maintainer, contributor or viewer, an
 Only people an admin added, or members of a GitHub team the admin names, can sign in.
 
 - People are rows in the database (`users`: GitHub login, role, repo scope, added by, added at, disabled at), keyed by lower-cased GitHub login.
-- An admin may name one GitHub team (`org/team`) and the role its members get (default viewer). A person who is in the team and has no row gets that role while a membership check (at sign-in and at most every 10 minutes while signed in) finds them in the team; a row always wins over the team. A person who leaves the team loses access at the next check.
+- An admin may name one GitHub team (`org/team`) and the role its members get: viewer by default, at most contributor. Maintainer and admin are never given by a team; an admin grants them to a person by name (USR-14), and a team role above contributor is refused when set. A person who is in the team and has no row gets that role while a membership check (at sign-in and at most every 10 minutes while signed in) finds them in the team; a row always wins over the team. A person who leaves the team loses access at the next check.
 - Anyone else who signs in with GitHub sees "This Towercab doesn't know your GitHub account. Ask an admin to add you." and gets no session.
-- Verified by: `users: an added person can sign in`, `users: a team member gets the team role`, `users: a row wins over the team`, `users: a person who left the team loses access`, `users: an unknown account is refused`
+- Verified by: `users: an added person can sign in`, `users: a team member gets the team role`, `users: a row wins over the team`, `users: a team role above contributor is refused`, `users: a team member is a viewer by default`, `users: a person who left the team loses access`, `users: an unknown account is refused`
 
 ### USR-3 · GitHub sign-in, no passwords
 
@@ -90,10 +90,11 @@ Each action Towercab takes for a person records their GitHub login and role, and
 
 A teammate's merge, review or comment on GitHub moves an intent when their role allows it on that repo, and anyone else's is ignored.
 
-- Replaces PIP-44 when `[auth]` is set: the author's login is looked up in the users (USR-2, including the named team) and `can(user, action, repo)` decides: an approving review or merge needs maintainer; a comment or review text that answers a question or gives feedback needs contributor; `/retry` (PIP-45) needs maintainer.
+- Replaces PIP-44 when `[auth]` is set: the author's login is looked up in the users (USR-2, including the named team) and `can(user, action, repo)` decides: an approving review or merge needs maintainer; a comment or a review's text that gives feedback needs maintainer; `/retry` (PIP-45) needs maintainer. One maintainer's approval is enough: there is no count of approvals.
+- A contributor's comment counts only as the answer to a question Towercab asked them (they wrote the intent, USR-1) while that intent waits on it. Any other comment of a contributor is shown on the timeline with their name (USR-8) but moves nothing: no event, no reply.
 - A login that is no user, a disabled user, a viewer's comment, the App's bot: ignored, as non-owners are today. No event, no reply.
 - `feedback_seen` moves forward only when an event is taken.
-- Verified by: `users: a maintainer's approval on github counts`, `users: a contributor's comment answers a question`, `users: a viewer's github comment is ignored`, `users: an unknown account's github review is ignored`, `users: a maintainer on another repo is ignored`
+- Verified by: `users: a maintainer's approval on github counts`, `users: a contributor's comment answers a question they were asked`, `users: a contributor's other comment is shown but moves nothing`, `users: one maintainer's approval is enough`, `users: a viewer's github comment is ignored`, `users: an unknown account's github review is ignored`, `users: a maintainer on another repo is ignored`
 
 ### USR-10 · Towercab's PR comments say who decided
 
@@ -116,7 +117,7 @@ Each person can link their own Telegram chat, and only a linked chat gets messag
 
 A person's Telegram chat gets only the messages for things that wait on them.
 
-- A card that waits for a decision goes to every linked maintainer and admin of that repo; a question goes to those who may answer it (contributor and above, on that repo), and first to the person who wrote the intent when they have a chat. A viewer gets nothing.
+- A card that waits for a decision goes to every linked maintainer and admin of that repo; a question goes to the person who wrote the intent (whatever their role, unless viewer) and to the linked maintainers and admins of that repo. A viewer gets nothing, and a contributor gets only questions on intents they wrote.
 - When one person decides, the other copies are edited as handled, naming who ([telegram.md](telegram.md)).
 - Verified by: `users: a decision card goes to maintainers of that repo`, `users: a viewer gets no telegram message`, `users: other copies are edited when one person decides`
 
@@ -134,8 +135,9 @@ An admin adds, changes and removes people, sets repo access, names the team and 
 - Actions (API under `/api/users`): add a login with a role and optional repo roles, change role or repos, disable and remove, name or clear the team and its role, list sessions, revoke. Adding checks the login exists on GitHub.
 - Each change is recorded: who, what, when (`user_events`), and shown on the admin page (UI-222).
 - The last enabled admin can't be changed away from admin or removed (USR-6). "Revoke all sessions" on one's own account keeps the current session, so an admin can't lock themselves out by mistake.
-- Settings an admin changes here are the ones in the database (users, team); the config file stays the owner's.
-- Verified by: `users: an admin adds a person with repo roles`, `users: only an admin manages users`, `users: every user change is recorded`, `users: adding an unknown github login fails`
+- Settings: an admin may change settings from the page, except security ones. The config file stays the source of truth and the page writes to it (only the changed keys, other lines byte-identical, as the repo settings and budgets of UI-150 already do), recorded like any change. Security settings are changed only by editing the file and refused from the page and the API with "this is a security setting: edit the config file": the sandbox and its access rules, the autonomy defaults and caps, and any budget above the cap the file sets for it (a budget may be changed up to its cap). Users and the named team live in the database, not in the file.
+- Maintainers and contributors never change settings.
+- Verified by: `users: an admin adds a person with repo roles`, `users: only an admin manages users`, `users: every user change is recorded`, `users: adding an unknown github login fails`, `users: an admin changes a setting and writes only that key to the config file`, `users: a security setting is refused from the page`, `users: a budget above its cap is refused`
 
 ### USR-15 · One company, one Towercab
 
@@ -146,6 +148,7 @@ All users share one set of repos, intents and one cost view; there are no separa
 
 ## Out of scope
 
+- More than one approval before a merge: one maintainer is enough for now; several is a later intent.
 - Several companies or customers on one Towercab, and intents in a database (a parked intent).
 - Passwords, SSO providers other than GitHub, API keys for scripts.
 - A person's own settings beyond linking Telegram.
@@ -154,5 +157,6 @@ All users share one set of repos, intents and one cost view; there are no separa
 
 - Towercab comments as itself with the person's name, instead of posting as them: it has no token of theirs and the comment must be traceable to the Towercab action.
 - Roles are ordered, not a set of ticks: four levels are easy to explain and check; the repo scope adds the only other dimension.
+- The team can lift people no higher than contributor (the owner's call, 2026-11-07), so a large GitHub team can't grant approval rights by membership alone.
 - A row beats the team, so an admin can lower or disable one member of a trusted team.
 - Without `[auth]` nothing changes, so one-owner installs need no migration.

@@ -1518,7 +1518,7 @@ When people are set up, the page opens on a sign-in screen with one button, "Sig
 
 Buttons the signed-in person's role does not allow are not shown, or are disabled and say why.
 
-- Per intent and repo (USR-5): a viewer has no action buttons; a contributor sees Answer and Create; a maintainer sees Approve, Merge, Reply, Start, Boost, Drop, Edit and autonomy; the admin page link shows for admins only. A disabled button's tooltip reads "Needs maintainer on <repo> (you are viewer)".
+- Per intent and repo (USR-5): a viewer has no action buttons; a contributor sees Create, and Answer only on a question they were asked (USR-9); a maintainer sees Approve, Merge, Reply, Start, Boost, Drop, Edit and autonomy; the admin page link shows for admins only. A disabled button's tooltip reads "Needs maintainer on <repo> (you are viewer)".
 - A 403 from the API (USR-7) shows its reason in the page's error line, never a blank failure.
 - Verified by: `ui: a viewer sees no action buttons`, `ui: a contributor sees only answer and create`, `ui: a disabled action says which role it needs`, `ui: the admin link shows for admins only`
 
@@ -1534,9 +1534,9 @@ Every card's last action and every timeline entry names the person and the chann
 
 Admins get a page that lists people with their roles and repo access, and adds or removes people.
 
-- A table: login and name, default role, repo roles, source (added or team), last seen, open sessions. Add person (GitHub login, role, repo roles), change role or repos, disable, remove with a confirmation, name or clear the GitHub team and its role (USR-2, USR-14). Changes show at once; the history of changes (`user_events`) is listed below.
+- A table: login and name, default role, repo roles, source (added or team), last seen, open sessions. Add person (GitHub login, role, repo roles), change role or repos, disable, remove with a confirmation, name or clear the GitHub team and its role (USR-2, USR-14; the team role list stops at contributor). A Settings section lets an admin change the non-security settings, and shows the security ones read-only with "Edit the config file" (USR-14). Changes show at once; the history of changes (`user_events`) is listed below.
 - A removal that would leave no admin is refused with the reason (USR-6).
-- Verified by: `ui: the admin page lists people with roles and repos`, `ui: an admin adds a person and sets repo roles`, `ui: removing the last admin is refused in the page`, `ui: the admin page lists the change history`
+- Verified by: `ui: the admin page lists people with roles and repos`, `ui: an admin adds a person and sets repo roles`, `ui: removing the last admin is refused in the page`, `ui: the admin page lists the change history`, `ui: the team role list stops at contributor`, `ui: security settings are read-only in the page`
 
 ### UI-223 · My account
 
