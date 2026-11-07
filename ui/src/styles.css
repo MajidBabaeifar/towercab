@@ -4357,3 +4357,59 @@ a.pr-tile:hover {
     grid-column: 3;
   }
 }
+
+/* UI-256: the top bar's spend turns amber at 80 % of the budget and red at 100 %. */
+.top-spend.amber .num {
+  color: var(--needs-edge);
+}
+
+.top-spend.red .num {
+  color: var(--err);
+}
+
+/* UI-255: the estimate line and its bar. */
+.estimate {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.est-bar {
+  display: block;
+  height: 4px;
+  min-width: 80px;
+  border-radius: 2px;
+  background: var(--surface-2);
+}
+
+.est-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.estimate.amber .est-bar i {
+  background: var(--needs-edge);
+}
+
+/* UI-253, UI-254: the budget form and the cap card. */
+.budget-form {
+  display: grid;
+  gap: var(--s2);
+}
+
+.budget-form label {
+  display: grid;
+  gap: 2px;
+}
+
+.form-error {
+  color: var(--err);
+}
+
+.cap-card .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}

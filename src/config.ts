@@ -4,6 +4,7 @@ import { closeSync, fstatSync, openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
+import { applyBudgets, type Budgets, emptyBudgets } from "./budgets.ts";
 import { type Capacity, defaultParallel, readCapacity } from "./capacity.ts";
 
 export const DEFAULT_NETWORK = [
@@ -74,6 +75,8 @@ export interface Config {
    * `loadRepos` (LOOP-65); the same Map all along, so a repo added at runtime is seen everywhere.
    */
   repos: Map<string, RepoConfig>;
+  /** MET-31: the monthly budget and the repos' caps, re-read from the file every pass. */
+  budgets: Budgets;
   /** The file's valid `[repos.<name>]` tables, imported into the database once (LOOP-65). */
   fileRepos: Map<string, RepoConfig>;
   /** Repo tables that failed to validate: name → reason. They fail only what uses that repo. */
@@ -182,6 +185,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       sandboxUnixSockets: r.bool(agent, "agent", "sandbox_unix_sockets", false),
     },
     repos: new Map(),
+    budgets: emptyBudgets(),
     fileRepos: new Map(),
     badRepos: new Map(),
     ignoredRepos: new Map(),
@@ -220,6 +224,8 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
   if (config.shadow.enabled && !config.telegram) {
     throw new ConfigError(`config: ${file}: shadow.enabled needs a [telegram] section`);
   }
+
+  applyBudgets(config, raw);
 
   const repos = raw.repos;
   if (repos !== undefined && (typeof repos !== "object" || repos === null || Array.isArray(repos))) {

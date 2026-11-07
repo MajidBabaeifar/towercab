@@ -488,7 +488,7 @@ export function ended<T>(
       const before = d.sessionCost?.[sessionKey] ?? 0;
       const delta = Math.max(0, e.result.costUsd - before);
       const now = cx.clock.now();
-      const runs = [...(d.runs ?? []), { at: now, cost: delta }].filter((r) => r.at > now - 30 * 86400);
+      const runs = [...(d.runs ?? []), { at: now, cost: delta }].filter((r) => r.at > now - 62 * 86400);
       cx.db.run(
         "UPDATE missions SET cost_usd = cost_usd + ?, agent_secs = agent_secs + ?, data = json_set(data, '$.sessionCost', json(?), '$.continued', json(?), '$.runs', json(?)) WHERE id = ?",
         delta,
