@@ -832,6 +832,39 @@ A repo holds at most `owner_waits` (default 4) specs and plans waiting on the ow
   waiting on the owner show as `waiting on you` (UI-61) with no mention of any repo limit.
 - Verified by: `loop: with ahead 2 and two intents waiting on the owner at spec a third is picked`, `loop: owner waits at plan do not count toward ahead`, `loop: a repo at owner_waits waiting intents starts no new one`, `loop: an outranking intent does not pass owner_waits`, `loop: the cap of twice ahead no longer holds a repo back`, `config: owner_waits default and range`, `loop: at the working limit only a higher priority intent starts`, `loop: an equal priority intent does not pass the working limit`, `loop: a ready intent does not count toward ahead`, `status: the working limit and the owner-waits limit are told apart`, `status: intents waiting on the owner show without the cap`
 
+### LOOP-113 · Pause stops all new work
+
+While Towercab is paused, no mission starts anything new, but steps already running finish and are applied.
+
+- Owner pause (`meta.paused`, LOOP-15) now holds every mission, not only picks and merges (LOOP-5, PIP-22). While
+  paused, no new child process starts for any mission: no Claude run, check, setup or screenshot, and no fix round.
+  A mission due for its next step stays at its recorded step, not counted as a crash, repair or timeout.
+- A child already running is left alone: it finishes, and its result is applied through `machine.apply` as usual.
+  The mission then holds at the next step. A health pause (LOOP-10) is unchanged.
+- Polling continues while paused: PR and CI state, owner events and the outbox (LOOP-16) are still read and
+  delivered, so state is current on resume. Only the starting of children is held.
+- `status` and the page (UI-109) say `paused: <n> running steps finishing` while `n > 0` children run, and
+  `paused` once none do. `n` counts running children, whichever mission they belong to.
+- `resume` lifts the hold; every mission continues from the step where it stopped, with no change to its counters.
+- Per-intent pause (SHD-22) keeps its meaning: it holds that intent's next steps the same way.
+- Verified by: `loop: a paused loop does not start the next step of a mission`, `loop: a running step finishes and is applied while paused`, `loop: polling continues while paused`, `status: paused counts running steps finishing`, `loop: resume continues missions where they stopped`
+
+### LOOP-114 · Pause now stops running children
+
+`towercab pause --now` also stops the children that are running, cleanly, and `resume` continues them from their session.
+
+- `pause --now` is `pause` (LOOP-113) plus: the loop sends SIGTERM to each running child's process group, then
+  SIGKILL after 10 s, as for a shutdown (LOOP-7). Each cut-off mission gets `interrupted`, which is not counted as
+  a crash (LOOP-7), a repair or a timeout, and no message goes to the owner.
+- It is a `pause` row in `commands` (LOOP-15) with a `now` flag, applied by the loop on its next pass; with no loop
+  running there is nothing to stop and it is a plain `pause`. The flag is not kept: a later plain `pause` stops
+  nothing.
+- On `resume`, a cut-off Claude run continues its own session (`--resume <uuid>`, prompt `Continue where you
+  stopped.`, LOOP-7); a cut-off check or other non-Claude step runs again from its start.
+- `status` shows `paused: stopping <n> running steps` until they have exited, then `paused`.
+- `pause --now <id>` applies to one intent's children the same way.
+- Verified by: `cli: pause now is a command with the now flag`, `loop: pause now stops running children`, `loop: a child stopped by pause now is not counted as a crash`, `loop: resume continues the sessions stopped by pause now`
+
 ### LOOP-65 · Repos live in the database
 
 The repos Towercab works on are kept in its database, so they can be added and removed while it
