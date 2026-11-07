@@ -887,9 +887,11 @@ After a stop that had to kill a hanging `gh` or `git` call, the next start finds
 At start, Towercab removes git lock files left in its own clones and checkouts by a process that no longer exists.
 
 - After crash recovery (LOOP-7) and before the first pass, the loop looks for `index.lock` and every other `*.lock` file inside the git directories of `repos/<name>/`, `work/*/` (including a checkout's `.git/worktrees/<name>/` entry in its clone) and the intents clone (`intents/`). Files outside git directories, and `towercab.lock` in the home, are never touched.
-- A lock is removed only when no `git` process holds it: no running `git` process (found through `Tools`) has that repo or checkout as its working directory. A lock that a running `git` process may hold stays, and the log says so.
-- Each removal is logged on its own line: `start: removed stale lock <path>`. A start with nothing to remove logs nothing. A removal that fails is logged and does not stop the start.
-- Verified by: `start: a stale index.lock in a clone is removed and logged`, `start: stale locks in a checkout and its worktree entry are removed`, `start: a lock held by a running git process is kept`, `start: files outside git directories are never removed`
+- A lock is removed only when both hold: it is older than 2 minutes (by its modification time against the loop's clock), and no lock-holding `git` process is around. A lock fails the second test when any running `git` process (found through `Tools`) has its working directory anywhere inside the lock's checkout, in any other checkout that shares the same clone (the clone itself and all its worktrees), or in a subfolder of any of them. A process whose working directory cannot be read counts as inside.
+- A lock that fails either test stays, and the log says which: `start: kept lock <path> (younger than 2 minutes)` or `start: kept lock <path> (git process <pid> running in <dir>)`. A kept lock is not retried at start; the step that meets it fails and is retried as for any other git error.
+- Only regular files named `*.lock` are removed; symbolic links are left alone.
+- Each removal is logged on its own line: `start: removed stale lock <path>`. A start with no lock found logs nothing. A removal that fails is logged and does not stop the start.
+- Verified by: `start: a stale index.lock in a clone is removed and logged`, `start: stale locks in a checkout and its worktree entry are removed`, `start: a lock younger than 2 minutes is kept`, `start: a lock is kept while a git process runs in a subfolder of its checkout`, `start: a lock is kept while a git process runs in another worktree of the same clone`, `start: a lock is kept when a process directory cannot be read`, `start: files outside git directories are never removed`, `start: a symbolic link named like a lock is kept`
 
 ### LOOP-139 · The intents repo is synced before the first pass
 
