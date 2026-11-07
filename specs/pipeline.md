@@ -2020,6 +2020,23 @@ Several comments taken in one revision, and a comment arriving while a reply is 
 - A revision takes every unseen owner comment on the PR (PIP-44) and returns one `reply` for them. The reply is posted once per revision round (PIP-204). A comment that arrives after the revision started waits for the next revision and gets its own reply then.
 - Verified by: `pipeline: several comments get one reply that answers each`, `pipeline: a comment that arrives during a revision gets the next reply`
 
+### PIP-208 · An outcome the owner deferred counts as met
+
+An outcome the owner has put off to another intent is not held against the code PR, so it never overrides a reviewer's Approve.
+
+- An outcome is deferred when (a) an owner answer or comment on the intent or its PRs names it and says it moves to a follow-up intent (by id), or (b) the intent file marks the bullet `deferred: <intent id>`. An agent's comment (PIP-182) or a non-owner never defers an outcome. The named intent must exist in the intents repo; otherwise the outcome stays as judged.
+- `review.outcomes[]` gets no new key: Towercab sets `met` true for a deferred outcome after the review returns, and keeps the follow-up id and the reason on the mission (`data.deferred`). PIP-5's "every outcome met" and PIP-120's fix-round test then read it as met, so a deferred outcome starts no fix round.
+- The prompt (`agents/review.md`) lists the deferred outcomes as data and says not to judge them; a review that marks one `met` false is overridden as above.
+- Verified by: `pipeline: a deferred outcome does not override an Approve`, `pipeline: an outcome marked deferred in the intent counts as met`, `pipeline: an owner answer naming an outcome defers it`, `pipeline: a deferral by an agent or a non-owner is ignored`, `pipeline: a deferral to an unknown intent is ignored`, `pipeline: a deferred outcome starts no fix round`
+
+### PIP-209 · A deferred outcome is shown, not hidden
+
+Deferred outcomes are listed in the review comment and the code PR body with the intent they moved to.
+
+- The Review comment and the code PR's description (PIP-48) carry a "Deferred" list: the bullet, the follow-up intent id and who deferred it. Absent when nothing is deferred.
+- The verdict line (PIP-121) names the deferral: an Approve that stands because of one says so.
+- Verified by: `pipeline: the review comment lists deferred outcomes`, `pipeline: the PR body lists deferred outcomes`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
