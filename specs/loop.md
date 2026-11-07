@@ -35,6 +35,7 @@ and its settings in one TOML file.
   run --watch`), then `systemctl --user daemon-reload` and `enable --now`. `down` = `disable --now`
   (missions stay). `restart` = `systemctl --user restart towercab` (a few seconds: no build).
   `logs` execs `journalctl --user -u towercab -f`. A failing `systemctl` → exit 1 with its stderr.
+- Not built yet: the unit will set `TimeoutStopSec=60`, so systemd waits a minute for a stop before killing the service; the loop's own stop budget stays far below it (LOOP-136). The **Unit** block below still shows the built value (30), because `service: unit file` compares it with the file `up` writes. The code PR changes the block and the unit to 60 together.
 - Verified by: `service: unit file`, `service: up, down, restart, logs`
 
 ### LOOP-3 · State machine
@@ -862,6 +863,42 @@ Boosting an intent sets its autonomy to a5 and, when it has not started, starts 
 - Inserts a `score` row in `commands` (LOOP-15; applied by the loop, or by the CLI with no loop) and applies LOOP-133. At least one of `u=`, `i=` is required; no argument or a bad value is a usage error (exit 2); a refusal prints `towercab: <reason>` and exits 1. It prints the new priority and whether the intent is parked.
 - There is no command-line command for `a` or for boost: raising autonomy stays on the page and GitHub (AUT-35) and `boost` rows from the command line are dropped (LOOP-134). An a0 intent refuses `score` like `start` (AUT-33), because the command line cannot tell the owner from an agent: only the page and GitHub change it.
 - Verified by: `cli: score changes u and i`, `cli: score needs a value`, `cli: score refuses a bad value`, `cli: score is refused on an a0 intent`, `commands: score applied without a loop`
+
+### LOOP-136 · A hanging `gh` or `git` call does not hold up stopping
+
+When Towercab is told to stop, it gives running `gh` and `git` calls 10 seconds to finish, then kills them and exits.
+
+- On SIGTERM or SIGINT the loop starts no new pass, poll, check or Claude run, and waits for the `gh` and `git` processes it started (through `Tools`) for at most 10 seconds (fixed, not a setting). Then it sends SIGTERM to each one's process group and SIGKILL 2 s later. A call cut off this way fails with `stopped: <command> was cut off at shutdown`. Its mission is not counted as a failure: the step is re-entered at the next start (LOOP-6).
+- The idle waits of `shutdown` (issues, features, readiness, settings, setup checks, limits, shadow) share this one deadline instead of waiting without limit; whatever is still running at the deadline is cut off the same way.
+- Claude runs keep their treatment: SIGTERM to the group, SIGKILL after 10 s, `interrupted` (LOOP-7); their sessions resume at the next start. All children are signalled at the same moment and waited for together, not one after another.
+- The whole stop therefore takes at most about 15 s (10 s grace + 2 s kill wait + a few seconds to write state), well under the `TimeoutStopSec=60` the unit will get (LOOP-2).
+- Verified by: `shutdown: a gh call that never exits is killed after the grace period`, `shutdown: children are stopped together`, `shutdown: a git call that never exits is killed after the grace period`, `shutdown: no new work starts once stopping`, `shutdown: a cut-off call does not count as a failure`
+
+### LOOP-137 · A stop that cut off a hanging call is a clean exit
+
+After a stop that had to kill a hanging `gh` or `git` call, the next start finds nothing to recover.
+
+- `shutdown` ends by removing `meta.running` and exiting 0 (LOOP-7), whether or not LOOP-136 had to kill a child. The next start does not log "the last run didn't exit cleanly; recovering" and does not add to any mission's `unclean` count.
+- The loop logs one line at the stop naming each call it cut off: `stop: cut off <command> after <n>s`.
+- Verified by: `shutdown: the next start after a cut-off call reports a clean exit`, `shutdown: the stop logs the calls it cut off`
+
+### LOOP-138 · Stale git locks are removed at start
+
+At start, Towercab removes git lock files left in its own clones and checkouts by a process that no longer exists.
+
+- After crash recovery (LOOP-7) and before the first pass, the loop looks for `index.lock` and every other `*.lock` file inside the git directories of `repos/<name>/`, `work/*/` (including a checkout's `.git/worktrees/<name>/` entry in its clone) and the intents clone (`intents/`). Files outside git directories, and `towercab.lock` in the home, are never touched.
+- A lock is removed only when both hold: it is older than 2 minutes (by its modification time against the loop's clock), and no lock-holding `git` process is around. A lock fails the second test when any running `git` process (found through `Tools`) has its working directory anywhere inside the lock's checkout, in any other checkout that shares the same clone (the clone itself and all its worktrees), or in a subfolder of any of them. A process whose working directory cannot be read counts as inside.
+- A lock that fails either test stays, and the log says which: `start: kept lock <path> (younger than 2 minutes)` or `start: kept lock <path> (git process <pid> running in <dir>)`. A kept lock is not retried at start; the step that meets it fails and is retried as for any other git error.
+- Only regular files named `*.lock` are removed; symbolic links are left alone.
+- Each removal is logged on its own line: `start: removed stale lock <path>`. A start with no lock found logs nothing. A removal that fails is logged and does not stop the start.
+- Verified by: `start: a stale index.lock in a clone is removed and logged`, `start: stale locks in a checkout and its worktree entry are removed`, `start: a lock younger than 2 minutes is kept`, `start: a lock is kept while a git process runs in a subfolder of its checkout`, `start: a lock is kept while a git process runs in another worktree of the same clone`, `start: a lock is kept when a process directory cannot be read`, `start: files outside git directories are never removed`, `start: a symbolic link named like a lock is kept`
+
+### LOOP-139 · The intents repo is synced before the first pass
+
+Before the first pass, Towercab re-syncs the intents repo, so a write cut off by a killed stop is repaired or redone.
+
+- The sync runs after LOOP-138 and before any pass, on every start: fetch, then reconcile with the remote as the normal sync does. A sync failure is logged, retried in the first pass and does not stop the start.
+- Verified by: `start: the intents repo is synced before the first pass`, `start: a failed intents sync does not stop the start`
 
 ### LOOP-120 · Telegram message when a reply is posted
 
