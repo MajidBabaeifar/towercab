@@ -75,17 +75,31 @@ export interface Taken {
   own: Set<string>;
   /** Why the intent's merged spec PRs couldn't be read, else null. */
   ownUnchecked: string | null;
+  /** PIP-210: why the base branch's headings couldn't be read, else null. */
+  baseUnchecked: string | null;
 }
 
 /** The `### <ID> ·` headings of `specs/` at `ref` of the clone. */
-async function baseIds(cx: Ctx, clone: string, ref: string): Promise<Set<string>> {
+async function baseIds(
+  cx: Ctx,
+  clone: string,
+  ref: string,
+): Promise<{ ids: Set<string>; unchecked: string | null }> {
   try {
-    return new Set(
-      headingIds(await git(cx.tools, clone, ["grep", "-h", "-E", "^### [A-Z]+-[0-9]+", ref, "--", "specs"])),
-    );
-  } catch {
-    // No match (or no specs/ yet): nothing is taken on base.
-    return new Set();
+    return {
+      ids: new Set(
+        headingIds(
+          await git(cx.tools, clone, ["grep", "-h", "-E", "^### [A-Z]+-[0-9]+", ref, "--", "specs"]),
+        ),
+      ),
+      unchecked: null,
+    };
+  } catch (e) {
+    const why = (e as Error).message;
+    // No match (or no specs/ yet) exits 1 with no message: nothing is taken on base. Anything else is unreadable.
+    if (why.endsWith("git grep failed")) return { ids: new Set(), unchecked: null };
+    cx.log(`${IDS_UNCHECKED_BASE}: ${why}`);
+    return { ids: new Set(), unchecked: why };
   }
 }
 
@@ -169,7 +183,8 @@ export async function takenIds(cx: Ctx, m: Mission): Promise<Taken> {
     ownUnchecked = (e as Error).message;
     cx.log(`${m.intent}: ${IDS_UNCHECKED_MERGED}: ${ownUnchecked}`);
   }
-  return { base: await baseIds(cx, clone, baseRef), open, unchecked, own, ownUnchecked };
+  const base = await baseIds(cx, clone, baseRef);
+  return { base: base.ids, open, unchecked, own, ownUnchecked, baseUnchecked: base.unchecked };
 }
 
 const claimedLine = (ids: string[]) =>
@@ -194,6 +209,9 @@ export const IDS_UNCHECKED = "IDs unchecked against open PRs";
 
 /** The log note when the intent's merged spec PRs could not be read (PIP-202). */
 export const IDS_UNCHECKED_MERGED = "IDs unchecked against merged spec PRs";
+
+/** The log note when the base branch's requirement IDs could not be read (PIP-210). */
+export const IDS_UNCHECKED_BASE = "IDs unchecked against main";
 
 /** PIP-130: whether a PR is approved (a review in state APPROVED); unreadable counts as not approved. */
 async function approvedPr(cx: Ctx, github: string, n: number | null): Promise<boolean> {
@@ -440,7 +458,7 @@ async function prompt(
   const written = [...new Set([...t.own, ...namedAsWritten(outcome)])];
   const existing = (line ? parseIds(line[1]!) : []).filter((id) => t.base.has(id) && written.includes(id));
   const existingLine = existing.length
-    ? `\nThese reserved IDs are already rows on the base branch, written by this intent's own earlier spec PR: ${existing.join(", ")}. They are existing rows to build or make Live, not new ones; do not rewrite or renumber them.`
+    ? `\nThese reserved IDs are already rows on the base branch, written by this intent's own earlier spec PR or worded by the intent as existing: ${existing.join(", ")}. They are existing rows to build or make Live, not new ones; do not rewrite or renumber them.`
     : "";
   return {
     prompt: render("design", {

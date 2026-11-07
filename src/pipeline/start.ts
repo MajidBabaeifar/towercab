@@ -9,7 +9,7 @@ import { RepoError } from "../repo/files.ts";
 import { dropSetup, getSetup, putSetup, startSetup, WAIT_PREFIX } from "../setup-checks.ts";
 import { moveIds, namedAsWritten, parseIds } from "../specids.ts";
 import { asEnv, cloneOf, intentOf, prUrl, repoFiles, repoFilesWait } from "./common.ts";
-import { takenIds } from "./design.ts";
+import { IDS_UNCHECKED_BASE, takenIds } from "./design.ts";
 
 const prefixOf = (id: string) => id.slice(0, id.lastIndexOf("-"));
 
@@ -29,10 +29,16 @@ async function reserveIds(cx: Ctx, m: Mission): Promise<void> {
   if (!reserved.length) return;
   const t = await takenIds(cx, m);
   if (t.unchecked !== null) return;
+  if (t.baseUnchecked !== null) {
+    cx.log(`${m.intent}: ${IDS_UNCHECKED_BASE}: ${t.baseUnchecked}`);
+    return;
+  }
   const used = new Set([...t.base, ...t.open.flatMap((p) => p.ids)]);
   // PIP-202: an ID is the intent's own when its own spec PR wrote it, or the intent names it as already
   // written; it is never moved. Merged PRs that can't be read leave only the intent's own words.
-  const own = new Set([...t.own, ...namedAsWritten(intent.sections.get("Proposed outcome") ?? "")]);
+  // PIP-210: wording that says a row exists makes the ID a reference, but only with a row on the base branch.
+  const worded = namedAsWritten(intent.sections.get("Proposed outcome") ?? "").filter((id) => t.base.has(id));
+  const own = new Set([...t.own, ...worded]);
   const clash = new Set(reserved.filter((id) => used.has(id) && !own.has(id)).map(prefixOf));
   if (!clash.size) return;
   const moving = reserved.filter((id) => clash.has(prefixOf(id)) && !own.has(id));

@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..149, UI-150..154, UI-155..164, UI-168, UI-184..191, UI-192..197, UI-239, UI-244..251, UI-236..238, UI-253..256, UI-259..267 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..149, UI-150..154, UI-155..163, UI-168, UI-184..191, UI-192..197, UI-239, UI-244..251, UI-236..238, UI-253..256, UI-259..267 · **Prefix:** UI
 
 ## Purpose
 
@@ -1074,11 +1074,16 @@ Every way out of a wait is a button on the card that does exactly what it says.
   (UI-66 → the `done` command), next to an optional one-line field for what the owner did, which
   becomes a ticked step (LOOP-76). A mission waiting on `your steps` shows the checklist of UI-160 and the
   same button.
-- A stuck wait (LOOP-77) shows "Stuck: this came back with nothing new" and only the `steps`, `done`,
-  start over and drop buttons: no reply box. `GET /api/state` (UI-65) carries `exits` per waiting
-  mission (a list of `{do, label}`) and `stuck`.
+- A stuck wait (LOOP-77) shows "Stuck: this came back with nothing new" and only those of the `steps`,
+  `done`, start over and drop buttons that the wait offers: no reply box. `GET /api/state` (UI-65)
+  carries `exits` per waiting mission (a list of `{do, label}`) and `stuck`.
+- When `done`, `steps` or drop would close an open code PR with commits (LOOP-76), the button first
+  opens a confirm that names the PR and its commit count and says its branch is deleted and nothing is
+  merged; only its OK posts the action. The state carries the PR number and commit count (`openPr:
+  {number, commits}`) of such a mission for this. When the PR can't be read the confirm gives the
+  general warning of LOOP-76 ("couldn't check the PR; it may have commits") and still asks.
 - After a click the card shows the done note of UI-105 ("Done by you · …").
-- Verified by: `ui: question options are buttons that do what they say`, `ui: no changes offers I did it myself`, `ui: a stuck wait offers only the other exits`, `ui: exits come from the API`, `ui: an option that asks for something first only fills the reply`, `ui: exits screenshots light, dark and mobile`
+- Verified by: `ui: question options are buttons that do what they say`, `ui: no changes offers I did it myself`, `ui: a stuck wait offers only the other exits`, `ui: exits come from the API`, `ui: an option that asks for something first only fills the reply`, `ui: exits screenshots light, dark and mobile`, `ui: closing an open PR with commits asks to confirm first`, `ui: an unreadable PR gets the general warning and a confirm`, `ui: a stuck card screenshots light, dark and mobile`
 
 ### UI-168 · Teammate review on the card and the repo page
 
@@ -1505,6 +1510,17 @@ The airspace's count badges (such as "+21") never cover a label or a plane, and 
 - The boxes of the count badges do not intersect the stage labels or the planes at 360, 768 and 1,280 px wide.
 - `ui/fixture.ts` carries more than 8 repos, several of them not ready (some missing the same item, UI-269), and a CLI repo with a finished intent; the Repos, Board, intent and airspace screenshots (light, dark, mobile) use it.
 - Verified by: `ui: airspace count badges do not overlap at 360, 768 and 1280px`, `ui: screenshots light, dark and mobile`
+
+### UI-276 · The repo page shows where each setting comes from
+
+The repo's page says for each setting whether it came from the repo, the overlay or the default.
+
+- Each of `max_autonomy`, `protected`, the checks and the other keys in effect ([REPO-44](repo.md)) carries a small
+  label `repo`, `overlay` or `default`. An overlay-sourced value has no edit control; it says `Set in
+  <path to the overlay file>` ([REPO-48](repo.md)). A refused overlay key shows REPO-46's one line, a notice card shows REPO-49's replaced-checks notice naming both sets of checks, and an invalid
+  overlay shows its reason like an invalid `TOWERCAB.md` (UI-153). A repo without an overlay shows `repo` and `default` labels only.
+- The labels come from the API's repo view, not from the page's own guess.
+- Verified by: `ui: settings show repo, overlay or default`, `ui: an overlay setting has no edit control`, `ui: a refused overlay key shows its line`, `ui: replaced overlay checks show a notice`
 
 ### UI-219 · Sign in with GitHub
 
