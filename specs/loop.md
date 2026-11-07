@@ -902,18 +902,19 @@ Before the first pass, Towercab re-syncs the intents repo, so a write cut off by
 
 ### LOOP-140 · Entering an end state does not need the intent file to be open
 
-When a mission enters `done`, `stopped` or another end state and its intent file has already been moved to `done/` or is gone, the move completes in one pass without writing the intent file again.
+When a mission enters an end state (`done`, `unverified` or `stopped`) and its intent file has already been moved to `done/` or is gone, the move completes in one pass without writing the intent file again.
 
-- The entry effect that writes the intent file (stage, waiting, links, cost) reads the intent's current place from the intents clone at that moment, not from the listing taken at the start of the pass. An intent found in `done/` or not found at all is skipped, as LOOP-6 already skips one it knows to be closed; the remaining entry effects (feature list, PRs, branches, checkout) still run.
-- `store.update` finding no open intent for an entry write is not a failure of the entry: the write is skipped and the entry carries on to its other effects. Any other error (a sync failure, a push rejected) still retries the entry next pass (LOOP-6).
+- Only these three mission stages are covered (they are the ones that end an intent: finished, merged but unchecked, and stopped or dropped). Entering any other stage with no open intent file stays an error and is retried next pass (LOOP-6), as today.
+- For an end-state entry, the entry effect that writes the intent file (stage, waiting, links, cost) looks the intent up in the intents clone at that moment, not in the listing taken at the start of the pass. An intent found in `done/` or not found at all is skipped, as LOOP-6 already skips one it knows to be closed; the remaining entry effects (feature list, PRs, branches, checkout) still run.
+- For an end-state entry, `store.update` refusing with `no open intent matches <id>` is not a failure of the entry: the write is skipped and the entry carries on to its other effects. Any other error (a sync failure, a push rejected) still retries the entry next pass.
 - No `entering <stage> failed, retrying next pass` line is logged for the skipped write.
-- Verified by: `loop: done on a blocked mission whose intent file was already moved settles in one pass`, `loop: a sync failure still retries the entry of a finished mission`
+- Verified by: `loop: done on a blocked mission whose intent file was already moved settles in one pass`, `loop: a sync failure still retries the entry of a finished mission`, `loop: entering an active stage with the intent file missing is still retried`
 
 ### LOOP-141 · Dropping an intent whose file is already gone settles the mission
 
 When the owner drops an intent by hand and the mission then enters `stopped`, the move completes in one pass with no retry.
 
-- Applies LOOP-140 to `towercab drop`: the intent file is already in `done/` (stage `dropped`), so the entry writes nothing to it and still closes the mission's open PRs and retires its branches (PIP-87).
+- Applies LOOP-140 to `towercab drop`, whether the file is in `done/` (stage `dropped`) or gone: the entry writes nothing to it and still closes the mission's open PRs and retires its branches (PIP-87).
 - Verified by: `loop: drop on a blocked mission whose intent file was already moved settles in one pass`
 
 ### LOOP-120 · Telegram message when a reply is posted
