@@ -127,7 +127,7 @@ test("public: example config", () => {
   expect([...config.badRepos]).toEqual([]);
   expect(config.repos.has("web")).toBe(true);
   const keys = {
-    intents: ["remote", "path", "cutoff", "issue_a"],
+    intents: ["remote", "path", "cutoff", "issue_a", "owner_waits"],
     agent: [
       "model",
       "review_model",

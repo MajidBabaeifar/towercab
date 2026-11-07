@@ -1210,9 +1210,9 @@ test("ui: an older pause shows paused without a time", async () => {
   });
 });
 
-test("ui: the cap is worded for an Up next row", () => {
-  expect(skipWords({ kind: "cap", working: 1, owner: 5, cap: 6 }, () => "", 0)).toBe(
-    "This repo is at its limit of 6 intents before build (1 being worked on, 5 waiting on you); it starts when one moves on, when it outranks them all, or when you start it.",
+test("ui: the owner-waits limit is worded for an Up next row", () => {
+  expect(skipWords({ kind: "owner", n: 4, limit: 4 }, () => "", 0)).toBe(
+    "4 intents in this repo are waiting on you (the limit is 4); it starts when you answer one, or when you start it.",
   );
 });
 

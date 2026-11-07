@@ -11,6 +11,8 @@ path = "~/intents"
 cutoff = 7
 # Autonomy level (1-5) of an intent filed as a GitHub issue without an a1..a5 label.
 issue_a = 3
+# Most specs and plans per repo that may wait on you at once; a repo at this limit starts no new intent.
+owner_waits = 4
 
 [agent]
 # Claude model for the work.

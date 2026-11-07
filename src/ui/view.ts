@@ -65,6 +65,8 @@ export interface TopBar {
   /** "of $20.00" when a daily budget is set. */
   budget: string | null;
   overBudget: boolean;
+  /** UI-256: spend against the budgets; `note` is the words that go with amber or red. */
+  budgetChip?: { text: string; level: "ok" | "amber" | "red"; note: string | null };
   version: { commit: string; behind: string | null };
   paused: boolean;
   /** No actions: the CLI serves the page without a loop (UI-2). */
@@ -198,6 +200,43 @@ export interface Row {
   warning?: string;
   /** UI-236: the intent is a draft of the shadow's. */
   shadow?: boolean;
+  estimate?: EstimateLine;
+}
+
+/** UI-255: what an intent is expected to cost, or what it has spent against that. */
+export interface EstimateLine {
+  text: string;
+  /** Spent so far as a share of the estimate, 0–100; null before it starts. */
+  pct: number | null;
+  /** Spent is above the usual range (the bar turns amber). */
+  over: boolean;
+}
+
+/** UI-253: a scope's budget amounts (`all`, or a repo) and what is spent so far. */
+export interface BudgetsView {
+  scope: string;
+  daily: number | null;
+  monthly: number | null;
+  spentDay: string;
+  spentMonth: string;
+  spentDayUsd: number;
+  spentMonthUsd: number;
+  where: string;
+}
+
+/** UI-254: a reached cap, as a Needs you card. */
+export interface CapCard {
+  key: string;
+  scope: string;
+  period: "day" | "month";
+  title: string;
+  line: string;
+  reason: string;
+  capUsd: number;
+  spentUsd: number;
+  raiseTo: number;
+  /** Intents that would start but wait behind it. */
+  waiting: number;
 }
 
 export interface ProblemView {
@@ -221,6 +260,7 @@ export interface UpNextView {
   reason: string | null;
   /** The "Start now" button is offered (UI-101). */
   canStart: boolean;
+  estimate?: EstimateLine;
 }
 
 export interface SpendDay {
@@ -237,6 +277,10 @@ export interface SpendView {
   todayUsd: number;
   budgetUsd: number | null;
   days: SpendDay[];
+  /** UI-253: the overall budget; present on the overview (`GET /api/state`). */
+  budgets?: BudgetsView;
+  /** UI-254: a card for each reached budget or cap, among the Needs you cards. */
+  caps?: CapCard[];
 }
 
 /** UI-78: the airspace's stations, in line order. */
@@ -701,29 +745,42 @@ export interface FocusHistory {
   text: string;
 }
 
-/** UI-194: the one wait Focus shows: a needs-you card or a proposed intent, with its context. */
-export interface FocusItem {
-  /** The intent's ID, or `proposed-<PR number>`: what the page keys the item by. */
+/** UI-259: one row of the Inbox: a needs-you card, a reached cap or a proposed intent, with its context. */
+export interface InboxItem {
+  /** The intent's ID, `proposed-<PR number>` or `cap-<scope>-<period>`: what the URL and the page key it by. */
   key: string;
+  kind: "card" | "cap" | "proposed";
   repo: string;
   title: string;
+  /** "Plan review", "Proposed", "Budget". */
+  kindLabel: string;
+  /** When the wait began (unix s); null when unknown. */
+  since: number | null;
   /** The first sentence of the intent's Problem; null when it has none. */
   overview: string | null;
   history: FocusHistory[];
   card: Card | null;
   proposed: ProposedCard | null;
+  cap: CapCard | null;
+  /** The PR the item is about, for `o` (UI-261). */
+  pr: number | null;
+  prUrl: string | null;
+  /** The card's main action is a merge, so `m` applies (UI-261). */
+  merge: boolean;
+  /** UI-264: began after the owner's last visit, or a snooze ran out after it. */
+  new: boolean;
+  /** UI-264: the wake time (unix s) while snoozed. */
+  snoozedUntil: number | null;
 }
 
-/** UI-192, UI-196: `GET /api/focus`. */
-export interface FocusPage {
+/** UI-259: `GET /api/inbox`. */
+export interface InboxPage {
   version: string;
-  item: FocusItem | null;
-  /** The other waits, without the one shown. */
-  more: number;
-  /** UI-195: the `skip` keys the server was asked to leave out. */
-  asked: string[];
-  /** UI-195: those of them that still wait on the owner. */
-  skipped: string[];
+  items: InboxItem[];
+  /** UI-244's count; snoozed items are in it. */
+  needs: number;
+  /** UI-264: the owner's last visit (unix s) as the server holds it; null before the first. */
+  lastVisit: number | null;
   readOnly: boolean;
   /** UI-188's notice when the proposed list may be old. */
   stale: string | null;
@@ -759,6 +816,8 @@ export interface LimitsView {
 export interface RepoView {
   /** UI-150: the limits form. */
   limits: LimitsView;
+  /** UI-253: this repo's daily and monthly caps. */
+  budgets?: BudgetsView;
   settings: SettingsView;
   /** UI-156: what the repo is missing; absent when nothing is. */
   setup?: SetupView;
@@ -878,7 +937,7 @@ export interface BoardPage {
   error: string | null;
 }
 
-export type ActivityKind = "move" | "wait" | "error" | "log";
+export type ActivityKind = "move" | "wait" | "error" | "log" | "settings";
 
 export interface ActivityItem {
   key: string;

@@ -11,7 +11,7 @@ const SHOTS = resolve(process.env.TOWERCAB_SHOTS ?? join(import.meta.dirname, "s
 const PAGES = [
   {
     name: "exits-overview",
-    path: "/",
+    path: "/inbox",
     expect: [
       "Nothing to build: I did it myself",
       "Stuck: this came back with nothing new",
@@ -41,17 +41,26 @@ test("ui: exits screenshots light, dark and mobile", async ({ browser }) => {
         hasTouch: m.mode === "mobile",
       });
       const page = await ctx.newPage();
-      for (const p of PAGES) {
-        await page.goto(`http://localhost:${server.port()}${p.path}`);
-        await page.waitForSelector(".page");
+      // UI-266: the cards are items of the Inbox, one at a time: every item is looked at in turn.
+      const base = `http://localhost:${server.port()}`;
+      const items: { key: string }[] = (await (await fetch(`${base}/api/inbox`)).json()).items;
+      let text = "";
+      let stuck = 0;
+      for (const item of items) {
+        await page.goto(`${base}/inbox/${item.key}`);
+        await page.waitForSelector(".inbox-row", { state: "attached" });
         await page.waitForLoadState("networkidle");
-        for (const text of p.expect) await expect(page.locator("body")).toContainText(text);
-        // The stuck card has no reply box of its own: one fewer "Send reply" than waits that take a reply.
-        await expect(page.locator(".needs-card.stuck-card")).toHaveCount(1);
+        text += `\n${await page.locator("body").textContent()}`;
+        const here = await page.locator(".needs-card.stuck-card").count();
+        stuck += here;
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-        expect(overflow, `${p.name} ${m.mode} scrolls sideways`).toBeLessThanOrEqual(0);
-        await page.screenshot({ path: join(SHOTS, `${p.name}-${m.mode}.png`), fullPage: true });
+        expect(overflow, `${item.key} ${m.mode} scrolls sideways`).toBeLessThanOrEqual(0);
+        if (here)
+          await page.screenshot({ path: join(SHOTS, `exits-overview-${m.mode}.png`), fullPage: true });
       }
+      for (const want of PAGES[0].expect) expect(text).toContain(want);
+      // The stuck card has no reply box of its own: one fewer "Send reply" than waits that take a reply.
+      expect(stuck).toBe(1);
       await ctx.close();
     }
   } finally {

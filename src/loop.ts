@@ -5,6 +5,7 @@ import { readFileSync, rmSync, statSync } from "node:fs";
 import { type AfterHold, afterState, heldText, holdTrigger, nextHold } from "./after.ts";
 import { ownerOnly } from "./autonomy.ts";
 import { Inhibitor, woke } from "./awake.ts";
+import { type Cap, capKey, capReason, capsOf, needsRun, reloadBudgets } from "./budgets.ts";
 import { slotStep } from "./capacity.ts";
 import { removeCheckout } from "./checkout.ts";
 import { applyPending, intentPaused, noteIgnored, paused, recordAgentComment } from "./commands.ts";
@@ -115,7 +116,7 @@ import {
 import { leftOf, type OwnerStep, parseDelivery, unticked } from "./steps.ts";
 import { APPROVE_NOTICE } from "./teammates.ts";
 import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
-import { budgetReached } from "./ui/state.ts";
+import { freezeEstimate } from "./ui/estimate.ts";
 import { checkUpdate, RESTART_CODE } from "./update.ts";
 
 /** LOOP-115: the stages a change reaches when its CI is green; it holds no slot while it waits in them. */
@@ -214,6 +215,9 @@ export class Loop {
   private probedAt: number | null = null;
   private probeOk = false;
   private children = new Map<number, Running>();
+  /** MET-33: the budgets and caps reached now, and the missions they hold back. */
+  private caps: Cap[] = [];
+  private capHeld = new Set<number>();
   private pollAt = new Map<number, number>();
   private listing: Listing | null = null;
   private listingError: string | null = null;
@@ -528,6 +532,9 @@ export class Loop {
     db.setMeta("health", JSON.stringify(this.health.open()));
     // LOOP-68: repos added or removed since the last pass (by the CLI or the page).
     syncRepos(this.d.config, db);
+    // MET-31, MET-33: budgets are read from the file again, then the caps that are reached.
+    reloadBudgets(this.d.config);
+    this.refreshCaps();
 
     // Commands from the CLI and the UI.
     for (const c of await applyPending({
@@ -569,7 +576,7 @@ export class Loop {
       (!this.d.sandboxProbe || this.probeOk) &&
       !paused(db) &&
       !this.health.blocked(this.now) &&
-      !budgetReached(db, this.d.config, this.now) &&
+      !this.caps.some((c) => c.scope === "all") &&
       this.codeMoved() === null &&
       this.drain === null
     ) {
@@ -1504,6 +1511,8 @@ export class Loop {
       if (!isWorking(m.stage) || m.step === "enter" || m.held || this.children.has(m.id)) continue;
       // SHD-22: a paused intent starts no further stage until it is resumed.
       if (intentPaused(db, m.intent)) continue;
+      // MET-33: a reached cap holds what was not underway when it was reached.
+      if (this.capHeld.has(m.id)) continue;
       // LOOP-105: no step of a loop whose checkout moved under it runs.
       if (this.codeMoved() !== null) break;
       if (queued.has(m.id) || this.cooling(m)) continue;
@@ -1803,6 +1812,43 @@ export class Loop {
     }
   }
 
+  /**
+   * MET-33: the caps reached now. When one is first reached, the missions working then are *underway*: they
+   * finish their run and go on until their next wait on the owner. After that wait (and any mission not
+   * underway) the cap holds their runs until it lifts. Kept in `meta.caps` so a restart keeps it.
+   */
+  private refreshCaps(): void {
+    const { db, config } = this.d;
+    this.caps = capsOf(db, config, this.now);
+    let saved: Record<string, number[]> = {};
+    try {
+      saved = JSON.parse(db.meta("caps") ?? "{}") as Record<string, number[]>;
+    } catch {
+      saved = {};
+    }
+    const mission = unfinished(db);
+    const held = new Set<number>();
+    const kept: Record<string, number[]> = {};
+    for (const c of this.caps) {
+      const key = capKey(c, this.now);
+      const mine = mission.filter((m) => c.scope === "all" || m.repo === c.scope);
+      let allow = saved[key];
+      if (!allow) {
+        allow = mine.filter((m) => isWorking(m.stage)).map((m) => m.id);
+        this.d.log(`${capReason(c)}: $${c.spent.toFixed(2)} of $${c.cap.toFixed(2)}; new work waits`);
+      }
+      allow = allow.filter((id) => {
+        const m = mine.find((x) => x.id === id);
+        return m !== undefined && !isWait(m.stage);
+      });
+      kept[key] = allow;
+      for (const m of mine) if (needsRun(m) && !allow.includes(m.id)) held.add(m.id);
+    }
+    this.capHeld = held;
+    const text = JSON.stringify(kept);
+    if (text !== (db.meta("caps") ?? "{}")) db.setMeta("caps", text);
+  }
+
   private cooling(m: Mission): boolean {
     return m.limit_model !== null && this.cooldownUntil(m.limit_model) !== null;
   }
@@ -1817,6 +1863,7 @@ export class Loop {
         working: workingAheadIn(ms, name).length,
         owner: ownerAheadIn(ms, name).length,
         limit: repo.ahead,
+        ownerLimit: config.intents.ownerWaits,
         ids: aheadIn(ms, name).map((m) => m.intent),
       });
     }
@@ -1862,6 +1909,9 @@ export class Loop {
     }
     // SHD-22: a paused intent is not picked either.
     l = { ...l, open: l.open.filter((i) => !intentPaused(this.d.db, i.id)) };
+    // MET-33: a repo whose cap is reached picks nothing; the other repos carry on.
+    const capped = new Set(this.caps.map((c) => c.scope));
+    l = { ...l, open: l.open.filter((i) => !capped.has(i.repo)) };
     const decision = decide(l, state);
     for (const w of decision.writes) {
       try {
@@ -1883,7 +1933,7 @@ export class Loop {
       // LOOP-68: the repo may have been removed since this pass read the repos (another process).
       if (!this.d.db.get("SELECT 1 FROM repos WHERE name = ?", pick.repo)) return null;
       this.d.db.delMeta(`start:${pick.id}`);
-      return insertMission(
+      const made = insertMission(
         this.d.db,
         {
           intent: pick.id,
@@ -1894,6 +1944,8 @@ export class Loop {
         },
         this.now,
       );
+      // MET-34: the estimate is frozen at start.
+      return freezeEstimate(this.d.db, made, this.now);
     });
     if (!m) {
       this.d.log(`${pick.id}: its repo ${pick.repo} was just removed; not picked`);

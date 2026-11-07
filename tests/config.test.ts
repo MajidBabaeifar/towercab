@@ -38,6 +38,7 @@ test("config: loads defaults", () => {
     path: null,
     cutoff: 7,
     issueA: 3,
+    ownerWaits: 4,
   });
   expect(c.agent).toEqual({
     model: "opus",
@@ -96,13 +97,29 @@ test("config: loads defaults", () => {
     { tasks: { remote: "r", path: "~/intents", cutoff: 9 }, agent: { toolchain: ["~/bin", "/opt/x"] } },
     "/x/config.toml",
   );
-  expect(t.intents).toEqual({ remote: "r", path: join(homedir(), "intents"), cutoff: 9, issueA: 3 });
+  expect(t.intents).toEqual({
+    remote: "r",
+    path: join(homedir(), "intents"),
+    cutoff: 9,
+    issueA: 3,
+    ownerWaits: 4,
+  });
   expect(t.agent.toolchain).toEqual([join(homedir(), "bin"), "/opt/x"]);
   expect(parseConfig({ tasks: { remote: "old" }, intents: { remote: "new" } }, "f").intents.remote).toBe(
     "new",
   );
   const tg = parseConfig({ telegram: { bot_token: "t", chat_id: 42 } }, "f").telegram;
   expect(tg).toEqual({ botToken: "t", chatId: "42", apiBase: "https://api.telegram.org" });
+});
+
+test("config: owner_waits default and range", () => {
+  const read = (intents: Record<string, unknown>) =>
+    parseConfig({ intents: { remote: "r", ...intents } }, "f");
+  expect(read({}).intents.ownerWaits).toBe(4);
+  expect(read({ owner_waits: 2 }).intents.ownerWaits).toBe(2);
+  expect(read({ owner_waits: 16 }).intents.ownerWaits).toBe(16);
+  expect(() => read({ owner_waits: 0 })).toThrow("intents.owner_waits must be an integer 1-16");
+  expect(() => read({ owner_waits: 17 })).toThrow("intents.owner_waits must be an integer 1-16");
 });
 
 test("config: bad values name the key", async () => {

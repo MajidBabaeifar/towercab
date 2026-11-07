@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-115..119, LOOP-129..131 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-115..119, LOOP-129..132 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -232,8 +232,9 @@ The CLI covers running the service and the few actions that have no GitHub gestu
 
 ### LOOP-16 · Telegram
 
-Telegram delivers Towercab's messages; the owner acts on GitHub or in the UI, or, with the shadow on,
-talks to it ([LOOP-129](loop.md), [shadow.md](shadow.md)).
+Telegram delivers Towercab's messages; the owner acts on GitHub, in the UI, or in the chat itself with
+buttons, replies and commands ([telegram.md](telegram.md), LOOP-126..128), or, with the shadow on, talks to it
+([LOOP-129](loop.md), [shadow.md](shadow.md)).
 
 - `POST <api_base>/bot<token>/sendMessage` `{chat_id, text, disable_web_page_preview: true}` (≤ 4000
   characters, 10 s timeout). Unsent rows go oldest first, stop at the first failure and retry with
@@ -594,9 +595,7 @@ An intent that outranks every intent ahead of build starts right away, over the 
   every intent, whatever its priority.
 - `[repos.<r>].workers` (LOOP-61) is unchanged: a ready mission is not ahead and does not count toward
   `ahead`.
-- LOOP-132's code PR rewrites the tests below for the rule above and renames them where the behaviour changes
-  (new titles under LOOP-132); this list names the tests that exist today.
-- Verified by: `loop: an intent that outranks every intent ahead starts below the cap`, `loop: at the cap only a higher priority intent starts`, `loop: an equal priority intent does not pass the cap`, `loop: the cap is twice ahead`, `loop: a ready intent does not count toward the cap`
+- Verified by: `loop: an intent that outranks every intent ahead starts below the cap`, `loop: at the working limit only a higher priority intent starts`, `loop: an equal priority intent does not pass the working limit`, `loop: a ready intent does not count toward ahead`
 
 ### LOOP-102 · status names the rule that held an intent back
 
@@ -612,9 +611,7 @@ An intent that outranks every intent ahead of build starts right away, over the 
   has a mission and shows its stage as usual.
 - This replaces the text `waiting: repo has <n> intents ahead` of LOOP-60 and LOOP-64, which counted
   intents waiting on the owner.
-- LOOP-132's code PR rewrites the tests below and renames them where the behaviour changes (new titles
-  under LOOP-132); this list names the tests that exist today.
-- Verified by: `status: the working limit and the cap are told apart`, `status: the cap names the intents waiting on the owner`
+- Verified by: `status: the working limit and the owner-waits limit are told apart`
 
 ### LOOP-103 · The default for how much runs at once fits the machine
 
@@ -794,8 +791,8 @@ When the shadow is enabled, the loop reads the owner's Telegram messages and han
 - `GET <api_base>/bot<token>/getUpdates?offset=<next>&timeout=0` once per pass (10 s timeout), only
   with `[shadow] enabled` and `[telegram]`. The offset is kept in `meta` (`telegram.offset`) and advances
   as SHD-20 says. Failures are logged once per outage without the token and retried with LOOP-10's backoff.
-  Updates from other chats are dropped (SHD-2). Beyond the shadow, Telegram still only notifies: the commands
-  of LOOP-15 are not read from it.
+  Updates from other chats are dropped (SHD-2). Reading without the shadow, and the chat's own commands, are
+  LOOP-126 and [telegram.md](telegram.md); the one-per-pass poll here becomes the long poll of LOOP-127.
 - Verified by: `telegram: owner messages reach the shadow once`, `telegram: update failures never raise`, `telegram: no shadow no polling`
 
 ### LOOP-130 · The shadow runs between passes, not inside them
@@ -812,8 +809,9 @@ A shadow turn runs as a detached child, so a long answer never delays the loop's
 The owner can reset the shadow and see its state from the command line and from the chat.
 
 - `towercab shadow reset` (SHD-17) and `towercab shadow status` (enabled or not, session age, turns, pending
-  action, today's cost against the cap). In the chat, `/reset` and `/status` do the same; any other `/…` text
-  goes to the shadow as ordinary text. `status` lists pending actions.
+  action, today's cost against the cap). In the chat, `/reset` resets the shadow; `/status` is TG-7's, whose
+  last line is the shadow's state as above (pending actions included). Any other `/…` text that TG-7..10
+  do not take goes to the shadow as ordinary text.
 - Verified by: `cli: shadow reset and status`, `telegram: slash reset and status`
 
 ### LOOP-132 · Waiting on the owner has its own limit
@@ -835,6 +833,87 @@ A repo holds at most `owner_waits` (default 4) specs and plans waiting on the ow
   now)` at the owner-waits limit. `status` and `next` never say `repo is at the cap`. Below the limit, intents
   waiting on the owner show as `waiting on you` (UI-61) with no mention of any repo limit.
 - Verified by: `loop: with ahead 2 and two intents waiting on the owner at spec a third is picked`, `loop: owner waits at plan do not count toward ahead`, `loop: a repo at owner_waits waiting intents starts no new one`, `loop: an outranking intent does not pass owner_waits`, `loop: the cap of twice ahead no longer holds a repo back`, `config: owner_waits default and range`, `loop: at the working limit only a higher priority intent starts`, `loop: an equal priority intent does not pass the working limit`, `loop: a ready intent does not count toward ahead`, `status: the working limit and the owner-waits limit are told apart`, `status: intents waiting on the owner show without the cap`
+
+### LOOP-113 · Pause stops all new work
+
+While Towercab is paused, no mission starts anything new, but steps already running finish and are applied.
+
+- Owner pause (`meta.paused`, LOOP-15) now holds every mission, not only picks and merges (LOOP-5, PIP-22). While
+  paused, no new child process starts for any mission: no Claude run, check, setup or screenshot, and no fix round.
+  A mission due for its next step stays at its recorded step, not counted as a crash, repair or timeout.
+- A child already running is left alone: it finishes, and its result is applied through `machine.apply` as usual.
+  The mission then holds at the next step. A health pause (LOOP-10) is unchanged.
+- Nothing that changes GitHub happens while paused: no push, no pull request opened or updated, no comment, no
+  review, no merge (PIP-22 already holds merges). A finished step's result is recorded and applied, and the
+  mission then waits at the step that would write, with nothing lost or repeated (LOOP-6: the handler records
+  before any side effect). On resume the write happens as it would have.
+- Reading continues while paused: PR and CI state and owner events are polled (read-only), so the page stays current
+  and an owner's reply is recorded. Replies and other effects that need a write wait for resume. Telegram
+  messages (LOOP-16) are not GitHub and still go out.
+- `status` and the page (UI-109) say `paused: <n> running steps finishing` while `n > 0` children run, and
+  `paused` once none do. `n` counts running children, whichever mission they belong to.
+- `resume` lifts the hold; every mission continues from the step where it stopped, with no change to its counters.
+- This is the global pause only. The per-intent pause (SHD-22, UI-239) keeps its meaning: it holds only that
+  intent's next step and never stops running work.
+- Verified by: `loop: a paused loop does not start the next step of a mission`, `loop: a running step finishes and is applied while paused`, `loop: a paused loop makes no GitHub writes`, `loop: polling continues while paused`, `status: paused counts running steps finishing`, `loop: resume continues missions where they stopped`
+
+### LOOP-114 · Pause now stops running children
+
+`towercab pause --now` also stops the children that are running, cleanly, and `resume` continues them from their session.
+
+- `pause --now` is `pause` (LOOP-113) plus: the loop sends SIGTERM to each running child's process group, then
+  SIGKILL after 10 s, as for a shutdown (LOOP-7). Each cut-off mission gets `interrupted`, which is not counted as
+  a crash (LOOP-7), a repair or a timeout, and no message goes to the owner.
+- It is a `pause` row in `commands` (LOOP-15) with a `now` flag, applied by the loop on its next pass; with no loop
+  running there is nothing to stop and it is a plain `pause`. The flag is not kept: a later plain `pause` stops
+  nothing.
+- On `resume`, a cut-off Claude run continues its own session (`--resume <uuid>`, prompt `Continue where you
+  stopped.`, LOOP-7); a cut-off check or other non-Claude step runs again from its start.
+- `status` shows `paused: stopping <n> running steps` until they have exited, then `paused`.
+- `--now` exists only for the global pause. `pause <id> --now` is refused with `--now stops everything: use it
+  without an intent`; a per-intent stop is a later intent.
+- Verified by: `cli: pause now is a command with the now flag`, `cli: pause now is refused for one intent`, `loop: pause now stops running children`, `loop: a child stopped by pause now is not counted as a crash`, `loop: resume continues the sessions stopped by pause now`
+
+### LOOP-126 · The loop reads Telegram with or without the shadow
+
+With `[telegram]` set, the loop reads the owner's chat for buttons, replies and commands, whether or not the shadow is enabled.
+
+- Replaces the condition of LOOP-129 (`[shadow] enabled`): updates are read whenever `[telegram]` is set. Without
+  `[telegram]` nothing is read. Each update is stored once (keyed by `update_id`, `meta` `telegram.offset` as
+  SHD-20 says) before the offset moves past it, then handled in a pass: a button press (TG-3..5, TG-10), a reply
+  to a question (TG-6), a command (TG-7..10) or text for the shadow (TG-15, LOOP-129). `allowed_updates` is
+  `message` and `callback_query`.
+- Updates from other chats are dropped and logged (TG-1). A failed read is logged once per outage without the
+  token and retried with LOOP-10's backoff; it never raises and never stops the pass.
+- A handled update's effect (an action, a reply, an edit) is recorded before it is applied (LOOP-6), so a
+  crash neither repeats an action nor loses its answer.
+- Verified by: `telegram: updates are read without the shadow`, `telegram: an update is stored once before the offset moves`, `telegram: no telegram config no polling`, `telegram: a crash after a button press does not repeat the action`
+
+### LOOP-127 · Telegram is long-polled beside the loop
+
+Towercab waits for Telegram on an open request, with no inbound port, and never slows the loop to do it.
+
+- The read of LOOP-126 is `getUpdates` with `timeout=25` (HTTP timeout 35 s), run beside the 5 s pass, not inside
+  it: the pass only handles updates already stored. A press or a command is therefore answered within about one
+  pass (5 s), not after a poll. Towercab opens no listening port for Telegram (no webhook): it runs on the
+  owner's laptop.
+- The poll stops when the loop stops (LOOP-7) and restarts from the stored offset; while paused (LOOP-113) it
+  continues, since reading is not a write. Tests use the injected clock and a fake Telegram API, never real
+  waiting.
+- Verified by: `telegram: a long poll does not delay a pass`, `telegram: the poll stops on shutdown and resumes from the offset`, `telegram: polling continues while paused`
+
+### LOOP-128 · Sent messages are remembered so they can be edited
+
+Each message Towercab sends is kept with its Telegram id, so it can be edited later instead of replaced.
+
+- An outbox row (LOOP-16) gets `kind` (`wait`, `info`), `intent`, `wait` (the id TG-5 names), `tg_message_id`
+  (set once `sendMessage` returns) and `ended` (outcome text or null). An edit is its own outbox row
+  (`editMessageText`, ≤ 4000 characters) sent in order, oldest first, retried with LOOP-10's backoff, and
+  skipped when Telegram refuses it (message gone or too old; logged once).
+- `answerCallbackQuery` for a press is sent first, ahead of other rows, so the button stops spinning at once.
+- Rows keep for 30 days after their wait ends, then are removed with the rest of the outbox's old rows. An
+  edit for a message whose id was never recorded (the send failed for good) is dropped.
+- Verified by: `telegram: a sent message records its id`, `telegram: edits are sent in order and retried`, `telegram: a press is answered before other rows`, `telegram: old rows are removed`
 
 ### LOOP-65 · Repos live in the database
 
@@ -1229,6 +1308,7 @@ If a part fails after the merges, that part and every part that landed after it 
 | `agent.parallel` | int 1–16 | computed from cores and free memory, at most 4 (LOOP-103) |
 | `agent.build_timeout`, `review_timeout`, `check_timeout` | minutes 1–1440 | 60, 15, 10 |
 | `agent.max_budget_usd`, `agent.daily_budget_usd` | number > 0 | 10; none |
+| `agent.monthly_budget_usd`, `budget.<repo>.daily_usd`, `budget.<repo>.monthly_usd` | number > 0, at most 2 decimals | none |
 | `agent.ci_poll`, `ci_grace`, `ci_wait` | seconds | 30, 120, 1800 |
 | `agent.freeze_wait` | minutes 1–1440 (LOOP-81) | 120 |
 | `agent.path`, `agent.toolchain`, `agent.env`, `agent.network`, `agent.sandbox_unix_sockets` | ignored since PIP-157 and AUT-26: they load, nothing reads them, and `towercab doctor` names each one that is set | none |
@@ -1236,6 +1316,7 @@ If a part fails after the merges, that part and every part that landed after it 
 | `repos.<r>.ahead` | int 1–16 | 3 |
 | `github.app_id`, `github.me`, `github.api_base` | int; login; URL | required; required; `https://api.github.com` |
 | `telegram.bot_token`, `telegram.chat_id`, `telegram.api_base` | strings; URL | none (no Telegram); `https://api.telegram.org` |
+| `telegram.ui_url` | URL (TG-14) | none (messages link to the PR) |
 | `ui.port` | int 0–65535 (0 = off) | 7311 |
 | `update.auto` | bool | true |
 

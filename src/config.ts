@@ -4,6 +4,7 @@ import { closeSync, fstatSync, openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
+import { applyBudgets, type Budgets, emptyBudgets } from "./budgets.ts";
 import { type Capacity, defaultParallel, readCapacity } from "./capacity.ts";
 import { DEFAULT_NETWORK } from "./pipeline/sandbox.ts";
 
@@ -35,7 +36,7 @@ export interface GitLabConfig {
 
 export interface Config {
   file: string;
-  intents: { remote: string; path: string | null; cutoff: number; issueA: number };
+  intents: { remote: string; path: string | null; cutoff: number; issueA: number; ownerWaits: number };
   agent: {
     model: string;
     reviewModel: string | null;
@@ -63,6 +64,8 @@ export interface Config {
    * `loadRepos` (LOOP-65); the same Map all along, so a repo added at runtime is seen everywhere.
    */
   repos: Map<string, RepoConfig>;
+  /** MET-31: the monthly budget and the repos' caps, re-read from the file every pass. */
+  budgets: Budgets;
   /** The file's valid `[repos.<name>]` tables, imported into the database once (LOOP-65). */
   fileRepos: Map<string, RepoConfig>;
   /** Repo tables that failed to validate: name → reason. They fail only what uses that repo. */
@@ -149,6 +152,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       path: r.optPath(intents, "intents", "path"),
       cutoff: r.int(intents, "intents", "cutoff", 7, 1, 15),
       issueA: r.int(intents, "intents", "issue_a", 3, 1, 5),
+      ownerWaits: r.int(intents, "intents", "owner_waits", 4, 1, 16),
     },
     agent: {
       model: r.word(agent, "agent", "model", "opus"),
@@ -171,6 +175,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       ignored: IGNORED_AGENT_KEYS.filter((k) => k in agent),
     },
     repos: new Map(),
+    budgets: emptyBudgets(),
     fileRepos: new Map(),
     badRepos: new Map(),
     ignoredRepos: new Map(),
@@ -209,6 +214,8 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
   if (config.shadow.enabled && !config.telegram) {
     throw new ConfigError(`config: ${file}: shadow.enabled needs a [telegram] section`);
   }
+
+  applyBudgets(config, raw);
 
   const repos = raw.repos;
   if (repos !== undefined && (typeof repos !== "object" || repos === null || Array.isArray(repos))) {

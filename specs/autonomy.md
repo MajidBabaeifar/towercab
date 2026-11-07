@@ -63,8 +63,10 @@ A worker that finds the change riskier than the intent says may lower `a`, never
 A repo can cap the autonomy of every intent in it.
 
 - `max_autonomy` (1–5, default 5) in the base branch's `TOWERCAB.md` ([REPO-1](repo.md)).
-  Effective `a` = the minimum of `a` at pick, `a` now, and the cap; no `a` anywhere → 5 (AUT-9),
-  then the cap.
+  Effective `a` = the minimum of `a` now (the intent's current level, AUT-34) and the cap; no `a` → 5
+  (AUT-9), then the cap. While a raise is flagged (AUT-35), `a` now means the level before that raise.
+  A raise therefore applies from the mission's next gate, and a lowering applies at once. It no longer
+  looks at `a` at pick.
 - Verified by: `autonomy: repo cap`
 
 ### AUT-9 · No autonomy set
@@ -73,8 +75,9 @@ An intent without `a` counts as a5: full autonomy, still limited by the repo's c
 the owner didn't write, by AUT-13.
 
 - `effectiveA`: no `a` at pick and none now → `DEFAULT_A` = 5, then the minimum with the repo cap
-  (AUT-8), then at most 4 when `source` isn't `me` (AUT-13). An `a` present at pick or now still counts,
-  so removing it mid-flight can't loosen a gate.
+  (AUT-8), then at most 4 when `source` isn't `me` (AUT-13). Removing `a` mid-flight is a raise to
+  that default (AUT-35): it counts when the owner does it and is flagged otherwise, so a stranger deleting
+  the line can't loosen a gate. The risk gate (AUT-18) protects the change either way.
 - Verified by: `autonomy: no a counts as a5`, `pipeline: an intent without a runs as a5`
 
 ### AUT-10 · Caps after a revert
@@ -113,6 +116,7 @@ Full autonomy applies only to intents the owner wrote; an intent from anywhere e
 
 - Effective `a` = 5 only when the intent's `source` is `me` (or missing: the owner's file);
   any other `source` → at most 4.
+- With `[auth]` set, [AUT-23](autonomy.md) decides instead.
 - Verified by: `autonomy: a5 needs source me`
 
 ### AUT-14 · Access by autonomy
@@ -228,6 +232,44 @@ in the same attempt instead of starting over.
   stands, the risk check runs). Any other retry starts a fresh attempt as before ([LOOP-15](loop.md)).
 - Verified by: `pipeline: a retry runs a risk check that didn't finish again`, `machine: every stage and event pair is defined`
 
+### AUT-22 · A gate waits for a maintainer of that repo
+
+When users are set up, a gate that waits for "the owner" waits for any maintainer or admin of the intent's repo, and the first valid decision wins.
+
+- With `[auth]` set ([users.md](users.md)), "the owner" in AUT-12, AUT-18 and AUT-20 means a person for whom `can(user, "approve", repo)` holds (USR-1, USR-5); their approval on the page, GitHub (USR-9) or Telegram (USR-11) moves the mission through `machine.apply`, and a second decision on the same gate finds it already handled and changes nothing.
+- A contributor or viewer cannot clear a gate; with no such person for the repo, the card says so and names the admins.
+- Verified by: `autonomy: any maintainer of the repo can decide a gate`, `autonomy: a second decision on a handled gate changes nothing`, `autonomy: a contributor cannot clear a gate`
+
+### AUT-23 · Full autonomy for intents an admin or maintainer wrote or confirmed
+
+Full autonomy (a5) applies only to intents written or confirmed by an admin or a maintainer of that repo.
+
+- Replaces AUT-13's "source is `me`" when `[auth]` is set. Effective `a` = 5 only when the intent's author, or the person who confirmed it on the page, GitHub or Telegram, is an admin or has the maintainer role on the intent's repo at the time of the gate; an intent from a contributor or from any other source stays at most a4 until one of them confirms it. The confirmation is recorded on the timeline (USR-8).
+- Who wrote an intent (the writer) is found from the channel, never from the file's `source` or `u`/`i` lines, which anyone can type:
+  - From the intents repo: the verified GitHub login of the account that pushed the commit adding the intent file, judged as in AUT-35 (GitHub's verified login, never the commit's local name or e-mail). A commit whose account can't be verified has no writer.
+  - From Telegram: the person whose linked chat sent it (USR-11). From the page: the signed-in person. From the command line: the owner (the first admin, USR-6).
+  - Intents that existed before `[auth]` was set count as written by the owner.
+- The writer is kept with the mission (not written into the intent file) and shown on its timeline (USR-8). A later edit by another account never changes the writer.
+- The writer's role on the intent's repo (USR-5) sets how it starts: admin or maintainer, as AUT-13 says above; contributor, it runs but at most as a4; viewer, or an account that maps to no person (or has no writer), counts as the lowest role: the intent waits as a card for a maintainer or admin of that repo to confirm it, and nothing runs (no design, no worker, no cost) until one does. Dropping it instead needs the same role.
+- A confirmation is its own action (`confirm`, maintainer and above, USR-1) on the page, GitHub or Telegram; it is recorded with the person, and an intent confirmed by a maintainer is judged as one a maintainer wrote.
+- Without `[auth]`, AUT-13 is unchanged.
+- Verified by: `autonomy: a5 needs an admin or maintainer author or confirmer`, `autonomy: a contributor's intent is at most a4`, `autonomy: a confirmation by a maintainer lifts it to a5`, `autonomy: a5 follows the role at the gate`, `autonomy: the writer is the verified account that pushed the file`, `autonomy: a source line in the file does not make a writer`, `autonomy: an unmapped account's intent waits for confirmation and nothing runs`, `autonomy: a viewer's intent waits for confirmation`, `autonomy: a telegram intent has the linked person as writer`, `autonomy: a cli intent has the owner as writer`, `autonomy: intents from before auth count as the owner's`
+
+### AUT-24 · Raising autonomy needs a maintainer of that repo
+
+A raise of an intent's autonomy counts only from an admin or a maintainer of that repo.
+
+- Replaces "the owner's login" in AUT-35 when `[auth]` is set: a raise from the page counts when the signed-in person can `raise` (maintainer on the repo, or admin); a push to the intents repo counts when its verified GitHub account is such a user (the same verified-account rule as AUT-35). Any other raise is flagged, naming the account, and does not take effect; accepting a flag needs the same role.
+- Lowering stays open to the same people and applies at once (AUT-34). Contributors and viewers can't raise or lower.
+- Verified by: `autonomy: a maintainer's raise counts`, `autonomy: a contributor's raise is flagged`, `autonomy: a push is judged by the user's role`
+
+### AUT-25 · a0 stays with admins
+
+An a0 intent can be decided only by an admin.
+
+- With `[auth]` set, AUT-31's "only the owner decides" means admins: a maintainer's approval, answer or autonomy change on an a0 intent is refused with "only an admin can decide an a0 intent"; the shadow and the command line follow the same rule as in AUT-31.
+- Verified by: `autonomy: a maintainer cannot decide an a0 intent`, `autonomy: an admin decides an a0 intent`
+
 ### AUT-26 · The network is never fully open
 
 At no autonomy level can a worker reach the whole internet; it reaches the domains it is granted and no others.
@@ -277,6 +319,31 @@ The command line refuses to answer, approve, start, drop or tick steps on an a0 
 - Still allowed on an a0 intent: `status`, `next`, `logs`, `ui`, `doctor` and `towercab pause` (global, or for the intent as in SHD-22), since none of them answers, approves or advances anything.
 - Verified by: `cli: an a0 intent refuses answer approve start drop and step`, `cli: pause and status work on an a0 intent`, `commands: an a0 command row from the cli is dropped`
 
+### AUT-34 · The owner changes an intent's autonomy
+
+An intent's autonomy can be moved to any level from a0 to a5 and back, and the running mission follows from its next gate.
+
+- The change sets `a` in the intent file with `setField` (INT-24's front matter; every other line stays byte-identical) and is one commit to the intents repo, pushed like any intent edit. Setting the level it already has writes nothing.
+- Any level 0–5 is valid, including from and to a0 (AUT-31). The repo cap (AUT-8) still applies at the gate, so a5 on a repo capped lower behaves as the cap says.
+- The effective level (AUT-8) is the intent's current `a`, read when a gate decides (the spec, plan and merge gates), never a copy taken at start or pick. A raise applies from the mission's next gate; a lowering applies at once. A gate already waiting is decided again on the next loop pass: lowering to a1 keeps it waiting for the owner, raising to a4 or a5 lets it go on if AUT-4 or AUT-13 would. Work already done is not redone.
+- A worker's `lower_a` (AUT-7) and the owner's change write the same field; the last one written wins.
+- Each change is recorded on the intent's timeline (who, from → to, through which channel).
+- Verified by: `autonomy: changing a writes only the a line in one commit`, `autonomy: a running mission uses the new level at its next gate`, `autonomy: a lowering applies at once`, `autonomy: a waiting gate is decided again after a change`, `autonomy: setting the same level writes nothing`
+
+### AUT-35 · Raising autonomy counts only from the page or the owner's GitHub account
+
+A raise of an intent's autonomy counts only when the owner makes it on the web page or pushes it to the intents repo from their own GitHub account; any other raise is flagged and does not take effect.
+
+- The channels for raising are the local page (`POST /api/actions` with `actor: owner`, UI-65, as in AUT-32) and GitHub. There is no command for it on the command line and no shadow action: the shadow (SHD-19) refuses a request to raise with the reason "only you can raise autonomy", recorded as refused (SHD-12, UI-237). A `commands` row that raises and did not come from the page (`by: page`) is dropped and noted on the timeline (AUT-32). Raising from a0 is no different from any other raise.
+- A push to the intents repo counts as the owner's raise when the pushing GitHub account is the owner's login (PIP-44), wherever the push was made. Towercab checks the account, from the verified login of the commit's author or pusher as GitHub reports it, never the local `user.name` or e-mail in the commit, which anyone can set. A commit whose account cannot be verified does not count.
+- When the loop syncs the intents repo and finds `a` higher than the last level it accepted, and the commit that raised it does not count, it flags the raise and writes no commit back. The flag keeps who raised it (account, or `unknown`), from → to, and the commit. A first value on a new intent, and an `a` that was missing and is set, are not raises.
+- Deleting the `a:` line from an intent that had one is a raise to the level the intent then gets (a5, or a4 when `source` isn't `me`, AUT-9, AUT-13), and is judged like any other raise: from the owner's account it counts, from any other it is flagged and the mission keeps the level it had. Deleting the line when the intent already runs at that default, or a level above it, raises nothing. The page never deletes the line: it always writes a level (UI-257).
+- While a raise is flagged the mission uses the lower level (the one before the raise, AUT-8). Flagging is noted once on the intent's timeline (AUT-32) and shows a Needs-you card naming who raised it (UI-258).
+- A flag ends when the owner accepts the raise or sets the level back on the page (UI-257, UI-258), or when `a` is lowered to or below the accepted level by any channel. Accepting makes the raise count from the next gate.
+- Lowering is done by the owner on the page or on GitHub, like a raise, and applies at once (AUT-34); it is not held for a confirmation or a `yes`. A worker's `lower_a` (AUT-7) stays as it is. No new command-line command or shadow action lowers.
+- Like a0, this is a rule Towercab's own shadow, agents and CLI follow, not a security boundary (see Decisions): the owner's `gh` login on this machine cannot be told from the owner.
+- Verified by: `autonomy: the page raises a`, `autonomy: a shadow raise is refused`, `autonomy: a raising command row from the cli is dropped`, `autonomy: a raise by the owner on github counts`, `autonomy: a push is judged by the verified github account`, `autonomy: a raise by another account is flagged and not written back`, `autonomy: deleting the a line by another account is flagged as a raise to the default`, `autonomy: deleting the a line by the owner counts`, `autonomy: a flagged raise runs at the lower level`, `autonomy: accepting a flagged raise lifts the flag`
+
 ## Out of scope
 
 - Raising autonomy automatically.
@@ -322,5 +389,12 @@ The command line refuses to answer, approve, start, drop or tick steps on an a0 
   would be no stronger. So the page and GitHub count, and no extra proof of identity is built for
   them. a0 does not stop a process that deliberately uses that login or edits the intents repo or the
   database by hand.
+- Changing autonomy (the owner's calls, 2026-11-07): a raise applies from the next gate and a lowering
+  at once; a raise by another account is flagged, not written back, and the mission keeps the lower
+  level; the pushing GitHub account is checked, not the commit's local name; no command-line command
+  for either direction; raising is confirmed on the page, lowering is one click; deleting the `a` line
+  is a raise to the default. Conservative defaults taken: a worker's `lower_a` stays; a commit whose
+  account can't be verified doesn't count as the owner's; the page never deletes the line; and a
+  deletion that doesn't raise the level (the intent already runs at the default or above) is not flagged.
 - a3 counts like a4 at the spec gate: a lower `a` must never be looser than a higher one, and a3's
   spec used to merge on its own whenever nothing stopped it.

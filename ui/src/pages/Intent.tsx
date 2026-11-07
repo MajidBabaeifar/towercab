@@ -91,7 +91,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
   );
   return (
     <main class="page intent" id="main">
-      <Link class="back" href="/">
+      <Link class="back" href="/overview">
         <ChevronLeft size={16} />
         Overview
       </Link>

@@ -10,26 +10,29 @@ export interface Places {
   owner: number;
   /** `[repos.<r>].ahead`. */
   limit: number;
+  /** `[intents].owner_waits` (LOOP-132). */
+  ownerLimit: number;
   /** The intents ahead, working or waiting. */
   ids: string[];
 }
 
-/** Why a repo holds an intent back: the places of working intents (LOOP-100) or the cap (LOOP-101). */
+/** Why a repo holds an intent back: the places of working intents (LOOP-100) or `owner_waits` (LOOP-132). */
 export type Held =
   | { kind: "working"; working: number; limit: number }
-  | { kind: "cap"; working: number; owner: number; cap: number };
+  | { kind: "owner"; owner: number; limit: number };
 
 /**
- * LOOP-100, LOOP-101: null when the intent may start. One that outranks every intent ahead (a tie does
- * not) always may; else the cap of `2 × ahead` holds it first, then `ahead` working intents.
+ * LOOP-100, LOOP-101, LOOP-132: null when the intent may start. `owner_waits` intents waiting on the owner
+ * hold every intent; else one that outranks every intent ahead (a tie does not) may; else `ahead` working
+ * intents hold it.
  */
 export function heldBack(places: Places | undefined, intent: Intent, listing: Listing): Held | null {
   if (!places) return null;
+  const { working, owner, limit, ownerLimit } = places;
+  if (owner >= ownerLimit) return { kind: "owner", owner, limit: ownerLimit };
   const p = priorityOf(intent);
   const prio = new Map(listing.open.map((i) => [i.id, priorityOf(i)]));
   if (places.ids.every((id) => p > (prio.get(id) ?? 0))) return null;
-  const { working, owner, limit } = places;
-  if (working + owner >= 2 * limit) return { kind: "cap", working, owner, cap: 2 * limit };
   if (working >= limit) return { kind: "working", working, limit };
   return null;
 }
@@ -113,8 +116,8 @@ export function badAfter(listing: Listing): { id: string; ids: string[] }[] {
 
 /** LOOP-102: which rule held the intent back, as `status` and `next` word it. */
 export function heldText(h: Held, id: string): string {
-  return h.kind === "cap"
-    ? `repo is at the cap of ${h.cap} intents before build, ${h.working} working and ${h.owner} waiting on the owner (start ${id} to go now)`
+  return h.kind === "owner"
+    ? `repo has ${h.owner} intents waiting on you (start ${id} to go now)`
     : `repo has ${h.working} intents working ahead (start ${id} to go now)`;
 }
 

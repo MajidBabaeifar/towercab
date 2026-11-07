@@ -18,7 +18,7 @@ import { isRepoName } from "../intents/features.ts";
 import type { IntentStore, Listing } from "../intents/types.ts";
 import type { UiActions } from "./actions.ts";
 import { board } from "./board.ts";
-import { focus } from "./focus.ts";
+import { inbox, inboxAction } from "./inbox.ts";
 import { repos } from "./repos.ts";
 import { shadowView } from "./shadow.ts";
 import { activity, intentPage, overview, queue, RUN_NAME, redact, type UiSources } from "./state.ts";
@@ -80,7 +80,8 @@ const TYPES: Record<string, string> = {
   ".webmanifest": "application/manifest+json",
 };
 
-const PAGES = /^\/(?:board|focus|repos|queue|activity|i\/[A-Za-z0-9._-]+)?\/?$/;
+const PAGES =
+  /^\/(?:board|overview|repos|queue|activity|i\/[A-Za-z0-9._-]+|inbox(?:\/[A-Za-z0-9._-]+)?)?\/?$/;
 const ACTIONS = new Set([
   "merge",
   "pass",
@@ -104,7 +105,12 @@ const ACTIONS = new Set([
   "shadowReset",
   "repo-settings",
   "repo-move",
+  "budgets",
+  "seen",
+  "snooze",
+  "unsnooze",
 ]);
+const INBOX_ACTIONS = new Set(["seen", "snooze", "unsnooze"]);
 const INTENT_ID = /^[A-Za-z0-9._-]{1,100}$/;
 
 const NOT_BUILT = `<!doctype html>
@@ -295,6 +301,11 @@ export function startUi(o: UiOptions): UiServer {
       head?: unknown;
       changes?: unknown;
       confirmed?: unknown;
+      scope?: unknown;
+      daily?: unknown;
+      monthly?: unknown;
+      item?: unknown;
+      until?: unknown;
     };
     try {
       body = JSON.parse(raw) as typeof body;
@@ -318,6 +329,10 @@ export function startUi(o: UiOptions): UiServer {
       "shadowReset",
       "repo-settings",
       "repo-move",
+      "budgets",
+      "seen",
+      "snooze",
+      "unsnooze",
     ].includes(action);
     if (needsIntent && !INTENT_ID.test(intent))
       return json(res, 400, { ok: false, message: "Which intent?" });
@@ -344,80 +359,89 @@ export function startUi(o: UiOptions): UiServer {
       if (intent) await a.guard?.(intent, action, typeof body.actor === "string" ? body.actor : "");
       const no = () => Promise.reject(new Error("Secrets aren't available."));
       const noLimits = () => Promise.reject(new Error("Changing settings isn't available."));
-      const message =
-        action === "repo-settings"
-          ? await (a.repoSettings ?? noLimits)(repo, body.changes, body.confirmed === true)
-          : action === "repo-move"
-            ? await (a.repoMove ?? noLimits)(repo)
-            : action === "secret"
-              ? await (a.secret ?? no)(
-                  intent,
-                  Number(body.n),
-                  typeof body.value === "string" ? body.value : "",
-                )
-              : action === "approve-secret"
-                ? await (a.approveSecret ?? no)(intent, Number(body.n))
-                : action === "merge"
-                  ? await a.merge(intent)
-                  : action === "pass"
-                    ? await (a.pass ?? (() => Promise.reject(new Error("Passing on isn't available."))))(
-                        intent,
-                      )
-                    : action === "reply"
-                      ? await a.reply(intent, typeof body.text === "string" ? body.text : "")
-                      : action === "retry"
-                        ? await a.retry(intent)
-                        : action === "drop"
-                          ? await a.drop(intent)
-                          : action === "done"
-                            ? await (
-                                a.done ??
-                                (() => Promise.reject(new Error("Ending an intent isn't available.")))
-                              )(intent, typeof body.text === "string" ? body.text : "")
-                            : action === "steps"
+      const message = INBOX_ACTIONS.has(action)
+        ? await inboxAction(src, action, typeof body.item === "string" ? body.item : "", body.until)
+        : action === "budgets"
+          ? await (a.budgets ?? noLimits)(
+              typeof body.scope === "string" ? body.scope : "all",
+              body.daily,
+              body.monthly,
+            )
+          : action === "repo-settings"
+            ? await (a.repoSettings ?? noLimits)(repo, body.changes, body.confirmed === true)
+            : action === "repo-move"
+              ? await (a.repoMove ?? noLimits)(repo)
+              : action === "secret"
+                ? await (a.secret ?? no)(
+                    intent,
+                    Number(body.n),
+                    typeof body.value === "string" ? body.value : "",
+                  )
+                : action === "approve-secret"
+                  ? await (a.approveSecret ?? no)(intent, Number(body.n))
+                  : action === "merge"
+                    ? await a.merge(intent)
+                    : action === "pass"
+                      ? await (a.pass ?? (() => Promise.reject(new Error("Passing on isn't available."))))(
+                          intent,
+                        )
+                      : action === "reply"
+                        ? await a.reply(intent, typeof body.text === "string" ? body.text : "")
+                        : action === "retry"
+                          ? await a.retry(intent)
+                          : action === "drop"
+                            ? await a.drop(intent)
+                            : action === "done"
                               ? await (
-                                  a.steps ??
-                                  (() => Promise.reject(new Error("Switching to steps isn't available.")))
-                                )(intent)
-                              : action === "start"
-                                ? await a.start(intent)
-                                : action === "step"
-                                  ? await (
-                                      a.step ??
-                                      (() => Promise.reject(new Error("Ticking steps isn't available.")))
-                                    )(intent, Number(body.n), body.done !== false)
-                                  : action === "pause"
-                                    ? await a.pause(intent)
-                                    : action === "addRepo"
-                                      ? await a.addRepo(
-                                          typeof body.github === "string" ? body.github : "",
-                                          typeof body.name === "string" && body.name ? body.name : undefined,
-                                        )
-                                      : action === "features"
-                                        ? await a.features(repo)
-                                        : action === "accept"
-                                          ? await a.accept(pr, head)
-                                          : action === "close"
-                                            ? await a.close(
-                                                pr,
-                                                typeof body.text === "string" ? body.text : undefined,
-                                              )
-                                            : action === "granted"
-                                              ? await (
-                                                  a.granted ??
-                                                  (() => Promise.reject(new Error("Not available.")))
-                                                )()
-                                              : action === "scanningGranted"
+                                  a.done ??
+                                  (() => Promise.reject(new Error("Ending an intent isn't available.")))
+                                )(intent, typeof body.text === "string" ? body.text : "")
+                              : action === "steps"
+                                ? await (
+                                    a.steps ??
+                                    (() => Promise.reject(new Error("Switching to steps isn't available.")))
+                                  )(intent)
+                                : action === "start"
+                                  ? await a.start(intent)
+                                  : action === "step"
+                                    ? await (
+                                        a.step ??
+                                        (() => Promise.reject(new Error("Ticking steps isn't available.")))
+                                      )(intent, Number(body.n), body.done !== false)
+                                    : action === "pause"
+                                      ? await a.pause(intent)
+                                      : action === "addRepo"
+                                        ? await a.addRepo(
+                                            typeof body.github === "string" ? body.github : "",
+                                            typeof body.name === "string" && body.name
+                                              ? body.name
+                                              : undefined,
+                                          )
+                                        : action === "features"
+                                          ? await a.features(repo)
+                                          : action === "accept"
+                                            ? await a.accept(pr, head)
+                                            : action === "close"
+                                              ? await a.close(
+                                                  pr,
+                                                  typeof body.text === "string" ? body.text : undefined,
+                                                )
+                                              : action === "granted"
                                                 ? await (
-                                                    a.scanningGranted ??
+                                                    a.granted ??
                                                     (() => Promise.reject(new Error("Not available.")))
                                                   )()
-                                                : action === "shadowReset"
+                                                : action === "scanningGranted"
                                                   ? await (
-                                                      a.shadowReset ??
+                                                      a.scanningGranted ??
                                                       (() => Promise.reject(new Error("Not available.")))
                                                     )()
-                                                  : await a.resume(intent);
+                                                  : action === "shadowReset"
+                                                    ? await (
+                                                        a.shadowReset ??
+                                                        (() => Promise.reject(new Error("Not available.")))
+                                                      )()
+                                                    : await a.resume(intent);
       reply = { ok: true, message };
     } catch (e) {
       reply = { ok: false, message: (e as Error).message };
@@ -455,14 +479,7 @@ export function startUi(o: UiOptions): UiServer {
     if (path === "/api/queue") return json(res, 200, await queue(src));
     if (path === "/api/board") return json(res, 200, await board(src));
     if (path === "/api/shadow") return json(res, 200, shadowView(src));
-    if (path === "/api/focus") {
-      // UI-195: the waits the page has just acted on; anything that isn't a plain key is ignored.
-      const skip = (url.searchParams.get("skip") ?? "")
-        .split(",")
-        .filter((k) => /^[A-Za-z0-9._-]{1,40}$/.test(k))
-        .slice(0, 50);
-      return json(res, 200, await focus(src, skip));
-    }
+    if (path === "/api/inbox") return json(res, 200, await inbox(src));
     if (path === "/api/repos") {
       const a = o.actions;
       // UI-144: a repo's first look asks once for its backfill, while Towercab runs.
@@ -506,6 +523,8 @@ export function startUi(o: UiOptions): UiServer {
       return runFile(res, id, parts);
     }
     if (path.startsWith("/api/")) return json(res, 404, { error: "Not found." });
+    // UI-266: Focus is gone; its old address lands on the Inbox.
+    if (/^\/focus\/?$/.test(path)) return send(res, 302, "text/plain; charset=utf-8", "", { Location: "/" });
     if (PAGES.test(path)) return send(res, 200, "text/html; charset=utf-8", indexHtml());
     if (staticFile(res, path)) return;
     send(res, 404, "text/plain; charset=utf-8", "Not found.");
