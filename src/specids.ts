@@ -46,6 +46,25 @@ export function addedIds(diff: string): string[] {
   return [...new Set([...diff.matchAll(/^\+### ([A-Z]+-\d+)(?=\s|$)/gm)].map((m) => m[1]!))];
 }
 
+/**
+ * PIP-202: whether `branch` is a spec PR head of intent `intentId`: `towercab/<id>-…-spec`, where the
+ * segment right after the prefix is not a bare number (that is a sibling intent, `261105-2152-2`).
+ */
+export function ownSpecBranch(intentId: string, branch: string): boolean {
+  const prefix = `towercab/${intentId}-`;
+  if (!branch.startsWith(prefix) || !branch.endsWith("-spec")) return false;
+  const first = branch.slice(prefix.length).split("-")[0]!;
+  return first !== "" && !/^\d+$/.test(first);
+}
+
+/** PIP-202: the IDs on lines of an intent that say they are "already written". */
+export function namedAsWritten(text: string): string[] {
+  const out = new Set<string>();
+  for (const line of text.split("\n"))
+    if (/already written/i.test(line)) for (const id of parseIds(line)) out.add(id);
+  return [...out];
+}
+
 /** The next `count` free numbers of `prefix`, after the highest taken one. */
 export function nextFree(prefix: string, taken: Iterable<string>, count: number): string[] {
   let top = 0;
