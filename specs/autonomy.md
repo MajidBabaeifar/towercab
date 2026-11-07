@@ -47,6 +47,8 @@ Every intent runs verify, the red→green proof, CI, the review and the gate, wh
 
 - The stage order ([LOOP-3](loop.md)) has no stage chosen by `a`. The gate merges only with CI green
   and the review approved.
+- Draft change: the stages an intent skips are chosen by its kind ([PIP-175](pipeline.md)), never by `a`;
+  the stages that remain are not shortened. The code PR adjusts this row in the same commit as the code.
 - Verified by: `autonomy: every stage runs at every level`
 
 ### AUT-7 · A worker may lower autonomy

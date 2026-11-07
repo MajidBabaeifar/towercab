@@ -84,7 +84,7 @@ flowchart LR
 You steer with ordinary GitHub actions. Merge to approve, close to drop, comment or request changes
 to send it back with your notes, and reply to a question to answer it. `/retry` starts over. A local
 web page shows what needs you, what is stuck, what is moving and what it costs
-([specs/ui.md](specs/ui.md)), and Telegram tells you when something waits on you. With `[shadow] enabled` you can also talk to Towercab there: ask what is going on, think something through and have it act within limits you set ([specs/shadow.md](specs/shadow.md)).
+([specs/ui.md](specs/ui.md)), and Telegram tells you when something waits on you.
 
 <table>
   <tr>
@@ -150,10 +150,6 @@ web page shows what needs you, what is stuck, what is moving and what it costs
 
 ## Safety
 
-Towercab's work arrives as pull requests, and code decides whether they may merge: at a1–a3 you merge
-every change yourself, and at a4–a5 Towercab merges only what passes every check and its risk rules allow.
-Each run is sandboxed and can't touch your keys, other repos or protected files.
-
 | Layer | What it does |
 | --- | --- |
 | **Sandbox** | Every check and every Claude Code run is sandboxed: no access to your keys, tokens or other repos, and a worker reaches only the network domains it is granted. |
@@ -166,9 +162,6 @@ Each run is sandboxed and can't touch your keys, other repos or protected files.
 
 Early, and built for one person: it runs on one machine, for one owner, and is used daily by its
 author. Version 1 (Rust) is on branch `rust`.
-
-Cost: Towercab itself is free; the Claude Code runs it starts use your own Claude subscription or API
-key, and the web page shows what each intent cost.
 
 ## Docs
 
@@ -187,9 +180,6 @@ key, and the web page shows what each intent cost.
 | [specs/public.md](specs/public.md) | What this repo shows |
 | [specs/gitlab.md](specs/gitlab.md) | Projects hosted on GitLab |
 | [specs/shadow.md](specs/shadow.md) | The owner's shadow assistant on Telegram |
-| [specs/telegram.md](specs/telegram.md) | Buttons, replies and commands in Telegram |
-| [specs/users.md](specs/users.md) | Several people with roles |
-| [specs/observer.md](specs/observer.md) | An agent that watches how Towercab runs and proposes improvements |
 
 Want to help? Read [CONTRIBUTING.md](CONTRIBUTING.md); everyone taking part follows the
 [code of conduct](CODE_OF_CONDUCT.md).

@@ -672,6 +672,17 @@ A GitLab issue is scored, proposed as an intent PR, deduplicated and label-check
 - A GitHub and a GitLab issue never share an intent, because dedupe is on the full `issue:` URL.
 - Verified by: `gitlab issues: an issue becomes one intent PR`, `gitlab issues: a done intent blocks its issue`, `gitlab issues: a labelled issue with no intent is proposed once`, `gitlab issues: the scoring run gets no tools`
 
+### INT-69 · The kind of work
+
+An intent can say what kind of work it is.
+
+- `kind` (`bugfix`, `refactor`, `infra`, `feature` or `spec`, [PIP-173](pipeline.md)) is optional; any other
+  value, or a non-string, makes the file unreadable (INT-11).
+- Draft change: this adds `kind` to the known keys of INT-2; the code PR switches INT-2 in the same
+  commit as the code. Towercab never writes the field; an inferred kind is kept on the mission
+  (PIP-173), so the owner's other lines stay byte-identical.
+- Verified by: `intents: kind is read`, `intents: an unknown kind is unreadable`
+
 ### INT-71 · One writer for a new intent
 
 The page and `towercab add` create an intent through the same function, and what it writes is what a hand-written intent would be.
