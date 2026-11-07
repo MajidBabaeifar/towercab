@@ -417,14 +417,14 @@ live, and when its work stops for good its line goes.
 - In the loop's entry effects (LOOP-6), after the intent file's fields: entering `pick` sets the
   intent's line to `in progress`, adding `- [in progress] <title> <!-- intent <id> -->` after the last
   feature line when there is none; entering `done` sets it to `live` (added the same way when
-  missing); entering `stopped` removes it, whatever stopped it (a drop, a closed PR, the intent file
+  missing); entering `done` by `covered_by` (LOOP-156) keeps the line and appends `(covered by <id>)`, the ID linked as `DONE.md` links it, with the status `live` once the covering intent's line is live and `in progress` before, and it follows the covering line from then on; `reopen` (LOOP-157) removes the mark and restores the earlier status; entering `stopped` removes it, whatever stopped it (a drop, a closed PR, the intent file
   removed or moved), since a stopped intent is no longer being worked on and comes back as planned if
   it is queued again. A replaced attempt changes nothing: the new attempt's `pick` does. Only the status word of an existing line changes, so the
   owner's wording stays. The title is cleaned to one line of at most 200 characters.
 - Each edit is idempotent, so an entry retried after a crash repeats it harmlessly. A sync failure
   retries the entry on the next pass; any other refusal (a symlink, bytes that aren't UTF-8) is
   logged and the mission moves on.
-- Verified by: `features: a picked intent gets an in-progress line, other lines stay byte-identical`, `features: done marks the line live, keeping the owner's wording`, `features: a dropped intent's line is removed`, `features: the loop tracks an intent from pick to done`, `features: a dropped intent's line goes`, `features: an unreadable feature list doesn't hold a mission`
+- Verified by: `features: a picked intent gets an in-progress line, other lines stay byte-identical`, `features: done marks the line live, keeping the owner's wording`, `features: a dropped intent's line is removed`, `features: the loop tracks an intent from pick to done`, `features: a dropped intent's line goes`, `features: an unreadable feature list doesn't hold a mission`, `features: a covered intent keeps its line marked covered by the other`, `features: a covered line follows the covering intent's status`
 
 ### INT-39 · Writing the list from the repo
 
