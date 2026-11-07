@@ -226,3 +226,19 @@ test("repo: an apply that ends ok ticks a settings-only intent's steps", async (
   await applySettings(s.deps, s.web);
   expect(stepsOf(s, "i1")).toEqual([true, false]);
 });
+
+test("repo: settings script runs never overlap", async () => {
+  const s = await settingsRig();
+  await settingsPass(s.deps, s.web);
+  let running = 0;
+  let most = 0;
+  s.r.tools.on(scriptPath(s), async (args) => {
+    running++;
+    most = Math.max(most, running);
+    await new Promise((r) => setImmediate(r));
+    running--;
+    return args[0] === "--check" ? { code: 1, stdout: "gap\n", stderr: "", timedOut: false } : okResult(PLAN);
+  });
+  await Promise.all([settingsPass(s.deps, s.web), applySettings(s.deps, s.web)]);
+  expect(most).toBe(1);
+});

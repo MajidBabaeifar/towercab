@@ -73,6 +73,29 @@ export async function withScript<T>(
   repo: RepoConfig,
   fn: (s: Script) => Promise<T>,
 ): Promise<T> {
+  // One at a time: the release is exported to one folder per tag, which a run clears when it starts and ends,
+  // so a daily check and an owner's Apply (or two Applies on different repos) must not overlap.
+  const turn = scriptLock;
+  let release!: () => void;
+  scriptLock = new Promise<void>((r) => {
+    release = r;
+  });
+  await turn;
+  try {
+    return await runWithScript(d, repo, fn);
+  } finally {
+    release();
+  }
+}
+
+/** The end of the queue of `withScript` runs. */
+let scriptLock: Promise<void> = Promise.resolve();
+
+async function runWithScript<T>(
+  d: SettingsDeps,
+  repo: RepoConfig,
+  fn: (s: Script) => Promise<T>,
+): Promise<T> {
   const ci = d.config.repos.get(CI_REPO);
   if (!ci) throw new SettingsUnknown("add the ci repo to Towercab");
   const dir = clonePath(ci, d.home.root);
