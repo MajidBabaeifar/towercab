@@ -1869,6 +1869,54 @@ An old secret finding in a file that is not a test or fixture is never ignored o
 - A finding still at the head is not affected: it is fixed in the code (PIP-193).
 - Verified by: `pipeline: an old finding outside tests asks the owner with rule, file, line and commit`, `pipeline: an old finding outside tests is not offered for gitleaksignore`, `pipeline: test and fixture paths are recognised`, `pipeline: a path with a parent segment is not a test path`
 
+### PIP-197 · A change in a specialist area also gets a specialist review
+
+A code PR that touches security or infrastructure files is also reviewed by a specialist for that
+area, next to the general review, so the risky parts are read by someone who knows what to look for.
+
+- Areas and the paths that call them in (matched by code on the PR's changed files, not by the
+  agent): `Security`: `src/pipeline/sandbox.ts`, `src/pipeline/guard.ts`, `src/pipeline/access.ts`,
+  `src/github/**`, and any path with a `sandbox`, `auth`, `secret`, `token`, `credential` or
+  `permission` segment or file-name word. `Infra`: `ansible/**`, `deploy/**`, `infra/**`,
+  `terraform/**`, `Dockerfile*`, `docker-compose*`, `*.service`, `.github/workflows/**`. A path may
+  call in both. No path matches → no specialist runs and the review is as in PIP-4.
+- Each called-in specialist runs after the general review, on the same head and with the same inputs
+  (intent, spec IDs, plan, diff, CI result, `REVIEW.md`), read-only and in a new session. Agents
+  `review-security` and `review-infra` (`agents/*.md`, PIP-76) differ from `review` only in their
+  brief: what to look for in that area.
+- A specialist's result is kept with what it judged and reused while the diff's `git patch-id` is
+  unchanged (as PIP-4). Its cost counts with the review's (MET-28).
+- A specialist that fails to finish ends as any run does (PIP-24): the mission waits for the owner
+  with the reason. It is not skipped.
+- Verified by: `pipeline: a security change gets a security review`, `pipeline: an infra change gets an infra review`, `pipeline: a change outside the specialist areas gets only the general review`, `pipeline: specialist review reused for an unchanged diff`
+
+### PIP-198 · Specialist findings follow the rules of the general review
+
+A specialist reports only Important findings, never nits, and its findings count toward approval and
+go back to the builder like any others.
+
+- Schema `review` (PIP-5) is used unchanged. The specialist's prompt asks only for `important`
+  findings, with `pass` set to `Security` or `Infra`; any `nit` it returns is dropped by code before
+  the verdict. `REVIEW.md`'s `## What Important means here` applies to it too.
+- The verdict (PIP-5) is computed over the general review and every specialist together: approved
+  only when each is approved, and with no important finding from any of them. The specialist's
+  `door` and `red_lines` are merged into the general review's (a one-way door from any wins).
+- Its findings appear in the Review comment (PIP-42, PIP-92) under their pass, and a specialist that
+  doesn't approve sends the change back to build in the same fix rounds as PIP-98, not extra ones.
+- Verified by: `pipeline: specialist nits are dropped`, `pipeline: a specialist's important finding stops approval`, `pipeline: specialist findings go back to the builder in the same fix rounds`, `pipeline: review comment shows specialist findings under their pass`
+
+### PIP-199 · A specialist review has the review's limits
+
+A specialist review runs under the same limits and permissions as the general review, so an extra
+reviewer cannot read more or spend more than the first.
+
+- `agents/review-security.md` and `agents/review-infra.md` carry the front matter of `agents/review.md`
+  (tools, `allow`, sandbox, model `review`, `session: new`, `timeout_min`, `max_cost_usd: 3`; PIP-94);
+  `[agent].max_budget_usd` can only lower it (PIP-71).
+- Both are listed in the agents table with the same permissions as `review`; this narrows nothing
+  and gains nothing (PIP-77).
+- Verified by: `agents: specialist reviews have the review's limits`
+
 ### PIP-194 · A plan that adds a wait lists the wait table in its access
 
 When a plan adds an owner wait or a new question, it asks up front for the file that holds the wait
@@ -1898,6 +1946,7 @@ fix: the plan lists the file up front.
 | [worker](../agents/worker.md) | Writes tests and code, and the code PR's text. | Read, Edit, Write, Glob, Grep, Bash in the sandbox; WebFetch for granted domains; protected paths per the grants. | mission's | mission |
 | [repair](../agents/repair.md) | Fixes red checks, a conflict, a review finding or an owner's answer in the worker's session. | The worker's tools and permissions, no more. | mission's | mission |
 | [review](../agents/review.md) | Reviews the code PR against the intent, plan and `REVIEW.md`; reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
+| review-security, review-infra (PIP-197) | Specialist reviews of a code PR that touches security or infra files; Important findings only; read only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [risk](../agents/risk.md) | Judges the risk of the spec, plan and code at their gates, and reviews the spec a second time (PIP-96, PIP-97); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [merge-review](../agents/merge-review.md) | Checks that a merge Towercab made by code kept both sides (PIP-169); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [score](../agents/score.md) | Turns a GitHub issue into a scored intent ([INT-22](intents.md)); runs outside any mission in an empty folder. | Nothing: no tools. | none | `[agent].model` |
