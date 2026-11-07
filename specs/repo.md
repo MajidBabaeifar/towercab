@@ -675,21 +675,27 @@ When the repo sets a limit itself, the overlay can make it stricter but never lo
 
 - For a key the repo sets, the effective value is the stricter of the two: `max_autonomy` the lower number;
   `protected` the union of both lists. Any other key the repo sets (`tests`, `live`, `releases`, `kind`, `readiness`,
-  `waive`, `go_live`, `workers`, `ahead`) keeps the repo's value, and the overlay's different value is ignored with
-  the note `overlay <key> ignored: the repo sets it`.
-- A repo that sets no `max_autonomy` takes the overlay's, which counts as the repo's choice, since there is nothing to
-  loosen. The overlay never adds to the granted paths of a plan ([AUT-14](autonomy.md)), so a protected glob
-  from it blocks like the repo's own.
+  `waive`, `go_live`, `workers`, `ahead`) keeps the repo's value, and the overlay's different value is refused with
+  the line below.
+- For a key the repo leaves out, the overlay is held to Towercab's default: it may be as strict or stricter, never
+  looser. Accepted: `max_autonomy` 1–5 (the default 5 is the loosest), `protected` globs (any list only adds),
+  `releases: manual`, `workers` and `ahead` at or below their defaults, `kind` and `readiness`. Refused: `live`,
+  `waive` and `go_live` (they skip a requirement or state a way to go live on its own), `tests` other than the
+  default list, `workers`/`ahead` above the default, and overlay checks that check nothing (REPO-35's rule: at
+  least one command reading the repo's own files). A refused key is dropped, not the whole overlay.
+- Every refusal, for a key the repo sets or leaves out, is one line: `overlay <key> refused: looser than <the repo's
+  value|the default>`. It shows in `doctor` (REPO-47) and on the repo page (UI-276). The overlay never adds to the
+  granted paths of a plan ([AUT-14](autonomy.md)), so a protected glob from it blocks like the repo's own.
 - The guard still protects the repo's own `CLAUDE.md`, `AGENTS.md`, `REVIEW.md` and `TOWERCAB.md` and `.git/**`
   whatever the overlay says (REPO-8); an overlay cannot remove a path from the protected list.
-- Verified by: `repo: the overlay lowers max_autonomy`, `repo: the overlay cannot raise max_autonomy`, `repo: overlay protected paths add to the repo's`, `repo: a loosening overlay key is ignored with a note`, `repo: the overlay cannot unprotect the repo's own files`
+- Verified by: `repo: the overlay lowers max_autonomy`, `repo: the overlay cannot raise max_autonomy`, `repo: overlay protected paths add to the repo's`, `repo: a loosening overlay key is refused with one line`, `repo: an omitted key is held to the default`, `repo: an overlay that loosens the default is refused`, `repo: overlay checks that check nothing are refused`, `repo: the overlay cannot unprotect the repo's own files`
 
 ### REPO-47 · Doctor shows where settings come from
 
 `towercab doctor` says, for each setting of a repo, whether it came from the repo, the overlay or the default.
 
 - For each repo with an overlay, `doctor` prints `<name>: <key> = <value> (repo|overlay|default)` for `max_autonomy`,
-  `protected`, the checks, and each other key in effect, plus REPO-46's ignored-key notes and REPO-43's errors.
+  `protected`, the checks, and each other key in effect, plus REPO-46's refusal lines, REPO-49's replaced-checks line and REPO-43's errors.
   A repo without an overlay prints nothing extra. `doctor` changes nothing and its exit code does not change for a
   valid overlay; an invalid one counts as a failed check like an invalid `TOWERCAB.md`.
 - Verified by: `doctor: settings show their source`, `doctor: an invalid overlay fails`, `doctor: no overlay prints no source lines`
@@ -701,6 +707,19 @@ A settings change that Towercab makes never writes the overlay into the repo, an
 - REPO-16's settings PR and REPO-19's move change only the repo's `TOWERCAB.md`. A key held by the overlay is shown as
   overlay-sourced (UI-276); changing it is done by editing the overlay file, and the page says so, with its path.
 - Verified by: `repo: a settings PR never copies overlay values`, `repo: an overlay key is not saved through a PR`
+
+### REPO-49 · Owner told when repo checks replace the overlay's
+
+When a repo starts to have checks of its own and an overlay's checks exist, the owner is told once, with both named, and nothing switches silently.
+
+- Trigger: the base branch has a non-empty ` ```checks ` block (CLAUDE.md or AGENTS.md, REPO-45) and the overlay's
+  `verifying.md` also has one. From then on the repo's checks run (REPO-44).
+- One notice per repo and per pair of block texts, kept in `meta` so a restart or the next fetch does not repeat it:
+  a notice card on the repo's page and its card in the All view (UI-276) and one Telegram message
+  ([TG](telegram.md), sent once, no buttons): `<name>: the repo now has its own checks (<file> on <base>), so the
+  overlay's checks in <overlay path> are no longer used.` Changing either block's text sends a new notice.
+- The notice changes nothing and asks nothing; an intent already running keeps the checks it started with.
+- Verified by: `repo: repo checks replacing overlay checks send one notice`, `repo: the same pair does not notify twice`, `repo: a running intent keeps its checks`
 
 **Grammar** (`src/repo/markdown.ts`)
 

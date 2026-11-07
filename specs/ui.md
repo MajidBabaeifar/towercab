@@ -1517,10 +1517,10 @@ The repo's page says for each setting whether it came from the repo, the overlay
 
 - Each of `max_autonomy`, `protected`, the checks and the other keys in effect ([REPO-44](repo.md)) carries a small
   label `repo`, `overlay` or `default`. An overlay-sourced value has no edit control; it says `Set in
-  <path to the overlay file>` ([REPO-48](repo.md)). An ignored overlay key shows REPO-46's note, and an invalid
+  <path to the overlay file>` ([REPO-48](repo.md)). A refused overlay key shows REPO-46's one line, a notice card shows REPO-49's replaced-checks notice naming both sets of checks, and an invalid
   overlay shows its reason like an invalid `TOWERCAB.md` (UI-153). A repo without an overlay shows `repo` and `default` labels only.
 - The labels come from the API's repo view, not from the page's own guess.
-- Verified by: `ui: settings show repo, overlay or default`, `ui: an overlay setting has no edit control`, `ui: an ignored overlay key shows its note`
+- Verified by: `ui: settings show repo, overlay or default`, `ui: an overlay setting has no edit control`, `ui: a refused overlay key shows its line`, `ui: replaced overlay checks show a notice`
 
 ### UI-219 · Sign in with GitHub
 
