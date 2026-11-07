@@ -1631,7 +1631,8 @@ The unknown-repo card shows the same folded install help when adding its repo fa
 Every intent or problem card that reports a repo Towercab can't reach because the App isn't installed carries the folded install help.
 
 - A problem from a failed add (UI-60, `meta.repo-add-failed:<name>`) and an intent or problem card whose reason is LOOP-122's text show the "See more" block of UI-209 under their reason line. The state (`GET /api/state`) adds `installHelp: {app, url, steps[]}` to such a card, taken from the same lookup as LOOP-122; a card whose reason is another error has none.
-- Verified by: `ui: a failed add problem shows the install steps`, `ui: an intent card with the missing install shows the steps`, `state: installHelp is set only for a missing install`
+- The card's help is cached for 10 minutes per repo (compared without case), so a page that refetches every few seconds does not ask GitHub each time. The cache is dropped at once when the repo becomes reachable (a token for it is minted, or the repo is added), so the help never outlives the problem, and a failed lookup is not cached.
+- Verified by: `ui: a failed add problem shows the install steps`, `ui: an intent card with the missing install shows the steps`, `state: installHelp is set only for a missing install`, `state: install help is cached for 10 minutes per repo`, `state: install help is refreshed when the repo becomes reachable`
 
 ### UI-212 · "Try again" adds the repo without retyping
 
