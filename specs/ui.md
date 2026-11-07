@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..149, UI-150..154, UI-155..164, UI-168, UI-184..191, UI-192..197, UI-239, UI-244..251, UI-236..238 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..149, UI-150..154, UI-155..164, UI-168, UI-184..191, UI-192..197, UI-239, UI-244..251, UI-236..238, UI-253..256 · **Prefix:** UI
 
 ## Purpose
 
@@ -1345,15 +1345,16 @@ The owner sets the daily and monthly budget, and each repo's caps, in the page.
   showing what is spent so far in that period. A repo's page has the same two fields as "Caps" inside
   Settings (UI-150), saved apart from the settings form because they apply at once and open no PR. A
   line under them says `Saved in config.toml on this machine.`
-- "Save" posts `{action: "budgets", scope: "all" | <repo>, daily, monthly}` (UI-66's actions); the
+- "Save budget" (on a repo's page "Save caps", so it never reads as the settings form's "Save") posts `{action: "budgets", scope: "all" | <repo>, daily, monthly}` (UI-66's actions); the
   server writes the changed keys to `config.toml` (MET-31); an empty field removes the key. An invalid
   amount is refused in the form and by the server with MET-31's reason; a refusal keeps the typed values
   (UI-67). Reply: `Saved. Applies now.`
 - Each change is recorded in the Activity page (UI-64) as kind `settings`, naming the key and the old →
   new value (`daily budget: $80 → $100`, `none` for unset), with the time. A save that changes nothing
   records nothing.
-- `GET /api/state` carries `budgets` (`{daily, monthly, spentDay, spentMonth}`) and
-  `GET /api/repos?repo=<name>` carries the repo's own. Fits 360 px, works in light and dark and by keyboard.
+- `GET /api/state` carries `budgets` (`{scope, daily, monthly, spentDay, spentMonth, …}`) and the reached
+  caps (`caps`) inside `spend`, so the response's top-level keys stay as they were;
+  `GET /api/repos?repo=<name>` carries the repo's own `budgets`. Fits 360 px, works in light and dark and by keyboard.
 - Verified by: `ui: the budget section saves daily and monthly amounts`, `ui: a repo page has its own caps`, `ui: an invalid budget is refused in the form and by the server`, `ui: a budget save is written to config.toml`, `ui: a budget change shows in activity as old to new`, `ui: an unchanged save records nothing`, `ui: screenshots light, dark and mobile`
 
 ### UI-254 · A reached cap is a card that offers to raise it

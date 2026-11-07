@@ -22,6 +22,15 @@ export function act(action: string, intent?: string, text?: string): Promise<Act
   return post({ action, intent, text });
 }
 
+/** UI-253: save a scope's budget (`all`) or a repo's caps; an amount left out stays, null removes it. */
+export function saveBudgets(
+  scope: string,
+  daily?: number | null,
+  monthly?: number | null,
+): Promise<ActionReply> {
+  return post({ action: "budgets", scope, daily, monthly });
+}
+
 /** UI-160, SHIP-22: tick (or untick) one of the owner's steps. */
 export function tickStep(intent: string, n: number, done: boolean): Promise<ActionReply> {
   return post({ action: "step", intent, n, done });

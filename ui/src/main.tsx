@@ -102,9 +102,21 @@ function TopBar({ top, path }: { top: Top | null; path: string }) {
         ) : null}
         <span class="grow" />
         {top ? (
-          <p class={`top-spend${top.overBudget ? " over" : ""}`} title="Spent today">
-            <span class="num">{top.spendToday}</span>
-            <span class="meta"> today{top.budget ? ` ${top.budget}` : ""}</span>
+          <p
+            class={`top-spend${top.overBudget ? " over" : ""}${top.budgetChip && top.budgetChip.level !== "ok" ? ` ${top.budgetChip.level}` : ""}`}
+            title="Spent against the budget"
+          >
+            {top.budgetChip ? (
+              <>
+                <span class="num">{top.budgetChip.text}</span>
+                {top.budgetChip.note ? <span class="meta"> · {top.budgetChip.note}</span> : null}
+              </>
+            ) : (
+              <>
+                <span class="num">{top.spendToday}</span>
+                <span class="meta"> today{top.budget ? ` ${top.budget}` : ""}</span>
+              </>
+            )}
           </p>
         ) : null}
         {top ? <PauseButton top={top} /> : null}
