@@ -97,7 +97,7 @@ const ACTIONS = new Set([
   "steps",
   "pause",
   "resume",
-  "granted",
+  "apply-settings",
   "scanningGranted",
   "addRepo",
   "features",
@@ -325,7 +325,7 @@ export function startUi(o: UiOptions): UiServer {
     const needsIntent = ![
       "pause",
       "resume",
-      "granted",
+      "apply-settings",
       "scanningGranted",
       "addRepo",
       "features",
@@ -349,7 +349,13 @@ export function startUi(o: UiOptions): UiServer {
     const head = typeof body.head === "string" ? body.head : "";
     if (action === "accept" && !/^[0-9a-f]{7,64}$/.test(head))
       return json(res, 400, { ok: false, message: "Which version of the pull request?" });
-    if ((action === "features" || action === "repo-settings" || action === "repo-move") && !isRepoName(repo))
+    if (
+      (action === "features" ||
+        action === "repo-settings" ||
+        action === "repo-move" ||
+        action === "apply-settings") &&
+      !isRepoName(repo)
+    )
       return json(res, 400, { ok: false, message: "Which repo?" });
     if (!o.actions) {
       return json(res, 409, {
@@ -378,12 +384,8 @@ export function startUi(o: UiOptions): UiServer {
                 body.daily,
                 body.monthly,
               )
-            : action === "budgets"
-              ? await (a.budgets ?? noLimits)(
-                  typeof body.scope === "string" ? body.scope : "all",
-                  body.daily,
-                  body.monthly,
-                )
+            : action === "apply-settings"
+              ? await (a.applySettings ?? noLimits)(repo)
               : action === "repo-settings"
                 ? await (a.repoSettings ?? noLimits)(repo, body.changes, body.confirmed === true)
                 : action === "repo-move"
@@ -445,23 +447,17 @@ export function startUi(o: UiOptions): UiServer {
                                                       pr,
                                                       typeof body.text === "string" ? body.text : undefined,
                                                     )
-                                                  : action === "granted"
+                                                  : action === "scanningGranted"
                                                     ? await (
-                                                        a.granted ??
+                                                        a.scanningGranted ??
                                                         (() => Promise.reject(new Error("Not available.")))
                                                       )()
-                                                    : action === "scanningGranted"
+                                                    : action === "shadowReset"
                                                       ? await (
-                                                          a.scanningGranted ??
+                                                          a.shadowReset ??
                                                           (() => Promise.reject(new Error("Not available.")))
                                                         )()
-                                                      : action === "shadowReset"
-                                                        ? await (
-                                                            a.shadowReset ??
-                                                            (() =>
-                                                              Promise.reject(new Error("Not available.")))
-                                                          )()
-                                                        : await a.resume(intent);
+                                                      : await a.resume(intent);
       reply = { ok: true, message };
     } catch (e) {
       reply = { ok: false, message: (e as Error).message };

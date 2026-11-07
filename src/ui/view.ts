@@ -753,10 +753,14 @@ export interface SettingsView {
   notes: string[];
   /** When it was checked, unix seconds; 0 when never. */
   at: number;
-  /** REPO-32: the one step the owner has, shared by every repo; null when nothing is missing. */
-  step: string | null;
-  /** The step's button works: Towercab runs (a read-only page can't act). */
-  canGrant: boolean;
+  /** REPO-38: what Apply would change; empty when the plan has no lines to show. */
+  plan: { what: string; now?: string; after?: string }[];
+  /** REPO-38: why there is no plan to show, or null. */
+  planNote: string | null;
+  /** REPO-39: an Apply is running for this repo now. */
+  applying: boolean;
+  /** REPO-39: the Apply button is offered (gaps, and Towercab runs). */
+  canApply: boolean;
 }
 
 /** UI-194: what one finished phase did, in its plain brief. */
@@ -886,8 +890,6 @@ export interface ReposPage {
   all: RepoSummary[];
   /** The totals over every repo (UI-137). */
   spend: RepoSpendView;
-  /** REPO-32: the one settings step the owner has (the same on every repo page), or null. */
-  settingsStep: { text: string; canGrant: boolean } | null;
   /** PIP-150: the one step for the code scanning alerts permission. */
   scanningStep: { text: string; canGrant: boolean } | null;
   /** What went wrong: the intents repo can't be read, or the asked-for repo doesn't exist. */

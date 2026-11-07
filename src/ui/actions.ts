@@ -25,7 +25,6 @@ import type { IntentStore } from "../intents/types.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
 import { grantScanning } from "../pipeline/alerts.ts";
 import { ownerMergeRefusal } from "../pipeline/teammate.ts";
-import { grantPermission } from "../settings/store.ts";
 import { resetShadow } from "../shadow/store.ts";
 import { approveSecret } from "../ship/secret-steps.ts";
 import { currentPr, type DoneNote, validNote } from "./state.ts";
@@ -41,8 +40,8 @@ export interface UiActions {
   pass?(intent: string): Promise<string>;
   /** UI-160, SHIP-22: tick (or untick) one of the owner's steps. */
   step?(intent: string, n: number, done: boolean): Promise<string>;
-  /** REPO-32: the owner granted the App Administration (write); settings are applied again. */
-  granted?(): Promise<string>;
+  /** REPO-39: the owner's Apply: the standard settings of one repo, with their own login. */
+  applySettings?(repo: string): Promise<string>;
   /** PIP-150: the owner granted the App Code scanning alerts (read); alerts are read again. */
   scanningGranted?(): Promise<string>;
   /** UI-164, LOOP-76: "I did it myself": ends the intent; the note becomes a ticked step. */
@@ -97,6 +96,8 @@ export interface ActionDeps {
     propose(repo: string, changes: unknown, confirmed: boolean): Promise<string>;
     move(repo: string): Promise<string>;
   } | null;
+  /** REPO-39: Apply for one repo, bound to the loop's database, tools and forge; null: not available. */
+  applySettings?: ((repo: string) => Promise<string>) | null;
   /** The loop's last list of proposed intents (LOOP-92); Accept refuses one whose file can't be read. */
   proposed?: () => ProposedPr[];
   /** SHIP-35: writes a typed secret; none: the page can't take one. */
@@ -307,12 +308,6 @@ export function createActions(d: ActionDeps): UiActions {
       return "Answer saved to the intent. Towercab goes on with it on its next pass.";
     },
 
-    async granted() {
-      return grantPermission(d.db)
-        ? "Noted. Towercab applies the standard settings again at its next check."
-        : "Nothing to clear: the GitHub App was not missing the permission.";
-    },
-
     async scanningGranted() {
       return grantScanning(d.db)
         ? "Noted. Towercab reads code scanning alerts again on the next red check."
@@ -459,6 +454,11 @@ export function createActions(d: ActionDeps): UiActions {
 
     async budgets(scope, daily, monthly) {
       return saveBudgets(d, scope, daily, monthly);
+    },
+
+    async applySettings(repo) {
+      if (!d.applySettings) throw new Error("Towercab isn't running, so it can't apply settings now.");
+      return d.applySettings(repo);
     },
 
     async repoMove(repo) {

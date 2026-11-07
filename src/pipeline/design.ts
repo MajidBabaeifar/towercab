@@ -16,7 +16,16 @@ import { plainLine, TITLE_MAX, titleProblem } from "../intents/naming.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { currentRisk, openPointsMd, openPointsWhy, type Risk, riskMd } from "../risk.ts";
-import { addedIds, applyMap, headingIds, moveIds, yields } from "../specids.ts";
+import {
+  addedIds,
+  applyMap,
+  headingIds,
+  moveIds,
+  namedAsWritten,
+  ownSpecBranch,
+  parseIds,
+  yields,
+} from "../specids.ts";
 import { cancelHung, ciState, hungReason, redLog } from "./ci.ts";
 import {
   asEnv,
@@ -62,6 +71,10 @@ export interface Taken {
   open: { number: number; ids: string[] }[];
   /** Why the open PRs couldn't be read (GitHub unreachable), else null. */
   unchecked: string | null;
+  /** PIP-202: the IDs the intent's own spec PRs added, merged or open (never moved, never "taken"). */
+  own: Set<string>;
+  /** Why the intent's merged spec PRs couldn't be read, else null. */
+  ownUnchecked: string | null;
 }
 
 /** The `### <ID> ·` headings of `specs/` at `ref` of the clone. */
@@ -86,19 +99,44 @@ export async function takenIds(cx: Ctx, m: Mission): Promise<Taken> {
   const clone = cloneOf(cx, m);
   const baseRef = `refs/remotes/origin/${repo.base}`;
   const open: Taken["open"] = [];
+  const own = new Set<string>();
   let unchecked: string | null = null;
-  try {
-    const prs = (await viaForge(cx.github.openPrBranches(repo.github))).map((p) => ({
-      number: p.number,
-      headRefName: p.branch,
-    }));
-    const others = prs.filter((p) => p.number !== m.spec_pr && p.headRefName !== `${m.branch}-spec`);
+  let ownUnchecked: string | null = null;
+  let fetched = false;
+  const fetchAll = async () => {
     await git(
       cx.tools,
       clone,
       ["fetch", "--quiet", "--prune", "origin"],
       await cx.github.gitAuth(repo.github),
     );
+    fetched = true;
+  };
+  try {
+    const prs = (await viaForge(cx.github.openPrBranches(repo.github))).map((p) => ({
+      number: p.number,
+      headRefName: p.branch,
+    }));
+    const mine = (p: { number: number; headRefName: string }) =>
+      p.number === m.spec_pr ||
+      p.headRefName === `${m.branch}-spec` ||
+      ownSpecBranch(m.intent, p.headRefName);
+    const others = prs.filter((p) => !mine(p));
+    await fetchAll();
+    // PIP-202: the intent's own open spec PRs are never a clash, and their rows are the intent's own.
+    for (const p of prs.filter(mine)) {
+      try {
+        const diff = await git(cx.tools, clone, [
+          "diff",
+          `${baseRef}...refs/remotes/origin/${p.headRefName}`,
+          "--",
+          "specs",
+        ]);
+        for (const id of addedIds(diff)) own.add(id);
+      } catch (e) {
+        cx.log(`spec PR #${p.number}: can't read its IDs, skipped: ${(e as Error).message}`);
+      }
+    }
     for (const p of others) {
       try {
         const diff = await git(cx.tools, clone, [
@@ -117,7 +155,21 @@ export async function takenIds(cx: Ctx, m: Mission): Promise<Taken> {
     unchecked = (e as Error).message;
     cx.log(`${m.intent}: IDs unchecked against open PRs: ${unchecked}`);
   }
-  return { base: await baseIds(cx, clone, baseRef), open, unchecked };
+  // PIP-202: the rows the intent's own merged spec PRs added are the intent's own too.
+  try {
+    const merged = (await viaForge(cx.github.mergedPrBranches(repo.github))).filter(
+      (p) => p.mergeCommit && ownSpecBranch(m.intent, p.branch),
+    );
+    if (merged.length && !fetched) await fetchAll();
+    for (const p of merged) {
+      const diff = await git(cx.tools, clone, ["diff", `${p.mergeCommit}^`, p.mergeCommit!, "--", "specs"]);
+      for (const id of addedIds(diff)) own.add(id);
+    }
+  } catch (e) {
+    ownUnchecked = (e as Error).message;
+    cx.log(`${m.intent}: ${IDS_UNCHECKED_MERGED}: ${ownUnchecked}`);
+  }
+  return { base: await baseIds(cx, clone, baseRef), open, unchecked, own, ownUnchecked };
 }
 
 const claimedLine = (ids: string[]) =>
@@ -139,6 +191,9 @@ function baseLine(base: Set<string>): string {
 
 /** What the design is told when the open PRs could not be read (PIP-130). */
 export const IDS_UNCHECKED = "IDs unchecked against open PRs";
+
+/** The log note when the intent's merged spec PRs could not be read (PIP-202). */
+export const IDS_UNCHECKED_MERGED = "IDs unchecked against merged spec PRs";
 
 /** PIP-130: whether a PR is approved (a review in state APPROVED); unreadable counts as not approved. */
 async function approvedPr(cx: Ctx, github: string, n: number | null): Promise<boolean> {
@@ -380,11 +435,18 @@ async function prompt(
     : "";
   const t = await takenIds(cx, m);
   const claimed = [...new Set(t.open.flatMap((p) => p.ids))].sort();
+  const outcome = intent.sections.get("Proposed outcome") ?? "";
+  const line = /spec IDs:\s*([^\n]+)/i.exec(outcome);
+  const written = [...new Set([...t.own, ...namedAsWritten(outcome)])];
+  const existing = (line ? parseIds(line[1]!) : []).filter((id) => t.base.has(id) && written.includes(id));
+  const existingLine = existing.length
+    ? `\nThese reserved IDs are already rows on the base branch, written by this intent's own earlier spec PR: ${existing.join(", ")}. They are existing rows to build or make Live, not new ones; do not rewrite or renumber them.`
+    : "";
   return {
     prompt: render("design", {
       intent: intentData(intent.text),
       earlier: answer + settled + files2 + (await ciSection(cx, m)),
-      reserved: `${reservedLine(intent.sections.get("Proposed outcome") ?? "")}\n${claimedLine(claimed)}${baseLine(t.base)}${t.unchecked === null ? "" : `\n${IDS_UNCHECKED}: the open PRs could not be read (${t.unchecked}). Take IDs after the highest on the base branch; Towercab checks them again before the spec PR is opened or updated.`}`,
+      reserved: `${reservedLine(outcome)}${existingLine}\n${claimedLine(claimed)}${baseLine(t.base)}${t.unchecked === null ? "" : `\n${IDS_UNCHECKED}: the open PRs could not be read (${t.unchecked}). Take IDs after the highest on the base branch; Towercab checks them again before the spec PR is opened or updated.`}`,
     }),
     files,
   };

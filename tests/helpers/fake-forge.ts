@@ -121,6 +121,11 @@ export class FakeForge implements Forge {
       .filter((p) => p.repo === repo && p.state === "OPEN")
       .map((p) => ({ number: p.number, branch: p.branch }));
   }
+  async mergedPrBranches(repo: string) {
+    return this.prs
+      .filter((p) => p.repo === repo && p.state === "MERGED")
+      .map((p) => ({ number: p.number, branch: p.branch, mergeCommit: p.mergeCommit }));
+  }
   async reviews(repo: string, n: number) {
     return this.pr(repo, n).reviews;
   }

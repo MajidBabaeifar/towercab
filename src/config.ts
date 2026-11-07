@@ -85,8 +85,6 @@ export interface Config {
   ignoredRepos: Map<string, string>;
   github: { appId: number; me: string; apiBase: string; name?: string } | null;
   gitlab: GitLabConfig | null;
-  /** REPO-31: `[github] settings`: `check` (default) or `apply` the standard GitHub settings. */
-  githubSettings: "check" | "apply";
   telegram: { botToken: string; chatId: string; apiBase: string } | null;
   /** SHD-11: `[shadow]`: the owner's Claude session in Telegram and what it may do without asking. */
   shadow: { enabled: boolean; free: ShadowFree[]; dailyBudgetUsd: number; model: string | null };
@@ -200,7 +198,6 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       me: r.gitlabLogin(gitlab),
       tokenFile: gitlabTokenFile(r, gitlab),
     },
-    githubSettings: settingsMode(r, github ?? {}),
     telegram: telegram && {
       botToken: r.str(telegram, "telegram", "bot_token", ""),
       chatId: String(telegram.chat_id ?? ""),
@@ -298,14 +295,6 @@ export function readTokenFile(file: string): { token: string } | { why: string }
 export function tokenFileProblem(file: string): string | null {
   const r = readTokenFile(file);
   return "why" in r ? r.why : null;
-}
-
-/** REPO-31: `[github] settings` is `check` (default) or `apply`. */
-function settingsMode(r: Reader, github: Record<string, unknown>): "check" | "apply" {
-  const v = github.settings;
-  if (v === undefined || v === "check") return "check";
-  if (v === "apply") return "apply";
-  throw r.err("settings must be check or apply");
 }
 
 function parseRepo(r: Reader, name: string, raw: unknown): RepoConfig {

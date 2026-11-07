@@ -172,6 +172,8 @@ export interface Forge {
   openPrOn(repo: string, head: string): Promise<number | null>;
   /** Every open change request: number and branch. */
   openPrBranches(repo: string): Promise<{ number: number; branch: string }[]>;
+  /** Merged change requests (the latest 300): number, branch and merge commit (null when the host did not say). */
+  mergedPrBranches(repo: string): Promise<{ number: number; branch: string; mergeCommit: string | null }[]>;
   reviews(repo: string, n: number): Promise<Review[]>;
   updatePrBody(repo: string, n: number, body: string): Promise<void>;
   commentOnPr(repo: string, n: number, text: string, how?: { inline?: boolean }): Promise<Result>;

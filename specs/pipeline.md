@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..156, PIP-165..172, PIP-182..186 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..156, PIP-165..172, PIP-182..186, PIP-192..193, PIP-196, PIP-197..199, PIP-202 · **Prefix:** PIP
 
 ## Purpose
 
@@ -425,6 +425,7 @@ Only the owner's reviews and comments move an intent; anyone else's are ignored.
 - Author login = `[github].me` (case-insensitive), with a non-empty body or a review state. Comments
   by the App's bot or anyone else never raise an event. Comments older than `feedback_seen` are
   skipped; `feedback_seen` moves forward when an event is taken.
+- With `[auth]` set ([users.md](users.md)), [USR-9](users.md) decides who counts instead of the owner's login alone.
 - Verified by: `events: only the owner's comments count`
 
 ### PIP-45 · Slash commands
@@ -1648,6 +1649,7 @@ An intent that names requirement numbers in advance gets different ones, written
 
 - At pick, Towercab reads the IDs in the intent's `## Proposed outcome` (`spec IDs: PIP-130..132`, ranges and lists) and checks them against the base branch and the requirement IDs added by open spec PRs (PIP-130).
 - A reserved range that sits in a gap is valid when nothing on `main` or in an open spec PR uses its IDs; it is never renumbered just for being in a gap.
+- An ID is taken only when it exists on the base branch or in an open spec PR of another intent; an ID that is the intent's own (written by its own merged or open spec PR, or named by the intent file as already written) is never taken (PIP-202).
 - A clash renumbers the whole reserved range to the next free numbers of the same prefix, keeping its length, and rewrites that line and any other mention of the old IDs in the intent through `setField`-style edits that leave other lines byte-identical; the new numbers are what the design gets as its reserved IDs.
 - The change is committed to the intents repo like any intent edit (INT rules) and noted in the mission's log; nothing else in the intent changes. No clash → the intent is untouched.
 - Verified by: `pipeline: reserved IDs that clash are renumbered at pick`, `pipeline: renumbered IDs are written back to the intent`, `pipeline: free reserved IDs leave the intent untouched`, `pipeline: a reserved range in a gap is not renumbered`
@@ -1963,6 +1965,61 @@ A stage can only call the code host through the `Forge` interface; the raw `gh` 
 - `npm run typecheck` fails when a stage reads a `GitHub` member from `Ctx.github`.
 - Verified by: `forge: Ctx.github is a Forge and nothing more`, `forge: stages make the same host calls through Forge`
 
+### PIP-202 · An intent's own spec rows are never renumbered
+
+Towercab never moves an ID that is the intent's own: one its own spec pull request wrote (merged or open), or one the intent file itself names as already written.
+
+- At pick (PIP-131) and in the checks before the design runs and before it publishes (PIP-130), a reserved ID is counted as taken only if it exists on the base branch or is added by an open spec PR of another intent, and is not the intent's own.
+- An ID is the intent's own when either holds: (a) its row on the base branch, or in an open spec PR, was added by a spec PR of this intent; or (b) the intent file names it as already written (for example "already written; make them Live"). A spec PR belongs to the intent when its head branch starts with `towercab/<intent id>-`, ends with `-spec`, and the segment right after the prefix is not a bare number (the real form is `towercab/<intent id>-<short title>-spec`; the shorter `towercab/<intent id>-spec` also matches). A bare number there marks a sibling intent: `towercab/261105-2152-2-…-spec` does not belong to `261105-2152`. For a merged PR, the IDs are the `### <ID> ·` headings its merge adds.
+- An own ID on the base branch stays as written, and the design gets it as an existing row to build or make Live, not as a new one. An open spec PR of the same intent never makes its own IDs a clash.
+- A reserved ID whose rows on the base branch belong to another intent, or to no intent (no matching spec PR and not named as already written by the intent), is still moved by PIP-131.
+- If the merged spec PRs cannot be read, the reserved IDs are left unmoved except those that exist on the base branch with no own-ID evidence from the intent file; the mission's log notes "IDs unchecked against merged spec PRs", and PIP-132 stays the backstop.
+- Verified by: `pipeline: reserved IDs from the intent's own merged spec PR are kept`, `pipeline: reserved IDs from the intent's own open spec PR are kept`, `pipeline: reserved IDs the intent names as already written are kept`, `pipeline: a spec PR head is matched by the intent id prefix and the -spec suffix`, `pipeline: a sibling intent's spec PR head is not matched`, `pipeline: reserved IDs that belong to another intent's rows are still moved`, `pipeline: reserved IDs on main that belong to no intent are still moved`, `pipeline: unreadable merged spec PRs leave reserved IDs unmoved`
+
+### PIP-203 · A revision started by the owner's comment is answered with a reply
+
+When a design, plan or build revision answers the owner's comments, the worker also writes a reply to them.
+
+- The result of a revision that the owner's feedback started (PIP-25, PIP-43; on the spec, plan or code PR) gains `reply`: Markdown written by the worker (PIP-40), and asked for in the prompt. A revision that changes nothing is asked to return one saying `Nothing to change: <why>`, and it is posted (PIP-204).
+- A missing, empty or unreadable `reply` never blocks, fails, repeats or delays the revision: the revision is applied and pushed as if the reply were there, and Towercab posts a generic reply in its place: `Revised in <short commit sha>`, the list of files the revision changed (at most 20, then "and <n> more"), and the line `Generated by Towercab: the worker wrote no reply.` It is built by code from facts it owns (PIP-40) and posted and threaded like a written reply (PIP-204). When nothing changed, it says `No files changed.` Towercab never starts another revision to get a better reply. The reply is not asked for on a revision Towercab started itself (red checks PIP-82, conflicts PIP-81, review or gate fixes, repairs) nor on a first run.
+- The prompt lists each comment of the feedback with its id, so the reply can answer them one by one (PIP-205). The PR description is still rewritten as before (PIP-48); `reply` is in addition.
+- Verified by: `pipeline: a feedback revision asks for a reply`, `pipeline: a missing reply gets a generic one with files and commit`, `pipeline: the generic reply is marked generated`, `pipeline: a missing reply never blocks or repeats a revision`, `pipeline: a revision Towercab started needs no reply`, `pipeline: a revision that changes nothing still replies`, `pipeline: the feedback prompt lists each comment with its id`
+
+### PIP-204 · The reply is one PR comment, with a pointer in each line thread
+
+Towercab posts the reply as one general comment on the PR the revision changed, and adds a one-line pointer in each line thread it answers, so no thread looks ignored.
+
+- Posted by `Forge` after the revision's commit is pushed. The general comment is a new PR comment that names the agent and answers every comment of the revision, quoting or linking each one (PIP-205). It is the only place the full reply is written.
+- For each owner comment of the revision that is a line comment or part of a review thread, `Forge` also posts a threaded reply in that thread: `Answered in <link to the general comment>`. Plain PR comments and review bodies (Approve or Request changes) cannot be threaded, so they get no pointer; the general comment quotes and links them.
+- The general comment has the header `**Reply** · round <n>` and the marker `<!-- towercab:reply:<n> -->`, as PIP-42; the pointers carry the header and the marker `<!-- towercab:reply-pointer:<n>:<comment id> -->`. The same round edits its general comment and its pointers instead of adding more. Nothing is posted before the commit it describes. Pointers are posted after the general comment, since they link to it.
+- A host failure while posting is retried on the next pass; it never loses the revision or sends the mission back. A pointer that fails does not hold back the general comment.
+- Verified by: `github: the reply is one general comment with header and marker`, `github: a line comment gets an answered-in pointer in its thread`, `github: a plain comment gets no pointer and is quoted`, `pipeline: the reply is posted after the revision is pushed`, `pipeline: a failed reply post is retried`, `pipeline: a failed pointer does not hold back the reply`
+
+### PIP-205 · What the reply says
+
+The reply tells the owner, in plain words, how Towercab read the comment, what it changed or left alone, and what is still open.
+
+- Written to `prompts/writing.md`: the outcome first; no step names, field names or other internal terms. Parts: how the comment was read; what changed in the PR (and what was not changed and why); new or still-open questions and points, each with a recommendation, or one line saying nothing is open.
+- Each comment of the revision gets its own part, quoted or linked (PIP-204), so that several comments handled in one revision get one reply that answers each of them (PIP-203). A comment the worker did not act on is still answered, with the reason.
+- A comment that needs no change is answered briefly in the form `Nothing to change: <why>`, so silence never reads as ignored.
+- `agents/design.md`, `agents/plan.md` and `agents/build.md` carry these rules for a feedback revision.
+- Verified by: `prompts: revision prompts ask for a reply that answers each comment`, `prompts: the reply rules follow the writing guide`, `prompts: a comment needing no change is answered Nothing to change`
+
+### PIP-206 · A reply is not feedback and does not replace the description
+
+Towercab's replies never start a revision, and the PR description is kept up to date as before.
+
+- A reply is a comment of the App's bot, so it never raises an event (PIP-42, PIP-44), including in a thread under the owner's comment, and never moves `feedback_seen`.
+- The PR description is rewritten by every revision as today (PIP-48); a reply does not stand in for it.
+- Verified by: `events: a reply under the owner's comment raises no event`, `pipeline: a revision still rewrites the PR description`
+
+### PIP-207 · One reply per revision, even when handled together
+
+Several comments taken in one revision, and a comment arriving while a reply is posted, never produce two replies for the same revision.
+
+- A revision takes every unseen owner comment on the PR (PIP-44) and returns one `reply` for them. The reply is posted once per revision round (PIP-204). A comment that arrives after the revision started waits for the next revision and gets its own reply then.
+- Verified by: `pipeline: several comments get one reply that answers each`, `pipeline: a comment that arrives during a revision gets the next reply`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
@@ -1972,7 +2029,8 @@ A stage can only call the code host through the `Forge` interface; the raw `gh` 
 | [worker](../agents/worker.md) | Writes tests and code, and the code PR's text. | Read, Edit, Write, Glob, Grep, Bash in the sandbox; WebFetch for granted domains; protected paths per the grants. | mission's | mission |
 | [repair](../agents/repair.md) | Fixes red checks, a conflict, a review finding or an owner's answer in the worker's session. | The worker's tools and permissions, no more. | mission's | mission |
 | [review](../agents/review.md) | Reviews the code PR against the intent, plan and `REVIEW.md`; reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
-| review-security, review-infra (PIP-197) | Specialist reviews of a code PR that touches security or infra files; Important findings only; read only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
+| [review-security](../agents/review-security.md) | The security specialist's review of a code PR that touches security files (PIP-197); Important findings only; reads only. | Specialist reviews of a code PR that touches security or infra files; Important findings only; read only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
+| [review-infra](../agents/review-infra.md) | The infra specialist's review of a code PR that touches infra files (PIP-197); Important findings only; reads only. | Specialist reviews of a code PR that touches security or infra files; Important findings only; read only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [risk](../agents/risk.md) | Judges the risk of the spec, plan and code at their gates, and reviews the spec a second time (PIP-96, PIP-97); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [merge-review](../agents/merge-review.md) | Checks that a merge Towercab made by code kept both sides (PIP-169); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [score](../agents/score.md) | Turns a GitHub issue into a scored intent ([INT-22](intents.md)); runs outside any mission in an empty folder. | Nothing: no tools. | none | `[agent].model` |

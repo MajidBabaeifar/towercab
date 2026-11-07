@@ -1,6 +1,6 @@
 # Repo files
 
-**Status:** Live: REPO-1..13, REPO-14..19, REPO-20..27, REPO-30..32 · **Prefix:** REPO
+**Status:** Live: REPO-1..13, REPO-14..19, REPO-20..27, REPO-30..33, REPO-38..42 · **Prefix:** REPO
 
 ## Purpose
 
@@ -479,7 +479,8 @@ An intent whose whole outcome is a GitHub settings change is delivered as owner 
   intent has an exit and never waits without one. Towercab does not apply them itself.
 - When an Apply ([REPO-39](#repo-39--apply-by-the-owners-click)) for the intent's repo ends with its
   `--check` `ok`, Towercab ticks those steps and the intent ends done as in [PIP-113](pipeline.md), with
-  no branch and no code pull request. A ruleset step held back by the guard stays unticked and is listed
+  no branch and no code pull request. The steps Apply ticks are those whose text starts `Apply the standard GitHub
+  settings` (the plan's instructions ask for that wording); other steps stay the owner's. A ruleset step held back by the guard stays unticked and is listed
   for the owner with the guard's words. A setting outside the standard list (not in `ci`'s script) stays an owner step.
 - Verified by: `repo: a settings-only intent becomes owner steps`, `repo: an apply that ends ok ticks a settings-only intent's steps`
 
@@ -487,7 +488,7 @@ An intent whose whole outcome is a GitHub settings change is delivered as owner 
 
 When a repo has settings gaps, its card shows exactly what Apply would change.
 
-- Right after a daily check that ends `gaps` (and on a page load with a stored result but no plan), Towercab
+- Right after a daily check that ends `gaps` (and again after an Apply that leaves gaps), Towercab
   runs the pinned `apply-settings --plan <owner/name>` ([REPO-31](#repo-31--applying-the-settings)'s
   guard reads the same output) with the App's token, which only reads, or as the owner when the App is refused
   ([REPO-41](#repo-41--the-app-needs-no-administration-permission)), and stores its JSON beside the

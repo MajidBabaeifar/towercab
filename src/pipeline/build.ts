@@ -57,6 +57,7 @@ import {
   type SkewLine,
 } from "./guard.ts";
 import { mechanicalMerge, testsOf } from "./mechanical.ts";
+import { ignoreRoundOk } from "./old-finding.ts";
 import { writePlanToMain } from "./plan.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { type Access, parseResult, type Question } from "./schemas.ts";
@@ -658,6 +659,22 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
   const intent = await intentOf(cx, m);
   await coGit(cx, m, ["add", "-A"]);
   const staged = (await coGit(cx, m, ["diff", "--cached", "--name-only"])).trim();
+  // PIP-192: an ignore round may push `.gitleaksignore` with the listed fingerprints and nothing else;
+  // any other change is thrown away and the round runs again as a normal repair.
+  if (staged && d.repair?.ignore) {
+    const diff = await coGit(cx, m, ["diff", "--cached", "-U0", "--", ".gitleaksignore"]);
+    if (!ignoreRoundOk(staged, diff, d.repair.ignore.fingerprints)) {
+      await coGit(cx, m, ["reset", "--quiet", "--hard", d.roundFrom ?? "HEAD"]);
+      await coGit(cx, m, ["clean", "-fdq"]);
+      const again = cx.record(
+        m,
+        "setup",
+        {},
+        { repair: { what: d.repair.what, details: d.repair.ignore.fallback, kind: d.repair.kind } },
+      );
+      return setupOrWorker(cx, again);
+    }
+  }
   // A conflict round's merge is committed even when the resolution kept this branch's side whole.
   const merging = await coGit(cx, m, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]).then(
     () => true,
@@ -699,6 +716,9 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
     if (d.repair.kind === "ci" && d.ci?.reruns)
       patch.ci = { ...d.ci, reruns: { ...d.ci.reruns, [head]: false } };
   }
+  // PIP-192: the head an ignore round produced gets no second one.
+  if (d.repair?.ignore && head !== d.roundFrom)
+    patch.ci = { ...(patch.ci ?? d.ci), ignored: { ...d.ci?.ignored, [head]: true } } as PipeData["ci"];
   if (!d.repair) patch.lockHead = head;
   const files = await repoFiles(cx, m);
   void effectiveOf(m, intent, files);

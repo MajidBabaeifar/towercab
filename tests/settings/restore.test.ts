@@ -2,9 +2,8 @@
 
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { settingsCommand } from "../../src/cli.ts";
-import { settingsPass } from "../../src/settings/apply.ts";
 import { fakeGitHub } from "../github/fakes.ts";
-import { settingsRig } from "./helpers.ts";
+import { checkThenApply, settingsRig } from "./helpers.ts";
 
 let saved: string | undefined;
 beforeEach(() => {
@@ -16,8 +15,8 @@ afterEach(() => {
 });
 
 async function applied() {
-  const s = await settingsRig({ apply: true });
-  await settingsPass(s.deps, s.web);
+  const s = await settingsRig();
+  await checkThenApply(s);
   s.gh.writes.length = 0;
   const w = {
     config: s.r.config,
@@ -74,7 +73,7 @@ test("cli: settings restore lists what was added since and leaves it", async () 
 });
 
 test("cli: settings restore refuses what it can't do", async () => {
-  const s = await settingsRig({ apply: true });
+  const s = await settingsRig();
   const w = {
     config: s.r.config,
     home: s.deps.home,

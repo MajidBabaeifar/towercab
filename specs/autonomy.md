@@ -116,6 +116,7 @@ Full autonomy applies only to intents the owner wrote; an intent from anywhere e
 
 - Effective `a` = 5 only when the intent's `source` is `me` (or missing: the owner's file);
   any other `source` → at most 4.
+- With `[auth]` set, [AUT-23](autonomy.md) decides instead.
 - Verified by: `autonomy: a5 needs source me`
 
 ### AUT-14 · Access by autonomy
@@ -234,6 +235,44 @@ in the same attempt instead of starting over.
   run the gate's checks and risk check, not a new design or plan), code → `review` (the review
   stands, the risk check runs). Any other retry starts a fresh attempt as before ([LOOP-15](loop.md)).
 - Verified by: `pipeline: a retry runs a risk check that didn't finish again`, `machine: every stage and event pair is defined`
+
+### AUT-22 · A gate waits for a maintainer of that repo
+
+When users are set up, a gate that waits for "the owner" waits for any maintainer or admin of the intent's repo, and the first valid decision wins.
+
+- With `[auth]` set ([users.md](users.md)), "the owner" in AUT-12, AUT-18 and AUT-20 means a person for whom `can(user, "approve", repo)` holds (USR-1, USR-5); their approval on the page, GitHub (USR-9) or Telegram (USR-11) moves the mission through `machine.apply`, and a second decision on the same gate finds it already handled and changes nothing.
+- A contributor or viewer cannot clear a gate; with no such person for the repo, the card says so and names the admins.
+- Verified by: `autonomy: any maintainer of the repo can decide a gate`, `autonomy: a second decision on a handled gate changes nothing`, `autonomy: a contributor cannot clear a gate`
+
+### AUT-23 · Full autonomy for intents an admin or maintainer wrote or confirmed
+
+Full autonomy (a5) applies only to intents written or confirmed by an admin or a maintainer of that repo.
+
+- Replaces AUT-13's "source is `me`" when `[auth]` is set. Effective `a` = 5 only when the intent's author, or the person who confirmed it on the page, GitHub or Telegram, is an admin or has the maintainer role on the intent's repo at the time of the gate; an intent from a contributor or from any other source stays at most a4 until one of them confirms it. The confirmation is recorded on the timeline (USR-8).
+- Who wrote an intent (the writer) is found from the channel, never from the file's `source` or `u`/`i` lines, which anyone can type:
+  - From the intents repo: the verified GitHub login of the account that pushed the commit adding the intent file, judged as in AUT-35 (GitHub's verified login, never the commit's local name or e-mail). A commit whose account can't be verified has no writer.
+  - From Telegram: the person whose linked chat sent it (USR-11). From the page: the signed-in person. From the command line: the owner (the first admin, USR-6).
+  - Intents that existed before `[auth]` was set count as written by the owner.
+- The writer is kept with the mission (not written into the intent file) and shown on its timeline (USR-8). A later edit by another account never changes the writer.
+- The writer's role on the intent's repo (USR-5) sets how it starts: admin or maintainer, as AUT-13 says above; contributor, it runs but at most as a4; viewer, or an account that maps to no person (or has no writer), counts as the lowest role: the intent waits as a card for a maintainer or admin of that repo to confirm it, and nothing runs (no design, no worker, no cost) until one does. Dropping it instead needs the same role.
+- A confirmation is its own action (`confirm`, maintainer and above, USR-1) on the page, GitHub or Telegram; it is recorded with the person, and an intent confirmed by a maintainer is judged as one a maintainer wrote.
+- Without `[auth]`, AUT-13 is unchanged.
+- Verified by: `autonomy: a5 needs an admin or maintainer author or confirmer`, `autonomy: a contributor's intent is at most a4`, `autonomy: a confirmation by a maintainer lifts it to a5`, `autonomy: a5 follows the role at the gate`, `autonomy: the writer is the verified account that pushed the file`, `autonomy: a source line in the file does not make a writer`, `autonomy: an unmapped account's intent waits for confirmation and nothing runs`, `autonomy: a viewer's intent waits for confirmation`, `autonomy: a telegram intent has the linked person as writer`, `autonomy: a cli intent has the owner as writer`, `autonomy: intents from before auth count as the owner's`
+
+### AUT-24 · Raising autonomy needs a maintainer of that repo
+
+A raise of an intent's autonomy counts only from an admin or a maintainer of that repo.
+
+- Replaces "the owner's login" in AUT-35 when `[auth]` is set: a raise from the page counts when the signed-in person can `raise` (maintainer on the repo, or admin); a push to the intents repo counts when its verified GitHub account is such a user (the same verified-account rule as AUT-35). Any other raise is flagged, naming the account, and does not take effect; accepting a flag needs the same role.
+- Lowering stays open to the same people and applies at once (AUT-34). Contributors and viewers can't raise or lower.
+- Verified by: `autonomy: a maintainer's raise counts`, `autonomy: a contributor's raise is flagged`, `autonomy: a push is judged by the user's role`
+
+### AUT-25 · a0 stays with admins
+
+An a0 intent can be decided only by an admin.
+
+- With `[auth]` set, AUT-31's "only the owner decides" means admins: a maintainer's approval, answer or autonomy change on an a0 intent is refused with "only an admin can decide an a0 intent"; the shadow and the command line follow the same rule as in AUT-31.
+- Verified by: `autonomy: a maintainer cannot decide an a0 intent`, `autonomy: an admin decides an a0 intent`
 
 ### AUT-26 · The network is never fully open
 

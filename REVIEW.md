@@ -28,6 +28,10 @@ differences from the plan and edge cases that fail safe. Report only Important f
 - Style that Biome already enforces.
 - Missing doc comments on unexported functions.
 
+## Specialist paths
+
+- security: `src/pipeline/sandbox.ts`, `src/pipeline/guard.ts`, `src/pipeline/access.ts`, `src/claude.ts`, `src/github/**`, `agents/**`
+
 ## Red lines
 
 - `src/machine.ts`: the state machine; a wrong move merges, stops or loses work silently.
