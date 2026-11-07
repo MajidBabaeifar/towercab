@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-115..119, LOOP-129..132 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-115..119, LOOP-129..132 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -1261,13 +1261,23 @@ Whatever Towercab waits on the owner for, the owner can end or move the intent f
   itself, LOOP-15) and the page's button (UI-164). The owner's one-line note (what they did) becomes a
   step in the plan's `## Your steps` that is already ticked, with the time (SHIP-17, SHIP-22), so the
   plan records the work; without a note the step reads "Done by the owner". `your steps` (LOOP-74) ends by ticking the last step
-  (SHIP-22), or with `done`, `retry` or `drop`.
+  (SHIP-22), or with `done`, `retry` or `drop`. `your steps first` offers `done` too, as both steps waits
+  do: the owner may have done the steps and the change itself, and the open code PR is closed as for any
+  `done` with the confirmation below.
+- An exit that would close an open code PR that has commits (`done`, `steps` and `drop`) asks for one
+  confirmation first, naming the PR and its commit count ("This closes PR #12 (3 commits) and deletes its
+  branch. Nothing is merged."). This includes `no changes` after a repair round, where the PR still
+  holds the repair commits. The page asks it in a confirm (UI-164); the CLI prints it and needs `--yes`
+  (`towercab done <id> --yes`) or refuses with the same text; an exit from Telegram or the API without
+  the confirmation is refused with it. A mission with no open code PR, or a PR with no commits beyond
+  its base, needs none. The PR and commit count come from the forge when the confirmation is asked; when
+  it cannot be read the exit is refused with that reason rather than done without a warning.
 - The ask, the Telegram message (LOOP-14) and `towercab status` (LOOP-13) name the exits of the wait in
   plain words.
 - A test walks every row of **Waits**, including the ones LOOP-74 adds, applies every exit from each
   wait through `machine.apply`, and fails when a wait has no exit that leaves it for `done`, `stopped`
   or another stage, or when a wait in the code is missing from the table.
-- Verified by: `machine: every wait has an exit that ends or moves the intent`, `machine: no changes can end as done`, `cli: done ends an intent the owner did`, `cli: done turns the note into a ticked step`, `outbox: the message names the exits`, `status: waits list their exits`, `machine: every wait has an exit besides a reply that ends or moves the intent`, `db: the commands rebuild keeps existing rows and accepts done and steps`
+- Verified by: `machine: every wait has an exit that ends or moves the intent`, `machine: no changes can end as done`, `cli: done ends an intent the owner did`, `cli: done turns the note into a ticked step`, `outbox: the message names the exits`, `status: waits list their exits`, `machine: every wait has an exit besides a reply that ends or moves the intent`, `db: the commands rebuild keeps existing rows and accepts done and steps`, `cli: done at no changes after a repair round asks to confirm the open PR`, `cli: steps and drop confirm an open PR with commits`, `cli: done without a PR needs no confirmation`, `machine: done is offered at your steps first`
 
 ### LOOP-77 · The same wait again is stuck
 
@@ -1278,13 +1288,14 @@ A mission that lands on the same wait again with nothing new is marked stuck and
   the mission's `data`, shown as "Stuck: this came back with nothing new" with the reason, and cleared on
   any move out of the wait to a different one or when something new arrives (a changed head, an owner
   answer that was not yet used).
-- A stuck wait offers only the exits that change something: `steps`, `done` (where it applies), `retry`
-  and `drop`. `continue` and the reply box are left out of the page, the Telegram message and `status`,
-  and a bare `answer` for a stuck mission is refused with `<id> is stuck at <wait>: a reply would land
-  here again; use steps, done, retry or drop`.
+- A stuck wait offers only the exits that change something: `steps`, `done`, `retry` and `drop`, each
+  only if that wait has it in its exits (LOOP-76). `continue` and the reply box are left out of the page,
+  the Telegram message and `status`, and a bare `answer` for a stuck mission is refused with `<id> is
+  stuck at <wait>: a reply would land here again; use <exits>`, where `<exits>` lists exactly the
+  offered ones in plain words, joined with commas and "or" (`retry or drop` at a wait that has only those).
 - Nothing about the mission's state changes: stuck is a display and an offer, and `machine.apply` still
   moves it only on events.
-- Verified by: `machine: the same wait again with nothing new is stuck`, `machine: something new clears stuck`, `cli: answer on a stuck mission is refused`, `outbox: a stuck wait offers only the other exits`, `machine: an answer without words still counts as new`
+- Verified by: `machine: the same wait again with nothing new is stuck`, `machine: something new clears stuck`, `cli: answer on a stuck mission is refused`, `outbox: a stuck wait offers only the other exits`, `machine: an answer without words still counts as new`, `cli: the stuck refusal lists only the exits the wait offers`
 
 ### LOOP-78 · A part per repo, built in parallel
 
@@ -1478,8 +1489,8 @@ like a crash; `–` = ignored)
 | recheck ([AUT-21](autonomy.md)) | – | → design | → plan | → review | – |
 | reviewed (PIP-142, PIP-143) | – | → design | – | → gate | – |
 | resume | merge (held) → again; else – | – | – | – | – |
-| owner_done (LOOP-76) | `steps` → done; else – | – | – | – | → done, only at a wait with the `done` exit (`no changes`) |
-| to_steps (PIP-113) | → `steps` with steps in the plan, else → plan; `steps` and plan – | → `steps` or plan | → `steps` or plan | → `steps` or plan | → `steps` or plan |
+| owner_done (LOOP-76) | `steps` → done; else – | – | – | – | → done, only at a wait with the `done` exit (`no changes`, `your steps first`, `several repos`) |
+| to_steps (PIP-113) | –; `steps` – | – | – | – | → `steps` with steps in the plan, else → plan; only at a wait with the `steps` exit |
 
 - again = re-enter the step; cool = wait for the model's cooldown (LOOP-9); backoff = LOOP-10;
   recover = `unclean + 1`, 3 → `crashed at <stage>`; fresh = this mission `stopped` (why `replaced by
