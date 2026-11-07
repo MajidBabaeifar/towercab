@@ -10,7 +10,6 @@ import { git, refreshBase } from "../checkout.ts";
 import { MERGE_METHOD } from "../forge.ts";
 import { SPEC_CONFLICT_REVISIONS, SPEC_CONFLICT_TEXT } from "../github/events.ts";
 import { PausedHold } from "../github/paused.ts";
-import { assignOwner } from "../github/teammates.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import { renameFeature } from "../intents/features.ts";
 import { plainLine, TITLE_MAX, titleProblem } from "../intents/naming.ts";
@@ -749,7 +748,7 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
       );
       if (!n) throw new Error("GitHub gave no pull request number");
       // PIP-146: the owner answers for the PR.
-      if (repo.teammateReview && !(await assignOwner(cx.github, repo.github, n))) {
+      if (repo.teammateReview && !(await cx.github.assignOwner(repo.github, n))) {
         cx.log(`${m.intent}: couldn't assign ${cx.github.me} to PR ${n}`);
       }
     }

@@ -8,7 +8,7 @@ import { ensureClone, git } from "../checkout.ts";
 import { tickSteps } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
-import { MERGE_METHOD, must } from "../forge.ts";
+import { type Forge, MERGE_METHOD, must } from "../forge.ts";
 import { forgeOf } from "../github/forge.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { Home } from "../home.ts";
@@ -23,7 +23,8 @@ import { REDACTED } from "./secrets.ts";
 export interface SecretEnv {
   db: Db;
   tools: Tools;
-  github: GitHub;
+  /** The loop's `Ctx` holds the `Forge` alone; a test may hold the raw calls. */
+  github: GitHub | Forge;
   config: Config;
   home: Home;
   clock: Clock;

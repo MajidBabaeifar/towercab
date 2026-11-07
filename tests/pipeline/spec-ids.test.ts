@@ -5,7 +5,6 @@ import { execFileSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { DESIGN, DIR, happy, intent, intents, reply, TARGET } from "../helpers/flows.ts";
 import { Pipe } from "../helpers/pipe.ts";
-import { failResult } from "../helpers/tools.ts";
 
 const row = (id: string, name = "Greeting") => `### ${id} · ${name}\n\nThe page says hello.\n`;
 const specOf = (...ids: string[]) => `# Web\n\n${ids.map((i) => row(i)).join("\n")}`;
@@ -148,13 +147,7 @@ test("pipeline: design goes on and is re-checked when open spec PRs cannot be li
     writes(p, "WEB-1");
     p.openOtherPr("web", "towercab/261026-0900-one-spec", other("WEB-1"));
     // GitHub fails to list the open PRs once, when the design starts.
-    const real = p.tools.run.bind(p.tools);
-    let failed = 0;
-    p.tools.run = async (cmd, args, opts) => {
-      if (cmd === "gh" && args.join(" ").includes("number,headRefName") && failed++ < 1)
-        return failResult("HTTP 502: bad gateway");
-      return real(cmd, args, opts);
-    };
+    p.forge.failNext("openPrBranches", 1, "HTTP 502: bad gateway");
     await p.start();
     const m = await p.untilStage("approval:spec");
     const prompt = designCalls(p)[0]!.prompt;

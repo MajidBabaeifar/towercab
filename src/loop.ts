@@ -25,7 +25,6 @@ import {
 import type { GitLabForge } from "./forge/gitlab.ts";
 import { isGitlab } from "./forge/types.ts";
 import { MERGE_METHOD } from "./forge.ts";
-import { retireBranch } from "./github/branches.ts";
 import {
   agentComments,
   approveNotices,
@@ -47,9 +46,8 @@ import {
   type ProposedCache,
   type ProposedPr,
   type ProposedState,
-  readProposed,
 } from "./github/proposed.ts";
-import { closeIfOpen, type PrState, readPr } from "./github/prs.ts";
+import { closeIfOpen, type PrState } from "./github/prs.ts";
 import { type ChildEnd, type Clock, type Ctx, EnvError, type Handlers, type Host } from "./handlers.ts";
 import { readHead } from "./head.ts";
 import type { Home } from "./home.ts";
@@ -908,7 +906,7 @@ export class Loop {
         ? "Closed: the owner did this by hand, so there is nothing to merge."
         : "Closed: the owner will do this by hand, so there is nothing to merge.",
     );
-    const gone = await retireBranch(this.d.github, repo.github, m.pr, this.d.store.github());
+    const gone = await this.d.github.retireBranch(repo.github, m.pr, this.d.store.github());
     if (gone) this.d.log(`${label(m)}: deleted branch ${gone} of ${repo.github}#${m.pr}`);
     update(this.d.db, m.id, { pr: null }, this.now);
   }
@@ -917,7 +915,7 @@ export class Loop {
     const prs = this.missionPrs(m);
     if (why) for (const [github, n] of prs) await closeIfOpen(this.d.github, github, n, why);
     for (const [github, n] of prs) {
-      const gone = await retireBranch(this.d.github, github, n, this.d.store.github());
+      const gone = await this.d.github.retireBranch(github, n, this.d.store.github());
       if (gone) this.d.log(`${label(m)}: deleted branch ${gone} of ${github}#${n}`);
     }
   }
@@ -1210,7 +1208,7 @@ export class Loop {
     try {
       list = this.d.readProposed
         ? await this.d.readProposed()
-        : await readProposed(this.d.github, repo!, this.proposedCache, (await this.d.github.bot()).login);
+        : await this.d.github.readProposed(repo!, this.proposedCache, (await this.d.github.bot()).login);
     } catch (e) {
       this.proposedError = (e as Error).message;
       this.proposedFailedAt = this.now;
@@ -1363,7 +1361,7 @@ export class Loop {
 
   /** PR reads (LOOP-18, PIP-21): every 60 s per mission with a PR. */
   private async pollPrs(): Promise<void> {
-    const read = this.d.readPr ?? ((repo: string, n: number) => readPr(this.d.github, repo, n));
+    const read = this.d.readPr ?? ((repo: string, n: number) => this.d.github.readPr(repo, n));
     for (const m of unfinished(this.d.db)) {
       if (m.step === "enter" || (!m.spec_pr && !m.plan_pr && !m.pr)) continue;
       // UI-106: the page acted on this PR, so read it now instead of at the next minute.

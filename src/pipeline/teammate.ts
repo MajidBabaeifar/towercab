@@ -2,15 +2,9 @@
 // and the PR poll. Nothing about reviewers is stored: it is read again before every decision.
 
 import type { RepoConfig } from "../config.ts";
+import type { Forge, PrState } from "../forge.ts";
 import { ownerForge } from "../github/forge.ts";
-import { type PrState, readPr, readPrExtra } from "../github/prs.ts";
-import {
-  readApprovedReviewIds,
-  readRequired,
-  readTeamInput,
-  requestReviewers,
-  sameDiffCommits,
-} from "../github/teammates.ts";
+import { readTeamInput, sameDiffCommits } from "../github/teammates.ts";
 import type { Ctx, GitHub, Progress } from "../handlers.ts";
 import { wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
@@ -49,7 +43,7 @@ export interface Evaluation {
 const REQUIRED_TTL = 600;
 
 export interface EvalDeps {
-  github: GitHub;
+  github: Forge;
   /** Absent where git isn't at hand (the owner's own merge): an older approval is then stale. */
   tools?: Tools;
   clone: string;
@@ -61,8 +55,8 @@ export async function evaluate(
   repo: RepoConfig,
   o: { n: number; branch: string; bot: string; pr?: PrState },
 ): Promise<Evaluation> {
-  const read = o.pr ?? (await readPr(d.github, repo.github, o.n));
-  const pr: PrState = { ...read, ...(await readPrExtra(d.github, repo.github, o.n)) };
+  const read = o.pr ?? (await d.github.readPr(repo.github, o.n));
+  const pr: PrState = { ...read, ...(await d.github.readPrExtra(repo.github, o.n)) };
   const team = await readTeamInput(d.github, repo, repo.github, o.n, pr, o.bot);
   const commits = pr.reviews.filter((r) => r.state === "APPROVED" && r.commit).map((r) => r.commit!);
   const sameDiff = d.tools
@@ -79,7 +73,7 @@ export async function evaluate(
     : new Set<string>();
   const result = approval(team, { head: pr.head, reviews: pr.reviews, sameDiff });
   const counted = result.kind === "approved" && pr.reviewDecision !== "REVIEW_REQUIRED";
-  const approvedReviewIds = await readApprovedReviewIds(d.github, repo.github, o.n);
+  const approvedReviewIds = await d.github.approvedReviewIds(repo.github, o.n);
   return { pr, team, result, counted, reviewers: reviewersOf(team), approvedReviewIds };
 }
 
@@ -91,7 +85,7 @@ export async function requiredApprovals(cx: Ctx, repo: RepoConfig): Promise<numb
     const [at, n] = cached.split(" ");
     if (cx.clock.now() - Number(at) < REQUIRED_TTL) return n === "?" ? null : Number(n);
   }
-  const n = await readRequired(cx.github, repo.github, repo.base);
+  const n = await cx.github.requiredApprovals(repo.github, repo.base);
   cx.db.setMeta(key, `${Math.floor(cx.clock.now())} ${n === null ? "?" : n}`);
   return n;
 }
@@ -139,8 +133,7 @@ export async function teammateStep(cx: Ctx, m: Mission, kind: TeamKind): Promise
   if (t.requested !== e.pr.head) {
     // Record first, then ask (LOOP-6).
     cx.record(m, m.step, {}, { teammate: { ...t, requested: e.pr.head, passNeeded: false } });
-    const failed =
-      listed.length > 0 ? (await requestReviewers(cx.github, repo.github, n, listed)).failed : [];
+    const failed = listed.length > 0 ? (await cx.github.requestReviewers(repo.github, n, listed)).failed : [];
     if (failed.length > 0) {
       why += ` Towercab couldn't ask ${failed.join(", ")}: check they can review this repo.`;
     }

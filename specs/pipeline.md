@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..156, PIP-165..172, PIP-182..186, PIP-192..194, PIP-196, PIP-197..199, PIP-202, PIP-210 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..156, PIP-165..172, PIP-182..186, PIP-192..194, PIP-196, PIP-197..199, PIP-200..201, PIP-202, PIP-210 · **Prefix:** PIP
 
 ## Purpose
 
@@ -1950,7 +1950,7 @@ The tests of the pipeline stages and the loop check what a stage asks the code h
 
 - `FakeForge` (`tests/helpers/fake-forge.ts`) implements all of `Forge` (every host read and write) in memory: it records each call by method and arguments and answers from the test's setup. Tests that need a host failure make a method throw.
 - Tests under `tests/pipeline/` and the loop tests build their `Ctx` with `FakeForge`; none of them registers a `gh` command line on `FakeTools` or builds a `GitHubForge`.
-- `gh` command lines are faked only in the tests of `GitHubForge` and of `src/github/` itself, and in tests of code that still calls `GitHub` directly (settings, teammate review, releases, secrets, readiness) until it moves behind `Forge`.
+- `gh` command lines are faked only in the tests of `GitHubForge` and of `src/github/` itself, and in tests of code that still calls `GitHub` directly (settings, releases, secrets, readiness) until it moves behind `Forge`.
 - A guard test fails when a file under `tests/pipeline/` mentions a `gh` argument list (an `args` check for `"gh"`, `"pr"`, `"api"` or `"run"` handed to `FakeTools`) or imports `GitHubForge`.
 - Behaviour does not change: every stage test keeps its title and asserts the same outcome.
 - Verified by: `forge: stage tests hold no fake gh command lines`, `forge: FakeForge records calls and answers from setup`, `forge: FakeForge fails a method on request`
@@ -1961,7 +1961,7 @@ A stage can only call the code host through the `Forge` interface; the raw `gh` 
 
 - `Ctx.github` is typed `Forge`, not `Forge & GitHub`; the `Host` type is removed from the stage contract (`src/handlers.ts`). The loop keeps the concrete object that is both, and gives stages only its `Forge` side.
 - A stage that today calls `gh`, `owner`, `gitAuth` or `bot` through `Ctx.github` reaches the same result through a `Forge` method (a new method where none fits), built by `GitHubForge` alone.
-- The code that still needs the raw calls (settings, teammate review, releases, secrets, readiness) takes a separate `GitHub` dependency from the loop, not from `Ctx`.
+- The code that still needs the raw calls (settings, releases, secrets, readiness) takes a separate `GitHub` dependency from the loop, not from `Ctx`.
 - `npm run typecheck` fails when a stage reads a `GitHub` member from `Ctx.github`.
 - Verified by: `forge: Ctx.github is a Forge and nothing more`, `forge: stages make the same host calls through Forge`
 
