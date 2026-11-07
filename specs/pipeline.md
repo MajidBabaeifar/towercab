@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..171, PIP-182..186 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..172, PIP-182..186 · **Prefix:** PIP
 
 ## Purpose
 
@@ -1843,7 +1843,7 @@ The intent page lists the owner-account comments that agents wrote, so the owner
 
 | Agent | Purpose | May touch | Session | Model |
 |---|---|---|---|---|
-| [design](../agents/design.md) | Turns the intent into spec changes and the spec PR's text. | Read, Glob, Grep; Edit only under `specs/**`; Write. | mission's | mission |
+| [design](../agents/design.md) | Turns the intent into spec changes and the spec PR's text. | Read, Glob, Grep; Edit only under `specs/**` and the README's docs table (PIP-172); Write. | mission's | mission |
 | [plan](../agents/plan.md) | Plans the build; reads only. | Read, Glob, Grep; Bash for `git log`, `git diff`, `git show`, `ls`. | mission's | mission |
 | [worker](../agents/worker.md) | Writes tests and code, and the code PR's text. | Read, Edit, Write, Glob, Grep, Bash in the sandbox; WebFetch for granted domains; protected paths per the grants. | mission's | mission |
 | [repair](../agents/repair.md) | Fixes red checks, a conflict, a review finding or an owner's answer in the worker's session. | The worker's tools and permissions, no more. | mission's | mission |

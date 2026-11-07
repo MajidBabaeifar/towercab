@@ -39,6 +39,7 @@ import {
   subjectOf,
   viaForge,
 } from "./common.ts";
+import { docsTableOnly } from "./docsindex.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { specBody } from "./prtext.ts";
 import { endRisk, spawnRisk } from "./risk.ts";
@@ -553,10 +554,29 @@ async function renameFeatureLine(cx: Ctx, m: Mission, from: string, to: string):
   }
 }
 
+/**
+ * PIP-172: keep the design's change to README.md only when it adds rows to the docs table and the spec
+ * PR adds a spec file that base lacks; any other README change is restored to what HEAD has.
+ */
+async function guardReadme(cx: Ctx, m: Mission): Promise<void> {
+  const base = `refs/remotes/origin/${cx.repo(m).base}`;
+  const mine = await readFile(join(cx.checkout(m), "README.md"), "utf8").catch(() => null);
+  const was = await coGit(cx, m, ["show", `${base}:README.md`]).catch(() => null);
+  if (mine !== null && was !== null && mine !== was && docsTableOnly(was, mine)) {
+    const onBase = new Set(
+      (await coGit(cx, m, ["ls-tree", "--name-only", base, "specs/"])).split("\n").filter(Boolean),
+    );
+    const now = await readdir(join(cx.checkout(m), "specs")).catch(() => [] as string[]);
+    if (now.some((f) => f.endsWith(".md") && !onBase.has(`specs/${f}`))) return;
+  }
+  await coGit(cx, m, ["checkout", "--quiet", "HEAD", "--", "README.md"]).catch(() => undefined);
+}
+
 /** Commit the spec change; no change → straight to plan. Edits outside specs/ are dropped. */
 async function commit(cx: Ctx, m: Mission): Promise<Progress> {
   await rename(cx, m);
-  const changed = (await coGit(cx, m, ["status", "--porcelain", "--", "specs"])).trim();
+  await guardReadme(cx, m);
+  const changed = (await coGit(cx, m, ["status", "--porcelain", "--", "specs", "README.md"])).trim();
   if (!changed) {
     await dropOthers(cx, m);
     // A spec commit made before a crash, not yet on the spec PR: push it now (LOOP-6).
@@ -570,7 +590,7 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
   }
   m = await recheckIds(cx, m);
   const intent = await intentOf(cx, m);
-  await coGit(cx, m, ["add", "-A", "--", "specs"]);
+  await coGit(cx, m, ["add", "-A", "--", "specs", "README.md"]);
   await coGit(cx, m, [
     ...(await botAuthor(cx)),
     "commit",
@@ -595,7 +615,7 @@ async function pushSpec(cx: Ctx, m: Mission): Promise<Progress> {
   return openPr(cx, cx.record(m, "pr", { head, pushed_at: cx.clock.now() }, { specBranch, pushRefusals: 0 }));
 }
 
-/** The design may edit only specs/ (PIP-25): anything else it left in the checkout is discarded. */
+/** The design may edit only specs/ and the README's docs table (PIP-25, PIP-172): anything else it left is discarded. */
 async function dropOthers(cx: Ctx, m: Mission): Promise<void> {
   await coGit(cx, m, ["reset", "--hard", "--quiet"]);
   await coGit(cx, m, ["clean", "-fdq"]);
