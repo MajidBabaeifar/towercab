@@ -59,8 +59,6 @@ export interface TowercabFile {
   releases?: "manual";
   /** The confirmed kind (REPO-20); absent: unconfirmed. */
   kind?: Kind;
-  /** `check` keeps the repo check-only when Towercab applies settings (REPO-31); absent: applied. */
-  settings?: "check";
   /** `warn` (absent) or `block` (LOOP-70). */
   readiness?: Mode;
   /** Items the owner waived, with the reason (REPO-20); absent: none. */
@@ -332,7 +330,7 @@ function frontMatter(ls: string[], t: TowercabFile): void {
       t.kind = val;
     } else if (k === "settings") {
       if (val !== "check") throw new Error(`settings: ${String(val)} isn't check`);
-      t.settings = "check";
+      // REPO-31: read and ignored; nothing applies without the owner's click.
     } else if (k === "readiness") {
       if (val !== "warn" && val !== "block") throw new Error(`readiness: ${String(val)} isn't warn or block`);
       t.readiness = val;

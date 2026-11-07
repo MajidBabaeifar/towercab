@@ -5,6 +5,7 @@ import { capReason, capsOf } from "../budgets.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import { fixFor } from "../faults.ts";
+import { ownerLogin } from "../github/owner.ts";
 import { type Host, systemClock } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { Intent } from "../intents/types.ts";
@@ -15,6 +16,7 @@ import { isParked, pickOrder, priorityOf } from "../priority.ts";
 import { proposeSettings, reopenMove, type SettingsEnv } from "../repo/settings.ts";
 import { addFailures, beginAddRepo } from "../repos.ts";
 import { checkoutRoot } from "../service.ts";
+import { applySettings } from "../settings/apply.ts";
 import { supplySecret } from "../ship/secret-steps.ts";
 import { version as gitVersion } from "../update.ts";
 import { createActions } from "./actions.ts";
@@ -160,6 +162,28 @@ export function startLoopUi(loop: Loop, config: Config, github: Host, home: Home
       limits: {
         propose: (repo, changes, confirmed) => proposeSettings(settingsEnv(), repo, changes, confirmed),
         move: (repo) => reopenMove(settingsEnv(), repo),
+      },
+      // REPO-39: Apply runs the settings script as the owner, for the one repo named.
+      applySettings: async (name) => {
+        const repo = config.repos.get(name);
+        if (!repo) throw new Error(`${name} isn't a repo Towercab knows`);
+        await ownerLogin(github);
+        const r = await applySettings(
+          {
+            config,
+            home,
+            db: loop.d.db,
+            tools: loop.d.tools,
+            clock: loop.d.clock,
+            github,
+            log: loop.d.log,
+          },
+          repo,
+        );
+        return r.state === "ok"
+          ? `Applied. The standard settings are in place on ${repo.github}.`
+          : (r.note ??
+              `Applied, but ${r.gaps.length} setting${r.gaps.length === 1 ? "" : "s"} still differ.`);
       },
       // SHIP-35: a typed secret goes straight to `sops`; the value stays in this request.
       supplySecret: (intent, n, value) =>

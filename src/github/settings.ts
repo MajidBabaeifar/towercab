@@ -182,7 +182,7 @@ export async function restoreSettings(gh: GitHub, repo: string, b: SettingsSnaps
     else if (forbidden(r))
       // What was restored before stays visible with the reason.
       throw new Error(
-        [...out, "the GitHub App lacks Administration (write): grant it, then run this again"].join("\n"),
+        [...out, `Your GitHub login can't change this repo's settings: it needs admin on ${repo}`].join("\n"),
       );
     else out.push(`Could not restore ${what}: ${(r.stderr || r.stdout).trim().split("\n")[0]}`);
   };

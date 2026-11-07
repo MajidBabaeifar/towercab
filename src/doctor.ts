@@ -21,7 +21,6 @@ import { apparmorProfile, type ProbeResult, sandboxProbe, userNamespaceDenied } 
 import { refusedRepoEnv } from "./pipeline/sandbox.ts";
 import { parseStored } from "./repo/readiness.ts";
 import { isMoved, readRecord } from "./repo/settings.ts";
-import { permissionLine } from "./settings/store.ts";
 import { shipNetwork } from "./ship/live.ts";
 import { tooFewListed } from "./teammates.ts";
 import type { Tools } from "./tools.ts";
@@ -134,9 +133,6 @@ export async function doctor(o: {
         : `gh login: not logged in as ${me} (run gh auth login): the UI's actions need it`,
     );
   }
-  // REPO-32: said once, and only while Towercab is meant to apply settings.
-  const perm = o.db && config.githubSettings === "apply" ? permissionLine(o.db) : null;
-  if (perm) lines.push(perm);
   if (config.gitlab && o.gitlab) {
     const g = await gitlabLines(o.gitlab, new GlabOwner(tools, config.gitlab), o.now ?? Date.now() / 1000);
     lines.push(...g.lines);

@@ -1,14 +1,17 @@
-// The daily settings job (REPO-30, REPO-31): check every repo with the pinned `ci` script, store the
-// answer, and with the owner's opt-in apply it behind the ruleset guard and a backup, then check again.
+// The settings jobs (REPO-30, REPO-31, REPO-38..41). The daily pass only reads: it checks every repo with the
+// pinned `ci` script and stores the answer with the plan. `applySettings` is the owner's click: guard, backup,
+// apply and check again, all with the owner's own `gh` login. Nothing else ever runs the script to change anything.
 
 import { ensureClone } from "../checkout.ts";
+import { tickSteps } from "../commands.ts";
 import { clonePath, type RepoConfig } from "../config.ts";
 import { isGitlab } from "../forge/types.ts";
 import { forgeOf } from "../github/forge.ts";
-import { parseTowercab } from "../repo/files.ts";
+import type { RunResult } from "../tools.ts";
 import { ForbiddenError, saveBackup } from "./backup.ts";
-import { mainGreen, parsePlan } from "./guard.ts";
+import { mainGreen, parsePlan, planChanges } from "./guard.ts";
 import {
+  type As,
   CI_REPO,
   firstLine,
   forbidden,
@@ -17,14 +20,7 @@ import {
   SettingsUnknown,
   withScript,
 } from "./script.ts";
-import {
-  DAY_S,
-  missingPermission,
-  type StoredSettings,
-  saveSettings,
-  setMissingPermission,
-  storedSettings,
-} from "./store.ts";
+import { DAY_S, type StoredSettings, saveSettings, storedSettings } from "./store.ts";
 
 const FETCH_EVERY_S = 600;
 
@@ -36,95 +32,142 @@ const gapLines = (stdout: string, stderr: string): string[] => {
   return lines.length ? lines : ["The standard settings differ"];
 };
 
-/** REPO-31: may Towercab apply here? A `settings: check` line in the repo's `TOWERCAB.md` says no. */
-async function mayApply(d: SettingsDeps, repo: RepoConfig): Promise<boolean> {
-  if (d.config.githubSettings !== "apply") return false;
-  let text: string | null;
-  try {
-    text = await forgeOf(d.github).readFile(repo.github, "TOWERCAB.md", repo.base);
-  } catch {
-    return false;
-  }
-  // No file: nothing says check-only.
-  if (text === null) return true;
-  try {
-    return parseTowercab(text).settings !== "check";
-  } catch {
-    // A file that can't be read is check-only: the safe side.
-    return false;
-  }
-}
-
-/** Run the check once: null for `ok`, the gap lines, or throw `SettingsUnknown`. */
-async function check(s: Script): Promise<string[] | null> {
-  const r = await s.run("check");
+/** The one result of `--check`: null for `ok`, the gap lines, or throw `SettingsUnknown`. */
+function gapsOf(r: RunResult): string[] | null {
   if (r.code === 0) return null;
   if (r.code !== 1) throw new SettingsUnknown(firstLine(r));
   return gapLines(r.stdout, r.stderr);
 }
 
-/** One repo's turn: check, and when allowed apply and check again. Always stores a result. */
+/** A read-only run as the App; when GitHub refuses it, once more as the owner (REPO-41). Never a write. */
+async function read(s: Script, mode: "check" | "plan", first: As): Promise<{ r: RunResult; as: As }> {
+  const r = await s.run(mode, first);
+  if (first === "owner" || !forbidden(r)) return { r, as: first };
+  return { r: await s.run(mode, "owner"), as: "owner" };
+}
+
+/** REPO-30, REPO-38: check one repo (and read its plan when it has gaps), as the App or, if refused, the owner. */
+async function checkRepo(s: Script, at: number, first: As = "app"): Promise<StoredSettings> {
+  const base = { tag: s.tag, at };
+  const c = await read(s, "check", first);
+  const gaps = gapsOf(c.r);
+  if (!gaps) return { state: "ok", gaps: [], ...base };
+  const plan = planChanges((await read(s, "plan", c.as)).r);
+  return { state: "gaps", gaps, ...base, ...(plan ? { plan } : {}) };
+}
+
+/** The daily turn of one repo: only reads. Always stores a result. */
 export async function settingsPass(d: SettingsDeps, repo: RepoConfig): Promise<StoredSettings> {
   const now = Math.floor(d.clock.now());
   const prev = storedSettings(d.db, repo.name);
   let result: StoredSettings;
   try {
-    result = await withScript(d, repo, async (s) => {
-      const gaps = await check(s);
-      const base = { tag: s.tag, at: now };
-      if (!gaps) return { state: "ok" as const, gaps: [], ...base };
-      const found: StoredSettings = { state: "gaps", gaps, ...base };
-      if (missingPermission(d.db) || !(await mayApply(d, repo))) return found;
+    result = await withScript(d, repo, (s) => checkRepo(s, now));
+  } catch (e) {
+    if (!(e instanceof SettingsUnknown)) d.log(`settings of ${repo.name}: ${(e as Error).message}`);
+    result = unknownResult(prev, now, e as Error);
+  }
+  saveSettings(d.db, repo.name, result);
+  return result;
+}
 
-      const plan = parsePlan(await s.run("plan"));
+/** The last result stands (REPO-27); only the time and the reason change. */
+function unknownResult(prev: StoredSettings | null, now: number, e: Error): StoredSettings {
+  const why = `The standard settings could not be checked: ${e.message}`;
+  return prev
+    ? { ...prev, at: now, note: why }
+    : { state: "unknown", gaps: [], tag: null, at: now, note: why };
+}
+
+/** REPO-39: repos whose Apply is running now; a second click is refused. */
+const applying = new Set<string>();
+export const isApplying = (repo: string): boolean => applying.has(repo);
+
+const cannot = (github: string) =>
+  `Your GitHub login can't change this repo's settings: it needs admin on ${github}`;
+
+const STEP_TEXT = /^apply the standard github settings\b/i;
+
+/**
+ * REPO-33: after an Apply ends `ok`, tick the "Apply the standard GitHub settings" steps of the repo's
+ * unfinished missions that are delivered as steps.
+ */
+function tickSettingsSteps(d: SettingsDeps, repo: RepoConfig): void {
+  const rows = d.db.all<{ intent: string; data: string }>(
+    "SELECT intent, data FROM missions WHERE repo = ? AND stage NOT IN ('done','stopped','unverified')",
+    repo.name,
+  );
+  for (const row of rows) {
+    let data: { delivery?: string; steps?: { n: number; text: string; done_at: string | null }[] };
+    try {
+      data = JSON.parse(row.data);
+    } catch {
+      continue;
+    }
+    if (data.delivery !== "steps") continue;
+    const ns = (data.steps ?? []).filter((x) => !x.done_at && STEP_TEXT.test(x.text)).map((x) => x.n);
+    if (ns.length) tickSteps(d.db, row.intent, ns, true, new Date(d.clock.now() * 1000), true);
+  }
+}
+
+/**
+ * REPO-31, REPO-39, REPO-40: the owner's Apply for one repo: the guard, the backup, the script, then check
+ * again, all as the owner. Throws when there is nothing to apply or an Apply is running; otherwise stores and
+ * returns the result.
+ */
+export async function applySettings(d: SettingsDeps, repo: RepoConfig): Promise<StoredSettings> {
+  const stored = storedSettings(d.db, repo.name);
+  if (isGitlab(repo.github) || stored?.state !== "gaps")
+    throw new Error(`${repo.name} has no settings gaps to apply`);
+  if (applying.has(repo.name)) throw new Error(`The settings of ${repo.name} are being applied already`);
+  applying.add(repo.name);
+  const now = Math.floor(d.clock.now());
+  const held = (note: string, extra: Partial<StoredSettings> = {}): StoredSettings => ({
+    ...stored,
+    note,
+    ...extra,
+  });
+  try {
+    const result = await withScript(d, repo, async (s) => {
+      const plan = parsePlan(await s.run("plan", "owner"));
       const guard = await mainGreen(d, repo, plan);
       try {
         await saveBackup(d, repo, plan?.branches ?? []);
       } catch (e) {
-        // An App without Administration can't read protection or alerts: that is the missing permission.
-        if (e instanceof ForbiddenError) {
-          setMissingPermission(d.db, repo.name, now);
-          return { ...found, note: "Nothing applied: the GitHub App lacks Administration (write)" };
-        }
-        return { ...found, note: `Nothing applied: no backup (${(e as Error).message})` };
+        if (e instanceof ForbiddenError) return held(cannot(repo.github));
+        return held(`Nothing applied: no backup (${(e as Error).message})`);
       }
-      const r = await s.run(guard.ok ? "apply" : "skip-ruleset");
-      if (forbidden(r)) {
-        setMissingPermission(d.db, repo.name, now);
-        return { ...found, note: "Nothing applied: the GitHub App lacks Administration (write)" };
-      }
+      const r = await s.run(guard.ok ? "apply" : "skip-ruleset", "owner");
+      if (forbidden(r)) return held(cannot(repo.github));
       if (!guard.ok && r.code === 2) {
-        return {
-          ...found,
-          note: `Nothing applied: this ci release has no --skip-ruleset (${firstLine(r)})`,
+        return held(`Nothing applied: this ci release has no --skip-ruleset (${firstLine(r)})`, {
           ruleset: guard.words,
-        };
+        });
       }
-      let after: string[] | null;
+      let after: StoredSettings;
       try {
-        after = await check(s);
+        after = await checkRepo(s, now, "owner");
       } catch (e) {
-        return { ...found, note: `Applied, but not checked again: ${(e as Error).message}` };
+        return held(`Applied, but not checked again: ${(e as Error).message}`);
       }
       const note = r.code === 0 ? undefined : `The apply ended with an error: ${firstLine(r)}`;
       return {
-        state: after ? "gaps" : "ok",
-        gaps: after ?? [],
-        ...base,
+        ...after,
         ...(note ? { note } : {}),
         ...(guard.ok ? {} : { ruleset: guard.words }),
       } satisfies StoredSettings;
     });
+    saveSettings(d.db, repo.name, result);
+    if (result.state === "ok") tickSettingsSteps(d, repo);
+    return result;
   } catch (e) {
     if (!(e instanceof SettingsUnknown)) d.log(`settings of ${repo.name}: ${(e as Error).message}`);
-    const why = `The standard settings could not be checked: ${(e as Error).message}`;
-    // The last result stands (REPO-27); only the time and the reason change.
-    result = prev
-      ? { ...prev, at: now, note: why }
-      : { state: "unknown", gaps: [], tag: null, at: now, note: why };
+    const result = unknownResult(stored, now, e as Error);
+    saveSettings(d.db, repo.name, result);
+    return result;
+  } finally {
+    applying.delete(repo.name);
   }
-  saveSettings(d.db, repo.name, result);
-  return result;
 }
 
 /** The repo whose daily check is due and oldest (never checked first), or null. */
