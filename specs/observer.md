@@ -32,9 +32,10 @@ The observer runs once a day and after notable events, never more often than the
 - Notable events: an intent blocked on `worker budget` (LOOP-1), the same check red
   three times for one intent, a rollback (SHIP), and a spend cap reached (MET-33). Each event marks
   the observer due; due runs are merged, with at most one event run per hour and none while one runs.
-- Off unless `[observer].enabled = true`. The loop re-reads the keys each pass, so an edit applies
+- On by default. The config line `[observer] enabled = false` switches it off; no run starts while it
+  is off, and a run already going finishes. The loop re-reads the keys each pass, so an edit applies
   without a restart. A pass never waits for a run (it is a background job as in LOOP-71).
-- Verified by: `observer: it runs daily at the set time`, `observer: a missed day runs once at start`, `observer: a notable event makes it due`, `observer: event runs are at most one an hour`, `observer: off by default`
+- Verified by: `observer: it runs daily at the set time`, `observer: a missed day runs once at start`, `observer: a notable event makes it due`, `observer: event runs are at most one an hour`, `observer: on by default`, `observer: enabled false switches it off`
 
 ### OBV-3 · What it reads
 
@@ -43,6 +44,7 @@ The evidence bundle covers the last 14 days of how Towercab ran, and nothing els
 - Per run, intent and stage: runs and the end of their logs, costs (MET), how long each wait and each
   stage took, repairs and retries, red checks and their names, review findings, alerts and problems
   (UI-60), and the owner's replies, answers and decisions (accept, close, drop, approve) with the time they took.
+- It covers every configured repo, with each repo's name and a one-line description (OBV-4).
 - Built by code from the database and `runs/<id>/`, in a size limit (`[observer].bundle_kb`, default
   400), newest first; what is cut is named in the bundle. Secrets are removed as the guard does for
   other agent text, and the text of an intent is data, not instructions.
@@ -57,11 +59,18 @@ Each improvement the observer finds becomes a proposed intent the owner accepts 
   For each, Towercab opens one pull request on the intents repo as the App (INT-51), with one new
   intent file: `source: observer`, `repo`, `u`, `i`, `a`, `## Problem` (with the evidence, OBV-5) and
   `## Proposed outcome` (with the gain). It then appears as every proposal does (INT-52, LOOP-93).
+- **Any repo.** The observer picks the repo where the fix belongs, from the repos Towercab has
+  configured (LOOP-67), not only `towercab`: a CI timeout goes to the `ci` repo, a flaky test to the
+  repo that has it. The proposal's `repo` is that repo; the evidence may come from runs of other repos.
+  The bundle (OBV-3) lists each repo's name and what it holds, so the agent can choose. A `repo` that
+  is not configured drops the finding with the reason `unknown repo`; it is never replaced by a guess.
+- The intent still goes to the one intents repo as a proposal (INT-51): the owner accepts or closes it as
+  any other, whichever repo it is for. The observer sets no autonomy that skips that step.
 - `a` is never above 4, the cap AUT-13 gives `source: shadow`, whatever the agent writes; the
   observer cannot write `source: me`. An intent with `source: observer` is capped the same way at pick.
 - A closed proposal is a no (INT-53): the observer does not propose the same thing again unless it
   cites runs newer than the closing (OBV-6).
-- Verified by: `observer: a finding becomes one proposed intent PR`, `observer: the intent has source observer`, `observer: autonomy is capped at a4`, `observer: a closed proposal is not proposed again without new evidence`
+- Verified by: `observer: a finding becomes one proposed intent PR`, `observer: a CI finding is proposed for the ci repo`, `observer: a flaky test is proposed for the repo that has it`, `observer: a finding for an unknown repo is dropped`, `observer: the intent has source observer`, `observer: autonomy is capped at a4`, `observer: a closed proposal is not proposed again without new evidence`
 
 ### OBV-5 · Each proposal shows its evidence and its gain
 
@@ -127,9 +136,9 @@ The observer's runs are part of the spend and have their own daily cap.
 
 - Each run's cost is kept on its record and added to the day's spend as MET-29 does for runs, labelled
   `observer`, so it counts toward the overall budgets as MET-32 says for the shadow, and for no repo. When
-  today's observer cost reaches `[observer].daily_budget_usd` (default 2), no further run starts that day; a run
+  today's observer cost reaches `[observer].daily_budget_usd` (default 3), no further run starts that day; a run
   going is limited to what is left of the cap. Reaching it pauses nothing else, and the overall budget (MET-33) still applies.
-- One run is also bounded by `[observer].max_budget_usd` (default 1).
+- One run is also bounded by `[observer].max_budget_usd` (default 1.5).
 - Verified by: `observer: its cost is in the spend`, `observer: the daily cap stops further runs`, `observer: the cap does not pause picks`, `observer: a run is bounded by its own budget`
 
 ### OBV-11 · It never changes Towercab by itself
@@ -166,6 +175,9 @@ Each observer run is kept with when it ran, why, what it cost and what came of i
 
 - It replaces the parked self-monitoring (intent 261026-2204-2): fixed bands need weeks of data and
   never fired, while an agent reading the evidence can say why something is slow and what to change.
+- It is on by default, because an observer the owner must remember to start would not notice what the
+  owner does not notice; its small cap and the proposal step bound what it can cost or do.
+- It proposes for any repo, because the fix for a symptom often lives elsewhere than where it showed.
 - Findings become intents, not changes, so the owner stays the only one who decides what is built.
 - At most three proposals a week and two cited runs each, so the owner's inbox stays readable and a
   proposal can be checked.
