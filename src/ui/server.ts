@@ -18,7 +18,7 @@ import { isRepoName } from "../intents/features.ts";
 import type { IntentStore, Listing } from "../intents/types.ts";
 import type { UiActions } from "./actions.ts";
 import { board } from "./board.ts";
-import { focus } from "./focus.ts";
+import { inbox, inboxAction } from "./inbox.ts";
 import { repos } from "./repos.ts";
 import { shadowView } from "./shadow.ts";
 import { activity, intentPage, overview, queue, RUN_NAME, redact, type UiSources } from "./state.ts";
@@ -80,7 +80,8 @@ const TYPES: Record<string, string> = {
   ".webmanifest": "application/manifest+json",
 };
 
-const PAGES = /^\/(?:board|focus|repos|queue|activity|i\/[A-Za-z0-9._-]+)?\/?$/;
+const PAGES =
+  /^\/(?:board|overview|repos|queue|activity|i\/[A-Za-z0-9._-]+|inbox(?:\/[A-Za-z0-9._-]+)?)?\/?$/;
 const ACTIONS = new Set([
   "merge",
   "pass",
@@ -105,7 +106,11 @@ const ACTIONS = new Set([
   "repo-settings",
   "repo-move",
   "budgets",
+  "seen",
+  "snooze",
+  "unsnooze",
 ]);
+const INBOX_ACTIONS = new Set(["seen", "snooze", "unsnooze"]);
 const INTENT_ID = /^[A-Za-z0-9._-]{1,100}$/;
 
 const NOT_BUILT = `<!doctype html>
@@ -299,6 +304,8 @@ export function startUi(o: UiOptions): UiServer {
       scope?: unknown;
       daily?: unknown;
       monthly?: unknown;
+      item?: unknown;
+      until?: unknown;
     };
     try {
       body = JSON.parse(raw) as typeof body;
@@ -323,6 +330,9 @@ export function startUi(o: UiOptions): UiServer {
       "repo-settings",
       "repo-move",
       "budgets",
+      "seen",
+      "snooze",
+      "unsnooze",
     ].includes(action);
     if (needsIntent && !INTENT_ID.test(intent))
       return json(res, 400, { ok: false, message: "Which intent?" });
@@ -349,8 +359,9 @@ export function startUi(o: UiOptions): UiServer {
       if (intent) await a.guard?.(intent, action, typeof body.actor === "string" ? body.actor : "");
       const no = () => Promise.reject(new Error("Secrets aren't available."));
       const noLimits = () => Promise.reject(new Error("Changing settings isn't available."));
-      const message =
-        action === "budgets"
+      const message = INBOX_ACTIONS.has(action)
+        ? await inboxAction(src, action, typeof body.item === "string" ? body.item : "", body.until)
+        : action === "budgets"
           ? await (a.budgets ?? noLimits)(
               typeof body.scope === "string" ? body.scope : "all",
               body.daily,
@@ -468,14 +479,7 @@ export function startUi(o: UiOptions): UiServer {
     if (path === "/api/queue") return json(res, 200, await queue(src));
     if (path === "/api/board") return json(res, 200, await board(src));
     if (path === "/api/shadow") return json(res, 200, shadowView(src));
-    if (path === "/api/focus") {
-      // UI-195: the waits the page has just acted on; anything that isn't a plain key is ignored.
-      const skip = (url.searchParams.get("skip") ?? "")
-        .split(",")
-        .filter((k) => /^[A-Za-z0-9._-]{1,40}$/.test(k))
-        .slice(0, 50);
-      return json(res, 200, await focus(src, skip));
-    }
+    if (path === "/api/inbox") return json(res, 200, await inbox(src));
     if (path === "/api/repos") {
       const a = o.actions;
       // UI-144: a repo's first look asks once for its backfill, while Towercab runs.
@@ -519,6 +523,8 @@ export function startUi(o: UiOptions): UiServer {
       return runFile(res, id, parts);
     }
     if (path.startsWith("/api/")) return json(res, 404, { error: "Not found." });
+    // UI-266: Focus is gone; its old address lands on the Inbox.
+    if (/^\/focus\/?$/.test(path)) return send(res, 302, "text/plain; charset=utf-8", "", { Location: "/" });
     if (PAGES.test(path)) return send(res, 200, "text/html; charset=utf-8", indexHtml());
     if (staticFile(res, path)) return;
     send(res, 404, "text/plain; charset=utf-8", "Not found.");

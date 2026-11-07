@@ -178,3 +178,17 @@ export function useLive<T>(path: string): Live<T> {
   }, [load]);
   return state;
 }
+
+/** UI-264: the owner looked at the Inbox; the server stamps its own clock. */
+export function markSeen(): Promise<ActionReply> {
+  return post({ action: "seen" });
+}
+
+/** UI-264: put an item aside until `until` (unix seconds). */
+export function snoozeItem(item: string, until: number): Promise<ActionReply> {
+  return post({ action: "snooze", item, until });
+}
+
+export function unsnoozeItem(item: string): Promise<ActionReply> {
+  return post({ action: "unsnooze", item });
+}
