@@ -2053,6 +2053,38 @@ Towercab leaves alone an ID that the intent's own wording says already exists, e
 - If the base branch cannot be read, no ID is moved, the mission's log notes "IDs unchecked against main", and PIP-132 stays the backstop.
 - Verified by: `pipeline: reserved IDs the intent words as made true as written are kept`, `pipeline: reserved IDs the intent words as already written or changed are kept`, `pipeline: an ID on main with no reference wording is moved as a collision`, `pipeline: a reference is kept when an open spec PR adds it too`, `pipeline: a reserved ID another open spec PR claims is still moved`, `pipeline: a line of references and reservations is split by its wording`, `pipeline: a reference with no row on main is treated as a reservation`, `pipeline: an unreadable base branch leaves reserved IDs unmoved`
 
+### PIP-211 · A setup-only secrets file per repo
+
+A repo that installs from a private package registry can have a file of secrets, in the config folder, that only its setup commands use.
+
+- `<config dir>/setup-secrets/<repo>.env` (default `~/.config/towercab/setup-secrets/<repo>.env`): `KEY=VALUE` lines, `#` comments and blank lines skipped, the first `=` splits, no quoting or expansion. It is a different file from the e2e secrets of [SHIP-2](ship.md); a key in one is never given to the other's commands. No file = no setup secrets.
+- A line that is not `KEY=VALUE`, or a key that is not `[A-Za-z_][A-Za-z0-9_]*`, makes the stage wait on `fix repo files` with "<path> line <n> is not KEY=VALUE" (the line's text is not quoted). A key that is `PATH`, `HOME`, `LD_*`, a proxy variable (PIP-158) or a cache variable (LOOP-34) is refused the same way.
+- Any group or other permission bit set → the stage waits on `fix repo files` with "<path> is readable by others; chmod 600 it", as for SHIP-2. The check runs each time the file is read, before setup starts.
+- Unlike the repo's named variables (PIP-159), a setup secret may have a token-like name (`NPM_TOKEN`, `PIP_INDEX_URL`, `CI_JOB_TOKEN`) and any value: the point is to hold a token.
+- Whether to add the registry host to the repo's network list is the owner's choice: nothing is added on its own. A host beyond the built-in registry list comes from a plan grant, the intent's `network` field or an owner's answer ([AUT-14, AUT-26](autonomy.md)).
+- Not in this requirement: a per-repo `.npmrc` or `pip.conf` mounted into the setup home. A repo that needs one commits an `.npmrc` that reads `${NPM_TOKEN}`, or its setup line writes the file into the sandbox home, which is empty and discarded after setup.
+- Verified by: `pipeline: setup secrets file must be private`, `pipeline: a malformed setup secrets line waits on fix repo files`, `pipeline: a setup secret may have a token-like name`, `pipeline: no setup secrets file means no setup secrets`
+
+### PIP-212 · Setup secrets reach only the setup commands
+
+The values of a repo's setup secrets are in the environment of its setup commands and nowhere else.
+
+- The values are added to the environment of the ` ```setup ` commands run by verify ([PIP-23](pipeline.md)) and by any other stage that runs the repo's setup (proof, screenshots, e2e preparation), on top of the allowlist of PIP-159. They are never in the environment of a check, an e2e suite, an adapter command, a Claude run (worker, repair, review or any other agent), the guard hook or a hook of Towercab.
+- They are never written into a prompt, a plan, a spec, a PR title or body, a comment, a question, a Telegram or UI message, a finding, a stored run record or the intent file. Setup secrets stay out of the mission's database: only the file path and the key names are recorded.
+- The setup sandbox home is an empty tmpfs (PIP-23), so a file a setup command writes there (`~/.npmrc`, `~/.config/pip/pip.conf`) is gone when setup ends and is never visible to the worker. The credential masks of the sandbox stay in force ([PIP-159](pipeline.md)); `<config dir>/setup-secrets/` is hidden like the rest of `~/.config/towercab`.
+- A setup that leaves a setup secret value in a file under the checkout (outside `.gitignore`d cache folders) is not detected by this requirement; the secrets check of CI and the review catch it as for any secret in a PR ([PIP-155](pipeline.md)).
+- Verified by: `pipeline: setup secrets are set for setup commands only`, `pipeline: the worker environment never holds a setup secret`, `pipeline: a check and an e2e suite do not see setup secrets`, `pipeline: no prompt or PR text holds a setup secret`, `pipeline: the setup secrets directory is unreadable in the sandbox`
+
+### PIP-213 · Setup secret values are redacted from every log
+
+Wherever Towercab keeps or shows output from a setup command, each setup secret value shows as `[redacted]`.
+
+- Every value of 4 or more characters is replaced with `[redacted]` as in SHIP-2, in the verify log, the repair details, the mission's log and error messages, the UI, the API and Telegram messages, before the text is stored or sent. Redaction runs on the raw output, so a value split across two reads of the same stream is still covered.
+- A value is also replaced in its common encodings: URL-encoded, and the base64 form used in HTTP basic authentication (`user:value`) when it appears in the output.
+- The failed-setup retry (PIP-23) and the repair round use the redacted log only; the redacted log is also what the worker reads if setup is red.
+- Values shorter than 4 characters are not redacted and a setup secret file that holds one is accepted; the doctor notes "<key> is too short to redact".
+- Verified by: `pipeline: setup secrets are redacted from the verify log`, `pipeline: a redacted setup log is what the repair round gets`, `pipeline: a url-encoded setup secret is redacted`, `pipeline: a setup secret split across output chunks is redacted`, `pipeline: a short setup secret is accepted with a doctor note`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
