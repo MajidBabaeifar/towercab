@@ -2,10 +2,9 @@
 // branch as the bot, open the code PR the first time.
 
 import { git } from "../checkout.ts";
-import { type BranchPr, deleteBranch, prsOnBranch } from "../github/branches.ts";
+import type { BranchPr } from "../github/branches.ts";
 import { isBot } from "../github/events.ts";
 import { closeIfOpen } from "../github/prs.ts";
-import { assignOwner } from "../github/teammates.ts";
 import type { Ctx, Handler, Progress } from "../handlers.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
@@ -170,7 +169,7 @@ async function clearLeftover(cx: Ctx, m: Mission, head: string): Promise<Outcome
   if (!sha || sha === head) return null;
   let prs: BranchPr[];
   try {
-    prs = await prsOnBranch(cx.github, repo.github, m.branch);
+    prs = await cx.github.prsOnBranch(repo.github, m.branch);
   } catch (e) {
     throw asEnv(e);
   }
@@ -189,7 +188,7 @@ async function clearLeftover(cx: Ctx, m: Mission, head: string): Promise<Outcome
   const why = `Towercab started this intent over, so this PR is closed. The new attempt pushes its own work to \`${m.branch}\` and opens its own PR.`;
   for (const p of prs) if (p.state === "OPEN") await closeOwn(cx, repo.github, p.number, why);
   try {
-    await deleteBranch(cx.github, repo.github, m.branch, cx.store.github());
+    await cx.github.deleteBranch(repo.github, m.branch, cx.store.github());
   } catch (e) {
     throw asEnv(e);
   }
@@ -239,7 +238,7 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
     );
     if (!n) throw new Error("GitHub gave no pull request number");
     // PIP-146: the owner answers for the PR.
-    if (repo.teammateReview && !(await assignOwner(cx.github, repo.github, n))) {
+    if (repo.teammateReview && !(await cx.github.assignOwner(repo.github, n))) {
       cx.log(`${m.intent}: couldn't assign ${cx.github.me} to PR ${n}`);
     }
   }
