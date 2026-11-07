@@ -1496,6 +1496,33 @@ While a long plan builds, the intent page and its card say "step 3 of 6".
 - `GET /api/state` and the intent's API carry `build: {stepsDone, stepsTotal}` (null when absent). Fits 360 px, light and dark.
 - Verified by: `ui: the intent page shows the plan step being built`, `ui: no step count for a one-run plan`
 
+### UI-200 · Your own open pull requests are read
+
+Towercab reads the open pull requests the owner opened by hand in each registered repo.
+
+- Per repo, each loop pass (rate-limited like the other PR reads, through the `Forge` of `src/forge.ts`) lists open PRs whose author is the owner's GitHub login. It leaves out Towercab's own PRs (head `towercab/*`), drafts marked as such stay in the list, and PRs from forks of other people are not read.
+- Per PR it keeps number, title, URL, head branch, opened-at, draft flag, the check status (`passing`, `failing`, `pending`, `none`) and the changed file paths. Nothing is written to the intent files or the mission table; the list is read-only and is not a mission.
+- A failed read keeps the last good list and shows the error as a problem on the repo (no crash, no empty list). Repos on GitLab are skipped until GL has the same read.
+- Verified by: `github: owner pull requests are listed without Towercab's own`, `github: a failed owner PR read keeps the last list`
+
+### UI-201 · "Yours" on the repo page and the Board
+
+The repo page and the Board show the owner's open pull requests as "Yours", with age and check status.
+
+- `GET /api/state` carries `yours: [{repo, number, title, url, ageSeconds, checks, draft}]`, oldest first. They do not count in "Needs you" (UI-244) and carry no stage or Approve buttons: a click opens the PR on GitHub.
+- The repo page lists them under `Yours`; the Board shows them in a separate `Yours` group per repo, away from Towercab's planes. The age reads `3 d` (exact on hover); the check status is a word and a colour, not colour alone. Hidden when empty. Fits 360 px, light and dark.
+- Visible to everyone who can see the repo in Towercab, whatever their role (USR-1, USR-5: a per-repo role never hides a repo's list). The PRs are already visible on GitHub to the same people, so hiding them would only make the page disagree with GitHub. A read-only role sees them and the links, and has no action to take on them.
+- Verified by: `ui: a fake owner pull request is listed as Yours on the repo page and the Board`, `ui: Yours is not counted in Needs you`, `ui: Yours is shown to a viewer and to a maintainer with a lower role on that repo`
+
+### UI-202 · A warning when your pull request touches the same spec
+
+When one of the owner's open pull requests changes a spec file that Towercab's own spec PR also changes, Towercab says so on its PR.
+
+- Overlap = a path under `specs/` changed by both an owner PR (UI-200) and the spec PR of a mission in the same repo. Checked each pass for missions with an open spec PR.
+- Towercab's stage comment on its PR gets one line per owner PR: `Your PR #<n> also changes specs/<file>.md; requirement IDs may clash.` The line names the IDs both PRs add when they share any. The same line shows on the intent page. The line is dropped when the overlap ends (owner PR closed or merged, or files no longer shared); it is never posted twice for the same pair.
+- Only a warning: nothing is blocked, and the owner's PR is never commented on.
+- Verified by: `ui: an owner pull request touching the same spec file adds the warning`, `ui: no warning when the owner's PR touches other files`
+
 ### UI-273 · An owner wait stage says what the owner did
 
 Opening a stage that was a wait on the owner shows the owner's answer, not "it wrote no files".
