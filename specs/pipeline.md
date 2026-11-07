@@ -1972,7 +1972,7 @@ Towercab never moves an ID that is the intent's own: one its own spec pull reque
 - At pick (PIP-131) and in the checks before the design runs and before it publishes (PIP-130), a reserved ID is counted as taken only if it exists on the base branch or is added by an open spec PR of another intent, and is not the intent's own.
 - An ID is the intent's own when either holds: (a) its row on the base branch, or in an open spec PR, was added by a spec PR of this intent; or (b) the intent file names it as already written (for example "already written; make them Live"). A spec PR belongs to the intent when its head branch starts with `towercab/<intent id>-`, ends with `-spec`, and the segment right after the prefix is not a bare number (the real form is `towercab/<intent id>-<short title>-spec`; the shorter `towercab/<intent id>-spec` also matches). A bare number there marks a sibling intent: `towercab/261105-2152-2-…-spec` does not belong to `261105-2152`. For a merged PR, the IDs are the `### <ID> ·` headings its merge adds.
 - An own ID on the base branch stays as written, and the design gets it as an existing row to build or make Live, not as a new one. An open spec PR of the same intent never makes its own IDs a clash.
-- A reserved ID whose rows on the base branch belong to another intent, or to no intent (no matching spec PR and not named as already written by the intent), is still moved by PIP-131.
+- A reserved ID whose rows on the base branch belong to another intent, or to no intent (no matching spec PR and not named as already written by the intent), is still moved by PIP-131. Narrowed by PIP-210: when the intent's spec-IDs line words an ID as existing ("made true as written", "changed"), it is a reference and is not moved.
 - If the merged spec PRs cannot be read, the reserved IDs are left unmoved except those that exist on the base branch with no own-ID evidence from the intent file; the mission's log notes "IDs unchecked against merged spec PRs", and PIP-132 stays the backstop.
 - Verified by: `pipeline: reserved IDs from the intent's own merged spec PR are kept`, `pipeline: reserved IDs from the intent's own open spec PR are kept`, `pipeline: reserved IDs the intent names as already written are kept`, `pipeline: a spec PR head is matched by the intent id prefix and the -spec suffix`, `pipeline: a sibling intent's spec PR head is not matched`, `pipeline: reserved IDs that belong to another intent's rows are still moved`, `pipeline: reserved IDs on main that belong to no intent are still moved`, `pipeline: unreadable merged spec PRs leave reserved IDs unmoved`
 
@@ -2019,6 +2019,18 @@ Several comments taken in one revision, and a comment arriving while a reply is 
 
 - A revision takes every unseen owner comment on the PR (PIP-44) and returns one `reply` for them. The reply is posted once per revision round (PIP-204). A comment that arrives after the revision started waits for the next revision and gets its own reply then.
 - Verified by: `pipeline: several comments get one reply that answers each`, `pipeline: a comment that arrives during a revision gets the next reply`
+
+### PIP-210 · An ID the intent says exists on main is a reference and is never moved
+
+Towercab leaves alone an ID that the intent's own wording says already exists, even when the row on `main` was written by another intent; any other ID that is already on `main` is a clash and is moved.
+
+- The signal is the wording of the intent's spec-IDs line (the `spec IDs:` line of `## Proposed outcome`, PIP-131). An ID or range on that line is a reference when the words attached to it say the row exists: "made true as written", "already written", "changed", "exists", or "existing" (case-insensitive), or it is named as an existing row. The wording covers the IDs it is attached to: the list or range it ends, up to the next `;` or sentence end.
+- A reference is never renumbered, whichever intent or spec PR wrote its row and even when an open spec PR of another intent adds the same ID. It needs a row on the base branch to be a reference; a reference with no row there is treated as a reservation.
+- An ID on that line with no such wording is a reservation. If a row with that ID already exists on the base branch, that is a collision and it is moved to the next free numbers of the same prefix as PIP-131 does today; an ID that does not exist on `main` is moved only when an open spec PR of another intent adds it (PIP-130).
+- A line that mixes both is split by its wording: references stay, reservations are checked and moved as above. The design gets the references as existing rows to build or make Live, and the reservations as new rows.
+- The own-ID rules of PIP-202 stay as they are (an intent's own rows are kept without any wording); the line of PIP-202 on rows of another intent is narrowed by this row.
+- If the base branch cannot be read, no ID is moved, the mission's log notes "IDs unchecked against main", and PIP-132 stays the backstop.
+- Verified by: `pipeline: reserved IDs the intent words as made true as written are kept`, `pipeline: reserved IDs the intent words as already written or changed are kept`, `pipeline: an ID on main with no reference wording is moved as a collision`, `pipeline: a reference is kept when an open spec PR adds it too`, `pipeline: a reserved ID another open spec PR claims is still moved`, `pipeline: a line of references and reservations is split by its wording`, `pipeline: a reference with no row on main is treated as a reservation`, `pipeline: an unreadable base branch leaves reserved IDs unmoved`
 
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
@@ -2104,6 +2116,12 @@ score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outc
   `gh pr comment` for agent sessions; it is the owner's to add and is not a requirement here. Chosen without asking: the agent is named by the stage that wrote the text;
   the command posts on the current PR (or the issue); old comments keep their headers; the marker only
   excludes comments, it never grants anything.
+- Reference IDs (PIP-210, from intent 261107-1130-1; the owner's call, 2026-11-07): the intent's wording, not
+  the mere presence of a row on `main`, marks an ID as a reference; without such wording an ID on `main` is a
+  collision and is moved as before. Decided without asking: the cue words are "made true as written",
+  "already written", "changed", "exists" and "existing", read on the list or range they end; a "reference"
+  with no row on `main` falls back to being a reservation; with `main` unreadable nothing is moved; PIP-202's
+  own-ID rules keep working without wording.
 - Hung CI (PIP-170, PIP-171, the owner's calls, 2026-11-06): limits only on Towercab's own step-running jobs; the
   shared-workflow callers have none and rely on cancel and rerun; a hung check is cancelled and rerun by Towercab
   on any repo, once per head. Decided without asking: the rerun waits `ci_wait` again before the owner is asked;
