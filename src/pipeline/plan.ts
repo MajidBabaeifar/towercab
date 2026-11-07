@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { planGate, riskWhy } from "../autonomy.ts";
 import { git } from "../checkout.ts";
 import { MERGE_METHOD } from "../forge.ts";
+import { PausedHold } from "../github/paused.ts";
 import type { ChildEnd, Ctx, GitHub, Handler, Progress } from "../handlers.ts";
 import type { Intent } from "../intents/types.ts";
 import { wait } from "../machine.ts";
@@ -214,8 +215,9 @@ export const planHandler: Handler = {
       // AUT-17: a plan that asks for access beyond the defaults is at least medium.
       const e = endRisk(cx, m, end, "plan", { access: extraAccess(cx, m) });
       if ("progress" in e) return e.progress;
+      // LOOP-113: the text goes first, so a write held by the pause leaves the step as it was.
+      await patchBody(cx, { ...m, step: "gate", data: JSON.stringify({ ...data(m), ...e.data }) });
       const fresh = cx.record(m, "gate", {}, e.data);
-      await patchBody(cx, fresh);
       return gateStep(cx, fresh);
     }
     const r = ended(cx, m, "plan", end, (v) => parseResult("plan", v));
@@ -334,6 +336,7 @@ async function patchBody(cx: Ctx, m: Mission): Promise<void> {
   try {
     await viaForge(cx.github.updatePrBody(github, m.plan_pr!, await bodyOf(cx, m)));
   } catch (e) {
+    if (e instanceof PausedHold) throw e;
     cx.log(`${m.intent}: couldn't update the plan PR text: ${(e as Error).message}`);
   }
 }

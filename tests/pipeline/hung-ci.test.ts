@@ -45,9 +45,9 @@ test(
       await onCodePr(p, checks, () => p.reruns.length > 0);
       expect(p.cancels).toEqual([RUN]);
       expect(p.reruns).toEqual([RUN]);
-      expect(p.tools.lines("gh").filter((l) => /^run (cancel|rerun)/.test(l))).toEqual([
-        `run cancel ${RUN} -R owner/web`,
-        `run rerun ${RUN} -R owner/web --failed`,
+      expect(p.forge.calls.filter((l) => /^(cancel|rerun) /.test(l))).toEqual([
+        `cancel owner/web ${RUN}`,
+        `rerun owner/web ${RUN}`,
       ]);
       const m = p.mission()!;
       // No repair was counted and the owner was not asked.
@@ -104,7 +104,7 @@ test(
       expect(p.reruns).toEqual([RUN]);
       expect(m.waiting).toBe("approve spec");
       expect(m.why).toContain("hung twice");
-      expect(p.tools.lines("gh").some((l) => l.startsWith("pr merge"))).toBe(false);
+      expect(p.forge.calls.some((l) => l.startsWith("merge "))).toBe(false);
     }),
   120_000,
 );

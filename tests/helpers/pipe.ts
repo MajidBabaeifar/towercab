@@ -8,7 +8,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseConfig } from "../../src/config.ts";
 import { Db } from "../../src/db.ts";
-import { GitHubForge } from "../../src/github/forge.ts";
 import type { Handlers, Host } from "../../src/handlers.ts";
 import { Home } from "../../src/home.ts";
 import { findOpen, openStore } from "../../src/intents/store.ts";
@@ -18,6 +17,7 @@ import type { Stage } from "../../src/machine.ts";
 import { getMission, type Mission } from "../../src/mission.ts";
 import { handlers } from "../../src/pipeline/index.ts";
 import type { ChildExit, ChildHandle, ChildSpec, RunOpts, RunResult } from "../../src/tools.ts";
+import { PipeForge } from "./pipe-forge.ts";
 import { FakeTools, failResult, okResult } from "./tools.ts";
 import { git, TestClock, tempDir } from "./world.ts";
 
@@ -255,6 +255,8 @@ export interface StartOpts {
 
 export class Pipe {
   readonly tools = new PipeTools();
+  /** The code host: what Towercab asks of it is in `forge.calls`; `forge.failNext` makes a call fail. */
+  readonly forge: PipeForge = new PipeForge(this);
   readonly clock = new TestClock();
   readonly home: Home;
   readonly db: Db;
@@ -310,12 +312,12 @@ export class Pipe {
   platform:
     | ((sha: string, task: string, repo: string) => { state: string; description?: string } | null)
     | null = null;
-  private nextDeployment = 100;
+  nextDeployment = 100;
   store!: IntentStore;
   rawStore!: IntentStore;
   loop!: Loop;
-  private nextPr = 1;
-  private nextComment = 1;
+  nextPr = 1;
+  nextComment = 1;
   private claude: ClaudeScript[] = [];
   private queues = new Map<string, ClaudeScript[]>();
   private startOpts: StartOpts = {};
@@ -339,7 +341,6 @@ export class Pipe {
         .join("")}[user]\n\tname = test\n\temail = test@localhost\n[init]\n\tdefaultBranch = main\n`,
     );
     process.env.GIT_CONFIG_GLOBAL = this.gitconfig;
-    this.fakeGh();
     this.tools.routes.set("bwrap", (spec) => this.runSandbox(spec));
     this.tools.routes.set("claude", (spec) => this.runClaude(spec));
     this.tools.routes.set("systemd-inhibit", () => new Promise<ChildExit>(() => {}));
@@ -389,14 +390,19 @@ export class Pipe {
     );
   }
 
+  /** The world's code host (`Forge`), the same one every time. */
   github(): Host {
-    return new GitHubForge({
-      me: "owner",
-      gh: (_repo, args, opts) => this.tools.run("gh", args, opts),
-      owner: (args, opts) => this.tools.run("gh", ["--as-owner", ...args], opts),
-      gitAuth: async () => ({ args: [], env: {} }),
-      bot: async () => ({ login: "towercab[bot]", id: 9, email: "9+towercab[bot]@users.noreply.github.com" }),
-    });
+    return this.forge;
+  }
+
+  /** Delete a branch of a bare repo; false when it is not there. */
+  deleteRef(repo: string, branch: string): boolean {
+    try {
+      git(this.bareOf(repo), "update-ref", "-d", `refs/heads/${branch}`);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async start(extra: Record<string, unknown> = {}, opts: StartOpts = {}): Promise<Loop> {
@@ -676,11 +682,6 @@ export class Pipe {
     return { code: r.code ?? 0, signal: null };
   }
 
-  private repoOf(args: string[]): string {
-    const i = args.indexOf("-R");
-    return i >= 0 ? args[i + 1]! : "owner/web";
-  }
-
   bareOf(github: string): string {
     return this.bares[github.split("/")[1]!]!;
   }
@@ -720,8 +721,8 @@ export class Pipe {
     return d;
   }
 
-  /** GitHub's "update branch": merge the base into the PR's head. */
-  private updateBranch(p: FakePr): void {
+  /** The host's "update branch": merge the base into the PR's head. */
+  updateBranch(p: FakePr): void {
     const work = join(this.dir("tc-update-"), "w");
     git(dirname(work), "clone", "-q", "-b", p.head, this.bareOf(p.repo), work);
     git(work, "merge", "-q", "--no-edit", "origin/main");
@@ -752,298 +753,6 @@ export class Pipe {
     };
     this.issues.push(it);
     return it;
-  }
-
-  private issueGh(args: string[], opts: RunOpts): RunResult {
-    this.issueCalls.push(args.join(" "));
-    const bad = this.issueFail?.(args);
-    if (bad) return failResult(bad);
-    const json = (v: unknown) => okResult(JSON.stringify(v));
-    const repo = this.repoOf(args);
-    const flag = (f: string) => args[args.indexOf(f) + 1] ?? "";
-    const [a, b] = args;
-    if (a === "label") return okResult();
-    const labels = (it: FakeIssue) => it.labels.map((name) => ({ name }));
-    if (b === "list") {
-      return json(
-        this.issues
-          .filter((i) => i.repo === repo)
-          .map((i) => ({
-            number: i.number,
-            url: `https://github.com/${repo}/issues/${i.number}`,
-            state: i.state,
-            author: { login: i.author },
-            labels: labels(i),
-          })),
-      );
-    }
-    const it = this.issues.find((x) => x.repo === repo && x.number === Number(args[2]));
-    if (!it) return failResult(`issue ${args[2]} not found`);
-    if (b === "view") {
-      return json({ title: it.title, body: it.body, author: { login: it.author }, labels: labels(it) });
-    }
-    if (b === "comment") it.comments.push(opts.input ?? "");
-    if (b === "edit" && args.includes("--add-label")) {
-      const label = flag("--add-label");
-      if (!it.labels.includes(label)) it.labels.push(label);
-      it.labeledBy = { ...it.labeledBy, [label]: "towercab[bot]" };
-    }
-    args.forEach((x, k) => {
-      if (b === "edit" && x === "--remove-label") it.labels = it.labels.filter((l) => l !== args[k + 1]);
-    });
-    return okResult();
-  }
-
-  private fakeGh(): void {
-    const json = (v: unknown) => okResult(JSON.stringify(v));
-    this.tools.on("gh", (raw, opts) => {
-      const asOwner = raw[0] === "--as-owner";
-      const args = asOwner ? raw.slice(1) : raw;
-      const repo = this.repoOf(args);
-      const flag = (f: string) => {
-        const i = args.indexOf(f);
-        return i >= 0 ? args[i + 1]! : "";
-      };
-      const [a, b] = args;
-      if (a === "issue" || a === "label") return this.issueGh(args, opts);
-      if (a === "pr" && b === "list" && flag("--state") === "merged") {
-        if (this.mergedListFails) return failResult("HTTP 502: bad gateway");
-        return json(
-          this.prs
-            .filter((x) => x.repo === repo && x.state === "MERGED")
-            .map((x) => ({
-              number: x.number,
-              headRefName: x.head,
-              mergeCommit: x.mergeCommit ? { oid: x.mergeCommit } : null,
-            })),
-        );
-      }
-      if (a === "pr" && b === "list" && !args.includes("--head")) {
-        return json(
-          this.prs
-            .filter((x) => x.repo === repo && x.state === "OPEN")
-            .map((x) => ({ number: x.number, headRefName: x.head, title: x.title })),
-        );
-      }
-      if (a === "pr" && b === "list") {
-        const all = flag("--state") === "all";
-        return json(
-          this.prs
-            .filter((x) => x.repo === repo && x.head === flag("--head") && (all || x.state === "OPEN"))
-            .map((x) => ({ number: x.number, state: x.state, author: { login: x.author } })),
-        );
-      }
-      if (a === "pr" && b === "create") {
-        const head = flag("--head");
-        if (this.prs.some((x) => x.repo === repo && x.head === head && x.state === "OPEN"))
-          return failResult(`a pull request for branch "${head}" into branch "main" already exists`);
-        const p: FakePr = {
-          number: this.nextPr++,
-          repo,
-          head,
-          base: flag("--base"),
-          title: flag("--title"),
-          body: opts.input ?? "",
-          state: "OPEN",
-          author: "towercab[bot]",
-          mergeCommit: null,
-          comments: [],
-          reviews: [],
-          checks: (pr, head) => this.newPrChecks(pr, head),
-          mergeable: "MERGEABLE",
-          mergeStates: [],
-        };
-        this.prs.push(p);
-        return okResult(`https://github.com/${repo}/pull/${p.number}\n`);
-      }
-      if (a === "run" && b === "cancel") {
-        this.cancels.push(Number(args[2]));
-        return okResult();
-      }
-      if (a === "run" && b === "rerun") {
-        this.reruns.push(Number(args[2]));
-        return okResult();
-      }
-      if (a === "run" && b === "view") {
-        if (this.runViewFails) return failResult("HTTP 410: the logs have expired");
-        return okResult(`run ${args[2]}: Error: a test failed\n`);
-      }
-      const n = Number(args[2]);
-      const p = this.prs.find((x) => x.repo === repo && x.number === n);
-      if (a === "pr" && b === "view" && p) {
-        const fields = flag("--json").split(",");
-        let head = "";
-        try {
-          head = this.headSha(p.repo, p.head);
-        } catch {
-          // The branch was deleted: a closed PR keeps no head to read.
-        }
-        const all: Record<string, unknown> = {
-          state: p.state,
-          mergedAt: p.state === "MERGED" ? "2026-10-26T12:00:00Z" : null,
-          mergeCommit: p.mergeCommit ? { oid: p.mergeCommit } : null,
-          headRefOid: head,
-          mergeable: p.mergeable,
-          mergeStateStatus: fields.includes("mergeStateStatus")
-            ? (p.mergeStates.shift() ?? "CLEAN")
-            : "CLEAN",
-          statusCheckRollup: fields.includes("statusCheckRollup") ? p.checks(p, head) : [],
-          isDraft: false,
-          author: { login: p.author },
-          headRefName: p.head,
-          isCrossRepository: false,
-          body: p.body,
-          reviews: p.reviews.map((r) => ({
-            author: { login: r.author },
-            state: r.state,
-            body: r.body,
-            submittedAt: r.at,
-            commit: { oid: r.commit },
-          })),
-          comments: p.comments.map((c) => ({
-            id: c.id,
-            author: { login: c.author },
-            body: c.body,
-            createdAt: c.at,
-          })),
-        };
-        return json(Object.fromEntries(fields.map((f) => [f, all[f]])));
-      }
-      if (a === "pr" && b === "merge" && p) {
-        if (p.state !== "OPEN") return failResult(`Pull request #${p.number} was already merged or closed`);
-        const match = flag("--match-head-commit");
-        if (match && match !== this.headSha(p.repo, p.head))
-          return failResult("Head branch was modified. Review and try the merge again.");
-        this.mergePr(p);
-        return okResult();
-      }
-      if (a === "pr" && b === "comment" && p) {
-        p.comments.push({
-          id: `c${this.nextComment++}`,
-          author: asOwner ? "owner" : "towercab[bot]",
-          body: opts.input ?? "",
-          at: this.at(),
-        });
-        return okResult();
-      }
-      if (a === "pr" && (b === "ready" || b === "close")) {
-        if (p && b === "close") {
-          p.state = "CLOSED";
-          const why = args[args.indexOf("--comment") + 1];
-          if (args.includes("--comment") && why) {
-            p.comments.push({
-              id: `c${this.nextComment++}`,
-              author: "towercab[bot]",
-              body: why,
-              at: this.at(),
-            });
-          }
-        }
-        return okResult();
-      }
-      if (a === "api") {
-        const path = args.find((x) => x.startsWith("repos/")) ?? "";
-        const ev = /^repos\/([^/]+\/[^/]+)\/issues\/(\d+)\/events$/.exec(path);
-        if (ev) {
-          const it = this.issues.find((x) => x.repo === ev[1] && x.number === Number(ev[2]));
-          if (!it) return failResult(`issue ${ev[2]} not found`);
-          // The real call filters with `--jq`: one `{label, actor}` line per `labeled` event.
-          return okResult(
-            it.labels
-              .map((label) => JSON.stringify({ label, actor: it.labeledBy?.[label] ?? "someone" }))
-              .join("\n"),
-          );
-        }
-        const jobLog = /^repos\/([^/]+\/[^/]+)\/actions\/jobs\/(\d+)\/logs$/.exec(path);
-        if (jobLog) {
-          const text = this.jobLogs.get(Number(jobLog[2]));
-          return text === undefined ? failResult("gh: Not Found (HTTP 404)") : okResult(text);
-        }
-        const scan = /^repos\/([^/]+\/[^/]+)\/code-scanning\/alerts\?/.exec(path);
-        if (scan) {
-          this.alertReads.push(path);
-          if (this.alertsDenied) return failResult("gh: Resource not accessible by integration (HTTP 403)");
-          if (this.alertsFail) return failResult(this.alertsFail);
-          return json(
-            this.alerts.map((a) => ({
-              rule: { id: a.rule },
-              most_recent_instance: {
-                location: { path: a.path, start_line: a.line },
-                message: { text: a.message },
-              },
-            })),
-          );
-        }
-        const changed = /^repos\/([^/]+\/[^/]+)\/pulls\/\d+\/files/.exec(path);
-        if (changed) return json(this.changedFiles.map((filename) => ({ filename, status: "modified" })));
-        const dep = /^repos\/([^/]+\/[^/?]+)\/deployments(?:\/(\d+)\/statuses)?(?:\?(.*))?$/.exec(path);
-        if (dep) {
-          const [, r, id, query] = dep;
-          const q = new URLSearchParams(query ?? "");
-          const newest = <T>(xs: T[]) => [...xs].reverse();
-          if (id) {
-            const d = this.deployments.find((x) => x.id === Number(id));
-            return json(newest(d?.statuses ?? []).slice(0, Number(q.get("per_page") ?? 30)));
-          }
-          if (args.includes("POST")) {
-            const body = JSON.parse(opts.input ?? "{}") as { ref: string; task: string; payload: unknown };
-            const made = this.deploy(r!, body.ref, body.task, body.payload, this.nextDeployment++)!;
-            return json({ id: made.id });
-          }
-          return json(
-            newest(this.deployments)
-              .filter((x) => x.repo === r && x.environment === (q.get("environment") ?? x.environment))
-              .filter((x) => !q.get("sha") || x.sha === q.get("sha"))
-              .slice(0, Number(q.get("per_page") ?? 30))
-              .map(({ id, sha, task, payload, created_at }) => ({ id, sha, task, payload, created_at })),
-          );
-        }
-        const del = /^repos\/([^/]+\/[^/]+)\/git\/refs\/heads\/(.+)$/.exec(path);
-        if (del && args.includes("DELETE")) {
-          const bad = this.deleteFail?.(del[1]!, del[2]!);
-          if (bad) return failResult(bad);
-          try {
-            git(this.bareOf(del[1]!), "update-ref", "-d", `refs/heads/${del[2]}`);
-          } catch {
-            return failResult("gh: Reference does not exist (HTTP 422)");
-          }
-          this.deleted.push(`${del[1]} ${del[2]}`);
-          return okResult();
-        }
-        const edit = /^repos\/([^/]+\/[^/]+)\/issues\/comments\/(\d+)$/.exec(path);
-        if (edit) {
-          for (const pr of this.prs.filter((x) => x.repo === edit[1])) {
-            const c = pr.comments.find((x) => x.id === `c${edit[2]}`);
-            if (c) c.body = (JSON.parse(opts.input ?? "{}") as { body: string }).body;
-          }
-          return okResult("{}");
-        }
-        const m = /^repos\/([^/]+\/[^/]+)\/(pulls|issues)\/(\d+)(\/comments|\/update-branch)?/.exec(path);
-        const pr = m ? this.prs.find((x) => x.repo === m[1] && x.number === Number(m[3])) : undefined;
-        if (m?.[4] === "/update-branch" && pr) {
-          this.updateBranch(pr);
-          return okResult("{}");
-        }
-        if (m?.[4] === "/comments") {
-          if (m[2] === "pulls") return okResult("[]");
-          return json(
-            (pr?.comments ?? []).map((c) => ({
-              id: Number(c.id.slice(1)),
-              body: c.body,
-              user: { login: c.author },
-              created_at: c.at,
-            })),
-          );
-        }
-        if (m && args.includes("PATCH")) {
-          if (pr) pr.body = opts.input ?? pr.body;
-          return okResult("{}");
-        }
-        return okResult("{}");
-      }
-      if (a === "auth") return okResult("Logged in to github.com account owner");
-      return failResult(`fake gh: unhandled ${args.join(" ")}`);
-    });
   }
 }
 

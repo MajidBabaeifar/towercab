@@ -12,6 +12,7 @@ import {
   commandResult,
   insertCommand,
   OWNER_ONLY_COMMANDS,
+  paused,
   pendingCommands,
   tickSteps,
 } from "./commands.ts";
@@ -97,7 +98,8 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   step <id> <n…|all>              tick off steps the plan lists for you (the change then goes on)
   done <id> [note]                you did the work yourself: ends the intent; the note is kept as a ticked step
   steps <id>                      you will do it by hand: the intent becomes steps for you to tick
-  pause [id] | resume [id]
+  pause [id] | resume [id]        pause holds all new work and every change on GitHub; running steps finish
+  pause --now                     also stops the running steps (they continue after resume)
   repo add <owner/name> [--name <short>] | repo remove <name> | repo list
   repo set <name> key=value…      workers, ahead, base, path, env (NAME=value or a JSON object)
   shadow reset | shadow status    clear the shadow's conversation; what it is doing and what it cost today
@@ -228,6 +230,7 @@ export async function main(argv: string[], tools: Tools = realTools()): Promise<
         base: { type: "string" },
         prs: { type: "string" },
         by: { type: "string" },
+        now: { type: "boolean" },
       },
     });
   } catch (e) {
@@ -473,6 +476,7 @@ async function run(
       need(2, "<id> --by <agent> <text>");
       if (v.by === undefined) throw new UsageError("reply needs --by <agent>");
       if (!w.github) throw new Error(`reply needs [github] in ${w.config.file} (app_id, me)`);
+      if (paused(w.db)) throw new Error("paused: resume first, nothing changes on GitHub while paused");
       const intent = await (await w.store()).get(args[0]!);
       const m = unfinishedFor(w.db, intent.id);
       const repo = w.config.repos.get(m?.repo ?? intent.repo);
@@ -515,11 +519,15 @@ async function run(
       return tickSteps(w.db, id, which, true, new Date());
     }
     case "pause":
-      return submit(w, "pause", args[0] ?? "");
+      // LOOP-114: `--now` stops the runs going; it is for the whole of Towercab, not one intent.
+      if (v.now === true && (args[0] ?? "") !== "")
+        throw new Error("--now stops everything: use it without an intent");
+      return submit(w, "pause", args[0] ?? "", v.now === true ? "now" : "");
     case "resume":
       return submit(w, "resume", args[0] ?? "");
     case "approve": {
       need(1, "<id>");
+      if (paused(w.db)) throw new Error("paused: resume first, nothing is merged while paused");
       const store = await w.store();
       const intent = await store.get(args[0]!);
       await refuseOwnerOnly(w, intent.id);
