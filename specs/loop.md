@@ -35,6 +35,7 @@ and its settings in one TOML file.
   run --watch`), then `systemctl --user daemon-reload` and `enable --now`. `down` = `disable --now`
   (missions stay). `restart` = `systemctl --user restart towercab` (a few seconds: no build).
   `logs` execs `journalctl --user -u towercab -f`. A failing `systemctl` → exit 1 with its stderr.
+- The unit sets `TimeoutStopSec=60`, so systemd waits a minute for a stop before killing the service; the loop's own stop budget stays far below it (LOOP-136).
 - Verified by: `service: unit file`, `service: up, down, restart, logs`
 
 ### LOOP-3 · State machine
@@ -867,11 +868,11 @@ Boosting an intent sets its autonomy to a5 and, when it has not started, starts 
 
 When Towercab is told to stop, it gives running `gh` and `git` calls 10 seconds to finish, then kills them and exits.
 
-- On SIGTERM or SIGINT the loop starts no new pass, poll, check or Claude run, and waits for the `gh` and `git` processes it started (through `Tools`) for at most `[agent].stop_grace_secs` (default 10, whole seconds, 1–60). Then it sends SIGTERM to each one's process group and SIGKILL 2 s later. A call cut off this way fails with `stopped: <command> was cut off at shutdown`. Its mission is not counted as a failure: the step is re-entered at the next start (LOOP-6).
+- On SIGTERM or SIGINT the loop starts no new pass, poll, check or Claude run, and waits for the `gh` and `git` processes it started (through `Tools`) for at most 10 seconds (fixed, not a setting). Then it sends SIGTERM to each one's process group and SIGKILL 2 s later. A call cut off this way fails with `stopped: <command> was cut off at shutdown`. Its mission is not counted as a failure: the step is re-entered at the next start (LOOP-6).
 - The idle waits of `shutdown` (issues, features, readiness, settings, setup checks, limits, shadow) share this one deadline instead of waiting without limit; whatever is still running at the deadline is cut off the same way.
-- Claude runs are unchanged: SIGTERM to the group, SIGKILL after 10 s, `interrupted` (LOOP-7). Their sessions resume at the next start.
-- The whole stop takes at most the grace period plus the Claude kill wait plus a few seconds, which stays under systemd's default stop timeout of 90 s (LOOP-2).
-- Verified by: `shutdown: a gh call that never exits is killed after the grace period`, `shutdown: a git call that never exits is killed after the grace period`, `shutdown: no new work starts once stopping`, `shutdown: a cut-off call does not count as a failure`
+- Claude runs keep their treatment: SIGTERM to the group, SIGKILL after 10 s, `interrupted` (LOOP-7); their sessions resume at the next start. All children are signalled at the same moment and waited for together, not one after another.
+- The whole stop therefore takes at most about 15 s (10 s grace + 2 s kill wait + a few seconds to write state), well under the unit's `TimeoutStopSec=60` (LOOP-2).
+- Verified by: `shutdown: a gh call that never exits is killed after the grace period`, `shutdown: children are stopped together`, `shutdown: a git call that never exits is killed after the grace period`, `shutdown: no new work starts once stopping`, `shutdown: a cut-off call does not count as a failure`
 
 ### LOOP-137 · A stop that cut off a hanging call is a clean exit
 
@@ -880,6 +881,22 @@ After a stop that had to kill a hanging `gh` or `git` call, the next start finds
 - `shutdown` ends by removing `meta.running` and exiting 0 (LOOP-7), whether or not LOOP-136 had to kill a child. The next start does not log "the last run didn't exit cleanly; recovering" and does not add to any mission's `unclean` count.
 - The loop logs one line at the stop naming each call it cut off: `stop: cut off <command> after <n>s`.
 - Verified by: `shutdown: the next start after a cut-off call reports a clean exit`, `shutdown: the stop logs the calls it cut off`
+
+### LOOP-138 · Stale git locks are removed at start
+
+At start, Towercab removes git lock files left in its own clones and checkouts by a process that no longer exists.
+
+- After crash recovery (LOOP-7) and before the first pass, the loop looks for `index.lock` and every other `*.lock` file inside the git directories of `repos/<name>/`, `work/*/` (including a checkout's `.git/worktrees/<name>/` entry in its clone) and the intents clone (`intents/`). Files outside git directories, and `towercab.lock` in the home, are never touched.
+- A lock is removed only when no `git` process holds it: no running `git` process (found through `Tools`) has that repo or checkout as its working directory. A lock that a running `git` process may hold stays, and the log says so.
+- Each removal is logged on its own line: `start: removed stale lock <path>`. A start with nothing to remove logs nothing. A removal that fails is logged and does not stop the start.
+- Verified by: `start: a stale index.lock in a clone is removed and logged`, `start: stale locks in a checkout and its worktree entry are removed`, `start: a lock held by a running git process is kept`, `start: files outside git directories are never removed`
+
+### LOOP-139 · The intents repo is synced before the first pass
+
+Before the first pass, Towercab re-syncs the intents repo, so a write cut off by a killed stop is repaired or redone.
+
+- The sync runs after LOOP-138 and before any pass, on every start: fetch, then reconcile with the remote as the normal sync does. A sync failure is logged, retried in the first pass and does not stop the start.
+- Verified by: `start: the intents repo is synced before the first pass`, `start: a failed intents sync does not stop the start`
 
 ### LOOP-120 · Telegram message when a reply is posted
 
@@ -1572,7 +1589,7 @@ Environment=PATH=<node dir>:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Restart=always
 RestartSec=5
 KillMode=mixed
-TimeoutStopSec=30
+TimeoutStopSec=60
 
 [Install]
 WantedBy=default.target
