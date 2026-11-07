@@ -1268,16 +1268,20 @@ Whatever Towercab waits on the owner for, the owner can end or move the intent f
   confirmation first, naming the PR and its commit count ("This closes PR #12 (3 commits) and deletes its
   branch. Nothing is merged."). This includes `no changes` after a repair round, where the PR still
   holds the repair commits. The page asks it in a confirm (UI-164); the CLI prints it and needs `--yes`
-  (`towercab done <id> --yes`) or refuses with the same text; an exit from Telegram or the API without
-  the confirmation is refused with it. A mission with no open code PR, or a PR with no commits beyond
-  its base, needs none. The PR and commit count come from the forge when the confirmation is asked; when
-  it cannot be read the exit is refused with that reason rather than done without a warning.
+  (`towercab done <id> --yes`) or refuses with the same text; the Telegram message answers the exit with
+  the warning and the buttons "Close PR with N commits? Yes / Cancel" (the confirm of TG-4
+  for drop and merge), and only Yes applies the exit; an API call without the confirmation is refused
+  with the warning. A mission with no open code PR, or a PR with no commits beyond its base, needs none.
+- The PR and commit count come from the forge when the confirmation is asked. When they cannot be read
+  (a GitHub outage), the exit is not blocked: the warning is general ("Couldn't check the PR; it may
+  have commits. It will be closed and its branch deleted.") and the same explicit confirm follows.
+  `done` at `your steps first` is offered behind this warning.
 - The ask, the Telegram message (LOOP-14) and `towercab status` (LOOP-13) name the exits of the wait in
   plain words.
 - A test walks every row of **Waits**, including the ones LOOP-74 adds, applies every exit from each
   wait through `machine.apply`, and fails when a wait has no exit that leaves it for `done`, `stopped`
   or another stage, or when a wait in the code is missing from the table.
-- Verified by: `machine: every wait has an exit that ends or moves the intent`, `machine: no changes can end as done`, `cli: done ends an intent the owner did`, `cli: done turns the note into a ticked step`, `outbox: the message names the exits`, `status: waits list their exits`, `machine: every wait has an exit besides a reply that ends or moves the intent`, `db: the commands rebuild keeps existing rows and accepts done and steps`, `cli: done at no changes after a repair round asks to confirm the open PR`, `cli: steps and drop confirm an open PR with commits`, `cli: done without a PR needs no confirmation`, `machine: done is offered at your steps first`
+- Verified by: `machine: every wait has an exit that ends or moves the intent`, `machine: no changes can end as done`, `cli: done ends an intent the owner did`, `cli: done turns the note into a ticked step`, `outbox: the message names the exits`, `status: waits list their exits`, `machine: every wait has an exit besides a reply that ends or moves the intent`, `db: the commands rebuild keeps existing rows and accepts done and steps`, `cli: done at no changes after a repair round asks to confirm the open PR`, `cli: steps and drop confirm an open PR with commits`, `cli: done without a PR needs no confirmation`, `cli: an unreadable PR gets a general warning and a confirm`, `telegram: an exit that closes an open PR asks Yes or Cancel`, `machine: done is offered at your steps first`
 
 ### LOOP-77 · The same wait again is stuck
 

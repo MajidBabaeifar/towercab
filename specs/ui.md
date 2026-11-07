@@ -1080,9 +1080,10 @@ Every way out of a wait is a button on the card that does exactly what it says.
 - When `done`, `steps` or drop would close an open code PR with commits (LOOP-76), the button first
   opens a confirm that names the PR and its commit count and says its branch is deleted and nothing is
   merged; only its OK posts the action. The state carries the PR number and commit count (`openPr:
-  {number, commits}`) of such a mission for this.
+  {number, commits}`) of such a mission for this. When the PR can't be read the confirm gives the
+  general warning of LOOP-76 ("couldn't check the PR; it may have commits") and still asks.
 - After a click the card shows the done note of UI-105 ("Done by you · …").
-- Verified by: `ui: question options are buttons that do what they say`, `ui: no changes offers I did it myself`, `ui: a stuck wait offers only the other exits`, `ui: exits come from the API`, `ui: an option that asks for something first only fills the reply`, `ui: exits screenshots light, dark and mobile`, `ui: closing an open PR with commits asks to confirm first`, `ui: a stuck card screenshots light, dark and mobile`
+- Verified by: `ui: question options are buttons that do what they say`, `ui: no changes offers I did it myself`, `ui: a stuck wait offers only the other exits`, `ui: exits come from the API`, `ui: an option that asks for something first only fills the reply`, `ui: exits screenshots light, dark and mobile`, `ui: closing an open PR with commits asks to confirm first`, `ui: an unreadable PR gets the general warning and a confirm`, `ui: a stuck card screenshots light, dark and mobile`
 
 ### UI-168 · Teammate review on the card and the repo page
 
