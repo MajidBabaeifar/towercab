@@ -310,7 +310,7 @@ scratch.
   proof, screenshots and e2e unless the owner allowed them to write ([PIP-95](pipeline.md)). Env for those runs:
   `XDG_CACHE_HOME=<cache>/xdg`, `npm_config_cache=<cache>/npm`, `CARGO_HOME=<cache>/cargo`,
   `CARGO_TARGET_DIR=<cache>/target`, `GOCACHE=<cache>/go`, `PIP_CACHE_DIR=<cache>/pip`, then
-  `[agent].env` and `[repos.<r>].env`. With one worker per repo (LOOP-4) two missions never share it
+  `[repos.<r>].env` when it passes [PIP-159](pipeline.md); `[agent].env` is ignored. With one worker per repo (LOOP-4) two missions never share it
   at once.
 - Verified by: `cache: one cache per repo across missions`
 
@@ -1252,7 +1252,7 @@ intents that waited for it start.
 `towercab repo set <name> key=value…` changes a repo's settings; config tables no longer do.
 
 - Keys: `workers`, `ahead` (integers 1–16), `base` (a branch name), `path` (absolute or `~/`; empty =
-  `<home>/repos/<name>`), `env` (`env=NAME=value` sets one variable, `env=NAME=` sets it empty;
+  `<home>/repos/<name>`), `ship_network` (`ship_network=a.com,*.b.com` sets the platform domains the repo's ship commands may reach, [PIP-158](pipeline.md); empty clears them), `env` (`env=NAME=value` sets one variable, `env=NAME=` sets it empty;
   `env={"NAME":"value",…}`, a JSON object of strings, replaces them all). Several pairs at once; one bad
   pair changes nothing. Prints the repo's `repo list` line after `set `. The running loop uses the new
   values from its next pass (LOOP-68).
@@ -1263,7 +1263,7 @@ intents that waited for it start.
 - `base` and `path` change only while no mission needs the repo (as for `repo remove`): `<name> has
   unfinished intents (<ids>): change base or path once they are done`.
 - Other refusals: `<key> must be an integer 1-16`; `base: <value> is not a branch name`; `path must be
-  absolute or start with ~/`; `env must be NAME=value or a JSON object of strings`; `unknown setting
+  absolute or start with ~/`; `env must be NAME=value or a JSON object of strings`; `env <NAME>: <reason>` for a name or value the sandbox leaves out ([PIP-159](pipeline.md)); `unknown setting
   <key>: use workers, ahead, base, path or env`; `<pair> isn't key=value`; `<name> isn't a repo Towercab
   knows (towercab repo list)`.
 - Verified by: `repos: set changes a repo's settings`, `cli: repo commands`
@@ -1616,11 +1616,7 @@ If a part fails after the merges, that part and every part that landed after it 
 | `agent.monthly_budget_usd`, `budget.<repo>.daily_usd`, `budget.<repo>.monthly_usd` | number > 0, at most 2 decimals | none |
 | `agent.ci_poll`, `ci_grace`, `ci_wait` | seconds | 30, 120, 1800 |
 | `agent.freeze_wait` | minutes 1–1440 (LOOP-81) | 120 |
-| `agent.path` | `PATH` for runs and checks | the loop's `PATH` |
-| `agent.toolchain` | list of absolute dirs (`~/` expanded) | `~/.local/bin` |
-| `agent.env` | table of strings | `{}` |
-| `agent.network` | list of domains | AUT-14's default list |
-| `agent.sandbox_unix_sockets` | bool | false |
+| `agent.path`, `agent.toolchain`, `agent.env`, `agent.network`, `agent.sandbox_unix_sockets` | ignored since PIP-157 and AUT-26: they load, nothing reads them, and `towercab doctor` names each one that is set | none |
 | `repos.<r>.github`, `path`, `base`, `workers`, `env` | `owner/name`; path; branch; int 1–16; table | required; `<home>/repos/<r>`; `main`; 1; `{}` |
 | `repos.<r>.ahead` | int 1–16 | 3 |
 | `github.app_id`, `github.me`, `github.api_base` | int; login; URL | required; required; `https://api.github.com` |
@@ -1726,6 +1722,7 @@ are stored in intent files and never change; each ask says plainly what the owne
 | `answer the question` | blocked | Answer a question so the work can go on: pick an option or write your own. |
 | `checks red` | blocked | The tests can't pass without your help. Reply with what to change, or start over. |
 | `allow check writes` | blocked | Decide if the tests may write to this machine's shared build cache: reply allow or no. |
+| `fix sandbox` | blocked | Towercab's sandbox can't start, so no Claude run does: fix what the message says (for the AppArmor profile, run the command shown), then retry. |
 | `tests don't prove the change` | blocked | No test shows the change works. Reply with what a test should check, or say go on to continue without one. |
 | `CI red` | blocked | GitHub's checks still fail after two fix attempts. Reply with a hint on what to change, or start over. |
 | `CI stuck` | blocked | GitHub's checks didn't finish in time. Make sure they run, then reply so Towercab looks again. |

@@ -38,6 +38,7 @@ import { type Mission, unfinishedFor } from "./mission.ts";
 import { decide, nextText } from "./pick.ts";
 import { grantScanning } from "./pipeline/alerts.ts";
 import { guardMain } from "./pipeline/guard.ts";
+import { checkSandbox } from "./pipeline/hostcheck.ts";
 import { handlers } from "./pipeline/index.ts";
 import { ownerMergeRefusal } from "./pipeline/teammate.ts";
 import { parseScores } from "./priority.ts";
@@ -393,6 +394,8 @@ async function run(
           selfUpdate: Boolean(v.watch),
           readiness: true,
           limits: true,
+          // PIP-163, PIP-162: the sandbox must hold before anything is picked or any Claude run starts.
+          sandboxProbe: () => checkSandbox(tools),
         },
         { watch: Boolean(v.watch), intent: v.intent as string | undefined },
       );

@@ -1,2 +1,3 @@
 # One fingerprint (commit:file:rule:line) per false positive, each with a comment above saying why.
-# None so far: the full-history scan found no findings.
+# A made-up key-shaped value in a test of the env filter (PIP-159); the file now builds it from two parts.
+b423a08a714d8acd60bf9fea0ee2e59ba732b6e2:tests/sandbox.test.ts:aws-access-token:326

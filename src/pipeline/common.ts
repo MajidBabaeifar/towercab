@@ -26,7 +26,7 @@ import { checkoutRoot } from "../service.ts";
 import { combine, type OwnerStep, type PlanStep, parseNoneLive, parseSteps } from "../steps.ts";
 import { grantsFor, parseAccess, type TestAsk } from "./access.ts";
 import type { Mech } from "./mechanical.ts";
-import { cacheEnv } from "./sandbox.ts";
+import { cacheEnv, DEFAULT_NETWORK } from "./sandbox.ts";
 import { type Access, type Question, type ReviewResult, SCHEMAS } from "./schemas.ts";
 
 /** `missions.data`, as the pipeline uses it. */
@@ -130,7 +130,11 @@ export interface PipeData {
   stepsDirty?: number;
   /** The merged plan's ticked access. */
   granted?: Access;
+  /** AUT-15: access the owner allowed mid-build (never granted by Towercab itself). */
   unplanned?: Omit<Access, "tests">;
+  /** AUT-15: access the owner refused mid-build, and the request being asked about. */
+  refusedAccess?: Omit<Access, "tests">;
+  accessAsk?: Omit<Access, "tests">;
   /** PIP-116: existing tests the owner allowed or refused mid-build, and the one being asked about. */
   testAllowed?: { path: string; why: string }[];
   refusedTests?: { path: string; why: string }[];
@@ -317,7 +321,7 @@ export function effectiveOf(m: Mission, intent: Intent, files: RepoFiles): numbe
 }
 
 /** The worker's grants (AUT-14). */
-export function grants(m: Mission, intent: Intent, files: RepoFiles, cx: Ctx) {
+export function grants(m: Mission, intent: Intent, files: RepoFiles, _cx?: Ctx) {
   const d = data(m);
   return grantsFor({
     a: effectiveOf(m, intent, files),
@@ -325,7 +329,7 @@ export function grants(m: Mission, intent: Intent, files: RepoFiles, cx: Ctx) {
     plan: d.granted ?? null,
     unlock: intent.unlock,
     network: intent.network,
-    defaults: cx.config.agent.network,
+    defaults: [...DEFAULT_NETWORK],
     unplanned: d.unplanned ?? null,
   });
 }
@@ -385,6 +389,11 @@ const STAGE_OF_KIND: Record<RunKind, string> = {
 
 /** Record the step, then spawn a Claude run (LOOP-6, LOOP-7, PIP-13, PIP-24). */
 export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string): Progress {
+  // PIP-161, PIP-162: while the sandbox probe fails no Claude run starts: the owner gets the probe's error, or,
+  // where user namespaces are restricted and the profile is missing, the one install command. A retry after the
+  // fix carries on; a working sandbox never gets this.
+  const probe = cx.sandbox?.();
+  if (probe && !probe.ok) return { done: wait("fix sandbox", probe.why) };
   const repo = cx.repo(m);
   const runs = cx.runs(m);
   const cache = cx.home.cache(repo.name);
@@ -430,9 +439,9 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
     grants:
       p.kind === "worker"
         ? grants(fresh, p.intent, p.files, cx)
-        : { domains: cx.config.agent.network, paths: [], open: false },
+        : { domains: [...DEFAULT_NETWORK], paths: [] },
     guardRules: p.guard ?? null,
-    cacheEnv: cacheEnv(cache, cx.config, repo),
+    cacheEnv: cacheEnv(cache, repo),
     cache,
     config: cx.config,
   };

@@ -6,8 +6,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { main } from "../src/cli.ts";
-import { checkLoop, clonePath, DEFAULT_NETWORK, loadConfig, parseConfig } from "../src/config.ts";
+import { checkLoop, clonePath, loadConfig, parseConfig } from "../src/config.ts";
 import { Home } from "../src/home.ts";
+import { DEFAULT_NETWORK } from "../src/pipeline/sandbox.ts";
 import { FakeTools } from "./helpers/tools.ts";
 import { tempDir } from "./helpers/world.ts";
 
@@ -55,8 +56,9 @@ test("config: loads defaults", () => {
     path: "/opt/node/bin:/usr/bin:/bin",
     toolchain: [join(process.env.HOME, ".local/bin")],
     env: {},
-    network: DEFAULT_NETWORK,
+    network: [...DEFAULT_NETWORK],
     sandboxUnixSockets: false,
+    ignored: [],
   });
   expect(DEFAULT_NETWORK).toEqual([
     "registry.npmjs.org",
