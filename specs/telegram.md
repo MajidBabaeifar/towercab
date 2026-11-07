@@ -26,32 +26,44 @@ Towercab acts on messages and button presses from the owner's chat and ignores e
 
 Everything the owner does in Telegram goes through the same actions as the page, with the same rules and refusals.
 
-- A button or command calls the code behind `POST /api/actions` (UI-65, UI-66), as the owner (LOOP-38). It
-  gets the same checks: an `a0` intent's owner-only rules (AUT-33), a missing PR, a PR that moved on. A refusal
-  is shown in Telegram in the same words as on the page.
-- Telegram adds no action the page lacks: `merge`, `retry`, `drop`, `reply`, `pause`, `resume` only.
-- Verified by: `telegram: buttons call the actions API`, `telegram: a refusal reads as on the page`, `telegram: no action the page lacks`
+- A button or command calls the code behind `POST /api/actions` (UI-65, UI-66), as the owner (LOOP-38), with
+  `actor: telegram`. It gets the same checks: a missing PR, a PR that moved on, and the owner-only rule below.
+  A refusal is shown in Telegram in the same words as on the page.
+- Telegram adds no action the page lacks: `merge`, `retry`, `drop`, `reply`, `accept` and `close` (a proposed
+  intent, UI-185), `pause` and `resume` (global, TG-10) only.
+- On an owner-only intent (effective `a` 0, AUT-31) Telegram follows AUT-32 and AUT-33: it never answers,
+  merges, drops, starts over, accepts or closes. Its messages carry no action buttons, only the link to the
+  card and the line `<id> is only yours: use GitHub or the page`; a reply to its question is not recorded as an
+  answer and gets that line; a button pressed anyway (the level may have been lowered after the message was
+  sent) is refused with the same line and recorded as in AUT-32. The check runs on the intent's level at the
+  time of the press. The global `/pause` and `/resume` are unaffected, as in AUT-33.
+- Verified by: `telegram: buttons call the actions API`, `telegram: a refusal reads as on the page`, `telegram: no action the page lacks`, `telegram: an a0 message has no action buttons`, `telegram: a button on an a0 intent is refused`, `telegram: a reply to an a0 question is not an answer`, `telegram: pause and resume work with a0 intents`
 
 ### TG-3 · A needs-you message carries buttons
 
 Each message that says something needs the owner has buttons for the actions on that card.
 
 - The buttons are those of the Needs you card for the same wait (UI-58, UI-164): Merge for a PR waiting to
-  be merged, Start over for a wait that offers it, Drop. A question has no button besides Drop; it is answered
-  by replying (TG-6). A wait with no action on its card gets no buttons.
+  be merged, Start over for a wait that offers it, Drop; for a proposed intent, Accept and Close (UI-185).
+  A question has no button besides Drop; it is answered by replying (TG-6). A wait with no action on its
+  card gets no buttons, and an owner-only intent none at all (TG-2).
 - Each button is an inline-keyboard button whose `callback_data` is at most 64 bytes and names the action,
   the intent and the wait it was shown for (TG-5). The message is the one LOOP-16 sends; no second message
   carries the buttons.
-- Verified by: `telegram: a needs-you message has the card's buttons`, `telegram: a question has no merge button`, `telegram: callback data fits 64 bytes`
+- Verified by: `telegram: a needs-you message has the card's buttons`, `telegram: a question has no merge button`, `telegram: a proposed intent has accept and close`, `telegram: callback data fits 64 bytes`
 
-### TG-4 · Drop asks for a confirm
+### TG-4 · Merge and drop ask for a confirm
 
-Dropping an intent from Telegram needs a second press, so a stray tap cannot do it.
+Merging or dropping from Telegram needs a second press, so a stray tap cannot do either.
 
-- The Drop button edits the message to `Drop <title>? This closes its PR.` with `Yes, drop` and `Cancel`.
-  Only `Yes, drop` acts; `Cancel` restores the original message and buttons. An unanswered confirm changes
-  nothing. Merge and Start over act on the first press, as on the page.
-- Verified by: `telegram: drop asks to confirm`, `telegram: cancel restores the buttons`, `telegram: an unconfirmed drop changes nothing`
+- The Merge button edits the message to `Merge <PR title>?` naming the PR and its target branch, as the page's
+  merge confirm does (UI-261), with `Yes, merge` and `Cancel`. The Drop button edits it to `Drop <title>? This
+  closes its PR.` with `Yes, drop` and `Cancel`. Only the `Yes` button acts; `Cancel` restores the original
+  message and buttons. An unanswered confirm changes nothing.
+- The merge acts on the head SHA the message showed (UI-65): if the PR moved on since, the press is refused as
+  TG-5 says and nothing is merged. The confirm buttons carry the same wait id as the first press.
+- Every other action (Start over, Accept, Close) acts on the first press, as on the page.
+- Verified by: `telegram: merge asks to confirm`, `telegram: drop asks to confirm`, `telegram: cancel restores the buttons`, `telegram: an unconfirmed merge or drop changes nothing`, `telegram: a merge confirm for a moved head is refused`, `telegram: other actions act on the first press`
 
 ### TG-5 · A stale button does nothing harmful
 
@@ -96,7 +108,7 @@ Replying to a question's message in Telegram answers that question.
   reason, buttons, link. Proposed intents get Accept and Close (UI-185). A line `<n> more waiting` follows
   when there are others (UI-196). With none: `Nothing needs you.`
 - The message is tracked like any other (TG-11), so it is edited when the wait is handled.
-- Verified by: `telegram: focus sends the top wait with buttons`, `telegram: focus picks as the focus tab does`, `telegram: focus says nothing needs you`
+- Verified by: `telegram: focus sends the top wait with buttons`, `telegram: focus picks as the focus tab does`, `telegram: focus offers accept and close for a proposal`, `telegram: focus says nothing needs you`
 
 ### TG-9 · /queue
 
@@ -182,7 +194,9 @@ Text Towercab cannot use gets a short help line, never silence and never a guess
 
 - Buttons call the page's actions rather than their own code, so a new rule (AUT-33) holds in both places
   without being written twice.
-- A confirm only for Drop, because it is the one action that cannot be taken back; Merge is already a
-  deliberate button on the page.
+- A confirm for Merge and Drop, as the page asks before a merge: a thumb can hit the wrong button on a
+  phone, and both are hard to undo. Everything else is one tap.
+- On owner-only intents Telegram gives no buttons, because AUT-32 says Telegram never counts there; the
+  message still links to the card so the owner can act on the page.
 - Edit instead of send: the point of the chat is what needs the owner now; a stale message that still
   shows buttons is the thing to avoid.
