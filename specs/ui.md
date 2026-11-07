@@ -1522,6 +1522,14 @@ The repo's page says for each setting whether it came from the repo, the overlay
 - The labels come from the API's repo view, not from the page's own guess.
 - Verified by: `ui: settings show repo, overlay or default`, `ui: an overlay setting has no edit control`, `ui: a refused overlay key shows its line`, `ui: replaced overlay checks show a notice`
 
+### UI-277 · Problems show loose secrets files
+
+The Overview's Problems block names each secrets file that others can read and the command that fixes it.
+
+- One Problems row (UI-60) per file found by the check of LOOP-143: `<path> is readable by others: chmod 600 <path>`. The row is a failure here even though the self-update check only warns (LOOP-145); nothing is shown when all such files are mode 600.
+- The rows come from the same check as `doctor`, through the API's problems list, not from the page's own guess.
+- Verified by: `ui: problems show a loose secrets file with its chmod`, `ui: no loose secrets file shows no row`
+
 ### UI-219 · Sign in with GitHub
 
 When people are set up, the page opens on a sign-in screen with one button, "Sign in with GitHub".
