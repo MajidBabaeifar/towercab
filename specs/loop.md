@@ -863,6 +863,21 @@ Boosting an intent sets its autonomy to a5 and, when it has not started, starts 
 - There is no command-line command for `a` or for boost: raising autonomy stays on the page and GitHub (AUT-35) and `boost` rows from the command line are dropped (LOOP-134). An a0 intent refuses `score` like `start` (AUT-33), because the command line cannot tell the owner from an agent: only the page and GitHub change it.
 - Verified by: `cli: score changes u and i`, `cli: score needs a value`, `cli: score refuses a bad value`, `cli: score is refused on an a0 intent`, `commands: score applied without a loop`
 
+### LOOP-120 · Telegram message when a reply is posted
+
+When Towercab has answered the owner's comment and the PR waits for the owner again, the owner gets a short Telegram message with a link to the reply.
+
+- One message per posted reply (PIP-204), written when the reply is recorded and the mission waits for the owner on that PR (`waiting: approve …` or the equivalent for the spec, plan or code PR). It names the intent, the PR and the gist (first sentence) of the reply, and links to the reply comment; ≤ 4000 characters (LOOP-16). It replaces no other message for the same wait: the usual "ready for you" message, if any, is not sent twice (one message covers both).
+- Buttons and reply-to-answer follow [telegram.md](telegram.md). With no `[telegram]`, the row is written and never sent (LOOP-16).
+- Verified by: `telegram: a posted reply sends one message with a link`, `telegram: the message names the intent, the PR and the gist`, `telegram: a reply and the ready message are sent once`
+
+### LOOP-121 · No message for a revision Towercab started itself
+
+Telegram stays quiet for revisions the owner did not ask for, so it only goes out when the owner has something to do.
+
+- A revision started by red checks, a conflict or a review or gate fix writes no reply (PIP-203) and no LOOP-120 message. If such a revision ends with the PR waiting for the owner, the existing messages of LOOP-16 apply unchanged. Replies by Towercab never count as feedback (PIP-206), so they send nothing on their own.
+- Verified by: `telegram: a revision Towercab started sends no reply message`, `telegram: a reply that leaves the PR not waiting sends nothing`
+
 ### LOOP-113 · Pause stops all new work
 
 While Towercab is paused, no mission starts anything new, but steps already running finish and are applied.

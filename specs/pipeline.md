@@ -1976,6 +1976,47 @@ Towercab never moves an ID that is the intent's own: one its own spec pull reque
 - If the merged spec PRs cannot be read, the reserved IDs are left unmoved except those that exist on the base branch with no own-ID evidence from the intent file; the mission's log notes "IDs unchecked against merged spec PRs", and PIP-132 stays the backstop.
 - Verified by: `pipeline: reserved IDs from the intent's own merged spec PR are kept`, `pipeline: reserved IDs from the intent's own open spec PR are kept`, `pipeline: reserved IDs the intent names as already written are kept`, `pipeline: a spec PR head is matched by the intent id prefix and the -spec suffix`, `pipeline: a sibling intent's spec PR head is not matched`, `pipeline: reserved IDs that belong to another intent's rows are still moved`, `pipeline: reserved IDs on main that belong to no intent are still moved`, `pipeline: unreadable merged spec PRs leave reserved IDs unmoved`
 
+### PIP-203 · A revision started by the owner's comment returns a reply
+
+When a design, plan or build revision answers the owner's comments, the worker also writes a reply to them.
+
+- The result of a revision that the owner's feedback started (PIP-25, PIP-43; on the spec, plan or code PR) gains `reply`: Markdown written by the worker (PIP-40), non-empty, and the revision is refused as malformed without it. It is not asked for on a revision Towercab started itself (red checks PIP-82, conflicts PIP-81, review or gate fixes, repairs) nor on a first run.
+- The prompt lists each comment of the feedback with its id, so the reply can answer them one by one (PIP-205). The PR description is still rewritten as before (PIP-48); `reply` is in addition.
+- Verified by: `pipeline: a feedback revision must return a reply`, `pipeline: a revision Towercab started needs no reply`, `pipeline: the feedback prompt lists each comment with its id`
+
+### PIP-204 · The reply is posted on the PR, under the owner's comment where possible
+
+Towercab posts the reply on the PR the revision changed, as a comment that names the agent.
+
+- Posted by `Forge` after the revision's commit is pushed. A comment that is a line comment or part of a review thread gets a threaded reply in that thread; a plain PR comment cannot be threaded, so the reply is a new PR comment that links and quotes the first line of the comment it answers. A review body (Approve or Request changes) is answered with a PR comment the same way.
+- Header `**Reply** · round <n>` and marker `<!-- towercab:reply:<n> -->`, as PIP-42; threaded replies carry the header and marker too. The same round edits its reply instead of adding another. The reply is never posted before the commit it describes, and never when the revision changed nothing and the worker returned no reply.
+- A host failure while posting is retried on the next pass; it never loses the revision or sends the mission back.
+- Verified by: `github: a reply to a line comment is threaded`, `github: a reply to a plain comment quotes it`, `github: reply has header and marker`, `pipeline: the reply is posted after the revision is pushed`, `pipeline: a failed reply post is retried`
+
+### PIP-205 · What the reply says
+
+The reply tells the owner, in plain words, how Towercab read the comment, what it changed or left alone, and what is still open.
+
+- Written to `prompts/writing.md`: the outcome first; no step names, field names or other internal terms. Parts: how the comment was read; what changed in the PR (and what was not changed and why); new or still-open questions and points, each with a recommendation, or one line saying nothing is open.
+- Each comment of the revision gets its own part, quoted or named by its first words, so that several comments handled in one revision get one reply that answers each of them (PIP-203). A comment the worker did not act on is still answered, with the reason.
+- `agents/design.md`, `agents/plan.md` and `agents/build.md` carry these rules for a feedback revision.
+- Verified by: `prompts: revision prompts ask for a reply that answers each comment`, `prompts: the reply rules follow the writing guide`
+
+### PIP-206 · A reply is not feedback and does not replace the description
+
+Towercab's replies never start a revision, and the PR description is kept up to date as before.
+
+- A reply is a comment of the App's bot, so it never raises an event (PIP-42, PIP-44), including in a thread under the owner's comment, and never moves `feedback_seen`.
+- The PR description is rewritten by every revision as today (PIP-48); a reply does not stand in for it.
+- Verified by: `events: a reply under the owner's comment raises no event`, `pipeline: a revision still rewrites the PR description`
+
+### PIP-207 · One reply per revision, even when handled together
+
+Several comments taken in one revision, and a comment arriving while a reply is posted, never produce two replies for the same revision.
+
+- A revision takes every unseen owner comment on the PR (PIP-44) and returns one `reply` for them. The reply is posted once per revision round (PIP-204). A comment that arrives after the revision started waits for the next revision and gets its own reply then.
+- Verified by: `pipeline: several comments get one reply that answers each`, `pipeline: a comment that arrives during a revision gets the next reply`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
