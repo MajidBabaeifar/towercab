@@ -222,7 +222,12 @@ test("ui: a wait stage shows the owner's decision", () => {
 
 test("ui: a wait stage still open says what it waits for", () => {
   const open = { attempt: 1, created: NOW - 3100, stage: "approval:spec" as const };
-  const map = stageMap(open, [T(0, "pick", "ok", "design"), T(60, "design", "wait", "approval:spec")], [], NOW);
+  const map = stageMap(
+    open,
+    [T(0, "pick", "ok", "design"), T(60, "design", "wait", "approval:spec")],
+    [],
+    NOW,
+  );
   const wait = map.stages.find((s) => s.id === "spec_review")!;
   // No decision yet; the client shows "Waiting for you: your spec review".
   expect(wait).toMatchObject({ decision: null, current: true, owner: true, outcome: "waiting on you" });
