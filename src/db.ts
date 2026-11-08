@@ -127,7 +127,9 @@ ALTER TABLE commands_new RENAME TO commands;`,
  * Versions reached by migrations that only add (tables, columns, keys older code doesn't read): a
  * Towercab older than them can still use the database (LOOP-37).
  */
-export const ADDITIVE = new Set([3, 6, 7, 8, 9]);
+export const ADDITIVE = new Set([3, 6, 7, 8, 9, 10]);
+// 10 only widens the CHECK on `commands` (same columns): older code reads the table as before, and a
+// `score` or `boost` row it doesn't know just gets an error result, so a rollback stays safe.
 
 /** The oldest Towercab (by its migration count) that can open a database at `version`. */
 export function compatibleFrom(version: number): number {
