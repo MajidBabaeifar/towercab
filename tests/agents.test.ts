@@ -210,6 +210,16 @@ test("agents: repair continues the worker session", () => {
   expect(repair.prompt).toContain("{{what}}");
 });
 
+test("agents: worker and repair carry the parallel work rules", () => {
+  for (const name of ["worker", "repair"]) {
+    const p = loadAgent(name).prompt;
+    expect(p).toContain("Parallel work");
+    expect(p).toContain("Don't merge or rebase the base branch just because it moved");
+    expect(p).toContain("Never stash, reset or delete work you didn't create");
+    expect(p).toContain("Conflicts are resolved only by the change whose turn it is to land");
+  }
+});
+
 test("agents: score has no tools", () => {
   const s = loadAgent("score");
   expect(s.tools).toEqual([]);

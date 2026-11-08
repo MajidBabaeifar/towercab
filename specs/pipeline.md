@@ -612,7 +612,12 @@ The repair run and the issue scorer each get their own file, so their role is wr
 - `agents/score.md`: the issue scorer (INT-22), no tools, `session: none`, `timeout_min: 5`.
 - The PR text is part of the build result, written by the worker. It stays in `worker.md` as its own
   section of the prompt rather than a separate run; PIP-75 records this.
-- Verified by: `agents: repair continues the worker session`, `agents: score has no tools`
+- `agents/worker.md` and `agents/repair.md` carry the same "Parallel work" rules (LOOP-160): no merge or
+  rebase of the base only because it moved (only for a conflict, a failing check or real base risk, then
+  rerun the affected checks); checks from an older head are no evidence for the new one; never stash,
+  reset or delete work the agent didn't create, nor touch another mission's branch or worktree;
+  conflicts are resolved only by the merge queue's head.
+- Verified by: `agents: repair continues the worker session`, `agents: score has no tools`, `agents: worker and repair carry the parallel work rules`
 
 ### PIP-75 · The audit
 
@@ -715,6 +720,8 @@ A code PR that conflicts with its base is merged with the base by Towercab's con
 - Applies to the conflict round of PIP-31 and PIP-22 (`DIRTY`), also when the conflict is found before
   the gate (in `ci` or `review`): the mission goes to `build` with `repair.kind = "conflict"` and never
   to an owner wait first. The conflict round's first run is not counted as a fix round.
+- Once missions are queued to merge, only the head of the repo's merge queue runs a conflict round; the
+  others wait their turn without one (LOOP-160).
 - Up to 2 automatic conflict rounds per code PR. The owner is asked (`waiting: merge failed`) only
   when the PR still conflicts after the second round.
 - Verified by: `pipeline: a code PR in conflict is resolved without asking`, `pipeline: a code conflict that stays after two rounds asks the owner`
