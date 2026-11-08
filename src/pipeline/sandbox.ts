@@ -4,7 +4,8 @@
 // (its `.git` read-only). Every setting here is a constant or built from the mission; no config key, repo
 // file or intent reaches it, and there is no way to switch it off.
 
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RepoConfig } from "../config.ts";
@@ -40,19 +41,88 @@ export const DEFAULT_NETWORK: readonly string[] = [
   "developer.mozilla.org",
 ];
 
+/** The usual install places of toolchains under HOME (PIP-223), fixed in code; `zig-*` is read from `~/.local`. */
+const TOOLCHAIN_PLACES = [".cargo/bin", ".rustup", ".local/go", ".local/node"];
+
+/** True when `dir` is a directory that really lies inside HOME (a symlink leaving HOME is not one). */
+function insideHome(home: string, dir: string): boolean {
+  try {
+    const real = realpathSync(dir);
+    const root = realpathSync(home);
+    return statSync(real).isDirectory() && real.startsWith(`${root}/`);
+  } catch {
+    return false;
+  }
+}
+
+/** `~/.local/zig-*` directories that exist, the newest (by name) first (PIP-223). */
+function zigDirs(home: string): string[] {
+  const local = join(home, ".local");
+  try {
+    return readdirSync(local)
+      .filter((n) => n.startsWith("zig-"))
+      .sort((a, b) => b.localeCompare(a, "en", { numeric: true }))
+      .map((n) => join(local, n))
+      .filter((d) => insideHome(home, d));
+  } catch {
+    return [];
+  }
+}
+
+/** The existing masked files (`MASKED`) at the top of `dir` and one level below it (PIP-224). */
+function maskedIn(dir: string): string[] {
+  let subs: string[] = [];
+  try {
+    subs = readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => join(dir, e.name));
+  } catch {
+    // Unreadable: only the top level is masked.
+  }
+  return [dir, ...subs].flatMap((d) => MASKED.map((f) => join(d, f)).filter((f) => existsSync(f)));
+}
+
+/** The standard toolchain locations under HOME that exist, in the order of PIP-223 (the `.rustup` has no bin). */
+export function toolchainPlaces(home: string): string[] {
+  const found = (rels: string[]) => rels.map((r) => join(home, r)).filter((d) => insideHome(home, d));
+  return [
+    ...found(TOOLCHAIN_PLACES.slice(0, 3)),
+    ...zigDirs(home),
+    ...found(TOOLCHAIN_PLACES.slice(3)),
+  ];
+}
+
+/** The directory of the Node that runs Towercab when it lives under HOME (the empty HOME would hide it). */
+function ownNode(home: string): string[] {
+  const node = dirname(process.execPath);
+  return node.startsWith(`${home}/`) ? [node] : [];
+}
+
 /**
- * The toolchain directories bound read-only (PIP-157), derived in code: `~/.local/bin`, and the directory of
- * the Node that runs Towercab when it lives under HOME (which the empty HOME would otherwise hide).
+ * The toolchain directories bound read-only (PIP-157, PIP-223), derived in code: the standard locations that
+ * exist, `~/.local/bin`, and the directory of the Node that runs Towercab when it lives under HOME.
  */
 export function toolchainDirs(home: string): string[] {
-  const node = dirname(process.execPath);
-  return [join(home, ".local", "bin"), ...(node.startsWith(`${home}/`) ? [node] : [])];
+  return [...new Set([...toolchainPlaces(home), join(home, ".local", "bin"), ...ownNode(home)])];
+}
+
+/** The `bin` directories of the bound toolchains, in the fixed order of PIP-223, then `~/.local/bin`. */
+export function toolchainBins(home: string): string[] {
+  const bin = (d: string) => {
+    const rel = d.slice(home.length + 1);
+    if (rel === ".rustup") return [];
+    if (rel === ".local/go" || rel === ".local/node") return [join(d, "bin")];
+    return [d];
+  };
+  return [
+    ...new Set([...toolchainPlaces(home).flatMap(bin), join(home, ".local", "bin"), ...ownNode(home)]),
+  ];
 }
 
 /** `PATH` of every sandboxed command and Claude run (PIP-157): the toolchain, then the system's. */
 export function sandboxPath(home: string): string {
   return [
-    ...toolchainDirs(home),
+    ...toolchainBins(home),
     "/usr/local/sbin",
     "/usr/local/bin",
     "/usr/sbin",
@@ -124,8 +194,7 @@ export function sandboxArgv(o: SandboxOpts): string[] {
   a.push("--tmpfs", o.home, "--tmpfs", "/tmp");
   for (const d of toolchainDirs(o.home).filter((d) => existsSync(d))) {
     a.push("--ro-bind", d, d);
-    for (const f of MASKED.map((f) => join(d, f)).filter((f) => existsSync(f)))
-      a.push("--ro-bind", "/dev/null", f);
+    for (const f of maskedIn(d)) a.push("--ro-bind", "/dev/null", f);
   }
   if (o.cache) a.push(o.cacheWritable ? "--bind" : "--ro-bind", o.cache, o.cache);
   const git = join(o.checkout, ".git");
@@ -191,7 +260,12 @@ export function refusedRepoEnv(env: Record<string, string> | undefined): { name:
 }
 
 /** The cache's variables (LOOP-34), then the repo's own variables that pass the rule of PIP-159. */
-export function cacheEnv(cache: string, repo: RepoConfig | null): Record<string, string> {
+export function cacheEnv(
+  cache: string,
+  repo: RepoConfig | null,
+  home: string = homedir(),
+): Record<string, string> {
+  const rustup = toolchainPlaces(home).find((d) => d === join(home, ".rustup"));
   return {
     XDG_CACHE_HOME: join(cache, "xdg"),
     npm_config_cache: join(cache, "npm"),
@@ -200,6 +274,12 @@ export function cacheEnv(cache: string, repo: RepoConfig | null): Record<string,
     GOCACHE: join(cache, "go"),
     PIP_CACHE_DIR: join(cache, "pip"),
     ...allowedRepoEnv(repo?.env),
+    // PIP-225: the Go and Zig caches and the bound rustup are fixed; a repo's variable of the same name loses.
+    GOPATH: join(cache, "go", "path"),
+    GOMODCACHE: join(cache, "go", "path", "pkg", "mod"),
+    ZIG_GLOBAL_CACHE_DIR: join(cache, "zig", "global"),
+    ZIG_LOCAL_CACHE_DIR: join(cache, "zig", "local"),
+    ...(rustup ? { RUSTUP_HOME: rustup } : {}),
   };
 }
 

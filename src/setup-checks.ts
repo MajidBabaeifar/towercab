@@ -154,7 +154,7 @@ async function runDraft(
 ): Promise<Ran> {
   const home = homedir();
   const cache = d.home.cache(repo.name);
-  const env = sandboxEnv(home, d.config, cacheEnv(cache, repo));
+  const env = sandboxEnv(home, d.config, cacheEnv(cache, repo, home));
   let output = "";
   for (const [lines, writable] of [
     [setup, true],
