@@ -164,8 +164,8 @@ Every GitLab test runs against an in-process fake, with no network.
 
 ## Out of scope
 
-- GitLab CI (pipelines and required jobs), GitLab issues, and deployments or environments; each is tracked
-  separately. Until CI is built, a GitLab repo has no CI stage: checks run locally as for a GitHub repo with no CI ([REPO-9](repo.md)).
+- GitLab CI (pipelines and required jobs), GitLab issues, and deployments or environments as a GitLab feature of
+  their own; each is tracked separately. Reading deployments for the ship stage is [SHIP-37](ship.md). Until CI is built, a GitLab repo has no CI stage: checks run locally as for a GitHub repo with no CI ([REPO-9](repo.md)).
 - Repository settings and readiness checks that call GitHub ([REPO-22](repo.md)..[REPO-33](repo.md)): a GitLab repo has only the
   `verifying` item.
 - SSH authentication and OAuth device flow.

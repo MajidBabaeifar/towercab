@@ -29,6 +29,7 @@ A repo opts into the ship stage with a `live` block in its `TOWERCAB.md`.
 - Anything else, or a missing required field, makes `TOWERCAB.md` invalid (`live: <why>`), and the
   intent waits on `fix repo files`. `TOWERCAB.md` is protected ([REPO-8](repo.md)), so a worker can't
   change the block.
+- Changed by SHIP-37: `adapter` also accepts `gitlab`, and a GitLab repo's default is `gitlab`. The rest stands.
 - Verified by: `repo: live block`, `repo: live block errors`
 
 ### SHIP-2 · Secrets for the e2e tests
@@ -494,6 +495,33 @@ A change counts as published only once the release that contains its merge exist
   <tag>" with the link; until then it shows "Merged, waiting for a release".
 - A repo with no release-please files ([REPO-23](repo.md)) has no release to wait for: the line is not shown.
 - Verified by: `ship: published links the release containing the merge`, `ship: merged shows waiting for a release`, `ship: repos without release-please show no release line`
+
+### SHIP-37 · The gitlab adapter
+
+A GitLab repo's ship stage reads what GitLab recorded for its environment, and asks for an older version by retrying the project's own deploy job.
+
+- `live.adapter: gitlab` is the default when the repo is a GitLab project ([GL-3](gitlab.md)); `github` stays the default for a GitHub repo. `gitlab` on a GitHub repo, or `github` on a GitLab repo, makes `TOWERCAB.md` invalid (`live: the gitlab adapter is for GitLab repos`, `live: the github adapter is for GitHub repos`). `command` works on either.
+- Calls go through the GitLab forge ([GL-5](gitlab.md)) with the token of [GL-2](gitlab.md), over `GET /projects/:id/deployments?environment=<e>&order_by=id&sort=desc` (up to 30). Each deployment has `status`, `sha` and `deployable` (the job: `id`, `status`, `failure_reason`).
+- `current()`: the `sha` of the newest deployment in the environment whose `status` is `success`, or none.
+- `outcome(sha)`: the newest deployment of that `sha`: `success` → live; `failed` → failed with the job's `failure_reason` (for example `script_failure`), else "the deploy job failed"; anything else → pending. With no success for `sha`, `current()` being `sha` or containing it (`git merge-base --is-ancestor` in Towercab's clone after a fetch, authenticated as [GL-2](gitlab.md)) → live.
+- `rollback(ask)`: finds the newest deployment of `ask.sha` in the environment whose `status` is `success` and retries its job (`POST /projects/:id/jobs/:job_id/retry`); the new job's id is returned. No such deployment → the rollback fails with "no successful deployment of <sha> in <environment> to run again". A retry the step already made (a deployment of `ask.sha` created after `ask.since`) is reused, so a crash never retries twice. A 403 → the rollback fails with "Towercab's GitLab token needs permission to run jobs in the <environment> environment".
+- It only reads deployments and retries a job the project's pipeline defines: no pipeline is created, no variable set, nothing deployed ([SHIP-3](#ship-3--the-adapter) still holds).
+- Verified by: `ship: gitlab adapter reads deployments`, `ship: gitlab adapter retries the deploy job once`, `ship: a failed gitlab deploy reports the job's reason`, `ship: gitlab is the default adapter of a GitLab repo`, `ship: gitlab adapter on a GitHub repo is invalid`
+
+### SHIP-38 · A deploy waiting for approval is pending
+
+A deploy that waits for a person to approve it on a protected GitLab environment is not a failure, and the wait says who has to act.
+
+- A deployment with `status` `blocked` is pending, and `outcome` carries the reason "the deploy is waiting for approval: a person has to approve it in GitLab (<environment>)". The reason shows in the wait on the intent page and in the message the deploy wait sends once it has lasted 5 minutes ([SHIP-7](#ship-7--waiting-for-the-deploy)).
+- Towercab never approves a deployment itself. The usual timeout of [SHIP-7](#ship-7--waiting-for-the-deploy) applies: unapproved after `timeout` minutes → `red` "not live after <n> minutes", with the same reason added.
+- Verified by: `ship: a gitlab deploy waiting for approval is pending with the reason`, `ship: a gitlab deploy never approved times out with the reason`
+
+### SHIP-39 · The deploy contract for GitLab
+
+The deploy contract page tells a GitLab team what their deploy job must do.
+
+- `docs/deploy-contract.md` gains a GitLab section: the deploy job needs `environment:` with the same name as the `live` block's `environment`; it deploys `CI_COMMIT_SHA`; rolling back re-runs an older successful job, so that job must deploy the commit it was run for and not "latest"; a protected environment with required approval makes the deploy wait for a person ([SHIP-38](#ship-38--a-deploy-waiting-for-approval-is-pending)); the token's role must be allowed to run that environment's jobs. A short `.gitlab-ci.yml` example.
+- Verified by: manual (read the GitLab section of `docs/deploy-contract.md`)
 
 ## Out of scope
 
