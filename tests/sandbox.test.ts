@@ -21,6 +21,8 @@ import {
   refusedRepoEnv,
   sandboxArgv,
   sandboxEnv,
+  toolchainDirs,
+  toolchainMounts,
 } from "../src/pipeline/sandbox.ts";
 import { FakeTools, failResult, okResult } from "./helpers/tools.ts";
 import { tempDir, testConfig, testHome } from "./helpers/world.ts";
@@ -630,4 +632,17 @@ test("sandbox: an upstream reset mid-download does not stop the proxy", async ()
     server.close();
     upstream.close();
   }
+});
+
+test("sandbox: node's whole install is mounted so npm resolves", () => {
+  const home = "/home/u";
+  expect(toolchainMounts(home, "/home/u/.local/node/bin")).toEqual([
+    "/home/u/.local/bin",
+    "/home/u/.local/node",
+  ]);
+  // A Node directly in ~/.local/bin or outside HOME widens nothing.
+  expect(toolchainMounts(home, "/home/u/.local/bin")).toEqual(["/home/u/.local/bin"]);
+  expect(toolchainMounts(home, "/usr/bin")).toEqual(["/home/u/.local/bin"]);
+  // PATH still lists the bin directory itself.
+  expect(toolchainDirs(home, "/home/u/.local/node/bin")).toContain("/home/u/.local/node/bin");
 });

@@ -5,7 +5,7 @@
 // file or intent reaches it, and there is no way to switch it off.
 
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RepoConfig } from "../config.ts";
 
@@ -44,9 +44,21 @@ export const DEFAULT_NETWORK: readonly string[] = [
  * The toolchain directories bound read-only (PIP-157), derived in code: `~/.local/bin`, and the directory of
  * the Node that runs Towercab when it lives under HOME (which the empty HOME would otherwise hide).
  */
-export function toolchainDirs(home: string): string[] {
-  const node = dirname(process.execPath);
+export function toolchainDirs(home: string, node = dirname(process.execPath)): string[] {
   return [join(home, ".local", "bin"), ...(node.startsWith(`${home}/`) ? [node] : [])];
+}
+
+/**
+ * What `toolchainDirs` needs mounted (PIP-157): Node's whole install when its `bin` sits in its own directory
+ * under HOME, since `npm` and `npx` there are links into `../lib`; the directories themselves otherwise.
+ */
+export function toolchainMounts(home: string, node = dirname(process.execPath)): string[] {
+  const shared = new Set([home, join(home, ".local")]);
+  const mounts = toolchainDirs(home, node).map((d) => {
+    const root = dirname(d);
+    return basename(d) === "bin" && root.startsWith(`${home}/`) && !shared.has(root) ? root : d;
+  });
+  return [...new Set(mounts)];
 }
 
 /** `PATH` of every sandboxed command and Claude run (PIP-157): the toolchain, then the system's. */
@@ -122,7 +134,7 @@ export function sandboxArgv(o: SandboxOpts): string[] {
     );
   }
   a.push("--tmpfs", o.home, "--tmpfs", "/tmp");
-  for (const d of toolchainDirs(o.home).filter((d) => existsSync(d))) {
+  for (const d of toolchainMounts(o.home).filter((d) => existsSync(d))) {
     a.push("--ro-bind", d, d);
     for (const f of MASKED.map((f) => join(d, f)).filter((f) => existsSync(f)))
       a.push("--ro-bind", "/dev/null", f);

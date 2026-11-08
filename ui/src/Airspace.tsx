@@ -7,6 +7,7 @@ import type { AirspaceView, Phase, Plane, StateKey } from "../../src/ui/view.ts"
 import { type Item, layoutAirspace } from "./airspace-layout.ts";
 import { act } from "./api.ts";
 import { StartButton } from "./components.tsx";
+import { Spinner } from "./icons.tsx";
 import { Link, navigate } from "./router.tsx";
 
 const PLANE =
@@ -247,8 +248,11 @@ function GroundStopBar({ stop }: { stop: NonNullable<AirspaceView["stop"]> }) {
   const resume = async () => {
     setBusy(true);
     const r = await act("resume");
-    setBusy(false);
-    setNote(r.ok ? null : r.message);
+    // UI-282: on success the bar stays busy until the page reports the loop resumed and removes it.
+    if (!r.ok) {
+      setBusy(false);
+      setNote(r.message);
+    }
   };
   return (
     <span
@@ -258,8 +262,15 @@ function GroundStopBar({ stop }: { stop: NonNullable<AirspaceView["stop"]> }) {
     >
       <span class="air-stop-text">{stop.text}</span>
       {stop.kind === "owner" && stop.canResume ? (
-        <button type="button" class="btn small" disabled={busy} onClick={() => void resume()}>
-          Resume
+        <button
+          type="button"
+          class="btn small"
+          disabled={busy}
+          aria-busy={busy}
+          onClick={() => void resume()}
+        >
+          {busy ? <Spinner size={12} class="spin" /> : null}
+          {busy ? "Resuming…" : "Resume"}
         </button>
       ) : null}
       {note ? <span class="meta error">{note}</span> : null}

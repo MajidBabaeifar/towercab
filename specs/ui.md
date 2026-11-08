@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..149, UI-150..154, UI-155..163, UI-168, UI-184..191, UI-192..197, UI-239, UI-244..251, UI-236..238, UI-253..256, UI-257..258, UI-259..267, UI-242..243 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..163, UI-168, UI-184..197, UI-236..239, UI-242..251, UI-253..267, UI-282 · **Prefix:** UI
 
 ## Purpose
 
@@ -80,6 +80,17 @@ The top bar says at a glance whether Towercab is healthy and how much needs the 
   version and whether it is behind `main`, and Pause/Resume. The tab title starts `(<n>)` while n
   things need the owner.
 - Verified by: `ui: top bar shows health and counts`
+
+### UI-282 · Pause and Resume show they are working
+
+After the owner presses Pause or Resume, the button shows that Towercab is applying it, so nobody presses again.
+
+- The top bar's button turns to `Pausing…` or `Resuming…` with a spinner, disabled and `aria-busy`, from the
+  click until the page reports the new state (the loop applies the command on its next pass, LOOP-113). A
+  refused action restores the button and shows the reason as its title; after 60 s without the new state it
+  restores the button with the title "Towercab has not applied it yet: check that the service is running".
+  The airspace's Resume (UI-109) reads `Resuming…` with a spinner the same way until the ground stop clears.
+- Verified by: `ui: pause shows it is working until the state changes`
 
 ### UI-58 · Needs you
 
