@@ -132,10 +132,7 @@ function dataBits(data: string): string {
 }
 
 /** Seconds spent in each stage, from the transitions of one mission. */
-function stageSecs(
-  ts: { at: number; to_stage: string }[],
-  end: number,
-): [string, number][] {
+function stageSecs(ts: { at: number; to_stage: string }[], end: number): [string, number][] {
   const by = new Map<string, number>();
   for (let i = 0; i < ts.length; i++) {
     const next = ts[i + 1]?.at ?? end;
@@ -264,7 +261,8 @@ export function buildBundle(i: BundleInput): Bundle {
     add(
       "Open intents",
       l.open.map(
-        (x) => `- ${x.id} (${x.repo}) ${clip(x.title, 120)} [stage ${x.stage ?? "not started"}${x.source ? `, from ${x.source}` : ""}]`,
+        (x) =>
+          `- ${x.id} (${x.repo}) ${clip(x.title, 120)} [stage ${x.stage ?? "not started"}${x.source ? `, from ${x.source}` : ""}]`,
       ),
     );
     const recent = l.done.filter((x) => {

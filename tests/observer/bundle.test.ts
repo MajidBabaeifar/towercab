@@ -43,10 +43,7 @@ test("observer: the bundle names what it cut", () => {
 });
 
 test("observer: secrets are removed from the bundle", () => {
-  const r = new ObsRig(
-    {},
-    { telegram: { bot_token: "123456:SECRET-bot-token-value", chat_id: 42 } },
-  );
+  const r = new ObsRig({}, { telegram: { bot_token: "123456:SECRET-bot-token-value", chat_id: 42 } });
   r.mission("leaky", "web", { why: "the log said 123456:SECRET-bot-token-value in a URL" });
   const b = bundleOf(r);
   expect(b.text).toContain("leaky");

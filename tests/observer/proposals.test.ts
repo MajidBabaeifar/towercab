@@ -94,14 +94,16 @@ test("observer: autonomy is capped at a4", async () => {
 
 test("observer: a closed proposal is not proposed again without new evidence", async () => {
   const r = new ObsRig();
-  r.child([finding()]).child([finding()]).child([
-    finding({
-      evidence: [
-        { id: "i-1", shows: "failed twice" },
-        { id: "i-5", shows: "and again today" },
-      ],
-    }),
-  ]);
+  r.child([finding()])
+    .child([finding()])
+    .child([
+      finding({
+        evidence: [
+          { id: "i-1", shows: "failed twice" },
+          { id: "i-5", shows: "and again today" },
+        ],
+      }),
+    ]);
   const o = r.observer();
   await r.run(o);
   expect(r.created).toHaveLength(1);
@@ -151,7 +153,12 @@ test("observer: a finding that overlaps a running intent goes in the report", as
   await r.run(r.observer());
   expect(r.created).toEqual([]);
   expect(r.comments).toEqual([]);
-  expect(r.outbox().map((m) => m.text).join("\n")).toContain("Seen again");
+  expect(
+    r
+      .outbox()
+      .map((m) => m.text)
+      .join("\n"),
+  ).toContain("Seen again");
 });
 
 test("observer: an identical title is not proposed twice", async () => {
@@ -205,10 +212,7 @@ test("observer: the best ranked findings use the room", async () => {
 test("observer: comments do not count toward the limit", async () => {
   const r = new ObsRig();
   r.proposed = [proposedPr(12, "Retries that never help")];
-  r.child([
-    finding({ overlaps: ["12"] }),
-    ...TITLES.slice(0, 3).map((title) => finding({ title })),
-  ]);
+  r.child([finding({ overlaps: ["12"] }), ...TITLES.slice(0, 3).map((title) => finding({ title }))]);
   await r.run(r.observer());
   expect(r.comments).toHaveLength(1);
   expect(r.created).toHaveLength(3);
