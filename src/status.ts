@@ -8,6 +8,7 @@ import type { Db } from "./db.ts";
 import type { Listing } from "./intents/types.ts";
 import { exitsOf, isWait, isWorking, waitInfo } from "./machine.ts";
 import { dataOf, type Mission, unfinished } from "./mission.ts";
+import { queuePlace, waitsInQueue } from "./queue.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
 import {
   buildingIn,
@@ -183,6 +184,11 @@ export function renderStatus(s: StatusInput): string {
     // LOOP-116: who holds the slots, and whether they wait for GitHub's checks.
     for (const m of workingIn(ms, repo))
       lines.push(`holds the slot: ${m.intent} (${m.stage})${waitsForCi(m) ? ", waiting for CI" : ""}`);
+    // LOOP-159: missions behind the head of the repo's merge queue.
+    for (const m of building.filter(waitsInQueue)) {
+      const p = queuePlace(ms, m);
+      if (p) lines.push(`queued to merge: ${m.intent} (#${p.n} of ${p.of})`);
+    }
   }
   for (const w of s.waits ?? []) lines.push(`waiting: ${w}`);
   // LOOP-72: a repo missing setup, and whether that holds its new work back.

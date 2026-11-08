@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..119, LOOP-126..132 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..119, LOOP-126..132, LOOP-159..162 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -260,6 +260,7 @@ into events.
   closed, owner feedback, `/retry`, conflict, head moved. They are re-derived from the PR each time
   (level-triggered), so nothing is lost while a child runs. A conflict carries the same conflict repair
   as CI's (PIP-1): the build merges the base branch first, so the next round no longer conflicts.
+  A mission waiting in its repo's merge queue gets no conflict until it is the head (LOOP-160).
 - Intents repo: the intent file gone → `intent_removed` (stop); `retry: fresh` written → `retry_fresh`;
   `waiting` removed by the owner while blocked → `answered` with no text.
 - A move out of a stage kills that stage's child.
@@ -1367,6 +1368,38 @@ When the intent that covered another is dropped or stopped, the owner is told on
 - The Inbox (UI-259) gets one item of kind `not delivered` per covered intent, with the text above and a `Reopen` button (UI-280's action) and `Dismiss`. It stays until the owner reopens, dismisses, or the covering intent is reopened and ends done. It counts as an Inbox item but no wait: no mission is blocked and `status` (LOOP-13) lists it under Notices.
 - The covered intent's timeline gets `covering intent <other id> was <dropped|stopped>` and its feature line is marked not delivered (INT-75). Nothing is reopened, dropped or started by this: the owner may have dropped the covering intent because the request is no longer wanted.
 - Verified by: `loop: a dropped covering intent flags the covered one once`, `loop: a replaced attempt of the covering intent flags nothing`, `loop: the covered intent stays done when its covering intent is dropped`, `outbox: the not delivered message has a reopen button per covered intent`, `status: not delivered intents are listed as notices`, `timeline: the covered intent shows its covering intent ended`
+
+### LOOP-159 · One merge queue per repo
+
+Changes that are ready to land in the same repo wait in a line and land one at a time, first come first served, so parallel builds never merge over each other.
+
+- A mission joins its repo's queue when it enters `merge`: `apply` stamps `data.queuedAt` (the move's time) if it has none. The queue (`src/queue.ts`, `queueOf`) is every unfinished mission of the repo at `merge` or holding `data.landing`, ordered: the one holding `landing` first, then by `queuedAt`, then priority, then id.
+- Only the head (`headOf`) steps at `merge`. When it first steps, the loop stamps `data.landing = { since }` on it; a mission at `merge` that is not the head does not step.
+- `status` prints `queued to merge: <id> (#<n> of <m>)` for each mission behind the head, under its repo's slot lines (LOOP-112); the overview shows such a mission as queued, `queued to merge` (UI view model).
+- No new column: `queuedAt` and `landing` live in the mission's `data`.
+- Verified by: `queue: missions land first in first out`, `queue: the landing mission stays head`, `queue: entering merge stamps the time`, `loop: three missions on one repo land in order`, `status: a mission behind the merge queue head shows its place`
+
+### LOOP-160 · Conflicts are repaired only at the head of the queue
+
+Only the change whose turn it is to land repairs a clash with the base branch; the others wait, so one fix never breaks another.
+
+- `prEvents` (LOOP-18) raises no `conflict` for a mission that `conflictHeld` says waits: at `merge` but not the head, or at `approval:merge` while another mission of the repo holds `landing`. Missions earlier in the pipeline (`ci`, `review`, `gate`) still get the conflict round of PIP-134.
+- The head turns `DIRTY` into a conflict round (PIP-134) from its merge step. It keeps `landing` through `build` → `verify` → … → `merge`, so it stays head while it repairs, and the re-checks run as usual.
+- Verified by: `queue: a conflict waits unless the mission is head`, `events: a held conflict raises nothing`, `loop: three missions on one repo land in order`
+
+### LOOP-161 · The head yields when it waits on the owner
+
+When the change at the head of the queue needs the owner or stops, the next one in line takes its turn.
+
+- A move into a wait stage, a wait at a working stage, or a finished stage clears `queuedAt` and `landing` (`apply`). The next mission in the queue becomes head. A mission that comes back from the owner rejoins at the back, with a new `queuedAt`.
+- Verified by: `queue: a wait leaves the queue`
+
+### LOOP-162 · Missions queued to merge hold no build slot
+
+A change waiting its turn to land does no work, so it leaves its build slot to the next change.
+
+- Extends LOOP-110: a mission at `merge` without `landing` is idle (`isIdle`). The head, once landing, counts as working until it merges or waits.
+- Verified by: `slots: a mission queued to merge is idle`
 
 ### LOOP-70 · A repo set to block starts no new intent
 

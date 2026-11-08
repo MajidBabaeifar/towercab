@@ -5,6 +5,7 @@ import type { Listing } from "./intents/types.ts";
 import { finished, isWorking, phaseOf, type Stage, WAIT_STAGES } from "./machine.ts";
 import { dataOf, type Mission } from "./mission.ts";
 import { priorityOf } from "./priority.ts";
+import { waitsInQueue } from "./queue.ts";
 
 /** The time a plan-approved mission started waiting for the build slot, or null (LOOP-61). */
 export function readySince(m: Mission): number | null {
@@ -64,6 +65,8 @@ export function isIdle(m: Mission): boolean {
   if (!isBuilding(m)) return false;
   if (m.stage === "approval:merge" || m.stage === "blocked") return true;
   if (m.stage === "steps" && m.waiting !== null) return true;
+  // LOOP-162: queued to merge behind the head.
+  if (waitsInQueue(m)) return true;
   return dataOf<{ idle?: boolean }>(m).idle === true;
 }
 
