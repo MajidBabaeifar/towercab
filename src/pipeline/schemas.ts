@@ -180,6 +180,24 @@ export const SHADOW_SCHEMA = object({
   actions: list(object({ action: S, intent: S, repo: S, title: S, text: S })),
 });
 
+/** OBV-4, OBV-5: what an observer run returns: improvements to propose, each with its evidence and gain. */
+export const OBSERVER_SCHEMA = object({
+  findings: list(
+    object({
+      title: S,
+      repo: S,
+      problem: S,
+      outcome: S,
+      gain: S,
+      u: { type: "integer", minimum: 1, maximum: 5 },
+      i: { type: "integer", minimum: 1, maximum: 5 },
+      a: { type: "integer", minimum: 1, maximum: 5 },
+      evidence: list(object({ id: S, shows: S })),
+      overlaps: list(S),
+    }),
+  ),
+});
+
 export const SCHEMAS = {
   design: DESIGN_SCHEMA,
   plan: PLAN_SCHEMA,
@@ -190,6 +208,7 @@ export const SCHEMAS = {
   score: SCORE_SCHEMA,
   features: FEATURES_SCHEMA,
   shadow: SHADOW_SCHEMA,
+  observer: OBSERVER_SCHEMA,
 };
 
 export interface Access {
@@ -318,6 +337,28 @@ export interface Results {
   score: ScoreResult;
   features: { features: string[] };
   shadow: ShadowResult;
+  observer: ObserverResult;
+}
+
+export interface ObserverFinding {
+  title: string;
+  /** The repo where the fix belongs (OBV-4). */
+  repo: string;
+  problem: string;
+  outcome: string;
+  /** What it expects to gain (OBV-5). */
+  gain: string;
+  u: number;
+  i: number;
+  a: number;
+  /** Ids from the bundle: an intent id or `owner/name#number`, each with what it shows. */
+  evidence: { id: string; shows: string }[];
+  /** Intent ids or PR numbers the agent found covering the same thing (OBV-6). */
+  overlaps: string[];
+}
+
+export interface ObserverResult {
+  findings: ObserverFinding[];
 }
 
 export interface ShadowResult {

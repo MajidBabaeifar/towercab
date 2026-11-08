@@ -36,6 +36,7 @@ import * as log from "./log.ts";
 import { Loop } from "./loop.ts";
 import { type ApplyCtx, isWait } from "./machine.ts";
 import { type Mission, unfinishedFor } from "./mission.ts";
+import { Observer } from "./observer/observer.ts";
 import { decide, nextText } from "./pick.ts";
 import { grantScanning } from "./pipeline/alerts.ts";
 import { guardMain } from "./pipeline/guard.ts";
@@ -396,6 +397,22 @@ async function run(
               () => loop,
             )
           : undefined;
+      // OBV-2: the observer is on unless `[observer] enabled = false`, and runs only in a watching loop.
+      const observer = v.watch
+        ? new Observer({
+            config: w.config,
+            home: w.home,
+            db: w.db,
+            tools,
+            clock: systemClock,
+            github: w.github!,
+            store,
+            log: (l) => log.emit(l),
+            listing: () => loop.currentListing(),
+            proposed: () => loop.proposedState().list,
+            health: { fail: (k, e, n) => loop.health.fail(k, e, n), ok: (k) => loop.health.ok(k) },
+          })
+        : undefined;
       const loop: Loop = new Loop(
         {
           config: w.config,
@@ -411,6 +428,7 @@ async function run(
           sender: chat ? chat.sender() : telegram,
           chat,
           shadow,
+          observer,
           selfUpdate: Boolean(v.watch),
           readiness: true,
           limits: true,

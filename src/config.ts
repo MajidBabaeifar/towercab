@@ -77,6 +77,16 @@ export interface Config {
   telegram: { botToken: string; chatId: string; apiBase: string; uiUrl?: string } | null;
   /** SHD-11: `[shadow]`: the owner's Claude session in Telegram and what it may do without asking. */
   shadow: { enabled: boolean; free: ShadowFree[]; dailyBudgetUsd: number; model: string | null };
+  /** OBV-2, OBV-7, OBV-10: `[observer]`: on unless `enabled = false`; its own caps. */
+  observer: {
+    enabled: boolean;
+    dailyAt: string;
+    maxProposalsPerWeek: number;
+    dailyBudgetUsd: number;
+    maxBudgetUsd: number;
+    bundleKb: number;
+    model: string | null;
+  };
   ui: { port: number };
   /** `drainMinutes`: how long a drain for an update waits before cutting runs off (LOOP-109). */
   update: { auto: boolean; drainMinutes: number };
@@ -136,6 +146,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
   const ui = r.table(raw.ui, "ui");
   const update = r.table(raw.update, "update");
   const shadow = r.table(raw.shadow, "shadow");
+  const observer = r.table(raw.observer, "observer");
   const free = r.strList(shadow, "shadow", "free", []);
   for (const f of free) {
     if (!(SHADOW_FREE as readonly string[]).includes(f)) {
@@ -201,6 +212,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       dailyBudgetUsd: r.num(shadow, "shadow", "daily_budget_usd", 5, 0, 100000),
       model: r.optWord(shadow, "shadow", "model"),
     },
+    observer: parseObserver(r, observer),
     ui: { port: r.int(ui, "ui", "port", 7311, 0, 65535) },
     update: {
       auto: r.bool(update, "update", "auto", true),
@@ -230,6 +242,32 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
     }
   }
   return config;
+}
+
+function parseObserver(r: Reader, t: Record<string, unknown>): Config["observer"] {
+  const dailyAt = r.str(t, "observer", "daily_at", "06:00");
+  // OBV-2: a local time `HH:MM`.
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(dailyAt)) throw r.err("observer.daily_at must be a time like 06:00");
+  return {
+    enabled: r.bool(t, "observer", "enabled", true),
+    dailyAt,
+    maxProposalsPerWeek: r.int(t, "observer", "max_proposals_per_week", 3, 1, 10),
+    dailyBudgetUsd: r.num(t, "observer", "daily_budget_usd", 3, 0, 100000),
+    maxBudgetUsd: r.num(t, "observer", "max_budget_usd", 1.5, 0, 100000),
+    bundleKb: r.int(t, "observer", "bundle_kb", 400, 10, 4000),
+    model: r.optWord(t, "observer", "model"),
+  };
+}
+
+/** OBV-2: read `[observer]` from the file again, so an edit applies without a restart; a bad value keeps the last good one. */
+export function reloadObserver(config: Config): void {
+  try {
+    const raw = parseToml(readFileSync(config.file, "utf8")) as Record<string, unknown>;
+    const r = new Reader(config.file);
+    config.observer = parseObserver(r, r.table(raw.observer, "observer"));
+  } catch {
+    // a missing file or a bad value keeps what is in force
+  }
 }
 
 /** GL-1: `api_base` is an https URL ending in `/api/v4` (http only for localhost, for tests). */
