@@ -1654,7 +1654,7 @@ Admins can see each person's open sessions and end one or all of them.
 
 The overview shows what the observer did lately: its last run, this week's proposals and what it spent today.
 
-- An "Observer" panel via `GET /api/observer` (`{enabled, lastRun, proposalsThisWeek, maxPerWeek, spentToday, cap, lastReport}`): the last run's time, trigger (daily or the event), outcome and proposal count, the proposals made in the last 7 days against `[observer].max_proposals_per_week` (OBV-7), today's observer spend against its cap (OBV-10) and when the last weekly report went out (OBV-8). With the observer off the panel is not shown. A reached cap says so in words.
+- An "Observer" panel via `GET /api/observer` (`{enabled, lastRun, proposalsThisWeek, maxPerWeek, spentToday, cap, lastReport}`): the last run's time, trigger (daily or the event), outcome and proposal count, the proposals made in the last 7 days against `[observer].max_proposals_per_week` (OBV-7), today's observer spend against its cap (OBV-10) and when the last weekly report went out (OBV-8). With the observer off, or before its first run, the panel is not shown. A reached cap says so in words.
 - Verified by: `ui: the observer panel shows its last run, proposals and spend`, `ui: the observer panel is hidden when off`
 
 ### UI-243 · Observer proposals are tagged and show their evidence

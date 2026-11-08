@@ -9,7 +9,8 @@ const TRIGGERS: Record<string, string> = { daily: "the daily run" };
 
 export function ObserverPanel() {
   const { data } = useLive<ObserverView>("/api/observer");
-  if (!data?.enabled) return null;
+  // Off, or not run yet: nothing to show, so the overview stays as short as it was.
+  if (!data?.enabled || !data.lastRun) return null;
   const run = data.lastRun;
   return (
     <Section title="Observer" id="observer" class="observer-panel">
@@ -20,20 +21,16 @@ export function ObserverPanel() {
       <p class="meta" data-testid="observer-week">
         {data.proposalsThisWeek} of {data.maxPerWeek} proposals this week
       </p>
-      {run ? (
-        <p data-testid="observer-last">
-          Last run <Time when={run.at} short /> · {TRIGGERS[run.trigger] ?? `after ${run.trigger}`} ·{" "}
-          {run.outcome === "done"
-            ? `${run.proposals} proposed, ${run.comments} added to existing work`
-            : run.outcome === "capped"
-              ? "stopped: its budget was used up"
-              : run.outcome === "running"
-                ? "running now"
-                : `failed${run.why ? `: ${run.why}` : ""}`}
-        </p>
-      ) : (
-        <p class="empty-line">The observer hasn't run yet.</p>
-      )}
+      <p data-testid="observer-last">
+        Last run <Time when={run.at} short /> · {TRIGGERS[run.trigger] ?? `after ${run.trigger}`} ·{" "}
+        {run.outcome === "done"
+          ? `${run.proposals} proposed, ${run.comments} added to existing work`
+          : run.outcome === "capped"
+            ? "stopped: its budget was used up"
+            : run.outcome === "running"
+              ? "running now"
+              : `failed${run.why ? `: ${run.why}` : ""}`}
+      </p>
       <p class="meta" data-testid="observer-report">
         {data.lastReport ? `Weekly report sent ${data.lastReport}` : "No weekly report yet"}
       </p>
