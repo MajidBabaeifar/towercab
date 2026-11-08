@@ -2045,7 +2045,7 @@ const DECISION_WORDS: Record<string, string> = {
   answered: "answered",
 };
 
-const SKIP_WHY =/^no (behaviour change|proof needed|local checks|CI on this repo)/i;
+const SKIP_WHY = /^no (behaviour change|proof needed|local checks|CI on this repo)/i;
 
 /** The plain words of a step back (UI-74): "checks failed: 2 tests red". */
 function returnWords(t: Pick<Transition, "event" | "why">, from: StageId): string {

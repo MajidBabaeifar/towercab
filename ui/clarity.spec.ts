@@ -27,10 +27,13 @@ async function open(browser: Browser, width: number, height: number) {
 }
 
 const box = (page: Page, selector: string) =>
-  page.locator(selector).first().evaluate((el) => {
-    const r = el.getBoundingClientRect();
-    return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height };
-  });
+  page
+    .locator(selector)
+    .first()
+    .evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height };
+    });
 
 test("ui: the not-ready badge fits its text", async ({ browser }) => {
   const t = await open(browser, 1280, 900);

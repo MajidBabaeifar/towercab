@@ -392,7 +392,9 @@ export function StageMap({
         {n.note ? <p class="smap-why">{n.note}</p> : null}
         <Rounds node={n} />
         <Returns node={n} names={names} />
-        {narrow && isOpen && openNode ? <Panel id={id} node={openNode} file={file} onOpen={openFile} /> : null}
+        {narrow && isOpen && openNode ? (
+          <Panel id={id} node={openNode} file={file} onOpen={openFile} />
+        ) : null}
       </li>
     );
   };

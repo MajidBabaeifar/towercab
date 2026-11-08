@@ -65,11 +65,7 @@ export function sharedGaps(db: Db, repos: Iterable<string>): SharedGap[] {
 }
 
 /** UI-155: the badge, or undefined for a ready or unchecked repo. Shared gaps (UI-269) don't count. */
-export function readinessBadge(
-  db: Db,
-  repo: string,
-  shared: SharedGap[] = [],
-): ReadinessBadge | undefined {
+export function readinessBadge(db: Db, repo: string, shared: SharedGap[] = []): ReadinessBadge | undefined {
   const r = parseStored(db.meta(`readiness:${repo}`))?.readiness;
   if (!r) return undefined;
   const skip = new Set<string>(shared.map((g) => g.item));
