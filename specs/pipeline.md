@@ -2159,6 +2159,34 @@ A later run of a long build starts a new session with the plan, the steps alread
 - Repair rounds (PIP-18) and fix rounds (PIP-98) resume the session of the run they follow, as today.
 - Verified by: `pipeline: a later build run starts a new session`, `pipeline: the later run prompt has the plan, built steps and the handoff note`, `pipeline: built steps are read from the branch commits`, `pipeline: a run with steps open and no handoff is asked for it`, `pipeline: a repair round resumes the run's session`
 
+### PIP-220 · Every text for a person has a part for people and a folded part for agents
+
+Every text Towercab writes that a person may read opens with a short part for people, and the detail meant for agents follows, folded away.
+
+- Applies to PR bodies (spec, plan, code), stage and review comments, questions, replies to the owner's comments, the spec-overlap line (UI-202), and the intent and plan PRs. Not to code, commit subjects or JSON read only by code.
+- One helper (`twoPartMd({people, agent})` in `src/pipeline/prtext.ts`, next to `plainMd`/`detailsMd` of PIP-108) builds the shape and is the only way a writer produces such text: `## For people\n\n<people>`, then `<details><summary>Agent context</summary>\n\n<agent>\n\n</details>`. The old `## In plain words` heading and the `**In plain words:**` lead of PIP-107 become `## For people` and `**For people:**` (comments); PIP-108's folding of the technical part is this fold, titled `Agent context` instead of `Details`.
+- The people part is the plain brief of PIP-106: what happened, why it matters, what (if anything) the owner decides. At most 5 lines and 600 characters, no list of files, no step or field names. Readable without the agent part: never "see below".
+- The agent part holds findings, file lists, logs, handoff notes, IDs and the footer's links to the intent. It is always inside the fold; with no agent detail the fold is left out. The footer line (`<sub>Built by Towercab …</sub>`) and the machine markers Towercab parses stay outside it, after it.
+- A run from before this rule (no separate fields, PIP-221) falls back to its brief as the people part and its technical text as the agent part.
+- Verified by: `pipeline: twoPartMd puts the people part first and folds the agent part`, `pipeline: every PR body opens with the people part and folds the agent part`, `pipeline: stage, review and question comments open with the people part`, `pipeline: a reply to the owner's comment has the two parts`, `pipeline: no fold when there is no agent detail`
+
+### PIP-221 · Agents return the people part and the agent part as separate fields
+
+Each agent that writes for the owner returns the people part and the agent part as two fields, so Towercab never has to split one text.
+
+- `brief` stays the people part (PIP-106). The agent part is the existing technical field of each result: `design.pr`, `plan.plan`, `build.pr` and `build.notes`, `review.outcomes`/`findings`/`summary`, the question's `context`. Where a result has none yet, an `agent` string (required, may be empty) is added: `review` and `risk` (`summary` stays the risk agent's people part). Schemas in PIP-71 stay closed.
+- `prompts/writing.md` has a section "People part, agent part" stating PIP-220's rule, and every agent prompt that writes for the owner (`design`, `plan`, `worker`, `repair`, `review`, `review-security`, `review-infra`, `risk`, `merge-review`) asks for the two fields and says the people part is at most 5 lines and holds no agent detail.
+- Verified by: `schemas: every result a person reads has a people part and an agent part`, `prompts: every agent that writes for the owner asks for the two parts`, `prompts: writing.md states the people part and agent part rule`
+
+### PIP-222 · A text with a missing or over-long people part is refused
+
+Towercab checks the shape before it posts, so a long or misplaced text never reaches the owner.
+
+- `checkTwoPart(text)` fails when: the people part is empty; it is over 5 lines or 600 characters; it contains a `<details>` block, a code fence, a file path line or a list of more than 3 items; or agent detail (a `Findings`, `Files` or `Handoff` heading, a spec-ID list) sits outside the fold. The error reads as the reason, e.g. `people part is 9 lines; the limit is 5`.
+- Applied in two places. On an agent result: a `brief` that fails is handled as an invalid result, so the run gets one continue asking only for a shorter people part (as PIP-1's continue), then the failure of PIP-1 for no valid result. On Towercab's own writers: the helper (PIP-220) throws before anything is posted or recorded as posted, so a bug in a writer fails its test, not the owner's phone.
+- An owner's own comments and PR text are never checked.
+- Verified by: `pipeline: an over-long people part is refused`, `pipeline: a missing people part is refused`, `pipeline: agent detail outside the fold is refused`, `pipeline: a result with a long brief gets one continue for a shorter one`, `pipeline: the owner's own text is not checked`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |

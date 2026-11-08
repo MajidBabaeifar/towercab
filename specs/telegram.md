@@ -269,6 +269,14 @@ If Telegram refuses to edit the card, Towercab sends a new card and remembers it
   sent for the replacement only if the intent is in a needs-you state.
 - Verified by: `telegram: a deleted card is replaced`, `telegram: a replaced card keeps the new id`, `telegram: a transient failure keeps the old card id`
 
+### TG-23 · Telegram shows only the people part
+
+Telegram messages carry the part for people and a link, never the agent part.
+
+- Cards, pings (TG-20), questions and any text built from a mission's stage text use the people part of PIP-220 only (its brief, within TG-18's line width). The agent part (`<details>` content, findings, file lists, handoff notes) is never sent; a message ends with the link to the intent page (TG-2), where the agent part is under `Agent context` (UI-281).
+- A mission without a people part (a run from before PIP-221) shows the card as before, with no technical text added.
+- Verified by: `telegram: a card shows the people part and no agent text`, `telegram: a question message carries the people part and a link`, `telegram: no details block reaches a message`
+
 ## Out of scope
 
 - Each signed-in person's own chat, by role: a later intent (see TG-1).
