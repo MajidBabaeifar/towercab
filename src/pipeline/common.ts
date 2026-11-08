@@ -795,10 +795,11 @@ export async function tellOwner(cx: Ctx, m: Mission, body: string, keep = ""): P
   const pr = currentPr(cx, m, cx.repo(m));
   // PIP-185: an answer an agent gave for the owner says so.
   const agent = dataOf<{ answeredBy?: string | null }>(m).answeredBy;
-  // PIP-220: the reply opens with its people part; the rest is folded.
-  const two = body.trim() ? twoPartMd(splitTwoPart(body)) : body;
-  const said = agent ? `${answeredByLine(agent)}\n\n${two}` : two;
   try {
+    // PIP-220: the reply opens with its people part; the rest is folded. Inside the try: a shape
+    // problem is logged, it never fails the step.
+    const two = body.trim() ? twoPartMd(splitTwoPart(body)) : body;
+    const said = agent ? `${answeredByLine(agent)}\n\n${two}` : two;
     if (pr) {
       await upsertStageComment(cx.github, pr.github, pr.n, "Answer", m.continued, said, byOf(m, "Answer"));
     } else {

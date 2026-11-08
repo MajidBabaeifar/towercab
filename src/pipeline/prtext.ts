@@ -79,13 +79,30 @@ export function checkTwoPart(text: string): string | null {
   return null;
 }
 
-/** PIP-220: `## For people` and the people part; "" without one. Throws when the part is not a good one. */
+/**
+ * A text that fails `checkPeople`, made into one that passes: markup, list marks and line breaks
+ * become plain prose, then it is cut to the character limit with `…`. A text that passes is unchanged.
+ */
+export function fitPeople(text: string): string {
+  const t = text.trim();
+  if (!checkPeople(t)) return t;
+  const prose = t
+    .replace(/<\/?details[^>]*>|<\/?summary[^>]*>/gi, " ")
+    .replace(/```/g, " ")
+    .replace(/^\s*(?:[-*]|\d+\.)\s+/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return prose.length > PEOPLE_MAX_CHARS ? `${prose.slice(0, PEOPLE_MAX_CHARS - 1).trimEnd()}…` : prose;
+}
+
+/**
+ * PIP-220: `## For people` and the people part; "" without one. A stored brief from before the limits
+ * (PIP-222 checks new results only) is fitted, never refused, so a mission in flight keeps going.
+ * New writers that must not post a bad part use `twoPartMd`, which refuses it.
+ */
 export function plainMd(brief: string | null | undefined): string {
   const b = brief?.trim() ?? "";
-  if (!b) return "";
-  const bad = checkPeople(b);
-  if (bad) throw new Error(bad);
-  return `## For people\n\n${b}`;
+  return b ? `## For people\n\n${fitPeople(b)}` : "";
 }
 
 /** PIP-220: the fold for the agent part, titled "Agent context"; "" for no detail. */
@@ -99,7 +116,8 @@ export function foldMd(agent: string): string {
  * after it. Throws before anything is posted when the people part is missing or too long.
  */
 export function twoPartMd(t: { people: string; agent?: string }): string {
-  if (!t.people.trim()) throw new Error("people part is missing");
+  const bad = checkPeople(t.people);
+  if (bad) throw new Error(bad);
   return [plainMd(t.people), foldMd(t.agent ?? "")].filter(Boolean).join("\n\n");
 }
 
@@ -115,6 +133,12 @@ export function splitTwoPart(text: string): { people: string; agent: string } {
   if (people.length > PEOPLE_MAX_CHARS) {
     rest.unshift(people.slice(PEOPLE_MAX_CHARS - 1));
     people = `${people.slice(0, PEOPLE_MAX_CHARS - 1).trimEnd()}…`;
+  }
+  // A list, code or markup in the first paragraph (an access reply naming many files) moves whole to
+  // the agent part and the people part becomes its fitted prose, so the result always passes.
+  if (checkPeople(people)) {
+    rest.unshift(people);
+    people = fitPeople(people);
   }
   return { people, agent: rest.join("\n\n") };
 }

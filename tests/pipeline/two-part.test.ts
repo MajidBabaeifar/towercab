@@ -10,6 +10,7 @@ import {
   checkPeople,
   checkTwoPart,
   codeBody,
+  fitPeople,
   PEOPLE_MAX_CHARS,
   planBody,
   specBody,
@@ -108,9 +109,32 @@ test("pipeline: an over-long people part is refused", () => {
   expect(checkPeople("a\nb\nc\nd\ne\nf")).toBe("people part is 6 lines; the limit is 5");
   expect(checkPeople("x".repeat(601))).toBe("people part is 601 characters; the limit is 600");
   expect(() => twoPartMd({ people: "a\nb\nc\nd\ne\nf" })).toThrow("people part is 6 lines; the limit is 5");
-  expect(() => specBody("t", [], links, [], "x".repeat(601))).toThrow("601 characters");
   expect(checkPeople("one\n- a\n- b\n- c\n- d")).toBe("people part has a list of more than 3 items");
   expect(checkPeople("see ```code```")).toBe("people part contains a code fence");
+});
+
+test("pipeline: a brief stored before the limits is fitted, not refused", () => {
+  // A mission in flight at deploy time: PR bodies built from its stored brief must not throw.
+  const old = `${"A long sentence about the change. ".repeat(25)}\n- one\n- two\n- three\n- four\n\`\`\`x\`\`\``;
+  expect(checkPeople(old)).not.toBeNull();
+  const fitted = fitPeople(old);
+  expect(checkPeople(fitted)).toBeNull();
+  expect(fitted.endsWith("…")).toBe(true);
+  for (const body of [
+    specBody("t", [], links, [], old),
+    planBody("## Approach\n\nA.", { domains: [], paths: [], tests: [] }, links, "", old),
+  ])
+    expect(checkTwoPart(body)).toBeNull();
+  expect(fitPeople(people)).toBe(people);
+});
+
+test("pipeline: a reply that lists four or more files still has a valid people part", () => {
+  const reply = ["Allowed:", "- a.ts", "- b.ts", "- c.ts", "- d.ts", "- e.ts"].join("\n");
+  const two = splitTwoPart(reply);
+  expect(checkPeople(two.people)).toBeNull();
+  expect(two.agent).toContain("- d.ts");
+  expect(() => twoPartMd(two)).not.toThrow();
+  expect(checkTwoPart(twoPartMd(two))).toBeNull();
 });
 
 test("pipeline: a missing people part is refused", () => {
