@@ -1,6 +1,6 @@
 # Telegram
 
-**Status:** Live: TG-1..TG-15 · **Prefix:** TG
+**Status:** Live: TG-1..15 · **Prefix:** TG
 
 ## Purpose
 
