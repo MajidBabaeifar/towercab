@@ -1,6 +1,6 @@
 # Telegram
 
-**Status:** Live: TG-1..15 · **Prefix:** TG
+**Status:** Live: TG-1..22 · **Prefix:** TG
 
 ## Purpose
 
@@ -133,6 +133,8 @@ Replying to a question's message in Telegram answers that question.
 
 When a wait is handled, from anywhere, the message about it is edited to say how, and no new message is sent.
 
+- An intent's card (TG-16) shows the outcome on its status line instead (TG-17, TG-21); this requirement covers
+  the other messages that ask something, such as a `/focus` message (TG-8) or a proposed intent.
 - Every message that asks something is recorded with its Telegram message id and the wait it was sent for
   (LOOP-128). When that wait ends, the loop edits it (`editMessageText`) to the first line of the original
   followed by the outcome, and removes the buttons: `✅ merged by you`, `✅ answered by you`,
@@ -150,16 +152,17 @@ When a wait is handled, from anywhere, the message about it is edited to say how
 A wait has one message that changes, so the chat does not pile up.
 
 - When a wait's text changes while it stands (a new question from the same intent, a new PR head), the
-  existing message is edited instead of sending another; a new wait on the same intent is a new message.
-  A message about something that is not a wait (a finished run, a rollback notice) is sent once and never
-  edited.
-- Verified by: `telegram: a changed wait edits its message`, `telegram: a new wait on the same intent is a new message`
+  existing message is edited instead of sending another. For an intent this message is its card (TG-16): a
+  changed wait, and a new wait on the same intent, edit the card; a new message exists only for a new attempt
+  at the intent (TG-21). A message about something that is not a wait (a finished run, a rollback notice) is sent
+  once and never edited.
+- Verified by: `telegram: a changed wait edits its message`, `telegram: a new wait on the same intent edits the card`
 
 ### TG-13 · Short and plain, with a link
 
 Every message is short, written for a person, and links to its card.
 
-- At most 600 characters outside the link, in the style of `prompts/writing.md`: what happened or what is
+- A card (TG-16) follows TG-17 and TG-18 instead. Every other message is at most 600 characters outside the link, in the style of `prompts/writing.md`: what happened or what is
   asked, then why it matters, in plain words. No step names, field names or IDs as text. The link is the
   card on the page (TG-14), or the PR for a message about a PR when no page address is configured.
   Without either, the message has no link.

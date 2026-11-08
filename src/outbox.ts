@@ -41,8 +41,11 @@ export interface Sender {
   send(text: string, buttons?: Button[][]): Promise<number | undefined | void>;
   edit?(message: number, text: string, buttons?: Button[][]): Promise<void>;
   answer?(callback: string, text: string): Promise<void>;
-  /** LOOP-128: the text and buttons a wait's row has when it goes out, or null for the stored text. */
-  prepare?(row: OutboxRow): Promise<{ text: string; buttons?: Button[][] } | null>;
+  /**
+   * LOOP-128: the text and buttons a wait's row has when it goes out, or null for the stored text.
+   * "drop": the row is not sent at all (TG-16: the intent's card says it).
+   */
+  prepare?(row: OutboxRow): Promise<{ text: string; buttons?: Button[][] } | "drop" | null>;
 }
 
 /** LOOP-128: rows whose wait ended are kept this long. */
@@ -114,6 +117,11 @@ export async function sendDue(
         await sender.edit(Number(row.target), row.text, buttons);
       } else {
         const p = await sender.prepare?.(row);
+        if (p === "drop") {
+          db.run("UPDATE outbox SET sent_at = 0 WHERE key = ?", row.key);
+          out.dropped++;
+          continue;
+        }
         if (p) {
           text = p.text;
           buttons = p.buttons;

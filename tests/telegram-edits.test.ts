@@ -8,24 +8,32 @@ async function started(over: Parameters<ChatRig["wait"]>[1] = {}, rig = new Chat
   return { rig, w };
 }
 
+/** The wait as a `/focus` message: not an intent's card, so TG-11's edit-with-outcome applies to it. */
+async function focused(over: Parameters<ChatRig["wait"]>[1] = {}, rig = new ChatRig(), intent = "i-1") {
+  const w = rig.wait(intent, over);
+  rig.cardState.clear();
+  rig.focusPick = { wait: w.view, proposal: null, more: 0 };
+  rig.say("/focus");
+  await rig.run();
+  return { rig, w };
+}
+
 describe("telegram: a handled wait edits its message", () => {
   test("telegram: a merge on GitHub edits the message", async () => {
-    const { rig, w } = await started();
+    const { rig, w } = await focused();
     rig.leave(w.id, "code_merged", "owner");
     await rig.run();
     expect(rig.edits()).toEqual([
       { message: 100, text: "Review and merge the code\n✅ merged by you on GitHub", keyboard: [] },
     ]);
-    const other = new ChatRig();
-    const o = other.wait("i-2");
-    await other.run();
+    const { rig: other, w: o } = await focused({}, new ChatRig(), "i-2");
     other.leave(o.id, "code_merged", "towercab[bot]");
     await other.run();
     expect(other.edits()[0]!.text).toBe("Review and merge the code\n✅ merged");
   });
 
   test("telegram: a button press edits the message", async () => {
-    const { rig, msg } = await started().then(({ rig, w }) => ({ rig, w, msg: rig.sent()[0]! }));
+    const { rig, msg } = await focused().then(({ rig, w }) => ({ rig, w, msg: rig.sent()[0]! }));
     rig.press(rig.data(msg, "Merge"), 100);
     await rig.run();
     const yes = (rig.edits()[0]!.keyboard as { callback_data: string }[][]).flat()[0]!.callback_data;
@@ -41,26 +49,22 @@ describe("telegram: a handled wait edits its message", () => {
   });
 
   test("telegram: an answer in the page edits the message", async () => {
-    const { rig, w } = await started({ question: true });
+    const { rig, w } = await focused({ question: true });
     rig.leave(w.id, "answered");
     await rig.run();
     expect(rig.edits().map((e) => e.text)).toEqual(["Review and merge the code\n✅ answered by you"]);
-    const d = new ChatRig();
-    const x = d.wait("i-3");
-    await d.run();
+    const { rig: d, w: x } = await focused({}, new ChatRig(), "i-3");
     d.leave(x.id, "intent_removed");
     await d.run();
     expect(d.edits()[0]!.text).toContain("🗑 dropped by you");
-    const r = new ChatRig();
-    const y = r.wait("i-4");
-    await r.run();
+    const { rig: r, w: y } = await focused({}, new ChatRig(), "i-4");
     r.leave(y.id, "retry_fresh");
     await r.run();
     expect(r.edits()[0]!.text).toContain("↩️ started over by you");
   });
 
   test("telegram: an ended wait is edited not resent", async () => {
-    const { rig, w } = await started();
+    const { rig, w } = await focused();
     rig.leave(w.id, "ok");
     await rig.run();
     await rig.run();
@@ -71,7 +75,7 @@ describe("telegram: a handled wait edits its message", () => {
   });
 
   test("telegram: an edit that Telegram refuses is dropped", async () => {
-    const { rig, w } = await started();
+    const { rig, w } = await focused();
     rig.refuseEdits = true;
     rig.leave(w.id, "code_merged", "owner");
     await rig.run();
@@ -80,7 +84,7 @@ describe("telegram: a handled wait edits its message", () => {
     );
     expect(row).toEqual([{ sent_at: 0, tries: 0 }]);
     rig.refuseEdits = false;
-    rig.wait("i-2");
+    rig.say("/focus");
     await rig.run();
     expect(rig.sent()).toHaveLength(2);
     expect(rig.logs.filter((l) => l.includes("token"))).toEqual([]);
@@ -89,24 +93,25 @@ describe("telegram: a handled wait edits its message", () => {
 
 describe("telegram: one message per wait", () => {
   test("telegram: a changed wait edits its message", async () => {
-    const { rig } = await started({ question: true });
-    rig.views[0]!.why = "A different reason now.";
+    const { rig, w } = await started({ question: true });
+    rig.cardState.set(w.id, rig.card(w.id, { ...w.view, ask: "Answer a different question" }));
     await rig.run();
     expect(rig.edits()).toHaveLength(1);
-    expect(rig.edits()[0]!.text).toContain("A different reason now.");
+    expect(rig.edits()[0]!.text).toContain("Answer a different");
     await rig.run();
     expect(rig.edits()).toHaveLength(1);
     expect(rig.sent()).toHaveLength(1);
   });
 
-  test("telegram: a new wait on the same intent is a new message", async () => {
+  test("telegram: a new wait on the same intent edits the card", async () => {
     const { rig, w } = await started();
-    rig.leave(w.id, "answered");
-    rig.db.run("UPDATE missions SET stage = 'done' WHERE id = ?", w.id);
-    rig.wait("i-1", {}, "review and merge PR");
+    rig.work(w.id);
     await rig.run();
-    expect(rig.sent()).toHaveLength(2);
-    expect(rig.edits()).toHaveLength(1);
+    rig.rewait(w.id);
+    await rig.run();
+    expect(rig.sent().filter((s) => s.text.startsWith("<pre>"))).toHaveLength(1);
+    expect(rig.edits()).toHaveLength(2);
+    expect(rig.edits().every((e) => e.message === 100)).toBe(true);
   });
 });
 
@@ -142,20 +147,20 @@ describe("telegram: short, plain, with a link", () => {
 
 describe("telegram: the outbox keeps what it sent", () => {
   test("telegram: a sent message records its id", async () => {
-    const { rig, w } = await started();
+    const { rig, w } = await focused();
     const row = rig.db.get<{
       tg_message_id: number;
       kind: string;
       intent: string;
       wait: string;
       sent_at: number;
-    }>("SELECT * FROM outbox WHERE key = ?", w.key)!;
-    expect(row).toMatchObject({ tg_message_id: 100, kind: "wait", intent: "i-1", wait: `${w.id}.0` });
+    }>("SELECT * FROM outbox WHERE kind = 'focus'")!;
+    expect(row).toMatchObject({ tg_message_id: 100, kind: "focus", intent: "i-1", wait: `${w.id}.0` });
     expect(row.sent_at).toBeGreaterThan(0);
   });
 
   test("telegram: edits are sent in order and retried", async () => {
-    const { rig, w } = await started();
+    const { rig, w } = await focused();
     rig.leave(w.id, "code_merged", "owner");
     rig.db.run(
       "INSERT INTO outbox (key, mission, text, created, kind, target) VALUES ('e2', NULL, 'second', ?, 'edit', '100')",
