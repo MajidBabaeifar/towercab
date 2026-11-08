@@ -1507,6 +1507,15 @@ The owner can pick another intent on an open intent's page and close the first a
 - When the covering intent was dropped or stopped (LOOP-158), the covered intent's page shows `Not delivered: <other id> was <dropped|stopped>` with the Reopen button, and the Inbox shows the `not delivered` item with Reopen and Dismiss (UI-259). Dismiss hides the Inbox item only; the page note stays.
 - Verified by: `ui: a not delivered intent shows its note and an Inbox item with Reopen`, `ui: dismissing a not delivered item keeps the page note`, `ui: reopen is offered only on a covered intent`, `ui: reopen puts the intent back and lists PRs it could not reopen`, `ui: covered by is offered at any open stage`, `ui: covered by picker leaves out itself and finished intents`, `ui: covered by closes the intent as done`, `ui: covered by shows on both timelines`, `ui: covered by asks to confirm an open code PR`
 
+### UI-281 · Cards show the people part, the agent part is a link
+
+Cards and lists show only the part for people; the agent part is one tap away on the intent page.
+
+- Board cards, Inbox items, Needs-you cards and the repo page's intent rows show the people part of PIP-220 (at most 5 lines, clipped with `…` after that) and no agent text. Each has an `Agent context` link to the intent page, where the part is folded under a header of that name and opens on a click (UI-267). The link is absent when there is no agent part.
+- The intent page leads with the people part and keeps the agent part (findings, file lists, logs, handoff notes) folded; PR links open the PR on GitHub, where the same split holds.
+- The API carries `people` and `agent` as separate fields on a stage; the cards read only `people`. Fits 360 px, light and dark.
+- Verified by: `ui: a card shows the people part and not the agent part`, `ui: the agent context is a link on a card and folded on the intent page`, `ui: no agent link when there is no agent part`
+
 ### UI-200 · Your own open pull requests are read
 
 Towercab reads the open pull requests the owner opened by hand in each registered repo.
