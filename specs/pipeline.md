@@ -2187,6 +2187,40 @@ Towercab checks the shape before it posts, so a long or misplaced text never rea
 - An owner's own comments and PR text are never checked.
 - Verified by: `pipeline: an over-long people part is refused`, `pipeline: a missing people part is refused`, `pipeline: agent detail outside the fold is refused`, `pipeline: a result with a long brief gets one continue for a shorter one`, `pipeline: the owner's own text is not checked`
 
+### PIP-223 · The sandbox binds the toolchains installed in their usual places
+
+A repo's setup, checks and builds find Rust, Go, Zig and Node when they are installed where their installers put them.
+
+- `toolchainDirs(home)` (PIP-157) returns, for each of these that exists, a read-only bind: `~/.cargo/bin`, `~/.rustup`, `~/.local/go`, every `~/.local/zig-*` directory, `~/.local/node`, plus `~/.local/bin` and the directory of the Node running Towercab when it lives under HOME, as today. The list is fixed in `src/pipeline/sandbox.ts`; no config key, repo file or intent field adds to it (PIP-157).
+- A directory that does not exist, or that is a symlink leaving HOME, is skipped without error; nothing else of `~/.cargo` (so not `registry`, `git` or `env`) is bound.
+- The `bin` directory of each bound toolchain is on `PATH` ahead of the system's, in a fixed order: `~/.cargo/bin`, `~/.local/go/bin`, each `~/.local/zig-*` (the directory holds the `zig` binary; several versions sort by name, the newest first), `~/.local/node/bin`, `~/.local/bin`, then the system directories (PIP-159). `PATH` is still a constant of the code, not read from Towercab's environment.
+- Nothing is writable: a command that writes into a toolchain directory fails.
+- Verified by: `sandbox: a repo command finds cargo, go and zig installed in the usual places`, `sandbox: a missing toolchain directory is skipped`, `sandbox: toolchain directories are read-only`, `sandbox: config keys do not change the argv`
+
+### PIP-224 · Credential files under a toolchain stay unreadable
+
+A token that a toolchain's own tool left in its install directory is never visible to a repo's commands.
+
+- Every bound toolchain directory (PIP-223) gets the masked files of `MASKED` (`credentials`, `credentials.toml`, `.git-credentials`, `.netrc`, `.npmrc`, `auth.json` and the rest of that list) bound over with `/dev/null`, as `~/.local/bin` does today, at the top of the directory and one level below it. `~/.cargo/credentials.toml` is out of reach because only `~/.cargo/bin` is bound; a `credentials.toml` placed inside a bound directory reads empty.
+- A masked file that does not exist is not created and adds no argument.
+- Verified by: `sandbox: a credentials file under a toolchain directory stays unreadable`, `sandbox: the rest of ~/.cargo is not bound`, `sandbox escape: a toolchain credential file reads empty`
+
+### PIP-225 · Go and Zig write their caches into the sandbox cache
+
+Go and Zig never need to write into the read-only install or the empty home: their caches live in the mission's writable cache, like Cargo's.
+
+- `cacheEnv` (LOOP-34) also sets `GOPATH` and `GOMODCACHE` under the cache's `go` directory, `GOCACHE` stays where it is, and `ZIG_GLOBAL_CACHE_DIR` and `ZIG_LOCAL_CACHE_DIR` point under the cache's `zig` directory. `CARGO_HOME` stays in the cache and `RUSTUP_HOME` points at the bound `~/.rustup` so the installed toolchains are found.
+- The names are fixed in code and in the allowlist of PIP-159; a repo's `[repos.<r>].env` cannot override them (PIP-159 already refuses cache variables).
+- Verified by: `sandbox: go and zig caches are inside the sandbox cache`, `sandbox: rustup home points at the bound toolchains`, `sandbox: a repo variable cannot override a cache variable`
+
+### PIP-226 · `towercab doctor` lists the toolchains it binds
+
+The owner can see which toolchains a repo's commands will find, and which are missing.
+
+- Doctor prints one line per toolchain location of PIP-223 as `toolchain <path>: bound` or `toolchain <path>: not found`, and for each bound one `bin` directory that is on `PATH`. Missing is information, not a fault: the exit code does not change.
+- A Zig directory shows one line per `~/.local/zig-*` match. It prints no file content and no environment value.
+- Verified by: `doctor: lists the toolchains it found and binds`, `doctor: a missing toolchain is not a fault`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
