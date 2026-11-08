@@ -6,7 +6,7 @@
 
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RepoConfig } from "../config.ts";
 
@@ -89,8 +89,7 @@ export function toolchainPlaces(home: string): string[] {
 }
 
 /** The directory of the Node that runs Towercab when it lives under HOME (the empty HOME would hide it). */
-function ownNode(home: string): string[] {
-  const node = dirname(process.execPath);
+function ownNode(home: string, node = dirname(process.execPath)): string[] {
   return node.startsWith(`${home}/`) ? [node] : [];
 }
 
@@ -98,8 +97,8 @@ function ownNode(home: string): string[] {
  * The toolchain directories bound read-only (PIP-157, PIP-223), derived in code: the standard locations that
  * exist, `~/.local/bin`, and the directory of the Node that runs Towercab when it lives under HOME.
  */
-export function toolchainDirs(home: string): string[] {
-  return [...new Set([...toolchainPlaces(home), join(home, ".local", "bin"), ...ownNode(home)])];
+export function toolchainDirs(home: string, node = dirname(process.execPath)): string[] {
+  return [...new Set([...toolchainPlaces(home), join(home, ".local", "bin"), ...ownNode(home, node)])];
 }
 
 /** The `bin` directories of the bound toolchains, in the fixed order of PIP-223, then `~/.local/bin`. */
@@ -111,6 +110,21 @@ export function toolchainBins(home: string): string[] {
     return [d];
   };
   return [...new Set([...toolchainPlaces(home).flatMap(bin), join(home, ".local", "bin"), ...ownNode(home)])];
+}
+
+/**
+ * What `toolchainDirs` needs mounted (PIP-157): Node's whole install when its `bin` sits in its own directory
+ * under HOME, since `npm` and `npx` there are links into `../lib`; the directories themselves otherwise.
+ */
+export function toolchainMounts(home: string, node = dirname(process.execPath)): string[] {
+  const shared = new Set([home, join(home, ".local")]);
+  // Only `~/.local/bin` and Node's own directory widen; `~/.cargo/bin` stays alone so the rest of `~/.cargo` is not bound (PIP-224).
+  const widen = (d: string) => {
+    const root = dirname(d);
+    return basename(d) === "bin" && root.startsWith(`${home}/`) && !shared.has(root) ? root : d;
+  };
+  const rest = toolchainDirs(home, node).filter((d) => !toolchainPlaces(home).includes(d));
+  return [...new Set([...toolchainPlaces(home), ...rest.map(widen)])];
 }
 
 /** `PATH` of every sandboxed command and Claude run (PIP-157): the toolchain, then the system's. */
@@ -186,7 +200,7 @@ export function sandboxArgv(o: SandboxOpts): string[] {
     );
   }
   a.push("--tmpfs", o.home, "--tmpfs", "/tmp");
-  for (const d of toolchainDirs(o.home).filter((d) => existsSync(d))) {
+  for (const d of toolchainMounts(o.home).filter((d) => existsSync(d))) {
     a.push("--ro-bind", d, d);
     for (const f of maskedIn(d)) a.push("--ro-bind", "/dev/null", f);
   }
