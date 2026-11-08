@@ -3,6 +3,8 @@
 
 import type { HttpRequest, HttpResponse } from "../../src/github/app.ts";
 import { sendDue } from "../../src/outbox.ts";
+import { buildTrack, type CardView } from "../../src/telegram/card.ts";
+import type { CardItem } from "../../src/telegram/cards.ts";
 import { Chat, type ChatData } from "../../src/telegram/chat.ts";
 import type { ProposalView, WaitView } from "../../src/telegram/render.ts";
 import { Telegram } from "../../src/telegram.ts";
@@ -49,6 +51,12 @@ export class ChatRig {
     proposal: null,
     more: 0,
   };
+  /** TG-16: the cards the fake page knows, by mission; `wait`, `leave` and `finish` keep them. */
+  cardState = new Map<number, CardItem>();
+  /** The last wait each mission asked, for `rewait`. */
+  private lastWait = new Map<number, WaitView>();
+  /** TG-22 and TG-20: refuse `deleteMessage` (the ping is gone or too old). */
+  refuseDeletes = false;
   chat: Chat;
   tg: Telegram;
   private n = 0;
@@ -74,6 +82,7 @@ export class ChatRig {
       queue: async () => this.queueRows,
       running: async () => this.runningRows,
       prHead: async (i) => this.heads[i] ?? null,
+      cards: async () => [...this.cardState.values()],
     };
     this.chat = new Chat({
       config: this.config,
@@ -105,6 +114,8 @@ export class ChatRig {
     if (method === "sendMessage") return ok({ message_id: this.nextMessage++ });
     if ((method === "editMessageText" || method === "answerCallbackQuery") && this.refuseEdits)
       return { status: 400, text: '{"ok":false,"description":"Bad Request: message to edit not found"}' };
+    if (method === "deleteMessage" && this.refuseDeletes)
+      return { status: 400, text: '{"ok":false,"description":"Bad Request: message to delete not found"}' };
     return ok(true);
   }
 
@@ -215,7 +226,61 @@ export class ChatRig {
       ...over,
     };
     this.views = [...this.views.filter((v) => v.intent !== intent), view];
+    this.lastWait.set(id, view);
+    this.cardState.set(id, this.card(id, view, { track: buildTrack(over.question ? 2 : 3, 0, false) }));
     return { id, key, view };
+  }
+
+  /** A card as the fake page shows it; with a wait it asks, without one it works. */
+  card(id: number, wait: WaitView | null, over: Partial<CardView> = {}): CardItem {
+    const m = this.db.get<{ intent: string; repo: string; continued: number }>(
+      "SELECT intent, repo, continued FROM missions WHERE id = ?",
+      id,
+    );
+    return {
+      wait,
+      view: {
+        intent: m?.intent ?? "i-1",
+        mission: id,
+        title: "Add export",
+        repo: m?.repo ?? "web",
+        track: buildTrack(2, 0, false),
+        status: "Building",
+        ask: wait?.ask ?? null,
+        question: wait?.question ?? false,
+        onlyYou: wait?.onlyYou ?? false,
+        waitId: wait?.waitId ?? null,
+        final: null,
+        link: wait ? (wait.pr?.url ?? null) : "https://github.com/owner/web/pull/7",
+        ...over,
+      },
+    };
+  }
+
+  /** The mission goes on working: its card shows `status` at track position `at`, and nothing is asked. */
+  work(id: number, status = "Building", at = 2): void {
+    this.views = this.views.filter((v) => Number(v.waitId.split(".")[0]) !== id);
+    this.cardState.set(id, this.card(id, null, { status, track: buildTrack(at, 0, false) }));
+  }
+
+  /** A new wait on the same mission (the wait counter moves on, as `machine.apply` does). */
+  rewait(id: number, over: Partial<WaitView> = {}): WaitView {
+    const cur = this.db.get<{ continued: number; intent: string }>(
+      "SELECT continued, intent FROM missions WHERE id = ?",
+      id,
+    )!;
+    this.db.run("UPDATE missions SET continued = ? WHERE id = ?", cur.continued + 1, id);
+    const view: WaitView = { ...this.lastWait.get(id)!, waitId: `${id}.${cur.continued + 1}`, ...over };
+    this.lastWait.set(id, view);
+    this.views = [...this.views.filter((v) => v.intent !== cur.intent), view];
+    this.cardState.set(id, this.card(id, view, { track: buildTrack(view.question ? 2 : 3, 0, false) }));
+    return view;
+  }
+
+  /** The mission ended: `final` is the card's last line (TG-21). */
+  finish(id: number, final: string): void {
+    this.views = this.views.filter((v) => Number(v.waitId.split(".")[0]) !== id);
+    this.cardState.set(id, this.card(id, null, { final, track: buildTrack(3, 0, final.startsWith("✅")) }));
   }
 
   /** The mission ended its wait: it moves to `build` through `event`. */
@@ -231,6 +296,7 @@ export class ChatRig {
       event,
     );
     this.views = [];
+    this.work(id);
   }
 
   /** Send what is due through the chat's sender. */

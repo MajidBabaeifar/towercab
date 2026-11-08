@@ -1708,6 +1708,9 @@ CREATE TABLE shadow_actions (id INTEGER PRIMARY KEY, at REAL NOT NULL, turn INTE
   detail TEXT NOT NULL DEFAULT '', UNIQUE (turn, idx));
 CREATE TABLE telegram_updates (update_id INTEGER PRIMARY KEY, at REAL NOT NULL, data TEXT NOT NULL,
   state TEXT NOT NULL DEFAULT 'new');
+CREATE TABLE tg_cards (mission INTEGER PRIMARY KEY, intent TEXT NOT NULL, message_id INTEGER,
+  text TEXT NOT NULL DEFAULT '', buttons TEXT, ping_id INTEGER, ping_wait TEXT,
+  final INTEGER NOT NULL DEFAULT 0, tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0);
 ```
 
 **Transitions** (`next(stage, event)`; "next" = the next stage of the order; `U` = unexpected, counted
