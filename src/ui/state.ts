@@ -21,6 +21,7 @@ import { dataOf, forIntent, type Mission } from "../mission.ts";
 import { testGrantsOf } from "../pipeline/access.ts";
 import type { SecretState } from "../pipeline/common.ts";
 import { section } from "../pipeline/prtext.ts";
+import { waitsInQueue } from "../queue.ts";
 import { type Kind, parseStored, stageSkip } from "../repo/readiness.ts";
 import { usualOwner } from "../repos.ts";
 import { currentRisk, type Risk, type RiskGate, riskWords } from "../risk.ts";
@@ -380,6 +381,8 @@ export function stateOf(m: Mission, now: number, o: StateOpts = {}): StateView {
   if (isReady(m)) return state("queued", "ready to build");
   // UI-249: back from a wait and waiting for a free build slot is queued, not working.
   if (returningSince(m) !== null) return state("queued", "waiting for a build slot");
+  // LOOP-159: behind the head of the repo's merge queue.
+  if (waitsInQueue(m) && !m.held) return state("queued", "queued to merge");
   // LOOP-118: held by `after:` is a quiet wait of Towercab's own, never stalled.
   if (heldByAfter(m))
     return state("queued", dataOf<{ afterHold?: { text: string } }>(m).afterHold?.text ?? null);

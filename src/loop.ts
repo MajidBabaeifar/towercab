@@ -87,6 +87,7 @@ import { type PipeData, prUrl as prLink } from "./pipeline/common.ts";
 import { writeTicks } from "./pipeline/steps.ts";
 import { evaluate } from "./pipeline/teammate.ts";
 import { isParked, priority } from "./priority.ts";
+import { conflictHeld, headOf, landingOf } from "./queue.ts";
 import { blockingRepos, startReadiness as startReadinessCheck } from "./readiness.ts";
 import { loadRepoFiles } from "./repo/files.ts";
 import { pollRepoSettings } from "./repo/poll.ts";
@@ -1525,7 +1526,8 @@ export class Loop {
             );
           }
         }
-        const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot, team, only);
+        const held = conflictHeld(unfinished(this.d.db), m);
+        const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot, team, only, held);
         if (!o) continue;
         if (o.event === "feedback" || o.event === "answered") {
           // A later answer by the owner clears the agent's name.
@@ -1628,6 +1630,11 @@ export class Loop {
       if (this.opts.intent && this.targetId && m.intent !== this.targetId) continue;
       const h = this.d.handlers[m.stage];
       if (!h) continue;
+      // LOOP-159: at `merge` only the head of the repo's merge queue steps; it marks itself landing.
+      if (m.stage === "merge" && landingOf(m) === null) {
+        if (headOf(unfinished(db), m.repo)?.id !== m.id) continue;
+        m = patchData(db, m, { landing: { since: this.now } }, this.now);
+      }
       // LOOP-117: before a build starts or goes on, the intent's current `after` is read again.
       if (m.stage === "build" && m.pr === null && m.step !== "commit") {
         const checked = this.holdByAfter(m);

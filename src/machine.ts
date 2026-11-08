@@ -604,9 +604,18 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
         cols.from_stage = null;
       }
       if (finished(to)) cols.finished = now;
+      // LOOP-159, LOOP-161: entering `merge` joins the repo's merge queue; a wait or the end leaves it,
+      // so a mission back from the owner joins at the back.
+      const leavesQueue = isWait(to) || finished(to) || !!extra.waiting;
+      const queue = leavesQueue
+        ? { queuedAt: undefined, landing: undefined }
+        : to === "merge" && typeof data.queuedAt !== "number"
+          ? { queuedAt: now }
+          : {};
       // The new stage's steps haven't launched anything (LOOP-4).
       data = {
         ...data,
+        ...queue,
         launched: undefined,
         ...(leavingWait ? { doneByYou: undefined, stuck: undefined } : {}),
       };

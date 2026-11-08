@@ -30,6 +30,12 @@ function cut(text: string): string {
   return chars.length > MAX_TEXT ? `${chars.slice(0, MAX_TEXT - 1).join("")}…` : text;
 }
 
+/** `html`: the text is HTML (TG-17's `<pre>` block); `replyTo`: a message to reply to (TG-20's ping). */
+export interface SendOptions {
+  html?: boolean;
+  replyTo?: number;
+}
+
 const markup = (rows: Button[][]) => rows.map((r) => r.map((b) => ({ text: b.text, callback_data: b.data })));
 
 export class Telegram implements Sender {
@@ -52,11 +58,15 @@ export class Telegram implements Sender {
    * `reply_markup` when there are buttons); sent = HTTP 200 and `ok: true`. Resolves with the message id.
    * Rejects with a reason that never holds the token.
    */
-  async send(text: string, buttons?: Button[][]): Promise<number | undefined> {
+  async send(text: string, buttons?: Button[][], opts: SendOptions = {}): Promise<number | undefined> {
     const body = {
       chat_id: this.config.chatId,
       text: cut(text),
       disable_web_page_preview: true,
+      ...(opts.html ? { parse_mode: "HTML" } : {}),
+      ...(opts.replyTo
+        ? { reply_parameters: { message_id: opts.replyTo, allow_sending_without_reply: true } }
+        : {}),
       ...(buttons?.length ? { reply_markup: { inline_keyboard: markup(buttons) } } : {}),
     };
     const v = await this.call("sendMessage", body);
@@ -65,18 +75,30 @@ export class Telegram implements Sender {
   }
 
   /** LOOP-128: `editMessageText`; no buttons removes them. Telegram refusing the edit rejects with `Refused`. */
-  async edit(message: number, text: string, buttons?: Button[][]): Promise<void> {
-    await this.call(
-      "editMessageText",
-      {
-        chat_id: this.config.chatId,
-        message_id: message,
-        text: cut(text),
-        disable_web_page_preview: true,
-        reply_markup: { inline_keyboard: markup(buttons ?? []) },
-      },
-      true,
-    );
+  async edit(message: number, text: string, buttons?: Button[][], opts: SendOptions = {}): Promise<void> {
+    try {
+      await this.call(
+        "editMessageText",
+        {
+          chat_id: this.config.chatId,
+          message_id: message,
+          text: cut(text),
+          disable_web_page_preview: true,
+          ...(opts.html ? { parse_mode: "HTML" } : {}),
+          reply_markup: { inline_keyboard: markup(buttons ?? []) },
+        },
+        true,
+      );
+    } catch (e) {
+      // TG-22: "message is not modified" means the message already says it.
+      if (e instanceof Refused && /not modified/i.test(e.message)) return;
+      throw e;
+    }
+  }
+
+  /** TG-20: `deleteMessage`. Telegram refusing (gone, too old) rejects with `Refused`. */
+  async remove(message: number): Promise<void> {
+    await this.call("deleteMessage", { chat_id: this.config.chatId, message_id: message }, true);
   }
 
   /** TG-5: `answerCallbackQuery`, so the button stops spinning. */

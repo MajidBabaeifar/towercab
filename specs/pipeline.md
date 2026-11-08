@@ -612,7 +612,12 @@ The repair run and the issue scorer each get their own file, so their role is wr
 - `agents/score.md`: the issue scorer (INT-22), no tools, `session: none`, `timeout_min: 5`.
 - The PR text is part of the build result, written by the worker. It stays in `worker.md` as its own
   section of the prompt rather than a separate run; PIP-75 records this.
-- Verified by: `agents: repair continues the worker session`, `agents: score has no tools`
+- `agents/worker.md` and `agents/repair.md` carry the same "Parallel work" rules (LOOP-160): no merge or
+  rebase of the base only because it moved (only for a conflict, a failing check or real base risk, then
+  rerun the affected checks); checks from an older head are no evidence for the new one; never stash,
+  reset or delete work the agent didn't create, nor touch another mission's branch or worktree;
+  conflicts are resolved only by the merge queue's head.
+- Verified by: `agents: repair continues the worker session`, `agents: score has no tools`, `agents: worker and repair carry the parallel work rules`
 
 ### PIP-75 · The audit
 
@@ -715,6 +720,8 @@ A code PR that conflicts with its base is merged with the base by Towercab's con
 - Applies to the conflict round of PIP-31 and PIP-22 (`DIRTY`), also when the conflict is found before
   the gate (in `ci` or `review`): the mission goes to `build` with `repair.kind = "conflict"` and never
   to an owner wait first. The conflict round's first run is not counted as a fix round.
+- Once missions are queued to merge, only the head of the repo's merge queue runs a conflict round; the
+  others wait their turn without one (LOOP-160).
 - Up to 2 automatic conflict rounds per code PR. The owner is asked (`waiting: merge failed`) only
   when the PR still conflicts after the second round.
 - Verified by: `pipeline: a code PR in conflict is resolved without asking`, `pipeline: a code conflict that stays after two rounds asks the owner`
@@ -1568,9 +1575,9 @@ When one job's log can't be read, the repair details say so in one line and the 
 Nothing a person or a repo writes can loosen the sandbox: its arguments, mounts, masked files, environment and network are decided by Towercab's code alone.
 
 - `sandboxArgv`, the Claude run's sandbox settings (PIP-24) and the sandbox environment are built from the mission only (checkout, cache, granted domains). No config key, no `TOWERCAB.md`, `CLAUDE.md` or agent file, no intent field and no plan text adds a mount, removes a mask, adds a variable, passes a bwrap or Claude sandbox argument or turns the sandbox off.
-- There is no "unsafe" switch, flag or environment variable. `[agent].toolchain`, `[agent].path`, `[agent].env` and `[agent].sandbox_unix_sockets` no longer reach a sandboxed command: the toolchain directories (`~/.local/bin`, and the directory of the Node running Towercab when it lives under HOME), `PATH` and the masked files are decided in `src/pipeline/sandbox.ts`, and the sandbox of repo commands never binds unix sockets in (nor does Claude's own, PIP-162). The one setting that stays is a repo's named variables, `[repos.<r>].env`, under the narrow rule of PIP-159. A config that still sets an ignored key loads, and `towercab doctor` names the key as ignored.
+- There is no "unsafe" switch, flag or environment variable. `[agent].toolchain`, `[agent].path`, `[agent].env` and `[agent].sandbox_unix_sockets` no longer reach a sandboxed command: the toolchain directories (`~/.local/bin`, and the directory of the Node running Towercab when it lives under HOME; when that directory is a `bin` of its own install, such as `~/.local/node/bin`, the whole install is mounted read-only so `npm` and `npx`, links into `../lib`, resolve), `PATH` and the masked files are decided in `src/pipeline/sandbox.ts`, and the sandbox of repo commands never binds unix sockets in (nor does Claude's own, PIP-162). The one setting that stays is a repo's named variables, `[repos.<r>].env`, under the narrow rule of PIP-159. A config that still sets an ignored key loads, and `towercab doctor` names the key as ignored.
 - A repo file that asks for more (a `TOWERCAB.md` setting, an agent file with `sandbox: none` for a tool-using agent, PIP-78) is refused with the reason or ignored, and never changes the argv.
-- Verified by: `sandbox: config keys do not change the argv`, `sandbox: repo and intent files do not change the argv`, `sandbox: no unsafe switch exists`, `sandbox: ignored config keys are named by doctor`
+- Verified by: `sandbox: config keys do not change the argv`, `sandbox: repo and intent files do not change the argv`, `sandbox: no unsafe switch exists`, `sandbox: ignored config keys are named by doctor`, `sandbox: node's whole install is mounted so npm resolves`
 
 ### PIP-158 · Network goes through an allowlist proxy
 
