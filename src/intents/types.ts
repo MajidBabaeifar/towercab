@@ -113,6 +113,11 @@ export interface IntentStore {
    */
   update(idOrSuffix: string, what: string, fn: (e: IntentEdit) => void, mark?: string): Promise<Intent>;
   hasMark(mark: string): Promise<boolean>;
+  /**
+   * AUT-35: the sha of the newest commit that added, changed or removed the intent's `a:` line, or null.
+   * A store that can't tell leaves it out; every raise is then judged as from an unknown account.
+   */
+  lastAChange?(idOrSuffix: string): Promise<string | null>;
   /** Read a file in the intents repo's `main` (e.g. a plan.md), or null. */
   readFile(path: string): Promise<string | null>;
   /**

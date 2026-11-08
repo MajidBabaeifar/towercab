@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ownerOnly, ownerOnlyLine } from "./autonomy.ts";
+import { levelNow } from "./autonomy-change.ts";
 import {
   applyCommand,
   type CommandName,
@@ -189,7 +190,7 @@ function applyCtx(db: Db): ApplyCtx {
 async function refuseOwnerOnly(w: World, intent: string): Promise<void> {
   if (intent === "") return;
   const found = await (await w.store()).get(intent).catch(() => null);
-  if (found && ownerOnly(found.a, unfinishedFor(w.db, found.id)?.a_at_pick ?? null)) {
+  if (found && ownerOnly(levelNow(w.db, found))) {
     throw new Error(ownerOnlyLine(found.id));
   }
 }

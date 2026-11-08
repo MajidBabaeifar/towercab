@@ -77,7 +77,7 @@ export function OverviewPage({ data }: { data: Data }) {
             {working.length ? (
               <div class="rows">
                 {working.map((r) => (
-                  <WorkRow key={r.intent} row={r} />
+                  <WorkRow key={r.intent} row={r} readOnly={top.readOnly} />
                 ))}
               </div>
             ) : (

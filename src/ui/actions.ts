@@ -2,6 +2,16 @@
 // in the CLI (a `commands` row the loop applies, LOOP-15).
 
 import { ownerOnly, ownerOnlyLine } from "../autonomy.ts";
+import {
+  acceptedOf,
+  clearFlag,
+  flagOf,
+  levelNow,
+  recordChange,
+  setAccepted,
+  setFlag,
+  writtenLevel,
+} from "../autonomy-change.ts";
 import { saveBudgets } from "../budgets.ts";
 import { tickSteps } from "../commands.ts";
 import type { Config, RepoConfig } from "../config.ts";
@@ -38,6 +48,11 @@ export interface UiActions {
   done?(intent: string, note: string): Promise<string>;
   /** UI-164, PIP-113: the owner does it by hand; the intent becomes steps. */
   steps?(intent: string): Promise<string>;
+  /**
+   * AUT-34, AUT-35, UI-257: set the intent's autonomy to `a` (0–5) in one commit. Only the page (actor
+   * `owner` or none) may; a raise from any other actor is refused, and so is a lowering by the shadow.
+   */
+  autonomy?(intent: string, a: number, actor?: string): Promise<string>;
   /** SHD-22: pause everything, or one intent when `intent` is given. */
   pause(intent?: string): Promise<string>;
   resume(intent?: string): Promise<string>;
@@ -346,11 +361,45 @@ export function createActions(d: ActionDeps): UiActions {
         : "Paused: nothing new starts until you resume.";
     },
 
+    async autonomy(intent, a, actor = "") {
+      if (!Number.isInteger(a) || a < 0 || a > 5) throw new Error("Autonomy is a0 to a5.");
+      const found = await d.store.get(intent);
+      const flag = flagOf(d.db, found.id);
+      const shown = flag ? flag.from : writtenLevel(found);
+      const owner = d.actor !== "shadow" && (actor === "" || actor === "owner");
+      // AUT-35: no command and no shadow action changes the level; a raise counts only from the page.
+      if (!owner) {
+        throw new Error(a > shown ? "only you can raise autonomy" : "only you can change autonomy");
+      }
+      const written = writtenLevel(found);
+      if (a === written) {
+        // Nothing to write: the file already says it (accepting a flagged raise lands here).
+        if (!flag) return `Already at a${a}.`;
+        setAccepted(d.db, found.id, a);
+        clearFlag(d.db, found.id);
+        recordChange(d.db, { intent: found.id, from: shown, to: a, at: d.clock.now() });
+        return "Saved. Applies from the next gate.";
+      }
+      // The accepted level moves before the push, so the loop never flags Towercab's own commit.
+      const was = acceptedOf(d.db, found.id);
+      setAccepted(d.db, found.id, a);
+      clearFlag(d.db, found.id);
+      try {
+        await d.store.update(found.id, "set autonomy", (e) => e.setField("a", a));
+      } catch (e) {
+        if (was !== null) setAccepted(d.db, found.id, was);
+        if (flag) setFlag(d.db, found.id, flag);
+        throw e;
+      }
+      recordChange(d.db, { intent: found.id, from: shown, to: a, at: d.clock.now() });
+      return "Saved. Applies from the next gate.";
+    },
+
     async guard(intent, action, actor) {
       if (actor === "owner" || actor === "") return;
       if (action === "pause") return;
       const found = await d.store.get(intent).catch(() => null);
-      if (found && ownerOnly(found.a, unfinishedFor(d.db, found.id)?.a_at_pick ?? null)) {
+      if (found && ownerOnly(levelNow(d.db, found))) {
         throw new Error(ownerOnlyLine(found.id));
       }
     },

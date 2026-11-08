@@ -305,7 +305,7 @@ test("issues: a5 label stays at a4", async () => {
   await poll();
   const i = (await accepted(p)).open[0]!;
   expect(i.a).toBe(5);
-  expect(effectiveA(i.a, i.a, 5, i.source)).toBe(4);
+  expect(effectiveA(i.a, 5, i.source)).toBe(4);
 });
 
 test("issues: the proposed comment links the PR", async () => {

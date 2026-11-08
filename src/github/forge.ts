@@ -5,6 +5,7 @@ import type {
   BranchPr,
   CheckState,
   CodeScanningAlert,
+  CommitProof,
   IssueRow,
   IssueText,
   Json,
@@ -387,6 +388,29 @@ export class GitHubForge implements Forge, GitHub {
     // Only "not found" means the file is absent; any other failure is an error, never "no file".
     if (/\b404\b|not found/i.test(`${r.stderr}\n${r.stdout}`)) return null;
     throw new Error(`gh api ${path}: ${r.stderr.trim() || `exit ${r.code}`}`);
+  }
+
+  async commitLogins(repo: string, sha: string): Promise<(string | null)[]> {
+    if (!/^[0-9a-f]{7,64}$/.test(sha)) throw new Error(`${sha} isn't a commit`);
+    const v = await this.json<{ author?: { login?: string } | null; committer?: { login?: string } | null }>(
+      repo,
+      `repos/${repo}/commits/${sha}`,
+    );
+    return [v.author?.login ?? null, v.committer?.login ?? null];
+  }
+
+  async commitProof(repo: string, sha: string): Promise<CommitProof> {
+    if (!/^[0-9a-f]{7,64}$/.test(sha)) throw new Error(`${sha} isn't a commit`);
+    const v = await this.json<{
+      author?: { login?: string } | null;
+      committer?: { login?: string } | null;
+      commit?: { verification?: { verified?: boolean } };
+    }>(repo, `repos/${repo}/commits/${sha}`);
+    return {
+      author: v.author?.login ?? null,
+      committer: v.committer?.login ?? null,
+      verified: v.commit?.verification?.verified === true,
+    };
   }
 
   async greenChecks(repo: string, branch: string): Promise<Set<string> | null> {

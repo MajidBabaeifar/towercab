@@ -21,6 +21,7 @@ import type {
   When,
 } from "../../src/ui/view.ts";
 import { AddRepoForm } from "./AddRepo.tsx";
+import { AutonomyControl, FlagButtons } from "./AutonomyControl.tsx";
 import {
   acceptProposed,
   act,
@@ -489,6 +490,13 @@ export function NeedsCard({
       ) : null}
       <p class="ask">{card.ask}</p>
       {card.why ? <p class="why">{card.why}</p> : null}
+      {card.autonomy ? (
+        card.kind === "autonomy" ? (
+          <FlagButtons intent={key} view={card.autonomy} readOnly={readOnly} />
+        ) : (
+          <AutonomyControl intent={key} view={card.autonomy} readOnly={readOnly} compact />
+        )
+      ) : null}
       {card.warning ? (
         <p class="why review-warning" role="status">
           <Alert size={16} /> {card.warning}
@@ -829,7 +837,7 @@ export function StepsChecklist({
 }
 
 /** UI-59: a moving intent. */
-export function WorkRow({ row }: { row: Row }) {
+export function WorkRow({ row, readOnly = false }: { row: Row; readOnly?: boolean }) {
   return (
     <Link class="row" href={`/i/${row.intent}`}>
       <span class="row-main">
@@ -850,6 +858,9 @@ export function WorkRow({ row }: { row: Row }) {
         </span>
       </span>
       {row.behind ? null : <Phases phases={row.phases} />}
+      {row.autonomy ? (
+        <AutonomyControl intent={row.intent} view={row.autonomy} readOnly={readOnly} compact />
+      ) : null}
       {row.estimate ? <EstimateBar line={row.estimate} /> : null}
       <span class="row-num">
         <span class="num">{row.cost}</span>

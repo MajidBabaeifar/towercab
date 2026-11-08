@@ -4358,6 +4358,103 @@ a.pr-tile:hover {
   }
 }
 
+/* Autonomy control (UI-257, UI-258) */
+
+.autonomy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin: var(--s1) 0;
+  min-width: 0;
+}
+
+.row .autonomy {
+  grid-column: 1 / -1;
+}
+
+.autonomy-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.seg {
+  min-width: 40px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+
+.seg:first-child {
+  border-left: 0;
+}
+
+.seg:hover:not(:disabled):not(.current) {
+  background: var(--surface-2);
+}
+
+.seg.current {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.seg:disabled {
+  cursor: default;
+}
+
+.seg:focus-visible,
+.autonomy .btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.autonomy-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.autonomy-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+
+.autonomy-flag {
+  color: var(--text-2);
+}
+
+@media (max-width: 720px), (pointer: coarse) {
+  .seg,
+  .autonomy .btn {
+    min-height: 44px;
+  }
+
+  .seg {
+    min-width: 44px;
+  }
+}
+
 /* UI-256: the top bar's spend turns amber at 80 % of the budget and red at 100 %. */
 .top-spend.amber .num {
   color: var(--needs-edge);
@@ -4719,4 +4816,25 @@ kbd {
 
 .palette-row[aria-selected="true"] {
   background: var(--accent-soft);
+}
+
+/* The inbox detail is one card around the intent's story; a flag box inside a card is not a second card. */
+.needs-card.inbox-detail-card,
+.needs-card.nested {
+  display: block;
+  padding: 0;
+}
+
+.needs-card.inbox-detail-card::before,
+.needs-card.nested::before {
+  content: none;
+}
+
+.needs-card.autonomy-flagbox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--needs-edge);
+  border-radius: var(--radius-sm);
 }

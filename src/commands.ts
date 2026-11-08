@@ -2,6 +2,7 @@
 // the loop applies it on its next pass, or the CLI applies it itself when no loop runs.
 
 import { ownerOnly, ownerOnlyLine } from "./autonomy.ts";
+import { levelNow } from "./autonomy-change.ts";
 import type { Db } from "./db.ts";
 import { localTime } from "./intents/intent.ts";
 import type { IntentStore } from "./intents/types.ts";
@@ -191,10 +192,21 @@ export function ignoredNotes(db: Db, intent: string): IgnoredNote[] {
 export async function applyCommand(cx: CommandCtx, row: CommandRow): Promise<string> {
   let result: string;
   try {
+    // AUT-35: no command changes autonomy (the table refuses the name); a row that claims to is dropped and noted.
+    if ((row.name as string) === "autonomy") {
+      noteIgnored(
+        cx.db,
+        row.arg || "-",
+        `command:${row.id}`,
+        `ignored "autonomy" from the ${row.source}: only you can raise autonomy`,
+        cx.now.getTime() / 1000,
+      );
+      throw new Error("only you can raise autonomy: use GitHub or the page");
+    }
     // AUT-33: only the page counts for an a0 intent; a row from anywhere else is dropped and noted.
     if (row.source !== "ui" && row.arg !== "" && OWNER_ONLY_COMMANDS.includes(row.name)) {
       const intent = await cx.store.get(row.arg).catch(() => null);
-      if (intent && ownerOnly(intent.a, unfinishedFor(cx.db, intent.id)?.a_at_pick ?? null)) {
+      if (intent && ownerOnly(levelNow(cx.db, intent))) {
         const at = cx.now.getTime() / 1000;
         noteIgnored(
           cx.db,

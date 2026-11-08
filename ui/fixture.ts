@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { clearFlag, flagOf, setAccepted, setFlag } from "../src/autonomy-change.ts";
 import { parseConfig } from "../src/config.ts";
 import { Db } from "../src/db.ts";
 import type { ProposedPr, ProposedState } from "../src/github/proposed.ts";
@@ -220,6 +221,8 @@ export interface FakeActionCall {
   done?: boolean;
   pr?: number;
   head?: string;
+  /** UI-257: the level asked for. */
+  a?: number;
 }
 
 export interface Fixture {
@@ -496,6 +499,18 @@ export function buildFixture(
     async start(intent) {
       calls.push({ action: "start", intent });
       return "Starting its design on the next pass, even if the repo is full.";
+    },
+    async autonomy(intent, a) {
+      calls.push({ action: "autonomy", intent, a });
+      if (!Number.isInteger(a) || a < 0 || a > 5) throw new Error("Autonomy is a0 to a5.");
+      const found = store.open.find((i) => i.id === intent);
+      if (!found) throw new Error(`there is no open intent ${intent}`);
+      // The fixture's one refusal: the intents repo can't be pushed to (UI-257).
+      if (intent === IDS.upnext && a === 0) throw new Error("The intents repo refused the push.");
+      const flag = flagOf(db, intent);
+      if (flag) clearFlag(db, intent);
+      found.a = a;
+      return "Saved. Applies from the next gate.";
     },
     async step(intent, n, done) {
       calls.push({ action: "step", intent, n, done });
@@ -1333,10 +1348,18 @@ function exitsScene(f: Fixture): void {
 
 export async function serveFixture(
   port = 0,
-  o: { empty?: boolean; proposed?: boolean; readiness?: boolean; exits?: boolean; crowded?: boolean } = {},
+  o: {
+    empty?: boolean;
+    proposed?: boolean;
+    readiness?: boolean;
+    exits?: boolean;
+    crowded?: boolean;
+    flagged?: boolean;
+  } = {},
 ): Promise<{ fixture: Fixture; server: UiServer }> {
   const fixture = buildFixture(o);
   if (o.exits && !o.empty) exitsScene(fixture);
+  if (o.flagged && !o.empty) flagScene(fixture);
   const here = dirname(fileURLToPath(import.meta.url));
   const server = startUi({
     port,
@@ -1401,4 +1424,19 @@ export function seedShadow(f: Fixture, now: number): void {
     f.db.delMeta("shadow.pending");
     return "Cleared the shadow's conversation. Its log of actions stays.";
   };
+}
+
+/** UI-258: someone else raised the plan-review intent from a2 to a5; it keeps running at a2. */
+export function flagScene(f: Fixture): void {
+  const i = f.store.open.find((x) => x.id === IDS.plan);
+  if (!i) return;
+  i.a = 5;
+  setAccepted(f.db, IDS.plan, 2);
+  setFlag(f.db, IDS.plan, {
+    who: "mallory",
+    from: 2,
+    to: 5,
+    commit: "0123456789abcdef",
+    at: Date.now() / 1000 - 600,
+  });
 }
