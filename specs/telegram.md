@@ -1,6 +1,6 @@
 # Telegram
 
-**Status:** Live · **Prefix:** TG
+**Status:** Live: TG-1..15 · **Prefix:** TG
 
 ## Purpose
 
@@ -184,6 +184,91 @@ Text Towercab cannot use gets a short help line, never silence and never a guess
   `/resume` and `reply to a question to answer it`. A leading `/` and an `@bot` suffix are accepted.
 - Verified by: `telegram: unknown command gets the help line`, `telegram: unknown text goes to the shadow when enabled`, `telegram: slash commands accept the bot suffix`
 
+### TG-16 · One card per intent
+
+Each intent has one Telegram message, its card, which Towercab edits as the intent moves instead of sending a new message.
+
+- Towercab sends the card the first time the intent needs to appear in Telegram (the first event LOOP-16 would
+  have sent a message for) and records its Telegram message id with the intent (as LOOP-128 does for messages).
+  On every later change of stage, status or wait it edits that message (`editMessageText`, HTML parse mode,
+  previews off) and sends no other message, apart from the ping of TG-20 and the replacement of TG-22. An edit
+  whose text and buttons are unchanged is not sent.
+- From the card on, the events that used to send a message for this intent (a PR waiting, a question, a merge, a
+  failure) change the card. This replaces TG-12's separate message per wait for intents; TG-11's outcome is
+  shown on the card's status line (TG-17). Commands that answer on demand (`/status`, `/focus`, `/queue`) still
+  send their own messages.
+- One intent moving from spec to merged yields one `sendMessage` for the card and several `editMessageText`.
+- Verified by: `telegram: an intent has one card`, `telegram: a stage change edits the card`, `telegram: an unchanged card is not edited`, `telegram: an intent through all stages sends one message and several edits`
+
+### TG-17 · The card is a block of characters
+
+The card shows the intent's id, title and repo, where it stands, what is happening or awaited, and a link, in a monospace block with no images.
+
+- The text is a `<pre>` block (content HTML-escaped) of, in order: a header line with the id; the short title
+  (wrapped, at most 2 lines); the repo; the status line; the stage track; and then, outside the block, the link
+  of TG-14 (the PR when the intent has one). The status line is first among the changing lines so the most
+  important one, what it needs from the owner, sits near the top: when the intent waits for the owner it reads
+  `▶ YOU: <ask>`, else what is happening now (`building`, `checks running`) or the outcome.
+- The track lists the stages in order with `●` for done, `◐` for the current one, `○` for those to come, for
+  example `spec ● plan ● build ◐ review ○ merge ○`. Stages that the intent skips are not listed. A stage that
+  failed or waits on the owner is `◐` and the status line says why.
+- Text is plain words as in TG-13: no step or field names in the title or status line; the track uses the
+  short stage names above.
+- Verified by: `telegram: the card has header, status, track and link`, `telegram: the card asks the owner on the first lines`, `telegram: the track marks done, current and next`
+
+### TG-18 · Built for a phone
+
+Every line of the card fits a phone screen without wrapping.
+
+- Each line inside the `<pre>` block is at most 28 characters (counted in code points, `●◐○▶` as one each);
+  longer text is wrapped at word breaks, and a word longer than the limit is cut with `…`. The track is split
+  over two lines when it does not fit, never in the middle of a stage. The title is cut to two lines with `…`.
+  The link sits outside the block and is not counted.
+- Verified by: `telegram: every card line fits 28 characters`, `telegram: a long track is split over two lines`, `telegram: a long title is cut`
+
+### TG-19 · Buttons follow the card's state
+
+The card's buttons are those of its current wait and are gone when nothing is asked.
+
+- Each edit sets the keyboard anew: the buttons of TG-3 for the current wait (with the confirms of TG-4 and the
+  stale-press rules of TG-5), none when the intent waits for nothing. A handled wait therefore leaves no stale
+  buttons. On an owner-only intent (effective `a` 0) the card has no action buttons at all, only the line and
+  link of TG-2.
+- Verified by: `telegram: card buttons change with the state`, `telegram: a handled wait leaves no buttons on the card`, `telegram: an owner-only card has no action buttons`
+
+### TG-20 · A needs-you change pings
+
+When a card turns into a state that needs the owner, Towercab sends a short ping so the phone buzzes, because an edit is silent.
+
+- On the change into a needs-you wait (a PR to merge, a question, a proposal, a failure offering Start over), or
+  a new wait replacing another, Towercab sends one message that replies to the card (`reply_parameters`) with
+  one line (at most 60 characters, plain words, `<short title>: <ask>`), notifications on. It is not sent for
+  edits within the same wait, nor when the wait ends.
+- The ping is sent after the card is edited, and is recorded with its message id so a reply to it answers the
+  wait as a reply to the card does (TG-6). It carries no buttons and is not edited. When its wait ends, the ping is
+  deleted (`deleteMessage`), a refusal is dropped and logged as in TG-11. The card is never moved or reposted.
+- A reply to the card or to its ping that is not an answer is handled as TG-6 says.
+- Verified by: `telegram: a needs-you change sends a ping that replies to the card`, `telegram: an edit within the same wait sends no ping`, `telegram: a reply to the ping answers the question`, `telegram: the ping is deleted when its wait ends`
+
+### TG-21 · A finished intent's card stops changing
+
+When an intent ends, its card shows the final state and is never edited again.
+
+- On done, unverified or dropped, the card is edited once: the status line reads `✅ done`, `⚠ unverified: <why>`
+  or `🗑 dropped`, the track is final, and the buttons are removed. Later events for the intent change nothing
+  on the card; a reopened intent (started over, UI-66) gets a new card (TG-16).
+- Verified by: `telegram: a finished card shows the final state`, `telegram: a finished card is not edited again`, `telegram: a restarted intent gets a new card`
+
+### TG-22 · A card that cannot be edited is replaced
+
+If Telegram refuses to edit the card, Towercab sends a new card and remembers its id.
+
+- When `editMessageText` fails because the message is gone or too old to edit, Towercab sends the card as new,
+  records the new message id in place of the old, and logs it once. Other failures (network, rate limit) leave
+  the id as is and are retried on the next pass. "Message is not modified" is not a failure. A ping (TG-20) is
+  sent for the replacement only if the intent is in a needs-you state.
+- Verified by: `telegram: a deleted card is replaced`, `telegram: a replaced card keeps the new id`, `telegram: a transient failure keeps the old card id`
+
 ## Out of scope
 
 - Each signed-in person's own chat, by role: a later intent (see TG-1).
@@ -198,5 +283,8 @@ Text Towercab cannot use gets a short help line, never silence and never a guess
   phone, and both are hard to undo. Everything else is one tap.
 - On owner-only intents Telegram gives no buttons, because AUT-32 says Telegram never counts there; the
   message still links to the card so the owner can act on the page.
+- The card keeps its place and a separate ping buzzes the phone (TG-20), rather than re-posting the card and
+  deleting the old one: the card's position in the chat and its id stay stable, and no message has to be
+  deleted to keep the chat tidy.
 - Edit instead of send: the point of the chat is what needs the owner now; a stale message that still
   shows buttons is the thing to avoid.
