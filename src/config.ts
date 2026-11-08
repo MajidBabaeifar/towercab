@@ -6,23 +6,10 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { applyBudgets, type Budgets, emptyBudgets } from "./budgets.ts";
 import { type Capacity, defaultParallel, readCapacity } from "./capacity.ts";
+import { DEFAULT_NETWORK } from "./pipeline/sandbox.ts";
 
-export const DEFAULT_NETWORK = [
-  "registry.npmjs.org",
-  "*.npmjs.org",
-  "pypi.org",
-  "files.pythonhosted.org",
-  "crates.io",
-  "*.crates.io",
-  "proxy.golang.org",
-  "sum.golang.org",
-  "github.com",
-  "*.github.com",
-  "*.githubusercontent.com",
-  "docs.rs",
-  "nodejs.org",
-  "developer.mozilla.org",
-];
+/** PIP-157: `[agent]` keys that still parse so an old file loads, but no longer reach the sandbox. */
+export const IGNORED_AGENT_KEYS = ["path", "toolchain", "env", "network", "sandbox_unix_sockets"];
 
 export interface RepoConfig {
   name: string;
@@ -69,6 +56,8 @@ export interface Config {
     env: Record<string, string>;
     network: string[];
     sandboxUnixSockets: boolean;
+    /** PIP-157: the sandbox keys above that the file sets; they parse but are never read. */
+    ignored: string[];
   };
   /**
    * The repos Towercab works on. Filled from the file by `parseConfig`, then from the database by
@@ -85,7 +74,7 @@ export interface Config {
   ignoredRepos: Map<string, string>;
   github: { appId: number; me: string; apiBase: string; name?: string } | null;
   gitlab: GitLabConfig | null;
-  telegram: { botToken: string; chatId: string; apiBase: string } | null;
+  telegram: { botToken: string; chatId: string; apiBase: string; uiUrl?: string } | null;
   /** SHD-11: `[shadow]`: the owner's Claude session in Telegram and what it may do without asking. */
   shadow: { enabled: boolean; free: ShadowFree[]; dailyBudgetUsd: number; model: string | null };
   ui: { port: number };
@@ -179,8 +168,9 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       path: r.str(agent, "agent", "path", process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"),
       toolchain: r.dirs(agent, "agent", "toolchain", ["~/.local/bin"]),
       env: r.env(agent, "agent", "env"),
-      network: r.strList(agent, "agent", "network", DEFAULT_NETWORK),
+      network: r.strList(agent, "agent", "network", [...DEFAULT_NETWORK]),
       sandboxUnixSockets: r.bool(agent, "agent", "sandbox_unix_sockets", false),
+      ignored: IGNORED_AGENT_KEYS.filter((k) => k in agent),
     },
     repos: new Map(),
     budgets: emptyBudgets(),
@@ -202,6 +192,8 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       botToken: r.str(telegram, "telegram", "bot_token", ""),
       chatId: String(telegram.chat_id ?? ""),
       apiBase: r.url(telegram, "telegram", "api_base", "https://api.telegram.org"),
+      // TG-14: where the owner reaches the page from the phone; absent unless set.
+      ...(telegram.ui_url === undefined ? {} : { uiUrl: r.url(telegram, "telegram", "ui_url", "") }),
     },
     shadow: {
       enabled: r.bool(shadow, "shadow", "enabled", false),

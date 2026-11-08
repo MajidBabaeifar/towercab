@@ -39,6 +39,7 @@ import { type Mission, unfinishedFor } from "./mission.ts";
 import { decide, nextText } from "./pick.ts";
 import { grantScanning } from "./pipeline/alerts.ts";
 import { guardMain } from "./pipeline/guard.ts";
+import { checkSandbox } from "./pipeline/hostcheck.ts";
 import { handlers } from "./pipeline/index.ts";
 import { ownerMergeRefusal } from "./pipeline/teammate.ts";
 import { parseScores } from "./priority.ts";
@@ -49,6 +50,7 @@ import { resetShadow, statusText } from "./shadow/store.ts";
 import { buildShadow } from "./shadow/wire.ts";
 import { checkIds, readPrList } from "./specs-cli.ts";
 import { renderStatus } from "./status.ts";
+import { buildChat } from "./telegram/wire.ts";
 import { Telegram } from "./telegram.ts";
 import { realTools, type Tools } from "./tools.ts";
 import { checkUpdate, version } from "./update.ts";
@@ -359,6 +361,23 @@ async function run(
       log.init(w.home.logFile);
       const store = await w.store();
       const telegram = w.config.telegram ? new Telegram(w.config.telegram) : null;
+      // LOOP-126: the chat (buttons, replies, commands) runs in a watching loop whenever Telegram is set.
+      const chat =
+        v.watch && telegram
+          ? buildChat(
+              {
+                config: w.config,
+                home: w.home,
+                db: w.db,
+                clock: systemClock,
+                store,
+                github: w.github!,
+                log: (l) => log.emit(l),
+              },
+              telegram,
+              () => loop,
+            )
+          : undefined;
       // SHD-1: the shadow reads the owner's chat only in a watching loop, with `[shadow] enabled`.
       const shadow =
         v.watch && w.config.shadow.enabled
@@ -373,7 +392,7 @@ async function run(
                 github: w.github!,
                 log: (l) => log.emit(l),
               },
-              telegram,
+              chat ? chat.shadowSource() : telegram,
               () => loop,
             )
           : undefined;
@@ -389,14 +408,18 @@ async function run(
           gitlab: w.gitlab,
           handlers: handlers(),
           log: (l) => log.emit(l),
-          sender: telegram,
+          sender: chat ? chat.sender() : telegram,
+          chat,
           shadow,
           selfUpdate: Boolean(v.watch),
           readiness: true,
           limits: true,
+          // PIP-163, PIP-162: the sandbox must hold before anything is picked or any Claude run starts.
+          sandboxProbe: () => checkSandbox(tools),
         },
         { watch: Boolean(v.watch), intent: v.intent as string | undefined },
       );
+      chat?.start();
       const stop = () => loop.stop(0);
       process.on("SIGTERM", stop);
       process.on("SIGINT", stop);

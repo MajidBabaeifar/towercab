@@ -140,17 +140,9 @@ test("pipeline: merged plan grants its ticked access", async () => {
     [`${DIR}/plan.md`]: md.replace("- [x] network: cdn.example.com", "- [ ] network: cdn.example.com"),
   });
   p.mergePr(pr);
-  // The worker first asks for more access mid-build (AUT-15), then finishes.
-  p.script(
-    reply(
-      build({
-        status: "access",
-        pr: null,
-        access: { domains: [{ domain: "fonts.example.org", why: "a web font" }], paths: [], tests: [] },
-      }),
-    ),
-    reply(build(), CODE),
-  );
+  // The worker finishes with the access the plan granted: a mid-build request is a question (AUT-15), see
+  // access-request.test.ts.
+  p.script(reply(build(), CODE));
   await p.untilStage("verify");
   const w = calls("worker")[0]!;
   const allowed = (w.settings.sandbox as { network: { allowedDomains: string[] } }).network.allowedDomains;
@@ -167,25 +159,15 @@ test("pipeline: merged plan grants its ticked access", async () => {
   });
 }, 30_000);
 
-test("autonomy: unplanned access at a1-a3 is granted", async () => {
-  // Granted at once and resumed in the same build: no wait for the owner.
-  const [ask, resumed] = calls("worker");
-  expect(resumed!.session).toEqual({ mode: "resume", id: ask!.session.id });
-  expect(resumed!.prompt).toBe("Access granted: fonts.example.org. Continue the build.");
-  const allowed = (resumed!.settings.sandbox as { network: { allowedDomains: string[] } }).network
-    .allowedDomains;
-  expect(allowed).toContain("fonts.example.org");
+test("autonomy: an a2 build within the plan's access waits for the owner's merge", async () => {
+  // Nothing was asked beyond the plan, so no "Access beyond the plan" and no wait before the PR.
+  expect(calls("worker")).toHaveLength(1);
   const m2 = p.mission()!;
   expect(p.stages(m2.id)).not.toContain("blocked");
-  expect(JSON.parse(m2.data).unplanned).toEqual({
-    domains: [{ domain: "fonts.example.org", why: "a web font" }],
-    paths: [],
-  });
+  expect(JSON.parse(m2.data).unplanned).toBeUndefined();
   const m = await p.untilStage("approval:merge");
-  // The owner merges at a2 anyway; the PR says what was granted beyond the plan.
   expect(m.why).toBe("At autonomy a2 you merge every change yourself.");
-  const body = p.prNo("web", m.pr!).body;
-  expect(body).toContain("## Access beyond the plan\n\n- network access to fonts.example.org: a web font");
+  expect(p.prNo("web", m.pr!).body).not.toContain("## Access beyond the plan");
 }, 30_000);
 
 test("metrics: totals at done", async () => {

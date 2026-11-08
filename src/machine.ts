@@ -248,6 +248,10 @@ export const WAITS: Record<string, { stage: Stage; ask: string }> = {
     stage: "blocked",
     ask: "Decide if the tests may write to this machine's shared build cache: reply allow or no.",
   },
+  "fix sandbox": {
+    stage: "blocked",
+    ask: "Towercab's sandbox can't start, so no Claude run does: fix what the message says (for the AppArmor profile, run the command shown), then retry.",
+  },
   "tests don't prove the change": {
     stage: "blocked",
     ask: "No test shows the change works. Reply with what a test should check, or say go on to continue without one.",
@@ -361,6 +365,7 @@ export const EXITS: Record<string, ExitKind[]> = {
   "answer the question": ["continue", "steps", "retry", "drop"],
   "checks red": BASIC,
   "allow check writes": BASIC,
+  "fix sandbox": BASIC,
   "tests don't prove the change": BASIC,
   "CI red": BASIC,
   "CI stuck": BASIC,
@@ -467,7 +472,7 @@ export function continueTo(waiting: string | null, from: Stage | null): Stage {
   if (waiting === "CI stuck") return "ci";
   if (waiting === "merge failed" || waiting === "your steps first") return "gate";
   // PIP-95: the answer is read where the question was asked.
-  if (waiting === "allow check writes" && from) return from;
+  if ((waiting === "allow check writes" || waiting === "fix sandbox") && from) return from;
   if (from === "pick" || from === "design" || from === "plan") return from;
   return "build";
 }

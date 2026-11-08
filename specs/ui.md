@@ -1488,6 +1488,61 @@ The stage map lists the stages this intent will go through, folds the rest, and 
 - A run of two or more stages not reached yet folds into one row, `<n> more stages to go`, that opens to list them. A merged code PR is never shown as `skipped`.
 - Verified by: `ui: stage map leaves out stages that cannot apply and says so`, `ui: unreached stages fold into one row`, `ui: a merged change does not show merging as skipped`
 
+### UI-279 · The intent page shows how many plan steps are built
+
+While a long plan builds, the intent page and its card say "step 3 of 6".
+
+- Shown from the mission's `data.build` (PIP-216) as `step <steps_done + 1> of <steps_total>` while the build runs (the step being worked on), and `<steps_done> of <steps_total> steps built` while it waits between runs or on the owner. Absent for a plan with no numbered steps or a single-step plan, and once the review starts.
+- `GET /api/state` and the intent's API carry `build: {stepsDone, stepsTotal}` (null when absent). Fits 360 px, light and dark.
+- Verified by: `ui: the intent page shows the plan step being built`, `ui: no step count for a one-run plan`
+
+### UI-280 · "Covered by…" closes an intent as done
+
+The owner can pick another intent on an open intent's page and close the first as done, because the second covers it.
+
+- An intent that is not done, dropped or stopped shows a "Covered by…" action next to Drop, at any stage and in the board's card menu. It opens a picker of the other intents of the same repo first, then the others (search by ID or title), without the intent itself, dropped or stopped ones, and any that wait `after:` this one (LOOP-156).
+- Choosing one posts `{action: "done", id, by: <other id>}` (UI-66) with `actor: owner`, which runs the `done --by` command of LOOP-156 with its confirm for an open code PR with commits (UI-164). The page shows `Closed as done: covered by <other id>` with the ID as a link, and a refusal shows its reason.
+- Both intents' pages show the cover on their timelines ("Covered by 261106-1201" and "Covers 261105-2152-14"), each with the other as a link. A covered intent shows as done, not dropped, with the covering intent named. Fits 360 px, light and dark; hidden for `a0` intents the same way Drop is (AUT-31) and for a viewer (USR).
+- A covered intent's page shows a "Reopen" button, which posts `{action: "reopen", id}` (UI-66) and runs LOOP-157. The page then shows the intent back at its old stage, with the PRs reopened and any that could not be, with the reason. The button is hidden on every other intent.
+- When the covering intent was dropped or stopped (LOOP-158), the covered intent's page shows `Not delivered: <other id> was <dropped|stopped>` with the Reopen button, and the Inbox shows the `not delivered` item with Reopen and Dismiss (UI-259). Dismiss hides the Inbox item only; the page note stays.
+- Verified by: `ui: a not delivered intent shows its note and an Inbox item with Reopen`, `ui: dismissing a not delivered item keeps the page note`, `ui: reopen is offered only on a covered intent`, `ui: reopen puts the intent back and lists PRs it could not reopen`, `ui: covered by is offered at any open stage`, `ui: covered by picker leaves out itself and finished intents`, `ui: covered by closes the intent as done`, `ui: covered by shows on both timelines`, `ui: covered by asks to confirm an open code PR`
+
+### UI-281 · Cards show the people part, the agent part is a link
+
+Cards and lists show only the part for people; the agent part is one tap away on the intent page.
+
+- Board cards, Inbox items, Needs-you cards and the repo page's intent rows show the people part of PIP-220 (at most 5 lines, clipped with `…` after that) and no agent text. Each has an `Agent context` link to the intent page, where the part is folded under a header of that name and opens on a click (UI-267). The link is absent when there is no agent part.
+- The intent page leads with the people part and keeps the agent part (findings, file lists, logs, handoff notes) folded; PR links open the PR on GitHub, where the same split holds.
+- The API carries `people` and `agent` as separate fields on a stage; the cards read only `people`. Fits 360 px, light and dark.
+- Verified by: `ui: a card shows the people part and not the agent part`, `ui: the agent context is a link on a card and folded on the intent page`, `ui: no agent link when there is no agent part`
+
+### UI-200 · Your own open pull requests are read
+
+Towercab reads the open pull requests the owner opened by hand in each registered repo.
+
+- Per repo, each loop pass (rate-limited like the other PR reads, through the `Forge` of `src/forge.ts`) lists open PRs whose author is the owner's GitHub login. It leaves out Towercab's own PRs (head `towercab/*`), drafts marked as such stay in the list, and PRs from forks of other people are not read.
+- Per PR it keeps number, title, URL, head branch, opened-at, draft flag, the check status (`passing`, `failing`, `pending`, `none`) and the changed file paths. Nothing is written to the intent files or the mission table; the list is read-only and is not a mission.
+- A failed read keeps the last good list and shows the error as a problem on the repo (no crash, no empty list). Repos on GitLab are skipped until GL has the same read.
+- Verified by: `github: owner pull requests are listed without Towercab's own`, `github: a failed owner PR read keeps the last list`
+
+### UI-201 · "Yours" on the repo page and the Board
+
+The repo page and the Board show the owner's open pull requests as "Yours", with age and check status.
+
+- `GET /api/state` carries `yours: [{repo, number, title, url, ageSeconds, checks, draft}]`, oldest first. They do not count in "Needs you" (UI-244) and carry no stage or Approve buttons: a click opens the PR on GitHub.
+- The repo page lists them under `Yours`; the Board shows them in a separate `Yours` group per repo, away from Towercab's planes. The age reads `3 d` (exact on hover); the check status is a word and a colour, not colour alone. Hidden when empty. Fits 360 px, light and dark.
+- Visible to everyone who can see the repo in Towercab, whatever their role (USR-1, USR-5: a per-repo role never hides a repo's list). The PRs are already visible on GitHub to the same people, so hiding them would only make the page disagree with GitHub. A read-only role sees them and the links, and has no action to take on them.
+- Verified by: `ui: a fake owner pull request is listed as Yours on the repo page and the Board`, `ui: Yours is not counted in Needs you`, `ui: Yours is shown to a viewer and to a maintainer with a lower role on that repo`
+
+### UI-202 · A warning when your pull request touches the same spec
+
+When one of the owner's open pull requests changes a spec file that Towercab's own spec PR also changes, Towercab says so on its PR.
+
+- Overlap = a path under `specs/` changed by both an owner PR (UI-200) and the spec PR of a mission in the same repo. Checked each pass for missions with an open spec PR.
+- Towercab's stage comment on its PR gets one line per owner PR: `Your PR #<n> also changes specs/<file>.md; requirement IDs may clash.` The line names the IDs both PRs add when they share any. The same line shows on the intent page. The line is dropped when the overlap ends (owner PR closed or merged, or files no longer shared); it is never posted twice for the same pair.
+- Only a warning: nothing is blocked, and the owner's PR is never commented on.
+- Verified by: `ui: an owner pull request touching the same spec file adds the warning`, `ui: no warning when the owner's PR touches other files`
+
 ### UI-273 · An owner wait stage says what the owner did
 
 Opening a stage that was a wait on the owner shows the owner's answer, not "it wrote no files".

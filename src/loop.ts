@@ -80,7 +80,7 @@ import {
   update,
 } from "./mission.ts";
 import { Mutex } from "./mutex.ts";
-import { sendDue } from "./outbox.ts";
+import { type Sender, sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import { type PipeData, prUrl as prLink } from "./pipeline/common.ts";
@@ -146,7 +146,7 @@ export interface LoopDeps {
   handlers: Handlers;
   log(line: string): void;
   /** Delivers outbox rows (Telegram), or null. */
-  sender: { send(text: string): Promise<void> } | null;
+  sender: Sender | null;
   /** Read one PR (tests fake it). */
   readPr?: (repo: string, n: number) => Promise<PrState>;
   /** Read the intents repo's proposed intents (LOOP-92; tests fake it). */
@@ -161,8 +161,12 @@ export interface LoopDeps {
   readinessLimitMs?: number;
   /** The checkout this loop's code runs from (LOOP-105); default the one this file is in. */
   codeRoot?: string;
+  /** PIP-163: proves the sandbox holds before a mission is picked (default none; the `run` command sets it). */
+  sandboxProbe?: () => Promise<{ ok: boolean; why: string }>;
   /** INT-39: when a backfill run's time is up (default a real timer; tests resolve it themselves). */
   featuresDeadline?: (ms: number) => Promise<void>;
+  /** LOOP-126: the owner's Telegram chat, handled each pass (even while paused); none: no chat. */
+  chat?: { pass(): Promise<void>; stop(): void };
   /** LOOP-129, LOOP-130: the shadow, passed each pass; none: no shadow. */
   shadow?: { pass(): Promise<void>; busy(): boolean; stop(): Promise<void> };
 }
@@ -207,6 +211,11 @@ export class Loop {
   readonly d: LoopDeps;
   readonly health = new Health();
   readonly inhibitor: Inhibitor;
+  /** PIP-163: when the sandbox probe last ran (null = not yet) and whether it passed. */
+  private probedAt: number | null = null;
+  private probeOk = false;
+  /** The last probe's result; null before the first one. */
+  private lastProbe: { ok: boolean; why: string } | null = null;
   private children = new Map<number, Running>();
   /** MET-33: the budgets and caps reached now, and the missions they hold back. */
   private caps: Cap[] = [];
@@ -337,6 +346,27 @@ export class Loop {
    * minute, as a background job like the readiness check: the pass never waits on it, and its fetch
    * holds the clone lock.
    */
+  /**
+   * PIP-163, PIP-161: at start, and every minute while it fails, proves the sandbox holds. A failed probe is a
+   * `sandbox` fault, which blocks picking (there is no running without the sandbox); a pass clears it.
+   */
+  private async probeSandbox(): Promise<void> {
+    const probe = this.d.sandboxProbe;
+    if (!probe) return;
+    if (this.probeOk || (this.probedAt !== null && this.now - this.probedAt < 60)) return;
+    this.probedAt = this.now;
+    const r = await probe();
+    this.probeOk = r.ok;
+    this.lastProbe = r;
+    if (r.ok) {
+      this.health.ok("sandbox");
+      this.d.log("sandbox: the start probe passed");
+    } else {
+      this.health.fail("sandbox", r.why, this.now);
+      this.d.log(`sandbox: the start probe failed: ${r.why}`);
+    }
+  }
+
   private pollSettings(): void {
     if (
       !this.d.limits ||
@@ -423,6 +453,7 @@ export class Loop {
     await this.settingsIdle();
     await this.setupChecksIdle();
     await this.limitsIdle();
+    this.d.chat?.stop();
     await this.d.shadow?.stop();
     for (const [id, r] of this.children) {
       r.handle.kill("SIGTERM");
@@ -478,6 +509,7 @@ export class Loop {
       store: d.store,
       github: d.github,
       timeouts,
+      ...(d.sandboxProbe ? { sandbox: () => this.lastProbe } : {}),
       log: d.log,
       repo: (m) => {
         const r = d.config.repos.get(m.repo);
@@ -572,7 +604,11 @@ export class Loop {
     // LOOP-111: missions back from a wait ask for their run before a ready build takes the free slot.
     await this.stepDue(!report.woke);
     this.releaseReady();
+    await this.probeSandbox();
     if (
+      // PIP-163: with a probe, nothing is picked until the sandbox has held (no waiting for the 15 minutes
+      // a fault takes to block picks).
+      (!this.d.sandboxProbe || this.probeOk) &&
       !paused(db) &&
       !this.health.blocked(this.now) &&
       !this.caps.some((c) => c.scope === "all") &&
@@ -585,6 +621,7 @@ export class Loop {
     await this.selfUpdate();
     this.restartIfMoved();
     // LOOP-130: the shadow reads the chat and reaps or starts a turn; its child runs beside the pass.
+    await this.d.chat?.pass();
     await this.d.shadow?.pass();
     await this.sendMessages();
 

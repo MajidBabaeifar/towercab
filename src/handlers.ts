@@ -71,6 +71,8 @@ export interface Ctx {
   github: Forge;
   /** False right after a wake from suspend: no wait timeout may fire before its poll (LOOP-11). */
   timeouts: boolean;
+  /** PIP-161, PIP-162: the last sandbox probe's result, when the loop probes (null before the first); absent in tests. */
+  sandbox?: () => { ok: boolean; why: string } | null;
   log(line: string): void;
   /** The mission's repo config (throws `unknown repo <r>`). */
   repo(m: Mission): RepoConfig;

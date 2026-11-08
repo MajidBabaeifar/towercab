@@ -82,7 +82,7 @@ A platform that doesn't react to GitHub Deployments is wired in with two command
   `outcome(sha)` is live when that commit is `sha` or contains it, else pending (such a platform is
   red only by the timeout). `rollback_command` runs with `TOWERCAB_ROLLBACK_SHA` and
   `TOWERCAB_REASON`; exit 0 means the request was taken.
-- Both run like the suites (SHIP-9): in the sandbox with network, the secrets, `BASE_URL`,
+- Both run like the suites (SHIP-9): in the sandbox with the network of [PIP-158](pipeline.md) (the registry list, the plan's grants, the live URL's host and the repo's `ship_network` domains), the secrets, `BASE_URL`,
   `TOWERCAB_ENVIRONMENT`, in the checkout at the shipped commit, 5 minutes each. A non-zero exit of
   `live_command` is pending; of `rollback_command`, a failed rollback.
 - Verified by: `ship: command adapter`
@@ -128,8 +128,8 @@ In an opted-in repo, a change comes with end-to-end tests for what it adds.
 
 Once the merge is live, Towercab runs the repo's e2e suites against the live URL.
 
-- In the mission's checkout, detached at the shipped commit: the `setup` block (with network), then
-  each suite's command in the sandbox ([PIP-23](pipeline.md)) with network, `BASE_URL=<url>`,
+- In the mission's checkout, detached at the shipped commit: the `setup` block (with the network of PIP-158), then
+  each suite's command in the sandbox ([PIP-23](pipeline.md)) with the network of PIP-158 (which includes the live URL's host), `BASE_URL=<url>`,
   `TOWERCAB_SHA` and the secrets, `check_timeout_min` each.
 - Order: suites whose `tests` globs match a file the intent's merges added or changed, then suites
   whose `paths` match a changed file, then the rest, each group in file order.
@@ -298,6 +298,38 @@ The owner ticks steps off in Towercab, and the ticks are kept in the plan as wel
 - A tick that completes the steps the mission waits for continues it on the next pass; ticks outside
   the wait are stored and counted when the wait comes.
 - Verified by: `ship: ticking steps from the CLI`, `ship: ticks outside the wait are kept`, `ship: ticks are written to plan.md`, `ship: ticks survive a rebuilt database`
+
+### SHIP-23 · A tick is never lost
+
+A step the owner ticks while Towercab is reading the plan is still ticked afterwards.
+
+- `refreshSteps` (`src/pipeline/steps.ts`) reads `plan.md` outside the transaction, then re-reads the
+  mission inside `Db.tx` and merges: a step ticked in the database since the read stays ticked (with
+  its time) unless the file has it ticked too, and `stepsDirty` stays set so the tick is written to
+  `plan.md` on the next pass (SHIP-22). Nothing is awaited inside the transaction.
+- A step is unticked only by an explicit untick (SHIP-22), never by a refresh.
+- Verified by: `ship: a tick during a plan read is kept`
+
+### SHIP-24 · The waiting card lists only open steps
+
+The "your steps" card and its message list the steps still to do, and a comment during the hold doesn't repeat the message.
+
+- The `your steps` wait card and its message (LOOP-74, UI-160) list only the unticked steps of the
+  phase waited for; ticked steps are left out. The before-merge hold (SHIP-18) lists its open steps the same way.
+- Each pull request comment during the before-merge hold re-checks the hold. A message to the owner is
+  queued only the first time, and again only when the set of open steps has changed (a step ticked,
+  unticked or added); otherwise nothing is queued.
+- Verified by: `ship: the steps card lists only open steps`, `ship: a comment during the hold sends no repeat message`, `ship: a changed set of open steps sends a new message`
+
+### SHIP-25 · The stage map shows an unverified end as passed
+
+A deploy that ends as merged, not verified live shows as passed on the stage map, with its own label, not as sent back.
+
+- In the visits of UI-72, a visit whose move ends in stage `unverified` (SHIP-21) has outcome `passed`
+  and `reason` "Merged, not verified live"; the map's node shows that label in place of "passed"
+  (UI-73). Moves to `done` stay `passed`; other ends stay `sent back`.
+- The UI screenshot test includes the intent page of an unverified intent, with its card and stage map.
+- Verified by: `ui: unverified deploy shows as passed with its own label`, `ui: unverified intent screenshot`
 
 ### SHIP-33 · A secret is an owner step
 

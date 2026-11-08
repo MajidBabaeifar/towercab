@@ -280,7 +280,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       const m = unfinishedFor(db, intent.id);
       // PIP-141: `allow <path>` reverses a refusal, unless a test question is open (then it is its answer).
       const paths = parseAllow(row.text);
-      if (paths && m && !(dataOf(m) as PipeData).testAsk) {
+      if (paths && m && !(dataOf(m) as PipeData).testAsk && !(dataOf(m) as PipeData).accessAsk) {
         const r = reverseRefusals(dataOf(m) as PipeData, paths);
         await store.update(intent.id, "answer", (e) => e.addAnswer(row.text, cx.now));
         const said = readingReply({ allowed: r.moved, refused: [], undecided: [] });

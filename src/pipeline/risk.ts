@@ -15,6 +15,7 @@ import {
   specRounds,
 } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
+import { DEFAULT_NETWORK } from "./sandbox.ts";
 import { parseResult } from "./schemas.ts";
 
 /** The stage folder each gate's run writes to (LOOP-39). */
@@ -32,10 +33,10 @@ export function withRisk(m: Mission, gate: RiskGate, risk: Risk | null): Partial
   return { risk: { ...d.risk, [gate]: risk }, riskOf: { ...d.riskOf, [gate]: riskKey(m, gate) } };
 }
 
-/** AUT-17: the plan's access beyond the defaults (`[agent].network`), in words; [] at other gates. */
-export function extraAccess(cx: Ctx, m: Mission): string[] {
+/** AUT-17: the plan's access beyond the defaults (the built-in list), in words; [] at other gates. */
+export function extraAccess(_cx: Ctx, m: Mission): string[] {
   const access = data(m).plan?.access;
-  const defaults = new Set(cx.config.agent.network);
+  const defaults = new Set<string>(DEFAULT_NETWORK);
   return [
     ...(access?.domains ?? []).filter((x) => !defaults.has(x.domain)).map((x) => `network: ${x.domain}`),
     ...(access?.paths ?? []).map((x) => `path: ${x.glob}`),
