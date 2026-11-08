@@ -54,7 +54,9 @@ test("sandbox: a repo command finds cargo, go and zig installed in the usual pla
   install(home);
   const path = sandboxPath(home).split(":");
   const zig = join(home, ".local", "zig-linux-x86_64-0.16.0");
-  expect(path.indexOf(join(home, ".cargo", "bin"))).toBeLessThan(path.indexOf(join(home, ".local", "go", "bin")));
+  expect(path.indexOf(join(home, ".cargo", "bin"))).toBeLessThan(
+    path.indexOf(join(home, ".local", "go", "bin")),
+  );
   expect(path).toContain(zig);
   expect(path.indexOf("/usr/bin")).toBeGreaterThan(path.indexOf(zig));
   const binds = roBinds(argvFor(home));

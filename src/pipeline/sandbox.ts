@@ -85,11 +85,7 @@ function maskedIn(dir: string): string[] {
 /** The standard toolchain locations under HOME that exist, in the order of PIP-223 (the `.rustup` has no bin). */
 export function toolchainPlaces(home: string): string[] {
   const found = (rels: string[]) => rels.map((r) => join(home, r)).filter((d) => insideHome(home, d));
-  return [
-    ...found(TOOLCHAIN_PLACES.slice(0, 3)),
-    ...zigDirs(home),
-    ...found(TOOLCHAIN_PLACES.slice(3)),
-  ];
+  return [...found(TOOLCHAIN_PLACES.slice(0, 3)), ...zigDirs(home), ...found(TOOLCHAIN_PLACES.slice(3))];
 }
 
 /** The directory of the Node that runs Towercab when it lives under HOME (the empty HOME would hide it). */
@@ -114,9 +110,7 @@ export function toolchainBins(home: string): string[] {
     if (rel === ".local/go" || rel === ".local/node") return [join(d, "bin")];
     return [d];
   };
-  return [
-    ...new Set([...toolchainPlaces(home).flatMap(bin), join(home, ".local", "bin"), ...ownNode(home)]),
-  ];
+  return [...new Set([...toolchainPlaces(home).flatMap(bin), join(home, ".local", "bin"), ...ownNode(home)])];
 }
 
 /** `PATH` of every sandboxed command and Claude run (PIP-157): the toolchain, then the system's. */
