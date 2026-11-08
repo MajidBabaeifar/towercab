@@ -73,8 +73,9 @@
   --ok-bg: #e7f6ee;
   --err: #b42318;
   --err-bg: #fdecea;
-  --warn: #8a4a00;
-  --warn-bg: #fff6e5;
+  /* UI-268: its own hue (rose), never the amber of --needs. */
+  --warn: #a3134f;
+  --warn-bg: #fdeaf2;
   --bar: #c7cbf5;
   --bar-today: #4338ca;
 }
@@ -127,8 +128,8 @@
     --ok-bg: rgb(60 200 130 / 0.12);
     --err: #ff9a8f;
     --err-bg: rgb(255 100 90 / 0.13);
-    --warn: #f7c04a;
-    --warn-bg: rgb(247 192 74 / 0.1);
+    --warn: #f9a8d4;
+    --warn-bg: rgb(244 114 182 / 0.12);
     --bar: #3a3f6e;
     --bar-today: #8b8cf8;
   }
@@ -473,6 +474,11 @@ code {
   color: var(--text-3);
   font-size: var(--t-xs);
   white-space: nowrap;
+}
+
+/* UI-274: the copy on the counts line is for phones only. */
+.counts .fresh {
+  display: none;
 }
 
 .fresh-dot {
@@ -2981,16 +2987,35 @@ a.pr-tile:hover {
     padding: 0 var(--s2);
   }
 
+  /* UI-274: the sticky bar is at most 100 px tall at 375 px: tight rows, and "Updated" on the counts line. */
   .topbar-inner {
-    gap: var(--s1) 12px;
-    padding-top: var(--s1);
-    padding-bottom: var(--s1);
+    gap: 2px 12px;
+    min-height: 0;
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+
+  .tabs-inner {
+    min-height: 40px;
   }
 
   .counts {
     order: 5;
     width: 100%;
     font-size: var(--t-xs);
+  }
+
+  .counts .fresh {
+    display: inline-flex;
+    margin-left: auto;
+  }
+
+  .counts .fresh .fresh-word {
+    display: inline;
+  }
+
+  .tabs-inner .fresh {
+    display: none;
   }
 
   .top-spend {
@@ -3600,9 +3625,7 @@ a.pr-tile:hover {
 
 /* Board (UI-133 to UI-136): stations across, repos down; only the board scrolls sideways. */
 
-.board-page {
-  max-width: none;
-}
+/* UI-271: the board keeps the page width (--max) so its edges line up with the top bar; it scrolls inside. */
 
 .board-sort {
   display: flex;
@@ -3691,6 +3714,18 @@ a.pr-tile:hover {
 .board-col-count {
   color: var(--text-3);
   font-weight: 500;
+}
+
+/* UI-271: an empty station is a narrow strip with its name written upright. */
+.board-col-head.narrow .board-col-label {
+  writing-mode: vertical-rl;
+  white-space: nowrap;
+}
+
+.board-shared {
+  margin: 0 0 var(--s1);
+  font-size: var(--t-xs);
+  color: var(--text-2);
 }
 
 .board-lane-head {
@@ -3797,6 +3832,18 @@ a.pr-tile:hover {
   font-weight: 500;
   line-height: 1.35;
   overflow-wrap: anywhere;
+  /* UI-271: long titles cut after three lines; the full title is the tooltip. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+/* A chip wraps inside its card rather than being cut off. */
+.board-card-foot .chip {
+  max-width: 100%;
+  white-space: normal;
 }
 
 .board-card-foot {
@@ -4093,9 +4140,12 @@ a.pr-tile:hover {
   min-width: 0;
 }
 
-/* UI-155..157: a repo missing setup. The warning colour, never the "Needs you" one. */
+/* UI-155..157, UI-268: a repo missing setup. The warning colour (rose), never the "Needs you" amber. */
 .ready-badge {
   display: inline-block;
+  /* UI-268: sized to its text, even inside a flex column. */
+  align-self: flex-start;
+  width: fit-content;
   padding: 0 0.5em;
   border: 1px solid var(--warn);
   border-radius: 999px;
@@ -4110,11 +4160,41 @@ a.pr-tile:hover {
 }
 .repo-setup {
   border-left: 4px solid var(--warn);
-  margin-block-end: 1rem;
+  /* UI-270: the padding of the other cards, in the spacing tokens. */
+  padding: var(--s2);
+  margin-block-end: var(--s2);
 }
 .setup-items {
-  margin: 0.5rem 0;
-  padding-inline-start: 1.1rem;
+  margin: var(--s1) 0;
+  padding-inline-start: var(--s3);
+}
+.setup-raw {
+  margin-top: var(--s-half, 4px);
+  font-size: var(--t-xs);
+}
+.setup-raw code {
+  display: block;
+  overflow-wrap: anywhere;
+}
+/* UI-269: a gap most repos share, said once. */
+.shared-gaps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-half, 4px);
+  margin: 0 0 var(--s2);
+  padding: 0;
+  list-style: none;
+  font-size: var(--t-sm);
+  color: var(--text-2);
+}
+.shared-gap::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: var(--s1);
+  border-radius: 50%;
+  background: var(--warn);
 }
 .setup-state {
   color: var(--warn);

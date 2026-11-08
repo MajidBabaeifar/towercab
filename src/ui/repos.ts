@@ -11,9 +11,19 @@ import { storedSettings } from "../settings/store.ts";
 import { budgetsView } from "./budget-view.ts";
 import { fileErrorOf, limitsView } from "./limits.ts";
 import { proposedFor, proposedSection } from "./proposed.ts";
-import { readinessBadge, setupView } from "./readiness.ts";
+import { readinessBadge, setupView, sharedGaps } from "./readiness.ts";
 import { type RepoSpend, repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
-import { ago, dbMark, lanesOf, needCounts, type Snap, snapshot, type UiSources, versionOf } from "./state.ts";
+import {
+  ago,
+  dbMark,
+  lanesOf,
+  needCounts,
+  type Snap,
+  snapshot,
+  type UiSources,
+  versionOf,
+  when,
+} from "./state.ts";
 import type {
   FeaturesView,
   FeatureView,
@@ -43,8 +53,9 @@ export async function repos(src: UiSources, selected: string | null, o: ReposOpt
     return (c?.missions ?? 0) + (c?.proposed ?? 0);
   };
   const by = spendByRepo(src.db, s.now);
+  const shared = sharedGaps(src.db, src.config.repos.keys());
   const badge = (repo: string) => {
-    const readiness = readinessBadge(src.db, repo);
+    const readiness = readinessBadge(src.db, repo, shared);
     return readiness ? { readiness } : {};
   };
   const chips = lanes.map((l) => ({
@@ -79,6 +90,7 @@ export async function repos(src: UiSources, selected: string | null, o: ReposOpt
     repo,
     all,
     spend: repoSpendView(spendTotals(by)),
+    shared,
     scanningStep: scanningPermissionMissing(src.db) ? { text: SCANNING_STEP, canGrant: src.running } : null,
     error,
   };
@@ -121,7 +133,7 @@ async function repoView(
     ahead: lane.ahead,
     limits: limitsView(src, lane.repo, s.now),
     budgets: budgetsView(src.db, src.config, s.now, lane.repo),
-    settings: settingsView(src.db, lane.repo, src.running),
+    settings: settingsView(src.db, lane.repo, src.running, s.now),
     proposed: proposedFor(proposedSection(src), src, lane.repo),
     features: await featuresView(src, s, lane, o),
     inProgress: lane.running,
@@ -134,11 +146,19 @@ async function repoView(
 }
 
 /** REPO-30, REPO-38: the stored settings check in plain words; no network. */
-export function settingsView(db: Db, repo: string, running = true): SettingsView {
+export function settingsView(db: Db, repo: string, running = true, now?: number): SettingsView {
   const s = storedSettings(db, repo);
   const none = { plan: [], planNote: null, applying: false, canApply: false };
   if (!s || (s.state === "unknown" && s.at === 0))
-    return { state: "unknown", summary: "Not checked yet", gaps: [], notes: [], at: 0, ...none };
+    return {
+      state: "unknown",
+      summary: "Not checked yet",
+      gaps: [],
+      notes: [],
+      at: 0,
+      checked: null,
+      ...none,
+    };
   const notes = [s.ruleset, s.note].filter((x): x is string => Boolean(x));
   const summary =
     s.state === "ok"
@@ -153,6 +173,7 @@ export function settingsView(db: Db, repo: string, running = true): SettingsView
     gaps: s.gaps,
     notes,
     at: s.at,
+    checked: s.at && now !== undefined ? when(s.at, now) : null,
     plan: gaps ? (s.plan ?? []) : [],
     planNote: gaps && !s.plan ? "The plan is not available from this ci release" : null,
     applying: isApplying(repo),

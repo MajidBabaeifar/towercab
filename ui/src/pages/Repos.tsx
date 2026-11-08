@@ -163,7 +163,11 @@ function Settings({ repo, s }: { repo: string; s: SettingsView }) {
     <section class="card repo-settings" aria-labelledby="settings-h">
       <header class="repo-sec-head">
         <h2 id="settings-h">GitHub settings</h2>
-        {s.at ? <span class="meta">checked {new Date(s.at * 1000).toLocaleString()}</span> : null}
+        {s.checked ? (
+          <span class="meta">
+            checked <Time when={s.checked} />
+          </span>
+        ) : null}
       </header>
       <p class={s.state === "gaps" ? "" : "meta"}>{s.summary}</p>
       {s.gaps.length ? (
@@ -187,11 +191,16 @@ function Settings({ repo, s }: { repo: string; s: SettingsView }) {
         </>
       ) : null}
       {s.planNote ? <p class="meta">{s.planNote}</p> : null}
-      {s.notes.map((n) => (
-        <p class="meta" key={n}>
-          {n}
-        </p>
-      ))}
+      {s.notes.length ? (
+        <details class="setup-raw">
+          <summary>Details</summary>
+          {s.notes.map((n) => (
+            <p class="meta" key={n}>
+              {n}
+            </p>
+          ))}
+        </details>
+      ) : null}
       {s.canApply ? (
         <p>
           <button type="button" class="btn small" disabled={running} onClick={() => void apply()}>
@@ -283,7 +292,14 @@ function SetupSection({ s }: { s: SetupView }) {
             <span class="setup-state">
               {i.state === "missing" ? "Missing" : i.state === "unknown" ? "Could not check" : "Waived"}
             </span>{" "}
-            {i.words}
+            {i.plain}
+            {/* UI-270: the command's own error, folded. */}
+            {i.raw ? (
+              <details class="setup-raw">
+                <summary>Details</summary>
+                <code>{i.raw}</code>
+              </details>
+            ) : null}
           </li>
         ))}
       </ul>
@@ -463,6 +479,16 @@ export function ReposPage({ data, readOnly }: { data: Data; readOnly: boolean })
       </section>
       <Chips data={data} />
       {data.error ? <ErrorNote text={data.error} /> : null}
+      {/* UI-269: a gap most repos share is said once, not as a badge on each. */}
+      {data.shared.length ? (
+        <ul class="shared-gaps" aria-label="Setup most repos lack">
+          {data.shared.map((g) => (
+            <li key={g.item} class="shared-gap">
+              {g.count} of {g.total} repos have {g.words}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {data.chips.length === 0 ? (
         <p class="empty-line">No repos yet.{readOnly ? "" : " Add one below."}</p>
       ) : data.repo ? (

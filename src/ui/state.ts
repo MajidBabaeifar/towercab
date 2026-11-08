@@ -2026,7 +2026,26 @@ function findRunFiles(home: Home, id: string): FoundFile[] {
   return out;
 }
 
-const SKIP_WHY = /^no (behaviour change|proof needed|local checks|CI on this repo)/i;
+/** UI-272: the ship stages in the "Not part of this repo's path" line. */
+const OFF_PATH_WORDS: Record<string, string> = {
+  deploy: "deploying",
+  e2e: "live tests",
+  rollback: "rollback",
+  revert: "reverting",
+};
+
+/** UI-273: how a wait on the owner ended, from the move that ended it. */
+const DECISION_WORDS: Record<string, string> = {
+  ok: "approved",
+  merged: "approved",
+  spec_merged: "approved",
+  plan_merged: "approved",
+  code_merged: "approved",
+  feedback: "asked for changes",
+  answered: "answered",
+};
+
+const SKIP_WHY =/^no (behaviour change|proof needed|local checks|CI on this repo)/i;
 
 /** The plain words of a step back (UI-74): "checks failed: 2 tests red". */
 function returnWords(t: Pick<Transition, "event" | "why">, from: StageId): string {
@@ -2096,6 +2115,8 @@ export function stageMap(
     segs.push({ node: def.id, at: r.at, via: r.via, end: false });
   }
   const visits: VisitView[] = [];
+  // UI-273: the event that ended a visit, for the owner's decision.
+  const endedBy = new WeakMap<VisitView, string | null>();
   const rounds = new Map<StageId, number>();
   const live = !finished(m.stage);
   segs.forEach((s, i) => {
@@ -2129,7 +2150,7 @@ export function stageMap(
     // After an answer the work resumes where the question came from, not at the answer.
     if (s.node === "answer" && next && !next.end) returnTo = null;
     const end = next ? next.at : live ? null : s.at;
-    visits.push({
+    const visit: VisitView = {
       stage: s.node,
       round,
       start: s.at,
@@ -2140,7 +2161,9 @@ export function stageMap(
       returnTo,
       returnLabel: returnTo && lv ? returnWords(lv, s.node) : null,
       files: [],
-    });
+    };
+    endedBy.set(visit, lv?.event ?? null);
+    visits.push(visit);
   });
   // Attach each file to a round: the one in its name, else the visit running when it was written.
   const shown: StageFileView[] = files.map((f) => {
@@ -2170,6 +2193,8 @@ export function stageMap(
   const furthest = Math.max(-1, ...visits.map((v) => NODE_INDEX.get(v.stage) ?? -1));
   const noSpec = visits.find((v) => v.stage === "design" && v.reason && SKIP_WHY.test(v.reason));
   const stages: StageNodeView[] = [];
+  const offNames: string[] = [];
+  let offReason: string | null = null;
   for (const def of NODES) {
     const vs = visits.filter((v) => v.stage === def.id);
     const own = shown.filter((f) => f.stage === def.id);
@@ -2183,8 +2208,14 @@ export function stageMap(
     const skipWhy =
       !last && def.ship && repo ? stageSkip(repo.kind, repo.hasLive, repo.goLive, def.id) : null;
     if (skipWhy) {
-      outcome = "skipped";
-      note = skipWhy;
+      // UI-272: a stage that cannot apply is not listed; one line sums them up.
+      offNames.push(OFF_PATH_WORDS[def.id] ?? def.name.toLowerCase());
+      offReason ??= skipWhy;
+      continue;
+    }
+    if (!last && def.id === "merge" && m.stage === "done") {
+      // UI-272: a merged change never shows its merge as skipped.
+      outcome = "passed";
     } else if (!last && def.id !== "other" && (NODE_INDEX.get(def.id) ?? 0) < furthest) {
       outcome = "skipped";
       note =
@@ -2193,7 +2224,17 @@ export function stageMap(
           : "not needed this time";
     }
     const secs = vs.reduce((a, v) => a + Math.max(0, (v.end ?? now) - v.start), 0);
+    // UI-273: what the owner did at a finished wait.
+    const done = def.owner && last && last.end !== null ? last : null;
+    const decision = done
+      ? {
+          who: "You",
+          what: DECISION_WORDS[endedBy.get(done) ?? ""] ?? "decided on GitHub",
+          at: when(done.end!, now),
+        }
+      : null;
     stages.push({
+      decision,
       id: def.id,
       name: def.name,
       owner: def.owner,
@@ -2220,6 +2261,7 @@ export function stageMap(
     attempt: m.attempt,
     visits,
     stages,
+    offPath: offNames.length && offReason ? { names: offNames, reason: offReason } : null,
     open,
     towercab: duration(spent(worked)),
     owner: duration(spent(waiting)),

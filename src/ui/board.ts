@@ -5,7 +5,7 @@
 import type { Intent } from "../intents/types.ts";
 import { fileErrorOf } from "./limits.ts";
 import { proposedSection } from "./proposed.ts";
-import { readinessBadge } from "./readiness.ts";
+import { readinessBadge, sharedGaps } from "./readiness.ts";
 import { lastSevenDays, repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
 import {
   ago,
@@ -123,8 +123,10 @@ export async function board(src: UiSources): Promise<BoardPage> {
   )) {
     changed.set(r.repo, r.at);
   }
+  // UI-269: the same repos and rule as the Repos page, folded lanes included.
+  const shared = sharedGaps(src.db, src.config.repos.keys());
   const rows: BoardRepo[] = repos.map((repo, index) => {
-    const readiness = readinessBadge(src.db, repo);
+    const readiness = readinessBadge(src.db, repo, shared);
     const at = changed.get(repo);
     const fileError = fileErrorOf(src, repo);
     return {
@@ -151,6 +153,7 @@ export async function board(src: UiSources): Promise<BoardPage> {
     repos: rows,
     ...(src.proposed ? { proposed: proposals.length } : {}),
     spend: repoSpendView(spendTotals(spend)),
+    shared,
     error: s.listError
       ? `Towercab can't read the intents repo, so the board shows only intents that have started. ${s.listError}`
       : null,

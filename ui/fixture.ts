@@ -345,7 +345,7 @@ export function setupProposal(now: number): ProposedPr {
 }
 
 /** UI-155..157: `web` blocks until it is set up, `api` has an unconfirmed kind, `docs` could not be checked. */
-function storeReadiness(db: Db, now: number): void {
+function storeReadiness(db: Db, now: number, many = false): void {
   const put = (
     repo: string,
     kind: Kind,
@@ -373,6 +373,19 @@ function storeReadiness(db: Db, now: number): void {
       words: "The standard settings could not be checked: add the ci repo to Towercab",
     },
   });
+  if (!many) return;
+  // UI-269: no release job on five of the seven checked repos, so it is a shared gap.
+  put("tool", "cli", true, "warn", { release: { state: "missing" } });
+  put("lib", "library", true, "warn", { release: { state: "missing" } });
+  put("site", "site", true, "warn", { release: { state: "missing" }, live: { state: "missing" } });
+  put("ops", "infra", true, "warn", {
+    release: { state: "missing" },
+    settings: {
+      state: "unknown",
+      words:
+        "The standard settings could not be checked: gh api repos/acme/ops/actions/permissions/workflow: gh: Resource not accessible by integration (HTTP 403)",
+    },
+  });
 }
 
 /** Build the fixture home; `now` defaults to the real clock so relative times read naturally. `empty`
@@ -386,6 +399,8 @@ export function buildFixture(
     readiness?: boolean;
     /** UI-251: many proposals and a mission waiting on the owner's steps, as on the live page. */
     crowded?: boolean;
+    /** UI-275: more than eight repos, several not ready, and a CLI repo's finished change. */
+    many?: boolean;
   } = {},
 ): Fixture {
   const now = o.now ?? Date.now() / 1000;
@@ -404,6 +419,7 @@ export function buildFixture(
         mobile: { github: "acme/mobile" },
         infra: { github: "acme/infra" },
         blog: { github: "acme/blog" },
+        ...(o.many ? MANY_REPOS : {}),
       },
     },
     join(root, "config.toml"),
@@ -412,6 +428,7 @@ export function buildFixture(
   const store = new MemStore();
   if (!o.empty) seed(db, store, home, now);
   if (o.crowded && !o.empty) crowdScene(db, store, now);
+  if (o.many && !o.empty) manyScene(db, store, now);
   const state: Fixture["state"] = {
     proposed: { list: [], error: null, failedAt: null },
     paused: false,
@@ -440,7 +457,7 @@ export function buildFixture(
     error: null,
     failedAt: null,
   };
-  if (o.readiness && !o.empty) storeReadiness(db, now);
+  if (o.readiness && !o.empty) storeReadiness(db, now, o.many);
   const logs: LogLine[] = o.empty
     ? []
     : [
@@ -676,6 +693,59 @@ function crowdScene(db: Db, store: MemStore, now: number): void {
         },
       ],
     },
+  });
+}
+
+/** UI-275: a finished change in a CLI repo, to show a stage map with stages that cannot apply. */
+const CLI_DONE = "261026-0930-1";
+
+/** UI-275: the repos added by `many`: a CLI, a library, a site and an ops repo. */
+const MANY_REPOS = {
+  tool: { github: "acme/tool" },
+  lib: { github: "acme/lib" },
+  site: { github: "acme/site" },
+  ops: { github: "acme/ops" },
+};
+
+function manyScene(db: Db, store: MemStore, now: number): void {
+  store.done.push(
+    makeIntent({
+      id: CLI_DONE,
+      title: "Add a --json flag to the export command",
+      repo: "tool",
+      done: true,
+      stage: "done",
+      cost: 3.2,
+      agentTime: 1500,
+      attempts: 1,
+      finished: iso(now - 5 * HOUR),
+    }),
+  );
+  addMission(db, now, {
+    intent: CLI_DONE,
+    repo: "tool",
+    stage: "done",
+    spec: 150,
+    plan: 30,
+    pr: 31,
+    cost: 3.2,
+    agent: 1500,
+    created: 9 * HOUR,
+    moves: [
+      [9 * HOUR - 20, "pick", "ok", "design"],
+      [8 * HOUR, "design", "wait", "approval:spec"],
+      [7 * HOUR, "approval:spec", "spec_merged", "plan"],
+      [6 * HOUR + 30 * MIN, "plan", "wait", "approval:plan"],
+      [6 * HOUR, "approval:plan", "plan_merged", "build"],
+      [5 * HOUR + 50 * MIN, "build", "ok", "verify"],
+      [5 * HOUR + 40 * MIN, "verify", "ok", "proof"],
+      [5 * HOUR + 35 * MIN, "proof", "ok", "publish"],
+      [5 * HOUR + 30 * MIN, "publish", "ok", "ci"],
+      [5 * HOUR + 20 * MIN, "ci", "ok", "review"],
+      [5 * HOUR + 10 * MIN, "review", "ok", "gate"],
+      [5 * HOUR + 5 * MIN, "gate", "wait", "approval:merge"],
+      [5 * HOUR, "approval:merge", "code_merged", "done"],
+    ],
   });
 }
 
@@ -1355,6 +1425,7 @@ export async function serveFixture(
     exits?: boolean;
     crowded?: boolean;
     flagged?: boolean;
+    many?: boolean;
   } = {},
 ): Promise<{ fixture: Fixture; server: UiServer }> {
   const fixture = buildFixture(o);

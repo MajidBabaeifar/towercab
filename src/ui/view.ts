@@ -501,6 +501,8 @@ export interface StageNodeView {
   visits: VisitView[];
   /** Everything it wrote, newest last. */
   files: StageFileView[];
+  /** UI-273: for a finished wait on the owner, what they did and when. */
+  decision: { who: string; what: string; at: When } | null;
 }
 
 /** One attempt's path through the pipeline (UI-72..74). */
@@ -510,6 +512,8 @@ export interface StageMapView {
   visits: VisitView[];
   /** Every stage in pipeline order, reached or not. */
   stages: StageNodeView[];
+  /** UI-272: stages left out because this repo has nothing for them, and why. */
+  offPath: { names: string[]; reason: string } | null;
   /** The stage that matters most (UI-75): waiting on you, else last red, else current, else the last. */
   open: StageId | null;
   towercab: string;
@@ -655,12 +659,31 @@ export interface ReadinessBadge {
   name: string;
 }
 
+/** UI-269: a setup item most repos lack, said once. */
+export interface SharedGap {
+  item: string;
+  /** Repos missing it. */
+  count: number;
+  /** Repos with a readiness result. */
+  total: number;
+  /** The item in a few words: "no release job". */
+  words: string;
+}
+
 /** UI-156: the "Set up this repo" section. */
 export interface SetupView {
   kind: string | null;
   confirmed: boolean;
   blocks: boolean;
-  items: { item: string; state: "missing" | "unknown" | "waived"; words: string }[];
+  items: {
+    item: string;
+    state: "missing" | "unknown" | "waived";
+    words: string;
+    /** UI-270: the gap in plain words, with what to do. */
+    plain: string;
+    /** UI-270: the raw error behind it, shown folded; null when there is none. */
+    raw: string | null;
+  }[];
   /** Whether new intents wait or only a warning shows. */
   sentence: string;
   /** Lines to add to `TOWERCAB.md`. */
@@ -753,6 +776,8 @@ export interface SettingsView {
   notes: string[];
   /** When it was checked, unix seconds; 0 when never. */
   at: number;
+  /** UI-270: the same time, relative and exact; null when never or when the page has no clock. */
+  checked: When | null;
   /** REPO-38: what Apply would change; empty when the plan has no lines to show. */
   plan: { what: string; now?: string; after?: string }[];
   /** REPO-38: why there is no plan to show, or null. */
@@ -890,6 +915,8 @@ export interface ReposPage {
   all: RepoSummary[];
   /** The totals over every repo (UI-137). */
   spend: RepoSpendView;
+  /** UI-269: setup items most repos lack. */
+  shared: SharedGap[];
   /** PIP-150: the one step for the code scanning alerts permission. */
   scanningStep: { text: string; canGrant: boolean } | null;
   /** What went wrong: the intents repo can't be read, or the asked-for repo doesn't exist. */
@@ -955,6 +982,8 @@ export interface BoardPage {
   proposed?: number;
   /** UI-137: the totals over every repo. */
   spend: RepoSpendView;
+  /** UI-269: setup items most repos lack, said once above the columns. */
+  shared: SharedGap[];
   /** The intents repo can't be read: what went wrong, shown above the board. */
   error: string | null;
 }

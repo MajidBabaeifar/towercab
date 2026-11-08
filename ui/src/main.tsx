@@ -125,6 +125,7 @@ function TopBar({ top, path }: { top: Top | null; path: string }) {
                 {top.slotsText.split(" · ")[0]}
               </span>
             ) : null}
+            <Freshness />
           </p>
         ) : null}
         <span class="grow" />

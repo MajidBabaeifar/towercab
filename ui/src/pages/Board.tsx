@@ -46,7 +46,9 @@ function Card({ card }: { card: BoardCard }) {
   return (
     <li>
       <Link class="board-card" href={`/i/${card.intent}`}>
-        <span class="board-card-title">{card.title}</span>
+        <span class="board-card-title" title={card.title}>
+          {card.title}
+        </span>
         <span class="board-card-foot">
           {/* The note goes beside the chip, so a narrow card wraps it instead of cutting it. */}
           <StateChip state={{ ...card.state, note: null }} small />
@@ -92,9 +94,9 @@ function LaneHead({ repo, folded, onToggle }: { repo: BoardRepo; folded: boolean
   );
 }
 
-// Narrow enough that ten columns, three of them empty, fit a 1280 px screen.
-const FULL = 144;
-const NARROW = 64;
+// UI-271: a station with cards is at least 180 px wide; an empty one is a narrow strip.
+const FULL = 180;
+const NARROW = 48;
 
 const EMPTY_LANE = "Nothing open, and nothing done in the last 7 days.";
 
@@ -243,6 +245,10 @@ export function BoardPage({ data }: { data: Data }) {
               {announce}
             </p>
           </div>
+          {/* UI-269: gaps most repos share, said once. */}
+          {data.shared.length ? (
+            <p class="board-shared">{data.shared.map((g) => `${g.count} repos: ${g.words}`).join(" · ")}</p>
+          ) : null}
           <Grid data={sorted} folded={folded} toggle={toggle} />
           <List data={sorted} folded={folded} toggle={toggle} />
         </>
