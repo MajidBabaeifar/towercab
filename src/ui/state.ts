@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { ownerOnly, RAISE_NOTES } from "../autonomy.ts";
+import { ownerOnly, ownSource, RAISE_NOTES } from "../autonomy.ts";
 import { changesOf, flagOf, levelNow, type RaiseFlag, writtenLevel } from "../autonomy-change.ts";
 import { budgetChanges, capsOf } from "../budgets.ts";
 import { slotsText } from "../capacity.ts";
@@ -25,6 +25,7 @@ import { waitsInQueue } from "../queue.ts";
 import { type Kind, parseStored, stageSkip } from "../repo/readiness.ts";
 import { usualOwner } from "../repos.ts";
 import { currentRisk, type Risk, type RiskGate, riskWords } from "../risk.ts";
+import { canBoostIntent, scoreChanges, scoreWords } from "../scores.ts";
 import { actionSentence, actionsFor, shadowCosts } from "../shadow/store.ts";
 import { type Held, heldReleases, releaseLine, releaseTitle } from "../ship/releases.ts";
 import { MAX_FAILS } from "../ship/secret-steps.ts";
@@ -58,6 +59,7 @@ import type {
   AutonomyView,
   Card,
   CardKind,
+  ControlsView,
   ExistingTestView,
   FocusHistory,
   GroundStop,
@@ -713,6 +715,50 @@ export function autonomyView(src: UiSources, i: Intent): AutonomyView {
     ...(f ? { flag: { who: f.who, from: f.from, to: f.to } } : {}),
     notes: [...RAISE_NOTES],
     locked: !src.running,
+    max: ownSource(i.source) ? 5 : 4,
+  };
+}
+
+/**
+ * UI-203, UI-205, UI-207, UI-208: the score controls, Boost, why an a5 plane waits, and the worker's note.
+ * `card` is the intent's wait card, when it has one: its reason is shown, nothing new is decided here.
+ */
+export function controlsOf(
+  src: UiSources,
+  i: Intent,
+  hasMission: boolean,
+  card: Card | null,
+): ControlsView {
+  const av = autonomyView(src, i);
+  const p = priority(i.u, i.i);
+  const own = ownSource(i.source);
+  const paused = intentPaused(src.db, i.id);
+  const unstarted = !hasMission && src.db.meta(`start:${i.id}`) === null;
+  const startNote = !unstarted
+    ? ""
+    : paused
+      ? " It is paused, so it starts when you resume it."
+      : " It also starts now.";
+  let waitWhy: string | null = null;
+  if (card && av.a === 5 && !i.done) {
+    // AUT-8, AUT-14, AUT-18: the cap and the access come first, then the reason the card already gives.
+    waitWhy =
+      av.cap !== null
+        ? `Waiting because the repo caps autonomy at a${av.cap}`
+        : card.access && card.access.domains.length + card.access.paths.length > 0
+          ? "Waiting for a decision on access"
+          : `Waiting because: ${(card.why || card.ask).replace(/\.$/, "")}`;
+  }
+  return {
+    u: i.u ?? 3,
+    i: i.i ?? 3,
+    priority: p,
+    parked: p < src.config.intents.cutoff,
+    canBoost: src.running && canBoostIntent(i) && (av.a < 5 || unstarted),
+    boostNote: `${RAISE_NOTES[5]}${startNote}`,
+    waitWhy,
+    // AUT-7: the worker's note stays until the owner sets the level again; it never hides the level shown.
+    lowered: i.lowerWhy && av.a < 5 ? `Lowered to a${av.a} by the worker: ${i.lowerWhy}` : null,
   };
 }
 
@@ -1109,6 +1155,7 @@ export function groundStopOf(src: UiSources, s: Snap): GroundStop | null {
 /** UI-78: every open intent as a plane at its station, and what landed today. */
 export function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): AirspaceView {
   const stop = groundStopOf(src, s);
+  const withMissions = new Set(s.missions.map((m) => m.intent));
   const planes: Plane[] = [];
   const seen = new Set<string>();
   for (const m of s.missions) {
@@ -1169,6 +1216,16 @@ export function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: numbe
     });
   }
   planes.sort((a, b) => STATIONS.indexOf(a.station) - STATIONS.indexOf(b.station));
+  // UI-205, UI-207, UI-208: Boost, why an a5 plane waits, and the worker's lowering note.
+  const cards = new Map(
+    waitsOf(src, s)
+      .filter((w) => w.card.kind !== "autonomy")
+      .map((w) => [w.card.intent, w.card] as const),
+  );
+  for (const p of planes) {
+    const i = s.intents.get(p.intent);
+    if (i) p.controls = controlsOf(src, i, withMissions.has(p.intent), cards.get(p.intent) ?? null);
+  }
 
   const today = localDate(s.now);
   const dropped = s.listing?.droppedIds ?? new Set<string>();
@@ -2390,6 +2447,16 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
       tone: "move",
     });
   }
+  // LOOP-133: a change of urgency or importance, who and from → to.
+  for (const c of scoreChanges(src.db, realId)) {
+    timeline.push({
+      at: when(c.at, s.now),
+      text: `You changed ${scoreWords(c)} on the ${c.by === "ui" ? "page" : "command line"}`,
+      why: null,
+      lasted: null,
+      tone: "move",
+    });
+  }
   const found = findRunFiles(src.home, realId);
   const attempts: AttemptView[] = missions.map((m, n) => {
     const nextCreated = missions[n + 1]?.created ?? Infinity;
@@ -2445,6 +2512,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     e2eLog: e2eLogOf(src.home.root, id),
     ...(only ? { onlyYou: "Only you can answer or approve this." } : {}),
     ...(intent && !intent.done ? { autonomy: autonomyView(src, intent) } : {}),
+    ...(intent && !intent.done ? { controls: controlsOf(src, intent, !!live, card) } : {}),
     ...(intentPaused(src.db, realId) ? { paused: true } : {}),
     agent_comments: agentCommentNotes(src.db, realId).map((c) => ({
       agent: c.agent,
@@ -2681,6 +2749,24 @@ export async function activity(src: UiSources, f: ActivityFilters = {}): Promise
       title: titleOf(s, c.intent),
       repo: intentRepo(c.intent),
       text: `a: a${c.from} → a${c.to}`,
+      detail: null,
+    });
+  }
+  // LOOP-133: a score change, `u: 3 → 4`.
+  for (const c of scoreChanges(src.db)) {
+    if (f.intent && c.intent !== f.intent) continue;
+    if (f.repo && intentRepo(c.intent) !== f.repo) continue;
+    if (since !== null && c.at < since) continue;
+    items.push({
+      key: `s${c.intent}:${c.at}`,
+      at: when(c.at, s.now),
+      time: clock(c.at),
+      day: dayWords(c.at, s.now),
+      kind: "settings",
+      intent: c.intent,
+      title: titleOf(s, c.intent),
+      repo: intentRepo(c.intent),
+      text: scoreWords(c),
       detail: null,
     });
   }

@@ -223,6 +223,9 @@ export interface FakeActionCall {
   head?: string;
   /** UI-257: the level asked for. */
   a?: number;
+  /** UI-204: the urgency and importance asked for (null: left as it is). */
+  u?: number | null;
+  i?: number | null;
 }
 
 export interface Fixture {
@@ -511,6 +514,29 @@ export function buildFixture(
       if (flag) clearFlag(db, intent);
       found.a = a;
       return "Saved. Applies from the next gate.";
+    },
+    async scores(intent, u, i) {
+      calls.push({ action: "scores", intent, u, i });
+      for (const v of [u, i]) {
+        if (v !== null && (!Number.isInteger(v) || v < 1 || v > 5)) throw new Error("A score is 1 to 5.");
+      }
+      const found = store.open.find((x) => x.id === intent);
+      if (!found) throw new Error(`there is no open intent ${intent}`);
+      if (u !== null) found.u = u;
+      if (i !== null) found.i = i;
+      const p = priority(found.u, found.i);
+      return { message: "Saved. The queue is reordered.", priority: p, parked: p < config.intents.cutoff };
+    },
+    async boost(intent) {
+      calls.push({ action: "boost", intent });
+      const found = store.open.find((x) => x.id === intent);
+      if (!found) throw new Error(`there is no open intent ${intent}`);
+      if (found.source !== null && found.source !== "me") throw new Error("a5 is only for your own intents.");
+      const flag = flagOf(db, intent);
+      if (flag) clearFlag(db, intent);
+      found.a = 5;
+      found.lowerWhy = null;
+      return "Boosted: a5. It runs from the next gate.";
     },
     async step(intent, n, done) {
       calls.push({ action: "step", intent, n, done });
