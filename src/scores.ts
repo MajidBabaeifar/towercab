@@ -40,13 +40,17 @@ export interface ScoreRecord {
   intent: string;
   at: number;
   by: string;
+  /** The order of changes made in the same second. */
+  n?: number;
   /** `[from, to]` for each score that changed. */
   u?: [number, number];
   i?: [number, number];
 }
 
 export function recordScores(db: Db, r: ScoreRecord): void {
-  db.setMeta(`score-change:${r.intent}:${r.at}`, JSON.stringify(r));
+  // `n` counts the changes made so far: two in the same second neither overwrite nor swap places.
+  const n = db.all<{ key: string }>("SELECT key FROM meta WHERE key LIKE 'score-change:%'").length;
+  db.setMeta(`score-change:${r.intent}:${r.at}:${n}`, JSON.stringify({ ...r, n }));
 }
 
 export function scoreChanges(db: Db, intent?: string): ScoreRecord[] {
@@ -56,7 +60,7 @@ export function scoreChanges(db: Db, intent?: string): ScoreRecord[] {
       intent ? `score-change:${intent}:%` : "score-change:%",
     )
     .map((r) => JSON.parse(r.value) as ScoreRecord)
-    .sort((a, b) => a.at - b.at);
+    .sort((a, b) => a.at - b.at || (a.n ?? 0) - (b.n ?? 0));
 }
 
 export function scoreWords(r: ScoreRecord): string {

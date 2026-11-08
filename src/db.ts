@@ -60,7 +60,7 @@ CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT 
 CREATE TABLE transitions (id INTEGER PRIMARY KEY, mission INTEGER NOT NULL REFERENCES missions(id),
   at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT);
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps')),
+  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost')),
   arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
   created REAL NOT NULL, applied_at REAL, result TEXT);
 CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, created REAL NOT NULL,
@@ -113,6 +113,14 @@ ALTER TABLE outbox ADD COLUMN ended_at REAL;
 ${TELEGRAM.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ")}`,
   // 9: one Telegram card per mission (TG-16). Additive; `IF NOT EXISTS` for a re-upgrade after a manual rollback.
   CARDS.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS "),
+  // 10: `score` and `boost` join the commands (LOOP-134, LOOP-135); the CHECK can't be altered, so the table is rebuilt.
+  `CREATE TABLE commands_new (id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost')),
+  arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
+  created REAL NOT NULL, applied_at REAL, result TEXT);
+INSERT INTO commands_new SELECT id, name, arg, text, source, created, applied_at, result FROM commands;
+DROP TABLE commands;
+ALTER TABLE commands_new RENAME TO commands;`,
 ];
 
 /**

@@ -787,7 +787,6 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
       repo: "blog",
       u: 3,
       i: 4,
-      source: "issue",
       issue: "https://github.com/acme/blog/issues/12",
     }),
     makeIntent({ id: IDS.queued, title: "Dark mode for the settings page", repo: "web", u: 2, i: 4 }),
