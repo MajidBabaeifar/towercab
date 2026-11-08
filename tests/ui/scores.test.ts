@@ -143,7 +143,5 @@ test("ui: the api refuses a5 for another source", async () => {
     clock: { now: () => NOW, mono: () => 0 },
     github: { owner: async () => ({ code: 0, stdout: "", stderr: "", timedOut: false }) },
   });
-  await expect(actions.autonomy!(IDS.queued, 5, "owner")).rejects.toThrow(
-    "a5 is only for your own intents.",
-  );
+  await expect(actions.autonomy!(IDS.queued, 5, "owner")).rejects.toThrow("a5 is only for your own intents.");
 });

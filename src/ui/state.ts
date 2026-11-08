@@ -723,15 +723,9 @@ export function autonomyView(src: UiSources, i: Intent): AutonomyView {
  * UI-203, UI-205, UI-207, UI-208: the score controls, Boost, why an a5 plane waits, and the worker's note.
  * `card` is the intent's wait card, when it has one: its reason is shown, nothing new is decided here.
  */
-export function controlsOf(
-  src: UiSources,
-  i: Intent,
-  hasMission: boolean,
-  card: Card | null,
-): ControlsView {
+export function controlsOf(src: UiSources, i: Intent, hasMission: boolean, card: Card | null): ControlsView {
   const av = autonomyView(src, i);
   const p = priority(i.u, i.i);
-  const own = ownSource(i.source);
   const paused = intentPaused(src.db, i.id);
   const unstarted = !hasMission && src.db.meta(`start:${i.id}`) === null;
   const startNote = !unstarted
