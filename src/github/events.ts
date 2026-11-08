@@ -289,6 +289,7 @@ export function prEvents(
   botLogin: string,
   team?: TeamReads,
   ownerOnlyIntent = false,
+  queueHeld = false,
 ): Outcome | null {
   if (finished(m.stage)) return null;
   const cur = currentPr(m);
@@ -378,6 +379,8 @@ export function prEvents(
     // LOOP-18: the same conflict repair CI gives, so the build merges the base first instead of
     // building on the old base again (a round that would conflict forever).
     if (code.mergeable === "CONFLICTING") {
+      // LOOP-160: only the head of the repo's merge queue repairs a conflict; the rest wait their turn.
+      if (queueHeld) return null;
       // PIP-134: after the last round only the stages that take a `conflict` ask the owner. A round
       // still running (GitHub shows the old state until the merge is pushed) and an owner who was
       // already asked are left alone.
