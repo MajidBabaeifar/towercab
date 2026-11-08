@@ -3,7 +3,7 @@
 
 import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { beforeAll, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import { cacheEnv, sandboxArgv, sandboxEnv, sandboxPath } from "../src/pipeline/sandbox.ts";
 import {
   BWRAP_REQUIRED,
@@ -167,13 +167,15 @@ test("sandbox escape: a toolchain credential file reads empty", (ctx) => {
 
 // -- PIP-225 ----------------------------------------------------------------------------------------------
 
-let home: string;
-beforeAll(() => {
-  home = tempDir();
-  install(home);
-});
+/** A fresh HOME with the toolchains installed (the temp dir is removed after each test). */
+function installed(): string {
+  const h = tempDir();
+  install(h);
+  return h;
+}
 
 test("sandbox: go and zig caches are inside the sandbox cache", () => {
+  const home = installed();
   const env = cacheEnv("/h/cache/web", null, home);
   for (const k of ["GOCACHE", "GOPATH", "GOMODCACHE", "ZIG_GLOBAL_CACHE_DIR", "ZIG_LOCAL_CACHE_DIR"]) {
     expect(env[k], k).toMatch(/^\/h\/cache\/web\//);
@@ -184,6 +186,7 @@ test("sandbox: go and zig caches are inside the sandbox cache", () => {
 });
 
 test("sandbox: rustup home points at the bound toolchains", () => {
+  const home = installed();
   expect(cacheEnv("/c", null, home).RUSTUP_HOME).toBe(join(home, ".rustup"));
   expect(cacheEnv("/c", null, tempDir()).RUSTUP_HOME).toBeUndefined();
 });
@@ -192,6 +195,7 @@ test("sandbox: a repo variable cannot override a cache variable", () => {
   const repo = {
     env: { GOPATH: "/mine", GOMODCACHE: "/mine", ZIG_GLOBAL_CACHE_DIR: "/mine", RUSTUP_HOME: "/mine" },
   } as never;
+  const home = installed();
   const env = cacheEnv("/c", repo, home);
   expect(env.GOPATH).toBe("/c/go/path");
   expect(env.GOMODCACHE).toBe("/c/go/path/pkg/mod");
