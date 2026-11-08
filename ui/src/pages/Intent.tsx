@@ -178,8 +178,8 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
         </p>
       ) : null}
       {data.brief ? (
-        <section class="card pad plain-brief" aria-label="In plain words">
-          <p class="access-head">In plain words</p>
+        <section class="card pad plain-brief" aria-label="For people">
+          <p class="access-head">For people</p>
           <Markdown text={data.brief} />
           {data.details ? <Details id={`page:${data.id}`} text={data.details} /> : null}
         </section>

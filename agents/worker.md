@@ -76,3 +76,7 @@ Return the JSON result:
   sentence on why; otherwise `null`.
 - `lower_a`, `lower_why`: a lower autonomy level (1–5) and why, when this change is riskier than the
   intent suggests; otherwise `null`.
+
+## People part, agent part
+
+`brief` is the people part; `pr` and `notes` are the agent part. The people part is at most 5 lines and holds no file lists, code, findings or IDs (see "People part, agent part" in the writing guide).

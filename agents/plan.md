@@ -101,3 +101,7 @@ Return the JSON result:
   (docs, CI or tests only), one sentence saying why. Leave it empty for any change a user could notice.
 - `e2e`: in a repo with e2e suites, `tests` (the e2e test files the build adds or changes) and
   `none_why` (empty, or why the change needs no e2e test). `null` in a repo without suites.
+
+## People part, agent part
+
+`brief` is the people part; `plan` is the agent part. The people part is at most 5 lines and holds no file lists, code, findings or IDs (see "People part, agent part" in the writing guide).

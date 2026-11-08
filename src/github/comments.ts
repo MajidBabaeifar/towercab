@@ -3,6 +3,7 @@
 
 import type { Forge } from "../forge.ts";
 import type { GitHub } from "../handlers.ts";
+import { twoPartMd } from "../pipeline/prtext.ts";
 import { check } from "../tools.ts";
 import { isBot } from "./events.ts";
 import { jsonStream } from "./prs.ts";
@@ -54,11 +55,19 @@ export function agentOf(step: Step, stage = ""): string {
   return step === "Intake" ? "scorer" : "towercab";
 }
 
+/** PIP-220: a comment body in two parts; a plain string is Towercab's own short line. */
+export interface TwoPart {
+  people: string;
+  agent?: string;
+}
+
 /**
  * The comment's whole text: marker, header, a blank line, `body`. The header names the agent and the
  * intent (PIP-182): `**Question** · designer · 261105-2152-9 · round 3`.
  */
-export function stageComment(step: Step, round: number, body: string, by?: By): string {
+export function stageComment(step: Step, round: number, body: string | TwoPart, by?: By): string {
+  // PIP-220: a text for a person is the people part first and the agent part folded.
+  if (typeof body !== "string") body = twoPartMd(body);
   const who = by ? ` · ${by.agent}${by.intent ? ` · ${by.intent}` : ""}` : "";
   return `${stageMarker(step, round)}\n**${step}**${who} · round ${round}\n\n${body.trim()}\n`;
 }
@@ -86,7 +95,7 @@ export async function upsertStageComment(
   pr: number,
   step: Step,
   round: number,
-  body: string,
+  body: string | TwoPart,
   by?: By,
 ): Promise<{ edited: boolean }> {
   return forge.upsertPrComment(repo, pr, stageMarker(step, round), stageComment(step, round, body, by));

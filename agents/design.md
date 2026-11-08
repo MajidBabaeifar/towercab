@@ -63,3 +63,7 @@ Then return the JSON result:
 - `pr`: the spec pull request's description, in Markdown, for the owner who wasn't there. Open with
   two or three sentences on what will behave differently once this is built and why. Then list the
   requirements by ID with one plain line each, and the concerns if any. No file lists, no schema keys.
+
+## People part, agent part
+
+`brief` is the people part; `pr` is the agent part. The people part is at most 5 lines and holds no file lists, code, findings or IDs (see "People part, agent part" in the writing guide).

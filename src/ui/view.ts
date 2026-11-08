@@ -157,6 +157,10 @@ export interface Card {
   since: When | null;
   /** UI-126: Markdown, the plain brief of what it waits on (no code words); Towercab's note as a fallback. */
   brief: string | null;
+  /** UI-281: the people part of PIP-220 (the brief, at most 5 lines); cards show this and no agent text. */
+  people?: string | null;
+  /** UI-281: the agent part (technical text), folded on the intent page and a link on a card; null for none. */
+  agent?: string | null;
   /** The plain reason it waits for the owner, one paragraph; a blocked wait's technical reason is in `details`. */
   why: string | null;
   /** UI-126: Markdown, the technical text agents feed on (concerns, findings, logs), folded under "Details". */

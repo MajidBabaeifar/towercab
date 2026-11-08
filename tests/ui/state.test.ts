@@ -1280,3 +1280,45 @@ test("ui: up next states a shared reason once", () => {
   expect(sharedReason([row(null), row(null)])).toBeNull();
   expect(sharedReason([])).toBeNull();
 });
+
+test("ui: a card shows the people part and not the agent part", async () => {
+  const f = fixture();
+  const o = await overview(f.sources);
+  for (const id of [IDS.plan, IDS.code, IDS.question]) {
+    const c = o.needs.find((x) => x.intent === id)!;
+    // The card's people part is the brief (at most 5 lines); the agent part is the technical text.
+    expect(c.people, id).toBe(c.brief);
+    expect(c.people!.split("\n").length, id).toBeLessThanOrEqual(5);
+    expect(c.agent, id).toBe(c.details);
+    expect(c.people, id).not.toBe(c.agent);
+  }
+  const long = missionCard(
+    f.sources,
+    mission({
+      stage: "approval:plan",
+      waiting: "approve plan",
+      data: JSON.stringify({ plan: { brief: "1\n2\n3\n4\n5\n6\n7", md: "## Approach\n\nA." } }),
+    }),
+    undefined,
+    null,
+    NOW,
+  );
+  expect(long.people).toBe("1\n2\n3\n4\n5…");
+});
+
+test("ui: no agent link when there is no agent part", () => {
+  const f = fixture();
+  const c = missionCard(
+    f.sources,
+    mission({
+      stage: "approval:plan",
+      waiting: "approve plan",
+      data: JSON.stringify({ plan: { brief: "Visitors see a hello." } }),
+    }),
+    undefined,
+    null,
+    NOW,
+  );
+  expect(c.people).toBe("Visitors see a hello.");
+  expect(c.agent ?? null).toBeNull();
+});
