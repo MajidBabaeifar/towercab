@@ -140,7 +140,7 @@ test("autonomy: a5 needs source me", () => {
   expect(
     grantsFor({ a: 5, source: "alert", plan: null, unlock: [], network: [], defaults: [], unplanned: null })
       .open,
-  ).toBe(false);
+  ).toBeUndefined();
 });
 
 test("autonomy: spec gate", () => {
@@ -183,9 +183,14 @@ test("autonomy: a worker only lowers a", () => {
 });
 
 test("autonomy: access by level", () => {
-  expect(accessPolicy(2)).toEqual({ network: "list", protectedPaths: "writable", request: "granted" });
-  expect(accessPolicy(4)).toEqual({ network: "list", protectedPaths: "planned", request: "owner merges" });
-  expect(accessPolicy(5)).toEqual({ network: "open", protectedPaths: "writable", request: "not needed" });
+  // AUT-26, AUT-15: the network is a list at every level, and a mid-build request is a question.
+  expect(accessPolicy(2)).toEqual({ network: "list", protectedPaths: "writable", request: "asks the owner" });
+  expect(accessPolicy(4)).toEqual({
+    network: "list",
+    protectedPaths: "planned",
+    request: "asks the owner, then the PR goes to the owner",
+  });
+  expect(accessPolicy(5)).toEqual({ network: "list", protectedPaths: "writable", request: "asks the owner" });
 
   const input = {
     source: "me",
@@ -204,16 +209,15 @@ test("autonomy: access by level", () => {
   };
   const domains = ["registry.npmjs.org", "*.npmjs.org", "api.stripe.com", "pkg.go.dev", "example.com"];
   // a1–a3: the list, the plan and requests; every protected path but .git.
-  expect(grantsFor({ ...input, a: 3 })).toEqual({ domains, paths: ["**"], open: false });
+  expect(grantsFor({ ...input, a: 3 })).toEqual({ domains, paths: ["**"] });
   // a4: protected paths only as planned (plus the intent's unlock and mid-build grants).
   expect(grantsFor({ ...input, a: 4 })).toEqual({
     domains,
     paths: [".github/workflows/ci.yml", "migrations/**", "ops/**"],
-    open: false,
   });
   expect(grantsFor({ ...input, a: 4, plan: null, unplanned: null, unlock: [] }).paths).toEqual([]);
-  // a5: open network, everything writable.
-  expect(grantsFor({ ...input, a: 5 })).toMatchObject({ paths: ["**"], open: true });
+  // a5: everything writable, and the same domains: the network is never open (AUT-26).
+  expect(grantsFor({ ...input, a: 5 })).toEqual({ domains, paths: ["**"] });
 });
 
 test("autonomy: a0 waits at every gate", () => {
@@ -229,7 +233,7 @@ test("autonomy: a0 waits at every gate", () => {
   });
   // Test and network access are the owner's at every level (AUT-27), and a0 gets a1-a3's policy.
   expect(accessPolicy(0)).toEqual(accessPolicy(1));
-  expect(accessPolicy(0).request).toBe("granted");
+  expect(accessPolicy(0).request).toBe("asks the owner");
   expect(ownerOnly(0)).toBe(true);
   expect(ownerOnly(4)).toBe(false);
   expect(ownerOnly(null)).toBe(false);

@@ -155,17 +155,21 @@ export function shadowVerdict(
 
 /** What a worker may reach without asking at an effective `a` (AUT-14). */
 export interface AccessPolicy {
-  /** `list`: the default list plus the plan's (and, at a1–a3, mid-build requests); `open`: any domain. */
-  network: "list" | "open";
+  /** `list`: the built-in list plus the plan's and the owner's answers; the network is never open (AUT-26). */
+  network: "list";
   /** `writable`: every protected path but `.git`; `planned`: only those the plan grants. */
   protectedPaths: "writable" | "planned";
-  /** A mid-build request: granted; granted but the PR goes to the owner; never needed. */
-  request: "granted" | "owner merges" | "not needed";
+  /** A mid-build request is a question to the owner at every level (AUT-15); at a4 the PR then goes to them too. */
+  request: "asks the owner" | "asks the owner, then the PR goes to the owner";
 }
 
 /** AUT-14's table, at the effective `a`. */
 export function accessPolicy(a: number): AccessPolicy {
-  if (a <= OWNER_MERGES) return { network: "list", protectedPaths: "writable", request: "granted" };
-  if (a === 5) return { network: "open", protectedPaths: "writable", request: "not needed" };
-  return { network: "list", protectedPaths: "planned", request: "owner merges" };
+  if (a <= OWNER_MERGES) return { network: "list", protectedPaths: "writable", request: "asks the owner" };
+  if (a === 5) return { network: "list", protectedPaths: "writable", request: "asks the owner" };
+  return {
+    network: "list",
+    protectedPaths: "planned",
+    request: "asks the owner, then the PR goes to the owner",
+  };
 }

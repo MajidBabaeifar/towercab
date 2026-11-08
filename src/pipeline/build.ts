@@ -7,14 +7,18 @@ import { lowered } from "../autonomy.ts";
 import { git, refreshBase } from "../checkout.ts";
 import { conflictRoundsDone } from "../github/events.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
+import type { Intent } from "../intents/types.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { CONTROL } from "../repo/protected.ts";
 import { runSet } from "../repo/runset.ts";
 import {
+  accessQuestion,
+  answerAccess,
   answerTest,
   askedTests,
   blockedTests,
+  netIds,
   readingReply,
   sortTestRequests,
   testGrantsOf,
@@ -43,6 +47,7 @@ import {
   takeRemote,
   tellOwner,
 } from "./common.ts";
+import { domainMatches, splitDomains } from "./domains.ts";
 import {
   clearGuardLogs,
   existingTests,
@@ -69,16 +74,8 @@ const SKEW_WINDOW = 3600;
 
 type NetAccess = Omit<Access, "tests">;
 
-const merge = (a: NetAccess | undefined, b: NetAccess): NetAccess => ({
-  domains: [
-    ...(a?.domains ?? []),
-    ...b.domains.filter((d) => !a?.domains.some((x) => x.domain === d.domain)),
-  ],
-  paths: [...(a?.paths ?? []), ...b.paths.filter((p) => !a?.paths.some((x) => x.glob === p.glob))],
-});
-
-function accessText(g: { domains: string[]; paths: string[]; open: boolean }, tests: string[]): string {
-  const net = g.open ? "any network domain" : `network: ${g.domains.join(", ") || "none"}`;
+function accessText(g: { domains: string[]; paths: string[] }, tests: string[]): string {
+  const net = `network: ${g.domains.join(", ") || "none"}`;
   const paths = g.paths.includes("**")
     ? "every protected path but .git"
     : g.paths.join(", ") || "no protected paths";
@@ -218,8 +215,13 @@ export const buildHandler: Handler = {
           return { done: wait("several repos", "The intent lists other repos in `repos:`.") };
         }
         // PIP-116: the owner's answer on a test the worker asked for comes first.
-        const resumed = Boolean(d.testAsk);
-        if (d.testAsk) {
+        const resumed = Boolean(d.testAsk || d.accessAsk);
+        if (d.accessAsk) {
+          const r = await resolveAccessAsk(cx, m);
+          if ("done" in r) return r;
+          m = r.m;
+        }
+        if (data(m).testAsk) {
           const r = await resolveTestAsk(cx, m);
           if ("done" in r) return r;
           m = r.m;
@@ -414,9 +416,24 @@ export const buildHandler: Handler = {
     const held = await heldHelperEdits(cx, m);
     if (v.status === "access" && v.access) {
       const d = data(m);
-      const net = [...v.access.domains.map((x) => x.domain), ...v.access.paths.map((p) => p.glob)];
-      const unplanned = net.length ? merge(d.unplanned, v.access) : d.unplanned;
-      const lines = net.length ? [`Access granted: ${net.join(", ")}.`] : [];
+      // AUT-15: Towercab never grants a worker's request itself; the owner is asked (AUT-27: not for an invalid one).
+      const net = await netRequest(cx, m, intent, v.access);
+      const unplanned = d.unplanned;
+      const lines = net.lines;
+      if (net.ask) {
+        const lost = v.access.tests.map((t) => t.path);
+        const note = [
+          ...lines,
+          ...(lost.length ? [`Ask again for these tests once this is settled: ${lost.join(", ")}.`] : []),
+        ].join(" ");
+        const o = await ask(cx, m, accessQuestion(net.ask), "answer the question", v.brief);
+        return {
+          done: {
+            ...o,
+            data: { ...o.data, answer: undefined, accessAsk: net.ask, testNote: note || undefined },
+          },
+        };
+      }
       const tests = [
         ...v.access.tests,
         ...held.filter((h) => !v.access!.tests.some((t) => t.path === h.path)),
@@ -592,6 +609,80 @@ export async function resolveTestAsk(cx: Ctx, m: Mission): Promise<{ done: Outco
 }
 
 /**
+ * AUT-15, AUT-27: what a worker's `status: access` request needs from the owner. A grant that is not a real
+ * domain (PIP-164) is refused without asking, one already granted or refused is not asked again; the rest is
+ * the question. `lines` is what the resumed worker is told.
+ */
+async function netRequest(
+  cx: Ctx,
+  m: Mission,
+  intent: Intent,
+  req: Access,
+): Promise<{ ask: NetAccess | null; lines: string[] }> {
+  const d = data(m);
+  const have = grants(m, intent, await repoFiles(cx, m), cx);
+  const lines: string[] = [];
+  const { valid, invalid } = splitDomains(req.domains.map((x) => x.domain));
+  if (invalid.length) {
+    lines.push(
+      `Refused without asking, since these are not domains you can be granted: ${invalid.map((i) => `${i.domain} (${i.why})`).join("; ")}.`,
+    );
+  }
+  const refusedD = (x: string) => d.refusedAccess?.domains.some((r) => r.domain === x) ?? false;
+  const refusedP = (x: string) => d.refusedAccess?.paths.some((r) => r.glob === x) ?? false;
+  const wantD = req.domains.filter(
+    (x) =>
+      valid.includes(x.domain) && !have.domains.some((g) => g === x.domain || domainMatches(g, x.domain)),
+  );
+  const wantP = req.paths.filter((p) => !have.paths.includes("**") && !have.paths.includes(p.glob));
+  const stale = [
+    ...wantD.filter((x) => refusedD(x.domain)).map((x) => x.domain),
+    ...wantP.filter((p) => refusedP(p.glob)).map((p) => p.glob),
+  ];
+  if (stale.length) lines.push(`The owner refused earlier, so these stay refused: ${stale.join(", ")}.`);
+  const ask: NetAccess = {
+    domains: wantD.filter((x) => !refusedD(x.domain)),
+    paths: wantP.filter((p) => !refusedP(p.glob)),
+  };
+  return { ask: netIds(ask).length ? ask : null, lines };
+}
+
+/**
+ * AUT-15: the owner answered the access question: allowed → the grants join `unplanned`, refused → refused for
+ * the rest of the mission (PIP-139: a reply that is neither stays asked).
+ */
+export async function resolveAccessAsk(cx: Ctx, m: Mission): Promise<{ done: Outcome } | { m: Mission }> {
+  const d = data(m);
+  const asked = d.accessAsk!;
+  const r = answerAccess(asked, d, d.answer);
+  if (r.read.undecided.length === netIds(asked).length) {
+    const q = d.question ?? accessQuestion(asked);
+    await tellOwner(cx, m, readingReply(r.read), questionMd(q, d.brief));
+    return {
+      done: wait("answer the question", q.question, {
+        data: { question: q, brief: d.brief, accessAsk: asked, answer: undefined },
+      }),
+    };
+  }
+  const note = [d.testNote, r.note].filter(Boolean).join(" ");
+  const left: NetAccess = {
+    domains: asked.domains.filter((x) => r.read.undecided.includes(x.domain)),
+    paths: asked.paths.filter((x) => r.read.undecided.includes(x.glob)),
+  };
+  if (netIds(left).length) {
+    await tellOwner(cx, m, readingReply(r.read));
+    const o = await ask(cx, m, accessQuestion(left));
+    return {
+      done: { ...o, data: { ...o.data, ...r.patch, answer: undefined, accessAsk: left, testNote: note } },
+    };
+  }
+  // PIP-140: recorded first, then said.
+  const recorded = cx.record(m, m.step, {}, { ...r.patch, accessAsk: undefined, testNote: note });
+  await tellOwner(cx, m, readingReply(r.read));
+  return { m: recorded };
+}
+
+/**
  * PIP-137: the helpers (existing tests with no test cases) the worker may edit: all of them but those
  * the owner refused, which stay blocked.
  */
@@ -645,7 +736,6 @@ async function setupOrWorker(cx: Ctx, m: Mission): Promise<Progress> {
       kind: "setup",
       lines: files.verifying.setup,
       dir: cx.checkout(m),
-      network: true,
       cacheWritable: true,
       log: logPath(cx, m, "build", "build-setup.log"),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
