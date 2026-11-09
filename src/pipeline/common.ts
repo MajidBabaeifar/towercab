@@ -743,15 +743,16 @@ const byOf = (m: Mission, step: Step): By => ({ agent: agentOf(step, m.stage), i
 
 /**
  * A question in Markdown (PIP-41). With a brief it opens with the people part (PIP-220) and the
- * question's context is folded as agent context; without one (PIP-106) it reads as before.
+ * question's context is folded as agent context; without one the question itself is the people part.
  */
 export function questionMd(q: Question, brief = ""): string {
   const opts = q.options
     .map((o) => `- **${o.option}**: ${o.then}${o.do ? ` _(${EFFECTS[o.do]})_` : ""}`)
     .join("\n");
   const ask = `**${q.question.trim()}**\n\n${opts}\n\n**Recommendation:** ${q.recommendation.trim()}\n\nReply to this comment to answer; Towercab continues with your reply.`;
-  if (!brief.trim()) return `${q.context.trim()}\n\n${ask}`;
-  return [plainMd(brief), ask, foldMd(q.context)].filter(Boolean).join("\n\n");
+  // PIP-220: a question asked without a brief opens with its own one-line question as the people part.
+  const people = brief.trim() || q.question.trim();
+  return [plainMd(people), ask, foldMd(q.context)].filter(Boolean).join("\n\n");
 }
 
 /**

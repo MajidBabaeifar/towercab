@@ -34,6 +34,7 @@ import {
   tail,
 } from "./common.ts";
 import { intentData, render } from "./prompts.ts";
+import { twoPartOr } from "./prtext.ts";
 import { parseResult } from "./schemas.ts";
 
 export const MAX_REPAIRS = 2;
@@ -266,7 +267,11 @@ async function mergeReviewEnd(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progr
     m,
     "Verify",
     round,
-    `**Merge review:** ${v.kept_both ? "both sides kept" : "a side was lost, so the worker resolves the conflict"}\n\n${plain}${lost ? `\n\n${lost}` : ""}`,
+    // PIP-220: the verdict and summary are the people part; the lost files are agent context.
+    twoPartOr(
+      `**Merge review:** ${v.kept_both ? "both sides kept" : "a side was lost, so the worker resolves the conflict"}\n\n${plain}`,
+      lost,
+    ),
   );
   if (!v.kept_both) return dropMechanical(cx, m, "the merge review found a side lost");
   return { done: ok({ why: "the merge kept both sides", data: { mech: { ...mech, reviewed: true } } }) };

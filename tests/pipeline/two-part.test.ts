@@ -16,6 +16,7 @@ import {
   specBody,
   splitTwoPart,
   twoPartMd,
+  twoPartOr,
 } from "../../src/pipeline/prtext.ts";
 import { parseResult, SCHEMAS } from "../../src/pipeline/schemas.ts";
 import { build, DESIGN, PLAN, REVIEW } from "../helpers/flows.ts";
@@ -88,8 +89,11 @@ test("pipeline: stage, review and question comments open with the people part", 
   expect(asked.startsWith(`## For people\n\n${people}\n\n**Split by currency?**`)).toBe(true);
   expect(asked.endsWith(fold(q.context))).toBe(true);
   expect(checkTwoPart(asked)).toBeNull();
-  // A question from before briefs reads as it did.
-  expect(questionMd(q)).toMatch(/^Two ways to split/);
+  // A question asked without a brief opens with the question as its people part, context folded.
+  const bare = questionMd(q);
+  expect(bare.startsWith("## For people\n\nSplit by currency?")).toBe(true);
+  expect(bare.endsWith(fold(q.context))).toBe(true);
+  expect(checkTwoPart(bare)).toBeNull();
 });
 
 test("pipeline: a reply to the owner's comment has the two parts", () => {
@@ -135,6 +139,17 @@ test("pipeline: a reply that lists four or more files still has a valid people p
   expect(two.agent).toContain("- d.ts");
   expect(() => twoPartMd(two)).not.toThrow();
   expect(checkTwoPart(twoPartMd(two))).toBeNull();
+});
+
+test("pipeline: a note of Towercab's own gets the two parts and a bad shape never loses it", () => {
+  const note = twoPartOr("**Merge review:** both sides kept\n\nNothing was dropped.", "- `a.txt`: kept");
+  expect(note.startsWith("## For people\n\n**Merge review:** both sides kept")).toBe(true);
+  expect(note).toContain(fold("Nothing was dropped.\n\n- `a.txt`: kept"));
+  expect(checkTwoPart(note)).toBeNull();
+  // A people part that cannot pass is posted as it was rather than dropped.
+  expect(twoPartOr("src/very/long/path.ts")).toBe("src/very/long/path.ts");
+  // The check sees the whole people part, not its first line.
+  expect(checkTwoPart(`## For people\n\n${"a\n".repeat(7)}\n${fold("x")}`)).toMatch(/lines/);
 });
 
 test("pipeline: a missing people part is refused", () => {

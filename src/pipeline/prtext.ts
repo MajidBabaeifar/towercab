@@ -68,7 +68,7 @@ function unfolded(text: string): string {
  * that passes `checkPeople`, and no agent detail (findings, files, handoff, spec IDs) outside a fold.
  */
 export function checkTwoPart(text: string): string | null {
-  const m = /^## For people\n\n([\s\S]*?)(?=\n## |\n<details|$)/m.exec(text);
+  const m = /^## For people\n\n([\s\S]*?)(?=\n\s*\n|\n## |\n<details|(?![\s\S]))/m.exec(text);
   if (!m) return "people part is missing";
   const bad = checkPeople(m[1]!);
   if (bad) return bad;
@@ -122,6 +122,27 @@ export function twoPartMd(t: { people: string; agent?: string }): string {
 }
 
 /**
+ * PIP-220: a text written as one piece (a note of Towercab's own) as two parts, its first paragraph the
+ * people part and the rest, with `more`, folded. A text that cannot take the shape is returned as it
+ * is: a note is never lost for its form.
+ */
+export function twoPartOr(text: string, more = ""): string {
+  try {
+    const two = splitTwoPart(text);
+    return twoPartMd({ people: two.people, agent: [two.agent, more].filter(Boolean).join("\n\n") });
+  } catch {
+    return [text, more].filter(Boolean).join("\n\n");
+  }
+}
+
+/** PIP-222: a body with a people part must pass `checkTwoPart` (agent detail only inside the fold). */
+function checked(body: string, brief: string | null | undefined): string {
+  const bad = brief?.trim() ? checkTwoPart(body) : null;
+  if (bad) throw new Error(bad);
+  return body;
+}
+
+/**
  * PIP-220: a text written as one piece (a reply to the owner) as two parts: its first paragraph,
  * cut to the limits, is the people part; the rest is the agent part.
  */
@@ -167,7 +188,7 @@ export function specBody(
   extra: string[] = [],
   brief = "",
 ): string {
-  return [
+  const body = [
     plainMd(brief),
     ...extra,
     ...detailsMd([workerText, specIds.length ? `**Spec IDs:** ${specIds.join(", ")}` : ""], brief),
@@ -175,6 +196,7 @@ export function specBody(
   ]
     .filter(Boolean)
     .join("\n\n");
+  return checked(body, brief);
 }
 
 export interface Access {
@@ -223,7 +245,7 @@ export function planBody(
     ...access.paths.map((p) => `writing ${p.glob}`),
     ...access.tests.map((t) => `changing the existing test ${t.path}`),
   ];
-  return [
+  const body = [
     plainMd(brief),
     risk,
     ...detailsMd([approach], brief),
@@ -237,6 +259,7 @@ export function planBody(
   ]
     .filter(Boolean)
     .join("\n\n");
+  return checked(body, brief);
 }
 
 /** `plan.md` (PIP-46): title, IDs, the worker's sections, then the access checklist. */
@@ -360,7 +383,7 @@ export function codeBody(b: CodeBody): string {
   if (meta) parts.push(meta);
   if (!plain && review) parts.push(review);
   parts.push(footer(b.footer));
-  return parts.join("\n\n");
+  return checked(parts.join("\n\n"), b.brief);
 }
 
 /** The body of `## <title>` in a Markdown text, trimmed ("" when absent). */
