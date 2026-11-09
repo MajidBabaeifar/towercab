@@ -50,7 +50,10 @@ export class FakeApi {
   /** `GET /users/<owner>/installation` answers 500. */
   lookupDown = false;
   /** The App's installation on an account (`GET /users/<owner>/installation`). */
-  readonly accounts = new Map<string, { id: number; repository_selection: string; account: { type: string } }>();
+  readonly accounts = new Map<
+    string,
+    { id: number; repository_selection: string; account: { type: string } }
+  >();
   private installs = new Map<string, number>();
   private live = new Set<number>();
   private clock: Clock;

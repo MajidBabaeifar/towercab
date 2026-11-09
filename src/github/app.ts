@@ -134,9 +134,7 @@ const META_URL = "app-install-url";
 const META_NAME = "app-name";
 
 /** What GitHub says about the App's installation on the repo's account. */
-type Seat =
-  | { kind: "none" }
-  | { kind: "selected" | "all"; url: string };
+type Seat = { kind: "none" } | { kind: "selected" | "all"; url: string };
 
 /** LOOP-122: the steps for `repo` (`owner/name`), in plain words. Holds no secret: names, ids and links only. */
 export function installSteps(app: string | null, repo: string, seat: Seat, url: string): string[] {
@@ -153,7 +151,12 @@ export function installSteps(app: string | null, repo: string, seat: Seat, url: 
     ];
   }
   if (seat.kind === "all") {
-    return [`Open ${url} to see where ${who} is installed.`, `Check that ${name} isn't excluded.`, "Save.", again];
+    return [
+      `Open ${url} to see where ${who} is installed.`,
+      `Check that ${name} isn't excluded.`,
+      "Save.",
+      again,
+    ];
   }
   return [`Open ${url} to install ${who}.`, `Choose ${owner} and pick ${name}.`, "Install.", again];
 }
@@ -301,7 +304,12 @@ export class App {
     let url = installUrl ?? SETTINGS_URL;
     try {
       const what = `GET /users/${owner}/installation`;
-      const r = await this.call(what, "GET", `/users/${encodeURIComponent(owner)}/installation`, `Bearer ${this.jwt()}`);
+      const r = await this.call(
+        what,
+        "GET",
+        `/users/${encodeURIComponent(owner)}/installation`,
+        `Bearer ${this.jwt()}`,
+      );
       if (r.status !== 404) {
         const v = json(this.ok(what, r));
         const id = numberField(v, "id");

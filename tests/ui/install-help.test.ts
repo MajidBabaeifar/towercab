@@ -56,7 +56,8 @@ test("ui: an intent card with the missing install shows the steps", () => {
 test("state: installHelp is set only for a missing install", async () => {
   const f = fixture();
   // Another error, and a missing install on a repo the sources can't help with, get none.
-  expect(missionCard(f.sources, blockedWith(f, "npm test: 2 failing"), undefined, null, NOW).installHelp).toBeUndefined();
+  const failing = missionCard(f.sources, blockedWith(f, "npm test: 2 failing"), undefined, null, NOW);
+  expect(failing.installHelp).toBeUndefined();
   const other = MISSING.replaceAll("me/web", "me/other");
   expect(missionCard(f.sources, blockedWith(f, other), undefined, null, NOW).installHelp).toBeUndefined();
   f.sources.problems = () => [{ title: "Towercab can't reach GitHub", detail: "HTTP 502", fix: "Wait." }];

@@ -111,7 +111,10 @@ export interface Problem {
 const NOT_INSTALLED = /the GitHub App isn't installed on ([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)/;
 
 /** UI-211: `{installHelp}` when `reason` says the App isn't installed on a repo and the sources can tell how to fix it. */
-export function installHelpOf(src: UiSources, reason: string | null | undefined): { installHelp?: InstallHelpView } {
+export function installHelpOf(
+  src: UiSources,
+  reason: string | null | undefined,
+): { installHelp?: InstallHelpView } {
   const repo = reason ? NOT_INSTALLED.exec(reason)?.[1] : undefined;
   const help = repo ? src.installHelp?.(repo) : null;
   return help ? { installHelp: help } : {};

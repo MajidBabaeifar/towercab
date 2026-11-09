@@ -254,7 +254,10 @@ export async function beginAddRepo(d: AddRepoDeps, text: string, name?: string):
     } catch (e) {
       // LOOP-122: the install steps travel with the refusal.
       const help = e instanceof AppNotInstalled ? e.help : undefined;
-      throw Object.assign(new Error(`Towercab can't reach ${typed}: ${(e as Error).message}`), help ? { help } : {});
+      throw Object.assign(
+        new Error(`Towercab can't reach ${typed}: ${(e as Error).message}`),
+        help ? { help } : {},
+      );
     }
     // GitHub's own spelling of the name, so links and the clone's URL match it.
     const full = info.name;
