@@ -51,7 +51,8 @@ const STAGE_AGENT: Record<string, string> = {
 export function agentOf(step: Step, stage = ""): string {
   const own = STAGE_AGENT[step.toLowerCase()];
   if (own) return own;
-  if (step === "Question" || step === "Answer" || step === "Reply") return STAGE_AGENT[stage.split(":")[0] ?? ""] ?? "towercab";
+  if (step === "Question" || step === "Answer" || step === "Reply")
+    return STAGE_AGENT[stage.split(":")[0] ?? ""] ?? "towercab";
   return step === "Intake" ? "scorer" : "towercab";
 }
 

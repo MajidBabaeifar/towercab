@@ -150,7 +150,11 @@ const EXCERPT_MAX = 120;
 
 /** The first non-empty line of `text`, cut to a quotable length. */
 export function excerptOf(text: string): string {
-  const line = text.split("\n").find((l) => l.trim())?.trim() ?? "";
+  const line =
+    text
+      .split("\n")
+      .find((l) => l.trim())
+      ?.trim() ?? "";
   return line.length > EXCERPT_MAX ? `${line.slice(0, EXCERPT_MAX - 1)}…` : line;
 }
 

@@ -26,7 +26,11 @@ function world() {
       { intent: `261026-${String(1000 + n++)}`, slug: "x", repo: "web", model: "m", a: 2 },
       NOW,
     );
-    db.run("UPDATE missions SET stage = 'design', step = '', data = ? WHERE id = ?", JSON.stringify(data), m.id);
+    db.run(
+      "UPDATE missions SET stage = 'design', step = '', data = ? WHERE id = ?",
+      JSON.stringify(data),
+      m.id,
+    );
     return getMission(db, m.id)!;
   };
   const texts = (m: Mission) =>

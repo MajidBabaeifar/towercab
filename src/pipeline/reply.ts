@@ -102,9 +102,7 @@ export interface Posting {
  * review thread it answers. Returns the general comment's link and the pointers that failed.
  */
 export async function postReply(forge: Forge, p: Posting): Promise<{ url: string; failed: string[] }> {
-  const quoted = p.targets
-    .map((t) => `> ${t.excerpt}${t.url ? ` ([comment](${t.url}))` : ""}`)
-    .join("\n>\n");
+  const quoted = p.targets.map((t) => `> ${t.excerpt}${t.url ? ` ([comment](${t.url}))` : ""}`).join("\n>\n");
   const body = `${quoted ? `Replying to:\n\n${quoted}\n\n` : ""}${p.text.trim()}`;
   const posted = await forge.upsertPrComment(
     p.github,
