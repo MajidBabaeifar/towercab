@@ -44,6 +44,7 @@ import { handlers } from "./pipeline/index.ts";
 import { ownerMergeRefusal } from "./pipeline/teammate.ts";
 import { parseScores } from "./priority.ts";
 import { addRepo, loadRepos, removeRepo, repoLine, repoList, setRepo } from "./repos.ts";
+import { parseScoreWords } from "./scores.ts";
 import { checkoutRoot, down, logsArgv, restart, up } from "./service.ts";
 import { restoreBackup } from "./settings/backup.ts";
 import { resetShadow, statusText } from "./shadow/store.ts";
@@ -69,6 +70,7 @@ export const COMMANDS = [
   "retry",
   "drop",
   "start",
+  "score",
   "step",
   "done",
   "steps",
@@ -97,7 +99,8 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   approve <id>                    merge the PR the intent waits on, as you
   retry <id> | drop <id>
   start <id>                      begin that intent's design now, even when the repo is full
-  step <id> <n…|all>              tick off steps the plan lists for you (the change then goes on)
+  score <id> u=N i=N              change urgency and/or importance (1-5); autonomy stays on the page
+  step <id> <n…|all>             tick off steps the plan lists for you (the change then goes on)
   done <id> [note]                you did the work yourself: ends the intent; the note is kept as a ticked step
   steps <id>                      you will do it by hand: the intent becomes steps for you to tick
   pause [id] | resume [id]        pause holds all new work and every change on GitHub; running steps finish
@@ -202,7 +205,10 @@ async function submit(w: World, name: CommandName, arg = "", text = ""): Promise
   if (w.home.holder() === null) {
     const store = await w.store();
     const row = pendingCommands(w.db).find((r) => r.id === id)!;
-    return applyCommand({ db: w.db, store, applyCtx: applyCtx(w.db), now: new Date() }, row);
+    return applyCommand(
+      { db: w.db, store, applyCtx: applyCtx(w.db), now: new Date(), cutoff: w.config.intents.cutoff },
+      row,
+    );
   }
   for (let i = 0; i < 20; i++) {
     const r = commandResult(w.db, id);
@@ -523,6 +529,18 @@ async function run(
     case "start":
       need(1, "<id>");
       return submit(w, "start", args[0]);
+    case "score": {
+      // LOOP-135: urgency and importance only; autonomy and Boost stay on the page and GitHub (AUT-35).
+      need(2, "<id> u=N and/or i=N");
+      try {
+        parseScoreWords(args.slice(1));
+      } catch (e) {
+        throw new UsageError((e as Error).message);
+      }
+      const intent = await (await w.store()).get(args[0]!);
+      if (intent.done) throw new Error(`${intent.id} is done or dropped`);
+      return submit(w, "score", intent.id, args.slice(1).join(" "));
+    }
     case "done":
       need(1, "<id> [note]");
       return submit(w, "done", args[0], args.slice(1).join(" "));
