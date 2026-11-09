@@ -101,3 +101,8 @@ Return the JSON result:
   (docs, CI or tests only), one sentence saying why. Leave it empty for any change a user could notice.
 - `e2e`: in a repo with e2e suites, `tests` (the e2e test files the build adds or changes) and
   `none_why` (empty, or why the change needs no e2e test). `null` in a repo without suites.
+- `reply` (only when the prompt lists the owner's comments): your answer to them, written to the writing
+  guide in plain words, outcome first. One part per comment, named by its id. Say how you read the
+  comment, what you changed in the plan (and what you chose not to change, and why), and each new or
+  still-open point with your recommendation. A comment that needs no change is answered
+  `Nothing to change: <why>`; never leave one without an answer. No step names or field names.

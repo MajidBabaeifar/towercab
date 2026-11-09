@@ -51,6 +51,7 @@ import {
 import { docsTableOnly } from "./docsindex.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { specBody } from "./prtext.ts";
+import { checkoutFacts, deliverReply, replyPatch, replySection } from "./reply.ts";
 import { endRisk, spawnRisk } from "./risk.ts";
 import { parseResult } from "./schemas.ts";
 import { teammateStep } from "./teammate.ts";
@@ -463,7 +464,7 @@ async function prompt(
   return {
     prompt: render("design", {
       intent: intentData(intent.text),
-      earlier: answer + settled + files2 + (await ciSection(cx, m)),
+      earlier: answer + replySection(d.replyTo) + settled + files2 + (await ciSection(cx, m)),
       reserved: `${reservedLine(outcome)}${existingLine}\n${claimedLine(claimed)}${baseLine(t.base)}${t.unchecked === null ? "" : `\n${IDS_UNCHECKED}: the open PRs could not be read (${t.unchecked}). Take IDs after the highest on the base branch; Towercab checks them again before the spec PR is opened or updated.`}`,
     }),
     files,
@@ -580,6 +581,8 @@ export const designHandler: Handler = {
         answer: undefined,
         mergeMain: undefined,
         specRed: undefined,
+        // PIP-203: the reply to the owner's comments, posted once the revision is pushed (PIP-204).
+        ...replyPatch(d, v.reply, m.head),
         ...(owner ? { specAnswers: [...(d.specAnswers ?? []), owner] } : {}),
       },
     );
@@ -812,6 +815,10 @@ async function decide(cx: Ctx, m: Mission): Promise<Progress> {
  * absent checks go to the gate: the owner (`approval:spec`) or Towercab's merge (PIP-50).
  */
 async function specCi(cx: Ctx, m: Mission): Promise<Progress> {
+  // PIP-204: the revision is pushed by now; its reply goes up before the checks are read or the owner asked.
+  const sent = await deliverReply(cx, m, (r) => checkoutFacts(cx, m, r.before));
+  if (sent.retry) return { poll: cx.config.agent.ciPoll };
+  m = sent.m;
   const repo = cx.repo(m);
   const d = data(m);
   const pushedAt = m.pushed_at ?? cx.clock.now();
