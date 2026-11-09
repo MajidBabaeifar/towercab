@@ -7,6 +7,12 @@ import { setAutonomy } from "./api.ts";
 
 const LEVELS = [0, 1, 2, 3, 4, 5];
 
+/** The choice's tooltip; the highest one says why a5 is missing for an intent that isn't the owner's (UI-206). */
+function levelTitle(view: AutonomyView, n: number): string {
+  const note = `a${n}: ${view.notes[n] ?? ""}`;
+  return n === view.max && view.max < 5 ? `${note} (a5 is only for your own intents)` : note;
+}
+
 /** A click inside a row's link must not follow the link. */
 const still = (e: Event) => {
   e.preventDefault();
@@ -67,14 +73,14 @@ export function AutonomyControl({
         <span class="meta">Autonomy</span>
         {/* biome-ignore lint/a11y/useSemanticElements: a segmented control, not a form group */}
         <span class="segmented" role="group" aria-label="Autonomy" ref={group} onKeyDown={move}>
-          {LEVELS.map((n) => (
+          {LEVELS.filter((n) => n <= view.max).map((n) => (
             <button
               key={n}
               type="button"
               aria-pressed={n === view.a}
               class={`seg${n === view.a ? " current" : ""}`}
               disabled={off && n !== view.a}
-              title={`a${n}: ${view.notes[n] ?? ""}`}
+              title={levelTitle(view, n)}
               onClick={() => choose(n)}
             >
               a{n}
