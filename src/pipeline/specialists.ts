@@ -103,7 +103,8 @@ export function mergeSpecialists(
     if (result.door === "one-way") door = "one-way";
     red.push(...result.red_lines);
     if (result.summary.trim()) summary += `\n\n**${AREA_PASS[area]} review**\n\n${result.summary.trim()}`;
-    if (result.agent?.trim()) agent += `${agent ? "\n\n" : ""}**${AREA_PASS[area]} review**\n\n${result.agent.trim()}`;
+    if (result.agent?.trim())
+      agent += `${agent ? "\n\n" : ""}**${AREA_PASS[area]} review**\n\n${result.agent.trim()}`;
   }
   return { ...general, findings, red_lines: red, summary, approved, door, agent };
 }
