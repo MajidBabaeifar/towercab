@@ -576,6 +576,7 @@ export class Loop {
       store: this.ownerStore,
       applyCtx: this.applyCtx(),
       now: new Date(this.now * 1000),
+      cutoff: this.d.config.intents.cutoff,
     })) {
       this.d.log(`command ${c.id}: ${c.result}`);
     }

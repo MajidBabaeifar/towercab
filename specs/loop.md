@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..119, LOOP-126..132, LOOP-159..162 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..119, LOOP-126..132, LOOP-133..135, LOOP-159..162 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -852,7 +852,7 @@ The owner can change an intent's urgency and importance, and the new priority an
 Boosting an intent sets its autonomy to a5 and, when it has not started, starts its design now.
 
 - A `boost` row in `commands` (LOOP-15), applied by the loop only when it comes from the page (`by: page`, as AUT-35 says for a raise); a row from the command line or any other channel is dropped and noted on the timeline (AUT-32). The shadow has no boost of this kind (SHD-8's `boost` raises `u` and `i` and is unchanged; the page names this one "Boost" too, see UI-205).
-- Steps, in one `machine`/command application: (1) `a` is set to 5 as AUT-34 describes (one commit), and `lower_a` and `lower_why` (AUT-7) are removed with `removeField` in the same commit; when `a` is already 5 and there is no lowering note, nothing is written; (2) when the intent has no mission and is not done, dropped or paused, it is started as `start` does (LOOP-63), including over the limits and including a parked intent (PRI-5), since the owner named it by boosting it. A paused intent keeps its pause: only `a` is set, and it starts when it is resumed. Step 1 is written before step 2 is recorded. An intent that already has a mission is not restarted and not moved: it only gets `a: 5` from its next gate (AUT-34).
+- Steps, in one `machine`/command application: (1) `a` is set to 5 as AUT-34 describes (one commit), and the worker's `lower_why` (AUT-7; `lower_a` is applied to `a` and never kept in the file) is removed with `removeField` in the same commit; when `a` is already 5 and there is no lowering note, nothing is written; (2) when the intent has no mission and is not done, dropped or paused, it is started as `start` does (LOOP-63), including over the limits and including a parked intent (PRI-5), since the owner named it by boosting it. A paused intent keeps its pause: only `a` is set, and it starts when it is resumed. Step 1 is written before step 2 is recorded. An intent that already has a mission is not restarted and not moved: it only gets `a: 5` from its next gate (AUT-34).
 - Refused with a reason, writing nothing: the intent is unknown, done or dropped; its `source` is not `me` (AUT-13), or, with `[auth]`, the person is not allowed a5 for that repo (AUT-23, AUT-24: `boost: a5 is only for the owner's own intents`); an `a0` intent is not refused (the page is an owner channel, AUT-32). A raise flagged by someone else (AUT-35) is accepted by the boost, as "Accept a5" does.
 - A boost is a raise: the page asks for the confirmation of UI-257 before posting it (UI-205). Boosting does not change the repo's cap, risk gates, access rules or the worker's right to lower `a` (AUT-7, AUT-8, AUT-14, AUT-18): effective `a` stays the minimum of `a` and the cap, and a high-risk spec, plan or merge still waits for the owner.
 - Verified by: `boost: sets a5 and starts an unstarted intent`, `boost: an intent already at a5 is only started`, `boost: a started intent only gets a5`, `boost: removes the lowered note in the same commit`, `boost: a command from the cli is dropped`, `boost: another source is refused`, `boost: a parked intent is started`, `boost: a paused intent only gets a5`, `boost: the cap and the risk gate still hold`
@@ -1727,7 +1727,7 @@ CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT 
 CREATE TABLE transitions (id INTEGER PRIMARY KEY, mission INTEGER NOT NULL REFERENCES missions(id),
   at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT);
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps')),
+  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost')),
   arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
   created REAL NOT NULL, applied_at REAL, result TEXT);
 CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, created REAL NOT NULL,

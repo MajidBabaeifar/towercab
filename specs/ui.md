@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..163, UI-168, UI-184..197, UI-236..239, UI-242..251, UI-253..267, UI-282 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..163, UI-168, UI-184..197, UI-203..208, UI-236..239, UI-242..251, UI-253..267, UI-282 · **Prefix:** UI
 
 ## Purpose
 
@@ -1707,7 +1707,7 @@ A boosted plane that waits for the owner says in the card which rule held it, in
 
 When a worker lowered an intent's `a` after a boost, the card says so and why.
 
-- If the intent's `lower_a` and `lower_why` are set (AUT-7, INT-24's front matter), the card and the intent page show `Lowered to a<n> by the worker: <lower_why>` beside the autonomy control (UI-257). The line stays until the owner sets `a` again on the page, GitHub or a boost; it never hides the level the control shows. Boost clears the note, since the owner raised the level on purpose: it removes `lower_a` and `lower_why` from the file in the same commit that sets `a: 5` (LOOP-134). A later lowering by a worker shows its own note.
+- If the intent's `lower_why` is set (AUT-7, INT-24's front matter) and its level is below a5, the card and the intent page show `Lowered to a<n> by the worker: <lower_why>` (UI-257's control shows the level itself). The line stays until the owner sets `a` again on the page or with a boost, which remove `lower_why` in the same commit; it never hides the level the control shows. Boost clears the note, since the owner raised the level on purpose (LOOP-134). A later lowering by a worker shows its own note.
 - Verified by: `ui: a card shows that the worker lowered autonomy and why`, `ui: a boost clears the lowered note`, `ui: a later lowering after a boost shows its own note`
 
 ### UI-209 · The add-repo form shows how to install the App

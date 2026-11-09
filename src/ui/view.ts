@@ -90,6 +90,24 @@ export interface AutonomyView {
   notes: string[];
   /** The page is read-only, or the intent is finished. */
   locked: boolean;
+  /** UI-206: the highest level offered: 5 for the owner's own intents, 4 for any other source. */
+  max: number;
+}
+
+/** UI-203, UI-205, UI-207, UI-208: the score controls, Boost, and what a card says about autonomy. */
+export interface ControlsView {
+  u: number;
+  i: number;
+  priority: number;
+  parked: boolean;
+  /** UI-205: the Boost button is offered. */
+  canBoost: boolean;
+  /** UI-205: what the Boost confirm says it allows (and that it starts the intent now). */
+  boostNote: string;
+  /** UI-207: why a plane at a5 waits for the owner; null when it doesn't. */
+  waitWhy: string | null;
+  /** UI-208: `Lowered to a<n> by the worker: <why>`; null when nothing was lowered. */
+  lowered: string | null;
 }
 
 export interface Question {
@@ -333,6 +351,8 @@ export interface Plane {
   phases: Phase[];
   /** The "Start now" button is offered (UI-101). */
   canStart: boolean;
+  /** UI-205, UI-207, UI-208: Boost, the wait reason and the lowering note. */
+  controls?: ControlsView;
   /** UI-125: rolling back, reverting, or in a fix round; absent otherwise. */
   ship?: { kind: "rollback" | "revert" | "fix"; mark: string };
   /** UI-110: why a plane waiting at merge is held ("Held until you resume"); absent otherwise. */
@@ -612,6 +632,8 @@ export interface IntentPage {
   onlyYou?: string;
   /** UI-257: the autonomy control. */
   autonomy?: AutonomyView;
+  /** UI-203: urgency and importance as controls, and the notes of UI-207 and UI-208. */
+  controls?: ControlsView;
   paused?: boolean;
   /** PIP-186: the comments agents wrote under the owner's login, oldest first. */
   agent_comments: AgentCommentView[];
@@ -1024,4 +1046,7 @@ export interface ActivityPage {
 export interface ActionReply {
   ok: boolean;
   message: string;
+  /** UI-204: after a score change, the new priority and whether the intent is parked. */
+  priority?: number;
+  parked?: boolean;
 }
