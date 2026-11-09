@@ -179,6 +179,8 @@ export interface PrComment {
   /** RFC 3339. */
   at: string;
   id: string;
+  /** The comment's link on the host, when it says (PIP-204). */
+  url?: string;
   /** Review comments: the file and line they are on. */
   path?: string;
   line?: number;
@@ -340,7 +342,19 @@ export interface Forge {
   /** After a change request was closed unmerged, delete its branch if it is Towercab's alone (PIP-87, PIP-88). */
   retireBranch(repo: string, n: number, intentsRepo: string | null): Promise<string | null>;
   /** Edit the bot's comment whose first line is `marker`, else post `text`; whether it edited. */
-  upsertPrComment(repo: string, n: number, marker: string, text: string): Promise<{ edited: boolean }>;
+  upsertPrComment(
+    repo: string,
+    n: number,
+    marker: string,
+    text: string,
+    how?: { link?: boolean },
+  ): Promise<{ edited: boolean; url?: string }>;
+  /**
+   * PIP-204: answer the review comment `commentId` in its thread with `text`, or edit the bot's reply there
+   * whose first line is `marker`. Never throws: the host's refusal is the result. A host that can't thread
+   * replies leaves it out; the general reply then stands alone.
+   */
+  replyInThread?(repo: string, n: number, commentId: string, marker: string, text: string): Promise<Result>;
   /** PIP-146: make the owner the assignee; false when the host refuses. */
   assignOwner(repo: string, n: number): Promise<boolean>;
   /** `CODEOWNERS` from `base`; null when it can't be read. */

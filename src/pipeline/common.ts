@@ -21,6 +21,7 @@ import {
   type TwoPart,
   upsertStageComment,
 } from "../github/comments.ts";
+import type { ReplyTarget } from "../github/events.ts";
 import { PausedHold } from "../github/paused.ts";
 import { type ChildEnd, type Ctx, EnvError, type GitHub, type Progress } from "../handlers.ts";
 import { plainLine, SUBJECT_MAX } from "../intents/naming.ts";
@@ -35,8 +36,9 @@ import { combine, type OwnerStep, type PlanStep, parseNoneLive, parseSteps } fro
 import { grantsFor, parseAccess, type TestAsk } from "./access.ts";
 import type { Mech } from "./mechanical.ts";
 import { foldMd, plainMd, splitTwoPart, twoPartMd } from "./prtext.ts";
+import type { PendingReply } from "./reply.ts";
 import { cacheEnv, DEFAULT_NETWORK } from "./sandbox.ts";
-import { type Access, type Question, type ReviewResult, SCHEMAS } from "./schemas.ts";
+import { type Access, type Question, type ReviewResult, SCHEMAS, withReply } from "./schemas.ts";
 
 /** `missions.data`, as the pipeline uses it. */
 export interface ShipData {
@@ -156,6 +158,14 @@ export interface PipeData {
   mergeOpened?: string[];
   /** The owner's last words for the worker (an answer, feedback). */
   answer?: string;
+  /** PIP-203: the owner's comments the running revision answers (set with the `feedback` event). */
+  replyTo?: ReplyTarget[];
+  /** PIP-204: replies written so far, for the next one's round. */
+  replyRounds?: number;
+  /** PIP-204: a reply written and not yet posted, until it is. */
+  reply?: PendingReply;
+  /** LOOP-120: the posted reply's gist and link, for the next owner wait's message; used once. */
+  replyNote?: { gist: string; url: string };
   /** Why the next build round runs: a repair's what and details. */
   repair?: {
     what: string;
@@ -445,7 +455,12 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
     stage: p.stage ?? STAGE_OF_KIND[p.kind],
     n,
     prompt,
-    schema: agent.schema ? SCHEMAS[agent.schema] : null,
+    // PIP-203: a revision the owner's comments started is also asked for `reply`.
+    schema: agent.schema
+      ? data(fresh).replyTo?.length && ["design", "plan", "build"].includes(agent.schema)
+        ? withReply(SCHEMAS[agent.schema])
+        : SCHEMAS[agent.schema]
+      : null,
     session,
     budgetUsd: agentBudgetUsd(agent, cx.config),
     claudeMd: p.files.claudeMd,
