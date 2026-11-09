@@ -31,6 +31,7 @@ import {
   agentComments,
   approveNotices,
   approveRequested,
+  feedbackTargets,
   ignoredReplies,
   intentEvents,
   prEvents,
@@ -1534,6 +1535,12 @@ export class Loop {
           // A later answer by the owner clears the agent's name.
           const d = (o.data ?? {}) as { answeredBy?: string | null };
           o.data = { ...d, answeredBy: d.answeredBy ?? null };
+        }
+        // PIP-203: the owner's own comment starts a revision that answers it. Towercab's conflict revision
+        // (PIP-81) and an answer to a question are not revisions of that kind, so they get no reply (LOOP-121).
+        if (o.event === "feedback" && !(o.data as { mergeMain?: boolean } | undefined)?.mergeMain) {
+          const targets = feedbackTargets(m, prs, this.d.github.me, bot, team, only);
+          o.data = { ...o.data, replyTo: targets.length ? targets : undefined, replyNote: undefined };
         }
         const running = this.children.has(m.id);
         if (running && !["code_merged", "spec_merged", "plan_merged", "closed"].includes(o.event)) continue;

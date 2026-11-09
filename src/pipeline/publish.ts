@@ -39,6 +39,7 @@ import {
   sameAsBase,
 } from "./guard.ts";
 import { codeBody } from "./prtext.ts";
+import { checkoutFacts, deliverReply } from "./reply.ts";
 
 /**
  * The wait for a diff that touches paths it may not (PIP-29, PIP-31). PIP-152: the tests among them are
@@ -204,6 +205,10 @@ async function closeOwn(cx: Ctx, github: string, n: number, why: string): Promis
 }
 
 async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
+  // PIP-204: the revision is pushed by now; its reply goes up before the checks run.
+  const sent = await deliverReply(cx, m, (r) => checkoutFacts(cx, m, r.before));
+  if (sent.retry) return { poll: cx.config.agent.ciPoll };
+  m = sent.m;
   if (m.pr) return { done: ok() };
   const repo = cx.repo(m);
   const intent = await intentOf(cx, m);

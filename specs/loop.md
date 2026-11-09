@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..119, LOOP-126..132, LOOP-133..135, LOOP-159..162 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..121, LOOP-126..132, LOOP-133..135, LOOP-159..162 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -1041,7 +1041,7 @@ On the release channel, Towercab moves only to a newer release tag, never to a n
 
 When Towercab has answered the owner's comment and the PR waits for the owner again, the owner gets a short Telegram message with a link to the reply.
 
-- One message per posted reply (PIP-204), written when the reply is recorded and the mission waits for the owner on that PR (`waiting: approve …` or the equivalent for the spec, plan or code PR). It names the intent, the PR and the gist (first sentence) of the reply, and links to the general reply comment (PIP-204), not to the pointers in line threads; ≤ 4000 characters (LOOP-16). It replaces no other message for the same wait: the usual "ready for you" message, if any, is not sent twice (one message covers both).
+- One message per posted reply (PIP-204): the mission keeps the reply's gist and link (`replyNote`), and the message of its next wait for the owner on that PR (an `approval:*` wait: the spec, plan or code PR) carries them, once. It names the intent, the PR and the gist (first sentence) of the reply, and links to the general reply comment (PIP-204), not to the pointers in line threads; ≤ 4000 characters (LOOP-16). A move that is not such a wait sends nothing for the reply. It replaces no other message for the same wait: the usual "ready for you" message, if any, is not sent twice (one message covers both).
 - Buttons and reply-to-answer follow [telegram.md](telegram.md). With no `[telegram]`, the row is written and never sent (LOOP-16).
 - Verified by: `telegram: a posted reply sends one message with a link`, `telegram: the message names the intent, the PR and the gist`, `telegram: a reply and the ready message are sent once`
 
