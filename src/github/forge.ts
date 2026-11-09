@@ -73,6 +73,9 @@ export class GitHubForge implements Forge, GitHub {
   bot(): Promise<Bot> {
     return this.raw.bot();
   }
+  peekInstallHelp(github: string): ReturnType<NonNullable<GitHub["peekInstallHelp"]>> {
+    return this.raw.peekInstallHelp?.(github) ?? null;
+  }
 
   asOwner(): Forge {
     const r = this.raw;

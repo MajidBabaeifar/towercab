@@ -10,6 +10,7 @@ import type { Db } from "./db.ts";
 import type { GitLabForge } from "./forge/gitlab.ts";
 import { gitlabPath, isGitlab, parseGitlabProject } from "./forge/types.ts";
 import type { Forge } from "./forge.ts";
+import { AppNotInstalled } from "./github/app.ts";
 import { splitDomains } from "./pipeline/domains.ts";
 import { envRefusal } from "./pipeline/sandbox.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
@@ -251,7 +252,9 @@ export async function beginAddRepo(d: AddRepoDeps, text: string, name?: string):
     try {
       info = await d.github.repoInfo(typed);
     } catch (e) {
-      throw new Error(`Towercab can't reach ${typed}: ${(e as Error).message}`);
+      // LOOP-122: the install steps travel with the refusal.
+      const help = e instanceof AppNotInstalled ? e.help : undefined;
+      throw Object.assign(new Error(`Towercab can't reach ${typed}: ${(e as Error).message}`), help ? { help } : {});
     }
     // GitHub's own spelling of the name, so links and the clone's URL match it.
     const full = info.name;
