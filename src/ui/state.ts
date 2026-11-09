@@ -108,7 +108,7 @@ export interface Problem {
   pauses?: boolean;
 }
 
-const NOT_INSTALLED = /the GitHub App isn't installed on ([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)/;
+const NOT_INSTALLED = /the GitHub App isn't installed on ([A-Za-z0-9._-]+\/[A-Za-z0-9._-]*[A-Za-z0-9_-])/;
 
 /** UI-211: `{installHelp}` when `reason` says the App isn't installed on a repo and the sources can tell how to fix it. */
 export function installHelpOf(
