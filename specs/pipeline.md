@@ -213,6 +213,10 @@ back to the worker.
 - Red → a repair round in `build` with the log tail (at most 2 for verify and proof together,
   `repairs`), then `waiting: checks red`. A log that shows a missing tool or a sandbox failure is a
   fault ([LOOP-10](loop.md)), not a repair.
+  What the owner reads names what failed: the reason is `The checks failed: <lines>`, with up to three
+  lines of the log that name a failing test or an error (`×`, `FAIL`, `not ok`, `error…`, an assertion or
+  a panic), else the log's last line, each cut to 100 characters, and `(and N more)` beyond three; never
+  only "The checks failed." The worker's repair prompt keeps the full log tail.
   A log that shows the checks could not write to the repo cache is a question for the owner
   (PIP-95), not a repair.
 - **Sandbox**: `bwrap --unshare-net --unshare-pid --unshare-ipc --unshare-uts --new-session
@@ -220,7 +224,7 @@ back to the worker.
   PIP-158] --tmpfs <HOME> --tmpfs /tmp`, the toolchain dirs read-only with credential files masked, the repo
   cache (LOOP-34), `--bind <checkout>` with its `.git` read-only, `--chdir <checkout>`, `sh -c <line>`. Every
   part is fixed in code (PIP-157).
-- Verified by: `pipeline: verify runs setup then checks`, `pipeline: verify red repairs then waits`, `pipeline: sandbox argv`
+- Verified by: `pipeline: verify runs setup then checks`, `pipeline: verify red repairs then waits`, `pipeline: sandbox argv`, `verify: a red check names what failed`
 
 ### PIP-24 · Claude runs
 
@@ -282,6 +286,9 @@ The worker plans the build, read-only, and Towercab opens the plan as a PR on th
 
 - Resumes the session; tools Read, Glob, Grep and read-only git. Result (**Schemas** `plan`): `plan`
   (markdown, PIP-46) and `access` (`domains` and `paths`, each with `why`).
+- A placeholder is refused: a `plan` with fewer than 80 characters of text or no listed step, or a `brief`
+  under 20 characters, is a bad result and the planner is asked again (PIP-13); no plan PR is opened for
+  it. (A plan whose whole text was `x` was once published and merged.)
 - Towercab writes `intents/<id>-<slug>/plan.md` (PIP-46) on branch `plan/<id>-<slug>` of the intents
   repo, pushes, and opens the plan PR (title `docs(plan): <title>`, body: the approach in a few
   sentences and the access asked for). Then the risk agent reads it (PIP-96), and the plan gate
@@ -291,7 +298,7 @@ The worker plans the build, read-only, and Towercab opens the plan as a PR on th
 - A build that departs from the plan returns `plan_changed`; Towercab commits it to `plan.md` on
   `main` of the intents repo (`towercab: plan changed <id>`), keeping the merged Access section, and the
   gate sends the PR to the owner below a5. A revised plan PR keeps the boxes the owner unticked.
-- Verified by: `pipeline: plan PR is opened on intents`, `pipeline: feedback revises the plan`, `pipeline: merged plan grants its ticked access`
+- Verified by: `pipeline: plan PR is opened on intents`, `pipeline: feedback revises the plan`, `pipeline: merged plan grants its ticked access`, `plan: a placeholder plan is refused and asked again`
 
 ### PIP-29 · Guard
 

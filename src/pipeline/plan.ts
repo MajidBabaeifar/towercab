@@ -223,6 +223,9 @@ export const planHandler: Handler = {
     }
     const r = ended(cx, m, "plan", end, (v) => parseResult("plan", v));
     if (!r.ok) return r.progress;
+    // PIP-28: a placeholder is not a plan; the owner must never be asked to approve one.
+    const thin = thinPlan(r.value.plan, r.value.brief);
+    if (thin) return { done: { event: "bad_result", why: thin, record: true } };
     // PIP-112: a switch to steps (PIP-113) keeps the delivery; steps have no merge, so all come "after".
     const delivery = r.value.delivery === "steps" || data(m).delivery === "steps" ? "steps" : "code";
     let ownerSteps = r.value.owner_steps ?? [];
@@ -312,6 +315,20 @@ async function push(cx: Ctx, m: Mission): Promise<Progress> {
     `docs(plan): ${subjectOf(m, intent)}`,
   );
   return openPr(cx, cx.record(m, "pr"));
+}
+
+/**
+ * Why a plan result is too thin to show the owner (PIP-28), or null: the plan needs at least one listed step
+ * and 80 characters of text, the brief 20.
+ */
+export function thinPlan(plan: string, brief: string | undefined): string | null {
+  const text = plan.replace(/\s+/g, "");
+  const steps = /^\s*(?:\d+[.)]|[-*])\s+\S/m.test(plan);
+  if (text.length < 80 || !steps)
+    return "the plan is a placeholder: write the approach and the steps as a list, in full";
+  if ((brief ?? "").trim().length < 20)
+    return "the plan's brief is a placeholder: say in plain words what will be built";
+  return null;
 }
 
 /** The plan PR's body (PIP-28): the plain brief (PIP-108), the risk once assessed (PIP-99), the plan. */
