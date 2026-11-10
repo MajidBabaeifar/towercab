@@ -184,7 +184,6 @@ author. Version 1 (Rust) is on branch `rust`.
 | [specs/telegram.md](specs/telegram.md) | Telegram messages and intent cards |
 | [specs/observer.md](specs/observer.md) | Watches the flow and suggests improvements |
 | [specs/users.md](specs/users.md) | People and what they may do |
-| [specs/kinds.md](specs/kinds.md) | Kinds of work and their paths |
 
 Want to help? Read [CONTRIBUTING.md](CONTRIBUTING.md); everyone taking part follows the
 [code of conduct](CODE_OF_CONDUCT.md).
