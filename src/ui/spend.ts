@@ -2,6 +2,7 @@
 // Today and 7 days come from the runs' costs (MET-29), all time from the missions' totals (MET-28).
 
 import type { Db } from "../db.ts";
+import { observerCosts } from "../observer/store.ts";
 import { shadowCosts } from "../shadow/store.ts";
 import { localDate, money, type UiSources } from "./state.ts";
 import type { RepoSpendView } from "./view.ts";
@@ -119,6 +120,8 @@ export function spendPeriods(db: Db, now: number): { all: Periods; repos: Map<st
   const from =
     new Date(new Date(now * 1000).getFullYear(), new Date(now * 1000).getMonth(), 1).getTime() / 1000;
   for (const r of shadowCosts(db, from)) add(all, r.at, r.cost);
+  // OBV-10: the observer's runs count overall and for no repo.
+  for (const r of observerCosts(db, from)) add(all, r.at, r.cost);
   for (const t of db.all<{ id: number; at: number; cost: number }>(
     "SELECT id, at, cost FROM shadow_turns WHERE cost > 0 AND at >= ?",
     from,

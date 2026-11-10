@@ -103,9 +103,7 @@ test("pipeline: spec PR is opened", () => {
 test("pipeline: spec PR merged when the gate is open", () => {
   // a5, no concerns: Towercab merged it itself after its (absent) CI, and moved on to plan.
   expect(spec().state).toBe("MERGED");
-  expect(
-    p.tools.lines("gh").some((l) => l.startsWith(`pr merge ${spec().number} --squash --match-head-commit `)),
-  ).toBe(true);
+  expect(p.forge.calls.some((l) => l.startsWith(`merge owner/web#${spec().number} squash head=`))).toBe(true);
   const moves = p.db.all<{ event: string; to_stage: string }>(
     "SELECT event, to_stage FROM transitions WHERE mission = ? ORDER BY id",
     m.id,
@@ -140,7 +138,7 @@ test("pipeline: plan PR is opened on intents", () => {
 
 test("pipeline: plan PR merged at a5", () => {
   expect(plan().state).toBe("MERGED");
-  expect(p.tools.lines("gh")).toContain(`pr merge ${plan().number} --squash -R owner/intents`);
+  expect(p.forge.calls).toContain(`merge owner/intents#${plan().number} squash`);
   expect(p.stages(m.id)).not.toContain("approval:plan");
 });
 
@@ -152,7 +150,8 @@ test("pipeline: build prompt has plan, intent and checks", () => {
   expect(w).toContain("- The page says hello");
   expect(w).toContain("Spec requirements to build: WEB-1");
   expect(w).toContain("sh -c 'for t in tests/*.sh; do sh \"$t\" || exit 1; done'");
-  expect(w).toContain("Access you have: any network domain");
+  expect(w).toContain("Access you have: network: registry.npmjs.org");
+  expect(w).not.toContain("any network domain");
   // The repo's setup ran in the checkout before the worker.
   const kinds = p.sandboxRuns.map((r) => r.kind);
   expect(kinds.indexOf("setup")).toBeLessThan(kinds.indexOf("checks"));
@@ -176,11 +175,10 @@ test("pipeline: first publish opens the code PR", () => {
     base: "main",
     title: "feat: show a greeting",
   });
-  const create = p.tools
-    .lines("gh")
-    .filter((l) => l.startsWith("pr create") && l.includes(`--head towercab/${ID}-${SLUG} `));
+  const create = p.forge.calls.filter(
+    (l) => l.startsWith("open owner/web#") && l.endsWith(` towercab/${ID}-${SLUG}`),
+  );
   expect(create).toHaveLength(1);
-  expect(create[0]).not.toContain("--draft");
   expect(m.pr).toBe(code().number);
   expect(m.pushed_at).not.toBeNull();
   expect(m.head).toBe(git(p.bares.web!, "rev-parse", `towercab/${ID}-${SLUG}`).trim());
@@ -240,7 +238,8 @@ test("pipeline: verify runs setup then checks", () => {
   // build's setup, then verify's setup and checks, then the screenshots.
   expect(verify).toEqual(["setup", "setup", "checks", "shots"]);
   const [, setup, checks] = p.sandboxRuns.filter((r) => r.cwd.endsWith(`${ID}-1`));
-  expect(setup!.argv).not.toContain("--unshare-net");
+  // PIP-158: the network is always unshared; setup and checks get the same proxy and list.
+  expect(setup!.argv).toContain("--unshare-net");
   expect(checks!.argv).toContain("--unshare-net");
   const log = readFileSync(join(p.home.runs(ID, "verify"), "verify-1.log"), "utf8");
   expect(log).toBe("$ sh -c 'for t in tests/*.sh; do sh \"$t\" || exit 1; done'\n");
@@ -281,8 +280,8 @@ test("runs: review reads logs and shots from stage folders", () => {
 });
 
 test("pipeline: merge on the gated head", () => {
-  const merge = p.tools.lines("gh").filter((l) => l.startsWith(`pr merge ${code().number} `));
-  expect(merge).toEqual([`pr merge ${code().number} --squash --match-head-commit ${m.head} -R owner/web`]);
+  const merge = p.forge.calls.filter((l) => l.startsWith(`merge owner/web#${code().number} `));
+  expect(merge).toEqual([`merge owner/web#${code().number} squash head=${m.head}`]);
   expect(code().state).toBe("MERGED");
   expect(m.merge_sha).toBe(code().mergeCommit);
   expect(m.merged_by).toBe("towercab");

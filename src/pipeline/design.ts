@@ -9,7 +9,7 @@ import { riskWhy, specGate } from "../autonomy.ts";
 import { git, refreshBase } from "../checkout.ts";
 import { MERGE_METHOD } from "../forge.ts";
 import { SPEC_CONFLICT_REVISIONS, SPEC_CONFLICT_TEXT } from "../github/events.ts";
-import { assignOwner } from "../github/teammates.ts";
+import { PausedHold } from "../github/paused.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import { renameFeature } from "../intents/features.ts";
 import { plainLine, TITLE_MAX, titleProblem } from "../intents/naming.ts";
@@ -51,6 +51,7 @@ import {
 import { docsTableOnly } from "./docsindex.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { specBody } from "./prtext.ts";
+import { checkoutFacts, deliverReply, replyPatch, replySection } from "./reply.ts";
 import { endRisk, spawnRisk } from "./risk.ts";
 import { parseResult } from "./schemas.ts";
 import { teammateStep } from "./teammate.ts";
@@ -75,17 +76,31 @@ export interface Taken {
   own: Set<string>;
   /** Why the intent's merged spec PRs couldn't be read, else null. */
   ownUnchecked: string | null;
+  /** PIP-210: why the base branch's headings couldn't be read, else null. */
+  baseUnchecked: string | null;
 }
 
 /** The `### <ID> ·` headings of `specs/` at `ref` of the clone. */
-async function baseIds(cx: Ctx, clone: string, ref: string): Promise<Set<string>> {
+async function baseIds(
+  cx: Ctx,
+  clone: string,
+  ref: string,
+): Promise<{ ids: Set<string>; unchecked: string | null }> {
   try {
-    return new Set(
-      headingIds(await git(cx.tools, clone, ["grep", "-h", "-E", "^### [A-Z]+-[0-9]+", ref, "--", "specs"])),
-    );
-  } catch {
-    // No match (or no specs/ yet): nothing is taken on base.
-    return new Set();
+    return {
+      ids: new Set(
+        headingIds(
+          await git(cx.tools, clone, ["grep", "-h", "-E", "^### [A-Z]+-[0-9]+", ref, "--", "specs"]),
+        ),
+      ),
+      unchecked: null,
+    };
+  } catch (e) {
+    const why = (e as Error).message;
+    // No match (or no specs/ yet) exits 1 with no message: nothing is taken on base. Anything else is unreadable.
+    if (why.endsWith("git grep failed")) return { ids: new Set(), unchecked: null };
+    cx.log(`${IDS_UNCHECKED_BASE}: ${why}`);
+    return { ids: new Set(), unchecked: why };
   }
 }
 
@@ -169,7 +184,8 @@ export async function takenIds(cx: Ctx, m: Mission): Promise<Taken> {
     ownUnchecked = (e as Error).message;
     cx.log(`${m.intent}: ${IDS_UNCHECKED_MERGED}: ${ownUnchecked}`);
   }
-  return { base: await baseIds(cx, clone, baseRef), open, unchecked, own, ownUnchecked };
+  const base = await baseIds(cx, clone, baseRef);
+  return { base: base.ids, open, unchecked, own, ownUnchecked, baseUnchecked: base.unchecked };
 }
 
 const claimedLine = (ids: string[]) =>
@@ -194,6 +210,9 @@ export const IDS_UNCHECKED = "IDs unchecked against open PRs";
 
 /** The log note when the intent's merged spec PRs could not be read (PIP-202). */
 export const IDS_UNCHECKED_MERGED = "IDs unchecked against merged spec PRs";
+
+/** The log note when the base branch's requirement IDs could not be read (PIP-210). */
+export const IDS_UNCHECKED_BASE = "IDs unchecked against main";
 
 /** PIP-130: whether a PR is approved (a review in state APPROVED); unreadable counts as not approved. */
 async function approvedPr(cx: Ctx, github: string, n: number | null): Promise<boolean> {
@@ -440,12 +459,12 @@ async function prompt(
   const written = [...new Set([...t.own, ...namedAsWritten(outcome)])];
   const existing = (line ? parseIds(line[1]!) : []).filter((id) => t.base.has(id) && written.includes(id));
   const existingLine = existing.length
-    ? `\nThese reserved IDs are already rows on the base branch, written by this intent's own earlier spec PR: ${existing.join(", ")}. They are existing rows to build or make Live, not new ones; do not rewrite or renumber them.`
+    ? `\nThese reserved IDs are already rows on the base branch, written by this intent's own earlier spec PR or worded by the intent as existing: ${existing.join(", ")}. They are existing rows to build or make Live, not new ones; do not rewrite or renumber them.`
     : "";
   return {
     prompt: render("design", {
       intent: intentData(intent.text),
-      earlier: answer + settled + files2 + (await ciSection(cx, m)),
+      earlier: answer + replySection(d.replyTo) + settled + files2 + (await ciSection(cx, m)),
       reserved: `${reservedLine(outcome)}${existingLine}\n${claimedLine(claimed)}${baseLine(t.base)}${t.unchecked === null ? "" : `\n${IDS_UNCHECKED}: the open PRs could not be read (${t.unchecked}). Take IDs after the highest on the base branch; Towercab checks them again before the spec PR is opened or updated.`}`,
     }),
     files,
@@ -510,8 +529,9 @@ export const designHandler: Handler = {
     if (m.step === "risk") {
       const e = endRisk(cx, m, end, "spec");
       if ("progress" in e) return e.progress;
+      // LOOP-113: the text goes first, so a write held by the pause leaves the step as it was.
+      await patchBody(cx, { ...m, step: "spec_ci", data: JSON.stringify({ ...data(m), ...e.data }) });
       const fresh = cx.record(m, "spec_ci", {}, e.data);
-      await patchBody(cx, fresh);
       return decide(cx, fresh);
     }
     const r = ended(cx, m, "design", end, (v) => parseResult("design", v));
@@ -561,6 +581,8 @@ export const designHandler: Handler = {
         answer: undefined,
         mergeMain: undefined,
         specRed: undefined,
+        // PIP-203: the reply to the owner's comments, posted once the revision is pushed (PIP-204).
+        ...replyPatch(d, v.reply, m.head),
         ...(owner ? { specAnswers: [...(d.specAnswers ?? []), owner] } : {}),
       },
     );
@@ -706,6 +728,7 @@ async function patchBody(cx: Ctx, m: Mission): Promise<void> {
   try {
     await viaForge(cx.github.updatePrBody(repo.github, m.spec_pr!, await bodyOf(cx, m)));
   } catch (e) {
+    if (e instanceof PausedHold) throw e;
     cx.log(`${m.intent}: couldn't update the spec PR text: ${(e as Error).message}`);
   }
 }
@@ -728,7 +751,7 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
       );
       if (!n) throw new Error("GitHub gave no pull request number");
       // PIP-146: the owner answers for the PR.
-      if (repo.teammateReview && !(await assignOwner(cx.github, repo.github, n))) {
+      if (repo.teammateReview && !(await cx.github.assignOwner(repo.github, n))) {
         cx.log(`${m.intent}: couldn't assign ${cx.github.me} to PR ${n}`);
       }
     }
@@ -792,6 +815,10 @@ async function decide(cx: Ctx, m: Mission): Promise<Progress> {
  * absent checks go to the gate: the owner (`approval:spec`) or Towercab's merge (PIP-50).
  */
 async function specCi(cx: Ctx, m: Mission): Promise<Progress> {
+  // PIP-204: the revision is pushed by now; its reply goes up before the checks are read or the owner asked.
+  const sent = await deliverReply(cx, m, (r) => checkoutFacts(cx, m, r.before));
+  if (sent.retry) return { poll: cx.config.agent.ciPoll };
+  m = sent.m;
   const repo = cx.repo(m);
   const d = data(m);
   const pushedAt = m.pushed_at ?? cx.clock.now();

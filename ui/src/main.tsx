@@ -11,7 +11,7 @@ import type {
 } from "../../src/ui/view.ts";
 import { act, useLive } from "./api.ts";
 import { ErrorNote, Freshness, Skeleton } from "./components.tsx";
-import { Alert, Logo, Pause, Play } from "./icons.tsx";
+import { Alert, Logo, Pause, Play, Spinner } from "./icons.tsx";
 import { Palette } from "./Palette.tsx";
 import { ActivityPage } from "./pages/Activity.tsx";
 import { BoardPage } from "./pages/Board.tsx";
@@ -41,27 +41,52 @@ function HealthPill({ top }: { top: Top }) {
 }
 
 function PauseButton({ top }: { top: Top }) {
-  const [busy, setBusy] = useState(false);
+  // UI-282: after a click the loop applies the command on its next pass, so the button shows it is
+  // working until the page reports the new state, and cannot be pressed again meanwhile.
+  const [want, setWant] = useState<boolean | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (want !== null && top.paused === want) setWant(null);
+  }, [top.paused, want]);
+  useEffect(() => {
+    if (want === null) return;
+    const t = setTimeout(() => {
+      setWant(null);
+      setNote("Towercab has not applied it yet: check that the service is running");
+    }, 60_000);
+    return () => clearTimeout(t);
+  }, [want]);
   if (top.readOnly) return null;
   const click = async () => {
-    setBusy(true);
-    const r = await act(top.paused ? "resume" : "pause");
-    setBusy(false);
-    setNote(r.ok ? null : r.message);
+    const target = !top.paused;
+    setWant(target);
+    setNote(null);
+    const r = await act(target ? "pause" : "resume");
+    if (!r.ok) {
+      setWant(null);
+      setNote(r.message);
+    }
   };
+  const pending = want !== null;
+  const label = pending ? (want ? "Pausing…" : "Resuming…") : top.paused ? "Resume" : "Pause";
   return (
     <button
       type="button"
       class="btn ghost pause-btn"
-      disabled={busy}
+      disabled={pending}
+      aria-busy={pending}
       onClick={() => void click()}
       title={
-        note ?? (top.paused ? "Let Towercab start new work again" : "Stop Towercab from starting new work")
+        note ??
+        (pending
+          ? "Towercab applies this on its next pass, within a few seconds"
+          : top.paused
+            ? "Let Towercab start new work again"
+            : "Stop Towercab from starting new work")
       }
     >
-      {top.paused ? <Play size={14} /> : <Pause size={14} />}
-      <span>{top.paused ? "Resume" : "Pause"}</span>
+      {pending ? <Spinner size={14} class="spin" /> : top.paused ? <Play size={14} /> : <Pause size={14} />}
+      <span>{label}</span>
     </button>
   );
 }

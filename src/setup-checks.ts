@@ -7,6 +7,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { effectiveA, gate, OWNER_MERGES } from "./autonomy.ts";
+import { levelNow } from "./autonomy-change.ts";
 import { ensureClone, git, gitEnv, NO_HOOKS } from "./checkout.ts";
 import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db } from "./db.ts";
@@ -18,7 +19,8 @@ import type { IntentStore } from "./intents/types.ts";
 import { type Mission, unfinished } from "./mission.ts";
 import { script } from "./pipeline/checks.ts";
 import { bucket } from "./pipeline/ci.ts";
-import { cacheEnv, sandboxArgv, sandboxEnv } from "./pipeline/sandbox.ts";
+import { proxySocket } from "./pipeline/proxy.ts";
+import { cacheEnv, DEFAULT_NETWORK, sandboxArgv, sandboxEnv } from "./pipeline/sandbox.ts";
 import {
   commandIsCheckOnly,
   type Draft,
@@ -152,9 +154,9 @@ async function runDraft(
 ): Promise<Ran> {
   const home = homedir();
   const cache = d.home.cache(repo.name);
-  const env = sandboxEnv(home, d.config, cacheEnv(cache, d.config, repo));
+  const env = sandboxEnv(home, d.config, cacheEnv(cache, repo));
   let output = "";
-  for (const [lines, network] of [
+  for (const [lines, writable] of [
     [setup, true],
     [checks, false],
   ] as const) {
@@ -162,10 +164,9 @@ async function runDraft(
     const argv = sandboxArgv({
       checkout: dir,
       home,
-      toolchain: d.config.agent.toolchain,
       cache,
-      network,
-      cacheWritable: network,
+      proxy: proxySocket([...DEFAULT_NETWORK]),
+      cacheWritable: writable,
       line: script([...lines]),
     });
     const r = await d.tools.run(argv[0]!, argv.slice(1), {
@@ -358,7 +359,7 @@ async function autonomyOf(d: SetupDeps, repo: RepoConfig): Promise<number> {
   for (const m of waiting) {
     try {
       const i = await d.store.get(m.intent);
-      as.push(effectiveA(m.a_at_pick, i.a, cap, i.source));
+      as.push(effectiveA(levelNow(d.db, i), cap, i.source));
     } catch {
       as.push(OWNER_MERGES);
     }

@@ -4,6 +4,8 @@
 import { readFileSync, rmSync, statSync } from "node:fs";
 import { type AfterHold, afterState, heldText, holdTrigger, nextHold } from "./after.ts";
 import { ownerOnly } from "./autonomy.ts";
+import { levelNow } from "./autonomy-change.ts";
+import { watchAutonomy } from "./autonomy-watch.ts";
 import { Inhibitor, woke } from "./awake.ts";
 import { type Cap, capKey, capReason, capsOf, needsRun, reloadBudgets } from "./budgets.ts";
 import { slotStep } from "./capacity.ts";
@@ -25,11 +27,11 @@ import {
 import type { GitLabForge } from "./forge/gitlab.ts";
 import { isGitlab } from "./forge/types.ts";
 import { MERGE_METHOD } from "./forge.ts";
-import { retireBranch } from "./github/branches.ts";
 import {
   agentComments,
   approveNotices,
   approveRequested,
+  feedbackTargets,
   ignoredReplies,
   intentEvents,
   prEvents,
@@ -40,15 +42,15 @@ import {
   type TeamReads,
 } from "./github/events.ts";
 import { pollIssues } from "./github/issues.ts";
+import { holdPushes, holdStore, holdWrites, PausedHold } from "./github/paused.ts";
 import {
   MORE_THAN_FILE,
   MORE_THAN_ONE,
   type ProposedCache,
   type ProposedPr,
   type ProposedState,
-  readProposed,
 } from "./github/proposed.ts";
-import { closeIfOpen, type PrState, readPr } from "./github/prs.ts";
+import { closeIfOpen, type PrState } from "./github/prs.ts";
 import { type ChildEnd, type Clock, type Ctx, EnvError, type Handlers, type Host } from "./handlers.ts";
 import { readHead } from "./head.ts";
 import type { Home } from "./home.ts";
@@ -79,13 +81,14 @@ import {
   update,
 } from "./mission.ts";
 import { Mutex } from "./mutex.ts";
-import { sendDue } from "./outbox.ts";
+import { type Sender, sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import { type PipeData, prUrl as prLink } from "./pipeline/common.ts";
 import { writeTicks } from "./pipeline/steps.ts";
 import { evaluate } from "./pipeline/teammate.ts";
 import { isParked, priority } from "./priority.ts";
+import { conflictHeld, headOf, landingOf } from "./queue.ts";
 import { blockingRepos, startReadiness as startReadinessCheck } from "./readiness.ts";
 import { loadRepoFiles } from "./repo/files.ts";
 import { pollRepoSettings } from "./repo/poll.ts";
@@ -145,7 +148,7 @@ export interface LoopDeps {
   handlers: Handlers;
   log(line: string): void;
   /** Delivers outbox rows (Telegram), or null. */
-  sender: { send(text: string): Promise<void> } | null;
+  sender: Sender | null;
   /** Read one PR (tests fake it). */
   readPr?: (repo: string, n: number) => Promise<PrState>;
   /** Read the intents repo's proposed intents (LOOP-92; tests fake it). */
@@ -160,10 +163,16 @@ export interface LoopDeps {
   readinessLimitMs?: number;
   /** The checkout this loop's code runs from (LOOP-105); default the one this file is in. */
   codeRoot?: string;
+  /** PIP-163: proves the sandbox holds before a mission is picked (default none; the `run` command sets it). */
+  sandboxProbe?: () => Promise<{ ok: boolean; why: string }>;
   /** INT-39: when a backfill run's time is up (default a real timer; tests resolve it themselves). */
   featuresDeadline?: (ms: number) => Promise<void>;
+  /** LOOP-126: the owner's Telegram chat, handled each pass (even while paused); none: no chat. */
+  chat?: { pass(): Promise<void>; stop(): void };
   /** LOOP-129, LOOP-130: the shadow, passed each pass; none: no shadow. */
   shadow?: { pass(): Promise<void>; busy(): boolean; stop(): Promise<void> };
+  /** OBV-2: the observer, passed each pass; none: no observer. */
+  observer?: { pass(): Promise<void>; busy(): boolean; stop(): Promise<void> };
 }
 
 export interface LoopOpts {
@@ -206,6 +215,11 @@ export class Loop {
   readonly d: LoopDeps;
   readonly health = new Health();
   readonly inhibitor: Inhibitor;
+  /** PIP-163: when the sandbox probe last ran (null = not yet) and whether it passed. */
+  private probedAt: number | null = null;
+  private probeOk = false;
+  /** The last probe's result; null before the first one. */
+  private lastProbe: { ok: boolean; why: string } | null = null;
   private children = new Map<number, Running>();
   /** MET-33: the budgets and caps reached now, and the missions they hold back. */
   private caps: Cap[] = [];
@@ -251,9 +265,27 @@ export class Loop {
   private targetId: string | null = null;
 
   constructor(d: LoopDeps, opts: LoopOpts) {
-    this.d = d;
+    // LOOP-113: while paused, nothing the loop or a stage does changes GitHub; the owner's commands do.
+    const held = () => paused(d.db);
+    this.ownerStore = d.store;
+    this.d = {
+      ...d,
+      github: holdWrites(d.github, held),
+      tools: holdPushes(d.tools, held),
+      store: holdStore(d.store, held),
+    };
     this.opts = opts;
-    this.inhibitor = new Inhibitor(d.tools, d.log);
+    this.inhibitor = new Inhibitor(this.d.tools, d.log);
+  }
+
+  /** The intents store without the pause hold: the owner's own commands write through it. */
+  readonly ownerStore: IntentStore;
+  /** LOOP-113: runs that ended while a write was held; their `finish` is asked again after resume. */
+  private parked = new Map<number, { r: Running; stage: string; step: string }>();
+
+  /** LOOP-113: the owner has paused; no new child starts and nothing changes GitHub. */
+  private isPaused(): boolean {
+    return paused(this.d.db);
   }
 
   get now(): number {
@@ -318,8 +350,36 @@ export class Loop {
    * minute, as a background job like the readiness check: the pass never waits on it, and its fetch
    * holds the clone lock.
    */
+  /**
+   * PIP-163, PIP-161: at start, and every minute while it fails, proves the sandbox holds. A failed probe is a
+   * `sandbox` fault, which blocks picking (there is no running without the sandbox); a pass clears it.
+   */
+  private async probeSandbox(): Promise<void> {
+    const probe = this.d.sandboxProbe;
+    if (!probe) return;
+    if (this.probeOk || (this.probedAt !== null && this.now - this.probedAt < 60)) return;
+    this.probedAt = this.now;
+    const r = await probe();
+    this.probeOk = r.ok;
+    this.lastProbe = r;
+    if (r.ok) {
+      this.health.ok("sandbox");
+      this.d.log("sandbox: the start probe passed");
+    } else {
+      this.health.fail("sandbox", r.why, this.now);
+      this.d.log(`sandbox: the start probe failed: ${r.why}`);
+    }
+  }
+
   private pollSettings(): void {
-    if (!this.d.limits || this.limitsJob || this.drain !== null || this.codeMoved() !== null) return;
+    if (
+      !this.d.limits ||
+      this.limitsJob ||
+      this.drain !== null ||
+      this.isPaused() ||
+      this.codeMoved() !== null
+    )
+      return;
     const forced = this.d.db.meta("repo-poll") !== null;
     if (!forced && this.now - this.lastSettingsPoll < INTENTS_POLL_S) return;
     this.lastSettingsPoll = this.now;
@@ -379,7 +439,8 @@ export class Loop {
       this.settingsJob !== null ||
       this.setupJob !== null ||
       this.issuesRun !== null ||
-      this.d.shadow?.busy()
+      this.d.shadow?.busy() ||
+      this.d.observer?.busy()
     )
       return;
     this.d.log(
@@ -397,7 +458,9 @@ export class Loop {
     await this.settingsIdle();
     await this.setupChecksIdle();
     await this.limitsIdle();
+    this.d.chat?.stop();
     await this.d.shadow?.stop();
+    await this.d.observer?.stop();
     for (const [id, r] of this.children) {
       r.handle.kill("SIGTERM");
       const done = await Promise.race([
@@ -452,6 +515,7 @@ export class Loop {
       store: d.store,
       github: d.github,
       timeouts,
+      ...(d.sandboxProbe ? { sandbox: () => this.lastProbe } : {}),
       log: d.log,
       repo: (m) => {
         const r = d.config.repos.get(m.repo);
@@ -510,14 +574,18 @@ export class Loop {
     // Commands from the CLI and the UI.
     for (const c of await applyPending({
       db,
-      store: this.d.store,
+      store: this.ownerStore,
       applyCtx: this.applyCtx(),
       now: new Date(this.now * 1000),
+      cutoff: this.d.config.intents.cutoff,
     })) {
       this.d.log(`command ${c.id}: ${c.result}`);
     }
 
-    await this.syncSteps();
+    // LOOP-114: `pause --now` cuts off what runs; the pause itself is LOOP-113.
+    this.stopForPause();
+    // LOOP-113: ticks and secrets are written to the intents repo; not while paused.
+    if (!this.isPaused()) await this.syncSteps();
     await this.reap();
     await this.enterDue();
     this.enforceTimeouts();
@@ -532,15 +600,22 @@ export class Loop {
     this.enforceDrain();
     // LOOP-105, LOOP-108: with the checkout moved or an update waiting, running children finish but
     // nothing new starts.
-    if (this.codeMoved() === null && this.drain === null) this.startIssues(false);
+    if (this.codeMoved() === null && this.drain === null && !this.isPaused()) this.startIssues(false);
     await this.pollPrs();
-    this.pollSettings();
-    await this.pollReleases();
+    // LOOP-113: settings and release PRs are followed with writes (merges, comments): not while paused.
+    if (!this.isPaused()) {
+      this.pollSettings();
+      await this.pollReleases();
+    }
     this.releaseReady();
     // LOOP-111: missions back from a wait ask for their run before a ready build takes the free slot.
     await this.stepDue(!report.woke);
     this.releaseReady();
+    await this.probeSandbox();
     if (
+      // PIP-163: with a probe, nothing is picked until the sandbox has held (no waiting for the 15 minutes
+      // a fault takes to block picks).
+      (!this.d.sandboxProbe || this.probeOk) &&
       !paused(db) &&
       !this.health.blocked(this.now) &&
       !this.caps.some((c) => c.scope === "all") &&
@@ -553,7 +628,10 @@ export class Loop {
     await this.selfUpdate();
     this.restartIfMoved();
     // LOOP-130: the shadow reads the chat and reaps or starts a turn; its child runs beside the pass.
+    await this.d.chat?.pass();
     await this.d.shadow?.pass();
+    // OBV-2: the observer reaps a finished run or starts one that is due; its child runs beside the pass.
+    await this.d.observer?.pass();
     await this.sendMessages();
 
     // A change waiting days on the owner's steps is not work: the machine may sleep and the loop is idle.
@@ -569,6 +647,7 @@ export class Loop {
       this.settingsJob === null &&
       this.setupJob === null &&
       !this.d.shadow?.busy() &&
+      !this.d.observer?.busy() &&
       live.length === 0 &&
       report.picked === null;
     if (this.targetId) {
@@ -587,6 +666,15 @@ export class Loop {
 
   /** Children that ended → their handler's `finish` (LOOP-12). */
   private async reap(): Promise<void> {
+    // LOOP-113: a result whose write was held while paused is applied once the pause is over.
+    if (!this.isPaused()) {
+      for (const [id, p] of [...this.parked]) {
+        this.parked.delete(id);
+        const m = getMission(this.d.db, id);
+        if (!m || finished(m.stage) || m.stage !== p.stage || m.step !== p.step) continue;
+        await this.finishRun(id, p.r, m);
+      }
+    }
     for (const [id, r] of [...this.children]) {
       if (!r.exit) continue;
       this.children.delete(id);
@@ -605,20 +693,35 @@ export class Loop {
         this.move(update(this.d.db, m.id, { child_model: null }, this.now), { event: "interrupted" });
         continue;
       }
-      dropIfEmpty(r.spec.stderr);
-      const end: ChildEnd = {
-        ...r.exit,
-        timedOut: r.timedOut,
-        runMs,
-        stdout: r.spec.stdout,
-        stderr: r.spec.stderr,
-      };
-      const h = this.d.handlers[fresh.stage];
-      if (!h) continue;
-      // A Claude run that ended without a network or auth failure: Claude is reachable.
-      await this.drive(fresh, () => h.finish(this.ctx(), fresh, end), r.spec.model !== undefined);
-      if (!this.children.has(id)) update(this.d.db, id, { child_model: null }, this.now);
+      await this.finishRun(id, r, fresh);
     }
+  }
+
+  /** The handler's `finish` for a run that ended (LOOP-12); a held write parks it until resume (LOOP-113). */
+  private async finishRun(id: number, r: Running, fresh: Mission): Promise<void> {
+    dropIfEmpty(r.spec.stderr);
+    const end: ChildEnd = {
+      ...r.exit!,
+      timedOut: r.timedOut,
+      runMs: this.d.clock.mono() - r.startMono,
+      stdout: r.spec.stdout,
+      stderr: r.spec.stderr,
+    };
+    const h = this.d.handlers[fresh.stage];
+    if (!h) return;
+    // A Claude run that ended without a network or auth failure: Claude is reachable.
+    const held = await this.drive(fresh, () => h.finish(this.ctx(), fresh, end), r.spec.model !== undefined);
+    if (held) {
+      // The handler recorded its result before the write (LOOP-6): when the step moved on, `step` goes on
+      // from there; otherwise `finish` is asked again.
+      const cur = getMission(this.d.db, id);
+      if (cur && !finished(cur.stage) && cur.stage === fresh.stage && cur.step === fresh.step) {
+        this.parked.set(id, { r, stage: cur.stage, step: cur.step });
+        return;
+      }
+      update(this.d.db, id, { busy: 0 }, this.now);
+    }
+    if (!this.children.has(id)) update(this.d.db, id, { child_model: null }, this.now);
   }
 
   /**
@@ -673,10 +776,14 @@ export class Loop {
 
   /** Entry effects of every mission whose step is `enter` (LOOP-6), finished ones too. */
   private async enterDue(): Promise<void> {
+    // LOOP-113: entry effects write to GitHub and the intents repo; they are made after resume.
+    if (this.isPaused()) return;
     for (const m of this.d.db.all<Mission>("SELECT * FROM missions WHERE step = 'enter' ORDER BY id")) {
       try {
         await this.cloneLock.run(() => this.enter(m));
       } catch (e) {
+        // LOOP-113: the entry's write is held by the pause; it is made after resume.
+        if (e instanceof PausedHold) continue;
         this.d.log(`${label(m)}: entering ${m.stage} failed, retrying next pass: ${(e as Error).message}`);
       }
     }
@@ -848,7 +955,7 @@ export class Loop {
         ? "Closed: the owner did this by hand, so there is nothing to merge."
         : "Closed: the owner will do this by hand, so there is nothing to merge.",
     );
-    const gone = await retireBranch(this.d.github, repo.github, m.pr, this.d.store.github());
+    const gone = await this.d.github.retireBranch(repo.github, m.pr, this.d.store.github());
     if (gone) this.d.log(`${label(m)}: deleted branch ${gone} of ${repo.github}#${m.pr}`);
     update(this.d.db, m.id, { pr: null }, this.now);
   }
@@ -857,7 +964,7 @@ export class Loop {
     const prs = this.missionPrs(m);
     if (why) for (const [github, n] of prs) await closeIfOpen(this.d.github, github, n, why);
     for (const [github, n] of prs) {
-      const gone = await retireBranch(this.d.github, github, n, this.d.store.github());
+      const gone = await this.d.github.retireBranch(github, n, this.d.store.github());
       if (gone) this.d.log(`${label(m)}: deleted branch ${gone} of ${github}#${n}`);
     }
   }
@@ -875,6 +982,27 @@ export class Loop {
         r.termAt = mono;
         r.handle.kill("SIGTERM");
       }
+    }
+  }
+
+  /**
+   * LOOP-114: after `pause --now`, every run still going gets SIGTERM (SIGKILL after 10 s by
+   * `enforceTimeouts`), and its mission is `interrupted` when the child is reaped: its session
+   * continues after resume and nothing is counted as a crash.
+   */
+  private stopForPause(): void {
+    if (this.d.db.meta("paused_now") !== "1") return;
+    if (!this.isPaused() || this.children.size === 0) {
+      this.d.db.delMeta("paused_now");
+      return;
+    }
+    const mono = this.d.clock.mono();
+    for (const [id, r] of this.children) {
+      if (r.exit || r.termAt !== null) continue;
+      r.interrupted = true;
+      r.termAt = mono;
+      r.handle.kill("SIGTERM");
+      this.d.log(`paused now: stopped the ${r.spec.kind} of mission ${id}`);
     }
   }
 
@@ -926,6 +1054,10 @@ export class Loop {
     }
     const listing = this.listing;
     const db = this.d.db;
+    await watchAutonomy(
+      { db, store: this.d.store, forge: this.d.github, now: this.now, log: this.d.log },
+      listing,
+    );
     for (const m of unfinished(db)) {
       if (m.step === "enter") continue;
       const intent = listing.open.find((i) => i.id === m.intent) ?? null;
@@ -994,7 +1126,14 @@ export class Loop {
    * read. A failure keeps the last result.
    */
   private startReadiness(): void {
-    if (!this.d.readiness || this.readinessJob || this.drain !== null || this.codeMoved() !== null) return;
+    if (
+      !this.d.readiness ||
+      this.readinessJob ||
+      this.drain !== null ||
+      this.isPaused() ||
+      this.codeMoved() !== null
+    )
+      return;
     const deps = {
       config: this.d.config,
       home: this.d.home,
@@ -1025,7 +1164,14 @@ export class Loop {
    * repo, as a background job like the readiness check, one at a time; its fetch holds the clone lock.
    */
   private startSettings(): void {
-    if (!this.d.readiness || this.settingsJob || this.drain !== null || this.codeMoved() !== null) return;
+    if (
+      !this.d.readiness ||
+      this.settingsJob ||
+      this.drain !== null ||
+      this.isPaused() ||
+      this.codeMoved() !== null
+    )
+      return;
     const deps = {
       config: this.d.config,
       home: this.d.home,
@@ -1050,7 +1196,7 @@ export class Loop {
    * job like the settings check, one repo at a time; its fetch holds the clone lock.
    */
   private startSetupChecks(): void {
-    if (this.setupJob || this.drain !== null || this.codeMoved() !== null) return;
+    if (this.setupJob || this.drain !== null || this.isPaused() || this.codeMoved() !== null) return;
     if (!setupWork(this.d.db, this.d.config, this.d.clock.now())) return;
     this.setupJob = setupChecksPass({
       config: this.d.config,
@@ -1115,7 +1261,7 @@ export class Loop {
     try {
       list = this.d.readProposed
         ? await this.d.readProposed()
-        : await readProposed(this.d.github, repo!, this.proposedCache, (await this.d.github.bot()).login);
+        : await this.d.github.readProposed(repo!, this.proposedCache, (await this.d.github.bot()).login);
     } catch (e) {
       this.proposedError = (e as Error).message;
       this.proposedFailedAt = this.now;
@@ -1157,6 +1303,11 @@ export class Loop {
     return isParked(p, this.d.config.intents.cutoff) ? "would be parked" : `priority ${p}`;
   }
 
+  /** The last read of the intents repo, for the observer (OBV-6). */
+  currentListing(): Listing | null {
+    return this.listing;
+  }
+
   /** For the page (UI-184) and the actions (INT-53). */
   proposedState(): ProposedState {
     return { list: this.proposed ?? [], error: this.proposedError, failedAt: this.proposedFailedAt };
@@ -1172,7 +1323,7 @@ export class Loop {
    * (scoring takes minutes) and never more than once at a time.
    */
   private startIssues(force: boolean): void {
-    if (this.issuesRun || !this.d.config.github) return;
+    if (this.issuesRun || !this.d.config.github || this.isPaused()) return;
     if (!force && this.now - this.lastIssuesPoll < ISSUES_POLL_S) return;
     this.lastIssuesPoll = this.now;
     const run = pollIssues({
@@ -1268,7 +1419,7 @@ export class Loop {
 
   /** PR reads (LOOP-18, PIP-21): every 60 s per mission with a PR. */
   private async pollPrs(): Promise<void> {
-    const read = this.d.readPr ?? ((repo: string, n: number) => readPr(this.d.github, repo, n));
+    const read = this.d.readPr ?? ((repo: string, n: number) => this.d.github.readPr(repo, n));
     for (const m of unfinished(this.d.db)) {
       if (m.step === "enter" || (!m.spec_pr && !m.plan_pr && !m.pr)) continue;
       // UI-106: the page acted on this PR, so read it now instead of at the next minute.
@@ -1316,10 +1467,8 @@ export class Loop {
         // PIP-141: the owner's `allow <path>` reverses a refusal, when no worker holds the mission's data.
         let reversed = false;
         if (!this.children.has(m.id)) {
-          const onlyYou = ownerOnly(
-            this.listing?.open.find((i) => i.id === m.intent)?.a ?? null,
-            m.a_at_pick,
-          );
+          const listedNow = this.listing?.open.find((i) => i.id === m.intent);
+          const onlyYou = ownerOnly(listedNow ? levelNow(this.d.db, listedNow) : null);
           for (const ask of reversalRequested(m, prs, this.d.github.me, bot, onlyYou)) {
             let said: string;
             try {
@@ -1358,7 +1507,8 @@ export class Loop {
         }
         // AUT-32: on an owner-only intent a reply from anyone else is ignored (PIP-44) and noted once.
         const listed = this.listing?.open.find((i) => i.id === m.intent);
-        if (ownerOnly(listed?.a ?? null, m.a_at_pick)) {
+        const levelListed = listed ? levelNow(this.d.db, listed) : null;
+        if (ownerOnly(levelListed)) {
           for (const r of ignoredReplies(m, prs, this.d.github.me, bot)) {
             noteIgnored(
               this.d.db,
@@ -1370,7 +1520,7 @@ export class Loop {
           }
         }
         // PIP-185: comments an agent marked under the owner's login are recorded once, at any level.
-        const only = ownerOnly(listed?.a ?? null, m.a_at_pick);
+        const only = ownerOnly(levelListed);
         for (const c of agentComments(m, prs, this.d.github.me, bot)) {
           const target = c.kind === "plan" ? intentsRepo : repo.github;
           recordAgentComment(this.d.db, m.intent, c.key, {
@@ -1390,12 +1540,19 @@ export class Loop {
             );
           }
         }
-        const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot, team, only);
+        const held = conflictHeld(unfinished(this.d.db), m);
+        const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot, team, only, held);
         if (!o) continue;
         if (o.event === "feedback" || o.event === "answered") {
           // A later answer by the owner clears the agent's name.
           const d = (o.data ?? {}) as { answeredBy?: string | null };
           o.data = { ...d, answeredBy: d.answeredBy ?? null };
+        }
+        // PIP-203: the owner's own comment starts a revision that answers it. Towercab's conflict revision
+        // (PIP-81) and an answer to a question are not revisions of that kind, so they get no reply (LOOP-121).
+        if (o.event === "feedback" && !(o.data as { mergeMain?: boolean } | undefined)?.mergeMain) {
+          const targets = feedbackTargets(m, prs, this.d.github.me, bot, team, only);
+          o.data = { ...o.data, replyTo: targets.length ? targets : undefined, replyNote: undefined };
         }
         const running = this.children.has(m.id);
         if (running && !["code_merged", "spec_merged", "plan_merged", "closed"].includes(o.event)) continue;
@@ -1410,6 +1567,8 @@ export class Loop {
         // PIP-112: the merged plan.md is the record of the delivery, edits in the plan PR included.
         this.move(o.event === "plan_merged" ? await this.deliveryFromPlan(m) : m, o);
       } catch (e) {
+        // LOOP-113: a reply or merge held by the pause is made after resume; the PR is read again then.
+        if (e instanceof PausedHold) continue;
         const msg = (e as Error).message;
         this.health.fail("github", msg, this.now);
         this.d.log(`${label(m)}: reading its PRs failed: ${msg}`);
@@ -1476,6 +1635,9 @@ export class Loop {
     for (const listed of order) {
       let m = listed;
       if (!isWorking(m.stage) || m.step === "enter" || m.held || this.children.has(m.id)) continue;
+      if (this.parked.has(m.id)) continue;
+      // LOOP-113: while paused only CI is looked at (a read of the checks); nothing else is due.
+      if (this.isPaused() && m.stage !== "ci") continue;
       // SHD-22: a paused intent starts no further stage until it is resumed.
       if (intentPaused(db, m.intent)) continue;
       // MET-33: a reached cap holds what was not underway when it was reached.
@@ -1488,6 +1650,11 @@ export class Loop {
       if (this.opts.intent && this.targetId && m.intent !== this.targetId) continue;
       const h = this.d.handlers[m.stage];
       if (!h) continue;
+      // LOOP-159: at `merge` only the head of the repo's merge queue steps; it marks itself landing.
+      if (m.stage === "merge" && landingOf(m) === null) {
+        if (headOf(unfinished(db), m.repo)?.id !== m.id) continue;
+        m = patchData(db, m, { landing: { since: this.now } }, this.now);
+      }
       // LOOP-117: before a build starts or goes on, the intent's current `after` is read again.
       if (m.stage === "build" && m.pr === null && m.step !== "commit") {
         const checked = this.holdByAfter(m);
@@ -1508,7 +1675,11 @@ export class Loop {
         update(db, m.id, { data: JSON.stringify(rest) }, this.now);
       }
       const fresh = update(db, m.id, { busy: 1 }, this.now);
-      await this.drive(fresh, () => h.step(this.ctx(timeouts), fresh));
+      if (await this.drive(fresh, () => h.step(this.ctx(timeouts), fresh))) {
+        // LOOP-113: a write was held by the pause; the step is asked for again after resume.
+        update(db, m.id, { busy: 0 }, this.now);
+        this.pollAt.set(m.id, this.now + DRAIN_RETRY_S);
+      }
     }
   }
 
@@ -1562,11 +1733,13 @@ export class Loop {
     m: Mission,
     call: () => Promise<import("./handlers.ts").Progress>,
     claudeRun = false,
-  ): Promise<void> {
+  ): Promise<boolean> {
     let p: import("./handlers.ts").Progress;
     try {
       p = await this.cloneLock.run(call);
     } catch (e) {
+      // LOOP-113: a write held by the pause is no failure: the step is asked for again after resume.
+      if (e instanceof PausedHold) return true;
       const cur = getMission(this.d.db, m.id) ?? m;
       if (e instanceof EnvError) {
         this.health.fail(e.fault, e.message, this.now);
@@ -1575,7 +1748,7 @@ export class Loop {
         this.d.log(`${label(cur)}: ${cur.stage}: ${(e as Error).stack ?? (e as Error).message}`);
         this.move(cur, { event: "crash", why: (e as Error).message });
       }
-      return;
+      return false;
     }
     const cur = getMission(this.d.db, m.id) ?? m;
     if ("done" in p) {
@@ -1599,13 +1772,14 @@ export class Loop {
       // older code): drop the run; the step is asked for again after the restart.
       if (this.codeMoved() !== null) {
         update(this.d.db, m.id, { busy: 0 }, this.now);
-        return;
+        return false;
       }
       // LOOP-108: an update waits for running work to end, so no new child starts; asked again later.
-      if (this.drain !== null) {
+      // LOOP-113: so does a pause.
+      if (this.drain !== null || this.isPaused()) {
         update(this.d.db, m.id, { busy: 0 }, this.now);
         this.pollAt.set(m.id, this.now + DRAIN_RETRY_S);
-        return;
+        return false;
       }
       // LOOP-111: a mission back from outside the slots takes a free one, or waits for it without starting.
       if (dataOf<{ idle?: boolean }>(cur).idle === true && isBuilding(cur)) {
@@ -1617,7 +1791,7 @@ export class Loop {
             patchData(this.d.db, getMission(this.d.db, m.id) ?? cur, { returning: this.now }, this.now);
           }
           this.pollAt.set(m.id, this.now + 1);
-          return;
+          return false;
         }
       }
       if (spec.slot && this.slotsUsed() >= this.d.config.agent.parallel) {
@@ -1628,7 +1802,7 @@ export class Loop {
           patchData(this.d.db, cur, { slot_wait_since: this.now, slot_wait_step: step }, this.now);
         }
         this.pollAt.set(m.id, this.now + 1);
-        return;
+        return false;
       }
       // The step's budget minus the run time it already spent (a restart or a limit wait in between
       // never adds to it, LOOP-12).
@@ -1640,7 +1814,7 @@ export class Loop {
       } catch (e) {
         this.health.fail(`tool:${spec.argv[0]}`, (e as Error).message, this.now);
         this.move(cur, { event: "env_fail", why: (e as Error).message });
-        return;
+        return false;
       }
       const r: Running = {
         handle,
@@ -1677,6 +1851,7 @@ export class Loop {
         this.now,
       );
     }
+    return false;
   }
 
   move(m: Mission, o: Outcome): Mission {
@@ -1933,7 +2108,8 @@ export class Loop {
       this.readinessJob === null &&
       this.settingsJob === null &&
       this.setupJob === null &&
-      !this.d.shadow?.busy();
+      !this.d.shadow?.busy() &&
+      !this.d.observer?.busy();
     // A drain whose children are gone updates at once instead of at the next minute.
     if (!(this.drain !== null && idle()) && this.now - this.lastUpdate < UPDATE_POLL_S) return;
     this.lastUpdate = this.now;

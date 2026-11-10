@@ -31,7 +31,7 @@ test("autonomy: an a0 mission ignores a marked agent reply", () => {
     reviews: [],
     comments,
   });
-  const only = ownerOnly(null, row.a_at_pick);
+  const only = ownerOnly(0);
   expect(only).toBe(true);
   const marked = code([reply(agentReplyBody("claude-code", "Majid", "Yes, merge it."), "c1")]);
   expect(prEvents(row, { code: marked }, ME, BOT, undefined, only)).toBeNull();

@@ -3,7 +3,6 @@
 
 import { expect, test } from "vitest";
 import { insertCommand } from "../../src/commands.ts";
-import { deleteBranch, retireBranch } from "../../src/github/branches.ts";
 import { realTools } from "../../src/tools.ts";
 import { happy, ID, intent, intents, SLUG, TARGET } from "../helpers/flows.ts";
 import { Pipe } from "../helpers/pipe.ts";
@@ -161,24 +160,24 @@ test("pipeline: a branch outside towercab/ is never deleted", async () => {
   const gh = p.github();
   const other = p.openOtherPr("web", "feature/greeting", { "f.txt": "x\n" });
   other.state = "CLOSED";
-  expect(await retireBranch(gh, "owner/web", other.number, null)).toBeNull();
-  await expect(deleteBranch(gh, "owner/web", "main", null)).rejects.toThrow(/not a Towercab branch/);
-  await expect(deleteBranch(gh, "owner/web", "plan/x", null)).rejects.toThrow(/not a Towercab branch/);
+  expect(await gh.retireBranch("owner/web", other.number, null)).toBeNull();
+  await expect(gh.deleteBranch("owner/web", "main", null)).rejects.toThrow(/not a Towercab branch/);
+  await expect(gh.deleteBranch("owner/web", "plan/x", null)).rejects.toThrow(/not a Towercab branch/);
   // A Towercab branch, but its PR is someone else's, still open, or merged.
   const theirs = p.openOtherPr("web", "towercab/x-theirs", { "t.txt": "x\n" }, true, "somebody-else");
   theirs.state = "CLOSED";
-  expect(await retireBranch(gh, "owner/web", theirs.number, null)).toBeNull();
+  expect(await gh.retireBranch("owner/web", theirs.number, null)).toBeNull();
   const open = p.openOtherPr("web", "towercab/x-open", { "o.txt": "x\n" });
-  expect(await retireBranch(gh, "owner/web", open.number, null)).toBeNull();
+  expect(await gh.retireBranch("owner/web", open.number, null)).toBeNull();
   const merged = p.openOtherPr("web", "towercab/x-merged", { "m.txt": "x\n" });
   merged.state = "MERGED";
-  expect(await retireBranch(gh, "owner/web", merged.number, null)).toBeNull();
+  expect(await gh.retireBranch("owner/web", merged.number, null)).toBeNull();
   // A closed PR whose branch a newer open PR still uses keeps it; the App's own closed PR loses it.
   const old = p.openOtherPr("web", "towercab/x-shared", { "s.txt": "x\n" });
   old.state = "CLOSED";
   const newer = p.openOtherPr("web", "towercab/x-shared", {}, false);
-  expect(await retireBranch(gh, "owner/web", old.number, null)).toBeNull();
+  expect(await gh.retireBranch("owner/web", old.number, null)).toBeNull();
   newer.state = "CLOSED";
-  expect(await retireBranch(gh, "owner/web", old.number, null)).toBe("towercab/x-shared");
+  expect(await gh.retireBranch("owner/web", old.number, null)).toBe("towercab/x-shared");
   expect(p.deleted).toEqual(["owner/web towercab/x-shared"]);
 });

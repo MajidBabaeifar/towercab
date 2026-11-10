@@ -6,23 +6,10 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { applyBudgets, type Budgets, emptyBudgets } from "./budgets.ts";
 import { type Capacity, defaultParallel, readCapacity } from "./capacity.ts";
+import { DEFAULT_NETWORK } from "./pipeline/sandbox.ts";
 
-export const DEFAULT_NETWORK = [
-  "registry.npmjs.org",
-  "*.npmjs.org",
-  "pypi.org",
-  "files.pythonhosted.org",
-  "crates.io",
-  "*.crates.io",
-  "proxy.golang.org",
-  "sum.golang.org",
-  "github.com",
-  "*.github.com",
-  "*.githubusercontent.com",
-  "docs.rs",
-  "nodejs.org",
-  "developer.mozilla.org",
-];
+/** PIP-157: `[agent]` keys that still parse so an old file loads, but no longer reach the sandbox. */
+export const IGNORED_AGENT_KEYS = ["path", "toolchain", "env", "network", "sandbox_unix_sockets"];
 
 export interface RepoConfig {
   name: string;
@@ -69,6 +56,8 @@ export interface Config {
     env: Record<string, string>;
     network: string[];
     sandboxUnixSockets: boolean;
+    /** PIP-157: the sandbox keys above that the file sets; they parse but are never read. */
+    ignored: string[];
   };
   /**
    * The repos Towercab works on. Filled from the file by `parseConfig`, then from the database by
@@ -85,9 +74,19 @@ export interface Config {
   ignoredRepos: Map<string, string>;
   github: { appId: number; me: string; apiBase: string; name?: string } | null;
   gitlab: GitLabConfig | null;
-  telegram: { botToken: string; chatId: string; apiBase: string } | null;
+  telegram: { botToken: string; chatId: string; apiBase: string; uiUrl?: string } | null;
   /** SHD-11: `[shadow]`: the owner's Claude session in Telegram and what it may do without asking. */
   shadow: { enabled: boolean; free: ShadowFree[]; dailyBudgetUsd: number; model: string | null };
+  /** OBV-2, OBV-7, OBV-10: `[observer]`: on unless `enabled = false`; its own caps. */
+  observer: {
+    enabled: boolean;
+    dailyAt: string;
+    maxProposalsPerWeek: number;
+    dailyBudgetUsd: number;
+    maxBudgetUsd: number;
+    bundleKb: number;
+    model: string | null;
+  };
   ui: { port: number };
   /** `drainMinutes`: how long a drain for an update waits before cutting runs off (LOOP-109). */
   update: { auto: boolean; drainMinutes: number };
@@ -147,6 +146,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
   const ui = r.table(raw.ui, "ui");
   const update = r.table(raw.update, "update");
   const shadow = r.table(raw.shadow, "shadow");
+  const observer = r.table(raw.observer, "observer");
   const free = r.strList(shadow, "shadow", "free", []);
   for (const f of free) {
     if (!(SHADOW_FREE as readonly string[]).includes(f)) {
@@ -179,8 +179,9 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       path: r.str(agent, "agent", "path", process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"),
       toolchain: r.dirs(agent, "agent", "toolchain", ["~/.local/bin"]),
       env: r.env(agent, "agent", "env"),
-      network: r.strList(agent, "agent", "network", DEFAULT_NETWORK),
+      network: r.strList(agent, "agent", "network", [...DEFAULT_NETWORK]),
       sandboxUnixSockets: r.bool(agent, "agent", "sandbox_unix_sockets", false),
+      ignored: IGNORED_AGENT_KEYS.filter((k) => k in agent),
     },
     repos: new Map(),
     budgets: emptyBudgets(),
@@ -202,6 +203,8 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       botToken: r.str(telegram, "telegram", "bot_token", ""),
       chatId: String(telegram.chat_id ?? ""),
       apiBase: r.url(telegram, "telegram", "api_base", "https://api.telegram.org"),
+      // TG-14: where the owner reaches the page from the phone; absent unless set.
+      ...(telegram.ui_url === undefined ? {} : { uiUrl: r.url(telegram, "telegram", "ui_url", "") }),
     },
     shadow: {
       enabled: r.bool(shadow, "shadow", "enabled", false),
@@ -209,6 +212,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       dailyBudgetUsd: r.num(shadow, "shadow", "daily_budget_usd", 5, 0, 100000),
       model: r.optWord(shadow, "shadow", "model"),
     },
+    observer: parseObserver(r, observer),
     ui: { port: r.int(ui, "ui", "port", 7311, 0, 65535) },
     update: {
       auto: r.bool(update, "update", "auto", true),
@@ -238,6 +242,32 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
     }
   }
   return config;
+}
+
+function parseObserver(r: Reader, t: Record<string, unknown>): Config["observer"] {
+  const dailyAt = r.str(t, "observer", "daily_at", "06:00");
+  // OBV-2: a local time `HH:MM`.
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(dailyAt)) throw r.err("observer.daily_at must be a time like 06:00");
+  return {
+    enabled: r.bool(t, "observer", "enabled", true),
+    dailyAt,
+    maxProposalsPerWeek: r.int(t, "observer", "max_proposals_per_week", 3, 1, 10),
+    dailyBudgetUsd: r.num(t, "observer", "daily_budget_usd", 3, 0, 100000),
+    maxBudgetUsd: r.num(t, "observer", "max_budget_usd", 1.5, 0, 100000),
+    bundleKb: r.int(t, "observer", "bundle_kb", 400, 10, 4000),
+    model: r.optWord(t, "observer", "model"),
+  };
+}
+
+/** OBV-2: read `[observer]` from the file again, so an edit applies without a restart; a bad value keeps the last good one. */
+export function reloadObserver(config: Config): void {
+  try {
+    const raw = parseToml(readFileSync(config.file, "utf8")) as Record<string, unknown>;
+    const r = new Reader(config.file);
+    config.observer = parseObserver(r, r.table(raw.observer, "observer"));
+  } catch {
+    // a missing file or a bad value keeps what is in force
+  }
 }
 
 /** GL-1: `api_base` is an https URL ending in `/api/v4` (http only for localhost, for tests). */

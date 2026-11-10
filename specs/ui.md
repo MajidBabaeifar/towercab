@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..149, UI-150..154, UI-155..164, UI-168, UI-184..191, UI-192..197, UI-239, UI-244..251, UI-236..238, UI-253..256, UI-259..267 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..163, UI-168, UI-184..197, UI-203..208, UI-236..239, UI-242..251, UI-253..267, UI-282 · **Prefix:** UI
 
 ## Purpose
 
@@ -80,6 +80,17 @@ The top bar says at a glance whether Towercab is healthy and how much needs the 
   version and whether it is behind `main`, and Pause/Resume. The tab title starts `(<n>)` while n
   things need the owner.
 - Verified by: `ui: top bar shows health and counts`
+
+### UI-282 · Pause and Resume show they are working
+
+After the owner presses Pause or Resume, the button shows that Towercab is applying it, so nobody presses again.
+
+- The top bar's button turns to `Pausing…` or `Resuming…` with a spinner, disabled and `aria-busy`, from the
+  click until the page reports the new state (the loop applies the command on its next pass, LOOP-113). A
+  refused action restores the button and shows the reason as its title; after 60 s without the new state it
+  restores the button with the title "Towercab has not applied it yet: check that the service is running".
+  The airspace's Resume (UI-109) reads `Resuming…` with a spinner the same way until the ground stop clears.
+- Verified by: `ui: pause shows it is working until the state changes`
 
 ### UI-58 · Needs you
 
@@ -1074,11 +1085,16 @@ Every way out of a wait is a button on the card that does exactly what it says.
   (UI-66 → the `done` command), next to an optional one-line field for what the owner did, which
   becomes a ticked step (LOOP-76). A mission waiting on `your steps` shows the checklist of UI-160 and the
   same button.
-- A stuck wait (LOOP-77) shows "Stuck: this came back with nothing new" and only the `steps`, `done`,
-  start over and drop buttons: no reply box. `GET /api/state` (UI-65) carries `exits` per waiting
-  mission (a list of `{do, label}`) and `stuck`.
+- A stuck wait (LOOP-77) shows "Stuck: this came back with nothing new" and only those of the `steps`,
+  `done`, start over and drop buttons that the wait offers: no reply box. `GET /api/state` (UI-65)
+  carries `exits` per waiting mission (a list of `{do, label}`) and `stuck`.
+- When `done`, `steps` or drop would close an open code PR with commits (LOOP-76), the button first
+  opens a confirm that names the PR and its commit count and says its branch is deleted and nothing is
+  merged; only its OK posts the action. The state carries the PR number and commit count (`openPr:
+  {number, commits}`) of such a mission for this. When the PR can't be read the confirm gives the
+  general warning of LOOP-76 ("couldn't check the PR; it may have commits") and still asks.
 - After a click the card shows the done note of UI-105 ("Done by you · …").
-- Verified by: `ui: question options are buttons that do what they say`, `ui: no changes offers I did it myself`, `ui: a stuck wait offers only the other exits`, `ui: exits come from the API`, `ui: an option that asks for something first only fills the reply`, `ui: exits screenshots light, dark and mobile`
+- Verified by: `ui: question options are buttons that do what they say`, `ui: no changes offers I did it myself`, `ui: a stuck wait offers only the other exits`, `ui: exits come from the API`, `ui: an option that asks for something first only fills the reply`, `ui: exits screenshots light, dark and mobile`, `ui: closing an open PR with commits asks to confirm first`, `ui: an unreadable PR gets the general warning and a confirm`, `ui: a stuck card screenshots light, dark and mobile`
 
 ### UI-168 · Teammate review on the card and the repo page
 
@@ -1483,6 +1499,61 @@ The stage map lists the stages this intent will go through, folds the rest, and 
 - A run of two or more stages not reached yet folds into one row, `<n> more stages to go`, that opens to list them. A merged code PR is never shown as `skipped`.
 - Verified by: `ui: stage map leaves out stages that cannot apply and says so`, `ui: unreached stages fold into one row`, `ui: a merged change does not show merging as skipped`
 
+### UI-279 · The intent page shows how many plan steps are built
+
+While a long plan builds, the intent page and its card say "step 3 of 6".
+
+- Shown from the mission's `data.build` (PIP-216) as `step <steps_done + 1> of <steps_total>` while the build runs (the step being worked on), and `<steps_done> of <steps_total> steps built` while it waits between runs or on the owner. Absent for a plan with no numbered steps or a single-step plan, and once the review starts.
+- `GET /api/state` and the intent's API carry `build: {stepsDone, stepsTotal}` (null when absent). Fits 360 px, light and dark.
+- Verified by: `ui: the intent page shows the plan step being built`, `ui: no step count for a one-run plan`
+
+### UI-280 · "Covered by…" closes an intent as done
+
+The owner can pick another intent on an open intent's page and close the first as done, because the second covers it.
+
+- An intent that is not done, dropped or stopped shows a "Covered by…" action next to Drop, at any stage and in the board's card menu. It opens a picker of the other intents of the same repo first, then the others (search by ID or title), without the intent itself, dropped or stopped ones, and any that wait `after:` this one (LOOP-156).
+- Choosing one posts `{action: "done", id, by: <other id>}` (UI-66) with `actor: owner`, which runs the `done --by` command of LOOP-156 with its confirm for an open code PR with commits (UI-164). The page shows `Closed as done: covered by <other id>` with the ID as a link, and a refusal shows its reason.
+- Both intents' pages show the cover on their timelines ("Covered by 261106-1201" and "Covers 261105-2152-14"), each with the other as a link. A covered intent shows as done, not dropped, with the covering intent named. Fits 360 px, light and dark; hidden for `a0` intents the same way Drop is (AUT-31) and for a viewer (USR).
+- A covered intent's page shows a "Reopen" button, which posts `{action: "reopen", id}` (UI-66) and runs LOOP-157. The page then shows the intent back at its old stage, with the PRs reopened and any that could not be, with the reason. The button is hidden on every other intent.
+- When the covering intent was dropped or stopped (LOOP-158), the covered intent's page shows `Not delivered: <other id> was <dropped|stopped>` with the Reopen button, and the Inbox shows the `not delivered` item with Reopen and Dismiss (UI-259). Dismiss hides the Inbox item only; the page note stays.
+- Verified by: `ui: a not delivered intent shows its note and an Inbox item with Reopen`, `ui: dismissing a not delivered item keeps the page note`, `ui: reopen is offered only on a covered intent`, `ui: reopen puts the intent back and lists PRs it could not reopen`, `ui: covered by is offered at any open stage`, `ui: covered by picker leaves out itself and finished intents`, `ui: covered by closes the intent as done`, `ui: covered by shows on both timelines`, `ui: covered by asks to confirm an open code PR`
+
+### UI-281 · Cards show the people part, the agent part is a link
+
+Cards and lists show only the part for people; the agent part is one tap away on the intent page.
+
+- Board cards, Inbox items, Needs-you cards and the repo page's intent rows show the people part of PIP-220 (at most 5 lines, clipped with `…` after that) and no agent text. Each has an `Agent context` link to the intent page, where the part is folded under a header of that name and opens on a click (UI-267). The link is absent when there is no agent part.
+- The intent page leads with the people part and keeps the agent part (findings, file lists, logs, handoff notes) folded; PR links open the PR on GitHub, where the same split holds.
+- The API carries `people` and `agent` as separate fields on a stage; the cards read only `people`. Fits 360 px, light and dark.
+- Verified by: `ui: a card shows the people part and not the agent part`, `ui: the agent context is a link on a card and folded on the intent page`, `ui: no agent link when there is no agent part`
+
+### UI-200 · Your own open pull requests are read
+
+Towercab reads the open pull requests the owner opened by hand in each registered repo.
+
+- Per repo, each loop pass (rate-limited like the other PR reads, through the `Forge` of `src/forge.ts`) lists open PRs whose author is the owner's GitHub login. It leaves out Towercab's own PRs (head `towercab/*`), drafts marked as such stay in the list, and PRs from forks of other people are not read.
+- Per PR it keeps number, title, URL, head branch, opened-at, draft flag, the check status (`passing`, `failing`, `pending`, `none`) and the changed file paths. Nothing is written to the intent files or the mission table; the list is read-only and is not a mission.
+- A failed read keeps the last good list and shows the error as a problem on the repo (no crash, no empty list). Repos on GitLab are skipped until GL has the same read.
+- Verified by: `github: owner pull requests are listed without Towercab's own`, `github: a failed owner PR read keeps the last list`
+
+### UI-201 · "Yours" on the repo page and the Board
+
+The repo page and the Board show the owner's open pull requests as "Yours", with age and check status.
+
+- `GET /api/state` carries `yours: [{repo, number, title, url, ageSeconds, checks, draft}]`, oldest first. They do not count in "Needs you" (UI-244) and carry no stage or Approve buttons: a click opens the PR on GitHub.
+- The repo page lists them under `Yours`; the Board shows them in a separate `Yours` group per repo, away from Towercab's planes. The age reads `3 d` (exact on hover); the check status is a word and a colour, not colour alone. Hidden when empty. Fits 360 px, light and dark.
+- Visible to everyone who can see the repo in Towercab, whatever their role (USR-1, USR-5: a per-repo role never hides a repo's list). The PRs are already visible on GitHub to the same people, so hiding them would only make the page disagree with GitHub. A read-only role sees them and the links, and has no action to take on them.
+- Verified by: `ui: a fake owner pull request is listed as Yours on the repo page and the Board`, `ui: Yours is not counted in Needs you`, `ui: Yours is shown to a viewer and to a maintainer with a lower role on that repo`
+
+### UI-202 · A warning when your pull request touches the same spec
+
+When one of the owner's open pull requests changes a spec file that Towercab's own spec PR also changes, Towercab says so on its PR.
+
+- Overlap = a path under `specs/` changed by both an owner PR (UI-200) and the spec PR of a mission in the same repo. Checked each pass for missions with an open spec PR.
+- Towercab's stage comment on its PR gets one line per owner PR: `Your PR #<n> also changes specs/<file>.md; requirement IDs may clash.` The line names the IDs both PRs add when they share any. The same line shows on the intent page. The line is dropped when the overlap ends (owner PR closed or merged, or files no longer shared); it is never posted twice for the same pair.
+- Only a warning: nothing is blocked, and the owner's PR is never commented on.
+- Verified by: `ui: an owner pull request touching the same spec file adds the warning`, `ui: no warning when the owner's PR touches other files`
+
 ### UI-273 · An owner wait stage says what the owner did
 
 Opening a stage that was a wait on the owner shows the owner's answer, not "it wrote no files".
@@ -1505,6 +1576,33 @@ The airspace's count badges (such as "+21") never cover a label or a plane, and 
 - The boxes of the count badges do not intersect the stage labels or the planes at 360, 768 and 1,280 px wide.
 - `ui/fixture.ts` carries more than 8 repos, several of them not ready (some missing the same item, UI-269), and a CLI repo with a finished intent; the Repos, Board, intent and airspace screenshots (light, dark, mobile) use it.
 - Verified by: `ui: airspace count badges do not overlap at 360, 768 and 1280px`, `ui: screenshots light, dark and mobile`
+
+### UI-276 · The repo page shows where each setting comes from
+
+The repo's page says for each setting whether it came from the repo, the overlay or the default.
+
+- Each of `max_autonomy`, `protected`, the checks and the other keys in effect ([REPO-44](repo.md)) carries a small
+  label `repo`, `overlay` or `default`. An overlay-sourced value has no edit control; it says `Set in
+  <path to the overlay file>` ([REPO-48](repo.md)). A refused overlay key shows REPO-46's one line, a notice card shows REPO-49's replaced-checks notice naming both sets of checks, and an invalid
+  overlay shows its reason like an invalid `TOWERCAB.md` (UI-153). A repo without an overlay shows `repo` and `default` labels only.
+- The labels come from the API's repo view, not from the page's own guess.
+- Verified by: `ui: settings show repo, overlay or default`, `ui: an overlay setting has no edit control`, `ui: a refused overlay key shows its line`, `ui: replaced overlay checks show a notice`
+
+### UI-277 · Problems show loose secrets files
+
+The Overview's Problems block names each secrets file that others can read and the command that fixes it.
+
+- One Problems row (UI-60) per file found by the check of LOOP-143: `<path> is readable by others: chmod 600 <path>`. The row is a failure here even though the self-update check only warns (LOOP-145); nothing is shown when all such files are mode 600.
+- The rows come from the same check as `doctor`, through the API's problems list, not from the page's own guess.
+- Verified by: `ui: problems show a loose secrets file with its chmod`, `ui: no loose secrets file shows no row`
+
+### UI-278 · Running version and waiting release
+
+The top bar shows which version of Towercab is running and, when the owner updates on releases, whether a newer release is waiting.
+
+- The top bar's version is the running version of LOOP-152. On the release channel it adds `<tag> available` when a newer release waits (LOOP-152) and nothing when up to date. On the `"main"` channel it still says whether the checkout is behind `main`.
+- The values come from the same API field as `status`, not from the page.
+- Verified by: `ui: top bar shows the running version`, `ui: top bar shows a waiting release`, `ui: top bar shows no release note when up to date`
 
 ### UI-219 · Sign in with GitHub
 
@@ -1556,7 +1654,7 @@ Admins can see each person's open sessions and end one or all of them.
 
 The overview shows what the observer did lately: its last run, this week's proposals and what it spent today.
 
-- An "Observer" panel via `GET /api/observer` (`{enabled, lastRun, proposalsThisWeek, maxPerWeek, spentToday, cap, lastReport}`): the last run's time, trigger (daily or the event), outcome and proposal count, the proposals made in the last 7 days against `[observer].max_proposals_per_week` (OBV-7), today's observer spend against its cap (OBV-10) and when the last weekly report went out (OBV-8). With the observer off the panel is not shown. A reached cap says so in words.
+- An "Observer" panel via `GET /api/observer` (`{enabled, lastRun, proposalsThisWeek, maxPerWeek, spentToday, cap, lastReport}`): the last run's time, trigger (daily or the event), outcome and proposal count, the proposals made in the last 7 days against `[observer].max_proposals_per_week` (OBV-7), today's observer spend against its cap (OBV-10) and when the last weekly report went out (OBV-8). With the observer off, or before its first run, the panel is not shown. A reached cap says so in words.
 - Verified by: `ui: the observer panel shows its last run, proposals and spend`, `ui: the observer panel is hidden when off`
 
 ### UI-243 · Observer proposals are tagged and show their evidence
@@ -1609,7 +1707,7 @@ A boosted plane that waits for the owner says in the card which rule held it, in
 
 When a worker lowered an intent's `a` after a boost, the card says so and why.
 
-- If the intent's `lower_a` and `lower_why` are set (AUT-7, INT-24's front matter), the card and the intent page show `Lowered to a<n> by the worker: <lower_why>` beside the autonomy control (UI-257). The line stays until the owner sets `a` again on the page, GitHub or a boost; it never hides the level the control shows. Boost clears the note, since the owner raised the level on purpose: it removes `lower_a` and `lower_why` from the file in the same commit that sets `a: 5` (LOOP-134). A later lowering by a worker shows its own note.
+- If the intent's `lower_why` is set (AUT-7, INT-24's front matter) and its level is below a5, the card and the intent page show `Lowered to a<n> by the worker: <lower_why>` (UI-257's control shows the level itself). The line stays until the owner sets `a` again on the page or with a boost, which remove `lower_why` in the same commit; it never hides the level the control shows. Boost clears the note, since the owner raised the level on purpose (LOOP-134). A later lowering by a worker shows its own note.
 - Verified by: `ui: a card shows that the worker lowered autonomy and why`, `ui: a boost clears the lowered note`, `ui: a later lowering after a boost shows its own note`
 
 ### UI-209 · The add-repo form shows how to install the App

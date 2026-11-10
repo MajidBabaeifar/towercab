@@ -6,12 +6,11 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { git, refreshBase } from "../checkout.ts";
 import { classifyRun } from "../faults.ts";
 import { MERGE_METHOD } from "../forge.ts";
-import { prsOnBranch } from "../github/branches.ts";
 import { type ChildEnd, type Ctx, EnvError, type Handler, type Progress } from "../handlers.ts";
 import { type Outcome, ok, red, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { type Adapter, adapterOf, RollbackRefused, shipEnv } from "../ship/adapter.ts";
-import { type Live, smokeSuites, suiteOrder } from "../ship/live.ts";
+import { type Live, liveDomains, shipNetwork, smokeSuites, suiteOrder } from "../ship/live.ts";
 import { readSecrets, type Secrets, secretsPath } from "../ship/secrets.ts";
 import { checksMayWrite, logPath, sandboxSpec } from "./checks.ts";
 import { ciState } from "./ci.ts";
@@ -105,11 +104,11 @@ async function startSuites(
       kind: "e2e-setup",
       lines: files.verifying.setup,
       dir: cx.checkout(at),
-      network: true,
       cacheWritable: true,
       log: logPath(cx, at, "e2e", `${n}-setup.log`),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
       extraEnv: shipEnv(sc, sha),
+      domains: [...liveDomains(sc.live), ...shipNetwork(cx.db, cx.repo(at).name)],
     }),
   };
 }
@@ -126,11 +125,11 @@ async function nextSuite(cx: Ctx, m: Mission, sc: ShipCx): Promise<Progress> {
       kind: "e2e",
       lines: [suite.command],
       dir: cx.checkout(at),
-      network: true,
       cacheWritable: checksMayWrite(cx, at),
       log: logPath(cx, at, "e2e", `${n}-${suite.name}.log`),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
       extraEnv: shipEnv(sc, sha),
+      domains: [...liveDomains(sc.live), ...shipNetwork(cx.db, cx.repo(at).name)],
     }),
   };
 }
@@ -489,7 +488,7 @@ export const revertHandler: Handler = {
     if (m.step === "pr") {
       const r = sc.ship.revert!;
       let pr =
-        (await prsOnBranch(cx.github, repo.github, branch)).find((p) => p.state === "OPEN")?.number ?? null;
+        (await cx.github.prsOnBranch(repo.github, branch)).find((p) => p.state === "OPEN")?.number ?? null;
       if (!pr) {
         const intent = await intentOf(cx, m);
         const body = revertBody(sc, intent.title);

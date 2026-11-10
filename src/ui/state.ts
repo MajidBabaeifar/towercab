@@ -4,7 +4,9 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ownerOnly } from "../autonomy.ts";
+
+import { ownerOnly, ownSource, RAISE_NOTES } from "../autonomy.ts";
+import { changesOf, flagOf, levelNow, type RaiseFlag, writtenLevel } from "../autonomy-change.ts";
 import { budgetChanges, capsOf } from "../budgets.ts";
 import { slotsText } from "../capacity.ts";
 import { agentCommentNotes, ignoredNotes, intentPaused } from "../commands.ts";
@@ -16,12 +18,16 @@ import type { Home } from "../home.ts";
 import type { Intent, IntentStore, Listing } from "../intents/types.ts";
 import { exitsOf, finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
 import { dataOf, forIntent, type Mission } from "../mission.ts";
+import { observerNote } from "../observer/evidence.ts";
+import { observerCosts } from "../observer/store.ts";
 import { testGrantsOf } from "../pipeline/access.ts";
 import type { SecretState } from "../pipeline/common.ts";
 import { section } from "../pipeline/prtext.ts";
+import { waitsInQueue } from "../queue.ts";
 import { type Kind, parseStored, stageSkip } from "../repo/readiness.ts";
 import { usualOwner } from "../repos.ts";
 import { currentRisk, type Risk, type RiskGate, riskWords } from "../risk.ts";
+import { canBoostIntent, scoreChanges, scoreWords } from "../scores.ts";
 import { actionSentence, actionsFor, shadowCosts } from "../shadow/store.ts";
 import { type Held, heldReleases, releaseLine, releaseTitle } from "../ship/releases.ts";
 import { MAX_FAILS } from "../ship/secret-steps.ts";
@@ -52,8 +58,10 @@ import type {
   ActivityPage,
   AirspaceView,
   AttemptView,
+  AutonomyView,
   Card,
   CardKind,
+  ControlsView,
   ExistingTestView,
   FocusHistory,
   GroundStop,
@@ -135,6 +143,9 @@ export interface UiSources {
   paused(): boolean;
   /** UI-111: when the owner paused (unix seconds); null for a pause made before the time was stored. */
   pausedAt(): number | null;
+  /** LOOP-113: the runs going now while paused (default 0), and whether `pause --now` is stopping them. */
+  runningSteps?(): number;
+  pausedNow?(): boolean;
   problems(): Problem[];
   version(): { commit: string; behind: number | null };
   /** The picker's whole list; the overview shows the first 5. */
@@ -374,6 +385,8 @@ export function stateOf(m: Mission, now: number, o: StateOpts = {}): StateView {
   if (isReady(m)) return state("queued", "ready to build");
   // UI-249: back from a wait and waiting for a free build slot is queued, not working.
   if (returningSince(m) !== null) return state("queued", "waiting for a build slot");
+  // LOOP-159: behind the head of the repo's merge queue.
+  if (waitsInQueue(m) && !m.held) return state("queued", "queued to merge");
   // LOOP-118: held by `after:` is a quiet wait of Towercab's own, never stalled.
   if (heldByAfter(m))
     return state("queued", dataOf<{ afterHold?: { text: string } }>(m).afterHold?.text ?? null);
@@ -691,7 +704,86 @@ const KIND_LABELS: Record<CardKind, string> = {
   question: "Question",
   blocked: "Blocked",
   release: "Release PR",
+  autonomy: "Autonomy raised",
 };
+
+/** UI-257: the autonomy control's data for an intent. */
+export function autonomyView(src: UiSources, i: Intent): AutonomyView {
+  const f = flagOf(src.db, i.id);
+  const cap = Number(src.db.meta(`a-cap:${i.repo}`) ?? 5);
+  return {
+    a: f ? f.from : writtenLevel(i),
+    cap: cap < 5 ? cap : null,
+    ...(f ? { flag: { who: f.who, from: f.from, to: f.to } } : {}),
+    notes: [...RAISE_NOTES],
+    locked: !src.running,
+    max: ownSource(i.source) ? 5 : 4,
+  };
+}
+
+/**
+ * UI-203, UI-205, UI-207, UI-208: the score controls, Boost, why an a5 plane waits, and the worker's note.
+ * `card` is the intent's wait card, when it has one: its reason is shown, nothing new is decided here.
+ */
+export function controlsOf(src: UiSources, i: Intent, hasMission: boolean, card: Card | null): ControlsView {
+  const av = autonomyView(src, i);
+  const p = priority(i.u, i.i);
+  const paused = intentPaused(src.db, i.id);
+  const unstarted = !hasMission && src.db.meta(`start:${i.id}`) === null;
+  const startNote = !unstarted
+    ? ""
+    : paused
+      ? " It is paused, so it starts when you resume it."
+      : " It also starts now.";
+  let waitWhy: string | null = null;
+  if (card && av.a === 5 && !i.done) {
+    // AUT-8, AUT-14, AUT-18: the cap and the access come first, then the reason the card already gives.
+    waitWhy =
+      av.cap !== null
+        ? `Waiting because the repo caps autonomy at a${av.cap}`
+        : card.access && card.access.domains.length + card.access.paths.length > 0
+          ? "Waiting for a decision on access"
+          : `Waiting because: ${(card.why || card.ask).replace(/\.$/, "")}`;
+  }
+  return {
+    u: i.u ?? 3,
+    i: i.i ?? 3,
+    priority: p,
+    parked: p < src.config.intents.cutoff,
+    canBoost: src.running && canBoostIntent(i) && (av.a < 5 || unstarted),
+    boostNote: `${RAISE_NOTES[5]}${startNote}`,
+    waitWhy,
+    // AUT-7: the worker's note stays until the owner sets the level again; it never hides the level shown.
+    lowered: i.lowerWhy && av.a < 5 ? `Lowered to a${av.a} by the worker: ${i.lowerWhy}` : null,
+  };
+}
+
+/** UI-258: a raise somebody else made, as a "Needs you" card with its two ways out. */
+export function flagCard(src: UiSources, i: Intent, f: RaiseFlag, now: number): Card {
+  const who = f.who === "unknown" ? "an unknown account" : f.who;
+  return {
+    intent: i.id,
+    title: i.title,
+    repo: i.repo,
+    kind: "autonomy",
+    kindLabel: KIND_LABELS.autonomy,
+    ask: `Accept a${f.to} or set it back to a${f.from}.`,
+    since: when(f.at, now),
+    brief: null,
+    why: `${who} raised ${i.title} from a${f.from} to a${f.to}. It still runs at a${f.from} until you decide.`,
+    details: null,
+    question: null,
+    access: null,
+    pr: null,
+    actions: [],
+    exits: [],
+    stuck: false,
+    mergeLabel: null,
+    done: null,
+    addRepo: null,
+    autonomy: autonomyView(src, i),
+  };
+}
 
 /** SHIP-31: a held release PR as a "Needs you" card. It has no intent; its key is `release:<repo>`. */
 export function releaseCard(h: Held, now: number): Card {
@@ -818,7 +910,7 @@ export function missionCard(
     done,
     addRepo: null,
     ...(d.reviewWarning ? { warning: d.reviewWarning } : {}),
-    ...(ownerOnly(intent?.a ?? null, m.a_at_pick) ? { onlyYou: true } : {}),
+    ...(ownerOnly(intent ? levelNow(src.db, intent) : null) ? { onlyYou: true } : {}),
     ...(dataOf<{ answeredBy?: string | null }>(m).answeredBy
       ? { decided_by_agent: dataOf<{ answeredBy?: string | null }>(m).answeredBy }
       : {}),
@@ -1027,12 +1119,21 @@ const NOT_STARTED: Phase[] = [
 export function groundStopOf(src: UiSources, s: Snap): GroundStop | null {
   if (s.paused) {
     const since = src.pausedAt();
+    // LOOP-113, LOOP-114: runs still going are told after the pause.
+    const running = src.runningSteps?.() ?? 0;
+    const stopping = running > 0 && (src.pausedNow?.() ?? false);
+    const tail =
+      running === 0
+        ? ""
+        : stopping
+          ? `: stopping ${running} running steps`
+          : `: ${running} running steps finishing`;
     return {
       kind: "owner",
       text:
         since === null
-          ? "GROUND STOP · paused"
-          : `GROUND STOP · paused since ${shortTime(since, s.now)} by you`,
+          ? `GROUND STOP · paused${tail}`
+          : `GROUND STOP · paused${tail} since ${shortTime(since, s.now)} by you`,
       since,
       canResume: src.running,
     };
@@ -1050,6 +1151,7 @@ export function groundStopOf(src: UiSources, s: Snap): GroundStop | null {
 /** UI-78: every open intent as a plane at its station, and what landed today. */
 export function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: number): AirspaceView {
   const stop = groundStopOf(src, s);
+  const withMissions = new Set(s.missions.map((m) => m.intent));
   const planes: Plane[] = [];
   const seen = new Set<string>();
   for (const m of s.missions) {
@@ -1110,6 +1212,16 @@ export function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: numbe
     });
   }
   planes.sort((a, b) => STATIONS.indexOf(a.station) - STATIONS.indexOf(b.station));
+  // UI-205, UI-207, UI-208: Boost, why an a5 plane waits, and the worker's lowering note.
+  const cards = new Map(
+    waitsOf(src, s)
+      .filter((w) => w.card.kind !== "autonomy")
+      .map((w) => [w.card.intent, w.card] as const),
+  );
+  for (const p of planes) {
+    const i = s.intents.get(p.intent);
+    if (i) p.controls = controlsOf(src, i, withMissions.has(p.intent), cards.get(p.intent) ?? null);
+  }
 
   const today = localDate(s.now);
   const dropped = s.listing?.droppedIds ?? new Set<string>();
@@ -1303,6 +1415,12 @@ export function spend(db: Db, now: number): Spend {
   }
   // SHD-18: the shadow's turns are part of the spend.
   for (const r of shadowCosts(db, now - 8 * DAY)) {
+    if (r.at > now) continue;
+    const k = localDate(r.at);
+    byDay.set(k, (byDay.get(k) ?? 0) + r.cost);
+  }
+  // OBV-10: so are the observer's runs.
+  for (const r of observerCosts(db, now - 8 * DAY)) {
     if (r.at > now) continue;
     const k = localDate(r.at);
     byDay.set(k, (byDay.get(k) ?? 0) + r.cost);
@@ -1533,6 +1651,20 @@ export function waitsOf(src: UiSources, s: Snap): Wait[] {
         intent: i,
       });
   }
+  // UI-257: every wait about an intent carries its autonomy control.
+  for (const w of waits) if (w.intent) w.card.autonomy = autonomyView(src, w.intent);
+  // UI-258: a raise somebody else made waits for the owner, one card per flagged intent.
+  for (const i of s.listing?.open ?? []) {
+    const f = flagOf(src.db, i.id);
+    if (f)
+      waits.push({
+        card: flagCard(src, i, f, s.now),
+        priority: priority(i.u, i.i),
+        order: f.at,
+        mission: null,
+        intent: i,
+      });
+  }
   // SHIP-31: a held release PR has no intent or mission; its priority is the default one (PRI-3).
   for (const h of heldReleases(src.db, s.now)) {
     if (h.card)
@@ -1586,11 +1718,19 @@ export async function overview(src: UiSources): Promise<Overview> {
   // UI-236: a draft of the shadow's is tagged wherever it shows.
   const drafted = (id: string) => s.intents.get(id)?.source === "shadow";
   for (const c of needs) if (drafted(c.intent)) c.shadow = true;
+  // UI-243: a proposal of the observer's is tagged the same way.
+  const observed = (id: string) => s.intents.get(id)?.source === "observer";
+  for (const c of needs) if (observed(c.intent)) c.observer = true;
   const need = needCounts(src, s);
   const withMission = new Set(s.missions.map((m) => m.intent));
   const list = src.upNext().filter((u) => !withMission.has(u.intent));
   const queued = [...ready, ...list.filter((u) => u.skip?.kind !== "parked").map((u) => queuedRow(s, u))];
-  for (const r of [...working, ...queued]) if (drafted(r.intent)) r.shadow = true;
+  for (const r of [...working, ...queued]) {
+    if (drafted(r.intent)) r.shadow = true;
+    if (observed(r.intent)) r.observer = true;
+    const i = s.intents.get(r.intent);
+    if (i) r.autonomy = autonomyView(src, i);
+  }
   // UI-255: the estimate before an intent starts, and spent against it while it runs.
   for (const r of [...working, ...ready]) {
     const m = s.missions.find((x) => x.intent === r.intent);
@@ -2296,12 +2436,46 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     });
   }
   if (shadowRows.length) timeline.sort((x, y) => x.at.at - y.at.at);
+  // UI-243: the first entry of an intent the observer proposed says so.
+  if (intent?.source === "observer") {
+    const t = intent.started ? Date.parse(intent.started) / 1000 : Number.NaN;
+    if (Number.isFinite(t)) {
+      timeline.unshift({
+        at: when(t, s.now),
+        text: "[observer] proposed this intent",
+        why: null,
+        lasted: null,
+        tone: "move",
+        observer: true,
+      });
+    }
+  }
   // AUT-32: replies Towercab ignored on an owner-only intent, noted once each.
-  const only = ownerOnly(intent?.a ?? null, last?.a_at_pick ?? null);
-  if (only) {
+  const only = ownerOnly(intent ? levelNow(src.db, intent) : null);
+  if (only || flagOf(src.db, realId)) {
     for (const n of ignoredNotes(src.db, realId)) {
       timeline.push({ at: when(n.at, s.now), text: n.text, why: null, lasted: null, tone: "move" });
     }
+  }
+  // AUT-34: a change made on the page, who and from → to.
+  for (const c of changesOf(src.db, realId)) {
+    timeline.push({
+      at: when(c.at, s.now),
+      text: `You changed autonomy from a${c.from} to a${c.to} on the page`,
+      why: null,
+      lasted: null,
+      tone: "move",
+    });
+  }
+  // LOOP-133: a change of urgency or importance, who and from → to.
+  for (const c of scoreChanges(src.db, realId)) {
+    timeline.push({
+      at: when(c.at, s.now),
+      text: `You changed ${scoreWords(c)} on the ${c.by === "ui" ? "page" : "command line"}`,
+      why: null,
+      lasted: null,
+      tone: "move",
+    });
   }
   const found = findRunFiles(src.home, realId);
   const attempts: AttemptView[] = missions.map((m, n) => {
@@ -2337,6 +2511,8 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     repo: intent?.repo ?? last?.repo ?? "",
     scores,
     ...(intent?.source === "shadow" ? { shadow: true } : {}),
+    ...(intent?.source === "observer" ? { observer: true } : {}),
+    ...(intent?.source === "observer" ? noteOf(intent.sections) : {}),
     canStart,
     state: st,
     sentence: sentenceOf(
@@ -2357,6 +2533,8 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     issue: intent?.issue ?? null,
     e2eLog: e2eLogOf(src.home.root, id),
     ...(only ? { onlyYou: "Only you can answer or approve this." } : {}),
+    ...(intent && !intent.done ? { autonomy: autonomyView(src, intent) } : {}),
+    ...(intent && !intent.done ? { controls: controlsOf(src, intent, !!live, card) } : {}),
     ...(intentPaused(src.db, realId) ? { paused: true } : {}),
     agent_comments: agentCommentNotes(src.db, realId).map((c) => ({
       agent: c.agent,
@@ -2578,6 +2756,42 @@ export async function activity(src: UiSources, f: ActivityFilters = {}): Promise
     detail: t.to_stage === "stopped" ? null : t.why,
   }));
   const intentRepo = (id: string) => s.intents.get(id)?.repo ?? null;
+  // UI-257: an autonomy change made on the page, `a: a3 → a4`.
+  for (const c of changesOf(src.db)) {
+    if (f.intent && c.intent !== f.intent) continue;
+    if (f.repo && intentRepo(c.intent) !== f.repo) continue;
+    if (since !== null && c.at < since) continue;
+    items.push({
+      key: `a${c.intent}:${c.at}`,
+      at: when(c.at, s.now),
+      time: clock(c.at),
+      day: dayWords(c.at, s.now),
+      kind: "settings",
+      intent: c.intent,
+      title: titleOf(s, c.intent),
+      repo: intentRepo(c.intent),
+      text: `a: a${c.from} → a${c.to}`,
+      detail: null,
+    });
+  }
+  // LOOP-133: a score change, `u: 3 → 4`.
+  for (const c of scoreChanges(src.db)) {
+    if (f.intent && c.intent !== f.intent) continue;
+    if (f.repo && intentRepo(c.intent) !== f.repo) continue;
+    if (since !== null && c.at < since) continue;
+    items.push({
+      key: `s${c.intent}:${c.at}`,
+      at: when(c.at, s.now),
+      time: clock(c.at),
+      day: dayWords(c.at, s.now),
+      kind: "settings",
+      intent: c.intent,
+      title: titleOf(s, c.intent),
+      repo: intentRepo(c.intent),
+      text: scoreWords(c),
+      detail: null,
+    });
+  }
   logLines(src).forEach((l, n) => {
     if (MOVE_LOG.test(l.text)) return;
     const id = ID_IN_LOG.exec(l.text)?.[1] ?? null;
@@ -2646,6 +2860,12 @@ const SECRET_PATTERNS: RegExp[] = [
 ];
 
 /** Text with tokens, bot tokens, bearer headers and private keys taken out (UI-4). */
+/** UI-243: an observer proposal's evidence and gain as the page's `observerNote`, or nothing. */
+function noteOf(sections: Map<string, string>): { observerNote?: { evidence: string; gain: string } } {
+  const n = observerNote(sections);
+  return n ? { observerNote: n } : {};
+}
+
 export function redact(text: string, config?: Config): string {
   let out = text;
   const bot = config?.telegram?.botToken;

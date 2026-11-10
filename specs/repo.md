@@ -1,6 +1,6 @@
 # Repo files
 
-**Status:** Live: REPO-1..13, REPO-14..19, REPO-20..27, REPO-30..33, REPO-38..42 · **Prefix:** REPO
+**Status:** Live: REPO-1..13, REPO-14..19, REPO-20..27, REPO-30, REPO-33, REPO-38..42 · **Prefix:** REPO
 
 ## Purpose
 
@@ -464,7 +464,13 @@ When the owner clicks Apply, Towercab applies the standard settings to that repo
   backup, left as it is: <what>`. It prints what it restored and the backup's time; no backup → `<repo>
   has no saved settings`; unknown repo → as in [LOOP-69](loop.md)'s text; a forbidden write is
   [REPO-40](#repo-40--an-apply-the-owner-cannot-make)'s message. It does not need the loop to be running.
-- Verified by: `repo: apply runs the script then checks again`, `repo: the required check names come from the plan`, `repo: a green main gets the whole apply`, `repo: a main not green gets everything but the ruleset`, `repo: a release without skip-ruleset applies nothing to a repo not green`, `repo: apply backs up everything the script can change and keeps 5`, `repo: the backup includes another branch the plan names`, `repo: no backup, no apply`, `cli: settings restore writes back what was saved`, `cli: settings restore lists what was added since and leaves it`
+- **Unreadable rulesets.** When the current rulesets cannot be read, restore skips the whole ruleset
+  part (no `PUT`, no `POST`) and lists `Could not read the current rulesets: <reason>; rulesets left as they are`, because a
+  ruleset that still exists would be created twice. The other parts are still restored.
+- **A refused apply after a partial one.** When a 403 ends an apply after the script already changed
+  something, Towercab runs `--check` again before it stores a result, so the card shows the gaps that really remain and
+  never `Nothing applied` over stale gaps. A re-check that cannot run keeps the last result and says the apply stopped part-way.
+- Verified by: `repo: apply runs the script then checks again`, `repo: the required check names come from the plan`, `repo: a green main gets the whole apply`, `repo: a main not green gets everything but the ruleset`, `repo: a release without skip-ruleset applies nothing to a repo not green`, `repo: apply backs up everything the script can change and keeps 5`, `repo: the backup includes another branch the plan names`, `repo: no backup, no apply`, `cli: settings restore writes back what was saved`, `cli: settings restore lists what was added since and leaves it`, `cli: settings restore skips rulesets it cannot read`, `repo: a refused apply after a partial one re-checks before storing`
 
 ### REPO-32 · A missing permission is said once
 
@@ -628,6 +634,99 @@ The owner is asked to add a verifying section only when Towercab found no check 
   reported in that ask, not proposed.
 - Verified by: `repo: no passing draft asks the owner`, `repo: the ask names what was tried`
 
+### REPO-43 · A per-repo overlay outside the checkout
+
+Towercab can read a repo's settings and checks from a folder in its own config directory, so a shared team repo needs no Towercab file.
+
+- The overlay of repo `<name>` is `<config dir>/repos/<name>/` (default `~/.config/towercab/repos/<name>/`), with
+  optional `TOWERCAB.md` and `verifying.md`. `TOWERCAB.md` has the front matter of REPO-1; `verifying.md` holds the
+  blocks of REPO-2 (with or without the `## Verifying your work` heading). Both go through the same parser and
+  grammar as the repo's files; an error reads `overlay <file>: <where>: <what>` and is handled like REPO-18's invalid file.
+- `loadOverlay(configDir, name)` reads regular files only (a symlink, directory or non-UTF-8 file → invalid) and
+  runs in the loop's process, never in a sandbox. `<name>` is the repo's configured name; one containing `/`, `..`
+  or a leading `.` has no overlay.
+- The overlay lives outside every checkout, and no sandbox mounts it writable or at all, so a worker cannot
+  change it ([PIP-24](pipeline.md)). No Towercab file needs to be committed to the repo.
+- Verified by: `repo: overlay files are read from the config directory`, `repo: an invalid overlay file is reported`, `repo: an overlay path escape is refused`, `repo: the overlay is not mounted in the sandbox`
+
+### REPO-44 · Where each setting comes from
+
+The repo's own files come first, and the overlay fills only what the repo leaves out.
+
+- Settings are merged per key. A key set in the base branch's `TOWERCAB.md` is the repo's. A key it lacks (or a repo
+  with no `TOWERCAB.md`) takes the overlay's value, else the default. The checks come from the repo (REPO-45's files)
+  when it has a non-empty ` ```checks ` block; only otherwise from the overlay's `verifying.md`, and then Towercab
+  does not draft a setup PR (REPO-34..36), because it has checks.
+- Every merged value carries its source, `repo`, `overlay` or `default`, kept for REPO-47.
+- Verified by: `repo: a repo key wins over the overlay`, `repo: an absent key takes the overlay`, `repo: the overlay's checks apply only without repo checks`, `repo: an overlay with checks skips the setup PR`
+
+### REPO-45 · Checks from AGENTS.md
+
+The verifying section is also read from `AGENTS.md` when `CLAUDE.md` has none.
+
+- `loadRepoFiles` (REPO-1) also reads `AGENTS.md` from the base branch with the same rules. A `CLAUDE.md` with a
+  non-empty ` ```checks ` block under `## Verifying your work` is used alone; otherwise `AGENTS.md`'s section
+  (REPO-2) is used. The two are never mixed block by block. Neither → REPO-44's overlay, then REPO-5.
+- Verified by: `repo: verifying section read from AGENTS.md`, `repo: CLAUDE.md verifying wins over AGENTS.md`
+
+### REPO-46 · The overlay can only tighten
+
+When the repo sets a limit itself, the overlay can make it stricter but never looser.
+
+- For a key the repo sets, the effective value is the stricter of the two: `max_autonomy` the lower number;
+  `protected` the union of both lists. Any other key the repo sets (`tests`, `live`, `releases`, `kind`, `readiness`,
+  `waive`, `go_live`, `workers`, `ahead`) keeps the repo's value, and the overlay's different value is refused with
+  the line below.
+- For a key the repo leaves out, the overlay is held to Towercab's default: it may be as strict or stricter, never
+  looser. Accepted: `max_autonomy` 1–5 (the default 5 is the loosest), `protected` globs (any list only adds),
+  `releases: manual`, `workers` and `ahead` at or below their defaults, `readiness`, and `kind` only under the rule below. Refused: `live`,
+  `waive` and `go_live` (they skip a requirement or state a way to go live on its own), `tests` other than the
+  default list, `workers`/`ahead` above the default, and overlay checks that check nothing (REPO-35's rule: at
+  least one command reading the repo's own files). A refused key is dropped, not the whole overlay.
+- An overlay `kind` (the repo has none) is accepted only when it equals `suggestKind` ([REPO-21](#repo-21--suggesting-a-kind)),
+  or when its `requiredSetup` ([REPO-22](#repo-22--required-setup-per-kind)) contains every item the suggested kind
+  requires, so deploy, live tests and the go-live statement are kept (`service` over `site`, `cli` or `library`;
+  `site` over `spec-only`). Otherwise it is refused with `overlay kind refused: <k> drops <items> that <inferred>
+  needs`, and the suggested kind is used. With no suggestion, any valid kind is accepted, since each adds to the
+  every-repo list. An accepted overlay kind stays unconfirmed (REPO-20): readiness only warns, as for a suggestion.
+- Every refusal, for a key the repo sets or leaves out, is one line: `overlay <key> refused: looser than <the repo's
+  value|the default>`. It shows in `doctor` (REPO-47) and on the repo page (UI-276). The overlay never adds to the
+  granted paths of a plan ([AUT-14](autonomy.md)), so a protected glob from it blocks like the repo's own.
+- The guard still protects the repo's own `CLAUDE.md`, `AGENTS.md`, `REVIEW.md` and `TOWERCAB.md` and `.git/**`
+  whatever the overlay says (REPO-8); an overlay cannot remove a path from the protected list.
+- Verified by: `repo: the overlay lowers max_autonomy`, `repo: the overlay cannot raise max_autonomy`, `repo: overlay protected paths add to the repo's`, `repo: a loosening overlay key is refused with one line`, `repo: an omitted key is held to the default`, `repo: an overlay that loosens the default is refused`, `repo: overlay checks that check nothing are refused`, `repo: an overlay kind matching the inferred one is accepted`, `repo: an overlay kind that keeps the inferred setup is accepted`, `repo: an overlay kind that drops inferred setup is refused`, `repo: an overlay kind stays unconfirmed`, `repo: the overlay cannot unprotect the repo's own files`
+
+### REPO-47 · Doctor shows where settings come from
+
+`towercab doctor` says, for each setting of a repo, whether it came from the repo, the overlay or the default.
+
+- For each repo with an overlay, `doctor` prints `<name>: <key> = <value> (repo|overlay|default)` for `max_autonomy`,
+  `protected`, the checks, and each other key in effect, plus REPO-46's refusal lines, REPO-49's replaced-checks line and REPO-43's errors.
+  A repo without an overlay prints nothing extra. `doctor` changes nothing and its exit code does not change for a
+  valid overlay; an invalid one counts as a failed check like an invalid `TOWERCAB.md`.
+- Verified by: `doctor: settings show their source`, `doctor: an invalid overlay fails`, `doctor: no overlay prints no source lines`
+
+### REPO-48 · Settings in the overlay are not changed by a pull request
+
+A settings change that Towercab makes never writes the overlay into the repo, and never opens a PR for a value that only the overlay holds.
+
+- REPO-16's settings PR and REPO-19's move change only the repo's `TOWERCAB.md`. A key held by the overlay is shown as
+  overlay-sourced (UI-276); changing it is done by editing the overlay file, and the page says so, with its path.
+- Verified by: `repo: a settings PR never copies overlay values`, `repo: an overlay key is not saved through a PR`
+
+### REPO-49 · Owner told when repo checks replace the overlay's
+
+When a repo starts to have checks of its own and an overlay's checks exist, the owner is told once, with both named, and nothing switches silently.
+
+- Trigger: the base branch has a non-empty ` ```checks ` block (CLAUDE.md or AGENTS.md, REPO-45) and the overlay's
+  `verifying.md` also has one. From then on the repo's checks run (REPO-44).
+- One notice per repo and per pair of block texts, kept in `meta` so a restart or the next fetch does not repeat it:
+  a notice card on the repo's page and its card in the All view (UI-276) and one Telegram message
+  ([TG](telegram.md), sent once, no buttons): `<name>: the repo now has its own checks (<file> on <base>), so the
+  overlay's checks in <overlay path> are no longer used.` Changing either block's text sends a new notice.
+- The notice changes nothing and asks nothing; an intent already running keeps the checks it started with.
+- Verified by: `repo: repo checks replacing overlay checks send one notice`, `repo: the same pair does not notify twice`, `repo: a running intent keeps its checks`
+
 **Grammar** (`src/repo/markdown.ts`)
 
 - Every file: UTF-8, a leading BOM dropped, lines split on `\n`, a trailing `\r` dropped. The first
@@ -661,3 +760,10 @@ The owner is asked to add a verifying section only when Towercab found no check 
   checker is left out and said so in the PR body, rather than guessed; a draft that cannot be shown to
   pass is never proposed (the owner is asked instead); and no setup PR is merged by Towercab if its
   review finds a command that is not a pure check.
+- The overlay (REPO-43..49) only ever tightens: where it conflicts with the repo or with Towercab's default,
+  the value is refused and the stricter one stands. A refused key is dropped alone, the rest of the overlay applies.
+- An overlay `kind` that is accepted stays unconfirmed (REPO-20), so it can warn but never hold work back; only
+  a `kind` committed to the repo does that, as today. With no inferred kind any valid kind is accepted, because
+  every kind only adds required setup.
+- A repo that gains its own checks overrides the overlay's at once, with one notice (REPO-49) and no question;
+  running intents keep the checks they started with.

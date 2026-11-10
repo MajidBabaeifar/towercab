@@ -11,8 +11,8 @@ import { type ClaudeRun, parseRun, prepareRun } from "../claude.ts";
 import type { Config, RepoConfig } from "../config.ts";
 import type { GitLabForge } from "../forge/gitlab.ts";
 import { isGitlab } from "../forge/types.ts";
-import type { Forge } from "../forge.ts";
-import type { Clock, GitHub } from "../handlers.ts";
+import { type Forge, must } from "../forge.ts";
+import type { Clock } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import { newId, slugOf } from "../intents/id.ts";
 import { plainLine, TITLE_MAX } from "../intents/naming.ts";
@@ -25,10 +25,8 @@ import { fence, render } from "../pipeline/prompts.ts";
 import { parseResult, SCHEMAS, type ScoreResult } from "../pipeline/schemas.ts";
 import { isParked, pickOrder } from "../priority.ts";
 import { checkoutRoot } from "../service.ts";
-import { check, type Tools } from "../tools.ts";
-import { prsOnBranch } from "./branches.ts";
+import type { Tools } from "../tools.ts";
 import { stageComment } from "./comments.ts";
-import { forgeOf } from "./forge.ts";
 
 /** The label that makes another author's issue eligible (INT-20). */
 export const TRIGGER_LABEL = "towercab";
@@ -53,7 +51,7 @@ export interface IssueDeps {
   tools: Tools;
   clock: Clock;
   store: IntentStore;
-  github: GitHub;
+  github: Forge;
   /** INT-64: GitLab, for the repos on `gitlab:…`; without it those repos are not polled. */
   gitlab?: GitLabForge | null;
   log(line: string): void;
@@ -91,7 +89,7 @@ type IssueApi = Pick<Forge, "listIssues" | "readIssue" | "commentOnIssue" | "add
 
 /** The host that has `repo`'s issues; null when a GitLab repo has no `[gitlab]` to ask. */
 function apiFor(d: IssueDeps, repo: RepoConfig): IssueApi | null {
-  if (!isGitlab(repo.github)) return forgeOf(d.github);
+  if (!isGitlab(repo.github)) return d.github;
   return d.gitlab ?? null;
 }
 
@@ -321,16 +319,6 @@ function issueText(v: Viewed): string {
   return `Title: ${oneLine(v.title, 300)}\nLabels: ${names(v.labels).join(", ") || "none"}\n\n${body}`;
 }
 
-async function gh(
-  d: IssueDeps,
-  github: string,
-  args: string[],
-  what: string,
-  input?: string,
-): Promise<string> {
-  return check(await d.github.gh(github, args, input === undefined ? {} : { input }), what);
-}
-
 async function addLabel(
   d: IssueDeps,
   repo: RepoConfig,
@@ -355,23 +343,7 @@ async function queuedByOwner(d: IssueDeps, repo: RepoConfig, n: number): Promise
     const who = await d.gitlab!.labelAddedBy(repo.github, n, QUEUED_LABEL);
     return !!who && who.toLowerCase() === meFor(d, repo).toLowerCase();
   }
-  const out = await gh(
-    d,
-    repo.github,
-    [
-      "api",
-      `repos/${repo.github}/issues/${n}/events`,
-      "--paginate",
-      "--jq",
-      '.[] | select(.event == "labeled") | {label: .label.name, actor: .actor.login}',
-    ],
-    "gh api issue events",
-  );
-  const events = out
-    .split("\n")
-    .filter((l) => l.trim())
-    .map((l) => JSON.parse(l) as { label: string; actor: string | null })
-    .filter((e) => e.label === QUEUED_LABEL);
+  const events = await d.github.labelEvents(repo.github, n, QUEUED_LABEL);
   const last = events[events.length - 1];
   return !!last?.actor && last.actor.toLowerCase() === d.github.me.toLowerCase();
 }
@@ -428,25 +400,7 @@ function intentsRepo(poll: Poll): string {
 async function takenIds(d: IssueDeps, poll: Poll, listing: Listing): Promise<Set<string>> {
   if (poll.taken) return poll.taken;
   const intents = intentsRepo(poll);
-  const open = JSON.parse(
-    await gh(
-      d,
-      intents,
-      [
-        "pr",
-        "list",
-        "-R",
-        intents,
-        "--state",
-        "open",
-        "--limit",
-        String(LIMIT),
-        "--json",
-        "headRefName,title",
-      ],
-      "gh pr list",
-    ),
-  ) as { headRefName: string; title?: string }[];
+  const open = await d.github.openPrTitles(intents, LIMIT);
   const taken = new Set<string>([
     ...listing.open.map((i) => i.id),
     ...listing.done.map((i) => i.id),
@@ -455,7 +409,7 @@ async function takenIds(d: IssueDeps, poll: Poll, listing: Listing): Promise<Set
   ]);
   for (const p of open) {
     const m = /^docs\(intents\): add (\S+) /.exec(p.title ?? "");
-    if (p.headRefName.startsWith("issue/") && m) taken.add(m[1]!);
+    if (p.branch.startsWith("issue/") && m) taken.add(m[1]!);
   }
   poll.taken = taken;
   return taken;
@@ -489,16 +443,14 @@ async function propose(
   );
   // INT-61: the owner's own label is their yes, so the intent goes straight to `main` with no PR.
   if (branch === "main") return "";
-  const out = await gh(
-    d,
-    intents,
-    ["pr", "create", "-R", intents, "--base", "main", "--head", branch, "--title", title, "--body-file", "-"],
-    "gh pr create",
-    proposalBody({ issueUrl, reasons, a: n.a ?? d.config.intents.issueA, lost }),
-  );
-  const m = /\/pull\/(\d+)/.exec(out);
-  if (!m) throw new Error(`gh pr create printed no PR URL: ${oneLine(out, 200)}`);
-  return prUrl(intents, Number(m[1]));
+  const n2 = await d.github.openPr(intents, {
+    base: "main",
+    head: branch,
+    title,
+    body: proposalBody({ issueUrl, reasons, a: n.a ?? d.config.intents.issueA, lost }),
+  });
+  if (n2 === null) throw new Error("gh pr create printed no PR URL");
+  return prUrl(intents, n2);
 }
 
 /** INT-25: tell the issue its intent PR waits for the owner, then label it. */
@@ -534,14 +486,9 @@ async function pollIssue(
       d.log(`${issue.url}: closed; dropped ${intent.id}`);
     } else if (!intent && labels.includes(PROPOSED_LABEL)) {
       const intents = intentsRepo(poll);
-      for (const pr of await prsOnBranch(d.github, intents, branch)) {
+      for (const pr of await d.github.prsOnBranch(intents, branch)) {
         if (pr.state !== "OPEN") continue;
-        await gh(
-          d,
-          intents,
-          ["pr", "close", String(pr.number), "-R", intents, "--comment", "The issue was closed."],
-          "gh pr close",
-        );
+        must(await d.github.closePr(intents, pr.number, "The issue was closed."), "gh pr close");
         d.log(`${issue.url}: closed; closed its intent PR #${pr.number}`);
       }
     }
@@ -564,7 +511,7 @@ async function pollIssue(
   if (await mentionedInUnreadable(d, listing, issue.url)) return;
   // INT-26: a PR from this issue's branch, in any state, is its one proposal; a closed one is a no.
   const intents = intentsRepo(poll);
-  const prs = await prsOnBranch(d.github, intents, branch);
+  const prs = await d.github.prsOnBranch(intents, branch);
   const latest = prs.reduce<(typeof prs)[number] | null>((a, p) => (!a || p.number > a.number ? p : a), null);
   let lost = false;
   if (prs.length) {

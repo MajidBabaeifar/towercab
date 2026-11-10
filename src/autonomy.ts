@@ -7,9 +7,9 @@ export const OWNER_MERGES = 3;
 /** The owner-only level (AUT-31): every wait goes to the owner, and only they decide. */
 export const OWNER_ONLY = 0;
 
-/** AUT-31: whether an intent is owner-only: its `a` now or at pick is 0, so nothing can raise it. */
-export function ownerOnly(aNow: number | null, aAtPick: number | null = null): boolean {
-  return aNow === OWNER_ONLY || aAtPick === OWNER_ONLY;
+/** AUT-31, AUT-8: whether an intent is owner-only: its current level is 0 (a raise applies from the next gate). */
+export function ownerOnly(aNow: number | null): boolean {
+  return aNow === OWNER_ONLY;
 }
 
 /** AUT-33: the one line the command line prints for an a0 intent. */
@@ -18,7 +18,7 @@ export function ownerOnlyLine(id: string): string {
 }
 
 /** The source that may reach a5 (AUT-13): the owner's own intents (a missing source is the owner's file). */
-function ownSource(source: string | null): boolean {
+export function ownSource(source: string | null): boolean {
   return source === null || source === "" || source === "me";
 }
 
@@ -26,19 +26,28 @@ function ownSource(source: string | null): boolean {
 export const DEFAULT_A = 5;
 
 /**
- * Effective `a` (AUT-8, AUT-9, AUT-13): the minimum of `a` at pick, `a` now and the repo cap, over the
- * `a`s present; none → a5 (`DEFAULT_A`). An intent whose `source` isn't `me` gets at most 4.
+ * Effective `a` (AUT-8, AUT-9, AUT-13): the minimum of the intent's current `a` and the repo cap; no `a` →
+ * a5 (`DEFAULT_A`). An intent whose `source` isn't `me` gets at most 4.
  */
-export function effectiveA(
-  aAtPick: number | null,
-  aNow: number | null,
-  cap: number,
-  source: string | null,
-): number {
-  const as = [aAtPick, aNow].filter((a): a is number => a !== null);
-  const a = Math.min(...(as.length ? as : [DEFAULT_A]), cap);
+export function effectiveA(aNow: number | null, cap: number, source: string | null): number {
+  const a = Math.min(aNow ?? DEFAULT_A, cap);
   return ownSource(source) ? a : Math.min(a, 4);
 }
+
+/** AUT-9, AUT-13, AUT-35: the level an intent gets when its `a:` line is missing. */
+export function defaultLevel(source: string | null): number {
+  return ownSource(source) ? DEFAULT_A : 4;
+}
+
+/** UI-257: what Towercab may do without asking at each level, for the confirm step of a raise. */
+export const RAISE_NOTES: readonly string[] = [
+  "Only you decide: every wait, merge and answer is yours.",
+  "You approve the spec and the plan and merge every change.",
+  "You approve the spec and the plan and merge every change; the worker may use the access it asks for.",
+  "You approve the plan and merge every change; Towercab passes the spec on its own when nothing is open.",
+  "Towercab merges the change itself when its checks pass, the review approves and the risk is low; the worker gets no access beyond the plan.",
+  "Towercab merges on its own unless the risk is high, and the worker may reach any website and edit protected files.",
+];
 
 /** A change's risk (AUT-16). */
 export type RiskLevel = "low" | "medium" | "high";
@@ -142,12 +151,12 @@ export type ShadowAction = "reply" | "merge" | "start" | "boost" | "drop" | "pau
  * where to act. Its action layer must call this before it runs anything.
  */
 export function shadowVerdict(
-  a: { aNow: number | null; aAtPick?: number | null },
+  a: { aNow: number | null },
   action: ShadowAction,
   ownerAsked: boolean,
   links: { page: string; pr?: string | null },
 ): { ok: true } | { ok: false; reason: string } {
-  if (!ownerOnly(a.aNow, a.aAtPick ?? null)) return { ok: true };
+  if (!ownerOnly(a.aNow)) return { ok: true };
   if (action === "pause" && ownerAsked) return { ok: true };
   const where = links.pr ? `${links.page} or ${links.pr}` : links.page;
   return { ok: false, reason: `this intent is only yours: act on it at ${where}` };
@@ -155,17 +164,21 @@ export function shadowVerdict(
 
 /** What a worker may reach without asking at an effective `a` (AUT-14). */
 export interface AccessPolicy {
-  /** `list`: the default list plus the plan's (and, at a1–a3, mid-build requests); `open`: any domain. */
-  network: "list" | "open";
+  /** `list`: the built-in list plus the plan's and the owner's answers; the network is never open (AUT-26). */
+  network: "list";
   /** `writable`: every protected path but `.git`; `planned`: only those the plan grants. */
   protectedPaths: "writable" | "planned";
-  /** A mid-build request: granted; granted but the PR goes to the owner; never needed. */
-  request: "granted" | "owner merges" | "not needed";
+  /** A mid-build request is a question to the owner at every level (AUT-15); at a4 the PR then goes to them too. */
+  request: "asks the owner" | "asks the owner, then the PR goes to the owner";
 }
 
 /** AUT-14's table, at the effective `a`. */
 export function accessPolicy(a: number): AccessPolicy {
-  if (a <= OWNER_MERGES) return { network: "list", protectedPaths: "writable", request: "granted" };
-  if (a === 5) return { network: "open", protectedPaths: "writable", request: "not needed" };
-  return { network: "list", protectedPaths: "planned", request: "owner merges" };
+  if (a <= OWNER_MERGES) return { network: "list", protectedPaths: "writable", request: "asks the owner" };
+  if (a === 5) return { network: "list", protectedPaths: "writable", request: "asks the owner" };
+  return {
+    network: "list",
+    protectedPaths: "planned",
+    request: "asks the owner, then the PR goes to the owner",
+  };
 }

@@ -425,7 +425,6 @@ live, and when its work stops for good its line goes.
   retries the entry on the next pass; any other refusal (a symlink, bytes that aren't UTF-8) is
   logged and the mission moves on.
 - Verified by: `features: a picked intent gets an in-progress line, other lines stay byte-identical`, `features: done marks the line live, keeping the owner's wording`, `features: a dropped intent's line is removed`, `features: the loop tracks an intent from pick to done`, `features: a dropped intent's line goes`, `features: an unreadable feature list doesn't hold a mission`
-
 ### INT-39 · Writing the list from the repo
 
 When a repo has no list of its own yet, Towercab reads the repo's README and specs once and writes
@@ -720,6 +719,15 @@ The owner can add what they wrote to an existing open or parked intent instead o
 - `canAddTo(intent)` in code (not the agent) decides this, so the form and `add` offer "add to this one" only where it will be accepted. Only a direct writer (INT-71) may add: a contributor's proposal cannot edit an intent on `main`.
 - The addition is on the intent's timeline (who, through which channel).
 - Verified by: `intents: addToIntent appends to the matching sections`, `intents: addToIntent creates a missing section before the Towercab sections`, `intents: addToIntent leaves the front matter alone`, `intents: addToIntent refuses a done intent`, `intents: addToIntent refuses an intent past design and says to write a new one`, `intents: addToIntent refuses a contributor`, `intents: an addition is on the timeline`
+
+### INT-75 · A covered intent keeps its feature line
+
+An intent closed as covered by another keeps its line in the feature list, marked with the intent that covered it.
+
+- Replaces INT-38's removal for this case only: entering `done` by `covered_by` (LOOP-156) keeps the line and appends `(covered by <id>)`, the ID linked as `DONE.md` links it (INT-6). The status is `live` once the covering intent's line is live and `in progress` before, and the line follows the covering line from then on. The owner's wording stays; only the status word and the mark change (INT-37).
+- When the covering intent is dropped or stopped (LOOP-158), the covered intent stays done and its line goes back to its own wording, without the covered mark, as `- [planned] <sentence> (not delivered) <!-- intent <id> -->`; it is not removed. If the covering intent later ends done again (a reopen that finishes), the line is marked covered again.
+- `reopen` (LOOP-157) removes the mark and restores the status the line had before the cover; a `(not delivered)` line becomes `in progress`. Entering `stopped` still removes the line (INT-38).
+- Verified by: `features: a covered intent keeps its line marked covered by the other`, `features: a covered line follows the covering intent's status`, `features: reopen restores the feature line`, `features: a dropped covering intent marks the line not delivered`
 
 ## Out of scope
 

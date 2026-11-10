@@ -79,7 +79,7 @@ test("issues: an unlabelled issue by someone else is never read", async () => {
   expect((await intents(p)).open).toHaveLength(0);
   expect(proposals(p)).toEqual([]);
   expect(p.claudeCalls).toEqual([]);
-  expect(p.issueCalls.filter((c) => c.startsWith("issue view"))).toEqual([]);
+  expect(p.forge.calls.filter((c) => c.startsWith("read-issue"))).toEqual([]);
   expect(p.logs.join("\n")).not.toContain("SECRET");
 });
 
@@ -233,7 +233,7 @@ test("issues: nothing from an issue reaches main before the owner merges", async
   expect(p.claudeCalls).toHaveLength(1);
   expect(it.labels).toEqual(["towercab:proposed"]);
   // Towercab never merges it itself.
-  expect(p.tools.lines("gh").filter((l) => l.startsWith("pr merge"))).toEqual([]);
+  expect(p.forge.calls.filter((l) => l.startsWith("merge "))).toEqual([]);
 });
 
 test("issues: proposals in the same minute get different IDs", async () => {
@@ -256,11 +256,11 @@ test("issues: a crash before the comment does not write twice", async () => {
   const { p, poll } = await world();
   p.queue("score", scored());
   const it = p.issue();
-  p.issueFail = (args) => (args[1] === "comment" ? "HTTP 502" : null);
+  p.forge.failNext("commentOnIssue", 99, "HTTP 502");
   await expect(poll()).rejects.toThrow("HTTP 502");
   expect(proposals(p)).toHaveLength(1);
   expect(it.comments).toEqual([]);
-  p.issueFail = null;
+  p.forge.failNext("commentOnIssue", 0);
   await poll();
   expect(proposals(p)).toHaveLength(1);
   expect(p.claudeCalls).toHaveLength(1);
@@ -268,9 +268,9 @@ test("issues: a crash before the comment does not write twice", async () => {
   expect(it.labels).toContain("towercab:proposed");
   // And once merged, the queued comment fails and is retried without a second intent.
   await accepted(p);
-  p.issueFail = (args) => (args[1] === "comment" ? "HTTP 502" : null);
+  p.forge.failNext("commentOnIssue", 99, "HTTP 502");
   await expect(poll()).rejects.toThrow("HTTP 502");
-  p.issueFail = null;
+  p.forge.failNext("commentOnIssue", 0);
   await poll();
   expect((await intents(p)).open).toHaveLength(1);
   expect(it.comments).toHaveLength(2);
@@ -305,7 +305,7 @@ test("issues: a5 label stays at a4", async () => {
   await poll();
   const i = (await accepted(p)).open[0]!;
   expect(i.a).toBe(5);
-  expect(effectiveA(i.a, i.a, 5, i.source)).toBe(4);
+  expect(effectiveA(i.a, 5, i.source)).toBe(4);
 });
 
 test("issues: the proposed comment links the PR", async () => {

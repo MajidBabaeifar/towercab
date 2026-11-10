@@ -16,6 +16,8 @@ export default defineConfig({
     "limits.spec.ts",
     "shadow.spec.ts",
     "overview-order.spec.ts",
+    "autonomy.spec.ts",
+    "autonomy-inbox.spec.ts",
     "inbox.spec.ts",
     "inbox-keys.spec.ts",
     "palette.spec.ts",

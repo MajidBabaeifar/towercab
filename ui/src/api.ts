@@ -80,6 +80,21 @@ export function openMove(repo: string): Promise<ActionReply> {
   return post({ action: "repo-move", repo });
 }
 
+/** UI-257: set an intent's autonomy (0–5); the page is the owner (AUT-35). */
+export function setAutonomy(id: string, a: number): Promise<ActionReply> {
+  return post({ action: "autonomy", id, a, actor: "owner" });
+}
+
+/** UI-204: change urgency and/or importance (1-5); the reply carries the new priority. */
+export function setScores(id: string, change: { u?: number; i?: number }): Promise<ActionReply> {
+  return post({ action: "scores", id, ...change, actor: "owner" });
+}
+
+/** UI-205: a5, and the start of an intent that has not started. */
+export function boostIntent(id: string): Promise<ActionReply> {
+  return post({ action: "boost", id, actor: "owner" });
+}
+
 /** UI-144: read the repo again for its feature list. */
 export function refreshFeatures(repo: string): Promise<ActionReply> {
   return post({ action: "features", repo });

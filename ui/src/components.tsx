@@ -21,6 +21,7 @@ import type {
   When,
 } from "../../src/ui/view.ts";
 import { AddRepoForm } from "./AddRepo.tsx";
+import { AutonomyControl, FlagButtons } from "./AutonomyControl.tsx";
 import {
   acceptProposed,
   act,
@@ -124,6 +125,31 @@ export function Id({ id }: { id: string }) {
 /** UI-236: marks what the shadow wrote or did; a text label, not colour alone. */
 export function ShadowTag() {
   return <span class="shadow-tag">[shadow]</span>;
+}
+
+/** UI-243: marks what the observer proposed; a text label, not colour alone. */
+export function ObserverTag() {
+  return <span class="shadow-tag observer-tag">[observer]</span>;
+}
+
+/** UI-243: the evidence links and the expected gain of an observer proposal, shown before the rest. */
+export function ObserverNote({ note }: { note: { evidence: string; gain: string } }) {
+  return (
+    <section class="observer-note" aria-label="Evidence and expected gain">
+      {note.evidence ? (
+        <>
+          <p class="access-head">Evidence</p>
+          <Markdown text={note.evidence} />
+        </>
+      ) : null}
+      {note.gain ? (
+        <>
+          <p class="access-head">Expected gain</p>
+          <Markdown text={note.gain} />
+        </>
+      ) : null}
+    </section>
+  );
 }
 
 export function Section(props: {
@@ -475,6 +501,7 @@ export function NeedsCard({
               <Link href={`/i/${key}`}>{card.title}</Link>
             )}
             {card.shadow ? <ShadowTag /> : null}
+            {card.observer ? <ObserverTag /> : null}
           </h3>
           <p class="meta">
             {card.repo}
@@ -489,6 +516,13 @@ export function NeedsCard({
       ) : null}
       <p class="ask">{card.ask}</p>
       {card.why ? <p class="why">{card.why}</p> : null}
+      {card.autonomy ? (
+        card.kind === "autonomy" ? (
+          <FlagButtons intent={key} view={card.autonomy} readOnly={readOnly} />
+        ) : (
+          <AutonomyControl intent={key} view={card.autonomy} readOnly={readOnly} compact />
+        )
+      ) : null}
       {card.warning ? (
         <p class="why review-warning" role="status">
           <Alert size={16} /> {card.warning}
@@ -829,13 +863,14 @@ export function StepsChecklist({
 }
 
 /** UI-59: a moving intent. */
-export function WorkRow({ row }: { row: Row }) {
+export function WorkRow({ row, readOnly = false }: { row: Row; readOnly?: boolean }) {
   return (
     <Link class="row" href={`/i/${row.intent}`}>
       <span class="row-main">
         <span class="row-title">
           {row.title}
           {row.shadow ? <ShadowTag /> : null}
+          {row.observer ? <ObserverTag /> : null}
         </span>
         <span class="meta">
           {row.repo} · <Id id={row.intent} />
@@ -850,6 +885,9 @@ export function WorkRow({ row }: { row: Row }) {
         </span>
       </span>
       {row.behind ? null : <Phases phases={row.phases} />}
+      {row.autonomy ? (
+        <AutonomyControl intent={row.intent} view={row.autonomy} readOnly={readOnly} compact />
+      ) : null}
       {row.estimate ? <EstimateBar line={row.estimate} /> : null}
       <span class="row-num">
         <span class="num">{row.cost}</span>
@@ -1125,6 +1163,7 @@ export function ProposedCard({
           >
             {card.title}
           </a>
+          {card.observer ? <ObserverTag /> : null}
           <a
             class="proposed-gh"
             href={card.prUrl}
@@ -1201,7 +1240,10 @@ export function ProposedCard({
       <header class="proposed-head">
         <span class="chip chip-sm">Proposed</span>
         {card.draft ? <span class="chip chip-sm chip-draft">Draft</span> : null}
-        <h3>{card.title}</h3>
+        <h3>
+          {card.title}
+          {card.observer ? <ObserverTag /> : null}
+        </h3>
       </header>
       <p class="meta proposed-meta">
         {card.repo ? <span class="mono">{card.repo}</span> : <span>repo unknown</span>}
@@ -1210,6 +1252,7 @@ export function ProposedCard({
         <span> · {card.from}</span>
         <span> · {card.waiting}</span>
       </p>
+      {card.observerNote ? <ObserverNote note={card.observerNote} /> : null}
       {card.problem ? <p class="proposed-problem">{card.problem}</p> : null}
       <div class="proposed-links">
         <a href={card.prUrl} target="_blank" rel="noreferrer noopener">

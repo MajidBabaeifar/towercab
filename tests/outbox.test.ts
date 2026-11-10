@@ -43,6 +43,18 @@ function world() {
 }
 
 describe("outbox", () => {
+  test("outbox: a row the sender drops is not sent", async () => {
+    const w = world();
+    w.at("design");
+    w.move(wait("approve spec"));
+    const sender = { ...w.sender, prepare: async () => "drop" as const };
+    expect(await sendDue(w.db, sender, 100)).toEqual({ sent: 0, dropped: 1, failed: null });
+    expect(w.sent).toEqual([]);
+    expect(w.rows()[0]).toMatchObject({ sent_at: 0, tg_message_id: null });
+    // Dropped once: the next round has nothing to do.
+    expect(await sendDue(w.db, sender, 101)).toEqual({ sent: 0, dropped: 0, failed: null });
+  });
+
   test("outbox: only actionable messages", async () => {
     const w = world();
     // Work moving on, limits, merges and done: no message.

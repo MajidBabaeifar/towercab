@@ -1,9 +1,19 @@
 // The page's buttons (UI-66): each does what the owner would do on GitHub (as the owner, LOOP-38) or
 // in the CLI (a `commands` row the loop applies, LOOP-15).
 
-import { ownerOnly, ownerOnlyLine } from "../autonomy.ts";
+import { ownerOnly, ownerOnlyLine, ownSource } from "../autonomy.ts";
+import {
+  acceptedOf,
+  clearFlag,
+  flagOf,
+  levelNow,
+  recordChange,
+  setAccepted,
+  setFlag,
+  writtenLevel,
+} from "../autonomy-change.ts";
 import { saveBudgets } from "../budgets.ts";
-import { tickSteps } from "../commands.ts";
+import { intentPaused, tickSteps } from "../commands.ts";
 import type { Config, RepoConfig } from "../config.ts";
 import type { Db } from "../db.ts";
 import { askFeatures } from "../features.ts";
@@ -15,6 +25,7 @@ import type { IntentStore } from "../intents/types.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
 import { grantScanning } from "../pipeline/alerts.ts";
 import { ownerMergeRefusal } from "../pipeline/teammate.ts";
+import { canBoostIntent, changeScores } from "../scores.ts";
 import { resetShadow } from "../shadow/store.ts";
 import { approveSecret } from "../ship/secret-steps.ts";
 import { currentPr, type DoneNote, validNote } from "./state.ts";
@@ -38,6 +49,20 @@ export interface UiActions {
   done?(intent: string, note: string): Promise<string>;
   /** UI-164, PIP-113: the owner does it by hand; the intent becomes steps. */
   steps?(intent: string): Promise<string>;
+  /**
+   * AUT-34, AUT-35, UI-257: set the intent's autonomy to `a` (0–5) in one commit. Only the page (actor
+   * `owner` or none) may; a raise from any other actor is refused, and so is a lowering by the shadow.
+   */
+  autonomy?(intent: string, a: number, actor?: string): Promise<string>;
+  /** UI-204, LOOP-133: set urgency and/or importance (null: leave it); the new priority comes back. */
+  scores?(
+    intent: string,
+    u: number | null,
+    i: number | null,
+    actor?: string,
+  ): Promise<{ message: string; priority: number; parked: boolean }>;
+  /** UI-205, LOOP-134: a5, and the start of an intent that has not started. */
+  boost?(intent: string, actor?: string): Promise<string>;
   /** SHD-22: pause everything, or one intent when `intent` is given. */
   pause(intent?: string): Promise<string>;
   resume(intent?: string): Promise<string>;
@@ -346,11 +371,82 @@ export function createActions(d: ActionDeps): UiActions {
         : "Paused: nothing new starts until you resume.";
     },
 
+    async autonomy(intent, a, actor = "") {
+      if (!Number.isInteger(a) || a < 0 || a > 5) throw new Error("Autonomy is a0 to a5.");
+      const found = await d.store.get(intent);
+      // UI-206: a5 is for the owner's own intents; the page doesn't offer it, and the API refuses it.
+      if (a === 5 && !ownSource(found.source)) throw new Error("a5 is only for your own intents.");
+      const flag = flagOf(d.db, found.id);
+      const shown = flag ? flag.from : writtenLevel(found);
+      const owner = d.actor !== "shadow" && (actor === "" || actor === "owner");
+      // AUT-35: no command and no shadow action changes the level; a raise counts only from the page.
+      if (!owner) {
+        throw new Error(a > shown ? "only you can raise autonomy" : "only you can change autonomy");
+      }
+      const written = writtenLevel(found);
+      if (a === written) {
+        // Nothing to write: the file already says it (accepting a flagged raise lands here).
+        if (!flag) return `Already at a${a}.`;
+        setAccepted(d.db, found.id, a);
+        clearFlag(d.db, found.id);
+        recordChange(d.db, { intent: found.id, from: shown, to: a, at: d.clock.now() });
+        return "Saved. Applies from the next gate.";
+      }
+      // The accepted level moves before the push, so the loop never flags Towercab's own commit.
+      const was = acceptedOf(d.db, found.id);
+      setAccepted(d.db, found.id, a);
+      clearFlag(d.db, found.id);
+      try {
+        await d.store.update(found.id, "set autonomy", (e) => {
+          e.setField("a", a);
+          // UI-208: the owner set the level again, so the worker's note about lowering it goes.
+          e.removeField("lower_why");
+        });
+      } catch (e) {
+        if (was !== null) setAccepted(d.db, found.id, was);
+        if (flag) setFlag(d.db, found.id, flag);
+        throw e;
+      }
+      recordChange(d.db, { intent: found.id, from: shown, to: a, at: d.clock.now() });
+      return "Saved. Applies from the next gate.";
+    },
+
+    async scores(intent, u, i, actor = "") {
+      if (d.actor === "shadow" || (actor !== "" && actor !== "owner")) {
+        throw new Error("only you can change scores");
+      }
+      const r = await changeScores(
+        { db: d.db, store: d.store, now: d.clock.now(), cutoff: d.config.intents.cutoff },
+        intent,
+        { ...(u !== null ? { u } : {}), ...(i !== null ? { i } : {}) },
+        "ui",
+      );
+      return {
+        message: r.changed ? "Saved. The queue is reordered." : r.message,
+        priority: r.priority,
+        parked: r.parked,
+      };
+    },
+
+    async boost(intent, actor = "") {
+      if (d.actor === "shadow" || (actor !== "" && actor !== "owner")) {
+        throw new Error("only you can raise autonomy");
+      }
+      const found = await d.store.get(intent);
+      if (found.done) throw new Error("It is done or dropped.");
+      if (!canBoostIntent(found)) throw new Error("a5 is only for your own intents.");
+      const started = unfinishedFor(d.db, found.id) || d.db.meta(`start:${found.id}`) !== null;
+      command("boost", found.id);
+      if (started) return "Boosted: a5. It runs from the next gate.";
+      if (intentPaused(d.db, found.id)) return "Boosted: a5. It is paused, so it starts when you resume it.";
+      return "Boosted: a5 and design started.";
+    },
+
     async guard(intent, action, actor) {
       if (actor === "owner" || actor === "") return;
       if (action === "pause") return;
       const found = await d.store.get(intent).catch(() => null);
-      if (found && ownerOnly(found.a, unfinishedFor(d.db, found.id)?.a_at_pick ?? null)) {
+      if (found && ownerOnly(levelNow(d.db, found))) {
         throw new Error(ownerOnlyLine(found.id));
       }
     },

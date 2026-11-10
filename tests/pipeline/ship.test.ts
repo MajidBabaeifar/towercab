@@ -102,14 +102,10 @@ describe("ship: the happy path", () => {
   });
 
   test("ship: github adapter reads deployments", () => {
-    const reads = p.tools.lines("gh").filter((l) => l.includes("/deployments"));
-    expect(
-      reads.some((l) =>
-        l.includes(`repos/owner/web/deployments?environment=production&per_page=30&sha=${m.merge_sha}`),
-      ),
-    ).toBe(true);
-    expect(reads.some((l) => /repos\/owner\/web\/deployments\/\d+\/statuses\?per_page=1/.test(l))).toBe(true);
-    expect(reads.some((l) => l.includes("POST"))).toBe(false);
+    const reads = p.forge.calls.filter((l) => l.startsWith("deployment"));
+    expect(reads).toContain(`deployments owner/web ${m.merge_sha}`);
+    expect(reads.some((l) => /^deployment-status owner\/web \d+$/.test(l))).toBe(true);
+    expect(p.forge.calls.some((l) => l.startsWith("deploy "))).toBe(false);
   });
 
   test("ship: suites run in order against the URL", () => {
@@ -183,9 +179,7 @@ describe("ship: red, rollback, fix forward", () => {
   });
 
   test("ship: github adapter asks for a rollback once", () => {
-    expect(p.tools.lines("gh").filter((l) => l.includes("POST") && l.includes("/deployments"))).toHaveLength(
-      1,
-    );
+    expect(p.forge.calls.filter((l) => l.startsWith("deploy "))).toHaveLength(1);
   });
 
   test("ship: rollback starts a fix round", () => {
@@ -415,7 +409,7 @@ describe("ship: the command adapter", () => {
 
   test("ship: command adapter", () => {
     expect(m.stage).toBe("done");
-    expect(p.tools.lines("gh").filter((l) => l.includes("/deployments"))).toEqual([]);
+    expect(p.forge.calls.filter((l) => l.startsWith("deployment") || l.startsWith("deploy "))).toEqual([]);
     expect(e2eRuns(p)).toEqual(["greet", "smoke"]);
   });
 });
@@ -471,7 +465,7 @@ describe("ship: without a live block", () => {
       { from_stage: "merge", event: "code_merged", to_stage: "deploy", why: null },
       { from_stage: "deploy", event: "skip", to_stage: "done", why: null },
     ]);
-    expect(p.tools.lines("gh").filter((l) => l.includes("/deployments"))).toEqual([]);
+    expect(p.forge.calls.filter((l) => l.startsWith("deployment") || l.startsWith("deploy "))).toEqual([]);
     expect(p.sandboxRuns.filter((r) => r.kind.startsWith("e2e"))).toEqual([]);
   });
 });

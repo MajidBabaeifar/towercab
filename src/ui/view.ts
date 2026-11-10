@@ -76,7 +76,39 @@ export interface TopBar {
 }
 
 export type ActionKey = "merge" | "pass" | "reply" | "retry" | "drop";
-export type CardKind = "spec" | "plan" | "code" | "question" | "blocked" | "release";
+export type CardKind = "spec" | "plan" | "code" | "question" | "blocked" | "release" | "autonomy";
+
+/** UI-257: the one control for an intent's autonomy. */
+export interface AutonomyView {
+  /** The level the intent runs at now (a flagged raise doesn't count yet). */
+  a: number;
+  /** The repo's cap when it is below a5 (AUT-8). */
+  cap: number | null;
+  /** AUT-35, UI-258: a raise somebody else made, waiting for the owner. */
+  flag?: { who: string; from: number; to: number };
+  /** What each level lets Towercab do without asking, for the confirm step (index = level). */
+  notes: string[];
+  /** The page is read-only, or the intent is finished. */
+  locked: boolean;
+  /** UI-206: the highest level offered: 5 for the owner's own intents, 4 for any other source. */
+  max: number;
+}
+
+/** UI-203, UI-205, UI-207, UI-208: the score controls, Boost, and what a card says about autonomy. */
+export interface ControlsView {
+  u: number;
+  i: number;
+  priority: number;
+  parked: boolean;
+  /** UI-205: the Boost button is offered. */
+  canBoost: boolean;
+  /** UI-205: what the Boost confirm says it allows (and that it starts the intent now). */
+  boostNote: string;
+  /** UI-207: why a plane at a5 waits for the owner; null when it doesn't. */
+  waitWhy: string | null;
+  /** UI-208: `Lowered to a<n> by the worker: <why>`; null when nothing was lowered. */
+  lowered: string | null;
+}
 
 export interface Question {
   context: string;
@@ -170,8 +202,12 @@ export interface Card {
   warning?: string;
   /** UI-236: the intent is a draft of the shadow's (`source: shadow`). */
   shadow?: boolean;
+  /** UI-243: the intent was proposed by the observer (`source: observer`). */
+  observer?: boolean;
   /** UI-239: the intent is a0: only the owner can answer or approve it, shown as "only you". */
   onlyYou?: boolean;
+  /** UI-257: the autonomy control. */
+  autonomy?: AutonomyView;
   /** PIP-186: an agent answered for the owner and the intent acted on it: the agent's name. */
   decided_by_agent?: string | null;
 }
@@ -200,6 +236,10 @@ export interface Row {
   warning?: string;
   /** UI-236: the intent is a draft of the shadow's. */
   shadow?: boolean;
+  /** UI-243: the intent was proposed by the observer. */
+  observer?: boolean;
+  /** UI-257: the autonomy control. */
+  autonomy?: AutonomyView;
   estimate?: EstimateLine;
 }
 
@@ -311,6 +351,8 @@ export interface Plane {
   phases: Phase[];
   /** The "Start now" button is offered (UI-101). */
   canStart: boolean;
+  /** UI-205, UI-207, UI-208: Boost, the wait reason and the lowering note. */
+  controls?: ControlsView;
   /** UI-125: rolling back, reverting, or in a fix round; absent otherwise. */
   ship?: { kind: "rollback" | "revert" | "fix"; mark: string };
   /** UI-110: why a plane waiting at merge is held ("Held until you resume"); absent otherwise. */
@@ -375,6 +417,32 @@ export interface TimelineItem {
   tone: "move" | "wait" | "error" | "done";
   /** UI-236: the shadow did this. */
   shadow?: boolean;
+  /** UI-243: the observer did this. */
+  observer?: boolean;
+}
+
+/** UI-242: `GET /api/observer`. */
+export interface ObserverView {
+  enabled: boolean;
+  /** The last run, or null before the first. */
+  lastRun: {
+    at: When;
+    trigger: string;
+    outcome: string;
+    proposals: number;
+    comments: number;
+    why: string | null;
+  } | null;
+  proposalsThisWeek: number;
+  maxPerWeek: number;
+  spentToday: string;
+  cap: string;
+  spentUsd: number;
+  capUsd: number;
+  /** The daily cap is reached: no further run today. */
+  capReached: boolean;
+  /** When the last weekly report went out: a day `YYYY-MM-DD`, or null. */
+  lastReport: string | null;
 }
 
 /** UI-237: one thing the shadow did, asked or refused. */
@@ -527,6 +595,10 @@ export interface IntentPage {
   scores: string;
   /** UI-236: a draft of the shadow's (`source: shadow`). */
   shadow?: boolean;
+  /** UI-243: proposed by the observer (`source: observer`). */
+  observer?: boolean;
+  /** UI-243: its evidence links and expected gain, shown above the rest of the text. */
+  observerNote?: { evidence: string; gain: string };
   /** The "Start now" button is offered (UI-101). */
   canStart: boolean;
   state: StateView;
@@ -558,6 +630,10 @@ export interface IntentPage {
   nothingLive?: string | null;
   /** UI-239: set for an a0 intent, with the line to show; `paused` is this intent's own pause (SHD-22). */
   onlyYou?: string;
+  /** UI-257: the autonomy control. */
+  autonomy?: AutonomyView;
+  /** UI-203: urgency and importance as controls, and the notes of UI-207 and UI-208. */
+  controls?: ControlsView;
   paused?: boolean;
   /** PIP-186: the comments agents wrote under the owner's login, oldest first. */
   agent_comments: AgentCommentView[];
@@ -714,6 +790,10 @@ export interface ProposedCard {
   canAccept: boolean;
   /** Shown beside the disabled Accept. */
   acceptWhy: string | null;
+  /** UI-243: proposed by the observer (`source: observer`). */
+  observer?: boolean;
+  /** UI-243: its evidence and expected gain, shown first. */
+  observerNote?: { evidence: string; gain: string };
 }
 
 /** UI-184, UI-188: the proposed cards in priority order, and a notice when the list may be old. */
@@ -966,4 +1046,7 @@ export interface ActivityPage {
 export interface ActionReply {
   ok: boolean;
   message: string;
+  /** UI-204: after a score change, the new priority and whether the intent is parked. */
+  priority?: number;
+  parked?: boolean;
 }

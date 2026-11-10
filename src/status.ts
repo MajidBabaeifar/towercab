@@ -1,11 +1,14 @@
 // `towercab status` (LOOP-13): what is happening, in plain lines, with or without a running loop.
 
 import { ownerOnly } from "./autonomy.ts";
+import { levelNow } from "./autonomy-change.ts";
 import { slotLines } from "./capacity.ts";
+import { pausedSuffix } from "./commands.ts";
 import type { Db } from "./db.ts";
 import type { Listing } from "./intents/types.ts";
 import { exitsOf, isWait, isWorking, waitInfo } from "./machine.ts";
 import { dataOf, type Mission, unfinished } from "./mission.ts";
+import { queuePlace, waitsInQueue } from "./queue.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
 import {
   buildingIn,
@@ -73,12 +76,15 @@ export function renderStatus(s: StatusInput): string {
     const i =
       s.listing?.open.find((x) => x.id === m.intent) ?? s.listing?.done.find((x) => x.id === m.intent);
     // UI-239: an owner-only intent is marked wherever it is listed.
-    const only = ownerOnly(i?.a ?? null, m.a_at_pick) ? " (only you)" : "";
+    const only = ownerOnly(i ? levelNow(s.db, i) : null) ? " (only you)" : "";
     return `${m.intent} ${m.repo}: ${i?.title ?? "(title unknown)"}${only}`;
   };
   const head = [
     `towercab ${s.version} · ${s.running ? `running (pid ${s.running})` : "not running"}`,
-    s.db.meta("paused") === "1" ? "paused" : "",
+    // LOOP-113, LOOP-114: how many runs are still finishing (or being stopped) while paused.
+    s.db.meta("paused") === "1"
+      ? `paused${s.running && pausedSuffix(s.db) ? `: ${pausedSuffix(s.db)}` : ""}`
+      : "",
     s.running && s.db.meta("draining") ? `draining for update to ${s.db.meta("draining")}` : "",
     s.problems.length ? "problems" : "",
   ]
@@ -178,6 +184,11 @@ export function renderStatus(s: StatusInput): string {
     // LOOP-116: who holds the slots, and whether they wait for GitHub's checks.
     for (const m of workingIn(ms, repo))
       lines.push(`holds the slot: ${m.intent} (${m.stage})${waitsForCi(m) ? ", waiting for CI" : ""}`);
+    // LOOP-159: missions behind the head of the repo's merge queue.
+    for (const m of building.filter(waitsInQueue)) {
+      const p = queuePlace(ms, m);
+      if (p) lines.push(`queued to merge: ${m.intent} (#${p.n} of ${p.of})`);
+    }
   }
   for (const w of s.waits ?? []) lines.push(`waiting: ${w}`);
   // LOOP-72: a repo missing setup, and whether that holds its new work back.

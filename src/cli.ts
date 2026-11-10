@@ -6,12 +6,14 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ownerOnly, ownerOnlyLine } from "./autonomy.ts";
+import { levelNow } from "./autonomy-change.ts";
 import {
   applyCommand,
   type CommandName,
   commandResult,
   insertCommand,
   OWNER_ONLY_COMMANDS,
+  paused,
   pendingCommands,
   tickSteps,
 } from "./commands.ts";
@@ -34,19 +36,23 @@ import * as log from "./log.ts";
 import { Loop } from "./loop.ts";
 import { type ApplyCtx, isWait } from "./machine.ts";
 import { type Mission, unfinishedFor } from "./mission.ts";
+import { Observer } from "./observer/observer.ts";
 import { decide, nextText } from "./pick.ts";
 import { grantScanning } from "./pipeline/alerts.ts";
 import { guardMain } from "./pipeline/guard.ts";
+import { checkSandbox } from "./pipeline/hostcheck.ts";
 import { handlers } from "./pipeline/index.ts";
 import { ownerMergeRefusal } from "./pipeline/teammate.ts";
 import { parseScores } from "./priority.ts";
 import { addRepo, loadRepos, removeRepo, repoLine, repoList, setRepo } from "./repos.ts";
+import { parseScoreWords } from "./scores.ts";
 import { checkoutRoot, down, logsArgv, restart, up } from "./service.ts";
 import { restoreBackup } from "./settings/backup.ts";
 import { resetShadow, statusText } from "./shadow/store.ts";
 import { buildShadow } from "./shadow/wire.ts";
 import { checkIds, readPrList } from "./specs-cli.ts";
 import { renderStatus } from "./status.ts";
+import { buildChat } from "./telegram/wire.ts";
 import { Telegram } from "./telegram.ts";
 import { realTools, type Tools } from "./tools.ts";
 import { checkUpdate, version } from "./update.ts";
@@ -65,6 +71,7 @@ export const COMMANDS = [
   "retry",
   "drop",
   "start",
+  "score",
   "step",
   "done",
   "steps",
@@ -93,10 +100,12 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   approve <id>                    merge the PR the intent waits on, as you
   retry <id> | drop <id>
   start <id>                      begin that intent's design now, even when the repo is full
-  step <id> <n…|all>              tick off steps the plan lists for you (the change then goes on)
+  score <id> u=N i=N              change urgency and/or importance (1-5); autonomy stays on the page
+  step <id> <n…|all>             tick off steps the plan lists for you (the change then goes on)
   done <id> [note]                you did the work yourself: ends the intent; the note is kept as a ticked step
   steps <id>                      you will do it by hand: the intent becomes steps for you to tick
-  pause [id] | resume [id]
+  pause [id] | resume [id]        pause holds all new work and every change on GitHub; running steps finish
+  pause --now                     also stops the running steps (they continue after resume)
   repo add <owner/name> [--name <short>] | repo remove <name> | repo list
   repo set <name> key=value…      workers, ahead, base, path, env (NAME=value or a JSON object)
   shadow reset | shadow status    clear the shadow's conversation; what it is doing and what it cost today
@@ -185,7 +194,7 @@ function applyCtx(db: Db): ApplyCtx {
 async function refuseOwnerOnly(w: World, intent: string): Promise<void> {
   if (intent === "") return;
   const found = await (await w.store()).get(intent).catch(() => null);
-  if (found && ownerOnly(found.a, unfinishedFor(w.db, found.id)?.a_at_pick ?? null)) {
+  if (found && ownerOnly(levelNow(w.db, found))) {
     throw new Error(ownerOnlyLine(found.id));
   }
 }
@@ -197,7 +206,10 @@ async function submit(w: World, name: CommandName, arg = "", text = ""): Promise
   if (w.home.holder() === null) {
     const store = await w.store();
     const row = pendingCommands(w.db).find((r) => r.id === id)!;
-    return applyCommand({ db: w.db, store, applyCtx: applyCtx(w.db), now: new Date() }, row);
+    return applyCommand(
+      { db: w.db, store, applyCtx: applyCtx(w.db), now: new Date(), cutoff: w.config.intents.cutoff },
+      row,
+    );
   }
   for (let i = 0; i < 20; i++) {
     const r = commandResult(w.db, id);
@@ -227,6 +239,7 @@ export async function main(argv: string[], tools: Tools = realTools()): Promise<
         base: { type: "string" },
         prs: { type: "string" },
         by: { type: "string" },
+        now: { type: "boolean" },
       },
     });
   } catch (e) {
@@ -355,6 +368,23 @@ async function run(
       log.init(w.home.logFile);
       const store = await w.store();
       const telegram = w.config.telegram ? new Telegram(w.config.telegram) : null;
+      // LOOP-126: the chat (buttons, replies, commands) runs in a watching loop whenever Telegram is set.
+      const chat =
+        v.watch && telegram
+          ? buildChat(
+              {
+                config: w.config,
+                home: w.home,
+                db: w.db,
+                clock: systemClock,
+                store,
+                github: w.github!,
+                log: (l) => log.emit(l),
+              },
+              telegram,
+              () => loop,
+            )
+          : undefined;
       // SHD-1: the shadow reads the owner's chat only in a watching loop, with `[shadow] enabled`.
       const shadow =
         v.watch && w.config.shadow.enabled
@@ -369,10 +399,26 @@ async function run(
                 github: w.github!,
                 log: (l) => log.emit(l),
               },
-              telegram,
+              chat ? chat.shadowSource() : telegram,
               () => loop,
             )
           : undefined;
+      // OBV-2: the observer is on unless `[observer] enabled = false`, and runs only in a watching loop.
+      const observer = v.watch
+        ? new Observer({
+            config: w.config,
+            home: w.home,
+            db: w.db,
+            tools,
+            clock: systemClock,
+            github: w.github!,
+            store,
+            log: (l) => log.emit(l),
+            listing: () => loop.currentListing(),
+            proposed: () => loop.proposedState().list,
+            health: { fail: (k, e, n) => loop.health.fail(k, e, n), ok: (k) => loop.health.ok(k) },
+          })
+        : undefined;
       const loop: Loop = new Loop(
         {
           config: w.config,
@@ -385,14 +431,19 @@ async function run(
           gitlab: w.gitlab,
           handlers: handlers(),
           log: (l) => log.emit(l),
-          sender: telegram,
+          sender: chat ? chat.sender() : telegram,
+          chat,
           shadow,
+          observer,
           selfUpdate: Boolean(v.watch),
           readiness: true,
           limits: true,
+          // PIP-163, PIP-162: the sandbox must hold before anything is picked or any Claude run starts.
+          sandboxProbe: () => checkSandbox(tools),
         },
         { watch: Boolean(v.watch), intent: v.intent as string | undefined },
       );
+      chat?.start();
       const stop = () => loop.stop(0);
       process.on("SIGTERM", stop);
       process.on("SIGINT", stop);
@@ -470,6 +521,7 @@ async function run(
       need(2, "<id> --by <agent> <text>");
       if (v.by === undefined) throw new UsageError("reply needs --by <agent>");
       if (!w.github) throw new Error(`reply needs [github] in ${w.config.file} (app_id, me)`);
+      if (paused(w.db)) throw new Error("paused: resume first, nothing changes on GitHub while paused");
       const intent = await (await w.store()).get(args[0]!);
       const m = unfinishedFor(w.db, intent.id);
       const repo = w.config.repos.get(m?.repo ?? intent.repo);
@@ -495,6 +547,18 @@ async function run(
     case "start":
       need(1, "<id>");
       return submit(w, "start", args[0]);
+    case "score": {
+      // LOOP-135: urgency and importance only; autonomy and Boost stay on the page and GitHub (AUT-35).
+      need(2, "<id> u=N and/or i=N");
+      try {
+        parseScoreWords(args.slice(1));
+      } catch (e) {
+        throw new UsageError((e as Error).message);
+      }
+      const intent = await (await w.store()).get(args[0]!);
+      if (intent.done) throw new Error(`${intent.id} is done or dropped`);
+      return submit(w, "score", intent.id, args.slice(1).join(" "));
+    }
     case "done":
       need(1, "<id> [note]");
       return submit(w, "done", args[0], args.slice(1).join(" "));
@@ -512,11 +576,15 @@ async function run(
       return tickSteps(w.db, id, which, true, new Date());
     }
     case "pause":
-      return submit(w, "pause", args[0] ?? "");
+      // LOOP-114: `--now` stops the runs going; it is for the whole of Towercab, not one intent.
+      if (v.now === true && (args[0] ?? "") !== "")
+        throw new Error("--now stops everything: use it without an intent");
+      return submit(w, "pause", args[0] ?? "", v.now === true ? "now" : "");
     case "resume":
       return submit(w, "resume", args[0] ?? "");
     case "approve": {
       need(1, "<id>");
+      if (paused(w.db)) throw new Error("paused: resume first, nothing is merged while paused");
       const store = await w.store();
       const intent = await store.get(args[0]!);
       await refuseOwnerOnly(w, intent.id);
