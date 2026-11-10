@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..194, PIP-196..207, PIP-210 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..194, PIP-196..207, PIP-210, PIP-223..226 · **Prefix:** PIP
 
 ## Purpose
 
@@ -1582,7 +1582,7 @@ When one job's log can't be read, the repair details say so in one line and the 
 Nothing a person or a repo writes can loosen the sandbox: its arguments, mounts, masked files, environment and network are decided by Towercab's code alone.
 
 - `sandboxArgv`, the Claude run's sandbox settings (PIP-24) and the sandbox environment are built from the mission only (checkout, cache, granted domains). No config key, no `TOWERCAB.md`, `CLAUDE.md` or agent file, no intent field and no plan text adds a mount, removes a mask, adds a variable, passes a bwrap or Claude sandbox argument or turns the sandbox off.
-- There is no "unsafe" switch, flag or environment variable. `[agent].toolchain`, `[agent].path`, `[agent].env` and `[agent].sandbox_unix_sockets` no longer reach a sandboxed command: the toolchain directories (`~/.local/bin`, and the directory of the Node running Towercab when it lives under HOME; when that directory is a `bin` of its own install, such as `~/.local/node/bin`, the whole install is mounted read-only so `npm` and `npx`, links into `../lib`, resolve), `PATH` and the masked files are decided in `src/pipeline/sandbox.ts`, and the sandbox of repo commands never binds unix sockets in (nor does Claude's own, PIP-162). The one setting that stays is a repo's named variables, `[repos.<r>].env`, under the narrow rule of PIP-159. A config that still sets an ignored key loads, and `towercab doctor` names the key as ignored.
+- There is no "unsafe" switch, flag or environment variable. `[agent].toolchain`, `[agent].path`, `[agent].env` and `[agent].sandbox_unix_sockets` no longer reach a sandboxed command: the toolchain directories (`~/.local/bin`, the standard install places of PIP-223, and the directory of the Node running Towercab when it lives under HOME; when that directory is a `bin` of its own install, such as `~/.local/node/bin`, the whole install is mounted read-only so `npm` and `npx`, links into `../lib`, resolve), `PATH` and the masked files are decided in `src/pipeline/sandbox.ts`, and the sandbox of repo commands never binds unix sockets in (nor does Claude's own, PIP-162). The one setting that stays is a repo's named variables, `[repos.<r>].env`, under the narrow rule of PIP-159. A config that still sets an ignored key loads, and `towercab doctor` names the key as ignored.
 - A repo file that asks for more (a `TOWERCAB.md` setting, an agent file with `sandbox: none` for a tool-using agent, PIP-78) is refused with the reason or ignored, and never changes the argv.
 - Verified by: `sandbox: config keys do not change the argv`, `sandbox: repo and intent files do not change the argv`, `sandbox: no unsafe switch exists`, `sandbox: ignored config keys are named by doctor`, `sandbox: node's whole install is mounted so npm resolves`
 
@@ -2225,7 +2225,7 @@ A token that a toolchain's own tool left in its install directory is never visib
 Go and Zig never need to write into the read-only install or the empty home: their caches live in the mission's writable cache, like Cargo's.
 
 - `cacheEnv` (LOOP-34) also sets `GOPATH` and `GOMODCACHE` under the cache's `go` directory, `GOCACHE` stays where it is, and `ZIG_GLOBAL_CACHE_DIR` and `ZIG_LOCAL_CACHE_DIR` point under the cache's `zig` directory. `CARGO_HOME` stays in the cache and `RUSTUP_HOME` points at the bound `~/.rustup` so the installed toolchains are found.
-- The names are fixed in code and in the allowlist of PIP-159; a repo's `[repos.<r>].env` cannot override them (PIP-159 already refuses cache variables).
+- `GOPATH`, `GOMODCACHE`, `ZIG_GLOBAL_CACHE_DIR`, `ZIG_LOCAL_CACHE_DIR` and `RUSTUP_HOME` are fixed in code: a repo's `[repos.<r>].env` of the same name is dropped. The older cache variables (`CARGO_HOME`, `CARGO_TARGET_DIR`, `GOCACHE`, …) stay overridable by a repo's named variables, as before (PIP-159).
 - Verified by: `sandbox: go and zig caches are inside the sandbox cache`, `sandbox: rustup home points at the bound toolchains`, `sandbox: a repo variable cannot override a cache variable`
 
 ### PIP-226 · `towercab doctor` lists the toolchains it binds

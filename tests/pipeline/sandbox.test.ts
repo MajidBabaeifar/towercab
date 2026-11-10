@@ -113,8 +113,12 @@ test("cache: one cache per repo across missions", () => {
   expect(home.cache("web")).toBe(first);
   expect(home.cache("api")).not.toBe(first);
   // `[agent].env` is ignored (PIP-157); `[repos.<r>].env` comes last when it passes PIP-159.
-  const env = cacheEnv(first, web);
+  const env = cacheEnv(first, web, "/home/me");
   expect(env).toEqual({
+    GOPATH: join(first, "go", "path"),
+    GOMODCACHE: join(first, "go", "path", "pkg", "mod"),
+    ZIG_GLOBAL_CACHE_DIR: join(first, "zig", "global"),
+    ZIG_LOCAL_CACHE_DIR: join(first, "zig", "local"),
     XDG_CACHE_HOME: join(first, "xdg"),
     npm_config_cache: join(first, "npm"),
     CARGO_HOME: join(first, "cargo"),

@@ -177,7 +177,7 @@ async function runCommand(e: AdapterEnv, line: string, extra: Record<string, str
   return e.cx.tools.run(argv[0]!, argv.slice(1), {
     cwd: e.dir,
     env: {
-      ...sandboxEnv(home, e.cx.config, cacheEnv(cache, repo)),
+      ...sandboxEnv(home, e.cx.config, cacheEnv(cache, repo, home)),
       ...shipEnv(e, sha),
       ...extra,
     },
