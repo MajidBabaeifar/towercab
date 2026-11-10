@@ -733,6 +733,7 @@ When an intent has no kind, Towercab reads it once and picks one, and the owner 
 
 - At `pick`, a mission whose intent has no `kind` runs the `kind` agent (no tools, `[agent].model`; its cost counts in the mission): it gets the intent text as data and returns `{kind, why}` (`why` is one plain line, at most 160 characters). The result is kept in the mission (`data.kind`, `data.kindWhy`); the intent file is not edited. A failed or invalid run counts as `feature`, the full path, and is noted on the timeline.
 - Doubt goes to the full path: the agent is told to answer `feature` unless the intent clearly fits a lighter kind. A `kind` set in the intent always wins over the inferred one, and a change from the page (UI-283) is written to the front matter and replaces it.
+- The code PR that builds this adds `agents/kind.md` and its row in the agents table of `pipeline.md` (PIP-76) together, since the spec check requires the table and the agent files to match.
 - The effective kind is read once per attempt; changing it later takes effect at the next stage that has not started (PIP-231).
 - Verified by: `kind: the agent gets the intent as data and no tools`, `kind: a set kind skips the agent`, `kind: a failed run counts as feature and is noted`, `kind: the inferred kind and its reason are kept in the mission`
 
