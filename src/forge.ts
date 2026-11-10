@@ -53,6 +53,8 @@ export interface Check {
   startedAt: number | null;
   run: number | null;
   url: string;
+  /** GL-11: a manual job that must run; the check waits for someone to start it. */
+  waitsFor?: string;
 }
 
 export interface ChecksRead {
