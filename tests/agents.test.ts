@@ -62,6 +62,8 @@ const BEFORE: Record<string, { tools: string; allowed: string[] }> = {
   features: { tools: "Read,Glob,Grep", allowed: ["Read", "Glob", "Grep"] },
   // SHD-5: the shadow has no tools at all; Towercab runs its reads and actions.
   shadow: { tools: "", allowed: [] },
+  // OBV-1: the observer has no tools at all; Towercab builds its evidence and acts on its result.
+  observer: { tools: "", allowed: [] },
 };
 BEFORE.repair = BEFORE.worker!;
 // PIP-96: the risk agent reads exactly as the review does, no more.

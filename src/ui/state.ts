@@ -18,6 +18,8 @@ import type { Home } from "../home.ts";
 import type { Intent, IntentStore, Listing } from "../intents/types.ts";
 import { exitsOf, finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
 import { dataOf, forIntent, type Mission } from "../mission.ts";
+import { observerNote } from "../observer/evidence.ts";
+import { observerCosts } from "../observer/store.ts";
 import { testGrantsOf } from "../pipeline/access.ts";
 import type { SecretState } from "../pipeline/common.ts";
 import { section } from "../pipeline/prtext.ts";
@@ -1417,6 +1419,12 @@ export function spend(db: Db, now: number): Spend {
     const k = localDate(r.at);
     byDay.set(k, (byDay.get(k) ?? 0) + r.cost);
   }
+  // OBV-10: so are the observer's runs.
+  for (const r of observerCosts(db, now - 8 * DAY)) {
+    if (r.at > now) continue;
+    const k = localDate(r.at);
+    byDay.set(k, (byDay.get(k) ?? 0) + r.cost);
+  }
   const days: Spend["days"] = [];
   const t = new Date(now * 1000);
   for (let i = 6; i >= 0; i--) {
@@ -1710,12 +1718,16 @@ export async function overview(src: UiSources): Promise<Overview> {
   // UI-236: a draft of the shadow's is tagged wherever it shows.
   const drafted = (id: string) => s.intents.get(id)?.source === "shadow";
   for (const c of needs) if (drafted(c.intent)) c.shadow = true;
+  // UI-243: a proposal of the observer's is tagged the same way.
+  const observed = (id: string) => s.intents.get(id)?.source === "observer";
+  for (const c of needs) if (observed(c.intent)) c.observer = true;
   const need = needCounts(src, s);
   const withMission = new Set(s.missions.map((m) => m.intent));
   const list = src.upNext().filter((u) => !withMission.has(u.intent));
   const queued = [...ready, ...list.filter((u) => u.skip?.kind !== "parked").map((u) => queuedRow(s, u))];
   for (const r of [...working, ...queued]) {
     if (drafted(r.intent)) r.shadow = true;
+    if (observed(r.intent)) r.observer = true;
     const i = s.intents.get(r.intent);
     if (i) r.autonomy = autonomyView(src, i);
   }
@@ -2424,6 +2436,20 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     });
   }
   if (shadowRows.length) timeline.sort((x, y) => x.at.at - y.at.at);
+  // UI-243: the first entry of an intent the observer proposed says so.
+  if (intent?.source === "observer") {
+    const t = intent.started ? Date.parse(intent.started) / 1000 : Number.NaN;
+    if (Number.isFinite(t)) {
+      timeline.unshift({
+        at: when(t, s.now),
+        text: "[observer] proposed this intent",
+        why: null,
+        lasted: null,
+        tone: "move",
+        observer: true,
+      });
+    }
+  }
   // AUT-32: replies Towercab ignored on an owner-only intent, noted once each.
   const only = ownerOnly(intent ? levelNow(src.db, intent) : null);
   if (only || flagOf(src.db, realId)) {
@@ -2485,6 +2511,8 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     repo: intent?.repo ?? last?.repo ?? "",
     scores,
     ...(intent?.source === "shadow" ? { shadow: true } : {}),
+    ...(intent?.source === "observer" ? { observer: true } : {}),
+    ...(intent?.source === "observer" ? noteOf(intent.sections) : {}),
     canStart,
     state: st,
     sentence: sentenceOf(
@@ -2832,6 +2860,12 @@ const SECRET_PATTERNS: RegExp[] = [
 ];
 
 /** Text with tokens, bot tokens, bearer headers and private keys taken out (UI-4). */
+/** UI-243: an observer proposal's evidence and gain as the page's `observerNote`, or nothing. */
+function noteOf(sections: Map<string, string>): { observerNote?: { evidence: string; gain: string } } {
+  const n = observerNote(sections);
+  return n ? { observerNote: n } : {};
+}
+
 export function redact(text: string, config?: Config): string {
   let out = text;
   const bot = config?.telegram?.botToken;
