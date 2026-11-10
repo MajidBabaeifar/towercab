@@ -17,6 +17,8 @@ test("db: schema matches the spec", () => {
     "commands",
     "meta",
     "missions",
+    "observer_proposals",
+    "observer_runs",
     "outbox",
     "repos",
     "shadow_actions",

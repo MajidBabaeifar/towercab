@@ -102,7 +102,16 @@ const TOKENS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTER
 /** The writing guide (PIP-39), appended to every run's system file. */
 export const WRITING_GUIDE = fileURLToPath(new URL("../prompts/writing.md", import.meta.url));
 
-export type RunKind = "design" | "plan" | "worker" | "review" | "risk" | "score" | "features" | "shadow";
+export type RunKind =
+  | "design"
+  | "plan"
+  | "worker"
+  | "review"
+  | "risk"
+  | "score"
+  | "features"
+  | "shadow"
+  | "observer";
 
 export const RUN_KINDS: RunKind[] = [
   "design",
@@ -113,6 +122,7 @@ export const RUN_KINDS: RunKind[] = [
   "score",
   "features",
   "shadow",
+  "observer",
 ];
 
 /** One `claude -p` run. */

@@ -83,7 +83,7 @@ export class Health {
   /** A call of `kind` succeeded: its fault closes. */
   ok(kind: string): void {
     this.faults.delete(kind);
-    if (this.faults.size === 0) {
+    if (this.blocking().length === 0) {
       this.episode = false;
       this.noticed = false;
     }
@@ -94,17 +94,22 @@ export class Health {
     return [...this.faults.values()].sort((a, b) => a.since - b.since || a.kind.localeCompare(b.kind));
   }
 
+  /** The faults that can hold work back: the observer's (OBV-12) never does. */
+  private blocking(): OpenFault[] {
+    return this.open().filter((f) => f.kind !== "observer");
+  }
+
   /** A fault has been open for 15 minutes: picks pause. */
   blocked(now: number): boolean {
-    if (this.open().some((f) => now - f.since >= BLOCK_AFTER)) this.episode = true;
-    return this.episode && this.faults.size > 0;
+    if (this.blocking().some((f) => now - f.since >= BLOCK_AFTER)) this.episode = true;
+    return this.episode && this.blocking().length > 0;
   }
 
   /** The fault to send one message about, once per episode (the oldest blocking one), else null. */
   noticeDue(now: number): OpenFault | null {
     if (!this.blocked(now) || this.noticed) return null;
     this.noticed = true;
-    return this.open().find((f) => now - f.since >= BLOCK_AFTER) ?? this.open()[0] ?? null;
+    return this.blocking().find((f) => now - f.since >= BLOCK_AFTER) ?? this.blocking()[0] ?? null;
   }
 }
 

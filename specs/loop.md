@@ -1689,6 +1689,11 @@ If a part fails after the merges, that part and every part that landed after it 
 | `github.app_id`, `github.me`, `github.api_base` | int; login; URL | required; required; `https://api.github.com` |
 | `telegram.bot_token`, `telegram.chat_id`, `telegram.api_base` | strings; URL | none (no Telegram); `https://api.telegram.org` |
 | `telegram.ui_url` | URL (TG-14) | none (messages link to the PR) |
+| `observer.enabled` | bool (OBV-2) | true |
+| `observer.daily_at` | local time `HH:MM` (OBV-2) | `06:00` |
+| `observer.max_proposals_per_week` | int 1–10 (OBV-7) | 3 |
+| `observer.daily_budget_usd`, `observer.max_budget_usd` | number > 0 (OBV-10) | 3; 1.5 |
+| `observer.bundle_kb`, `observer.model` | int 10–4000 (OBV-3); model name | 400; `[agent].model` |
 | `ui.port` | int 0–65535 (0 = off) | 7311 |
 | `update.auto` | bool | true |
 | `update.channel` | `"main"` or `"release"` (LOOP-150) | `"main"` |
@@ -1744,6 +1749,12 @@ CREATE TABLE telegram_updates (update_id INTEGER PRIMARY KEY, at REAL NOT NULL, 
 CREATE TABLE tg_cards (mission INTEGER PRIMARY KEY, intent TEXT NOT NULL, message_id INTEGER,
   text TEXT NOT NULL DEFAULT '', buttons TEXT, ping_id INTEGER, ping_wait TEXT,
   final INTEGER NOT NULL DEFAULT 0, tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0);
+CREATE TABLE observer_runs (id INTEGER PRIMARY KEY, trigger TEXT NOT NULL, started REAL NOT NULL,
+  ended REAL, cost REAL NOT NULL DEFAULT 0, outcome TEXT NOT NULL DEFAULT 'running',
+  findings INTEGER NOT NULL DEFAULT 0, proposals INTEGER NOT NULL DEFAULT 0, comments INTEGER NOT NULL DEFAULT 0,
+  dropped TEXT NOT NULL DEFAULT '[]', detail TEXT NOT NULL DEFAULT '{}');
+CREATE TABLE observer_proposals (pr INTEGER PRIMARY KEY, intent TEXT NOT NULL, run INTEGER NOT NULL, at REAL NOT NULL,
+  title TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '[]');
 ```
 
 **Transitions** (`next(stage, event)`; "next" = the next stage of the order; `U` = unexpected, counted
