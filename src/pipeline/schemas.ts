@@ -116,6 +116,9 @@ export const BUILD_SCHEMA = object({
   plan_changed: S_NULL,
   lower_a: { type: ["integer", "null"], minimum: 0, maximum: 5 },
   lower_why: S_NULL,
+  // PIP-216, PIP-219: how many plan steps are built so far (null = all) and the note for the next run.
+  steps_done: { type: ["integer", "null"], minimum: 0 },
+  handoff: S_NULL,
 });
 
 export const REVIEW_SCHEMA = object({
@@ -273,6 +276,10 @@ export interface BuildResult {
   plan_changed: string | null;
   lower_a: number | null;
   lower_why: string | null;
+  /** PIP-216: plan steps built so far, from step 1 in order; null = all of them. */
+  steps_done: number | null;
+  /** PIP-219: what is done, what is next, anything surprising; needed while steps are open. */
+  handoff: string | null;
   /** PIP-203: as in `DesignResult`. */
   reply?: string;
 }
@@ -430,6 +437,10 @@ export function parseResult<K extends keyof Results>(
   kind: K,
   value: unknown,
 ): { ok: true; value: Results[K] } | { ok: false; why: string } {
+  // PIP-216, PIP-219: a build result from before steps (or a cached one) reads as all built, no handoff.
+  if (kind === "build" && isObject(value)) {
+    value = { steps_done: null, handoff: null, ...value };
+  }
   // PIP-119: a review from before `owner` existed (or a cached one) reads as `owner: false`.
   if (kind === "review" && isObject(value) && Array.isArray(value.outcomes)) {
     value = {

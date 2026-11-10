@@ -72,6 +72,11 @@ describe("machine", () => {
       ["approval:merge", "retry_fresh", "fresh"],
       ["merge", "resume", "again"],
       ["gate", "resume", "ignore"],
+      // PIP-216: open plan steps send a published build back to build; nowhere else.
+      ["publish", "more_steps", "→ build"],
+      ["ci", "more_steps", "unexpected"],
+      ["review", "more_steps", "unexpected"],
+      ["blocked", "more_steps", "ignore"],
     ];
     for (const [s, e, want] of rows) expect(show(next(s, e)), `${s} × ${e}`).toBe(want);
     expect(show(next("blocked", "spec_merged", "design"))).toBe("→ plan");

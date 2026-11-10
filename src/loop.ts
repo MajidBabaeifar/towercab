@@ -7,7 +7,7 @@ import { ownerOnly } from "./autonomy.ts";
 import { levelNow } from "./autonomy-change.ts";
 import { watchAutonomy } from "./autonomy-watch.ts";
 import { Inhibitor, woke } from "./awake.ts";
-import { type Cap, capKey, capReason, capsOf, needsRun, reloadBudgets } from "./budgets.ts";
+import { type Cap, capKey, capReason, capsOf, needsRun, reloadBudgets, runDue } from "./budgets.ts";
 import { slotStep } from "./capacity.ts";
 import { removeCheckout } from "./checkout.ts";
 import { applyPending, intentPaused, noteIgnored, paused, recordAgentComment } from "./commands.ts";
@@ -1996,7 +1996,8 @@ export class Loop {
       }
       allow = allow.filter((id) => {
         const m = mine.find((x) => x.id === id);
-        return m !== undefined && !isWait(m.stage);
+        // PIP-218: the next run of a long build is new work, so a cap holds it between runs.
+        return m !== undefined && !isWait(m.stage) && !runDue(m);
       });
       kept[key] = allow;
       for (const m of mine) if (needsRun(m) && !allow.includes(m.id)) held.add(m.id);

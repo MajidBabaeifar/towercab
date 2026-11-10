@@ -297,8 +297,15 @@ async function failed(cx: Ctx, m: Mission, what: string, log: string): Promise<P
   // The owner reads which test or error it was, not only that something failed.
   const which = failingLines(log);
   const said = which ? `${what.replace(/\.$/, "")}: ${which}` : what;
-  if (m.repairs >= MAX_REPAIRS)
-    return { done: wait("checks red", `Still failing after ${MAX_REPAIRS} fix attempts: ${said}`) };
+  if (m.repairs >= MAX_REPAIRS) {
+    // PIP-217: a run of a long build whose checks stay red after the repairs is no progress.
+    const b = data(m).build;
+    const why = `Still failing after ${MAX_REPAIRS} fix attempts: ${said}`;
+    if (b && b.stepsTotal !== undefined && (b.stepsDone ?? 0) < b.stepsTotal) {
+      return { done: wait("checks red", why, { data: { build: { ...b, stalled: (b.stalled ?? 0) + 1 } } }) };
+    }
+    return { done: wait("checks red", why) };
+  }
   return {
     done: red(said, {
       set: { repairs: m.repairs + 1 },

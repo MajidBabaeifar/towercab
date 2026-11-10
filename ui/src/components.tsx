@@ -914,6 +914,7 @@ export function WorkRow({ row, readOnly = false }: { row: Row; readOnly?: boolea
         <StateChip state={row.state} small />
         <span class="row-step">
           {row.behind ?? row.step}
+          {row.build ? <span class="meta build-steps"> · {row.build.label}</span> : null}
           {row.inStep ? <span class="meta"> · {row.inStep}</span> : null}
           {row.warning ? <span class="meta review-warning"> · {row.warning}</span> : null}
         </span>

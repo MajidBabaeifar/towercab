@@ -206,7 +206,25 @@ export interface PipeData {
   /** Head at the end of the last non-repair round (PIP-31). */
   lockHead?: string;
   /** `brief`: the worker's plain brief of what changed (PIP-106). */
-  build?: { pr: string | null; notes: string; planChanged: string | null; brief?: string };
+  build?: {
+    pr: string | null;
+    notes: string;
+    planChanged: string | null;
+    brief?: string;
+    /** PIP-216: plan steps built so far and in the plan; absent for a plan of one run. */
+    stepsDone?: number;
+    stepsTotal?: number;
+    /** PIP-218: build runs of this code phase since the owner last let it carry on (repairs not counted). */
+    runs?: number;
+    /** PIP-217: runs in a row that added no passing commit. */
+    stalled?: number;
+    /** PIP-219: the note the last run left for the next one. */
+    handoff?: string;
+    /** The next worker run is a new run of the long build, in a fresh session (PIP-219). */
+    due?: boolean;
+    /** The round that just ended was a run, not a repair or an answer round. */
+    lastRun?: boolean;
+  };
   /** The step whose child really started (LOOP-4); a step re-entered without it never ran. */
   launched?: string;
   /** Runs per kind, for file names. */

@@ -1680,6 +1680,7 @@ If a part fails after the merges, that part and every part that landed after it 
 | `agent.parallel` | int 1–16 | computed from cores and free memory, at most 4 (LOOP-103) |
 | `agent.build_timeout`, `review_timeout`, `check_timeout` | minutes 1–1440 | 60, 15, 10 |
 | `agent.max_budget_usd`, `agent.daily_budget_usd` | number > 0 | 10; none |
+| `agent.max_build_runs` | integer 1–50 | 3 |
 | `agent.monthly_budget_usd`, `budget.<repo>.daily_usd`, `budget.<repo>.monthly_usd` | number > 0, at most 2 decimals | none |
 | `agent.ci_poll`, `ci_grace`, `ci_wait` | seconds | 30, 120, 1800 |
 | `agent.freeze_wait` | minutes 1–1440 (LOOP-81) | 120 |

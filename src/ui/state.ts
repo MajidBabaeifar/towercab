@@ -513,7 +513,7 @@ type MissionData = {
   brief?: string;
   design?: { brief?: string; pr?: string; concerns?: { what: string; why: string }[]; open?: string[] };
   plan?: { brief?: string; md?: string };
-  build?: { brief?: string; notes?: string };
+  build?: { brief?: string; notes?: string; stepsDone?: number; stepsTotal?: number };
   review?: { summary?: string; brief?: string; details?: string } | null;
   runs?: { at: number; cost: number }[];
   doneByYou?: DoneNote;
@@ -524,6 +524,25 @@ type MissionData = {
   /** PIP-147: the host asks for approvals the reviewers can't give. */
   reviewWarning?: string;
 };
+
+/**
+ * UI-279: how far a long build is. Present only for a plan of several steps that is still being built
+ * (build, its checks, the push, or a wait in between); gone once every step is built and review starts.
+ */
+export function buildProgress(m: Mission): { stepsDone: number; stepsTotal: number; label: string } | null {
+  const b = dataOf<MissionData>(m).build;
+  if (!b || b.stepsTotal === undefined || b.stepsTotal < 2) return null;
+  const done = b.stepsDone ?? 0;
+  if (done >= b.stepsTotal) return null;
+  const stage = isWait(m.stage) ? m.from_stage : m.stage;
+  if (!stage || !["build", "verify", "proof", "publish"].includes(stage)) return null;
+  const running = !isWait(m.stage);
+  return {
+    stepsDone: done,
+    stepsTotal: b.stepsTotal,
+    label: running ? `step ${done + 1} of ${b.stepsTotal}` : `${done} of ${b.stepsTotal} steps built`,
+  };
+}
 
 /** PIP-143, UI-168: the change waits for the teammates, not for the owner. */
 export function onTeammates(m: Pick<Mission, "waiting">): boolean {
@@ -1013,6 +1032,7 @@ export function missionRow(src: UiSources, s: Snap, m: Mission): Row {
     ...(dataOf<MissionData>(m).reviewWarning ? { warning: dataOf<MissionData>(m).reviewWarning } : {}),
     inStep: duration(s.now - entered),
     cost: money(m.cost_usd),
+    build: buildProgress(m),
     model: modelName(m.child_model ?? m.model),
     behind: ready
       ? inFlight >= capOf(workers)
@@ -2532,6 +2552,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     ...(intent?.source === "observer" ? noteOf(intent.sections) : {}),
     canStart,
     state: st,
+    build: live ? buildProgress(live) : null,
     sentence: sentenceOf(
       st,
       live ?? last,

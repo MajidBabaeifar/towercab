@@ -59,6 +59,7 @@ export const EVENTS = [
   "owner_done",
   "to_steps",
   "reviewed",
+  "more_steps",
 ] as const;
 export type Event = (typeof EVENTS)[number];
 
@@ -206,6 +207,10 @@ export function next(
       return K("ignore");
     case "resume":
       return stage === "merge" ? K("again") : K("ignore");
+    // PIP-216: plan steps are still open after a push; the next build run carries on from the first one.
+    case "more_steps":
+      if (stage === "publish") return go("build");
+      return wait ? K("ignore") : K("unexpected");
   }
 }
 
