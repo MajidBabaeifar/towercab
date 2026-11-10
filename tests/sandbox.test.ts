@@ -275,12 +275,17 @@ test("sandbox: no grant binds no proxy", () => {
 // -- PIP-159 ----------------------------------------------------------------------------------------------
 
 test("sandbox: the environment is built from an allowlist", () => {
-  const env = sandboxEnv("/home/me", null, cacheEnv("/h/cache/web", null));
+  // A HOME with no toolchains: no RUSTUP_HOME (PIP-225), whatever the machine running the test has.
+  const env = sandboxEnv("/home/me", null, cacheEnv("/h/cache/web", null, "/home/me"));
   expect(Object.keys(env).sort()).toEqual(
     [
       "CARGO_HOME",
       "CARGO_TARGET_DIR",
       "GOCACHE",
+      "GOMODCACHE",
+      "GOPATH",
+      "ZIG_GLOBAL_CACHE_DIR",
+      "ZIG_LOCAL_CACHE_DIR",
       "HOME",
       "LANG",
       "PATH",

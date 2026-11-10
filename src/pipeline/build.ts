@@ -245,6 +245,11 @@ async function mergeBaseBranch(cx: Ctx, m: Mission): Promise<string[] | null> {
   return (await coGit(cx, m, ["diff", "--name-only", "--diff-filter=U"])).trim().split("\n");
 }
 
+/** PIP-227: marks a question the worker asked mid-build, so the round after the answer keeps its edits. */
+function keepWork(o: Outcome): Outcome {
+  return { ...o, data: { ...o.data, askedMidBuild: true } };
+}
+
 export const buildHandler: Handler = {
   async step(cx, m) {
     const d = data(m);
@@ -256,7 +261,9 @@ export const buildHandler: Handler = {
           return { done: wait("several repos", "The intent lists other repos in `repos:`.") };
         }
         // PIP-116: the owner's answer on a test the worker asked for comes first.
-        const resumed = Boolean(d.testAsk || d.accessAsk);
+        // PIP-227: a question asked mid-build keeps the work too, except in a conflict round, which merges first.
+        const kept = Boolean(d.askedMidBuild) && d.repair?.kind !== "conflict";
+        const resumed = Boolean(d.testAsk || d.accessAsk) || kept;
         if (d.accessAsk) {
           const r = await resolveAccessAsk(cx, m);
           if ("done" in r) return r;
@@ -269,7 +276,8 @@ export const buildHandler: Handler = {
         }
         // The checkout is Towercab's: what another program left in it (an untracked file, an edit)
         // can't block the checkout below or ride into the PR. Ignored files, such as caches, stay (LOOP-8).
-        // After a test question the worker's own edits stay: it was told to finish the rest first.
+        // After a test question the worker's own edits stay: it was told to finish the rest first. After any
+        // other question of its own they stay too (PIP-227): the answer continues that work, it doesn't redo it.
         if (!resumed) {
           await coGit(cx, m, ["reset", "--quiet", "--hard"]);
           await coGit(cx, m, ["clean", "-fdq"]);
@@ -389,7 +397,7 @@ export const buildHandler: Handler = {
         }
         // Where this round starts, so commit can tell a round that changed nothing (PIP-1).
         const from = (await coGit(cx, m, ["rev-parse", "HEAD"])).trim();
-        m = cx.record(m, m.step, {}, { roundFrom: from, answered: undefined });
+        m = cx.record(m, m.step, {}, { roundFrom: from, answered: undefined, askedMidBuild: undefined });
         return setupOrWorker(cx, m);
       }
       case "setup":
@@ -432,7 +440,7 @@ export const buildHandler: Handler = {
     if (v.status === "blocked" && v.question) {
       // LOOP-107: a block that Towercab's own logs trace to a known setup error is retried once.
       const fault = setupFault(setupEvidence(cx, m, end));
-      if (!fault) return { done: await ask(cx, m, v.question, "answer the question", v.brief) };
+      if (!fault) return { done: keepWork(await ask(cx, m, v.question, "answer the question", v.brief)) };
       const d = data(m);
       const key = `${m.stage}:${d.roundFrom ?? ""}`;
       const tried = d.setupRetried ?? {};
@@ -450,7 +458,7 @@ export const buildHandler: Handler = {
         ...v.question,
         context: `Towercab's own setup failed again after one automatic retry: ${fault.plain}. ${v.question.context}`,
       };
-      return { done: await ask(cx, m, again, "answer the question", v.brief) };
+      return { done: keepWork(await ask(cx, m, again, "answer the question", v.brief)) };
     }
     // PIP-137: a helper edit that is more than additions waits for the owner, in the same question as
     // the tests the worker asked for (PIP-136). The edit stays in the checkout, unpublished.

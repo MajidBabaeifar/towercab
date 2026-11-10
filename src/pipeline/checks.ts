@@ -61,7 +61,7 @@ export function sandboxSpec(cx: Ctx, m: Mission, r: SandboxRun): ChildSpec {
       line: script(r.lines),
     }),
     cwd: r.dir,
-    env: { ...sandboxEnv(home, cx.config, cacheEnv(cache, repo)), ...(r.extraEnv ?? {}) },
+    env: { ...sandboxEnv(home, cx.config, cacheEnv(cache, repo, home)), ...(r.extraEnv ?? {}) },
     stdout: r.log,
     stderr: `${r.log}.err`,
     timeoutMs: r.timeoutMs,
