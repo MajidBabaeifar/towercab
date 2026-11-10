@@ -258,7 +258,7 @@ export class GitLabForge {
     throw failure("PUT", this.mr(slug, iid, "/merge"), r.status, r.json);
   }
 
-  private project(slug: string, tail: string): string {
+  private projectUrl(slug: string, tail: string): string {
     return `/projects/${encodeURIComponent(gitlabPath(slug))}${tail}`;
   }
 
@@ -274,7 +274,8 @@ export class GitLabForge {
     for (const p of await this.list(this.mr(slug, iid, "/pipelines"))) {
       if (str(p.sha) !== head || typeof p.id !== "number") continue;
       const pipeline = { id: p.id, createdAt: unix(p.created_at) };
-      for (const job of await this.list(this.project(slug, `/pipelines/${p.id}/jobs?include_retried=false`))) {
+      const jobs = await this.list(this.projectUrl(slug, `/pipelines/${p.id}/jobs?include_retried=false`));
+      for (const job of jobs) {
         const c = jobCheck(pipeline, job);
         if (c) checks.push(c);
       }
@@ -284,7 +285,7 @@ export class GitLabForge {
 
   /** GL-12: retry a pipeline's failed and cancelled jobs; GitLab's refusal is a `RetryRefused`. */
   async rerunFailed(slug: string, pipeline: number): Promise<void> {
-    const path = this.project(slug, `/pipelines/${pipeline}/retry`);
+    const path = this.projectUrl(slug, `/pipelines/${pipeline}/retry`);
     const r = await this.call("POST", path);
     if (r.status >= 200 && r.status < 300) return;
     throw new RetryRefused(str(isObj(r.json) ? r.json.message : "") || `GitLab answered HTTP ${r.status}`);
@@ -292,12 +293,12 @@ export class GitLabForge {
 
   /** Cancel a pipeline that hangs (PIP-171). */
   async cancelRun(slug: string, pipeline: number): Promise<void> {
-    await this.ok("POST", this.project(slug, `/pipelines/${pipeline}/cancel`));
+    await this.ok("POST", this.projectUrl(slug, `/pipelines/${pipeline}/cancel`));
   }
 
   /** The whole log of one job. */
   async jobLog(slug: string, job: number): Promise<string> {
-    const path = this.project(slug, `/jobs/${job}/trace`);
+    const path = this.projectUrl(slug, `/jobs/${job}/trace`);
     const r = await this.call("GET", path);
     if (r.status >= 200 && r.status < 300) return r.text;
     throw failure("GET", path, r.status, r.json);
@@ -306,7 +307,7 @@ export class GitLabForge {
   /** The logs of a pipeline's failed jobs that are not allowed to fail. */
   async failedLog(slug: string, pipeline: number): Promise<string> {
     const parts: string[] = [];
-    for (const job of await this.list(this.project(slug, `/pipelines/${pipeline}/jobs`))) {
+    for (const job of await this.list(this.projectUrl(slug, `/pipelines/${pipeline}/jobs`))) {
       if (str(job.status) !== "failed" || job.allow_failure === true || typeof job.id !== "number") continue;
       parts.push(`Job ${str(job.name)}:\n${await this.jobLog(slug, job.id)}`);
     }

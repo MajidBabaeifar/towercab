@@ -2,8 +2,8 @@
 // Actions run once, send a red to the worker as a repair (2 at most), else wait for the owner.
 
 import { git, refreshBase } from "../checkout.ts";
-import type { Check } from "../forge.ts";
 import { RetryRefused } from "../forge/gitlab-ci.ts";
+import type { Check } from "../forge.ts";
 import { conflictOutcome } from "../github/events.ts";
 import type { Ctx, Handler, Progress } from "../handlers.ts";
 import { ok, red, wait } from "../machine.ts";

@@ -45,6 +45,15 @@ function ctx(forge: GitLabForge, now: () => number, timeouts = false) {
   return cx as unknown as Ctx;
 }
 
+/** A clock that moves on at every read, as time does between two polls. */
+function ticking(): () => number {
+  let t = PUSHED + 1000;
+  return () => {
+    t += 100;
+    return t;
+  };
+}
+
 function mission(mr: FakeMr): Mission {
   return { pr: mr.iid, head: mr.sha, pushed_at: PUSHED, ci_repairs: 0, step: "ci", data: "{}" } as Mission;
 }
@@ -111,8 +120,16 @@ test("gitlab ci: a manual job keeps the pipeline pending and is named", async ()
   expect(b).toEqual({ kind: "pending", runs: [], manual: "deploy" });
   // Before the CI wait runs out the step polls; after it, the owner is told which job waits.
   const m = mission(mr);
-  expect(await ciHandler.step(ctx(forge, () => PUSHED + 1000, true), m)).toEqual({ poll: 5 });
-  const late = await ciHandler.step(ctx(forge, () => PUSHED + WAIT + 10, true), m);
+  expect(
+    await ciHandler.step(
+      ctx(forge, () => PUSHED + 1000, true),
+      m,
+    ),
+  ).toEqual({ poll: 5 });
+  const late = await ciHandler.step(
+    ctx(forge, () => PUSHED + WAIT + 10, true),
+    m,
+  );
   expect(late).toEqual({ done: expect.objectContaining({ event: "wait", waiting: "CI stuck" }) });
   expect("done" in late && late.done.why).toBe("job deploy is waiting for a manual start");
   expect(gl.calls().some((c) => c.startsWith("POST") && c.includes("/cancel"))).toBe(false);
@@ -140,7 +157,10 @@ test("gitlab ci: no pipelines is green after the grace window", async () => {
   expect((await buckets(forge, mr, PUSHED + 10)).b).toEqual({ kind: "pending", runs: [] });
   expect((await buckets(forge, mr, PUSHED + GRACE + 1)).b).toEqual({ kind: "none" });
   const m = mission(mr);
-  const done = await ciHandler.step(ctx(forge, () => PUSHED + GRACE + 1), m);
+  const done = await ciHandler.step(
+    ctx(forge, () => PUSHED + GRACE + 1),
+    m,
+  );
   expect(done).toEqual({ done: expect.objectContaining({ event: "ok", why: "no CI on this repo" }) });
   // A pipeline created before the push is ignored inside the grace window.
   gl.pipeline(mr, [["test", "failed"]], { created_at: "2026-11-05T09:00:00Z" });
@@ -151,7 +171,7 @@ test("gitlab ci: a first red pipeline is retried once", async () => {
   const { gl, mr, forge } = setup();
   const pl = gl.pipeline(mr, [["test", "failed", { trace: "Error: a test failed\n" }]]);
   const m = mission(mr);
-  const cx = ctx(forge, () => PUSHED + 1000);
+  const cx = ctx(forge, ticking());
   expect(await ciHandler.step(cx, m)).toEqual({ poll: 5 });
   expect(gl.calls().filter((c) => c.includes("/retry"))).toEqual([
     `POST /projects/grp%2Fweb/pipelines/${pl.id}/retry`,
@@ -167,7 +187,7 @@ test("gitlab ci: a first cancelled pipeline is retried once", async () => {
   const { gl, mr, forge } = setup();
   const pl = gl.pipeline(mr, [["test", "canceled"]]);
   const m = mission(mr);
-  const cx = ctx(forge, () => PUSHED + 1000);
+  const cx = ctx(forge, ticking());
   expect(await ciHandler.step(cx, m)).toEqual({ poll: 5 });
   expect(gl.calls().filter((c) => c.includes("/retry"))).toHaveLength(1);
   pl.jobs[0]!.status = "canceled";
@@ -183,11 +203,12 @@ test("gitlab ci: a failing job's log tail goes to the repair round", async () =>
     ["lint", "failed", { allow_failure: true, trace: "lint noise only" }],
   ]);
   const m = mission(mr);
-  const cx = ctx(forge, () => PUSHED + 1000);
+  const cx = ctx(forge, ticking());
   await ciHandler.step(cx, m);
-  pl.jobs[0]!.status = "failed";
+  for (const j of pl.jobs) j.status = "failed";
   const red = await ciHandler.step(cx, m);
-  const repair = "done" in red ? (red.done.data as { repair: { kind: string; details: string } }).repair : null;
+  const repair =
+    "done" in red ? (red.done.data as { repair: { kind: string; details: string } }).repair : null;
   expect(repair?.kind).toBe("ci");
   expect(repair?.details).toContain("Job test:\nrunning tests\nError: a test failed");
   expect(repair?.details).not.toContain("lint noise only");
@@ -201,7 +222,7 @@ test("gitlab ci: log tails are cut and redacted", async () => {
   const trace = `first line\n${noise}\n  Secret: hunter2-token\nError: the last failure\n`;
   const pl = gl.pipeline(mr, [["test", "failed", { trace }]]);
   const m = mission(mr);
-  const cx = ctx(forge, () => PUSHED + 1000);
+  const cx = ctx(forge, ticking());
   await ciHandler.step(cx, m);
   pl.jobs[0]!.status = "failed";
   const red = await ciHandler.step(cx, m);
@@ -217,7 +238,10 @@ test("gitlab ci: a refused retry waits with the reason", async () => {
   gl.pipeline(mr, [["test", "failed"]]);
   gl.retryRefusal = "Retry is not allowed on this pipeline";
   const m = mission(mr);
-  const out = await ciHandler.step(ctx(forge, () => PUSHED + 1000), m);
+  const out = await ciHandler.step(
+    ctx(forge, () => PUSHED + 1000),
+    m,
+  );
   expect(out).toEqual({
     done: expect.objectContaining({
       event: "wait",
