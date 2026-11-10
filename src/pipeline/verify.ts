@@ -275,8 +275,15 @@ async function mergeReviewEnd(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progr
 /** A red verify: a repair round, or after the repairs `checks red`. */
 async function failed(cx: Ctx, m: Mission, what: string, log: string): Promise<Progress> {
   if (data(m).mech) return dropMechanical(cx, m, `${what.replace(/\.$/, "").toLowerCase()}`);
-  if (m.repairs >= MAX_REPAIRS)
-    return { done: wait("checks red", `Still failing after ${MAX_REPAIRS} fix attempts: ${what}`) };
+  if (m.repairs >= MAX_REPAIRS) {
+    // PIP-217: a run of a long build whose checks stay red after the repairs is no progress.
+    const b = data(m).build;
+    const why = `Still failing after ${MAX_REPAIRS} fix attempts: ${what}`;
+    if (b && b.stepsTotal !== undefined && (b.stepsDone ?? 0) < b.stepsTotal) {
+      return { done: wait("checks red", why, { data: { build: { ...b, stalled: (b.stalled ?? 0) + 1 } } }) };
+    }
+    return { done: wait("checks red", why) };
+  }
   return {
     done: red(what, {
       set: { repairs: m.repairs + 1 },

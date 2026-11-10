@@ -45,6 +45,8 @@ export interface Config {
     reviewTimeoutMin: number;
     checkTimeoutMin: number;
     maxBudgetUsd: number;
+    /** PIP-218: build runs of one intent before the owner is asked, when a plan needs several. */
+    maxBuildRuns: number;
     dailyBudgetUsd: number | null;
     ciPoll: number;
     ciGrace: number;
@@ -160,6 +162,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       reviewTimeoutMin: r.int(agent, "agent", "review_timeout", 15, 1, 1440),
       checkTimeoutMin: r.int(agent, "agent", "check_timeout", 10, 1, 1440),
       maxBudgetUsd: r.num(agent, "agent", "max_budget_usd", 10, 0, 1000),
+      maxBuildRuns: r.int(agent, "agent", "max_build_runs", 3, 1, 50),
       dailyBudgetUsd: r.optNum(agent, "agent", "daily_budget_usd", 0, 100000),
       ciPoll: r.int(agent, "agent", "ci_poll", 30, 5, 3600),
       ciGrace: r.int(agent, "agent", "ci_grace", 120, 0, 3600),

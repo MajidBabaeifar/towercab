@@ -126,6 +126,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
         <StateChip state={data.state} />
       </header>
       <p class="sentence">{data.sentence}</p>
+      {data.build ? <p class="build-steps meta">{data.build.label}</p> : null}
       {data.onlyYou ? <p class="meta only-you-line">{data.onlyYou}</p> : null}
       {data.autonomy ? <AutonomyControl intent={data.id} view={data.autonomy} readOnly={readOnly} /> : null}
       {!readOnly && (data.onlyYou || data.paused) ? (

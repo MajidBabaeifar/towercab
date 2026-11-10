@@ -116,6 +116,9 @@ export const BUILD_SCHEMA = object({
   plan_changed: S_NULL,
   lower_a: { type: ["integer", "null"], minimum: 0, maximum: 5 },
   lower_why: S_NULL,
+  // PIP-216, PIP-219: how many plan steps are built so far (null = all) and the note for the next run.
+  steps_done: { type: ["integer", "null"], minimum: 0 },
+  handoff: S_NULL,
 });
 
 export const REVIEW_SCHEMA = object({
@@ -250,6 +253,10 @@ export interface BuildResult {
   plan_changed: string | null;
   lower_a: number | null;
   lower_why: string | null;
+  /** PIP-216: plan steps built so far, from step 1 in order; null = all of them. */
+  steps_done: number | null;
+  /** PIP-219: what is done, what is next, anything surprising; needed while steps are open. */
+  handoff: string | null;
 }
 
 export interface ReviewResult {
