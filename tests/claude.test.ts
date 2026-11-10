@@ -504,7 +504,8 @@ test("claude: no token in env", () => {
     },
     "/cfg/config.toml",
   );
-  const cache = cacheEnv("/h/cache/web", c.repos.get("web")!);
+  // A HOME with no toolchains: no RUSTUP_HOME (PIP-225), whatever the machine running the test has.
+  const cache = cacheEnv("/h/cache/web", c.repos.get("web")!, "/home/me");
   const env = claudeEnv(run("worker", { config: c, cacheEnv: cache }), "/home/me");
   expect(Object.keys(env)).toEqual([
     "HOME",
@@ -517,6 +518,10 @@ test("claude: no token in env", () => {
     "GOCACHE",
     "PIP_CACHE_DIR",
     "KEEP_ME",
+    "GOPATH",
+    "GOMODCACHE",
+    "ZIG_GLOBAL_CACHE_DIR",
+    "ZIG_LOCAL_CACHE_DIR",
   ]);
   // PIP-157: `[agent].path` and `[agent].env` are ignored; PATH is a constant.
   expect(env).toMatchObject({ HOME: "/home/me", PATH: sandboxPath("/home/me") });

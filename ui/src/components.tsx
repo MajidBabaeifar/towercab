@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type {
   ActionReply,
   Card,
+  InstallHelpView,
   Phase,
   ProblemView,
   ProposedCard as ProposedCardData,
@@ -75,6 +76,38 @@ export function Details({ id, text }: { id: string; text: string }) {
       <summary>Agent context</summary>
       <div class="details-body">
         <Markdown text={text} />
+      </div>
+    </details>
+  );
+}
+
+/** UI-211: how to install the GitHub App on a repo it can't reach, folded under "See more". */
+export function InstallHelpBlock({ id, help }: { id: string; help: InstallHelpView }) {
+  const [open, setOpen] = useState(detailsOpen.has(`install:${id}`));
+  return (
+    <details
+      class="details-fold install-help"
+      open={open}
+      onToggle={(e) => {
+        const now = (e.currentTarget as HTMLDetailsElement).open;
+        if (now) detailsOpen.add(`install:${id}`);
+        else detailsOpen.delete(`install:${id}`);
+        setOpen(now);
+      }}
+    >
+      <summary>See more</summary>
+      <div class="details-body">
+        {help.app ? <p>App: {help.app}</p> : null}
+        <ol>
+          {help.steps.map((s) => (
+            <li key={s}>{s}</li>
+          ))}
+        </ol>
+        <p>
+          <a href={help.url} target="_blank" rel="noopener">
+            {help.url}
+          </a>
+        </p>
       </div>
     </details>
   );
@@ -518,6 +551,7 @@ export function NeedsCard({
       ) : null}
       <p class="ask">{card.ask}</p>
       {card.why ? <p class="why">{card.why}</p> : null}
+      {card.installHelp ? <InstallHelpBlock id={`card:${key}`} help={card.installHelp} /> : null}
       {card.autonomy ? (
         card.kind === "autonomy" ? (
           <FlagButtons intent={key} view={card.autonomy} readOnly={readOnly} />
@@ -915,6 +949,7 @@ export function ProblemItem({ p }: { p: ProblemView }) {
       <div class="problem-body">
         <p class="problem-title">{p.title}</p>
         {p.detail ? <p class={`problem-detail${p.code ? " code" : ""}`}>{p.detail}</p> : null}
+        {p.installHelp ? <InstallHelpBlock id={`problem:${p.key}`} help={p.installHelp} /> : null}
         <p class="problem-fix">{p.fix}</p>
       </div>
       {p.intent ? (

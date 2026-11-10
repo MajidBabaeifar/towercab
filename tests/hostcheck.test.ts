@@ -12,8 +12,11 @@ import {
   PROFILE_FILE,
   profileStep,
   RESTRICT_FILE,
+  STOCK_DISABLED,
+  STOCK_FILE,
   sandboxFailure,
 } from "../src/pipeline/hostcheck.ts";
+import { NESTED_WHY } from "../src/pipeline/probe.ts";
 import { happy, intent, intents, TARGET } from "./helpers/flows.ts";
 import { Pipe } from "./helpers/pipe.ts";
 import { FakeTools, failResult, okResult } from "./helpers/tools.ts";
@@ -112,4 +115,30 @@ test("hostcheck: a failed probe otherwise shows the probe's error", async () => 
   expect(got.calls).toBe(0);
   expect(got.faults[0]).toContain("execvp sh: No such file");
   expect(got.faults[0]).not.toContain("apparmor_parser");
+});
+
+test("hostcheck: a refused nested namespace with the stock profile shows the swap command", async () => {
+  // Ubuntu's own profile lets bwrap start, so the old probe held while every worker's shell failed.
+  const nested = () => new FakeTools().on("/usr/bin/bwrap", () => failResult("", 24));
+  const STOCK = host({ [RESTRICT_FILE]: "1\n", [STOCK_FILE]: "profile bwrap /usr/bin/bwrap {}\n" });
+  const r = await checkSandbox(nested(), STOCK);
+  expect(r.ok).toBe(false);
+  expect(r.why).toContain(NESTED_WHY);
+  expect(r.why).toContain(`sudo ln -sf ${STOCK_FILE} ${STOCK_DISABLED}`);
+  expect(r.why).toContain(`sudo apparmor_parser -R ${STOCK_FILE}`);
+  expect(r.why).toContain(`sudo apparmor_parser -r ${PROFILE_FILE}`);
+  expect(r.why).not.toMatch(/sysctl|apparmor_restrict_unprivileged_userns|allowAllUnixSockets/);
+  // Nothing is picked and no Claude run starts while it fails.
+  const got = await run(nested(), STOCK);
+  expect(got.faults.join(" ")).toContain(NESTED_WHY);
+  expect(got.calls).toBe(0);
+  // Already switched off, or no restriction: only the probe's own words.
+  const OFF = host({
+    [RESTRICT_FILE]: "1\n",
+    [STOCK_FILE]: "x",
+    [STOCK_DISABLED]: "x",
+    [PROFILE_FILE]: PROFILE,
+  });
+  expect((await checkSandbox(nested(), OFF)).why).toBe(NESTED_WHY);
+  expect((await checkSandbox(nested(), FREE)).why).toBe(NESTED_WHY);
 });

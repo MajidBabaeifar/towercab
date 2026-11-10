@@ -164,6 +164,8 @@ export interface RiskView {
 
 /** UI-58: one wait on the owner. */
 export interface Card {
+  /** UI-211: set when the reason is that the App isn't installed. */
+  installHelp?: InstallHelpView;
   intent: string;
   title: string;
   repo: string;
@@ -283,7 +285,16 @@ export interface CapCard {
   waiting: number;
 }
 
+/** UI-211: how to install the GitHub App on a repo it can't reach (LOOP-122), folded under "See more". */
+export interface InstallHelpView {
+  app: string | null;
+  url: string;
+  steps: string[];
+}
+
 export interface ProblemView {
+  /** UI-211: set when the reason is that the App isn't installed. */
+  installHelp?: InstallHelpView;
   key: string;
   title: string;
   detail: string | null;
