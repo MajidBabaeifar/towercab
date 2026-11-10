@@ -734,6 +734,7 @@ const MANY_REPOS = {
 };
 
 function manyScene(db: Db, store: MemStore, now: number): void {
+  const iso = (t: number) => new Date(t * 1000).toISOString();
   store.done.push(
     makeIntent({
       id: CLI_DONE,
