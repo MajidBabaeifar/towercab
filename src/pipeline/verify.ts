@@ -272,13 +272,35 @@ async function mergeReviewEnd(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progr
   return { done: ok({ why: "the merge kept both sides", data: { mech: { ...mech, reviewed: true } } }) };
 }
 
+const FAILING = /^\s*(?:[×✗✖]|FAIL\b|not ok\b|error(?:\[| TS\d+|:)|.*\b(?:AssertionError|panicked at)\b)/;
+
+/**
+ * What failed, for a person (PIP-23): up to three lines of the log that name a failing test or error, else its
+ * last line; colour codes removed, each cut to 100 characters. Empty when the log says nothing.
+ */
+export function failingLines(log: string): string {
+  const lines = log
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: strips terminal colour codes.
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("$ "));
+  const hits = [...new Set(lines.filter((l) => FAILING.test(l)))];
+  const picked = hits.length ? hits.slice(0, 3) : lines.slice(-1);
+  const more = hits.length > 3 ? ` (and ${hits.length - 3} more)` : "";
+  return picked.map((l) => (l.length > 100 ? `${l.slice(0, 99)}…` : l)).join("; ") + more;
+}
+
 /** A red verify: a repair round, or after the repairs `checks red`. */
 async function failed(cx: Ctx, m: Mission, what: string, log: string): Promise<Progress> {
   if (data(m).mech) return dropMechanical(cx, m, `${what.replace(/\.$/, "").toLowerCase()}`);
+  // The owner reads which test or error it was, not only that something failed.
+  const which = failingLines(log);
+  const said = which ? `${what.replace(/\.$/, "")}: ${which}` : what;
   if (m.repairs >= MAX_REPAIRS)
-    return { done: wait("checks red", `Still failing after ${MAX_REPAIRS} fix attempts: ${what}`) };
+    return { done: wait("checks red", `Still failing after ${MAX_REPAIRS} fix attempts: ${said}`) };
   return {
-    done: red(what, {
+    done: red(said, {
       set: { repairs: m.repairs + 1 },
       data: {
         repair: { what, details: tail(log), kind: "verify" },

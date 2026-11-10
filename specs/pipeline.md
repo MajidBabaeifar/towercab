@@ -213,6 +213,10 @@ back to the worker.
 - Red → a repair round in `build` with the log tail (at most 2 for verify and proof together,
   `repairs`), then `waiting: checks red`. A log that shows a missing tool or a sandbox failure is a
   fault ([LOOP-10](loop.md)), not a repair.
+  What the owner reads names what failed: the reason is `The checks failed: <lines>`, with up to three
+  lines of the log that name a failing test or an error (`×`, `FAIL`, `not ok`, `error…`, an assertion or
+  a panic), else the log's last line, each cut to 100 characters, and `(and N more)` beyond three; never
+  only "The checks failed." The worker's repair prompt keeps the full log tail.
   A log that shows the checks could not write to the repo cache is a question for the owner
   (PIP-95), not a repair.
 - **Sandbox**: `bwrap --unshare-net --unshare-pid --unshare-ipc --unshare-uts --new-session
@@ -220,7 +224,7 @@ back to the worker.
   PIP-158] --tmpfs <HOME> --tmpfs /tmp`, the toolchain dirs read-only with credential files masked, the repo
   cache (LOOP-34), `--bind <checkout>` with its `.git` read-only, `--chdir <checkout>`, `sh -c <line>`. Every
   part is fixed in code (PIP-157).
-- Verified by: `pipeline: verify runs setup then checks`, `pipeline: verify red repairs then waits`, `pipeline: sandbox argv`
+- Verified by: `pipeline: verify runs setup then checks`, `pipeline: verify red repairs then waits`, `pipeline: sandbox argv`, `verify: a red check names what failed`
 
 ### PIP-24 · Claude runs
 
@@ -282,6 +286,9 @@ The worker plans the build, read-only, and Towercab opens the plan as a PR on th
 
 - Resumes the session; tools Read, Glob, Grep and read-only git. Result (**Schemas** `plan`): `plan`
   (markdown, PIP-46) and `access` (`domains` and `paths`, each with `why`).
+- A placeholder is refused: a `plan` with fewer than 80 characters of text or no listed step, or a `brief`
+  under 20 characters, is a bad result and the planner is asked again (PIP-13); no plan PR is opened for
+  it. (A plan whose whole text was `x` was once published and merged.)
 - Towercab writes `intents/<id>-<slug>/plan.md` (PIP-46) on branch `plan/<id>-<slug>` of the intents
   repo, pushes, and opens the plan PR (title `docs(plan): <title>`, body: the approach in a few
   sentences and the access asked for). Then the risk agent reads it (PIP-96), and the plan gate
@@ -291,7 +298,7 @@ The worker plans the build, read-only, and Towercab opens the plan as a PR on th
 - A build that departs from the plan returns `plan_changed`; Towercab commits it to `plan.md` on
   `main` of the intents repo (`towercab: plan changed <id>`), keeping the merged Access section, and the
   gate sends the PR to the owner below a5. A revised plan PR keeps the boxes the owner unticked.
-- Verified by: `pipeline: plan PR is opened on intents`, `pipeline: feedback revises the plan`, `pipeline: merged plan grants its ticked access`
+- Verified by: `pipeline: plan PR is opened on intents`, `pipeline: feedback revises the plan`, `pipeline: merged plan grants its ticked access`, `plan: a placeholder plan is refused and asked again`
 
 ### PIP-29 · Guard
 
@@ -1622,13 +1629,14 @@ The sandbox runs on Ubuntu with unprivileged user namespaces restricted, without
 - Towercab never tells the owner to set `kernel.apparmor_restrict_unprivileged_userns=0` or `kernel.unprivileged_userns_clone`. Where the restriction blocks bwrap, `towercab doctor` and the fault of PIP-161 say it and give the narrow fix: an AppArmor profile that allows only the `bwrap` binary Towercab uses to create user namespaces.
 - The self-test of PIP-163 runs the real argv, so a restricted host is found before a mission starts.
 - The probe decides (PIP-163): a sandbox that works never gets a card, whatever files exist. When the probe fails, nothing is picked and no Claude run starts (a run asked for waits `fix sandbox`, stage `blocked`; a retry after the fix carries on). The text the owner sees is the probe's own error and, only if `kernel.apparmor_restrict_unprivileged_userns` is 1 and Towercab's profile (`/etc/apparmor.d/towercab-bwrap`) is not installed, the one step with the exact install command; `towercab doctor` shows the same step. Nothing is loosened to make a run work: Claude's own sandbox never gets `allowAllUnixSockets`, and the host's sockets stay hidden.
-- Verified by: `sandbox: a restricted user namespace gives the apparmor profile fix`, `sandbox: doctor never suggests turning the restriction off`, `hostcheck: a failed probe with the restriction on and no profile shows the install command`, `hostcheck: a working sandbox runs with the restriction on and no profile file`, `hostcheck: a failed probe otherwise shows the probe's error`
+- Ubuntu's own profile for `bwrap` (`/etc/apparmor.d/bwrap-userns-restrict`, on by default from 24.10) lets bwrap start but refuses a user namespace to whatever bwrap starts. Claude's sandbox starts every shell command in one, so with that profile a worker has no shell and builds blind while Towercab's own checks still run. When the probe fails for this reason (PIP-163) with the restriction on and that profile active, the owner's step is to switch the stock profile off (a link in `/etc/apparmor.d/disable/` and `apparmor_parser -R`) and install Towercab's profile, as one set of commands; two profiles can't both own `bwrap`. The step still never touches the sysctl and never loosens Claude's sandbox.
+- Verified by: `sandbox: a restricted user namespace gives the apparmor profile fix`, `sandbox: doctor never suggests turning the restriction off`, `hostcheck: a failed probe with the restriction on and no profile shows the install command`, `hostcheck: a working sandbox runs with the restriction on and no profile file`, `hostcheck: a failed probe otherwise shows the probe's error`, `hostcheck: a refused nested namespace with the stock profile shows the swap command`
 
 ### PIP-163 · The sandbox is tested at start
 
 Towercab proves the sandbox holds on this machine before it runs a mission, and again in `doctor`.
 
-- At service start and in `towercab doctor`, a probe runs through the production builder: a read of a planted canary outside the checkout fails, a write into `.git` fails, and a request without a grant fails. A failed probe is a fault (PIP-161) and the loop takes no mission until the next successful probe.
+- At service start and in `towercab doctor`, a probe runs through the production builder: a read of a planted canary outside the checkout fails, a write into `.git` fails, and a request without a grant fails, and a command inside can create a user namespace of its own (`unshare -Ur true`, skipped where `unshare` is missing), because Claude's sandbox needs that for every shell command a worker runs. A failed probe is a fault (PIP-161) and the loop takes no mission until the next successful probe.
 - The probe's result and the bwrap version show in `doctor`.
 - Verified by: `sandbox: the start probe passes on a sound sandbox`, `sandbox: a failed probe stops the loop taking missions`, `doctor: shows the sandbox probe`
 
