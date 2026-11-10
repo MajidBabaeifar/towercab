@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..149, UI-150..154, UI-155..163, UI-168, UI-184..191, UI-192..197, UI-239, UI-244..251, UI-236..238, UI-253..256, UI-257..258, UI-259..267, UI-203..208, UI-282, UI-211 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..163, UI-168, UI-184..197, UI-203..208, UI-211, UI-236..239, UI-242..251, UI-253..267, UI-282 · **Prefix:** UI
 
 ## Purpose
 
@@ -1654,7 +1654,7 @@ Admins can see each person's open sessions and end one or all of them.
 
 The overview shows what the observer did lately: its last run, this week's proposals and what it spent today.
 
-- An "Observer" panel via `GET /api/observer` (`{enabled, lastRun, proposalsThisWeek, maxPerWeek, spentToday, cap, lastReport}`): the last run's time, trigger (daily or the event), outcome and proposal count, the proposals made in the last 7 days against `[observer].max_proposals_per_week` (OBV-7), today's observer spend against its cap (OBV-10) and when the last weekly report went out (OBV-8). With the observer off the panel is not shown. A reached cap says so in words.
+- An "Observer" panel via `GET /api/observer` (`{enabled, lastRun, proposalsThisWeek, maxPerWeek, spentToday, cap, lastReport}`): the last run's time, trigger (daily or the event), outcome and proposal count, the proposals made in the last 7 days against `[observer].max_proposals_per_week` (OBV-7), today's observer spend against its cap (OBV-10) and when the last weekly report went out (OBV-8). With the observer off, or before its first run, the panel is not shown. A reached cap says so in words.
 - Verified by: `ui: the observer panel shows its last run, proposals and spend`, `ui: the observer panel is hidden when off`
 
 ### UI-243 · Observer proposals are tagged and show their evidence

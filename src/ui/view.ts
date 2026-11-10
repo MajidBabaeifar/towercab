@@ -204,6 +204,8 @@ export interface Card {
   warning?: string;
   /** UI-236: the intent is a draft of the shadow's (`source: shadow`). */
   shadow?: boolean;
+  /** UI-243: the intent was proposed by the observer (`source: observer`). */
+  observer?: boolean;
   /** UI-239: the intent is a0: only the owner can answer or approve it, shown as "only you". */
   onlyYou?: boolean;
   /** UI-257: the autonomy control. */
@@ -236,6 +238,8 @@ export interface Row {
   warning?: string;
   /** UI-236: the intent is a draft of the shadow's. */
   shadow?: boolean;
+  /** UI-243: the intent was proposed by the observer. */
+  observer?: boolean;
   /** UI-257: the autonomy control. */
   autonomy?: AutonomyView;
   estimate?: EstimateLine;
@@ -424,6 +428,32 @@ export interface TimelineItem {
   tone: "move" | "wait" | "error" | "done";
   /** UI-236: the shadow did this. */
   shadow?: boolean;
+  /** UI-243: the observer did this. */
+  observer?: boolean;
+}
+
+/** UI-242: `GET /api/observer`. */
+export interface ObserverView {
+  enabled: boolean;
+  /** The last run, or null before the first. */
+  lastRun: {
+    at: When;
+    trigger: string;
+    outcome: string;
+    proposals: number;
+    comments: number;
+    why: string | null;
+  } | null;
+  proposalsThisWeek: number;
+  maxPerWeek: number;
+  spentToday: string;
+  cap: string;
+  spentUsd: number;
+  capUsd: number;
+  /** The daily cap is reached: no further run today. */
+  capReached: boolean;
+  /** When the last weekly report went out: a day `YYYY-MM-DD`, or null. */
+  lastReport: string | null;
 }
 
 /** UI-237: one thing the shadow did, asked or refused. */
@@ -576,6 +606,10 @@ export interface IntentPage {
   scores: string;
   /** UI-236: a draft of the shadow's (`source: shadow`). */
   shadow?: boolean;
+  /** UI-243: proposed by the observer (`source: observer`). */
+  observer?: boolean;
+  /** UI-243: its evidence links and expected gain, shown above the rest of the text. */
+  observerNote?: { evidence: string; gain: string };
   /** The "Start now" button is offered (UI-101). */
   canStart: boolean;
   state: StateView;
@@ -767,6 +801,10 @@ export interface ProposedCard {
   canAccept: boolean;
   /** Shown beside the disabled Accept. */
   acceptWhy: string | null;
+  /** UI-243: proposed by the observer (`source: observer`). */
+  observer?: boolean;
+  /** UI-243: its evidence and expected gain, shown first. */
+  observerNote?: { evidence: string; gain: string };
 }
 
 /** UI-184, UI-188: the proposed cards in priority order, and a notice when the list may be old. */

@@ -171,6 +171,8 @@ export interface LoopDeps {
   chat?: { pass(): Promise<void>; stop(): void };
   /** LOOP-129, LOOP-130: the shadow, passed each pass; none: no shadow. */
   shadow?: { pass(): Promise<void>; busy(): boolean; stop(): Promise<void> };
+  /** OBV-2: the observer, passed each pass; none: no observer. */
+  observer?: { pass(): Promise<void>; busy(): boolean; stop(): Promise<void> };
 }
 
 export interface LoopOpts {
@@ -437,7 +439,8 @@ export class Loop {
       this.settingsJob !== null ||
       this.setupJob !== null ||
       this.issuesRun !== null ||
-      this.d.shadow?.busy()
+      this.d.shadow?.busy() ||
+      this.d.observer?.busy()
     )
       return;
     this.d.log(
@@ -457,6 +460,7 @@ export class Loop {
     await this.limitsIdle();
     this.d.chat?.stop();
     await this.d.shadow?.stop();
+    await this.d.observer?.stop();
     for (const [id, r] of this.children) {
       r.handle.kill("SIGTERM");
       const done = await Promise.race([
@@ -626,6 +630,8 @@ export class Loop {
     // LOOP-130: the shadow reads the chat and reaps or starts a turn; its child runs beside the pass.
     await this.d.chat?.pass();
     await this.d.shadow?.pass();
+    // OBV-2: the observer reaps a finished run or starts one that is due; its child runs beside the pass.
+    await this.d.observer?.pass();
     await this.sendMessages();
 
     // A change waiting days on the owner's steps is not work: the machine may sleep and the loop is idle.
@@ -641,6 +647,7 @@ export class Loop {
       this.settingsJob === null &&
       this.setupJob === null &&
       !this.d.shadow?.busy() &&
+      !this.d.observer?.busy() &&
       live.length === 0 &&
       report.picked === null;
     if (this.targetId) {
@@ -1294,6 +1301,11 @@ export class Loop {
   private proposedPriority(i: { u: number | null; i: number | null }): string {
     const p = priority(i.u, i.i);
     return isParked(p, this.d.config.intents.cutoff) ? "would be parked" : `priority ${p}`;
+  }
+
+  /** The last read of the intents repo, for the observer (OBV-6). */
+  currentListing(): Listing | null {
+    return this.listing;
   }
 
   /** For the page (UI-184) and the actions (INT-53). */
@@ -2096,7 +2108,8 @@ export class Loop {
       this.readinessJob === null &&
       this.settingsJob === null &&
       this.setupJob === null &&
-      !this.d.shadow?.busy();
+      !this.d.shadow?.busy() &&
+      !this.d.observer?.busy();
     // A drain whose children are gone updates at once instead of at the next minute.
     if (!(this.drain !== null && idle()) && this.now - this.lastUpdate < UPDATE_POLL_S) return;
     this.lastUpdate = this.now;

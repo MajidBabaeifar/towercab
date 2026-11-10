@@ -88,6 +88,21 @@ daily_budget_usd = 5
 # The model it uses (default: [agent] model).
 # model = "opus"
 
+[observer]
+# The observer reads how Towercab ran and proposes improvements as intents for you to accept or close.
+# It only reads, and it is on unless you turn it off here.
+enabled = true
+# When it runs each day (local time); it also runs after notable events.
+daily_at = "06:00"
+# The most proposals it opens in any seven days.
+max_proposals_per_week = 3
+# What it may spend per day (USD); it counts toward your overall budget and never pauses other work.
+daily_budget_usd = 3
+# What one run may spend (USD).
+max_budget_usd = 1.5
+# The model it uses (default: [agent] model).
+# model = "opus"
+
 [ui]
 # Port of the local web page (0 turns it off).
 port = 7311

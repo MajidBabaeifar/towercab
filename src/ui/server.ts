@@ -19,6 +19,7 @@ import type { IntentStore, Listing } from "../intents/types.ts";
 import type { UiActions } from "./actions.ts";
 import { board } from "./board.ts";
 import { inbox, inboxAction } from "./inbox.ts";
+import { observerView } from "./observer.ts";
 import { repos } from "./repos.ts";
 import { shadowView } from "./shadow.ts";
 import { activity, intentPage, overview, queue, RUN_NAME, redact, type UiSources } from "./state.ts";
@@ -524,6 +525,7 @@ export function startUi(o: UiOptions): UiServer {
     if (path === "/api/queue") return json(res, 200, await queue(src));
     if (path === "/api/board") return json(res, 200, await board(src));
     if (path === "/api/shadow") return json(res, 200, shadowView(src));
+    if (path === "/api/observer") return json(res, 200, observerView(src));
     if (path === "/api/inbox") return json(res, 200, await inbox(src));
     if (path === "/api/repos") {
       const a = o.actions;
