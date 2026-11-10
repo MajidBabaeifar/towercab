@@ -139,3 +139,5 @@ export interface IntentStore {
 
 export class SyncError extends Error {}
 export class RefusedError extends Error {}
+/** LOOP-140: no open intent matches; the intent is closed (in `done/`) or gone. */
+export class NoOpenIntentError extends RefusedError {}

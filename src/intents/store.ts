@@ -30,6 +30,7 @@ import {
   type IntentStore,
   type Listing,
   type NewIntent,
+  NoOpenIntentError,
   RefusedError,
   SyncError,
   type Unreadable,
@@ -627,7 +628,8 @@ export class GitStore implements IntentStore {
     let pinned: string | null = null;
     return this.write(async (s) => {
       const found = findOpen(s.listing, pinned ?? idOrSuffix);
-      if (pinned !== null && found.id !== pinned) throw new RefusedError(`no open intent matches ${pinned}`);
+      if (pinned !== null && found.id !== pinned)
+        throw new NoOpenIntentError(`no open intent matches ${pinned}`);
       pinned = found.id;
       const f = s.files.get(found.id)!.clone();
       const before = f.render();
