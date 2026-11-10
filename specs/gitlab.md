@@ -191,6 +191,64 @@ A first red or cancelled GitLab pipeline is retried once before it counts, and a
 - A retry that GitLab refuses → `waiting: CI red` with GitLab's reason.
 - Verified by: `gitlab ci: a first red pipeline is retried once`, `gitlab ci: a first cancelled pipeline is retried once`, `gitlab ci: a failing job's log tail goes to the repair round`, `gitlab ci: log tails are cut and redacted`, `gitlab ci: a refused retry waits with the reason`
 
+### GL-13 · The loop picks intents on GitLab repos
+
+An intent on a GitLab repo is picked and goes through every stage like one on a GitHub repo.
+
+- The hold-back of GitLab repos in `pick` is removed: a GitLab repo's intents follow the same order, limits and
+  `after` rules as GitHub's ([LOOP-1](loop.md)). Each stage reaches the host only through the `Forge` of the
+  mission's repo, which is a `GitLabForge` ([GL-5](#gl-5--merge-request-actions)) for a `gitlab:` repo, so no stage branches on the host.
+- Spec, plan and code each open as a merge request, draft first ([GL-5](#gl-5--merge-request-actions)), and the CI stage reads
+  its pipelines ([GL-11](#gl-11--build-results-from-merge-request-pipelines), [GL-12](#gl-12--a-first-red-gitlab-pipeline-is-retried-then-repaired-from-log-tails)).
+- A GitLab repo's readiness has only the `verifying` item ([REPO-22](repo.md)..[REPO-33](repo.md) stay GitHub-only).
+- Verified by: `gitlab: intents on a GitLab repo are picked`, `gitlab: a mission on a GitLab repo reaches the merged state`
+
+### GL-14 · The loop reads merge requests and acts on them
+
+Every minute the loop reads the merge request of each waiting GitLab mission and moves it as it does for a pull request.
+
+- The loop's read of open pull requests ([PIP-21](pipeline.md)) also reads each GitLab mission's merge request
+  as [GL-6](#gl-6--merge-request-events) lists, through `Forge`, never by branching on the host in `loop.ts`.
+- The events of GL-6 reach `machine.apply` like GitHub's: `merged` → `*_merged`, `closed` → `closed`, an owner note →
+  `feedback` with its file and line for a diff note, `/retry` → `retry`, a conflict, a moved head. Notes by the bot and system notes are not feedback.
+- The owner's approval on a merge request that waits for it merges it with `sha=<gated head>` ([GL-5](#gl-5--merge-request-actions)), as in [PIP-43](pipeline.md),
+  only once [GL-15](#gl-15--an-approval-counts-only-for-the-commit-it-was-given-on) holds.
+- A merge request that GitLab can't read (404, 401) is a failure of the kind [GL-2](#gl-2--the-token-is-towercabs-identity) names, not a closed merge request.
+- Verified by: `gitlab: the loop reads the merge request of a waiting mission`, `gitlab: a merged merge request moves the mission to merged`, `gitlab: a closed merge request moves the mission to closed`, `gitlab: an owner note in the loop becomes feedback`, `gitlab: /retry in the loop retries the mission`, `gitlab: the owner's approval in the loop merges`, `gitlab: an unreadable merge request is not a closed one`
+
+### GL-15 · An approval counts only for the commit it was given on
+
+An approval merges only the commit it was given on: if the branch changes afterwards, Towercab asks again.
+
+- Applies to the owner's approval ([GL-14](#gl-14--the-loop-reads-merge-requests-and-acts-on-them)) and to teammates' ([GL-7](#gl-7--approvals-notes-and-threads)). Towercab records the head
+  `sha` at which it first sees each name in `approved_by`; GitLab gives no commit for an approval.
+- When the head has moved since, the approval stays valid only if the diff against the base has the same patch-id
+  ([PIP-142](pipeline.md)); otherwise it is stale: the mission waits for a new approval, the stage comment says
+  `approval was for <short sha>, the branch is now at <short sha>`, and nothing is merged.
+- Where GitLab itself removes approvals on a new commit, `approved_by` is empty and nothing more is done.
+- The merge still carries `sha=<gated head>`, so a head that moves between the check and the merge is refused ([PIP-22](pipeline.md)).
+- Verified by: `gitlab: an approval of the same head merges`, `gitlab: an approval of an older head with a changed diff does not merge`, `gitlab: an approval of an older head with the same patch-id still counts`, `gitlab: a stale approval is said in the stage comment`
+
+### GL-16 · The intents repo on GitLab runs end to end
+
+With the intents repo on GitLab, its plan merge requests are opened, read and merged by the loop.
+
+- Completes [GL-4](#gl-4--the-intents-repo-on-gitlab): the store pulls, commits and pushes with the GitLab identity, and the plan merge
+  request ([PIP-46](pipeline.md)) is read by the loop as GL-14 says and merged on the intents project.
+- Code on GitHub with intents on GitLab, and the reverse, work: each repo uses its own host's `Forge`.
+- Intents from issues are not read from a GitLab intents repo (GL-4); the loop does not fail on it.
+- Verified by: `gitlab: a plan merge request on the intents project is merged by the loop`, `gitlab: code on GitHub with intents on GitLab`, `gitlab: code on GitLab with intents on GitHub`
+
+### GL-17 · The owner is told once when the token is about to expire
+
+Towercab tells the owner once when the GitLab token has 14 days or less left.
+
+- Once per loop start the loop reads `GET <api_base>/personal_access_tokens/self` ([GL-9](#gl-9--doctor-checks-the-token)). On the first read where
+  `expires_at` is within 14 days, it sends the owner one message ([LOOP-14](loop.md)): `GitLab token expires in <n> days
+  (<date>): create a new one before then`. It is not repeated for the same `expires_at`, also after a restart; a new token with a new date can notify again.
+- `expires_at: null` and a failed read send nothing; a token that already expired is the auth failure of [GL-2](#gl-2--the-token-is-towercabs-identity).
+- Verified by: `gitlab: the owner is told once when the token is within 14 days of expiring`, `gitlab: the token notice is not repeated after a restart`, `gitlab: a token without expiry sends no notice`
+
 ## Out of scope
 
 - GitLab issues, and deployments or environments; each is tracked separately. GitLab CI is read as GL-11 and GL-12 say; a GitLab repo with no pipelines has no CI stage and counts as a GitHub repo with no CI ([REPO-9](repo.md)).
