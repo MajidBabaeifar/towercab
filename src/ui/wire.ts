@@ -122,6 +122,7 @@ export function sourcesOf(loop: Loop, home: Home): UiSources {
     pausedNow: () => pausedNow(loop.d.db),
     pausedAt: () => pausedAt(loop.d.db),
     problems: () => problemsOf(loop),
+    installHelp: (github) => loop.d.github.peekInstallHelp?.(github) ?? null,
     version: () => version,
     upNext: () => upNextOf(loop),
     prUrl: (repo, n) => `https://github.com/${repo}/pull/${n}`,

@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..194, PIP-196..202, PIP-210, PIP-216..219 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..194, PIP-196..207, PIP-210, PIP-216..219 · **Prefix:** PIP
 
 ## Purpose
 
@@ -1622,13 +1622,14 @@ The sandbox runs on Ubuntu with unprivileged user namespaces restricted, without
 - Towercab never tells the owner to set `kernel.apparmor_restrict_unprivileged_userns=0` or `kernel.unprivileged_userns_clone`. Where the restriction blocks bwrap, `towercab doctor` and the fault of PIP-161 say it and give the narrow fix: an AppArmor profile that allows only the `bwrap` binary Towercab uses to create user namespaces.
 - The self-test of PIP-163 runs the real argv, so a restricted host is found before a mission starts.
 - The probe decides (PIP-163): a sandbox that works never gets a card, whatever files exist. When the probe fails, nothing is picked and no Claude run starts (a run asked for waits `fix sandbox`, stage `blocked`; a retry after the fix carries on). The text the owner sees is the probe's own error and, only if `kernel.apparmor_restrict_unprivileged_userns` is 1 and Towercab's profile (`/etc/apparmor.d/towercab-bwrap`) is not installed, the one step with the exact install command; `towercab doctor` shows the same step. Nothing is loosened to make a run work: Claude's own sandbox never gets `allowAllUnixSockets`, and the host's sockets stay hidden.
-- Verified by: `sandbox: a restricted user namespace gives the apparmor profile fix`, `sandbox: doctor never suggests turning the restriction off`, `hostcheck: a failed probe with the restriction on and no profile shows the install command`, `hostcheck: a working sandbox runs with the restriction on and no profile file`, `hostcheck: a failed probe otherwise shows the probe's error`
+- Ubuntu's own profile for `bwrap` (`/etc/apparmor.d/bwrap-userns-restrict`, on by default from 24.10) lets bwrap start but refuses a user namespace to whatever bwrap starts. Claude's sandbox starts every shell command in one, so with that profile a worker has no shell and builds blind while Towercab's own checks still run. When the probe fails for this reason (PIP-163) with the restriction on and that profile active, the owner's step is to switch the stock profile off (a link in `/etc/apparmor.d/disable/` and `apparmor_parser -R`) and install Towercab's profile, as one set of commands; two profiles can't both own `bwrap`. The step still never touches the sysctl and never loosens Claude's sandbox.
+- Verified by: `sandbox: a restricted user namespace gives the apparmor profile fix`, `sandbox: doctor never suggests turning the restriction off`, `hostcheck: a failed probe with the restriction on and no profile shows the install command`, `hostcheck: a working sandbox runs with the restriction on and no profile file`, `hostcheck: a failed probe otherwise shows the probe's error`, `hostcheck: a refused nested namespace with the stock profile shows the swap command`
 
 ### PIP-163 · The sandbox is tested at start
 
 Towercab proves the sandbox holds on this machine before it runs a mission, and again in `doctor`.
 
-- At service start and in `towercab doctor`, a probe runs through the production builder: a read of a planted canary outside the checkout fails, a write into `.git` fails, and a request without a grant fails. A failed probe is a fault (PIP-161) and the loop takes no mission until the next successful probe.
+- At service start and in `towercab doctor`, a probe runs through the production builder: a read of a planted canary outside the checkout fails, a write into `.git` fails, and a request without a grant fails, and a command inside can create a user namespace of its own (`unshare -Ur true`, skipped where `unshare` is missing), because Claude's sandbox needs that for every shell command a worker runs. A failed probe is a fault (PIP-161) and the loop takes no mission until the next successful probe.
 - The probe's result and the bwrap version show in `doctor`.
 - Verified by: `sandbox: the start probe passes on a sound sandbox`, `sandbox: a failed probe stops the loop taking missions`, `doctor: shows the sandbox probe`
 
@@ -1987,7 +1988,7 @@ Towercab never moves an ID that is the intent's own: one its own spec pull reque
 
 When a design, plan or build revision answers the owner's comments, the worker also writes a reply to them.
 
-- The result of a revision that the owner's feedback started (PIP-25, PIP-43; on the spec, plan or code PR) gains `reply`: Markdown written by the worker (PIP-40), and asked for in the prompt. A revision that changes nothing is asked to return one saying `Nothing to change: <why>`, and it is posted (PIP-204).
+- The result of a revision that the owner's feedback started (PIP-25, PIP-43; on the spec, plan or code PR) gains `reply`: Markdown written by the worker (PIP-40), asked for in the prompt and required in that run's result schema (no other run's schema has it). A revision that changes nothing is asked to return one saying `Nothing to change: <why>`, and it is posted (PIP-204).
 - A missing, empty or unreadable `reply` never blocks, fails, repeats or delays the revision: the revision is applied and pushed as if the reply were there, and Towercab posts a generic reply in its place: `Revised in <short commit sha>`, the list of files the revision changed (at most 20, then "and <n> more"), and the line `Generated by Towercab: the worker wrote no reply.` It is built by code from facts it owns (PIP-40) and posted and threaded like a written reply (PIP-204). When nothing changed, it says `No files changed.` Towercab never starts another revision to get a better reply. The reply is not asked for on a revision Towercab started itself (red checks PIP-82, conflicts PIP-81, review or gate fixes, repairs) nor on a first run.
 - The prompt lists each comment of the feedback with its id, so the reply can answer them one by one (PIP-205). The PR description is still rewritten as before (PIP-48); `reply` is in addition.
 - Verified by: `pipeline: a feedback revision asks for a reply`, `pipeline: a missing reply gets a generic one with files and commit`, `pipeline: the generic reply is marked generated`, `pipeline: a missing reply never blocks or repeats a revision`, `pipeline: a revision Towercab started needs no reply`, `pipeline: a revision that changes nothing still replies`, `pipeline: the feedback prompt lists each comment with its id`
@@ -1998,8 +1999,8 @@ Towercab posts the reply as one general comment on the PR the revision changed, 
 
 - Posted by `Forge` after the revision's commit is pushed. The general comment is a new PR comment that names the agent and answers every comment of the revision, quoting or linking each one (PIP-205). It is the only place the full reply is written.
 - For each owner comment of the revision that is a line comment or part of a review thread, `Forge` also posts a threaded reply in that thread: `Answered in <link to the general comment>`. Plain PR comments and review bodies (Approve or Request changes) cannot be threaded, so they get no pointer; the general comment quotes and links them.
-- The general comment has the header `**Reply** · round <n>` and the marker `<!-- towercab:reply:<n> -->`, as PIP-42; the pointers carry the header and the marker `<!-- towercab:reply-pointer:<n>:<comment id> -->`. The same round edits its general comment and its pointers instead of adding more. Nothing is posted before the commit it describes. Pointers are posted after the general comment, since they link to it.
-- A host failure while posting is retried on the next pass; it never loses the revision or sends the mission back. A pointer that fails does not hold back the general comment.
+- The general comment has the header `**Reply** · <agent> · <intent> · round <n>` (PIP-182) and the marker `<!-- towercab:reply:<n> -->`, as PIP-42; the pointers carry the header and the marker `<!-- towercab:reply-pointer:<n>:<comment id> -->`. The same round edits its general comment and its pointers instead of adding more. Nothing is posted before the commit it describes. Pointers are posted after the general comment, since they link to it.
+- A host failure while posting the general comment is retried on the next pass, up to 3 posts in all, then the reply is given up and logged; it never loses the revision or sends the mission back. A pointer that fails is logged and does not hold back the general comment. A host whose `Forge` has no `replyInThread` gets no pointers.
 - Verified by: `github: the reply is one general comment with header and marker`, `github: a line comment gets an answered-in pointer in its thread`, `github: a plain comment gets no pointer and is quoted`, `pipeline: the reply is posted after the revision is pushed`, `pipeline: a failed reply post is retried`, `pipeline: a failed pointer does not hold back the reply`
 
 ### PIP-205 · What the reply says
@@ -2009,7 +2010,7 @@ The reply tells the owner, in plain words, how Towercab read the comment, what i
 - Written to `prompts/writing.md`: the outcome first; no step names, field names or other internal terms. Parts: how the comment was read; what changed in the PR (and what was not changed and why); new or still-open questions and points, each with a recommendation, or one line saying nothing is open.
 - Each comment of the revision gets its own part, quoted or linked (PIP-204), so that several comments handled in one revision get one reply that answers each of them (PIP-203). A comment the worker did not act on is still answered, with the reason.
 - A comment that needs no change is answered briefly in the form `Nothing to change: <why>`, so silence never reads as ignored.
-- `agents/design.md`, `agents/plan.md` and `agents/build.md` carry these rules for a feedback revision.
+- `agents/design.md`, `agents/plan.md`, `agents/worker.md` and `agents/repair.md` carry these rules for a feedback revision, and the revision prompt repeats them beside the list of comments.
 - Verified by: `prompts: revision prompts ask for a reply that answers each comment`, `prompts: the reply rules follow the writing guide`, `prompts: a comment needing no change is answered Nothing to change`
 
 ### PIP-206 · A reply is not feedback and does not replace the description
@@ -2243,6 +2244,7 @@ The owner can see which toolchains a repo's commands will find, and which are mi
 | [merge-review](../agents/merge-review.md) | Checks that a merge Towercab made by code kept both sides (PIP-169); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [score](../agents/score.md) | Turns a GitHub issue into a scored intent ([INT-22](intents.md)); runs outside any mission in an empty folder. | Nothing: no tools. | none | `[agent].model` |
 | [shadow](../agents/shadow.md) | The owner's shadow in Telegram ([SHD-1](shadow.md)); one long-lived session, outside any mission, in an empty folder. | Nothing: no tools; Towercab runs its reads and actions. | resume | `[shadow].model`, else `[agent].model` |
+| [observer](../agents/observer.md) | Reads 14 days of how Towercab ran and proposes improvements ([OBV-1](observer.md)); runs outside any mission, in an empty folder. | Nothing: no tools, no network; Towercab builds its evidence and opens the proposals. | none | `[observer].model`, else `[agent].model` |
 | [features](../agents/features.md) | Writes a repo's live features from its README and specs ([INT-39](intents.md)); runs outside any mission in a fresh checkout of base. | Read, Glob, Grep in the sandbox; no network. | none | `[agent].model` |
 
 Each file's front matter also holds the time and cost limits and the result schema (PIP-71). `repair`

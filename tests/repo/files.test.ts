@@ -392,7 +392,8 @@ test("repo: Towercab's own files parse", () => {
   expect(own.verifying.fast).toEqual(["npm run lint", "npm run typecheck", "npx vitest run {tests}"]);
   expect(own.review.passes.map((p) => p.name)).toEqual(["Bugs", "Security", "Compliance"]);
   expect(own.review.redLines.some((l) => l.includes("src/machine.ts"))).toBe(true);
-  expect(own.towercab).toEqual({
+  // The limits (`ahead`, `workers`, …) are the owner's to change in TOWERCAB.md, so they are not pinned here.
+  expect(own.towercab).toMatchObject({
     maxAutonomy: 5,
     protected: ["src/machine.ts"],
     tests: ["tests/**"],

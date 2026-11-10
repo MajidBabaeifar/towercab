@@ -78,7 +78,7 @@ test("pipeline: open steps send the mission back to build, not review", async ()
   expect(m.stage).toBe("build");
   expect(p.stages(m.id)).not.toContain("review");
   expect(p.stages(m.id)).not.toContain("ci");
-  expect(p.prs.some((x) => x.repo === "web")).toBe(true);
+  expect(m.pr).not.toBeNull();
   expect(buildOf(p)).toMatchObject({ stepsDone: 2, stepsTotal: 6, runs: 1 });
 }, 120_000);
 

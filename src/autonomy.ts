@@ -18,7 +18,7 @@ export function ownerOnlyLine(id: string): string {
 }
 
 /** The source that may reach a5 (AUT-13): the owner's own intents (a missing source is the owner's file). */
-function ownSource(source: string | null): boolean {
+export function ownSource(source: string | null): boolean {
   return source === null || source === "" || source === "me";
 }
 

@@ -1,6 +1,6 @@
 # Observer
 
-**Status:** Draft · **Prefix:** OBV
+**Status:** Live · **Prefix:** OBV
 
 ## Purpose
 
@@ -158,9 +158,13 @@ Each observer run is kept with when it ran, why, what it cost and what came of i
 
 - Table `observer_runs`: id, `trigger` (`daily`, or the event), start and end, cost, outcome (`done`,
   `failed`, `capped`), counts of findings, proposals, comments and dropped findings with the reason of
-  each. Table `observer_proposals`: PR number, intent id, run id, time. Kept 90 days.
+  each, and a `detail` with the findings held back and seen again (OBV-7, OBV-8). `running` is the
+  outcome of a run in progress; one left `running` by a restart is marked `failed` at the next start. Table
+  `observer_proposals`: PR number, intent id, run id, time, and the title and the ids it cited, so a closed
+  proposal needs new evidence to come back (OBV-4). Kept 90 days.
 - A failed run (agent error, an unreadable result, a GitHub failure) is a fault of the loop (LOOP-10)
-  of kind `observer`, is retried at the next trigger, and moves no mission. A result that does not match the schema counts as failed
+  of kind `observer`, is retried at the next trigger, and moves no mission. An `observer` fault never
+  pauses picks and never sends the fault message, however long it stays open. A result that does not match the schema counts as failed
   and opens nothing. A crash mid-run opens no second PR: the branch is `observer/<run id>-<n>`, so a replay finds it.
 - Verified by: `observer: a run is recorded with its cost and outcome`, `observer: a failed run is a fault and does not stop the loop`, `observer: an invalid result opens nothing`, `observer: a replay after a crash opens no second PR`
 
