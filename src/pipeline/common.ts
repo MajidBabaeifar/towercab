@@ -197,6 +197,8 @@ export interface PipeData {
   ship?: ShipData;
   /** HEAD when the current build round began (PIP-1). */
   roundFrom?: string;
+  /** PIP-227: the worker stopped mid-build with a question; its uncommitted work stays for the next round. */
+  askedMidBuild?: boolean;
   /** LOOP-115: the owner answered a wait; the next build round merges the base branch first. */
   answered?: boolean;
   /** LOOP-117: the mission waits at build for the intents its intent file says it comes after. */
