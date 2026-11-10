@@ -2236,6 +2236,15 @@ The owner can see which toolchains a repo's commands will find, and which are mi
 - A Zig directory shows one line per `~/.local/zig-*` match. It prints no file content and no environment value.
 - Verified by: `doctor: lists the toolchains it found and binds`, `doctor: a missing toolchain is not a fault`
 
+### PIP-227 · A worker's question keeps the work it has done
+
+When a worker stops mid-build to ask the owner something, what it has written so far is still there when the answer arrives.
+
+- A build round that ends with the worker's own question (`status: blocked` with a `question`, PIP-41) marks the mission (`data.askedMidBuild`). The round after the answer does not reset or clean the checkout and does not move the branch back to the base branch, as after a test question (PIP-116); the worker's session continues on its own uncommitted files. The mark is cleared when that round starts.
+- A conflict round is the exception: it merges the base branch first, on a clean checkout, as before. `retry` still starts from nothing.
+- Before this, an answered question on a first round threw the work away while the resumed session still believed it was in place.
+- Verified by: `pipeline: a worker's question keeps its uncommitted work for the next round`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
