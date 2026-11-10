@@ -1,6 +1,6 @@
 // The start probe (PIP-163): through the production builder, proves the sandbox on this machine holds before
-// a mission runs: a planted secret outside the checkout can't be read, `.git` can't be written, and there is
-// no network without a grant.
+// a mission runs: a planted secret outside the checkout can't be read, `.git` can't be written, there is
+// no network without a grant, and a command inside can start a sandbox of its own (Claude's shell does).
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,10 +14,19 @@ export interface ProbeResult {
   why: string;
 }
 
+const NESTED_EXIT = 24;
+
+/** What the probe says when a command inside the sandbox may not create a user namespace. */
+export const NESTED_WHY =
+  "a command inside the sandbox can't start a sandbox of its own, so a worker's shell commands would all fail";
+
 const SCRIPT = [
   `cat "$HOME/.ssh/canary" 2>/dev/null && exit 21`,
   `(echo x > .git/probe) 2>/dev/null && exit 22`,
   `[ "$(tail -n +3 /proc/net/dev | wc -l)" = 1 ] || exit 23`,
+  // Claude's own sandbox starts every shell command in a user namespace of its own; where that is refused
+  // (Ubuntu's stock `bwrap` profile), a worker has no shell at all and builds blind.
+  `if command -v unshare >/dev/null 2>&1; then unshare -Ur true 2>/dev/null || exit ${NESTED_EXIT}; fi`,
   `echo held`,
 ].join("\n");
 
@@ -25,6 +34,7 @@ const EXIT_WHY: Record<number, string> = {
   21: "a secret outside the checkout could be read",
   22: "the checkout's .git could be written",
   23: "the sandbox has a network interface without a grant",
+  [NESTED_EXIT]: NESTED_WHY,
 };
 
 /** True when a probe failure reads like Ubuntu's restriction on unprivileged user namespaces (PIP-162). */
