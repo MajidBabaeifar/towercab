@@ -92,8 +92,9 @@ export async function doctor(o: {
     lines.push(`sandbox: ${probe.ok ? "the probe held" : `the probe failed: ${probe.why}`}`);
     if (!probe.ok) {
       ok = false;
-      // PIP-162: the one owner step, only when the probe failed and the restriction is on without the profile.
-      const step = profileStep((o.host ?? hostState)(), bwrapPath);
+      // PIP-162: the one owner step, only when the probe failed and the restriction is on without the profile,
+      // or with Ubuntu's stock profile refusing the worker's shell.
+      const step = profileStep((o.host ?? hostState)(), bwrapPath, probe);
       if (step)
         lines.push(`owner step: ${step.title}; run:`, ...step.commands.split("\n").map((l) => `  ${l}`));
       if (userNamespaceDenied(probe.why)) {
