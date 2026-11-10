@@ -204,12 +204,38 @@ async function closeOwn(cx: Ctx, github: string, n: number, why: string): Promis
   }
 }
 
+/**
+ * PIP-216, PIP-218: with plan steps still open the pushed run is not the end of the build. The next run
+ * starts in a fresh session (PIP-219) and uses no repair; at `[agent].max_build_runs` runs the owner is
+ * asked instead, and a reply grants another set.
+ */
+function afterPush(cx: Ctx, m: Mission, o: Outcome): Outcome {
+  const b = data(m).build;
+  if (!b || b.stepsTotal === undefined || (b.stepsDone ?? 0) >= b.stepsTotal) return o;
+  const done = b.stepsDone ?? 0;
+  const runs = b.runs ?? 0;
+  const fresh = { session: crypto.randomUUID(), session_used: 0 };
+  if (runs >= cx.config.agent.maxBuildRuns) {
+    return wait(
+      "worker budget",
+      `${runs} build runs built ${done} of ${b.stepsTotal} plan steps; reply to let it carry on with ${cx.config.agent.maxBuildRuns} more runs.`,
+      { set: { ...o.set, ...fresh }, data: { build: { ...b, runs: 0, stalled: 0, due: true } } },
+    );
+  }
+  return {
+    event: "more_steps",
+    why: `${done} of ${b.stepsTotal} plan steps are built; run ${runs + 1} carries on from step ${done + 1}`,
+    set: { ...o.set, ...fresh, repairs: 0, ci_repairs: 0 },
+    data: { build: { ...b, stalled: 0, due: true } },
+  };
+}
+
 async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
   // PIP-204: the revision is pushed by now; its reply goes up before the checks run.
   const sent = await deliverReply(cx, m, (r) => checkoutFacts(cx, m, r.before));
   if (sent.retry) return { poll: cx.config.agent.ciPoll };
   m = sent.m;
-  if (m.pr) return { done: ok() };
+  if (m.pr) return { done: afterPush(cx, m, ok()) };
   const repo = cx.repo(m);
   const intent = await intentOf(cx, m);
   const d = data(m);
@@ -247,5 +273,5 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
       cx.log(`${m.intent}: couldn't assign ${cx.github.me} to PR ${n}`);
     }
   }
-  return { done: ok({ set: { pr: n } }) };
+  return { done: afterPush(cx, m, ok({ set: { pr: n } })) };
 }

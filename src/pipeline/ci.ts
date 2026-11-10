@@ -2,6 +2,7 @@
 // Actions run once, send a red to the worker as a repair (2 at most), else wait for the owner.
 
 import { git, refreshBase } from "../checkout.ts";
+import { RetryRefused } from "../forge/gitlab-ci.ts";
 import type { Check } from "../forge.ts";
 import { conflictOutcome } from "../github/events.ts";
 import type { Ctx, Handler, Progress } from "../handlers.ts";
@@ -15,7 +16,7 @@ import { classify, ignoreDetails, oldFindingQuestion, type Verdict } from "./old
 export type { Check };
 
 export type Bucket =
-  | { kind: "pending"; runs: number[] }
+  | { kind: "pending"; runs: number[]; manual?: string }
   | { kind: "green" }
   | { kind: "none" }
   | { kind: "red"; checks: Check[] }
@@ -45,15 +46,20 @@ export function bucket(checks: Check[], pushedAt: number, now: number, grace: nu
     .filter((c) => !c.name.startsWith("towercab/"))
     .filter((c) => !(within && c.startedAt !== null && c.startedAt < pushedAt));
   if (counted.length === 0) return within ? { kind: "pending", runs: [] } : { kind: "none" };
+  // GL-11: a manual job waits for a person, so it neither makes its pipeline busy nor can be cancelled.
   const busy = new Set(
-    counted.filter((c) => c.kind === "run" && c.status !== "COMPLETED" && c.run).map((c) => c.run),
+    counted
+      .filter((c) => c.kind === "run" && c.status !== "COMPLETED" && c.run && !c.waitsFor)
+      .map((c) => c.run),
   );
   const settled = (c: Check) => c.run === null || !busy.has(c.run);
   const r = counted.filter((c) => failed(c) && settled(c));
   if (r.length) return { kind: "red", checks: r };
   const x = counted.filter((c) => cancelled(c) && settled(c));
   if (x.length) return { kind: "cancel", checks: x };
-  return counted.every(passed) ? { kind: "green" } : { kind: "pending", runs: [...busy] as number[] };
+  if (counted.every(passed)) return { kind: "green" };
+  const manual = busy.size === 0 ? counted.find((c) => c.waitsFor)?.waitsFor : undefined;
+  return { kind: "pending", runs: [...busy] as number[], ...(manual ? { manual } : {}) };
 }
 
 /**
@@ -212,6 +218,7 @@ export const ciHandler: Handler = {
         return { done: conflictOutcome(m) };
       case "pending": {
         if (cx.timeouts && cx.clock.now() - pushedAt > cx.config.agent.ciWait) {
+          if (s.manual) return { done: wait("CI stuck", `job ${s.manual} is waiting for a manual start`) };
           const head = m.head ?? "";
           const hung = d.ci?.hung ?? {};
           const again = hung[head] === true;
@@ -240,7 +247,15 @@ export const ciHandler: Handler = {
         const reruns = { ...(d.ci?.reruns ?? {}) };
         const runs = [...new Set(s.checks.map((c) => c.run).filter((r): r is number => r !== null))];
         if (!reruns[m.head ?? ""] && runs.length) {
-          for (const run of runs) await viaForge(cx.github.rerunFailed(repo.github, run));
+          for (const run of runs) {
+            try {
+              await cx.github.rerunFailed(repo.github, run);
+            } catch (e) {
+              // GL-12: GitLab refused the retry; its reason is the owner's to read.
+              if (e instanceof RetryRefused) return { done: wait("CI red", e.message) };
+              throw asEnv(e);
+            }
+          }
           cx.record(
             m,
             m.step,

@@ -117,6 +117,9 @@ export const BUILD_SCHEMA = object({
   plan_changed: S_NULL,
   lower_a: { type: ["integer", "null"], minimum: 0, maximum: 5 },
   lower_why: S_NULL,
+  // PIP-216, PIP-219: how many plan steps are built so far (null = all) and the note for the next run.
+  steps_done: { type: ["integer", "null"], minimum: 0 },
+  handoff: S_NULL,
 });
 
 export const REVIEW_SCHEMA = object({
@@ -278,6 +281,10 @@ export interface BuildResult {
   plan_changed: string | null;
   lower_a: number | null;
   lower_why: string | null;
+  /** PIP-216: plan steps built so far, from step 1 in order; null = all of them. */
+  steps_done: number | null;
+  /** PIP-219: what is done, what is next, anything surprising; needed while steps are open. */
+  handoff: string | null;
   /** PIP-203: as in `DesignResult`. */
   reply?: string;
 }
@@ -442,6 +449,10 @@ export function parseResult<K extends keyof Results>(
   // PIP-221: a review or risk result from before `agent` (or a cached one) has an empty agent part.
   if ((kind === "review" || kind === "risk") && isObject(value) && !("agent" in value)) {
     value = { ...value, agent: "" };
+  }
+  // PIP-216, PIP-219: a build result from before steps (or a cached one) reads as all built, no handoff.
+  if (kind === "build" && isObject(value)) {
+    value = { steps_done: null, handoff: null, ...value };
   }
   // PIP-222: the people part must be short and free of agent detail; otherwise the result is invalid.
   const people = isObject(value) ? (kind === "risk" ? value.summary : value.brief) : undefined;
