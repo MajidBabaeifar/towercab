@@ -2,6 +2,7 @@
 max_autonomy: 5
 protected: [src/machine.ts]
 tests: [tests/**]
+ahead: 1
 ---
 
 # Towercab on Towercab
