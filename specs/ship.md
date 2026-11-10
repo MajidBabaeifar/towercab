@@ -29,6 +29,7 @@ A repo opts into the ship stage with a `live` block in its `TOWERCAB.md`.
 - Anything else, or a missing required field, makes `TOWERCAB.md` invalid (`live: <why>`), and the
   intent waits on `fix repo files`. `TOWERCAB.md` is protected ([REPO-8](repo.md)), so a worker can't
   change the block.
+- Changed by SHIP-37: `adapter` also accepts `gitlab`, and a GitLab repo's default is `gitlab`. The rest stands.
 - Verified by: `repo: live block`, `repo: live block errors`
 
 ### SHIP-2 · Secrets for the e2e tests
@@ -82,7 +83,7 @@ A platform that doesn't react to GitHub Deployments is wired in with two command
   `outcome(sha)` is live when that commit is `sha` or contains it, else pending (such a platform is
   red only by the timeout). `rollback_command` runs with `TOWERCAB_ROLLBACK_SHA` and
   `TOWERCAB_REASON`; exit 0 means the request was taken.
-- Both run like the suites (SHIP-9): in the sandbox with network, the secrets, `BASE_URL`,
+- Both run like the suites (SHIP-9): in the sandbox with the network of [PIP-158](pipeline.md) (the registry list, the plan's grants, the live URL's host and the repo's `ship_network` domains), the secrets, `BASE_URL`,
   `TOWERCAB_ENVIRONMENT`, in the checkout at the shipped commit, 5 minutes each. A non-zero exit of
   `live_command` is pending; of `rollback_command`, a failed rollback.
 - Verified by: `ship: command adapter`
@@ -128,8 +129,8 @@ In an opted-in repo, a change comes with end-to-end tests for what it adds.
 
 Once the merge is live, Towercab runs the repo's e2e suites against the live URL.
 
-- In the mission's checkout, detached at the shipped commit: the `setup` block (with network), then
-  each suite's command in the sandbox ([PIP-23](pipeline.md)) with network, `BASE_URL=<url>`,
+- In the mission's checkout, detached at the shipped commit: the `setup` block (with the network of PIP-158), then
+  each suite's command in the sandbox ([PIP-23](pipeline.md)) with the network of PIP-158 (which includes the live URL's host), `BASE_URL=<url>`,
   `TOWERCAB_SHA` and the secrets, `check_timeout_min` each.
 - Order: suites whose `tests` globs match a file the intent's merges added or changed, then suites
   whose `paths` match a changed file, then the rest, each group in file order.
@@ -299,6 +300,38 @@ The owner ticks steps off in Towercab, and the ticks are kept in the plan as wel
   the wait are stored and counted when the wait comes.
 - Verified by: `ship: ticking steps from the CLI`, `ship: ticks outside the wait are kept`, `ship: ticks are written to plan.md`, `ship: ticks survive a rebuilt database`
 
+### SHIP-23 · A tick is never lost
+
+A step the owner ticks while Towercab is reading the plan is still ticked afterwards.
+
+- `refreshSteps` (`src/pipeline/steps.ts`) reads `plan.md` outside the transaction, then re-reads the
+  mission inside `Db.tx` and merges: a step ticked in the database since the read stays ticked (with
+  its time) unless the file has it ticked too, and `stepsDirty` stays set so the tick is written to
+  `plan.md` on the next pass (SHIP-22). Nothing is awaited inside the transaction.
+- A step is unticked only by an explicit untick (SHIP-22), never by a refresh.
+- Verified by: `ship: a tick during a plan read is kept`
+
+### SHIP-24 · The waiting card lists only open steps
+
+The "your steps" card and its message list the steps still to do, and a comment during the hold doesn't repeat the message.
+
+- The `your steps` wait card and its message (LOOP-74, UI-160) list only the unticked steps of the
+  phase waited for; ticked steps are left out. The before-merge hold (SHIP-18) lists its open steps the same way.
+- Each pull request comment during the before-merge hold re-checks the hold. A message to the owner is
+  queued only the first time, and again only when the set of open steps has changed (a step ticked,
+  unticked or added); otherwise nothing is queued.
+- Verified by: `ship: the steps card lists only open steps`, `ship: a comment during the hold sends no repeat message`, `ship: a changed set of open steps sends a new message`
+
+### SHIP-25 · The stage map shows an unverified end as passed
+
+A deploy that ends as merged, not verified live shows as passed on the stage map, with its own label, not as sent back.
+
+- In the visits of UI-72, a visit whose move ends in stage `unverified` (SHIP-21) has outcome `passed`
+  and `reason` "Merged, not verified live"; the map's node shows that label in place of "passed"
+  (UI-73). Moves to `done` stay `passed`; other ends stay `sent back`.
+- The UI screenshot test includes the intent page of an unverified intent, with its card and stage map.
+- Verified by: `ui: unverified deploy shows as passed with its own label`, `ui: unverified intent screenshot`
+
 ### SHIP-33 · A secret is an owner step
 
 A plan can list a secret as an owner step, saying where it goes, what it is for and whether Towercab may make it up.
@@ -462,6 +495,33 @@ A change counts as published only once the release that contains its merge exist
   <tag>" with the link; until then it shows "Merged, waiting for a release".
 - A repo with no release-please files ([REPO-23](repo.md)) has no release to wait for: the line is not shown.
 - Verified by: `ship: published links the release containing the merge`, `ship: merged shows waiting for a release`, `ship: repos without release-please show no release line`
+
+### SHIP-37 · The gitlab adapter
+
+A GitLab repo's ship stage reads what GitLab recorded for its environment, and asks for an older version by retrying the project's own deploy job.
+
+- `live.adapter: gitlab` is the default when the repo is a GitLab project ([GL-3](gitlab.md)); `github` stays the default for a GitHub repo. `gitlab` on a GitHub repo, or `github` on a GitLab repo, makes `TOWERCAB.md` invalid (`live: the gitlab adapter is for GitLab repos`, `live: the github adapter is for GitHub repos`). `command` works on either.
+- Calls go through the GitLab forge ([GL-5](gitlab.md)) with the token of [GL-2](gitlab.md), over `GET /projects/:id/deployments?environment=<e>&order_by=id&sort=desc` (up to 30). Each deployment has `status`, `sha` and `deployable` (the job: `id`, `status`, `failure_reason`).
+- `current()`: the `sha` of the newest deployment in the environment whose `status` is `success`, or none.
+- `outcome(sha)`: the newest deployment of that `sha`: `success` → live; `failed` → failed with the job's `failure_reason` (for example `script_failure`), else "the deploy job failed"; anything else → pending. With no success for `sha`, `current()` being `sha` or containing it (`git merge-base --is-ancestor` in Towercab's clone after a fetch, authenticated as [GL-2](gitlab.md)) → live.
+- `rollback(ask)`: finds the newest deployment of `ask.sha` in the environment whose `status` is `success` and retries its job (`POST /projects/:id/jobs/:job_id/retry`); the new job's id is returned. No such deployment → the rollback fails with "no successful deployment of <sha> in <environment> to run again". A retry the step already made (a deployment of `ask.sha` created after `ask.since`) is reused, so a crash never retries twice. A 403 → the rollback fails with "Towercab's GitLab token needs permission to run jobs in the <environment> environment". A retry GitLab refuses because the job is outdated (the project setting "Prevent outdated deployment jobs") fails the rollback with "GitLab refused to re-run the deploy job of <sha> because the setting Prevent outdated deployment jobs is on: turn it off for the <environment> environment".
+- It only reads deployments and retries a job the project's pipeline defines: no pipeline is created, no variable set, nothing deployed ([SHIP-3](#ship-3--the-adapter) still holds).
+- Verified by: `ship: gitlab adapter reads deployments`, `ship: gitlab adapter retries the deploy job once`, `ship: a failed gitlab deploy reports the job's reason`, `ship: gitlab is the default adapter of a GitLab repo`, `ship: gitlab adapter on a GitHub repo is invalid`
+
+### SHIP-38 · A deploy waiting for approval is pending
+
+A deploy that waits for a person to approve it on a protected GitLab environment is not a failure, and the wait says who has to act.
+
+- A deployment with `status` `blocked` is pending, and `outcome` carries the reason "the deploy is waiting for approval: a person has to approve it in GitLab (<environment>)". The reason shows in the wait on the intent page and in the message the deploy wait sends once it has lasted 5 minutes ([SHIP-7](#ship-7--waiting-for-the-deploy)).
+- Towercab never approves a deployment itself. The usual timeout of [SHIP-7](#ship-7--waiting-for-the-deploy) applies: unapproved after `timeout` minutes → `red` "not live after <n> minutes", with the same reason added.
+- Verified by: `ship: a gitlab deploy waiting for approval is pending with the reason`, `ship: a gitlab deploy never approved times out with the reason`
+
+### SHIP-39 · The deploy contract for GitLab
+
+The deploy contract page tells a GitLab team what their deploy job must do.
+
+- `docs/deploy-contract.md` gains a GitLab section: the deploy job needs `environment:` with the same name as the `live` block's `environment`; it deploys `CI_COMMIT_SHA`; rolling back re-runs an older successful job, so that job must deploy the commit it was run for and not "latest"; a protected environment with required approval makes the deploy wait for a person ([SHIP-38](#ship-38--a-deploy-waiting-for-approval-is-pending)); the token's role must be allowed to run that environment's jobs. The section tells teams to allow re-running older deploy jobs: the project setting that blocks outdated deployment jobs ("Prevent outdated deployment jobs") must be off for the environment Towercab rolls back. A short `.gitlab-ci.yml` example.
+- Verified by: manual (read the GitLab section of `docs/deploy-contract.md`)
 
 ## Out of scope
 

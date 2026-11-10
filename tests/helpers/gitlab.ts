@@ -36,6 +36,23 @@ export interface FakeMr {
   merge_commit_sha: string | null;
   notes: FakeNote[];
   approvedBy: string[];
+  /** GL-11: the merge request's pipelines. */
+  pipelines?: FakePipeline[];
+}
+
+export interface FakeJob {
+  id: number;
+  name: string;
+  status: string;
+  allow_failure?: boolean;
+  trace?: string;
+}
+
+export interface FakePipeline {
+  id: number;
+  sha: string;
+  created_at: string;
+  jobs: FakeJob[];
 }
 
 export interface FakeProject {
@@ -75,6 +92,26 @@ export class FakeGitLab {
   /** Page size, small so tests can see pagination. */
   perPage = 100;
   private nextNote = 1;
+  private nextPipeline = 1;
+  private nextJob = 1;
+  /** GL-12: when set, `…/retry` answers 403 with this message. */
+  retryRefusal: string | null = null;
+
+  /** GL-11: a pipeline on `m` with jobs given as `[name, status, extra]`. */
+  pipeline(
+    m: FakeMr,
+    jobs: [string, string, Partial<FakeJob>?][],
+    o: { sha?: string; created_at?: string } = {},
+  ): FakePipeline {
+    const p: FakePipeline = {
+      id: this.nextPipeline++,
+      sha: o.sha ?? m.sha,
+      created_at: o.created_at ?? "2026-11-05T10:00:00Z",
+      jobs: jobs.map(([name, status, extra]) => ({ id: this.nextJob++, name, status, ...extra })),
+    };
+    m.pipelines = [...(m.pipelines ?? []), p];
+    return p;
+  }
 
   project(path: string, base = "main"): FakeProject {
     const p: FakeProject = { path, default_branch: base, mrs: [], approvals: true };
@@ -155,6 +192,34 @@ export class FakeGitLab {
         web_url: `https://gitlab.test/${p.path}/-/merge_requests/${m.iid}`,
       });
     }
+    const allPipelines = p.mrs.flatMap((x) => x.pipelines ?? []);
+    const pj = /^\/pipelines\/(\d+)\/(jobs|retry|cancel)$/.exec(rest);
+    if (pj) {
+      const pl = allPipelines.find((x) => x.id === Number(pj[1]));
+      if (!pl) return reply(404, { message: "404 Pipeline Not Found" });
+      const jobView = (j: FakeJob) => ({
+        id: j.id,
+        name: j.name,
+        status: j.status,
+        allow_failure: j.allow_failure ?? false,
+        web_url: `https://gitlab.test/${p.path}/-/jobs/${j.id}`,
+      });
+      if (pj[2] === "jobs" && req.method === "GET") return page(pl.jobs.map(jobView));
+      if (pj[2] === "retry" && req.method === "POST") {
+        if (this.retryRefusal) return reply(403, { message: this.retryRefusal });
+        for (const j of pl.jobs) if (["failed", "canceled"].includes(j.status)) j.status = "running";
+        return reply(201, { id: pl.id });
+      }
+      if (pj[2] === "cancel" && req.method === "POST") {
+        for (const j of pl.jobs) if (["pending", "running"].includes(j.status)) j.status = "canceled";
+        return reply(200, { id: pl.id });
+      }
+    }
+    const tr = /^\/jobs\/(\d+)\/trace$/.exec(rest);
+    if (tr && req.method === "GET") {
+      const job = allPipelines.flatMap((x) => x.jobs).find((j) => j.id === Number(tr[1]));
+      return job ? { status: 200, text: job.trace ?? "" } : reply(404, { message: "404 Job Not Found" });
+    }
     const mm = /^\/merge_requests\/(\d+)(\/.*)?$/.exec(rest);
     if (!mm) return reply(404, { message: "404 Not Found" });
     const m = p.mrs.find((x) => x.iid === Number(mm[1]));
@@ -174,6 +239,11 @@ export class FakeGitLab {
       m.merged_at = "2026-11-05T11:00:00Z";
       m.merge_commit_sha = "b".repeat(40);
       return reply(200, this.view(m));
+    }
+    if (tail === "/pipelines" && req.method === "GET") {
+      return page(
+        (m.pipelines ?? []).map(({ id, sha, created_at }) => ({ id, sha, created_at, status: "running" })),
+      );
     }
     if (tail === "/rebase" && req.method === "PUT") return reply(202, { rebase_in_progress: true });
     if (tail === "/notes" && req.method === "GET") return page(m.notes);

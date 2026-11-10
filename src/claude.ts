@@ -14,7 +14,9 @@ import { appKeyPath, type Config } from "./config.ts";
 import { classifyFailure } from "./faults.ts";
 import { type Limit, limitOf } from "./limits.ts";
 import { oneLine } from "./machine.ts";
+import { splitDomains } from "./pipeline/domains.ts";
 import { type GuardRules, writeGuardRules } from "./pipeline/guard.ts";
+import { sandboxPath } from "./pipeline/sandbox.ts";
 import type { JsonSchema } from "./pipeline/schemas.ts";
 import { Protected } from "./repo/protected.ts";
 import type { ChildSpec } from "./tools.ts";
@@ -100,7 +102,16 @@ const TOKENS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTER
 /** The writing guide (PIP-39), appended to every run's system file. */
 export const WRITING_GUIDE = fileURLToPath(new URL("../prompts/writing.md", import.meta.url));
 
-export type RunKind = "design" | "plan" | "worker" | "review" | "risk" | "score" | "features" | "shadow";
+export type RunKind =
+  | "design"
+  | "plan"
+  | "worker"
+  | "review"
+  | "risk"
+  | "score"
+  | "features"
+  | "shadow"
+  | "observer";
 
 export const RUN_KINDS: RunKind[] = [
   "design",
@@ -111,6 +122,7 @@ export const RUN_KINDS: RunKind[] = [
   "score",
   "features",
   "shadow",
+  "observer",
 ];
 
 /** One `claude -p` run. */
@@ -138,10 +150,10 @@ export interface ClaudeRun {
   /** The base branch's `CLAUDE.md` (REPO-1); empty without one. */
   claudeMd: string;
   /** What the run may reach (AUT-14, `grantsFor`). */
-  grants: { domains: string[]; paths: string[]; open: boolean };
+  grants: { domains: string[]; paths: string[]; open?: false };
   /** The worker's guard (PIP-29): written to `<runs>/guard.json`, its hook and denyWrite added. */
   guardRules?: GuardRules | null;
-  /** `cacheEnv` (LOOP-34): the cache's variables, `[agent].env`, `[repos.<r>].env`. */
+  /** `cacheEnv` (LOOP-34): the cache's variables, the repo's `[repos.<r>].env` that passes PIP-159. */
   cacheEnv: Record<string, string>;
   /** The repo cache directory: writable in the sandbox. */
   cache?: string | null;
@@ -234,7 +246,7 @@ export function claudeArgv(run: ClaudeRun): string[] {
 /**
  * The `--settings` file: the sandbox (secret paths unreadable; `<cwd>/.git`, blocked protected paths
  * and locked tests unwritable; the cache writable; the granted domains), WebFetch per granted domain
- * (any at a5), and the worker's guard hook.
+ * (never every domain, AUT-26), and the worker's guard hook.
  */
 export function claudeSettings(
   run: ClaudeRun,
@@ -245,7 +257,8 @@ export function claudeSettings(
     ...configSecrets(run.config),
     ...othersInHome(run),
   ];
-  if (run.config.agent.sandboxUnixSockets) denyRead.push(...HOST_SOCKETS);
+  // PIP-157: unix sockets are never bound in, and the host's are hidden, whatever the config says.
+  denyRead.push(...HOST_SOCKETS);
   const denyWrite = [join(resolve(run.cwd), ".git")];
   // PIP-100: an agent without Edit or Write only reads, so its Bash can't write the checkout either
   // (`git diff --output=<file>` from text planted in a diff).
@@ -278,13 +291,13 @@ export function claudeSettings(
     allowUnsandboxedCommands: false,
     filesystem,
   };
+  // AUT-26: only granted domains that are real domains (PIP-164); never `*`.
+  const domains = splitDomains(run.grants.domains).valid;
   const network: Record<string, unknown> = {};
-  if (run.grants.domains.length) network.allowedDomains = [...run.grants.domains];
-  if (run.config.agent.sandboxUnixSockets) network.allowAllUnixSockets = true;
+  if (domains.length) network.allowedDomains = domains;
   if (Object.keys(network).length) sandbox.network = network;
   const s: Record<string, unknown> = { sandbox };
-  const allow = run.grants.domains.map((d) => `WebFetch(domain:${d})`);
-  if (run.grants.open) allow.push("WebFetch(domain:*)");
+  const allow = domains.map((d) => `WebFetch(domain:${d})`);
   if (allow.length) s.permissions = { allow };
   if (run.guardRules) {
     const command = `${shellQuote(o.towercabExe)} hook guard ${shellQuote(join(runDir(run), "guard.json"))}`;
@@ -295,11 +308,11 @@ export function claudeSettings(
   return s;
 }
 
-/** A run's whole environment: HOME, PATH = `[agent].path`, LANG, the cache env; never a GitHub token. */
+/** A run's whole environment: HOME, PATH (a constant, PIP-157), LANG, the cache env; never a GitHub token. */
 export function claudeEnv(run: ClaudeRun, home: string): Record<string, string> {
   const env: Record<string, string> = {
     HOME: home,
-    PATH: run.config.agent.path,
+    PATH: sandboxPath(home),
     LANG: process.env.LANG || "C.UTF-8",
     ...run.cacheEnv,
   };

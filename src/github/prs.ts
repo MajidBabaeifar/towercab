@@ -59,6 +59,7 @@ export function parsePr(viewJson: string, commentsText: string): PrState {
     body: str(c.body),
     at: str(c.createdAt),
     id: idOf(c.id),
+    ...(str(c.url) ? { url: str(c.url) } : {}),
   }));
   for (const page of jsonStream(commentsText, "gh api comments")) {
     if (!Array.isArray(page)) throw new Error("gh api comments: not a list");
@@ -70,6 +71,7 @@ export function parsePr(viewJson: string, commentsText: string): PrState {
         body: str(c.body),
         at: str(c.created_at),
         id: idOf(c.id),
+        ...(str(c.html_url) ? { url: str(c.html_url) } : {}),
         ...(typeof c.path === "string" ? { path: c.path } : {}),
         ...(typeof line === "number" ? { line } : {}),
         ...(c.pull_request_review_id !== undefined && c.pull_request_review_id !== null

@@ -8,7 +8,9 @@ import type { Ctx } from "../handlers.ts";
 import type { Mission } from "../mission.ts";
 import { quote } from "../repo/runset.ts";
 import type { ChildSpec } from "../tools.ts";
-import { cacheEnv, sandboxArgv, sandboxEnv } from "./sandbox.ts";
+import { splitDomains } from "./domains.ts";
+import { proxySocket } from "./proxy.ts";
+import { cacheEnv, DEFAULT_NETWORK, sandboxArgv, sandboxEnv } from "./sandbox.ts";
 import type { Question } from "./schemas.ts";
 
 /** A shell script running each line in order, stopping at the first failure. */
@@ -21,11 +23,26 @@ export interface SandboxRun {
   lines: string[];
   /** The checkout to run in (the mission's, or the proof's). */
   dir: string;
-  network: boolean;
   cacheWritable: boolean;
   log: string;
   timeoutMs: number;
   extraEnv?: Record<string, string>;
+  /** Domains beyond `commandDomains`: the ship stage adds the live app's host (SHIP-5, SHIP-9). */
+  domains?: string[];
+}
+
+/**
+ * The domains every sandboxed command of a mission may reach (PIP-158): the built-in registry list, and
+ * nothing more but what the approved plan ticked or the owner allowed mid-build (AUT-14, AUT-15), each a real
+ * domain (PIP-164).
+ */
+export function commandDomains(m: Mission): string[] {
+  const d = JSON.parse(m.data || "{}") as {
+    granted?: { domains?: { domain: string }[] };
+    unplanned?: { domains?: { domain: string }[] };
+  };
+  const more = [...(d.granted?.domains ?? []), ...(d.unplanned?.domains ?? [])].map((x) => x.domain);
+  return [...new Set([...DEFAULT_NETWORK, ...splitDomains(more).valid])];
 }
 
 export function sandboxSpec(cx: Ctx, m: Mission, r: SandboxRun): ChildSpec {
@@ -37,14 +54,14 @@ export function sandboxSpec(cx: Ctx, m: Mission, r: SandboxRun): ChildSpec {
     argv: sandboxArgv({
       checkout: r.dir,
       home,
-      toolchain: cx.config.agent.toolchain,
       cache,
-      network: r.network,
+      // PIP-158: the same domains for every command, through the allowlist proxy.
+      proxy: proxySocket([...commandDomains(m), ...splitDomains(r.domains ?? []).valid], (l) => cx.log(l)),
       cacheWritable: r.cacheWritable,
       line: script(r.lines),
     }),
     cwd: r.dir,
-    env: { ...sandboxEnv(home, cx.config, cacheEnv(cache, cx.config, repo)), ...(r.extraEnv ?? {}) },
+    env: { ...sandboxEnv(home, cx.config, cacheEnv(cache, repo, home)), ...(r.extraEnv ?? {}) },
     stdout: r.log,
     stderr: `${r.log}.err`,
     timeoutMs: r.timeoutMs,

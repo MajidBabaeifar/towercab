@@ -90,6 +90,8 @@ export function mergeSpecialists(
   const findings = [...general.findings];
   const red = [...general.red_lines];
   let summary = general.summary.trim();
+  // PIP-221: every reviewer's agent part is kept, the general one first.
+  let agent = (general.agent ?? "").trim();
   let approved = general.approved;
   let door = general.door;
   for (const { area, result } of specialists) {
@@ -101,6 +103,8 @@ export function mergeSpecialists(
     if (result.door === "one-way") door = "one-way";
     red.push(...result.red_lines);
     if (result.summary.trim()) summary += `\n\n**${AREA_PASS[area]} review**\n\n${result.summary.trim()}`;
+    if (result.agent?.trim())
+      agent += `${agent ? "\n\n" : ""}**${AREA_PASS[area]} review**\n\n${result.agent.trim()}`;
   }
-  return { ...general, findings, red_lines: red, summary, approved, door };
+  return { ...general, findings, red_lines: red, summary, approved, door, agent };
 }

@@ -2,18 +2,30 @@
 // the loop applies it on its next pass, or the CLI applies it itself when no loop runs.
 
 import { ownerOnly, ownerOnlyLine } from "./autonomy.ts";
+import { levelNow } from "./autonomy-change.ts";
 import type { Db } from "./db.ts";
 import { localTime } from "./intents/intent.ts";
-import type { IntentStore } from "./intents/types.ts";
+import type { Intent, IntentStore } from "./intents/types.ts";
 import { type ApplyCtx, apply, exitsOf, waitKey } from "./machine.ts";
 import { dataOf, type Mission, patchData, unfinishedFor } from "./mission.ts";
 import { parseAllow, readingReply, reverseRefusals } from "./pipeline/access.ts";
 import type { PipeData } from "./pipeline/common.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
 import { recheck } from "./risk.ts";
+import { changeScores, parseScoreWords, raiseToFull } from "./scores.ts";
 import { checklist, type OwnerStep } from "./steps.ts";
 
-export type CommandName = "answer" | "retry" | "drop" | "pause" | "resume" | "start" | "done" | "steps";
+export type CommandName =
+  | "answer"
+  | "retry"
+  | "drop"
+  | "pause"
+  | "resume"
+  | "start"
+  | "done"
+  | "steps"
+  | "score"
+  | "boost";
 
 export interface CommandRow {
   id: number;
@@ -59,6 +71,8 @@ export interface CommandCtx {
   store: IntentStore;
   applyCtx: ApplyCtx;
   now: Date;
+  /** `[intents].cutoff` (PRI-5), to say whether a score change parks the intent; default 7. */
+  cutoff?: number;
 }
 
 /**
@@ -136,6 +150,7 @@ export const OWNER_ONLY_COMMANDS: readonly CommandName[] = [
   "retry",
   "steps",
   "resume",
+  "score",
 ];
 
 /** An ignored reply or command noted on an a0 intent (AUT-32, AUT-33). */
@@ -191,10 +206,32 @@ export function ignoredNotes(db: Db, intent: string): IgnoredNote[] {
 export async function applyCommand(cx: CommandCtx, row: CommandRow): Promise<string> {
   let result: string;
   try {
+    // AUT-35: no command changes autonomy (the table refuses the name); a row that claims to is dropped and noted.
+    if ((row.name as string) === "autonomy") {
+      noteIgnored(
+        cx.db,
+        row.arg || "-",
+        `command:${row.id}`,
+        `ignored "autonomy" from the ${row.source}: only you can raise autonomy`,
+        cx.now.getTime() / 1000,
+      );
+      throw new Error("only you can raise autonomy: use GitHub or the page");
+    }
+    // LOOP-134: Boost raises autonomy, so like a raise it counts only from the page (AUT-35).
+    if (row.name === "boost" && row.source !== "ui") {
+      noteIgnored(
+        cx.db,
+        row.arg || "-",
+        `command:${row.id}`,
+        `ignored "boost" from the ${row.source}: only you can raise autonomy`,
+        cx.now.getTime() / 1000,
+      );
+      throw new Error("only you can raise autonomy: use the page");
+    }
     // AUT-33: only the page counts for an a0 intent; a row from anywhere else is dropped and noted.
     if (row.source !== "ui" && row.arg !== "" && OWNER_ONLY_COMMANDS.includes(row.name)) {
       const intent = await cx.store.get(row.arg).catch(() => null);
-      if (intent && ownerOnly(intent.a, unfinishedFor(cx.db, intent.id)?.a_at_pick ?? null)) {
+      if (intent && ownerOnly(levelNow(cx.db, intent))) {
         const at = cx.now.getTime() / 1000;
         noteIgnored(
           cx.db,
@@ -223,6 +260,24 @@ export async function applyPending(cx: CommandCtx): Promise<{ id: number; result
   const out: { id: number; result: string }[] = [];
   for (const row of pendingCommands(cx.db)) out.push({ id: row.id, result: await applyCommand(cx, row) });
   return out;
+}
+
+/** LOOP-63: mark an intent to start over the limits; refused when it is done, started or its repo is not ready. */
+function startIntent(db: Db, intent: Intent): void {
+  if (intent.stage === "dropped") throw new Error(`${intent.id} is done or dropped`);
+  if (unfinishedFor(db, intent.id) || db.meta(`start:${intent.id}`) !== null) {
+    throw new Error(`${intent.id} has already started`);
+  }
+  // LOOP-70: a blocking repo starts nothing but its setup intent.
+  const ready = parseStored(db.meta(`readiness:${intent.repo}`))?.readiness;
+  if (ready?.blocks && intent.setup !== true) {
+    throw new Error(
+      `${intent.repo} is not ready: ${missing(ready)
+        .map((i) => i.item)
+        .join(", ")}`,
+    );
+  }
+  db.setMeta(`start:${intent.id}`, "1");
 }
 
 async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
@@ -268,7 +323,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       const m = unfinishedFor(db, intent.id);
       // PIP-141: `allow <path>` reverses a refusal, unless a test question is open (then it is its answer).
       const paths = parseAllow(row.text);
-      if (paths && m && !(dataOf(m) as PipeData).testAsk) {
+      if (paths && m && !(dataOf(m) as PipeData).testAsk && !(dataOf(m) as PipeData).accessAsk) {
         const r = reverseRefusals(dataOf(m) as PipeData, paths);
         await store.update(intent.id, "answer", (e) => e.addAnswer(row.text, cx.now));
         const said = readingReply({ allowed: r.moved, refused: [], undecided: [] });
@@ -301,21 +356,34 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
     }
     case "start": {
       const intent = await store.get(row.arg);
-      if (intent.stage === "dropped") throw new Error(`${intent.id} is done or dropped`);
-      if (unfinishedFor(db, intent.id) || db.meta(`start:${intent.id}`) !== null) {
-        throw new Error(`${intent.id} has already started`);
-      }
-      // LOOP-70: a blocking repo starts nothing but its setup intent.
-      const ready = parseStored(db.meta(`readiness:${intent.repo}`))?.readiness;
-      if (ready?.blocks && intent.setup !== true) {
-        throw new Error(
-          `${intent.repo} is not ready: ${missing(ready)
-            .map((i) => i.item)
-            .join(", ")}`,
-        );
-      }
-      db.setMeta(`start:${intent.id}`, "1");
+      startIntent(db, intent);
       return `starting ${intent.id}: its design begins on the next pass, over the limit if need be`;
+    }
+    case "score": {
+      // LOOP-133, LOOP-135: `text` is `u=N i=N`, already checked by the CLI and the page.
+      const r = await changeScores(
+        { db, store, now: cx.now.getTime() / 1000, cutoff: cx.cutoff ?? 7 },
+        row.arg,
+        parseScoreWords(row.text.split(/\s+/).filter(Boolean)),
+        row.source,
+      );
+      return r.message;
+    }
+    case "boost": {
+      // LOOP-134: a5 first (one commit), then what `start` does for an intent without a mission.
+      const { found } = await raiseToFull({ db, store, now: cx.now.getTime() / 1000 }, row.arg);
+      if (unfinishedFor(db, found.id) || db.meta(`start:${found.id}`) !== null) {
+        return `boosted ${found.id}: a5 from its next gate`;
+      }
+      if (intentPaused(db, found.id)) {
+        return `boosted ${found.id}: a5; it is paused, so it starts when you resume it`;
+      }
+      try {
+        startIntent(db, found);
+      } catch (e) {
+        return `boosted ${found.id}: a5; not started: ${(e as Error).message}`;
+      }
+      return `boosted ${found.id}: a5, and its design begins on the next pass, over the limit if need be`;
     }
     case "retry": {
       const intent = await store.get(row.arg);

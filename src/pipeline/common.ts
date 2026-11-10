@@ -7,12 +7,21 @@ import { join } from "node:path";
 import type { AfterHold } from "../after.ts";
 import { type Agent, type AgentName, agentBudgetUsd, loadAgent } from "../agents.ts";
 import { effectiveA } from "../autonomy.ts";
+import { withFlag } from "../autonomy-change.ts";
 import { git, gitSane } from "../checkout.ts";
 import { type ClaudeRun, freshContext, parseRun, prepareRun, type RunEnd, type RunKind } from "../claude.ts";
 import { clonePath, type RepoConfig } from "../config.ts";
 import { classifyFailure, classifyRun } from "../faults.ts";
 import { must, type Result } from "../forge.ts";
-import { agentOf, answeredByLine, type By, type Step, upsertStageComment } from "../github/comments.ts";
+import {
+  agentOf,
+  answeredByLine,
+  type By,
+  type Step,
+  type TwoPart,
+  upsertStageComment,
+} from "../github/comments.ts";
+import type { ReplyTarget } from "../github/events.ts";
 import { PausedHold } from "../github/paused.ts";
 import { type ChildEnd, type Ctx, EnvError, type GitHub, type Progress } from "../handlers.ts";
 import { plainLine, SUBJECT_MAX } from "../intents/naming.ts";
@@ -26,8 +35,10 @@ import { checkoutRoot } from "../service.ts";
 import { combine, type OwnerStep, type PlanStep, parseNoneLive, parseSteps } from "../steps.ts";
 import { grantsFor, parseAccess, type TestAsk } from "./access.ts";
 import type { Mech } from "./mechanical.ts";
-import { cacheEnv } from "./sandbox.ts";
-import { type Access, type Question, type ReviewResult, SCHEMAS } from "./schemas.ts";
+import { foldMd, plainMd, splitTwoPart, twoPartMd } from "./prtext.ts";
+import type { PendingReply } from "./reply.ts";
+import { cacheEnv, DEFAULT_NETWORK } from "./sandbox.ts";
+import { type Access, type Question, type ReviewResult, SCHEMAS, withReply } from "./schemas.ts";
 
 /** `missions.data`, as the pipeline uses it. */
 export interface ShipData {
@@ -130,7 +141,11 @@ export interface PipeData {
   stepsDirty?: number;
   /** The merged plan's ticked access. */
   granted?: Access;
+  /** AUT-15: access the owner allowed mid-build (never granted by Towercab itself). */
   unplanned?: Omit<Access, "tests">;
+  /** AUT-15: access the owner refused mid-build, and the request being asked about. */
+  refusedAccess?: Omit<Access, "tests">;
+  accessAsk?: Omit<Access, "tests">;
   /** PIP-116: existing tests the owner allowed or refused mid-build, and the one being asked about. */
   testAllowed?: { path: string; why: string }[];
   refusedTests?: { path: string; why: string }[];
@@ -143,6 +158,14 @@ export interface PipeData {
   mergeOpened?: string[];
   /** The owner's last words for the worker (an answer, feedback). */
   answer?: string;
+  /** PIP-203: the owner's comments the running revision answers (set with the `feedback` event). */
+  replyTo?: ReplyTarget[];
+  /** PIP-204: replies written so far, for the next one's round. */
+  replyRounds?: number;
+  /** PIP-204: a reply written and not yet posted, until it is. */
+  reply?: PendingReply;
+  /** LOOP-120: the posted reply's gist and link, for the next owner wait's message; used once. */
+  replyNote?: { gist: string; url: string };
   /** Why the next build round runs: a repair's what and details. */
   repair?: {
     what: string;
@@ -182,6 +205,8 @@ export interface PipeData {
   ship?: ShipData;
   /** HEAD when the current build round began (PIP-1). */
   roundFrom?: string;
+  /** PIP-227: the worker stopped mid-build with a question; its uncommitted work stays for the next round. */
+  askedMidBuild?: boolean;
   /** LOOP-115: the owner answered a wait; the next build round merges the base branch first. */
   answered?: boolean;
   /** LOOP-117: the mission waits at build for the intents its intent file says it comes after. */
@@ -189,7 +214,25 @@ export interface PipeData {
   /** Head at the end of the last non-repair round (PIP-31). */
   lockHead?: string;
   /** `brief`: the worker's plain brief of what changed (PIP-106). */
-  build?: { pr: string | null; notes: string; planChanged: string | null; brief?: string };
+  build?: {
+    pr: string | null;
+    notes: string;
+    planChanged: string | null;
+    brief?: string;
+    /** PIP-216: plan steps built so far and in the plan; absent for a plan of one run. */
+    stepsDone?: number;
+    stepsTotal?: number;
+    /** PIP-218: build runs of this code phase since the owner last let it carry on (repairs not counted). */
+    runs?: number;
+    /** PIP-217: runs in a row that added no passing commit. */
+    stalled?: number;
+    /** PIP-219: the note the last run left for the next one. */
+    handoff?: string;
+    /** The next worker run is a new run of the long build, in a fresh session (PIP-219). */
+    due?: boolean;
+    /** The round that just ended was a run, not a repair or an answer round. */
+    lastRun?: boolean;
+  };
   /** The step whose child really started (LOOP-4); a step re-entered without it never ran. */
   launched?: string;
   /** Runs per kind, for file names. */
@@ -287,7 +330,8 @@ export function tail(text: string, max = TAIL): string {
 
 /** The intent of a mission (open or done). */
 export async function intentOf(cx: Ctx, m: Mission): Promise<Intent> {
-  return cx.store.get(m.intent);
+  // AUT-8, AUT-35: the level is read now, at each gate; a raise nobody confirmed does not count yet.
+  return withFlag(cx.db, await cx.store.get(m.intent));
 }
 
 export function cloneOf(cx: Ctx, m: Mission): string {
@@ -297,7 +341,10 @@ export function cloneOf(cx: Ctx, m: Mission): string {
 /** The repo files from the base branch of Towercab's clone (REPO-1). */
 export async function repoFiles(cx: Ctx, m: Mission): Promise<RepoFiles> {
   try {
-    return await loadRepoFiles(cx.tools, cloneOf(cx, m), cx.repo(m).base);
+    const files = await loadRepoFiles(cx.tools, cloneOf(cx, m), cx.repo(m).base);
+    // UI-257: the page shows a repo's cap beside the autonomy control.
+    cx.db.setMeta(`a-cap:${m.repo}`, String(files.towercab.maxAutonomy));
+    return files;
   } catch (e) {
     if (e instanceof RepoError && e.kind === "git") throw new EnvError("github", e.message);
     throw e;
@@ -312,12 +359,12 @@ export function repoFilesWait(e: unknown): Outcome | null {
   return null;
 }
 
-export function effectiveOf(m: Mission, intent: Intent, files: RepoFiles): number {
-  return effectiveA(m.a_at_pick, intent.a, files.towercab.maxAutonomy, intent.source);
+export function effectiveOf(_m: Mission, intent: Intent, files: RepoFiles): number {
+  return effectiveA(intent.a, files.towercab.maxAutonomy, intent.source);
 }
 
 /** The worker's grants (AUT-14). */
-export function grants(m: Mission, intent: Intent, files: RepoFiles, cx: Ctx) {
+export function grants(m: Mission, intent: Intent, files: RepoFiles, _cx?: Ctx) {
   const d = data(m);
   return grantsFor({
     a: effectiveOf(m, intent, files),
@@ -325,7 +372,7 @@ export function grants(m: Mission, intent: Intent, files: RepoFiles, cx: Ctx) {
     plan: d.granted ?? null,
     unlock: intent.unlock,
     network: intent.network,
-    defaults: cx.config.agent.network,
+    defaults: [...DEFAULT_NETWORK],
     unplanned: d.unplanned ?? null,
   });
 }
@@ -381,10 +428,16 @@ const STAGE_OF_KIND: Record<RunKind, string> = {
   score: "design",
   features: "design",
   shadow: "design",
+  observer: "design",
 };
 
 /** Record the step, then spawn a Claude run (LOOP-6, LOOP-7, PIP-13, PIP-24). */
 export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string): Progress {
+  // PIP-161, PIP-162: while the sandbox probe fails no Claude run starts: the owner gets the probe's error, or,
+  // where user namespaces are restricted and the profile is missing, the one install command. A retry after the
+  // fix carries on; a working sandbox never gets this.
+  const probe = cx.sandbox?.();
+  if (probe && !probe.ok) return { done: wait("fix sandbox", probe.why) };
   const repo = cx.repo(m);
   const runs = cx.runs(m);
   const cache = cx.home.cache(repo.name);
@@ -423,16 +476,21 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
     stage: p.stage ?? STAGE_OF_KIND[p.kind],
     n,
     prompt,
-    schema: agent.schema ? SCHEMAS[agent.schema] : null,
+    // PIP-203: a revision the owner's comments started is also asked for `reply`.
+    schema: agent.schema
+      ? data(fresh).replyTo?.length && ["design", "plan", "build"].includes(agent.schema)
+        ? withReply(SCHEMAS[agent.schema])
+        : SCHEMAS[agent.schema]
+      : null,
     session,
     budgetUsd: agentBudgetUsd(agent, cx.config),
     claudeMd: p.files.claudeMd,
     grants:
       p.kind === "worker"
         ? grants(fresh, p.intent, p.files, cx)
-        : { domains: cx.config.agent.network, paths: [], open: false },
+        : { domains: [...DEFAULT_NETWORK], paths: [] },
     guardRules: p.guard ?? null,
-    cacheEnv: cacheEnv(cache, cx.config, repo),
+    cacheEnv: cacheEnv(cache, repo),
     cache,
     config: cx.config,
   };
@@ -704,13 +762,18 @@ export const EFFECTS = {
 /** PIP-182: who a stage comment of mission `m` is from: the agent of the step, and the intent. */
 const byOf = (m: Mission, step: Step): By => ({ agent: agentOf(step, m.stage), intent: m.intent });
 
-/** A question in Markdown (PIP-41), led by its plain brief when it has one (PIP-106). */
+/**
+ * A question in Markdown (PIP-41). With a brief it opens with the people part (PIP-220) and the
+ * question's context is folded as agent context; without one the question itself is the people part.
+ */
 export function questionMd(q: Question, brief = ""): string {
   const opts = q.options
     .map((o) => `- **${o.option}**: ${o.then}${o.do ? ` _(${EFFECTS[o.do]})_` : ""}`)
     .join("\n");
-  const plain = brief.trim() ? `**In plain words:** ${brief.trim()}\n\n` : "";
-  return `${plain}${q.context.trim()}\n\n**${q.question.trim()}**\n\n${opts}\n\n**Recommendation:** ${q.recommendation.trim()}\n\nReply to this comment to answer; Towercab continues with your reply.`;
+  const ask = `**${q.question.trim()}**\n\n${opts}\n\n**Recommendation:** ${q.recommendation.trim()}\n\nReply to this comment to answer; Towercab continues with your reply.`;
+  // PIP-220: a question asked without a brief opens with its own one-line question as the people part.
+  const people = brief.trim() || q.question.trim();
+  return [plainMd(people), ask, foldMd(q.context)].filter(Boolean).join("\n\n");
 }
 
 /**
@@ -742,7 +805,13 @@ export async function ask(
 }
 
 /** A stage comment on the current PR, never failing the step. */
-export async function note(cx: Ctx, m: Mission, step: Step, round: number, body: string): Promise<void> {
+export async function note(
+  cx: Ctx,
+  m: Mission,
+  step: Step,
+  round: number,
+  body: string | TwoPart,
+): Promise<void> {
   const pr = currentPr(cx, m, cx.repo(m));
   if (!pr) return;
   try {
@@ -763,8 +832,11 @@ export async function tellOwner(cx: Ctx, m: Mission, body: string, keep = ""): P
   const pr = currentPr(cx, m, cx.repo(m));
   // PIP-185: an answer an agent gave for the owner says so.
   const agent = dataOf<{ answeredBy?: string | null }>(m).answeredBy;
-  const said = agent ? `${answeredByLine(agent)}\n\n${body}` : body;
   try {
+    // PIP-220: the reply opens with its people part; the rest is folded. Inside the try: a shape
+    // problem is logged, it never fails the step.
+    const two = body.trim() ? twoPartMd(splitTwoPart(body)) : body;
+    const said = agent ? `${answeredByLine(agent)}\n\n${two}` : two;
     if (pr) {
       await upsertStageComment(cx.github, pr.github, pr.n, "Answer", m.continued, said, byOf(m, "Answer"));
     } else {

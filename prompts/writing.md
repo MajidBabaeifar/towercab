@@ -126,3 +126,9 @@ owner-only intent ignores it. Towercab's own comments already name their agent.
 
 Read it once as the owner would, on a phone, with no context. Cut every sentence that does not help
 them decide or check. If something is uncertain, say so plainly instead of hedging every line.
+
+## People part, agent part
+
+Every text for a person has two parts, and results return them as separate fields: `brief` (the risk agent's `summary`) is the people part, and the technical fields (`pr`, `plan`, `notes`, `agent`) are the agent part.
+
+The people part is at most 5 lines and 600 characters: what happened, why it matters and what (if anything) the owner decides. It holds no file lists, code, findings or IDs. Everything else is the agent part: Towercab folds it under "Agent context" after the people part, so it stays available but out of the way. Towercab refuses a people part that is longer or that holds agent detail, and asks you once for a shorter one.

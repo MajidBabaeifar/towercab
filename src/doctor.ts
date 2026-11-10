@@ -2,6 +2,8 @@
 // self-update check (LOOP-35): config, tools and modules only, no network.
 
 import { existsSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { type Capacity, readCapacity, slotHint } from "./capacity.ts";
 import type { Config } from "./config.ts";
 import { appKeyPath, clonePath } from "./config.ts";
@@ -16,8 +18,12 @@ import type { GitHub } from "./handlers.ts";
 export { ghVersionOk };
 
 import type { Home } from "./home.ts";
+import { type HostState, hostState, profileStep } from "./pipeline/hostcheck.ts";
+import { apparmorProfile, type ProbeResult, sandboxProbe, userNamespaceDenied } from "./pipeline/probe.ts";
+import { refusedRepoEnv, toolchainBins, toolchainPlaces } from "./pipeline/sandbox.ts";
 import { parseStored } from "./repo/readiness.ts";
 import { isMoved, readRecord } from "./repo/settings.ts";
+import { shipNetwork } from "./ship/live.ts";
 import { tooFewListed } from "./teammates.ts";
 import type { Tools } from "./tools.ts";
 
@@ -36,11 +42,17 @@ export async function doctor(o: {
   /** GL-9: Towercab's GitLab, when `[gitlab]` is configured. */
   gitlab?: GitLabForge | null;
   quick: boolean;
+  /** The HOME whose toolchains are listed (PIP-226); the real one when absent. */
+  userHome?: string;
   /** The database, for the readiness lines (LOOP-72). */
   db?: Db;
   /** Unix seconds and the machine's cores and memory, for the slots line (LOOP-104); real ones when absent. */
   now?: number;
   capacity?: Capacity;
+  /** The sandbox probe (PIP-163); the real one when absent. */
+  probe?: () => Promise<ProbeResult>;
+  /** The host's user-namespace state (PIP-162); the real one when absent. */
+  host?: () => HostState;
 }): Promise<DoctorResult> {
   const { config, home, tools } = o;
   const lines: string[] = [`config: ${config.file}`, `home: ${home.root}`, `node: ${process.version}`];
@@ -60,7 +72,58 @@ export async function doctor(o: {
     lines.push(`glab: ${p ?? "missing"}`);
     if (!p) ok = false;
   }
+  // PIP-157, PIP-159: keys that no longer reach the sandbox, and repo variables it leaves out.
+  for (const k of config.agent.ignored) {
+    lines.push(`config: [agent] ${k} is ignored: the sandbox's settings are fixed in code`);
+  }
+  for (const name of config.repos.keys()) {
+    const extra = o.db ? shipNetwork(o.db, name) : [];
+    if (extra.length) lines.push(`${name}: ship commands may also reach ${extra.join(", ")}`);
+  }
+  for (const [name, repo] of config.repos) {
+    for (const r of refusedRepoEnv(repo.env)) {
+      lines.push(`${name}: env ${r.name} is left out of the sandbox: ${r.why}`);
+    }
+  }
+  // PIP-226: the toolchains the sandbox binds; a missing one is information, not a fault.
+  const userHome = o.userHome ?? homedir();
+  const bound = toolchainPlaces(userHome);
+  const places = [".cargo/bin", ".rustup", ".local/go", ".local/zig-*", ".local/node"];
+  for (const p of places) {
+    if (p.endsWith("zig-*")) {
+      const zigs = bound.filter((d) => d.startsWith(join(userHome, ".local", "zig-")));
+      if (zigs.length === 0) lines.push(`toolchain ${join(userHome, p)}: not found`);
+      for (const z of zigs) lines.push(`toolchain ${z}: bound`);
+    } else {
+      const d = join(userHome, p);
+      lines.push(`toolchain ${d}: ${bound.includes(d) ? "bound" : "not found"}`);
+    }
+  }
+  lines.push(`toolchain PATH: ${toolchainBins(userHome).join(":")}`);
   if (o.quick) return { lines, ok };
+
+  // PIP-163: the sandbox probe; PIP-162: the narrow fix where user namespaces are restricted.
+  const bwrapPath = tools.which("bwrap");
+  if (bwrapPath) {
+    const version = await tools.run(bwrapPath, ["--version"]).catch(() => null);
+    lines.push(`bwrap version: ${version?.stdout.trim() || "unknown"}`);
+    const probe = await (o.probe ?? (() => sandboxProbe(tools)))();
+    lines.push(`sandbox: ${probe.ok ? "the probe held" : `the probe failed: ${probe.why}`}`);
+    if (!probe.ok) {
+      ok = false;
+      // PIP-162: the one owner step, only when the probe failed and the restriction is on without the profile,
+      // or with Ubuntu's stock profile refusing the worker's shell.
+      const step = profileStep((o.host ?? hostState)(), bwrapPath, probe);
+      if (step)
+        lines.push(`owner step: ${step.title}; run:`, ...step.commands.split("\n").map((l) => `  ${l}`));
+      if (userNamespaceDenied(probe.why)) {
+        lines.push(
+          "sandbox: Ubuntu may restrict user namespaces; allow only this bwrap with this AppArmor profile:",
+          ...apparmorProfile(bwrapPath).map((l) => `  ${l}`),
+        );
+      }
+    }
+  }
 
   const v = await ghVersion(tools);
   lines.push(`gh version: ${v.version}${v.ok ? "" : ": Towercab needs 2.46 or newer"}`);

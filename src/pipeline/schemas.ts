@@ -2,6 +2,7 @@
 // every key required, `null` where optional; plus their result types and a validator for them.
 
 import type { PlanStep } from "../steps.ts";
+import { checkPeople } from "./prtext.ts";
 
 /** Conventional Commit types. */
 export const TYPES = [
@@ -116,6 +117,9 @@ export const BUILD_SCHEMA = object({
   plan_changed: S_NULL,
   lower_a: { type: ["integer", "null"], minimum: 0, maximum: 5 },
   lower_why: S_NULL,
+  // PIP-216, PIP-219: how many plan steps are built so far (null = all) and the note for the next run.
+  steps_done: { type: ["integer", "null"], minimum: 0 },
+  handoff: S_NULL,
 });
 
 export const REVIEW_SCHEMA = object({
@@ -137,6 +141,8 @@ export const REVIEW_SCHEMA = object({
   door: { type: "string", enum: ["one-way", "two-way"] },
   red_lines: list(object({ line: S, file: S })),
   summary: S,
+  // PIP-221: the agent part beside `brief`; may be empty.
+  agent: S,
 });
 
 /** The risk agent's assessment at a gate (PIP-96, AUT-16) and the spec's second review (PIP-97). */
@@ -147,6 +153,8 @@ export const RISK_SCHEMA = object({
   level: { type: "string", enum: ["low", "medium", "high"] },
   summary: S,
   open_points: list(object({ point: S, why: S })),
+  // PIP-221: the agent part beside `summary`, the people part; may be empty.
+  agent: S,
 });
 
 /** PIP-169: the short review of a mechanical merge: did the combination keep both sides? */
@@ -180,6 +188,24 @@ export const SHADOW_SCHEMA = object({
   actions: list(object({ action: S, intent: S, repo: S, title: S, text: S })),
 });
 
+/** OBV-4, OBV-5: what an observer run returns: improvements to propose, each with its evidence and gain. */
+export const OBSERVER_SCHEMA = object({
+  findings: list(
+    object({
+      title: S,
+      repo: S,
+      problem: S,
+      outcome: S,
+      gain: S,
+      u: { type: "integer", minimum: 1, maximum: 5 },
+      i: { type: "integer", minimum: 1, maximum: 5 },
+      a: { type: "integer", minimum: 1, maximum: 5 },
+      evidence: list(object({ id: S, shows: S })),
+      overlaps: list(S),
+    }),
+  ),
+});
+
 export const SCHEMAS = {
   design: DESIGN_SCHEMA,
   plan: PLAN_SCHEMA,
@@ -190,6 +216,7 @@ export const SCHEMAS = {
   score: SCORE_SCHEMA,
   features: FEATURES_SCHEMA,
   shadow: SHADOW_SCHEMA,
+  observer: OBSERVER_SCHEMA,
 };
 
 export interface Access {
@@ -213,6 +240,8 @@ export interface DesignResult {
   concerns: { what: string; why: string }[];
   open_questions: { question: string; answer: string | null }[];
   pr: string;
+  /** PIP-203: absent or not text counts as none (the generic reply is posted). */
+  reply?: string;
 }
 
 export interface PlanResult {
@@ -229,6 +258,8 @@ export interface PlanResult {
   live_none_why?: string;
   /** PIP-112: absent counts as `code`. */
   delivery?: "code" | "steps";
+  /** PIP-203: as in `DesignResult`. */
+  reply?: string;
 }
 
 export interface Question {
@@ -250,6 +281,12 @@ export interface BuildResult {
   plan_changed: string | null;
   lower_a: number | null;
   lower_why: string | null;
+  /** PIP-216: plan steps built so far, from step 1 in order; null = all of them. */
+  steps_done: number | null;
+  /** PIP-219: what is done, what is next, anything surprising; needed while steps are open. */
+  handoff: string | null;
+  /** PIP-203: as in `DesignResult`. */
+  reply?: string;
 }
 
 export interface ReviewResult {
@@ -271,6 +308,8 @@ export interface ReviewResult {
   door: "one-way" | "two-way";
   red_lines: { line: string; file: string }[];
   summary: string;
+  /** PIP-221: the agent part; absent in a result from before it counts as empty. */
+  agent?: string;
 }
 
 export interface RiskResult {
@@ -284,6 +323,8 @@ export interface RiskResult {
   summary: string;
   /** PIP-97: what the owner must decide before the spec is built; empty at the plan and code gates. */
   open_points: { point: string; why: string }[];
+  /** PIP-221: the agent part; absent counts as empty. */
+  agent?: string;
 }
 
 export interface MergeReviewResult {
@@ -318,6 +359,28 @@ export interface Results {
   score: ScoreResult;
   features: { features: string[] };
   shadow: ShadowResult;
+  observer: ObserverResult;
+}
+
+export interface ObserverFinding {
+  title: string;
+  /** The repo where the fix belongs (OBV-4). */
+  repo: string;
+  problem: string;
+  outcome: string;
+  /** What it expects to gain (OBV-5). */
+  gain: string;
+  u: number;
+  i: number;
+  a: number;
+  /** Ids from the bundle: an intent id or `owner/name#number`, each with what it shows. */
+  evidence: { id: string; shows: string }[];
+  /** Intent ids or PR numbers the agent found covering the same thing (OBV-6). */
+  overlaps: string[];
+}
+
+export interface ObserverResult {
+  findings: ObserverFinding[];
 }
 
 export interface ShadowResult {
@@ -383,6 +446,20 @@ export function parseResult<K extends keyof Results>(
   kind: K,
   value: unknown,
 ): { ok: true; value: Results[K] } | { ok: false; why: string } {
+  // PIP-221: a review or risk result from before `agent` (or a cached one) has an empty agent part.
+  if ((kind === "review" || kind === "risk") && isObject(value) && !("agent" in value)) {
+    value = { ...value, agent: "" };
+  }
+  // PIP-216, PIP-219: a build result from before steps (or a cached one) reads as all built, no handoff.
+  if (kind === "build" && isObject(value)) {
+    value = { steps_done: null, handoff: null, ...value };
+  }
+  // PIP-222: the people part must be short and free of agent detail; otherwise the result is invalid.
+  const people = isObject(value) ? (kind === "risk" ? value.summary : value.brief) : undefined;
+  if (typeof people === "string" && ["design", "plan", "build", "review", "risk"].includes(kind)) {
+    const bad = people.trim() ? checkPeople(people) : null;
+    if (bad) return { ok: false, why: `result.${kind === "risk" ? "summary" : "brief"}: ${bad}` };
+  }
   // PIP-119: a review from before `owner` existed (or a cached one) reads as `owner: false`.
   if (kind === "review" && isObject(value) && Array.isArray(value.outcomes)) {
     value = {
@@ -416,6 +493,16 @@ export function parseResult<K extends keyof Results>(
         : own,
     };
   }
+  // PIP-203: `reply` is asked for in the run's schema (`withReply`) but never insisted on here: it is taken
+  // out before the check, and one that is not text counts as none.
+  if ((kind === "design" || kind === "plan" || kind === "build") && isObject(checked)) {
+    const { reply: _reply, ...rest } = checked;
+    checked = rest;
+    if (isObject(value) && "reply" in value && typeof value.reply !== "string") {
+      const { reply: _bad, ...kept } = value;
+      value = kept;
+    }
+  }
   const why = validate(SCHEMAS[kind], checked);
   if (why !== null) return { ok: false, why };
   if (kind === "plan" && isObject(value)) {
@@ -435,6 +522,19 @@ export function parseResult<K extends keyof Results>(
       return { ok: false, why: "question.options needs at least one option" };
   }
   return { ok: true, value: value as Results[K] };
+}
+
+/**
+ * PIP-203: `schema` for the run of a revision the owner's comments started: the same, with a required `reply`
+ * (the answer to the comments). Other runs are not asked for one.
+ */
+export function withReply(schema: JsonSchema): JsonSchema {
+  const props = schema.properties as Record<string, JsonSchema>;
+  return {
+    ...schema,
+    properties: { ...props, reply: S },
+    required: [...(schema.required as string[]), "reply"],
+  };
 }
 
 /** SHIP-33: what is wrong with the secrets of a plan's steps, or null. */

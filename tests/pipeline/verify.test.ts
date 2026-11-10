@@ -5,6 +5,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
+import { failingLines } from "../../src/pipeline/verify.ts";
 import { build, happy, ID, intent, intents, TARGET } from "../helpers/flows.ts";
 import { type ClaudeReply, Pipe } from "../helpers/pipe.ts";
 
@@ -39,7 +40,7 @@ test("pipeline: verify red repairs then waits", async () => {
   const m = await p.untilStage("blocked");
   expect([m.waiting, m.why], p.moves()).toEqual([
     "checks red",
-    "Still failing after 2 fix attempts: The checks failed.",
+    "Still failing after 2 fix attempts: The checks failed: no bye in greeting.txt",
   ]);
   expect(workers()).toHaveLength(3);
   const reds = p.db.all<{ from_stage: string; to_stage: string }>(
@@ -119,3 +120,22 @@ test("pipeline: question comment has context, options, recommendation", async ()
   );
   void ID;
 }, 30_000);
+
+test("verify: a red check names what failed", () => {
+  const log = [
+    "$ npm test",
+    "\u001b[31m × pipeline: a later build run starts a new session\u001b[39m 3228ms",
+    " ✓ pipeline: something fine",
+    " × pipeline: open steps send the mission back to build",
+    " × pipeline: open steps send the mission back to build",
+    "AssertionError: expected 1 to be 2",
+    "error TS2322: Type 'string' is not assignable to type 'number'.",
+    " Tests  3 failed | 38 passed (41)",
+  ].join("\n");
+  expect(failingLines(log)).toBe(
+    "× pipeline: a later build run starts a new session 3228ms; × pipeline: open steps send the mission back to build; AssertionError: expected 1 to be 2 (and 1 more)",
+  );
+  expect(failingLines("$ make\nbuilding\nmake: *** [all] Error 2\n")).toBe("make: *** [all] Error 2");
+  expect(failingLines("")).toBe("");
+  expect(failingLines(`× ${"a".repeat(200)}`)).toHaveLength(100);
+});

@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type {
   ActionReply,
   Card,
+  InstallHelpView,
   Phase,
   ProblemView,
   ProposedCard as ProposedCardData,
@@ -21,6 +22,7 @@ import type {
   When,
 } from "../../src/ui/view.ts";
 import { AddRepoForm } from "./AddRepo.tsx";
+import { AutonomyControl, FlagButtons } from "./AutonomyControl.tsx";
 import {
   acceptProposed,
   act,
@@ -48,7 +50,7 @@ import {
 } from "./icons.tsx";
 import { Markdown } from "./md.tsx";
 import { asksFirst } from "./options.ts";
-import { Link } from "./router.tsx";
+import { Link, usePath } from "./router.tsx";
 import { sharedReason } from "./up-next.ts";
 
 const drafts = new Map<string, string>();
@@ -57,7 +59,7 @@ const expanded = new Set<string>();
 /** UI-126: the "Details" folds a viewer opened, by key, so a refetch keeps them open. */
 const detailsOpen = new Set<string>();
 
-/** UI-126, UI-127: the technical text, folded under "Details" until asked for. */
+/** UI-126, UI-127, UI-281: the agent part, folded under "Agent context" until asked for. */
 export function Details({ id, text }: { id: string; text: string }) {
   const [open, setOpen] = useState(detailsOpen.has(id));
   return (
@@ -71,9 +73,41 @@ export function Details({ id, text }: { id: string; text: string }) {
         setOpen(now);
       }}
     >
-      <summary>Details</summary>
+      <summary>Agent context</summary>
       <div class="details-body">
         <Markdown text={text} />
+      </div>
+    </details>
+  );
+}
+
+/** UI-211: how to install the GitHub App on a repo it can't reach, folded under "See more". */
+export function InstallHelpBlock({ id, help }: { id: string; help: InstallHelpView }) {
+  const [open, setOpen] = useState(detailsOpen.has(`install:${id}`));
+  return (
+    <details
+      class="details-fold install-help"
+      open={open}
+      onToggle={(e) => {
+        const now = (e.currentTarget as HTMLDetailsElement).open;
+        if (now) detailsOpen.add(`install:${id}`);
+        else detailsOpen.delete(`install:${id}`);
+        setOpen(now);
+      }}
+    >
+      <summary>See more</summary>
+      <div class="details-body">
+        {help.app ? <p>App: {help.app}</p> : null}
+        <ol>
+          {help.steps.map((s) => (
+            <li key={s}>{s}</li>
+          ))}
+        </ol>
+        <p>
+          <a href={help.url} target="_blank" rel="noopener">
+            {help.url}
+          </a>
+        </p>
       </div>
     </details>
   );
@@ -124,6 +158,31 @@ export function Id({ id }: { id: string }) {
 /** UI-236: marks what the shadow wrote or did; a text label, not colour alone. */
 export function ShadowTag() {
   return <span class="shadow-tag">[shadow]</span>;
+}
+
+/** UI-243: marks what the observer proposed; a text label, not colour alone. */
+export function ObserverTag() {
+  return <span class="shadow-tag observer-tag">[observer]</span>;
+}
+
+/** UI-243: the evidence links and the expected gain of an observer proposal, shown before the rest. */
+export function ObserverNote({ note }: { note: { evidence: string; gain: string } }) {
+  return (
+    <section class="observer-note" aria-label="Evidence and expected gain">
+      {note.evidence ? (
+        <>
+          <p class="access-head">Evidence</p>
+          <Markdown text={note.evidence} />
+        </>
+      ) : null}
+      {note.gain ? (
+        <>
+          <p class="access-head">Expected gain</p>
+          <Markdown text={note.gain} />
+        </>
+      ) : null}
+    </section>
+  );
 }
 
 export function Section(props: {
@@ -312,7 +371,9 @@ export function NeedsCard({
   };
   const can = (a: string) => !readOnly && card.actions.includes(a as Card["actions"][number]);
   // A plain brief is two to four sentences (PIP-106): shown whole up to about that, folded beyond.
-  const long = (card.brief?.length ?? 0) > 480;
+  const people = card.people ?? card.brief;
+  const path = usePath();
+  const long = (people?.length ?? 0) > 480;
   const toggle = () => {
     if (open) expanded.delete(key);
     else expanded.add(key);
@@ -475,6 +536,7 @@ export function NeedsCard({
               <Link href={`/i/${key}`}>{card.title}</Link>
             )}
             {card.shadow ? <ShadowTag /> : null}
+            {card.observer ? <ObserverTag /> : null}
           </h3>
           <p class="meta">
             {card.repo}
@@ -489,14 +551,22 @@ export function NeedsCard({
       ) : null}
       <p class="ask">{card.ask}</p>
       {card.why ? <p class="why">{card.why}</p> : null}
+      {card.installHelp ? <InstallHelpBlock id={`card:${key}`} help={card.installHelp} /> : null}
+      {card.autonomy ? (
+        card.kind === "autonomy" ? (
+          <FlagButtons intent={key} view={card.autonomy} readOnly={readOnly} />
+        ) : (
+          <AutonomyControl intent={key} view={card.autonomy} readOnly={readOnly} compact />
+        )
+      ) : null}
       {card.warning ? (
         <p class="why review-warning" role="status">
           <Alert size={16} /> {card.warning}
         </p>
       ) : null}
-      {card.brief ? (
+      {people ? (
         <div class={`brief${long && !open ? " clamped" : ""}`}>
-          <Markdown text={card.brief} />
+          <Markdown text={people} />
           {long ? (
             <button type="button" class="link-btn" aria-expanded={open} onClick={toggle}>
               {open ? "Less" : "More"}
@@ -638,7 +708,16 @@ export function NeedsCard({
       {card.addRepo && !readOnly ? (
         <AddRepoForm name={card.addRepo.name} initial={card.addRepo.github} />
       ) : null}
-      {card.details ? <Details id={`card:${key}`} text={card.details} /> : null}
+      {card.details ? (
+        // UI-281: a card shows no agent text; on the intent's page or the opened Inbox card it is folded, elsewhere a link.
+        path === `/i/${key}` || path === `/inbox/${key}` ? (
+          <Details id={`card:${key}`} text={card.details} />
+        ) : (
+          <Link class="agent-link" href={`/i/${key}`}>
+            Agent context
+          </Link>
+        )
+      ) : null}
       {can("reply") ? (
         <form
           class="reply"
@@ -829,13 +908,14 @@ export function StepsChecklist({
 }
 
 /** UI-59: a moving intent. */
-export function WorkRow({ row }: { row: Row }) {
+export function WorkRow({ row, readOnly = false }: { row: Row; readOnly?: boolean }) {
   return (
     <Link class="row" href={`/i/${row.intent}`}>
       <span class="row-main">
         <span class="row-title">
           {row.title}
           {row.shadow ? <ShadowTag /> : null}
+          {row.observer ? <ObserverTag /> : null}
         </span>
         <span class="meta">
           {row.repo} · <Id id={row.intent} />
@@ -845,11 +925,15 @@ export function WorkRow({ row }: { row: Row }) {
         <StateChip state={row.state} small />
         <span class="row-step">
           {row.behind ?? row.step}
+          {row.build ? <span class="meta build-steps"> · {row.build.label}</span> : null}
           {row.inStep ? <span class="meta"> · {row.inStep}</span> : null}
           {row.warning ? <span class="meta review-warning"> · {row.warning}</span> : null}
         </span>
       </span>
       {row.behind ? null : <Phases phases={row.phases} />}
+      {row.autonomy ? (
+        <AutonomyControl intent={row.intent} view={row.autonomy} readOnly={readOnly} compact />
+      ) : null}
       {row.estimate ? <EstimateBar line={row.estimate} /> : null}
       <span class="row-num">
         <span class="num">{row.cost}</span>
@@ -866,6 +950,7 @@ export function ProblemItem({ p }: { p: ProblemView }) {
       <div class="problem-body">
         <p class="problem-title">{p.title}</p>
         {p.detail ? <p class={`problem-detail${p.code ? " code" : ""}`}>{p.detail}</p> : null}
+        {p.installHelp ? <InstallHelpBlock id={`problem:${p.key}`} help={p.installHelp} /> : null}
         <p class="problem-fix">{p.fix}</p>
       </div>
       {p.intent ? (
@@ -1125,6 +1210,7 @@ export function ProposedCard({
           >
             {card.title}
           </a>
+          {card.observer ? <ObserverTag /> : null}
           <a
             class="proposed-gh"
             href={card.prUrl}
@@ -1201,7 +1287,10 @@ export function ProposedCard({
       <header class="proposed-head">
         <span class="chip chip-sm">Proposed</span>
         {card.draft ? <span class="chip chip-sm chip-draft">Draft</span> : null}
-        <h3>{card.title}</h3>
+        <h3>
+          {card.title}
+          {card.observer ? <ObserverTag /> : null}
+        </h3>
       </header>
       <p class="meta proposed-meta">
         {card.repo ? <span class="mono">{card.repo}</span> : <span>repo unknown</span>}
@@ -1210,6 +1299,7 @@ export function ProposedCard({
         <span> · {card.from}</span>
         <span> · {card.waiting}</span>
       </p>
+      {card.observerNote ? <ObserverNote note={card.observerNote} /> : null}
       {card.problem ? <p class="proposed-problem">{card.problem}</p> : null}
       <div class="proposed-links">
         <a href={card.prUrl} target="_blank" rel="noreferrer noopener">

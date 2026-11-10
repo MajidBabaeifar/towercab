@@ -129,6 +129,33 @@ interface Said {
   text: string;
   /** PIP-185: the agent whose marker the owner-account comment carries. */
   agent?: string;
+  /** PIP-204: the owner's own comment or review, for the reply (a teammate's is never answered). */
+  own?: { id: string; url: string; thread: string };
+}
+
+/** PIP-204: one owner comment a revision answers, kept in the mission until the reply is posted. */
+export interface ReplyTarget {
+  kind: PrKind;
+  /** The comment's id (a review without an id gets `review-<time>`). */
+  id: string;
+  /** The review comment's id when the reply can also go in its thread, else empty. */
+  thread: string;
+  /** The comment's link on the host, or empty. */
+  url: string;
+  /** Its first line, for quoting. */
+  excerpt: string;
+}
+
+const EXCERPT_MAX = 120;
+
+/** The first non-empty line of `text`, cut to a quotable length. */
+export function excerptOf(text: string): string {
+  const line =
+    text
+      .split("\n")
+      .find((l) => l.trim())
+      ?.trim() ?? "";
+  return line.length > EXCERPT_MAX ? `${line.slice(0, EXCERPT_MAX - 1)}…` : line;
 }
 
 /** The owner's comments and steering reviews on the read PRs, oldest first (commands included). */
@@ -148,14 +175,16 @@ function ownerSaid(prs: Prs, me: string, botLogin: string, ownerOnlyIntent = fal
         at: c.at,
         text: `${where}${stripAgentHeader(c.body).trim()}`,
         ...(agent ? { agent } : {}),
+        own: { id: c.id, url: c.url ?? "", thread: c.path ? c.id : "" },
       });
     }
     for (const r of pr.reviews) {
       if (!isOwner(r.author, me)) continue;
+      const own = { id: `review-${r.at}`, url: "", thread: "" };
       if (r.state === "CHANGES_REQUESTED") {
-        out.push({ kind, at: r.at, text: r.body.trim() || "Changes requested." });
+        out.push({ kind, at: r.at, text: r.body.trim() || "Changes requested.", own });
       } else if (r.state === "COMMENTED" && r.body.trim()) {
-        out.push({ kind, at: r.at, text: r.body.trim() });
+        out.push({ kind, at: r.at, text: r.body.trim(), own });
       }
     }
   }
@@ -278,6 +307,52 @@ export function approvalNotes(prs: Prs, team: TeamReads): string[] {
 }
 
 /**
+ * What the owner (and, in a repo that needs a teammate's review, the reviewers) said since `feedback_seen`,
+ * and which of it is feedback rather than a command (PIP-141, PIP-143).
+ */
+function freshFeedback(
+  m: Mission,
+  prs: Prs,
+  me: string,
+  botLogin: string,
+  team: TeamReads | undefined,
+  ownerOnlyIntent: boolean,
+): { fresh: Said[]; feedback: Said[] } {
+  const mine = ownerSaid(prs, me, botLogin, ownerOnlyIntent);
+  const said = team ? [...mine, ...reviewerSaid(prs, team)] : mine;
+  const fresh = said.filter((s) => newer(s.at, m.feedback_seen));
+  // PIP-141: `allow <path>` reverses a refusal (not feedback), unless a test question is open.
+  const asked = dataOf<{ testAsk?: unknown; accessAsk?: unknown }>(m);
+  const asking = Boolean(asked.testAsk || asked.accessAsk);
+  const isCommand = (s: Said) =>
+    s.text === RETRY ||
+    s.text === RELEASE ||
+    (team && s.text === PASS) ||
+    (!asking && parseAllow(s.text) !== null);
+  return { fresh, feedback: fresh.filter((s) => !isCommand(s)) };
+}
+
+/**
+ * PIP-204: the owner's comments the next revision answers (the same ones `prEvents` takes as feedback), for
+ * the loop to keep with the `feedback` event. A teammate's comments are not answered.
+ */
+export function feedbackTargets(
+  m: Mission,
+  prs: Prs,
+  me: string,
+  botLogin: string,
+  team?: TeamReads,
+  ownerOnlyIntent = false,
+): ReplyTarget[] {
+  const { feedback } = freshFeedback(m, prs, me, botLogin, team, ownerOnlyIntent);
+  return feedback.flatMap((s) =>
+    s.own
+      ? [{ kind: s.kind, id: s.own.id, thread: s.own.thread, url: s.own.url, excerpt: excerptOf(s.text) }]
+      : [],
+  );
+}
+
+/**
  * At most one event from a PR read, in LOOP-18's order: merged (the current PR) > closed >
  * the owner's feedback (`answered` while blocked) > `/retry` > conflict > head moved (code PR).
  * Only the owner's comments newer than `feedback_seen` count; taking one moves it forward.
@@ -289,6 +364,7 @@ export function prEvents(
   botLogin: string,
   team?: TeamReads,
   ownerOnlyIntent = false,
+  queueHeld = false,
 ): Outcome | null {
   if (finished(m.stage)) return null;
   const cur = currentPr(m);
@@ -304,17 +380,7 @@ export function prEvents(
     if (prs[kind]?.state === "CLOSED" && prNumber(m, kind) !== null) return { event: "closed" };
   }
 
-  const mine = ownerSaid(prs, me, botLogin, ownerOnlyIntent);
-  const said = team ? [...mine, ...reviewerSaid(prs, team)] : mine;
-  const fresh = said.filter((s) => newer(s.at, m.feedback_seen));
-  // PIP-141: `allow <path>` reverses a refusal (not feedback), unless a test question is open.
-  const asking = Boolean(dataOf<{ testAsk?: unknown }>(m).testAsk);
-  const isCommand = (s: Said) =>
-    s.text === RETRY ||
-    s.text === RELEASE ||
-    (team && s.text === PASS) ||
-    (!asking && parseAllow(s.text) !== null);
-  const feedback = fresh.filter((s) => !isCommand(s));
+  const { fresh, feedback } = freshFeedback(m, prs, me, botLogin, team, ownerOnlyIntent);
   if (feedback.length > 0) {
     const kinds = new Set(feedback.map((s) => s.kind));
     const text = feedback.map((s) => (kinds.size > 1 ? `(${s.kind} PR) ${s.text}` : s.text)).join("\n\n");
@@ -377,6 +443,8 @@ export function prEvents(
     // LOOP-18: the same conflict repair CI gives, so the build merges the base first instead of
     // building on the old base again (a round that would conflict forever).
     if (code.mergeable === "CONFLICTING") {
+      // LOOP-160: only the head of the repo's merge queue repairs a conflict; the rest wait their turn.
+      if (queueHeld) return null;
       // PIP-134: after the last round only the stages that take a `conflict` ask the owner. A round
       // still running (GitHub shows the old state until the merge is pushed) and an owner who was
       // already asked are left alone.
@@ -535,7 +603,8 @@ export function reversalRequested(
   botLogin: string,
   ownerOnlyIntent = false,
 ): ReversalAsk[] {
-  if (finished(m.stage) || dataOf<{ testAsk?: unknown }>(m).testAsk) return [];
+  const open = dataOf<{ testAsk?: unknown; accessAsk?: unknown }>(m);
+  if (finished(m.stage) || open.testAsk || open.accessAsk) return [];
   const out: ReversalAsk[] = [];
   for (const kind of KINDS) {
     const pr = prs[kind];

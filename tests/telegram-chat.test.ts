@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { ChatRig, labels } from "./helpers/telegram.ts";
 
+/** A card's lines joined with single spaces, so a sentence the card wraps can be found. */
+const flat = (t: string): string => t.replace(/\s+/g, " ");
+
 /** A rig with one merge wait delivered as message 100. */
 async function started(over: Parameters<ChatRig["wait"]>[1] = {}, rig = new ChatRig()) {
   const w = rig.wait("i-1", over);
@@ -64,7 +67,7 @@ describe("telegram: who and what", () => {
   test("telegram: an a0 message has no action buttons", async () => {
     const { msg } = await started({ onlyYou: true });
     expect(msg.keyboard).toBeUndefined();
-    expect(msg.text).toContain("i-1 is only yours: use GitHub or the page");
+    expect(flat(msg.text)).toContain("i-1 is only yours: use GitHub or the page");
   });
 
   test("telegram: a button on an a0 intent is refused", async () => {
@@ -102,7 +105,7 @@ describe("telegram: buttons", () => {
   test("telegram: a needs-you message has the card's buttons", async () => {
     const { msg } = await started();
     expect(labels(msg)).toEqual(["Merge", "Start over", "Drop"]);
-    expect(msg.text).toContain("Review and merge the code");
+    expect(flat(msg.text)).toContain("Review and merge the code");
     const r2 = new ChatRig();
     r2.wait("i-2", { actions: ["retry"] });
     await r2.run();
@@ -116,7 +119,7 @@ describe("telegram: buttons", () => {
   test("telegram: a question has no merge button", async () => {
     const { msg } = await started({ question: true, actions: ["merge", "retry", "drop"] });
     expect(labels(msg)).toEqual(["Drop"]);
-    expect(msg.text).toContain("Reply to this message to answer.");
+    expect(flat(msg.text)).toContain("Reply to answer.");
   });
 
   test("telegram: a proposed intent has accept and close", async () => {
@@ -223,7 +226,8 @@ describe("telegram: confirms", () => {
     rig.press(rig.data(msg, "Start over"), 100);
     await rig.run();
     expect(rig.actionCalls).toContain("retry i-1");
-    expect(rig.edits().at(-1)!.text).toBe("Review and merge the code\n↩️ started over by you");
+    // The card is brought up to date at once (TG-19): the fake page has not moved yet, so it shows the wait.
+    expect(rig.edits().at(-1)!.text).toMatch(/^<pre>/);
   });
 });
 
@@ -252,7 +256,8 @@ describe("telegram: stale buttons", () => {
     rig.leave(w.id, "code_merged", "owner");
     rig.press(drop, 100);
     await rig.run();
-    expect(rig.edits().map((e) => e.text)).toContain("Review and merge the code\n✅ merged by you on GitHub");
+    expect(flat(rig.edits().at(-1)!.text)).toContain("Building");
+    expect(rig.edits().at(-1)!.keyboard).toEqual([]);
     expect(rig.actionCalls).toEqual([]);
   });
 });
@@ -263,7 +268,6 @@ describe("telegram: replies", () => {
     rig.say("Use Postgres", { replyTo: 100 });
     await rig.run();
     expect(rig.actionCalls).toEqual(["guard i-1 reply telegram", "reply i-1 Use Postgres"]);
-    expect(rig.edits().at(-1)!.text).toContain("✅ answered by you");
     expect(rig.sent().at(-1)!.text).toBe("reply done");
   });
 

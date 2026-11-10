@@ -5,6 +5,7 @@ import { Airspace } from "../Airspace.tsx";
 import { BudgetForm } from "../budgets.tsx";
 import { Empty, ProblemItem, Section, SpendCard, UpNextList, WorkRow } from "../components.tsx";
 import { ListIcon, Moon } from "../icons.tsx";
+import { ObserverPanel } from "../Observer.tsx";
 import { Link } from "../router.tsx";
 import { ShadowPanel } from "../Shadow.tsx";
 
@@ -77,7 +78,7 @@ export function OverviewPage({ data }: { data: Data }) {
             {working.length ? (
               <div class="rows">
                 {working.map((r) => (
-                  <WorkRow key={r.intent} row={r} />
+                  <WorkRow key={r.intent} row={r} readOnly={top.readOnly} />
                 ))}
               </div>
             ) : (
@@ -110,6 +111,7 @@ export function OverviewPage({ data }: { data: Data }) {
             </Section>
           ) : null}
           <ShadowPanel readOnly={top.readOnly} />
+          <ObserverPanel />
           <Section title="Towercab">
             <dl class="facts">
               <div>

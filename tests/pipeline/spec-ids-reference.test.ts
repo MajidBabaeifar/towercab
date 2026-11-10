@@ -50,6 +50,12 @@ describe("the wording of the intent", () => {
     // A `;` ends the clause: the wording after it covers only its own IDs.
     expect(namedAsWritten("- WEB-1 is new; WEB-2 exists\n")).toEqual(["WEB-2"]);
     expect(namedAsWritten("- WEB-1 is existing\n- WEB-2 CHANGED\n")).toEqual(["WEB-1", "WEB-2"]);
+    // Any "as written" counts, as in "none new; UI-158, LOOP-71 and INT-2 are met as written".
+    expect(namedAsWritten("- spec IDs: none new; UI-158, LOOP-71 and INT-2 are met as written.\n")).toEqual([
+      "UI-158",
+      "LOOP-71",
+      "INT-2",
+    ]);
     // Whole words only, and no wording means no reference.
     expect(namedAsWritten("- WEB-1 is unchanged and nonexistent\n")).toEqual([]);
     expect(namedAsWritten("- spec IDs: WEB-1..2\n")).toEqual([]);

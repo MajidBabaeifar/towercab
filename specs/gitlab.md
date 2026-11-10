@@ -1,6 +1,6 @@
 # GitLab
 
-**Status:** Live: GL-1, GL-10 · **Prefix:** GL
+**Status:** Live: GL-1, GL-10, GL-11, GL-12 · **Prefix:** GL
 
 ## Purpose
 
@@ -8,8 +8,8 @@ Towercab can work on code hosted on GitLab, gitlab.com or a self-managed server,
 the same pipeline, with merge requests in place of pull requests. This area covers only what is
 specific to GitLab: the configuration, the identity, the repo names, how a merge request is read and
 changed, and how the owner's and teammates' actions map onto GitLab. The host-neutral parts are the
-forge interface (intent #128), which this area implements. GitLab CI, issues and deployments are out
-of scope.
+forge interface (intent #128), which this area implements. Reading GitLab CI results is covered here;
+issues and deployments are out of scope.
 
 ## Requirements
 
@@ -162,10 +162,38 @@ Every GitLab test runs against an in-process fake, with no network.
   `~/.local/share/towercab`.
 - Verified by: `gitlab: the fake enforces the token and the merge sha`, `gitlab: the fake paginates`
 
+### GL-11 · Build results from merge request pipelines
+
+On a GitLab repo, Towercab judges a merge request's build from the jobs of the pipelines that ran on the pushed head commit.
+
+- Every `ci_poll` s ([PIP-3](pipeline.md)): `GET …/merge_requests/:iid/pipelines`, keeping only pipelines whose `sha` is the
+  pushed head; pipelines for other commits never count. Each kept pipeline's jobs come from
+  `GET …/pipelines/:id/jobs` (with `include_retried=false`, paginated as in [GL-5](#gl-5--merge-request-actions)). Several pipelines for one head all count.
+- Job `status` maps to the buckets of PIP-3: `success` → pass; `failed` → fail; `canceled` → cancelled;
+  `skipped` → left out; `created`, `pending`, `running`, `waiting_for_resource`, `preparing`, `scheduled` → pending.
+- A `failed` job with `allow_failure: true` is neutral: it passes, as GitHub's `NEUTRAL` does.
+- A `manual` job that is not `allow_failure` keeps its pipeline pending until `ci_wait` runs out, then
+  `waiting: CI stuck` with the reason `job <name> is waiting for a manual start`. A manual job with
+  `allow_failure: true` (GitLab's default for manual jobs) does not block.
+- The grace window and the head rule are PIP-3's: within `ci_grace` s of a push, pipelines created before it
+  are ignored, and no pipeline or job after `ci_grace` → green with `no CI on this repo`, as on a GitHub repo with no checks.
+- GitHub repos are read as before.
+- Verified by: `gitlab ci: only pipelines of the pushed head count`, `gitlab ci: job statuses map to the CI buckets`, `gitlab ci: an allowed failure is neutral`, `gitlab ci: a manual job keeps the pipeline pending and is named`, `gitlab ci: several pipelines for one head all count`, `gitlab ci: no pipelines is green after the grace window`
+
+### GL-12 · A first red GitLab pipeline is retried, then repaired from log tails
+
+A first red or cancelled GitLab pipeline is retried once before it counts, and a red that stays gives the repair round the failing jobs' logs.
+
+- Same rule as [PIP-18](pipeline.md): the first red or cancelled pipeline of a head is retried once with `POST …/pipelines/:id/retry`, with no repair counted; a second red or cancel counts. A job in a pipeline
+  that is not a retryable GitLab pipeline is never retried.
+- A red after that → a repair round in `build` ([PIP-3](pipeline.md), at most `ci_repairs`) with the tails of the failing jobs' logs
+  (`GET …/jobs/:id/trace`), cut to the same limit and redacted by the same rules as GitHub's ([PIP-83](pipeline.md)); allowed failures are not included.
+- A retry that GitLab refuses → `waiting: CI red` with GitLab's reason.
+- Verified by: `gitlab ci: a first red pipeline is retried once`, `gitlab ci: a first cancelled pipeline is retried once`, `gitlab ci: a failing job's log tail goes to the repair round`, `gitlab ci: log tails are cut and redacted`, `gitlab ci: a refused retry waits with the reason`
+
 ## Out of scope
 
-- GitLab CI (pipelines and required jobs), GitLab issues, and deployments or environments; each is tracked
-  separately. Until CI is built, a GitLab repo has no CI stage: checks run locally as for a GitHub repo with no CI ([REPO-9](repo.md)).
+- GitLab issues, and deployments or environments; each is tracked separately. GitLab CI is read as GL-11 and GL-12 say; a GitLab repo with no pipelines has no CI stage and counts as a GitHub repo with no CI ([REPO-9](repo.md)).
 - Repository settings and readiness checks that call GitHub ([REPO-22](repo.md)..[REPO-33](repo.md)): a GitLab repo has only the
   `verifying` item.
 - SSH authentication and OAuth device flow.

@@ -511,3 +511,16 @@ test("ui: tab title starts with a pause mark while paused", async ({ browser }) 
     fixture.cleanup();
   }
 });
+
+test("ui: pause shows it is working until the state changes", async ({ page }) => {
+  await page.goto("/");
+  await settle(page);
+  // The action is accepted but the loop has not applied it yet: the button waits for the new state.
+  await page.route("**/api/actions", (r) =>
+    r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true }) }),
+  );
+  await page.locator(".topbar").getByRole("button", { name: "Pause" }).click();
+  const busy = page.locator(".topbar").getByRole("button", { name: "Pausing…" });
+  await expect(busy).toBeVisible();
+  await expect(busy).toBeDisabled();
+});

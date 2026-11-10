@@ -30,6 +30,7 @@ import {
   type IntentStore,
   type Listing,
   type NewIntent,
+  NoOpenIntentError,
   RefusedError,
   SyncError,
   type Unreadable,
@@ -569,6 +570,37 @@ export class GitStore implements IntentStore {
     return findOpen(await this.list(), idOrSuffix);
   }
 
+  async lastAChange(idOrSuffix: string): Promise<string | null> {
+    return this.locked(async () => {
+      const found = findOpen(scan(this.path).listing, idOrSuffix);
+      const rel = `${found.dir}/intent.md`;
+      // A merge commit is diffed against its first parent, so a level changed while resolving a merge is
+      // found in the merge itself and not credited to an older commit.
+      const r = await this.git([
+        "log",
+        "-n1",
+        "--format=%H",
+        "--diff-merges=first-parent",
+        "-s",
+        "-G^a:",
+        "--",
+        rel,
+      ]);
+      const sha = r.stdout.trim();
+      if (r.code !== 0 || !/^[0-9a-f]{40,64}$/.test(sha)) return null;
+      // The commit must really set the level the file has now; else nobody can be credited with it.
+      const level = (text: string) => /^a:[ \t]*(\S*)[ \t]*$/m.exec(text.split(/^---$/m)[1] ?? "")?.[1] ?? "";
+      const then = await this.git(["show", `${sha}:${rel}`]);
+      let now: string;
+      try {
+        now = readFileSync(join(this.path, rel), "utf8");
+      } catch {
+        return null;
+      }
+      return then.code === 0 && level(then.stdout) === level(now) ? sha : null;
+    });
+  }
+
   async add(n: NewIntent, now: Date): Promise<Intent> {
     const title = n.title.trim();
     const text = intentText(n, now);
@@ -596,7 +628,8 @@ export class GitStore implements IntentStore {
     let pinned: string | null = null;
     return this.write(async (s) => {
       const found = findOpen(s.listing, pinned ?? idOrSuffix);
-      if (pinned !== null && found.id !== pinned) throw new RefusedError(`no open intent matches ${pinned}`);
+      if (pinned !== null && found.id !== pinned)
+        throw new NoOpenIntentError(`no open intent matches ${pinned}`);
       pinned = found.id;
       const f = s.files.get(found.id)!.clone();
       const before = f.render();

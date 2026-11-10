@@ -14,6 +14,7 @@ import { e2eText } from "../ship/live.ts";
 import { check } from "../tools.ts";
 import { coGit, data, ended, intentOf, note, repoFiles, spawnRun } from "./common.ts";
 import { fence, intentData, render } from "./prompts.ts";
+import { twoPartMd } from "./prtext.ts";
 import { endRisk, spawnRisk } from "./risk.ts";
 import { parseResult, type ReviewResult } from "./schemas.ts";
 import { AREA_AGENT, AREAS, type Area, mergeSpecialists, specialistsFor } from "./specialists.ts";
@@ -280,9 +281,12 @@ async function conclude(cx: Ctx, m: Mission, v: ReviewResult, round: number): Pr
   const decision = reviewDecision(v, fixes);
   const approved = decision.approved;
   const body = reviewComment(v, files.review);
-  // PIP-108: the comment a person reads opens with the plain brief; PIP-121: the verdict comes before it.
-  const plain = v.brief.trim() ? `**In plain words:** ${v.brief.trim()}\n\n` : "";
-  await note(cx, m, "Review", round, `${verdictLine(decision)}\n\n${plain}${body}`);
+  // PIP-220: the people part opens the comment (PIP-121: the verdict before it), the findings and the
+  // review's own agent text folded after it.
+  const text = v.brief.trim()
+    ? twoPartMd({ people: v.brief, agent: [body, v.agent ?? ""].filter(Boolean).join("\n\n") })
+    : body;
+  await note(cx, m, "Review", round, `${verdictLine(decision)}\n\n${text}`);
   const pid = await patchId(cx, m);
   const review = {
     approved,

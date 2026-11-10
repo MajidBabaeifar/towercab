@@ -8,14 +8,16 @@ import type { Clock, Host } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { IntentStore } from "../intents/types.ts";
 import type { Loop } from "../loop.ts";
-import { unfinishedFor } from "../mission.ts";
+import { type Mission, unfinishedFor } from "../mission.ts";
 import type { Telegram } from "../telegram.ts";
 import { createActions } from "../ui/actions.ts";
 import { inbox } from "../ui/inbox.ts";
 import { proposedSection } from "../ui/proposed.ts";
-import { currentPr, queue, snapshot, waitsOf } from "../ui/state.ts";
+import { currentPr, queue, type Snap, shipWords, snapshot, type Wait, waitsOf } from "../ui/state.ts";
 import type { Card, ProposedCard } from "../ui/view.ts";
 import { sourcesOf } from "../ui/wire.ts";
+import { buildTrack, trackIndex } from "./card.ts";
+import type { CardItem } from "./cards.ts";
 import { Chat, type ChatData } from "./chat.ts";
 import type { ProposalView, WaitView } from "./render.ts";
 
@@ -54,6 +56,7 @@ export function buildChat(w: ChatWorld, telegram: Telegram, loop: () => Loop): C
     repo: card.repo,
     ask: card.ask,
     why: card.why,
+    people: card.people ?? null,
     question: card.kind === "question" || (card.openPoints?.length ?? 0) > 0,
     actions: card.actions.filter(
       (a): a is "merge" | "retry" | "drop" => a === "merge" || a === "retry" || a === "drop",
@@ -70,7 +73,81 @@ export function buildChat(w: ChatWorld, telegram: Telegram, loop: () => Loop): C
       .filter((x) => x.mission && !x.card.done)
       .map((x) => viewOf(x.card, `${x.mission!.id}.${x.mission!.continued}`, x.mission!.head ?? ""));
   };
+  /** TG-16, TG-17: one mission as its card shows it, with the wait whose buttons it carries. */
+  const cardOf = (
+    snap: Snap,
+    m: Mission,
+    wait: Wait | undefined,
+    pr: { github: string; number: number } | null,
+  ): CardItem => {
+    const finished = m.stage === "done" || m.stage === "stopped" || m.stage === "unverified";
+    const open = wait && !wait.card.done ? wait : undefined;
+    const view = open ? viewOf(open.card, `${m.id}.${m.continued}`, m.head ?? "") : null;
+    const visited = w.db
+      .all<{ from_stage: string; to_stage: string }>(
+        "SELECT from_stage, to_stage FROM transitions WHERE mission = ? ORDER BY id",
+        m.id,
+      )
+      .map((t) => ({ from: t.from_stage, to: t.to_stage }));
+    // A dropped mission stands where it was dropped from; a finished one is past every stage.
+    const last = visited.at(-1);
+    const at = m.stage === "stopped" ? trackIndex(last?.from ?? "", null) : trackIndex(m.stage, m.from_stage);
+    const stops = visited
+      .flatMap((t) => [trackIndex(t.from, null), trackIndex(t.to, null)])
+      .filter((i) => i >= 0);
+    const first = Math.min(at >= 0 ? at : 4, ...stops);
+    const final = !finished
+      ? null
+      : m.stage === "done"
+        ? "✅ done"
+        : m.stage === "unverified"
+          ? `⚠ unverified: ${m.why ?? "merged, not checked live"}`
+          : m.why?.startsWith("replaced by")
+            ? "↩️ started over"
+            : "🗑 dropped";
+    const repo = w.config.repos.get(m.repo)?.github;
+    const link = pr ? src().prUrl(pr.github, pr.number) : m.pr && repo ? src().prUrl(repo, m.pr) : null;
+    return {
+      wait: view,
+      view: {
+        intent: m.intent,
+        mission: m.id,
+        title: snap.intents.get(m.intent)?.title ?? m.intent,
+        repo: m.repo,
+        track: buildTrack(at, first, m.stage === "done" || m.stage === "unverified"),
+        status: wait?.card.done?.text ?? shipWords(m),
+        ask: view?.ask ?? null,
+        question: view?.question ?? false,
+        onlyYou: view?.onlyYou ?? false,
+        waitId: view?.waitId ?? null,
+        final,
+        link,
+      },
+    };
+  };
+  const cards = async (): Promise<CardItem[]> => {
+    const s = src();
+    const snap = await snapshot(s);
+    const waitOf = new Map(
+      waitsOf(s, snap)
+        .filter((x) => x.mission)
+        .map((x) => [x.mission!.id, x] as const),
+    );
+    const out: CardItem[] = snap.missions.map((m) =>
+      cardOf(snap, m, waitOf.get(m.id), currentPr(m, w.config, w.store.github())),
+    );
+    // An ended mission's card is closed once; a recent unverified one gets its card (TG-21).
+    const ended = w.db.all<Mission>(
+      `SELECT * FROM missions m WHERE m.stage IN ('done', 'stopped', 'unverified') AND (
+         EXISTS (SELECT 1 FROM tg_cards c WHERE c.mission = m.id AND c.final = 0)
+         OR (m.stage = 'unverified' AND m.finished > ?))`,
+      w.clock.now() - 6 * 3600,
+    );
+    for (const m of ended) out.push(cardOf(snap, m, undefined, null));
+    return out;
+  };
   const data: ChatData = {
+    cards,
     waits,
     proposals: async () => proposedSection(src()).cards.map(proposalOf),
     focus: async () => {

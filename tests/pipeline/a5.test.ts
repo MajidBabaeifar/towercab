@@ -150,7 +150,8 @@ test("pipeline: build prompt has plan, intent and checks", () => {
   expect(w).toContain("- The page says hello");
   expect(w).toContain("Spec requirements to build: WEB-1");
   expect(w).toContain("sh -c 'for t in tests/*.sh; do sh \"$t\" || exit 1; done'");
-  expect(w).toContain("Access you have: any network domain");
+  expect(w).toContain("Access you have: network: registry.npmjs.org");
+  expect(w).not.toContain("any network domain");
   // The repo's setup ran in the checkout before the worker.
   const kinds = p.sandboxRuns.map((r) => r.kind);
   expect(kinds.indexOf("setup")).toBeLessThan(kinds.indexOf("checks"));
@@ -186,7 +187,7 @@ test("pipeline: first publish opens the code PR", () => {
 test("pipeline: PR text comes from the worker", () => {
   // PIP-108: the worker's plain brief and the risk lead; the worker's technical text follows.
   const body = code().body;
-  expect(body.startsWith(`## In plain words\n\n${BUILD_BRIEF}\n\n## Risk: low`)).toBe(true);
+  expect(body.startsWith(`## For people\n\n${BUILD_BRIEF}\n\n## Risk: low`)).toBe(true);
   const at = body.indexOf(WORKER_PR);
   expect(at).toBeGreaterThan(0);
   // Code adds only its own facts after it: checks, links, IDs, the review, the footer.
@@ -195,7 +196,7 @@ test("pipeline: PR text comes from the worker", () => {
   expect(rest).toContain("**Spec IDs:** WEB-1");
   expect(rest).toContain("Part of this change:");
   expect(rest).toMatch(/<sub>Built by Towercab · .* · \$1\.80 · 0h01m<\/sub>$/);
-  expect(spec().body.startsWith(`## In plain words\n\n${DESIGN.brief}`)).toBe(true);
+  expect(spec().body.startsWith(`## For people\n\n${DESIGN.brief}`)).toBe(true);
   expect(spec().body).toContain(DESIGN.pr);
 });
 
@@ -237,7 +238,8 @@ test("pipeline: verify runs setup then checks", () => {
   // build's setup, then verify's setup and checks, then the screenshots.
   expect(verify).toEqual(["setup", "setup", "checks", "shots"]);
   const [, setup, checks] = p.sandboxRuns.filter((r) => r.cwd.endsWith(`${ID}-1`));
-  expect(setup!.argv).not.toContain("--unshare-net");
+  // PIP-158: the network is always unshared; setup and checks get the same proxy and list.
+  expect(setup!.argv).toContain("--unshare-net");
   expect(checks!.argv).toContain("--unshare-net");
   const log = readFileSync(join(p.home.runs(ID, "verify"), "verify-1.log"), "utf8");
   expect(log).toBe("$ sh -c 'for t in tests/*.sh; do sh \"$t\" || exit 1; done'\n");

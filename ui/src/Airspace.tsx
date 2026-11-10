@@ -7,7 +7,9 @@ import type { AirspaceView, Phase, Plane, StateKey } from "../../src/ui/view.ts"
 import { type Item, layoutAirspace } from "./airspace-layout.ts";
 import { act } from "./api.ts";
 import { StartButton } from "./components.tsx";
+import { Spinner } from "./icons.tsx";
 import { Link, navigate } from "./router.tsx";
+import { BoostButton, ControlNotes } from "./ScoreControls.tsx";
 
 const PLANE =
   "M7 0L-4.5 -1.2L-4.5 1.2Z M1.5 0L-1.5 -6L-3 -6L-1 0L-3 6L-1.5 6Z M-3.5 0L-5.8 -3L-7 -3L-5.6 0L-7 3L-5.8 3Z";
@@ -171,7 +173,9 @@ function Card({
         {p.lines[1] ? <div>▸ {p.lines[1]}</div> : null}
         {p.held ? <div>▸ {p.held}</div> : null}
         <div>▸ {phaseText(p.phases)}</div>
+        {p.controls ? <ControlNotes view={p.controls} /> : null}
         {p.canStart ? <StartButton intent={p.intent} /> : null}
+        {p.controls?.canBoost ? <BoostButton intent={p.intent} view={p.controls} /> : null}
         <Link class="air-go" href={`/i/${p.intent}`}>
           Open intent ›
         </Link>
@@ -247,8 +251,11 @@ function GroundStopBar({ stop }: { stop: NonNullable<AirspaceView["stop"]> }) {
   const resume = async () => {
     setBusy(true);
     const r = await act("resume");
-    setBusy(false);
-    setNote(r.ok ? null : r.message);
+    // UI-282: on success the bar stays busy until the page reports the loop resumed and removes it.
+    if (!r.ok) {
+      setBusy(false);
+      setNote(r.message);
+    }
   };
   return (
     <span
@@ -258,8 +265,15 @@ function GroundStopBar({ stop }: { stop: NonNullable<AirspaceView["stop"]> }) {
     >
       <span class="air-stop-text">{stop.text}</span>
       {stop.kind === "owner" && stop.canResume ? (
-        <button type="button" class="btn small" disabled={busy} onClick={() => void resume()}>
-          Resume
+        <button
+          type="button"
+          class="btn small"
+          disabled={busy}
+          aria-busy={busy}
+          onClick={() => void resume()}
+        >
+          {busy ? <Spinner size={12} class="spin" /> : null}
+          {busy ? "Resuming…" : "Resume"}
         </button>
       ) : null}
       {note ? <span class="meta error">{note}</span> : null}

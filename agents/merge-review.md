@@ -34,3 +34,7 @@ Whether the pull request itself is good is not your question.
 sides. No file names or function names.
 
 Return the JSON result: `kept_both`, `lost`, `summary`.
+
+## People part, agent part
+
+`summary` is the people part; `lost` is the agent part. The people part is at most 5 lines and holds no file lists, code, findings or IDs (see "People part, agent part" in the writing guide).

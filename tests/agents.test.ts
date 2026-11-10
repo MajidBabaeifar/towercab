@@ -62,6 +62,8 @@ const BEFORE: Record<string, { tools: string; allowed: string[] }> = {
   features: { tools: "Read,Glob,Grep", allowed: ["Read", "Glob", "Grep"] },
   // SHD-5: the shadow has no tools at all; Towercab runs its reads and actions.
   shadow: { tools: "", allowed: [] },
+  // OBV-1: the observer has no tools at all; Towercab builds its evidence and acts on its result.
+  observer: { tools: "", allowed: [] },
 };
 BEFORE.repair = BEFORE.worker!;
 // PIP-96: the risk agent reads exactly as the review does, no more.
@@ -208,6 +210,16 @@ test("agents: repair continues the worker session", () => {
   expect(repair.tools).toEqual(worker.tools);
   expect(repair.allow).toEqual(worker.allow);
   expect(repair.prompt).toContain("{{what}}");
+});
+
+test("agents: worker and repair carry the parallel work rules", () => {
+  for (const name of ["worker", "repair"]) {
+    const p = loadAgent(name).prompt;
+    expect(p).toContain("Parallel work");
+    expect(p).toContain("Don't merge or rebase the base branch just because it moved");
+    expect(p).toContain("Never stash, reset or delete work you didn't create");
+    expect(p).toContain("Conflicts are resolved only by the change whose turn it is to land");
+  }
 });
 
 test("agents: score has no tools", () => {

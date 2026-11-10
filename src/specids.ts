@@ -58,7 +58,7 @@ export function ownSpecBranch(intentId: string, branch: string): boolean {
 }
 
 /** PIP-210: wording that says the row already exists (whole words, any case). */
-const REFERENCE_WORDING = /\b(?:made true as written|already written|changed|exists|existing)\b/i;
+const REFERENCE_WORDING = /\b(?:as written|already written|changed|exists|existing)\b/i;
 
 /**
  * PIP-202, PIP-210: the IDs the intent words as already existing ("made true as written", "already

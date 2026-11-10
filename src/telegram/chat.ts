@@ -10,8 +10,9 @@ import { envBackoff, finished } from "../machine.ts";
 import { getMission, unfinishedFor } from "../mission.ts";
 import type { Button, OutboxRow, Sender } from "../outbox.ts";
 import { OFFSET, offset, statusText } from "../shadow/store.ts";
-import type { TelegramUpdate } from "../telegram.ts";
+import type { SendOptions, TelegramUpdate } from "../telegram.ts";
 import type { UiActions } from "../ui/actions.ts";
+import { type CardItem, type CardRow, Cards } from "./cards.ts";
 import {
   cardLink,
   confirmButtons,
@@ -38,13 +39,16 @@ export interface ChatData {
   running(): Promise<{ intent: string; title: string; step: string }[]>;
   /** The live head of the intent's current PR, or null. */
   prHead(intent: string): Promise<string | null>;
+  /** TG-16: the cards to keep up to date: every unfinished mission, and the ended ones whose card is open. */
+  cards(): Promise<CardItem[]>;
 }
 
 /** The Bot API calls the chat makes (`Telegram`; tests give it a fake HTTP). */
 export interface ChatApi {
   updates(offset: number, timeoutSec: number): Promise<TelegramUpdate[]>;
-  send(text: string, buttons?: Button[][]): Promise<number | undefined>;
-  edit(message: number, text: string, buttons?: Button[][]): Promise<void>;
+  send(text: string, buttons?: Button[][], opts?: SendOptions): Promise<number | undefined>;
+  edit(message: number, text: string, buttons?: Button[][], opts?: SendOptions): Promise<void>;
+  remove(message: number): Promise<void>;
   answer(callback: string, text: string): Promise<void>;
 }
 
@@ -75,9 +79,12 @@ export class Chat {
   private poller: Promise<void> | null = null;
   private stopped = false;
   private lastSweep = Number.NEGATIVE_INFINITY;
+  private lastCards = Number.NEGATIVE_INFINITY;
+  private cards: Cards;
 
   constructor(d: ChatDeps) {
     this.d = d;
+    this.cards = new Cards({ config: d.config, db: d.db, clock: d.clock, log: d.log, telegram: d.telegram });
   }
 
   private get chatId(): string {
@@ -89,7 +96,8 @@ export class Chat {
     const t = this.d.telegram;
     return {
       send: (text, buttons) => t.send(text, buttons),
-      edit: (m, text, buttons) => t.edit(m, text, buttons),
+      // A card's text is HTML (TG-17); the confirm lines of TG-4 are plain.
+      edit: (m, text, buttons) => t.edit(m, text, buttons, { html: text.startsWith("<pre>") }),
       answer: (c, text) => t.answer(c, text),
       prepare: (row) => this.prepare(row),
     };
@@ -175,10 +183,25 @@ export class Chat {
         }
       }
       await this.handleStored();
+      await this.syncCards();
       await this.sweep(false);
     } catch (e) {
       this.d.log(`telegram: ${(e as Error).message}`);
     }
+  }
+
+  /** TG-16: bring every intent's card up to date (at most once per sweep interval; a press forces it). */
+  private async syncCards(force = false): Promise<void> {
+    const now = this.d.clock.now();
+    if (!force && now - this.lastCards < (this.d.sweepEvery ?? 10)) return;
+    this.lastCards = now;
+    let items: CardItem[];
+    try {
+      items = await this.d.data.cards();
+    } catch {
+      return;
+    }
+    await this.cards.sync(items);
   }
 
   // ---- storing and handling -------------------------------------------------------------------------
@@ -280,7 +303,28 @@ export class Chat {
     this.put(`tg:edit:${this.seq()}`, "edit", text, { target: String(row.tg_message_id), buttons });
   }
 
+  /** TG-16: a card (or its ping) looks like a sent row, so the buttons' edits and restores treat it alike. */
+  private cardRow(c: CardRow): OutboxRow {
+    return {
+      key: `card:${c.mission}`,
+      mission: c.mission,
+      text: c.text,
+      created: 0,
+      sent_at: 0,
+      tries: 0,
+      next_try: 0,
+      kind: "card",
+      intent: c.intent,
+      wait: c.ping_wait,
+      tg_message_id: c.message_id,
+      buttons: c.buttons,
+      ended_at: null,
+    };
+  }
+
   private rowOf(message: number): OutboxRow | undefined {
+    const card = this.cards.byMessage(message);
+    if (card) return this.cardRow(card);
     return this.d.db.get<OutboxRow>(
       "SELECT * FROM outbox WHERE tg_message_id = ? AND kind IN ('wait', 'focus', 'info') ORDER BY created DESC LIMIT 1",
       message,
@@ -302,22 +346,18 @@ export class Chat {
     this.d.db.run("UPDATE outbox SET ended_at = ? WHERE key = ?", this.d.clock.now(), row.key);
   }
 
-  /** LOOP-128: the text and buttons of a wait's message when it goes out (TG-3, TG-13). */
-  async prepare(row: OutboxRow): Promise<{ text: string; buttons?: Button[][] } | null> {
+  /**
+   * LOOP-128: what a wait's row does when it goes out. TG-16: a wait the page knows is told by the intent's
+   * card, so its own message is dropped; one it does not know goes out as it was written.
+   */
+  async prepare(row: OutboxRow): Promise<"drop" | null> {
     if (row.mission === null) return null;
     const m = getMission(this.d.db, row.mission);
     if (!m) return null;
     const wait = `${m.id}.${row.key.slice(row.key.lastIndexOf(":") + 1)}`;
-    this.d.db.run(
-      "UPDATE outbox SET kind = 'wait', intent = ?, wait = ? WHERE key = ?",
-      m.intent,
-      wait,
-      row.key,
-    );
     try {
       const v = (await this.d.data.waits()).find((x) => x.intent === m.intent && x.waitId === wait);
-      if (!v) return null;
-      return { text: this.textOf(v), buttons: waitButtons(v) };
+      return v ? "drop" : null;
     } catch {
       return null;
     }
@@ -403,6 +443,9 @@ export class Chat {
         v.waitId,
         { merge: "✅ merged by you", drop: "🗑 dropped by you", retry: "↩️ started over by you" }[action],
       );
+      // The card showed the confirm: show where the intent stands now (TG-19).
+      this.cards.invalidate(v.intent);
+      await this.syncCards(true);
     } catch (e) {
       // The page's refusal, in the page's words; the message goes back to what it was.
       this.answer(u, (e as Error).message);
@@ -411,6 +454,11 @@ export class Chat {
   }
 
   private refresh(row: OutboxRow, v: WaitView): void {
+    // A card goes back to what it showed; the next sync brings it up to date (TG-16).
+    if (row.kind === "card") {
+      this.editRow(row, row.text, row.buttons ? JSON.parse(row.buttons) : undefined);
+      return;
+    }
     const text = this.textOf(v);
     const buttons = waitButtons(v);
     this.editRow(row, text, buttons);
@@ -444,10 +492,16 @@ export class Chat {
 
   /** True when the text answered a question; false when it goes elsewhere. */
   private async reply(u: TelegramUpdate, text: string, to: number): Promise<boolean> {
-    const row = this.rowOf(to);
-    if (!row?.intent || !row.wait || !row.text.includes(REPLY_LINE)) return false;
-    const v = (await this.d.data.waits()).find((x) => x.intent === row.intent);
-    if (!v || v.waitId !== row.wait) {
+    // TG-6, TG-20: a reply to an intent's card or its ping answers the question the card asks.
+    const card = this.cards.byMessage(to);
+    const row = card ? undefined : this.rowOf(to);
+    if (!card && (!row?.intent || !row.wait || !row.text.includes(REPLY_LINE))) return false;
+    const intent = card ? card.intent : row!.intent!;
+    const shown = card ? card.ping_wait : row!.wait!;
+    const v = (await this.d.data.waits()).find((x) => x.intent === intent);
+    if (card && v && !v.question) return false;
+    if (card && !v && !shown) return false;
+    if (!v || (shown && v.waitId !== shown)) {
       this.say(u, "That is already handled.");
       await this.sweep(true);
       return true;
@@ -551,6 +605,7 @@ export class Chat {
   /** Edit the messages of waits that ended, and those whose text changed while the wait stands. */
   async sweep(force: boolean): Promise<void> {
     const { db, clock } = this.d;
+    if (force) await this.syncCards(true);
     const now = clock.now();
     if (!force && now - this.lastSweep < (this.d.sweepEvery ?? 10)) return;
     this.lastSweep = now;

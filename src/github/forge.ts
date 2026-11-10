@@ -5,6 +5,7 @@ import type {
   BranchPr,
   CheckState,
   CodeScanningAlert,
+  CommitProof,
   IssueRow,
   IssueText,
   Json,
@@ -32,7 +33,7 @@ import type { GitHub, Host } from "../handlers.ts";
 import { check, type RunOpts } from "../tools.ts";
 import { deleteBranch, prsOnBranch, retireBranch } from "./branches.ts";
 import { checksOf } from "./checks.ts";
-import { upsertComment } from "./comments.ts";
+import { replyInThread, upsertComment } from "./comments.ts";
 import { parseAuthStatus } from "./owner.ts";
 import { fetchFiles, type ProposedCache, type ProposedPr, readProposed } from "./proposed.ts";
 import { jsonStream, readPr, readPrExtra } from "./prs.ts";
@@ -71,6 +72,9 @@ export class GitHubForge implements Forge, GitHub {
   }
   bot(): Promise<Bot> {
     return this.raw.bot();
+  }
+  peekInstallHelp(github: string): ReturnType<NonNullable<GitHub["peekInstallHelp"]>> {
+    return this.raw.peekInstallHelp?.(github) ?? null;
   }
 
   asOwner(): Forge {
@@ -389,6 +393,29 @@ export class GitHubForge implements Forge, GitHub {
     throw new Error(`gh api ${path}: ${r.stderr.trim() || `exit ${r.code}`}`);
   }
 
+  async commitLogins(repo: string, sha: string): Promise<(string | null)[]> {
+    if (!/^[0-9a-f]{7,64}$/.test(sha)) throw new Error(`${sha} isn't a commit`);
+    const v = await this.json<{ author?: { login?: string } | null; committer?: { login?: string } | null }>(
+      repo,
+      `repos/${repo}/commits/${sha}`,
+    );
+    return [v.author?.login ?? null, v.committer?.login ?? null];
+  }
+
+  async commitProof(repo: string, sha: string): Promise<CommitProof> {
+    if (!/^[0-9a-f]{7,64}$/.test(sha)) throw new Error(`${sha} isn't a commit`);
+    const v = await this.json<{
+      author?: { login?: string } | null;
+      committer?: { login?: string } | null;
+      commit?: { verification?: { verified?: boolean } };
+    }>(repo, `repos/${repo}/commits/${sha}`);
+    return {
+      author: v.author?.login ?? null,
+      committer: v.committer?.login ?? null,
+      verified: v.commit?.verification?.verified === true,
+    };
+  }
+
   async greenChecks(repo: string, branch: string): Promise<Set<string> | null> {
     const head = await this.raw.gh(repo, ["api", `repos/${repo}/commits/${branch}`, "--jq", ".sha"]);
     const sha = head.stdout.trim();
@@ -677,8 +704,28 @@ export class GitHubForge implements Forge, GitHub {
   retireBranch(repo: string, n: number, intentsRepo: string | null): Promise<string | null> {
     return retireBranch(this.raw, repo, n, intentsRepo);
   }
-  upsertPrComment(repo: string, n: number, marker: string, text: string): Promise<{ edited: boolean }> {
-    return upsertComment(this.raw, repo, n, marker, text);
+  upsertPrComment(
+    repo: string,
+    n: number,
+    marker: string,
+    text: string,
+    how: { link?: boolean } = {},
+  ): Promise<{ edited: boolean; url?: string }> {
+    return upsertComment(this.raw, repo, n, marker, text, how.link === true);
+  }
+  async replyInThread(
+    repo: string,
+    n: number,
+    commentId: string,
+    marker: string,
+    text: string,
+  ): Promise<Result> {
+    try {
+      await replyInThread(this.raw, repo, n, commentId, marker, text);
+      return { ok: true, reason: "" };
+    } catch (e) {
+      return { ok: false, reason: (e as Error).message };
+    }
   }
   assignOwner(repo: string, n: number): Promise<boolean> {
     return assignOwner(this.raw, repo, n);

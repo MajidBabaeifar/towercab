@@ -3,6 +3,7 @@
 
 import type { Forge } from "../forge.ts";
 import type { GitHub } from "../handlers.ts";
+import { twoPartMd } from "../pipeline/prtext.ts";
 import { check } from "../tools.ts";
 import { isBot } from "./events.ts";
 import { jsonStream } from "./prs.ts";
@@ -18,6 +19,7 @@ export const STEPS = [
   "Gate",
   "Question",
   "Answer",
+  "Reply",
   "Access",
   "Intake",
 ] as const;
@@ -50,15 +52,24 @@ const STAGE_AGENT: Record<string, string> = {
 export function agentOf(step: Step, stage = ""): string {
   const own = STAGE_AGENT[step.toLowerCase()];
   if (own) return own;
-  if (step === "Question" || step === "Answer") return STAGE_AGENT[stage.split(":")[0] ?? ""] ?? "towercab";
+  if (step === "Question" || step === "Answer" || step === "Reply")
+    return STAGE_AGENT[stage.split(":")[0] ?? ""] ?? "towercab";
   return step === "Intake" ? "scorer" : "towercab";
+}
+
+/** PIP-220: a comment body in two parts; a plain string is Towercab's own short line. */
+export interface TwoPart {
+  people: string;
+  agent?: string;
 }
 
 /**
  * The comment's whole text: marker, header, a blank line, `body`. The header names the agent and the
  * intent (PIP-182): `**Question** · designer · 261105-2152-9 · round 3`.
  */
-export function stageComment(step: Step, round: number, body: string, by?: By): string {
+export function stageComment(step: Step, round: number, body: string | TwoPart, by?: By): string {
+  // PIP-220: a text for a person is the people part first and the agent part folded.
+  if (typeof body !== "string") body = twoPartMd(body);
   const who = by ? ` · ${by.agent}${by.intent ? ` · ${by.intent}` : ""}` : "";
   return `${stageMarker(step, round)}\n**${step}**${who} · round ${round}\n\n${body.trim()}\n`;
 }
@@ -86,9 +97,9 @@ export async function upsertStageComment(
   pr: number,
   step: Step,
   round: number,
-  body: string,
+  body: string | TwoPart,
   by?: By,
-): Promise<{ edited: boolean }> {
+): Promise<{ edited: boolean; url?: string }> {
   return forge.upsertPrComment(repo, pr, stageMarker(step, round), stageComment(step, round, body, by));
 }
 
@@ -99,7 +110,8 @@ export async function upsertComment(
   pr: number,
   marker: string,
   text: string,
-): Promise<{ edited: boolean }> {
+  link = false,
+): Promise<{ edited: boolean; url?: string }> {
   const listed = check(
     await gh.gh(repo, ["api", "--paginate", `repos/${repo}/issues/${pr}/comments?per_page=100`]),
     "gh api comments",
@@ -115,17 +127,79 @@ export async function upsertComment(
     }
   }
   if (id !== null) {
-    check(
+    const out = check(
       await gh.gh(repo, ["api", "-X", "PATCH", `repos/${repo}/issues/comments/${id}`, "--input", "-"], {
         input: JSON.stringify({ body: text }),
       }),
       "gh api PATCH comment",
     );
-    return { edited: true };
+    const url = link ? htmlUrlOf(out) : "";
+    return { edited: true, ...(url ? { url } : {}) };
   }
-  check(
+  const out = check(
     await gh.gh(repo, ["pr", "comment", String(pr), "-R", repo, "--body-file", "-"], { input: text }),
     "gh pr comment",
   );
-  return { edited: false };
+  // `gh pr comment` prints the new comment's link.
+  const url = link ? /https?:\/\/\S+/.exec(out)?.[0] : undefined;
+  return { edited: false, ...(url ? { url } : {}) };
+}
+
+/** The `html_url` of a comment `gh api` printed, or "". */
+function htmlUrlOf(out: string): string {
+  try {
+    const v = JSON.parse(out) as { html_url?: unknown };
+    return typeof v.html_url === "string" ? v.html_url : "";
+  } catch {
+    return "";
+  }
+}
+
+/** PIP-204: the marker of the pointer in the thread of owner comment `commentId` for round `round`. */
+export const pointerMarker = (round: number, commentId: string) =>
+  `<!-- towercab:reply-pointer:${round}:${commentId} -->`;
+
+/**
+ * The `gh` side of `Forge.replyInThread`: edit the bot's reply that carries `marker` in the PR's review
+ * comments, else post `text` as a reply to review comment `commentId`. Throws the host's reason.
+ */
+export async function replyInThread(
+  gh: GitHub,
+  repo: string,
+  pr: number,
+  commentId: string,
+  marker: string,
+  text: string,
+): Promise<void> {
+  const listed = check(
+    await gh.gh(repo, ["api", "--paginate", `repos/${repo}/pulls/${pr}/comments?per_page=100`]),
+    "gh api review comments",
+  );
+  const bot = (await gh.bot()).login;
+  let id: string | null = null;
+  for (const page of jsonStream(listed, "gh api review comments")) {
+    for (const c of Array.isArray(page) ? page : []) {
+      const o = c as { id?: unknown; body?: unknown; user?: { login?: unknown } };
+      const first = typeof o.body === "string" ? (o.body.split("\n", 1)[0] ?? "").trim() : "";
+      const author = typeof o.user?.login === "string" ? o.user.login : "";
+      if (first === marker && isBot(author, bot) && typeof o.id === "number") id = String(o.id);
+    }
+  }
+  if (id !== null) {
+    check(
+      await gh.gh(repo, ["api", "-X", "PATCH", `repos/${repo}/pulls/comments/${id}`, "--input", "-"], {
+        input: JSON.stringify({ body: text }),
+      }),
+      "gh api PATCH review comment",
+    );
+    return;
+  }
+  check(
+    await gh.gh(
+      repo,
+      ["api", "-X", "POST", `repos/${repo}/pulls/${pr}/comments/${commentId}/replies`, "--input", "-"],
+      { input: JSON.stringify({ body: text }) },
+    ),
+    "gh api reply",
+  );
 }

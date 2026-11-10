@@ -143,6 +143,8 @@ test("pipeline: gate table", async () => {
   ];
   const got = [];
   for (const [id, a, data, _] of rows) {
+    // AUT-8: the gate reads the intent's level now, so each row's level is written to its intent.
+    if (id === ID && a !== null) await cx.store.update(ID, "set a", (e) => e.setField("a", a));
     const m = make(id, a, data, { pr: pr.number, head });
     const out = (await gateHandler.step(cx, m)) as Extract<Progress, { done: unknown }>;
     got.push(out.done.event === "wait" ? out.done.why : out.done.event === "ok" ? null : out.done.event);
