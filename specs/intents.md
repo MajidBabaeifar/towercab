@@ -718,6 +718,24 @@ An intent closed as covered by another keeps its line in the feature list, marke
 - `reopen` (LOOP-157) removes the mark and restores the status the line had before the cover; a `(not delivered)` line becomes `in progress`. Entering `stopped` still removes the line (INT-38).
 - Verified by: `features: a covered intent keeps its line marked covered by the other`, `features: a covered line follows the covering intent's status`, `features: reopen restores the feature line`, `features: a dropped covering intent marks the line not delivered`
 
+### INT-76 · An intent has a kind
+
+An intent can say what kind of work it is, and the kind decides how much of the full path it goes through.
+
+- `kind` is an optional front-matter key, written by the owner or from the page (UI-283): `bugfix`, `refactor`, `infra` (infrastructure and configuration), `feature` or `spec-only` (a change that lives only in the specs and the repo's settings files, or only in steps the owner does). Any other value is a field error and the intent is unreadable (INT-11).
+- Missing means "not set": Towercab infers one (INT-77). A set `kind` is never changed by Towercab; it is only written with `setField` (INT-5), so the other lines stay byte-identical.
+- The paths of the kinds are PIP-228..PIP-232.
+- Verified by: `intents: kind is one of five values`, `intents: an unknown kind makes the intent unreadable`, `intents: setting kind keeps other lines`
+
+### INT-77 · Towercab infers the kind when the owner has not set it
+
+When an intent has no kind, Towercab reads it once and picks one, and the owner can see why and change it.
+
+- At `pick`, a mission whose intent has no `kind` runs the `kind` agent (no tools, `[agent].model`; its cost counts in the mission): it gets the intent text as data and returns `{kind, why}` (`why` is one plain line, at most 160 characters). The result is kept in the mission (`data.kind`, `data.kindWhy`); the intent file is not edited. A failed or invalid run counts as `feature`, the full path, and is noted on the timeline.
+- Doubt goes to the full path: the agent is told to answer `feature` unless the intent clearly fits a lighter kind. A `kind` set in the intent always wins over the inferred one, and a change from the page (UI-283) is written to the front matter and replaces it.
+- The effective kind is read once per attempt; changing it later takes effect at the next stage that has not started (PIP-231).
+- Verified by: `kind: the agent gets the intent as data and no tools`, `kind: a set kind skips the agent`, `kind: a failed run counts as feature and is noted`, `kind: the inferred kind and its reason are kept in the mission`
+
 ## Out of scope
 
 - Other stores (Notion, Jira).
