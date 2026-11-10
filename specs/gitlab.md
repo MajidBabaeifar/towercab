@@ -13,6 +13,10 @@ issues and deployments are out of scope.
 
 ## Requirements
 
+GL-4 to GL-9 are part of the work that makes the pipeline run on GitLab ([GL-13](#gl-13--the-loop-picks-intents-on-gitlab-repos) to
+[GL-17](#gl-17--the-owner-is-told-once-when-the-token-is-about-to-expire)). Each is added to the Status line only when it is built and its
+tests exist; the build may be split over several runs.
+
 ### GL-1 · The `[gitlab]` config table
 
 Towercab reads where GitLab is, who the owner is there, and where the token is kept from one config table.
@@ -113,9 +117,8 @@ GitHub's approve, request changes and comment map onto GitLab approvals, notes a
 
 - **Approve** = a GitLab approval (`POST …/approve`, listed in `approved_by` on `…/approvals`). The owner's
   approval ([PIP-43](pipeline.md)) is the owner's name in `approved_by`; teammates' approvals ([PIP-142](pipeline.md)) are the listed reviewers' and code owners'
-  names there. An approval counts for the head it was given on: GitLab drops approvals on a new commit only if the
-  project is set to; where it does not, Towercab treats an approval as stale by the same patch-id rule as
-  PIP-142 and asks again. Code owners are read from `CODEOWNERS` on the base branch (root, `docs/` or
+  names there. An approval counts only if it came after the last push ([GL-15](#gl-15--an-approval-counts-only-if-it-came-after-the-last-push)), whatever the
+  project's setting for dropping approvals on a new commit; an older one is stale and Towercab asks again. Code owners are read from `CODEOWNERS` on the base branch (root, `docs/` or
   `.gitlab/`), by the same stricter rules; a group owner (`@group`) counts for nobody.
 - **Request changes** has no equivalent on every GitLab tier, so it is an unresolved thread: a reviewer's
   findings are resolvable diff threads, and a teammate's or owner's unresolved thread or note after their last
@@ -125,7 +128,7 @@ GitHub's approve, request changes and comment map onto GitLab approvals, notes a
 - A project where approvals are not available (a tier without them, `404` on `…/approvals`) cannot
   satisfy `teammate_review=on`: the mission asks the owner as in PIP-142 and `towercab doctor` says
   `<name>: GitLab approvals are not available on this project, so teammate review cannot be met`.
-- Verified by: `gitlab: an approval is the approved_by list`, `gitlab: a teammate approval counts only for a listed reviewer or code owner`, `gitlab: an approval of an older head with a changed diff is stale`, `gitlab: review findings become resolvable threads`, `gitlab: a fixed finding's thread is resolved by Towercab`, `gitlab: an unresolved human thread is feedback`, `gitlab: no approvals on the project cannot meet teammate review`
+- Verified by: `gitlab: an approval is the approved_by list`, `gitlab: a teammate approval counts only for a listed reviewer or code owner`, `gitlab: an approval before the last push is stale`, `gitlab: review findings become resolvable threads`, `gitlab: a fixed finding's thread is resolved by Towercab`, `gitlab: an unresolved human thread is feedback`, `gitlab: no approvals on the project cannot meet teammate review`
 
 ### GL-8 · Acting as the owner on GitLab
 
@@ -216,18 +219,21 @@ Every minute the loop reads the merge request of each waiting GitLab mission and
 - A merge request that GitLab can't read (404, 401) is a failure of the kind [GL-2](#gl-2--the-token-is-towercabs-identity) names, not a closed merge request.
 - Verified by: `gitlab: the loop reads the merge request of a waiting mission`, `gitlab: a merged merge request moves the mission to merged`, `gitlab: a closed merge request moves the mission to closed`, `gitlab: an owner note in the loop becomes feedback`, `gitlab: /retry in the loop retries the mission`, `gitlab: the owner's approval in the loop merges`, `gitlab: an unreadable merge request is not a closed one`
 
-### GL-15 · An approval counts only for the commit it was given on
+### GL-15 · An approval counts only if it came after the last push
 
-An approval merges only the commit it was given on: if the branch changes afterwards, Towercab asks again.
+An approval merges only if it was given after the newest push to the branch: an older approval does not count, and Towercab asks again.
 
-- Applies to the owner's approval ([GL-14](#gl-14--the-loop-reads-merge-requests-and-acts-on-them)) and to teammates' ([GL-7](#gl-7--approvals-notes-and-threads)). Towercab records the head
-  `sha` at which it first sees each name in `approved_by`; GitLab gives no commit for an approval.
-- When the head has moved since, the approval stays valid only if the diff against the base has the same patch-id
-  ([PIP-142](pipeline.md)); otherwise it is stale: the mission waits for a new approval, the stage comment says
-  `approval was for <short sha>, the branch is now at <short sha>`, and nothing is merged.
-- Where GitLab itself removes approvals on a new commit, `approved_by` is empty and nothing more is done.
+- Applies to the owner's approval ([GL-14](#gl-14--the-loop-reads-merge-requests-and-acts-on-them)) and to teammates' ([GL-7](#gl-7--approvals-notes-and-threads)), and it does not depend on any project setting
+  (GitLab's "remove approvals on new commits" may be on or off).
+- Before every merge, and before an approval satisfies `teammate_review`, Towercab compares two times. The approval time
+  is `approved_at` of the person in `approved_by` on `…/approvals`; when GitLab omits it, the `created_at` of that person's
+  system note "approved this merge request". The push time is `created_at` of the newest entry of `GET …/merge_requests/:iid/versions`
+  (the time GitLab received the newest commit; a commit's own date can be rewritten, so it is not used).
+- The approval counts only if its time is strictly later than the push time. An equal time, or a time that cannot be read, does not count.
+- A stale approval is not merged: the mission waits for a new approval, and the stage comment says
+  `approval was given at <time>, before the last push at <time>`. This replaces the patch-id rule of [PIP-142](pipeline.md) for GitLab ([GL-7](#gl-7--approvals-notes-and-threads)): an unchanged diff does not rescue an older approval.
 - The merge still carries `sha=<gated head>`, so a head that moves between the check and the merge is refused ([PIP-22](pipeline.md)).
-- Verified by: `gitlab: an approval of the same head merges`, `gitlab: an approval of an older head with a changed diff does not merge`, `gitlab: an approval of an older head with the same patch-id still counts`, `gitlab: a stale approval is said in the stage comment`
+- Verified by: `gitlab: an approval after the last push merges`, `gitlab: an approval before the last push does not merge`, `gitlab: an approval at the same time as the push does not merge`, `gitlab: an approval time falls back to the system note`, `gitlab: an unreadable time does not count`, `gitlab: a stale approval is said in the stage comment`
 
 ### GL-16 · The intents repo on GitLab runs end to end
 
@@ -261,4 +267,5 @@ Towercab tells the owner once when the GitLab token has 14 days or less left.
 - One token per installation, not per project: GitLab bot users come from project or group access tokens, and
   one group token covers its projects. Several groups would each need their own; that is a later extension.
 - `oauth2` with the token over HTTPS for git, because it needs no SSH key and mirrors the GitHub credential helper.
+- Approval freshness is decided by time (approval after the newest push), not by project settings or patch-id: it works on every tier and setting, at the price of asking again after a push that changed nothing.
 - Request changes is an unresolved thread, because the native "request changes" exists only on paid tiers.
