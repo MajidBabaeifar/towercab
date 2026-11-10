@@ -55,7 +55,13 @@ import { type ChildEnd, type Clock, type Ctx, EnvError, type Handlers, type Host
 import { readHead } from "./head.ts";
 import type { Home } from "./home.ts";
 import { removeFeature, setFeature } from "./intents/features.ts";
-import { type Intent, type IntentStore, type Listing, SyncError } from "./intents/types.ts";
+import {
+  type Intent,
+  type IntentStore,
+  type Listing,
+  NoOpenIntentError,
+  SyncError,
+} from "./intents/types.ts";
 import {
   type ApplyCtx,
   apply,
@@ -811,7 +817,12 @@ export class Loop {
         const repo = this.d.config.repos.get(m.repo);
         const prUrl = (n: number | null, gh: string | null | undefined) =>
           n && gh ? `https://github.com/${gh}/pull/${n}` : null;
-        await store.update(
+        // LOOP-140: an intent the owner already closed by hand has no file left to write.
+        const update = (...a: Parameters<IntentStore["update"]>) =>
+          store.update(...a).catch((e: unknown) => {
+            if (!(e instanceof NoOpenIntentError) || !finished(m.stage)) throw e;
+          });
+        await update(
           m.intent,
           m.stage,
           (e) => {
@@ -857,7 +868,11 @@ export class Loop {
     await this.switchedToSteps(m);
     // LOOP-76: the owner's note, ticked, goes to the plan of an intent they finished themselves.
     if (m.stage === "done" && (dataOf(m) as PipeData).stepsDirty !== undefined) {
-      await writeTicks(this.ctx(), m);
+      // LOOP-140: an intent already closed by hand has no open plan left to tick.
+      await writeTicks(this.ctx(), m).catch((e: unknown) => {
+        if (!(e instanceof NoOpenIntentError)) throw e;
+        this.d.log(`${label(m)}: the owner's note wasn't written to plan.md: the intent is already closed`);
+      });
     }
     if (finished(m.stage)) removeCheckout(this.d.home.abs(m.checkout));
     const set: Record<string, SqlValue> = { step: "" };
