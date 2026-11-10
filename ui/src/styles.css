@@ -3005,9 +3005,21 @@ a.pr-tile:hover {
     font-size: var(--t-xs);
   }
 
+  .counts {
+    flex-wrap: wrap;
+    min-width: 0;
+    gap: 0 var(--s1);
+  }
+
+  /* The slots note goes (its tooltip stays on wider screens) so "Updated" fits the line. */
+  .counts .slots-note {
+    display: none;
+  }
+
   .counts .fresh {
     display: inline-flex;
     margin-left: auto;
+    gap: 4px;
   }
 
   .counts .fresh .fresh-word {
