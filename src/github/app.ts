@@ -108,6 +108,59 @@ interface Token {
   expires: number;
 }
 
+/** LOOP-122: how to install the App for a repo it can't reach: the App's name, a link and plain steps. */
+export interface InstallHelp {
+  /** The App's name as GitHub shows it; null when GitHub never said. */
+  app: string | null;
+  url: string;
+  steps: string[];
+}
+
+/** LOOP-122: the App isn't installed on a repo; the message is the reason, `help` says how to fix it. */
+export class AppNotInstalled extends Error {
+  readonly help: InstallHelp;
+  constructor(github: string, help: InstallHelp) {
+    super(`the GitHub App isn't installed on ${github}`);
+    this.name = "AppNotInstalled";
+    this.help = help;
+  }
+}
+
+/** The general page that lists the Apps installed on the owner's account: the link of last resort. */
+export const SETTINGS_URL = "https://github.com/settings/installations";
+/** How long a looked-up help is kept per repo (UI-211). */
+export const HELP_TTL_S = 600;
+const META_URL = "app-install-url";
+const META_NAME = "app-name";
+
+/** What GitHub says about the App's installation on the repo's account. */
+type Seat = { kind: "none" } | { kind: "selected" | "all"; url: string };
+
+/** LOOP-122: the steps for `repo` (`owner/name`), in plain words. Holds no secret: names, ids and links only. */
+export function installSteps(app: string | null, repo: string, seat: Seat, url: string): string[] {
+  const owner = repo.split("/")[0] ?? repo;
+  const name = repo.split("/")[1] ?? repo;
+  const who = app ? `“${app}”` : "Towercab's GitHub App";
+  const again = 'Come back and press "Try again" (or run the command again).';
+  if (seat.kind === "selected") {
+    return [
+      `Open ${url} to change where ${who} is installed.`,
+      `Under Repository access, add ${name}.`,
+      "Save.",
+      again,
+    ];
+  }
+  if (seat.kind === "all") {
+    return [
+      `Open ${url} to see where ${who} is installed.`,
+      `Check that ${name} isn't excluded.`,
+      "Save.",
+      again,
+    ];
+  }
+  return [`Open ${url} to install ${who}.`, `Choose ${owner} and pick ${name}.`, "Install.", again];
+}
+
 /** Installation tokens and the bot, cached for the life of the loop. */
 export class App {
   private o: AppOptions;
@@ -118,6 +171,8 @@ export class App {
   private installs = new Map<string, number>();
   private inflight = new Map<string, Promise<string>>();
   private cachedBot: Bot | null = null;
+  private helps = new Map<string, { help: InstallHelp; at: number }>();
+  private helping = new Map<string, Promise<InstallHelp>>();
 
   constructor(o: AppOptions) {
     this.o = { ...o, apiBase: o.apiBase.replace(/\/+$/, "") };
@@ -164,7 +219,7 @@ export class App {
         cached = false;
         const what = `GET /repos/${github}/installation`;
         const r = await this.call(what, "GET", `/repos/${github}/installation`, auth);
-        if (r.status === 404) throw new Error(`the GitHub App isn't installed on ${github}`);
+        if (r.status === 404) throw new AppNotInstalled(github, await this.installHelp(github));
         const id = numberField(json(this.ok(what, r)), "id");
         if (id === null) throw new Error(`${what}: no id`);
         install = id;
@@ -187,8 +242,91 @@ export class App {
       const at = Date.parse(stringField(v, "expires_at") ?? "");
       const expires = Number.isFinite(at) ? at / 1000 : this.clock.now() + 3600;
       this.tokens.set(key, { token, expires });
+      // UI-211: the repo is reachable, so any help kept for it is stale.
+      this.helps.delete(key);
       return token;
     }
+  }
+
+  /**
+   * LOOP-122: how to install the App for `github`. Looked up when asked: `GET /app` (name and slug; the
+   * public install URL and name are stored in `meta` whenever it answers) and `GET /users/<owner>/installation`.
+   * A lookup that fails falls back to the stored values, then to the general settings page. Kept 10 minutes
+   * per repo when both lookups answered (UI-211).
+   */
+  installHelp(github: string): Promise<InstallHelp> {
+    const key = github.toLowerCase();
+    const kept = this.helps.get(key);
+    if (kept && this.clock.now() - kept.at < HELP_TTL_S) return Promise.resolve(kept.help);
+    const running = this.helping.get(key);
+    if (running) return running;
+    const p = this.lookupHelp(github, key).finally(() => this.helping.delete(key));
+    this.helping.set(key, p);
+    return p;
+  }
+
+  /** UI-211: the help at once, for code that can't wait: the kept one, else the stored fallback with a refresh started. */
+  peekInstallHelp(github: string): InstallHelp {
+    const kept = this.helps.get(github.toLowerCase());
+    if (kept && this.clock.now() - kept.at < HELP_TTL_S) return kept.help;
+    this.installHelp(github).catch(() => {});
+    return this.storedHelp(github);
+  }
+
+  private storedHelp(github: string): InstallHelp {
+    const app = this.o.db?.meta(META_NAME) || null;
+    const url = this.o.db?.meta(META_URL) || SETTINGS_URL;
+    return { app, url, steps: installSteps(app, github, { kind: "none" }, url) };
+  }
+
+  private async lookupHelp(github: string, key: string): Promise<InstallHelp> {
+    const owner = github.split("/")[0] ?? github;
+    let complete = true;
+    let app = this.o.db?.meta(META_NAME) || null;
+    let installUrl = this.o.db?.meta(META_URL) || null;
+    try {
+      const what = "GET /app";
+      const v = json(this.ok(what, await this.call(what, "GET", "/app", `Bearer ${this.jwt()}`)));
+      const slug = stringField(v, "slug");
+      if (slug && /^[A-Za-z0-9._-]+$/.test(slug)) {
+        installUrl = `https://github.com/apps/${slug}/installations/new`;
+        this.o.db?.setMeta(META_URL, installUrl);
+      }
+      const name = stringField(v, "name");
+      if (name) {
+        app = name;
+        this.o.db?.setMeta(META_NAME, name);
+      }
+    } catch {
+      complete = false;
+    }
+    let seat: Seat = { kind: "none" };
+    let url = installUrl ?? SETTINGS_URL;
+    try {
+      const what = `GET /users/${owner}/installation`;
+      const r = await this.call(
+        what,
+        "GET",
+        `/users/${encodeURIComponent(owner)}/installation`,
+        `Bearer ${this.jwt()}`,
+      );
+      if (r.status !== 404) {
+        const v = json(this.ok(what, r));
+        const id = numberField(v, "id");
+        if (id === null) throw new Error(`${what}: no id`);
+        const account = typeof v === "object" && v !== null ? (v as Record<string, unknown>).account : null;
+        const org = stringField(account, "type") === "Organization";
+        url = org
+          ? `https://github.com/organizations/${owner}/settings/installations/${id}`
+          : `https://github.com/settings/installations/${id}`;
+        seat = { kind: stringField(v, "repository_selection") === "all" ? "all" : "selected", url };
+      }
+    } catch {
+      complete = false;
+    }
+    const help = { app, url, steps: installSteps(app, github, seat, url) };
+    if (complete) this.helps.set(key, { help, at: this.clock.now() });
+    return help;
   }
 
   /** The bot (memory, else `meta.bot`, else `GET /app` → slug, `GET /users/<slug>[bot]` → id). */

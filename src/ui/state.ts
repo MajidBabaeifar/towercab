@@ -65,6 +65,7 @@ import type {
   ExistingTestView,
   FocusHistory,
   GroundStop,
+  InstallHelpView,
   IntentPage,
   Lane,
   Overview,
@@ -109,6 +110,18 @@ export interface Problem {
   pauses?: boolean;
 }
 
+const NOT_INSTALLED = /the GitHub App isn't installed on ([A-Za-z0-9._-]+\/[A-Za-z0-9._-]*[A-Za-z0-9_-])/;
+
+/** UI-211: `{installHelp}` when `reason` says the App isn't installed on a repo and the sources can tell how to fix it. */
+export function installHelpOf(
+  src: UiSources,
+  reason: string | null | undefined,
+): { installHelp?: InstallHelpView } {
+  const repo = reason ? NOT_INSTALLED.exec(reason)?.[1] : undefined;
+  const help = repo ? src.installHelp?.(repo) : null;
+  return help ? { installHelp: help } : {};
+}
+
 /** Why the picker skips an intent (LOOP-5), worded by the page. */
 export type Skip =
   | { kind: "paused" }
@@ -147,6 +160,8 @@ export interface UiSources {
   runningSteps?(): number;
   pausedNow?(): boolean;
   problems(): Problem[];
+  /** UI-211: the install help for `owner/name`, when GitHub's App isn't installed there. */
+  installHelp?(github: string): InstallHelpView | null;
   version(): { commit: string; behind: number | null };
   /** The picker's whole list; the overview shows the first 5. */
   upNext(): UpNext[];
@@ -888,6 +903,7 @@ export function missionCard(
   return {
     ...(risk ? { risk } : {}),
     ...(points.length ? { openPoints: points } : {}),
+    ...installHelpOf(src, m.why),
     // UI-245: the checklist of UI-160 rides on the card.
     ...(onSteps(m) && stepViewsOf(src, m, now).length ? { steps: stepViewsOf(src, m, now) } : {}),
     intent: m.intent,
@@ -1282,6 +1298,7 @@ function problemsOf(src: UiSources, s: Snap, todaySpend: number): ProblemView[] 
       intent: p.intent ?? null,
       tone: "error",
       code: false,
+      ...installHelpOf(src, p.detail),
     });
   }
   const budget = src.config.agent.dailyBudgetUsd;

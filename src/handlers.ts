@@ -32,6 +32,8 @@ export interface GitHub {
   gitAuth(github: string): Promise<{ args: string[]; env: Record<string, string> }>;
   /** The App's bot user (commit author). */
   bot(): Promise<{ login: string; id: number; email: string }>;
+  /** LOOP-122, UI-211: how to install the App for `github`, at once (a kept or stored help; a refresh starts). */
+  peekInstallHelp?(github: string): { app: string | null; url: string; steps: string[] } | null;
   /** `[github].me`. */
   readonly me: string;
 }
