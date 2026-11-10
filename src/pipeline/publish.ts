@@ -2,10 +2,9 @@
 // branch as the bot, open the code PR the first time.
 
 import { git } from "../checkout.ts";
-import { type BranchPr, deleteBranch, prsOnBranch } from "../github/branches.ts";
+import type { BranchPr } from "../github/branches.ts";
 import { isBot } from "../github/events.ts";
 import { closeIfOpen } from "../github/prs.ts";
-import { assignOwner } from "../github/teammates.ts";
 import type { Ctx, Handler, Progress } from "../handlers.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
@@ -40,6 +39,7 @@ import {
   sameAsBase,
 } from "./guard.ts";
 import { codeBody } from "./prtext.ts";
+import { checkoutFacts, deliverReply } from "./reply.ts";
 
 /**
  * The wait for a diff that touches paths it may not (PIP-29, PIP-31). PIP-152: the tests among them are
@@ -170,7 +170,7 @@ async function clearLeftover(cx: Ctx, m: Mission, head: string): Promise<Outcome
   if (!sha || sha === head) return null;
   let prs: BranchPr[];
   try {
-    prs = await prsOnBranch(cx.github, repo.github, m.branch);
+    prs = await cx.github.prsOnBranch(repo.github, m.branch);
   } catch (e) {
     throw asEnv(e);
   }
@@ -189,7 +189,7 @@ async function clearLeftover(cx: Ctx, m: Mission, head: string): Promise<Outcome
   const why = `Towercab started this intent over, so this PR is closed. The new attempt pushes its own work to \`${m.branch}\` and opens its own PR.`;
   for (const p of prs) if (p.state === "OPEN") await closeOwn(cx, repo.github, p.number, why);
   try {
-    await deleteBranch(cx.github, repo.github, m.branch, cx.store.github());
+    await cx.github.deleteBranch(repo.github, m.branch, cx.store.github());
   } catch (e) {
     throw asEnv(e);
   }
@@ -205,6 +205,10 @@ async function closeOwn(cx: Ctx, github: string, n: number, why: string): Promis
 }
 
 async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
+  // PIP-204: the revision is pushed by now; its reply goes up before the checks run.
+  const sent = await deliverReply(cx, m, (r) => checkoutFacts(cx, m, r.before));
+  if (sent.retry) return { poll: cx.config.agent.ciPoll };
+  m = sent.m;
   if (m.pr) return { done: ok() };
   const repo = cx.repo(m);
   const intent = await intentOf(cx, m);
@@ -239,7 +243,7 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
     );
     if (!n) throw new Error("GitHub gave no pull request number");
     // PIP-146: the owner answers for the PR.
-    if (repo.teammateReview && !(await assignOwner(cx.github, repo.github, n))) {
+    if (repo.teammateReview && !(await cx.github.assignOwner(repo.github, n))) {
       cx.log(`${m.intent}: couldn't assign ${cx.github.me} to PR ${n}`);
     }
   }

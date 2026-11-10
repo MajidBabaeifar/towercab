@@ -61,6 +61,11 @@ export function closeProposed(pr: number, text: string): Promise<ActionReply> {
   return post({ action: "close", pr, text: text.trim() || undefined });
 }
 
+/** REPO-39: apply the standard settings of one repo with the owner's own login. */
+export function applySettings(repo: string): Promise<ActionReply> {
+  return post({ action: "apply-settings", repo });
+}
+
 /** UI-151: open (or update) the PR that changes a repo's limits; `null` takes a key out of the file. */
 export function saveLimits(
   repo: string,
@@ -73,6 +78,21 @@ export function saveLimits(
 /** UI-154: open the PR that moves a repo's limits into its file again. */
 export function openMove(repo: string): Promise<ActionReply> {
   return post({ action: "repo-move", repo });
+}
+
+/** UI-257: set an intent's autonomy (0–5); the page is the owner (AUT-35). */
+export function setAutonomy(id: string, a: number): Promise<ActionReply> {
+  return post({ action: "autonomy", id, a, actor: "owner" });
+}
+
+/** UI-204: change urgency and/or importance (1-5); the reply carries the new priority. */
+export function setScores(id: string, change: { u?: number; i?: number }): Promise<ActionReply> {
+  return post({ action: "scores", id, ...change, actor: "owner" });
+}
+
+/** UI-205: a5, and the start of an intent that has not started. */
+export function boostIntent(id: string): Promise<ActionReply> {
+  return post({ action: "boost", id, actor: "owner" });
 }
 
 /** UI-144: read the repo again for its feature list. */
@@ -177,4 +197,18 @@ export function useLive<T>(path: string): Live<T> {
     };
   }, [load]);
   return state;
+}
+
+/** UI-264: the owner looked at the Inbox; the server stamps its own clock. */
+export function markSeen(): Promise<ActionReply> {
+  return post({ action: "seen" });
+}
+
+/** UI-264: put an item aside until `until` (unix seconds). */
+export function snoozeItem(item: string, until: number): Promise<ActionReply> {
+  return post({ action: "snooze", item, until });
+}
+
+export function unsnoozeItem(item: string): Promise<ActionReply> {
+  return post({ action: "unsnooze", item });
 }

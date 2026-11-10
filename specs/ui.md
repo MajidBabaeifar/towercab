@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..149, UI-150..154, UI-155..164, UI-168, UI-184..191, UI-192..197, UI-239, UI-244..251, UI-236..238, UI-253..256 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..163, UI-168, UI-184..197, UI-203..208, UI-236..239, UI-242..251, UI-253..267, UI-282 · **Prefix:** UI
 
 ## Purpose
 
@@ -80,6 +80,17 @@ The top bar says at a glance whether Towercab is healthy and how much needs the 
   version and whether it is behind `main`, and Pause/Resume. The tab title starts `(<n>)` while n
   things need the owner.
 - Verified by: `ui: top bar shows health and counts`
+
+### UI-282 · Pause and Resume show they are working
+
+After the owner presses Pause or Resume, the button shows that Towercab is applying it, so nobody presses again.
+
+- The top bar's button turns to `Pausing…` or `Resuming…` with a spinner, disabled and `aria-busy`, from the
+  click until the page reports the new state (the loop applies the command on its next pass, LOOP-113). A
+  refused action restores the button and shows the reason as its title; after 60 s without the new state it
+  restores the button with the title "Towercab has not applied it yet: check that the service is running".
+  The airspace's Resume (UI-109) reads `Resuming…` with a spinner the same way until the ground stop clears.
+- Verified by: `ui: pause shows it is working until the state changes`
 
 ### UI-58 · Needs you
 
@@ -934,6 +945,8 @@ The Board marks the repos that are not ready, so the owner sees it without openi
 
 Every task's stage map shows the same full list of stages, whatever the repo, so maps look alike.
 
+- Changed by [UI-272](#ui-272--the-stage-map-shows-the-path-this-intent-takes): stages that cannot apply are left out and summed up in one line, and unreached ones fold.
+
 - Replaces the "listed only when the attempt visited them" rule of UI-123: the map lists the stages of
   UI-72 and all of the ship stages for every attempt. A stage the attempt never reached is `not reached`
   as before; one that does not apply is `skipped` with its reason (UI-159).
@@ -1009,43 +1022,15 @@ Proposed intents are listed by the priority they would have, and the page says w
 
 ### UI-189 · Fold a Needs you card
 
-Each Needs you card on the overview folds to one line with a toggle, and opens again.
-
-- A button on the card's header with `aria-expanded` and an accessible name (`Fold <title>` / `Open
-  <title>`), reachable and operable by keyboard like the stage map's toggles (UI-73). It applies to
-  the overview only; the card on the intent page (UI-62) stays open.
-- Folding only hides: the brief, risk block, open points, options, access list, reply box and menu
-  are hidden, not removed, so the card's content, actions and order (UI-58) do not change and a draft
-  reply typed in the box is kept while folded.
-- Cards start open.
-- Verified by: `ui: needs-you card folds and opens`, `ui: fold toggle is keyboard operable`
+Removed: the Needs you cards are items of the Inbox (UI-259), one shown at a time, so there is nothing to fold; lists fold under their headers (UI-267).
 
 ### UI-190 · A folded card's line
 
-A folded Needs you card still shows what it is, what it asks and how long it has waited.
-
-- One line: the intent's title, its repo, the ask in the same words as the open card's (LOOP-14
-  **Waits**; an open question shows its first line cut with an ellipsis) and the wait's age in the
-  same form as the open card ("2 h"). The line ends with the toggle; it does not wrap on a 720 px
-  screen (the title is cut with an ellipsis first).
-- The browser test measures the line only after fonts have loaded and layout has settled (two
-  animation frames with an unchanged size), and compares sizes with a tolerance of 1 px, so a slow
-  runner does not fail it. It must pass 20 repeats in a row.
-- Verified by: `ui: folded needs-you card shows title, repo, ask and age`
+Removed: the Needs you cards are items of the Inbox (UI-259), one shown at a time, so there is nothing to fold; lists fold under their headers (UI-267).
 
 ### UI-191 · Remember folded cards
 
-The page remembers which Needs you cards are folded in this browser, keeps them folded through live updates, and opens a card again when it changes.
-
-- Folded cards are kept in `localStorage` under `towercab.needs.folded` as a JSON object from intent
-  ID to the wait's key (the kind of wait and its round: the `Waits` kind plus the PR number or
-  question round it belongs to). Every read and write is wrapped in `try`/`catch` as UI-135 does, so
-  without storage a card still folds until the page reloads.
-- A card is folded only while its stored key equals its current wait's key. A new ask or a new round
-  gives a different key, so the card renders open and the stale entry is removed. An entry for an
-  intent that no longer waits is removed. A live update (UI-66) that leaves the key unchanged leaves
-  the card folded and its place in the order.
-- Verified by: `ui: folded needs-you cards are remembered`, `ui: a changed ask opens a folded card again`, `ui: live updates keep a card folded`, `ui: needs-you folds are kept per intent in localStorage`, `ui: a new ask or round gives a card a new wait key`, `ui: folds of intents that no longer wait are forgotten`, `ui: folds work without storage`
+Removed: the Needs you cards are items of the Inbox (UI-259), one shown at a time, so there is nothing to fold; lists fold under their headers (UI-267).
 
 ### UI-160 · Your steps on the intent page
 
@@ -1100,11 +1085,16 @@ Every way out of a wait is a button on the card that does exactly what it says.
   (UI-66 → the `done` command), next to an optional one-line field for what the owner did, which
   becomes a ticked step (LOOP-76). A mission waiting on `your steps` shows the checklist of UI-160 and the
   same button.
-- A stuck wait (LOOP-77) shows "Stuck: this came back with nothing new" and only the `steps`, `done`,
-  start over and drop buttons: no reply box. `GET /api/state` (UI-65) carries `exits` per waiting
-  mission (a list of `{do, label}`) and `stuck`.
+- A stuck wait (LOOP-77) shows "Stuck: this came back with nothing new" and only those of the `steps`,
+  `done`, start over and drop buttons that the wait offers: no reply box. `GET /api/state` (UI-65)
+  carries `exits` per waiting mission (a list of `{do, label}`) and `stuck`.
+- When `done`, `steps` or drop would close an open code PR with commits (LOOP-76), the button first
+  opens a confirm that names the PR and its commit count and says its branch is deleted and nothing is
+  merged; only its OK posts the action. The state carries the PR number and commit count (`openPr:
+  {number, commits}`) of such a mission for this. When the PR can't be read the confirm gives the
+  general warning of LOOP-76 ("couldn't check the PR; it may have commits") and still asks.
 - After a click the card shows the done note of UI-105 ("Done by you · …").
-- Verified by: `ui: question options are buttons that do what they say`, `ui: no changes offers I did it myself`, `ui: a stuck wait offers only the other exits`, `ui: exits come from the API`, `ui: an option that asks for something first only fills the reply`, `ui: exits screenshots light, dark and mobile`
+- Verified by: `ui: question options are buttons that do what they say`, `ui: no changes offers I did it myself`, `ui: a stuck wait offers only the other exits`, `ui: exits come from the API`, `ui: an option that asks for something first only fills the reply`, `ui: exits screenshots light, dark and mobile`, `ui: closing an open PR with commits asks to confirm first`, `ui: an unreadable PR gets the general warning and a confirm`, `ui: a stuck card screenshots light, dark and mobile`
 
 ### UI-168 · Teammate review on the card and the repo page
 
@@ -1158,29 +1148,22 @@ A freeze that ran past its limit shows buttons to keep waiting or to lift it, an
 
 ### UI-192 · Focus tab
 
-A Focus tab shows the one thing that needs the owner most, and nothing else.
-
-- `/focus`, a top tab after Board (UI-133); Repos (UI-140) follows, so it becomes the fourth tab.
-  `GET /api/focus` returns `{item, more}`: `item` is the top wait (UI-193) or `null`, `more` the number
-  of other waits (UI-196). It is part of the page's version (UI-67), so the page updates when a wait
-  comes or goes, without losing input.
-- The tab label carries no count; the top bar (UI-57) already does.
-- Verified by: `ui: the focus tab shows one wait`, `ui: focus is served from its own API`
+Removed: Focus is replaced by the Inbox (UI-259, UI-266): `/focus` redirects to `/` and `GET /api/focus` is gone.
 
 ### UI-193 · The most important wait comes first
 
-Focus picks the wait with the highest priority; between equals, the one waiting longest.
+The Inbox lists the wait with the highest priority first; between equals, the one waiting longest.
 
-- Every wait counts: approvals (spec, plan, code), questions, blocked waits (UI-58), and proposed
+- Every wait counts: approvals (spec, plan, code), questions, blocked waits (UI-58), reached caps (UI-254), and proposed
   intents (UI-184). Priority is the intent's `2i + u` (PRI-3); a proposed intent uses the priority it
-  would get (INT-52), and one that would be parked comes after every other wait.
+  would get (INT-52), and one that would be parked comes after every other wait. A reached cap comes first.
 - Ties: oldest wait first (the time the wait began, the PR's age for a proposal), then the intent ID, so
-  the pick never flips between two reads.
-- Verified by: `ui: focus picks the highest priority wait`, `ui: focus breaks ties by oldest wait`, `ui: focus includes questions, blocked waits and proposed intents`
+  the order never flips between two reads.
+- Verified by: `ui: the inbox lists every wait in priority order`
 
-### UI-194 · What Focus shows
+### UI-194 · What an Inbox item shows
 
-Focus shows enough to act without opening anything else: where the work is, what it is, what happened,
+An Inbox item shows enough to act without opening anything else: where the work is, what it is, what happened,
 and what is asked now.
 
 - Top to bottom: the repo; the intent in one line (its title and a one-sentence overview, the first
@@ -1190,37 +1173,26 @@ and what is asked now.
   and the PR link. A proposed intent shows its fields and Accept/Close (UI-185) in the same place.
 - A phase not yet reached is not listed. A mission from before briefs shows the review's summary
   (UI-126's fallback) in place of the history.
-- Verified by: `ui: focus shows repo, overview, history and the ask`, `ui: focus offers the actions of the needs-you card`, `ui: focus shows a proposed intent`
+- Verified by: `ui: the inbox shows the repo, overview, history and the ask of each item`
 
 ### UI-195 · The next one takes its place
 
-When the owner acts, or the wait ends for any other reason, Focus moves on to the next.
-
-- The page replaces the item as soon as `GET /api/focus` names another (after the owner's action, or
-  when the loop moves the mission), with a short fade of at most 300 ms, none under
-  `prefers-reduced-motion`. Text the owner is typing in a reply box belongs to the item it was typed on
-  and is not carried to the next (UI-67).
-- With no wait left, Focus says "Nothing needs you."
-- Verified by: `ui: focus moves to the next wait after an action`, `ui: focus moves on when a wait ends elsewhere`, `ui: focus says nothing needs you when empty`
+Removed: the Inbox moves to the next row when a wait ends (UI-259), without Focus's skip list.
 
 ### UI-196 · How many more
 
-Focus says how many other waits there are, without listing them.
-
-- `more` is the count of waits other than the one shown, proposed intents included: "3 more waiting",
-  "1 more waiting"; nothing is shown at 0. No titles, links or list; the Overview has them.
-- Verified by: `ui: focus counts the other waits without listing them`
+Removed: the Inbox lists every wait and its heading counts them (UI-259).
 
 ### UI-197 · Same actions, any screen
 
-Focus adds no new way to act, and it works on a phone and by keyboard.
+The Inbox adds no new way to act, and it works on a phone and by keyboard.
 
-- Every action posts to `POST /api/actions` (UI-65), exactly as on the Needs you card; Focus has no
+- Every action posts to `POST /api/actions` (UI-65), exactly as on the Needs you card; the Inbox has no
   action of its own. The same refusals and errors show in the same words.
 - At 360 px wide the item is one column with no sideways scroll; buttons are at least 44 px tall. Every
   action is reachable by Tab in reading order with a visible focus ring; the item has a heading the
-  tab moves to when the next one arrives, and the change is announced politely (`aria-live="polite"`).
-- Verified by: `ui: focus has no action the needs-you card lacks`, `ui: focus works by keyboard`, `ui: screenshots light, dark and mobile`
+  Enter key moves the focus to (UI-261), and the change is announced politely (`aria-live="polite"`).
+- Verified by: `ui: the inbox card has the actions of the needs-you card`, `ui: on a phone the inbox is a list that opens the card`, `ui: screenshots light, dark and mobile`
 
 ### UI-236 · The shadow's tag shows everywhere
 
@@ -1262,10 +1234,10 @@ Every screen shows the same number of things that need the owner, and the parts 
 
 - One server-side function defines a wait on the owner: approvals (spec, plan, code), questions, blocked
   waits, owner steps before or after merge (UI-160, UI-162), and proposed intents (UI-184). `GET
-  /api/state`, `/api/focus`, `/api/board` and the repo views (UI-141) all use it; none keeps its own
+  /api/state`, `/api/inbox`, `/api/board` and the repo views (UI-141) all use it; none keeps its own
   rule (`waitsOf` and the working list of `overview()` no longer disagree on the `steps` stage).
 - The count is `needs` = `missions + proposed`. The top bar (UI-57), the tab title `(<n>)`, the overview
-  headline, Focus (`1 + more`, UI-196) and the Board's "Needs you" chips (plus its `<n> proposed`,
+  headline, the Inbox (its list and `needs`, UI-259) and the Board's "Needs you" chips (plus its `<n> proposed`,
   UI-187) all equal it. The headline may split it ("4 need you · 11 proposed") but the parts sum to `needs`.
 - A repo's view counts the same waits for that repo only; the repos' counts sum to the total, unknown
   repos included.
@@ -1280,13 +1252,13 @@ A mission waiting for the owner's own steps shows as a Needs you card, not as wo
   like other cards (UI-58). The "working" count (UI-57) and pill count only missions Towercab is working on.
 - Verified by: `ui: a mission waiting on owner steps is a needs-you card`, `ui: the working count excludes owner waits`
 
-### UI-246 · Needs you comes first on the overview
+### UI-246 · The overview links to the Inbox first
 
-The overview puts what waits for the owner above everything else.
+The overview sends the owner to the Inbox for what waits, and keeps what is moving.
 
-- Order: headline → Needs you cards → Problems → Proposed → Working (then Up next and the rest as
-  today). The airspace keeps its place and starts folded below 640 px wide; the owner can open it.
-- Verified by: `ui: overview puts needs-you cards before proposals`, `ui: the airspace starts folded on a phone`
+- Order: headline → one line `<n> need you · <p> proposed` linking to the Inbox (UI-266) → Problems → Working (then Up
+  next and the rest as today). The airspace keeps its place and starts folded below 640 px wide; the owner can open it.
+- Verified by: `ui: the overview links to the inbox instead of listing cards`, `ui: the airspace starts folded on a phone`
 
 ### UI-247 · Proposed intents take one line
 
@@ -1296,9 +1268,8 @@ Each proposed intent is one compact row, so ten fit on a phone screen.
   GitHub" beside it in the same menu or link target list), the repo, the priority (or "would be parked"),
   the age, and Accept and Close (UI-185; a GitHub-only PR still offers Close only). The `#proposed-<PR
   number>` anchor, the Draft chip and the stale-list note (UI-188) stay.
-- The first 5 rows show; the rest fold under a button "Show <n> more proposals" (`aria-expanded`),
-  with `n` the number folded. Order is UI-188's. Repo pages (UI-186) use the same rows.
-- Verified by: `ui: proposed intents are one line each`, `ui: proposals after the fifth fold under a button`
+- Repo pages (UI-186) use the same rows under a header that folds them (UI-267); the first-5 fold and its "Show <n> more proposals" button are gone. In the Inbox a proposal is a list row (UI-259).
+- Verified by: `ui: proposed intents are one line each`
 
 ### UI-248 · The ask and its button come first on a card
 
@@ -1307,8 +1278,8 @@ A Needs you card shows what is asked, the brief and the main button before the d
 - Order in the card: title and repo; the ask; the brief (UI-126); the main action (for example "Merge
   spec PR"); then the risk as one line (`Medium risk · easy to undo · fairly sure it works`, from AUT-20's
   fields) and the open points as `<n> open points for you`, each opening on tap; then the rest
-  (access list, menu, reply box). The same card is used on the overview, on Focus (UI-194) and on the
-  intent page (UI-62). The fold of UI-189 still applies on the overview.
+  (access list, menu, reply box). The same card is used in the Inbox (UI-259) and on the
+  intent page (UI-62).
 - On a 375 px wide screen the ask, the brief and the main button fit in the first 700 px of the card.
 - Verified by: `ui: the main button sits under the brief`, `ui: risk and open points are folded to one line each`, `ui: screenshots light, dark and mobile`
 
@@ -1332,10 +1303,9 @@ When every row of "Up next" has the same reason, the reason is written once abov
 
 The screenshot fixture has the cases that made the overview hard to use.
 
-- `ui/fixture.ts` gains several proposed intents (at least 6, so the fold of UI-247 shows) and a
-  mission waiting on the owner's steps. The overview screenshots (light, dark, mobile) are taken with
-  them and a test checks the first Needs you card sits above the first proposal.
-- Verified by: `ui: screenshots light, dark and mobile`, `ui: fixture overview has the first needs-you card above the proposals`
+- `ui/fixture.ts` has a crowded scene: at least 5 waits (one on the owner's steps), 18 proposed intents and 36 queued
+  intents. The Inbox and Overview screenshots (light, dark, mobile) are taken with it.
+- Verified by: `ui: screenshots light, dark and mobile`, `ui: the crowded fixture has the waits, proposals and queue of the live page`
 
 ### UI-253 · Budgets are edited in the page
 
@@ -1408,9 +1378,417 @@ When someone other than the owner raises an intent's autonomy, a card at the top
 - Buttons: "Accept a<to>" (posts `{action: "autonomy", id, a: <to>}` with `actor: owner`; its confirm step is UI-257's, so it names the level and what it allows) and "Set back to a<from>" (one click, writes `a: <from>` with AUT-34). Either removes the card. The intent's page and card also show the flag beside the control.
 - Verified by: `ui: a flagged raise shows a card naming who raised it`, `ui: the flag card counts as needing you`, `ui: accepting a flagged raise asks for a confirmation`, `ui: setting a flagged raise back removes the card`
 
+### UI-259 · An Inbox page lists everything that needs the owner
+
+One Inbox page lists every wait, with the list on the left and the selected card on the right.
+
+- `/` is the Inbox, the page the app lands on, and its top tab comes first and replaces Focus (UI-133, UI-266). The list holds the waits UI-244 counts: approvals, questions, blocked waits, owner steps, proposed intents and reached caps (UI-254); flagged raises (UI-258) join it when they are built. Order is UI-193's (priority, then oldest wait, then intent ID). `GET /api/inbox` returns `{items, needs, lastVisit, readOnly, stale, version}` with `needs` equal to UI-244's count; it is part of the page's version (UI-67), so the page updates without losing typed text.
+- A list row is one line (UI-247's compactness): kind chip, title, repo, age. The selected row is marked (`aria-selected`) and its card shows on the right: the Needs you card of UI-248, the proposal view of UI-194 and UI-185, or the cap card. The URL is `/inbox/<item id>`, so a link opens that item. With no item in the URL the first row is selected, so a card is always visible; selecting is not acting: nothing is posted until the owner uses a button or the confirm of UI-261.
+- Every action posts to `POST /api/actions` (UI-65) exactly as the Needs you card does; the Inbox has no action of its own (UI-197's rule). When the selected item's wait ends, the selection moves to the next row (a fade of at most 300 ms, none under `prefers-reduced-motion`). With no wait left, the page says "Nothing needs you."
+- Verified by: `ui: the inbox lists every wait in priority order`, `ui: the inbox count equals the needs count`, `ui: the inbox card has the actions of the needs-you card`, `ui: the inbox moves on when a wait ends`, `ui: an inbox link opens its item`, `ui: the inbox opens with the first item selected and posts nothing`
+
+### UI-260 · The Inbox on a phone is a list that opens the card
+
+Below 640 px wide the Inbox shows the list, and a tap opens the card full screen.
+
+- Below 640 px: the list alone; a row opens the card on its own screen (`/inbox/<id>`) with a "Back to the inbox" button, and the browser's back button does the same. The list keeps its scroll position on return. No sideways scroll at 360 px; rows and buttons are at least 44 px tall.
+- Verified by: `ui: on a phone the inbox is a list that opens the card`, `ui: going back keeps the inbox scroll position`, `ui: screenshots light, dark and mobile`
+
+### UI-261 · Move through the Inbox by keyboard
+
+Single keys move through the Inbox and act on the selected item, and no key acts without a second step.
+
+- `j` selects the next row, `k` the previous (no wrap), `Enter` opens the card and moves focus into it, `Escape` returns focus to the list. `r` focuses the reply box of the card (the answer or the reply for a question), `o` opens the PR in a new tab (the proposal's PR for a proposed intent; nothing for an item with no PR), `s` opens the snooze choices (UI-264), `/` focuses the list's filter (UI-263), `?` opens the shortcuts list.
+- `Enter` only opens: it never posts an action, even on the first item the page selected by itself. No other key posts either, except as below.
+- `m` offers the merge the card's main action offers (UI-248), only for a merge (spec, plan or code PR); it always opens a confirm that names the PR and the repo (`Merge <PR label>: <title>?`) with "Merge" and "Cancel", with no setting to skip it. Nothing is posted until "Merge" is clicked or Enter is pressed on it inside the confirm; the confirm opens with focus on "Cancel", so the same key press that opened it cannot confirm it. Escape cancels. It posts the card's own merge action (UI-65). On any other item `m` does nothing and says so.
+- Keys do nothing while the focus is in a field, a select or a dialog, and ignore combinations with Ctrl, Cmd or Alt. A shortcut that does not apply to the item shows a short polite message (`aria-live="polite"`), not an error.
+- Verified by: `ui: j and k move the inbox selection`, `ui: enter opens the card and escape returns to the list`, `ui: enter only opens and never posts an action`, `ui: m asks before merging and posts nothing until confirmed`, `ui: the merge confirm opens on cancel and needs its own click or enter`, `ui: m does nothing on an item that is not a merge`, `ui: r focuses the reply box and o opens the PR`, `ui: shortcuts are ignored while typing`
+
+### UI-262 · A list of the shortcuts
+
+`?` shows every shortcut, and the page says it exists.
+
+- `?` opens a dialog listing UI-261's keys and Cmd-K (UI-265), with Escape to close and focus returned to where it was. A `? shortcuts` button sits in the Inbox heading.
+- Verified by: `ui: the question mark shows the shortcuts`, `ui: the shortcuts dialog returns focus`
+
+### UI-263 · Filter the list
+
+A field above the Inbox list narrows it to matching items.
+
+- Case-insensitive match on title, repo, intent ID and PR number (`#203` or `203`); while a filter is set the count reads `<shown> of <n>`. Filtering changes the view only: `needs` (UI-244) is unchanged. The filter is kept in the URL (`?q=`).
+- Verified by: `ui: the inbox filter matches title, repo, id and PR number`, `ui: filtering does not change the needs count`
+
+### UI-264 · New since your last visit, and snoozing
+
+The Inbox marks what arrived since the owner last looked, and lets them put an item aside for a while.
+
+- **State is on the server, per owner, not per browser,** so the phone and the laptop agree. It is kept in the database's `meta` table: `inbox:last_visit` (unix seconds) and one `inbox:snooze:<item>` per snoozed item (the wake time). No migration is needed: a database from before the Inbox simply has none of these keys, and an older Towercab ignores them. It touches no mission: the loop and the state machine never read it. `GET /api/inbox` carries `lastVisit` and each item's `new` and `snoozedUntil`, and a change moves the page's version (UI-67), so every open screen updates.
+- **New:** a row carries a `New` marker (text, not colour alone) when its wait began after `last_visit`, or a snooze ran out after it. The page posts `{action: "seen"}` (UI-66's actions) once the Inbox has been visible for 3 seconds, and the server sets `last_visit` to its own clock then and forgets snoozes that have run out; a reload closed at once marks nothing as seen. The marker stays on screen until the page is left or reloaded, so rows do not change under the owner's eyes; opening an item clears its own marker at once. The heading says `<n> new`. With no `last_visit` yet (first visit), nothing is marked new.
+- **Snooze:** `s` or a "Snooze" button opens the choices "1 hour", "Until tomorrow 08:00" and "Until Monday 08:00" in the browser's time zone; the page sends the chosen instant as `{action: "snooze", item, until}`, and the server refuses a time in the past or more than 30 days away, or an item that is not waiting, with the reason (UI-67). `{action: "unsnooze", item}` clears it. A snoozed item leaves the main list and shows under a "Snoozed <n>" list (UI-267) with its wake time and "Unsnooze". It returns when `until` passes, by the server's clock, with the `New` marker. A snooze whose wait ends is dropped. `s` only opens the choices; it does not pick one (UI-261's second step).
+- A snoozed item still counts in `needs` (UI-244), so the top bar and the tab title do not hide it; the Inbox heading reads `<n> need you · <k> snoozed`.
+- Verified by: `ui: a wait newer than the last visit is marked new`, `ui: a wait newer than the last visit shows a new marker`, `ui: the last visit is set on the server after the page was visible for 3 seconds`, `ui: the page sends seen only after it was visible for 3 seconds`, `ui: the first visit marks nothing new`, `ui: a snoozed item moves under snoozed and returns when due`, `ui: snoozing from the inbox moves the item under snoozed`, `ui: a snooze is shared between two clients`, `ui: a snooze in the past or beyond 30 days is refused`, `ui: a snoozed item still counts as needing you`, `ui: inbox state survives a restart and an older database gains it`
+
+### UI-265 · Cmd-K search and commands
+
+Cmd-K (Ctrl-K elsewhere) opens one box that finds intents, repos and PRs and runs commands.
+
+- Opens on any page, as a dialog with a labelled field; Escape closes and returns focus. Typing lists matches in groups: **Intents** (ID or title words), **Repos** (name), **PRs** (a number, `#123` or `123`, matching the pull requests of the Inbox's items), and **Commands**. Arrow keys move, Enter runs, results are announced politely. A match opens the intent's page (UI-62), the repo's page (UI-141) or the PR's item in the Inbox.
+- Commands: `pause` and `resume` (UI-65's actions for all work; the top bar's button has no confirm, so the box asks once itself: `Pause?` with "Cancel" focused, then the action), `go to inbox | overview | board | repos | activity`, `go to repo <name>`, and `open settings` (the Repos page, where each repo's settings are, UI-150). The box offers a command only when it applies (no `resume` while not paused, none of the actions while Towercab is not running). A command posts through `POST /api/actions` or navigates; it has no action of its own, and a refusal shows in the box in the same words (UI-67).
+- The search runs in the page over data it already reads (`/api/state`, `/api/inbox`, `/api/repos`, loaded once when the box opens); it makes no request per keystroke and loads no extra service.
+- Verified by: `ui: cmd-k finds an intent, a repo and a PR number`, `ui: cmd-k runs go to repo`, `ui: cmd-k pause asks for the usual confirm`, `ui: cmd-k offers only applicable commands`, `ui: cmd-k opens and closes by keyboard`
+
+### UI-266 · The Inbox is the home page, and the Overview stays one tab away
+
+The Inbox replaces Focus as the page Towercab opens on; the Overview keeps its own address and every old link still works.
+
+- This covers intent 261105-2152-14. `/` is the Inbox (UI-259). The tabs read Inbox, Overview, Board, Repos, Activity; Focus is gone. The Overview moves to `/overview`. `GET /api/focus` goes away. This replaces UI-192, UI-195 and UI-196; UI-193's pick order, UI-194's content and UI-197's actions and phone rules live on for the Inbox.
+- Old links keep working: `/focus` redirects to `/`, and an old Overview link with a fragment (`/#proposed-<PR number>`, `/#needs-<id>`) opens the Inbox on that item (or, if the item is no longer a wait, the Overview with the fragment). Repo, intent and Board links are unchanged. The tab bar marks the current page.
+- The tab title keeps the needs-you count, `(<n>) Towercab` plus the page's name after the first tab, with `n` equal to UI-244's `needs` on every page (snoozed items included); it is `Towercab` at 0.
+- The Overview keeps its headline, Problems, Working, Up next and airspace (UI-246's order, without the Needs you cards and Proposed); in their place one line `<n> need you · <p> proposed` links to the Inbox. The Board's "Needs you" chips and `<n> proposed` (UI-244, UI-187) link to the Inbox. The crowded Overview (UI-251) is no taller than 2,300 px at 1280 px wide (3,334 px with the cards); its rows are still tall, so a shorter page needs the rows themselves redesigned.
+- `ui/fixture.ts` carries at least 5 waits, 18 proposals and 36 queued; the Inbox and Overview screenshots (light, dark, mobile) use it.
+- Verified by: `ui: the root page is the inbox and the overview has its own address`, `ui: focus redirects to the inbox`, `ui: old overview fragments open the inbox item`, `ui: the tab title keeps the needs count`, `ui: the overview links to the inbox instead of listing cards`, `ui: the crowded overview is shorter than with its cards`, `ui: screenshots light, dark and mobile`
+
+### UI-267 · Long lists fold under a header
+
+Every list that can grow long has a header with a toggle that folds and opens it, and remembers its state.
+
+- This covers intent 261105-2152-12. The lists with a header are: the Inbox's list and its Snoozed list (UI-264), Proposed on a repo's page (UI-247), Working, Up next and Problems on the Overview, and In progress, Up next and Waiting on a repo's page. Each has a header: its name, a count, and a button toggle (`aria-expanded`, `aria-controls`) that works by Enter and Space and is at least 44 px tall on a phone. The Board's repo lanes keep their own fold (UI-135); Parked and Recently done on a repo's page stay native `details` elements.
+- A folded list still shows its header with the count (`Working · 12`). The count is the list's real length (the filter of UI-263 applied to the Inbox's list; the Inbox heading keeps UI-244's `needs`).
+- Lists start open. The state is remembered per browser (one `localStorage` entry for all lists, like UI-146's sort; a storage failure leaves the list working, and it stays as the owner set it until the page reloads). It survives live updates (UI-67): a refresh of data neither opens a folded list nor folds an open one, and focus stays on the toggle. A link to a proposal (`#proposed-<PR>`) opens a folded Proposed list.
+- Verified by: `ui: every long list has a header with a count and a toggle`, `ui: a folded list still shows its count`, `ui: lists start open`, `ui: fold state is remembered per browser`, `ui: fold state survives a live update`, `ui: fold toggle works by keyboard and on a phone`, `ui: fold state works without browser storage`
+
+### UI-268 · Not-ready looks different from needs-you
+
+A repo that lacks setup has its own colour and a badge that fits its text, so it is never mistaken for a wait on the owner.
+
+- This covers intent 261106-0820-1. `--warn` gets a hue distinct from `--needs` in light and dark mode, each at least 4.5:1 against the surface it is drawn on; `ui/DESIGN.md` and the comment above `.ready-badge` say so.
+- `.ready-badge` sizes to its text on every card (the Repos "All" view, the Board lane header, UI-155, UI-157), never the card's full width.
+- Verified by: `ui: warn and needs colours differ with enough contrast`, `ui: the not-ready badge fits its text`
+
+### UI-269 · A gap shared by most repos is said once
+
+When most repos lack the same setup item, the Repos page and the Board each say so once at the top and drop the badge from each repo.
+
+- Over the repos with a readiness result (UI-155): an item is shared when it is missing on at least 3 repos and on more than half of them (the owner confirmed this rule). The Repos page shows a line at the top, `<n> of <m> repos have <item in plain words>` (for example `9 of 11 repos have no release job`), one line per shared item.
+- The Board shows the same shared items as one small line above the columns, in the short form `<n> repos: <item>` (for example `9 repos: no kind set`), one line per item or items joined on one line; it is absent when nothing is shared. It counts the same repos as the Repos page, and lists shared items for all repos, folded ones (UI-135) included.
+- A repo whose only missing items are shared ones shows no not-ready badge on the Repos tab or in its Board lane header (UI-157); the badge shows for any other missing item, with only those items in its tooltip. The repo's own page still lists every gap (UI-270).
+- Verified by: `ui: a shared gap is summed up once on the repos page`, `ui: the board sums up shared gaps in one line above the columns`, `ui: no badge for a repo missing only shared items`
+
+### UI-270 · Setup gaps in plain words
+
+The "Set up this repo" section says each gap in plain words with what to do, and keeps the raw error under "Details".
+
+- Each missing item shows a sentence and an action (for example `Towercab's GitHub App can't read this repo's workflow settings: give it the Actions permission`). The raw command error (such as `gh api …: HTTP 403`) is inside a folded "Details" and appears once, not again under "GitHub settings". Unknown errors say `Towercab could not check this` with the raw text under "Details".
+- The check time is relative and exact on hover (UI-71). The section has the same card padding as the other cards, in the spacing tokens, so text does not touch its border.
+- Verified by: `ui: setup gaps are plain words with the error under details`, `ui: setup check time is relative`, `ui: setup section has card padding`
+
+### UI-271 · A readable Board at laptop widths
+
+Empty stations on the Board take little room, so busy ones are wide enough to read every chip.
+
+- A station column with no cards collapses to a narrow strip showing its name and `0`; a column with cards is at least 180 px wide. At 1,280 px wide every chip's text is fully visible (no clipping, no horizontal overflow of a chip).
+- A card title is cut after three lines; the full title is its tooltip and its accessible name.
+- The Board stays as wide as the top bar and the other pages (1,120 px max), so the edges line up (the top bar does not widen); a Board that needs more room scrolls sideways inside that width.
+- Verified by: `ui: empty board stations collapse to a strip`, `ui: busy board stations are at least 180px`, `ui: board chips are not clipped at 1280px`, `ui: board titles cut after three lines with the full title on hover`, `ui: board is as wide as the top bar`
+
+### UI-272 · The stage map shows the path this intent takes
+
+The stage map lists the stages this intent will go through, folds the rest, and names what does not apply.
+
+- Replaces UI-158 and changes UI-159: stages that cannot apply to the repo (deploy, live tests, rollback and revert for a repo with nothing to deploy, REPO-26) are left out and summed up in one line, `Not part of this repo's path: <stages in plain words>`, with the kind's reason as its tooltip. A stage the attempt visited is always listed, with its own outcome.
+- A run of two or more stages not reached yet folds into one row, `<n> more stages to go`, that opens to list them. A merged code PR is never shown as `skipped`.
+- Verified by: `ui: stage map leaves out stages that cannot apply and says so`, `ui: unreached stages fold into one row`, `ui: a merged change does not show merging as skipped`
+
+### UI-279 · The intent page shows how many plan steps are built
+
+While a long plan builds, the intent page and its card say "step 3 of 6".
+
+- Shown from the mission's `data.build` (PIP-216) as `step <steps_done + 1> of <steps_total>` while the build runs (the step being worked on), and `<steps_done> of <steps_total> steps built` while it waits between runs or on the owner. Absent for a plan with no numbered steps or a single-step plan, and once the review starts.
+- `GET /api/state` and the intent's API carry `build: {stepsDone, stepsTotal}` (null when absent). Fits 360 px, light and dark.
+- Verified by: `ui: the intent page shows the plan step being built`, `ui: no step count for a one-run plan`
+
+### UI-280 · "Covered by…" closes an intent as done
+
+The owner can pick another intent on an open intent's page and close the first as done, because the second covers it.
+
+- An intent that is not done, dropped or stopped shows a "Covered by…" action next to Drop, at any stage and in the board's card menu. It opens a picker of the other intents of the same repo first, then the others (search by ID or title), without the intent itself, dropped or stopped ones, and any that wait `after:` this one (LOOP-156).
+- Choosing one posts `{action: "done", id, by: <other id>}` (UI-66) with `actor: owner`, which runs the `done --by` command of LOOP-156 with its confirm for an open code PR with commits (UI-164). The page shows `Closed as done: covered by <other id>` with the ID as a link, and a refusal shows its reason.
+- Both intents' pages show the cover on their timelines ("Covered by 261106-1201" and "Covers 261105-2152-14"), each with the other as a link. A covered intent shows as done, not dropped, with the covering intent named. Fits 360 px, light and dark; hidden for `a0` intents the same way Drop is (AUT-31) and for a viewer (USR).
+- A covered intent's page shows a "Reopen" button, which posts `{action: "reopen", id}` (UI-66) and runs LOOP-157. The page then shows the intent back at its old stage, with the PRs reopened and any that could not be, with the reason. The button is hidden on every other intent.
+- When the covering intent was dropped or stopped (LOOP-158), the covered intent's page shows `Not delivered: <other id> was <dropped|stopped>` with the Reopen button, and the Inbox shows the `not delivered` item with Reopen and Dismiss (UI-259). Dismiss hides the Inbox item only; the page note stays.
+- Verified by: `ui: a not delivered intent shows its note and an Inbox item with Reopen`, `ui: dismissing a not delivered item keeps the page note`, `ui: reopen is offered only on a covered intent`, `ui: reopen puts the intent back and lists PRs it could not reopen`, `ui: covered by is offered at any open stage`, `ui: covered by picker leaves out itself and finished intents`, `ui: covered by closes the intent as done`, `ui: covered by shows on both timelines`, `ui: covered by asks to confirm an open code PR`
+
+### UI-281 · Cards show the people part, the agent part is a link
+
+Cards and lists show only the part for people; the agent part is one tap away on the intent page.
+
+- Board cards, Inbox items, Needs-you cards and the repo page's intent rows show the people part of PIP-220 (at most 5 lines, clipped with `…` after that) and no agent text. Each has an `Agent context` link to the intent page, where the part is folded under a header of that name and opens on a click (UI-267). The link is absent when there is no agent part.
+- The intent page leads with the people part and keeps the agent part (findings, file lists, logs, handoff notes) folded; PR links open the PR on GitHub, where the same split holds.
+- The API carries `people` and `agent` as separate fields on a stage; the cards read only `people`. Fits 360 px, light and dark.
+- Verified by: `ui: a card shows the people part and not the agent part`, `ui: the agent context is a link on a card and folded on the intent page`, `ui: no agent link when there is no agent part`
+
+### UI-200 · Your own open pull requests are read
+
+Towercab reads the open pull requests the owner opened by hand in each registered repo.
+
+- Per repo, each loop pass (rate-limited like the other PR reads, through the `Forge` of `src/forge.ts`) lists open PRs whose author is the owner's GitHub login. It leaves out Towercab's own PRs (head `towercab/*`), drafts marked as such stay in the list, and PRs from forks of other people are not read.
+- Per PR it keeps number, title, URL, head branch, opened-at, draft flag, the check status (`passing`, `failing`, `pending`, `none`) and the changed file paths. Nothing is written to the intent files or the mission table; the list is read-only and is not a mission.
+- A failed read keeps the last good list and shows the error as a problem on the repo (no crash, no empty list). Repos on GitLab are skipped until GL has the same read.
+- Verified by: `github: owner pull requests are listed without Towercab's own`, `github: a failed owner PR read keeps the last list`
+
+### UI-201 · "Yours" on the repo page and the Board
+
+The repo page and the Board show the owner's open pull requests as "Yours", with age and check status.
+
+- `GET /api/state` carries `yours: [{repo, number, title, url, ageSeconds, checks, draft}]`, oldest first. They do not count in "Needs you" (UI-244) and carry no stage or Approve buttons: a click opens the PR on GitHub.
+- The repo page lists them under `Yours`; the Board shows them in a separate `Yours` group per repo, away from Towercab's planes. The age reads `3 d` (exact on hover); the check status is a word and a colour, not colour alone. Hidden when empty. Fits 360 px, light and dark.
+- Visible to everyone who can see the repo in Towercab, whatever their role (USR-1, USR-5: a per-repo role never hides a repo's list). The PRs are already visible on GitHub to the same people, so hiding them would only make the page disagree with GitHub. A read-only role sees them and the links, and has no action to take on them.
+- Verified by: `ui: a fake owner pull request is listed as Yours on the repo page and the Board`, `ui: Yours is not counted in Needs you`, `ui: Yours is shown to a viewer and to a maintainer with a lower role on that repo`
+
+### UI-202 · A warning when your pull request touches the same spec
+
+When one of the owner's open pull requests changes a spec file that Towercab's own spec PR also changes, Towercab says so on its PR.
+
+- Overlap = a path under `specs/` changed by both an owner PR (UI-200) and the spec PR of a mission in the same repo. Checked each pass for missions with an open spec PR.
+- Towercab's stage comment on its PR gets one line per owner PR: `Your PR #<n> also changes specs/<file>.md; requirement IDs may clash.` The line names the IDs both PRs add when they share any. The same line shows on the intent page. The line is dropped when the overlap ends (owner PR closed or merged, or files no longer shared); it is never posted twice for the same pair.
+- Only a warning: nothing is blocked, and the owner's PR is never commented on.
+- Verified by: `ui: an owner pull request touching the same spec file adds the warning`, `ui: no warning when the owner's PR touches other files`
+
+### UI-273 · An owner wait stage says what the owner did
+
+Opening a stage that was a wait on the owner shows the owner's answer, not "it wrote no files".
+
+- For a wait stage (plan review, code review and the like) the detail shows who decided, what (approved, changes requested, answered, closed) and when (relative, exact on hover), taken from the recorded event; while still waiting it says what it waits for. Without a recorded event it says `The owner decided on GitHub`. `This was a wait for you; it wrote no files.` is removed.
+- Verified by: `ui: a wait stage shows the owner's decision`, `ui: a wait stage still open says what it waits for`
+
+### UI-274 · A phone top bar that leaves room
+
+On a phone the top bar is short and the airspace starts folded.
+
+- At 375 px wide the sticky top bar is at most 100 px tall: `Updated <time>` joins the counts line instead of its own line.
+- On a phone the airspace starts folded to its one-line summary; the owner opens it (the state is remembered like UI-267's). On wider screens it starts open as before.
+- Verified by: `ui: phone top bar is at most 100px`, `ui: phone airspace starts folded`
+
+### UI-275 · Airspace badges never overlap
+
+The airspace's count badges (such as "+21") never cover a label or a plane, and the screenshots show these cases.
+
+- The boxes of the count badges do not intersect the stage labels or the planes at 360, 768 and 1,280 px wide.
+- `ui/fixture.ts` carries more than 8 repos, several of them not ready (some missing the same item, UI-269), and a CLI repo with a finished intent; the Repos, Board, intent and airspace screenshots (light, dark, mobile) use it.
+- Verified by: `ui: airspace count badges do not overlap at 360, 768 and 1280px`, `ui: screenshots light, dark and mobile`
+
+### UI-276 · The repo page shows where each setting comes from
+
+The repo's page says for each setting whether it came from the repo, the overlay or the default.
+
+- Each of `max_autonomy`, `protected`, the checks and the other keys in effect ([REPO-44](repo.md)) carries a small
+  label `repo`, `overlay` or `default`. An overlay-sourced value has no edit control; it says `Set in
+  <path to the overlay file>` ([REPO-48](repo.md)). A refused overlay key shows REPO-46's one line, a notice card shows REPO-49's replaced-checks notice naming both sets of checks, and an invalid
+  overlay shows its reason like an invalid `TOWERCAB.md` (UI-153). A repo without an overlay shows `repo` and `default` labels only.
+- The labels come from the API's repo view, not from the page's own guess.
+- Verified by: `ui: settings show repo, overlay or default`, `ui: an overlay setting has no edit control`, `ui: a refused overlay key shows its line`, `ui: replaced overlay checks show a notice`
+
+### UI-277 · Problems show loose secrets files
+
+The Overview's Problems block names each secrets file that others can read and the command that fixes it.
+
+- One Problems row (UI-60) per file found by the check of LOOP-143: `<path> is readable by others: chmod 600 <path>`. The row is a failure here even though the self-update check only warns (LOOP-145); nothing is shown when all such files are mode 600.
+- The rows come from the same check as `doctor`, through the API's problems list, not from the page's own guess.
+- Verified by: `ui: problems show a loose secrets file with its chmod`, `ui: no loose secrets file shows no row`
+
+### UI-278 · Running version and waiting release
+
+The top bar shows which version of Towercab is running and, when the owner updates on releases, whether a newer release is waiting.
+
+- The top bar's version is the running version of LOOP-152. On the release channel it adds `<tag> available` when a newer release waits (LOOP-152) and nothing when up to date. On the `"main"` channel it still says whether the checkout is behind `main`.
+- The values come from the same API field as `status`, not from the page.
+- Verified by: `ui: top bar shows the running version`, `ui: top bar shows a waiting release`, `ui: top bar shows no release note when up to date`
+
+### UI-219 · Sign in with GitHub
+
+When people are set up, the page opens on a sign-in screen with one button, "Sign in with GitHub".
+
+- With `[auth]` set ([USR-3](users.md)) every route except the sign-in ones shows it until a session exists; after sign-in the person lands on the page they asked for. With no `[auth]` there is no sign-in and the page opens as before.
+- A refused account sees "This Towercab doesn't know your GitHub account. Ask an admin to add you." with the login shown and a sign-out link; an expired or revoked session returns here with "You were signed out".
+- Verified by: `ui: signed-out visitors see the sign-in screen`, `ui: an unknown account sees why it was refused`, `ui: without auth config there is no sign-in`
+
+### UI-220 · The page offers only what the role can do
+
+Buttons the signed-in person's role does not allow are not shown, or are disabled and say why.
+
+- Per intent and repo (USR-5): a viewer has no action buttons; a contributor sees Create, and Answer only on a question they were asked (USR-9); a maintainer sees Approve, Merge, Reply, Start, Boost, Drop, Edit, Confirm (on an intent waiting for confirmation, AUT-23) and autonomy; the admin page link shows for admins only. A disabled button's tooltip reads "Needs maintainer on <repo> (you are viewer)".
+- A 403 from the API (USR-7) shows its reason in the page's error line, never a blank failure.
+- Verified by: `ui: a viewer sees no action buttons`, `ui: a contributor sees only answer and create`, `ui: a disabled action says which role it needs`, `ui: the admin link shows for admins only`
+
+### UI-221 · Cards and timeline show who did it
+
+Every card's last action and every timeline entry names the person and the channel.
+
+- "Approved by Ana · page", "Answered by Ben · Telegram", "Merged by Cy · GitHub" (USR-8); Towercab's own steps read "Towercab". Names come from GitHub's display name or the login.
+- The Needs-you card shows who else can decide it (maintainers of that repo) and whether another person has already handled it.
+- Verified by: `ui: a card shows who acted and how`, `ui: the timeline names every actor`, `ui: a handled card shows who handled it`
+
+### UI-222 · Admin page: people, roles and repos
+
+Admins get a page that lists people with their roles and repo access, and adds or removes people.
+
+- A table: login and name, default role, repo roles, source (added or team), last seen, open sessions. Add person (GitHub login, role, repo roles), change role or repos, disable, remove with a confirmation, name or clear the GitHub team and its role (USR-2, USR-14; the team role list stops at contributor). A Settings section lets an admin change the non-security settings, and shows the security ones read-only with "Edit the config file" (USR-14). Changes show at once; the history of changes (`user_events`) is listed below.
+- A removal that would leave no admin is refused with the reason (USR-6).
+- Verified by: `ui: the admin page lists people with roles and repos`, `ui: an admin adds a person and sets repo roles`, `ui: removing the last admin is refused in the page`, `ui: the admin page lists the change history`, `ui: the team role list stops at contributor`, `ui: security settings are read-only in the page`
+
+### UI-223 · My account
+
+The account menu shows who I am, my role, and lets me link Telegram or sign out.
+
+- Top-right menu: name, login, role (with repo roles), Link Telegram (shows the one-time code and the bot to send it to, USR-11; or "Linked" with Unlink), Sign out. Reads only the person's own data.
+- Verified by: `ui: the account menu shows my role and signs out`, `ui: linking telegram shows a one-time code`
+
+### UI-224 · Admins end sessions
+
+Admins can see each person's open sessions and end one or all of them.
+
+- On the admin page (UI-222): per person, each session with its created and last-seen time and a Revoke button, plus "Revoke all" (USR-4). The next request of a revoked session returns to sign-in (UI-219).
+- Verified by: `ui: an admin revokes a session`, `ui: a revoked person returns to sign-in`
+
+### UI-242 · The observer panel
+
+The overview shows what the observer did lately: its last run, this week's proposals and what it spent today.
+
+- An "Observer" panel via `GET /api/observer` (`{enabled, lastRun, proposalsThisWeek, maxPerWeek, spentToday, cap, lastReport}`): the last run's time, trigger (daily or the event), outcome and proposal count, the proposals made in the last 7 days against `[observer].max_proposals_per_week` (OBV-7), today's observer spend against its cap (OBV-10) and when the last weekly report went out (OBV-8). With the observer off, or before its first run, the panel is not shown. A reached cap says so in words.
+- Verified by: `ui: the observer panel shows its last run, proposals and spend`, `ui: the observer panel is hidden when off`
+
+### UI-243 · Observer proposals are tagged and show their evidence
+
+An intent the observer proposed shows an `[observer]` tag, and its evidence is one click away.
+
+- An intent with `source: observer` shows the tag (a text label, not colour alone) beside its title on proposed cards (UI-184), lists, the intent page and the timeline. On the card and the intent page, the evidence links and the expected gain (OBV-5) appear above the rest of the text. A run link opens that run in the page.
+- Verified by: `ui: an observer proposal is tagged and shows its evidence`
+
+### UI-203 · Change urgency and importance on the intent page
+
+The intent page shows urgency and importance as two controls from 1 to 5 that change them, and the priority and parked state update at once.
+
+- Two segmented controls `u` and `i` (choices 1..5, the current one marked in text and state, not colour alone), next to the autonomy control of UI-257 and built like it. Choosing a value posts `{action: "scores", id, u?, i?}` (UI-204). No confirm step: LOOP-133 says scores set order only.
+- After the reply the page shows the new priority (PRI-3), `parked` with `raise u or i to run it` or not (PRI-5), and the intent's place in the queue (UI-61) without a reload; the reply is `Saved. The queue is reordered.` A refusal keeps the old values and shows the reason (UI-67). Done or dropped intents show the scores without the controls.
+- Fits 360 px, light and dark, works by keyboard (arrow keys).
+- Verified by: `ui: the intent page changes urgency and importance`, `ui: a score change shows the new priority and parked state`, `ui: a refused score change keeps the old values`, `ui: scores show without controls on a done intent`
+
+### UI-204 · Scores action
+
+The API has a `scores` action that changes urgency and importance.
+
+- `POST /api/actions` accepts `{action: "scores", id, u?, i?}` (UI-65, UI-66) with `actor: owner`, at least one of `u`, `i`; it applies LOOP-133 and returns the new `priority`, `parked` and the reply text. A missing value, one outside 1–5, a non-integer or an unknown id → the error text and nothing written. With `[auth]` it needs the maintainer role on the repo (UI-220, USR-5).
+- `GET /api/state`, the intent's API and the plane cards carry `u`, `i`, `priority` and `parked` for the controls.
+- Verified by: `ui: scores action writes u and i`, `ui: scores action refuses a bad value`, `ui: scores action needs the maintainer role`, `ui: API shapes`
+
+### UI-205 · Boost button on the plane card
+
+A plane's card in the airspace has a "Boost" button that gives the intent full autonomy and starts it now if it has not started.
+
+- "Boost" on the plane card (UI-80) posts `{action: "boost", id}` with `actor: owner` and applies LOOP-134. Its confirm step is UI-257's raise confirm: `Boost?` / `Raise to a5?`, naming that Towercab may then pass the spec and plan gates and merge on its own unless the change is high risk, the repo's cap or access rules stop it, with "Boost" and "Cancel"; nothing is written until "Boost". For an intent not yet started the confirm also says it starts now.
+- Shown only when the intent is not done or dropped, `source` is `me` (AUT-13; with `[auth]` when the person may set a5, AUT-23, AUT-24) and its level is below a5 or it has no mission yet; hidden otherwise, never disabled. A parked intent without a mission is started by Boost as well (LOOP-134). "Start now" (UI-101) stays beside the button where it is shown and does not change autonomy. The reply says in one sentence what happened: `Boosted: a5 and design started.` or `Boosted: a5. It runs from the next gate.` or the error.
+- Verified by: `ui: boost appears on the plane card for an own intent below a5`, `ui: boost asks for a confirmation that names a5`, `ui: boost on an unstarted intent starts it`, `ui: boost is not shown for another source`, `ui: boost is not shown at a5 for a started intent`
+
+### UI-206 · The highest level offered depends on the source
+
+For intents that are not the owner's own, the autonomy control stops at a4 and no Boost is shown.
+
+- The autonomy control of UI-257 on the page and on cards offers `a0`..`a5` for an intent with `source: me` (or missing), and `a0`..`a4` for any other source (AUT-13; with `[auth]` a5 is offered when the person may set it, AUT-23, AUT-24). The a5 choice is omitted, not disabled, and the control says `a5 is only for your own intents` as a tooltip on the a4 choice's group. The API refuses `a: 5` for such an intent with the same text (a defence, not the only guard).
+- Verified by: `ui: another source gets a0 to a4 only`, `ui: an own intent gets a0 to a5`, `ui: the api refuses a5 for another source`
+
+### UI-207 · The card says why a boosted plane stopped
+
+A boosted plane that waits for the owner says in the card which rule held it, in plain words.
+
+- On the plane card and the intent page, when the effective level is a5 (the intent's `a` is 5) and the mission waits on the owner, the card's wait sentence (UI-56, UI-59) adds one reason: `Waiting because this change is high risk (<risk reason>)` (AUT-18); `Waiting because the repo caps autonomy at a<n>` (AUT-8); `Waiting for access beyond the plan` or `Waiting for a decision on access` (AUT-14, AUT-15, AUT-30); the question or open point already shown (PIP-110) otherwise. The reasons come from the state `GET /api/state` already derives for the wait (`why`); no new decision is made by the page.
+- Verified by: `ui: a boosted plane says it waits for high risk`, `ui: a boosted plane says the repo cap holds it`, `ui: a boosted plane says it waits for access`
+
+### UI-208 · The card shows that a worker lowered autonomy
+
+When a worker lowered an intent's `a` after a boost, the card says so and why.
+
+- If the intent's `lower_why` is set (AUT-7, INT-24's front matter) and its level is below a5, the card and the intent page show `Lowered to a<n> by the worker: <lower_why>` (UI-257's control shows the level itself). The line stays until the owner sets `a` again on the page or with a boost, which remove `lower_why` in the same commit; it never hides the level the control shows. Boost clears the note, since the owner raised the level on purpose (LOOP-134). A later lowering by a worker shows its own note.
+- Verified by: `ui: a card shows that the worker lowered autonomy and why`, `ui: a boost clears the lowered note`, `ui: a later lowering after a boost shows its own note`
+
+### UI-209 · The add-repo form shows how to install the App
+
+When the add-repo form is refused because the GitHub App isn't installed, a folded "See more" explains the fix under the one-line error.
+
+- The refusal of LOOP-66 stays one line on the form (UI-130). If it carries `help` (LOOP-122), a "See more" toggle follows, closed by default, holding: the App's name, a numbered list of the steps, and the link as a real link (`target="_blank"`, `rel="noopener"`). Without `help`, no toggle shows. The toggle stays as the owner left it while the form is used again.
+- Verified by: `ui: a refused add shows the install steps under See more`, `ui: the install steps are folded by default`, `ui: a refusal without help shows no See more`
+
+### UI-210 · The unknown-repo card shows how to install the App
+
+The unknown-repo card shows the same folded install help when adding its repo fails for a missing App install.
+
+- When "Add this repo" (UI-131) is refused with LOOP-122's `help`, the card's error line is followed by the same "See more" block as UI-209, built by the same component.
+- Verified by: `ui: the unknown-repo card shows the install steps under See more`
+
+### UI-211 · Any card that hits the missing install shows the help
+
+Every intent or problem card that reports a repo Towercab can't reach because the App isn't installed carries the folded install help.
+
+- A problem from a failed add (UI-60, `meta.repo-add-failed:<name>`) and an intent or problem card whose reason is LOOP-122's text show the "See more" block of UI-209 under their reason line. The state (`GET /api/state`) adds `installHelp: {app, url, steps[]}` to such a card, taken from the same lookup as LOOP-122; a card whose reason is another error has none.
+- The card's help is cached for 10 minutes per repo (compared without case), so a page that refetches every few seconds does not ask GitHub each time. The cache is dropped at once when the repo becomes reachable (a token for it is minted, or the repo is added), so the help never outlives the problem, and a failed lookup is not cached.
+- Verified by: `ui: a failed add problem shows the install steps`, `ui: an intent card with the missing install shows the steps`, `state: installHelp is set only for a missing install`, `state: install help is cached for 10 minutes per repo`, `state: install help is refreshed when the repo becomes reachable`
+
+### UI-212 · "Try again" adds the repo without retyping
+
+After installing the App, the owner presses "Try again" and the add goes through with what was typed before.
+
+- Next to the error the form and the unknown-repo card show a "Try again" button; the steps end with "then press Try again". It posts the same `addRepo` action (UI-130) with the field's current `github` and `name`, which are kept after a refusal. A problem card (UI-211) offers "Try again" the same way. A new success replaces the error and clears the problem (UI-130).
+- Verified by: `ui: try again adds the repo with the same text`, `ui: the field keeps its text after a refusal`, `ui: a problem card offers try again for a failed add`
+
+### UI-213 · A "New intent" form
+
+The dashboard has a "New intent" button that opens a form shaped like the intent template.
+
+- Fields, in order: repo (a picker of Towercab's repos), title, urgency, importance, autonomy (segmented 1–5 and `a0`..`a5` as UI-203 and UI-257 build them, none chosen by default), then the text boxes Problem, Proposed outcome, Affected users and systems, Constraints, Open questions. Only repo and title are required (INT-2); a score left alone is not written (INT-71).
+- Next to the title the form shows the naming rule of INT-33 in plain words (`Write it as a user story: the product, then what someone can do or see, 4 to 20 words`) with its example; it does not change what is typed.
+- The button is in the top bar and in Cmd-K (UI-265). With `[auth]` a maintainer of the repo writes straight to the intents repo and a contributor proposes (INT-71); this is the Create of UI-220. The repo picker lists the repos where the person is at least a contributor; a viewer has no button. A contributor's form says `A maintainer will accept or close your intent.` under the buttons, and its autonomy choices stop at a4 (UI-206).
+- Verified by: `ui: the new intent form has the template's fields`, `ui: the form needs only a repo and a title`, `ui: the form shows the naming rule beside the title`, `ui: the new intent button is in the top bar and in search`, `ui: the repo picker lists only allowed repos`, `ui: a contributor's form says a maintainer will review it`, `ui: a viewer has no new intent button`
+
+### UI-214 · Create runs the overlap check first
+
+Pressing Create makes an agent look for overlaps and shows what it found before anything is written.
+
+- Create posts `{action: "checkIntent", ...draft}` (UI-216) and the form shows `Checking your intent against the existing ones…` with the fields locked and the button disabled. The answer lists each match: its kind in words (`Open intent`, `Parked`, `Done`, `Dropped`, `Intent PR`), its title as a link (intent page, or the PR), and the `how` line (INT-73). A `titleNote` shows under the title field as a note.
+- Verified by: `ui: create shows that the check is running`, `ui: matches list kind, link and how`, `ui: a title note shows under the title`
+
+### UI-215 · Decide: create anyway, add to one, or cancel
+
+With matches, the owner chooses; with none, the intent is created at once.
+
+- With matches the form offers `Create anyway` (for a contributor, `Propose anyway`), `Add my text to this one` on each match that `canAddTo` (INT-74) and only to a maintainer, and `Cancel` (back to the form, text kept). Done, dropped and PR matches only link. A match past design shows `Already past design. Write a new intent and link <id>.` with the ID as a link, and no add button. With no match the intent is created without a question, and with only a title note it is too.
+- A failed check (INT-73) shows its error with `Create without the check` and `Cancel`; the text says the check was skipped if the owner goes on.
+- Verified by: `ui: with no match the intent is created at once`, `ui: matches offer create anyway, add to this one and cancel`, `ui: done and PR matches offer no add`, `ui: a match past design offers no add and says to write a new intent`, `ui: a contributor is offered propose anyway and no add`, `ui: cancel keeps the typed text`, `ui: a failed check offers create without the check`
+
+### UI-216 · Check and create actions
+
+The API has `checkIntent` and `createIntent` actions behind the form.
+
+- `POST /api/actions` (UI-65, UI-66) accepts `{action: "checkIntent", repo, title, u?, i?, a?, problem?, outcome?, affected?, constraints?, questions?}` with `actor: owner` and returns `{matches, titleNote?}` (INT-73); and `{action: "createIntent", ...same, addTo?: <id>}` which applies INT-72 and then INT-71, or INT-74 when `addTo` is set, and returns `{id, path, added: boolean, reply}`. `createIntent` does not run the check itself: the form decides after `checkIntent`.
+- A bad value, an unknown repo or id, or an intent that cannot be added to (INT-74, with its text) returns the error text and nothing is written. With `[auth]` both actions need the contributor role on the repo (UI-220, USR-5); `createIntent` uses `mode: "direct"` for a maintainer and `"proposal"` for a contributor, chosen by the server from the role, never by the request, and `addTo` needs the maintainer role. For a proposal the reply carries `proposal: true` and the PR's URL instead of a path. A refusal is a 403 with its reason (USR-7).
+- A repeated press cannot make two intents: `createIntent` with the same repo and title as one the same person created in the last 2 minutes (an intent, or an open proposal) is refused with `Already created as <id>`, and nothing is written; the form also disables Create while a request runs.
+- Verified by: `ui: checkIntent returns matches`, `ui: createIntent writes the intent and returns its id`, `ui: createIntent with addTo appends to the intent`, `ui: createIntent refuses a bad value and writes nothing`, `ui: createIntent refuses addTo for an intent past design`, `ui: a contributor's createIntent opens a proposal`, `ui: the mode follows the role, not the request`, `ui: addTo needs the maintainer role`, `ui: a repeated create is refused as already created`, `ui: the new intent actions need the contributor role`, `ui: API shapes`
+
+### UI-217 · The page opens the new intent
+
+After the intent is written, the page opens it.
+
+- On success the page goes to the new intent's page (UI-67 updates keep the page live) and shows `Created <id>.` once; after `addTo` it opens the existing intent and shows `Added to <id>.`. A contributor's proposal is not an intent yet: the page shows `Proposed <id>. A maintainer will accept or close it.` with a link to the pull request and opens the Inbox, where it shows as a proposed card (UI-184). The new intent shows in the Inbox and Board as any intent does, at the next state refresh, which the action's reply waits for (at most 5 s) so the page does not open on a missing intent.
+- Verified by: `ui: a created intent opens its page`, `ui: adding to an intent opens that intent`, `ui: a proposal shows its pull request and the Inbox`, `ui: the page does not open on a missing intent`
+
+### UI-218 · The form is safe to leave and works everywhere
+
+The form keeps what was typed after a refusal, fits a phone and works by keyboard.
+
+- After a refusal or Cancel the fields keep their text; the text is dropped after a success. The form fits 360 px, light and dark, every field has a label, Tab and Enter work, and the error line is announced. The screenshots (UI-275) include the empty form and the overlap list.
+- Verified by: `ui: the form keeps its text after a refusal`, `ui: the new intent form works by keyboard`, `ui: screenshots light, dark and mobile`
+
 ## Out of scope
 
-- Editing intents in the page, except their autonomy (UI-257): the owner edits them in the intents repo or with `/intent`.
+- Editing intents in the page, except their autonomy (UI-257), scores (UI-203) and adding text to an open one (INT-74, UI-215): the owner edits other fields in the intents repo or with `/intent`.
 - Remote access: the page is for this machine only.
 
 ## Decisions

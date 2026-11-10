@@ -3,6 +3,7 @@
 import { expect, test } from "vitest";
 import {
   accessPolicy,
+  defaultLevel,
   effectiveA,
   type GateInput,
   gate,
@@ -112,35 +113,34 @@ test("autonomy: no risk assessment goes to the owner", () => {
 });
 
 test("autonomy: no a counts as a5", () => {
-  expect(effectiveA(null, null, 5, "me")).toBe(5);
-  expect(effectiveA(null, null, 5, null)).toBe(5);
+  expect(effectiveA(null, 5, "me")).toBe(5);
+  expect(effectiveA(null, 5, null)).toBe(5);
   // The repo cap and AUT-13 still apply.
-  expect(effectiveA(null, null, 3, "me")).toBe(3);
-  expect(effectiveA(null, null, 5, "github:issue#12")).toBe(4);
-  // An `a` present still counts, so removing it mid-flight can't loosen a gate.
-  expect(effectiveA(2, null, 5, "me")).toBe(2);
+  expect(effectiveA(null, 3, "me")).toBe(3);
+  expect(effectiveA(null, 5, "github:issue#12")).toBe(4);
+  // Removing `a` is a raise to the default (AUT-35): the page flags it unless the owner did it.
+  expect(defaultLevel("me")).toBe(5);
+  expect(defaultLevel("issue")).toBe(4);
 });
 
 test("autonomy: repo cap", () => {
-  expect(effectiveA(5, 5, 5, "me")).toBe(5);
-  expect(effectiveA(5, 4, 5, "me")).toBe(4);
-  expect(effectiveA(4, 5, 5, "me")).toBe(4);
-  expect(effectiveA(5, 5, 3, "me")).toBe(3);
-  // Removing `a` mid-flight can't loosen a gate: the one present counts.
-  expect(effectiveA(2, null, 5, "me")).toBe(2);
-  expect(effectiveA(null, 2, 5, "me")).toBe(2);
-  expect(effectiveA(5, null, 1, null)).toBe(1);
+  expect(effectiveA(5, 5, "me")).toBe(5);
+  expect(effectiveA(4, 5, "me")).toBe(4);
+  expect(effectiveA(5, 3, "me")).toBe(3);
+  // The intent's current level counts, not the one at pick (AUT-8).
+  expect(effectiveA(2, 5, "me")).toBe(2);
+  expect(effectiveA(5, 1, null)).toBe(1);
 });
 
 test("autonomy: a5 needs source me", () => {
-  expect(effectiveA(5, 5, 5, "me")).toBe(5);
-  expect(effectiveA(5, 5, 5, null)).toBe(5);
-  expect(effectiveA(5, 5, 5, "github:issue#12")).toBe(4);
-  expect(effectiveA(3, 5, 5, "alert")).toBe(3);
+  expect(effectiveA(5, 5, "me")).toBe(5);
+  expect(effectiveA(5, 5, null)).toBe(5);
+  expect(effectiveA(5, 5, "github:issue#12")).toBe(4);
+  expect(effectiveA(3, 5, "alert")).toBe(3);
   expect(
     grantsFor({ a: 5, source: "alert", plan: null, unlock: [], network: [], defaults: [], unplanned: null })
       .open,
-  ).toBe(false);
+  ).toBeUndefined();
 });
 
 test("autonomy: spec gate", () => {
@@ -183,9 +183,14 @@ test("autonomy: a worker only lowers a", () => {
 });
 
 test("autonomy: access by level", () => {
-  expect(accessPolicy(2)).toEqual({ network: "list", protectedPaths: "writable", request: "granted" });
-  expect(accessPolicy(4)).toEqual({ network: "list", protectedPaths: "planned", request: "owner merges" });
-  expect(accessPolicy(5)).toEqual({ network: "open", protectedPaths: "writable", request: "not needed" });
+  // AUT-26, AUT-15: the network is a list at every level, and a mid-build request is a question.
+  expect(accessPolicy(2)).toEqual({ network: "list", protectedPaths: "writable", request: "asks the owner" });
+  expect(accessPolicy(4)).toEqual({
+    network: "list",
+    protectedPaths: "planned",
+    request: "asks the owner, then the PR goes to the owner",
+  });
+  expect(accessPolicy(5)).toEqual({ network: "list", protectedPaths: "writable", request: "asks the owner" });
 
   const input = {
     source: "me",
@@ -204,16 +209,15 @@ test("autonomy: access by level", () => {
   };
   const domains = ["registry.npmjs.org", "*.npmjs.org", "api.stripe.com", "pkg.go.dev", "example.com"];
   // a1–a3: the list, the plan and requests; every protected path but .git.
-  expect(grantsFor({ ...input, a: 3 })).toEqual({ domains, paths: ["**"], open: false });
+  expect(grantsFor({ ...input, a: 3 })).toEqual({ domains, paths: ["**"] });
   // a4: protected paths only as planned (plus the intent's unlock and mid-build grants).
   expect(grantsFor({ ...input, a: 4 })).toEqual({
     domains,
     paths: [".github/workflows/ci.yml", "migrations/**", "ops/**"],
-    open: false,
   });
   expect(grantsFor({ ...input, a: 4, plan: null, unplanned: null, unlock: [] }).paths).toEqual([]);
-  // a5: open network, everything writable.
-  expect(grantsFor({ ...input, a: 5 })).toMatchObject({ paths: ["**"], open: true });
+  // a5: everything writable, and the same domains: the network is never open (AUT-26).
+  expect(grantsFor({ ...input, a: 5 })).toEqual({ domains, paths: ["**"] });
 });
 
 test("autonomy: a0 waits at every gate", () => {
@@ -229,7 +233,7 @@ test("autonomy: a0 waits at every gate", () => {
   });
   // Test and network access are the owner's at every level (AUT-27), and a0 gets a1-a3's policy.
   expect(accessPolicy(0)).toEqual(accessPolicy(1));
-  expect(accessPolicy(0).request).toBe("granted");
+  expect(accessPolicy(0).request).toBe("asks the owner");
   expect(ownerOnly(0)).toBe(true);
   expect(ownerOnly(4)).toBe(false);
   expect(ownerOnly(null)).toBe(false);
@@ -237,13 +241,12 @@ test("autonomy: a0 waits at every gate", () => {
 });
 
 test("autonomy: a0 is never raised", () => {
-  // `a` at pick or now: either one at 0 keeps it at 0; removing `a` does not lift it.
-  expect(effectiveA(0, 5, 5, "me")).toBe(0);
-  expect(effectiveA(5, 0, 5, "me")).toBe(0);
-  expect(effectiveA(0, null, 5, "me")).toBe(0);
-  expect(effectiveA(null, 0, 5, null)).toBe(0);
-  expect(ownerOnly(5, 0)).toBe(true);
-  expect(ownerOnly(0, null)).toBe(true);
+  // Nothing in the level's own arithmetic lifts it: the cap and the source only lower it. A raise comes
+  // from the owner (the page, GitHub); anyone else's is flagged and the mission keeps a0 (AUT-35).
+  expect(effectiveA(0, 5, "me")).toBe(0);
+  expect(effectiveA(0, 5, null)).toBe(0);
+  expect(ownerOnly(0)).toBe(true);
+  expect(ownerOnly(5)).toBe(false);
   // A worker can lower to a0 but never out of it.
   expect(lowered(3, 0)).toBe(0);
   expect(lowered(0, 5)).toBeNull();
@@ -252,7 +255,7 @@ test("autonomy: a0 is never raised", () => {
 
 test("autonomy: a0 ignores risk and cap", () => {
   // A repo cap of 5 or 1 changes nothing; neither does a low risk.
-  for (const cap of [1, 3, 5]) expect(effectiveA(0, 0, cap, "me")).toBe(0);
+  for (const cap of [1, 3, 5]) expect(effectiveA(0, cap, "me")).toBe(0);
   expect(decide({ a: 0, risk: "low" }).merge).toBe(false);
   expect(decide({ a: 0, risk: "high" }).merge).toBe(false);
   // The checks still come first, with their own reasons.
@@ -273,8 +276,6 @@ test("shadow: an a0 intent is refused", () => {
   // An intent that is not a0 is not guarded here.
   expect(shadowVerdict({ aNow: 4 }, "merge", false, LINKS)).toEqual({ ok: true });
   expect(shadowVerdict({ aNow: null }, "drop", false, LINKS)).toEqual({ ok: true });
-  // `a` at pick counts too.
-  expect(shadowVerdict({ aNow: 5, aAtPick: 0 }, "reply", true, LINKS).ok).toBe(false);
 });
 
 test("autonomy: telegram never answers an a0 intent", () => {

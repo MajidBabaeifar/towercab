@@ -1,11 +1,11 @@
-// REPO-32: an App without Administration is refused already at the backup's reads; that is the missing
-// permission, not a backup failure, so the doctor line and the one step appear.
+// REPO-40: an owner login without admin is refused already at the backup's reads; that is the login
+// that can't change the repo, not a backup failure, so the card says so once.
 
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { settingsPass } from "../../src/settings/apply.ts";
+import { forgeOf } from "../../src/github/forge.ts";
+import { applySettings, settingsPass } from "../../src/settings/apply.ts";
 import { forbidden } from "../../src/settings/script.ts";
-import { missingPermission, PERMISSION_STEP } from "../../src/settings/store.ts";
-import { settingsView } from "../../src/ui/repos.ts";
+import { storedSettings } from "../../src/settings/store.ts";
 import { failResult } from "../helpers/tools.ts";
 import { ghHandler, settingsRig } from "./helpers.ts";
 
@@ -18,22 +18,22 @@ afterEach(() => {
   else process.env.GIT_CONFIG_GLOBAL = saved;
 });
 
-test("repo: a forbidden backup read is the missing permission", async () => {
+test("repo: a forbidden backup read says the login cannot change the repo", async () => {
   for (const path of ["repos/owner/web/branches/main/protection", "repos/owner/web/vulnerability-alerts"]) {
-    const s = await settingsRig({ apply: true });
+    const s = await settingsRig();
     const real = ghHandler(s.gh);
     s.r.tools.on("gh", (args, opts) =>
       args[1] === path
         ? failResult("gh: Resource not accessible by integration (HTTP 403)")
         : real(args, opts),
     );
-    const out = await settingsPass(s.deps, s.web);
+    await settingsPass(s.deps, s.web);
+    const out = await applySettings(s.deps, s.web);
     expect(out).toMatchObject({
       state: "gaps",
-      note: "Nothing applied: the GitHub App lacks Administration (write)",
+      note: "Your GitHub login can't change this repo's settings: it needs admin on owner/web",
     });
-    expect(missingPermission(s.r.db)?.repo).toBe("web");
-    expect(settingsView(s.r.db, "web").step).toBe(PERMISSION_STEP);
+    expect(storedSettings(s.r.db, "web")?.gaps).toEqual(["merge rules are off"]);
     expect(s.script.runs.map((a) => a[0])).not.toContain("owner/web");
   }
 });
@@ -46,9 +46,8 @@ test("repo: only gh's HTTP 403 counts as forbidden", () => {
 });
 
 test("repo: the base branch is encoded when TOWERCAB.md is read", async () => {
-  const s = await settingsRig({ apply: true });
-  s.web.base = "feat/x#1";
-  await settingsPass(s.deps, s.web);
+  const s = await settingsRig();
+  await forgeOf(s.deps.github).readFile("owner/web", "TOWERCAB.md", "feat/x#1");
   const read = s.r.tools.calls.find((c) => c.args[1]?.includes("contents/TOWERCAB.md"));
   expect(read?.args[1]).toContain("ref=feat%2Fx%231");
 });

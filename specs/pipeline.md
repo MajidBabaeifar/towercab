@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..114, PIP-115..121, PIP-130..156, PIP-165..172, PIP-182..186 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..194, PIP-196..207, PIP-210 · **Prefix:** PIP
 
 ## Purpose
 
@@ -207,17 +207,19 @@ After each build or repair, code runs the repo's setup and checks in a sandbox a
 back to the worker.
 
 - ` ```setup ` (base branch's) runs first, with network and the repo cache writable; non-zero → once
-  more after 60 s, then red. The run set ([REPO-9](repo.md)) runs in order without network, each
-  bounded by `check_timeout`. Logs: `runs/<id>/verify-<n>.log` (`$ <command>` before each output); under LOOP-39 they move to `runs/<id>/verify/check-<n>.log`.
+  more after 60 s, then red. The run set ([REPO-9](repo.md)) runs in order, each bounded by
+  `check_timeout`. Setup and the run set both reach only the built-in registry list, through the allowlist
+  proxy (PIP-158). Logs: `runs/<id>/verify-<n>.log` (`$ <command>` before each output); under LOOP-39 they move to `runs/<id>/verify/check-<n>.log`.
 - Red → a repair round in `build` with the log tail (at most 2 for verify and proof together,
   `repairs`), then `waiting: checks red`. A log that shows a missing tool or a sandbox failure is a
   fault ([LOOP-10](loop.md)), not a repair.
   A log that shows the checks could not write to the repo cache is a question for the owner
   (PIP-95), not a repair.
-- **Sandbox**: `bwrap [--unshare-net] --unshare-pid --unshare-ipc --unshare-uts --new-session
-  --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /run --tmpfs <HOME> --tmpfs /tmp`,
-  the toolchain dirs read-only with credential files masked, the repo cache (LOOP-34), `--bind
-  <checkout>` with its `.git` read-only, `--chdir <checkout>`, `sh -c <line>`.
+- **Sandbox**: `bwrap --unshare-net --unshare-pid --unshare-ipc --unshare-uts --new-session
+  --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /run [the proxy's node, bridge and socket,
+  PIP-158] --tmpfs <HOME> --tmpfs /tmp`, the toolchain dirs read-only with credential files masked, the repo
+  cache (LOOP-34), `--bind <checkout>` with its `.git` read-only, `--chdir <checkout>`, `sh -c <line>`. Every
+  part is fixed in code (PIP-157).
 - Verified by: `pipeline: verify runs setup then checks`, `pipeline: verify red repairs then waits`, `pipeline: sandbox argv`
 
 ### PIP-24 · Claude runs
@@ -229,12 +231,12 @@ Every Claude run is headless, sandboxed, and gets only the tools and access its 
   move into the stage folder under LOOP-39) --model
   <m> --tools <list> [--allowedTools …] [--disallowedTools …] [--session-id|--resume <uuid>]
   [--max-budget-usd <n>] [--json-schema <schema>]`, the prompt on stdin. The system file = the base
-  branch's `CLAUDE.md` + the writing guide (PIP-39). Env: HOME, PATH, LANG, the repo cache's
-  variables (LOOP-34), `[agent].env`; never a GitHub token.
+  branch's `CLAUDE.md` + the writing guide (PIP-39). Env: HOME, PATH (a constant, PIP-157), LANG, the repo
+  cache's variables (LOOP-34) and the repo's own variables that pass PIP-159; never a GitHub token.
 - Settings: `sandbox {enabled, failIfUnavailable, allowUnsandboxedCommands: false, filesystem
   {denyRead: secret paths, denyWrite: <checkout>/.git + blocked protected paths, allowWrite: the repo
   cache}, network {allowedDomains: the granted domains}}`, `permissions.allow: WebFetch(domain:<d>)`
-  per granted domain (`WebFetch(domain:*)` at a5), the guard hook for workers (PIP-29). Secret paths:
+  per granted domain (never `*`, AUT-26), the guard hook for workers (PIP-29). Secret paths:
   `~/.ssh`, `~/.config/gh`, `~/.aws`, `~/.gnupg`, `~/.config/towercab`, `~/.claude/.credentials.json`,
   `~/.netrc`, `~/.git-credentials`, `~/.config/sops`, `~/.config/restic`, `~/.config/age`,
   `~/.password-store`, `~/.docker`, `~/.kube`, `~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials*`,
@@ -243,9 +245,6 @@ Every Claude run is headless, sandboxed, and gets only the tools and access its 
 - Tools by agent: **Agents** table. Disallowed for every run: `Bash(git push:*)`,
   `Bash(git remote:*)`, `Bash(git config:*)`, `Bash(gh:*)`, `Bash(ssh:*)`, `Bash(sudo:*)`, `Read` of
   each secret path. A denied push or secret read fails the step.
-- Draft change: PIP-157..159 and AUT-26 fix the sandbox settings, the environment and the granted
-  domains in code (no `WebFetch(domain:*)`, no `[agent].env`). The code PR switches this row, PIP-23,
-  PIP-95 and PIP-116 (wording), LOOP-34 and LOOP-69 in the same commit as the code.
 - Verified by: `claude: worker argv`, `claude: review argv`, `claude: settings by autonomy`, `claude: result parse`, `claude: no token in env`, `claude: other missions are unreadable`
 
 ### PIP-25 · Design
@@ -425,6 +424,7 @@ Only the owner's reviews and comments move an intent; anyone else's are ignored.
 - Author login = `[github].me` (case-insensitive), with a non-empty body or a review state. Comments
   by the App's bot or anyone else never raise an event. Comments older than `feedback_seen` are
   skipped; `feedback_seen` moves forward when an event is taken.
+- With `[auth]` set ([users.md](users.md)), [USR-9](users.md) decides who counts instead of the owner's login alone.
 - Verified by: `events: only the owner's comments count`
 
 ### PIP-45 · Slash commands
@@ -612,7 +612,12 @@ The repair run and the issue scorer each get their own file, so their role is wr
 - `agents/score.md`: the issue scorer (INT-22), no tools, `session: none`, `timeout_min: 5`.
 - The PR text is part of the build result, written by the worker. It stays in `worker.md` as its own
   section of the prompt rather than a separate run; PIP-75 records this.
-- Verified by: `agents: repair continues the worker session`, `agents: score has no tools`
+- `agents/worker.md` and `agents/repair.md` carry the same "Parallel work" rules (LOOP-160): no merge or
+  rebase of the base only because it moved (only for a conflict, a failing check or real base risk, then
+  rerun the affected checks); checks from an older head are no evidence for the new one; never stash,
+  reset or delete work the agent didn't create, nor touch another mission's branch or worktree;
+  conflicts are resolved only by the merge queue's head.
+- Verified by: `agents: repair continues the worker session`, `agents: score has no tools`, `agents: worker and repair carry the parallel work rules`
 
 ### PIP-75 · The audit
 
@@ -715,6 +720,8 @@ A code PR that conflicts with its base is merged with the base by Towercab's con
 - Applies to the conflict round of PIP-31 and PIP-22 (`DIRTY`), also when the conflict is found before
   the gate (in `ci` or `review`): the mission goes to `build` with `repair.kind = "conflict"` and never
   to an owner wait first. The conflict round's first run is not counted as a fix round.
+- Once missions are queued to merge, only the head of the repo's merge queue runs a conflict round; the
+  others wait their turn without one (LOOP-160).
 - Up to 2 automatic conflict rounds per code PR. The owner is asked (`waiting: merge failed`) only
   when the PR still conflicts after the second round.
 - Verified by: `pipeline: a code PR in conflict is resolved without asking`, `pipeline: a code conflict that stays after two rounds asks the owner`
@@ -897,7 +904,7 @@ the worker, because it is not a code problem.
   read-only and that the code is not at fault. The options: `Allow` (Towercab remembers it for the
   repo and runs the checks again; later missions of the repo do not ask) and `Don't allow` (the
   mission waits `checks red`, and the owner can make the checks write inside the checkout, for example
-  `CARGO_TARGET_DIR` under `[repos.<r>].env`, then reply, or drop the intent). It recommends allowing,
+  `CARGO_TARGET_DIR` under `[repos.<r>].env` (a name PIP-159 allows), then reply, or drop the intent). It recommends allowing,
   since setup and the worker already write there.
 - An answer that starts with `allow`, `yes` or `ok` (any case) allows; any other answer does not. The
   answer continues the mission at the stage that asked, not at `build`.
@@ -1139,7 +1146,7 @@ owner, naming the test and why, and the owner's answer decides.
 
 - The worker returns `status: access` with `access.tests: [{path, why}]` (**Schemas** `build`); the
   guard's block reason for a protected existing test ends `if you need it, finish what you can and
-  return status access with this test and why`. Unlike other unplanned access (AUT-15) this is never
+  return status access with this test and why`. Like all unplanned access (AUT-15) this is never
   granted by Towercab itself, at any autonomy: the mission waits with a question that names the test
   and the reason (PIP-110), with the options `Allow this change` and `No, keep the test as it is` (PIP-138), and a
   recommendation.
@@ -1568,9 +1575,9 @@ When one job's log can't be read, the repair details say so in one line and the 
 Nothing a person or a repo writes can loosen the sandbox: its arguments, mounts, masked files, environment and network are decided by Towercab's code alone.
 
 - `sandboxArgv`, the Claude run's sandbox settings (PIP-24) and the sandbox environment are built from the mission only (checkout, cache, granted domains). No config key, no `TOWERCAB.md`, `CLAUDE.md` or agent file, no intent field and no plan text adds a mount, removes a mask, adds a variable, passes a bwrap or Claude sandbox argument or turns the sandbox off.
-- There is no "unsafe" switch, flag or environment variable. `[agent].toolchain`, `[agent].path`, `[agent].env` and `[agent].sandbox_unix_sockets` no longer reach a sandboxed command: the toolchain directories, `PATH` and the masked files are constants of `src/pipeline/sandbox.ts`, and unix sockets are never bound in. The one setting that stays is a repo's named variables, `[repos.<r>].env`, under the narrow rule of PIP-159. A config that still sets an ignored key loads, and `towercab doctor` names the key as ignored.
+- There is no "unsafe" switch, flag or environment variable. `[agent].toolchain`, `[agent].path`, `[agent].env` and `[agent].sandbox_unix_sockets` no longer reach a sandboxed command: the toolchain directories (`~/.local/bin`, and the directory of the Node running Towercab when it lives under HOME; when that directory is a `bin` of its own install, such as `~/.local/node/bin`, the whole install is mounted read-only so `npm` and `npx`, links into `../lib`, resolve), `PATH` and the masked files are decided in `src/pipeline/sandbox.ts`, and the sandbox of repo commands never binds unix sockets in (nor does Claude's own, PIP-162). The one setting that stays is a repo's named variables, `[repos.<r>].env`, under the narrow rule of PIP-159. A config that still sets an ignored key loads, and `towercab doctor` names the key as ignored.
 - A repo file that asks for more (a `TOWERCAB.md` setting, an agent file with `sandbox: none` for a tool-using agent, PIP-78) is refused with the reason or ignored, and never changes the argv.
-- Verified by: `sandbox: config keys do not change the argv`, `sandbox: repo and intent files do not change the argv`, `sandbox: no unsafe switch exists`, `sandbox: ignored config keys are named by doctor`
+- Verified by: `sandbox: config keys do not change the argv`, `sandbox: repo and intent files do not change the argv`, `sandbox: no unsafe switch exists`, `sandbox: ignored config keys are named by doctor`, `sandbox: node's whole install is mounted so npm resolves`
 
 ### PIP-158 · Network goes through an allowlist proxy
 
@@ -1578,8 +1585,8 @@ A sandboxed command has no network of its own: it reaches only the domains the r
 
 - The sandbox always runs with `--unshare-net`. A proxy run by Towercab outside the sandbox listens on a unix socket bound into it; the sandbox sets `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` for it (and their lower-case forms) and has no other route out.
 - The proxy allows a `CONNECT` or request only to a granted domain (AUT-14, AUT-26; `*.d` matches subdomains). It refuses IP literals, a name that resolves to a loopback, private or link-local address, a port other than 80 and 443, and any host not granted; a refusal is logged with the domain.
-- The built-in package-registry list (AUT-14, AUT-26) is the same for setup (PIP-23), checks, proof, screenshots and e2e commands and Claude runs, and nothing more: any other domain reaches a command only as a plan grant (AUT-14). Nothing else changes by command or by autonomy level. With no domain at all, no proxy socket is bound and nothing is reachable.
-- Verified by: `sandbox: network is always unshared`, `sandbox: the proxy allows a granted domain`, `sandbox: the proxy refuses a domain that is not granted`, `sandbox: the proxy refuses IP literals and private addresses`, `sandbox: no grant binds no proxy`
+- The built-in package-registry list (AUT-14, AUT-26) is the same for setup (PIP-23), checks, proof, screenshots and e2e commands and Claude runs, and nothing more: any other domain reaches a command only as a plan grant (AUT-14). The one exception is the ship stage (SHIP-5, SHIP-9): its commands (the e2e suites, `live_command`, `rollback_command`) also reach the host of the live URL, the app just shipped to. A platform's API is a plan grant or, for every intent of a repo, the owner's `towercab repo set <name> ship_network=<domains>` (LOOP-69; kept in the database, never in a repo file, and named by `towercab doctor`); a private-address or `localhost` live URL stays unreachable. Nothing else changes by command or by autonomy level. With no domain at all, no proxy socket is bound and nothing is reachable. An error of an upstream or a client (a reset in the middle of a download, a client that vanishes) ends only that connection: a 502 if no response has started, else the response is destroyed; nothing is thrown out of the proxy into Towercab's process.
+- Verified by: `sandbox: network is always unshared`, `sandbox: the proxy allows a granted domain`, `sandbox: the proxy refuses a domain that is not granted`, `sandbox: the proxy refuses IP literals and private addresses`, `sandbox: no grant binds no proxy`, `sandbox: a plan's domains reach commands too`, `sandbox: the ship stage reaches the live app's host`, `sandbox escape: a granted domain goes through the bridge and an ungranted one is refused`, `sandbox: ship commands reach the platform domains the owner approved`, `sandbox: an upstream reset mid-download does not stop the proxy`
 
 ### PIP-159 · A repo's commands never see a credential
 
@@ -1595,7 +1602,7 @@ Setup, checks and e2e commands of a repo run with no token, key or login of the 
 
 A suite of real escape attempts runs in CI against the real sandbox, and every attempt must fail.
 
-- Each attempt runs a command through the same builder as production (`sandboxArgv` and the Claude settings) and passes only if the attempt fails: reading `~/.ssh` and the App key, writing outside the checkout, writing into `<checkout>/.git`, reaching a host without a grant (direct, by IP, by a non-granted name, through a granted name that resolves to a private address), reading a secret environment variable, listing host processes (`/proc` shows only the sandbox's own), and a signal or `ptrace` to a host process.
+- Each attempt runs a command through the same builder as production (`sandboxArgv` and the Claude settings) and passes only if the attempt fails: reading `~/.ssh` and the App key, writing outside the checkout, writing into `<checkout>/.git`, reaching a host without a grant (direct, by IP, by a non-granted name, through a granted name that resolves to a private address), reading a secret environment variable and listing host processes (`/proc` shows only the sandbox's own). What the proxy refuses (a granted name that resolves to a private address, an IP literal, a port) is checked by its own tests (PIP-158).
 - The suite is part of `npm run check` and of the CI workflow. Where bwrap is not installed, each attempt is skipped with the note `skipped: no bwrap`, so a local run still passes. The CI workflow installs bwrap and the AppArmor profile of PIP-162 and fails if bwrap is missing there, so the suite always runs in CI. A leak fails with the attempt and what it read or wrote.
 - Verified by: `sandbox escape: ssh keys cannot be read`, `sandbox escape: the app key cannot be read`, `sandbox escape: a write outside the checkout fails`, `sandbox escape: a write into .git fails`, `sandbox escape: the network is unreachable without a grant`, `sandbox escape: secret variables are not set`, `sandbox escape: host processes are not visible`, `sandbox escape: without bwrap the attempts are skipped with a note`, `sandbox escape: CI installs bwrap and fails when it is missing`
 
@@ -1614,7 +1621,8 @@ The sandbox runs on Ubuntu with unprivileged user namespaces restricted, without
 
 - Towercab never tells the owner to set `kernel.apparmor_restrict_unprivileged_userns=0` or `kernel.unprivileged_userns_clone`. Where the restriction blocks bwrap, `towercab doctor` and the fault of PIP-161 say it and give the narrow fix: an AppArmor profile that allows only the `bwrap` binary Towercab uses to create user namespaces.
 - The self-test of PIP-163 runs the real argv, so a restricted host is found before a mission starts.
-- Verified by: `sandbox: a restricted user namespace gives the apparmor profile fix`, `sandbox: doctor never suggests turning the restriction off`
+- The probe decides (PIP-163): a sandbox that works never gets a card, whatever files exist. When the probe fails, nothing is picked and no Claude run starts (a run asked for waits `fix sandbox`, stage `blocked`; a retry after the fix carries on). The text the owner sees is the probe's own error and, only if `kernel.apparmor_restrict_unprivileged_userns` is 1 and Towercab's profile (`/etc/apparmor.d/towercab-bwrap`) is not installed, the one step with the exact install command; `towercab doctor` shows the same step. Nothing is loosened to make a run work: Claude's own sandbox never gets `allowAllUnixSockets`, and the host's sockets stay hidden.
+- Verified by: `sandbox: a restricted user namespace gives the apparmor profile fix`, `sandbox: doctor never suggests turning the restriction off`, `hostcheck: a failed probe with the restriction on and no profile shows the install command`, `hostcheck: a working sandbox runs with the restriction on and no profile file`, `hostcheck: a failed probe otherwise shows the probe's error`
 
 ### PIP-163 · The sandbox is tested at start
 
@@ -1648,6 +1656,7 @@ An intent that names requirement numbers in advance gets different ones, written
 
 - At pick, Towercab reads the IDs in the intent's `## Proposed outcome` (`spec IDs: PIP-130..132`, ranges and lists) and checks them against the base branch and the requirement IDs added by open spec PRs (PIP-130).
 - A reserved range that sits in a gap is valid when nothing on `main` or in an open spec PR uses its IDs; it is never renumbered just for being in a gap.
+- An ID is taken only when it exists on the base branch or in an open spec PR of another intent; an ID that is the intent's own (written by its own merged or open spec PR, or named by the intent file as already written) is never taken (PIP-202).
 - A clash renumbers the whole reserved range to the next free numbers of the same prefix, keeping its length, and rewrites that line and any other mention of the old IDs in the intent through `setField`-style edits that leave other lines byte-identical; the new numbers are what the design gets as its reserved IDs.
 - The change is committed to the intents repo like any intent edit (INT rules) and noted in the mission's log; nothing else in the intent changes. No clash → the intent is untouched.
 - Verified by: `pipeline: reserved IDs that clash are renumbered at pick`, `pipeline: renumbered IDs are written back to the intent`, `pipeline: free reserved IDs leave the intent untouched`, `pipeline: a reserved range in a gap is not renumbered`
@@ -1869,6 +1878,59 @@ An old secret finding in a file that is not a test or fixture is never ignored o
 - A finding still at the head is not affected: it is fixed in the code (PIP-193).
 - Verified by: `pipeline: an old finding outside tests asks the owner with rule, file, line and commit`, `pipeline: an old finding outside tests is not offered for gitleaksignore`, `pipeline: test and fixture paths are recognised`, `pipeline: a path with a parent segment is not a test path`
 
+### PIP-197 · A change in a specialist area also gets a specialist review
+
+A code PR that touches security or infrastructure files is also reviewed by a specialist for that
+area, next to the general review, so the risky parts are read by someone who knows what to look for.
+
+- Areas and the paths that call them in, matched by code on the PR's changed files, not by the agent.
+  The shared default list holds generic patterns only. `Security`: any path with a `sandbox`, `auth`,
+  `secret`, `token`, `credential`, `permission`, `crypto`, `session` or `password` segment or file-name
+  word (broad on purpose: a missed security issue costs more than an extra run). `Infra`: `ansible/**`,
+  `deploy/**`, `infra/**`, `terraform/**`, `Dockerfile*`, `docker-compose*`, `*.service`,
+  `.github/workflows/**`. No file of Towercab itself is in the default.
+- A repo adds its own paths per area in `REVIEW.md` under `## Specialist paths` ([REPO-42](repo.md)); they
+  extend the default, never replace it. A path may call in both areas. No path matches → no specialist
+  runs and the review is as in PIP-4.
+- Each called-in specialist runs after the general review, on the same head and with the same inputs
+  (intent, spec IDs, plan, diff, CI result, `REVIEW.md`), read-only and in a new session. Agents
+  `review-security` and `review-infra` (`agents/*.md`, PIP-76) differ from `review` only in their
+  brief: what to look for in that area.
+- A specialist's result is kept with what it judged and reused while the diff's `git patch-id` is
+  unchanged (as PIP-4). Its cost counts with the review's (MET-28).
+- A specialist that fails to finish ends as any run does (PIP-24): the mission waits for the owner
+  with the reason. It is not skipped.
+- Verified by: `pipeline: a repo's specialist paths also call in a specialist`, `pipeline: a security change gets a security review`, `pipeline: an infra change gets an infra review`, `pipeline: a change outside the specialist areas gets only the general review`, `pipeline: specialist review reused for an unchanged diff`
+
+### PIP-198 · Specialist findings follow the rules of the general review
+
+A specialist reports only Important findings, never nits, and its findings count toward approval and
+go back to the builder like any others.
+
+- Schema `review` (PIP-5) is used unchanged. The specialist's prompt asks only for `important`
+  findings, with `pass` set to `Security` or `Infra`; any `nit` it returns is dropped by code before
+  the verdict. `REVIEW.md`'s `## What Important means here` applies to it too.
+- The verdict (PIP-5) is computed over the general review and every specialist together: approved
+  only when each is approved, and with no important finding from any of them. The specialist's
+  `door` and `red_lines` are merged into the general review's (a one-way door from any wins).
+- Its findings appear in the Review comment (PIP-42, PIP-92) under their pass, and a specialist that
+  doesn't approve sends the change back to build in the same two fix rounds as PIP-98, not extra
+  ones. The general review's and every specialist's findings go into the same round: one repair
+  run with all of them as the details, then one new review pass (general and specialists) on the new diff.
+- Verified by: `pipeline: specialist nits are dropped`, `pipeline: a specialist's important finding stops approval`, `pipeline: specialist findings go back to the builder in the same fix rounds`, `pipeline: both reviewers' findings go into one fix round`, `pipeline: review comment shows specialist findings under their pass`
+
+### PIP-199 · A specialist review has the review's limits
+
+A specialist review runs under the same limits and permissions as the general review, so an extra
+reviewer cannot read more or spend more than the first.
+
+- `agents/review-security.md` and `agents/review-infra.md` carry the front matter of `agents/review.md`
+  (tools, `allow`, sandbox, model `review`, `session: new`, `timeout_min`, `max_cost_usd: 3`; PIP-94);
+  `[agent].max_budget_usd` can only lower it (PIP-71).
+- Both are listed in the agents table with the same permissions as `review`; this narrows nothing
+  and gains nothing (PIP-77).
+- Verified by: `agents: specialist reviews have the review's limits`
+
 ### PIP-194 · A plan that adds a wait lists the wait table in its access
 
 When a plan adds an owner wait or a new question, it asks up front for the file that holds the wait
@@ -1889,6 +1951,283 @@ Removed: the owner decided that an edit to `src/machine.ts` the plan did not lis
 owner as unplanned access (AUT-15), even when it only adds wait table entries. PIP-194 is the whole
 fix: the plan lists the file up front.
 
+### PIP-200 · Stage tests use a fake forge, not fake `gh` command lines
+
+The tests of the pipeline stages and the loop check what a stage asks the code host to do through a fake `Forge`, so they do not depend on how `GitHubForge` words its `gh` commands.
+
+- `FakeForge` (`tests/helpers/fake-forge.ts`) implements all of `Forge` (every host read and write) in memory: it records each call by method and arguments and answers from the test's setup. Tests that need a host failure make a method throw.
+- Tests under `tests/pipeline/` and the loop tests build their `Ctx` with `FakeForge`; none of them registers a `gh` command line on `FakeTools` or builds a `GitHubForge`.
+- `gh` command lines are faked only in the tests of `GitHubForge` and of `src/github/` itself, and in tests of code that still calls `GitHub` directly (settings, releases, secrets, readiness) until it moves behind `Forge`.
+- A guard test fails when a file under `tests/pipeline/` mentions a `gh` argument list (an `args` check for `"gh"`, `"pr"`, `"api"` or `"run"` handed to `FakeTools`) or imports `GitHubForge`.
+- Behaviour does not change: every stage test keeps its title and asserts the same outcome.
+- Verified by: `forge: stage tests hold no fake gh command lines`, `forge: FakeForge records calls and answers from setup`, `forge: FakeForge fails a method on request`
+
+### PIP-201 · Stages reach the code host only through `Forge`
+
+A stage can only call the code host through the `Forge` interface; the raw `gh` calls are not within its reach.
+
+- `Ctx.github` is typed `Forge`, not `Forge & GitHub`; the `Host` type is removed from the stage contract (`src/handlers.ts`). The loop keeps the concrete object that is both, and gives stages only its `Forge` side.
+- A stage that today calls `gh`, `owner`, `gitAuth` or `bot` through `Ctx.github` reaches the same result through a `Forge` method (a new method where none fits), built by `GitHubForge` alone.
+- The code that still needs the raw calls (settings, releases, secrets, readiness) takes a separate `GitHub` dependency from the loop, not from `Ctx`.
+- `npm run typecheck` fails when a stage reads a `GitHub` member from `Ctx.github`.
+- Verified by: `forge: Ctx.github is a Forge and nothing more`, `forge: stages make the same host calls through Forge`
+
+### PIP-202 · An intent's own spec rows are never renumbered
+
+Towercab never moves an ID that is the intent's own: one its own spec pull request wrote (merged or open), or one the intent file itself names as already written.
+
+- At pick (PIP-131) and in the checks before the design runs and before it publishes (PIP-130), a reserved ID is counted as taken only if it exists on the base branch or is added by an open spec PR of another intent, and is not the intent's own.
+- An ID is the intent's own when either holds: (a) its row on the base branch, or in an open spec PR, was added by a spec PR of this intent; or (b) the intent file names it as already written (for example "already written; make them Live"). A spec PR belongs to the intent when its head branch starts with `towercab/<intent id>-`, ends with `-spec`, and the segment right after the prefix is not a bare number (the real form is `towercab/<intent id>-<short title>-spec`; the shorter `towercab/<intent id>-spec` also matches). A bare number there marks a sibling intent: `towercab/261105-2152-2-…-spec` does not belong to `261105-2152`. For a merged PR, the IDs are the `### <ID> ·` headings its merge adds.
+- An own ID on the base branch stays as written, and the design gets it as an existing row to build or make Live, not as a new one. An open spec PR of the same intent never makes its own IDs a clash.
+- A reserved ID whose rows on the base branch belong to another intent, or to no intent (no matching spec PR and not named as already written by the intent), is still moved by PIP-131. Narrowed by PIP-210: when the intent's spec-IDs line words an ID as existing ("made true as written", "changed"), it is a reference and is not moved.
+- If the merged spec PRs cannot be read, the reserved IDs are left unmoved except those that exist on the base branch with no own-ID evidence from the intent file; the mission's log notes "IDs unchecked against merged spec PRs", and PIP-132 stays the backstop.
+- Verified by: `pipeline: reserved IDs from the intent's own merged spec PR are kept`, `pipeline: reserved IDs from the intent's own open spec PR are kept`, `pipeline: reserved IDs the intent names as already written are kept`, `pipeline: a spec PR head is matched by the intent id prefix and the -spec suffix`, `pipeline: a sibling intent's spec PR head is not matched`, `pipeline: reserved IDs that belong to another intent's rows are still moved`, `pipeline: reserved IDs on main that belong to no intent are still moved`, `pipeline: unreadable merged spec PRs leave reserved IDs unmoved`
+
+### PIP-203 · A revision started by the owner's comment is answered with a reply
+
+When a design, plan or build revision answers the owner's comments, the worker also writes a reply to them.
+
+- The result of a revision that the owner's feedback started (PIP-25, PIP-43; on the spec, plan or code PR) gains `reply`: Markdown written by the worker (PIP-40), asked for in the prompt and required in that run's result schema (no other run's schema has it). A revision that changes nothing is asked to return one saying `Nothing to change: <why>`, and it is posted (PIP-204).
+- A missing, empty or unreadable `reply` never blocks, fails, repeats or delays the revision: the revision is applied and pushed as if the reply were there, and Towercab posts a generic reply in its place: `Revised in <short commit sha>`, the list of files the revision changed (at most 20, then "and <n> more"), and the line `Generated by Towercab: the worker wrote no reply.` It is built by code from facts it owns (PIP-40) and posted and threaded like a written reply (PIP-204). When nothing changed, it says `No files changed.` Towercab never starts another revision to get a better reply. The reply is not asked for on a revision Towercab started itself (red checks PIP-82, conflicts PIP-81, review or gate fixes, repairs) nor on a first run.
+- The prompt lists each comment of the feedback with its id, so the reply can answer them one by one (PIP-205). The PR description is still rewritten as before (PIP-48); `reply` is in addition.
+- Verified by: `pipeline: a feedback revision asks for a reply`, `pipeline: a missing reply gets a generic one with files and commit`, `pipeline: the generic reply is marked generated`, `pipeline: a missing reply never blocks or repeats a revision`, `pipeline: a revision Towercab started needs no reply`, `pipeline: a revision that changes nothing still replies`, `pipeline: the feedback prompt lists each comment with its id`
+
+### PIP-204 · The reply is one PR comment, with a pointer in each line thread
+
+Towercab posts the reply as one general comment on the PR the revision changed, and adds a one-line pointer in each line thread it answers, so no thread looks ignored.
+
+- Posted by `Forge` after the revision's commit is pushed. The general comment is a new PR comment that names the agent and answers every comment of the revision, quoting or linking each one (PIP-205). It is the only place the full reply is written.
+- For each owner comment of the revision that is a line comment or part of a review thread, `Forge` also posts a threaded reply in that thread: `Answered in <link to the general comment>`. Plain PR comments and review bodies (Approve or Request changes) cannot be threaded, so they get no pointer; the general comment quotes and links them.
+- The general comment has the header `**Reply** · <agent> · <intent> · round <n>` (PIP-182) and the marker `<!-- towercab:reply:<n> -->`, as PIP-42; the pointers carry the header and the marker `<!-- towercab:reply-pointer:<n>:<comment id> -->`. The same round edits its general comment and its pointers instead of adding more. Nothing is posted before the commit it describes. Pointers are posted after the general comment, since they link to it.
+- A host failure while posting the general comment is retried on the next pass, up to 3 posts in all, then the reply is given up and logged; it never loses the revision or sends the mission back. A pointer that fails is logged and does not hold back the general comment. A host whose `Forge` has no `replyInThread` gets no pointers.
+- Verified by: `github: the reply is one general comment with header and marker`, `github: a line comment gets an answered-in pointer in its thread`, `github: a plain comment gets no pointer and is quoted`, `pipeline: the reply is posted after the revision is pushed`, `pipeline: a failed reply post is retried`, `pipeline: a failed pointer does not hold back the reply`
+
+### PIP-205 · What the reply says
+
+The reply tells the owner, in plain words, how Towercab read the comment, what it changed or left alone, and what is still open.
+
+- Written to `prompts/writing.md`: the outcome first; no step names, field names or other internal terms. Parts: how the comment was read; what changed in the PR (and what was not changed and why); new or still-open questions and points, each with a recommendation, or one line saying nothing is open.
+- Each comment of the revision gets its own part, quoted or linked (PIP-204), so that several comments handled in one revision get one reply that answers each of them (PIP-203). A comment the worker did not act on is still answered, with the reason.
+- A comment that needs no change is answered briefly in the form `Nothing to change: <why>`, so silence never reads as ignored.
+- `agents/design.md`, `agents/plan.md`, `agents/worker.md` and `agents/repair.md` carry these rules for a feedback revision, and the revision prompt repeats them beside the list of comments.
+- Verified by: `prompts: revision prompts ask for a reply that answers each comment`, `prompts: the reply rules follow the writing guide`, `prompts: a comment needing no change is answered Nothing to change`
+
+### PIP-206 · A reply is not feedback and does not replace the description
+
+Towercab's replies never start a revision, and the PR description is kept up to date as before.
+
+- A reply is a comment of the App's bot, so it never raises an event (PIP-42, PIP-44), including in a thread under the owner's comment, and never moves `feedback_seen`.
+- The PR description is rewritten by every revision as today (PIP-48); a reply does not stand in for it.
+- Verified by: `events: a reply under the owner's comment raises no event`, `pipeline: a revision still rewrites the PR description`
+
+### PIP-207 · One reply per revision, even when handled together
+
+Several comments taken in one revision, and a comment arriving while a reply is posted, never produce two replies for the same revision.
+
+- A revision takes every unseen owner comment on the PR (PIP-44) and returns one `reply` for them. The reply is posted once per revision round (PIP-204). A comment that arrives after the revision started waits for the next revision and gets its own reply then.
+- Verified by: `pipeline: several comments get one reply that answers each`, `pipeline: a comment that arrives during a revision gets the next reply`
+
+### PIP-208 · An outcome the owner deferred counts as met
+
+An outcome the owner has put off to another intent is not held against the code PR, so it never overrides a reviewer's Approve.
+
+- An outcome is deferred in exactly three ways, and nothing else defers one:
+  (a) an owner comment or answer on the intent or its PRs has a line that starts with `defer`, names the outcome, and names an intent id, for example `defer "Stage tests use a FakeForge" to 261105-2120`. The outcome is named by its text in quotes (matched to a `Proposed outcome` bullet or a spec row name, ignoring case and surrounding space) or by its number (`defer 3 to 261105-2120`, the bullet's position, counting from 1);
+  (b) the intent file marks the bullet `deferred: <intent id>`;
+  (c) the plan (the plan PR's text) has its own line in the same strict form as (a): `defer "<outcome>" to <intent id>` or `defer <number> to <intent id>`. Merging the plan PR approves that line. Loose wording in a plan ("for a later slice", "follow-up") defers nothing, and a plan line in a plan PR that is not merged defers nothing.
+  A line in any other wording is not a deferral, however clear it reads to a person. An agent's comment (PIP-182) or a non-owner never defers an outcome in (a). The named intent must exist in the intents repo; otherwise the outcome stays as judged.
+- `review.outcomes[]` gets no new key: Towercab sets `met` true for a deferred outcome after the review returns, and keeps the follow-up id and the reason on the mission (`data.deferred`). PIP-5's "every outcome met" and PIP-120's fix-round test then read it as met, so a deferred outcome starts no fix round.
+- The prompt (`agents/review.md`) lists the deferred outcomes as data and says not to judge them; a review that marks one `met` false is overridden as above.
+- Verified by: `pipeline: a deferred outcome does not override an Approve`, `pipeline: an outcome marked deferred in the intent counts as met`, `pipeline: a defer line naming an outcome by its quoted text defers it`, `pipeline: a defer line naming an outcome by its number defers it`, `pipeline: a comment not in the defer form defers nothing`, `pipeline: a defer line in the plan defers the outcome`, `pipeline: loose wording in a plan defers nothing`, `pipeline: a defer line in an unmerged plan defers nothing`, `pipeline: a deferral by an agent or a non-owner is ignored`, `pipeline: a deferral to an unknown intent is ignored`, `pipeline: a deferred outcome starts no fix round`
+
+### PIP-209 · A deferred outcome is shown, not hidden
+
+Deferred outcomes are listed in the review comment and the code PR body with the intent they moved to.
+
+- The Review comment and the code PR's description (PIP-48) carry a "Deferred" list: the bullet, the follow-up intent id and who deferred it. Absent when nothing is deferred.
+- The verdict line (PIP-121) names the deferral: an Approve that stands because of one says so.
+- Verified by: `pipeline: the review comment lists deferred outcomes`, `pipeline: the PR body lists deferred outcomes`
+
+### PIP-210 · An ID the intent says exists on main is a reference and is never moved
+
+Towercab leaves alone an ID that the intent's own wording says already exists, even when the row on `main` was written by another intent; any other ID that is already on `main` is a clash and is moved.
+
+- The signal is the wording of the intent's spec-IDs line (the `spec IDs:` line of `## Proposed outcome`, PIP-131). An ID or range on that line is a reference when the words attached to it say the row exists: "as written" (as in "made true as written" or "met as written"), "already written", "changed", "exists", or "existing" (case-insensitive), or it is named as an existing row. The wording covers the IDs it is attached to: the list or range it ends, up to the next `;` or sentence end.
+- A reference is never renumbered, whichever intent or spec PR wrote its row and even when an open spec PR of another intent adds the same ID. It needs a row on the base branch to be a reference; a reference with no row there is treated as a reservation.
+- An ID on that line with no such wording is a reservation. If a row with that ID already exists on the base branch, that is a collision and it is moved to the next free numbers of the same prefix as PIP-131 does today; an ID that does not exist on `main` is moved only when an open spec PR of another intent adds it (PIP-130).
+- A line that mixes both is split by its wording: references stay, reservations are checked and moved as above. The design gets the references as existing rows to build or make Live, and the reservations as new rows.
+- The own-ID rules of PIP-202 stay as they are (an intent's own rows are kept without any wording); the line of PIP-202 on rows of another intent is narrowed by this row.
+- If the base branch cannot be read, no ID is moved, the mission's log notes "IDs unchecked against main", and PIP-132 stays the backstop.
+- Verified by: `pipeline: reserved IDs the intent words as made true as written are kept`, `pipeline: reserved IDs the intent words as already written or changed are kept`, `pipeline: an ID on main with no reference wording is moved as a collision`, `pipeline: a reference is kept when an open spec PR adds it too`, `pipeline: a reserved ID another open spec PR claims is still moved`, `pipeline: a line of references and reservations is split by its wording`, `pipeline: a reference with no row on main is treated as a reservation`, `pipeline: an unreadable base branch leaves reserved IDs unmoved`
+
+### PIP-211 · A setup-only secrets file per repo
+
+A repo that installs from a private package registry can have a file of secrets, in the config folder, that only its setup commands use.
+
+- `<config dir>/setup-secrets/<repo>.env` (default `~/.config/towercab/setup-secrets/<repo>.env`): `KEY=VALUE` lines, `#` comments and blank lines skipped, the first `=` splits, no quoting or expansion. It is a different file from the e2e secrets of [SHIP-2](ship.md); a key in one is never given to the other's commands. No file = no setup secrets.
+- A line that is not `KEY=VALUE`, or a key that is not `[A-Za-z_][A-Za-z0-9_]*`, makes the stage wait on `fix repo files` with "<path> line <n> is not KEY=VALUE" (the line's text is not quoted). A key that is `PATH`, `HOME`, `LD_*`, a proxy variable (PIP-158) or a cache variable (LOOP-34) is refused the same way.
+- Any group or other permission bit set → the stage waits on `fix repo files` with "<path> is readable by others; chmod 600 it", as for SHIP-2. The check runs each time the file is read, before setup starts.
+- Unlike the repo's named variables (PIP-159), a setup secret may have a token-like name (`NPM_TOKEN`, `PIP_INDEX_URL`, `CI_JOB_TOKEN`) and any value: the point is to hold a token.
+- The value is the token alone, never a URL or a header: a value that contains `://`, whitespace or a quote makes the stage wait on `fix repo files` with "<path>: <KEY> must hold the token only". A repo's setup commands build any URL or auth line from the variable (`//registry.example.com/:_authToken=${NPM_TOKEN}`), so Towercab knows exactly what to hide.
+- A token shorter than 8 characters is refused: the stage waits on `fix repo files` with "<path>: <KEY> is shorter than 8 characters" (never the value). So every secret value is long enough to be redacted (PIP-213).
+- A token can have a username, declared in the same file as a second line `<KEY>_USERNAME=<name>` next to it (for example `NPM_TOKEN` and `NPM_TOKEN_USERNAME`). The username is set in the setup environment like any other line, is not a secret and has no length rule. A `<KEY>_USERNAME` line with no `<KEY>` line is not a token pair and is read as an ordinary secret line.
+- Whether to add the registry host to the repo's network list is the owner's choice: nothing is added on its own. A host beyond the built-in registry list comes from a plan grant, the intent's `network` field or an owner's answer ([AUT-14, AUT-26](autonomy.md)).
+- Not in this requirement: a per-repo `.npmrc` or `pip.conf` mounted into the setup home. A repo that needs one commits an `.npmrc` that reads `${NPM_TOKEN}`, or its setup line writes the file into the setup credentials folder (PIP-212), which is empty at the start and deleted after setup.
+- Verified by: `pipeline: a setup secret that holds a url is refused`, `pipeline: setup secrets file must be private`, `pipeline: a malformed setup secrets line waits on fix repo files`, `pipeline: a setup secret may have a token-like name`, `pipeline: no setup secrets file means no setup secrets`, `pipeline: a setup token shorter than 8 characters is refused`, `pipeline: a setup token username is read from the line next to it`
+
+### PIP-212 · Setup secrets reach only the setup commands
+
+The values of a repo's setup secrets are in the environment of its setup commands and nowhere else.
+
+- The values are added to the environment of the ` ```setup ` commands run by verify ([PIP-23](pipeline.md)) and by any other stage that runs the repo's setup (proof, screenshots, e2e preparation), on top of the allowlist of PIP-159. They are never in the environment of a check, an e2e suite, an adapter command, a Claude run (worker, repair, review or any other agent), the guard hook or a hook of Towercab.
+- They are never written into a prompt, a plan, a spec, a PR title or body, a comment, a question, a Telegram or UI message, a finding, a stored run record or the intent file. Setup secrets stay out of the mission's database: only the file path and the key names are recorded.
+- Each setup run gets its own empty **credentials folder**, `<work>/setup-creds/` (outside the checkout), bound writable into the setup sandbox only. Setup is told to use it for registry credentials: `NPM_CONFIG_USERCONFIG=<creds>/npmrc`, `PIP_CONFIG_FILE=<creds>/pip.conf`, `XDG_CONFIG_HOME=<creds>/xdg`, `POETRY_CONFIG_DIR=<creds>/poetry` (set only when the repo has a setup secrets file, after the variables of PIP-159). The folder is never bound into a check, e2e, proof, screenshot or Claude run, and is deleted after the scan below, hit or not. The sandbox home stays an empty tmpfs (PIP-23). The credential masks of the sandbox stay in force ([PIP-159](pipeline.md)); `<config dir>/setup-secrets/` is hidden like the rest of `~/.config/towercab`.
+- For a repo with a setup secrets file, the shared download cache (LOOP-34) is read-only for the worker and its repair rounds, as it already is for checks; setup still writes it. The owner's allowance of PIP-95 does not lift this for such a repo. A repo without a setup secrets file keeps today's rules.
+- Right after every setup run, before any worker, repair or check starts in that checkout, Towercab scans for each setup token and its encoded forms (PIP-213): every file of the pass-1 tree (`setup-tree/`, PIP-214), ignored output included, and, as a second guard, every file of the worker's checkout; the small git files of the checkout's `.git` (`config`, `config.worktree`, `info/*`, `hooks/*`, `modules/*/config`, never `objects/` or packs); the whole credentials folder; and, in the shared cache, only files created or changed during this setup run and no larger than 256 KiB (the cache is not scanned in full). It is a literal search for the known values, run by Towercab, because a generic scanner does not know them. A hit stops the stage: the mission waits for the owner with one line, "setup left a secret in <path> (<KEY>)", naming the file (for the credentials folder, `setup-creds/<name>`) and the key, never the value or the line. No repair round runs and the worker never starts; the line is posted without the value as everywhere else (PIP-213).
+- Setup with secrets never runs code the branch controls: it follows PIP-214, runs its first pass in a clean copy outside the checkout, and the scan above runs after that pass, before anything is copied into the checkout.
+- Setup runs again, and the scan with it, on the owner's next resume. A file in the shared cache that is changed during setup but larger than 256 KiB is not read; that gap is known and is named in the PR's concerns.
+- Verified by: `pipeline: setup gets its own empty credentials folder`, `pipeline: the credentials folder is not bound into the worker or the checks`, `pipeline: the shared cache is read-only for the worker when the repo has setup secrets`, `pipeline: a setup secret in git config stops the stage`, `pipeline: a setup secret in the credentials folder stops the stage`, `pipeline: a setup secret in a changed cache file stops the stage`, `pipeline: git objects are not scanned`, `pipeline: setup secrets are set for setup commands only`, `pipeline: the worker environment never holds a setup secret`, `pipeline: a check and an e2e suite do not see setup secrets`, `pipeline: no prompt or PR text holds a setup secret`, `pipeline: the setup secrets directory is unreadable in the sandbox`, `pipeline: a setup secret left in the checkout stops the stage before the worker`, `pipeline: the setup secret scan names the file and key and not the value`, `pipeline: the setup secret scan covers ignored files`, `pipeline: a clean checkout after setup lets the worker start`
+
+### PIP-213 · Setup secret values are redacted from every log
+
+Wherever Towercab keeps or shows output from a setup command, each setup secret value shows as `[redacted]`.
+
+- Every setup token (all are 8 or more characters, PIP-211) is replaced with `[redacted]`, in the verify log, the repair details, the mission's log and error messages, the UI, the API and Telegram messages, before the text is stored or sent. Redaction runs on the raw output, so a value split across two reads of the same stream is still covered.
+- The token is hidden wherever it appears: in output text, in a line written to the mission's log, in a message, in the scan result (PIP-212) and in any error text, not only in the setup log.
+- Each token is also replaced in its encodings: URL-encoded (percent-encoding, upper- and lower-case hex) and base64 (standard and URL-safe, with and without padding, and at each of the three alignments a token can have inside a longer base64 string).
+- When a token has a username (PIP-211), the HTTP Basic-auth value built from `<username>:<token>` is replaced too, as base64 in the same forms, in the `Authorization: Basic <value>` header and bare. The username alone is not redacted.
+- The failed-setup retry (PIP-23) and the repair round use the redacted log only; the redacted log is also what the worker reads if setup is red.
+- Verified by: `pipeline: setup secrets are redacted from the verify log`, `pipeline: a redacted setup log is what the repair round gets`, `pipeline: a url-encoded setup secret is redacted`, `pipeline: a base64 setup secret is redacted in every alignment`, `pipeline: a basic-auth header built from the username and token is redacted`, `pipeline: a setup username alone is not redacted`, `pipeline: a setup secret split across output chunks is redacted`
+
+### PIP-214 · Setup with secrets never runs the branch's code
+
+When a repo has setup secrets, the token is used only to install what the main branch already lists, with install scripts off; whatever the branch changed installs afterwards without any secret.
+
+- **Pass 1, with secrets, in a separate clean copy.** The repo's ` ```setup ` lines (the base branch's, PIP-23) run with the setup secrets (PIP-212) in `<work>/setup-tree/`, a fresh export of the **base commit's tree** (`git archive <base commit>`, no `.git`, no ignored folder, nothing the worker or the branch wrote), made new for every pass and never reused. The sandbox binds it at the checkout's own path, so absolute paths in the install output (a virtualenv, a `.bin` link) are the same in the worker's checkout. So manifests, lockfiles, `.npmrc`, `pip.conf` and every script the setup lines call are main's, never the branch's, and the worker's checkout is not mounted in this pass at all.
+- **System tools only.** In pass 1 `PATH` is the sandbox's system directories alone (PIP-159): never `node_modules/.bin`, a project virtualenv (`.venv/bin`, `venv/bin`), `./`, `~/.local/bin` or any directory of the checkout. Tools the install itself puts in `setup-tree/node_modules/.bin` come from main's own manifests, so they may run from inside that tree only.
+- **Copy out.** After pass 1 and a clean scan (PIP-212), its install output is copied into the worker's checkout: only the paths in `setup-tree/` that are untracked in main's tree and ignored by main's `.gitignore` (such as `node_modules` or `.venv`), at the same relative paths, with links kept as links, modes kept and setuid/setgid bits cleared, and the setup credentials folder, `setup-tree/.git` and the scan files never copied. The copy never overwrites or deletes a file the branch tracks. Any other file pass 1 created (untracked and not ignored) is not copied and is named in the verify log. A scan hit means nothing is copied. The checkout never held a secret, because the secret pass never ran in it.
+- **Scripts off.** Pass 1 sets, after and over every repo variable: `npm_config_ignore_scripts=true` (npm, pnpm, yarn 1), `YARN_ENABLE_SCRIPTS=false`, `PIP_ONLY_BINARY=:all:` and `UV_NO_BUILD=1`, so no lifecycle script (`preinstall`, `install`, `postinstall`, `prepare`) and no source build runs. If a setup line uses a tool with no such switch (`cargo`, `go`, `bundle`, `gem`, `make`, `mvn`, `gradle`, read as a command word), pass 1 does not run: the stage waits on `fix repo files` with "setup secrets cannot be used with <tool>: its install scripts cannot be turned off".
+- **Pass 2, without secrets.** If the branch head differs from the base commit in a manifest or lockfile (`package.json`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `.yarnrc.yml`, `.npmrc`, `requirements*.txt`, `constraints*.txt`, `pyproject.toml`, `poetry.lock`, `uv.lock`, `Pipfile`, `Pipfile.lock`, `pip.conf`, `setup.py`, `setup.cfg`; at any depth, added, changed or deleted), the same setup lines run once more in the worker's checkout (after the copy above, with the usual `PATH`) with no setup secret, no credentials folder and only the built-in registry list (PIP-158; plan grants and the intent's `network` are not given), as setup runs today otherwise. Install scripts run as they would without secrets; there is nothing for them to read.
+- A pass 2 that fails because it needs something private (the proxy refused a host, PIP-158, or the log shows 401, 403, `E404` or `Unauthorized` for a registry) is not a repair round: the mission asks the owner, naming the changed files and the refused host, "The change updates packages that need the private registry. Add them on the main branch first, or change the manifests to public packages?". Any other pass 2 failure is red as usual (PIP-23).
+- No change to a manifest or lockfile → no pass 2. A repo with no setup secrets file runs setup once, as today.
+- Verified by: `pipeline: setup with secrets runs on a fresh export of the base commit's tree`, `pipeline: the secret pass does not mount the worker's checkout`, `pipeline: the secret pass binds its tree at the checkout path`, `pipeline: a branch that plants a fake node_modules bin tool does not run it in the secret pass`, `pipeline: the secret pass path is the system directories only`, `pipeline: install output is copied into the checkout after a clean scan`, `pipeline: only ignored untracked output is copied`, `pipeline: a scan hit copies nothing`, `pipeline: the copy never overwrites a tracked file`, `pipeline: the copy clears setuid bits and keeps links as links`, `pipeline: a branch that adds a postinstall script does not run it in the secret pass`, `pipeline: a branch that adds a postinstall script runs it in pass 2 with no secret in its environment`, `pipeline: a branch that changes a script the setup calls does not run it with the secret`, `pipeline: install scripts are switched off in the secret pass`, `pipeline: a setup tool with no scripts switch is refused with secrets`, `pipeline: a branch that changes a manifest gets a second pass without secrets`, `pipeline: an unchanged manifest gets no second pass`, `pipeline: the second pass gets no plan grant and no credentials folder`, `pipeline: a second pass that needs a private package asks the owner`, `pipeline: a second pass that fails otherwise is red`, `pipeline: a repo without setup secrets runs setup once`
+
+### PIP-215 · Spec rows that say parked cite a parked intent
+
+A spec row that says it is removed because something is parked must name that parked intent, and the specs README lists which intents are still parked, so a row cannot go on calling a built feature parked.
+
+- `specs/README.md` holds a `## Parked` table: one row per parked intent, its ID (`YYMMDD-HHMM-N`) in the first column and one line on what it holds in the second.
+- The check reads every `specs/*.md` row, removed ones included, and ignores the Status line. A row's text is its heading's section, and the README's own table is not checked.
+- It applies only to a sentence that calls something removed, parked or deferred: one with `parked`, `deferred` or `Removed:` followed by `parked`/`deferred`, such as `parked as`, `parked with`, `is parked`, `are parked`, `stays parked`, `(parked)` or `parked in intent`. The priority cutoff's parked state (PRI-5), the UI's Parked list and a `parked` priority state are not that and are left alone. A sentence that cites an intent only as an origin or an example (it says `replaces`, `replaced`, `e.g.` or `for example`) is left alone too.
+- A checked sentence with no intent ID fails: `<ID>: says parked without an intent id`. An intent ID in it that is not in the Parked table fails: `<ID>: cites <intent id>, which is not parked`. A `Removed: replaced by <ID>` row (or `superseded by`) whose `<ID>` is not a heading in any spec file fails: `<ID>: replaced by <other>, which does not exist`.
+- Taking an intent's ID out of the Parked table when its feature is built makes the check list every row that still cites it, so none is left calling it parked.
+- The initial Parked table holds the intents still open and parked: 261026-2204-3 (only the part that turns review findings into intents and feeds a repo's `CLAUDE.md`; its issue intake is built), 261026-2204-5, 261030-0401-2 and 261030-0401-3. 261026-2204-2 is closed and is not listed.
+- The build that adds the check also fixes every row it flags, so the check starts green: rows citing 261026-2204-4 (the ship stage, now live: AUT-5, REPO-3, PIP-8, PIP-34 and the other removed rows that cite it) say what replaced them (a SHIP row) or lose the word parked; `maintain.md`, its README line and any row citing 261026-2204-2 say it is closed, not parked; rows that say parked with no ID (such as the ship notes on migration-aware rollback) cite a listed intent or are reworded. Their IDs and headings stay.
+- Verified by: `specs: parked rows cite a parked intent`
+
+### PIP-216 · A large plan is built over several runs
+
+When a build run ends with plan steps still open, the next run carries on from the first open step, and the review runs once every step is built.
+
+- Total = the numbered items under `## Steps` of the merged `plan.md` (PIP-46), read by code. The build result gains `steps_done` (int, the count of steps built from step 1 in order, so far; `null` is read as "all", which keeps a plan without numbered steps one run). Towercab keeps `data.build.steps_done` and `steps_total` on the mission, recorded before the next run starts.
+- A run that ends `done` with `steps_done < steps_total`, and made progress (PIP-217), is not finished: Towercab commits and verifies it as today (PIP-1, PIP-23), pushes it to the same branch and PR (PIP-2), then starts a new build run in a fresh session (PIP-219), which is told the steps already built and to start at the first open step. The review, and the gate after it, start only when `steps_done = steps_total`.
+- The intermediate rounds count no repair (PIP-18) and no fix round: only red checks and review findings do. The code PR text is written on the last run and covers the whole intent.
+- One intent, one PR, one branch: no extra intent and no extra PR is made for later runs.
+- A run that ends `done` with `steps_done` lower than before is read as no change in `steps_done`.
+- Verified by: `pipeline: a six-step plan builds in three runs and then goes to review`, `pipeline: open steps send the mission back to build, not review`, `pipeline: the build prompt names the steps already built`, `pipeline: intermediate runs count no repair`
+
+### PIP-217 · A run makes progress when it adds a passing commit
+
+A build run counts as progress only if it adds new commits to the branch and its checks pass; two runs in a row without it stop the build and ask the owner.
+
+- Progress = the branch head moved since the run started (the run's commit, PIP-1) and verify (PIP-23) is green on it. A run with no new commit, or whose checks stay red after their repair rounds, is no progress. Red checks are repaired first, as today (PIP-18); progress is judged after them.
+- `data.build.stalled` counts runs in a row without progress and is reset by a run with progress. At 1 the next run starts as above. At 2 the mission waits as a blocked wait, `answer the question`, with a question naming the steps built (`steps_done of steps_total`), what the last two runs did, the options (carry on for two more runs, change the plan, drop) and a recommendation. A run with no new commit while steps are open does not end in `waiting: no changes` (PIP-1) before this count is reached; with all steps built it does, as today.
+- The owner's answer to that question resets `stalled` to 0.
+- Verified by: `pipeline: a run with no new commits counts as no progress`, `pipeline: two runs without progress ask the owner`, `pipeline: a run with progress resets the stall count`, `pipeline: a run with red checks after repairs is no progress`
+
+### PIP-218 · A long build has a limit per run and a cap on runs
+
+Each run of a long build gets the per-run spending limit, the whole build is capped at 3 runs by default, and the repo, daily and monthly caps still apply on top.
+
+- Each build run is limited by `[agent].max_budget_usd` (default 10, PIP-71, LOOP-1) on its own, not shared out of a total. A single-repo build is therefore limited to `max_build_runs` × that limit without the owner stepping in.
+- New setting `[agent].max_build_runs`: integer ≥ 1, default 3, in the settings table of LOOP-1 and editable like the other `[agent]` keys; an invalid value is ignored and shown as a problem. It counts the build runs of one intent's code phase (`data.build.runs`, kept on the mission; repair rounds are not counted). 1 gives today's single run.
+- When `runs` has reached `max_build_runs` with steps still open, the mission enters the blocked wait `worker budget` (LOOP-1), as for any spent intent; the owner's reply to carry on grants another `max_build_runs` runs from the first open step (`steps_done` kept, `runs` reset to 0), or the owner starts over or drops.
+- A multi-repo intent (LOOP-78) keeps its single total cap across parts as written there; `max_build_runs` counts each part's runs on its own.
+- Every run's cost counts in the intent's spend (MET). A daily or monthly budget or a repo cap reached (MET-33) lets a run already going finish and starts no further run; the mission waits at its next owner wait and resumes when the cap is raised or a new period starts. The next run is not skipped, and `steps_done` and `runs` are kept.
+- Verified by: `pipeline: each run of a long build gets the per-run limit`, `pipeline: max_build_runs stops a long build with steps open and asks`, `pipeline: the owner's reply grants another set of runs`, `pipeline: max_build_runs is read from config.toml and a bad value is ignored`, `pipeline: all runs of a long build count in the intent's spend`, `pipeline: a repo cap pauses a long build between runs`, `pipeline: a long build resumes at the first open step after a pause`
+
+### PIP-219 · Each later run starts fresh from a handoff note
+
+A later run of a long build starts a new session with the plan, the steps already built and a short note the previous run wrote, not a growing conversation.
+
+- The first run is as PIP-1. Every later run of the same code phase starts a new session (no resume) and is given: `plan.md`, `intent.md` with `## Answers`, the spec IDs, the access and the run set as PIP-1 does, the list of steps already built, and the previous run's handoff note.
+- The built steps come from the branch's commits (the commit subjects since base, from `git log`) and the `steps_done` Towercab recorded (PIP-216), not from the old session. The prompt tells the worker to commit by step.
+- The build result gains `handoff` (string, required when `steps_done < steps_total`, else `null`): what is done, what is next, anything surprising, in a few sentences. Towercab stores it in `data.build.handoff` before the next run starts and replaces it each run. A run that ends without a valid `handoff` while steps are open gets one continue asking only for it (as PIP-1's continue), then the matching wait.
+- Repair rounds (PIP-18) and fix rounds (PIP-98) resume the session of the run they follow, as today.
+- Verified by: `pipeline: a later build run starts a new session`, `pipeline: the later run prompt has the plan, built steps and the handoff note`, `pipeline: built steps are read from the branch commits`, `pipeline: a run with steps open and no handoff is asked for it`, `pipeline: a repair round resumes the run's session`
+
+### PIP-220 · Every text for a person has a part for people and a folded part for agents
+
+Every text Towercab writes that a person may read opens with a short part for people, and the detail meant for agents follows, folded away.
+
+- Applies to PR bodies (spec, plan, code), stage and review comments, questions, replies to the owner's comments, the spec-overlap line (UI-202), and the intent and plan PRs. Not to code, commit subjects or JSON read only by code.
+- One helper (`twoPartMd({people, agent})` in `src/pipeline/prtext.ts`, next to `plainMd`/`detailsMd` of PIP-108) builds the shape and is the only way a writer produces such text: `## For people\n\n<people>`, then `<details><summary>Agent context</summary>\n\n<agent>\n\n</details>`. The old `## In plain words` heading and the `**In plain words:**` lead of PIP-107 become `## For people` and `**For people:**` (comments); PIP-108's folding of the technical part is this fold, titled `Agent context` instead of `Details`.
+- The people part is the plain brief of PIP-106: what happened, why it matters, what (if anything) the owner decides. At most 5 lines and 600 characters, no list of files, no step or field names. Readable without the agent part: never "see below".
+- The agent part holds findings, file lists, logs, handoff notes, IDs and the footer's links to the intent. It is always inside the fold; with no agent detail the fold is left out. The footer line (`<sub>Built by Towercab …</sub>`) and the machine markers Towercab parses stay outside it, after it.
+- A run from before this rule (no separate fields, PIP-221) falls back to its brief as the people part and its technical text as the agent part.
+- Verified by: `pipeline: twoPartMd puts the people part first and folds the agent part`, `pipeline: every PR body opens with the people part and folds the agent part`, `pipeline: stage, review and question comments open with the people part`, `pipeline: a reply to the owner's comment has the two parts`, `pipeline: no fold when there is no agent detail`
+
+### PIP-221 · Agents return the people part and the agent part as separate fields
+
+Each agent that writes for the owner returns the people part and the agent part as two fields, so Towercab never has to split one text.
+
+- `brief` stays the people part (PIP-106). The agent part is the existing technical field of each result: `design.pr`, `plan.plan`, `build.pr` and `build.notes`, `review.outcomes`/`findings`/`summary`, the question's `context`. Where a result has none yet, an `agent` string (required, may be empty) is added: `review` and `risk` (`summary` stays the risk agent's people part). Schemas in PIP-71 stay closed.
+- `prompts/writing.md` has a section "People part, agent part" stating PIP-220's rule, and every agent prompt that writes for the owner (`design`, `plan`, `worker`, `repair`, `review`, `review-security`, `review-infra`, `risk`, `merge-review`) asks for the two fields and says the people part is at most 5 lines and holds no agent detail.
+- Verified by: `schemas: every result a person reads has a people part and an agent part`, `prompts: every agent that writes for the owner asks for the two parts`, `prompts: writing.md states the people part and agent part rule`
+
+### PIP-222 · A text with a missing or over-long people part is refused
+
+Towercab checks the shape before it posts, so a long or misplaced text never reaches the owner.
+
+- `checkTwoPart(text)` fails when: the people part is empty; it is over 5 lines or 600 characters; it contains a `<details>` block, a code fence, a file path line or a list of more than 3 items; or agent detail (a `Findings`, `Files` or `Handoff` heading, a spec-ID list) sits outside the fold. The error reads as the reason, e.g. `people part is 9 lines; the limit is 5`.
+- Applied in two places. On an agent result: a `brief` that fails is handled as an invalid result, so the run gets one continue asking only for a shorter people part (as PIP-1's continue), then the failure of PIP-1 for no valid result. On Towercab's own writers: the helper (PIP-220) throws before anything is posted or recorded as posted, so a bug in a writer fails its test, not the owner's phone.
+- An owner's own comments and PR text are never checked.
+- Verified by: `pipeline: an over-long people part is refused`, `pipeline: a missing people part is refused`, `pipeline: agent detail outside the fold is refused`, `pipeline: a result with a long brief gets one continue for a shorter one`, `pipeline: the owner's own text is not checked`
+
+### PIP-223 · The sandbox binds the toolchains installed in their usual places
+
+A repo's setup, checks and builds find Rust, Go, Zig and Node when they are installed where their installers put them.
+
+- `toolchainDirs(home)` (PIP-157) returns, for each of these that exists, a read-only bind: `~/.cargo/bin`, `~/.rustup`, `~/.local/go`, every `~/.local/zig-*` directory, `~/.local/node`, plus `~/.local/bin` and the directory of the Node running Towercab when it lives under HOME, as today. The list is fixed in `src/pipeline/sandbox.ts`; no config key, repo file or intent field adds to it (PIP-157).
+- A directory that does not exist, or that is a symlink leaving HOME, is skipped without error; nothing else of `~/.cargo` (so not `registry`, `git` or `env`) is bound.
+- The `bin` directory of each bound toolchain is on `PATH` ahead of the system's, in a fixed order: `~/.cargo/bin`, `~/.local/go/bin`, each `~/.local/zig-*` (the directory holds the `zig` binary; several versions sort by name, the newest first), `~/.local/node/bin`, `~/.local/bin`, then the system directories (PIP-159). `PATH` is still a constant of the code, not read from Towercab's environment.
+- Nothing is writable: a command that writes into a toolchain directory fails.
+- Verified by: `sandbox: a repo command finds cargo, go and zig installed in the usual places`, `sandbox: a missing toolchain directory is skipped`, `sandbox: toolchain directories are read-only`, `sandbox: config keys do not change the argv`
+
+### PIP-224 · Credential files under a toolchain stay unreadable
+
+A token that a toolchain's own tool left in its install directory is never visible to a repo's commands.
+
+- Every bound toolchain directory (PIP-223) gets the masked files of `MASKED` (`credentials`, `credentials.toml`, `.git-credentials`, `.netrc`, `.npmrc`, `auth.json` and the rest of that list) bound over with `/dev/null`, as `~/.local/bin` does today, at the top of the directory and one level below it. `~/.cargo/credentials.toml` is out of reach because only `~/.cargo/bin` is bound; a `credentials.toml` placed inside a bound directory reads empty.
+- A masked file that does not exist is not created and adds no argument.
+- Verified by: `sandbox: a credentials file under a toolchain directory stays unreadable`, `sandbox: the rest of ~/.cargo is not bound`, `sandbox escape: a toolchain credential file reads empty`
+
+### PIP-225 · Go and Zig write their caches into the sandbox cache
+
+Go and Zig never need to write into the read-only install or the empty home: their caches live in the mission's writable cache, like Cargo's.
+
+- `cacheEnv` (LOOP-34) also sets `GOPATH` and `GOMODCACHE` under the cache's `go` directory, `GOCACHE` stays where it is, and `ZIG_GLOBAL_CACHE_DIR` and `ZIG_LOCAL_CACHE_DIR` point under the cache's `zig` directory. `CARGO_HOME` stays in the cache and `RUSTUP_HOME` points at the bound `~/.rustup` so the installed toolchains are found.
+- The names are fixed in code and in the allowlist of PIP-159; a repo's `[repos.<r>].env` cannot override them (PIP-159 already refuses cache variables).
+- Verified by: `sandbox: go and zig caches are inside the sandbox cache`, `sandbox: rustup home points at the bound toolchains`, `sandbox: a repo variable cannot override a cache variable`
+
+### PIP-226 · `towercab doctor` lists the toolchains it binds
+
+The owner can see which toolchains a repo's commands will find, and which are missing.
+
+- Doctor prints one line per toolchain location of PIP-223 as `toolchain <path>: bound` or `toolchain <path>: not found`, and for each bound one `bin` directory that is on `PATH`. Missing is information, not a fault: the exit code does not change.
+- A Zig directory shows one line per `~/.local/zig-*` match. It prints no file content and no environment value.
+- Verified by: `doctor: lists the toolchains it found and binds`, `doctor: a missing toolchain is not a fault`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
@@ -1898,10 +2237,13 @@ fix: the plan lists the file up front.
 | [worker](../agents/worker.md) | Writes tests and code, and the code PR's text. | Read, Edit, Write, Glob, Grep, Bash in the sandbox; WebFetch for granted domains; protected paths per the grants. | mission's | mission |
 | [repair](../agents/repair.md) | Fixes red checks, a conflict, a review finding or an owner's answer in the worker's session. | The worker's tools and permissions, no more. | mission's | mission |
 | [review](../agents/review.md) | Reviews the code PR against the intent, plan and `REVIEW.md`; reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
+| [review-security](../agents/review-security.md) | The security specialist's review of a code PR that touches security files (PIP-197); Important findings only; reads only. | Specialist reviews of a code PR that touches security or infra files; Important findings only; read only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
+| [review-infra](../agents/review-infra.md) | The infra specialist's review of a code PR that touches infra files (PIP-197); Important findings only; reads only. | Specialist reviews of a code PR that touches security or infra files; Important findings only; read only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [risk](../agents/risk.md) | Judges the risk of the spec, plan and code at their gates, and reviews the spec a second time (PIP-96, PIP-97); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [merge-review](../agents/merge-review.md) | Checks that a merge Towercab made by code kept both sides (PIP-169); reads only. | Read, Glob, Grep; Bash for `git diff`, `git log`, `git show`. | new per run | review model |
 | [score](../agents/score.md) | Turns a GitHub issue into a scored intent ([INT-22](intents.md)); runs outside any mission in an empty folder. | Nothing: no tools. | none | `[agent].model` |
 | [shadow](../agents/shadow.md) | The owner's shadow in Telegram ([SHD-1](shadow.md)); one long-lived session, outside any mission, in an empty folder. | Nothing: no tools; Towercab runs its reads and actions. | resume | `[shadow].model`, else `[agent].model` |
+| [observer](../agents/observer.md) | Reads 14 days of how Towercab ran and proposes improvements ([OBV-1](observer.md)); runs outside any mission, in an empty folder. | Nothing: no tools, no network; Towercab builds its evidence and opens the proposals. | none | `[observer].model`, else `[agent].model` |
 | [features](../agents/features.md) | Writes a repo's live features from its README and specs ([INT-39](intents.md)); runs outside any mission in a fresh checkout of base. | Read, Glob, Grep in the sandbox; no network. | none | `[agent].model` |
 
 Each file's front matter also holds the time and cost limits and the result schema (PIP-71). `repair`
@@ -1971,6 +2313,13 @@ score    {u: int 1-5, u_why: S, i: int 1-5, i_why: S, title: S, problem: S, outc
   `gh pr comment` for agent sessions; it is the owner's to add and is not a requirement here. Chosen without asking: the agent is named by the stage that wrote the text;
   the command posts on the current PR (or the issue); old comments keep their headers; the marker only
   excludes comments, it never grants anything.
+- Deferred outcomes (PIP-208, PIP-209, from intent 261105-0810, the owner's calls): a deferral is a strict `defer "<outcome>" to <intent id>` line (or the bullet's number) in an owner comment or in a merged plan; loose wording defers nothing, because the review overrode on 1546, 1547 and 2152-2 only from that case. Decided without asking: a quoted outcome matches a bullet or spec row name ignoring case and space; an unmerged plan defers nothing; a deferral never turns a `met` false review into a weaker verdict, it only counts the outcome as met and shows it in the review and PR body. PIP-208 does not touch PIP-210: PIP-210 decides whether a reserved ID is a reference or a collision at pick, PIP-208 decides how the review counts an outcome, and the two never read the same text.
+- Reference IDs (PIP-210, from intent 261107-1130-1; the owner's call, 2026-11-07): the intent's wording, not
+  the mere presence of a row on `main`, marks an ID as a reference; without such wording an ID on `main` is a
+  collision and is moved as before. Decided without asking: the cue words are "made true as written",
+  "already written", "changed", "exists" and "existing", read on the list or range they end; a "reference"
+  with no row on `main` falls back to being a reservation; with `main` unreadable nothing is moved; PIP-202's
+  own-ID rules keep working without wording.
 - Hung CI (PIP-170, PIP-171, the owner's calls, 2026-11-06): limits only on Towercab's own step-running jobs; the
   shared-workflow callers have none and rely on cancel and rerun; a hung check is cancelled and rerun by Towercab
   on any repo, once per head. Decided without asking: the rerun waits `ci_wait` again before the owner is asked;

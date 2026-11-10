@@ -63,3 +63,8 @@ Then return the JSON result:
 - `pr`: the spec pull request's description, in Markdown, for the owner who wasn't there. Open with
   two or three sentences on what will behave differently once this is built and why. Then list the
   requirements by ID with one plain line each, and the concerns if any. No file lists, no schema keys.
+- `reply` (only when the prompt lists the owner's comments): your answer to them, written to the writing
+  guide in plain words, outcome first. One part per comment, named by its id. Say how you read the
+  comment, what you changed (and what you chose not to change, and why), and each new or still-open
+  point with your recommendation. A comment that needs no change is answered `Nothing to change: <why>`;
+  never leave one without an answer. No step names or field names.

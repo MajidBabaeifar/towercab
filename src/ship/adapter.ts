@@ -6,11 +6,13 @@ import { git } from "../checkout.ts";
 import { ForgeDenied } from "../forge.ts";
 import { type Ctx, EnvError } from "../handlers.ts";
 import type { Mission } from "../mission.ts";
-import { checksMayWrite } from "../pipeline/checks.ts";
+import { checksMayWrite, commandDomains } from "../pipeline/checks.ts";
 import { viaForge } from "../pipeline/common.ts";
+import { splitDomains } from "../pipeline/domains.ts";
+import { proxySocket } from "../pipeline/proxy.ts";
 import { cacheEnv, sandboxArgv, sandboxEnv } from "../pipeline/sandbox.ts";
 import type { RunResult } from "../tools.ts";
-import type { Live } from "./live.ts";
+import { type Live, liveDomains, shipNetwork } from "./live.ts";
 import type { Secrets } from "./secrets.ts";
 
 export type DeployOutcome = { state: "live" } | { state: "failed"; why: string } | { state: "pending" };
@@ -160,9 +162,14 @@ async function runCommand(e: AdapterEnv, line: string, extra: Record<string, str
   const argv = sandboxArgv({
     checkout: e.dir,
     home,
-    toolchain: e.cx.config.agent.toolchain,
     cache,
-    network: true,
+    proxy: proxySocket(
+      [
+        ...commandDomains(e.m),
+        ...splitDomains([...liveDomains(e.live), ...shipNetwork(e.cx.db, repo.name)]).valid,
+      ],
+      (l) => e.cx.log(l),
+    ),
     cacheWritable: checksMayWrite(e.cx, e.m),
     line,
   });
@@ -170,7 +177,7 @@ async function runCommand(e: AdapterEnv, line: string, extra: Record<string, str
   return e.cx.tools.run(argv[0]!, argv.slice(1), {
     cwd: e.dir,
     env: {
-      ...sandboxEnv(home, e.cx.config, cacheEnv(cache, e.cx.config, repo)),
+      ...sandboxEnv(home, e.cx.config, cacheEnv(cache, repo)),
       ...shipEnv(e, sha),
       ...extra,
     },

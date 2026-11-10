@@ -17,9 +17,9 @@ import type {
   SetupView,
 } from "../../../src/ui/view.ts";
 import { AddRepoForm } from "../AddRepo.tsx";
-import { act, refreshFeatures } from "../api.ts";
+import { act, applySettings, refreshFeatures } from "../api.ts";
 import { BudgetForm } from "../budgets.tsx";
-import { ErrorNote, ProposedList, ReadinessChip, StateChip, Time, WorkRow } from "../components.tsx";
+import { ErrorNote, ProposedList, ReadinessChip, Section, StateChip, Time, WorkRow } from "../components.tsx";
 import { Alert, Check, External } from "../icons.tsx";
 import { FileNotice, Limits } from "../Limits.tsx";
 import { Link } from "../router.tsx";
@@ -119,7 +119,7 @@ function RefreshButton({ repo }: { repo: string }) {
   );
 }
 
-/** REPO-32: the one step for a missing permission, with its button when the page can act. */
+/** PIP-150: the one step for a missing permission, with its button when the page can act. */
 function SettingsStep({
   text,
   canGrant,
@@ -150,7 +150,15 @@ function SettingsStep({
   );
 }
 
-function Settings({ s }: { s: SettingsView }) {
+function Settings({ repo, s }: { repo: string; s: SettingsView }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ActionReply | null>(null);
+  const apply = async () => {
+    setBusy(true);
+    setResult(await applySettings(repo));
+    setBusy(false);
+  };
+  const running = busy || s.applying;
   return (
     <section class="card repo-settings" aria-labelledby="settings-h">
       <header class="repo-sec-head">
@@ -165,12 +173,38 @@ function Settings({ s }: { s: SettingsView }) {
           ))}
         </ul>
       ) : null}
+      {s.plan.length ? (
+        <>
+          <p class="meta">Apply would change:</p>
+          <ul class="repo-gaps">
+            {s.plan.map((c) => (
+              <li key={`${c.what}|${c.now ?? ""}|${c.after ?? ""}`}>
+                {c.what}
+                {c.now !== undefined || c.after !== undefined ? `: ${c.now ?? "—"} → ${c.after ?? "—"}` : ""}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+      {s.planNote ? <p class="meta">{s.planNote}</p> : null}
       {s.notes.map((n) => (
         <p class="meta" key={n}>
           {n}
         </p>
       ))}
-      {s.step ? <SettingsStep text={s.step} canGrant={s.canGrant} /> : null}
+      {s.canApply ? (
+        <p>
+          <button type="button" class="btn small" disabled={running} onClick={() => void apply()}>
+            {running ? "Applying…" : "Apply"}
+          </button>{" "}
+          <span class="meta">Runs with your own GitHub login.</span>
+        </p>
+      ) : null}
+      {result ? (
+        <p class={`result ${result.ok ? "ok" : "err"}`} role="status">
+          <span>{result.message}</span>
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -202,11 +236,21 @@ function Features({ repo, f }: { repo: string; f: FeaturesView }) {
 }
 
 function Group({ title, count, children }: { title: string; count?: number; children: ComponentChildren }) {
+  // UI-267: a list of the repo (not the spend or caps lines) has a header that folds it.
+  if (count !== undefined)
+    return (
+      <Section
+        title={title}
+        count={count}
+        class="repo-group"
+        fold={`repo-${title.toLowerCase().replace(/\s+/g, "-")}`}
+      >
+        {children}
+      </Section>
+    );
   return (
     <section class="repo-group" aria-label={title}>
-      <h2>
-        {title} {count === undefined ? null : <span class="num meta">{count}</span>}
-      </h2>
+      <h2>{title}</h2>
       {children}
     </section>
   );
@@ -294,7 +338,7 @@ function Repo({ r, readOnly }: { r: RepoView; readOnly: boolean }) {
           ) : null}
         </section>
       ) : null}
-      <Settings s={r.settings} />
+      <Settings repo={r.repo} s={r.settings} />
       <Features repo={r.repo} f={r.features} />
       <Group title="In progress" count={r.inProgress.length}>
         {r.inProgress.length ? (
@@ -385,11 +429,6 @@ function counts(s: RepoSummary): string {
 function All({ data }: { data: Data }) {
   return (
     <div class="repo-all">
-      {data.settingsStep ? (
-        <section class="card repo-settings" aria-label="GitHub settings">
-          <SettingsStep text={data.settingsStep.text} canGrant={data.settingsStep.canGrant} />
-        </section>
-      ) : null}
       {data.scanningStep ? (
         <section class="card repo-settings" aria-label="Code scanning alerts">
           <SettingsStep

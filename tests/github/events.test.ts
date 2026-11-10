@@ -437,3 +437,10 @@ describe("events", () => {
     expect(lines[1]).toMatch(/^api: there is no live check/);
   });
 });
+
+test("events: a held conflict raises nothing", () => {
+  const { m } = world("merge", { pr: 7, head: "h1" });
+  const prs = { code: pr({ mergeable: "CONFLICTING" }) };
+  expect(prEvents(m, prs, ME, BOT)?.event).toBe("conflict");
+  expect(prEvents(m, prs, ME, BOT, undefined, false, true)).toBeNull();
+});

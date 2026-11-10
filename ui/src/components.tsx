@@ -21,6 +21,7 @@ import type {
   When,
 } from "../../src/ui/view.ts";
 import { AddRepoForm } from "./AddRepo.tsx";
+import { AutonomyControl, FlagButtons } from "./AutonomyControl.tsx";
 import {
   acceptProposed,
   act,
@@ -31,7 +32,7 @@ import {
   useFreshness,
 } from "./api.ts";
 import { EstimateBar } from "./budgets.tsx";
-import { foldedOn, forgetFold, setFolded, waitKey } from "./folds.ts";
+import { foldedOn, forgetFold, listFolded, setFolded, setListFolded, waitKey } from "./folds.ts";
 import {
   Alert,
   Check,
@@ -126,6 +127,31 @@ export function ShadowTag() {
   return <span class="shadow-tag">[shadow]</span>;
 }
 
+/** UI-243: marks what the observer proposed; a text label, not colour alone. */
+export function ObserverTag() {
+  return <span class="shadow-tag observer-tag">[observer]</span>;
+}
+
+/** UI-243: the evidence links and the expected gain of an observer proposal, shown before the rest. */
+export function ObserverNote({ note }: { note: { evidence: string; gain: string } }) {
+  return (
+    <section class="observer-note" aria-label="Evidence and expected gain">
+      {note.evidence ? (
+        <>
+          <p class="access-head">Evidence</p>
+          <Markdown text={note.evidence} />
+        </>
+      ) : null}
+      {note.gain ? (
+        <>
+          <p class="access-head">Expected gain</p>
+          <Markdown text={note.gain} />
+        </>
+      ) : null}
+    </section>
+  );
+}
+
 export function Section(props: {
   title: string;
   count?: number;
@@ -133,15 +159,47 @@ export function Section(props: {
   children: ComponentChildren;
   class?: string;
   id?: string;
+  /** UI-267: the list's name in the browser's fold memory; the header then has a toggle and always a count. */
+  fold?: string;
+  /** UI-267: open whatever was remembered (a link points inside it). */
+  forceOpen?: boolean;
 }) {
+  const [folded, setFolded] = useState(props.fold ? listFolded(props.fold) : false);
+  const hidden = folded && !props.forceOpen;
+  const body = `${props.fold ?? "section"}-body`;
+  const count = props.count !== undefined && (props.fold || props.count > 0) ? props.count : null;
   return (
     <section class={`section${props.class ? ` ${props.class}` : ""}`} id={props.id} aria-label={props.title}>
       <header class="section-head">
-        <h2>{props.title}</h2>
-        {props.count !== undefined && props.count > 0 ? <span class="count">{props.count}</span> : null}
+        <h2>
+          {props.fold ? (
+            <button
+              type="button"
+              class="section-toggle"
+              aria-expanded={!hidden}
+              aria-controls={body}
+              onClick={() => {
+                setListFolded(props.fold!, !hidden);
+                setFolded(!hidden);
+              }}
+            >
+              <ChevronDown size={14} class="fold-chev" />
+              {props.title}
+            </button>
+          ) : (
+            props.title
+          )}
+        </h2>
+        {count !== null ? <span class="count">{count}</span> : null}
         {props.aside ? <span class="section-aside">{props.aside}</span> : null}
       </header>
-      {props.children}
+      {props.fold ? (
+        <div id={body} hidden={hidden}>
+          {props.children}
+        </div>
+      ) : (
+        props.children
+      )}
     </section>
   );
 }
@@ -443,6 +501,7 @@ export function NeedsCard({
               <Link href={`/i/${key}`}>{card.title}</Link>
             )}
             {card.shadow ? <ShadowTag /> : null}
+            {card.observer ? <ObserverTag /> : null}
           </h3>
           <p class="meta">
             {card.repo}
@@ -457,6 +516,13 @@ export function NeedsCard({
       ) : null}
       <p class="ask">{card.ask}</p>
       {card.why ? <p class="why">{card.why}</p> : null}
+      {card.autonomy ? (
+        card.kind === "autonomy" ? (
+          <FlagButtons intent={key} view={card.autonomy} readOnly={readOnly} />
+        ) : (
+          <AutonomyControl intent={key} view={card.autonomy} readOnly={readOnly} compact />
+        )
+      ) : null}
       {card.warning ? (
         <p class="why review-warning" role="status">
           <Alert size={16} /> {card.warning}
@@ -797,13 +863,14 @@ export function StepsChecklist({
 }
 
 /** UI-59: a moving intent. */
-export function WorkRow({ row }: { row: Row }) {
+export function WorkRow({ row, readOnly = false }: { row: Row; readOnly?: boolean }) {
   return (
     <Link class="row" href={`/i/${row.intent}`}>
       <span class="row-main">
         <span class="row-title">
           {row.title}
           {row.shadow ? <ShadowTag /> : null}
+          {row.observer ? <ObserverTag /> : null}
         </span>
         <span class="meta">
           {row.repo} · <Id id={row.intent} />
@@ -818,6 +885,9 @@ export function WorkRow({ row }: { row: Row }) {
         </span>
       </span>
       {row.behind ? null : <Phases phases={row.phases} />}
+      {row.autonomy ? (
+        <AutonomyControl intent={row.intent} view={row.autonomy} readOnly={readOnly} compact />
+      ) : null}
       {row.estimate ? <EstimateBar line={row.estimate} /> : null}
       <span class="row-num">
         <span class="num">{row.cost}</span>
@@ -1093,6 +1163,7 @@ export function ProposedCard({
           >
             {card.title}
           </a>
+          {card.observer ? <ObserverTag /> : null}
           <a
             class="proposed-gh"
             href={card.prUrl}
@@ -1169,7 +1240,10 @@ export function ProposedCard({
       <header class="proposed-head">
         <span class="chip chip-sm">Proposed</span>
         {card.draft ? <span class="chip chip-sm chip-draft">Draft</span> : null}
-        <h3>{card.title}</h3>
+        <h3>
+          {card.title}
+          {card.observer ? <ObserverTag /> : null}
+        </h3>
       </header>
       <p class="meta proposed-meta">
         {card.repo ? <span class="mono">{card.repo}</span> : <span>repo unknown</span>}
@@ -1178,6 +1252,7 @@ export function ProposedCard({
         <span> · {card.from}</span>
         <span> · {card.waiting}</span>
       </p>
+      {card.observerNote ? <ObserverNote note={card.observerNote} /> : null}
       {card.problem ? <p class="proposed-problem">{card.problem}</p> : null}
       <div class="proposed-links">
         <a href={card.prUrl} target="_blank" rel="noreferrer noopener">
@@ -1243,40 +1318,30 @@ export function ProposedCard({
   );
 }
 
-/** UI-247: this many proposals show; the rest fold under a button. */
-export const PROPOSED_SHOWN = 5;
-
-/** UI-184, UI-186, UI-188, UI-247: the proposed rows in order, with the notice of a failed read. */
+/** UI-184, UI-186, UI-188, UI-247, UI-267: the proposed rows in order, under a header that folds them. */
 export function ProposedList({ data, readOnly, id }: { data: ProposedData; readOnly: boolean; id?: string }) {
-  const [more, setMore] = useState(false);
-  // A link to a folded proposal (LOOP-93's message) opens the fold.
+  // A link to a proposal (LOOP-93's message) opens the list if it was folded.
   const target = /^#proposed-(\d+)$/.exec(location.hash)?.[1];
-  const hidden = data.cards.slice(PROPOSED_SHOWN);
-  const linked = target !== undefined && hidden.some((c) => String(c.pr) === target);
-  const open = more || linked;
+  const linked = target !== undefined && data.cards.some((c) => String(c.pr) === target);
   useEffect(() => {
     if (target) document.getElementById(`proposed-${target}`)?.scrollIntoView();
   }, [target]);
   if (!data.cards.length) return null;
-  const shown = open ? data.cards : data.cards.slice(0, PROPOSED_SHOWN);
   return (
-    <Section title="Proposed" count={data.cards.length} id={id} class="proposed-section">
+    <Section
+      title="Proposed"
+      count={data.cards.length}
+      id={id}
+      class="proposed-section"
+      fold="proposed"
+      forceOpen={linked}
+    >
       {data.stale ? <p class="proposed-stale meta">{data.stale}</p> : null}
       <div class="proposed-rows">
-        {shown.map((c) => (
+        {data.cards.map((c) => (
           <ProposedCard key={c.pr} card={c} readOnly={readOnly} compact />
         ))}
       </div>
-      {hidden.length ? (
-        <button
-          type="button"
-          class="link-btn proposed-more"
-          aria-expanded={open}
-          onClick={() => setMore(!open)}
-        >
-          {open ? "Show fewer proposals" : `Show ${hidden.length} more proposals`}
-        </button>
-      ) : null}
     </Section>
   );
 }

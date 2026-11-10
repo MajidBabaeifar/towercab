@@ -2,10 +2,13 @@
 // the folded list of moves, cost and the intent's own text.
 
 import type { IntentPage as Data, PrView } from "../../../src/ui/view.ts";
+import { AutonomyControl } from "../AutonomyControl.tsx";
 import {
   Details,
   Id,
   NeedsCard,
+  ObserverNote,
+  ObserverTag,
   OnlyYou,
   PauseButton,
   RiskBlock,
@@ -19,6 +22,7 @@ import {
 import { ChevronLeft, External, PullRequest } from "../icons.tsx";
 import { Markdown } from "../md.tsx";
 import { Link } from "../router.tsx";
+import { ControlNotes, ScoreControl } from "../ScoreControls.tsx";
 import { StageMap } from "../StageMap.tsx";
 
 const PR_WORDS: Record<PrView["state"], string> = {
@@ -75,7 +79,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
               </span>
               <span class="tl-dot" aria-hidden="true" />
               <div class="tl-body">
-                <p class={`tl-text${t.shadow ? " tl-shadow" : ""}`}>{t.text}</p>
+                <p class={`tl-text${t.shadow || t.observer ? " tl-shadow" : ""}`}>{t.text}</p>
                 {t.why ? <p class="tl-why">{t.why}</p> : null}
               </div>
               <span class="tl-lasted meta">
@@ -91,7 +95,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
   );
   return (
     <main class="page intent" id="main">
-      <Link class="back" href="/">
+      <Link class="back" href="/overview">
         <ChevronLeft size={16} />
         Overview
       </Link>
@@ -100,6 +104,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
           <h1>
             {data.title} {data.onlyYou ? <OnlyYou /> : null}
             {data.shadow ? <ShadowTag /> : null}
+            {data.observer ? <ObserverTag /> : null}
           </h1>
           <p class="meta">
             {data.repo} · <Id id={data.id} />
@@ -125,7 +130,11 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
         <StateChip state={data.state} />
       </header>
       <p class="sentence">{data.sentence}</p>
+      {data.observerNote ? <ObserverNote note={data.observerNote} /> : null}
       {data.onlyYou ? <p class="meta only-you-line">{data.onlyYou}</p> : null}
+      {data.autonomy ? <AutonomyControl intent={data.id} view={data.autonomy} readOnly={readOnly} /> : null}
+      {data.controls ? <ScoreControl intent={data.id} view={data.controls} readOnly={readOnly} /> : null}
+      {data.controls ? <ControlNotes view={data.controls} /> : null}
       {!readOnly && (data.onlyYou || data.paused) ? (
         <PauseButton intent={data.id} paused={data.paused === true} />
       ) : null}

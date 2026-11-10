@@ -51,11 +51,9 @@ const moves = () =>
 
 test("pipeline: behind updates the branch", () => {
   expect(m.stage, p.moves()).toBe("done");
-  const put = p.tools.lines("gh").filter((l) => l.includes("/update-branch"));
+  const put = p.forge.calls.filter((l) => l.startsWith("update-branch "));
   expect(put).toHaveLength(1);
-  expect(put[0]).toMatch(
-    new RegExp(`^api -X PUT repos/owner/web/pulls/${m.pr}/update-branch -f expected_head_sha=[0-9a-f]{40}$`),
-  );
+  expect(put[0]).toMatch(new RegExp(`^update-branch owner/web#${m.pr} [0-9a-f]{40}$`));
   expect(moves()).toContainEqual({
     from_stage: "merge",
     event: "head_moved",
@@ -93,8 +91,8 @@ test("pipeline: dirty is a conflict round", () => {
 
 test("pipeline: merge on the gated head", () => {
   // Each merge attempt read the PR first; the only merge call names the head the last gate passed.
-  const merges = p.tools.lines("gh").filter((l) => l.startsWith(`pr merge ${m.pr} `));
-  expect(merges).toEqual([`pr merge ${m.pr} --squash --match-head-commit ${m.head} -R owner/web`]);
+  const merges = p.forge.calls.filter((l) => l.startsWith(`merge owner/web#${m.pr} `));
+  expect(merges).toEqual([`merge owner/web#${m.pr} squash head=${m.head}`]);
   expect(m.head).toBe(p.headSha("owner/web", BRANCH));
   expect(gates()).toBe(3);
 });

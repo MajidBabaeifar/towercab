@@ -4,6 +4,7 @@
 import { join } from "node:path";
 import { ensureClone } from "../../src/checkout.ts";
 import { clonePath, type RepoConfig } from "../../src/config.ts";
+import { applySettings, settingsPass } from "../../src/settings/apply.ts";
 import type { SettingsDeps } from "../../src/settings/script.ts";
 import { type Rig, release, rig, WEB } from "../helpers/ready.ts";
 import { failResult, okResult, type RunFn } from "../helpers/tools.ts";
@@ -149,11 +150,10 @@ export interface SettingsRig {
 }
 
 /** `web` and `ci` (tagged on its main, with the script), `gh` and the script faked. */
-export async function settingsRig(o: { apply?: boolean; tags?: string[] } = {}): Promise<SettingsRig> {
+export async function settingsRig(o: { tags?: string[] } = {}): Promise<SettingsRig> {
   const r = rig({ web: WEB, ci: { "README.md": "ci\n" } });
   const tags = o.tags ?? ["v1.0.0"];
   for (const tag of tags) release(r.remotes.ci!, { "bin/apply-settings": `#!/bin/sh\n# ${tag}\n` }, tag);
-  if (o.apply) r.config.githubSettings = "apply";
   const gh = newGh();
   const script = newScript();
   r.tools.on("gh", ghHandler(gh));
@@ -165,4 +165,10 @@ export async function settingsRig(o: { apply?: boolean; tags?: string[] } = {}):
   const logs: string[] = [];
   const deps: SettingsDeps = { ...r.deps, log: (l) => logs.push(l) };
   return { r, deps, gh, script, logs, web: r.config.repos.get("web")! };
+}
+
+/** The daily check, then the owner's Apply: what a click on a repo with gaps does. */
+export async function checkThenApply(s: SettingsRig) {
+  await settingsPass(s.deps, s.web);
+  return applySettings(s.deps, s.web);
 }

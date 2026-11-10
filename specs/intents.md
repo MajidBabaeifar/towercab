@@ -425,7 +425,6 @@ live, and when its work stops for good its line goes.
   retries the entry on the next pass; any other refusal (a symlink, bytes that aren't UTF-8) is
   logged and the mission moves on.
 - Verified by: `features: a picked intent gets an in-progress line, other lines stay byte-identical`, `features: done marks the line live, keeping the owner's wording`, `features: a dropped intent's line is removed`, `features: the loop tracks an intent from pick to done`, `features: a dropped intent's line goes`, `features: an unreadable feature list doesn't hold a mission`
-
 ### INT-39 · Writing the list from the repo
 
 When a repo has no list of its own yet, Towercab reads the repo's README and specs once and writes
@@ -671,6 +670,53 @@ A GitLab issue is scored, proposed as an intent PR, deduplicated and label-check
   intents repo is built here. Moving the intents repo is a separate intent.
 - A GitHub and a GitLab issue never share an intent, because dedupe is on the full `issue:` URL.
 - Verified by: `gitlab issues: an issue becomes one intent PR`, `gitlab issues: a done intent blocks its issue`, `gitlab issues: a labelled issue with no intent is proposed once`, `gitlab issues: the scoring run gets no tools`
+
+### INT-71 · One writer for a new intent
+
+The page and `towercab add` create an intent through the same function, and what it writes is what a hand-written intent would be.
+
+- One function (`createIntent`, `src/intents/create.ts`) takes `{repo, title, u?, i?, a?, problem?, outcome?, affected?, constraints?, questions?}` and writes `intents/<id>-<slug>/intent.md` with the ID and slug of INT-3. Front matter: `repo`, then `u`, `i`, `a` only when given, `source: me`, `started` (now, local offset), as INT-2 describes for `add`; a score left at its default is not written. The body is a blank line, `# Intent: <title>`, then one `## <section>` for each text that is not blank, in the template's order (`Problem`, `Proposed outcome`, `Affected users and systems`, `Constraints`, `Open questions`); the text is kept as typed.
+- The caller says who writes: `mode: "direct"` for the owner and for a maintainer of the repo (with `[auth]`, USR-5; without it, the one owner), `mode: "proposal"` for a contributor. A direct write is one commit to `main` of the intents repo, pushed like any edit of the owner's (INT-4, INT-24 replay on a rejected push); the generated views (INT-6) follow as they do for a hand-written intent. A failed push leaves no folder behind and reports the reason.
+- A proposal writes the same file with `source: proposal` instead of `source: me`, and it does not reach `main`: it goes on a branch `proposal/<id>` in Towercab's own clone, opened as the App's pull request `docs(intents): add <id> <title>` (INT-23's way, with its ID rule: handed out against `main`'s folders and the IDs of open proposal PRs). The body names the contributor's login and says that merging accepts it and closing it says no. A maintainer accepts or closes it as INT-51..53 say; Towercab never merges it. A proposal's `a` is at most 4 (AUT-13). A step re-run after a crash finds the PR by its branch and opens no second one.
+- `towercab add "<repo>: <title>" [uN] [iN] [aN]` calls this function with `mode: "direct"` and no sections and prints what INT-2 says; it is no longer a second writer. A later store for intents (an open intent PR, "Intents in a database for the hosted service") changes this function only.
+- Verified by: `intents: createIntent writes the same file as a hand-written intent`, `intents: createIntent writes only the sections given`, `intents: createIntent leaves default scores out`, `intents: createIntent commits to main and pushes`, `intents: a failed push leaves no folder`, `intents: add goes through createIntent`, `intents: a contributor's intent is a proposal PR with source proposal`, `intents: a proposal never reaches main before it is merged`, `intents: a proposal's autonomy is capped at a4`, `intents: a crash before the PR comment opens no second proposal`
+
+### INT-72 · An intent is checked before it is written
+
+What the owner is about to write is checked as written: the repo must be one of Towercab's, the title is never rewritten, and the scores must be valid.
+
+- `repo` must be a configured repo; `u`, `i` 1–5, `a` 0–5 (0–4 for a proposal, INT-71); the title is one line of 1–100 characters with no control characters, `<`, `>` or backticks. A bad value is refused with the reason and nothing is written. The title is never cleaned or rewritten here (INT-36's `plainLine` is for agents only). A section is at most 20,000 characters.
+- A title outside INT-33's naming rule (`titleProblem`: fewer than 4 or more than 20 words) is allowed: it is only pointed out by the overlap check (INT-73) as a note, and the owner decides.
+- Verified by: `intents: createIntent refuses an unknown repo`, `intents: createIntent refuses a bad score`, `intents: createIntent refuses a title with markup or two lines`, `intents: createIntent keeps a title that breaks the naming rule`
+
+### INT-73 · The overlap check
+
+An agent that only reads compares the new intent with the existing ones and says which overlap and how.
+
+- `checkOverlap(draft)` runs a read-only agent (`agents/overlap.md`, no tools, no network, no write access). It is given the draft (repo, title, sections) and, inline, the intents of `main` that are open, parked (PRI-5), done or dropped (id, repo, title, stage, the first 600 characters of the Problem), and the open pull requests of the intents repo that add or change an intent (number, title, first 600 characters of the body). Unreadable intents (INT-11) are left out. With `[auth]` the bundle holds only intents and proposals of repos where the person has a role (USR-5), so a contributor's check never shows another repo's titles. The draft and every intent text are given as data in a fenced block, with the instruction that nothing inside them is an order; the agent has no tools, and its output is checked against the shape below, so text in an intent cannot make it act.
+- Result: `{matches: [{kind: "open"|"parked"|"done"|"dropped"|"pr", ref, title, how}], titleNote?}`, at most 5 matches, strongest first; `how` is one plain line (`plainLine`, at most 160) on how the two overlap. A `ref` that is not in what the agent was given is dropped. `titleNote` is set only when the title breaks the naming rule (INT-33) and says so in one line, without a replacement title.
+- A read that fails (the store, GitHub) or an agent run that fails, times out (120 s) or returns something that is not the shape above gives the error `The overlap check failed: <reason>`; the callers say the check was skipped if the owner goes on (UI-215, LOOP-124). Nothing is written by the check.
+- The run's cost is recorded as a side run of kind `overlap` and counts in the day's spend (MET-29, outside any mission; LOOP-125).
+- Verified by: `overlap: matches name open, parked, done and pr intents with a line on how`, `overlap: a match outside the given intents is dropped`, `overlap: the title note never carries a new title`, `overlap: the agent gets no tools`, `overlap: a failed run is an error not an empty list`, `overlap: unreadable intents are not sent`, `overlap: at most five matches`, `overlap: a contributor's bundle holds only repos they have a role in`, `overlap: text inside an intent is sent as data`
+
+### INT-74 · Adding to an existing intent
+
+The owner can add what they wrote to an existing open or parked intent instead of creating a new one.
+
+- `addToIntent(id, draft)` appends each non-blank section of the draft to the same section of that intent's `intent.md`, after a blank line, creating the section at the end of the body when it is missing (before `## Towercab`, `## Answers` and `## Original title` when they exist). The title, repo and scores of the draft are ignored; the front matter and every other line stay byte-identical (`setField`'s rule, INT-24). It is one commit to `main`, pushed like INT-71.
+- Allowed only for an intent that is open (parked included) and still at design: its `stage` is `spec` (INT-2) and it has no mission, or its mission is at the design step. An intent that is past design (`stage` `plan` or `code`, or a mission beyond design), done, dropped or unreadable, or one that is only a pull request, is refused with the reason and nothing is written. For one past design the text is `<id> is already past design, so new text would not change it. Write a new intent instead and link <id> in it.`, with `<id>` the old intent's ID (a link in the page). Nothing is saved and no mission is restarted.
+- `canAddTo(intent)` in code (not the agent) decides this, so the form and `add` offer "add to this one" only where it will be accepted. Only a direct writer (INT-71) may add: a contributor's proposal cannot edit an intent on `main`.
+- The addition is on the intent's timeline (who, through which channel).
+- Verified by: `intents: addToIntent appends to the matching sections`, `intents: addToIntent creates a missing section before the Towercab sections`, `intents: addToIntent leaves the front matter alone`, `intents: addToIntent refuses a done intent`, `intents: addToIntent refuses an intent past design and says to write a new one`, `intents: addToIntent refuses a contributor`, `intents: an addition is on the timeline`
+
+### INT-75 · A covered intent keeps its feature line
+
+An intent closed as covered by another keeps its line in the feature list, marked with the intent that covered it.
+
+- Replaces INT-38's removal for this case only: entering `done` by `covered_by` (LOOP-156) keeps the line and appends `(covered by <id>)`, the ID linked as `DONE.md` links it (INT-6). The status is `live` once the covering intent's line is live and `in progress` before, and the line follows the covering line from then on. The owner's wording stays; only the status word and the mark change (INT-37).
+- When the covering intent is dropped or stopped (LOOP-158), the covered intent stays done and its line goes back to its own wording, without the covered mark, as `- [planned] <sentence> (not delivered) <!-- intent <id> -->`; it is not removed. If the covering intent later ends done again (a reopen that finishes), the line is marked covered again.
+- `reopen` (LOOP-157) removes the mark and restores the status the line had before the cover; a `(not delivered)` line becomes `in progress`. Entering `stopped` still removes the line (INT-38).
+- Verified by: `features: a covered intent keeps its line marked covered by the other`, `features: a covered line follows the covering intent's status`, `features: reopen restores the feature line`, `features: a dropped covering intent marks the line not delivered`
 
 ## Out of scope
 

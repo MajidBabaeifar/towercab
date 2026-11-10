@@ -25,7 +25,9 @@ An intent's priority is twice its importance plus its urgency.
 - Verified by: `priority: score is 2i + u`
 ```
 
-- IDs are never reused. A dropped requirement keeps its heading and says `Removed: <why>`.
+- IDs are never reused. A dropped requirement keeps its heading and says `Removed: <why>`. The why
+  names what replaced it (`Removed: replaced by LOOP-4`) or the parked intent that holds it
+  (`Removed: parked as intent 261026-2204-5`), and that intent is in the Parked table below.
 - `Verified by` names tests (their exact `test(...)` titles in `tests/`), a command, or `manual` with
   what to look at.
 - **Status line:** `Draft` = agreed, not built. `Live: <IDs>` lists the built requirements
@@ -42,13 +44,29 @@ An intent's priority is twice its importance plus its urgency.
 | [loop.md](loop.md) | LOOP | The program: service, state machine, crash recovery, limits, commands, messages, updates |
 | [pipeline.md](pipeline.md) | PIP | Spec, plan and code PRs; build, verify, proof, CI, review, gate, merge; GitHub interactions; writing |
 | [ship.md](ship.md) | SHIP | After the merge: wait for the deploy, run e2e against the live app, roll back and fix forward |
-| [repo.md](repo.md) | REPO | What Towercab reads from a target repo: `CLAUDE.md`, `REVIEW.md`, `TOWERCAB.md`; protected paths |
+| [repo.md](repo.md) | REPO | What Towercab reads from a target repo: `CLAUDE.md`, `AGENTS.md`, `REVIEW.md`, `TOWERCAB.md`, a per-repo overlay; protected paths |
 | [gitlab.md](gitlab.md) | GL | Working with code hosted on GitLab: config, token identity, project names, merge requests, approvals |
 | [ui.md](ui.md) | UI | The local web page for the person running Towercab |
 | [metrics.md](metrics.md) | MET | Cost and time per intent, spend per day |
 | [public.md](public.md) | PUB | What the public repo shows: license, security policy, README, screenshot, contributing, conduct, example config, no personal names |
 | [shadow.md](shadow.md) | SHD | The shadow: a Claude session the owner talks to in Telegram, what it may do, how it is tagged and capped |
+| [telegram.md](telegram.md) | TG | Acting from Telegram: buttons on messages, answering by reply, commands, messages edited when handled |
+| [users.md](users.md) | USR | Several people signing in with GitHub, roles, repo access, who did what |
+| [observer.md](observer.md) | OBV | The observer: a read-only agent that watches how Towercab runs and proposes improvements as intents |
 | [maintain.md](maintain.md) | MNT | Removed: parked as intent 261026-2204-2 |
 | [scheduler.md](scheduler.md) | SCH | Removed: superseded by loop.md |
 | [tasks.md](tasks.md) | TSK | Removed: superseded by intents.md |
 | [runner.md](runner.md) | RUN | Removed: superseded by loop.md |
+
+## Parked
+
+Intents that hold a feature the specs do not build. A row may say `parked` only by citing one of
+these IDs ([PIP-215](pipeline.md)). When a feature is built, remove its ID here: the spec check then
+lists every row that still calls it parked.
+
+| Intent | What it holds |
+|---|---|
+| 261026-2204-3 | Review findings becoming intents and feeding a target repo's `CLAUDE.md` (its issue intake is built) |
+| 261026-2204-5 | Grafana and OTLP export, eval pass rates, repo rulesets |
+| 261030-0401-2 | Staging and preview environments before production |
+| 261030-0401-3 | Watching the live app after green: alerts, incidents, the AI SRE |

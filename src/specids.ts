@@ -46,6 +46,36 @@ export function addedIds(diff: string): string[] {
   return [...new Set([...diff.matchAll(/^\+### ([A-Z]+-\d+)(?=\s|$)/gm)].map((m) => m[1]!))];
 }
 
+/**
+ * PIP-202: whether `branch` is a spec PR head of intent `intentId`: `towercab/<id>-…-spec`, where the
+ * segment right after the prefix is not a bare number (that is a sibling intent, `261105-2152-2`).
+ */
+export function ownSpecBranch(intentId: string, branch: string): boolean {
+  const prefix = `towercab/${intentId}-`;
+  if (!branch.startsWith(prefix) || !branch.endsWith("-spec")) return false;
+  const first = branch.slice(prefix.length).split("-")[0]!;
+  return first !== "" && !/^\d+$/.test(first);
+}
+
+/** PIP-210: wording that says the row already exists (whole words, any case). */
+const REFERENCE_WORDING = /\b(?:as written|already written|changed|exists|existing)\b/i;
+
+/**
+ * PIP-202, PIP-210: the IDs the intent words as already existing ("made true as written", "already
+ * written", "changed", "exists", "existing"). The wording covers the IDs of its own clause: a line
+ * split at `;`, except that a parenthesis is joined to the IDs before it.
+ */
+export function namedAsWritten(text: string): string[] {
+  const out = new Set<string>();
+  for (const line of text.split("\n")) {
+    // "WEB-1..2 (already written; make them Live)": the parenthesis belongs to the IDs before it.
+    const flat = line.replace(/\([^)]*\)/g, (p) => p.replaceAll(";", ","));
+    for (const clause of flat.split(";"))
+      if (REFERENCE_WORDING.test(clause)) for (const id of parseIds(clause)) out.add(id);
+  }
+  return [...out];
+}
+
 /** The next `count` free numbers of `prefix`, after the highest taken one. */
 export function nextFree(prefix: string, taken: Iterable<string>, count: number): string[] {
   let top = 0;

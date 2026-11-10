@@ -10,8 +10,11 @@ import type { Db } from "./db.ts";
 import type { GitLabForge } from "./forge/gitlab.ts";
 import { gitlabPath, isGitlab, parseGitlabProject } from "./forge/types.ts";
 import type { Forge } from "./forge.ts";
+import { splitDomains } from "./pipeline/domains.ts";
+import { envRefusal } from "./pipeline/sandbox.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
 import { isMoved, readFileValues } from "./repo/settings.ts";
+import { shipNetworkKey } from "./ship/live.ts";
 import type { Tools } from "./tools.ts";
 
 /** Where a row came from: a config table, or `repo add` from the CLI or the page. */
@@ -494,6 +497,7 @@ export function setRepo(db: Db, config: Config, name: string, pairs: string[], b
     const row = db.get<RepoRow>("SELECT * FROM repos WHERE name = ?", name);
     if (!row) throw new Error(`${name} isn't a repo Towercab knows (towercab repo list)`);
     const r = toRepo(row);
+    let shipNet: string[] | null = null;
     for (const pair of pairs) {
       const eq = pair.indexOf("=");
       if (eq < 1) throw new Error(`${pair} isn't key=value`);
@@ -513,8 +517,15 @@ export function setRepo(db: Db, config: Config, name: string, pairs: string[], b
         const p = value === "" ? "" : expand(value);
         if (p !== "" && !isAbsolute(p)) throw new Error("path must be absolute or start with ~/");
         r.path = p;
-      } else if (key === "env") r.env = envOf(r.env, value);
-      else if (key === "teammate_review") {
+      } else if (key === "env") {
+        const next = envOf(r.env, value);
+        // PIP-159: a variable the sandbox would leave out is refused when it is set, with the reason.
+        for (const [k, v] of Object.entries(next)) {
+          const why = r.env[k] === v ? null : envRefusal(k, v);
+          if (why) throw new Error(`env ${k}: ${why}`);
+        }
+        r.env = next;
+      } else if (key === "teammate_review") {
         if (value !== "on" && value !== "off") throw new Error("teammate_review must be on or off");
         if (value === "on") r.teammateReview = true;
         else delete r.teammateReview;
@@ -522,8 +533,18 @@ export function setRepo(db: Db, config: Config, name: string, pairs: string[], b
         const list = reviewersOf(value, config.github?.me ?? "", bot);
         if (list.length > 0) r.reviewers = list;
         else delete r.reviewers;
+      } else if (key === "ship_network") {
+        // The platform domains the repo's deploy and rollback commands may reach (SHIP-5): the owner's, kept
+        // in the database, never in a repo file.
+        shipNet = value
+          .split(",")
+          .map((d) => d.trim())
+          .filter(Boolean);
+        const bad = splitDomains(shipNet).invalid[0];
+        if (bad) throw new Error(`ship_network: ${bad.domain} ${bad.why}`);
       } else throw new Error(`unknown setting ${key}: use ${SETTINGS}`);
     }
+    if (shipNet) db.setMeta(shipNetworkKey(name), JSON.stringify(shipNet));
     if (r.base !== row.base || r.path !== row.path) {
       const busy = needing(db, name);
       if (busy.length > 0) {

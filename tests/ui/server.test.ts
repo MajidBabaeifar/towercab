@@ -88,7 +88,7 @@ test("ui: binds localhost only", async () => {
 
 test("ui: loop serves the page", async () => {
   const { ui, port } = await serve();
-  for (const path of ["/", "/board", "/queue", "/activity", `/i/${IDS.plan}`]) {
+  for (const path of ["/", "/overview", "/inbox", "/board", "/queue", "/activity", `/i/${IDS.plan}`]) {
     const r = await call(port, { path });
     expect(r.status, path).toBe(200);
     expect(r.headers["content-type"]).toBe("text/html; charset=utf-8");

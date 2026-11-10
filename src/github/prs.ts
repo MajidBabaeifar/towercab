@@ -1,50 +1,11 @@
 // Reading one of the intent's PRs (PIP-21) with gh 2.46 (LOOP-20): `gh pr view --json` plus the
 // review comments through `gh api --paginate` (no `--slurp`: its pages print back to back).
 
+import { type Forge, must, type PrComment, type PrState } from "../forge.ts";
 import type { GitHub } from "../handlers.ts";
 import { check } from "../tools.ts";
 
-export interface PrReview {
-  author: string;
-  /** `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, `DISMISSED`, `PENDING`. */
-  state: string;
-  body: string;
-  /** RFC 3339. */
-  at: string;
-  /** The head it reviewed, when gh says. */
-  commit: string | null;
-}
-
-export interface PrComment {
-  author: string;
-  body: string;
-  /** RFC 3339. */
-  at: string;
-  id: string;
-  /** Review comments: the file and line they are on. */
-  path?: string;
-  line?: number;
-  /** Review comments: the review they belong to (PIP-145: an approval's comments are not feedback). */
-  reviewId?: string;
-}
-
-export interface PrState {
-  state: "OPEN" | "MERGED" | "CLOSED";
-  mergedAt: string | null;
-  mergeCommit: string | null;
-  head: string;
-  /** `MERGEABLE`, `CONFLICTING` or `UNKNOWN`. */
-  mergeable: string;
-  body: string;
-  isDraft: boolean;
-  /** PIP-142: the PR's author, the host's review decision and the base branch, when gh says. */
-  author?: string;
-  reviewDecision?: string;
-  base?: string;
-  reviews: PrReview[];
-  /** Conversation comments, then review comments. */
-  comments: PrComment[];
-}
+export type { PrComment, PrReview, PrState } from "../forge.ts";
 
 export const PR_FIELDS = "state,mergedAt,mergeCommit,headRefOid,mergeable,isDraft,reviews,comments,body";
 
@@ -98,6 +59,7 @@ export function parsePr(viewJson: string, commentsText: string): PrState {
     body: str(c.body),
     at: str(c.createdAt),
     id: idOf(c.id),
+    ...(str(c.url) ? { url: str(c.url) } : {}),
   }));
   for (const page of jsonStream(commentsText, "gh api comments")) {
     if (!Array.isArray(page)) throw new Error("gh api comments: not a list");
@@ -109,6 +71,7 @@ export function parsePr(viewJson: string, commentsText: string): PrState {
         body: str(c.body),
         at: str(c.created_at),
         id: idOf(c.id),
+        ...(str(c.html_url) ? { url: str(c.html_url) } : {}),
         ...(typeof c.path === "string" ? { path: c.path } : {}),
         ...(typeof line === "number" ? { line } : {}),
         ...(c.pull_request_review_id !== undefined && c.pull_request_review_id !== null
@@ -198,11 +161,7 @@ function login(v: unknown): string {
 }
 
 /** Close an open PR as the App with a comment saying why (PIP-53); a closed or merged one is left. */
-export async function closeIfOpen(gh: GitHub, repo: string, n: number, why: string): Promise<void> {
-  const view = check(
-    await gh.gh(repo, ["pr", "view", String(n), "-R", repo, "--json", "state"]),
-    "gh pr view",
-  );
-  if ((JSON.parse(view) as { state: string }).state !== "OPEN") return;
-  check(await gh.gh(repo, ["pr", "close", String(n), "-R", repo, "--comment", why]), "gh pr close");
+export async function closeIfOpen(forge: Forge, repo: string, n: number, why: string): Promise<void> {
+  if ((await forge.prBrief(repo, n)).state !== "OPEN") return;
+  must(await forge.closePr(repo, n, why), "gh pr close");
 }

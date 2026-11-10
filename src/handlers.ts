@@ -37,8 +37,9 @@ export interface GitHub {
 }
 
 /**
- * What the loop and the stages hold: the forge, and, until the code that still makes raw `gh` calls
- * (settings, teammate review, releases, secrets, readiness) has moved behind it, the raw calls too.
+ * What the loop holds: the forge, and, until the code that still makes raw `gh` calls (settings,
+ * releases, secrets, readiness) has moved behind it, the raw calls too. Stages get the `Forge` alone
+ * (`Ctx.github`, PIP-201).
  */
 export type Host = Forge & GitHub;
 
@@ -67,9 +68,11 @@ export interface Ctx {
   tools: Tools;
   clock: Clock;
   store: IntentStore;
-  github: Host;
+  github: Forge;
   /** False right after a wake from suspend: no wait timeout may fire before its poll (LOOP-11). */
   timeouts: boolean;
+  /** PIP-161, PIP-162: the last sandbox probe's result, when the loop probes (null before the first); absent in tests. */
+  sandbox?: () => { ok: boolean; why: string } | null;
   log(line: string): void;
   /** The mission's repo config (throws `unknown repo <r>`). */
   repo(m: Mission): RepoConfig;

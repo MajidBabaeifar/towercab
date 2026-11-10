@@ -3,6 +3,7 @@
 // `[shadow].free` lists them; confirm always waits. Every action is recorded before it runs.
 
 import { ownerOnly, ownerOnlyLine } from "../autonomy.ts";
+import { levelNow } from "../autonomy-change.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import type { Clock } from "../handlers.ts";
@@ -80,7 +81,7 @@ export class Executor {
     }
     // SHD-21, SHD-22: an a0 intent is the owner's alone, whatever `free` says and after a yes; the one
     // exception is a pause the owner's own latest message asked for.
-    if (ownerOnly(found.a ?? null, unfinishedFor(db, id)?.a_at_pick ?? null)) {
+    if (ownerOnly(levelNow(db, found))) {
       const asked = /\bpause\b/i.test(ownerText) && ownerText.includes(id);
       if (!(req.action === "pause" && asked)) return { id, why: ownerOnlyLine(id) };
     }

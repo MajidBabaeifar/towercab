@@ -1,9 +1,10 @@
 // `towercab doctor` finds the owner's `gh` login in the text of `gh auth status` (LOOP-15).
 
 import { expect, test } from "vitest";
+import { Db } from "../src/db.ts";
 import { doctor } from "../src/doctor.ts";
 import type { GitHub } from "../src/handlers.ts";
-import { FakeTools } from "./helpers/tools.ts";
+import { FakeTools, okResult } from "./helpers/tools.ts";
 import { testConfig, testHome } from "./helpers/world.ts";
 
 async function ghLoginLine(status: { stdout?: string; stderr?: string }): Promise<string> {
@@ -39,4 +40,43 @@ test("doctor: another gh login is not the owner's", async () => {
   expect(await ghLoginLine({ stdout: "You are not logged into any GitHub hosts.\n" })).toMatch(
     /^gh login: not logged in as owner /,
   );
+});
+
+test("doctor: shows the sandbox probe", async () => {
+  const tools = new FakeTools().on("/usr/bin/bwrap", () => okResult("bubblewrap 0.9.0"));
+  const config = testConfig();
+  const held = await doctor({
+    config,
+    home: testHome(),
+    tools,
+    github: null,
+    quick: false,
+    probe: async () => ({ ok: true, why: "held" }),
+  });
+  expect(held.lines).toContain("bwrap version: bubblewrap 0.9.0");
+  expect(held.lines).toContain("sandbox: the probe held");
+  const failed = await doctor({
+    config,
+    home: testHome(),
+    tools,
+    github: null,
+    quick: false,
+    probe: async () => ({ ok: false, why: "the checkout's .git could be written" }),
+  });
+  expect(failed.ok).toBe(false);
+  expect(failed.lines).toContain("sandbox: the probe failed: the checkout's .git could be written");
+  // Not a namespace problem: no profile is suggested.
+  expect(failed.lines.join("\n")).not.toContain("AppArmor");
+});
+
+test("doctor: no Administration line whatever the App has", async () => {
+  const github = {
+    owner: async () => ({ code: 0, stdout: "", stderr: "", timedOut: false }),
+  } as unknown as GitHub;
+  const db = Db.memory();
+  // A permission flag left in `meta` by an older Towercab says nothing.
+  db.setMeta("settings-permission", JSON.stringify({ at: 1, repo: "web" }));
+  const config = testConfig({ github: { app_id: 1, me: "owner" } });
+  const r = await doctor({ config, home: testHome(), tools: new FakeTools(), github, db, quick: false });
+  expect(r.lines.filter((l) => /Administration/.test(l))).toEqual([]);
 });

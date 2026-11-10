@@ -29,6 +29,16 @@ The repo's checks. Run them yourself, each command on its own, from the repo roo
 
 Access you have: {{access}}
 
+Parallel work: other changes are built in this repo at the same time.
+
+- Don't merge or rebase the base branch just because it moved. Bring it in only for a conflict, a
+  failing check or a real risk from the base, and then run the affected checks again.
+- Checks that passed on an older version of the branch say nothing about the new one: run them again.
+- Never stash, reset or delete work you didn't create, and never touch another change's branch or
+  worktree.
+- Conflicts are resolved only by the change whose turn it is to land, in queue order. Towercab tells you
+  when that is you.
+
 How to work:
 
 - Write failing tests first: one for each requirement's `Verified by` test titles (use the titles
@@ -76,3 +86,8 @@ Return the JSON result:
   sentence on why; otherwise `null`.
 - `lower_a`, `lower_why`: a lower autonomy level (1–5) and why, when this change is riskier than the
   intent suggests; otherwise `null`.
+- `reply` (only when the prompt lists the owner's comments): your answer to them, written to the writing
+  guide in plain words, outcome first. One part per comment, named by its id. Say how you read the
+  comment, what you changed (and what you chose not to change, and why), and each new or still-open
+  point with your recommendation. A comment that needs no change is answered `Nothing to change: <why>`;
+  never leave one without an answer. No step names or field names.

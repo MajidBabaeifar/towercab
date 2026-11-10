@@ -73,24 +73,34 @@ async function crashing(p: Pipe, between: () => void = () => {}): Promise<string
     return r;
   };
 
-  // GitHub and the repos: a PR created, merged, commented or edited; a push.
-  const mutation = (cmd: string, args: string[]) => {
-    if (cmd === "git" && args.includes("push")) return "git push";
-    if (cmd !== "gh") return null;
-    const a = args[0] === "--as-owner" ? args.slice(1) : args;
-    if (a[0] === "pr" && ["create", "merge", "comment", "close", "ready"].includes(a[1]!))
-      return `gh pr ${a[1]}`;
-    if (a[0] === "run" && a[1] === "rerun") return "gh run rerun";
-    if (a[0] === "api" && (a.includes("PATCH") || a.includes("PUT"))) return `gh api ${a[2]}`;
-    return null;
-  };
+  // The repos: a push.
   const toolsRun = p.tools.run.bind(p.tools);
   p.tools.run = async (cmd: string, args: string[], opts: RunOpts = {}) => {
     const r = await toolsRun(cmd, args, opts);
-    const kind = mutation(cmd, args);
-    if (kind && r.code === 0) wrote(kind);
+    if (cmd === "git" && args.includes("push") && r.code === 0) wrote("git push");
     return r;
   };
+  // The code host: a PR opened, merged, commented, closed or edited.
+  const forge = p.forge as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>;
+  const mutations: Record<string, string> = {
+    openPr: "forge open",
+    mergePr: "forge merge",
+    commentOnPr: "forge comment",
+    upsertPrComment: "forge comment",
+    closePr: "forge close",
+    markReady: "forge ready",
+    rerunFailed: "forge rerun",
+    updatePrBody: "forge body",
+    updateBranch: "forge update-branch",
+  };
+  for (const [method, kind] of Object.entries(mutations)) {
+    const real = forge[method]!.bind(forge);
+    forge[method] = async (...a: unknown[]) => {
+      const r = (await real(...a)) as { ok?: boolean } | undefined;
+      if (r?.ok !== false) wrote(kind);
+      return r;
+    };
+  }
 
   // The intents repo, through the store.
   const wrapStore = (s: IntentStore): IntentStore => ({
@@ -215,7 +225,7 @@ test("loop: a crash at every durable write still ends done once", async () => {
   const points = await crashing(p);
   // Every kind of write crashed at least once, at many points of the flow.
   const kinds = new Set(points.map((s) => s.split(" @ ")[0]!));
-  for (const k of ["tx insert", "run update", "git push", "gh pr create", "gh pr merge", "store", "gh api"])
+  for (const k of ["tx insert", "run update", "git push", "forge open", "forge merge", "store", "forge body"])
     expect(
       [...kinds].some((x) => x.startsWith(k)),
       k,

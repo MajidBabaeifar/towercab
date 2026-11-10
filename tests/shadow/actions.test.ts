@@ -233,7 +233,7 @@ test("shadow: a drafted intent is capped at a4", async () => {
   const a = Number(/^a: (\d)$/m.exec(d.file())?.[1]);
   expect(a).toBeLessThanOrEqual(4);
   // Whatever it says, autonomy 5 cannot be reached by a source that isn't the owner's (AUT-13).
-  expect(effectiveA(5, 5, 5, "shadow")).toBe(4);
+  expect(effectiveA(5, 5, "shadow")).toBe(4);
 });
 
 test("shadow: confirming a draft sets source me", async () => {
