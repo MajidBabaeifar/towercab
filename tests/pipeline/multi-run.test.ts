@@ -223,12 +223,7 @@ test("pipeline: a run with red checks after repairs is no progress", async () =>
   // The test looks for a file no round writes, so the checks stay red; each repair still changes something.
   const red = (tag: string) =>
     reply(build({ steps_done: null, handoff: null }), { [`junk-${tag}.txt`]: "x\n" });
-  p.queue(
-    "worker",
-    unfinished(),
-    red("a"),
-    red("b"),
-  );
+  p.queue("worker", unfinished(), red("a"), red("b"));
   await p.start();
   const n = await p.until(() => p.mission()?.waiting === "checks red", 200);
   expect(n, p.moves()).toBeGreaterThan(0);
