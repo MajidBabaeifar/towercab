@@ -549,7 +549,8 @@ async function askHandoff(cx: Ctx, m: Mission, done: number, total: number): Pro
       }),
     };
   }
-  const fresh = cx.record(m, "worker", {}, { continued: { ...continued, handoff: true } });
+  // Another step name than the run's own: the same one would read as the run being continued, with its prompt.
+  const fresh = cx.record(m, "access", {}, { continued: { ...continued, handoff: true } });
   return spawnWorker(
     cx,
     fresh,
@@ -832,7 +833,8 @@ async function stalledRun(cx: Ctx, m: Mission): Promise<Progress> {
   const done = b.stepsDone ?? 0;
   const total = b.stepsTotal ?? 0;
   const fresh = { session: crypto.randomUUID(), session_used: 0 };
-  const next = { ...b, stalled, due: true, lastRun: false };
+  // A run that added nothing doesn't use up one of the build's runs; the stall count bounds these.
+  const next = { ...b, stalled, due: true, lastRun: false, runs: Math.max(0, (b.runs ?? 1) - 1) };
   if (stalled < MAX_STALLS) {
     cx.record(m, "", fresh, { build: next });
     return {

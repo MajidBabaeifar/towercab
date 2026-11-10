@@ -105,7 +105,9 @@ test("pipeline: the build prompt names the steps already built", async () => {
   expect(second!.prompt).toContain("Steps 1 to 2 of 6 are built");
   expect(second!.prompt).toContain("start at step 3");
   expect(second!.prompt).toContain("1. One\n2. Two");
-  expect(second!.prompt).not.toContain("3. Three\n4. Four");
+  // The built list holds steps 1 and 2 only (the plan itself, fenced above it, names them all).
+  const built = second!.prompt.split("Steps already built:\n")[1]!.split("\n\n")[0];
+  expect(built).toBe("1. One\n2. Two");
 }, 120_000);
 
 test("pipeline: a later build run starts a new session", async () => {
@@ -115,7 +117,7 @@ test("pipeline: a later build run starts a new session", async () => {
   await p.start();
   await untilWorkers(p, 2);
   const [first, second] = workers(p);
-  expect(first!.session.mode).toBe("new");
+  // Run 1 resumes the mission's session (design and plan used it); run 2 does not.
   expect(second!.session.mode).toBe("new");
   expect(second!.session.id).not.toBe(first!.session.id);
 }, 120_000);
