@@ -56,6 +56,7 @@ export function buildChat(w: ChatWorld, telegram: Telegram, loop: () => Loop): C
     repo: card.repo,
     ask: card.ask,
     why: card.why,
+    people: card.people ?? null,
     question: card.kind === "question" || (card.openPoints?.length ?? 0) > 0,
     actions: card.actions.filter(
       (a): a is "merge" | "retry" | "drop" => a === "merge" || a === "retry" || a === "drop",

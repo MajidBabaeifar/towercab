@@ -187,7 +187,7 @@ test("pipeline: first publish opens the code PR", () => {
 test("pipeline: PR text comes from the worker", () => {
   // PIP-108: the worker's plain brief and the risk lead; the worker's technical text follows.
   const body = code().body;
-  expect(body.startsWith(`## In plain words\n\n${BUILD_BRIEF}\n\n## Risk: low`)).toBe(true);
+  expect(body.startsWith(`## For people\n\n${BUILD_BRIEF}\n\n## Risk: low`)).toBe(true);
   const at = body.indexOf(WORKER_PR);
   expect(at).toBeGreaterThan(0);
   // Code adds only its own facts after it: checks, links, IDs, the review, the footer.
@@ -196,7 +196,7 @@ test("pipeline: PR text comes from the worker", () => {
   expect(rest).toContain("**Spec IDs:** WEB-1");
   expect(rest).toContain("Part of this change:");
   expect(rest).toMatch(/<sub>Built by Towercab · .* · \$1\.80 · 0h01m<\/sub>$/);
-  expect(spec().body.startsWith(`## In plain words\n\n${DESIGN.brief}`)).toBe(true);
+  expect(spec().body.startsWith(`## For people\n\n${DESIGN.brief}`)).toBe(true);
   expect(spec().body).toContain(DESIGN.pr);
 });
 

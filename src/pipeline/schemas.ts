@@ -2,6 +2,7 @@
 // every key required, `null` where optional; plus their result types and a validator for them.
 
 import type { PlanStep } from "../steps.ts";
+import { checkPeople } from "./prtext.ts";
 
 /** Conventional Commit types. */
 export const TYPES = [
@@ -116,6 +117,9 @@ export const BUILD_SCHEMA = object({
   plan_changed: S_NULL,
   lower_a: { type: ["integer", "null"], minimum: 0, maximum: 5 },
   lower_why: S_NULL,
+  // PIP-216, PIP-219: how many plan steps are built so far (null = all) and the note for the next run.
+  steps_done: { type: ["integer", "null"], minimum: 0 },
+  handoff: S_NULL,
 });
 
 export const REVIEW_SCHEMA = object({
@@ -137,6 +141,8 @@ export const REVIEW_SCHEMA = object({
   door: { type: "string", enum: ["one-way", "two-way"] },
   red_lines: list(object({ line: S, file: S })),
   summary: S,
+  // PIP-221: the agent part beside `brief`; may be empty.
+  agent: S,
 });
 
 /** The risk agent's assessment at a gate (PIP-96, AUT-16) and the spec's second review (PIP-97). */
@@ -147,6 +153,8 @@ export const RISK_SCHEMA = object({
   level: { type: "string", enum: ["low", "medium", "high"] },
   summary: S,
   open_points: list(object({ point: S, why: S })),
+  // PIP-221: the agent part beside `summary`, the people part; may be empty.
+  agent: S,
 });
 
 /** PIP-169: the short review of a mechanical merge: did the combination keep both sides? */
@@ -273,6 +281,10 @@ export interface BuildResult {
   plan_changed: string | null;
   lower_a: number | null;
   lower_why: string | null;
+  /** PIP-216: plan steps built so far, from step 1 in order; null = all of them. */
+  steps_done: number | null;
+  /** PIP-219: what is done, what is next, anything surprising; needed while steps are open. */
+  handoff: string | null;
   /** PIP-203: as in `DesignResult`. */
   reply?: string;
 }
@@ -296,6 +308,8 @@ export interface ReviewResult {
   door: "one-way" | "two-way";
   red_lines: { line: string; file: string }[];
   summary: string;
+  /** PIP-221: the agent part; absent in a result from before it counts as empty. */
+  agent?: string;
 }
 
 export interface RiskResult {
@@ -309,6 +323,8 @@ export interface RiskResult {
   summary: string;
   /** PIP-97: what the owner must decide before the spec is built; empty at the plan and code gates. */
   open_points: { point: string; why: string }[];
+  /** PIP-221: the agent part; absent counts as empty. */
+  agent?: string;
 }
 
 export interface MergeReviewResult {
@@ -430,6 +446,20 @@ export function parseResult<K extends keyof Results>(
   kind: K,
   value: unknown,
 ): { ok: true; value: Results[K] } | { ok: false; why: string } {
+  // PIP-221: a review or risk result from before `agent` (or a cached one) has an empty agent part.
+  if ((kind === "review" || kind === "risk") && isObject(value) && !("agent" in value)) {
+    value = { ...value, agent: "" };
+  }
+  // PIP-216, PIP-219: a build result from before steps (or a cached one) reads as all built, no handoff.
+  if (kind === "build" && isObject(value)) {
+    value = { steps_done: null, handoff: null, ...value };
+  }
+  // PIP-222: the people part must be short and free of agent detail; otherwise the result is invalid.
+  const people = isObject(value) ? (kind === "risk" ? value.summary : value.brief) : undefined;
+  if (typeof people === "string" && ["design", "plan", "build", "review", "risk"].includes(kind)) {
+    const bad = people.trim() ? checkPeople(people) : null;
+    if (bad) return { ok: false, why: `result.${kind === "risk" ? "summary" : "brief"}: ${bad}` };
+  }
   // PIP-119: a review from before `owner` existed (or a cached one) reads as `owner: false`.
   if (kind === "review" && isObject(value) && Array.isArray(value.outcomes)) {
     value = {

@@ -1,6 +1,6 @@
 // Intent IDs, slugs and folder names (INT-3).
 
-import { RefusedError } from "./types.ts";
+import { NoOpenIntentError, RefusedError } from "./types.ts";
 
 const ID = /^(\d{6})-(\d{4})(?:-(\d+))?$/;
 const DIR = /^(\d{6}-\d{4}(?:-\d+)?)-([a-z][a-z0-9-]*)$/;
@@ -79,6 +79,6 @@ export function resolve(suffix: string, ids: Iterable<string>): string {
   if (all.includes(suffix)) return suffix;
   const matches = suffix ? all.filter((id) => id.endsWith(suffix)) : [];
   if (matches.length === 1) return matches[0]!;
-  if (matches.length === 0) throw new RefusedError(`no open intent matches ${suffix}`);
+  if (matches.length === 0) throw new NoOpenIntentError(`no open intent matches ${suffix}`);
   throw new RefusedError(`${suffix} matches ${matches.length} intents: ${matches.join(", ")}`);
 }

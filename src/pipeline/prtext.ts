@@ -31,15 +31,142 @@ export function linkLine(l: Links): string {
   return parts.length ? `Part of this change: ${parts.join(" · ")}.` : "";
 }
 
-/** PIP-108: the `## In plain words` section every PR body opens with; no brief → "". */
-export function plainMd(brief: string | null | undefined): string {
-  const b = brief?.trim() ?? "";
-  return b ? `## In plain words\n\n${b}` : "";
+/** PIP-222: the people part is at most this many lines and characters. */
+export const PEOPLE_MAX_LINES = 5;
+export const PEOPLE_MAX_CHARS = 600;
+
+/** PIP-222: why `people` is not a good people part, or null when it is. */
+export function checkPeople(people: string): string | null {
+  const text = people.trim();
+  if (!text) return "people part is missing";
+  const lines = text.split("\n").filter((l) => l.trim()).length;
+  if (lines > PEOPLE_MAX_LINES) return `people part is ${lines} lines; the limit is ${PEOPLE_MAX_LINES}`;
+  if (text.length > PEOPLE_MAX_CHARS)
+    return `people part is ${text.length} characters; the limit is ${PEOPLE_MAX_CHARS}`;
+  if (/<\/?details/i.test(text)) return "people part contains a details block";
+  if (text.includes("```")) return "people part contains a code fence";
+  if (/^\S+\/\S+\.\w+$/m.test(text)) return "people part lists a file path";
+  if ((text.match(/^\s*(?:[-*]|\d+\.)\s/gm) ?? []).length > 3)
+    return "people part has a list of more than 3 items";
+  return null;
+}
+
+/** The text with every `<details>` block (nested ones included) taken out. */
+function unfolded(text: string): string {
+  let out = "";
+  let depth = 0;
+  for (const part of text.split(/(<\/?details[^>]*>)/i)) {
+    if (/^<details/i.test(part)) depth++;
+    else if (/^<\/details/i.test(part)) depth = Math.max(0, depth - 1);
+    else if (depth === 0) out += part;
+  }
+  return out;
 }
 
 /**
- * PIP-108: the technical text, folded under "Details" when a plain brief leads the body; without a
- * brief (a run from before briefs) it stays open, as it was.
+ * PIP-222: why a rendered text breaks the two-part shape, or null: it needs a `## For people` section
+ * that passes `checkPeople`, and no agent detail (findings, files, handoff, spec IDs) outside a fold.
+ */
+export function checkTwoPart(text: string): string | null {
+  const m = /^## For people\n\n([\s\S]*?)(?=\n\s*\n|\n## |\n<details|(?![\s\S]))/m.exec(text);
+  if (!m) return "people part is missing";
+  const bad = checkPeople(m[1]!);
+  if (bad) return bad;
+  const rest = unfolded(text);
+  const h = /^#{1,4} (Findings|Files(?: changed)?|Handoff(?: note)?)\b/im.exec(rest);
+  if (h) return `agent detail (${h[1]}) is outside the folded block`;
+  if (/^\*\*Spec IDs:\*\*/m.test(rest)) return "agent detail (spec IDs) is outside the folded block";
+  return null;
+}
+
+/**
+ * A text that fails `checkPeople`, made into one that passes: markup, list marks and line breaks
+ * become plain prose, then it is cut to the character limit with `…`. A text that passes is unchanged.
+ */
+export function fitPeople(text: string): string {
+  const t = text.trim();
+  if (!checkPeople(t)) return t;
+  const prose = t
+    .replace(/<\/?details[^>]*>|<\/?summary[^>]*>/gi, " ")
+    .replace(/```/g, " ")
+    .replace(/^\s*(?:[-*]|\d+\.)\s+/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return prose.length > PEOPLE_MAX_CHARS ? `${prose.slice(0, PEOPLE_MAX_CHARS - 1).trimEnd()}…` : prose;
+}
+
+/**
+ * PIP-220: `## For people` and the people part; "" without one. A stored brief from before the limits
+ * (PIP-222 checks new results only) is fitted, never refused, so a mission in flight keeps going.
+ * New writers that must not post a bad part use `twoPartMd`, which refuses it.
+ */
+export function plainMd(brief: string | null | undefined): string {
+  const b = brief?.trim() ?? "";
+  return b ? `## For people\n\n${fitPeople(b)}` : "";
+}
+
+/** PIP-220: the fold for the agent part, titled "Agent context"; "" for no detail. */
+export function foldMd(agent: string): string {
+  const a = agent.trim();
+  return a ? `<details><summary>Agent context</summary>\n\n${a}\n\n</details>` : "";
+}
+
+/**
+ * PIP-220: the one shape every text for a person has: the people part first, the agent part folded
+ * after it. Throws before anything is posted when the people part is missing or too long.
+ */
+export function twoPartMd(t: { people: string; agent?: string }): string {
+  const bad = checkPeople(t.people);
+  if (bad) throw new Error(bad);
+  return [plainMd(t.people), foldMd(t.agent ?? "")].filter(Boolean).join("\n\n");
+}
+
+/**
+ * PIP-220: a text written as one piece (a note of Towercab's own) as two parts, its first paragraph the
+ * people part and the rest, with `more`, folded. A text that cannot take the shape is returned as it
+ * is: a note is never lost for its form.
+ */
+export function twoPartOr(text: string, more = ""): string {
+  try {
+    const two = splitTwoPart(text);
+    return twoPartMd({ people: two.people, agent: [two.agent, more].filter(Boolean).join("\n\n") });
+  } catch {
+    return [text, more].filter(Boolean).join("\n\n");
+  }
+}
+
+/** PIP-222: a body with a people part must pass `checkTwoPart` (agent detail only inside the fold). */
+function checked(body: string, brief: string | null | undefined): string {
+  const bad = brief?.trim() ? checkTwoPart(body) : null;
+  if (bad) throw new Error(bad);
+  return body;
+}
+
+/**
+ * PIP-220: a text written as one piece (a reply to the owner) as two parts: its first paragraph,
+ * cut to the limits, is the people part; the rest is the agent part.
+ */
+export function splitTwoPart(text: string): { people: string; agent: string } {
+  const [first = "", ...rest] = text.trim().split(/\n\s*\n/);
+  const lines = first.split("\n").filter((l) => l.trim());
+  let people = lines.slice(0, PEOPLE_MAX_LINES).join("\n");
+  if (lines.length > PEOPLE_MAX_LINES) rest.unshift(lines.slice(PEOPLE_MAX_LINES).join("\n"));
+  if (people.length > PEOPLE_MAX_CHARS) {
+    rest.unshift(people.slice(PEOPLE_MAX_CHARS - 1));
+    people = `${people.slice(0, PEOPLE_MAX_CHARS - 1).trimEnd()}…`;
+  }
+  // A list, code or markup in the first paragraph (an access reply naming many files) moves whole to
+  // the agent part and the people part becomes its fitted prose, so the result always passes.
+  if (checkPeople(people)) {
+    rest.unshift(people);
+    people = fitPeople(people);
+  }
+  return { people, agent: rest.join("\n\n") };
+}
+
+/**
+ * PIP-220: the technical text, folded under "Agent context" when a people part leads the body;
+ * without one (a run from before this rule) it stays open, as it was.
  */
 export function detailsMd(parts: string[], brief: string | null | undefined): string[] {
   const text = parts
@@ -47,7 +174,7 @@ export function detailsMd(parts: string[], brief: string | null | undefined): st
     .filter(Boolean)
     .join("\n\n");
   if (!text) return [];
-  return brief?.trim() ? [`<details><summary>Details</summary>\n\n${text}\n\n</details>`] : [text];
+  return brief?.trim() ? [foldMd(text)] : [text];
 }
 
 /**
@@ -61,7 +188,7 @@ export function specBody(
   extra: string[] = [],
   brief = "",
 ): string {
-  return [
+  const body = [
     plainMd(brief),
     ...extra,
     ...detailsMd([workerText, specIds.length ? `**Spec IDs:** ${specIds.join(", ")}` : ""], brief),
@@ -69,6 +196,7 @@ export function specBody(
   ]
     .filter(Boolean)
     .join("\n\n");
+  return checked(body, brief);
 }
 
 export interface Access {
@@ -117,7 +245,7 @@ export function planBody(
     ...access.paths.map((p) => `writing ${p.glob}`),
     ...access.tests.map((t) => `changing the existing test ${t.path}`),
   ];
-  return [
+  const body = [
     plainMd(brief),
     risk,
     ...detailsMd([approach], brief),
@@ -131,6 +259,7 @@ export function planBody(
   ]
     .filter(Boolean)
     .join("\n\n");
+  return checked(body, brief);
 }
 
 /** `plan.md` (PIP-46): title, IDs, the worker's sections, then the access checklist. */
@@ -232,33 +361,29 @@ export function codeBody(b: CodeBody): string {
   const stepsMd = b.ownerSteps?.length
     ? ["## For you to do", "", ...b.ownerSteps.map((s) => `- [ ] ${s.bullet} (${s.why})`)].join("\n")
     : "";
-  const review = b.reviewDetails?.trim()
-    ? `<details><summary>Review details</summary>\n\n${b.reviewDetails.trim()}\n\n</details>`
-    : "";
+  // PIP-220: the IDs are agent detail: folded with a people part, open without.
+  const ids = b.specIds.length ? `**Spec IDs:** ${b.specIds.join(", ")}` : "";
+  const reviewText = b.reviewDetails?.trim() ?? "";
+  // With a people part the review sits inside the one fold; without, it keeps its own.
+  const review = plain ? (reviewText ? `## Review details\n\n${reviewText}` : "") : foldMd(reviewText);
   if (plain) {
     // PIP-108: what the owner decides on stays open (the risk, access beyond the plan); the worker's
-    // text, the checks and the review fold under Details.
+    // text, the checks and the review fold under "Agent context".
     if (stepsMd) parts.push(stepsMd);
     if (unplanned) parts.push(unplanned);
     if (testsMd) parts.push(testsMd);
-    parts.push(...detailsMd([...tech, review], b.brief));
+    parts.push(...detailsMd([...tech, review, ids], b.brief));
   } else {
     parts.push(...tech);
     if (stepsMd) parts.push(stepsMd);
     if (unplanned) parts.push(unplanned);
     if (testsMd) parts.push(testsMd);
   }
-  const meta = [
-    b.specIds.length ? `**Spec IDs:** ${b.specIds.join(", ")}` : "",
-    issueLine(b.issue),
-    linkLine(b.links),
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  const meta = [plain ? "" : ids, issueLine(b.issue), linkLine(b.links)].filter(Boolean).join("\n\n");
   if (meta) parts.push(meta);
   if (!plain && review) parts.push(review);
   parts.push(footer(b.footer));
-  return parts.join("\n\n");
+  return checked(parts.join("\n\n"), b.brief);
 }
 
 /** The body of `## <title>` in a Markdown text, trimmed ("" when absent). */

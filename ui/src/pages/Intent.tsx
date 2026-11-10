@@ -130,6 +130,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
         <StateChip state={data.state} />
       </header>
       <p class="sentence">{data.sentence}</p>
+      {data.build ? <p class="build-steps meta">{data.build.label}</p> : null}
       {data.observerNote ? <ObserverNote note={data.observerNote} /> : null}
       {data.onlyYou ? <p class="meta only-you-line">{data.onlyYou}</p> : null}
       {data.autonomy ? <AutonomyControl intent={data.id} view={data.autonomy} readOnly={readOnly} /> : null}
@@ -185,8 +186,8 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
         </p>
       ) : null}
       {data.brief ? (
-        <section class="card pad plain-brief" aria-label="In plain words">
-          <p class="access-head">In plain words</p>
+        <section class="card pad plain-brief" aria-label="For people">
+          <p class="access-head">For people</p>
           <Markdown text={data.brief} />
           {data.details ? <Details id={`page:${data.id}`} text={data.details} /> : null}
         </section>

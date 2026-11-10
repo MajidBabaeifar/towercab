@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..163, UI-168, UI-184..197, UI-203..208, UI-211, UI-236..239, UI-242..251, UI-253..275, UI-282 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..163, UI-168, UI-184..197, UI-203..208, UI-211, UI-236..239, UI-242..251, UI-253..275, UI-279, UI-281..282 · **Prefix:** UI
 
 ## Purpose
 
@@ -91,6 +91,14 @@ After the owner presses Pause or Resume, the button shows that Towercab is apply
   restores the button with the title "Towercab has not applied it yet: check that the service is running".
   The airspace's Resume (UI-109) reads `Resuming…` with a spinner the same way until the ground stop clears.
 - Verified by: `ui: pause shows it is working until the state changes`
+
+### UI-283 · The page shows an intent's kind and lets the owner set it
+
+An intent's page says what kind of work it is, which stages that kind skips, and lets the owner change the kind.
+
+- The intent page shows the kind (set or inferred, with the inferred one's reason, INT-77) and the skipped stages in plain words ("No spec PR: this is a bugfix"). Board cards show the kind as a small label. Fits 360 px, light and dark.
+- A control on the page sets the kind to one of the five values (INT-76) with `POST /api/actions` `{action: "set-kind", id, kind}` (UI-66, `actor: owner`), writing `kind` into the intent's front matter (INT-5). It is offered only for a stage that has not started; a kind that would lighten a mission already past a skipped stage is refused with the reason. For an `a0` intent only the owner can do it (AUT-32); a viewer never sees it (USR).
+- Verified by: `ui: the intent page shows the kind and the skipped stages`, `ui: the owner sets the kind from the page`, `ui: a kind change past the skipped stage is refused`, `ui: a viewer cannot set the kind`
 
 ### UI-58 · Needs you
 
@@ -1525,7 +1533,7 @@ The owner can pick another intent on an open intent's page and close the first a
 Cards and lists show only the part for people; the agent part is one tap away on the intent page.
 
 - Board cards, Inbox items, Needs-you cards and the repo page's intent rows show the people part of PIP-220 (at most 5 lines, clipped with `…` after that) and no agent text. Each has an `Agent context` link to the intent page, where the part is folded under a header of that name and opens on a click (UI-267). The link is absent when there is no agent part.
-- The intent page leads with the people part and keeps the agent part (findings, file lists, logs, handoff notes) folded; PR links open the PR on GitHub, where the same split holds.
+- The intent page and an opened Inbox card lead with the people part and keep the agent part (findings, file lists, logs, handoff notes) folded; PR links open the PR on GitHub, where the same split holds.
 - The API carries `people` and `agent` as separate fields on a stage; the cards read only `people`. Fits 360 px, light and dark.
 - Verified by: `ui: a card shows the people part and not the agent part`, `ui: the agent context is a link on a card and folded on the intent page`, `ui: no agent link when there is no agent part`
 

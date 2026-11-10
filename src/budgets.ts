@@ -268,6 +268,15 @@ export function raiseTo(c: Cap): number {
   return Math.min(MAX_BUDGET, Math.max(c.cap + step, Math.floor(c.spent) + step));
 }
 
+/** PIP-218: the mission's next build run, of a plan too big for one, has not started yet. */
+export function runDue(m: Pick<Mission, "data">): boolean {
+  try {
+    return (JSON.parse(m.data) as { build?: { due?: boolean } }).build?.due === true;
+  } catch {
+    return false;
+  }
+}
+
 /** A mission whose stage needs no Claude run is never held by a cap (merge, the owner's steps). */
 export function needsRun(m: Pick<Mission, "stage">): boolean {
   return m.stage !== "merge" && m.stage !== "steps";

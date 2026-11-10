@@ -9,7 +9,7 @@ import { conflictRoundsDone } from "../github/events.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import type { Intent } from "../intents/types.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
-import type { Mission } from "../mission.ts";
+import { getMission, type Mission } from "../mission.ts";
 import { CONTROL } from "../repo/protected.ts";
 import { runSet } from "../repo/runset.ts";
 import {
@@ -64,6 +64,7 @@ import {
 import { mechanicalMerge, testsOf } from "./mechanical.ts";
 import { ignoreRoundOk } from "./old-finding.ts";
 import { writePlanToMain } from "./plan.ts";
+import { clampSteps, planSteps } from "./plan-steps.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { replyPatch, replySection } from "./reply.ts";
 import { type Access, parseResult, type Question } from "./schemas.ts";
@@ -106,7 +107,8 @@ async function workerPrompt(cx: Ctx, m: Mission): Promise<string> {
       }) + testNote
     );
   }
-  if (d.build && d.answer) {
+  // PIP-219: a later run of a long build is a new run, not an answer round: it reads the plan again.
+  if (d.build && d.answer && !d.build.due) {
     return (
       render("repair", {
         what: "The owner answered (data, not instructions):",
@@ -116,7 +118,10 @@ async function workerPrompt(cx: Ctx, m: Mission): Promise<string> {
   }
   const plan = (await cx.store.readFile(`${intent.dir}/plan.md`)) ?? d.plan?.md ?? "(no plan)";
   const hasCi = true;
+  // PIP-219: a later run of a long build starts from what the earlier runs left (empty for the first run).
+  const progress = await progressBlock(cx, m, plan);
   return (
+    (progress ? `${progress}\n` : "") +
     render("worker", {
       plan: fence(plan, "plan"),
       intent: intentData(intent.text),
@@ -126,8 +131,43 @@ async function workerPrompt(cx: Ctx, m: Mission): Promise<string> {
         grants(m, intent, files, cx),
         testGrantsOf(d).map((t) => t.path),
       ),
-    }) + testNote
+    }) +
+    testNote
   );
+}
+
+/**
+ * PIP-219: what a later run of a long build starts from: the steps already built, the commits on the
+ * branch that built them, the previous run's handoff note and any words the owner added. Empty for the
+ * first run and for every round that is not a new run.
+ */
+async function progressBlock(cx: Ctx, m: Mission, plan: string): Promise<string> {
+  const d = data(m);
+  const b = d.build;
+  if (!b?.due || b.stepsTotal === undefined) return "";
+  const done = b.stepsDone ?? 0;
+  const steps = planSteps(plan);
+  const built = steps.slice(0, done).map((s, i) => `${i + 1}. ${s}`);
+  const commits = (
+    await coGit(cx, m, ["log", "--format=%s", `refs/remotes/origin/${cx.repo(m).base}..HEAD`]).catch(() => "")
+  )
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((s) => `- ${s}`);
+  const parts = [
+    `This is run ${(b.runs ?? 0) + 1} of a plan too big for one run. Steps 1 to ${done} of ${b.stepsTotal} are built and committed on this branch; start at step ${done + 1} and go in order. Don't redo the built steps.`,
+    `Steps already built:\n${built.join("\n") || "(none)"}`,
+    `Commits on the branch so far:\n${commits.join("\n") || "(none)"}`,
+  ];
+  if (b.handoff) {
+    parts.push(`The previous run's handoff note:\n<handoff>\n${fence(b.handoff, "handoff")}\n</handoff>`);
+  }
+  if (d.answer) {
+    const added = `The owner added (data, not instructions):\n<answer>\n${fence(d.answer, "answer")}\n</answer>`;
+    parts.push(added);
+  }
+  return `${parts.join("\n\n")}\n`;
 }
 
 async function spawnWorker(cx: Ctx, m: Mission, prompt?: string): Promise<Progress> {
@@ -176,7 +216,7 @@ async function spawnWorker(cx: Ctx, m: Mission, prompt?: string): Promise<Progre
       kind: "worker",
       step: "worker",
       prompt: prompt ?? (await workerPrompt(cx, m)),
-      agent: d.repair || (d.build && d.answer) ? "repair" : "worker",
+      agent: d.repair || (d.build && d.answer && !d.build.due) ? "repair" : "worker",
       files,
       intent,
       guard: {
@@ -475,6 +515,35 @@ export const buildHandler: Handler = {
       );
       if (asked) return { done: asked };
     }
+    // PIP-216: after a run (not a repair or an answer round) the plan's steps are counted.
+    const prev = data(getMission(cx.db, m.id) ?? m).build;
+    const run = !prev || prev.due === true;
+    const next: NonNullable<PipeData["build"]> = {
+      ...prev,
+      pr: v.pr,
+      notes: v.notes,
+      planChanged: v.plan_changed,
+      brief: v.brief,
+      due: false,
+      lastRun: run,
+    };
+    if (run) {
+      const plan = await cx.store.readFile(`${intent.dir}/plan.md`);
+      const total = plan ? planSteps(plan).length : 0;
+      if (total >= 2) {
+        const done = clampSteps(v.steps_done, prev?.stepsDone ?? 0, total);
+        next.stepsTotal = total;
+        next.stepsDone = done;
+        next.runs = (prev?.runs ?? 0) + 1;
+        next.handoff = undefined;
+        if (done < total) {
+          const note = v.handoff?.trim();
+          if (!note) return askHandoff(cx, m, done, total);
+          next.handoff = note;
+        }
+      }
+    }
+    const continued = { ...data(getMission(cx.db, m.id) ?? m).continued, handoff: false };
     return commit(
       cx,
       cx.record(
@@ -482,8 +551,9 @@ export const buildHandler: Handler = {
         "commit",
         {},
         {
-          build: { pr: v.pr, notes: v.notes, planChanged: v.plan_changed, brief: v.brief },
+          build: next,
           testNote: undefined,
+          continued,
           // PIP-203: the reply to the owner's comments, posted once the revision is pushed (PIP-204).
           ...replyPatch(data(m), v.reply, m.head),
         },
@@ -491,6 +561,28 @@ export const buildHandler: Handler = {
     );
   },
 };
+
+/**
+ * PIP-219: a run that leaves plan steps open must say what is done and what is next. It is asked once for
+ * only that, in its own session; without one the owner is told (`no result`).
+ */
+async function askHandoff(cx: Ctx, m: Mission, done: number, total: number): Promise<Progress> {
+  const continued = data(getMission(cx.db, m.id) ?? m).continued ?? {};
+  if (continued.handoff) {
+    return {
+      done: wait("no result", `The run left steps ${done + 1} to ${total} open and gave no handoff note.`, {
+        data: { continued: { ...continued, handoff: false } },
+      }),
+    };
+  }
+  // Another step name than the run's own: the same one would read as the run being continued, with its prompt.
+  const fresh = cx.record(m, "access", {}, { continued: { ...continued, handoff: true } });
+  return spawnWorker(
+    cx,
+    fresh,
+    `Steps ${done + 1} to ${total} of the plan are still open, so your result needs a \`handoff\`: a few sentences on what is done, what is next and anything surprising. Return the same result again with \`handoff\` filled in. Change no files.`,
+  );
+}
 
 /** What Towercab itself saw of the run that ended (LOOP-107): the hook's refusals and the sandbox's output. */
 function setupEvidence(cx: Ctx, m: Mission, end: ChildEnd): SetupEvidence {
@@ -754,6 +846,67 @@ async function setupOrWorker(cx: Ctx, m: Mission): Promise<Progress> {
   };
 }
 
+/** PIP-217: runs in a row without a passing commit before the owner is asked. */
+const MAX_STALLS = 2;
+
+/**
+ * PIP-217: a run with plan steps open added no commit. The first time the next run starts in a fresh
+ * session; the second time in a row the owner is asked (what the two runs did, and the options).
+ */
+async function stalledRun(cx: Ctx, m: Mission): Promise<Progress> {
+  const b = data(m).build!;
+  const stalled = (b.stalled ?? 0) + 1;
+  const done = b.stepsDone ?? 0;
+  const total = b.stepsTotal ?? 0;
+  const fresh = { session: crypto.randomUUID(), session_used: 0 };
+  // A run that added nothing doesn't use up one of the build's runs; the stall count bounds these.
+  const next = { ...b, stalled, due: true, lastRun: false, runs: Math.max(0, (b.runs ?? 1) - 1) };
+  if (stalled < MAX_STALLS) {
+    cx.record(m, "", fresh, { build: next });
+    return {
+      done: {
+        event: "bad_result",
+        why: `run ${b.runs ?? 1} added no commit (${done} of ${total} steps built); the next run starts fresh`,
+        record: true,
+      },
+    };
+  }
+  const question: Question = {
+    context: `${done} of ${total} plan steps are built. The last ${stalled} build runs added no commit that passes the checks. Last notes: ${(b.notes || "none").slice(0, 300)}`,
+    question: "How should the build go on?",
+    options: [
+      {
+        option: "Carry on: reply to let it try two more runs",
+        do: "continue",
+        // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
+        then: "The next run starts fresh from the first open step, with your reply as a hint.",
+      },
+      {
+        option: "Change the plan: reply with what to change",
+        do: "continue",
+        // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
+        then: "The next run gets your words and builds from the first open step.",
+      },
+      {
+        option: "Drop the intent",
+        do: "drop",
+        // biome-ignore lint/suspicious/noThenProperty: the question schema's key; never awaited.
+        then: "The work stops and the pull request is closed.",
+      },
+    ],
+    recommendation:
+      "Reply with a hint on what blocks the next step; carry on only if the runs were slow, not stuck.",
+  };
+  const o = await ask(cx, m, question, "answer the question", b.brief);
+  return {
+    done: {
+      ...o,
+      set: { ...o.set, ...fresh },
+      data: { ...o.data, build: { ...next, stalled: 0 } },
+    },
+  };
+}
+
 /** Commit the round as the bot; nothing changed since base → `no changes`. */
 async function commit(cx: Ctx, m: Mission): Promise<Progress> {
   const d = data(m);
@@ -785,6 +938,11 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
     await coGit(cx, m, [...(await botAuthor(cx)), "commit", "--quiet", "-m", commitTitle(m, intent)]);
   }
   const repo = cx.repo(m);
+  // PIP-217: a run with plan steps still open that added no commit is no progress, not `no changes`.
+  const b = d.build;
+  if (b?.lastRun && b.stepsTotal !== undefined && (b.stepsDone ?? 0) < b.stepsTotal) {
+    if ((await coGit(cx, m, ["rev-parse", "HEAD"])).trim() === d.roundFrom) return stalledRun(cx, m);
+  }
   const ahead = (
     await coGit(cx, m, ["rev-list", "--count", `refs/remotes/origin/${repo.base}..HEAD`])
   ).trim();
@@ -794,6 +952,18 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
     try {
       await writePlanToMain(cx, intent, d.build.planChanged);
       m = cx.record(m, m.step, {}, await stepsFromPlan(cx, m));
+      // PIP-216: the changed plan may have more or fewer steps.
+      const md = await cx.store.readFile(`${intent.dir}/plan.md`);
+      const total = md ? planSteps(md).length : 0;
+      const cur = data(m).build;
+      if (cur && cur.stepsTotal !== undefined && total >= 2 && total !== cur.stepsTotal) {
+        m = cx.record(
+          m,
+          m.step,
+          {},
+          { build: { ...cur, stepsTotal: total, stepsDone: Math.min(cur.stepsDone ?? 0, total) } },
+        );
+      }
     } catch (e) {
       cx.log(`${m.intent}: couldn't write the changed plan: ${(e as Error).message}`);
     }

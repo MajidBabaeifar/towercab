@@ -60,10 +60,14 @@ verdict line of the comment is written by Towercab, so judge each field on its o
 
 Return the JSON result: `brief`, `approved`, `outcomes` (one per bullet, in order, each with `bullet`,
 `met`, `owner` and `why`), `tests_weakened`,
-`plan_followed`, `findings` (each with `severity`, `pass`, `file`, `line`, `what`), `door`, `red_lines`, and `summary`: Markdown for the owner, opening with
+`plan_followed`, `findings` (each with `severity`, `pass`, `file`, `line`, `what`), `door`, `red_lines`, `agent` (Markdown: the detail for agents, which may be empty) and `summary`: Markdown for the owner, opening with
 your verdict in one sentence, then what is good, then what needs attention, most important first.
 
 `brief` is the plain brief (see "Two kinds of text"): two to four sentences for an owner who doesn't
 code, saying whether the change does what the intent asked, what the people who use the product will
 notice, and anything that should make the owner hesitate before it goes live. No files, lines or pass
 names: those belong in `findings` and `summary`.
+
+## People part, agent part
+
+`brief` is the people part; `agent` is the agent part, beside the findings and outcomes. The people part is at most 5 lines and holds no file lists, code, findings or IDs (see "People part, agent part" in the writing guide).

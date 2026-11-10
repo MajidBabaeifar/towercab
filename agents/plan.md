@@ -106,3 +106,7 @@ Return the JSON result:
   comment, what you changed in the plan (and what you chose not to change, and why), and each new or
   still-open point with your recommendation. A comment that needs no change is answered
   `Nothing to change: <why>`; never leave one without an answer. No step names or field names.
+
+## People part, agent part
+
+`brief` is the people part; `plan` is the agent part. The people part is at most 5 lines and holds no file lists, code, findings or IDs (see "People part, agent part" in the writing guide).

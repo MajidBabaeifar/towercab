@@ -48,6 +48,7 @@ test("config: loads defaults", () => {
     reviewTimeoutMin: 15,
     checkTimeoutMin: 10,
     maxBudgetUsd: 10,
+    maxBuildRuns: 3,
     dailyBudgetUsd: null,
     ciPoll: 30,
     ciGrace: 120,

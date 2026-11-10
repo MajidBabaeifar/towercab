@@ -13,6 +13,8 @@ export interface WaitView {
   /** What the owner decides, in plain words. */
   ask: string;
   why: string | null;
+  /** TG-23: the people part of the card (PIP-220); the agent part never goes into a message. */
+  people?: string | null;
   /** A question or open point: it is answered by replying (TG-6). */
   question: boolean;
   /** The buttons the card offers (TG-3). */
@@ -112,7 +114,9 @@ export function proposalButtons(p: ProposalView): Button[][] {
 /** TG-13: ask, then what and where, then why; no IDs, short, with the link last. */
 export function waitText(v: WaitView, link: string | null): string {
   const lines = [v.ask, `${oneLine(v.title, 100)} (${v.repo})`];
-  if (v.why) lines.push(oneLine(v.why, 240));
+  // TG-23: the people part, else the plain reason; the agent part is the link's page.
+  const said = v.people?.trim() || v.why;
+  if (said) lines.push(oneLine(said, 240));
   if (v.question) lines.push(REPLY_LINE);
   if (v.onlyYou) lines.push(ownerOnlyLine(v.intent));
   return withLink(lines.join("\n"), link);

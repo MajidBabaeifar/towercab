@@ -177,6 +177,10 @@ export interface Card {
   since: When | null;
   /** UI-126: Markdown, the plain brief of what it waits on (no code words); Towercab's note as a fallback. */
   brief: string | null;
+  /** UI-281: the people part of PIP-220 (the brief, at most 5 lines); cards show this and no agent text. */
+  people?: string | null;
+  /** UI-281: the agent part (technical text), folded on the intent page and a link on a card; null for none. */
+  agent?: string | null;
   /** The plain reason it waits for the owner, one paragraph; a blocked wait's technical reason is in `details`. */
   why: string | null;
   /** UI-126: Markdown, the technical text agents feed on (concerns, findings, logs), folded under "Details". */
@@ -221,6 +225,13 @@ export interface Phase {
   status: PhaseStatus;
 }
 
+/** UI-279: plan steps built so far, and the words for them. */
+export interface BuildProgress {
+  stepsDone: number;
+  stepsTotal: number;
+  label: string;
+}
+
 /** UI-59: a moving intent. */
 export interface Row {
   intent: string;
@@ -231,6 +242,8 @@ export interface Row {
   step: string;
   inStep: string;
   cost: string;
+  /** UI-279: "step 3 of 6" while a plan of several steps builds; null otherwise. */
+  build?: BuildProgress | null;
   model: string;
   /** For a queued row: what it waits behind, in words. */
   behind: string | null;
@@ -617,6 +630,8 @@ export interface IntentPage {
   /** The "Start now" button is offered (UI-101). */
   canStart: boolean;
   state: StateView;
+  /** UI-279: the plan step being built. */
+  build?: BuildProgress | null;
   sentence: string;
   prs: PrView[];
   card: Card | null;

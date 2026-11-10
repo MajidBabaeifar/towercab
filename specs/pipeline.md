@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..194, PIP-196..207, PIP-210, PIP-223..226 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..194, PIP-196..207, PIP-210, PIP-216..226 · **Prefix:** PIP
 
 ## Purpose
 
@@ -480,10 +480,10 @@ it gets.
 The code PR opens with what it does, why, and what to check before merging, in plain words; the
 technical detail follows.
 
-- Body: `## In plain words` and the risk first (PIP-108); then the worker's `pr` markdown (sections
+- Body: `## For people` and the risk first (PIP-108); then the worker's `pr` markdown (sections
   `## What this does`, `## Why`, `## What to check before merging`, `## Changes`); then Towercab's `## Checks` (one line each: verify, proof, CI, review, in
   plain words), `## Access beyond the plan` (when any), links to the spec PR and the plan PR, the spec
-  IDs, the review's details in a `<details>` block, and the footer `<sub>Built by Towercab · intent ·
+  IDs, the review's details in the folded `Agent context` block (PIP-220), and the footer `<sub>Built by Towercab · intent ·
   $<cost> · <h>h<mm>m</sub>`. Updated at the gate. Without a worker text: the intent's title and
   problem under `## What this does`.
 - Verified by: `pipeline: code PR body sections`, `pipeline: body without worker text`
@@ -1013,16 +1013,16 @@ Towercab keeps each stage's plain brief beside its technical text, so cards and 
   asked (`ask(cx, m, q, waiting, brief)`: the worker's brief when it is blocked; none clears an
   earlier one). Any wait that asks no question of its own (`apply`) drops `question` and `brief`, so an
   answered question never comes back on a later card. A question posted on a PR or in the intent opens
-  with `**In plain words:** <brief>`, and so does the Review comment; the review's `details` (the
+  with `## For people` and the brief (PIP-220), and so does the Review comment; the review's `details` (the
   card's and the PR's technical text) stay without it.
 - Verified by: `ui: the card leads with the plain brief, the technical text folded`, `pipeline: every PR body opens in plain words`, `machine: an answered question doesn't come back on a later wait`
 
 ### PIP-108 · PR bodies open in plain words
 
 The spec, plan and code PRs start with what the change means in plain words, with the risk and what
-the owner decides beside it; the technical text is folded under "Details".
+the owner decides beside it; the technical text is folded under "Agent context" (PIP-220).
 
-- `plainMd(brief)` = `## In plain words\n\n<brief>` ("" without a brief); `detailsMd` folds the
+- `plainMd(brief)` = `## For people\n\n<brief>` (PIP-220) ("" without a brief); `detailsMd` folds the
   technical part as `<details><summary>Details</summary>…</details>`. Spec PR: the brief, the open
   points and the risk (PIP-99), then, folded, the design's `pr` text and the spec IDs; the links stay
   open. Plan PR: the brief and the risk, the approach folded, then the access asked for, the merge line
@@ -2244,6 +2244,71 @@ When a worker stops mid-build to ask the owner something, what it has written so
 - A conflict round is the exception: it merges the base branch first, on a clean checkout, as before. `retry` still starts from nothing.
 - Before this, an answered question on a first round threw the work away while the resumed session still believed it was in place.
 - Verified by: `pipeline: a worker's question keeps its uncommitted work for the next round`
+
+### PIP-228 · Each kind of work has its own path
+
+A bugfix, a refactor, an infrastructure change and a spec-only change each skip the stages they do not need, and a feature goes the full way.
+
+- The stages a kind runs (`pick → …`, the order of LOOP-3):
+
+  | Kind | Runs | Skips |
+  |---|---|---|
+  | `feature` | the full path | nothing |
+  | `bugfix` | plan, build, verify, proof (red→green, PIP-30), publish, ci, review, gate, merge, ship | design and the spec PR |
+  | `refactor` | plan, build, verify, publish, ci, review, gate, merge, ship; the proof is "no existing test changed" (PIP-233) | design, the spec PR and the red→green proof |
+  | `infra` | plan, build, verify, apply (PIP-229), publish, ci, review, gate, merge, ship | design, the spec PR and the proof |
+  | `spec-only` | design, the spec PR (PIP-230) | plan, build, the code PR and ship |
+
+- The skip is one move in the machine's table, recorded as an event with the kind (`kind_routed`), made by `apply` in one `Db.tx` (LOOP-3): `pick` goes to `plan` for `bugfix`, `refactor` and `infra`, to `design` for the others. The phase (`stage`, INT-5) shows `plan` and `code` as usual; the page shows which stages were skipped and why (UI-283).
+- A kind never skips CI, the review or the merge gate: only the stages named above are skipped, and the intent's own checks stay (AUT-6).
+- With no design step there is no `spec_ids` list: the plan's `Covers:` line (PIP-46) is empty and the review's bullets come from the intent's own outcomes (PIP-5).
+- Verified by: `pipeline: a bugfix goes from pick to plan with no spec PR`, `pipeline: a refactor and an infra change skip the spec PR`, `pipeline: a feature keeps the full path`, `pipeline: a kind never skips ci review or the merge gate`, `machine: kind_routed moves pick by kind`
+
+### PIP-229 · An infra change is applied instead of proven
+
+For an infrastructure or configuration change, Towercab runs the change for real and records what happened, instead of writing a failing test first.
+
+- The plan of an `infra` mission (**Schemas** `plan`) gains `apply`: a list of `{command, why}` the build runs, in the sandbox, after verify is green (at most 5). The plan PR lists them in plain words. A mission of another kind ignores `apply`. A missing or empty list for `infra` is a bad result and is asked for again (PIP-13).
+- Each command runs under the same sandbox, grants and guard as the build (PIP-24, PIP-29, AUT-14): network only for granted domains, protected paths only when granted. A command that needs access not granted is the usual access question (PIP-47). Towercab never applies to a live system by itself: "apply" means commands in the sandbox, reported in the PR. A change to a real system (a service, an account, a machine) is an owner step done by the owner after the merge (SHIP-17 `after`), listed in the plan.
+- The result of each command (exit code, last 20 lines, duration) is recorded and put in the code PR under "What was applied" (PIP-48). A failing command is a repair round (PIP-23's rounds and cap); the cap then asks the owner.
+- Verified by: `pipeline: an infra plan needs apply commands`, `pipeline: apply runs after verify and is recorded in the PR`, `pipeline: apply stays inside the sandbox grants`, `pipeline: a failing apply is a repair round`, `pipeline: an infra mission runs no red-green proof`
+
+### PIP-230 · A spec-only change ends at the spec PR
+
+When the intent changes only the specs or the repo's settings files, the spec PR is the whole delivery and merging it ends the intent.
+
+- A `spec-only` mission runs design as always (PIP-25), with one widening: the design agent may also edit the repo's settings files named in `REPO-*` (`TOWERCAB.md`, `CLAUDE.md`, `REVIEW.md`, `AGENTS.md`) and nothing else; the guard refuses any other path as for PIP-100. If the intent needs a change to the code, or to a setting that is not in the repo, the design returns a `kind_changed` request to `feature` or to steps (PIP-231) instead of pretending to cover it.
+- Merging the spec PR (`spec_merged`) ends the mission `done` (the intent's `stage` becomes `done`): no plan, build, code PR or deploy. The spec PR's gate (AUT-11), risk judgment (PIP-96), second reviewer (PIP-97) and conflict rules (PIP-81, PIP-133) are unchanged.
+- An intent that is only steps for the owner (a setting on a service) stays on the existing delivery (PIP-112, PIP-113): kind `spec-only` does not replace it.
+- Verified by: `pipeline: merging a spec-only spec PR ends the intent done`, `pipeline: a spec-only design may edit the settings files`, `pipeline: a spec-only design cannot edit code`, `pipeline: a spec-only intent runs no plan or build`
+
+### PIP-231 · A lighter kind that outgrows its path becomes a question, never a silent change
+
+When work turns out to need more than its kind allows, Towercab asks the owner to move it to the full path and does not decide that itself.
+
+- A `bugfix` stays a bugfix when its spec change touches only the row it fixes: that row's wording or its `Verified by` line. The plan names the row (`Fixes: <ID>`, PIP-46); the edit goes in the code PR, since a bugfix has no spec PR. Such an edit is never a trigger.
+- Triggers: a build of a `bugfix`, `refactor` or `infra` mission that adds a requirement or changes what another row promises, or edits a row other than the one it fixes; a `refactor` or `infra` build that changes any file under `specs/`; one that changes an existing test's behaviour (PIP-116's detection); a design of `spec-only` that returns `kind_changed`; or a plan that says the intent changes behaviour the specs do not cover. Code (the build's diff of `specs/`, compared with the named row) decides which case it is, not the agent.
+- It is asked as one question (PIP-41, PIP-114): "Move this to the full path?" with the options `feature` (design starts, the spec PR first; work done so far is kept in the branch and nothing merged is undone), or `keep` (carry on, with the change dropped). Towercab never moves a mission to a lighter kind on its own account; only the owner does, from the page (UI-283), and only for a stage that has not started (INT-77).
+- At a0 the question goes to the owner alone (AUT-31, AUT-32); no other level changes who answers (AUT-11, AUT-12). Choosing `feature` writes `kind: feature` to the intent (INT-76) and moves the mission to `design`.
+- Verified by: `pipeline: a bugfix that adds a requirement asks to move to the full path`, `pipeline: a bugfix that changes another row asks to move to the full path`, `pipeline: a bugfix that edits only its own row stays a bugfix`, `pipeline: choosing feature starts design and keeps the branch`, `pipeline: a spec-only design that needs code asks first`, `pipeline: towercab never lightens a kind by itself`
+
+### PIP-232 · Kinds change the path, not who decides
+
+A kind removes stages; every wait that is left follows the intent's autonomy exactly as before, and the owner-only level works with every kind.
+
+- A skipped stage's gate is not "approved": the spec gate does not exist for a `bugfix`, `refactor` or `infra` mission, so nothing waits and nothing is recorded as approved by anyone. The plan gate (AUT-12), questions (PIP-110), test changes (PIP-116), access (AUT-15), the merge (AUT-3) and the owner's steps (SHIP-17) are as for a feature, at each autonomy level and under the repo's cap (AUT-8).
+- `a0` (AUT-31) applies to every kind: an `a0` intent of any kind waits for the owner at each wait it still has, and the shadow, other agents and the CLI cannot decide it (AUT-32, AUT-33). A kind does not set, lower or raise autonomy; and the owner-only rule (the intent 261106-0500) is not part of this requirement.
+- The `kind` agent's output and a kind change (INT-77, UI-283) are never an approval. Changing the kind of an `a0` intent is allowed only for the owner, as in AUT-32.
+- A lighter kind, guessed or set, never lowers the review of a high-risk change: when the risk agent judges the plan or the code high (PIP-96), the plan gate and the merge go to the owner as at a feature's gates, whatever the autonomy level and kind (as AUT-9's risk floor already does for a feature).
+- Verified by: `pipeline: a high-risk bugfix is held for the owner`, `pipeline: a bugfix has no spec gate and the plan gate still follows autonomy`, `pipeline: an a0 intent of any kind waits at every gate it has`, `pipeline: a kind does not change autonomy`, `autonomy: only the owner changes the kind of an a0 intent`
+
+### PIP-233 · A refactor is proven by its tests staying the same
+
+Because a refactor changes no behaviour, its proof is that the existing tests pass untouched, not that a new test turns from red to green.
+
+- For `refactor`, the proof stage (PIP-30) is replaced by a check that no existing test file changed relative to the base (the diff of the test paths, PIP-115) and that verify is green. A changed existing test is the unplanned test question of PIP-116, and PIP-231 applies when it means a behaviour change. New tests are allowed.
+- The code PR says "Refactor: no existing test changed" in its description (PIP-48), and the review treats a changed test as a finding of weakening (PIP-5).
+- Verified by: `pipeline: a refactor passes with the existing tests untouched`, `pipeline: a refactor that edits an existing test is asked first`, `pipeline: the refactor PR says no test changed`
 
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
