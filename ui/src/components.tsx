@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type {
   ActionReply,
   Card,
+  InstallHelpView,
   Phase,
   ProblemView,
   ProposedCard as ProposedCardData,
@@ -80,6 +81,38 @@ export function Details({ id, text }: { id: string; text: string }) {
   );
 }
 
+/** UI-211: how to install the GitHub App on a repo it can't reach, folded under "See more". */
+export function InstallHelpBlock({ id, help }: { id: string; help: InstallHelpView }) {
+  const [open, setOpen] = useState(detailsOpen.has(`install:${id}`));
+  return (
+    <details
+      class="details-fold install-help"
+      open={open}
+      onToggle={(e) => {
+        const now = (e.currentTarget as HTMLDetailsElement).open;
+        if (now) detailsOpen.add(`install:${id}`);
+        else detailsOpen.delete(`install:${id}`);
+        setOpen(now);
+      }}
+    >
+      <summary>See more</summary>
+      <div class="details-body">
+        {help.app ? <p>App: {help.app}</p> : null}
+        <ol>
+          {help.steps.map((s) => (
+            <li key={s}>{s}</li>
+          ))}
+        </ol>
+        <p>
+          <a href={help.url} target="_blank" rel="noopener">
+            {help.url}
+          </a>
+        </p>
+      </div>
+    </details>
+  );
+}
+
 export function StateChip({ state, small }: { state: StateView; small?: boolean }) {
   return (
     <span class={`chip chip-${state.key}${small ? " chip-sm" : ""}`}>
@@ -125,6 +158,31 @@ export function Id({ id }: { id: string }) {
 /** UI-236: marks what the shadow wrote or did; a text label, not colour alone. */
 export function ShadowTag() {
   return <span class="shadow-tag">[shadow]</span>;
+}
+
+/** UI-243: marks what the observer proposed; a text label, not colour alone. */
+export function ObserverTag() {
+  return <span class="shadow-tag observer-tag">[observer]</span>;
+}
+
+/** UI-243: the evidence links and the expected gain of an observer proposal, shown before the rest. */
+export function ObserverNote({ note }: { note: { evidence: string; gain: string } }) {
+  return (
+    <section class="observer-note" aria-label="Evidence and expected gain">
+      {note.evidence ? (
+        <>
+          <p class="access-head">Evidence</p>
+          <Markdown text={note.evidence} />
+        </>
+      ) : null}
+      {note.gain ? (
+        <>
+          <p class="access-head">Expected gain</p>
+          <Markdown text={note.gain} />
+        </>
+      ) : null}
+    </section>
+  );
 }
 
 export function Section(props: {
@@ -476,6 +534,7 @@ export function NeedsCard({
               <Link href={`/i/${key}`}>{card.title}</Link>
             )}
             {card.shadow ? <ShadowTag /> : null}
+            {card.observer ? <ObserverTag /> : null}
           </h3>
           <p class="meta">
             {card.repo}
@@ -490,6 +549,7 @@ export function NeedsCard({
       ) : null}
       <p class="ask">{card.ask}</p>
       {card.why ? <p class="why">{card.why}</p> : null}
+      {card.installHelp ? <InstallHelpBlock id={`card:${key}`} help={card.installHelp} /> : null}
       {card.autonomy ? (
         card.kind === "autonomy" ? (
           <FlagButtons intent={key} view={card.autonomy} readOnly={readOnly} />
@@ -844,6 +904,7 @@ export function WorkRow({ row, readOnly = false }: { row: Row; readOnly?: boolea
         <span class="row-title">
           {row.title}
           {row.shadow ? <ShadowTag /> : null}
+          {row.observer ? <ObserverTag /> : null}
         </span>
         <span class="meta">
           {row.repo} · <Id id={row.intent} />
@@ -877,6 +938,7 @@ export function ProblemItem({ p }: { p: ProblemView }) {
       <div class="problem-body">
         <p class="problem-title">{p.title}</p>
         {p.detail ? <p class={`problem-detail${p.code ? " code" : ""}`}>{p.detail}</p> : null}
+        {p.installHelp ? <InstallHelpBlock id={`problem:${p.key}`} help={p.installHelp} /> : null}
         <p class="problem-fix">{p.fix}</p>
       </div>
       {p.intent ? (
@@ -1136,6 +1198,7 @@ export function ProposedCard({
           >
             {card.title}
           </a>
+          {card.observer ? <ObserverTag /> : null}
           <a
             class="proposed-gh"
             href={card.prUrl}
@@ -1212,7 +1275,10 @@ export function ProposedCard({
       <header class="proposed-head">
         <span class="chip chip-sm">Proposed</span>
         {card.draft ? <span class="chip chip-sm chip-draft">Draft</span> : null}
-        <h3>{card.title}</h3>
+        <h3>
+          {card.title}
+          {card.observer ? <ObserverTag /> : null}
+        </h3>
       </header>
       <p class="meta proposed-meta">
         {card.repo ? <span class="mono">{card.repo}</span> : <span>repo unknown</span>}
@@ -1221,6 +1287,7 @@ export function ProposedCard({
         <span> · {card.from}</span>
         <span> · {card.waiting}</span>
       </p>
+      {card.observerNote ? <ObserverNote note={card.observerNote} /> : null}
       {card.problem ? <p class="proposed-problem">{card.problem}</p> : null}
       <div class="proposed-links">
         <a href={card.prUrl} target="_blank" rel="noreferrer noopener">

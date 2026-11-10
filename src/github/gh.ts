@@ -94,6 +94,8 @@ export function createGhClient(o: GitHubOptions): GitHub {
     },
 
     bot: () => app.bot(),
+
+    peekInstallHelp: (github) => app.peekInstallHelp(github),
   };
 }
 

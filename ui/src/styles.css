@@ -4242,6 +4242,24 @@ a.pr-tile:hover {
   justify-items: start;
 }
 
+/* The observer (UI-242, UI-243): its tag reuses the shadow's; the note shows evidence and gain first. */
+
+.observer-note {
+  margin: var(--s2) 0;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.observer-note p {
+  margin: var(--s1) 0;
+}
+
+.observer-panel .meta {
+  margin: var(--s1) 0;
+}
+
 /* The shadow (UI-236 to UI-238) */
 
 .shadow-tag {

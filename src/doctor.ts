@@ -2,6 +2,8 @@
 // self-update check (LOOP-35): config, tools and modules only, no network.
 
 import { existsSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { type Capacity, readCapacity, slotHint } from "./capacity.ts";
 import type { Config } from "./config.ts";
 import { appKeyPath, clonePath } from "./config.ts";
@@ -18,7 +20,7 @@ export { ghVersionOk };
 import type { Home } from "./home.ts";
 import { type HostState, hostState, profileStep } from "./pipeline/hostcheck.ts";
 import { apparmorProfile, type ProbeResult, sandboxProbe, userNamespaceDenied } from "./pipeline/probe.ts";
-import { refusedRepoEnv } from "./pipeline/sandbox.ts";
+import { refusedRepoEnv, toolchainBins, toolchainPlaces } from "./pipeline/sandbox.ts";
 import { parseStored } from "./repo/readiness.ts";
 import { isMoved, readRecord } from "./repo/settings.ts";
 import { shipNetwork } from "./ship/live.ts";
@@ -40,6 +42,8 @@ export async function doctor(o: {
   /** GL-9: Towercab's GitLab, when `[gitlab]` is configured. */
   gitlab?: GitLabForge | null;
   quick: boolean;
+  /** The HOME whose toolchains are listed (PIP-226); the real one when absent. */
+  userHome?: string;
   /** The database, for the readiness lines (LOOP-72). */
   db?: Db;
   /** Unix seconds and the machine's cores and memory, for the slots line (LOOP-104); real ones when absent. */
@@ -81,6 +85,21 @@ export async function doctor(o: {
       lines.push(`${name}: env ${r.name} is left out of the sandbox: ${r.why}`);
     }
   }
+  // PIP-226: the toolchains the sandbox binds; a missing one is information, not a fault.
+  const userHome = o.userHome ?? homedir();
+  const bound = toolchainPlaces(userHome);
+  const places = [".cargo/bin", ".rustup", ".local/go", ".local/zig-*", ".local/node"];
+  for (const p of places) {
+    if (p.endsWith("zig-*")) {
+      const zigs = bound.filter((d) => d.startsWith(join(userHome, ".local", "zig-")));
+      if (zigs.length === 0) lines.push(`toolchain ${join(userHome, p)}: not found`);
+      for (const z of zigs) lines.push(`toolchain ${z}: bound`);
+    } else {
+      const d = join(userHome, p);
+      lines.push(`toolchain ${d}: ${bound.includes(d) ? "bound" : "not found"}`);
+    }
+  }
+  lines.push(`toolchain PATH: ${toolchainBins(userHome).join(":")}`);
   if (o.quick) return { lines, ok };
 
   // PIP-163: the sandbox probe; PIP-162: the narrow fix where user namespaces are restricted.
@@ -92,8 +111,9 @@ export async function doctor(o: {
     lines.push(`sandbox: ${probe.ok ? "the probe held" : `the probe failed: ${probe.why}`}`);
     if (!probe.ok) {
       ok = false;
-      // PIP-162: the one owner step, only when the probe failed and the restriction is on without the profile.
-      const step = profileStep((o.host ?? hostState)(), bwrapPath);
+      // PIP-162: the one owner step, only when the probe failed and the restriction is on without the profile,
+      // or with Ubuntu's stock profile refusing the worker's shell.
+      const step = profileStep((o.host ?? hostState)(), bwrapPath, probe);
       if (step)
         lines.push(`owner step: ${step.title}; run:`, ...step.commands.split("\n").map((l) => `  ${l}`));
       if (userNamespaceDenied(probe.why)) {

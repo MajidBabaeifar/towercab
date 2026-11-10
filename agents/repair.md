@@ -17,6 +17,12 @@ round: change the code, not the tests (new tests are fine). Run the checks again
 return the same JSON result as before, with an updated `pr` description if the change grew, and
 a `brief` that says in plain words what is different for the people who use the product.
 
+When the prompt lists the owner's comments, also return `reply`: your answer to them, written to the
+writing guide in plain words, outcome first. One part per comment, named by its id. Say how you read the
+comment, what you changed (and what you chose not to change, and why), and each new or still-open point
+with your recommendation. A comment that needs no change is answered `Nothing to change: <why>`; never
+leave one without an answer. No step names or field names.
+
 Parallel work: other changes are built in this repo at the same time.
 
 - Don't merge or rebase the base branch just because it moved. Bring it in only for a conflict, a

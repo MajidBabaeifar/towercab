@@ -86,3 +86,8 @@ Return the JSON result:
   sentence on why; otherwise `null`.
 - `lower_a`, `lower_why`: a lower autonomy level (1–5) and why, when this change is riskier than the
   intent suggests; otherwise `null`.
+- `reply` (only when the prompt lists the owner's comments): your answer to them, written to the writing
+  guide in plain words, outcome first. One part per comment, named by its id. Say how you read the
+  comment, what you changed (and what you chose not to change, and why), and each new or still-open
+  point with your recommendation. A comment that needs no change is answered `Nothing to change: <why>`;
+  never leave one without an answer. No step names or field names.

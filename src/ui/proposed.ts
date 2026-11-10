@@ -45,6 +45,8 @@ function cardOf(src: UiSources, p: ProposedPr, now: number, stale: string | null
     problem,
     canAccept: acceptWhy === null,
     acceptWhy,
+    ...(i?.source === "observer" ? { observer: true } : {}),
+    ...(i?.observer ? { observerNote: i.observer } : {}),
   };
 }
 
