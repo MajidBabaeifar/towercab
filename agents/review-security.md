@@ -55,3 +55,7 @@ important problem. Fill the fields that are not yours neutrally: `outcomes` an e
 then what needs attention, most important first. `brief` is two to four plain sentences for an owner
 who doesn't code: whether the change is safe, and anything that should make them hesitate; no files,
 lines or pass names.
+
+## People part, agent part
+
+`brief` is the people part; `agent` is the agent part, beside the findings and outcomes. The people part is at most 5 lines and holds no file lists, code, findings or IDs (see "People part, agent part" in the writing guide).

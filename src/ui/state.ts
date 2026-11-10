@@ -877,6 +877,14 @@ function stepViewsOf(src: UiSources, m: Mission, now: number): StepView[] {
 const onSteps = (m: Pick<Mission, "waiting">) =>
   m.waiting === "your steps" || m.waiting === "your steps first";
 
+/** UI-281: the people part as a card shows it: at most the first 5 lines, cut with `…`. */
+export function clipPeople(text: string | null): string | null {
+  const t = text?.trim();
+  if (!t) return null;
+  const lines = t.split("\n");
+  return lines.length > 5 ? `${lines.slice(0, 5).join("\n").trimEnd()}…` : t;
+}
+
 /** UI-58: the card for a mission waiting on the owner. */
 export function missionCard(
   src: UiSources,
@@ -933,6 +941,8 @@ export function missionCard(
     ask: askOf(m.waiting),
     since: since === null ? null : when(since, now),
     brief,
+    people: clipPeople(brief),
+    agent: details,
     why: shownWhy,
     details,
     question: d.question ?? null,

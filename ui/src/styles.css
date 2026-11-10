@@ -4856,3 +4856,8 @@ kbd {
   border: 1px solid var(--needs-edge);
   border-radius: var(--radius-sm);
 }
+
+.agent-link {
+  font-size: 0.85rem;
+  color: var(--muted, inherit);
+}

@@ -46,4 +46,8 @@ file names, functions or step names.
 
 {{open_points}}
 
-Return the JSON result: `blast_radius`, `door`, `certainty`, `level`, `summary`, `open_points`.
+Return the JSON result: `blast_radius`, `door`, `certainty`, `level`, `summary`, `open_points` and `agent` (Markdown: the detail for agents, which may be empty).
+
+## People part, agent part
+
+`summary` is the people part; `agent` is the agent part. The people part is at most 5 lines and holds no file lists, code, findings or IDs (see "People part, agent part" in the writing guide).

@@ -13,7 +13,14 @@ import { type ClaudeRun, freshContext, parseRun, prepareRun, type RunEnd, type R
 import { clonePath, type RepoConfig } from "../config.ts";
 import { classifyFailure, classifyRun } from "../faults.ts";
 import { must, type Result } from "../forge.ts";
-import { agentOf, answeredByLine, type By, type Step, upsertStageComment } from "../github/comments.ts";
+import {
+  agentOf,
+  answeredByLine,
+  type By,
+  type Step,
+  type TwoPart,
+  upsertStageComment,
+} from "../github/comments.ts";
 import type { ReplyTarget } from "../github/events.ts";
 import { PausedHold } from "../github/paused.ts";
 import { type ChildEnd, type Ctx, EnvError, type GitHub, type Progress } from "../handlers.ts";
@@ -28,6 +35,7 @@ import { checkoutRoot } from "../service.ts";
 import { combine, type OwnerStep, type PlanStep, parseNoneLive, parseSteps } from "../steps.ts";
 import { grantsFor, parseAccess, type TestAsk } from "./access.ts";
 import type { Mech } from "./mechanical.ts";
+import { foldMd, plainMd, splitTwoPart, twoPartMd } from "./prtext.ts";
 import type { PendingReply } from "./reply.ts";
 import { cacheEnv, DEFAULT_NETWORK } from "./sandbox.ts";
 import { type Access, type Question, type ReviewResult, SCHEMAS, withReply } from "./schemas.ts";
@@ -754,13 +762,18 @@ export const EFFECTS = {
 /** PIP-182: who a stage comment of mission `m` is from: the agent of the step, and the intent. */
 const byOf = (m: Mission, step: Step): By => ({ agent: agentOf(step, m.stage), intent: m.intent });
 
-/** A question in Markdown (PIP-41), led by its plain brief when it has one (PIP-106). */
+/**
+ * A question in Markdown (PIP-41). With a brief it opens with the people part (PIP-220) and the
+ * question's context is folded as agent context; without one the question itself is the people part.
+ */
 export function questionMd(q: Question, brief = ""): string {
   const opts = q.options
     .map((o) => `- **${o.option}**: ${o.then}${o.do ? ` _(${EFFECTS[o.do]})_` : ""}`)
     .join("\n");
-  const plain = brief.trim() ? `**In plain words:** ${brief.trim()}\n\n` : "";
-  return `${plain}${q.context.trim()}\n\n**${q.question.trim()}**\n\n${opts}\n\n**Recommendation:** ${q.recommendation.trim()}\n\nReply to this comment to answer; Towercab continues with your reply.`;
+  const ask = `**${q.question.trim()}**\n\n${opts}\n\n**Recommendation:** ${q.recommendation.trim()}\n\nReply to this comment to answer; Towercab continues with your reply.`;
+  // PIP-220: a question asked without a brief opens with its own one-line question as the people part.
+  const people = brief.trim() || q.question.trim();
+  return [plainMd(people), ask, foldMd(q.context)].filter(Boolean).join("\n\n");
 }
 
 /**
@@ -792,7 +805,13 @@ export async function ask(
 }
 
 /** A stage comment on the current PR, never failing the step. */
-export async function note(cx: Ctx, m: Mission, step: Step, round: number, body: string): Promise<void> {
+export async function note(
+  cx: Ctx,
+  m: Mission,
+  step: Step,
+  round: number,
+  body: string | TwoPart,
+): Promise<void> {
   const pr = currentPr(cx, m, cx.repo(m));
   if (!pr) return;
   try {
@@ -813,8 +832,11 @@ export async function tellOwner(cx: Ctx, m: Mission, body: string, keep = ""): P
   const pr = currentPr(cx, m, cx.repo(m));
   // PIP-185: an answer an agent gave for the owner says so.
   const agent = dataOf<{ answeredBy?: string | null }>(m).answeredBy;
-  const said = agent ? `${answeredByLine(agent)}\n\n${body}` : body;
   try {
+    // PIP-220: the reply opens with its people part; the rest is folded. Inside the try: a shape
+    // problem is logged, it never fails the step.
+    const two = body.trim() ? twoPartMd(splitTwoPart(body)) : body;
+    const said = agent ? `${answeredByLine(agent)}\n\n${two}` : two;
     if (pr) {
       await upsertStageComment(cx.github, pr.github, pr.n, "Answer", m.continued, said, byOf(m, "Answer"));
     } else {

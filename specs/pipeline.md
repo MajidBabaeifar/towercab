@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..194, PIP-196..207, PIP-210, PIP-216..219, PIP-223..226 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..194, PIP-196..207, PIP-210, PIP-216..226 · **Prefix:** PIP
 
 ## Purpose
 
@@ -480,10 +480,10 @@ it gets.
 The code PR opens with what it does, why, and what to check before merging, in plain words; the
 technical detail follows.
 
-- Body: `## In plain words` and the risk first (PIP-108); then the worker's `pr` markdown (sections
+- Body: `## For people` and the risk first (PIP-108); then the worker's `pr` markdown (sections
   `## What this does`, `## Why`, `## What to check before merging`, `## Changes`); then Towercab's `## Checks` (one line each: verify, proof, CI, review, in
   plain words), `## Access beyond the plan` (when any), links to the spec PR and the plan PR, the spec
-  IDs, the review's details in a `<details>` block, and the footer `<sub>Built by Towercab · intent ·
+  IDs, the review's details in the folded `Agent context` block (PIP-220), and the footer `<sub>Built by Towercab · intent ·
   $<cost> · <h>h<mm>m</sub>`. Updated at the gate. Without a worker text: the intent's title and
   problem under `## What this does`.
 - Verified by: `pipeline: code PR body sections`, `pipeline: body without worker text`
@@ -1013,16 +1013,16 @@ Towercab keeps each stage's plain brief beside its technical text, so cards and 
   asked (`ask(cx, m, q, waiting, brief)`: the worker's brief when it is blocked; none clears an
   earlier one). Any wait that asks no question of its own (`apply`) drops `question` and `brief`, so an
   answered question never comes back on a later card. A question posted on a PR or in the intent opens
-  with `**In plain words:** <brief>`, and so does the Review comment; the review's `details` (the
+  with `## For people` and the brief (PIP-220), and so does the Review comment; the review's `details` (the
   card's and the PR's technical text) stay without it.
 - Verified by: `ui: the card leads with the plain brief, the technical text folded`, `pipeline: every PR body opens in plain words`, `machine: an answered question doesn't come back on a later wait`
 
 ### PIP-108 · PR bodies open in plain words
 
 The spec, plan and code PRs start with what the change means in plain words, with the risk and what
-the owner decides beside it; the technical text is folded under "Details".
+the owner decides beside it; the technical text is folded under "Agent context" (PIP-220).
 
-- `plainMd(brief)` = `## In plain words\n\n<brief>` ("" without a brief); `detailsMd` folds the
+- `plainMd(brief)` = `## For people\n\n<brief>` (PIP-220) ("" without a brief); `detailsMd` folds the
   technical part as `<details><summary>Details</summary>…</details>`. Spec PR: the brief, the open
   points and the risk (PIP-99), then, folded, the design's `pr` text and the spec IDs; the links stay
   open. Plan PR: the brief and the risk, the approach folded, then the access asked for, the merge line

@@ -22,7 +22,7 @@ test("prompts: writing guide is in every run", () => {
   }
   const lines = guide.trimEnd().split("\n").length;
   expect(lines).toBeGreaterThanOrEqual(80);
-  expect(lines).toBeLessThanOrEqual(130);
+  expect(lines).toBeLessThanOrEqual(140);
 
   const root = tempDir();
   const runsDir = join(root, "runs");

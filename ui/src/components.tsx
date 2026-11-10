@@ -50,7 +50,7 @@ import {
 } from "./icons.tsx";
 import { Markdown } from "./md.tsx";
 import { asksFirst } from "./options.ts";
-import { Link } from "./router.tsx";
+import { Link, usePath } from "./router.tsx";
 import { sharedReason } from "./up-next.ts";
 
 const drafts = new Map<string, string>();
@@ -59,7 +59,7 @@ const expanded = new Set<string>();
 /** UI-126: the "Details" folds a viewer opened, by key, so a refetch keeps them open. */
 const detailsOpen = new Set<string>();
 
-/** UI-126, UI-127: the technical text, folded under "Details" until asked for. */
+/** UI-126, UI-127, UI-281: the agent part, folded under "Agent context" until asked for. */
 export function Details({ id, text }: { id: string; text: string }) {
   const [open, setOpen] = useState(detailsOpen.has(id));
   return (
@@ -73,7 +73,7 @@ export function Details({ id, text }: { id: string; text: string }) {
         setOpen(now);
       }}
     >
-      <summary>Details</summary>
+      <summary>Agent context</summary>
       <div class="details-body">
         <Markdown text={text} />
       </div>
@@ -371,7 +371,9 @@ export function NeedsCard({
   };
   const can = (a: string) => !readOnly && card.actions.includes(a as Card["actions"][number]);
   // A plain brief is two to four sentences (PIP-106): shown whole up to about that, folded beyond.
-  const long = (card.brief?.length ?? 0) > 480;
+  const people = card.people ?? card.brief;
+  const path = usePath();
+  const long = (people?.length ?? 0) > 480;
   const toggle = () => {
     if (open) expanded.delete(key);
     else expanded.add(key);
@@ -562,9 +564,9 @@ export function NeedsCard({
           <Alert size={16} /> {card.warning}
         </p>
       ) : null}
-      {card.brief ? (
+      {people ? (
         <div class={`brief${long && !open ? " clamped" : ""}`}>
-          <Markdown text={card.brief} />
+          <Markdown text={people} />
           {long ? (
             <button type="button" class="link-btn" aria-expanded={open} onClick={toggle}>
               {open ? "Less" : "More"}
@@ -706,7 +708,16 @@ export function NeedsCard({
       {card.addRepo && !readOnly ? (
         <AddRepoForm name={card.addRepo.name} initial={card.addRepo.github} />
       ) : null}
-      {card.details ? <Details id={`card:${key}`} text={card.details} /> : null}
+      {card.details ? (
+        // UI-281: a card shows no agent text; on the intent's page or the opened Inbox card it is folded, elsewhere a link.
+        path === `/i/${key}` || path === `/inbox/${key}` ? (
+          <Details id={`card:${key}`} text={card.details} />
+        ) : (
+          <Link class="agent-link" href={`/i/${key}`}>
+            Agent context
+          </Link>
+        )
+      ) : null}
       {can("reply") ? (
         <form
           class="reply"
