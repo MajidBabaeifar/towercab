@@ -541,7 +541,13 @@ export function envBackoff(retries: number): number {
 }
 
 /** The text of a wait's message (LOOP-14): the ask, title and repo, why, link. */
-export function waitMessage(waiting: string, s: Subject, why: string | null, stuck = false): string {
+export function waitMessage(
+  waiting: string,
+  s: Subject,
+  why: string | null,
+  stuck = false,
+  reply?: { gist: string; url: string },
+): string {
   const lines = [waitInfo(waiting).ask];
   // LOOP-77: a wait that came back with nothing new offers only the exits that change something.
   if (stuck) {
@@ -550,6 +556,8 @@ export function waitMessage(waiting: string, s: Subject, why: string | null, stu
   }
   lines.push(`${s.title} (${s.repo})`);
   if (why) lines.push(oneLine(why, 300));
+  // LOOP-120: the reply Towercab just posted, in the same message as the ask.
+  if (reply) lines.push(`Towercab replied to your comment: ${oneLine(reply.gist, 250)}`, reply.url);
   if (s.link) lines.push(s.link);
   return lines.join("\n").slice(0, 4000);
 }
@@ -656,13 +664,17 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
       const fromStage = isWait(cur.stage) ? cur.from_stage : cur.stage;
       // A new wait from inside a wait still counts as a new message.
       const continued = isWait(cur.stage) ? cur.continued + 1 : cur.continued;
+      // LOOP-120: the reply just posted rides on the message of the owner's next approval, once.
+      const note = data.replyNote as { gist: string; url: string } | undefined;
+      const reply = note && info.stage.startsWith("approval:") ? note : undefined;
+      if (note) data = { ...data, replyNote: undefined };
       move(info.stage, { waiting, from_stage: fromStage, continued }, why);
       const key = `${cur.id}:${waitKey(waiting)}:${continued}`;
       db.run(
         "INSERT OR IGNORE INTO outbox (key, mission, text, created) VALUES (?, ?, ?, ?)",
         key,
         cur.id,
-        waitMessage(waiting, cx.subject(cur), why, data.stuck === true),
+        waitMessage(waiting, cx.subject(cur), why, data.stuck === true, reply),
         now,
       );
     };

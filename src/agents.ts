@@ -20,6 +20,7 @@ export const AGENT_NAMES = [
   "score",
   "features",
   "shadow",
+  "observer",
 ] as const;
 export type AgentName = (typeof AGENT_NAMES)[number];
 

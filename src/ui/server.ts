@@ -19,6 +19,7 @@ import type { IntentStore, Listing } from "../intents/types.ts";
 import type { UiActions } from "./actions.ts";
 import { board } from "./board.ts";
 import { inbox, inboxAction } from "./inbox.ts";
+import { observerView } from "./observer.ts";
 import { repos } from "./repos.ts";
 import { shadowView } from "./shadow.ts";
 import { activity, intentPage, overview, queue, RUN_NAME, redact, type UiSources } from "./state.ts";
@@ -84,6 +85,8 @@ const PAGES =
   /^\/(?:board|overview|repos|queue|activity|i\/[A-Za-z0-9._-]+|inbox(?:\/[A-Za-z0-9._-]+)?)?\/?$/;
 const ACTIONS = new Set([
   "autonomy",
+  "scores",
+  "boost",
   "merge",
   "pass",
   "reply",
@@ -298,6 +301,9 @@ export function startUi(o: UiOptions): UiServer {
       n?: unknown;
       /** AUT-34: the level to set (`autonomy`). */
       a?: unknown;
+      /** LOOP-133: urgency and importance (`scores`). */
+      u?: unknown;
+      i?: unknown;
       id?: unknown;
       done?: unknown;
       value?: unknown;
@@ -365,6 +371,30 @@ export function startUi(o: UiOptions): UiServer {
     }
     const a = o.actions;
     let reply: ActionReply;
+    // UI-204, UI-205: the owner's edits of scores and autonomy; the reply may carry the new priority.
+    if (action === "scores" || action === "boost") {
+      const actor = typeof body.actor === "string" ? body.actor : "";
+      const score = (v: unknown) => {
+        if (v === undefined || v === null) return null;
+        return typeof v === "number" ? v : Number.NaN;
+      };
+      try {
+        await a.guard?.(intent, action, actor);
+        if (action === "boost") {
+          if (!a.boost) throw new Error("Boost isn't available.");
+          reply = { ok: true, message: await a.boost(intent, actor) };
+        } else {
+          if (!a.scores) throw new Error("Changing scores isn't available.");
+          const r = await a.scores(intent, score(body.u), score(body.i), actor);
+          reply = { ok: true, message: r.message, priority: r.priority, parked: r.parked };
+        }
+      } catch (e) {
+        reply = { ok: false, message: (e as Error).message };
+      }
+      store.invalidate();
+      changed();
+      return json(res, reply.ok ? 200 : 422, reply);
+    }
     try {
       // AUT-32: the page is the owner; an actor that says otherwise can't act on an a0 intent.
       if (intent) await a.guard?.(intent, action, typeof body.actor === "string" ? body.actor : "");
@@ -495,6 +525,7 @@ export function startUi(o: UiOptions): UiServer {
     if (path === "/api/queue") return json(res, 200, await queue(src));
     if (path === "/api/board") return json(res, 200, await board(src));
     if (path === "/api/shadow") return json(res, 200, shadowView(src));
+    if (path === "/api/observer") return json(res, 200, observerView(src));
     if (path === "/api/inbox") return json(res, 200, await inbox(src));
     if (path === "/api/repos") {
       const a = o.actions;
