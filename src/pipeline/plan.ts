@@ -263,6 +263,7 @@ export const planHandler: Handler = {
           plan: {
             md: withRepos(r.value.plan, reposMd(checked.value)),
             parts: checked.value.parts.map((p) => p.repo),
+            waitsOn: Object.fromEntries(checked.value.parts.map((p) => [p.repo, p.waits_on])),
             access,
             droppedTests,
             e2e: r.value.e2e ?? null,

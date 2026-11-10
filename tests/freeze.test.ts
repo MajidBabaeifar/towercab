@@ -25,7 +25,7 @@ test("loop: all the repos freeze in one step or none", () => {
   expect(frozenBy(db, "infra")).toBeNull();
 });
 
-test("loop: a held freeze makes the mission wait at the gate", () => {
+test("freeze: a held repo is named so the gate can say what it waits for", () => {
   const db = testDb();
   const a = mission(db, "261001-0900");
   const b = mission(db, "261001-1000");
@@ -45,7 +45,7 @@ test("loop: a freeze survives a restart", () => {
   expect(freezeAge(db, a, 65)).toBe(60);
 });
 
-test("loop: a freeze writes nothing to GitHub", () => {
+test("freeze: taking a freeze needs only a database", () => {
   const db = testDb();
   const a = mission(db, "261001-0900");
   // The module takes a database and no host: it has no way to reach GitHub.
