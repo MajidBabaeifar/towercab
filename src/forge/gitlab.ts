@@ -3,10 +3,11 @@
 
 import type { GitLabConfig } from "../config.ts";
 import { readTokenFile } from "../config.ts";
-import type { IssueRow, IssueText } from "../forge.ts";
+import type { Check, ChecksRead, IssueRow, IssueText } from "../forge.ts";
 import type { Http } from "../github/app.ts";
 import { type By, type Step, stageComment, stageMarker } from "../github/comments.ts";
 import type { PrComment, PrReview, PrState } from "../github/prs.ts";
+import { jobCheck, RetryRefused, unix } from "./gitlab-ci.ts";
 import { gitlabPath } from "./types.ts";
 
 export const GITLAB_TIMEOUT_MS = 30_000;
@@ -108,7 +109,7 @@ export class GitLabForge {
     } catch {
       json = null;
     }
-    return { status: res.status, json };
+    return { status: res.status, json, text: res.text };
   }
 
   /** A 2xx answer's JSON; anything else an Error naming the call and GitLab's reason (LOOP-10 reads it). */
@@ -255,6 +256,61 @@ export class GitLabForge {
       return { merged: false, reason: str(isObj(r.json) ? r.json.message : "") || `HTTP ${r.status}` };
     }
     throw failure("PUT", this.mr(slug, iid, "/merge"), r.status, r.json);
+  }
+
+  private project(slug: string, tail: string): string {
+    return `/projects/${encodeURIComponent(gitlabPath(slug))}${tail}`;
+  }
+
+  /**
+   * GL-11: the jobs of the merge request's pipelines on its current head as checks (one pipeline is one
+   * run); pipelines for other commits never count.
+   */
+  async readChecks(slug: string, iid: number): Promise<ChecksRead> {
+    const mr = await this.ok("GET", this.mr(slug, iid));
+    if (!isObj(mr)) throw new Error("GitLab sent no merge request");
+    const head = str(mr.sha);
+    const checks: Check[] = [];
+    for (const p of await this.list(this.mr(slug, iid, "/pipelines"))) {
+      if (str(p.sha) !== head || typeof p.id !== "number") continue;
+      const pipeline = { id: p.id, createdAt: unix(p.created_at) };
+      for (const job of await this.list(this.project(slug, `/pipelines/${p.id}/jobs?include_retried=false`))) {
+        const c = jobCheck(pipeline, job);
+        if (c) checks.push(c);
+      }
+    }
+    return { head, mergeable: mr.has_conflicts === true ? "CONFLICTING" : "MERGEABLE", checks };
+  }
+
+  /** GL-12: retry a pipeline's failed and cancelled jobs; GitLab's refusal is a `RetryRefused`. */
+  async rerunFailed(slug: string, pipeline: number): Promise<void> {
+    const path = this.project(slug, `/pipelines/${pipeline}/retry`);
+    const r = await this.call("POST", path);
+    if (r.status >= 200 && r.status < 300) return;
+    throw new RetryRefused(str(isObj(r.json) ? r.json.message : "") || `GitLab answered HTTP ${r.status}`);
+  }
+
+  /** Cancel a pipeline that hangs (PIP-171). */
+  async cancelRun(slug: string, pipeline: number): Promise<void> {
+    await this.ok("POST", this.project(slug, `/pipelines/${pipeline}/cancel`));
+  }
+
+  /** The whole log of one job. */
+  async jobLog(slug: string, job: number): Promise<string> {
+    const path = this.project(slug, `/jobs/${job}/trace`);
+    const r = await this.call("GET", path);
+    if (r.status >= 200 && r.status < 300) return r.text;
+    throw failure("GET", path, r.status, r.json);
+  }
+
+  /** The logs of a pipeline's failed jobs that are not allowed to fail. */
+  async failedLog(slug: string, pipeline: number): Promise<string> {
+    const parts: string[] = [];
+    for (const job of await this.list(this.project(slug, `/pipelines/${pipeline}/jobs`))) {
+      if (str(job.status) !== "failed" || job.allow_failure === true || typeof job.id !== "number") continue;
+      parts.push(`Job ${str(job.name)}:\n${await this.jobLog(slug, job.id)}`);
+    }
+    return parts.join("\n\n");
   }
 
   /** Bring the branch up to date with its base (GitLab's rebase). */

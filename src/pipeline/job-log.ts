@@ -4,9 +4,9 @@
 /** The log is only cut when it is longer than the tail a repair round gets (PIP-83). */
 export const LOG_TAIL = 6000;
 
-/** The job id in a check's details URL (`…/actions/runs/<run>/job/<job>`), or null. */
+/** The job id in a check's details URL (`…/actions/runs/<run>/job/<job>`, GitLab's `…/-/jobs/<job>`), or null. */
 export function jobId(url: string): number | null {
-  const m = /\/job\/(\d+)(?:[/?#]|$)/.exec(url);
+  const m = /\/(?:job|-\/jobs)\/(\d+)(?:[/?#]|$)/.exec(url);
   return m ? Number(m[1]) : null;
 }
 
