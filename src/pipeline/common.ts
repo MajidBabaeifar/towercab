@@ -239,6 +239,8 @@ export interface PipeData {
   n?: Record<string, number>;
   /** `<kind>`: a cut-off run gets one continue (PIP-1). */
   continued?: Record<string, boolean>;
+  /** `<kind>`: why the run's answer was refused, told to the one continue (PIP-1). */
+  refusedWhy?: Record<string, string>;
   /** Unix times of the build runs refused for guard version skew; an hour's worth counts (LOOP-106). */
   skew?: number[];
   /** `<stage>:<round start>`: the build round already retried once for a known setup error (LOOP-107). */
@@ -454,6 +456,12 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
   else session = { mode: m.session_used ? "resume" : "new", id: m.session };
   const fresh = cx.record(m, p.step, {}, nd);
   let prompt = resumed && resumePrompt ? resumePrompt : p.prompt;
+  // PIP-1: the one continue after a refused answer says what was wrong with it.
+  const refusedWhy = reentered ? data(m).refusedWhy?.[p.kind] : undefined;
+  if (refusedWhy) {
+    const note = `Your last answer was not accepted: ${refusedWhy}. Give your result again with that fixed; change nothing else.`;
+    prompt = resumed && resumePrompt ? note : `${prompt}\n\n${note}`;
+  }
   // A resumed step on a new worker session: the old one was gone (LOOP-7), so the new one is
   // told where the work is, then given the step's task.
   if (resumed && onWorkerSession && session.mode === "new") {
@@ -527,7 +535,8 @@ export function ended<T>(
   });
   const d = data(m);
   const continued = d.continued ?? {};
-  const once = (waiting: string, why: string): Ended<T> => {
+  const once = (waiting: string, why: string, refusedWhy?: string): Ended<T> => {
+    const refused = { ...d.refusedWhy, [kind]: refusedWhy };
     if (!continued[kind]) {
       return {
         ok: false,
@@ -537,14 +546,18 @@ export function ended<T>(
             why,
             // The one continue gets the step's whole budget again.
             set: { step_secs: 0 },
-            data: { continued: { ...continued, [kind]: true } },
+            data: { continued: { ...continued, [kind]: true }, refusedWhy: refused },
           },
         },
       };
     }
     return {
       ok: false,
-      progress: { done: wait(waiting, why, { data: { continued: { ...continued, [kind]: false } } }) },
+      progress: {
+        done: wait(waiting, why, {
+          data: { continued: { ...continued, [kind]: false }, refusedWhy: { ...refused, [kind]: undefined } },
+        }),
+      },
     };
   };
   if (end.timedOut) return once("worker timeout", "the run hit its time limit");
@@ -554,7 +567,7 @@ export function ended<T>(
       const parsed = parse(e.result.structuredOutput);
       if (!parsed.ok) {
         if (env) throw new EnvError(env.kind, env.why);
-        return once("no result", parsed.why);
+        return once("no result", parsed.why, parsed.why);
       }
       // The first success on a model ends its cooldown and resets its backoff (LOOP-9).
       cx.db.delMeta(`cooldown:${model}`);
@@ -565,7 +578,7 @@ export function ended<T>(
       const now = cx.clock.now();
       const runs = [...(d.runs ?? []), { at: now, cost: delta }].filter((r) => r.at > now - 62 * 86400);
       cx.db.run(
-        "UPDATE missions SET cost_usd = cost_usd + ?, agent_secs = agent_secs + ?, data = json_set(data, '$.sessionCost', json(?), '$.continued', json(?), '$.runs', json(?)) WHERE id = ?",
+        "UPDATE missions SET cost_usd = cost_usd + ?, agent_secs = agent_secs + ?, data = json_remove(json_set(data, '$.sessionCost', json(?), '$.continued', json(?), '$.runs', json(?)), '$.refusedWhy') WHERE id = ?",
         delta,
         e.result.durationMs / 1000,
         JSON.stringify({ ...(d.sessionCost ?? {}), [sessionKey]: e.result.costUsd }),
