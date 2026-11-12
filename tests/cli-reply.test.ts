@@ -29,10 +29,14 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 /** A home whose intents repo holds one intent (`extra` front matter) that came from issue 5. */
-function world(extra = "", github = '[github]\napp_id = 1\nme = "owner"\nname = "Majid"\n') {
+function world(
+  extra = "",
+  github = '[github]\napp_id = 1\nme = "owner"\nname = "Majid"\n',
+  issue = `issue: ${ISSUE}\n`,
+) {
   const intents = bareRepo({
     "intents/.keep": "",
-    [`intents/${ID}-t/intent.md`]: intentMd("web", `u: 4\ni: 5\n${extra}issue: ${ISSUE}\n`, "T"),
+    [`intents/${ID}-t/intent.md`]: intentMd("web", `u: 4\ni: 5\n${extra}${issue}`, "T"),
   });
   const dir = tempDir();
   const config = join(dir, "config.toml");
@@ -88,4 +92,15 @@ test("cli: reply works on an a0 intent", async () => {
   const { g, tools } = world("a: 0\n");
   expect(await main([...g, "reply", ID, "--by", "claude-code", "A hint."], tools)).toBe(0);
   expect(comment(tools)!.opts.input).toContain("<!-- towercab:agent:claude-code -->");
+});
+
+test("cli: reply without a PR or issue goes in as a marked answer", async () => {
+  // The intent came from no issue and has no PR yet.
+  const bare = world("", undefined, "");
+  expect(await main([...bare.g, "reply", ID, "--by", "claude-code", "Carry on."], bare.tools)).toBe(0);
+  expect(out).toContain("no PR or issue yet, sent as an answer marked claude-code");
+  expect(comment(bare.tools)).toBeUndefined();
+  // An a0 intent takes no answer from an agent, so there the reply is refused.
+  const only = world("a: 0\n", undefined, "");
+  expect(await main([...only.g, "reply", ID, "--by", "claude-code", "Carry on."], only.tools)).toBe(1);
 });
