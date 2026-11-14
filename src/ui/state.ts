@@ -32,6 +32,7 @@ import { canBoostIntent, scoreChanges, scoreWords } from "../scores.ts";
 import { actionSentence, actionsFor, shadowCosts } from "../shadow/store.ts";
 import { type Held, heldReleases, releaseLine, releaseTitle } from "../ship/releases.ts";
 import { MAX_FAILS } from "../ship/secret-steps.ts";
+import { sideCosts } from "../side-runs.ts";
 import {
   aheadIn,
   buildingIn,
@@ -1479,6 +1480,12 @@ export function spend(db: Db, now: number): Spend {
   }
   // OBV-10: so are the observer's runs.
   for (const r of observerCosts(db, now - 8 * DAY)) {
+    if (r.at > now) continue;
+    const k = localDate(r.at);
+    byDay.set(k, (byDay.get(k) ?? 0) + r.cost);
+  }
+  // LOOP-125: so are the overlap checks, which belong to no mission.
+  for (const r of sideCosts(db, now - 8 * DAY)) {
     if (r.at > now) continue;
     const k = localDate(r.at);
     byDay.set(k, (byDay.get(k) ?? 0) + r.cost);

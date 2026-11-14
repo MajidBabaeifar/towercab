@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..121, LOOP-126..132, LOOP-133..135, LOOP-159..162, LOOP-122, LOOP-140..141 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..121, LOOP-126..132, LOOP-133..135, LOOP-159..162, LOOP-122, LOOP-140..141, LOOP-124..125 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -1086,7 +1086,7 @@ On the command line, the install steps print under the error, and running the sa
 An overlap check runs when the owner asks for it, takes no slot, and its cost shows in the spend.
 
 - It runs in the process that serves the request (the page's server or the command), not in a pass, and takes no build slot (LOOP-110); at most 2 run at once, a third waits. Pause (LOOP-113) does not stop it, because the owner asked for it, but a draining service (LOOP-108) refuses it with `Towercab is restarting; try again in a minute`.
-- Its cost is stored as a run with no mission and kind `overlap`, and counts in the day's spend and in the caps' totals (MET-29, MET-33); the Spend view lists it as `Overlap checks`.
+- Its cost is stored as a side run (kind `overlap`, in `meta` under `side_runs`, kept 33 days, no mission) and counts in the day's and the month's spend and in the caps' totals (MET-29, MET-32, MET-33); the Spend view lists it with the other runs' sums, not as a line of its own.
 - Verified by: `overlap: a check takes no build slot`, `overlap: a check runs while paused`, `overlap: a draining service refuses a check`, `overlap: its cost counts in the day's spend`, `overlap: two checks at most run at once`
 
 ### LOOP-113 · Pause stops all new work

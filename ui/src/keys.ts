@@ -3,9 +3,12 @@
 
 const SHORTCUTS = "towercab:shortcuts";
 const PALETTE = "towercab:palette";
+const NEW_INTENT = "towercab:new-intent";
 
 export const openShortcuts = (): void => void dispatchEvent(new Event(SHORTCUTS));
 export const openPalette = (): void => void dispatchEvent(new Event(PALETTE));
+export const openNewIntent = (): void => void dispatchEvent(new Event(NEW_INTENT));
+export const NEW_INTENT_EVENT = NEW_INTENT;
 export const SHORTCUTS_EVENT = SHORTCUTS;
 export const PALETTE_EVENT = PALETTE;
 

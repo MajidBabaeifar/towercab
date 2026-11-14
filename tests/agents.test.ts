@@ -64,6 +64,8 @@ const BEFORE: Record<string, { tools: string; allowed: string[] }> = {
   shadow: { tools: "", allowed: [] },
   // OBV-1: the observer has no tools at all; Towercab builds its evidence and acts on its result.
   observer: { tools: "", allowed: [] },
+  // INT-73: the overlap check has no tools at all; Towercab builds what it reads.
+  overlap: { tools: "", allowed: [] },
 };
 BEFORE.repair = BEFORE.worker!;
 // PIP-96: the risk agent reads exactly as the review does, no more.

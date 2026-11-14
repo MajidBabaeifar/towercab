@@ -22,6 +22,16 @@ import { ForgeBadReply, MERGE_METHOD, type PrBrief, type Result } from "../forge
 import { ownerForge } from "../github/forge.ts";
 import { classifyFiles, type ProposedPr } from "../github/proposed.ts";
 import type { Clock, GitHub } from "../handlers.ts";
+import type { Home } from "../home.ts";
+import {
+  addToIntent,
+  cannotAddTo,
+  checkDraft,
+  createIntent,
+  type Draft,
+  type Mode,
+} from "../intents/create.ts";
+import { checkOverlap, type Match, type OverlapResult } from "../intents/overlap.ts";
 import type { IntentStore } from "../intents/types.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
 import { grantScanning } from "../pipeline/alerts.ts";
@@ -29,6 +39,7 @@ import { ownerMergeRefusal } from "../pipeline/teammate.ts";
 import { canBoostIntent, changeScores } from "../scores.ts";
 import { resetShadow } from "../shadow/store.ts";
 import { approveSecret } from "../ship/secret-steps.ts";
+import type { Tools } from "../tools.ts";
 import { currentPr, type DoneNote, validNote } from "./state.ts";
 
 /** What the page can do; each resolves to one sentence saying what happened, or throws the error. */
@@ -92,9 +103,44 @@ export interface UiActions {
   accept(pr: number, head: string): Promise<string>;
   /** INT-53: comment `text` (default `Not going ahead.`) and close the proposed intent's PR. */
   close(pr: number, text?: string): Promise<string>;
+  /** UI-216, INT-73: the intents and open proposals that overlap `draft`; `visible` limits them to the person's repos. */
+  checkIntent?(
+    draft: Draft,
+    o?: { visible?: (repo: string) => boolean },
+  ): Promise<{ matches: CheckedMatch[]; titleNote?: string }>;
+  /** UI-216, INT-71, INT-74: write the intent (`direct` or as a `proposal`), or add the draft's text to `addTo`. */
+  createIntent?(draft: Draft, o: { mode: Mode; by: string; addTo?: string }): Promise<CreatedReply>;
   /** UI-238, SHD-17: clear the shadow's conversation, summary and pending actions; its action log stays. */
   shadowReset?(): Promise<string>;
 }
+
+/** A match and whether the page may offer "add my text to this one" (INT-74); the server also needs the maintainer role. */
+export type CheckedMatch = Match & { canAdd: boolean; pastDesign: boolean };
+
+/** What `createIntent` answers (UI-216). */
+export interface CreatedReply {
+  id: string;
+  path: string;
+  added: boolean;
+  proposal?: boolean;
+  pr?: number;
+  message: string;
+}
+
+/** What the new intent form needs beyond the page's own sources (UI-216, LOOP-125). */
+export interface IntentTools {
+  home: Home;
+  tools: Tools;
+  /** LOOP-108: a draining service refuses a check. */
+  draining?: () => boolean;
+  /** INT-71: what a contributor's proposal needs; none: proposals are refused. */
+  proposal?: { config: Config; home: Home; tools: Tools; github: GitHub; who: string } | null;
+  towercabExe?: string;
+  userHome?: string;
+}
+
+/** A repeat of the same create by the same person within this long is refused (UI-216). */
+export const REPEAT_S = 120;
 
 export interface ActionDeps {
   db: Db;
@@ -118,6 +164,8 @@ export interface ActionDeps {
   proposed?: () => ProposedPr[];
   /** SHIP-35: writes a typed secret; none: the page can't take one. */
   supplySecret?: (intent: string, n: number, value: string) => Promise<string>;
+  /** The new intent form (UI-213..218); without it the page can't create intents. */
+  intentTools?: IntentTools | null;
   /** SHD-12: the shadow's own actions: what it writes on GitHub starts with `[shadow] `. */
   actor?: "shadow";
 }
@@ -210,7 +258,85 @@ export function createActions(d: ActionDeps): UiActions {
   /** Ask the loop to read the intents repo's PRs now (UI-106's way). */
   const readNow = () => d.db.setMeta("proposed:poll", "1");
 
+  const made = new Map<string, { at: number; id: string }>();
+  const intentTools = () => {
+    if (!d.intentTools) throw new Error("Creating intents isn't available.");
+    return d.intentTools;
+  };
+
   return {
+    async checkIntent(draft, o = {}) {
+      const t = intentTools();
+      // A bad value is refused before the check is paid for.
+      const checked = checkDraft(draft, d.config, "direct");
+      const found: OverlapResult = await checkOverlap(
+        {
+          config: d.config,
+          home: t.home,
+          tools: t.tools,
+          clock: d.clock,
+          store: d.store,
+          db: d.db,
+          proposed: () => d.proposed?.() ?? [],
+          draining: t.draining,
+          visible: o.visible,
+          towercabExe: t.towercabExe,
+          userHome: t.userHome,
+        },
+        checked,
+      );
+      const listing = await d.store.list();
+      return {
+        ...found,
+        matches: found.matches.map((m) => {
+          const intent = listing.open.find((i) => i.id === m.ref);
+          const no = intent ? cannotAddTo(intent, unfinishedFor(d.db, intent.id)) : "not an open intent";
+          return {
+            ...m,
+            canAdd: intent !== undefined && no === null,
+            pastDesign: intent !== undefined && no !== null,
+          };
+        }),
+      };
+    },
+
+    async createIntent(draft, o) {
+      const t = intentTools();
+      if (o.addTo) {
+        const i = await addToIntent(
+          { store: d.store },
+          o.addTo,
+          draft,
+          unfinishedFor(d.db, o.addTo),
+          o.by,
+          o.mode,
+        );
+        return { id: i.id, path: `${i.dir}/intent.md`, added: true, message: `Added to ${i.id}.` };
+      }
+      const checked = checkDraft(draft, d.config, o.mode);
+      const key = `${o.by}|${checked.repo}|${checked.title}`;
+      const now = d.clock.now();
+      const before = made.get(key);
+      if (before && now - before.at < REPEAT_S) throw new Error(`Already created as ${before.id}`);
+      const c = await createIntent(
+        { store: d.store, config: d.config, now: () => new Date(now * 1000), proposal: t.proposal },
+        checked,
+        o.mode,
+      );
+      made.set(key, { at: now, id: c.id || `PR #${c.pr}` });
+      if (c.proposal) {
+        return {
+          id: c.id,
+          path: "",
+          added: false,
+          proposal: true,
+          ...(c.pr ? { pr: c.pr } : {}),
+          message: `Proposed ${c.id}. A maintainer will accept or close it.`,
+        };
+      }
+      return { id: c.id, path: c.path, added: false, message: `Created ${c.id}.` };
+    },
+
     async accept(n, head) {
       const now = await look(n);
       if (now.state !== "OPEN" || now.head !== head) throw changed(n);
