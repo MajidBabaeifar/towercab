@@ -3,4 +3,5 @@
 b423a08a714d8acd60bf9fea0ee2e59ba732b6e2:tests/sandbox.test.ts:aws-access-token:326
 # A made-up token (`abcdefgh1234`) in the test of the setup secrets file's username pairing (PIP-211); not a real key.
 df232dcd6b78516e2d369d993bc20fdb16998898:tests/pipeline/setup-secrets.test.ts:generic-api-key:89
+# The same made-up token on the next line of that test; not a real key.
 df232dcd6b78516e2d369d993bc20fdb16998898:tests/pipeline/setup-secrets.test.ts:generic-api-key:90
