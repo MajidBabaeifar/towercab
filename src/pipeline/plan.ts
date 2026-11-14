@@ -10,6 +10,7 @@ import { MERGE_METHOD } from "../forge.ts";
 import { PausedHold } from "../github/paused.ts";
 import type { ChildEnd, Ctx, GitHub, Handler, Progress } from "../handlers.ts";
 import type { Intent } from "../intents/types.ts";
+import { kindNote, kindOf, kindPrompt } from "../kind.ts";
 import { wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { runSet } from "../repo/runset.ts";
@@ -175,6 +176,7 @@ export const planHandler: Handler = {
           d.delivery === "steps"
             ? "\n\nThe owner will do this by hand: set delivery to steps and list what they do in owner_steps."
             : "";
+        const kindText = kindPrompt("plan", kindOf(intent.kind, d));
         const prompt =
           render("plan", {
             intent: intentData(intent.text),
@@ -183,7 +185,8 @@ export const planHandler: Handler = {
             e2e: e2eText(files.towercab.live, "plan"),
           }) +
           feedback +
-          byHand;
+          byHand +
+          (kindText ? `\n\n${kindText}` : "");
         return spawnRun(
           cx,
           m,
@@ -347,6 +350,8 @@ async function bodyOf(cx: Ctx, m: Mission): Promise<string> {
     riskMd(currentRisk(m, "plan")),
     d.plan!.brief ?? "",
     d.delivery ?? "code",
+    // INT-77: with no spec PR this is the mission's first PR, so it carries the guess.
+    m.spec_pr ? "" : kindNote(d),
   );
 }
 

@@ -155,6 +155,8 @@ export interface ClaudeRun {
   grants: { domains: string[]; paths: string[]; open?: false };
   /** The worker's guard (PIP-29): written to `<runs>/guard.json`, its hook and denyWrite added. */
   guardRules?: GuardRules | null;
+  /** Allow rules added to the agent file's own (PIP-230: the settings files for a spec-only design). */
+  allowMore?: string[];
   /** `cacheEnv` (LOOP-34): the cache's variables, the repo's `[repos.<r>].env` that passes PIP-159. */
   cacheEnv: Record<string, string>;
   /** The repo cache directory: writable in the sandbox. */
@@ -230,7 +232,7 @@ export function claudeArgv(run: ClaudeRun): string[] {
     "--tools",
     k.tools.join(","),
     // An empty list would make `--allowedTools` swallow `--disallowedTools` as its value.
-    ...(k.allow.length ? ["--allowedTools", ...k.allow] : []),
+    ...(k.allow.length ? ["--allowedTools", ...k.allow, ...(run.allowMore ?? [])] : []),
     "--disallowedTools",
     ...disallowed(run.config),
     ...othersInHome(run).flatMap((p) => [

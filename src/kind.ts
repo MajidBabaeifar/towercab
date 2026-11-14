@@ -55,3 +55,43 @@ export function parseKindComment(text: string): WorkKind | null {
   const v = m?.[1]?.toLowerCase();
   return isKind(v) ? v : null;
 }
+
+/** PIP-230: the repo's settings files (`REPO-*`) a spec-only design may edit besides `specs/`. */
+export const SETTINGS_FILES = ["TOWERCAB.md", "CLAUDE.md", "REVIEW.md", "AGENTS.md"] as const;
+
+/** PIP-230: whether a design of this kind may leave a change at `rel` (repo-relative). */
+export function designMayEdit(kind: WorkKind, rel: string): boolean {
+  if (rel === "README.md" || rel.startsWith("specs/")) return true;
+  return kind === "spec-only" && (SETTINGS_FILES as readonly string[]).includes(rel);
+}
+
+/** PIP-230: the extra `--allowedTools` rules of a design of this kind. */
+export function designAllow(kind: WorkKind): string[] {
+  return kind === "spec-only" ? SETTINGS_FILES.map((f) => `Edit(${f})`) : [];
+}
+
+/** PIP-228: what a kind tells the design, plan or build agent about its path; empty for a feature. */
+export function kindPrompt(stage: "design" | "plan" | "build", kind: WorkKind): string {
+  switch (kind) {
+    case "feature":
+      return "";
+    case "spec-only":
+      if (stage !== "design") return "";
+      return `This intent is a spec-only change: merging the spec PR ends it, with no plan, build or code PR. Besides \`specs/\` you may edit the repo's settings files (${SETTINGS_FILES.join(", ")}) and nothing else. If the intent needs a change to the code, or to a setting that is not in the repo, change nothing for it and say so in \`concerns\`.`;
+    case "bugfix":
+      if (stage === "design") return "";
+      return stage === "plan"
+        ? "This intent is a bugfix: there is no spec PR. Name the requirement it fixes on a `Fixes: <ID>` line, plan a failing test that shows the bug first, then the smallest fix. Wording or a `Verified by` line of that one row may change in the code PR; any other spec change means this is not a bugfix."
+        : "This intent is a bugfix: there is no spec PR. Write a test that fails because of the bug, then the smallest fix that makes it pass. Touch no spec row except the one the plan names, and only its wording or its `Verified by` line.";
+    case "refactor":
+      if (stage === "design") return "";
+      return stage === "plan"
+        ? "This intent is a refactor: behaviour does not change and there is no spec PR. Plan the change so that no existing test is edited; new tests are fine. A refactor that needs an existing test or a spec file changed is not a refactor, say so in the plan."
+        : "This intent is a refactor: behaviour does not change. Do not edit any existing test and do not touch `specs/`; new tests are fine. If the change cannot be made that way, stop and say so.";
+    case "infra":
+      if (stage === "design") return "";
+      return stage === "plan"
+        ? "This intent is an infrastructure or configuration change: there is no spec PR and no failing-test proof. Plan it as small, reversible steps, and keep any change to a real system as a step for the owner."
+        : "This intent is an infrastructure or configuration change: there is no spec PR and no failing-test proof. Make the smallest change, run the repo's checks, and keep any change to a real system out of the code.";
+  }
+}

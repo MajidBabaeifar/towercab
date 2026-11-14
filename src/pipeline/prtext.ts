@@ -235,6 +235,7 @@ export function planBody(
   risk = "",
   brief = "",
   delivery: "code" | "steps" = "code",
+  kindLine = "",
 ): string {
   const approach =
     section(planMd, "Approach")
@@ -247,6 +248,7 @@ export function planBody(
   ];
   const body = [
     plainMd(brief),
+    kindLine,
     risk,
     ...detailsMd([approach], brief),
     asks.length

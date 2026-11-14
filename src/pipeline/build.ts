@@ -8,6 +8,7 @@ import { git, refreshBase } from "../checkout.ts";
 import { conflictRoundsDone } from "../github/events.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import type { Intent } from "../intents/types.ts";
+import { kindOf, kindPrompt } from "../kind.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
 import { getMission, type Mission } from "../mission.ts";
 import { CONTROL } from "../repo/protected.ts";
@@ -120,6 +121,8 @@ async function workerPrompt(cx: Ctx, m: Mission): Promise<string> {
   const hasCi = true;
   // PIP-219: a later run of a long build starts from what the earlier runs left (empty for the first run).
   const progress = await progressBlock(cx, m, plan);
+  const kindPart = kindPrompt("build", kindOf(intent.kind, d));
+  const kindText = kindPart ? `\n\n${kindPart}` : "";
   return (
     (progress ? `${progress}\n` : "") +
     render("worker", {
@@ -132,6 +135,7 @@ async function workerPrompt(cx: Ctx, m: Mission): Promise<string> {
         testGrantsOf(d).map((t) => t.path),
       ),
     }) +
+    kindText +
     testNote
   );
 }

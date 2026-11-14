@@ -403,6 +403,8 @@ export interface RunPlan {
   files: RepoFiles;
   intent: Intent;
   guard?: ClaudeRun["guardRules"];
+  /** Allow rules added to the agent's own (PIP-230). */
+  allowMore?: string[];
   /** The stage folder of its files when the kind runs in more than one stage (LOOP-39). */
   stage?: string;
 }
@@ -503,6 +505,7 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
         ? grants(fresh, p.intent, p.files, cx)
         : { domains: [...DEFAULT_NETWORK], paths: [] },
     guardRules: p.guard ?? null,
+    allowMore: p.allowMore,
     cacheEnv: cacheEnv(cache, repo),
     cache,
     config: cx.config,

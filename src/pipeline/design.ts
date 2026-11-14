@@ -13,6 +13,15 @@ import { PausedHold } from "../github/paused.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import { renameFeature } from "../intents/features.ts";
 import { plainLine, TITLE_MAX, titleProblem } from "../intents/naming.ts";
+import {
+  designAllow,
+  designMayEdit,
+  kindNote,
+  kindOf,
+  kindPrompt,
+  SETTINGS_FILES,
+  type WorkKind,
+} from "../kind.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { currentRisk, openPointsMd, openPointsWhy, type Risk, riskMd } from "../risk.ts";
@@ -462,12 +471,14 @@ async function prompt(
   const existingLine = existing.length
     ? `\nThese reserved IDs are already rows on the base branch, written by this intent's own earlier spec PR or worded by the intent as existing: ${existing.join(", ")}. They are existing rows to build or make Live, not new ones; do not rewrite or renumber them.`
     : "";
+  const kindText = kindPrompt("design", kindOf(intent.kind, d));
   return {
-    prompt: render("design", {
-      intent: intentData(intent.text),
-      earlier: answer + replySection(d.replyTo) + settled + files2 + (await ciSection(cx, m)),
-      reserved: `${reservedLine(outcome)}${existingLine}\n${claimedLine(claimed)}${baseLine(t.base)}${t.unchecked === null ? "" : `\n${IDS_UNCHECKED}: the open PRs could not be read (${t.unchecked}). Take IDs after the highest on the base branch; Towercab checks them again before the spec PR is opened or updated.`}`,
-    }),
+    prompt:
+      render("design", {
+        intent: intentData(intent.text),
+        earlier: answer + replySection(d.replyTo) + settled + files2 + (await ciSection(cx, m)),
+        reserved: `${reservedLine(outcome)}${existingLine}\n${claimedLine(claimed)}${baseLine(t.base)}${t.unchecked === null ? "" : `\n${IDS_UNCHECKED}: the open PRs could not be read (${t.unchecked}). Take IDs after the highest on the base branch; Towercab checks them again before the spec PR is opened or updated.`}`,
+      }) + (kindText ? `\n\n${kindText}` : ""),
     files,
   };
 }
@@ -496,6 +507,7 @@ async function designRun(cx: Ctx, m: Mission): Promise<Progress> {
       agent: "design",
       files,
       intent,
+      allowMore: designAllow(kindOf(intent.kind, d)),
     },
     "Continue where you stopped.",
   );
@@ -665,7 +677,10 @@ async function guardReadme(cx: Ctx, m: Mission): Promise<void> {
 async function commit(cx: Ctx, m: Mission): Promise<Progress> {
   await rename(cx, m);
   await guardReadme(cx, m);
-  const changed = (await coGit(cx, m, ["status", "--porcelain", "--", "specs", "README.md"])).trim();
+  // PIP-230: a spec-only design keeps its edits to the repo's settings files; anything else is dropped.
+  const extra = await settingsChanged(cx, m, kindOf((await intentOf(cx, m)).kind, data(m)));
+  const changed =
+    (await coGit(cx, m, ["status", "--porcelain", "--", "specs", "README.md"])).trim() || extra.join(" ");
   if (!changed) {
     await dropOthers(cx, m);
     // A spec commit made before a crash, not yet on the spec PR: push it now (LOOP-6).
@@ -679,7 +694,7 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
   }
   m = await recheckIds(cx, m);
   const intent = await intentOf(cx, m);
-  await coGit(cx, m, ["add", "-A", "--", "specs", "README.md"]);
+  await coGit(cx, m, ["add", "-A", "--", "specs", "README.md", ...extra]);
   await coGit(cx, m, [
     ...(await botAuthor(cx)),
     "commit",
@@ -704,6 +719,15 @@ async function pushSpec(cx: Ctx, m: Mission): Promise<Progress> {
   return openPr(cx, cx.record(m, "pr", { head, pushed_at: cx.clock.now() }, { specBranch, pushRefusals: 0 }));
 }
 
+/** PIP-230: the settings files with a change in the checkout, when the kind's design may edit them. */
+async function settingsChanged(cx: Ctx, m: Mission, kind: WorkKind): Promise<string[]> {
+  const out = await coGit(cx, m, ["status", "--porcelain", "--untracked-files=all"]);
+  return out
+    .split("\n")
+    .map((l) => l.slice(3).trim())
+    .filter((p) => (SETTINGS_FILES as readonly string[]).includes(p) && designMayEdit(kind, p));
+}
+
 /** The design may edit only specs/ and the README's docs table (PIP-25, PIP-172): anything else it left is discarded. */
 async function dropOthers(cx: Ctx, m: Mission): Promise<void> {
   await coGit(cx, m, ["reset", "--hard", "--quiet"]);
@@ -722,7 +746,8 @@ async function bodyOf(cx: Ctx, m: Mission): Promise<string> {
     d.design?.pr ?? "",
     d.design?.specIds ?? [],
     { intentUrl: cx.store.url(intent), specPrUrl: null, planPrUrl: null },
-    [openPointsMd(risk), riskMd(risk)],
+    // INT-77: a spec-only change's first PR is the spec PR, so it carries the guess.
+    [kindOf(intent.kind, d) === "spec-only" ? kindNote(d) : "", openPointsMd(risk), riskMd(risk)],
     d.design?.brief ?? "",
   );
 }

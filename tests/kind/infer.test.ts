@@ -84,3 +84,16 @@ test("kind: a guessed lighter kind takes effect without waiting", async () => {
     p.cleanup();
   }
 }, 120_000);
+
+test("kind: the first PR says the guess and its reason", async () => {
+  const p = await run("", guess("bugfix", "It fixes a wrong total."));
+  try {
+    await p.untilStage("approval:plan");
+    const m = p.mission()!;
+    const body = p.prNo("intents", m.plan_pr!).body;
+    expect(body).toContain("Towercab guessed this is a bugfix: It fixes a wrong total.");
+    expect(body).toContain("kind: <");
+  } finally {
+    p.cleanup();
+  }
+}, 120_000);
