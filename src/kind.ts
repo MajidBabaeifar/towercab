@@ -91,7 +91,84 @@ export function kindPrompt(stage: "design" | "plan" | "build", kind: WorkKind): 
     case "infra":
       if (stage === "design") return "";
       return stage === "plan"
-        ? "This intent is an infrastructure or configuration change: there is no spec PR and no failing-test proof. Plan it as small, reversible steps, and keep any change to a real system as a step for the owner."
+        ? "This intent is an infrastructure or configuration change: there is no spec PR and no failing-test proof. List the commands to run in the sandbox after the checks pass in `apply` (one to five, each with a `why`). Plan it as small, reversible steps, and keep any change to a real system as a step for the owner."
         : "This intent is an infrastructure or configuration change: there is no spec PR and no failing-test proof. Make the smallest change, run the repo's checks, and keep any change to a real system out of the code.";
+  }
+}
+
+/** PIP-233: what the code PR says of a refactor's proof. */
+export const REFACTOR_PROOF = "Refactor: no existing test changed";
+
+/** PIP-231: a spec file split into its preamble and its rows (`### <ID> · <name>` headings), by ID. */
+export function specRows(text: string): { preamble: string; rows: Map<string, string> } {
+  const parts = text.split(/^(?=### \S+ · )/m);
+  const rows = new Map<string, string>();
+  let preamble = "";
+  for (const p of parts) {
+    const id = /^### (\S+) · /.exec(p)?.[1];
+    if (id) rows.set(id, p.trimEnd());
+    else preamble += p;
+  }
+  return { preamble: preamble.trimEnd(), rows };
+}
+
+/** The requirement a bugfix plan says it fixes (`Fixes: <ID>`, PIP-46), or null. */
+export function fixedRow(plan: string): string | null {
+  return /^\s*Fixes:\s*([A-Z]+-\d+)/m.exec(plan)?.[1] ?? null;
+}
+
+/**
+ * PIP-231: why a lighter kind's change to one spec file outgrows its path, or null when it stays within it.
+ * A `bugfix` may change the one row it fixes (its wording or `Verified by`); a `refactor` and an `infra` change
+ * may change no spec file at all.
+ */
+export function outgrown(
+  kind: WorkKind,
+  file: string,
+  before: string,
+  after: string,
+  fixId: string | null,
+): string | null {
+  if (before === after) return null;
+  if (kind !== "bugfix")
+    return `${file} changes, and a ${kind === "infra" ? "infrastructure change" : kind} may not touch the specs.`;
+  const b = specRows(before);
+  const a = specRows(after);
+  for (const id of a.rows.keys()) if (!b.rows.has(id)) return `${file} adds the requirement ${id}.`;
+  for (const id of b.rows.keys()) if (!a.rows.has(id)) return `${file} removes the requirement ${id}.`;
+  if (a.preamble !== b.preamble) return `${file} changes text outside the requirements.`;
+  for (const [id, text] of a.rows)
+    if (b.rows.get(id) !== text && id !== fixId)
+      return fixId
+        ? `${file} changes the requirement ${id}, not the ${fixId} this bugfix fixes.`
+        : `${file} changes the requirement ${id}, and the plan names no requirement it fixes.`;
+  return null;
+}
+
+/**
+ * UI-283: why a mission at stage `at` cannot take `kind`, or null. Only a stage that has not started can be skipped:
+ * a lighter kind needs the mission before its design (a spec-only change may also take over a design in progress),
+ * and a feature may always take over (PIP-231).
+ */
+export function kindChangeRefusal(kind: WorkKind, at: string): string | null {
+  if (kind === "feature" || at === "pick") return null;
+  if (kind === "spec-only" && (at === "design" || at === "approval:spec")) return null;
+  const started = at === "design" || at === "approval:spec" ? "design" : "plan or build";
+  return `The ${started} has already started, so ${kind === "infra" ? "an infrastructure change" : `a ${kind}`} can no longer skip it.`;
+}
+
+/** UI-283: a kind's name for a person. */
+export function kindLabel(kind: WorkKind): string {
+  switch (kind) {
+    case "feature":
+      return "Feature";
+    case "bugfix":
+      return "Bugfix";
+    case "refactor":
+      return "Refactor";
+    case "infra":
+      return "Infrastructure change";
+    case "spec-only":
+      return "Specs and settings only";
   }
 }

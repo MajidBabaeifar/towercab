@@ -90,6 +90,11 @@ export function setScores(id: string, change: { u?: number; i?: number }): Promi
   return post({ action: "scores", id, ...change, actor: "owner" });
 }
 
+/** UI-283: set the intent's kind. */
+export function setKind(id: string, kind: string): Promise<ActionReply> {
+  return post({ action: "set-kind", id, kind, actor: "owner" });
+}
+
 /** UI-205: a5, and the start of an intent that has not started. */
 export function boostIntent(id: string): Promise<ActionReply> {
   return post({ action: "boost", id, actor: "owner" });

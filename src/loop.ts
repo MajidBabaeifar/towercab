@@ -62,6 +62,7 @@ import {
   NoOpenIntentError,
   SyncError,
 } from "./intents/types.ts";
+import { kindChangeRefusal, kindOf, parseKindComment, type WorkKind } from "./kind.ts";
 import {
   type ApplyCtx,
   apply,
@@ -1571,6 +1572,13 @@ export class Loop {
         }
         const running = this.children.has(m.id);
         if (running && !["code_merged", "spec_merged", "plan_merged", "closed"].includes(o.event)) continue;
+        // INT-77: the owner's whole comment `kind: <value>` switches the kind and its path; it is no answer.
+        const switchTo =
+          (o.event === "feedback" || o.event === "answered") && o.text ? parseKindComment(o.text) : null;
+        if (switchTo) {
+          await this.switchKind(m, switchTo);
+          continue;
+        }
         // PIP-145: what an approving reviewer wrote goes to the PR's record, nothing more.
         const notes = (o.data as { approvalNotes?: string[] } | undefined)?.approvalNotes ?? [];
         if (o.event === "reviewed" && notes.length > 0) {
@@ -1589,6 +1597,23 @@ export class Loop {
         this.d.log(`${label(m)}: reading its PRs failed: ${msg}`);
       }
     }
+  }
+
+  /** INT-77: write the owner's kind to the intent and put the mission on its path, unless that stage has started. */
+  private async switchKind(m: Mission, kind: WorkKind): Promise<void> {
+    const intent = await this.d.store.get(m.intent);
+    if (kindOf(intent.kind, dataOf(m) as { kind?: string }) === kind && intent.kind === kind) return;
+    const refusal = kindChangeRefusal(kind, m.stage === "blocked" ? (m.from_stage ?? m.stage) : m.stage);
+    if (refusal) {
+      this.d.log(`${label(m)}: ignored "kind: ${kind}": ${refusal}`);
+      return;
+    }
+    await this.d.store.update(m.intent, "set kind", (e) => e.setField("kind", kind));
+    this.move(m, {
+      event: "kind_routed",
+      why: `the owner replied kind: ${kind}`,
+      data: { kind, kindBy: "owner", kindWhy: "You set it." },
+    });
   }
 
   /**

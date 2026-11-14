@@ -22,7 +22,7 @@ import {
 import { ChevronLeft, External, PullRequest } from "../icons.tsx";
 import { Markdown } from "../md.tsx";
 import { Link } from "../router.tsx";
-import { ControlNotes, ScoreControl } from "../ScoreControls.tsx";
+import { ControlNotes, KindControl, ScoreControl } from "../ScoreControls.tsx";
 import { StageMap } from "../StageMap.tsx";
 
 const PR_WORDS: Record<PrView["state"], string> = {
@@ -135,6 +135,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
       {data.onlyYou ? <p class="meta only-you-line">{data.onlyYou}</p> : null}
       {data.autonomy ? <AutonomyControl intent={data.id} view={data.autonomy} readOnly={readOnly} /> : null}
       {data.controls ? <ScoreControl intent={data.id} view={data.controls} readOnly={readOnly} /> : null}
+      {data.controls ? <KindControl intent={data.id} view={data.controls} readOnly={readOnly} /> : null}
       {data.controls ? <ControlNotes view={data.controls} /> : null}
       {!readOnly && (data.onlyYou || data.paused) ? (
         <PauseButton intent={data.id} paused={data.paused === true} />

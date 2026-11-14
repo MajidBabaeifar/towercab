@@ -237,6 +237,13 @@ export const planHandler: Handler = {
         return { done: { event: "bad_result", why: "a plan the owner does by hand needs owner_steps" } };
       ownerSteps = ownerSteps.map((s) => ({ ...s, when: "after" as const }));
     }
+    // PIP-229: an infra plan lists the commands to apply; none is a bad result, asked for again.
+    const planKind = kindOf((await intentOf(cx, m)).kind, data(m));
+    const apply = planKind === "infra" ? (r.value.apply ?? []) : [];
+    if (planKind === "infra" && apply.length === 0)
+      return {
+        done: { event: "bad_result", why: "an infrastructure plan needs apply commands", record: true },
+      };
     // INT-43: a multi-repo plan has a part per repo in an order without cycles; else the planner is asked again.
     const intent = await intentOf(cx, m);
     const checked = checkParts(intent.repo, intent.repos ?? [], r.value.repos ?? []);
@@ -264,7 +271,8 @@ export const planHandler: Handler = {
         {},
         {
           plan: {
-            md: withRepos(r.value.plan, reposMd(checked.value)),
+            md: withApply(withRepos(r.value.plan, reposMd(checked.value)), apply),
+            apply,
             parts: checked.value.parts.map((p) => p.repo),
             access,
             droppedTests,
@@ -283,6 +291,13 @@ export const planHandler: Handler = {
     );
   },
 };
+
+/** PIP-229: the plan PR lists the commands to apply in plain words. */
+function withApply(md: string, apply: { command: string; why: string }[]): string {
+  if (!apply.length) return md;
+  const lines = apply.map((a) => `- \`${a.command}\`: ${a.why}`);
+  return `${md.trim()}\n\n## What will be applied\n\nThese run in the sandbox after the checks pass:\n\n${lines.join("\n")}`;
+}
 
 /** SHIP-17, SHIP-21: the plan's `## Your steps` and `Nothing to check live:`, after `## Access`. */
 function ownerText(plan: { ownerSteps?: PlanStep[]; liveNoneWhy?: string }): string {

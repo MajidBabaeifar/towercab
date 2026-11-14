@@ -16,8 +16,16 @@ import type { ProposedState } from "../github/proposed.ts";
 import type { Clock } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { Intent, IntentStore, Listing } from "../intents/types.ts";
+import {
+  isKind,
+  kindChangeRefusal,
+  kindLabel,
+  kindOf as missionKindOf,
+  skippedStages,
+  WORK_KINDS,
+} from "../kind.ts";
 import { exitsOf, finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
-import { dataOf, forIntent, type Mission } from "../mission.ts";
+import { dataOf, forIntent, type Mission, unfinishedFor } from "../mission.ts";
 import { observerNote } from "../observer/evidence.ts";
 import { observerCosts } from "../observer/store.ts";
 import { testGrantsOf } from "../pipeline/access.ts";
@@ -67,6 +75,7 @@ import type {
   GroundStop,
   InstallHelpView,
   IntentPage,
+  KindView,
   Lane,
   Overview,
   Phase,
@@ -789,6 +798,34 @@ export function controlsOf(src: UiSources, i: Intent, hasMission: boolean, card:
     waitWhy,
     // AUT-7: the worker's note stays until the owner sets the level again; it never hides the level shown.
     lowered: i.lowerWhy && av.a < 5 ? `Lowered to a${av.a} by the worker: ${i.lowerWhy}` : null,
+    kind: kindViewOf(src, i),
+  };
+}
+
+/** UI-283: the kind an intent goes by, why, what it skips, and which kinds the page may still set. */
+export function kindViewOf(src: UiSources, i: Intent): KindView {
+  const m = unfinishedFor(src.db, i.id);
+  const d = m ? dataOf<{ kind?: string; kindWhy?: string; kindBy?: string }>(m) : {};
+  const kind = missionKindOf(i.kind, d);
+  const by =
+    isKind(i.kind) || (d.kindBy === "owner" && isKind(d.kind))
+      ? "owner"
+      : d.kindBy === "guess"
+        ? "guess"
+        : "default";
+  const at = m ? (m.stage === "blocked" ? (m.from_stage ?? m.stage) : m.stage) : "pick";
+  return {
+    value: kind,
+    label: kindLabel(kind),
+    by,
+    why: by === "guess" ? (d.kindWhy ?? null) : null,
+    skipped: skippedStages(kind),
+    canSet: src.running && !i.done,
+    options: WORK_KINDS.map((v) => ({
+      value: v,
+      label: kindLabel(v),
+      refused: v === kind ? null : kindChangeRefusal(v, at),
+    })),
   };
 }
 

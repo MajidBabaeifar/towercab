@@ -2,12 +2,15 @@
 
 import { expect, test } from "vitest";
 import { dataOf } from "../../src/mission.ts";
-import { DESIGN, happy, intent, intents, ownerMerges, reply, SPEC, TARGET } from "../helpers/flows.ts";
+import { DESIGN, happy, intent, intents, ownerMerges, PLAN, reply, SPEC, TARGET } from "../helpers/flows.ts";
 import { Pipe } from "../helpers/pipe.ts";
 
 function world(kind: string, a = 5): Pipe {
   const p = new Pipe(TARGET, intents(intent({ a, extra: `kind: ${kind}\n` })));
   happy(p);
+  // PIP-229: an infra plan lists what to apply.
+  if (kind === "infra")
+    p.respond.plan = reply({ ...PLAN, apply: [{ command: "true", why: "nothing to change" }] });
   return p;
 }
 

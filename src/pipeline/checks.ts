@@ -19,7 +19,7 @@ export function script(lines: string[]): string {
 }
 
 export interface SandboxRun {
-  kind: "setup" | "checks" | "proof-setup" | "proof" | "proof-head" | "shots" | "e2e-setup" | "e2e";
+  kind: "setup" | "checks" | "apply" | "proof-setup" | "proof" | "proof-head" | "shots" | "e2e-setup" | "e2e";
   lines: string[];
   /** The checkout to run in (the mission's, or the proof's). */
   dir: string;

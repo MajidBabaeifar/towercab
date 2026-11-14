@@ -97,3 +97,19 @@ test("kind: the first PR says the guess and its reason", async () => {
     p.cleanup();
   }
 }, 120_000);
+
+test("kind: one reply from the owner switches the kind and its path", async () => {
+  const p = await run("", guess("bugfix"));
+  try {
+    await p.untilStage("approval:plan");
+    const m = p.mission()!;
+    // Anyone else's `kind:` comment is ignored; the owner's switches the mission back to the design.
+    p.ownerComment(p.prNo("intents", m.plan_pr!), "kind: feature");
+    p.clock.advance(61);
+    await p.until(() => p.moves().includes("(kind_routed: the owner replied kind: feature"), 40);
+    expect(p.moves()).toContain("→ design (kind_routed");
+    expect(dataOf<Record<string, string>>(p.mission()!)).toMatchObject({ kind: "feature", kindBy: "owner" });
+  } finally {
+    p.cleanup();
+  }
+}, 120_000);

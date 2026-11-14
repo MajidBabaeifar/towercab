@@ -6,6 +6,7 @@ import type { BranchPr } from "../github/branches.ts";
 import { isBot } from "../github/events.ts";
 import { closeIfOpen } from "../github/prs.ts";
 import type { Ctx, Handler, Progress } from "../handlers.ts";
+import { kindOf } from "../kind.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { CONTROL, Protected } from "../repo/protected.ts";
@@ -38,6 +39,7 @@ import {
   publishRefusals,
   sameAsBase,
 } from "./guard.ts";
+import { checkOutgrown } from "./outgrown.ts";
 import { codeBody } from "./prtext.ts";
 import { checkoutFacts, deliverReply } from "./reply.ts";
 
@@ -119,6 +121,9 @@ export const publishHandler: Handler = {
       ),
     );
     if (bad.length) return { done: refusalWait(bad, d.lockedTests ?? []) };
+    // PIP-231: a lighter kind whose change outgrows its path is asked about first.
+    const outgrew = await checkOutgrown(cx, m, kindOf(intent.kind, d));
+    if (outgrew) return outgrew;
     if (m.pr && (await takeRemote(cx, m, m.branch)) === "conflict") {
       await coGit(cx, m, ["merge", "--abort"]).catch(() => "");
       return {

@@ -59,6 +59,7 @@ import {
 } from "./common.ts";
 import { docsTableOnly } from "./docsindex.ts";
 import { kindFinish, kindStep, needsKind } from "./kindrun.ts";
+import { askKindChange } from "./outgrown.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { specBody } from "./prtext.ts";
 import { checkoutFacts, deliverReply, replyPatch, replySection } from "./reply.ts";
@@ -519,6 +520,19 @@ export const designHandler: Handler = {
     // AUT-21: the owner's retry of a risk check that didn't finish: the checks, then the check again.
     if (m.step === "" && d.recheck) return specCi(cx, cx.record(m, "spec_ci", {}, { recheck: undefined }));
     if (m.step === "" && (await needsKind(cx, m))) return kindStep(cx, m);
+    // PIP-231: the owner answered "Move this to the full path?" from a spec-only design.
+    if (d.kindAsk) {
+      const full = /\bfeature\b|full path/i.test(d.answer ?? "") && !/\bkeep\b/i.test(d.answer ?? "");
+      if (full) await cx.store.update(m.intent, "kind: feature", (e) => e.setField("kind", "feature"));
+      m = cx.record(
+        m,
+        m.step,
+        {},
+        full
+          ? { kind: "feature", kindBy: "owner", kindAsk: undefined, answer: undefined }
+          : { kindKept: true, kindAsk: undefined, answer: undefined },
+      );
+    }
     switch (m.step) {
       case "kind":
         return kindStep(cx, m);
@@ -555,6 +569,14 @@ export const designHandler: Handler = {
     if (!r.ok) return r.progress;
     const v = r.value;
     const d = data(m);
+    // PIP-231: a spec-only design that needs code is asked about, not pretended to be covered.
+    if (
+      !d.kindKept &&
+      kindOf((await intentOf(cx, m)).kind, d) === "spec-only" &&
+      v.concerns.some((c) => c.what.trim() === "kind_changed")
+    ) {
+      return { done: await askKindChange(cx, m, "spec-only", v.concerns.map((c) => c.why).join(" ")) };
+    }
     // PIP-133: a conflict revision that altered a row main changed is not pushed; the owner is asked.
     if (d.mergeMain) {
       const altered = await mainRowsAltered(cx, m);
