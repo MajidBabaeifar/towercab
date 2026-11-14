@@ -146,12 +146,15 @@ function NewIntentForm({ top, close }: { top: TopBar | null; close(): void }) {
   const names = (repos?.chips ?? []).map((c) => c.repo).filter(Boolean);
   const contributor = top?.role === "contributor";
   const [f, setF] = useState<Fields>(saved);
+  const latest = useRef<Fields>(f);
   const [phase, setPhase] = useState<Phase>("form");
   const [error, setError] = useState<string | null>(null);
   const [matches, setMatches] = useState<Match[]>([]);
   const [titleNote, setTitleNote] = useState<string | null>(null);
   const set = <K extends keyof Fields>(k: K, v: Fields[K]) => {
-    const next = { ...f, [k]: v };
+    // Built on the latest value, not the last render: quick keystrokes can come before a re-render.
+    const next = { ...latest.current, [k]: v };
+    latest.current = next;
     saved = next;
     setF(next);
   };
