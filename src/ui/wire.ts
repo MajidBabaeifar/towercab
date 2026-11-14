@@ -21,6 +21,7 @@ import { applySettings } from "../settings/apply.ts";
 import { supplySecret } from "../ship/secret-steps.ts";
 import { version as gitVersion } from "../update.ts";
 import { Auth } from "../users/auth.ts";
+import { ensureFirstAdmin } from "../users/store.ts";
 import { createActions } from "./actions.ts";
 import { startUi, type UiServer } from "./server.ts";
 import { budgetReached, type Problem, type Skip, type UiSources, type UpNext } from "./state.ts";
@@ -138,6 +139,8 @@ export function sourcesOf(loop: Loop, home: Home): UiSources {
 export function authOf(loop: Loop, config: Config, github: Host): Auth | null {
   if (!config.auth) return null;
   const a = config.auth;
+  // USR-6: the owner is the first admin, so the first sign-in works before the loop's first pass.
+  ensureFirstAdmin(loop.d.db, config.github?.me ?? "", loop.d.clock.now());
   return new Auth({
     db: loop.d.db,
     auth: a,

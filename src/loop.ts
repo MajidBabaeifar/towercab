@@ -130,6 +130,7 @@ import { freezeEstimate } from "./ui/estimate.ts";
 import { checkUpdate, RESTART_CODE } from "./update.ts";
 import { loginCheck } from "./users/check.ts";
 import { People } from "./users/people.ts";
+import { ensureFirstAdmin } from "./users/store.ts";
 import { confirmationOf, writerOf } from "./users/writer.ts";
 import { settleWriters } from "./users/writers.ts";
 import { can } from "./users.ts";
@@ -1461,6 +1462,8 @@ export class Loop {
   /** AUT-23: credit the open intents to their writers; hold those a viewer or unmapped account wrote. */
   private async settleWriters(listing: Listing): Promise<void> {
     if (!this.d.config.auth) return;
+    // USR-6: with sign-in on and nobody added yet, the owner is the first admin (idempotent).
+    ensureFirstAdmin(this.d.db, this.d.config.github?.me ?? "", this.d.clock.now());
     const v = await settleWriters(
       {
         db: this.d.db,

@@ -415,16 +415,26 @@ export function startUi(o: UiOptions): UiServer {
     if (!ACTIONS.has(action)) return json(res, 400, { ok: false, message: `Unknown action “${action}”.` });
     // USR-7: the role decides, whatever the page showed.
     if (who) {
-      const why = await gateAction(
-        who.user,
-        action,
-        body as { a?: unknown; repo?: unknown },
-        intent,
-        async (id) => {
-          const i = await store.get(id);
-          return { repo: i.repo, repos: i.repos, a: i.a, a0: ownerOnly(levelNow(o.sources.db, i)) };
-        },
-      );
+      // A proposal is gated on the repo its own intent file names, never on one the request supplies.
+      let gated: { a?: unknown; repo?: unknown } = body as { a?: unknown; repo?: unknown };
+      if (action === "accept" || action === "close") {
+        const n = typeof body.pr === "number" ? body.pr : 0;
+        const found = o.sources.proposed?.().list.find((p) => p.number === n);
+        const unreadable = !found?.intent && who.user.role !== "admin";
+        // The role's own reason comes first; an unreadable proposal is refused even for a role that may.
+        if (unreadable) {
+          const why = denial(who.user, action === "accept" ? "approve" : "drop");
+          return json(res, 403, {
+            ok: false,
+            message: why ?? "Can't tell which repo this proposal is for: its intent file can't be read.",
+          });
+        }
+        gated = { repo: found?.intent?.repo };
+      }
+      const why = await gateAction(who.user, action, gated, intent, async (id) => {
+        const i = await store.get(id);
+        return { repo: i.repo, repos: i.repos, a: i.a, a0: ownerOnly(levelNow(o.sources.db, i)) };
+      });
       if (why) return json(res, 403, { ok: false, message: why });
     }
     const proposal = action === "accept" || action === "close";
