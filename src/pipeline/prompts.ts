@@ -18,6 +18,7 @@ export const AGENT_VARS: Record<AgentName, string[]> = {
   features: ["repo", "current", "listed"],
   shadow: ["earlier", "state", "results", "message"],
   observer: ["bundle", "steering", "repos", "limit"],
+  overlap: ["draft", "existing"],
 };
 
 /** An agent's prompt filled with `vars`; an unknown `{{key}}` is a bug, a missing var an empty string. */

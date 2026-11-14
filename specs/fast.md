@@ -1,6 +1,6 @@
 # Fast lane
 
-**Status:** Draft · **Prefix:** FAST
+**Status:** Live: FAST-9 · **Prefix:** FAST
 
 ## Purpose
 
@@ -80,7 +80,7 @@ The fast lane changes order, waiting and who decides, never the checks, the revi
 
 - Every stage and every check of the intent's path runs (AUT-6). The repo's cap (AUT-8) still lowers the level the fast lane applies, an a0 intent stays with the owner (AUT-31), and `source` rules (AUT-13) are unchanged.
 - Counts as a raise of autonomy (AUT-35). A mark from the page, the owner's GitHub account or the owner's own Telegram chat (the chat the owner paired, a verified channel) applies FAST-6 to FAST-8 at once. A mark from the command line applies FAST-2 to FAST-5 at once, and the gates follow the intent's own level until the owner confirms on the page (one confirmed click on the card, as in UI-258), because agents can run the command line and must not raise their own gates; the card says `fast lane: waiting for your confirmation`. There is no exception: every command-line mark needs the page click, whatever the intent's `a` (a4 and a5 included). A Telegram message from any other chat is ignored (TG-2).
-- Verified by: `fast: every check still runs`, `fast: a repo cap still applies`, `fast: an a0 intent stays with the owner`, `fast: a mark from the command line waits for confirmation to skip approvals`, `fast: a mark from the command line on an a4 intent still waits for confirmation`, `fast: a mark from the page skips approvals at once`, `fast: a mark from the owner's telegram chat skips approvals at once`, `fast: a mark from another telegram chat is ignored`
+- Verified by: `fast: every check still runs`, `fast: a repo cap still applies`, `fast: an a0 intent stays with the owner`, `fast: a mark from the command line waits for confirmation to skip approvals`, `fast: a mark from the command line on an a4 intent still waits for confirmation`, `fast: a mark from the page skips approvals at once`, `fast: a mark from the owner's telegram chat skips approvals at once`, `fast: a mark from another telegram chat is ignored`, `fast: a mark pushed by the owner on github skips approvals at once`, `fast: a mark pushed by another account stays unconfirmed`
 
 ### FAST-10 · The page and the card show the fast lane and its progress
 

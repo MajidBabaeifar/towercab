@@ -479,6 +479,41 @@ export function approveRequested(m: Mission, prs: Prs, me: string, teamOn = fals
   return ok ? n : null;
 }
 
+/** The marker of the one note on a stale approval given at `at` by `author` (GL-15). */
+export const staleMarker = (author: string, at: string) => `<!-- towercab:stale:${author}:${at} -->`;
+
+/** A stale approval (GL-15) the bot has not yet said so about. */
+export interface StaleAsk {
+  kind: PrKind;
+  pr: number;
+  marker: string;
+  text: string;
+}
+
+/**
+ * GL-15: the approvals on the PR the mission waits on that were given before the last push (or whose time
+ * can't be read), and that no bot note carrying their marker answers. They never merge and never count.
+ */
+export function staleApprovalNotices(m: Mission, prs: Prs, botLogin: string): StaleAsk[] {
+  const kind = WAITS_ON[m.stage];
+  if (!kind || finished(m.stage)) return [];
+  const pr = prs[kind];
+  const n = prNumber(m, kind);
+  if (!pr || n === null || pr.state !== "OPEN") return [];
+  const out: StaleAsk[] = [];
+  for (const a of pr.staleApprovals ?? []) {
+    const marker = staleMarker(a.author, a.at);
+    if (pr.comments.some((b) => isBot(b.author, botLogin) && b.body.includes(marker))) continue;
+    out.push({
+      kind,
+      pr: n,
+      marker,
+      text: `approval was given at ${a.at || "an unreadable time"}, before the last push at ${a.pushedAt || "an unreadable time"}: approve again`,
+    });
+  }
+  return out;
+}
+
 /** The marker of the one reply to the owner's Approve review submitted at `at` (PIP-144). */
 export const approveMarker = (at: string) => `<!-- towercab:approve:${at} -->`;
 

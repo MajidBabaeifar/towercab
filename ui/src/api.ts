@@ -56,6 +56,30 @@ export function addRepo(github: string, name?: string): Promise<ActionReply> {
   return post({ action: "addRepo", github, name });
 }
 
+/** What the new intent form sends (UI-216). */
+export interface IntentDraft {
+  repo: string;
+  title: string;
+  u?: number;
+  i?: number;
+  a?: number;
+  problem?: string;
+  outcome?: string;
+  affected?: string;
+  constraints?: string;
+  questions?: string;
+}
+
+/** UI-214: the overlap check; the reply lists the matches. */
+export function checkIntent(draft: IntentDraft): Promise<ActionReply> {
+  return post({ action: "checkIntent", ...draft });
+}
+
+/** UI-216: write the intent, or add its text to `addTo`. */
+export function createIntent(draft: IntentDraft, addTo?: string): Promise<ActionReply> {
+  return post({ action: "createIntent", ...draft, ...(addTo ? { addTo } : {}) });
+}
+
 /** UI-185: merge a proposed intent's PR, as the card showed it at `head`. */
 export function acceptProposed(pr: number, head: string): Promise<ActionReply> {
   return post({ action: "accept", pr, head });
@@ -88,6 +112,11 @@ export function openMove(repo: string): Promise<ActionReply> {
 /** UI-257: set an intent's autonomy (0–5); the page is the owner (AUT-35). */
 export function setAutonomy(id: string, a: number): Promise<ActionReply> {
   return post({ action: "autonomy", id, a, actor: "owner" });
+}
+
+/** FAST-1, FAST-9: put an intent in the fast lane or take it out; the page is the owner, so it confirms too. */
+export function setFast(id: string, fast: boolean): Promise<ActionReply> {
+  return post({ action: "set-fast", id, fast, actor: "owner" });
 }
 
 /** UI-204: change urgency and/or importance (1-5); the reply carries the new priority. */

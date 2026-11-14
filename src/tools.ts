@@ -57,11 +57,21 @@ export interface Tools {
   spawn(spec: ChildSpec): ChildHandle;
   /** The absolute path of `cmd` on PATH, or null. */
   which(cmd: string): string | null;
+  /**
+   * LOOP-136: cut off every `run` call still in flight (SIGTERM to its group, SIGKILL `CUT_OFF_KILL_MS`
+   * later); each resolves with `stopped: <cmd> was cut off at shutdown`. Returns what was cut off.
+   * A Tools without it has nothing to cut off.
+   */
+  cutOff?(): string[];
 }
 
 export const GH_TIMEOUT_MS = 120_000;
 export const GIT_TIMEOUT_MS = 300_000;
 export const KILL_AFTER_MS = 10_000;
+/** LOOP-136: how long running `gh` and `git` calls get once Towercab is told to stop. */
+export const STOP_GRACE_MS = 10_000;
+/** LOOP-136: SIGKILL follows a cut-off call's SIGTERM after this long. */
+export const CUT_OFF_KILL_MS = 2_000;
 
 /** Signal a process group, ignoring a group that is already gone. */
 export function killGroup(pid: number, signal: NodeJS.Signals): void {
@@ -73,7 +83,16 @@ export function killGroup(pid: number, signal: NodeJS.Signals): void {
 }
 
 export function realTools(): Tools {
+  /** LOOP-136: the `run` calls in flight, each with what cuts it off. */
+  const inFlight = new Set<{ label: string; cut: () => void }>();
   return {
+    cutOff() {
+      const cut = [...inFlight];
+      inFlight.clear();
+      for (const c of cut) c.cut();
+      return cut.map((c) => c.label);
+    },
+
     run(cmd, args, opts = {}) {
       return new Promise((resolve) => {
         const child = nodeSpawn(cmd, args, {
@@ -100,11 +119,29 @@ export function realTools(): Tools {
             killer = setTimeout(() => child.pid && killGroup(child.pid, "SIGKILL"), KILL_AFTER_MS);
           }, opts.timeoutMs);
         }
+        const entry = {
+          label: [cmd, args[0]].filter(Boolean).join(" "),
+          cut: () => {
+            clearTimeout(timer);
+            if (child.pid) killGroup(child.pid, "SIGTERM");
+            clearTimeout(killer);
+            killer = setTimeout(() => child.pid && killGroup(child.pid, "SIGKILL"), CUT_OFF_KILL_MS);
+            resolve({
+              code: null,
+              stdout,
+              stderr: `stopped: ${cmd} was cut off at shutdown\n`,
+              timedOut: false,
+            });
+          },
+        };
+        inFlight.add(entry);
         child.on("error", (e) => {
+          inFlight.delete(entry);
           clearTimeout(timer);
           resolve({ code: 127, stdout, stderr: `${stderr}${cmd}: ${e.message}\n`, timedOut: false });
         });
         child.on("close", (code) => {
+          inFlight.delete(entry);
           clearTimeout(timer);
           clearTimeout(killer);
           if (timedOut) stderr += `timed out after ${Math.round((opts.timeoutMs ?? 0) / 1000)} s\n`;

@@ -9,6 +9,27 @@ export function isGitlab(slug: string): boolean {
   return slug.startsWith(GITLAB);
 }
 
+let webHost = "gitlab.com";
+
+/** The host GitLab links point at: `[gitlab].api_base`'s, set once when the config is read. */
+export function setGitlabHost(host: string): void {
+  webHost = host;
+}
+
+/** The web page of pull request or merge request `n` of `slug`, on its own host. */
+export function changeUrl(slug: string, n: number): string {
+  return isGitlab(slug)
+    ? `https://${webHost}/${gitlabPath(slug)}/-/merge_requests/${n}`
+    : `https://github.com/${slug}/pull/${n}`;
+}
+
+/** The web page of `path` at `ref` in `slug`. */
+export function blobUrl(slug: string, ref: string, path: string): string {
+  return isGitlab(slug)
+    ? `https://${webHost}/${gitlabPath(slug)}/-/blob/${ref}/${path}`
+    : `https://github.com/${slug}/blob/${ref}/${path}`;
+}
+
 /** `group/subgroup/project` of a GitLab slug. */
 export function gitlabPath(slug: string): string {
   return slug.slice(GITLAB.length);

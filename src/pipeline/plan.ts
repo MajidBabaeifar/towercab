@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { planGate, riskWhy } from "../autonomy.ts";
 import { git } from "../checkout.ts";
-import { MERGE_METHOD } from "../forge.ts";
+import { type Forge, MERGE_METHOD } from "../forge.ts";
 import { PausedHold } from "../github/paused.ts";
 import type { ChildEnd, Ctx, GitHub, Handler, Progress } from "../handlers.ts";
 import type { Intent } from "../intents/types.ts";
@@ -24,6 +24,7 @@ import {
   data,
   effectiveOf,
   ended,
+  gateLevelOf,
   grantedFromPlan,
   intentOf,
   mustForge,
@@ -47,7 +48,7 @@ export const TESTS_WHY = "The plan asks to change existing tests; you decide whi
 
 /** What a branch on the intents repo needs; the issue poll (INT-23) has it as well as a mission's `Ctx`. */
 export type IntentsCx = Pick<Ctx, "store" | "home" | "tools" | "config"> & {
-  github: Pick<GitHub, "gitAuth" | "bot">;
+  github: Pick<GitHub, "gitAuth"> & Pick<Forge, "bot">;
 };
 
 /**
@@ -89,7 +90,7 @@ export async function commitToIntents(
   message: string,
   clone = "plans",
 ): Promise<void> {
-  const { dir, auth } = await intentsClone(cx, clone);
+  const { dir, auth, github } = await intentsClone(cx, clone);
   await git(cx.tools, dir, ["checkout", "--quiet", "--force", "-B", branch, from]);
   await git(cx.tools, dir, ["clean", "-fdq"]);
   for (const [path, text] of Object.entries(files)) {
@@ -98,7 +99,8 @@ export async function commitToIntents(
   }
   await git(cx.tools, dir, ["add", "-A"]);
   const status = (await git(cx.tools, dir, ["status", "--porcelain"])).trim();
-  if (status) await git(cx.tools, dir, [...(await botAuthor(cx)), "commit", "--quiet", "-m", message]);
+  if (status)
+    await git(cx.tools, dir, [...(await botAuthor(cx, github)), "commit", "--quiet", "-m", message]);
   const force = branch === "main" ? [] : ["--force"];
   await git(cx.tools, dir, ["push", "--quiet", ...force, "origin", `HEAD:refs/heads/${branch}`], auth).catch(
     (e) => {
@@ -414,7 +416,7 @@ async function gateStep(cx: Ctx, m: Mission): Promise<Progress> {
   if (risk === undefined) return spawnRisk(cx, m, "plan");
   const intent = await intentOf(cx, m);
   const files = await repoFiles(cx, m);
-  const a = effectiveOf(m, intent, files);
+  const a = gateLevelOf(cx, m, intent, files);
   const level = risk?.level ?? null;
   // PIP-115: a plan that lists existing tests to change is the owner's to merge, at every a.
   const tests = (data(m).plan?.access.tests?.length ?? 0) > 0;

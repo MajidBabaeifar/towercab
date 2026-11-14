@@ -26,7 +26,14 @@ import { shadowView } from "./shadow.ts";
 import { activity, intentPage, overview, queue, RUN_NAME, redact, type UiSources } from "./state.ts";
 import type { ActionReply } from "./view.ts";
 
+/** USR-5: what the person asking may do for a repo. Without `[auth]` the one owner is a maintainer (UI-216). */
+export type Role = "viewer" | "contributor" | "maintainer";
+
 export interface UiOptions {
+  /** The role of whoever sent `req` for `repo`; default: a maintainer. */
+  roleOf?: (req: IncomingMessage, repo: string) => Role;
+  /** The person's name for the timeline and proposals; default `owner via page`. */
+  who?: (req: IncomingMessage) => string;
   /** 0 = any free port (tests, the fixture); the caller treats `[ui] port = 0` as off. */
   port: number;
   sources: UiSources;
@@ -85,7 +92,10 @@ const TYPES: Record<string, string> = {
 const PAGES =
   /^\/(?:board|overview|repos|queue|activity|i\/[A-Za-z0-9._-]+|inbox(?:\/[A-Za-z0-9._-]+)?)?\/?$/;
 const ACTIONS = new Set([
+  "checkIntent",
+  "createIntent",
   "autonomy",
+  "set-fast",
   "scores",
   "boost",
   "merge",
@@ -302,6 +312,16 @@ export function startUi(o: UiOptions): UiServer {
       n?: unknown;
       /** AUT-34: the level to set (`autonomy`). */
       a?: unknown;
+      /** UI-216: the new intent form's text and the intent to add it to (`checkIntent`, `createIntent`). */
+      title?: unknown;
+      problem?: unknown;
+      outcome?: unknown;
+      affected?: unknown;
+      constraints?: unknown;
+      questions?: unknown;
+      addTo?: unknown;
+      /** FAST-1: on or off (`set-fast`). */
+      fast?: unknown;
       /** LOOP-133: urgency and importance (`scores`). */
       u?: unknown;
       i?: unknown;
@@ -330,6 +350,8 @@ export function startUi(o: UiOptions): UiServer {
     if (!ACTIONS.has(action)) return json(res, 400, { ok: false, message: `Unknown action “${action}”.` });
     const proposal = action === "accept" || action === "close";
     const needsIntent = ![
+      "checkIntent",
+      "createIntent",
       "pause",
       "resume",
       "apply-settings",
@@ -372,6 +394,73 @@ export function startUi(o: UiOptions): UiServer {
     }
     const a = o.actions;
     let reply: ActionReply;
+    // UI-216: the new intent form. The mode follows the person's role, never the request.
+    if (action === "checkIntent" || action === "createIntent") {
+      const role = o.roleOf?.(req, repo) ?? "maintainer";
+      const text = (v: unknown) => (typeof v === "string" ? v : undefined);
+      // A score that is not a number reaches the writer as NaN, which refuses it.
+      const score = (v: unknown) =>
+        v === undefined || v === null ? undefined : typeof v === "number" ? v : Number.NaN;
+      const draft = {
+        repo,
+        title: typeof body.title === "string" ? body.title : "",
+        u: score(body.u),
+        i: score(body.i),
+        a: score(body.a),
+        problem: text(body.problem),
+        outcome: text(body.outcome),
+        affected: text(body.affected),
+        constraints: text(body.constraints),
+        questions: text(body.questions),
+      };
+      const addTo = typeof body.addTo === "string" && body.addTo ? body.addTo : undefined;
+      if (role === "viewer")
+        return json(res, 403, {
+          ok: false,
+          message: `Needs contributor on ${repo || "the repo"} (you are viewer)`,
+        });
+      if (addTo && role !== "maintainer")
+        return json(res, 403, {
+          ok: false,
+          message: `Needs maintainer on ${repo || "the repo"} (you are ${role})`,
+        });
+      if (addTo && !INTENT_ID.test(addTo)) return json(res, 400, { ok: false, message: "Which intent?" });
+      try {
+        if (action === "checkIntent") {
+          if (!a.checkIntent) throw new Error("Creating intents isn't available.");
+          const r = await a.checkIntent(draft, {
+            visible: (name) => (o.roleOf?.(req, name) ?? "maintainer") !== "viewer",
+          });
+          reply = {
+            ok: true,
+            message: "",
+            matches: r.matches.map((m) => ({ ...m, canAdd: m.canAdd && role === "maintainer" })),
+            ...(r.titleNote ? { titleNote: r.titleNote } : {}),
+          };
+        } else {
+          if (!a.createIntent) throw new Error("Creating intents isn't available.");
+          const r = await a.createIntent(draft, {
+            mode: role === "maintainer" ? "direct" : "proposal",
+            by: o.who?.(req) ?? "owner via page",
+            addTo,
+          });
+          reply = {
+            ok: true,
+            message: r.message,
+            id: r.id,
+            path: r.path,
+            added: r.added,
+            ...(r.proposal ? { proposal: true } : {}),
+            ...(r.pr ? { pr: r.pr, url: o.sources.prUrl(src.store.github() ?? "", r.pr) } : {}),
+          };
+        }
+      } catch (e) {
+        reply = { ok: false, message: (e as Error).message };
+      }
+      store.invalidate();
+      changed();
+      return json(res, reply.ok ? 200 : 422, reply);
+    }
     // UI-204, UI-205: the owner's edits of scores and autonomy; the reply may carry the new priority.
     if (action === "scores" || action === "boost") {
       const actor = typeof body.actor === "string" ? body.actor : "";
@@ -409,90 +498,97 @@ export function startUi(o: UiOptions): UiServer {
               typeof body.a === "number" ? body.a : Number.NaN,
               typeof body.actor === "string" ? body.actor : "",
             )
-          : action === "budgets"
-            ? await (a.budgets ?? noLimits)(
-                typeof body.scope === "string" ? body.scope : "all",
-                body.daily,
-                body.monthly,
+          : action === "set-fast"
+            ? await (a.fast ?? noLimits)(
+                intent,
+                body.fast !== false,
+                typeof body.actor === "string" ? body.actor : "",
               )
-            : action === "apply-settings"
-              ? await (a.applySettings ?? noLimits)(repo)
-              : action === "repo-settings"
-                ? await (a.repoSettings ?? noLimits)(repo, body.changes, body.confirmed === true)
-                : action === "repo-move"
-                  ? await (a.repoMove ?? noLimits)(repo)
-                  : action === "secret"
-                    ? await (a.secret ?? no)(
-                        intent,
-                        Number(body.n),
-                        typeof body.value === "string" ? body.value : "",
-                      )
-                    : action === "approve-secret"
-                      ? await (a.approveSecret ?? no)(intent, Number(body.n))
-                      : action === "merge"
-                        ? await a.merge(intent)
-                        : action === "pass"
-                          ? await (
-                              a.pass ?? (() => Promise.reject(new Error("Passing on isn't available.")))
-                            )(intent)
-                          : action === "reply"
-                            ? await a.reply(intent, typeof body.text === "string" ? body.text : "")
-                            : action === "retry"
-                              ? await a.retry(intent)
-                              : action === "drop"
-                                ? await a.drop(intent, body.confirmed === true)
-                                : action === "done"
-                                  ? await (
-                                      a.done ??
-                                      (() => Promise.reject(new Error("Ending an intent isn't available.")))
-                                    )(
-                                      intent,
-                                      typeof body.text === "string" ? body.text : "",
-                                      body.confirmed === true,
-                                    )
-                                  : action === "steps"
+            : action === "budgets"
+              ? await (a.budgets ?? noLimits)(
+                  typeof body.scope === "string" ? body.scope : "all",
+                  body.daily,
+                  body.monthly,
+                )
+              : action === "apply-settings"
+                ? await (a.applySettings ?? noLimits)(repo)
+                : action === "repo-settings"
+                  ? await (a.repoSettings ?? noLimits)(repo, body.changes, body.confirmed === true)
+                  : action === "repo-move"
+                    ? await (a.repoMove ?? noLimits)(repo)
+                    : action === "secret"
+                      ? await (a.secret ?? no)(
+                          intent,
+                          Number(body.n),
+                          typeof body.value === "string" ? body.value : "",
+                        )
+                      : action === "approve-secret"
+                        ? await (a.approveSecret ?? no)(intent, Number(body.n))
+                        : action === "merge"
+                          ? await a.merge(intent)
+                          : action === "pass"
+                            ? await (
+                                a.pass ?? (() => Promise.reject(new Error("Passing on isn't available.")))
+                              )(intent)
+                            : action === "reply"
+                              ? await a.reply(intent, typeof body.text === "string" ? body.text : "")
+                              : action === "retry"
+                                ? await a.retry(intent)
+                                : action === "drop"
+                                  ? await a.drop(intent, body.confirmed === true)
+                                  : action === "done"
                                     ? await (
-                                        a.steps ??
-                                        (() =>
-                                          Promise.reject(new Error("Switching to steps isn't available.")))
-                                      )(intent, body.confirmed === true)
-                                    : action === "start"
-                                      ? await a.start(intent)
-                                      : action === "step"
-                                        ? await (
-                                            a.step ??
-                                            (() =>
-                                              Promise.reject(new Error("Ticking steps isn't available.")))
-                                          )(intent, Number(body.n), body.done !== false)
-                                        : action === "pause"
-                                          ? await a.pause(intent)
-                                          : action === "addRepo"
-                                            ? await a.addRepo(
-                                                typeof body.github === "string" ? body.github : "",
-                                                typeof body.name === "string" && body.name
-                                                  ? body.name
-                                                  : undefined,
-                                              )
-                                            : action === "features"
-                                              ? await a.features(repo)
-                                              : action === "accept"
-                                                ? await a.accept(pr, head)
-                                                : action === "close"
-                                                  ? await a.close(
-                                                      pr,
-                                                      typeof body.text === "string" ? body.text : undefined,
-                                                    )
-                                                  : action === "scanningGranted"
-                                                    ? await (
-                                                        a.scanningGranted ??
-                                                        (() => Promise.reject(new Error("Not available.")))
-                                                      )()
-                                                    : action === "shadowReset"
+                                        a.done ??
+                                        (() => Promise.reject(new Error("Ending an intent isn't available.")))
+                                      )(
+                                        intent,
+                                        typeof body.text === "string" ? body.text : "",
+                                        body.confirmed === true,
+                                      )
+                                    : action === "steps"
+                                      ? await (
+                                          a.steps ??
+                                          (() =>
+                                            Promise.reject(new Error("Switching to steps isn't available.")))
+                                        )(intent, body.confirmed === true)
+                                      : action === "start"
+                                        ? await a.start(intent)
+                                        : action === "step"
+                                          ? await (
+                                              a.step ??
+                                              (() =>
+                                                Promise.reject(new Error("Ticking steps isn't available.")))
+                                            )(intent, Number(body.n), body.done !== false)
+                                          : action === "pause"
+                                            ? await a.pause(intent)
+                                            : action === "addRepo"
+                                              ? await a.addRepo(
+                                                  typeof body.github === "string" ? body.github : "",
+                                                  typeof body.name === "string" && body.name
+                                                    ? body.name
+                                                    : undefined,
+                                                )
+                                              : action === "features"
+                                                ? await a.features(repo)
+                                                : action === "accept"
+                                                  ? await a.accept(pr, head)
+                                                  : action === "close"
+                                                    ? await a.close(
+                                                        pr,
+                                                        typeof body.text === "string" ? body.text : undefined,
+                                                      )
+                                                    : action === "scanningGranted"
                                                       ? await (
-                                                          a.shadowReset ??
+                                                          a.scanningGranted ??
                                                           (() => Promise.reject(new Error("Not available.")))
                                                         )()
-                                                      : await a.resume(intent);
+                                                      : action === "shadowReset"
+                                                        ? await (
+                                                            a.shadowReset ??
+                                                            (() =>
+                                                              Promise.reject(new Error("Not available.")))
+                                                          )()
+                                                        : await a.resume(intent);
       reply = { ok: true, message };
     } catch (e) {
       // LOOP-76: an exit that closes an open PR with commits asks first; the page shows the text and asks again.

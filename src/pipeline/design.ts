@@ -33,8 +33,8 @@ import {
   cloneOf,
   coGit,
   data,
-  effectiveOf,
   ended,
+  gateLevelOf,
   intentOf,
   mustForge,
   PushRefused,
@@ -331,7 +331,7 @@ async function mergeBase(cx: Ctx, m: Mission): Promise<string[]> {
   );
   if (!merging) {
     await coGit(cx, m, [
-      ...(await botAuthor(cx)),
+      ...(await botAuthor(cx, cx.repo(m).github)),
       "merge",
       "--no-edit",
       `refs/remotes/origin/${repo.base}`,
@@ -676,7 +676,7 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
   const intent = await intentOf(cx, m);
   await coGit(cx, m, ["add", "-A", "--", "specs", "README.md"]);
   await coGit(cx, m, [
-    ...(await botAuthor(cx)),
+    ...(await botAuthor(cx, cx.repo(m).github)),
     "commit",
     "--quiet",
     "-m",
@@ -775,7 +775,7 @@ async function gateStep(cx: Ctx, m: Mission): Promise<Progress> {
 async function ownerWait(cx: Ctx, m: Mission, risk: Risk | null): Promise<Outcome | null> {
   const intent = await intentOf(cx, m);
   const files = await repoFiles(cx, m);
-  const a = effectiveOf(m, intent, files);
+  const a = gateLevelOf(cx, m, intent, files);
   const points = risk?.openPoints ?? [];
   if (!specGate(a, points.length, risk?.level ?? null)) return null;
   const why = points.length

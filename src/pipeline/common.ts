@@ -6,12 +6,14 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AfterHold } from "../after.ts";
 import { type Agent, type AgentName, agentBudgetUsd, loadAgent } from "../agents.ts";
-import { effectiveA } from "../autonomy.ts";
+import { effectiveA, gateLevel } from "../autonomy.ts";
 import { withFlag } from "../autonomy-change.ts";
 import { git, gitSane } from "../checkout.ts";
 import { type ClaudeRun, freshContext, parseRun, prepareRun, type RunEnd, type RunKind } from "../claude.ts";
 import { clonePath, type RepoConfig } from "../config.ts";
+import { fastConfirmed } from "../fast.ts";
 import { classifyFailure, classifyRun } from "../faults.ts";
+import { changeUrl } from "../forge/types.ts";
 import { must, type Result } from "../forge.ts";
 import {
   agentOf,
@@ -370,6 +372,19 @@ export function effectiveOf(_m: Mission, intent: Intent, files: RepoFiles): numb
   return effectiveA(intent.a, files.towercab.maxAutonomy, intent.source);
 }
 
+/**
+ * FAST-9: the level the spec, plan and merge gates decide at: a fast-lane mark the owner confirmed applies the a5
+ * rows, under the repo's cap. Grants and the build keep `effectiveOf`.
+ */
+export function gateLevelOf(cx: Ctx, m: Mission, intent: Intent, files: RepoFiles): number {
+  return gateLevel(
+    effectiveOf(m, intent, files),
+    intent.fast === true && fastConfirmed(cx.db, intent.id),
+    files.towercab.maxAutonomy,
+    intent.source,
+  );
+}
+
 /** The worker's grants (AUT-14). */
 export function grants(m: Mission, intent: Intent, files: RepoFiles, _cx?: Ctx) {
   const d = data(m);
@@ -655,8 +670,11 @@ export async function coGit(cx: Ctx, m: Mission, args: string[]): Promise<string
 }
 
 /** `-c user.name=… -c user.email=…` of the App's bot, for Towercab's commits. */
-export async function botAuthor(cx: { github: Pick<GitHub, "bot"> }): Promise<string[]> {
-  const bot = await cx.github.bot();
+export async function botAuthor(
+  cx: { github: { bot(repo?: string): Promise<{ login: string; email: string }> } },
+  repo?: string,
+): Promise<string[]> {
+  const bot = await cx.github.bot(repo);
   return ["-c", `user.name=${bot.login}`, "-c", `user.email=${bot.email}`, "-c", "commit.gpgsign=false"];
 }
 
@@ -762,7 +780,7 @@ export function mustForge(o: Result, what: string): void {
 }
 
 export function prUrl(github: string, n: number): string {
-  return `https://github.com/${github}/pull/${n}`;
+  return changeUrl(github, n);
 }
 
 /** The intent's current PR (code > plan > spec), with its repo. */
@@ -941,7 +959,7 @@ export async function takeRemote(
     .then(() => true)
     .catch(() => false);
   if (isAncestor) return "none";
-  const merged = await coGit(cx, m, [...(await botAuthor(cx)), "merge", "--no-edit", ref])
+  const merged = await coGit(cx, m, [...(await botAuthor(cx, cx.repo(m).github)), "merge", "--no-edit", ref])
     .then(() => true)
     .catch(() => false);
   cx.record(m, m.step, {}, { foreignHead: true });

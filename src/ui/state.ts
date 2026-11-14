@@ -13,6 +13,7 @@ import { agentCommentNotes, ignoredNotes, intentPaused } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import { generalWarningText, warningText } from "../exit-warning.ts";
+import { fastConfirmed } from "../fast.ts";
 import type { ProposedState } from "../github/proposed.ts";
 import type { Clock } from "../handlers.ts";
 import type { Home } from "../home.ts";
@@ -32,6 +33,7 @@ import { canBoostIntent, scoreChanges, scoreWords } from "../scores.ts";
 import { actionSentence, actionsFor, shadowCosts } from "../shadow/store.ts";
 import { type Held, heldReleases, releaseLine, releaseTitle } from "../ship/releases.ts";
 import { MAX_FAILS } from "../ship/secret-steps.ts";
+import { sideCosts } from "../side-runs.ts";
 import {
   aheadIn,
   buildingIn,
@@ -64,6 +66,7 @@ import type {
   CardKind,
   ControlsView,
   ExistingTestView,
+  FastView,
   FocusHistory,
   GroundStop,
   InstallHelpView,
@@ -147,6 +150,14 @@ export interface LogLine {
 }
 
 /** Everything the page reads; the loop provides it (the CLI too, read-only, UI-2). */
+/** What the page needs of the running version; `name` and `release` are absent in older fakes. */
+export type UiVersion = {
+  commit: string;
+  behind: number | null;
+  name?: string;
+  release?: { running: string | null; available: string | null } | null;
+};
+
 export interface UiSources {
   db: Db;
   store: IntentStore;
@@ -163,7 +174,7 @@ export interface UiSources {
   problems(): Problem[];
   /** UI-211: the install help for `owner/name`, when GitHub's App isn't installed there. */
   installHelp?(github: string): InstallHelpView | null;
-  version(): { commit: string; behind: number | null };
+  version(): UiVersion;
   /** The picker's whole list; the overview shows the first 5. */
   upNext(): UpNext[];
   /** A PR's URL; `repo` is `owner/name`. */
@@ -746,6 +757,12 @@ const KIND_LABELS: Record<CardKind, string> = {
   release: "Release PR",
   autonomy: "Autonomy raised",
 };
+
+/** FAST-1, FAST-9: the fast lane control's data for an intent. */
+export function fastView(src: UiSources, i: Intent): FastView {
+  const on = i.fast === true;
+  return { on, confirmed: on && fastConfirmed(src.db, i.id), locked: !src.running };
+}
 
 /** UI-257: the autonomy control's data for an intent. */
 export function autonomyView(src: UiSources, i: Intent): AutonomyView {
@@ -1487,6 +1504,12 @@ export function spend(db: Db, now: number): Spend {
     const k = localDate(r.at);
     byDay.set(k, (byDay.get(k) ?? 0) + r.cost);
   }
+  // LOOP-125: so are the overlap checks, which belong to no mission.
+  for (const r of sideCosts(db, now - 8 * DAY)) {
+    if (r.at > now) continue;
+    const k = localDate(r.at);
+    byDay.set(k, (byDay.get(k) ?? 0) + r.cost);
+  }
   const days: Spend["days"] = [];
   const t = new Date(now * 1000);
   for (let i = 6; i >= 0; i--) {
@@ -1584,14 +1607,24 @@ function healthOf(
   return { health: "Running", note: "Towercab is running." };
 }
 
-function versionText(v: { commit: string; behind: number | null }): TopBar["version"] {
+/** UI-278: the running version, and on the release channel the release that waits instead of the lag behind main. */
+function versionText(v: UiVersion): TopBar["version"] {
+  const commit = v.commit.slice(0, 7);
+  if (v.release) {
+    return {
+      commit,
+      name: v.name,
+      behind: null,
+      release: v.release.available ? `${v.release.available} available` : null,
+    };
+  }
   const behind =
     v.behind === null
       ? null
       : v.behind === 0
         ? "up to date"
         : `${v.behind} commit${v.behind === 1 ? "" : "s"} behind main`;
-  return { commit: v.commit.slice(0, 7), behind };
+  return { commit, name: v.name, behind, release: v.release };
 }
 
 /** A short hash of what is shown, so the page knows when to refetch (UI-65, UI-67). */
@@ -2639,6 +2672,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     e2eLog: e2eLogOf(src.home.root, id),
     ...(only ? { onlyYou: "Only you can answer or approve this." } : {}),
     ...(intent && !intent.done ? { autonomy: autonomyView(src, intent) } : {}),
+    ...(intent && !intent.done ? { fast: fastView(src, intent) } : {}),
     ...(intent && !intent.done ? { controls: controlsOf(src, intent, !!live, card) } : {}),
     ...(intentPaused(src.db, realId) ? { paused: true } : {}),
     agent_comments: agentCommentNotes(src.db, realId).map((c) => ({

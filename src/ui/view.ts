@@ -67,8 +67,11 @@ export interface TopBar {
   overBudget: boolean;
   /** UI-256: spend against the budgets; `note` is the words that go with amber or red. */
   budgetChip?: { text: string; level: "ok" | "amber" | "red"; note: string | null };
-  version: { commit: string; behind: string | null };
+  /** UI-278: `name` is the release tag or short commit; `release` is `<tag> available` on the release channel. */
+  version: { commit: string; name?: string; behind: string | null; release?: string | null };
   paused: boolean;
+  /** USR-5: what the person may do; absent without `[auth]`, where the one owner is a maintainer (UI-213). */
+  role?: "viewer" | "contributor" | "maintainer";
   /** No actions: the CLI serves the page without a loop (UI-2). */
   readOnly: boolean;
   /** A banner across the page, e.g. "Towercab isn't running". */
@@ -77,6 +80,15 @@ export interface TopBar {
 
 export type ActionKey = "merge" | "pass" | "reply" | "retry" | "drop";
 export type CardKind = "spec" | "plan" | "code" | "question" | "blocked" | "release" | "autonomy";
+
+/** FAST-1, FAST-9: whether the intent is in the fast lane and whether the owner confirmed it. */
+export interface FastView {
+  on: boolean;
+  /** On and confirmed: its approvals pass as at a5. On and not confirmed: the page says `fast lane: waiting for your confirmation`. */
+  confirmed: boolean;
+  /** The service isn't running, so the page can't change anything. */
+  locked: boolean;
+}
 
 /** UI-257: the one control for an intent's autonomy. */
 export interface AutonomyView {
@@ -664,6 +676,8 @@ export interface IntentPage {
   onlyYou?: string;
   /** UI-257: the autonomy control. */
   autonomy?: AutonomyView;
+  /** FAST-1, FAST-9: the fast lane mark; `confirmed` is false until the owner confirms a mark that did not come from them. */
+  fast?: FastView;
   /** UI-203: urgency and importance as controls, and the notes of UI-207 and UI-208. */
   controls?: ControlsView;
   paused?: boolean;
@@ -1108,4 +1122,22 @@ export interface ActionReply {
   parked?: boolean;
   /** LOOP-76: the action would close an open PR with commits; asked again with `confirmed: true`. */
   confirm?: { pr: number; commits: number | null; text: string };
+  /** UI-216: the overlap check's matches (`checkIntent`), and a note on a title that breaks the naming rule. */
+  matches?: {
+    kind: string;
+    ref: string;
+    title: string;
+    how: string;
+    url?: string;
+    canAdd?: boolean;
+    pastDesign?: boolean;
+  }[];
+  titleNote?: string;
+  /** UI-216: what `createIntent` wrote: the intent's ID and file, whether text was added to an existing one, or a proposal's pull request. */
+  id?: string;
+  path?: string;
+  added?: boolean;
+  proposal?: boolean;
+  pr?: number;
+  url?: string;
 }

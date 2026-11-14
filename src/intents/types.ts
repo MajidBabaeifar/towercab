@@ -24,6 +24,8 @@ export interface Intent {
   issue: string | null;
   /** `setup: true` (LOOP-71): the intent that sets a repo up; allowed in a blocking repo. */
   setup?: boolean;
+  /** `fast: true` (FAST-1): the owner put the intent in the fast lane; absent otherwise. */
+  fast?: boolean;
   started: string | null;
   unlock: string[];
   network: string[];
@@ -90,10 +92,12 @@ export interface NewIntent {
 
 /** One change to an intent through the store (INT-5's field writes, sections, answers). */
 export interface IntentEdit {
-  setField(key: string, value: string | number | string[] | null): void;
+  setField(key: string, value: string | number | boolean | string[] | null): void;
   removeField(key: string): void;
   /** Replace `## <title>` whole; empty text removes it. */
   setSection(title: string, text: string): void;
+  /** INT-74: add text to `## <title>` in place (a missing section goes before Towercab's own); the rest stays byte-identical. */
+  addToSection(title: string, text: string): void;
   /** Append `- <time>: <text>` to `## Answers`. */
   addAnswer(text: string, at: Date): void;
   /** Replace the title line only (INT-34). */
@@ -118,6 +122,8 @@ export interface IntentStore {
    * A store that can't tell leaves it out; every raise is then judged as from an unknown account.
    */
   lastAChange?(idOrSuffix: string): Promise<string | null>;
+  /** FAST-9: the same for the `fast:` line, so a mark pushed to the intents repo can be judged like a raise. */
+  lastFastChange?(idOrSuffix: string): Promise<string | null>;
   /** Read a file in the intents repo's `main` (e.g. a plan.md), or null. */
   readFile(path: string): Promise<string | null>;
   /**
