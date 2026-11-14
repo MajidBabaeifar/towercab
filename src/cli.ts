@@ -57,7 +57,7 @@ import { restoreBackup } from "./settings/backup.ts";
 import { resetShadow, statusText } from "./shadow/store.ts";
 import { buildShadow } from "./shadow/wire.ts";
 import { checkIds, readPrList } from "./specs-cli.ts";
-import { renderStatus } from "./status.ts";
+import { renderStatus, versionLine } from "./status.ts";
 import { buildChat } from "./telegram/wire.ts";
 import { Telegram } from "./telegram.ts";
 import { realTools, type Tools } from "./tools.ts";
@@ -409,7 +409,16 @@ async function run(
       return r.ok ? 0 : 1;
     }
     case "update": {
-      const r = await checkUpdate({ tools, checkout: checkoutRoot(), idle: () => true });
+      // LOOP-151: the channel comes from the config; without a config file the check follows main.
+      const file = configPath(flags.config);
+      const channel = existsSync(file) ? loadConfig(file).update.channel : "main";
+      const r = await checkUpdate({
+        tools,
+        checkout: checkoutRoot(),
+        idle: () => true,
+        channel,
+        log: (m) => process.stderr.write(`${m}\n`),
+      });
       if (r.kind === "updated") return `updated ${r.from} → ${r.to}; run towercab restart to use it`;
       if (r.kind === "failed") throw new Error(`update failed and rolled back: ${r.why}`);
       return r.kind === "none" || r.kind === "unreachable" ? `nothing to update: ${r.why}` : "waiting";
@@ -542,13 +551,15 @@ async function run(
       const next =
         decision && listing ? nextText(decision, listing, w.config.intents.cutoff) : `next: ${listingError}`;
       if (cmd === "next") return next;
-      const ver = await version({ tools, checkout: checkoutRoot() });
+      const ver = await version({ tools, checkout: checkoutRoot(), channel: w.config.update.channel });
+      const shown = versionLine(ver, pkgVersion());
       return renderStatus({
         db: w.db,
         listing,
         listingError,
         running: w.home.holder(),
-        version: `${pkgVersion()} (${ver.commit}${ver.behind ? `, ${ver.behind} behind main` : ""})`,
+        version: shown.version,
+        update: shown.update,
         now: Date.now() / 1000,
         problems: JSON.parse(w.db.meta("health") ?? "[]"),
         next: next.split("\n")[0]!,
