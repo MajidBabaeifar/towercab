@@ -242,3 +242,13 @@ test("fast: a mark pushed by another account stays unconfirmed", async () => {
   await w.actions().fast!(ID, true, "owner");
   expect(await levelOf(w)).toBe(5);
 });
+
+test("fast: a mark made while the watch runs keeps its confirmation", async () => {
+  const w = await world();
+  // The watch read the intents before the page marked the intent.
+  const stale = await w.store.list();
+  await w.actions().fast!(ID, true, "owner");
+  await watchFast({ db: w.db, store: w.store, forge: w.forge, now: NOW, log: () => {} }, stale);
+  expect(fastConfirmed(w.db, ID)).toBe(true);
+  expect(await levelOf(w)).toBe(5);
+});

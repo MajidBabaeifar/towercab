@@ -27,7 +27,11 @@ export async function watchFast(d: FastWatchDeps, listing: Listing): Promise<voi
   const { db } = d;
   for (const i of listing.open) {
     if (!i.fast) {
-      if (fastConfirmed(db, i.id) || fastFromCli(db, i.id)) clearFast(db, i.id);
+      if (fastConfirmed(db, i.id) || fastFromCli(db, i.id)) {
+        // The listing may be older than a mark made on the page a moment ago: look again before clearing.
+        const now = await d.store.get(i.id).catch(() => null);
+        if (now && !now.fast) clearFast(db, i.id);
+      }
       continue;
     }
     if (fastConfirmed(db, i.id) || fastFromCli(db, i.id)) continue;
