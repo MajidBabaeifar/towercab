@@ -29,6 +29,8 @@ import {
   tail,
   viaForge,
 } from "./common.ts";
+import { endSecretPass, startSecretPass } from "./setup-pass.ts";
+import { hasSetupSecrets } from "./setup-secrets.ts";
 
 export const MAX_FIXES = 2;
 const HOLD_POLL = 60;
@@ -101,6 +103,15 @@ async function startSuites(
   const { n, data: nd } = nextN(fresh, "e2e");
   const at = cx.record(fresh, fresh.step, {}, nd);
   const sha = (await coGit(cx, at, ["rev-parse", "HEAD"])).trim();
+  // PIP-212: the repo's setup secrets reach this setup too, in a clean export of the checkout's commit.
+  const secret = await startSecretPass(cx, at, {
+    kind: "e2e-setup",
+    dir: cx.checkout(at),
+    lines: files.verifying.setup,
+    log: logPath(cx, at, "e2e", `${n}-setup.log`),
+    timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
+  });
+  if (secret) return secret;
   return {
     spawn: sandboxSpec(cx, at, {
       kind: "e2e-setup",
@@ -167,6 +178,11 @@ async function suiteEnded(
   end: ChildEnd,
   run: SuiteRun,
 ): Promise<Progress | SuitesDone> {
+  if (m.step === `${run.kind}-setup` && hasSetupSecrets(cx.config.file, m.repo)) {
+    // PIP-212, PIP-213: the setup secrets are redacted and searched for first; a hit stops the stage.
+    const r = await endSecretPass(cx, m, end, cx.checkout(m));
+    if ("done" in r) return r;
+  }
   const log = keptLog(end, sc.secrets);
   const e = sc.ship.e2e!;
   if (m.step === `${run.kind}-setup`) {

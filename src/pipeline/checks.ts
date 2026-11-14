@@ -29,6 +29,12 @@ export interface SandboxRun {
   extraEnv?: Record<string, string>;
   /** Domains beyond `commandDomains`: the ship stage adds the live app's host (SHIP-5, SHIP-9). */
   domains?: string[];
+  /** PIP-214: run in this separate tree, bound at `dir`; the checkout is not mounted. */
+  tree?: string;
+  /** PIP-212: more folders bound writable (the setup credentials folder). */
+  extraBinds?: string[];
+  /** PIP-214: only the built-in registry list, no plan grants or owner answers (the pass without secrets). */
+  builtinOnly?: boolean;
 }
 
 /**
@@ -56,11 +62,16 @@ export function sandboxSpec(cx: Ctx, m: Mission, r: SandboxRun): ChildSpec {
       home,
       cache,
       // PIP-158: the same domains for every command, through the allowlist proxy.
-      proxy: proxySocket([...commandDomains(m), ...splitDomains(r.domains ?? []).valid], (l) => cx.log(l)),
+      proxy: proxySocket(
+        [...(r.builtinOnly ? DEFAULT_NETWORK : commandDomains(m)), ...splitDomains(r.domains ?? []).valid],
+        (l) => cx.log(l),
+      ),
       cacheWritable: r.cacheWritable,
       line: script(r.lines),
+      tree: r.tree,
+      extraBinds: r.extraBinds,
     }),
-    cwd: r.dir,
+    cwd: r.tree ?? r.dir,
     env: { ...sandboxEnv(home, cx.config, cacheEnv(cache, repo, home)), ...(r.extraEnv ?? {}) },
     stdout: r.log,
     stderr: `${r.log}.err`,

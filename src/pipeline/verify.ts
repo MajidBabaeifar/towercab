@@ -36,6 +36,8 @@ import {
 import { intentData, render } from "./prompts.ts";
 import { twoPartOr } from "./prtext.ts";
 import { parseResult } from "./schemas.ts";
+import { endSecretPass, openPass, type PassOpts, privateQuestion, startSecretPass } from "./setup-pass.ts";
+import { hasSetupSecrets, manifestChanges, needsPrivate } from "./setup-secrets.ts";
 
 export const MAX_REPAIRS = 2;
 export const MAX_SHOTS = 20;
@@ -94,10 +96,26 @@ export const verifyHandler: Handler = {
       cx.db.setMeta(checksWriteKey(repo), "1");
       cx.log(`${m.intent}: the checks of ${repo} may now write to its build cache`);
     }
+    // PIP-214: the owner answered about a private package; the setup starts again.
+    if (data(m).openAsk) m = cx.record(m, "setup", {}, { openAsk: undefined, answer: undefined });
     const { n, data: nd } = nextN(m, "verify");
+    if (m.step === "setup-secret") {
+      const again = await startSecretPass(cx, m, setupPass(cx, m, files.verifying.setup, ""));
+      return again ?? { done: { event: "bad_result", why: "the setup secrets file is gone" } };
+    }
+    if (m.step === "setup-open") return openPass(cx, m, setupPass(cx, m, files.verifying.setup, "-open"));
     if (m.step === "" || m.step === "setup") {
       const fresh = cx.record(m, "setup", {}, nd);
       if (files.verifying.setup.length === 0) return checks(cx, cx.record(fresh, "checks"));
+      // PIP-214: a repo with setup secrets installs them in a clean export of the base tree first.
+      if (hasSetupSecrets(cx.config.file, m.repo)) {
+        const secret = await startSecretPass(
+          cx,
+          cx.record(fresh, "setup-secret"),
+          setupPass(cx, fresh, files.verifying.setup, ""),
+        );
+        if (secret) return secret;
+      }
       return {
         spawn: sandboxSpec(cx, fresh, {
           kind: "setup",
@@ -117,7 +135,20 @@ export const verifyHandler: Handler = {
 
   async finish(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
     if (m.step === "merge-review") return mergeReviewEnd(cx, m, end);
+    if (m.step === "setup-secret") return secretEnded(cx, m, end);
     const log = `${read(end.stdout)}${read(end.stderr)}`;
+    if (m.step === "setup-open") {
+      if (end.code === 0) return checks(cx, cx.record(m, "checks"));
+      if (needsPrivate(log)) {
+        const base = data(m).setupSecret?.base ?? "HEAD";
+        const changed = manifestChanges((await coGit(cx, m, ["diff", "--name-only", base])).split("\n"));
+        const o = await ask(cx, m, privateQuestion(changed, log));
+        return { done: { ...o, data: { ...o.data, openAsk: true, answer: undefined } } };
+      }
+      const env = classifyRun(log);
+      if (env) throw new EnvError(env.kind, env.why);
+      return failed(cx, m, "The repo's setup failed.", log);
+    }
     if (m.step === "setup") {
       if (end.code !== 0) {
         const env = classifyRun(log);
@@ -175,6 +206,34 @@ export const verifyHandler: Handler = {
     return { done: { event: "bad_result", why: `unknown verify step ${m.step}` } };
   },
 };
+
+/** The options of one setup pass (PIP-214): its log is `verify-<n>-setup<suffix>.log`. */
+function setupPass(cx: Ctx, m: Mission, lines: string[], suffix: string): PassOpts {
+  const n = data(m).n?.verify ?? 1;
+  return {
+    kind: "setup",
+    dir: cx.checkout(m),
+    lines,
+    log: logPath(cx, m, "verify", `verify-${n}-setup${suffix}.log`),
+    timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
+  };
+}
+
+/** PIP-212..214: the secret pass ended: nothing copied on a hit, then pass 2 when a manifest changed. */
+async function secretEnded(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
+  const r = await endSecretPass(cx, m, end, cx.checkout(m));
+  if ("done" in r) return r;
+  if (r.failed) {
+    const env = classifyRun(r.log);
+    if (env) throw new EnvError(env.kind, env.why);
+    return failed(cx, m, "The repo's setup failed.", r.log);
+  }
+  if (r.open.length > 0) {
+    const files = await repoFiles(cx, m);
+    return openPass(cx, cx.record(m, "setup-open"), setupPass(cx, m, files.verifying.setup, "-open"));
+  }
+  return checks(cx, cx.record(m, "checks"));
+}
 
 async function checks(cx: Ctx, m: Mission): Promise<Progress> {
   // PIP-167: a merge made by code runs the repo's full checks, not the fast subset.
