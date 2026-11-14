@@ -4,9 +4,10 @@
 import { ownerOnly, ownerOnlyLine } from "./autonomy.ts";
 import { levelNow } from "./autonomy-change.ts";
 import type { Db } from "./db.ts";
+import { liftFreeze } from "./freeze.ts";
 import { localTime } from "./intents/intent.ts";
 import type { Intent, IntentStore } from "./intents/types.ts";
-import { type ApplyCtx, apply, exitsOf, waitKey } from "./machine.ts";
+import { type ApplyCtx, apply, exitsOf, wait, waitKey } from "./machine.ts";
 import { dataOf, type Mission, patchData, unfinishedFor } from "./mission.ts";
 import { parseAllow, readingReply, reverseRefusals } from "./pipeline/access.ts";
 import type { PipeData } from "./pipeline/common.ts";
@@ -25,7 +26,8 @@ export type CommandName =
   | "done"
   | "steps"
   | "score"
-  | "boost";
+  | "boost"
+  | "unfreeze";
 
 export interface CommandRow {
   id: number;
@@ -156,6 +158,7 @@ export const OWNER_ONLY_COMMANDS: readonly CommandName[] = [
   "steps",
   "resume",
   "score",
+  "unfreeze",
 ];
 
 /** An ignored reply or command noted on an a0 intent (AUT-32, AUT-33). */
@@ -412,6 +415,16 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
         e.removeField("retry");
       });
       return `${intent.id} is queued for a fresh attempt`;
+    }
+    case "unfreeze": {
+      // LOOP-81: lift the freeze the intent holds; nothing freezes again until the owner asks.
+      const intent = await store.get(row.arg);
+      const m = unfinishedFor(db, intent.id);
+      const offered = m?.stage === "blocked" && exitsOf(m.waiting ?? "").some((e) => e.do === "unfreeze");
+      if (!m || !offered) throw new Error(`${intent.id} isn't at a freeze that can be lifted`);
+      const freed = liftFreeze(db, m.id);
+      apply(cx.applyCtx, m, wait("freeze lifted", "You lifted the freeze; freeze again when you are ready."));
+      return `unfroze ${intent.id}${freed.length ? ` (${freed.join(", ")})` : ""}`;
     }
     case "done": {
       // LOOP-76: the owner did the work themselves; their note becomes a ticked step of the plan.

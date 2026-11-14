@@ -335,7 +335,10 @@ export function shipWords(m: Pick<Mission, "stage" | "step" | "data"> & { waitin
   // UI-161: the hold before the merge, and the stage after it, wait on the owner's steps.
   if (m.stage === "blocked" && m.waiting === "your steps first")
     return "Waiting for your steps before merging";
-  const fixes = dataOf<{ ship?: { fixes?: number } }>(m as Mission).ship?.fixes ?? 0;
+  const sd = dataOf<{ ship?: { fixes?: number; pending?: { why: string } } }>(m as Mission).ship;
+  // SHIP-38: what the deploy waits on, when the platform says (a deploy waiting for approval).
+  if (m.stage === "deploy" && sd?.pending?.why) return `Waiting for the deploy: ${sd.pending.why}`;
+  const fixes = sd?.fixes ?? 0;
   const ship = ["deploy", "e2e", "rollback", "revert"].includes(m.stage);
   if (fixes > 0 && !ship && !isWait(m.stage) && !finished(m.stage))
     return `Fixing (${fixes} of 2): ${stepWords(m.stage).toLowerCase()}`;

@@ -3,11 +3,18 @@
 
 import type { GitLabConfig } from "../config.ts";
 import { readTokenFile } from "../config.ts";
-import type { Check, ChecksRead, IssueRow, IssueText } from "../forge.ts";
+import {
+  type Check,
+  type ChecksRead,
+  ForgeBadReply,
+  ForgeDenied,
+  type IssueRow,
+  type IssueText,
+} from "../forge.ts";
 import type { Http } from "../github/app.ts";
 import { type By, type Step, stageComment, stageMarker } from "../github/comments.ts";
 import type { PrComment, PrReview, PrState } from "../github/prs.ts";
-import { jobCheck, RetryRefused, unix } from "./gitlab-ci.ts";
+import { jobCheck, OutdatedJob, RetryRefused, unix } from "./gitlab-ci.ts";
 import { gitlabPath } from "./types.ts";
 
 export const GITLAB_TIMEOUT_MS = 30_000;
@@ -59,6 +66,16 @@ export interface MrView {
   mergeCommit: string | null;
   draft: boolean;
   title: string;
+}
+
+/** SHIP-37: one deployment of an environment and the job that ran it. */
+export interface GitLabDeployment {
+  id: number;
+  /** `created`, `running`, `success`, `failed`, `canceled`, `blocked`. */
+  status: string;
+  sha: string;
+  createdAt: string;
+  job: { id: number; failureReason: string } | null;
 }
 
 export interface TokenInfo {
@@ -289,6 +306,41 @@ export class GitLabForge {
     const r = await this.call("POST", path);
     if (r.status >= 200 && r.status < 300) return;
     throw new RetryRefused(str(isObj(r.json) ? r.json.message : "") || `GitLab answered HTTP ${r.status}`);
+  }
+
+  /** SHIP-37: the newest deployments of an environment (at most 30), newest first. */
+  async deployments(slug: string, environment: string): Promise<GitLabDeployment[]> {
+    const q = `?environment=${encodeURIComponent(environment)}&order_by=id&sort=desc&per_page=30`;
+    const rows = await this.ok("GET", this.projectUrl(slug, `/deployments${q}`));
+    return arr(rows).flatMap((d): GitLabDeployment[] => {
+      if (typeof d.id !== "number") return [];
+      const job = isObj(d.deployable) ? d.deployable : {};
+      return [
+        {
+          id: d.id,
+          status: str(d.status),
+          sha:
+            str(d.sha) ||
+            (isObj(d.deployable) && isObj(d.deployable.commit) ? str(d.deployable.commit.id) : ""),
+          createdAt: str(d.created_at),
+          job: typeof job.id === "number" ? { id: job.id, failureReason: str(job.failure_reason) } : null,
+        },
+      ];
+    });
+  }
+
+  /** SHIP-37: run a deploy job again; the new job's id. A 403 is `ForgeDenied`, an outdated job `OutdatedJob`. */
+  async retryJob(slug: string, jobId: number): Promise<number> {
+    const path = this.projectUrl(slug, `/jobs/${jobId}/retry`);
+    const r = await this.call("POST", path);
+    if (r.status >= 200 && r.status < 300) {
+      if (!isObj(r.json) || typeof r.json.id !== "number") throw new ForgeBadReply("GitLab sent no new job");
+      return r.json.id;
+    }
+    const why = isObj(r.json) ? str(r.json.message) || str(r.json.error) : "";
+    if (/outdated/i.test(why)) throw new OutdatedJob(why);
+    if (r.status === 403) throw new ForgeDenied(why || "HTTP 403");
+    throw failure("POST", path, r.status, r.json);
   }
 
   /** Cancel a pipeline that hangs (PIP-171). */

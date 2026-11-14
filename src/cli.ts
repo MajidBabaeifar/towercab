@@ -76,6 +76,7 @@ export const COMMANDS = [
   "step",
   "done",
   "steps",
+  "unfreeze",
   "approve",
   "pause",
   "resume",
@@ -571,6 +572,9 @@ async function run(
     case "done":
       need(1, "<id> [note]");
       return submit(w, "done", args[0], args.slice(1).join(" "));
+    case "unfreeze":
+      need(1, "<id>");
+      return submit(w, "unfreeze", args[0]);
     case "steps":
       need(1, "<id>");
       return submit(w, "steps", args[0]);

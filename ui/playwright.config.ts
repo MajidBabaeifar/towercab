@@ -2,7 +2,9 @@
 
 import { defineConfig, devices } from "@playwright/test";
 
-const PORT = Number(process.env.TOWERCAB_FIXTURE_PORT ?? 7398);
+// Each checkout gets its own port, so parallel builds on one machine don't collide on the fixture server.
+const own = [...process.cwd()].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % 1000;
+const PORT = Number(process.env.TOWERCAB_FIXTURE_PORT ?? 7398 + own);
 
 export default defineConfig({
   testDir: ".",
