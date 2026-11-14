@@ -77,7 +77,7 @@ export async function checkUpdate(d: UpdateDeps): Promise<UpdateResult> {
   const failure =
     (lockChanged ? await step("npm", ["ci", "--no-audit", "--no-fund"]) : null) ??
     (uiChanged || lockChanged ? await step("npm", ["run", "build:ui"]) : null) ??
-    (await step(join(d.checkout, "bin", "towercab"), ["doctor", "--quick"]));
+    (await step(join(d.checkout, "bin", "towercab"), ["doctor", "--quick", "--for-update"]));
   if (failure) {
     await git(d, ["reset", "--hard", "--quiet", from]);
     if (lockChanged) await step("npm", ["ci", "--no-audit", "--no-fund"]);

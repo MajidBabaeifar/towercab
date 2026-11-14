@@ -118,7 +118,7 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   ui [--no-open]                  open the web page
   specs check-ids [--base <ref>] [--prs <file>]
                                   fail when a spec adds a requirement ID the base branch or another open PR has
-  doctor [--quick]                what is missing
+  doctor [--quick] [--for-update] what is missing (--for-update: loose key files only warn)
   update                          update this checkout to the latest main now
 `;
 
@@ -239,6 +239,7 @@ export async function main(argv: string[], tools: Tools = realTools()): Promise<
         intent: { type: "string" },
         "no-open": { type: "boolean" },
         quick: { type: "boolean" },
+        "for-update": { type: "boolean" },
         name: { type: "string" },
         base: { type: "string" },
         prs: { type: "string" },
@@ -333,7 +334,14 @@ async function run(
           if (e instanceof ConfigError) return `config: ${e.message}`;
           throw e;
         }
-        const r = await doctor({ config, home: Home.resolve(flags.home), tools, github: null, quick: true });
+        const r = await doctor({
+          config,
+          home: Home.resolve(flags.home),
+          tools,
+          github: null,
+          quick: true,
+          forUpdate: Boolean(v["for-update"]),
+        });
         process.stdout.write(`${r.lines.join("\n")}\n`);
         return r.ok ? 0 : 1;
       }
