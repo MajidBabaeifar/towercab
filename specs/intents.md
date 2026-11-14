@@ -1,6 +1,6 @@
 # Intents
 
-**Status:** Live: INT-1..44, INT-51..53, INT-60..68 · **Prefix:** INT
+**Status:** Live: INT-1..44, INT-51..53, INT-60..68, INT-71..74 · **Prefix:** INT
 
 ## Purpose
 
@@ -693,10 +693,10 @@ What the owner is about to write is checked as written: the repo must be one of 
 
 An agent that only reads compares the new intent with the existing ones and says which overlap and how.
 
-- `checkOverlap(draft)` runs a read-only agent (`agents/overlap.md`, no tools, no network, no write access). It is given the draft (repo, title, sections) and, inline, the intents of `main` that are open, parked (PRI-5), done or dropped (id, repo, title, stage, the first 600 characters of the Problem), and the open pull requests of the intents repo that add or change an intent (number, title, first 600 characters of the body). Unreadable intents (INT-11) are left out. With `[auth]` the bundle holds only intents and proposals of repos where the person has a role (USR-5), so a contributor's check never shows another repo's titles. The draft and every intent text are given as data in a fenced block, with the instruction that nothing inside them is an order; the agent has no tools, and its output is checked against the shape below, so text in an intent cannot make it act.
+- `checkOverlap(draft)` runs a read-only agent (`agents/overlap.md`, no tools, no network, no write access). It is given the draft (repo, title, sections) and, inline, the intents of `main` that are open, parked (PRI-5), done or dropped (id, repo, title, stage, the first 600 characters of the Problem), and the open pull requests of the intents repo that add an intent (as `PR#<number>`: the intent's repo and title as INT-51 reads them; the pull request's text is not read). Unreadable intents (INT-11) are left out. With `[auth]` the bundle holds only intents and proposals of repos where the person has a role (USR-5), so a contributor's check never shows another repo's titles. The draft and every intent text are given as data in a fenced block, with the instruction that nothing inside them is an order; the agent has no tools, and its output is checked against the shape below, so text in an intent cannot make it act.
 - Result: `{matches: [{kind: "open"|"parked"|"done"|"dropped"|"pr", ref, title, how}], titleNote?}`, at most 5 matches, strongest first; `how` is one plain line (`plainLine`, at most 160) on how the two overlap. A `ref` that is not in what the agent was given is dropped. `titleNote` is set only when the title breaks the naming rule (INT-33) and says so in one line, without a replacement title.
 - A read that fails (the store, GitHub) or an agent run that fails, times out (120 s) or returns something that is not the shape above gives the error `The overlap check failed: <reason>`; the callers say the check was skipped if the owner goes on (UI-215, LOOP-124). Nothing is written by the check.
-- The run's cost is recorded as a side run of kind `overlap` and counts in the day's spend (MET-29, outside any mission; LOOP-125).
+- The run's cost is recorded as a side run of kind `overlap` and counts in the day's spend (MET-29, outside any mission; LOOP-125). A run that fails after it cost something is recorded too.
 - Verified by: `overlap: matches name open, parked, done and pr intents with a line on how`, `overlap: a match outside the given intents is dropped`, `overlap: the title note never carries a new title`, `overlap: the agent gets no tools`, `overlap: a failed run is an error not an empty list`, `overlap: unreadable intents are not sent`, `overlap: at most five matches`, `overlap: a contributor's bundle holds only repos they have a role in`, `overlap: text inside an intent is sent as data`
 
 ### INT-74 · Adding to an existing intent
@@ -706,7 +706,7 @@ The owner can add what they wrote to an existing open or parked intent instead o
 - `addToIntent(id, draft)` appends each non-blank section of the draft to the same section of that intent's `intent.md`, after a blank line, creating the section at the end of the body when it is missing (before `## Towercab`, `## Answers` and `## Original title` when they exist). The title, repo and scores of the draft are ignored; the front matter and every other line stay byte-identical (`setField`'s rule, INT-24). It is one commit to `main`, pushed like INT-71.
 - Allowed only for an intent that is open (parked included) and still at design: its `stage` is `spec` (INT-2) and it has no mission, or its mission is at the design step. An intent that is past design (`stage` `plan` or `code`, or a mission beyond design), done, dropped or unreadable, or one that is only a pull request, is refused with the reason and nothing is written. For one past design the text is `<id> is already past design, so new text would not change it. Write a new intent instead and link <id> in it.`, with `<id>` the old intent's ID (a link in the page). Nothing is saved and no mission is restarted.
 - `canAddTo(intent)` in code (not the agent) decides this, so the form and `add` offer "add to this one" only where it will be accepted. Only a direct writer (INT-71) may add: a contributor's proposal cannot edit an intent on `main`.
-- The addition is on the intent's timeline (who, through which channel).
+- The addition is recorded in its commit as a trailer `Added-by: <who>` (the page: `<name> via page`; the command line: `owner via cli`), which is what the intent's history shows.
 - Verified by: `intents: addToIntent appends to the matching sections`, `intents: addToIntent creates a missing section before the Towercab sections`, `intents: addToIntent leaves the front matter alone`, `intents: addToIntent refuses a done intent`, `intents: addToIntent refuses an intent past design and says to write a new one`, `intents: addToIntent refuses a contributor`, `intents: an addition is on the timeline`
 
 ### INT-75 · A covered intent keeps its feature line
