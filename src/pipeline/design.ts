@@ -33,8 +33,8 @@ import {
   cloneOf,
   coGit,
   data,
-  effectiveOf,
   ended,
+  gateLevelOf,
   intentOf,
   mustForge,
   PushRefused,
@@ -775,7 +775,7 @@ async function gateStep(cx: Ctx, m: Mission): Promise<Progress> {
 async function ownerWait(cx: Ctx, m: Mission, risk: Risk | null): Promise<Outcome | null> {
   const intent = await intentOf(cx, m);
   const files = await repoFiles(cx, m);
-  const a = effectiveOf(m, intent, files);
+  const a = gateLevelOf(cx, m, intent, files);
   const points = risk?.openPoints ?? [];
   if (!specGate(a, points.length, risk?.level ?? null)) return null;
   const why = points.length

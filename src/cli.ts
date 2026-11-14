@@ -20,6 +20,7 @@ import {
 import { appKeyPath, type Config, ConfigError, checkLoop, configPath, loadConfig } from "./config.ts";
 import { Db } from "./db.ts";
 import { doctor } from "./doctor.ts";
+import { markFast } from "./fast.ts";
 import { GitLabForge } from "./forge/gitlab.ts";
 import { parseGitlabProject } from "./forge/types.ts";
 import type { Forge } from "./forge.ts";
@@ -73,6 +74,7 @@ export const COMMANDS = [
   "retry",
   "drop",
   "start",
+  "fast",
   "score",
   "step",
   "done",
@@ -96,9 +98,10 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   up | down | restart | logs      the systemd user service
   run [--watch] [--intent <id>]   the loop in the foreground
   status | next                   what is happening, and what runs next
-  add "<repo>: <title>" [uN iN aN] [--check | --no-check]
+  add "<repo>: <title>" [uN iN aN] [--fast] [--check | --no-check]
                                   at a terminal: lists overlapping intents and asks first; in a script: writes,
                                   and checks only with --check (a warning)
+  fast <id> [--off]               put an intent in the fast lane (its approvals still wait for your click on the page)
   answer <id> <text>              answer a question (when there is no PR to reply on)
   answer <id> allow <path>…       allow a test you refused earlier, for the running mission
   reply <id> --by <agent> <text>  an agent speaks for you on the PR (or issue): marked as the agent's
@@ -264,6 +267,8 @@ export async function main(argv: string[], tools: Tools = realTools()): Promise<
         now: { type: "boolean" },
         check: { type: "boolean" },
         "no-check": { type: "boolean" },
+        fast: { type: "boolean" },
+        off: { type: "boolean" },
       },
     });
   } catch (e) {
@@ -541,7 +546,9 @@ async function run(
       const checking = v["no-check"] !== true && (interactive || v.check === true);
       const made = async () => {
         const c = await createIntent(deps, draft, "direct");
-        return `${c.id} ${c.path}`;
+        // FAST-1: the mark is written after the intent exists; the command line never confirms it (FAST-9).
+        if (v.fast === true) await markFast({ db: w.db, store }, c.id, true, "cli");
+        return `${c.id} ${c.path}${v.fast === true ? " (fast lane)" : ""}`;
       };
       if (!checking) return made();
       let found: { matches: Match[]; titleNote?: string } | null = null;
@@ -615,6 +622,10 @@ async function run(
       }
       process.stdout.write(`${lines.join("\n")}\n`);
       return made();
+    }
+    case "fast": {
+      need(1, "<id> [--off]");
+      return markFast({ db: w.db, store: await w.store() }, args[0]!, v.off !== true, "cli");
     }
     case "answer":
       need(2, "<id> <text>");
