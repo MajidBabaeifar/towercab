@@ -22,6 +22,7 @@ export const AGENT_NAMES = [
   "features",
   "shadow",
   "observer",
+  "overlap",
 ] as const;
 export type AgentName = (typeof AGENT_NAMES)[number];
 
