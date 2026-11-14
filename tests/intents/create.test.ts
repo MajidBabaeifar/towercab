@@ -72,7 +72,7 @@ test("intents: createIntent commits to main and pushes", async () => {
   const w = await world();
   const made = await createIntent(w.d, draft(), "direct");
   expect(git(w.remote, "log", "--format=%s", "main").split("\n")[0]).toBe(`towercab: add ${made.id}`);
-  expect(git(w.remote, "branch", "--list").replace("*", "").trim()).toBe("main");
+  expect(git(w.remote, "branch", "--format=%(refname:short)").trim()).toBe("main");
 });
 
 test("intents: a failed push leaves no folder", async () => {
