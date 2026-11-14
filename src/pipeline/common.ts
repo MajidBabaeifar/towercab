@@ -27,6 +27,7 @@ import { PausedHold } from "../github/paused.ts";
 import { type ChildEnd, type Ctx, EnvError, type GitHub, type Progress } from "../handlers.ts";
 import { plainLine, SUBJECT_MAX } from "../intents/naming.ts";
 import type { Intent } from "../intents/types.ts";
+import type { REFACTOR_PROOF } from "../kind.ts";
 import { cooldown } from "../limits.ts";
 import { type Outcome, wait } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
@@ -81,6 +82,10 @@ export interface SecretState {
 }
 
 export interface PipeData {
+  /** INT-77: the kind the mission goes by, why, and who chose it (an owner's wins over a guess). */
+  kind?: string;
+  kindWhy?: string;
+  kindBy?: "guess" | "owner";
   design?: {
     type: string;
     scope: string;
@@ -129,7 +134,15 @@ export interface PipeData {
     /** SHIP-17, SHIP-21: the owner's steps and the "nothing to check live" claim the plan made. */
     ownerSteps?: PlanStep[];
     liveNoneWhy?: string;
+    /** PIP-229: the commands an `infra` plan has the build apply in the sandbox. */
+    apply?: { command: string; why: string }[];
   };
+  /** PIP-229: the commands applied so far, with their results; `applyAt` is the next one to run. */
+  applied?: AppliedRun[];
+  applyAt?: number;
+  /** PIP-231: the question "Move this to the full path?" is open; and the owner chose to keep the kind. */
+  kindAsk?: boolean;
+  kindKept?: boolean;
   /** PIP-112, PIP-113: absent counts as `code`; `steps` means the owner does the work. */
   delivery?: "code" | "steps";
   /** LOOP-77: the last blocked wait (key, head, count of owner answers) and whether it came back unchanged. */
@@ -254,7 +267,7 @@ export interface PipeData {
   setup?: string;
   verify?: { log: string; result: "green" | "red" };
   shots?: string[];
-  proof?: "proven" | "none needed" | "not proven";
+  proof?: "proven" | "none needed" | "not proven" | typeof REFACTOR_PROOF;
   proofWaited?: boolean;
   /** The lines the proof ran on base, and whether they are the PR's checks block (PIP-54). */
   proofLines?: { lines: string[]; fromPr: boolean };
@@ -398,6 +411,15 @@ export function grants(m: Mission, intent: Intent, files: RepoFiles, _cx?: Ctx) 
   });
 }
 
+/** PIP-229: one applied command and what happened. */
+export interface AppliedRun {
+  command: string;
+  why: string;
+  code: number;
+  secs: number;
+  tail: string;
+}
+
 export function nextN(m: Mission, kind: string): { n: number; data: Partial<PipeData> } {
   const counts = { ...(data(m).n ?? {}) };
   counts[kind] = (counts[kind] ?? 0) + 1;
@@ -418,6 +440,8 @@ export interface RunPlan {
   files: RepoFiles;
   intent: Intent;
   guard?: ClaudeRun["guardRules"];
+  /** Allow rules added to the agent's own (PIP-230). */
+  allowMore?: string[];
   /** The stage folder of its files when the kind runs in more than one stage (LOOP-39). */
   stage?: string;
 }
@@ -447,6 +471,7 @@ const STAGE_OF_KIND: Record<RunKind, string> = {
   // The risk agent runs at three gates; its handler names the stage folder (PIP-96).
   risk: "review",
   score: "design",
+  kind: "design",
   features: "design",
   shadow: "design",
   observer: "design",
@@ -521,6 +546,7 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
         ? grants(fresh, p.intent, p.files, cx)
         : { domains: [...DEFAULT_NETWORK], paths: [] },
     guardRules: p.guard ?? null,
+    allowMore: p.allowMore,
     cacheEnv: cacheEnv(cache, repo),
     cache,
     config: cx.config,

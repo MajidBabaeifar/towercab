@@ -117,6 +117,25 @@ export interface ControlsView {
   waitWhy: string | null;
   /** UI-208: `Lowered to a<n> by the worker: <why>`; null when nothing was lowered. */
   lowered: string | null;
+  /** UI-283: the intent's kind, what it skips, and the control that sets it. */
+  kind: KindView;
+}
+
+/** UI-283: an intent's kind as the page shows it. */
+export interface KindView {
+  value: string;
+  /** "Bugfix", "Infrastructure change"... */
+  label: string;
+  /** `owner`: set in the intent or from the page; `guess`: inferred (INT-77); `default`: none yet, so the full path. */
+  by: "owner" | "guess" | "default";
+  /** The inferred kind's reason (INT-77), or null. */
+  why: string | null;
+  /** The stages this kind skips, in plain words. */
+  skipped: string[];
+  /** The control is offered (the page can act and the intent is not finished). */
+  canSet: boolean;
+  /** The five kinds; `refused` is why one cannot be taken now (UI-283), or null. */
+  options: { value: string; label: string; refused: string | null }[];
 }
 
 export interface Question {

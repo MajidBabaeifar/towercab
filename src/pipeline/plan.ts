@@ -10,6 +10,7 @@ import { MERGE_METHOD } from "../forge.ts";
 import { PausedHold } from "../github/paused.ts";
 import type { ChildEnd, Ctx, GitHub, Handler, Progress } from "../handlers.ts";
 import type { Intent } from "../intents/types.ts";
+import { kindNote, kindOf, kindPrompt } from "../kind.ts";
 import { wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { runSet } from "../repo/runset.ts";
@@ -176,6 +177,7 @@ export const planHandler: Handler = {
           d.delivery === "steps"
             ? "\n\nThe owner will do this by hand: set delivery to steps and list what they do in owner_steps."
             : "";
+        const kindText = kindPrompt("plan", kindOf(intent.kind, d));
         const prompt =
           render("plan", {
             intent: intentData(intent.text),
@@ -184,7 +186,8 @@ export const planHandler: Handler = {
             e2e: e2eText(files.towercab.live, "plan"),
           }) +
           feedback +
-          byHand;
+          byHand +
+          (kindText ? `\n\n${kindText}` : "");
         return spawnRun(
           cx,
           m,
@@ -235,6 +238,13 @@ export const planHandler: Handler = {
         return { done: { event: "bad_result", why: "a plan the owner does by hand needs owner_steps" } };
       ownerSteps = ownerSteps.map((s) => ({ ...s, when: "after" as const }));
     }
+    // PIP-229: an infra plan lists the commands to apply; none is a bad result, asked for again.
+    const planKind = kindOf((await intentOf(cx, m)).kind, data(m));
+    const apply = planKind === "infra" ? (r.value.apply ?? []) : [];
+    if (planKind === "infra" && apply.length === 0)
+      return {
+        done: { event: "bad_result", why: "an infrastructure plan needs apply commands", record: true },
+      };
     // INT-43: a multi-repo plan has a part per repo in an order without cycles; else the planner is asked again.
     const intent = await intentOf(cx, m);
     const checked = checkParts(intent.repo, intent.repos ?? [], r.value.repos ?? []);
@@ -262,7 +272,8 @@ export const planHandler: Handler = {
         {},
         {
           plan: {
-            md: withRepos(r.value.plan, reposMd(checked.value)),
+            md: withApply(withRepos(r.value.plan, reposMd(checked.value)), apply),
+            apply,
             parts: checked.value.parts.map((p) => p.repo),
             waitsOn: Object.fromEntries(checked.value.parts.map((p) => [p.repo, p.waits_on])),
             access,
@@ -282,6 +293,13 @@ export const planHandler: Handler = {
     );
   },
 };
+
+/** PIP-229: the plan PR lists the commands to apply in plain words. */
+function withApply(md: string, apply: { command: string; why: string }[]): string {
+  if (!apply.length) return md;
+  const lines = apply.map((a) => `- \`${a.command}\`: ${a.why}`);
+  return `${md.trim()}\n\n## What will be applied\n\nThese run in the sandbox after the checks pass:\n\n${lines.join("\n")}`;
+}
 
 /** SHIP-17, SHIP-21: the plan's `## Your steps` and `Nothing to check live:`, after `## Access`. */
 function ownerText(plan: { ownerSteps?: PlanStep[]; liveNoneWhy?: string }): string {
@@ -349,6 +367,8 @@ async function bodyOf(cx: Ctx, m: Mission): Promise<string> {
     riskMd(currentRisk(m, "plan")),
     d.plan!.brief ?? "",
     d.delivery ?? "code",
+    // INT-77: with no spec PR this is the mission's first PR, so it carries the guess.
+    m.spec_pr ? "" : kindNote(d),
   );
 }
 

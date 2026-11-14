@@ -3,7 +3,7 @@
 
 import { useRef, useState } from "preact/hooks";
 import type { ActionReply, ControlsView } from "../../src/ui/view.ts";
-import { boostIntent, setScores } from "./api.ts";
+import { boostIntent, setKind, setScores } from "./api.ts";
 
 const SCORES = [1, 2, 3, 4, 5];
 
@@ -146,5 +146,69 @@ export function ControlNotes({ view }: { view: ControlsView }) {
       {view.waitWhy ? <span class="meta">{view.waitWhy}</span> : null}
       {view.lowered ? <span class="meta">{view.lowered}</span> : null}
     </>
+  );
+}
+
+/** UI-283: the intent's kind, why it was guessed, what it skips, and the choice of another kind. */
+export function KindControl({
+  intent,
+  view,
+  readOnly,
+}: {
+  intent: string;
+  view: ControlsView;
+  readOnly: boolean;
+}) {
+  const k = view.kind;
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ActionReply | null>(null);
+  const pick = async (kind: string) => {
+    setBusy(true);
+    setResult(await setKind(intent, kind));
+    setBusy(false);
+  };
+  return (
+    <span class="autonomy kind" data-kind={k.value}>
+      <span class="meta">
+        Kind: <strong>{k.label}</strong>
+        {k.by === "guess" ? " (Towercab's guess)" : ""}
+        {k.why ? ` · ${k.why}` : ""}
+      </span>
+      {k.skipped.map((s) => (
+        <span class="meta" key={s}>
+          {s}
+        </span>
+      ))}
+      {k.canSet && !readOnly ? (
+        // biome-ignore lint/a11y/useSemanticElements: a segmented control, not a form group
+        <span class="segmented" role="group" aria-label="Kind">
+          {k.options.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              class={`seg${o.value === k.value ? " current" : ""}`}
+              aria-pressed={o.value === k.value}
+              disabled={busy || (o.refused !== null && o.value !== k.value)}
+              title={o.refused ?? undefined}
+              onClick={() => o.value !== k.value && void pick(o.value)}
+            >
+              {o.label}
+            </button>
+          ))}
+        </span>
+      ) : null}
+      {k.options
+        .filter((o) => o.refused && o.value !== k.value)
+        .map((o) => (
+          <span class="meta" key={`r-${o.value}`}>
+            {o.label}: {o.refused}
+          </span>
+        ))}
+      {result ? (
+        <span class={result.ok ? "meta" : "meta error"} role="status">
+          {result.message}
+        </span>
+      ) : null}
+    </span>
   );
 }

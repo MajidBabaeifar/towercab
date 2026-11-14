@@ -173,6 +173,9 @@ function Card({
         {p.lines[1] ? <div>▸ {p.lines[1]}</div> : null}
         {p.held ? <div>▸ {p.held}</div> : null}
         <div>▸ {phaseText(p.phases)}</div>
+        {p.controls && p.controls.kind.value !== "feature" ? (
+          <div class="kind-label">▸ {p.controls.kind.label}</div>
+        ) : null}
         {p.controls ? <ControlNotes view={p.controls} /> : null}
         {p.canStart ? <StartButton intent={p.intent} /> : null}
         {p.controls?.canBoost ? <BoostButton intent={p.intent} view={p.controls} /> : null}

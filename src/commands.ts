@@ -7,6 +7,7 @@ import type { Db } from "./db.ts";
 import { liftFreeze } from "./freeze.ts";
 import { localTime } from "./intents/intent.ts";
 import type { Intent, IntentStore } from "./intents/types.ts";
+import { isKind, kindChangeRefusal, kindOf, WORK_KINDS } from "./kind.ts";
 import { type ApplyCtx, apply, exitsOf, wait, waitKey } from "./machine.ts";
 import { dataOf, type Mission, patchData, unfinishedFor } from "./mission.ts";
 import { parseAllow, readingReply, reverseRefusals } from "./pipeline/access.ts";
@@ -27,7 +28,8 @@ export type CommandName =
   | "steps"
   | "score"
   | "boost"
-  | "unfreeze";
+  | "unfreeze"
+  | "kind";
 
 export interface CommandRow {
   id: number;
@@ -154,6 +156,7 @@ export const OWNER_ONLY_COMMANDS: readonly CommandName[] = [
   "resume",
   "score",
   "unfreeze",
+  "kind",
 ];
 
 /** An ignored reply or command noted on an a0 intent (AUT-32, AUT-33). */
@@ -371,6 +374,26 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
         row.source,
       );
       return r.message;
+    }
+    case "kind": {
+      // UI-283, INT-77: the owner's kind goes into the intent, and a mission that has not passed its stage follows it.
+      const kind = row.text.trim();
+      if (!isKind(kind)) throw new Error(`"${kind}" is not a kind: use ${WORK_KINDS.join(", ")}`);
+      const intent = await store.get(row.arg);
+      const m = unfinishedFor(db, intent.id);
+      const refusal = m
+        ? kindChangeRefusal(kind, m.stage === "blocked" ? (m.from_stage ?? m.stage) : m.stage)
+        : null;
+      if (refusal) throw new Error(refusal);
+      if (intent.kind !== kind) await store.update(intent.id, "set kind", (e) => e.setField("kind", kind));
+      if (m && kindOf(null, dataOf(m) as PipeData) !== kind) {
+        apply(cx.applyCtx, m, {
+          event: "kind_routed",
+          why: "you set the kind",
+          data: { kind, kindBy: "owner", kindWhy: "You set it." },
+        });
+      }
+      return `${intent.id} is ${kind}`;
     }
     case "boost": {
       // LOOP-134: a5 first (one commit), then what `start` does for an intent without a mission.

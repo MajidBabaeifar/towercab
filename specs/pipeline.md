@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..194, PIP-196..207, PIP-210, PIP-216..226 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..194, PIP-196..207, PIP-210, PIP-216..226, PIP-228..233 · **Prefix:** PIP
 
 ## Purpose
 
@@ -2264,7 +2264,7 @@ A bugfix, a refactor, an infrastructure change and a spec-only change each skip 
   | `infra` | plan, build, verify, apply (PIP-229), publish, ci, review, gate, merge, ship | design, the spec PR and the proof |
   | `spec-only` | design, the spec PR (PIP-230) | plan, build, the code PR and ship |
 
-- The skip is one move in the machine's table, recorded as an event with the kind (`kind_routed`), made by `apply` in one `Db.tx` (LOOP-3): `pick` goes to `plan` for `bugfix`, `refactor` and `infra`, to `design` for the others. The phase (`stage`, INT-5) shows `plan` and `code` as usual; the page shows which stages were skipped and why (UI-283).
+- The skip is one move in the machine's table, recorded as an event with the kind (`kind_routed`), made by `apply` in one `Db.tx` (LOOP-3): `pick` goes to `plan` for `bugfix`, `refactor` and `infra` when the intent sets the kind, and to `design` otherwise; the first step of `design` moves a guessed lighter kind (INT-77) on to `plan`. The phase (`stage`, INT-5) shows `plan` and `code` as usual; the page shows which stages were skipped and why (UI-283).
 - A kind never skips CI, the review or the merge gate: only the stages named above are skipped, and the intent's own checks stay (AUT-6).
 - With no design step there is no `spec_ids` list: the plan's `Covers:` line (PIP-46) is empty and the review's bullets come from the intent's own outcomes (PIP-5).
 - Verified by: `pipeline: a bugfix goes from pick to plan with no spec PR`, `pipeline: a refactor and an infra change skip the spec PR`, `pipeline: a feature keeps the full path`, `pipeline: a kind never skips ci review or the merge gate`, `machine: kind_routed moves pick by kind`
@@ -2331,6 +2331,7 @@ Because a refactor changes no behaviour, its proof is that the existing tests pa
 | [score](../agents/score.md) | Turns a GitHub issue into a scored intent ([INT-22](intents.md)); runs outside any mission in an empty folder. | Nothing: no tools. | none | `[agent].model` |
 | [shadow](../agents/shadow.md) | The owner's shadow in Telegram ([SHD-1](shadow.md)); one long-lived session, outside any mission, in an empty folder. | Nothing: no tools; Towercab runs its reads and actions. | resume | `[shadow].model`, else `[agent].model` |
 | [observer](../agents/observer.md) | Reads 14 days of how Towercab ran and proposes improvements ([OBV-1](observer.md)); runs outside any mission, in an empty folder. | Nothing: no tools, no network; Towercab builds its evidence and opens the proposals. | none | `[observer].model`, else `[agent].model` |
+| [kind](../agents/kind.md) | Picks an intent's kind when the owner has not set one ([INT-77](intents.md)); runs once, at the first step of the design stage, in the mission. | Nothing: no tools. | none | `[agent].model` |
 | [features](../agents/features.md) | Writes a repo's live features from its README and specs ([INT-39](intents.md)); runs outside any mission in a fresh checkout of base. | Read, Glob, Grep in the sandbox; no network. | none | `[agent].model` |
 
 Each file's front matter also holds the time and cost limits and the result schema (PIP-71). `repair`

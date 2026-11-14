@@ -3,6 +3,7 @@
 
 import { parse as parseYaml } from "yaml";
 import { isRepoName } from "../config.ts";
+import { isKind, WORK_KINDS } from "../kind.ts";
 import { applyMap } from "../specids.ts";
 import { isId } from "./id.ts";
 import type { Intent, IntentEdit } from "./types.ts";
@@ -25,6 +26,7 @@ type Kind =
   | "score"
   | "level"
   | "str"
+  | "kind"
   | "after"
   | "list"
   | "time"
@@ -43,6 +45,7 @@ const KINDS: Record<string, Kind> = {
   model: "str",
   review: "str",
   source: "str",
+  kind: "kind",
   issue: "str",
   waiting: "str",
   spec_pr: "str",
@@ -70,6 +73,7 @@ const DESCRIBE: Record<Kind, string> = {
   score: "an integer 1-5",
   level: "an integer 0-5",
   str: "a string",
+  kind: `one of ${WORK_KINDS.join(", ")}`,
   after: "a list of ids",
   repos: "a list of repo names (or one name)",
   list: "a list of strings",
@@ -129,6 +133,9 @@ function check(key: string, kind: Kind, v: unknown, reading: boolean): Value {
       throw bad();
     case "str":
       if (typeof v === "string") return v;
+      throw bad();
+    case "kind":
+      if (isKind(v)) return v;
       throw bad();
     case "after":
       // One ID counts as a one-item list (only for `after`).
@@ -514,6 +521,7 @@ export class IntentFile implements IntentEdit {
       model: str("model"),
       review: str("review"),
       source: str("source"),
+      kind: str("kind"),
       issue: str("issue"),
       setup: this.isSetup(),
       ...(v.get("fast") === true ? { fast: true } : {}),

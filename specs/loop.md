@@ -862,6 +862,7 @@ Boosting an intent sets its autonomy to a5 and, when it has not started, starts 
 `towercab score <id> [u=<1-5>] [i=<1-5>]` changes an intent's urgency and importance from the command line.
 
 - Inserts a `score` row in `commands` (LOOP-15; applied by the loop, or by the CLI with no loop) and applies LOOP-133. At least one of `u=`, `i=` is required; no argument or a bad value is a usage error (exit 2); a refusal prints `towercab: <reason>` and exits 1. It prints the new priority and whether the intent is parked.
+- A `kind` row in `commands` (UI-283; `text` is the kind) writes `kind` into the intent and moves a mission that has not passed the stage the kind skips (`kind_routed`, PIP-228); like `score` it counts only from the page at a0 (AUT-33). The owner's comment `kind: <value>` on the mission's PR does the same (INT-77).
 - There is no command-line command for `a` or for boost: raising autonomy stays on the page and GitHub (AUT-35) and `boost` rows from the command line are dropped (LOOP-134). An a0 intent refuses `score` like `start` (AUT-33), because the command line cannot tell the owner from an agent: only the page and GitHub change it.
 - Verified by: `cli: score changes u and i`, `cli: score needs a value`, `cli: score refuses a bad value`, `cli: score is refused on an a0 intent`, `commands: score applied without a loop`
 
@@ -1728,7 +1729,7 @@ CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT 
 CREATE TABLE transitions (id INTEGER PRIMARY KEY, mission INTEGER NOT NULL REFERENCES missions(id),
   at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT);
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost','unfreeze')),
+  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost','unfreeze','kind')),
   arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
   created REAL NOT NULL, applied_at REAL, result TEXT);
 CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, created REAL NOT NULL,
@@ -1773,6 +1774,7 @@ like a crash; `–` = ignored)
 | env_fail | backoff | backoff | backoff | backoff | backoff |
 | crash | recover | – | – | – | – |
 | spec_merged | design → plan; else – | → plan | – | – | from design → plan |
+| kind_routed | pick, design → plan for a lighter kind, pick → design for the others; a feature from plan … merge → design; else – | → plan (lighter kind) | – | – | – |
 | plan_merged | plan → build (steps delivery: `steps`); else – | – | → build (steps delivery: `steps`) | – | from plan → build (steps delivery: `steps`) |
 | code_merged | build … merge → deploy; else – | – | – | → deploy | → deploy, unless it came from deploy … revert |
 | closed | → stopped | → stopped | → stopped | → stopped | → stopped |

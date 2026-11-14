@@ -23,6 +23,7 @@ import { ownerForge } from "../github/forge.ts";
 import { classifyFiles, type ProposedPr } from "../github/proposed.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { IntentStore } from "../intents/types.ts";
+import { isKind, kindChangeRefusal, WORK_KINDS } from "../kind.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
 import { grantScanning } from "../pipeline/alerts.ts";
 import { ownerMergeRefusal } from "../pipeline/teammate.ts";
@@ -55,6 +56,8 @@ export interface UiActions {
    * `owner` or none) may; a raise from any other actor is refused, and so is a lowering by the shadow.
    */
   autonomy?(intent: string, a: number, actor?: string): Promise<string>;
+  /** UI-283: set the intent's kind (INT-76); only the owner, and not past a stage the kind skips. */
+  kind?(intent: string, kind: string, actor?: string): Promise<string>;
   /**
    * FAST-1, FAST-9: put the intent in the fast lane or take it out. From the page (actor `owner` or none) or the
    * owner's own Telegram chat (`channel`, never taken from a request) it counts at once; the shadow is refused.
@@ -415,6 +418,20 @@ export function createActions(d: ActionDeps): UiActions {
       }
       recordChange(d.db, { intent: found.id, from: shown, to: a, at: d.clock.now() });
       return "Saved. Applies from the next gate.";
+    },
+
+    async kind(intent, kind, actor = "") {
+      if (d.actor === "shadow" || (actor !== "" && actor !== "owner"))
+        throw new Error("only you can change the kind");
+      if (!isKind(kind)) throw new Error(`Kind is one of ${WORK_KINDS.join(", ")}.`);
+      const found = await d.store.get(intent);
+      const m = unfinishedFor(d.db, found.id);
+      const refusal = m
+        ? kindChangeRefusal(kind, m.stage === "blocked" ? (m.from_stage ?? m.stage) : m.stage)
+        : null;
+      if (refusal) throw new Error(refusal);
+      command("kind", found.id, kind);
+      return `Saved: ${kind}. It applies from the next pass.`;
     },
 
     async fast(intent, on, actor = "", channel = "page") {

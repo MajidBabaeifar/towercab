@@ -1,6 +1,6 @@
 # Intents
 
-**Status:** Live: INT-1..44, INT-51..53, INT-60..68 · **Prefix:** INT
+**Status:** Live: INT-1..44, INT-51..53, INT-60..68, INT-76..77 · **Prefix:** INT
 
 ## Purpose
 
@@ -731,7 +731,7 @@ An intent can say what kind of work it is, and the kind decides how much of the 
 
 When an intent has no kind, Towercab reads it once and picks one, and the owner can see why and change it.
 
-- At `pick`, a mission whose intent has no `kind` runs the `kind` agent (no tools, `[agent].model`; its cost counts in the mission): it gets the intent text as data and returns `{kind, why}` (`why` is one plain line, at most 160 characters). The result is kept in the mission (`data.kind`, `data.kindWhy`); the intent file is not edited. A failed or invalid run counts as `feature`, the full path, and is noted on the timeline.
+- At the first step of the design stage, a mission whose intent has no `kind` runs the `kind` agent (no tools, `[agent].model`; its cost counts in the mission): it gets the intent text as data and returns `{kind, why}` (`why` is one plain line, at most 160 characters). The result is kept in the mission (`data.kind`, `data.kindWhy`); the intent file is not edited. A failed or invalid run counts as `feature`, the full path, and is noted on the timeline.
 - Doubt goes to the full path: the agent is told to answer `feature` unless the intent clearly fits a lighter kind. A `kind` set in the intent always wins over the inferred one, and a change from the page (UI-283) is written to the front matter and replaces it.
 - The code PR that builds this adds `agents/kind.md` and its row in the agents table of `pipeline.md` (PIP-76) together, since the spec check requires the table and the agent files to match.
 - A guessed kind takes effect at once: nothing waits for the owner to confirm it. The first PR of the mission (the plan PR for `bugfix`, `refactor` and `infra`, the spec PR for `spec-only`) says in plain words which kind was guessed and why, and that one reply switches it.

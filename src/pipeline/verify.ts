@@ -6,6 +6,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statS
 import { join } from "node:path";
 import { classifyRun } from "../faults.ts";
 import { type ChildEnd, type Ctx, EnvError, type Handler, type Progress } from "../handlers.ts";
+import { kindOf } from "../kind.ts";
 import { ok, red, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { glob } from "../repo/protected.ts";
@@ -110,6 +111,7 @@ export const verifyHandler: Handler = {
       };
     }
     if (m.step === "checks") return checks(cx, m);
+    if (m.step === "apply") return applyNext(cx, m);
     if (m.step === "shots") return shots(cx, m);
     if (m.step === "merge-review") return mergeReview(cx, m);
     return { done: { event: "bad_result", why: `unknown verify step ${m.step}` } };
@@ -140,17 +142,14 @@ export const verifyHandler: Handler = {
         if (env) throw new EnvError(env.kind, env.why);
         return failed(cx, m, "The checks failed.", log);
       }
-      const files = await repoFiles(cx, m);
-      // PIP-169: a merge made by code is read on its own diff before it goes on; no screenshots for it.
-      if (data(m).mech)
-        return mergeReview(
-          cx,
-          cx.record(m, "merge-review", {}, { verify: { log: tail(log, 2000), result: "green" } }),
-        );
-      if (files.verifying.screenshots)
-        return shots(cx, cx.record(m, "shots", {}, { verify: { log: tail(log, 2000), result: "green" } }));
-      return { done: ok({ data: { verify: { log: tail(log, 2000), result: "green" } } }) };
+      // PIP-229: an infra change is applied in the sandbox once the checks are green.
+      if (await hasApply(cx, m)) {
+        const green = { verify: { log: tail(log, 2000), result: "green" as const } };
+        return applyNext(cx, cx.record(m, "apply", {}, { ...green, applyAt: 0, applied: [] }));
+      }
+      return afterGreen(cx, m, log);
     }
+    if (m.step === "apply") return applyEnd(cx, m, end, log);
     if (m.step === "shots") {
       const dir = join(cx.checkout(m), ".towercab-shots");
       const n = data(m).n?.verify ?? 1;
@@ -175,6 +174,63 @@ export const verifyHandler: Handler = {
     return { done: { event: "bad_result", why: `unknown verify step ${m.step}` } };
   },
 };
+
+/** Green checks (and a green apply): a merge by code is read on its diff, else screenshots, else on. */
+async function afterGreen(cx: Ctx, m: Mission, log: string): Promise<Progress> {
+  const files = await repoFiles(cx, m);
+  const verify = { log: tail(log, 2000), result: "green" as const };
+  // PIP-169: a merge made by code is read on its own diff before it goes on; no screenshots for it.
+  if (data(m).mech) return mergeReview(cx, cx.record(m, "merge-review", {}, { verify }));
+  if (files.verifying.screenshots) return shots(cx, cx.record(m, "shots", {}, { verify }));
+  return { done: ok({ data: { verify } }) };
+}
+
+/** PIP-229: whether the plan of an infra mission has commands to apply. */
+async function hasApply(cx: Ctx, m: Mission): Promise<boolean> {
+  if (kindOf((await intentOf(cx, m)).kind, data(m)) !== "infra") return false;
+  return (data(m).plan?.apply?.length ?? 0) > 0;
+}
+
+/** PIP-229: run the next apply command in the sandbox, as the build's checks do; none left → on. */
+async function applyNext(cx: Ctx, m: Mission): Promise<Progress> {
+  const list = data(m).plan?.apply ?? [];
+  const i = data(m).applyAt ?? 0;
+  const next = list[i];
+  if (!next) return afterGreen(cx, m, data(m).verify?.log ?? "");
+  const n = data(m).n?.verify ?? 1;
+  return {
+    spawn: sandboxSpec(cx, m, {
+      kind: "apply",
+      lines: [next.command],
+      dir: cx.checkout(m),
+      cacheWritable: checksMayWrite(cx, m),
+      log: logPath(cx, m, "verify", `verify-${n}-apply-${i + 1}.log`),
+      timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
+    }),
+  };
+}
+
+/** PIP-229: record the command's result; a failure is a repair round like a red check. */
+async function applyEnd(cx: Ctx, m: Mission, end: ChildEnd, log: string): Promise<Progress> {
+  const list = data(m).plan?.apply ?? [];
+  const i = data(m).applyAt ?? 0;
+  const cmd = list[i]!;
+  const code = end.timedOut ? 124 : end.code;
+  const run = {
+    command: cmd.command,
+    why: cmd.why,
+    code,
+    secs: Math.round(end.runMs / 1000),
+    tail: tail(log, 2000).split("\n").slice(-20).join("\n"),
+  };
+  const applied = [...(data(m).applied ?? []), run];
+  if (code !== 0) {
+    const env = classifyRun(log);
+    if (env) throw new EnvError(env.kind, env.why);
+    return failed(cx, cx.record(m, "apply", {}, { applied }), `Applying \`${cmd.command}\` failed.`, log);
+  }
+  return applyNext(cx, cx.record(m, "apply", {}, { applied, applyAt: i + 1 }));
+}
 
 async function checks(cx: Ctx, m: Mission): Promise<Progress> {
   // PIP-167: a merge made by code runs the repo's full checks, not the fast subset.
