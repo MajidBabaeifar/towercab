@@ -126,16 +126,23 @@ export const takesSlotIn = (m: Mission, repo: string): boolean =>
 export function runBudget(
   agentUsd: number | null,
   capUsd: number,
-  m: Pick<Mission, "cost_usd">,
+  m: Pick<Mission, "cost_usd"> & { data?: string },
   multi: boolean,
 ): number | null {
   if (!multi) return agentUsd;
-  const left = capUsd - m.cost_usd;
+  const left = capUsd - spentOf(m);
   return agentUsd === null ? left : Math.min(agentUsd, left);
 }
 
 /** The cap is reached: every part stops at its next step and the mission asks once (LOOP-78). */
-export const capReached = (capUsd: number, m: Pick<Mission, "cost_usd">): boolean => m.cost_usd >= capUsd;
+export const capReached = (capUsd: number, m: Pick<Mission, "cost_usd"> & { data?: string }): boolean =>
+  spentOf(m) >= capUsd;
+
+/** What counts against the cap: the spend since the owner last let the parts carry on (`capBase`). */
+function spentOf(m: Pick<Mission, "cost_usd"> & { data?: string }): number {
+  const base = m.data ? Number(dataOf({ data: m.data } as Mission).capBase) || 0 : 0;
+  return m.cost_usd - base;
+}
 
 /** LOOP-80: the next part to merge: the first unmerged part whose `waitsOn` repos have all merged; null when none is ready. */
 export function nextToLand(parts: PartState[]): PartState | null {

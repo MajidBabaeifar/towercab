@@ -830,6 +830,8 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
                 : continueTo(cur.waiting, cur.from_stage);
         // LOOP-81: keeping a freeze waiting starts a new period.
         if (cur.waiting === "freeze") data.freezeFrom = now;
+        // LOOP-78: the owner's reply lets the parts carry on: the cap counts from the spend now.
+        if (cur.waiting === "worker budget" && multi) data.capBase = cur.cost_usd;
         if (o.text) data.answer = o.text;
         // LOOP-77: an answer is new, with words or without (the owner removed `waiting`).
         if (o.text || o.counted) data.answers = (Number(data.answers) || 0) + 1;
