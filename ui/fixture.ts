@@ -11,6 +11,8 @@ import { Db } from "../src/db.ts";
 import type { ProposedPr, ProposedState } from "../src/github/proposed.ts";
 import type { Clock } from "../src/handlers.ts";
 import { Home } from "../src/home.ts";
+import type { Draft } from "../src/intents/create.ts";
+import type { MatchKind } from "../src/intents/overlap.ts";
 import type { Intent, IntentStore, Listing, Unreadable } from "../src/intents/types.ts";
 import type { Stage } from "../src/machine.ts";
 import {
@@ -226,6 +228,8 @@ export interface FakeActionCall {
   /** UI-204: the urgency and importance asked for (null: left as it is). */
   u?: number | null;
   i?: number | null;
+  /** UI-216: the new intent form's title. */
+  title?: string;
 }
 
 export interface Fixture {
@@ -595,6 +599,92 @@ export function buildFixture(
     async features(repo) {
       calls.push({ action: "features", repo });
       return "Towercab reads the repo's README and specs and rewrites its live features within a few minutes.";
+    },
+
+    // UI-214, UI-216: the overlap check and the writer. A title that has a word of 5 letters or more in
+    // common with an intent overlaps it; a title with `FAIL` in it makes the check fail.
+    async checkIntent(draft: Draft) {
+      calls.push({ action: "checkIntent", repo: draft.repo, title: draft.title });
+      if (draft.title.includes("FAIL")) throw new Error("The overlap check failed: it timed out");
+      const words = draft.title
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w.length >= 5);
+      const matches = [...store.open, ...store.done]
+        .flatMap((i) => {
+          const hit = words.find((w) => i.title.toLowerCase().includes(w));
+          if (!hit) return [];
+          const kind: MatchKind = i.done
+            ? store.dropped.has(i.id)
+              ? "dropped"
+              : "done"
+            : priority(i.u, i.i) < config.intents.cutoff
+              ? "parked"
+              : "open";
+          const started = !i.done && i.stage !== null && i.stage !== "spec";
+          return [
+            {
+              kind,
+              ref: i.id,
+              title: i.title,
+              how: `Both are about “${hit}”`,
+              canAdd: !i.done && !started,
+              pastDesign: !i.done && started,
+            },
+          ];
+        })
+        .slice(0, 5);
+      return {
+        matches,
+        ...(draft.title.length < 20 ? { titleNote: "The title is shorter than a user story" } : {}),
+      };
+    },
+
+    async createIntent(draft: Draft, o) {
+      calls.push({
+        action: "createIntent",
+        repo: draft.repo,
+        title: draft.title,
+        ...(o.addTo ? { intent: o.addTo } : {}),
+      });
+      if (o.addTo) {
+        const found = store.open.find((i) => i.id === o.addTo);
+        if (!found) throw new Error(`no intent matches ${o.addTo}`);
+        if (found.stage !== null && found.stage !== "spec")
+          throw new Error(
+            `${found.id} is already past design, so new text would not change it. Write a new intent instead and link ${found.id} in it.`,
+          );
+        return {
+          id: found.id,
+          path: `${found.dir}/intent.md`,
+          added: true,
+          message: `Added to ${found.id}.`,
+        };
+      }
+      if (!draft.title.trim()) throw new Error("the title must be one non-empty line");
+      if (draft.title.includes("REFUSE")) throw new Error("The intents repo refused the push");
+      const id = `261109-${String(900 + store.open.length).padStart(4, "0")}-1`;
+      const made = makeIntent({
+        id,
+        title: draft.title,
+        repo: draft.repo,
+        u: draft.u ?? null,
+        i: draft.i ?? null,
+        a: draft.a ?? null,
+      });
+      // The fixture server has no roles, so a title with PROPOSAL in it stands for a contributor.
+      if (o.mode === "proposal" || draft.title.includes("PROPOSAL")) {
+        return {
+          id,
+          path: "",
+          added: false,
+          proposal: true,
+          pr: 301,
+          message: `Proposed ${id}. A maintainer will accept or close it.`,
+        };
+      }
+      store.open.push(made);
+      return { id, path: `${made.dir}/intent.md`, added: false, message: `Created ${id}.` };
     },
   };
 

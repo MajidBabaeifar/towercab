@@ -150,6 +150,14 @@ export function startLoopUi(loop: Loop, config: Config, github: Host, home: Home
       clock: loop.d.clock,
       github,
       proposed: () => loop.proposedState().list,
+      // UI-213..218, LOOP-125: the new intent form: the overlap check runs here, outside any mission and
+      // slot; a draining service refuses it; a contributor's proposal is opened as the App.
+      intentTools: {
+        home,
+        tools: loop.d.tools,
+        draining: () => loop.d.db.meta("draining") !== null,
+        proposal: { config, home, tools: loop.d.tools, github, who: "a contributor" },
+      },
       // REPO-16, REPO-19: the settings PR and the move, as the loop's own database, tools and forge do them.
       limits: {
         propose: (repo, changes, confirmed) => proposeSettings(settingsEnv(), repo, changes, confirmed),

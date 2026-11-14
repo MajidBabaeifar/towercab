@@ -69,6 +69,8 @@ export interface TopBar {
   budgetChip?: { text: string; level: "ok" | "amber" | "red"; note: string | null };
   version: { commit: string; behind: string | null };
   paused: boolean;
+  /** USR-5: what the person may do; absent without `[auth]`, where the one owner is a maintainer (UI-213). */
+  role?: "viewer" | "contributor" | "maintainer";
   /** No actions: the CLI serves the page without a loop (UI-2). */
   readOnly: boolean;
   /** A banner across the page, e.g. "Towercab isn't running". */
@@ -1104,4 +1106,22 @@ export interface ActionReply {
   /** UI-204: after a score change, the new priority and whether the intent is parked. */
   priority?: number;
   parked?: boolean;
+  /** UI-216: the overlap check's matches (`checkIntent`), and a note on a title that breaks the naming rule. */
+  matches?: {
+    kind: string;
+    ref: string;
+    title: string;
+    how: string;
+    url?: string;
+    canAdd?: boolean;
+    pastDesign?: boolean;
+  }[];
+  titleNote?: string;
+  /** UI-216: what `createIntent` wrote: the intent's ID and file, whether text was added to an existing one, or a proposal's pull request. */
+  id?: string;
+  path?: string;
+  added?: boolean;
+  proposal?: boolean;
+  pr?: number;
+  url?: string;
 }

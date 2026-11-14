@@ -51,6 +51,30 @@ export function addRepo(github: string, name?: string): Promise<ActionReply> {
   return post({ action: "addRepo", github, name });
 }
 
+/** What the new intent form sends (UI-216). */
+export interface IntentDraft {
+  repo: string;
+  title: string;
+  u?: number;
+  i?: number;
+  a?: number;
+  problem?: string;
+  outcome?: string;
+  affected?: string;
+  constraints?: string;
+  questions?: string;
+}
+
+/** UI-214: the overlap check; the reply lists the matches. */
+export function checkIntent(draft: IntentDraft): Promise<ActionReply> {
+  return post({ action: "checkIntent", ...draft });
+}
+
+/** UI-216: write the intent, or add its text to `addTo`. */
+export function createIntent(draft: IntentDraft, addTo?: string): Promise<ActionReply> {
+  return post({ action: "createIntent", ...draft, ...(addTo ? { addTo } : {}) });
+}
+
 /** UI-185: merge a proposed intent's PR, as the card showed it at `head`. */
 export function acceptProposed(pr: number, head: string): Promise<ActionReply> {
   return post({ action: "accept", pr, head });

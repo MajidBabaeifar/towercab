@@ -466,6 +466,43 @@ export class IntentFile implements IntentEdit {
     this.setSection("Answers", `${old ? `${old}\n` : ""}- ${answerTime(at)}: ${t}`);
   }
 
+  /**
+   * INT-74: add `text` to `## <title>` after a blank line, in place; a missing section is added before
+   * `## Towercab`, `## Answers` and `## Original title` (else last). Front matter and other lines stay as they are.
+   */
+  addToSection(title: string, text: string): void {
+    const t = text.trim();
+    if (!t) return;
+    const eol = this.eol;
+    const esc = t
+      .split("\n")
+      .map((raw) => {
+        const line = raw.replace(/\r$/, "");
+        return (line.startsWith("#") ? "\\" : "") + line;
+      })
+      .join(eol);
+    const body = this.body;
+    const all = spans(body);
+    const s = all.find((x) => x.title === title);
+    let next: string;
+    if (s) {
+      const tail = /\s*$/.exec(body.slice(s.content, s.end))![0];
+      const at = s.end - tail.length;
+      next = body.slice(0, at) + eol + eol + esc + (tail || eol) + body.slice(s.end);
+    } else {
+      const before = all.find((x) => ["Towercab", "Answers", "Original title"].includes(x.title));
+      if (before) {
+        let head = body.slice(0, before.start);
+        if (!head.endsWith(eol + eol)) head += head.endsWith(eol) ? eol : eol + eol;
+        next = `${head}## ${title}${eol}${eol}${esc}${eol}${eol}${body.slice(before.start)}`;
+      } else {
+        next = appendSection(body, title, text, eol);
+      }
+    }
+    checkFences(next, this.bodyLine);
+    this.body = next;
+  }
+
   /** LOOP-71: `setup: true` in the front matter (an unknown key, so it is read from the text). */
   private isSetup(): boolean {
     const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(this.render())?.[1] ?? "";

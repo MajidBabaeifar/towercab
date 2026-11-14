@@ -4965,3 +4965,117 @@ kbd {
   font-size: 0.85rem;
   color: var(--muted, inherit);
 }
+
+/* New intent (UI-213..218) */
+
+.new-intent {
+  width: min(640px, 100%);
+}
+
+.new-intent-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+.new-intent-form label {
+  font-weight: 500;
+}
+
+.new-intent-form input,
+.new-intent-form select,
+.new-intent-form textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font: inherit;
+}
+
+.new-intent-form input:focus-visible,
+.new-intent-form select:focus-visible,
+.new-intent-form textarea:focus-visible {
+  outline-offset: 0;
+  border-color: var(--focus);
+}
+
+.new-intent-scores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+.new-intent-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.overlaps ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: 0;
+  list-style: none;
+}
+
+.overlaps li {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding-bottom: var(--s1);
+  border-bottom: 1px solid var(--line);
+}
+
+.banner-ok {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1);
+}
+
+@media (max-width: 480px) {
+  .modal-back:has(.new-intent) {
+    padding-top: var(--s1);
+  }
+
+  .new-intent {
+    max-height: 94vh;
+  }
+}
+
+.new-intent-form .seg {
+  align-items: center;
+  justify-content: center;
+}
+
+/* UI-274: on a phone the top bar keeps two rows, so the button floats instead (outside the bar). */
+.new-intent-fab {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  .topbar .new-intent-btn {
+    display: none;
+  }
+
+  .new-intent-fab {
+    position: fixed;
+    right: var(--s2);
+    bottom: var(--s2);
+    z-index: 40;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 52px;
+    height: 52px;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 28px;
+    line-height: 1;
+    box-shadow: var(--shadow-pop);
+  }
+}

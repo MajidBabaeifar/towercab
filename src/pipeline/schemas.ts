@@ -206,6 +206,18 @@ export const OBSERVER_SCHEMA = object({
   ),
 });
 
+/** INT-73: which intents overlap a draft, and how. */
+export const OVERLAP_SCHEMA = object({
+  matches: list(
+    object({
+      kind: { type: "string", enum: ["open", "parked", "done", "dropped", "pr"] },
+      ref: S,
+      how: S,
+    }),
+  ),
+  title_note: S,
+});
+
 export const SCHEMAS = {
   design: DESIGN_SCHEMA,
   plan: PLAN_SCHEMA,
@@ -217,6 +229,7 @@ export const SCHEMAS = {
   features: FEATURES_SCHEMA,
   shadow: SHADOW_SCHEMA,
   observer: OBSERVER_SCHEMA,
+  overlap: OVERLAP_SCHEMA,
 };
 
 export interface Access {
@@ -360,6 +373,13 @@ export interface Results {
   features: { features: string[] };
   shadow: ShadowResult;
   observer: ObserverResult;
+  overlap: OverlapResult;
+}
+
+export interface OverlapResult {
+  matches: { kind: "open" | "parked" | "done" | "dropped" | "pr"; ref: string; how: string }[];
+  /** Set only when the title breaks the naming rule; empty otherwise. */
+  title_note: string;
 }
 
 export interface ObserverFinding {

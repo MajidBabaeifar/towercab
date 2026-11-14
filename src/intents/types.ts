@@ -94,6 +94,8 @@ export interface IntentEdit {
   removeField(key: string): void;
   /** Replace `## <title>` whole; empty text removes it. */
   setSection(title: string, text: string): void;
+  /** INT-74: add text to `## <title>` in place (a missing section goes before Towercab's own); the rest stays byte-identical. */
+  addToSection(title: string, text: string): void;
   /** Append `- <time>: <text>` to `## Answers`. */
   addAnswer(text: string, at: Date): void;
   /** Replace the title line only (INT-34). */
