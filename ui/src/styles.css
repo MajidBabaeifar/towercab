@@ -3005,10 +3005,22 @@ a.pr-tile:hover {
     font-size: var(--t-xs);
   }
 
+  /* One line whatever the font: the counts clip, "Updated" keeps its room. */
   .counts {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
     gap: 0 var(--s1);
+  }
+
+  .counts > :not(.fresh) {
+    flex-shrink: 1;
+    min-width: 0;
+  }
+
+  .counts .fresh {
+    flex-shrink: 0;
   }
 
   /* The slots note goes (its tooltip stays on wider screens) so "Updated" fits the line. */
