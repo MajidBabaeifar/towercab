@@ -13,7 +13,9 @@ import { AccountMenu } from "./AccountMenu.tsx";
 import { act, useLive } from "./api.ts";
 import { ErrorNote, Freshness, Skeleton } from "./components.tsx";
 import { Alert, Logo, Pause, Play, Spinner } from "./icons.tsx";
+import { openNewIntent } from "./keys.ts";
 import { type Me, useMe } from "./me.ts";
+import { NewIntentHost } from "./NewIntent.tsx";
 import { Palette } from "./Palette.tsx";
 import { ActivityPage } from "./pages/Activity.tsx";
 import { AdminPage } from "./pages/Admin.tsx";
@@ -153,6 +155,11 @@ function TopBar({ top, path, me }: { top: Top | null; path: string; me: Me | nul
             )}
           </p>
         ) : null}
+        {top && !top.readOnly && top.role !== "viewer" ? (
+          <button type="button" class="btn primary new-intent-btn" onClick={openNewIntent}>
+            New intent
+          </button>
+        ) : null}
         {top ? <PauseButton top={top} /> : null}
         {me?.auth ? <AccountMenu me={me} /> : null}
       </div>
@@ -289,6 +296,7 @@ function App({ me }: { me: Me }) {
       {page}
       <Shortcuts />
       <Palette top={top} />
+      <NewIntentHost top={top} />
     </>
   );
 }

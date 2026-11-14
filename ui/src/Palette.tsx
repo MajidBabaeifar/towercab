@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { InboxPage, Overview, ReposPage, TopBar } from "../../src/ui/view.ts";
 import { act, useLive } from "./api.ts";
-import { PALETTE_EVENT } from "./keys.ts";
+import { openNewIntent, PALETTE_EVENT } from "./keys.ts";
 import { Modal } from "./Modal.tsx";
 import { navigate } from "./router.tsx";
 
@@ -81,6 +81,17 @@ function PaletteBox({ top, close }: { top: TopBar | null; close(): void }) {
     for (const [name, href] of PAGES)
       out.push({ key: `c:${name}`, group: "Commands", label: `go to ${name}`, run: go(href) });
     out.push({ key: "c:settings", group: "Commands", label: "open settings", run: go("/repos") });
+    if (top && !top.readOnly && top.role !== "viewer") {
+      out.push({
+        key: "c:new-intent",
+        group: "Commands",
+        label: "new intent",
+        run: () => {
+          openNewIntent();
+          return null;
+        },
+      });
+    }
     if (top && !top.readOnly) {
       const paused = top.paused;
       out.push({
