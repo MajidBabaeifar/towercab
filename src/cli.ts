@@ -122,7 +122,7 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   ui [--no-open]                  open the web page
   specs check-ids [--base <ref>] [--prs <file>]
                                   fail when a spec adds a requirement ID the base branch or another open PR has
-  doctor [--quick] [--for-update] what is missing (--for-update: loose key files only warn)
+  doctor [--quick]                what is missing (--quick: loose key files only warn)
   update                          update this checkout to the latest main now
 `;
 
@@ -363,7 +363,9 @@ async function run(
           tools,
           github: null,
           quick: true,
-          forUpdate: Boolean(v["for-update"]),
+          // LOOP-145: the quick check is the self-update's, and an older Towercab calls it without
+          // `--for-update`: a loose secrets file is a warning here whether or not the flag is given.
+          forUpdate: true,
         });
         process.stdout.write(`${r.lines.join("\n")}\n`);
         return r.ok ? 0 : 1;
