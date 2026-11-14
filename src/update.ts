@@ -215,10 +215,13 @@ export async function checkUpdate(d: UpdateDeps): Promise<UpdateResult> {
       ? null
       : `${cmd} ${args.join(" ")}: ${(r.stderr || r.stdout).trim().split("\n").pop()}`;
   };
+  // LOOP-145: `doctor --quick` already only warns about a loose secrets file, flag or not; a main
+  // checkout's update names the flag, a release or tag move (LOOP-150..152) runs the plain quick check.
+  const doctorArgs = release || onTag ? ["doctor", "--quick"] : ["doctor", "--quick", "--for-update"];
   const failure =
     (lockChanged ? await step("npm", ["ci", "--no-audit", "--no-fund"]) : null) ??
     (uiChanged || lockChanged ? await step("npm", ["run", "build:ui"]) : null) ??
-    (await step(join(d.checkout, "bin", "towercab"), ["doctor", "--quick", "--for-update"]));
+    (await step(join(d.checkout, "bin", "towercab"), doctorArgs));
   if (failure) {
     await back();
     if (lockChanged) await step("npm", ["ci", "--no-audit", "--no-fund"]);
