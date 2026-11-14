@@ -25,6 +25,7 @@ import {
   setFeaturesRun,
 } from "./features.ts";
 import type { GitLabForge } from "./forge/gitlab.ts";
+import { queueTokenNotice } from "./forge/gitlab-token.ts";
 import { isGitlab } from "./forge/types.ts";
 import { MERGE_METHOD } from "./forge.ts";
 import {
@@ -39,6 +40,7 @@ import {
   releaseRequested,
   reversalMarker,
   reversalRequested,
+  staleApprovalNotices,
   type TeamReads,
 } from "./github/events.ts";
 import { pollIssues } from "./github/issues.ts";
@@ -349,6 +351,8 @@ export class Loop {
     await this.pollIntents(true);
     await this.pollProposed(true);
     this.startIssues(true);
+    // GL-17: once per start, the token's expiry; the notice is keyed by its date, so it is sent once.
+    if (this.d.gitlab) await queueTokenNotice(this.d.gitlab, db, this.now);
   }
 
   /**
@@ -1519,6 +1523,11 @@ export class Loop {
                 : APPROVE_NOTICE.waiting;
             await this.d.github.commentOnPr(repo.github, ask.pr, `${ask.marker}\n${text}`);
           }
+        }
+        // GL-15: an approval given before the last push never counts: say so once.
+        for (const ask of staleApprovalNotices(m, prs, bot)) {
+          const target = ask.kind === "plan" ? intentsRepo! : repo.github;
+          await this.d.github.commentOnPr(target, ask.pr, `${ask.marker}\n${ask.text}`);
         }
         // AUT-32: on an owner-only intent a reply from anyone else is ignored (PIP-44) and noted once.
         const listed = this.listing?.open.find((i) => i.id === m.intent);

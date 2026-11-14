@@ -1,6 +1,6 @@
 # GitLab
 
-**Status:** Live: GL-1, GL-10, GL-11, GL-12 · **Prefix:** GL
+**Status:** Live: GL-1, GL-10, GL-11, GL-12, GL-17 · **Prefix:** GL
 
 ## Purpose
 

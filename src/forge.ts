@@ -205,6 +205,8 @@ export interface PrState {
   reviewDecision?: string;
   base?: string;
   reviews: PrReview[];
+  /** GL-15: approvals given before the last push (or whose time can't be read); they never count. RFC 3339, `""` if unreadable. */
+  staleApprovals?: { author: string; at: string; pushedAt: string }[];
   /** Conversation comments, then review comments. */
   comments: PrComment[];
 }

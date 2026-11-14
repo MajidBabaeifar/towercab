@@ -339,9 +339,16 @@ export class GitLabForge {
     if (!isObj(mr)) throw new Error("GitLab sent no merge request");
     const v = viewOf(mr);
     const comments: PrComment[] = [];
+    // GL-15: when each person approved, from GitLab's own "approved this merge request" notes.
+    const approvedNote = new Map<string, string>();
     for (const d of await this.list(this.mr(slug, iid, "/discussions"))) {
       for (const n of arr(d.notes)) {
-        if (n.system === true) continue;
+        if (n.system === true) {
+          const who = isObj(n.author) ? str(n.author.username) : "";
+          if (who && /^approved this merge request/i.test(str(n.body)))
+            approvedNote.set(who, str(n.created_at));
+          continue;
+        }
         const pos = isObj(n.position) ? n.position : null;
         const line = pos ? (pos.new_line ?? pos.old_line) : undefined;
         const path = pos ? str(pos.new_path) || str(pos.old_path) : "";
@@ -357,11 +364,21 @@ export class GitLabForge {
     }
     const reviews: PrReview[] = [];
     const ap = await this.call("GET", this.mr(slug, iid, "/approvals"));
+    const staleApprovals: { author: string; at: string; pushedAt: string }[] = [];
     if (ap.status >= 200 && ap.status < 300 && isObj(ap.json)) {
-      for (const a of arr(ap.json.approved_by)) {
+      const given = arr(ap.json.approved_by).flatMap((a) => {
         const user = isObj(a.user) ? str(a.user.username) : "";
-        if (user)
-          reviews.push({ author: user, state: "APPROVED", body: "", at: str(mr.updated_at), commit: v.head });
+        return user ? [{ user, at: str(a.approved_at) || approvedNote.get(user) || "" }] : [];
+      });
+      // GL-15: the push time is when GitLab received the newest commit, the newest version's `created_at`.
+      const pushedAt = given.length ? await this.pushedAt(slug, iid) : "";
+      const push = Date.parse(pushedAt);
+      for (const { user, at } of given) {
+        const t = Date.parse(at);
+        // Strictly later than the push; an equal or unreadable time does not count.
+        if (Number.isNaN(t) || Number.isNaN(push) || t <= push)
+          staleApprovals.push({ author: user, at, pushedAt });
+        else reviews.push({ author: user, state: "APPROVED", body: "", at, commit: null });
       }
     }
     const conflicts = mr.has_conflicts === true || v.status === "conflict";
@@ -378,8 +395,25 @@ export class GitLabForge {
       body: str(mr.description),
       isDraft: v.draft,
       reviews,
+      ...(staleApprovals.length ? { staleApprovals } : {}),
       comments,
     };
+  }
+
+  /** GL-15: `created_at` of the newest entry of the merge request's versions; `""` when unreadable. */
+  private async pushedAt(slug: string, iid: number): Promise<string> {
+    const r = await this.call("GET", this.mr(slug, iid, "/versions"));
+    if (!(r.status >= 200 && r.status < 300) || !Array.isArray(r.json)) return "";
+    let newest = "";
+    let at = Number.NaN;
+    for (const x of arr(r.json)) {
+      const t = Date.parse(str(x.created_at));
+      if (!Number.isNaN(t) && (Number.isNaN(at) || t > at)) {
+        at = t;
+        newest = str(x.created_at);
+      }
+    }
+    return newest;
   }
 
   private issue(slug: string, iid: number, tail = ""): string {
