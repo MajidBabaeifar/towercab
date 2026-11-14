@@ -44,6 +44,8 @@ import { type Access, type Question, type ReviewResult, SCHEMAS, withReply } fro
 export interface ShipData {
   /** The intent's merge commits, oldest first. */
   merges: string[];
+  /** What the platform says the deploy waits on, and since when (unix s; SHIP-38). */
+  pending?: { why: string; at: number };
   /** When the current wait for a deploy began (unix s). */
   since?: number;
   /** Fix rounds after a rollback (SHIP-11). */
@@ -343,7 +345,7 @@ export function cloneOf(cx: Ctx, m: Mission): string {
 /** The repo files from the base branch of Towercab's clone (REPO-1). */
 export async function repoFiles(cx: Ctx, m: Mission): Promise<RepoFiles> {
   try {
-    const files = await loadRepoFiles(cx.tools, cloneOf(cx, m), cx.repo(m).base);
+    const files = await loadRepoFiles(cx.tools, cloneOf(cx, m), cx.repo(m).base, cx.repo(m).github);
     // UI-257: the page shows a repo's cap beside the autonomy control.
     cx.db.setMeta(`a-cap:${m.repo}`, String(files.towercab.maxAutonomy));
     return files;

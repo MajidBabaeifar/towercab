@@ -1,6 +1,6 @@
 # Ship
 
-**Status:** Live: SHIP-1..22, SHIP-30..32, SHIP-33..36 · **Prefix:** SHIP
+**Status:** Live: SHIP-1..22, SHIP-30..32, SHIP-33..36, SHIP-37..39 · **Prefix:** SHIP
 
 ## Purpose
 
@@ -108,6 +108,9 @@ After the merge, Towercab waits until the platform says the merge commit is live
   counts. No `live` block → `skip`. Else the merge commit joins `data.ship.merges`, and `outcome`
   is read every `ci_poll`: live → `ok`; failed → `red` "the deploy failed: <reason>"; `timeout`
   minutes after entering → `red` "not live after <n> minutes".
+- When the adapter says why the deploy is pending ([SHIP-38](#ship-38--a-deploy-waiting-for-approval-is-pending)),
+  the reason is kept in `data.ship.pending`, shown on the intent page's wait line, and sent to the owner once
+  when the wait has lasted 5 minutes (outbox key `deploy-pending:<mission>:<since>`).
 - Verified by: `ship: deploy waits for the merge commit`, `ship: a failed deploy is red`, `ship: no deploy in time is red`, `ship: a live block merged meanwhile counts`
 
 ### SHIP-8 · Every change brings its e2e tests

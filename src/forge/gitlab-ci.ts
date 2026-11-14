@@ -9,6 +9,9 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
 /** GitLab refused to retry a pipeline (GL-12); the message is GitLab's reason. */
 export class RetryRefused extends Error {}
 
+/** GitLab refused to run a deploy job again because it is outdated (SHIP-37). */
+export class OutdatedJob extends Error {}
+
 /** An RFC 3339 time as Unix seconds, or null. */
 export function unix(s: unknown): number | null {
   const t = typeof s === "string" ? Date.parse(s) : Number.NaN;
