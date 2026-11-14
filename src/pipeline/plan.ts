@@ -24,6 +24,7 @@ import {
   data,
   effectiveOf,
   ended,
+  gateLevelOf,
   grantedFromPlan,
   intentOf,
   mustForge,
@@ -413,7 +414,7 @@ async function gateStep(cx: Ctx, m: Mission): Promise<Progress> {
   if (risk === undefined) return spawnRisk(cx, m, "plan");
   const intent = await intentOf(cx, m);
   const files = await repoFiles(cx, m);
-  const a = effectiveOf(m, intent, files);
+  const a = gateLevelOf(cx, m, intent, files);
   const level = risk?.level ?? null;
   // PIP-115: a plan that lists existing tests to change is the owner's to merge, at every a.
   const tests = (data(m).plan?.access.tests?.length ?? 0) > 0;

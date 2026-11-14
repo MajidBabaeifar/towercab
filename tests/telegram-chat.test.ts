@@ -329,8 +329,8 @@ describe("telegram: pause, resume and help", () => {
     rig.say("hello");
     await rig.run();
     expect(rig.sent().map((s) => s.text)).toEqual([
-      "I understand /status, /focus, /queue, /pause and /resume. Reply to a question to answer it.",
-      "I understand /status, /focus, /queue, /pause and /resume. Reply to a question to answer it.",
+      "I understand /status, /focus, /queue, /pause, /resume and /fast. Reply to a question to answer it.",
+      "I understand /status, /focus, /queue, /pause, /resume and /fast. Reply to a question to answer it.",
     ]);
   });
 

@@ -13,6 +13,7 @@ import { removeCheckout } from "./checkout.ts";
 import { applyPending, intentPaused, noteIgnored, paused, recordAgentComment } from "./commands.ts";
 import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
+import { watchFast } from "./fast-watch.ts";
 import { fixFor, Health } from "./faults.ts";
 import {
   BackfillError,
@@ -1070,6 +1071,10 @@ export class Loop {
     const listing = this.listing;
     const db = this.d.db;
     await watchAutonomy(
+      { db, store: this.d.store, forge: this.d.github, now: this.now, log: this.d.log },
+      listing,
+    );
+    await watchFast(
       { db, store: this.d.store, forge: this.d.github, now: this.now, log: this.d.log },
       listing,
     );
