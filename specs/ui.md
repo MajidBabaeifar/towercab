@@ -100,6 +100,42 @@ An intent's page says what kind of work it is, which stages that kind skips, and
 - A control on the page sets the kind to one of the five values (INT-76) with `POST /api/actions` `{action: "set-kind", id, kind}` (UI-66, `actor: owner`), writing `kind` into the intent's front matter (INT-5). It is offered only for a stage that has not started; a kind that would lighten a mission already past a skipped stage is refused with the reason. For an `a0` intent only the owner can do it (AUT-32); a viewer never sees it (USR).
 - Verified by: `ui: the intent page shows the kind and the skipped stages`, `ui: the owner sets the kind from the page`, `ui: a kind change past the skipped stage is refused`, `ui: a viewer cannot set the kind`
 
+### UI-284 · A wait card says why it waits and links to the autonomy control
+
+A card that waits for the owner because of the intent's autonomy says so in plain words, says what Towercab would do at the next level, and links to where the level is changed.
+
+- Needs-you cards, the Board's waiting cards and the intent page show AUT-37's `why` and `next` right under the ask, in the plain words of AUT-36 (`Waiting because this intent asks you before merging plans (Ask at every gate, a2). At Merges when safe (a4) Towercab would merge it itself.`). A wait with another cause shows that cause only (AUT-37 returns nothing).
+- A link `Change autonomy` goes to the autonomy control (UI-257) on the intent's page, scrolled to it and focused; on the page itself it focuses the control. Raising still opens UI-257's confirm step, so the link changes nothing by itself and never raises on its own.
+- Counts as people part (UI-281): at most two sentences, no field names. Fits 360 px, light and dark.
+- Verified by: `ui: a wait card says which autonomy level caused it`, `ui: a wait card names what the next level would do`, `ui: the change autonomy link focuses the control`, `ui: a wait with another cause shows no autonomy text`
+
+### UI-285 · Autonomy shows its plain name everywhere
+
+Wherever the page shows an intent's autonomy, it shows the level's plain name, and the sentence is one hover or tap away.
+
+- The control (UI-257) labels its six choices with the names of AUT-36 (`a3 · Specs on its own`; at 360 px the short `a3` with the name under the chosen one), and each choice carries the sentence as its tooltip and `aria-description`. The raise confirm step (UI-257) names the level by name (`Raise to Merges when safe (a4)?`). The flag card (UI-258), cap text (`capped at a<n> by the repo`, UI-257), Activity rows (UI-64), Boost's confirm (UI-205), cards, the Board, Inbox and the create form (UI-203's autonomy choices) use the name too.
+- The grey `autonomy 2` metadata text is removed from cards and the page; the name replaces it.
+- Verified by: `ui: the autonomy control shows level names and sentences`, `ui: cards and the page show the name instead of autonomy n`, `ui: the raise confirmation names the level by name`, `ui: the flag card and activity use level names`
+
+### UI-286 · Stop now ends one intent's running agent
+
+The intent's page and card have a "Stop now" button that ends the agent working on that intent and holds the intent until the owner resumes it.
+
+- Shown only while a child (Claude run, check or setup) of that intent's mission is running. Its confirm step says what happens: `Stop the agent working on this intent now? Work it did is kept and it continues from where it stopped when you resume.` with "Stop now" and "Cancel". It posts `{action: "stop-now", id}` with `actor: owner` (UI-66); a `commands` row (LOOP-15) with the intent's id.
+- The loop applies it on its next pass like LOOP-114 does for everything: SIGTERM to that mission's child process group, SIGKILL after 10 s. The mission gets `interrupted`, which counts as no crash, repair or timeout (LOOP-7), and the other missions' children run on. It then holds like a per-intent pause (SHD-22, UI-239), so the next step doesn't start the agent again; the card says `Stopped by you` with a "Resume" button, and nothing is sent to the owner.
+- Resume continues a cut-off Claude run in its own session and runs a cut-off check again from its start (LOOP-114). The intent stays at its stage and keeps its counters.
+- This is not the global pause and not a drop: the intent and its branch stay as they are. The command line keeps refusing `pause <id> --now` (LOOP-114); only the page offers this. For an a0 intent only the owner can do it (AUT-32); who may press it follows who may pause that intent (UI-239, USR), and a viewer never sees it. Not offered with nothing running, and a second press while stopping shows `Stopping…` with a spinner (UI-282).
+- Recorded in the Activity page (UI-64) as kind `settings`, `stopped by you`, with the time.
+- Verified by: `ui: a running card offers stop now and nothing else does`, `ui: stop now asks for a confirmation`, `ui: stop now ends only that intent's agent`, `ui: a stopped intent holds and resume continues its session`, `ui: stop now shows stopping until it applied`, `ui: a viewer cannot stop an agent`, `loop: a stop now row interrupts one mission without a crash`
+
+### UI-287 · A running card says what the agent does next and what it may reach
+
+A card whose agent is running says what step comes next and what the agent can reach, in plain words.
+
+- The card (Board, overview and working rows, intent page) shows `Next: <plain stage name> (UI-56)` taken from the stage map's path for this kind (UI-272), or `Next: waiting for you` when the next step is a wait, and `May reach:` with one line from AUT-14 for the effective level (AUT-8): the network (default domains plus the plan's and the owner's grants, counted, with the full list on hover or tap), the protected paths it may write (none, only those the plan grants, or any), and `anything else it asks you first` (AUT-15). It is computed from the same grants the sandbox gets, so it can't differ from them.
+- `GET /api/state` carries `running: {next, reach: {network: [domain], paths: "none"|"planned"|"any"}}` for each running mission, null otherwise. Hidden for a mission that is not running. Fits 360 px, light and dark.
+- Verified by: `ui: a running card shows the next step`, `ui: a running card shows what the agent may reach`, `ui: reach follows the effective level and the plan's grants`, `ui: nothing is shown when the mission is not running`
+
 ### UI-58 · Needs you
 
 Each thing waiting on the owner is one card that says what is asked, why, and offers only the
