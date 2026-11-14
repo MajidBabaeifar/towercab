@@ -109,6 +109,15 @@ function headerNames(path: string): string[] {
  * file stays byte-identical. Refuses, and writes nothing, if the result would not parse.
  */
 export function setBudgetKey(file: string, path: string, key: string, value: number | null): void {
+  setConfigKey(file, path, key, value);
+}
+
+/** A value `setConfigKey` can write: a number, a boolean or a plain string. */
+export type ConfigValue = number | boolean | string;
+
+/** `setBudgetKey` for any simple value (USR-14): the same line-only edit, the same read-back check. */
+export function setConfigKey(file: string, path: string, key: string, value: ConfigValue | null): void {
+  const shown = value === null ? "" : typeof value === "string" ? JSON.stringify(value) : String(value);
   const text = readFileSync(file, "utf8");
   const lines = text.split(/(?<=\n)/);
   const names = headerNames(path);
@@ -120,7 +129,7 @@ export function setBudgetKey(file: string, path: string, key: string, value: num
     if (value === null) return;
     const sep = text === "" || text.endsWith("\n") ? "" : eol;
     lines.push(
-      `${sep}${text === "" ? "" : eol}[${names[/^[\w-]+$/.test(path.replace(/^budget\./, "")) ? 0 : names.length - 1]!}]${eol}${key} = ${value}${eol}`,
+      `${sep}${text === "" ? "" : eol}[${names[/^[\w-]+$/.test(path.replace(/^budget\./, "")) ? 0 : names.length - 1]!}]${eol}${key} = ${shown}${eol}`,
     );
   } else {
     let end = lines.findIndex((l, n) => n > start && /^\s*\[/.test(l));
@@ -131,14 +140,14 @@ export function setBudgetKey(file: string, path: string, key: string, value: num
       else {
         const l = lines[at]!;
         const m = /^(\s*[^=]+=\s*)([^#\r\n]*?)(\s*#.*?)?(\r?\n?)$/.exec(l);
-        if (m) lines[at] = `${m[1]}${value}${m[3] ?? ""}${m[4]}`;
+        if (m) lines[at] = `${m[1]}${shown}${m[3] ?? ""}${m[4]}`;
       }
     } else if (value !== null) {
       let last = end - 1;
       while (last > start && lines[last]!.trim() === "") last--;
       const before = lines[last]!;
       if (!before.endsWith("\n")) lines[last] = `${before}${eol}`;
-      lines.splice(last + 1, 0, `${key} = ${value}${eol}`);
+      lines.splice(last + 1, 0, `${key} = ${shown}${eol}`);
     }
   }
   const next = lines.join("");

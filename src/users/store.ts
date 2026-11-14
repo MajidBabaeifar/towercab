@@ -23,6 +23,8 @@ export interface PersonRow extends User {
   added: number;
   disabledAt: number | null;
   lastSeen: number | null;
+  /** The linked Telegram chat (USR-11); null when none. */
+  telegramChat: string | null;
 }
 
 /** What an admin may set when adding or changing a person. */
@@ -67,6 +69,7 @@ function toUser(r: UserRow): PersonRow {
     added: r.added,
     disabledAt: r.disabled_at,
     lastSeen: r.last_seen,
+    telegramChat: r.telegram_chat,
   };
 }
 
@@ -91,7 +94,14 @@ export function userEvents(db: Db, limit = 100): UserEvent[] {
   return db.all<UserEvent>("SELECT * FROM user_events ORDER BY id DESC LIMIT ?", limit);
 }
 
-function record(db: Db, now: number, actor: string, action: string, target: string, detail: string): void {
+export function record(
+  db: Db,
+  now: number,
+  actor: string,
+  action: string,
+  target: string,
+  detail: string,
+): void {
   db.run(
     "INSERT INTO user_events (at, actor, action, target, detail) VALUES (?, ?, ?, ?, ?)",
     now,
@@ -228,5 +238,87 @@ export function removeUser(db: Db, by: User, login: string, now: number): void {
     revokeSessions(db, who, now);
     db.run("DELETE FROM users WHERE login = ?", who);
     record(db, now, by.login, "remove", who, "");
+  });
+}
+
+export interface Team {
+  name: string;
+  role: Role;
+}
+
+/** USR-2: the named GitHub team (`org/team`) and the role its members get; null when none is named. */
+export function getTeam(db: Db): Team | null {
+  const name = db.meta("auth_team");
+  if (!name) return null;
+  const role = db.meta("auth_team_role");
+  return { name, role: isRole(role) ? role : "viewer" };
+}
+
+/** USR-2, USR-14: name the team (null clears it). A team lifts people no higher than contributor. */
+export function setTeam(db: Db, by: User, team: { name: string; role?: Role } | null, now: number): void {
+  requireAdmin(by);
+  if (!team) {
+    db.tx(() => {
+      db.delMeta("auth_team");
+      db.delMeta("auth_team_role");
+      record(db, now, by.login, "team", "", "cleared");
+    });
+    return;
+  }
+  if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(team.name)) throw new Error("the team must be org/team");
+  const role = team.role ?? "viewer";
+  if (!isRole(role)) throw new Error(`${role} isn't a role (${ROLES.join(", ")})`);
+  if (role === "maintainer" || role === "admin") {
+    throw new Error(`a team can't give ${role}: the most it gives is contributor`);
+  }
+  db.tx(() => {
+    db.setMeta("auth_team", team.name);
+    db.setMeta("auth_team_role", role);
+    record(db, now, by.login, "team", team.name, role);
+  });
+}
+
+export interface SessionRow {
+  id: number;
+  login: string;
+  created: number;
+  lastSeen: number;
+}
+
+/** USR-4, UI-224: the sessions that can still be used at `now` (not revoked, inside both limits). */
+export function openSessions(db: Db, now: number, idleS: number): SessionRow[] {
+  return db
+    .all<{ id: number; login: string; created: number; last_seen: number }>(
+      "SELECT id, login, created, last_seen FROM sessions WHERE revoked_at IS NULL AND expires > ? AND last_seen > ? ORDER BY login, id",
+      now,
+      now - idleS,
+    )
+    .map((r) => ({ id: r.id, login: r.login, created: r.created, lastSeen: r.last_seen }));
+}
+
+/** USR-4, USR-14: an admin ends one session. */
+export function revokeSession(db: Db, by: User, id: number, now: number): void {
+  requireAdmin(by);
+  db.tx(() => {
+    const s = db.get<{ login: string }>("SELECT login FROM sessions WHERE id = ? AND revoked_at IS NULL", id);
+    if (!s) throw new Error("that session is already over");
+    db.run("UPDATE sessions SET revoked_at = ? WHERE id = ?", now, id);
+    record(db, now, by.login, "revoke", s.login, `session ${id}`);
+  });
+}
+
+/** USR-14: an admin ends all of a person's sessions; `keep` (their own current one) stays. */
+export function revokeAll(db: Db, by: User, login: string, now: number, keep?: number): number {
+  requireAdmin(by);
+  const who = lower(login);
+  return db.tx(() => {
+    const n = db.run(
+      "UPDATE sessions SET revoked_at = ? WHERE login = ? AND revoked_at IS NULL AND id IS NOT ?",
+      now,
+      who,
+      keep ?? null,
+    ).changes;
+    record(db, now, by.login, "revoke", who, `${n} session${n === 1 ? "" : "s"}`);
+    return n;
   });
 }

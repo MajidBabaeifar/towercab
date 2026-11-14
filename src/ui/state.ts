@@ -47,6 +47,7 @@ import {
 } from "../slots.ts";
 import type { OwnerStep, SecretSpec } from "../steps.ts";
 import { whoText } from "../teammates.ts";
+import { getUser } from "../users/store.ts";
 import { budgetsView, capCards, topBudget } from "./budget-view.ts";
 import { estimateFor, estimateLine, frozenEstimate } from "./estimate.ts";
 import { proposedSection } from "./proposed.ts";
@@ -174,6 +175,16 @@ export interface UiSources {
   logs?(): LogLine[];
 }
 
+/** USR-8: the person behind a move or card for the page ("Ana · page"); nothing for Towercab's own steps. */
+export function personOf(
+  db: Db,
+  login: string | null | undefined,
+  via: string | null | undefined,
+): { actor?: { login: string; name: string; via: string | null } } {
+  if (!login || login === "towercab") return {};
+  return { actor: { login, name: getUser(db, login)?.name || login, via: via ?? null } };
+}
+
 export interface Transition {
   id: number;
   mission: number;
@@ -182,6 +193,9 @@ export interface Transition {
   event: string;
   to_stage: Stage;
   why: string | null;
+  /** USR-8: who (a GitHub login, or `towercab`) and through which channel; null for rows from before. */
+  actor?: string | null;
+  via?: string | null;
 }
 
 const DAY = 86_400;
@@ -2509,6 +2523,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
         why: t.to_stage === "stopped" ? null : t.why,
         lasted: next ? duration(next.at - t.at) : null,
         tone: t.to_stage === "done" ? "done" : kind === "log" ? "move" : kind,
+        ...personOf(src.db, t.actor, t.via),
       });
     });
   }

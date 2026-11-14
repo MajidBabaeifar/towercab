@@ -241,7 +241,8 @@ export interface Forge {
   updatePrBody(repo: string, n: number, body: string): Promise<void>;
   commentOnPr(repo: string, n: number, text: string, how?: { inline?: boolean }): Promise<Result>;
   markReady(repo: string, n: number): Promise<Result>;
-  mergePr(repo: string, n: number, o: { method: MergeMethod; head?: string }): Promise<Result>;
+  /** `body`: the merge commit's body (USR-10 puts `Approved-by:` there). */
+  mergePr(repo: string, n: number, o: { method: MergeMethod; head?: string; body?: string }): Promise<Result>;
   closePr(repo: string, n: number, comment?: string): Promise<Result>;
   /** Merge the base branch into the change request's head, if the head is still `expectedHead`. */
   updateBranch(repo: string, n: number, expectedHead: string): Promise<void>;
@@ -288,6 +289,10 @@ export interface Forge {
   activeOwnerLogin(): Promise<string | null>;
   /** Every login the owner's tool is signed in as, lowercase. */
   ownerLogins(): Promise<string[]>;
+  /** USR-2: whether `login` is in the team `org/team`, as the owner sees it; throws when the host can't say. */
+  teamMember?(team: string, login: string): Promise<boolean>;
+  /** USR-14: whether the account exists; throws when the host can't say. */
+  accountExists?(login: string): Promise<boolean>;
 
   /** A file of `repo` at `ref` as text, or null when it is not there. Throws on any other failure. */
   readFile(repo: string, path: string, ref: string): Promise<string | null>;

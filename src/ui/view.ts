@@ -443,6 +443,8 @@ export interface TimelineItem {
   shadow?: boolean;
   /** UI-243: the observer did this. */
   observer?: boolean;
+  /** USR-8: the person who did it and the channel; absent for Towercab's own steps. */
+  actor?: { login: string; name: string; via: string | null };
 }
 
 /** UI-242: `GET /api/observer`. */

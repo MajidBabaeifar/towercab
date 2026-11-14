@@ -56,6 +56,7 @@ import { buildChat } from "./telegram/wire.ts";
 import { Telegram } from "./telegram.ts";
 import { realTools, type Tools } from "./tools.ts";
 import { checkUpdate, version } from "./update.ts";
+import { recordWriter } from "./users/writer.ts";
 
 export const COMMANDS = [
   "up",
@@ -511,6 +512,10 @@ async function run(
       const scores = parseScores(args.slice(1));
       const store = await w.store();
       const i = await store.add({ repo: m[1]!, title: m[2]!.trim(), ...scores }, new Date());
+      // AUT-23: an intent made on this machine is the owner's (the first admin).
+      if (w.config.auth && w.config.github) {
+        recordWriter(w.db, i.id, { login: w.config.github.me.toLowerCase(), via: "cli" });
+      }
       return `${i.id} ${i.dir}/intent.md`;
     }
     case "answer":

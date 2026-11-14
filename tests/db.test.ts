@@ -26,6 +26,7 @@ test("db: schema matches the spec", () => {
     "shadow_actions",
     "shadow_turns",
     "telegram_updates",
+    "tg_card_chats",
     "tg_cards",
     "transitions",
     "user_events",

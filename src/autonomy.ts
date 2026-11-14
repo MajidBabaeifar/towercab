@@ -34,6 +34,17 @@ export function effectiveA(aNow: number | null, cap: number, source: string | nu
   return ownSource(source) ? a : Math.min(a, 4);
 }
 
+/**
+ * AUT-23: effective `a` when `[auth]` is set: the writer's role sets the ceiling (a5 for an admin or a
+ * maintainer, or a confirmation by one; a4 for a contributor), whatever the file's `source` line says.
+ */
+export function effectiveAForWriter(aNow: number | null, cap: number, ceiling: number): number {
+  return Math.min(aNow ?? DEFAULT_A, cap, ceiling);
+}
+
+/** AUT-25: with `[auth]` set an a0 intent is decided by admins only. */
+export const A0_ADMIN_ONLY = "only an admin can decide an a0 intent";
+
 /** AUT-9, AUT-13, AUT-35: the level an intent gets when its `a:` line is missing. */
 export function defaultLevel(source: string | null): number {
   return ownSource(source) ? DEFAULT_A : 4;

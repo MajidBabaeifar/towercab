@@ -506,6 +506,10 @@ export interface Outcome {
   counted?: boolean;
   /** For a step that runs again (`bad_result`, `timeout`): write the retry to the move log (LOOP-106, 107). */
   record?: boolean;
+  /** USR-8: the person behind the event (GitHub login); Towercab's own steps are `towercab`. */
+  actor?: string;
+  /** USR-8: the channel the person used: `page`, `github`, `telegram` or `cli`. */
+  via?: string;
   /** Mission columns to set in the same transaction. */
   set?: Record<string, SqlValue>;
   /** Keys to merge into `missions.data` in the same transaction. */
@@ -634,13 +638,15 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
       };
       write(cols);
       db.run(
-        "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why, actor, via) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         cur.id,
         now,
         cur.stage,
         o.event,
         to,
         why,
+        o.actor ?? "towercab",
+        o.via ?? null,
       );
       cx.log?.(`${cur.intent} ${cur.stage} → ${to} (${o.event}${why ? `: ${oneLine(why, 120)}` : ""})`);
     };
@@ -701,13 +707,15 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
         write({ ...set, step: cur.step === "enter" ? "enter" : cur.step, busy: 0 });
         if (o.record) {
           db.run(
-            "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why, actor, via) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             cur.id,
             now,
             cur.stage,
             o.event,
             cur.stage,
             o.why ?? null,
+            o.actor ?? "towercab",
+            o.via ?? null,
           );
         }
         break;

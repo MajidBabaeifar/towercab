@@ -36,25 +36,30 @@ export interface CommandRow {
   created: number;
   applied_at: number | null;
   result: string | null;
+  /** USR-8: who gave the command (a GitHub login) and through which channel; null for older rows. */
+  actor?: string | null;
+  via?: string | null;
 }
 
 export const MAX_ANSWER = 2000;
 
 export function insertCommand(
   db: Db,
-  c: { name: CommandName; arg?: string; text?: string; source: string },
+  c: { name: CommandName; arg?: string; text?: string; source: string; actor?: string; via?: string },
   now: number,
 ): number {
   if (c.name === "answer" && (!c.text?.trim() || c.text.length > MAX_ANSWER)) {
     throw new Error(`an answer is 1 to ${MAX_ANSWER} characters`);
   }
   return db.run(
-    "INSERT INTO commands (name, arg, text, source, created) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO commands (name, arg, text, source, created, actor, via) VALUES (?, ?, ?, ?, ?, ?, ?)",
     c.name,
     c.arg ?? "",
     c.text ?? "",
     c.source,
     now,
+    c.actor ?? null,
+    c.via ?? null,
   ).lastId;
 }
 
@@ -280,8 +285,12 @@ function startIntent(db: Db, intent: Intent): void {
   db.setMeta(`start:${intent.id}`, "1");
 }
 
+/** USR-8: the channel of a command: its `via`, else what its `source` means. */
+const VIA: Record<string, string> = { ui: "page", cli: "cli", telegram: "telegram" };
+
 async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
   const { db, store } = cx;
+  const by = { actor: row.actor ?? undefined, via: row.via ?? VIA[row.source] ?? row.source };
   switch (row.name) {
     case "pause": {
       if (row.arg !== "") {
@@ -314,7 +323,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       );
       for (const m of held) {
         db.run("UPDATE missions SET held = 0 WHERE id = ?", m.id);
-        apply(cx.applyCtx, { ...m, held: 0 }, { event: "resume" });
+        apply(cx.applyCtx, { ...m, held: 0 }, { event: "resume", ...by });
       }
       return "resumed";
     }
@@ -328,7 +337,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
         await store.update(intent.id, "answer", (e) => e.addAnswer(row.text, cx.now));
         const said = readingReply({ allowed: r.moved, refused: [], undecided: [] });
         if (m.stage === "blocked") {
-          apply(cx.applyCtx, m, { event: "answered", text: row.text, data: r.patch });
+          apply(cx.applyCtx, m, { event: "answered", text: row.text, data: r.patch, ...by });
           return `${said}\nit continues`;
         }
         patchData(db, m, r.patch, cx.now.getTime() / 1000);
@@ -349,7 +358,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
         if (!m) e.removeField("waiting");
       });
       if (m?.stage === "blocked") {
-        apply(cx.applyCtx, m, { event: "answered", text: row.text });
+        apply(cx.applyCtx, m, { event: "answered", text: row.text, ...by });
         return `answered ${intent.id}; it continues`;
       }
       return m ? `noted for ${intent.id}: the worker gets it with its next run` : `answered ${intent.id}`;
@@ -391,10 +400,10 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       if (m) {
         const again = recheck(m);
         if (again) {
-          apply(cx.applyCtx, m, again);
+          apply(cx.applyCtx, m, { ...again, ...by });
           return `running the risk check of ${intent.id} again`;
         }
-        const fresh = apply(cx.applyCtx, m, { event: "retry_fresh" });
+        const fresh = apply(cx.applyCtx, m, { event: "retry_fresh", ...by });
         return `fresh attempt ${fresh.attempt} for ${intent.id}`;
       }
       await store.update(intent.id, "retry", (e) => {
@@ -424,6 +433,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       // One write: the steps go with the move, so a refused move leaves nothing behind.
       apply(cx.applyCtx, m, {
         event: "owner_done",
+        ...by,
         why: "the owner did it themselves",
         data: { steps, stepsDirty: steps.length },
       });
@@ -440,6 +450,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       const steps = ((dataOf(m) as PipeData).steps ?? []).map((s) => ({ ...s, when: "after" as const }));
       const out = apply(cx.applyCtx, m, {
         event: "to_steps",
+        ...by,
         why: "the owner will do it by hand",
         data: { delivery: "steps", steps },
         // A plan made again opens a new plan PR; the merged one is not reused.
@@ -452,7 +463,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
     case "drop": {
       const intent = await store.get(row.arg);
       const m = unfinishedFor(db, intent.id);
-      if (m) apply(cx.applyCtx, m, { event: "intent_removed", why: "dropped" });
+      if (m) apply(cx.applyCtx, m, { event: "intent_removed", why: "dropped", ...by });
       await store.update(intent.id, "drop", (e) => {
         e.setField("stage", "dropped");
         e.removeField("waiting");

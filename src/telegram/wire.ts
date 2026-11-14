@@ -48,6 +48,7 @@ export function buildChat(w: ChatWorld, telegram: Telegram, loop: () => Loop): C
     config: w.config,
     clock: w.clock,
     github: w.github,
+    app: w.github,
     proposed: () => loop().proposedState().list,
   });
   const viewOf = (card: Card, id: string, head: string): WaitView => ({
@@ -187,5 +188,14 @@ export function buildChat(w: ChatWorld, telegram: Telegram, loop: () => Loop): C
       return p ? (await ownerForge(w.github.owner).prBrief(p.github, p.number)).head : null;
     },
   };
-  return new Chat({ config: w.config, db: w.db, clock: w.clock, log: w.log, telegram, actions, data });
+  return new Chat({
+    config: w.config,
+    db: w.db,
+    clock: w.clock,
+    log: w.log,
+    telegram,
+    actions,
+    data,
+    addIntent: (repo, title) => w.store.add({ repo, title, u: 3, i: 3, source: "telegram" }, new Date()),
+  });
 }

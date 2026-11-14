@@ -6,6 +6,7 @@ import { finished, next, type Outcome, type Stage } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
 import { parseAllow } from "../pipeline/access.ts";
 import { recheck } from "../risk.ts";
+import type { LoginCheck, What } from "../users/check.ts";
 import { stripAgentHeader } from "./agent-header.ts";
 import { agentOfBody } from "./comments.ts";
 import type { PrState } from "./prs.ts";
@@ -109,9 +110,16 @@ export function newer(at: string, seen: string | null): boolean {
 }
 
 /** The owner's login (PIP-44): case-insensitive; an empty `me` or author never matches. */
-export function isOwner(author: string, me: string): boolean {
+export function isOwner(author: string, me: Me, what: What = "feedback"): boolean {
+  if (typeof me !== "string") return me.may(author, what);
   return me !== "" && author.toLowerCase() === me.toLowerCase();
 }
+
+/**
+ * Who counts on a mission: the owner's login (a string, PIP-44), or with `[auth]` set a per-mission check
+ * built from the people and their roles (USR-9).
+ */
+export type Me = string | LoginCheck;
 
 /** A bot's login as GitHub's REST (`x[bot]`) or GraphQL (`x`, `app/x`) shows it. */
 export function isBot(author: string, botLogin: string): boolean {
@@ -126,6 +134,8 @@ export function isBot(author: string, botLogin: string): boolean {
 interface Said {
   kind: PrKind;
   at: string;
+  /** The comment's or review's author (USR-8: who the event is by). */
+  author: string;
   text: string;
   /** PIP-185: the agent whose marker the owner-account comment carries. */
   agent?: string;
@@ -159,7 +169,7 @@ export function excerptOf(text: string): string {
 }
 
 /** The owner's comments and steering reviews on the read PRs, oldest first (commands included). */
-function ownerSaid(prs: Prs, me: string, botLogin: string, ownerOnlyIntent = false): Said[] {
+function ownerSaid(prs: Prs, me: Me, botLogin: string, ownerOnlyIntent = false): Said[] {
   const out: Said[] = [];
   for (const kind of KINDS) {
     const pr = prs[kind];
@@ -173,6 +183,7 @@ function ownerSaid(prs: Prs, me: string, botLogin: string, ownerOnlyIntent = fal
       out.push({
         kind,
         at: c.at,
+        author: c.author,
         text: `${where}${stripAgentHeader(c.body).trim()}`,
         ...(agent ? { agent } : {}),
         own: { id: c.id, url: c.url ?? "", thread: c.path ? c.id : "" },
@@ -182,9 +193,9 @@ function ownerSaid(prs: Prs, me: string, botLogin: string, ownerOnlyIntent = fal
       if (!isOwner(r.author, me)) continue;
       const own = { id: `review-${r.at}`, url: "", thread: "" };
       if (r.state === "CHANGES_REQUESTED") {
-        out.push({ kind, at: r.at, text: r.body.trim() || "Changes requested.", own });
+        out.push({ kind, at: r.at, author: r.author, text: r.body.trim() || "Changes requested.", own });
       } else if (r.state === "COMMENTED" && r.body.trim()) {
-        out.push({ kind, at: r.at, text: r.body.trim(), own });
+        out.push({ kind, at: r.at, author: r.author, text: r.body.trim(), own });
       }
     }
   }
@@ -204,7 +215,7 @@ export interface IgnoredReply {
  * AUT-32: on an owner-only intent, the comments and reviews from anyone but the owner or Towercab's own
  * bot. PIP-44 already ignores them; this lists them so the loop can note each once on the intent.
  */
-export function ignoredReplies(m: Mission, prs: Prs, me: string, botLogin: string): IgnoredReply[] {
+export function ignoredReplies(m: Mission, prs: Prs, me: Me, botLogin: string): IgnoredReply[] {
   const out: IgnoredReply[] = [];
   for (const kind of KINDS) {
     const pr = prs[kind];
@@ -235,7 +246,7 @@ export interface AgentComment {
 }
 
 /** PIP-185: the comments under the owner's login that an agent marked, for the record (any level). */
-export function agentComments(m: Mission, prs: Prs, me: string, botLogin: string): AgentComment[] {
+export function agentComments(m: Mission, prs: Prs, me: Me, botLogin: string): AgentComment[] {
   const out: AgentComment[] = [];
   for (const kind of KINDS) {
     for (const c of prs[kind]?.comments ?? []) {
@@ -279,7 +290,7 @@ function reviewerSaid(prs: Prs, team: TeamReads): Said[] {
     if (!team.heard.has(c.author.toLowerCase()) || !text || isCommand(text)) continue;
     if (c.reviewId && team.approvedReviewIds.has(c.reviewId)) continue;
     const where = c.path ? `${c.path}${c.line ? `:${c.line}` : ""}: ` : "";
-    out.push({ kind: team.kind, at: c.at, text: `${c.author}: ${where}${text}` });
+    out.push({ kind: team.kind, at: c.at, author: c.author, text: `${c.author}: ${where}${text}` });
   }
   for (const r of pr.reviews) {
     if (!team.heard.has(r.author.toLowerCase())) continue;
@@ -288,10 +299,11 @@ function reviewerSaid(prs: Prs, team: TeamReads): Said[] {
       out.push({
         kind: team.kind,
         at: r.at,
+        author: r.author,
         text: `${r.author} asked for changes: ${text || "Changes requested."}`,
       });
     } else if (r.state === "COMMENTED" && text && !isCommand(text)) {
-      out.push({ kind: team.kind, at: r.at, text: `${r.author}: ${text}` });
+      out.push({ kind: team.kind, at: r.at, author: r.author, text: `${r.author}: ${text}` });
     }
   }
   return out;
@@ -313,7 +325,7 @@ export function approvalNotes(prs: Prs, team: TeamReads): string[] {
 function freshFeedback(
   m: Mission,
   prs: Prs,
-  me: string,
+  me: Me,
   botLogin: string,
   team: TeamReads | undefined,
   ownerOnlyIntent: boolean,
@@ -339,7 +351,7 @@ function freshFeedback(
 export function feedbackTargets(
   m: Mission,
   prs: Prs,
-  me: string,
+  me: Me,
   botLogin: string,
   team?: TeamReads,
   ownerOnlyIntent = false,
@@ -360,7 +372,7 @@ export function feedbackTargets(
 export function prEvents(
   m: Mission,
   prs: Prs,
-  me: string,
+  me: Me,
   botLogin: string,
   team?: TeamReads,
   ownerOnlyIntent = false,
@@ -389,17 +401,20 @@ export function prEvents(
     return {
       event: m.stage === "blocked" ? "answered" : "feedback",
       text,
+      ...byOf(me, feedback.at(-1)!.author),
       set: { feedback_seen: latest(feedback) },
       // PIP-185: when every word came from marked agents, the answer says who gave it for the owner.
       data: { answer: text, ...answeredBy(feedback) },
     };
   }
-  const retries = fresh.filter((s) => s.text === RETRY);
+  // USR-9: `/retry` is a command: it needs maintainer, whatever a contributor may answer.
+  const retries = fresh.filter((s) => s.text === RETRY && isOwner(s.author, me, "command"));
   if (retries.length > 0) {
+    const by = byOf(me, retries.at(-1)!.author);
     // AUT-21: a gate waiting on a risk check that didn't finish runs the check again.
     const again = recheck(m);
-    if (again) return { ...again, set: { feedback_seen: latest(retries) } };
-    return { event: "retry_fresh", set: { feedback_seen: latest(retries) } };
+    if (again) return { ...again, ...by, set: { feedback_seen: latest(retries) } };
+    return { event: "retry_fresh", ...by, set: { feedback_seen: latest(retries) } };
   }
 
   if (team) {
@@ -462,7 +477,7 @@ export function prEvents(
  * PIP-43: the owner's Approve review, newer than `feedback_seen` and on the PR's current head,
  * on the open PR the mission waits on → that PR's number, for Towercab to merge as the owner.
  */
-export function approveRequested(m: Mission, prs: Prs, me: string, teamOn = false): number | null {
+export function approveRequested(m: Mission, prs: Prs, me: Me, teamOn = false): number | null {
   const kind = WAITS_ON[m.stage];
   // PIP-144: in a repo that needs a teammate's review the owner's Approve never merges.
   if (!kind || (teamOn && kind !== "plan")) return null;
@@ -471,12 +486,32 @@ export function approveRequested(m: Mission, prs: Prs, me: string, teamOn = fals
   if (!pr || n === null || pr.state !== "OPEN") return null;
   const ok = pr.reviews.some(
     (r) =>
-      isOwner(r.author, me) &&
+      isOwner(r.author, me, "approve") &&
       r.state === "APPROVED" &&
       newer(r.at, m.feedback_seen) &&
       (r.commit === null || r.commit === pr.head),
   );
   return ok ? n : null;
+}
+
+/** USR-8: the event's actor and channel, only when sign-in is on (the loop names the owner otherwise). */
+const byOf = (me: Me, author: string): { actor?: string; via?: string } =>
+  typeof me === "string" ? {} : { actor: author.toLowerCase(), via: "github" };
+
+/** USR-9, USR-10: who approved (the login of the newest approving review that `approveRequested` took). */
+export function approvedBy(m: Mission, prs: Prs, me: Me): string | null {
+  const kind = WAITS_ON[m.stage];
+  const pr = kind ? prs[kind] : undefined;
+  const r = pr?.reviews
+    .filter(
+      (x) =>
+        isOwner(x.author, me, "approve") &&
+        x.state === "APPROVED" &&
+        newer(x.at, m.feedback_seen) &&
+        (x.commit === null || x.commit === pr.head),
+    )
+    .at(-1);
+  return r ? r.author.toLowerCase() : null;
 }
 
 /** The marker of the one reply to the owner's Approve review submitted at `at` (PIP-144). */
@@ -493,7 +528,7 @@ export interface ApproveAsk {
  * PIP-144: the owner's Approve reviews on the PR the mission waits on that no bot reply carrying their
  * marker answers. They neither merge nor count, so the owner is told once what to do instead.
  */
-export function approveNotices(m: Mission, prs: Prs, me: string, botLogin: string): ApproveAsk[] {
+export function approveNotices(m: Mission, prs: Prs, me: Me, botLogin: string): ApproveAsk[] {
   const kind = WAITS_ON[m.stage];
   if (!kind || kind === "plan" || finished(m.stage)) return [];
   const pr = prs[kind];
@@ -501,7 +536,7 @@ export function approveNotices(m: Mission, prs: Prs, me: string, botLogin: strin
   if (!pr || n === null || pr.state !== "OPEN") return [];
   const out: ApproveAsk[] = [];
   for (const r of pr.reviews) {
-    if (!isOwner(r.author, me) || r.state !== "APPROVED" || !r.at) continue;
+    if (!isOwner(r.author, me, "approve") || r.state !== "APPROVED" || !r.at) continue;
     const marker = approveMarker(r.at);
     if (pr.comments.some((b) => isBot(b.author, botLogin) && b.body.includes(marker))) continue;
     out.push({ kind, pr: n, marker });
@@ -559,7 +594,7 @@ export interface ReleaseAsk {
 export function releaseRequested(
   m: Mission,
   prs: Prs,
-  me: string,
+  me: Me,
   botLogin: string,
   repos: ReleaseRepo[],
 ): ReleaseAsk[] {
@@ -571,7 +606,7 @@ export function releaseRequested(
     const n = prNumber(m, kind);
     if (!pr || n === null) continue;
     for (const c of pr.comments) {
-      if (!isOwner(c.author, me) || c.body.trim() !== RELEASE || !c.id) continue;
+      if (!isOwner(c.author, me, "command") || c.body.trim() !== RELEASE || !c.id) continue;
       const marker = `<!-- towercab:release:${c.id} -->`;
       const answered = pr.comments.some((b) => isBot(b.author, botLogin) && b.body.includes(marker));
       if (!answered) out.push({ kind, pr: n, commentId: c.id, reply: releaseReply(c.id, text) });
@@ -599,7 +634,7 @@ export const reversalMarker = (commentId: string) => `<!-- towercab:allow:${comm
 export function reversalRequested(
   m: Mission,
   prs: Prs,
-  me: string,
+  me: Me,
   botLogin: string,
   ownerOnlyIntent = false,
 ): ReversalAsk[] {
@@ -611,7 +646,7 @@ export function reversalRequested(
     const n = prNumber(m, kind);
     if (!pr || n === null) continue;
     for (const c of pr.comments) {
-      if (!isOwner(c.author, me) || !c.id || !newer(c.at, m.feedback_seen)) continue;
+      if (!isOwner(c.author, me, "command") || !c.id || !newer(c.at, m.feedback_seen)) continue;
       // PIP-185: on an a0 intent an agent's marked comment cannot lift a refusal.
       if (ownerOnlyIntent && agentOfBody(c.body)) continue;
       const paths = parseAllow(c.body);

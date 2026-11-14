@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AfterHold } from "../after.ts";
 import { type Agent, type AgentName, agentBudgetUsd, loadAgent } from "../agents.ts";
-import { effectiveA } from "../autonomy.ts";
+import { effectiveA, effectiveAForWriter } from "../autonomy.ts";
 import { withFlag } from "../autonomy-change.ts";
 import { git, gitSane } from "../checkout.ts";
 import { type ClaudeRun, freshContext, parseRun, prepareRun, type RunEnd, type RunKind } from "../claude.ts";
@@ -361,7 +361,12 @@ export function repoFilesWait(e: unknown): Outcome | null {
   return null;
 }
 
-export function effectiveOf(_m: Mission, intent: Intent, files: RepoFiles): number {
+export function effectiveOf(m: Mission, intent: Intent, files: RepoFiles): number {
+  // AUT-23: with `[auth]` set the loop keeps the writer's ceiling on the mission, refreshed every pass.
+  const ceiling = (data(m) as { ceiling?: unknown }).ceiling;
+  if (typeof ceiling === "number") {
+    return effectiveAForWriter(intent.a, files.towercab.maxAutonomy, ceiling);
+  }
   return effectiveA(intent.a, files.towercab.maxAutonomy, intent.source);
 }
 

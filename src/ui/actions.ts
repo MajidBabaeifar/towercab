@@ -17,7 +17,7 @@ import { intentPaused, tickSteps } from "../commands.ts";
 import type { Config, RepoConfig } from "../config.ts";
 import type { Db } from "../db.ts";
 import { askFeatures } from "../features.ts";
-import { ForgeBadReply, MERGE_METHOD, type PrBrief, type Result } from "../forge.ts";
+import { type Forge, ForgeBadReply, MERGE_METHOD, type PrBrief, type Result } from "../forge.ts";
 import { ownerForge } from "../github/forge.ts";
 import { classifyFiles, type ProposedPr } from "../github/proposed.ts";
 import type { Clock, GitHub } from "../handlers.ts";
@@ -28,7 +28,17 @@ import { ownerMergeRefusal } from "../pipeline/teammate.ts";
 import { canBoostIntent, changeScores } from "../scores.ts";
 import { resetShadow } from "../shadow/store.ts";
 import { approveSecret } from "../ship/secret-steps.ts";
+import { getUser } from "../users/store.ts";
+import { ceilingNow, confirmIntent } from "../users/writer.ts";
 import { currentPr, type DoneNote, validNote } from "./state.ts";
+
+/** USR-8, USR-10: who is acting through the page. `signed`: sign-in is on, so the PR names them. */
+export interface Actor {
+  login: string;
+  name: string;
+  via: "page" | "github" | "telegram" | "cli";
+  signed: boolean;
+}
 
 /** What the page can do; each resolves to one sentence saying what happened, or throws the error. */
 export interface UiActions {
@@ -68,6 +78,10 @@ export interface UiActions {
   resume(intent?: string): Promise<string>;
   /** AUT-32: refuse an action on an a0 intent from any actor but the owner (the page and GitHub). */
   guard?(intent: string, action: string, actor: string): Promise<void>;
+  /** AUT-23: a maintainer confirms an intent a viewer or unmapped account wrote, so it may start. */
+  confirm?(intent: string): Promise<string>;
+  /** USR-8: the same actions, recorded and worded as done by `by`. */
+  as?(by: Actor): UiActions;
   /** UI-130: add `owner/name` as a repo (`name` = its short name, default the repo part). */
   addRepo(github: string, name?: string): Promise<string>;
   /** UI-144: read the repo again for its feature list (INT-39). */
@@ -96,6 +110,8 @@ export interface ActionDeps {
   config: Config;
   clock: Clock;
   github: Pick<GitHub, "owner">;
+  /** USR-10: Towercab's own identity for comments that name who decided; absent: the owner's login posts them. */
+  app?: Pick<Forge, "commentOnPr">;
   /**
    * LOOP-66's checks, bound to the loop's database, config, tools and home: resolves with the repo once
    * they pass, while the clone goes on (UI-130); null: refused.
@@ -112,6 +128,8 @@ export interface ActionDeps {
   proposed?: () => ProposedPr[];
   /** SHIP-35: writes a typed secret; none: the page can't take one. */
   supplySecret?: (intent: string, n: number, value: string) => Promise<string>;
+  /** USR-8: who acts; absent, the owner (`[github].me`) on the page. */
+  by?: Actor;
   /** SHD-12: the shadow's own actions: what it writes on GitHub starts with `[shadow] `. */
   actor?: "shadow";
 }
@@ -145,16 +163,31 @@ function firstLine(s: string): string {
 export function createActions(d: ActionDeps): UiActions {
   const command = (name: string, arg = "", text = "") => {
     d.db.run(
-      "INSERT INTO commands (name, arg, text, source, created) VALUES (?, ?, ?, 'ui', ?)",
+      "INSERT INTO commands (name, arg, text, source, created, actor, via) VALUES (?, ?, ?, 'ui', ?, ?, ?)",
       name,
       arg,
       text,
       d.clock.now(),
+      d.by?.login ?? d.config?.github?.me ?? null,
+      d.by?.via ?? "page",
     );
+  };
+  /** USR-10: "approved by Ana in Towercab (page)" when sign-in is on; null otherwise (the text stays as it was). */
+  const says = (past: string): string | null =>
+    d.by?.signed ? `${past} by ${d.by.name} in Towercab (${d.by.via})` : null;
+  /** USR-10: Towercab's own comment on the PR, naming who decided. */
+  const note = async (github: string, n: number, past: string) => {
+    const line = says(past);
+    if (line) await (d.app ?? of).commentOnPr(github, n, `${line}.`, { inline: true });
   };
   const pr = (m: Mission | undefined) => (m ? currentPr(m, d.config, d.store.github()) : null);
   const of = ownerForge(d.github.owner);
   const tag = d.actor === "shadow" ? SHADOW_TAG : "";
+  /** AUT-13, AUT-23: a5 is for the owner's own intents, or with sign-in on, those an admin or maintainer wrote or confirmed. */
+  const a5Allowed = (found: { id: string; repo: string; repos?: string[]; source: string | null }) =>
+    d.by?.signed
+      ? ceilingNow(d.db, found.id, [found.repo, ...(found.repos ?? [])]) >= 5
+      : ownSource(found.source);
   const refused = (r: Result, what: string) => {
     if (!r.ok) throw new Error(`GitHub refused to ${what}: ${firstLine(r.reason)}`);
   };
@@ -277,8 +310,12 @@ export function createActions(d: ActionDeps): UiActions {
       // SHD-12: the PR says who asked for the merge.
       if (tag)
         await of.commentOnPr(p.github, p.number, `${tag}Merging on your yes in Telegram.`, { inline: true });
+      await note(p.github, p.number, "Approved");
       refused(
-        await of.mergePr(p.github, p.number, { method: MERGE_METHOD }),
+        await of.mergePr(p.github, p.number, {
+          method: MERGE_METHOD,
+          ...(d.by?.signed ? { body: `Approved-by: ${d.by.login}` } : {}),
+        }),
         `merge the ${p.label} #${p.number}`,
       );
       done(m, p, "merge");
@@ -297,12 +334,14 @@ export function createActions(d: ActionDeps): UiActions {
       if (!p) throw new Error("Nothing to pass on: its PR isn't open yet.");
       // The same comment the owner can write on GitHub, so there is one way in (PIP-143).
       refused(await of.commentOnPr(p.github, p.number, "/pass", { inline: true }), "pass it on");
+      await note(p.github, p.number, "Passed on");
       d.db.setMeta(`poll:${m.id}`, "1");
       return `Passed on: Towercab asks your teammates within a minute.`;
     },
 
     async reply(intent, text) {
-      const body = `${tag}${text.trim()}`;
+      const by = says("Answered");
+      const body = `${tag}${by ? `${by}:\n\n` : ""}${text.trim()}`;
       if (!text.trim()) throw new Error("Write a reply first.");
       if (body.length > MAX_REPLY) throw new Error(`The reply is too long: at most ${MAX_REPLY} characters.`);
       const m = unfinishedFor(d.db, intent);
@@ -334,6 +373,7 @@ export function createActions(d: ActionDeps): UiActions {
           await of.commentOnPr(p.github, p.number, "/retry", { inline: true }),
           `comment on the ${p.label}`,
         );
+        await note(p.github, p.number, "Retry asked");
         done(m, p, "retry");
         return `Asked for a fresh start on the ${p.label} #${p.number}. A new attempt begins within a minute.`;
       }
@@ -348,7 +388,15 @@ export function createActions(d: ActionDeps): UiActions {
         const again = repeated(m, p, "drop");
         if (again) return again;
         refused(
-          await of.closePr(p.github, p.number, tag ? `${tag}Dropped on your yes in Telegram.` : undefined),
+          await of.closePr(
+            p.github,
+            p.number,
+            tag
+              ? `${tag}Dropped on your yes in Telegram.`
+              : says("Dropped")
+                ? `${says("Dropped")}.`
+                : undefined,
+          ),
           `close the ${p.label} #${p.number}`,
         );
         done(m, p, "drop");
@@ -356,6 +404,14 @@ export function createActions(d: ActionDeps): UiActions {
       }
       command("drop", intent);
       return "Towercab drops it on its next pass.";
+    },
+
+    async confirm(intent) {
+      const by = d.by?.signed ? getUser(d.db, d.by.login) : null;
+      if (!by) throw new Error("Only a signed-in maintainer can confirm an intent.");
+      const found = await d.store.get(intent);
+      confirmIntent(d.db, by, found.id, [found.repo, ...(found.repos ?? [])], d.by!.via, d.clock.now());
+      return "Confirmed. It can start now, as if a maintainer had written it.";
     },
 
     async start(intent) {
@@ -375,7 +431,7 @@ export function createActions(d: ActionDeps): UiActions {
       if (!Number.isInteger(a) || a < 0 || a > 5) throw new Error("Autonomy is a0 to a5.");
       const found = await d.store.get(intent);
       // UI-206: a5 is for the owner's own intents; the page doesn't offer it, and the API refuses it.
-      if (a === 5 && !ownSource(found.source)) throw new Error("a5 is only for your own intents.");
+      if (a === 5 && !a5Allowed(found)) throw new Error("a5 is only for your own intents.");
       const flag = flagOf(d.db, found.id);
       const shown = flag ? flag.from : writtenLevel(found);
       const owner = d.actor !== "shadow" && (actor === "" || actor === "owner");
@@ -434,7 +490,9 @@ export function createActions(d: ActionDeps): UiActions {
       }
       const found = await d.store.get(intent);
       if (found.done) throw new Error("It is done or dropped.");
-      if (!canBoostIntent(found)) throw new Error("a5 is only for your own intents.");
+      if (!canBoostIntent(found) && !(d.by?.signed && !found.done && a5Allowed(found))) {
+        throw new Error("a5 is only for your own intents.");
+      }
       const started = unfinishedFor(d.db, found.id) || d.db.meta(`start:${found.id}`) !== null;
       command("boost", found.id);
       if (started) return "Boosted: a5. It runs from the next gate.";
@@ -523,6 +581,10 @@ export function createActions(d: ActionDeps): UiActions {
       if (!askFeatures(d.db, repo, d.clock.now()))
         return "Towercab is already reading the repo for its feature list.";
       return "Towercab reads the repo's README and specs and rewrites its live features within a few minutes.";
+    },
+
+    as(by) {
+      return createActions({ ...d, by });
     },
   };
 }

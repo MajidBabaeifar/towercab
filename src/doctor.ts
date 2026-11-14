@@ -222,6 +222,18 @@ export async function doctor(o: {
       }
     }
   }
+  if (config.auth) {
+    const a = config.auth;
+    if (process.env[a.clientSecretEnv])
+      lines.push(`auth: sign-in on, ${a.publicUrl}, listening on ${a.listen}`);
+    else {
+      lines.push(`auth: the variable ${a.clientSecretEnv} (client secret) is empty or unset`);
+      ok = false;
+    }
+    if (!a.publicUrl.startsWith("https://") && a.listen !== "127.0.0.1") {
+      lines.push("auth: public_url is not https: the session cookie is marked Secure and won't be kept");
+    }
+  } else lines.push("auth: not configured (one owner, no sign-in)");
   lines.push(
     `telegram: ${config.telegram ? `chat ${config.telegram.chatId}${config.telegram.uiUrl ? `, links to ${config.telegram.uiUrl}` : ", links to the PR (no ui_url)"}` : "not configured (no messages)"}`,
   );

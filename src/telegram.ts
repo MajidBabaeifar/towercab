@@ -32,6 +32,8 @@ function cut(text: string): string {
 
 /** `html`: the text is HTML (TG-17's `<pre>` block); `replyTo`: a message to reply to (TG-20's ping). */
 export interface SendOptions {
+  /** USR-11: a linked person's chat; absent, the owner's. */
+  chat?: string;
   html?: boolean;
   replyTo?: number;
 }
@@ -60,7 +62,7 @@ export class Telegram implements Sender {
    */
   async send(text: string, buttons?: Button[][], opts: SendOptions = {}): Promise<number | undefined> {
     const body = {
-      chat_id: this.config.chatId,
+      chat_id: opts.chat ?? this.config.chatId,
       text: cut(text),
       disable_web_page_preview: true,
       ...(opts.html ? { parse_mode: "HTML" } : {}),
@@ -80,7 +82,7 @@ export class Telegram implements Sender {
       await this.call(
         "editMessageText",
         {
-          chat_id: this.config.chatId,
+          chat_id: opts.chat ?? this.config.chatId,
           message_id: message,
           text: cut(text),
           disable_web_page_preview: true,
@@ -97,8 +99,8 @@ export class Telegram implements Sender {
   }
 
   /** TG-20: `deleteMessage`. Telegram refusing (gone, too old) rejects with `Refused`. */
-  async remove(message: number): Promise<void> {
-    await this.call("deleteMessage", { chat_id: this.config.chatId, message_id: message }, true);
+  async remove(message: number, chat?: string): Promise<void> {
+    await this.call("deleteMessage", { chat_id: chat ?? this.config.chatId, message_id: message }, true);
   }
 
   /** TG-5: `answerCallbackQuery`, so the button stops spinning. */
