@@ -3,7 +3,7 @@
 
 import type { Db, SqlValue } from "./db.ts";
 import { COLUMNS, dataOf, getMission, insertMission, type Mission } from "./mission.ts";
-import { LANDING_STAGES as LANDING, type PartState, seedParts } from "./parts.ts";
+import { LANDING_STAGES as LANDING, PART_STAGES, type PartState, seedParts } from "./parts.ts";
 import { type ShipFacts, shipFacts } from "./steps.ts";
 
 export const ORDER = [
@@ -670,8 +670,13 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
       }
       if (finished(to)) cols.finished = now;
       else if (finished(cur.stage)) cols.finished = null;
-      if (to === "merge" && cur.stage === "approval:merge" && Array.isArray(data.parts)) {
-        data = { ...data, landApproved: true };
+      // LOOP-80: the owner's yes holds for one landing: leaving the landing, or asking again, clears it.
+      if (Array.isArray(data.parts)) {
+        if (to === "merge" && cur.stage === "approval:merge") {
+          data = { ...data, landApproved: true, ownerApproved: undefined };
+        } else if (to === "approval:merge" || PART_STAGES.includes(to)) {
+          data = { ...data, landApproved: undefined, ownerApproved: undefined };
+        }
       }
       // LOOP-159, LOOP-161: entering `merge` joins the repo's merge queue; a wait or the end leaves it,
       // so a mission back from the owner joins at the back.

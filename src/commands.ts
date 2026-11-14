@@ -398,7 +398,16 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       if (!m && last?.stage === "unverified" && partsOf(last).some((p) => !p.merged)) {
         db.tx(() => {
           const parts = partsOf(last).map((p) =>
-            p.merged ? p : { ...p, stage: "ci" as const, step: "", atGate: false, waiting: null },
+            p.merged
+              ? p
+              : {
+                  ...p,
+                  stage: "ci" as const,
+                  step: "",
+                  atGate: false,
+                  waiting: null,
+                  data: { ...(p.data ?? {}), needsApproval: undefined },
+                },
           );
           db.run(
             "UPDATE missions SET data = ? WHERE id = ?",

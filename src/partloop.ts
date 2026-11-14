@@ -80,6 +80,21 @@ export class PartDriver {
     for (const r of this.children.values()) if (!r.exit) r.handle.kill(sig);
   }
 
+  /** Stop part runs the way the missions' are: SIGTERM, then SIGKILL for those still there after `ms`. */
+  async stopAll(ms: number): Promise<void> {
+    const live = [...this.children.values()].filter((r) => !r.exit);
+    for (const r of live) r.handle.kill("SIGTERM");
+    const ended = await Promise.all(
+      live.map((r) =>
+        Promise.race([
+          r.handle.done.then(() => true),
+          new Promise<boolean>((x) => setTimeout(() => x(false), ms)),
+        ]),
+      ),
+    );
+    for (const [i, r] of live.entries()) if (!ended[i]) r.handle.kill("SIGKILL");
+  }
+
   private get now(): number {
     return this.host.clock.now();
   }
@@ -145,6 +160,8 @@ export class PartDriver {
   private readyToLand(m: Mission): Mission | null {
     const { db } = this.host;
     const parts = partsOf(m);
+    // Landing starts once every part has passed its checks (merged ones from an earlier round count).
+    if (!parts.every((p) => p.atGate || p.merged)) return null;
     // The owner's approval is asked for the intent as a whole, once every part is ready.
     if (parts.some((p) => p.data?.needsApproval === true) && dataOf(m).landApproved !== true) {
       apply(this.host.applyCtx(), m, {

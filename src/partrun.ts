@@ -12,6 +12,7 @@ import {
   type Outcome,
   oneLine,
   type Stage,
+  waitInfo,
   waitKey,
   waitMessage,
 } from "./machine.ts";
@@ -259,6 +260,19 @@ export function applyPart(cx: ApplyCtx, m: Mission, repo: string, o: Outcome): M
         if (part.stage === "gate" && o.waiting === "review and merge PR") {
           upd((p) =>
             lay({ ...p, atGate: true, waiting: null }, set, { ...(o.data ?? {}), needsApproval: true }),
+          );
+          break;
+        }
+        // A wait that asks for an approval stage (a teammate's review) is the part's own: the mission
+        // doesn't leave the parts for it, and the part looks again on the next pass.
+        if (waitInfo(o.waiting).stage !== "blocked") {
+          upd((p) => lay(p, { ...set, retry_at: cx.now + 30 }, o.data));
+          cx.db.run(
+            "INSERT OR IGNORE INTO outbox (key, mission, text, created) VALUES (?, ?, ?, ?)",
+            `${cur.id}:${repo}:${waitKey(o.waiting)}:${cur.continued}`,
+            cur.id,
+            waitMessage(o.waiting, cx.subject({ ...cur, repo }), o.why ?? null),
+            cx.now,
           );
           break;
         }

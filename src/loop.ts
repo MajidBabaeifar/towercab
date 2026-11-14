@@ -95,6 +95,7 @@ import {
 import { Mutex } from "./mutex.ts";
 import { type Sender, sendDue } from "./outbox.ts";
 import { PartDriver } from "./partloop.ts";
+import { applyPart, patchPart } from "./partrun.ts";
 import { inLanding, inPartStages, partsOf } from "./parts.ts";
 import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
@@ -377,6 +378,16 @@ export class Loop {
           const fresh = update(db, m.id, { child_pid: null, child_kind: null, child_since: null }, this.now);
           apply(this.applyCtx(), fresh, { event: "crash", why: "Towercab stopped while this step ran" });
         }
+        // LOOP-78: a part's run is recorded on the part; the old run goes and the part's step is taken again.
+        for (const p of partsOf(m)) {
+          if (!p.cols?.child_pid) continue;
+          killGroup(Number(p.cols.child_pid), "SIGKILL");
+          patchPart(this.applyCtx(), m.id, p.repo, { child_pid: null, child_kind: null, child_since: null });
+          applyPart(this.applyCtx(), getMission(db, m.id)!, p.repo, {
+            event: "crash",
+            why: "Towercab stopped while this step ran",
+          });
+        }
       }
     }
     db.setMeta("running", `${process.pid} ${Math.floor(this.now)}`);
@@ -536,11 +547,12 @@ export class Loop {
       await within(idle, CUT_OFF_KILL_MS + 1000);
     }
     // LOOP-7: Claude runs get SIGTERM together, then SIGKILL for those still there after 10 s.
-    this.parts.killAll("SIGTERM");
+    const partsStopped = this.parts.stopAll(KILL_AFTER_MS);
     const live = [...this.children];
     for (const [, r] of live) r.handle.kill("SIGTERM");
     const ended = await Promise.all(live.map(([, r]) => within(r.handle.done, KILL_AFTER_MS)));
     for (const [i, [, r]] of live.entries()) if (!ended[i]) r.handle.kill("SIGKILL");
+    await partsStopped;
     for (const [id, r] of live) {
       const m = getMission(this.d.db, id);
       if (m && !finished(m.stage)) {
