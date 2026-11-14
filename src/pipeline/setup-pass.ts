@@ -44,6 +44,12 @@ import {
 /** The clean export of the base tree and the credentials folder of the pass for `dir` (PIP-212, PIP-214). */
 export const setupTreeOf = (dir: string): string => `${dir}-setup-tree`;
 export const setupCredsOf = (dir: string): string => `${dir}-setup-creds`;
+const setupCacheOf = (dir: string): string => `${dir}-setup-cache`;
+
+/** Removes the cache pass 2 used. */
+export function dropOpenCache(dir: string): void {
+  rmSync(setupCacheOf(dir), { recursive: true, force: true });
+}
 const indexOf = (dir: string): string => `${dir}-setup-index`;
 
 export interface PassOpts {
@@ -161,6 +167,20 @@ function clearSetid(path: string): void {
   if (st.isDirectory()) for (const e of readdirSync(path)) clearSetid(join(path, e));
 }
 
+/** True when every parent folder of `rel` under `root` is a real folder (or does not exist yet). */
+function plainParents(root: string, rel: string): boolean {
+  let at = root;
+  for (const part of rel.split("/").slice(0, -1)) {
+    at = join(at, part);
+    try {
+      if (!lstatSync(at).isDirectory()) return false;
+    } catch {
+      return true;
+    }
+  }
+  return true;
+}
+
 /**
  * Copies what main's `.gitignore` ignores from the clean tree into the checkout (PIP-214), never over a
  * tracked file; returns the new files that were left out.
@@ -174,6 +194,8 @@ export async function copyOut(tools: Tools, dir: string, tree: string): Promise<
     .map((l) => l.replace(/\/$/, ""))
     .filter((l) => l && !l.startsWith(".git/") && l !== ".git");
   for (const p of ignored) {
+    // A parent that is a link could lead outside the checkout (or the tree): such a path is left out.
+    if (!plainParents(dir, p) || !plainParents(tree, p)) continue;
     const tracked = (await gitIn(tools, dir, ["ls-files", "--", p])).trim();
     if (tracked) continue;
     rmSync(join(dir, p), { recursive: true, force: true });
@@ -249,6 +271,10 @@ export async function endSecretPass(cx: Ctx, m: Mission, end: ChildEnd, dir: str
 
 /** Pass 2 (PIP-214): the same lines in the checkout with no secret, no credentials folder, built-in registries only. */
 export function openPass(cx: Ctx, m: Mission, o: PassOpts): Progress {
+  // Branch code runs here, so it gets a cache of its own: the shared one, which the secret pass reads, stays untouched.
+  const cache = setupCacheOf(o.dir);
+  rmSync(cache, { recursive: true, force: true });
+  mkdirSync(cache, { recursive: true });
   return {
     spawn: sandboxSpec(cx, m, {
       kind: o.kind,
@@ -258,6 +284,7 @@ export function openPass(cx: Ctx, m: Mission, o: PassOpts): Progress {
       log: o.log,
       timeoutMs: o.timeoutMs,
       builtinOnly: true,
+      cache,
     }),
   };
 }

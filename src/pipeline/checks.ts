@@ -12,6 +12,7 @@ import { splitDomains } from "./domains.ts";
 import { proxySocket } from "./proxy.ts";
 import { cacheEnv, DEFAULT_NETWORK, sandboxArgv, sandboxEnv } from "./sandbox.ts";
 import type { Question } from "./schemas.ts";
+import { hasSetupSecrets } from "./setup-secrets.ts";
 
 /** A shell script running each line in order, stopping at the first failure. */
 export function script(lines: string[]): string {
@@ -35,6 +36,8 @@ export interface SandboxRun {
   extraBinds?: string[];
   /** PIP-214: only the built-in registry list, no plan grants or owner answers (the pass without secrets). */
   builtinOnly?: boolean;
+  /** PIP-212: a cache of its own in place of the repo's shared one. */
+  cache?: string;
 }
 
 /**
@@ -53,7 +56,7 @@ export function commandDomains(m: Mission): string[] {
 
 export function sandboxSpec(cx: Ctx, m: Mission, r: SandboxRun): ChildSpec {
   const repo = cx.repo(m);
-  const cache = cx.home.cache(repo.name);
+  const cache = r.cache ?? cx.home.cache(repo.name);
   const home = homedir();
   return {
     kind: r.kind,
@@ -90,6 +93,8 @@ export const checksWriteKey = (repo: string): string => `checks-write:${repo}`;
 
 /** The owner let this repo's checks, proof, screenshots and e2e write to its cache (PIP-95). */
 export function checksMayWrite(cx: Ctx, m: Mission): boolean {
+  // PIP-212: branch code never writes the cache that a pass with setup secrets reads.
+  if (hasSetupSecrets(cx.config.file, m.repo)) return false;
   return cx.db.meta(checksWriteKey(cx.repo(m).name)) === "1";
 }
 

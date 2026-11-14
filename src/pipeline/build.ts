@@ -69,7 +69,7 @@ import { fence, intentData, render } from "./prompts.ts";
 import { replyPatch, replySection } from "./reply.ts";
 import { type Access, parseResult, type Question } from "./schemas.ts";
 import { type SetupEvidence, setupFault } from "./setup-faults.ts";
-import { endSecretPass, openPass, type PassOpts, startSecretPass } from "./setup-pass.ts";
+import { dropOpenCache, endSecretPass, openPass, type PassOpts, startSecretPass } from "./setup-pass.ts";
 import { hasSetupSecrets } from "./setup-secrets.ts";
 
 /** LOOP-106: skew retries per mission within `SKEW_WINDOW` seconds, before the owner is asked. */
@@ -437,6 +437,7 @@ export const buildHandler: Handler = {
       return spawnWorker(cx, cx.record(m, "setup-done", {}, { setup: cx.checkout(m) }));
     }
     if (m.step === "setup-open") {
+      dropOpenCache(cx.checkout(m));
       if (end.code !== 0)
         cx.log(
           `${m.intent}: the setup without secrets failed (verify runs it again): ${tail(readLog(end.stdout), 300)}`,

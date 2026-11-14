@@ -36,7 +36,14 @@ import {
 import { intentData, render } from "./prompts.ts";
 import { twoPartOr } from "./prtext.ts";
 import { parseResult } from "./schemas.ts";
-import { endSecretPass, openPass, type PassOpts, privateQuestion, startSecretPass } from "./setup-pass.ts";
+import {
+  dropOpenCache,
+  endSecretPass,
+  openPass,
+  type PassOpts,
+  privateQuestion,
+  startSecretPass,
+} from "./setup-pass.ts";
 import { hasSetupSecrets, manifestChanges, needsPrivate } from "./setup-secrets.ts";
 
 export const MAX_REPAIRS = 2;
@@ -97,7 +104,29 @@ export const verifyHandler: Handler = {
       cx.log(`${m.intent}: the checks of ${repo} may now write to its build cache`);
     }
     // PIP-214: the owner answered about a private package; the setup starts again.
-    if (data(m).openAsk) m = cx.record(m, "setup", {}, { openAsk: undefined, answer: undefined });
+    if (data(m).openAsk) {
+      const answer = data(m).answer ?? "";
+      const clear = { openAsk: undefined, answer: undefined };
+      // "Use public packages instead": the worker changes the manifests, in a repair round that reads the answer.
+      if (/public/i.test(answer)) {
+        if (m.repairs >= MAX_REPAIRS)
+          return {
+            done: wait("checks red", `Still failing after ${MAX_REPAIRS} fix attempts: private packages.`),
+          };
+        const what =
+          "The owner chose public packages: change the manifests so they install from public registries.";
+        return {
+          done: red(what, {
+            set: { repairs: m.repairs + 1 },
+            data: {
+              ...clear,
+              repair: { what, details: `The owner answered: ${tail(answer, 500)}`, kind: "verify" },
+            },
+          }),
+        };
+      }
+      m = cx.record(m, "setup", {}, clear);
+    }
     const { n, data: nd } = nextN(m, "verify");
     if (m.step === "setup-secret") {
       const again = await startSecretPass(cx, m, setupPass(cx, m, files.verifying.setup, ""));
@@ -138,6 +167,7 @@ export const verifyHandler: Handler = {
     if (m.step === "setup-secret") return secretEnded(cx, m, end);
     const log = `${read(end.stdout)}${read(end.stderr)}`;
     if (m.step === "setup-open") {
+      dropOpenCache(cx.checkout(m));
       if (end.code === 0) return checks(cx, cx.record(m, "checks"));
       if (needsPrivate(log)) {
         const base = data(m).setupSecret?.base ?? "HEAD";
@@ -161,7 +191,10 @@ export const verifyHandler: Handler = {
       if (end.timedOut) return failed(cx, m, "The checks timed out.", log);
       if (end.code !== 0) {
         const cache = cx.home.cache(cx.repo(m).name);
-        const ro = checksMayWrite(cx, m) ? null : readOnlyCachePath(log, cache);
+        const ro =
+          checksMayWrite(cx, m) || hasSetupSecrets(cx.config.file, m.repo)
+            ? null
+            : readOnlyCachePath(log, cache);
         if (ro) {
           // PIP-95: not the code's fault, so no repair round; the owner decides.
           const o = await ask(cx, m, cacheWriteQuestion(cx.repo(m).name, cache, ro), "allow check writes");
