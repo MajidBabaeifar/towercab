@@ -50,11 +50,29 @@ export class FakeTools implements Tools {
     return this;
   }
 
+  /** `run` calls not answered yet; `cutOff` answers them with the stopped result (LOOP-136). */
+  private pending = new Set<{ label: string; cmd: string; cut: (r: RunResult) => void }>();
+
   async run(cmd: string, args: string[], opts: RunOpts = {}): Promise<RunResult> {
     this.calls.push({ cmd, args, opts });
     const fn = this.runs.get(cmd);
     if (!fn) return failResult(`${cmd}: not faked`, 127);
-    return fn(args, opts);
+    const entry = { label: [cmd, args[0]].filter(Boolean).join(" "), cmd, cut: (_r: RunResult) => {} };
+    const answer = fn(args, opts);
+    return new Promise<RunResult>((resolve, reject) => {
+      entry.cut = resolve;
+      this.pending.add(entry);
+      Promise.resolve(answer)
+        .then(resolve, reject)
+        .finally(() => this.pending.delete(entry));
+    });
+  }
+
+  cutOff(): string[] {
+    const cut = [...this.pending];
+    this.pending.clear();
+    for (const c of cut) c.cut(failResult(`stopped: ${c.cmd} was cut off at shutdown`, 1));
+    return cut.map((c) => c.label);
   }
 
   spawn(spec: ChildSpec): ChildHandle {

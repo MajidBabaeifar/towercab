@@ -18,7 +18,7 @@ Environment=PATH=${nodeDir}:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Restart=always
 RestartSec=5
 KillMode=mixed
-TimeoutStopSec=30
+TimeoutStopSec=60
 
 [Install]
 WantedBy=default.target
