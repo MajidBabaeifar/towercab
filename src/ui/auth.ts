@@ -25,7 +25,9 @@ export const UNKNOWN_ACCOUNT = "This Towercab doesn't know your GitHub account. 
 
 const TEAM_BY = "team:";
 
-export type SignIn = { ok: true; token: string; user: StoredUser } | { ok: false; reason: string };
+export type SignIn =
+  | { ok: true; token: string; user: StoredUser }
+  | { ok: false; reason: string; login?: string };
 
 export class Auth {
   private db: Db;
@@ -83,10 +85,10 @@ export class Auth {
     } else if (user.addedBy.startsWith(TEAM_BY)) {
       viaTeam = true;
     }
-    if (!user || user.disabled) return { ok: false, reason: UNKNOWN_ACCOUNT };
+    if (!user || user.disabled) return { ok: false, reason: UNKNOWN_ACCOUNT, login };
     if (viaTeam) {
       const left = await this.syncTeam(user, token, now);
-      if (left) return { ok: false, reason: UNKNOWN_ACCOUNT };
+      if (left) return { ok: false, reason: UNKNOWN_ACCOUNT, login };
       user = getUser(this.db, login) ?? user;
     }
     const session = createSession(this.db, login, now, this.limits);

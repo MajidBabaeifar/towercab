@@ -233,7 +233,14 @@ export function createActions(d: ActionDeps): UiActions {
 
   /** UI-105, UI-106: remember the action for display and ask the loop to read the PR on its next pass. */
   const done = (m: Mission, p: { number: number } | null, action: DoneNote["action"]) => {
-    const note: DoneNote = { action, stage: m.stage, pr: p?.number ?? 0, at: d.clock.now() };
+    const who = currentActor();
+    const note: DoneNote = {
+      action,
+      stage: m.stage,
+      pr: p?.number ?? 0,
+      at: d.clock.now(),
+      ...(d.config?.auth ? { by: who.login, via: who.via } : {}),
+    };
     d.db.tx(() => {
       const fresh = getMission(d.db, m.id);
       if (!fresh || fresh.stage !== m.stage) return;
@@ -622,7 +629,11 @@ export function createActions(d: ActionDeps): UiActions {
       const found = await d.store.get(intent);
       if (found.done) throw new Error("It is done or dropped.");
       if (d.config?.auth ? !mayFull(authorityOf(d.db, found.id, found.repo)) : !canBoostIntent(found))
-        throw new Error("a5 is only for intents an admin or maintainer wrote or confirmed.");
+        throw new Error(
+          d.config?.auth
+            ? "a5 is only for intents an admin or maintainer wrote or confirmed."
+            : "a5 is only for your own intents.",
+        );
       const started = unfinishedFor(d.db, found.id) || d.db.meta(`start:${found.id}`) !== null;
       command("boost", found.id);
       const bp = pr(unfinishedFor(d.db, found.id));

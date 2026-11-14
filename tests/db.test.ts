@@ -29,6 +29,7 @@ test("db: schema matches the spec", () => {
     "tg_cards",
     "tg_link_codes",
     "tg_links",
+    "tg_person_cards",
     "transitions",
     "user_events",
     "users",

@@ -150,6 +150,7 @@ export function sourcesOf(loop: Loop, home: Home): UiSources {
     prUrl: (repo, n) => changeUrl(repo, n),
     intentUrl: (i) => loop.d.store.url(i),
     proposed: () => loop.proposedState(),
+    unconfirmed: () => [...(loop.pickState().unconfirmed ?? [])],
   };
 }
 

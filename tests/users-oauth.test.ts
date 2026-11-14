@@ -123,7 +123,7 @@ test("users: an unknown account is refused", async () => {
   const { db, auth } = world({ c1: "mallory" }, new Set());
   setTeam(db, { team: "acme/devs" }, "owner", 0);
   const r = await signIn(auth, "c1");
-  expect(r).toEqual({ ok: false, reason: UNKNOWN_ACCOUNT });
+  expect(r).toEqual({ ok: false, reason: UNKNOWN_ACCOUNT, login: "mallory" });
   expect(getUser(db, "mallory")).toBeNull();
   expect(db.get("SELECT COUNT(*) AS n FROM sessions")).toEqual({ n: 0 });
 });

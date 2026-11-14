@@ -18,8 +18,10 @@ import { type Actor, runAs } from "../actor.ts";
 import { ownerOnly } from "../autonomy.ts";
 import { levelNow } from "../autonomy-change.ts";
 import type { AuthConfig } from "../config.ts";
+import { peopleOf } from "../intent-people.ts";
 import { isRepoName } from "../intents/features.ts";
 import type { IntentStore, Listing } from "../intents/types.ts";
+import { chatOf, createLinkCode, LINK_CODE_SECS } from "../telegram/people.ts";
 import { can, refusal, roleOn } from "../users.ts";
 import {
   hashToken,
@@ -115,7 +117,7 @@ const TYPES: Record<string, string> = {
 };
 
 const PAGES =
-  /^\/(?:signin|board|overview|repos|queue|activity|i\/[A-Za-z0-9._-]+|inbox(?:\/[A-Za-z0-9._-]+)?)?\/?$/;
+  /^\/(?:signin|users|board|overview|repos|queue|activity|i\/[A-Za-z0-9._-]+|inbox(?:\/[A-Za-z0-9._-]+)?)?\/?$/;
 export const ACTIONS = new Set([
   "checkIntent",
   "createIntent",
@@ -459,7 +461,13 @@ export function startUi(o: UiOptions): UiServer {
       // An intent's own repo decides; a repo named in the body can't stand in for it.
       const found = intent ? await src.store.get(intent).catch(() => null) : null;
       const where = intent ? (found?.repo ?? "") : repo;
-      if (!need || !can(me!, need, where)) {
+      // USR-9: a contributor may answer a question on an intent they wrote.
+      const own =
+        action === "reply" &&
+        !!intent &&
+        peopleOf(src.db, intent)?.writer === me!.login.toLowerCase() &&
+        can(me!, "answer", where);
+      if (!need || (!can(me!, need, where) && !own)) {
         return json(res, 403, {
           ok: false,
           message: need ? `Refused: ${refusal(me!, need, where)}.` : "Refused: unknown action.",
@@ -723,7 +731,7 @@ export function startUi(o: UiOptions): UiServer {
       );
       if (!r.ok) {
         return send(res, 302, "text/plain; charset=utf-8", "", {
-          Location: `/signin?error=${encodeURIComponent(r.reason)}`,
+          Location: `/signin?error=${encodeURIComponent(r.reason)}${r.login ? `&login=${encodeURIComponent(r.login)}` : ""}`,
         });
       }
       return send(res, 302, "text/plain; charset=utf-8", "", {
@@ -746,11 +754,32 @@ export function startUi(o: UiOptions): UiServer {
       }
       if (!user) return json(res, 401, { error: "Sign in first." });
       const { login, name, role, repoRoles } = user;
-      return json(res, 200, { auth: true, login, name: name || login, role, repoRoles });
+      // USR-11, UI-223: whether Telegram is set up and this person's chat is linked (the chat id itself stays private).
+      const telegram = { available: !!config.telegram, linked: chatOf(A.users.db, login) !== null };
+      return json(res, 200, { auth: true, login, name: name || login, role, repoRoles, telegram });
     }
     if (A && path.startsWith("/api/") && !user) return json(res, 401, { error: "Sign in first." });
     if (req.method === "POST") {
       if (path === "/api/actions") return runAs(actorOf(req), () => act(req, res));
+      if (A && user && path === "/api/me/telegram") {
+        if (!originOk(req)) return json(res, 403, { ok: false, message: "Refused: wrong origin." });
+        if (!config.telegram)
+          return json(res, 422, { ok: false, message: "Telegram isn't set up on this Towercab." });
+        let op = "";
+        try {
+          op = String((JSON.parse(await readBody(req)) as { op?: unknown }).op ?? "");
+        } catch {
+          return json(res, 400, { ok: false, message: "The request isn't JSON." });
+        }
+        // Only the person's own link: never another login's.
+        if (op === "unlink") {
+          A.users.db.run("DELETE FROM tg_links WHERE login = ?", user.login.toLowerCase());
+          return json(res, 200, { ok: true, linked: false });
+        }
+        if (op !== "code") return json(res, 422, { ok: false, message: "Unknown request." });
+        const code = createLinkCode(A.users.db, user.login, nowS());
+        return json(res, 200, { ok: true, code, expiresInMinutes: LINK_CODE_SECS / 60 });
+      }
       if (A && user && (path === "/api/users" || path === "/api/settings")) {
         if (!originOk(req)) return json(res, 403, { ok: false, message: "Refused: wrong origin." });
         const need = path === "/api/users" ? "users" : "settings";

@@ -9,6 +9,7 @@ import type {
   ReposPage as ReposData,
   TopBar as Top,
 } from "../../src/ui/view.ts";
+import { AccountMenu } from "./AccountMenu.tsx";
 import { act, useLive } from "./api.ts";
 import { ErrorNote, Freshness, Skeleton } from "./components.tsx";
 import { Alert, Logo, Pause, Play, Spinner } from "./icons.tsx";
@@ -21,8 +22,11 @@ import { InboxPage } from "./pages/Inbox.tsx";
 import { IntentPage } from "./pages/Intent.tsx";
 import { OverviewPage } from "./pages/Overview.tsx";
 import { ReposPage } from "./pages/Repos.tsx";
+import { UsersPage } from "./pages/Users.tsx";
 import { Link, usePath } from "./router.tsx";
 import { Shortcuts } from "./Shortcuts.tsx";
+import { SignIn } from "./SignIn.tsx";
+import { canCreateAnywhere, useSession } from "./session.ts";
 
 const TABS = [
   ["/", "Inbox"],
@@ -94,6 +98,7 @@ function PauseButton({ top }: { top: Top }) {
 }
 
 function TopBar({ top, path }: { top: Top | null; path: string }) {
+  const { me } = useSession();
   // `/queue` is the Repos tab's old name (UI-140): old links land there.
   const at = path === "/queue" || path.startsWith("/queue/") ? "/repos" : path;
   const section =
@@ -149,12 +154,20 @@ function TopBar({ top, path }: { top: Top | null; path: string }) {
             )}
           </p>
         ) : null}
-        {top && !top.readOnly && top.role !== "viewer" ? (
+        {top && !top.readOnly && top.role !== "viewer" && canCreateAnywhere(me) ? (
           <button type="button" class="btn primary new-intent-btn" onClick={openNewIntent}>
             New intent
           </button>
         ) : null}
-        {top ? <PauseButton top={top} /> : null}
+        {top && (!me?.auth || me.role === "admin" || me.role === "maintainer") ? (
+          <PauseButton top={top} />
+        ) : null}
+        {me?.auth && me.role === "admin" ? (
+          <Link href="/users" class="btn ghost admin-link">
+            People
+          </Link>
+        ) : null}
+        {me?.auth ? <AccountMenu me={me} /> : null}
       </div>
       <nav class="tabs" aria-label="Pages">
         <div class="tabs-inner">
@@ -211,6 +224,17 @@ function BoardRoute() {
 }
 
 function App() {
+  const session = useSession();
+  const [expired, setExpired] = useState(false);
+  useEffect(() => {
+    if (session.state === "out") setExpired(location.pathname !== "/signin");
+  }, [session.state]);
+  if (session.state === "loading") return <Skeleton />;
+  if (session.state === "out" || location.pathname === "/signin") return <SignIn expired={expired} />;
+  return <Pages />;
+}
+
+function Pages() {
   const path = usePath();
   const [pathname, search = ""] = path.split("?");
   const state = useLive<Overview>("/api/state");
@@ -249,7 +273,8 @@ function App() {
         onTitle={setIntentTitle}
       />
     );
-  } else if (pathname === "/board") page = <BoardRoute />;
+  } else if (pathname === "/users") page = <UsersPage />;
+  else if (pathname === "/board") page = <BoardRoute />;
   else if (pathname === "/repos" || pathname === "/queue")
     page = <ReposRoute search={search} readOnly={top?.readOnly ?? true} />;
   else if (pathname === "/activity") page = <ActivityPage search={search} />;

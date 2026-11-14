@@ -158,6 +158,18 @@ export async function doctor(o: {
     lines.push(...g.lines);
     if (!g.ok) ok = false;
   }
+  // USR-3, USR-4: sign-in needs the client secret in the environment and an https address for its cookies.
+  if (config.auth) {
+    const a = config.auth;
+    if (!process.env[a.clientSecretEnv]) {
+      lines.push(`sign-in: ${a.clientSecretEnv} is not set in the environment: nobody can sign in`);
+      ok = false;
+    } else lines.push("sign-in: on (GitHub)");
+    if (!a.publicUrl.startsWith("https://"))
+      lines.push(
+        `sign-in: ${a.publicUrl} is not https: the session cookie is secure-only and browsers drop it`,
+      );
+  }
   for (const [name, repo] of config.repos) {
     lines.push(
       `${name}: ${repo.github} · ${existsSync(clonePath(repo, home.root)) ? "cloned" : "clones on first use"}`,

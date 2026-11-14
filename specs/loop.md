@@ -1768,6 +1768,9 @@ CREATE TABLE tg_links (login TEXT PRIMARY KEY, chat TEXT NOT NULL UNIQUE, linked
 CREATE TABLE tg_link_codes (code TEXT PRIMARY KEY, login TEXT NOT NULL, expires REAL NOT NULL, used_at REAL);
 CREATE TABLE intent_people (intent TEXT PRIMARY KEY, writer TEXT, confirmed_by TEXT, confirmed_at REAL,
   at REAL NOT NULL);
+CREATE TABLE tg_person_cards (mission INTEGER NOT NULL, login TEXT NOT NULL, chat TEXT NOT NULL,
+  intent TEXT NOT NULL, message_id INTEGER, text TEXT NOT NULL DEFAULT '', buttons TEXT, wait TEXT,
+  final INTEGER NOT NULL DEFAULT 0, handled_by TEXT, PRIMARY KEY (mission, login));
 ```
 
 **Transitions** (`next(stage, event)`; "next" = the next stage of the order; `U` = unexpected, counted

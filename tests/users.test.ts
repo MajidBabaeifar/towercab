@@ -1,5 +1,7 @@
 import { expect, test } from "vitest";
+import { ownerActor } from "../src/actor.ts";
 import { Db } from "../src/db.ts";
+import { authOf } from "../src/ui/wire.ts";
 import {
   can,
   checkRepoRoles,
@@ -9,7 +11,8 @@ import {
   ROLES,
   type UserAction,
 } from "../src/users.ts";
-import { addUser, getUser, removeUser, seedOwner, setDisabled } from "../src/users-store.ts";
+import { addUser, getUser, listUsers, removeUser, seedOwner, setDisabled } from "../src/users-store.ts";
+import { testConfig } from "./helpers/world.ts";
 
 const person = (role: Person["role"], repoRoles: Person["repoRoles"] = {}): Person => ({
   login: "ana",
@@ -110,4 +113,16 @@ test("users: the last admin cannot be removed", () => {
   removeUser(db, "owner", "cy", 4);
   expect(getUser(db, "owner")).toBeNull();
   expect(() => removeUser(db, "cy", "cy", 5)).toThrow(/last admin/);
+});
+
+test("users: without auth config the owner acts as before", () => {
+  const db = Db.memory();
+  const config = testConfig();
+  expect(config.auth).toBeNull();
+  // No sign-in is set up and nobody is added: the owner is the one actor on every channel.
+  expect(authOf(db, config, () => 0)).toBeUndefined();
+  expect(listUsers(db)).toEqual([]);
+  const me = config.github?.me ?? "owner";
+  for (const via of ["page", "github", "telegram", "cli"] as const)
+    expect(ownerActor(me, via)).toEqual({ login: me, name: me, role: "admin", via });
 });

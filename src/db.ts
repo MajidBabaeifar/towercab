@@ -69,6 +69,11 @@ CREATE TABLE tg_link_codes (code TEXT PRIMARY KEY, login TEXT NOT NULL, expires 
 CREATE TABLE intent_people (intent TEXT PRIMARY KEY, writer TEXT, confirmed_by TEXT, confirmed_at REAL,
   at REAL NOT NULL);`;
 
+/** USR-12: the copy of an intent's card a linked person's chat holds, and who handled it. */
+const PERSON_CARDS = `CREATE TABLE tg_person_cards (mission INTEGER NOT NULL, login TEXT NOT NULL, chat TEXT NOT NULL,
+  intent TEXT NOT NULL, message_id INTEGER, text TEXT NOT NULL DEFAULT '', buttons TEXT, wait TEXT,
+  final INTEGER NOT NULL DEFAULT 0, handled_by TEXT, PRIMARY KEY (mission, login));`;
+
 /** LOOP-37 **Schema**, as written in specs/loop.md (a test compares them). */
 export const SCHEMA = `CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE missions (
@@ -99,14 +104,15 @@ ${SHADOW}
 ${TELEGRAM}
 ${CARDS}
 ${OBSERVER}
-${USERS}`;
+${USERS}
+${PERSON_CARDS}`;
 
 /** Migration i takes `user_version` from i to i+1. Later changes append. */
 export const MIGRATIONS: string[] = [
   SCHEMA.replace("'resume','start','done','steps'", "'resume'")
     .replaceAll(ACTOR, "")
     .replace(OUTBOX_TG, "")
-    .replace(`\n${REPOS}\n${SHADOW}\n${TELEGRAM}\n${CARDS}\n${OBSERVER}\n${USERS}`, ""),
+    .replace(`\n${REPOS}\n${SHADOW}\n${TELEGRAM}\n${CARDS}\n${OBSERVER}\n${USERS}\n${PERSON_CARDS}`, ""),
   // 2: `start` joins the commands (LOOP-63); the CHECK can't be altered, so the table is rebuilt.
   `CREATE TABLE commands_new (id INTEGER PRIMARY KEY,
   name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start')),
@@ -170,13 +176,15 @@ ALTER TABLE commands_new RENAME TO commands;`,
 ALTER TABLE transitions ADD COLUMN via TEXT NOT NULL DEFAULT '';
 ALTER TABLE commands ADD COLUMN actor TEXT NOT NULL DEFAULT '';
 ALTER TABLE commands ADD COLUMN via TEXT NOT NULL DEFAULT '';`,
+  // 15: the copies of a card in linked people's chats (USR-12). Additive; `IF NOT EXISTS` for a re-upgrade after a manual rollback.
+  PERSON_CARDS.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS "),
 ];
 
 /**
  * Versions reached by migrations that only add (tables, columns, keys older code doesn't read): a
  * Towercab older than them can still use the database (LOOP-37).
  */
-export const ADDITIVE = new Set([3, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+export const ADDITIVE = new Set([3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
 // 10 and 12 only widen the CHECK on `commands` (same columns): older code reads the table as before, and a
 // `score`, `boost` or `unfreeze` row it doesn't know just gets an error result, so a rollback stays safe.
 

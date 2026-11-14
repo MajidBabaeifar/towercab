@@ -51,6 +51,7 @@ import {
 import { Markdown } from "./md.tsx";
 import { asksFirst } from "./options.ts";
 import { Link, usePath } from "./router.tsx";
+import { allows, isViewer, useMe } from "./session.ts";
 import { sharedReason } from "./up-next.ts";
 
 const drafts = new Map<string, string>();
@@ -369,7 +370,20 @@ export function NeedsCard({
     if (action === "drop") setConfirm(false);
     if (r.ok) onActed?.(action);
   };
-  const can = (a: string) => !readOnly && card.actions.includes(a as Card["actions"][number]);
+  // UI-220: the signed-in person's role decides what shows. A viewer sees no action buttons; a person whose
+  // role is too low for the main button sees it disabled with the role it needs.
+  const me = useMe();
+  const has = (a: string) => !readOnly && card.actions.includes(a as Card["actions"][number]);
+  const perm = (a: string) => {
+    if (a === "reply") {
+      const own = allows(me, "reply", card.repo);
+      return own.ok || !card.question ? own : allows(me, "answer", card.repo);
+    }
+    if (a === "pass") return allows(me, "drop", card.repo);
+    return allows(me, a as "merge", card.repo);
+  };
+  const can = (a: string) => has(a) && perm(a).ok;
+  const blocked = has("merge") && !perm("merge").ok && !isViewer(me, card.repo);
   // A plain brief is two to four sentences (PIP-106): shown whole up to about that, folded beyond.
   const people = card.people ?? card.brief;
   const path = usePath();
@@ -393,8 +407,29 @@ export function NeedsCard({
   };
   const actionBar = (
     <>
-      {(can("merge") && card.mergeLabel) || can("pass") || card.pr ? (
+      {(can("merge") && card.mergeLabel) ||
+      can("pass") ||
+      can("confirm") ||
+      (blocked && card.mergeLabel) ||
+      card.pr ? (
         <footer class="card-actions">
+          {can("confirm") ? (
+            <button
+              type="button"
+              class="btn primary"
+              disabled={busy !== null}
+              onClick={() => void run("confirm")}
+            >
+              <Check size={16} />
+              {busy === "confirm" ? "Confirming…" : "Confirm"}
+            </button>
+          ) : null}
+          {blocked && card.mergeLabel ? (
+            <button type="button" class="btn primary" disabled title={perm("merge").why}>
+              <Merge size={16} />
+              {card.mergeLabel}
+            </button>
+          ) : null}
           {can("pass") ? (
             <button
               type="button"
@@ -747,6 +782,11 @@ export function NeedsCard({
             </button>
           </div>
         </form>
+      ) : null}
+      {card.handledBy ? <p class="meta handled-by">Already handled by {card.handledBy}.</p> : null}
+      {card.lastBy ? <p class="meta last-by">{card.lastBy}</p> : null}
+      {card.alsoCanDecide?.length && !card.done ? (
+        <p class="meta also-decide">Who can decide: {card.alsoCanDecide.join(", ")}</p>
       ) : null}
       {card.done ? (
         <p class={`done-note${card.done.stuck ? " stuck" : ""}`} role="status">

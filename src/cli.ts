@@ -63,6 +63,7 @@ import { buildChat } from "./telegram/wire.ts";
 import { Telegram } from "./telegram.ts";
 import { realTools, type Tools } from "./tools.ts";
 import { checkUpdate, version } from "./update.ts";
+import { listUsers } from "./users-store.ts";
 
 export const COMMANDS = [
   "up",
@@ -93,6 +94,7 @@ export const COMMANDS = [
   "repo",
   "shadow",
   "settings",
+  "users",
   "hook",
   "specs",
 ] as const;
@@ -121,6 +123,7 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   repo add <owner/name> [--name <short>] | repo remove <name> | repo list
   repo set <name> key=value…      workers, ahead, base, path, env (NAME=value or a JSON object)
   shadow reset | shadow status    clear the shadow's conversation; what it is doing and what it cost today
+  users list                      the people who may sign in, with roles (read-only: manage them on the page)
   settings restore <repo>         put back the settings saved before the last apply
   settings scanning-granted       the GitHub App now has Code scanning alerts (read)
   ui [--no-open]                  open the web page
@@ -798,6 +801,18 @@ async function run(
     }
     case "repo":
       return repo(w, args, v.name as string | undefined);
+    case "users": {
+      // USR-6: for recovery when nobody can sign in; the command line stays the owner's and changes nothing here.
+      if (args[0] !== "list") throw new UsageError("users list");
+      if (!w.config.auth) return "no [auth] section: Towercab has one owner and no sign-in";
+      const rows = listUsers(w.db).map(
+        (u) =>
+          `${u.login}\t${u.disabled ? "disabled" : u.role}${Object.entries(u.repoRoles ?? {})
+            .map(([r, role]) => ` ${r}=${role}`)
+            .join("")}`,
+      );
+      return rows.length ? rows.join("\n") : "nobody yet: the owner is added when Towercab starts";
+    }
     case "settings":
       return settingsCommand(w, args);
     case "ui": {
