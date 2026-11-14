@@ -89,6 +89,7 @@ export function withDeadline(d: ReadinessDeps, ms: number, now: () => number = D
     run: async (cmd, args, opts) => d.tools.run(cmd, args, left(opts)),
     spawn: (spec) => d.tools.spawn(spec),
     which: (cmd) => d.tools.which(cmd),
+    cutOff: () => d.tools.cutOff?.() ?? [],
   };
   const github = limitedForge(d.github, left);
   return {

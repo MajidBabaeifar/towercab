@@ -63,6 +63,7 @@ import {
   NoOpenIntentError,
   SyncError,
 } from "./intents/types.ts";
+import { type GitProc, lockRoots, removeStaleLocks } from "./locks.ts";
 import {
   type ApplyCtx,
   apply,
@@ -124,7 +125,14 @@ import {
 } from "./slots.ts";
 import { leftOf, type OwnerStep, parseDelivery, unticked } from "./steps.ts";
 import { APPROVE_NOTICE } from "./teammates.ts";
-import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
+import {
+  type ChildHandle,
+  CUT_OFF_KILL_MS,
+  KILL_AFTER_MS,
+  killGroup,
+  STOP_GRACE_MS,
+  type Tools,
+} from "./tools.ts";
 import { freezeEstimate } from "./ui/estimate.ts";
 import { checkUpdate, RESTART_CODE } from "./update.ts";
 
@@ -180,6 +188,10 @@ export interface LoopDeps {
   shadow?: { pass(): Promise<void>; busy(): boolean; stop(): Promise<void> };
   /** OBV-2: the observer, passed each pass; none: no observer. */
   observer?: { pass(): Promise<void>; busy(): boolean; stop(): Promise<void> };
+  /** LOOP-138: the running git processes (default: read from `/proc`); tests fake them. */
+  gitProcs?: () => GitProc[];
+  /** LOOP-136: how long running `gh` and `git` calls get at a stop (default 10 s, fixed; tests shorten it). */
+  stopGraceMs?: number;
 }
 
 export interface LoopOpts {
@@ -267,6 +279,11 @@ export class Loop {
   private startCommit: string | null = null;
   private last: { wall: number; mono: number } | null = null;
   private stopping = false;
+  /** LOOP-136: resolves when `stop` is called, so a waiting loop wakes at once. */
+  private readonly stopped: Promise<void>;
+  private wake: () => void = () => {};
+  /** LOOP-136: set once calls were cut off at a stop; their failures are not the mission's. */
+  private cutOffDone = false;
   exitCode = 0;
   private opts: LoopOpts;
   private targetId: string | null = null;
@@ -283,6 +300,9 @@ export class Loop {
     };
     this.opts = opts;
     this.inhibitor = new Inhibitor(this.d.tools, d.log);
+    this.stopped = new Promise<void>((r) => {
+      this.wake = r;
+    });
   }
 
   /** The intents store without the pause hold: the owner's own commands write through it. */
@@ -344,6 +364,17 @@ export class Loop {
     if (this.startCommit) db.setMeta("code_commit", this.startCommit);
     else db.delMeta("code_commit");
     loadRepos(this.d.config, db, this.now);
+    // LOOP-138: a killed git left its lock files behind; the sync below (LOOP-139) needs them gone.
+    removeStaleLocks({
+      roots: lockRoots(
+        this.d.home.root,
+        this.d.home.intents,
+        [...this.d.config.repos.values()].map((r) => clonePath(r, this.d.home.root)),
+      ),
+      now: this.now,
+      log: this.d.log,
+      ...(this.d.gitProcs ? { procs: this.d.gitProcs } : {}),
+    });
     // REPO-19: the first run of the settings reader is recorded once (and again after a rollback).
     await recordParser(db, this.d.tools, this.codeRoot(), this.startCommit, this.now).catch(() => undefined);
     recoverFeatures(db, this.now);
@@ -457,24 +488,35 @@ export class Loop {
   }
 
   /** Clean exit: children get SIGTERM, then SIGKILL; their missions are `interrupted`. */
-  async shutdown(): Promise<void> {
-    await this.issuesIdle();
+  async shutdown(running?: Promise<unknown>): Promise<void> {
+    // LOOP-136: the pass in flight and the background jobs get one grace period between them; `gh` and
+    // `git` calls still running at its end are cut off, and the exit follows at once.
+    const graceMs = this.d.stopGraceMs ?? STOP_GRACE_MS;
     this.stopFeatures();
-    await this.featuresIdle();
-    await this.readinessIdle();
-    await this.settingsIdle();
-    await this.setupChecksIdle();
-    await this.limitsIdle();
-    this.d.chat?.stop();
-    await this.d.shadow?.stop();
-    await this.d.observer?.stop();
-    for (const [id, r] of this.children) {
-      r.handle.kill("SIGTERM");
-      const done = await Promise.race([
-        r.handle.done.then(() => true),
-        sleep(KILL_AFTER_MS).then(() => false),
-      ]);
-      if (!done) r.handle.kill("SIGKILL");
+    const idle = (async () => {
+      await running?.catch(() => undefined);
+      await this.issuesIdle();
+      await this.featuresIdle();
+      await this.readinessIdle();
+      await this.settingsIdle();
+      await this.setupChecksIdle();
+      await this.limitsIdle();
+      this.d.chat?.stop();
+      await this.d.shadow?.stop();
+      await this.d.observer?.stop();
+    })().catch((e: Error) => this.d.log(`stop: ${e.message}`));
+    if (!(await within(idle, graceMs))) {
+      this.cutOffDone = true;
+      for (const c of this.d.tools.cutOff?.() ?? [])
+        this.d.log(`stop: cut off ${c} after ${graceMs / 1000}s`);
+      await within(idle, CUT_OFF_KILL_MS + 1000);
+    }
+    // LOOP-7: Claude runs get SIGTERM together, then SIGKILL for those still there after 10 s.
+    const live = [...this.children];
+    for (const [, r] of live) r.handle.kill("SIGTERM");
+    const ended = await Promise.all(live.map(([, r]) => within(r.handle.done, KILL_AFTER_MS)));
+    for (const [i, [, r]] of live.entries()) if (!ended[i]) r.handle.kill("SIGKILL");
+    for (const [id, r] of live) {
       const m = getMission(this.d.db, id);
       if (m && !finished(m.stage)) {
         const runS = (this.d.clock.mono() - r.startMono) / 1000;
@@ -496,18 +538,26 @@ export class Loop {
   stop(code = 0): void {
     this.stopping = true;
     this.exitCode = code;
+    this.wake();
   }
 
   /** The pass loop until stopped (LOOP-12). */
   async run(): Promise<number> {
     await this.open();
+    let inFlight: Promise<PassReport> | undefined;
     while (!this.stopping) {
-      const r = await this.pass();
+      const pass = this.pass();
+      // LOOP-136: a stop during a pass does not wait for the pass; `shutdown` gives it the grace period.
+      const r = await Promise.race([pass, this.stopped.then(() => null)]);
+      if (r === null) {
+        inFlight = pass;
+        break;
+      }
       if (r.stop) break;
       if (!this.opts.watch && r.idle) break;
-      await sleep(PASS_MS);
+      await within(this.stopped, PASS_MS);
     }
-    await this.shutdown();
+    await this.shutdown(inFlight);
     return this.exitCode;
   }
 
@@ -558,6 +608,8 @@ export class Loop {
   async pass(): Promise<PassReport> {
     const { db, clock } = this.d;
     const report: PassReport = { idle: false, stop: false, picked: null, woke: false, target: null };
+    // LOOP-136: once told to stop, the loop takes no new work.
+    if (this.stopping) return { ...report, stop: true };
     const nowPoint = { wall: clock.now(), mono: clock.mono() };
     if (this.last && woke(this.last, nowPoint, PASS_MS / 1000)) {
       report.woke = true;
@@ -615,9 +667,12 @@ export class Loop {
       await this.pollReleases();
     }
     this.releaseReady();
+    // LOOP-136: a stop that came during the pass starts no step and picks nothing.
+    if (this.stopping) return { ...report, stop: true };
     // LOOP-111: missions back from a wait ask for their run before a ready build takes the free slot.
     await this.stepDue(!report.woke);
     this.releaseReady();
+    if (this.stopping) return { ...report, stop: true };
     await this.probeSandbox();
     if (
       // PIP-163: with a probe, nothing is picked until the sandbox has held (no waiting for the 15 minutes
@@ -1065,7 +1120,10 @@ export class Loop {
       this.githubOk();
     } catch (e) {
       this.listingError = (e as Error).message;
-      this.health.fail("github", this.listingError, this.now);
+      // LOOP-136: a call cut off at a stop says nothing about GitHub.
+      if (!this.cutOffDone) this.health.fail("github", this.listingError, this.now);
+      // LOOP-139: at start a failed sync is logged; the next pass tries again.
+      if (force) this.d.log(`intents: ${this.listingError}`);
       return;
     }
     const listing = this.listing;
@@ -1766,7 +1824,10 @@ export class Loop {
       // LOOP-113: a write held by the pause is no failure: the step is asked for again after resume.
       if (e instanceof PausedHold) return true;
       const cur = getMission(this.d.db, m.id) ?? m;
-      if (e instanceof EnvError) {
+      if (this.cutOffDone) {
+        // LOOP-136: a call cut off at the stop is no failure of the step; it runs again at the next start.
+        this.move(cur, { event: "interrupted" });
+      } else if (e instanceof EnvError) {
         this.health.fail(e.fault, e.message, this.now);
         this.move(cur, { event: "env_fail", why: e.message });
       } else {
@@ -2233,8 +2294,22 @@ export function clockTime(unix: number, now: number): string {
   return sameDay ? hm : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+/** Whether `p` settled within `ms`; the timer does not outlive the wait. */
+async function within(p: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      p.then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((r) => {
+        timer = setTimeout(() => r(false), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Read a run file as text, or "". */
