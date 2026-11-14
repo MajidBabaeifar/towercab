@@ -67,7 +67,8 @@ export interface TopBar {
   overBudget: boolean;
   /** UI-256: spend against the budgets; `note` is the words that go with amber or red. */
   budgetChip?: { text: string; level: "ok" | "amber" | "red"; note: string | null };
-  version: { commit: string; behind: string | null };
+  /** UI-278: `name` is the release tag or short commit; `release` is `<tag> available` on the release channel. */
+  version: { commit: string; name?: string; behind: string | null; release?: string | null };
   paused: boolean;
   /** USR-5: what the person may do; absent without `[auth]`, where the one owner is a maintainer (UI-213). */
   role?: "viewer" | "contributor" | "maintainer";

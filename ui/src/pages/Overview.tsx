@@ -125,8 +125,9 @@ export function OverviewPage({ data }: { data: Data }) {
               <div>
                 <dt>Version</dt>
                 <dd>
-                  <span class="mono">{top.version.commit}</span>
+                  <span class="mono">{top.version.name ?? top.version.commit}</span>
                   {top.version.behind ? <span class="meta"> · {top.version.behind}</span> : null}
+                  {top.version.release ? <span class="meta"> · {top.version.release}</span> : null}
                 </dd>
               </div>
             </dl>

@@ -2315,6 +2315,18 @@ Because a refactor changes no behaviour, its proof is that the existing tests pa
 - The code PR says "Refactor: no existing test changed" in its description (PIP-48), and the review treats a changed test as a finding of weakening (PIP-5).
 - Verified by: `pipeline: a refactor passes with the existing tests untouched`, `pipeline: a refactor that edits an existing test is asked first`, `pipeline: the refactor PR says no test changed`
 
+### PIP-234 · A review's verdict is one value, set by what blocks
+
+A review with nothing that blocks is approved, even when the agent's own `approved` flag says false.
+
+- A review *blocks* when it has at least one of the reasons of PIP-120: an important finding, weakened tests, a plan deviation (`plan_followed` false), or an outcome with `met` false and `owner` false. Nits and owner steps never block.
+- Verdict = approved when nothing blocks, whatever `approved` says; not approved when something blocks. The agent's `approved` alone never turns a review into a rejection. This replaces the "`approved` ∧" term of PIP-5 and the last sentence of PIP-120 ("treated as not approved at the gate").
+- The same verdict feeds the fix round (PIP-98), the gate (PIP-7), the Review comment (PIP-121) and the owner's wait text. A review that doesn't block starts no fix round, writes no `review didn't approve` wait and never reaches the repair stage, so `repair round changed nothing` cannot follow from it.
+- When the agent's `approved` was false and nothing blocks, the Review comment says `Approve` and notes in plain words that the reviewer's flag was overridden because it named no blocking reason (PIP-121).
+- The review prompt (`agents/review.md`) tells the agent that `approved` and `summary` must say the same thing as its findings: `approved` is false only with a blocking reason, and the summary must not recommend merging when it lists one.
+- The summary's wording is never parsed for approval; the structured fields are the only input.
+- Verified by: `pipeline: a review with nothing blocking is approved when the flag says false`, `pipeline: a review with nothing blocking starts no fix round`, `pipeline: nits alone never block a review`, `pipeline: a blocking finding still fails a review the agent approved`, `pipeline: the review comment notes an overridden flag`, `pipeline: review prompt ties the flag and summary to the findings`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |

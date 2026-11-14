@@ -342,7 +342,7 @@ async function mergeBase(cx: Ctx, m: Mission): Promise<string[]> {
   );
   if (!merging) {
     await coGit(cx, m, [
-      ...(await botAuthor(cx)),
+      ...(await botAuthor(cx, cx.repo(m).github)),
       "merge",
       "--no-edit",
       `refs/remotes/origin/${repo.base}`,
@@ -718,7 +718,7 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
   const intent = await intentOf(cx, m);
   await coGit(cx, m, ["add", "-A", "--", "specs", "README.md", ...extra]);
   await coGit(cx, m, [
-    ...(await botAuthor(cx)),
+    ...(await botAuthor(cx, cx.repo(m).github)),
     "commit",
     "--quiet",
     "-m",
