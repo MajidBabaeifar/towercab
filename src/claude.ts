@@ -20,6 +20,7 @@ import { sandboxPath } from "./pipeline/sandbox.ts";
 import type { JsonSchema } from "./pipeline/schemas.ts";
 import { Protected } from "./repo/protected.ts";
 import type { ChildSpec } from "./tools.ts";
+import { INTEROP_VARS, isWslHost } from "./wsl.ts";
 
 /** The prompt of a run resumed after a cut-off (a crash, a kill, a limit wait). */
 export const CONTINUE = "Continue where you stopped.";
@@ -94,7 +95,14 @@ export function othersInHome(run: Pick<ClaudeRun, "cwd" | "runsDir" | "cache">):
 }
 
 /** Sockets that reach the host's power, hidden when Unix sockets are allowed. */
-export const HOST_SOCKETS = ["/var/run/docker.sock", "/run/docker.sock", "/run/dbus", "/run/user"];
+// `/run/WSL` holds the sockets WSL uses to start Windows programs (LOOP-163).
+export const HOST_SOCKETS = [
+  "/var/run/docker.sock",
+  "/run/docker.sock",
+  "/run/dbus",
+  "/run/user",
+  "/run/WSL",
+];
 
 /** Environment variables never passed to a run (LOOP-19). */
 const TOKENS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"];
@@ -250,7 +258,7 @@ export function claudeArgv(run: ClaudeRun): string[] {
  */
 export function claudeSettings(
   run: ClaudeRun,
-  o: { towercabExe: string; home: string },
+  o: { towercabExe: string; home: string; wsl?: boolean },
 ): Record<string, unknown> {
   const denyRead = [
     ...SECRET_PATHS.map((p) => join(o.home, p)),
@@ -259,6 +267,8 @@ export function claudeSettings(
   ];
   // PIP-157: unix sockets are never bound in, and the host's are hidden, whatever the config says.
   denyRead.push(...HOST_SOCKETS);
+  // LOOP-163: under WSL every Windows drive is mounted below /mnt, and the worker must not read them.
+  if (o.wsl ?? isWslHost()) denyRead.push("/mnt");
   const denyWrite = [join(resolve(run.cwd), ".git")];
   // PIP-100: an agent without Edit or Write only reads, so its Bash can't write the checkout either
   // (`git diff --output=<file>` from text planted in a diff).
@@ -317,6 +327,8 @@ export function claudeEnv(run: ClaudeRun, home: string): Record<string, string> 
     ...run.cacheEnv,
   };
   for (const t of TOKENS) delete env[t];
+  // LOOP-163: no run can start a Windows program.
+  for (const k of INTEROP_VARS) delete env[k];
   // SHIP-36: the age key stays with Towercab's own process.
   for (const k of Object.keys(env)) if (/^(SOPS_|AGE_)/i.test(k)) delete env[k];
   return env;

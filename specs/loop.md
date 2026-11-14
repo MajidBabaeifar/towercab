@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..121, LOOP-126..132, LOOP-133..135, LOOP-159..162, LOOP-122, LOOP-140..141, LOOP-136..139, LOOP-124..125, LOOP-142..145 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..121, LOOP-126..132, LOOP-133..135, LOOP-159..162, LOOP-122, LOOP-140..141, LOOP-136..139, LOOP-124..125, LOOP-142..145, LOOP-163 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -953,6 +953,15 @@ The self-update check only warns about a secrets file that others can read, so a
 - The check of LOOP-35 runs `bin/towercab doctor --quick --for-update`. On the command line, `doctor --quick` always prints the loose-secrets line of LOOP-143 as a warning (`warning: <path> is readable by others: chmod 600 <path>`) that does not change the exit code, with or without `--for-update`; the flag is accepted and changes nothing more. So the update check of a Towercab that predates the flag, which runs plain `doctor --quick`, does not roll back on a loose file either. Every other failure of `doctor --quick` still fails the update and rolls it back.
 - A warning in that check does not stop the update and sends no `self-update failed` message. The full `doctor` (without `--quick`) and the Problems block (UI-277) still show it as a failure with the `chmod 600` fix, on every platform. The `doctor` function itself fails on it unless called with its `forUpdate` option, which the command line sets for `--quick`.
 - Verified by: `update: a loose secrets file only warns`, `update: another doctor failure still rolls back`, `doctor: --for-update turns a loose secrets file into a warning`, `doctor: a loose secrets file fails without the flag`
+
+### LOOP-163 · Workers cannot reach the Windows side under WSL
+
+Under WSL, no worker or sandboxed command can read the Windows drives or start a Windows program.
+
+- When WSL is detected (LOOP-142): `/mnt` (every drive mount) is in the Claude run's `denyRead`, and the bwrap argv of every sandboxed command has `--tmpfs /mnt` after `--tmpfs /run` and before the checkout is bound. Outside WSL neither is added.
+- `/run/WSL` (the sockets that start Windows programs) is in `HOST_SOCKETS`, so it is always hidden from runs.
+- `WSL_INTEROP`, `WSLENV` and `WSL_DISTRO_NAME` are dropped from every run's and sandboxed command's environment, and a repo variable of those names is refused (PIP-159). Only the keep-awake `powershell.exe` child (LOOP-142) keeps them.
+- Verified by: `sandbox: WSL drives and interop are hidden from workers`, `sandbox: WSL interop variables are not passed to runs`
 
 ### LOOP-144 · A guide for Windows through WSL2
 

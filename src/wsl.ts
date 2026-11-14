@@ -2,7 +2,7 @@
 // user's `.wslconfig` says. Everything is read through `Tools`, so tests fake it and a host without
 // `cat` or `powershell.exe` simply answers "no".
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { Tools } from "./tools.ts";
 
 /** The Windows program that holds the machine awake and reads `.wslconfig`. */
@@ -18,6 +18,25 @@ export const POWERSHELL_FALLBACK = "/mnt/c/Windows/System32/WindowsPowerShell/v1
 export function powershellPath(tools: Tools, exists: (p: string) => boolean = existsSync): string | null {
   if (tools.which(POWERSHELL)) return POWERSHELL;
   return exists(POWERSHELL_FALLBACK) ? POWERSHELL_FALLBACK : null;
+}
+
+/** True when the kernel release names Microsoft (the same test as `detectWsl`, read directly for the sandbox builders). */
+export function isWslHost(
+  read: () => string = () => readFileSync("/proc/sys/kernel/osrelease", "utf8"),
+): boolean {
+  try {
+    return /microsoft/i.test(read());
+  } catch {
+    return false;
+  }
+}
+
+/** The Windows interop variables: with them a command can start Windows programs. */
+export const INTEROP_VARS = ["WSL_INTEROP", "WSLENV", "WSL_DISTRO_NAME"];
+
+/** `env` without the interop variables; only the keep-awake child keeps them (LOOP-142). */
+export function withoutInterop(env: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !INTEROP_VARS.includes(k)));
 }
 
 /** The kernel release when it contains `microsoft` (case-insensitive), else null: not WSL. */
