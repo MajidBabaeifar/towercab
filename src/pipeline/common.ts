@@ -199,6 +199,10 @@ export interface PipeData {
   approvalNotes?: string[];
   /** PIP-119: outcomes only the owner can do, from the last review. */
   ownerSteps?: { bullet: string; why: string }[];
+  /** PIP-208: the `defer` lines of the owner's comments, kept as they arrive. */
+  deferrals?: { name?: string; n?: number; to: string }[];
+  /** PIP-208, PIP-209: the outcomes the last review counted as met because they were deferred. */
+  deferred?: { bullet: string; to: string; by: string; unmet: boolean }[];
   /** The risk agent's assessment per gate (PIP-96, AUT-16); null = the run didn't finish. */
   risk?: { spec?: Risk | null; plan?: Risk | null; code?: Risk | null };
   /** What each gate's assessment was of (`Risk.of`), kept also when the run didn't finish. */
