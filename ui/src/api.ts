@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import type { ActionReply } from "../../src/ui/view.ts";
+import { signedOut } from "./me.ts";
 
 const token = document.querySelector('meta[name="towercab-token"]')?.getAttribute("content") ?? "";
 
@@ -14,8 +15,35 @@ export async function getJson<T>(path: string): Promise<T> {
     throw new Error("Can't reach Towercab. Is it still running?");
   }
   const body = (await r.json().catch(() => null)) as (T & { error?: string }) | null;
+  if (r.status === 401) signedOut();
   if (!r.ok) throw new Error(body?.error ?? `Towercab answered ${r.status}.`);
   return body as T;
+}
+
+/** USR-14: a JSON POST with the page's token; the body comes back whatever the status (a 403 has its reason). */
+export async function postJson<T extends { ok?: boolean; message?: string }>(
+  path: string,
+  body: Record<string, unknown>,
+): Promise<T> {
+  try {
+    const r = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Towercab-Token": token },
+      body: JSON.stringify(body),
+    });
+    if (r.status === 401) signedOut();
+    const out = (await r.json().catch(() => null)) as T | null;
+    return out ?? ({ ok: false, message: `Towercab answered ${r.status}.` } as T);
+  } catch {
+    return { ok: false, message: "Can't reach Towercab. Is it still running?" } as T;
+  } finally {
+    bump();
+  }
+}
+
+/** AUT-23: a maintainer confirms an intent held for confirmation. */
+export function confirmIntent(id: string): Promise<ActionReply> {
+  return post({ action: "confirm", intent: id });
 }
 
 export function act(action: string, intent?: string, text?: string): Promise<ActionReply> {
@@ -107,6 +135,7 @@ async function post(req: Record<string, unknown>): Promise<ActionReply> {
       headers: { "Content-Type": "application/json", "X-Towercab-Token": token },
       body: JSON.stringify(req),
     });
+    if (r.status === 401) signedOut();
     const body = (await r.json().catch(() => null)) as ActionReply | null;
     return body ?? { ok: false, message: `Towercab answered ${r.status}.` };
   } catch {

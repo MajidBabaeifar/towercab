@@ -195,7 +195,18 @@ export interface Card {
   stuck: boolean;
   mergeLabel: string | null;
   /** UI-105: the owner already acted from the page and the mission has not moved on; no buttons then. */
-  done: { action: "merge" | "drop" | "retry" | "done" | "steps"; text: string; stuck: boolean } | null;
+  done: {
+    action: "merge" | "drop" | "retry" | "done" | "steps";
+    text: string;
+    stuck: boolean;
+    /** UI-221: who decided and how, with sign-in on. */
+    by?: string;
+    via?: string;
+  } | null;
+  /** UI-221: the people who can decide this card (maintainers and admins of its repo); empty without sign-in. */
+  others?: string[];
+  /** AUT-22: nobody can decide it, with the admins to ask. */
+  nobody?: string;
   /** UI-131: the intent's repo is unknown: its short name and a guess at `owner/name` ("" = none). */
   addRepo: { name: string; github: string } | null;
   /** AUT-20: the risk of what it waits on; null when none was judged (or the check didn't finish). */
@@ -886,7 +897,7 @@ export interface FocusHistory {
 export interface InboxItem {
   /** The intent's ID, `proposed-<PR number>` or `cap-<scope>-<period>`: what the URL and the page key it by. */
   key: string;
-  kind: "card" | "cap" | "proposed";
+  kind: "card" | "cap" | "proposed" | "confirm";
   repo: string;
   title: string;
   /** "Plan review", "Proposed", "Budget". */
@@ -899,6 +910,8 @@ export interface InboxItem {
   card: Card | null;
   proposed: ProposedCard | null;
   cap: CapCard | null;
+  /** AUT-23: an intent held until a maintainer confirms it; the writer and why. */
+  confirm?: { reason: string; writer: string };
   /** The PR the item is about, for `o` (UI-261). */
   pr: number | null;
   prUrl: string | null;

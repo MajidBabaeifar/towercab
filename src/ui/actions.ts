@@ -194,7 +194,13 @@ export function createActions(d: ActionDeps): UiActions {
 
   /** UI-105, UI-106: remember the action for display and ask the loop to read the PR on its next pass. */
   const done = (m: Mission, p: { number: number } | null, action: DoneNote["action"]) => {
-    const note: DoneNote = { action, stage: m.stage, pr: p?.number ?? 0, at: d.clock.now() };
+    const note: DoneNote = {
+      action,
+      stage: m.stage,
+      pr: p?.number ?? 0,
+      at: d.clock.now(),
+      ...(d.by?.signed ? { by: d.by.login, via: d.by.via } : {}),
+    };
     d.db.tx(() => {
       const fresh = getMission(d.db, m.id);
       if (!fresh || fresh.stage !== m.stage) return;

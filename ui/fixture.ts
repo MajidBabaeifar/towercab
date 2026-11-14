@@ -2,12 +2,14 @@
 // state, served with fake actions. `node ui/fixture.ts [--port N]` serves it for a look.
 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { clearFlag, flagOf, setAccepted, setFlag } from "../src/autonomy-change.ts";
 import { parseConfig } from "../src/config.ts";
 import { Db } from "../src/db.ts";
+import type { Http } from "../src/github/app.ts";
 import type { ProposedPr, ProposedState } from "../src/github/proposed.ts";
 import type { Clock } from "../src/handlers.ts";
 import { Home } from "../src/home.ts";
@@ -24,6 +26,9 @@ import {
 import type { UiActions } from "../src/ui/actions.ts";
 import { startUi, type UiServer } from "../src/ui/server.ts";
 import { type LogLine, type Problem, priority, type UiSources, type UpNext } from "../src/ui/state.ts";
+import { Auth, STATE_COOKIE } from "../src/users/auth.ts";
+import { addUser, ensureFirstAdmin } from "../src/users/store.ts";
+import type { Role, User } from "../src/users.ts";
 
 const MIN = 60;
 const HOUR = 3600;
@@ -1536,4 +1541,85 @@ export function flagScene(f: Fixture): void {
     commit: "0123456789abcdef",
     at: Date.now() / 1000 - 600,
   });
+}
+
+/** USR-3: a page with sign-in on (UI-219..224). `as(login)` signs a person in with the fake GitHub; the admin is `owner`. */
+export async function servePeople(
+  o: { people?: { login: string; role: Role; repos?: Record<string, Role>; name?: string }[] } = {},
+) {
+  const free = createServer();
+  await new Promise<void>((ok) => free.listen(0, "127.0.0.1", ok));
+  const port = (free.address() as { port: number }).port;
+  await new Promise((ok) => free.close(ok));
+  const publicUrl = `http://localhost:${port}`;
+  const fixture = buildFixture({});
+  const clock = { t: Math.floor(Date.now() / 1000) };
+  const authConfig = {
+    clientId: "id",
+    clientSecretEnv: "S",
+    publicUrl,
+    listen: "127.0.0.1",
+    sessionHours: 12,
+    sessionDays: 7,
+  };
+  fixture.sources.config.auth = authConfig;
+  writeFileSync(
+    fixture.sources.config.file,
+    '# Towercab\n[agent]\nparallel = 2\ndaily_budget_usd = 40\nmonthly_budget_usd = 900\n\n[github]\napp_id = 1\nme = "owner"\n',
+  );
+  ensureFirstAdmin(fixture.db, "owner", clock.t);
+  const admin: User = { login: "owner", role: "admin", repos: {} };
+  for (const p of o.people ?? []) {
+    addUser(fixture.db, admin, p.login, { role: p.role, repos: p.repos ?? {}, name: p.name }, clock.t);
+  }
+  const github = { login: "owner", exists: true };
+  const http: Http = async (req) =>
+    req.url.endsWith("/login/oauth/access_token")
+      ? { status: 200, text: '{"access_token":"t"}' }
+      : { status: 200, text: JSON.stringify({ login: github.login }) };
+  const auth = new Auth({
+    db: fixture.db,
+    auth: authConfig,
+    http,
+    now: () => clock.t,
+    secret: () => "shh",
+    apiBase: "https://api.github.com",
+    inTeam: async () => false,
+    random: () => "STATE",
+  });
+  const here = dirname(fileURLToPath(import.meta.url));
+  const server = startUi({
+    port,
+    auth,
+    people: {
+      db: fixture.db,
+      config: fixture.sources.config,
+      now: () => clock.t,
+      exists: async () => github.exists,
+    },
+    sources: fixture.sources,
+    actions: fixture.actions,
+    distDir: resolve(here, "dist"),
+    log: () => {},
+    pollMs: 500,
+  });
+  await server.ready;
+  return {
+    fixture,
+    base: publicUrl,
+    github,
+    clock,
+    /** The cookie `{ name, value }` of a person who signed in. */
+    async as(login: string): Promise<{ name: string; value: string }> {
+      github.login = login;
+      const out = await auth.callback("code", "STATE", `${STATE_COOKIE}=STATE`);
+      if (!out.ok) throw new Error(out.message);
+      const [name, ...rest] = out.cookies[0]!.split(";")[0]!.split("=");
+      return { name: name!, value: rest.join("=") };
+    },
+    async stop() {
+      await server.stop();
+      fixture.cleanup();
+    },
+  };
 }

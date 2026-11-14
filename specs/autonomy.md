@@ -1,6 +1,6 @@
 # Autonomy
 
-**Status:** Live: AUT-1..21, AUT-26..27, AUT-31..35 · **Prefix:** AUT
+**Status:** Live: AUT-1..21, AUT-22..25, AUT-26..27, AUT-31..35 · **Prefix:** AUT
 
 ## Purpose
 

@@ -645,7 +645,12 @@ export function startUi(o: UiOptions): UiServer {
         req.headers.cookie,
       );
       if (out.ok) return redirect(out.location, out.cookies);
-      const page = `<!doctype html><meta charset="utf-8"><title>Towercab</title><h1>Towercab</h1><p>${out.message.replace(/[<>&"]/g, "")}</p><p><a href="/auth/login">Sign in with GitHub</a></p>`;
+      const esc = (t: string) => t.replace(/[<>&"]/g, "");
+      // UI-219: a refused account sees which login GitHub gave and can try another.
+      const who = out.login
+        ? `<p>You are signed in to GitHub as <strong>${esc(out.login)}</strong>. <a href="https://github.com/logout">Sign out of GitHub</a></p>`
+        : "";
+      const page = `<!doctype html><meta charset="utf-8"><title>Towercab</title><h1>Towercab</h1><p class="refused">${esc(out.message)}</p>${who}<p><a href="/auth/login">Sign in with GitHub</a></p>`;
       return send(res, out.status, "text/html; charset=utf-8", page);
     }
     if (req.method === "POST" && url.pathname === "/auth/logout") {

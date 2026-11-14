@@ -39,7 +39,7 @@ export interface Signed {
 
 export type Outcome =
   | { ok: true; location: string; cookies: string[] }
-  | { ok: false; status: number; message: string };
+  | { ok: false; status: number; message: string; login?: string };
 
 const hash = (token: string) => createHash("sha256").update(token).digest("hex");
 
@@ -106,7 +106,7 @@ export class Auth {
       return { ok: false, status: 502, message: `Sign-in failed: ${(e as Error).message}` };
     }
     const user = await this.resolve(login, true);
-    if (!user) return { ok: false, status: 403, message: UNKNOWN_ACCOUNT };
+    if (!user) return { ok: false, status: 403, message: UNKNOWN_ACCOUNT, login };
     const token = randomBytes(32).toString("hex");
     const now = this.d.now();
     this.d.db.run(

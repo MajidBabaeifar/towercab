@@ -81,7 +81,7 @@ test("users: an unknown account is refused", async () => {
   const w = world();
   w.github.login = "stranger";
   const out = await w.auth.callback("code", "STATE", `${STATE_COOKIE}=STATE`);
-  expect(out).toEqual({ ok: false, status: 403, message: UNKNOWN_ACCOUNT });
+  expect(out).toEqual({ ok: false, status: 403, message: UNKNOWN_ACCOUNT, login: "stranger" });
   expect(w.db.get<{ n: number }>("SELECT count(*) AS n FROM sessions")?.n).toBe(0);
 });
 

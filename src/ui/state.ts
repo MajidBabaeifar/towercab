@@ -47,7 +47,8 @@ import {
 } from "../slots.ts";
 import type { OwnerStep, SecretSpec } from "../steps.ts";
 import { whoText } from "../teammates.ts";
-import { getUser } from "../users/store.ts";
+import { getUser, listUsers } from "../users/store.ts";
+import { can } from "../users.ts";
 import { budgetsView, capCards, topBudget } from "./budget-view.ts";
 import { estimateFor, estimateLine, frozenEstimate } from "./estimate.ts";
 import { proposedSection } from "./proposed.ts";
@@ -171,6 +172,8 @@ export interface UiSources {
   intentUrl(intent: Intent): string | null;
   /** UI-184: the open PRs that add an intent (LOOP-92); without it, none. */
   proposed?(): ProposedState;
+  /** AUT-23: intents held until a maintainer confirms them (intent ID → why); without it, none. */
+  unconfirmed?(): Map<string, string>;
   /** Recent loop log lines; without it, the first lines of `towercab.log`'s entries. */
   logs?(): LogLine[];
 }
@@ -574,6 +577,9 @@ export interface DoneNote {
   stage: string;
   pr: number;
   at: number;
+  /** USR-8: who decided and through which channel (with sign-in on). */
+  by?: string;
+  via?: string;
 }
 
 /** UI-108: after this long without a move, the card stops promising one. */
@@ -601,10 +607,12 @@ export function doneOf(src: UiSources, m: Mission, now: number): Card["done"] {
   if (!n) return null;
   const age = now - n.at;
   const stuck = age >= STUCK_AFTER_S;
+  // UI-221: with sign-in on, the note names the person who decided.
+  const who = n.by ? getUser(src.db, n.by)?.name || n.by : "you";
   const text = stuck
-    ? `${DONE_WORDS[n.action]} by you ${ago(n.at, now)}, but Towercab has not moved on yet`
-    : `${DONE_WORDS[n.action]} by you · Towercab moves on within a minute`;
-  return { action: n.action, text, stuck };
+    ? `${DONE_WORDS[n.action]} by ${who} ${ago(n.at, now)}, but Towercab has not moved on yet`
+    : `${DONE_WORDS[n.action]} by ${who} · Towercab moves on within a minute`;
+  return { action: n.action, text, stuck, ...(n.by ? { by: who, via: n.via ?? "page" } : {}) };
 }
 
 const nonEmpty = (s: string | null | undefined): string | null => (s?.trim() ? s.trim() : null);
@@ -899,6 +907,20 @@ export function clipPeople(text: string | null): string | null {
   return lines.length > 5 ? `${lines.slice(0, 5).join("\n").trimEnd()}…` : t;
 }
 
+/**
+ * UI-221, AUT-22: with sign-in on, who can decide a card of `repo` (maintainers and admins, by name), or the
+ * admins to ask when nobody can.
+ */
+export function decidersOf(src: UiSources, repo: string): { others?: string[]; nobody?: string } {
+  if (!src.config.auth) return {};
+  const people = listUsers(src.db).filter((u) => !u.disabled);
+  const name = (u: { login: string; name: string }) => u.name || u.login;
+  const others = people.filter((u) => can(u, "approve", repo)).map(name);
+  if (others.length) return { others };
+  const admins = people.filter((u) => u.role === "admin").map(name);
+  return { nobody: `No maintainer for this repo. Ask ${admins.join(", ") || "an admin"}.` };
+}
+
 /** UI-58: the card for a mission waiting on the owner. */
 export function missionCard(
   src: UiSources,
@@ -967,6 +989,7 @@ export function missionCard(
     stuck,
     mergeLabel: approval && pr && !done && !passing ? MERGE_LABELS[kind]! : null,
     done,
+    ...decidersOf(src, m.repo),
     addRepo: null,
     ...(d.reviewWarning ? { warning: d.reviewWarning } : {}),
     ...(ownerOnly(intent ? levelNow(src.db, intent) : null) ? { onlyYou: true } : {}),
