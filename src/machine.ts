@@ -407,7 +407,8 @@ export const EXITS: Record<string, ExitKind[]> = {
   "freeze lifted": ["continue", "drop"],
   "rolled back, revise": BASIC,
   "rollback failed": BASIC,
-  "your steps first": BASIC,
+  // LOOP-76: both steps waits offer `done`; the open code PR is closed behind a confirm.
+  "your steps first": ["continue", "done", "retry", "drop"],
   "your steps": ["tick", "done", "retry", "drop"],
 };
 
@@ -443,6 +444,12 @@ export function exitsOf(waiting: string, stuck = false, code = false): Exit[] {
         label: k === "done" && waitKey(waiting) === "your steps" ? "I did all of it myself" : EXIT_LABELS[k],
       }))
   );
+}
+
+/** The exits in plain words for a sentence: `retry or drop`, `steps, done, retry or drop` (LOOP-77). */
+export function listExits(exits: Exit[]): string {
+  const words = exits.map((e) => e.do as string);
+  return words.length > 1 ? `${words.slice(0, -1).join(", ")} or ${words.at(-1)}` : (words[0] ?? "");
 }
 
 /** The event an exit sends to the machine at a wait's stage (LOOP-76's walk uses it). */

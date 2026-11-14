@@ -49,6 +49,8 @@ export function buildChat(w: ChatWorld, telegram: Telegram, loop: () => Loop): C
     clock: w.clock,
     github: w.github,
     proposed: () => loop().proposedState().list,
+    // LOOP-76: a drop only reaches the actions after the Yes of the chat's own confirm (TG-4).
+    confirmed: true,
   });
   const viewOf = (card: Card, id: string, head: string): WaitView => ({
     intent: card.intent,

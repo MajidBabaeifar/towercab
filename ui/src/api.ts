@@ -18,8 +18,13 @@ export async function getJson<T>(path: string): Promise<T> {
   return body as T;
 }
 
-export function act(action: string, intent?: string, text?: string): Promise<ActionReply> {
-  return post({ action, intent, text });
+export function act(
+  action: string,
+  intent?: string,
+  text?: string,
+  confirmed?: boolean,
+): Promise<ActionReply> {
+  return post({ action, intent, text, ...(confirmed ? { confirmed: true } : {}) });
 }
 
 /** UI-253: save a scope's budget (`all`) or a repo's caps; an amount left out stays, null removes it. */

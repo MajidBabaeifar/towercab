@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, resolve, sep } from "node:path";
+import { ExitNeedsConfirm } from "../exit-warning.ts";
 import { isRepoName } from "../intents/features.ts";
 import type { IntentStore, Listing } from "../intents/types.ts";
 import type { UiActions } from "./actions.ts";
@@ -439,18 +440,22 @@ export function startUi(o: UiOptions): UiServer {
                             : action === "retry"
                               ? await a.retry(intent)
                               : action === "drop"
-                                ? await a.drop(intent)
+                                ? await a.drop(intent, body.confirmed === true)
                                 : action === "done"
                                   ? await (
                                       a.done ??
                                       (() => Promise.reject(new Error("Ending an intent isn't available.")))
-                                    )(intent, typeof body.text === "string" ? body.text : "")
+                                    )(
+                                      intent,
+                                      typeof body.text === "string" ? body.text : "",
+                                      body.confirmed === true,
+                                    )
                                   : action === "steps"
                                     ? await (
                                         a.steps ??
                                         (() =>
                                           Promise.reject(new Error("Switching to steps isn't available.")))
-                                      )(intent)
+                                      )(intent, body.confirmed === true)
                                     : action === "start"
                                       ? await a.start(intent)
                                       : action === "step"
@@ -490,6 +495,9 @@ export function startUi(o: UiOptions): UiServer {
                                                       : await a.resume(intent);
       reply = { ok: true, message };
     } catch (e) {
+      // LOOP-76: an exit that closes an open PR with commits asks first; the page shows the text and asks again.
+      if (e instanceof ExitNeedsConfirm)
+        return json(res, 409, { ok: false, message: e.message, confirm: e.warning });
       reply = { ok: false, message: (e as Error).message };
     }
     store.invalidate();

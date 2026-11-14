@@ -7,7 +7,7 @@ import type { Db } from "./db.ts";
 import { liftFreeze } from "./freeze.ts";
 import { localTime } from "./intents/intent.ts";
 import type { Intent, IntentStore } from "./intents/types.ts";
-import { type ApplyCtx, apply, exitsOf, wait, waitKey } from "./machine.ts";
+import { type ApplyCtx, apply, exitsOf, listExits, wait, waitKey } from "./machine.ts";
 import { dataOf, type Mission, patchData, unfinishedFor } from "./mission.ts";
 import { parseAllow, readingReply, reverseRefusals } from "./pipeline/access.ts";
 import type { PipeData } from "./pipeline/common.ts";
@@ -344,7 +344,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       // LOOP-77: a reply to a wait that came back with nothing new would only land on it again.
       if (m?.stage === "blocked" && (dataOf(m) as PipeData).stuck) {
         throw new Error(
-          `${intent.id} is stuck at ${waitKey(m.waiting ?? "")}: a reply would land here again; use steps, done, retry or drop`,
+          `${intent.id} is stuck at ${waitKey(m.waiting ?? "")}: a reply would land here again; use ${listExits(exitsOf(m.waiting ?? "", true, (dataOf(m) as PipeData).delivery !== "steps"))}`,
         );
       }
       await store.update(intent.id, "answer", (e) => {
