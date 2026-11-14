@@ -42,9 +42,11 @@ intent page), never on the overview.
 - **Repos**: a row of repo chips (with counts) picks one repo, kept in the URL. Its page: what people
   can do (In progress, Live, Planned) → In progress → Up next (numbered) → Waiting (with the reason) →
   Parked (folded) → Spend. With no repo chosen ("All"): one short card per repo, then "Add a repo".
-  A repo missing setup shows a "Not ready" badge (the warning colour, never "Needs you") on its chip,
-  card and Board row, and its page opens with a "Set up this repo" section listing each gap in words,
-  before everything else.
+  A repo missing setup shows a "Not ready" badge (the warning colour, a rose of its own, never the amber
+  of "Needs you") on its chip, card and Board row, and its page opens with a "Set up this repo" section
+  listing each gap in plain words, the command's own error folded under "Details", before everything
+  else. A gap that at least 3 repos and more than half of them share is said once, in a line at the top of
+  the Repos page ("9 of 11 repos have no release job") and above the Board's columns, not as a badge on each.
 - **Activity**: filter bar (intent, repo, kind, since; in the URL) → list grouped by day.
 
 ## State vocabulary

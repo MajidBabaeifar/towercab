@@ -247,12 +247,15 @@ test("ui: board folds a repo and remembers it", async ({ browser }) => {
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     await expect(card).toHaveCount(0);
     if (m.mode === "light") {
-      // At 1280 px every column fits; narrower, only the board scrolls sideways, and its column headers
-      // stay on top while it scrolls down.
+      // UI-271: busy columns are at least 180 px and the board keeps the page width, so it may scroll
+      // sideways at 1280 px, but only inside itself; its column headers stay on top while it scrolls down.
       const board = page.locator(".board");
       const sizes = () => board.evaluate((e) => ({ scroll: e.scrollWidth, client: e.clientWidth }));
       const wide = await sizes();
-      expect(wide.scroll).toBeLessThanOrEqual(wide.client);
+      expect(wide.client).toBeLessThanOrEqual(1120);
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+      ).toBeLessThanOrEqual(0);
       await page.setViewportSize({ width: 960, height: 900 });
       const narrow = await sizes();
       expect(narrow.scroll).toBeGreaterThan(narrow.client);

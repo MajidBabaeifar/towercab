@@ -262,10 +262,16 @@ function Panel({
       {node.visits.length === 0 && node.files.length === 0 ? (
         <p class="smap-note">{node.note ?? "Nothing has happened here yet."}</p>
       ) : null}
-      {node.visits.length > 0 && node.files.length === 0 ? (
+      {node.owner && node.decision ? (
         <p class="smap-note">
-          {node.owner ? "This was a wait for you; it wrote no files." : "This stage wrote no files."}
+          {node.decision.who} {node.decision.what} <Time when={node.decision.at} />.
         </p>
+      ) : null}
+      {node.owner && node.current ? (
+        <p class="smap-note">Waiting for you: {node.name.toLowerCase()}.</p>
+      ) : null}
+      {node.visits.length > 0 && node.files.length === 0 && !node.owner ? (
+        <p class="smap-note">This stage wrote no files.</p>
       ) : null}
       {keys.map((k) => {
         const group = rounds.get(k)!;
@@ -350,6 +356,49 @@ export function StageMap({
     buttons[to]?.focus();
   };
 
+  // UI-272: a run of two or more stages not reached yet folds into one row.
+  const groups: (StageNodeView | StageNodeView[])[] = [];
+  for (const n of map.stages) {
+    const idle = n.outcome === "not reached" && !n.current;
+    const last = groups[groups.length - 1];
+    if (idle && Array.isArray(last)) last.push(n);
+    else if (idle && last && !Array.isArray(last) && last.outcome === "not reached" && !last.current) {
+      groups[groups.length - 1] = [last, n];
+    } else groups.push(n);
+  }
+  const node = (n: StageNodeView) => {
+    const isOpen = n.id === openId;
+    return (
+      <li
+        key={n.id}
+        class={`smap-node smap-${CLASS[n.outcome]}${n.owner ? " smap-owner" : ""}${isOpen ? " smap-open" : ""}`}
+      >
+        <button
+          type="button"
+          class="smap-btn"
+          aria-expanded={isOpen}
+          aria-current={n.current ? "step" : undefined}
+          aria-label={nodeLabel(n)}
+          onClick={() => choose(n)}
+        >
+          <span class="smap-name">{n.name}</span>
+          <span class="smap-out">
+            <OutcomeIcon outcome={n.outcome} />
+            {n.outcome}
+          </span>
+          {n.time ? <span class="smap-time num">{n.time}</span> : null}
+          <ChevronDown size={14} class="smap-chev" />
+        </button>
+        {n.note ? <p class="smap-why">{n.note}</p> : null}
+        <Rounds node={n} />
+        <Returns node={n} names={names} />
+        {narrow && isOpen && openNode ? (
+          <Panel id={id} node={openNode} file={file} onOpen={openFile} />
+        ) : null}
+      </li>
+    );
+  };
+
   return (
     <div class="smap">
       {attempts.length > 1 ? (
@@ -374,39 +423,24 @@ export function StageMap({
         </fieldset>
       ) : null}
       <ol class="smap-list" ref={list} onKeyDown={move} aria-label="Stages in pipeline order">
-        {map.stages.map((n) => {
-          const isOpen = n.id === openId;
-          return (
-            <li
-              key={n.id}
-              class={`smap-node smap-${CLASS[n.outcome]}${n.owner ? " smap-owner" : ""}${isOpen ? " smap-open" : ""}`}
-            >
-              <button
-                type="button"
-                class="smap-btn"
-                aria-expanded={isOpen}
-                aria-current={n.current ? "step" : undefined}
-                aria-label={nodeLabel(n)}
-                onClick={() => choose(n)}
-              >
-                <span class="smap-name">{n.name}</span>
-                <span class="smap-out">
-                  <OutcomeIcon outcome={n.outcome} />
-                  {n.outcome}
-                </span>
-                {n.time ? <span class="smap-time num">{n.time}</span> : null}
-                <ChevronDown size={14} class="smap-chev" />
-              </button>
-              {n.note ? <p class="smap-why">{n.note}</p> : null}
-              <Rounds node={n} />
-              <Returns node={n} names={names} />
-              {narrow && isOpen && openNode ? (
-                <Panel id={id} node={openNode} file={file} onOpen={openFile} />
-              ) : null}
+        {groups.map((g) =>
+          Array.isArray(g) ? (
+            <li key={`more-${g[0]!.id}`} class="smap-more">
+              <details open={g.some((n) => n.id === openId) || undefined}>
+                <summary>{g.length} more stages to go</summary>
+                <ol class="smap-list smap-list-inner">{g.map((n) => node(n))}</ol>
+              </details>
             </li>
-          );
-        })}
+          ) : (
+            node(g)
+          ),
+        )}
       </ol>
+      {map.offPath ? (
+        <p class="smap-off meta" title={map.offPath.reason}>
+          Not part of this repo's path: {map.offPath.names.join(", ")}
+        </p>
+      ) : null}
       <dl class="smap-totals">
         <div>
           <dt>Towercab working</dt>

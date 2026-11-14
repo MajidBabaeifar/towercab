@@ -22,6 +22,7 @@ export default defineConfig({
     "inbox-keys.spec.ts",
     "palette.spec.ts",
     "folds.spec.ts",
+    "clarity.spec.ts",
   ],
   outputDir: "screenshots/.results",
   fullyParallel: false,

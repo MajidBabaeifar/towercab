@@ -215,7 +215,7 @@ test("ui: API shapes", async () => {
   const queue = await json("/api/queue");
   expect((queue.body.lanes as unknown[]).length).toBe(6);
   const board = await json("/api/board");
-  expect(Object.keys(board.body).sort()).toEqual(["columns", "error", "repos", "spend", "version"]);
+  expect(Object.keys(board.body).sort()).toEqual(["columns", "error", "repos", "shared", "spend", "version"]);
   const act = await json(`/api/activity?intent=${IDS.plan}&kind=waits`);
   expect(act.body).toMatchObject({ more: false });
   expect((act.body.items as { kind: string }[]).map((i) => i.kind)).toEqual(["wait", "wait"]);

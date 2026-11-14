@@ -243,7 +243,8 @@ function vertical_(
   const order = orderOf(a);
   const yOf = (k: StationKey) => y0 + order.indexOf(k) * gap;
   const first = lineX + 26;
-  const rowCap = Math.max(2, Math.floor((w - 24 - first) / 22) + 1);
+  // UI-275: room for the `+n` marker's whole box (22 px wide) beside the last plane, inside the edge.
+  const rowCap = Math.max(2, Math.floor((w - 24 - first - 12) / 22) + 1);
   const items: Item[] = [];
   const stations: StationMark[] = [];
   const labels: Label[] = [];
@@ -270,7 +271,14 @@ function vertical_(
       items.push({ kind: "plane", key: plane.intent, plane, x: first + 22 * n, y, heading: 90 });
     });
     if (hidden.length)
-      items.push({ kind: "more", key: `more:${k}`, station: k, hidden, x: first + 22 * shown.length, y });
+      items.push({
+        kind: "more",
+        key: `more:${k}`,
+        station: k,
+        hidden,
+        x: first + 22 * shown.length + 4,
+        y,
+      });
   }
   if (a.landed.count) {
     const n = Math.min(a.landed.count, rowCap);

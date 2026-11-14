@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..163, UI-168, UI-184..197, UI-203..208, UI-211, UI-236..239, UI-242..251, UI-253..267, UI-279, UI-281..282 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..163, UI-168, UI-184..197, UI-203..208, UI-211, UI-236..239, UI-242..251, UI-253..275, UI-279, UI-281..282 · **Prefix:** UI
 
 ## Purpose
 
@@ -969,7 +969,9 @@ A stage that does not apply to the repo's kind says why, in the map itself.
 - The `reason` of a `skipped` visit-less stage is REPO-26's text (`a library has nothing to deploy`,
   `kind not set`), shown on the node as for other skipped stages (UI-73). It comes from the repo's
   confirmed kind, or the suggested one while unconfirmed ([REPO-21](repo.md)), at the time the page is built; a stage the attempt did visit keeps its own outcome.
+- Changed by [UI-272](#ui-272--the-stage-map-shows-the-path-this-intent-takes): a stage that cannot apply has no node; the reason is the tooltip of the line that names it (`offPath.reason` in the data).
 - Verified by: `ui: ship stages are skipped with the kind's reason`, `ui: screenshots light, dark and mobile`
+
 ### UI-184 · Proposed cards
 
 The overview shows each proposed intent as a "Proposed" card, so the owner sees what waits for a yes.
@@ -1583,7 +1585,7 @@ The airspace's count badges (such as "+21") never cover a label or a plane, and 
 
 - The boxes of the count badges do not intersect the stage labels or the planes at 360, 768 and 1,280 px wide.
 - `ui/fixture.ts` carries more than 8 repos, several of them not ready (some missing the same item, UI-269), and a CLI repo with a finished intent; the Repos, Board, intent and airspace screenshots (light, dark, mobile) use it.
-- Verified by: `ui: airspace count badges do not overlap at 360, 768 and 1280px`, `ui: screenshots light, dark and mobile`
+- Verified by: `ui: airspace count badges do not overlap at 360, 768 and 1280px`, `ui: clarity screenshots light, dark and mobile`
 
 ### UI-276 · The repo page shows where each setting comes from
 
