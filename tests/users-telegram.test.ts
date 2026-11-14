@@ -150,3 +150,20 @@ describe("users: telegram sends a person what waits on them", () => {
     expect(rig.calls("editMessageText").length).toBe(before);
   });
 });
+
+describe("users: a removed person's telegram press", () => {
+  test("users: a press from a chat unlinked before it was handled does nothing", async () => {
+    const rig = team({ ana: { role: "maintainer" } });
+    await link(rig, "ana", "77");
+    const w = rig.wait("i-1");
+    await rig.run();
+    const mine = copyOf(rig, "ana");
+    // The press is stored while linked, then the person is removed before the next pass handles it.
+    rig.press(`d|i-1|${w.view.waitId}`, mine, "77");
+    rig.press(`D|i-1|${w.view.waitId}`, mine, "77");
+    rig.chat.store(await rig.tg.updates(0, 0));
+    rig.db.run("DELETE FROM tg_links WHERE login = 'ana'");
+    await rig.run();
+    expect(rig.actionCalls.filter((c) => c.startsWith("drop"))).toEqual([]);
+  });
+});

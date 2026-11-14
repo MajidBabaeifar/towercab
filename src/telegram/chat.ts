@@ -140,6 +140,7 @@ export class Chat {
   /** USR-11: may this chat's person do `action` on `repo`? The owner's chat always may. */
   private allowed(action: UserAction, repo: string): string | null {
     const u = this.who.user;
+    if (!u && this.theirs) return "that chat is not linked to a person";
     return !u || can(u, action, repo) ? null : refusal(u, action, repo);
   }
 
@@ -301,6 +302,8 @@ export class Chat {
 
   private async handle(u: TelegramUpdate): Promise<"done" | "shadow"> {
     if (u.callback) {
+      // USR-11: a press stored while the chat was linked, handled after the person was removed, does nothing.
+      if (this.theirs && !this.who.user) return "done";
       await this.press(u, u.callback);
       return "done";
     }
