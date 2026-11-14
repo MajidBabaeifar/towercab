@@ -82,6 +82,10 @@ const OWNER_STEPS = list(
 /** INT-43: for a multi-repo intent, what changes in each repo and in which order the parts land; else empty. */
 const REPOS = list(object({ repo: S, change: S, waits_on: list(S), safe_alone: S }));
 
+/** PIP-229: the commands an infra change is tried with in the sandbox, at most `MAX_APPLY`. */
+export const MAX_APPLY = 5;
+const APPLY = list(object({ command: S, why: S }));
+
 export const PLAN_SCHEMA = object({
   brief: BRIEF,
   plan: S,
@@ -93,6 +97,14 @@ export const PLAN_SCHEMA = object({
   live_none_why: S,
   // PIP-112: `code` builds and ships a change; `steps` is work only the owner can do.
   delivery: { type: "string", enum: ["code", "steps"] },
+  // PIP-229: only an infra plan lists commands; every other kind returns an empty list.
+  apply: APPLY,
+});
+
+/** INT-77: the kind the `kind` agent picks for an intent, with one plain line why. */
+export const KIND_SCHEMA = object({
+  kind: { type: "string", enum: ["feature", "bugfix", "refactor", "infra", "spec-only"] },
+  why: S,
 });
 
 /** PIP-114: the three things an option of a question can make Towercab do. */
@@ -214,6 +226,7 @@ export const SCHEMAS = {
   risk: RISK_SCHEMA,
   merge_review: MERGE_REVIEW_SCHEMA,
   score: SCORE_SCHEMA,
+  kind: KIND_SCHEMA,
   features: FEATURES_SCHEMA,
   shadow: SHADOW_SCHEMA,
   observer: OBSERVER_SCHEMA,
@@ -258,6 +271,8 @@ export interface PlanResult {
   live_none_why?: string;
   /** PIP-112: absent counts as `code`. */
   delivery?: "code" | "steps";
+  /** PIP-229: absent counts as none. */
+  apply?: { command: string; why: string }[];
   /** PIP-203: as in `DesignResult`. */
   reply?: string;
 }
@@ -357,6 +372,7 @@ export interface Results {
   risk: RiskResult;
   merge_review: MergeReviewResult;
   score: ScoreResult;
+  kind: { kind: "feature" | "bugfix" | "refactor" | "infra" | "spec-only"; why: string };
   features: { features: string[] };
   shadow: ShadowResult;
   observer: ObserverResult;
@@ -476,6 +492,7 @@ export function parseResult<K extends keyof Results>(
       live_none_why: "",
       delivery: "code",
       repos: [],
+      apply: [],
       ...value,
     };
     value = plan;
@@ -515,6 +532,16 @@ export function parseResult<K extends keyof Results>(
     if (!Array.isArray(steps) || steps.length === 0)
       return { ok: false, why: "a plan with delivery steps needs at least one owner_steps entry" };
   }
+  // PIP-229: at most MAX_APPLY commands, each a real line.
+  if (kind === "plan" && isObject(value) && Array.isArray(value.apply)) {
+    if (value.apply.length > MAX_APPLY)
+      return { ok: false, why: `apply lists more than ${MAX_APPLY} commands` };
+    if (value.apply.some((a) => isObject(a) && typeof a.command === "string" && !a.command.trim()))
+      return { ok: false, why: "an apply command is empty" };
+  }
+  // INT-77: the reason is one plain line.
+  if (kind === "kind" && isObject(value) && typeof value.why === "string" && value.why.length > 160)
+    return { ok: false, why: "why is longer than 160 characters" };
   // PIP-114: a question with no options has nothing the owner can pick.
   if (kind === "build" && isObject(value) && isObject(value.question)) {
     const options = value.question.options;

@@ -59,6 +59,8 @@ const BEFORE: Record<string, { tools: string; allowed: string[] }> = {
     allowed: ["Read", "Glob", "Grep", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"],
   },
   score: { tools: "", allowed: [] },
+  // INT-77: the kind agent has no tools at all; it reads the intent text and answers.
+  kind: { tools: "", allowed: [] },
   features: { tools: "Read,Glob,Grep", allowed: ["Read", "Glob", "Grep"] },
   // SHD-5: the shadow has no tools at all; Towercab runs its reads and actions.
   shadow: { tools: "", allowed: [] },

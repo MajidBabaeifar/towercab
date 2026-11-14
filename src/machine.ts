@@ -2,6 +2,7 @@
 // A red line (REVIEW.md): a wrong move here merges, stops or loses work silently.
 
 import type { Db, SqlValue } from "./db.ts";
+import { isKind, needsDesign } from "./kind.ts";
 import { COLUMNS, dataOf, getMission, insertMission, type Mission } from "./mission.ts";
 import { type ShipFacts, shipFacts } from "./steps.ts";
 
@@ -60,6 +61,7 @@ export const EVENTS = [
   "to_steps",
   "reviewed",
   "more_steps",
+  "kind_routed",
 ] as const;
 export type Event = (typeof EVENTS)[number];
 
@@ -104,6 +106,25 @@ export function orderIndex(s: Stage): number {
 const between = (s: Stage, a: WorkStage, b: WorkStage) =>
   orderIndex(s) >= orderIndex(a) && orderIndex(s) <= orderIndex(b);
 
+/** PIP-228: the kind a mission goes by; a missing or unknown one is `feature`. */
+const kindIn = (facts: ShipFacts) => (isKind(facts.kind) ? facts.kind : "feature");
+
+/**
+ * PIP-228, INT-77: where a kind put on a mission sends it. Before `plan` a lighter kind skips the spec PR;
+ * from the plan on, only a kind that needs a spec PR moves it back to `design`; a lighter kind never moves
+ * a mission that is already past the stage it would skip (PIP-231).
+ */
+function routed(stage: Stage, from: Stage | null, facts: ShipFacts): Next {
+  const at = isWait(stage) ? (from ?? stage) : stage;
+  const kind = kindIn(facts);
+  const design = needsDesign(kind);
+  if (at === "pick") return go(design ? "design" : "plan");
+  if (at === "design" || at === "approval:spec") return design ? K("ignore") : go("plan");
+  // Past the design: a kind with a spec PR starts it; a lighter one changes nothing.
+  if (design && kind === "feature" && (at === "plan" || between(at, "build", "merge"))) return go("design");
+  return K("ignore");
+}
+
 /**
  * The transition table. `from` is the stage a wait was entered from (blocked uses it for
  * `spec_merged`/`plan_merged`).
@@ -121,6 +142,10 @@ export function next(
       if (wait || stage === "revert") return K("unexpected");
       // PIP-113: a steps-delivered intent has no deploy; its last tick ends it.
       if (stage === "steps" && facts.delivery) return go("done");
+      // PIP-230: a spec-only change ends at its spec PR (no spec change: nothing to merge).
+      if (stage === "design" && kindIn(facts) === "spec-only") return go("done");
+      // PIP-228: a lighter kind has no spec PR, so a mission still at `pick` goes straight to the plan.
+      if (stage === "pick" && !needsDesign(kindIn(facts))) return go("plan");
       if (stage === "rollback") return go("build");
       return go(ORDER[orderIndex(stage) + 1]!);
     case "red":
@@ -146,10 +171,15 @@ export function next(
       return K("backoff");
     case "crash":
       return wait ? K("ignore") : K("recover");
-    case "spec_merged":
-      if (stage === "design" || stage === "approval:spec") return go("plan");
-      if (stage === "blocked" && from === "design") return go("plan");
+    case "spec_merged": {
+      // PIP-230: merging the spec PR of a spec-only change ends the mission.
+      const after = kindIn(facts) === "spec-only" ? "done" : "plan";
+      if (stage === "design" || stage === "approval:spec") return go(after);
+      if (stage === "blocked" && from === "design") return go(after);
       return K("ignore");
+    }
+    case "kind_routed":
+      return routed(stage, from, facts);
     case "plan_merged":
       // PIP-113: a steps-delivered intent skips the build and the code PR.
       if (stage === "plan" || stage === "approval:plan") return go(facts.delivery ? "steps" : "build");

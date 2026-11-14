@@ -428,6 +428,7 @@ const STAGE_OF_KIND: Record<RunKind, string> = {
   // The risk agent runs at three gates; its handler names the stage folder (PIP-96).
   risk: "review",
   score: "design",
+  kind: "design",
   features: "design",
   shadow: "design",
   observer: "design",

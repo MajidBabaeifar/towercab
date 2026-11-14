@@ -100,7 +100,7 @@ export const LOW_RISK = {
 };
 
 /** Kinds `script` never answers: they answer from `queue(kind)` or `respond` only. */
-const UNSCRIPTED = new Set(["risk"]);
+const UNSCRIPTED = new Set(["risk", "kind"]);
 
 export interface ClaudeCall {
   kind: string;
@@ -300,6 +300,8 @@ export class Pipe {
    */
   readonly respond: Partial<Record<string, ClaudeScript>> = {
     risk: () => ({ structured: LOW_RISK, cost: 0, durationMs: 0 }),
+    // INT-77: the kind agent answers `feature` for free, so flows that don't care keep the full path.
+    kind: () => ({ structured: { kind: "feature", why: "A test default." }, cost: 0, durationMs: 0 }),
   };
   /** Overrides a sandbox run; return null to run it with `sh`. */
   sandbox: ((spec: ChildSpec) => ChildExit | null) | null = null;

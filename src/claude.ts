@@ -109,6 +109,7 @@ export type RunKind =
   | "review"
   | "risk"
   | "score"
+  | "kind"
   | "features"
   | "shadow"
   | "observer";
@@ -120,6 +121,7 @@ export const RUN_KINDS: RunKind[] = [
   "review",
   "risk",
   "score",
+  "kind",
   "features",
   "shadow",
   "observer",
