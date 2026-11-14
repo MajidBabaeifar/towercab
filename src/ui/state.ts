@@ -149,6 +149,14 @@ export interface LogLine {
 }
 
 /** Everything the page reads; the loop provides it (the CLI too, read-only, UI-2). */
+/** What the page needs of the running version; `name` and `release` are absent in older fakes. */
+export type UiVersion = {
+  commit: string;
+  behind: number | null;
+  name?: string;
+  release?: { running: string | null; available: string | null } | null;
+};
+
 export interface UiSources {
   db: Db;
   store: IntentStore;
@@ -165,7 +173,7 @@ export interface UiSources {
   problems(): Problem[];
   /** UI-211: the install help for `owner/name`, when GitHub's App isn't installed there. */
   installHelp?(github: string): InstallHelpView | null;
-  version(): { commit: string; behind: number | null };
+  version(): UiVersion;
   /** The picker's whole list; the overview shows the first 5. */
   upNext(): UpNext[];
   /** A PR's URL; `repo` is `owner/name`. */
@@ -1587,14 +1595,24 @@ function healthOf(
   return { health: "Running", note: "Towercab is running." };
 }
 
-function versionText(v: { commit: string; behind: number | null }): TopBar["version"] {
+/** UI-278: the running version, and on the release channel the release that waits instead of the lag behind main. */
+function versionText(v: UiVersion): TopBar["version"] {
+  const commit = v.commit.slice(0, 7);
+  if (v.release) {
+    return {
+      commit,
+      name: v.name,
+      behind: null,
+      release: v.release.available ? `${v.release.available} available` : null,
+    };
+  }
   const behind =
     v.behind === null
       ? null
       : v.behind === 0
         ? "up to date"
         : `${v.behind} commit${v.behind === 1 ? "" : "s"} behind main`;
-  return { commit: v.commit.slice(0, 7), behind };
+  return { commit, name: v.name, behind, release: v.release };
 }
 
 /** A short hash of what is shown, so the page knows when to refetch (UI-65, UI-67). */
