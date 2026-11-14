@@ -2047,7 +2047,7 @@ An outcome the owner has put off to another intent is not held against the code 
 - An outcome is deferred in exactly three ways, and nothing else defers one:
   (a) an owner comment or answer on the intent or its PRs has a line that starts with `defer`, names the outcome, and names an intent id, for example `defer "Stage tests use a FakeForge" to 261105-2120`. The outcome is named by its text in quotes (matched to a `Proposed outcome` bullet or a spec row name, ignoring case and surrounding space) or by its number (`defer 3 to 261105-2120`, the bullet's position, counting from 1);
   (b) the intent file marks the bullet `deferred: <intent id>`;
-  (c) the plan (the plan PR's text) has its own line in the same strict form as (a): `defer "<outcome>" to <intent id>` or `defer <number> to <intent id>`. Merging the plan PR approves that line. Loose wording in a plan ("for a later slice", "follow-up") defers nothing, and a plan line in a plan PR that is not merged defers nothing.
+  (c) the plan (the plan PR's text) has its own line in the same strict form as (a): `defer "<outcome>" to <intent id>` or `defer <number> to <intent id>`. Merging the plan PR approves that line, but only for a stage the owner agreed to split off (PIP-238); a planner's own line defers nothing (PIP-235). Loose wording in a plan ("for a later slice", "follow-up") defers nothing, and a plan line in a plan PR that is not merged defers nothing.
   A line in any other wording is not a deferral, however clear it reads to a person. An agent's comment (PIP-182) or a non-owner never defers an outcome in (a). The named intent must exist in the intents repo; otherwise the outcome stays as judged.
 - `review.outcomes[]` gets no new key: Towercab sets `met` true for a deferred outcome after the review returns, and keeps the follow-up id and the reason on the mission (`data.deferred`). PIP-5's "every outcome met" and PIP-120's fix-round test then read it as met, so a deferred outcome starts no fix round.
 - The prompt (`agents/review.md`) lists the deferred outcomes as data and says not to judge them; a review that marks one `met` false is overridden as above.
@@ -2326,6 +2326,58 @@ A review with nothing that blocks is approved, even when the agent's own `approv
 - The review prompt (`agents/review.md`) tells the agent that `approved` and `summary` must say the same thing as its findings: `approved` is false only with a blocking reason, and the summary must not recommend merging when it lists one.
 - The summary's wording is never parsed for approval; the structured fields are the only input.
 - Verified by: `pipeline: a review with nothing blocking is approved when the flag says false`, `pipeline: a review with nothing blocking starts no fix round`, `pipeline: nits alone never block a review`, `pipeline: a blocking finding still fails a review the agent approved`, `pipeline: the review comment notes an overridden flag`, `pipeline: review prompt ties the flag and summary to the findings`
+
+### PIP-235 · A plan covers the whole intent, in stages
+
+The plan for a large intent is split into stages inside one plan, every outcome of the intent belongs to a stage, and the plan never leaves an outcome for a later intent on its own.
+
+- `## Steps` of `plan.md` (PIP-46) may group its numbered items under `### Stage <n>: <name>` headings. The numbering of the items runs on across stages (PIP-216 counts them as one list), and a plan with no stage headings is one stage. A stage is built in the order written, failing tests first within each (as PIP-46).
+- The plan result (**Schemas** `plan`) gains `stages`: a list of `{name, outcomes}` in build order, where `outcomes` are the numbers (counting from 1) of the intent's `Proposed outcome` bullets the stage meets. Every bullet is in at least one stage; a result that leaves a bullet out, or names a number the intent does not have, is a bad result and is asked for again (PIP-13). Towercab keeps the list as `data.plan.stages` and writes the stage headings into `plan.md` from it.
+- The plan prompt (`agents/plan.md`) tells the planner to plan all outcomes, to size stages so that each one fits a build run (PIP-218), and never to write "later", "follow-up" or a `defer` line (PIP-208) for an outcome. A plan that would need more than `max_build_runs` runs for all its stages is not cut: the planner returns `split` (PIP-238) and Towercab asks.
+- A `defer` line in a plan no longer defers anything by itself: PIP-208's third way now needs the owner's agreed split (PIP-238); a line written by the planner without one is ignored and noted in the plan PR's concerns.
+- Verified by: `pipeline: a plan result lists stages and every outcome is in one`, `pipeline: a plan that leaves an outcome out is asked again`, `pipeline: a plan with no stage headings is one stage`, `pipeline: stage headings are written into plan.md`, `pipeline: the plan prompt forbids moving outcomes to a later intent`, `pipeline: a defer line the planner wrote defers nothing`
+
+### PIP-236 · The build goes through every stage before the review
+
+The build carries on run after run until every stage of the plan is built, and the review runs once, on the whole change.
+
+- PIP-216's steps are the steps of all stages. `data.build.stage` (the stage of the first open step, 1-based) is kept next to `steps_done`, and the build prompt (PIP-219) names the current stage and the outcomes it must meet. A run may finish several stages; it never ends a stage's steps half built unless its budget ends the run, in which case PIP-216 resumes at the first open step.
+- No review, gate or code PR text is produced before the last stage is built (PIP-216), and a run that ends with no stage left open and every step built goes to review exactly as PIP-216 says. The cap of runs (PIP-218) applies to the whole build, stages included; at the cap the mission waits on `worker budget` and the owner's reply grants more runs, as there, unless the owner answered `whole` to the split question, which lifts the cap for the intent (PIP-238).
+- Where a multi-run build shows (the intent page, Telegram status), it says `stage <n> of <m>` with the step count; a plan of one stage shows none.
+- Verified by: `pipeline: a three-stage plan builds every stage before review`, `pipeline: the build prompt names the current stage and its outcomes`, `pipeline: the review does not start while a stage is open`, `pipeline: the run cap counts all stages`, `pipeline: the status shows the stage of a staged build`
+
+### PIP-237 · A stage the review finds missing goes back to build, not to a fix round
+
+When the review finds that a whole stage was not built, the mission goes back to build that stage, which is a build run and not a fix round.
+
+- The review result (**Schemas** `review`) gains `missing_stages`: the stage numbers (PIP-235) for which the reviewer finds the stage's steps not built at all, as against built wrongly. A number that is not a stage of the plan is dropped. The reviewer judges the whole intent: every outcome, in every stage, in this one review (PIP-5).
+- With `missing_stages` non-empty, event `red` from `review` to `build` (why `stage <n> was not built: build run`) sets `steps_done` to the steps before the first missing stage's first step (PIP-216), and the build resumes there in a fresh run (PIP-219), told the missing stages and the reviewer's reason. The run counts in `runs` (PIP-218), not in `reviewFixes` (PIP-98); it counts no repair (PIP-18). A run that makes no progress counts as stalled (PIP-217).
+- Other blocking reasons in the same review (PIP-120) wait: after the missing stage is built, the new review decides them, and a fix round (PIP-98) follows only then. `missing_stages` is taken from the structured field alone; the summary's wording is never parsed (PIP-234).
+- The Review comment's verdict line says `Sending back to build stage <n>` with the reason in plain words (PIP-121), and never `Approve`. At the run cap (PIP-218) the mission waits on `worker budget` instead of going on.
+- The review prompt (`agents/review.md`) lists the stages and their outcomes as data and says to set `missing_stages` only for a stage with no work in the diff.
+- Verified by: `pipeline: a missing stage sends the build back to build that stage`, `pipeline: a missing stage is not a fix round`, `pipeline: a missing stage run counts in the run cap`, `pipeline: a missing stage is built before other findings are fixed`, `pipeline: a stage number the plan does not have is dropped`, `pipeline: the review comment says which stage goes back to build`
+
+### PIP-238 · An intent is split only when the owner agrees
+
+When one plan could not be built within the run cap, Towercab asks the owner whether to split the intent, with the split as the recommended answer, and splits only on a yes.
+
+- The plan result may carry `split`: `{reason, keep, move}`, where `keep` and `move` are lists of stage numbers (PIP-235) that partition the stages, and `keep` is not empty. The planner sets it only when the stages need more than `max_build_runs` runs (PIP-218), or the intent cannot be built in one change for a reason it names; it is never set because the work is large alone.
+- Towercab asks one question (PIP-41, PIP-114): `Build this in one go, or split it?`, with the stages in each part and the reason. Options: `split` (recommended; build `keep` now and write a follow-up intent for `move`), `whole` (plan all stages here and build them in one go: the run limit is lifted for this intent, see below) and `drop`. The question goes to the owner alone at every autonomy level (AUT-31, AUT-32); no agent, the shadow, the CLI or a timeout answers it, and an unanswered question never splits.
+- Only the answer `split` splits an intent. Nothing else does: a plan line, a review, a reply in other words or a comment (PIP-208's loose wording) does not. On `whole` the planner is run again with `split` not allowed.
+- The answer `whole` lifts the cap `max_build_runs` (PIP-218) for this intent: Towercab records it (`data.build.runs_unlimited`, before the next run) and the build carries on run after run until every step is built, with no `worker budget` wait for the number of runs. Nothing else is lifted: each run still has its per-run limit (PIP-218), the repo, daily and monthly spending caps still pause the build between runs (MET-33), and a run with no progress still counts as stalled, so two in a row ask the owner (PIP-217). A restart or resume keeps the lifted cap; the answer `split` or a new plan does not carry it over.
+- On `split`, the plan is rewritten for `keep` alone, the moved outcomes are recorded as deferred to the follow-up (`data.deferred`, PIP-208), and the plan PR lists them with the follow-up's id (PIP-209). A moved outcome is judged by neither the review nor the gate of this intent.
+- PIP-208's third way now reads: a `defer` line in a merged plan defers an outcome only when the intent's mission holds an owner's `split` answer (PIP-238) naming that outcome's stage; otherwise it defers nothing.
+- Verified by: `pipeline: a plan that needs more runs than the cap asks to split`, `pipeline: the split question recommends splitting and goes to the owner alone`, `pipeline: only the answer split splits an intent`, `pipeline: whole plans every stage without split`, `pipeline: whole lifts the run limit for that intent`, `pipeline: a spending cap still pauses a build after whole`, `pipeline: a stalled build after whole still asks`, `pipeline: a split rewrites the plan for the kept stages`, `pipeline: a moved outcome is judged by no review of this intent`, `pipeline: a plan does not ask to split because it is large alone`
+
+### PIP-239 · Towercab writes the follow-up intent after a split
+
+After the owner agrees to a split, Towercab writes the follow-up intent itself, with the moved outcomes, so nobody has to write it by hand.
+
+- The follow-up is written through `createIntent` (INT-71, `mode: "direct"`) before the plan PR opens, in the same repo, with the parent's `u`, `i` and `a` and the title `<parent title> (stages <list>)`. Its `Problem` says it continues the parent intent and links the id; its `Proposed outcome` holds the moved outcome bullets as written in the parent, and it names the parent's spec IDs the moved stages need. The commit has the trailer `Split-from: <parent id>`.
+- The write is recorded first (`ctx.record`) and is found again by that trailer, so a crash or a retry never writes a second follow-up. A failed write leaves the mission waiting with the reason and does not open the plan PR; the owner's answer is kept.
+- The follow-up goes through the overlap check's rules as a new intent but is never held by them (INT-73 is for the owner's own drafts), and it starts at design like any intent (INT-2). It is not tied to the parent's merge: the owner may reorder or drop it like any intent.
+- The code PR of the parent says in `## What this does` that the intent was split, and links the follow-up (PIP-209).
+- Verified by: `pipeline: a split writes the follow-up intent with the moved outcomes`, `pipeline: the follow-up keeps the parent's scores and repo`, `pipeline: a retry after a crash writes one follow-up`, `pipeline: a failed follow-up write waits and opens no plan PR`, `pipeline: the code PR links the follow-up`
 
 ### PIP-240 · A worker that reports every step built finishes the build, with or without a new commit
 
