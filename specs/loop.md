@@ -924,6 +924,7 @@ On Windows through WSL2, Towercab keeps Windows from sleeping while missions are
 
 - WSL is detected when the kernel release (`/proc/sys/kernel/osrelease`) contains `microsoft`, case-insensitively. The check goes through `Tools`, so tests fake it.
 - In WSL the inhibitor of LOOP-11 is a `powershell.exe` child instead of `systemd-inhibit`: it calls `SetThreadExecutionState` from `kernel32.dll` with `ES_CONTINUOUS | ES_SYSTEM_REQUIRED` (`0x80000001`) and then sleeps until killed. The child is started, killed and restarted under the same rules as in LOOP-11 (working stage, nothing driven, shutdown), and the wake check applies unchanged.
+- `powershell.exe` is run by the bare name when `PATH` has it, else by `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe` when that exists, because the systemd service's `PATH` has no Windows directory; the same program reads `.wslconfig` (LOOP-143). The child's environment is `PATH` plus `WSL_INTEROP`, `WSL_DISTRO_NAME` and `WSLENV` when set.
 - The execution state belongs to the PowerShell process's thread, so Windows drops it when the child ends, however it ends.
 - Outside WSL the inhibitor stays `systemd-inhibit` as in LOOP-11.
 - A missing `powershell.exe` is not fatal: the loop runs without the inhibitor and `doctor` warns (LOOP-143).

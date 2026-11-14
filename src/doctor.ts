@@ -26,7 +26,15 @@ import { isMoved, readRecord } from "./repo/settings.ts";
 import { shipNetwork } from "./ship/live.ts";
 import { tooFewListed } from "./teammates.ts";
 import type { Tools } from "./tools.ts";
-import { detectWsl, hasVmIdleTimeout, isUnderMnt, POWERSHELL, pid1IsSystemd, readWslConfig } from "./wsl.ts";
+import {
+  detectWsl,
+  hasVmIdleTimeout,
+  isUnderMnt,
+  POWERSHELL,
+  pid1IsSystemd,
+  powershellPath,
+  readWslConfig,
+} from "./wsl.ts";
 
 export const TOOLS = ["git", "gh", "claude", "bwrap", "systemd-inhibit", "systemctl", "journalctl"];
 
@@ -155,12 +163,12 @@ export async function doctor(o: {
     }
   }
   if (release !== null) {
-    const shell = tools.which(POWERSHELL);
+    const shell = powershellPath(tools);
     if (!shell) {
       lines.push(`warning: wsl: ${POWERSHELL} is not on PATH, so Windows may sleep while missions run`);
     }
     if (wslSystemd) {
-      const text = shell ? await readWslConfig(tools) : null;
+      const text = shell ? await readWslConfig(tools, shell) : null;
       const fix = "set vmIdleTimeout=-1 under [wsl2] in %UserProfile%\\.wslconfig, then run wsl --shutdown";
       if (text === null) {
         lines.push(`warning: wsl: .wslconfig could not be read, so no keep-alive is known: ${fix}`);
