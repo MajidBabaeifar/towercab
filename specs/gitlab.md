@@ -1,6 +1,6 @@
 # GitLab
 
-**Status:** Live: GL-1, GL-10, GL-11, GL-12 · **Prefix:** GL
+**Status:** Live: GL-1, GL-10, GL-11, GL-12, GL-13, GL-14, GL-15, GL-16, GL-17 · **Prefix:** GL
 
 ## Purpose
 
@@ -200,7 +200,7 @@ An intent on a GitLab repo is picked and goes through every stage like one on a 
 
 - The hold-back of GitLab repos in `pick` is removed: a GitLab repo's intents follow the same order, limits and
   `after` rules as GitHub's ([LOOP-1](loop.md)). Each stage reaches the host only through the `Forge` of the
-  mission's repo, which is a `GitLabForge` ([GL-5](#gl-5--merge-request-actions)) for a `gitlab:` repo, so no stage branches on the host.
+  mission's repo: for a `gitlab:` repo a `Forge` built on `GitLabForge` ([GL-5](#gl-5--merge-request-actions)), chosen by the repo's slug, so no stage branches on the host.
 - Spec, plan and code each open as a merge request, draft first ([GL-5](#gl-5--merge-request-actions)), and the CI stage reads
   its pipelines ([GL-11](#gl-11--build-results-from-merge-request-pipelines), [GL-12](#gl-12--a-first-red-gitlab-pipeline-is-retried-then-repaired-from-log-tails)).
 - A GitLab repo's readiness has only the `verifying` item ([REPO-22](repo.md)..[REPO-33](repo.md) stay GitHub-only).

@@ -149,7 +149,7 @@ export async function mechanicalMerge(
   label: string,
 ): Promise<Mech | null> {
   try {
-    const author = await botAuthor(cx);
+    const author = await botAuthor(cx, cx.repo(m).github);
     const mech = await resolveConflicts((args) => coGit(cx, m, args), cx.checkout(m), files, author, label);
     if (mech) cx.log(`${m.intent}: merged ${label} without the worker: ${mech.notes.join("; ")}`);
     return mech;

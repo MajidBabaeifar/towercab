@@ -12,6 +12,7 @@ import { git, gitSane } from "../checkout.ts";
 import { type ClaudeRun, freshContext, parseRun, prepareRun, type RunEnd, type RunKind } from "../claude.ts";
 import { clonePath, type RepoConfig } from "../config.ts";
 import { classifyFailure, classifyRun } from "../faults.ts";
+import { changeUrl } from "../forge/types.ts";
 import { must, type Result } from "../forge.ts";
 import {
   agentOf,
@@ -655,8 +656,11 @@ export async function coGit(cx: Ctx, m: Mission, args: string[]): Promise<string
 }
 
 /** `-c user.name=… -c user.email=…` of the App's bot, for Towercab's commits. */
-export async function botAuthor(cx: { github: Pick<GitHub, "bot"> }): Promise<string[]> {
-  const bot = await cx.github.bot();
+export async function botAuthor(
+  cx: { github: { bot(repo?: string): Promise<{ login: string; email: string }> } },
+  repo?: string,
+): Promise<string[]> {
+  const bot = await cx.github.bot(repo);
   return ["-c", `user.name=${bot.login}`, "-c", `user.email=${bot.email}`, "-c", "commit.gpgsign=false"];
 }
 
@@ -762,7 +766,7 @@ export function mustForge(o: Result, what: string): void {
 }
 
 export function prUrl(github: string, n: number): string {
-  return `https://github.com/${github}/pull/${n}`;
+  return changeUrl(github, n);
 }
 
 /** The intent's current PR (code > plan > spec), with its repo. */
@@ -941,7 +945,7 @@ export async function takeRemote(
     .then(() => true)
     .catch(() => false);
   if (isAncestor) return "none";
-  const merged = await coGit(cx, m, [...(await botAuthor(cx)), "merge", "--no-edit", ref])
+  const merged = await coGit(cx, m, [...(await botAuthor(cx, cx.repo(m).github)), "merge", "--no-edit", ref])
     .then(() => true)
     .catch(() => false);
   cx.record(m, m.step, {}, { foreignHead: true });

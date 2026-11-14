@@ -498,7 +498,7 @@ export const revertHandler: Handler = {
       await git(cx.tools, clone, ["fetch", "--quiet", "origin"], await cx.github.gitAuth(repo.github));
       await checkoutAt(cx, m, null);
       await coGit(cx, m, ["checkout", "--quiet", "-B", branch, `refs/remotes/origin/${repo.base}`]);
-      const author = await botAuthor(cx);
+      const author = await botAuthor(cx, cx.repo(m).github);
       for (const sha of [...sc.ship.merges].reverse()) {
         try {
           await coGit(cx, m, [...author, "revert", "--no-edit", sha]);

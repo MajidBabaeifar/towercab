@@ -17,6 +17,7 @@ import {
   writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { blobUrl, parseGitlabProject } from "../forge/types.ts";
 import { alive } from "../home.ts";
 import { emit } from "../log.ts";
 import { cmpIntents } from "../priority.ts";
@@ -67,6 +68,8 @@ export interface StoreOptions {
   tools: Tools;
   /** Network calls (clone, fetch, push) act as this returns (LOOP-19). */
   auth?: GitAuth;
+  /** `[gitlab].api_base`'s host: a remote on it is a GitLab project (GL-4). */
+  gitlabHost?: string;
   /** Commit author; default `towercab <towercab@localhost>`. */
   author?: { name: string; email: string };
   /** `[intents].cutoff` for `TODO.md` (default 7). */
@@ -238,6 +241,12 @@ export function findOpen(listing: Listing, s: string): Intent {
 export function githubOf(remote: string): string | null {
   const m = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(remote);
   return m ? `${m[1]}/${m[2]}` : null;
+}
+
+/** The slug of the intents repo a remote names: `owner/name` on GitHub, `gitlab:group/intents` on `gitlabHost`, else null. */
+export function intentsSlug(remote: string, gitlabHost: string | null): string | null {
+  const gl = gitlabHost ? parseGitlabProject(remote, gitlabHost) : null;
+  return gl ? `gitlab:${gl}` : githubOf(remote);
 }
 
 const held = new Map<string, Promise<void>>();
@@ -715,13 +724,14 @@ export class GitStore implements IntentStore {
     }
   }
 
+  /** The intents repo's slug: `owner/name` on GitHub, `gitlab:group/intents` on GitLab; null for any other remote. */
   github(): string | null {
-    return githubOf(this.o.remote);
+    return intentsSlug(this.o.remote, this.o.gitlabHost ?? null);
   }
 
   url(i: Intent): string | null {
     const gh = this.github();
-    return gh ? `https://github.com/${gh}/blob/main/${i.dir}/intent.md` : null;
+    return gh ? blobUrl(gh, "main", `${i.dir}/intent.md`) : null;
   }
 }
 

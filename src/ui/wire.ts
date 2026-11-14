@@ -6,6 +6,7 @@ import { pausedNow, runningSteps } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import { fixFor } from "../faults.ts";
+import { changeUrl } from "../forge/types.ts";
 import { ownerLogin } from "../github/owner.ts";
 import { type Host, systemClock } from "../handlers.ts";
 import type { Home } from "../home.ts";
@@ -125,7 +126,7 @@ export function sourcesOf(loop: Loop, home: Home): UiSources {
     installHelp: (github) => loop.d.github.peekInstallHelp?.(github) ?? null,
     version: () => version,
     upNext: () => upNextOf(loop),
-    prUrl: (repo, n) => `https://github.com/${repo}/pull/${n}`,
+    prUrl: (repo, n) => changeUrl(repo, n),
     intentUrl: (i) => loop.d.store.url(i),
     proposed: () => loop.proposedState(),
   };
@@ -248,7 +249,7 @@ export async function serveReadOnly(
       problems: () => [],
       version: () => version,
       upNext: () => [],
-      prUrl: (repo, n) => `https://github.com/${repo}/pull/${n}`,
+      prUrl: (repo, n) => changeUrl(repo, n),
       intentUrl: (i) => store.url(i),
     },
     actions: null,

@@ -4,6 +4,7 @@
 
 import type { Db } from "../db.ts";
 import { featuresRun } from "../features.ts";
+import { blobUrl } from "../forge/types.ts";
 import { type Feature, featuresPath, hasOwnLines, parseFeatures } from "../intents/features.ts";
 import { SCANNING_STEP, scanningPermissionMissing } from "../pipeline/alerts.ts";
 import { isApplying } from "../settings/apply.ts";
@@ -223,7 +224,7 @@ export async function featuresView(
     inProgress: lines.filter((f) => f.status === "in progress").map(view),
     live: lines.filter((f) => f.status === "live").map(view),
     planned,
-    url: gh && text !== null ? `https://github.com/${gh}/blob/main/${path}` : null,
+    url: gh && text !== null ? blobUrl(gh, "main", path) : null,
     run,
     note: readError
       ? `The feature list can't be read: ${readError}`

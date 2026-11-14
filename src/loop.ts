@@ -25,7 +25,9 @@ import {
   setFeaturesRun,
 } from "./features.ts";
 import type { GitLabForge } from "./forge/gitlab.ts";
-import { isGitlab } from "./forge/types.ts";
+import { queueTokenNotice } from "./forge/gitlab-token.ts";
+import type { Routed } from "./forge/route.ts";
+import { changeUrl, isGitlab } from "./forge/types.ts";
 import { MERGE_METHOD } from "./forge.ts";
 import {
   agentComments,
@@ -39,6 +41,7 @@ import {
   releaseRequested,
   reversalMarker,
   reversalRequested,
+  staleApprovalNotices,
   type TeamReads,
 } from "./github/events.ts";
 import { pollIssues } from "./github/issues.ts";
@@ -307,10 +310,9 @@ export class Loop {
     const repo = this.d.config.repos.get(m.repo);
     const prNo = m.pr ?? m.plan_pr ?? m.spec_pr;
     let link: string | null = null;
-    if (m.pr && repo) link = `https://github.com/${repo.github}/pull/${m.pr}`;
-    else if (m.plan_pr && this.d.store.github())
-      link = `https://github.com/${this.d.store.github()}/pull/${m.plan_pr}`;
-    else if (m.spec_pr && repo) link = `https://github.com/${repo.github}/pull/${m.spec_pr}`;
+    if (m.pr && repo) link = changeUrl(repo.github, m.pr);
+    else if (m.plan_pr && this.d.store.github()) link = changeUrl(this.d.store.github()!, m.plan_pr);
+    else if (m.spec_pr && repo) link = changeUrl(repo.github, m.spec_pr);
     else if (i) link = this.d.store.url(i);
     void prNo;
     return { title: i?.title ?? m.intent, repo: m.repo, link };
@@ -349,6 +351,8 @@ export class Loop {
     await this.pollIntents(true);
     await this.pollProposed(true);
     this.startIssues(true);
+    // GL-17: once per start, the token's expiry; the notice is keyed by its date, so it is sent once.
+    if (this.d.gitlab) await queueTokenNotice(this.d.gitlab, db, this.now);
   }
 
   /**
@@ -816,7 +820,7 @@ export class Loop {
         const data = dataOf<{ dropped?: boolean; steps?: OwnerStep[] }>(m);
         const repo = this.d.config.repos.get(m.repo);
         const prUrl = (n: number | null, gh: string | null | undefined) =>
-          n && gh ? `https://github.com/${gh}/pull/${n}` : null;
+          n && gh ? changeUrl(gh, n) : null;
         // LOOP-140: an intent the owner already closed by hand has no file left to write.
         const update = (...a: Parameters<IntentStore["update"]>) =>
           store.update(...a).catch((e: unknown) => {
@@ -1276,7 +1280,7 @@ export class Loop {
     try {
       list = this.d.readProposed
         ? await this.d.readProposed()
-        : await this.d.github.readProposed(repo!, this.proposedCache, (await this.d.github.bot()).login);
+        : await this.d.github.readProposed(repo!, this.proposedCache, (await this.d.github.bot(repo!)).login);
     } catch (e) {
       this.proposedError = (e as Error).message;
       this.proposedFailedAt = this.now;
@@ -1432,6 +1436,36 @@ export class Loop {
     });
   }
 
+  /** GL-14: the owner's login and the bot of the host `repo` lives on (one host: the same as the host's own). */
+  private identityOf(repo: string): { me: string; bot(): Promise<{ login: string }> } {
+    const h = this.d.github as Partial<Routed> & Host;
+    return h.identityOf?.(repo) ?? { me: h.me, bot: () => h.bot() };
+  }
+
+  /** A PR read on another host, with its owner and bot named as they are on the code's host. */
+  private async renamed(pr: PrState, repo: string, to: { me: string; bot: string }): Promise<PrState> {
+    const from = this.identityOf(repo);
+    const fromMe = from.me.toLowerCase();
+    const fromBot = (await from.bot()).login.toLowerCase();
+    const host = isGitlab(repo) ? "gitlab" : "github";
+    // A stranger whose login equals the other host's owner or bot is not them: it gets a name that can't match.
+    const name = (a: string): string => {
+      const l = a.toLowerCase();
+      if (l === fromMe) return to.me;
+      if (l === fromBot) return to.bot;
+      return l === to.me.toLowerCase() || l === to.bot.toLowerCase() ? `${host}:${a}` : a;
+    };
+    return {
+      ...pr,
+      ...(pr.author !== undefined ? { author: name(pr.author) } : {}),
+      reviews: pr.reviews.map((r) => ({ ...r, author: name(r.author) })),
+      comments: pr.comments.map((c) => ({ ...c, author: name(c.author) })),
+      ...(pr.staleApprovals
+        ? { staleApprovals: pr.staleApprovals.map((x) => ({ ...x, author: name(x.author) })) }
+        : {}),
+    };
+  }
+
   /** PR reads (LOOP-18, PIP-21): every 60 s per mission with a PR. */
   private async pollPrs(): Promise<void> {
     const read = this.d.readPr ?? ((repo: string, n: number) => this.d.github.readPr(repo, n));
@@ -1451,19 +1485,31 @@ export class Loop {
         if (m.plan_pr && intentsRepo) prs.plan = await read(intentsRepo, m.plan_pr);
         if (m.pr) prs.code = await read(repo.github, m.pr);
         this.githubOk();
+        // GL-14: the owner and the bot are those of the host the code lives on; a plan PR on the other host
+        // is read under that host's names, so its authors are renamed to these before any event is computed.
+        const ident = this.identityOf(repo.github);
+        const me = ident.me;
+        const bot = (await ident.bot()).login;
+        if (prs.plan && intentsRepo && isGitlab(intentsRepo) !== isGitlab(repo.github)) {
+          prs.plan = await this.renamed(prs.plan, intentsRepo, { me, bot });
+        }
         const teamOn = repo.teammateReview === true;
-        const approve = approveRequested(m, prs, this.d.github.me, teamOn);
+        const approve = approveRequested(m, prs, me, teamOn);
         if (approve !== null) {
           const target = approve === m.plan_pr ? intentsRepo! : repo.github;
-          const r = await this.d.github.mergePr(target, approve, { method: MERGE_METHOD });
+          // GL-15: the merge carries the head the approval was judged on, so a push after the check is refused.
+          const judged = approve === m.plan_pr ? prs.plan : approve === m.pr ? prs.code : prs.spec;
+          const r = await this.d.github.mergePr(target, approve, {
+            method: MERGE_METHOD,
+            ...(judged?.head ? { head: judged.head } : {}),
+          });
           this.d.log(
             `${label(m)}: the owner approved PR ${approve}; ${r.ok ? "merged" : `merge refused: ${r.reason}`}`,
           );
           this.lastPrPoll.delete(m.id);
           continue;
         }
-        const bot = (await this.d.github.bot()).login;
-        let asks = releaseRequested(m, prs, this.d.github.me, bot, []);
+        let asks = releaseRequested(m, prs, me, bot, []);
         if (asks.length > 0) {
           // PIP-45: the lead repo's `live` block, read from the base branch of Towercab's clone.
           let entry: ReleaseRepo;
@@ -1478,7 +1524,7 @@ export class Loop {
           } catch (e) {
             entry = { name: m.repo, live: null, unreadable: (e as Error).message };
           }
-          asks = releaseRequested(m, prs, this.d.github.me, bot, [entry]);
+          asks = releaseRequested(m, prs, me, bot, [entry]);
         }
         for (const ask of asks) {
           const target = ask.kind === "plan" ? intentsRepo! : repo.github;
@@ -1489,7 +1535,7 @@ export class Loop {
         if (!this.children.has(m.id)) {
           const listedNow = this.listing?.open.find((i) => i.id === m.intent);
           const onlyYou = ownerOnly(listedNow ? levelNow(this.d.db, listedNow) : null);
-          for (const ask of reversalRequested(m, prs, this.d.github.me, bot, onlyYou)) {
+          for (const ask of reversalRequested(m, prs, me, bot, onlyYou)) {
             let said: string;
             try {
               const r = reverseRefusals(dataOf(m) as PipeData, ask.paths);
@@ -1515,7 +1561,7 @@ export class Loop {
         let team: TeamReads | undefined;
         if (teamOn) {
           team = await this.teamReads(m, repo, prs, bot);
-          for (const ask of approveNotices(m, prs, this.d.github.me, bot)) {
+          for (const ask of approveNotices(m, prs, me, bot)) {
             // PIP-144: the owner's Approve neither merges nor counts: say so once.
             const text = team?.approved
               ? APPROVE_NOTICE.after
@@ -1525,11 +1571,16 @@ export class Loop {
             await this.d.github.commentOnPr(repo.github, ask.pr, `${ask.marker}\n${text}`);
           }
         }
+        // GL-15: an approval given before the last push never counts: say so once.
+        for (const ask of staleApprovalNotices(m, prs, bot)) {
+          const target = ask.kind === "plan" ? intentsRepo! : repo.github;
+          await this.d.github.commentOnPr(target, ask.pr, `${ask.marker}\n${ask.text}`);
+        }
         // AUT-32: on an owner-only intent a reply from anyone else is ignored (PIP-44) and noted once.
         const listed = this.listing?.open.find((i) => i.id === m.intent);
         const levelListed = listed ? levelNow(this.d.db, listed) : null;
         if (ownerOnly(levelListed)) {
-          for (const r of ignoredReplies(m, prs, this.d.github.me, bot)) {
+          for (const r of ignoredReplies(m, prs, me, bot)) {
             noteIgnored(
               this.d.db,
               m.intent,
@@ -1541,7 +1592,7 @@ export class Loop {
         }
         // PIP-185: comments an agent marked under the owner's login are recorded once, at any level.
         const only = ownerOnly(levelListed);
-        for (const c of agentComments(m, prs, this.d.github.me, bot)) {
+        for (const c of agentComments(m, prs, me, bot)) {
           const target = c.kind === "plan" ? intentsRepo : repo.github;
           recordAgentComment(this.d.db, m.intent, c.key, {
             agent: c.agent,
@@ -1561,7 +1612,7 @@ export class Loop {
           }
         }
         const held = conflictHeld(unfinished(this.d.db), m);
-        const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot, team, only, held);
+        const o = prEvents(pastMerges(m, prs), prs, me, bot, team, only, held);
         if (!o) continue;
         if (o.event === "feedback" || o.event === "answered") {
           // A later answer by the owner clears the agent's name.
@@ -1571,7 +1622,7 @@ export class Loop {
         // PIP-203: the owner's own comment starts a revision that answers it. Towercab's conflict revision
         // (PIP-81) and an answer to a question are not revisions of that kind, so they get no reply (LOOP-121).
         if (o.event === "feedback" && !(o.data as { mergeMain?: boolean } | undefined)?.mergeMain) {
-          const targets = feedbackTargets(m, prs, this.d.github.me, bot, team, only);
+          const targets = feedbackTargets(m, prs, me, bot, team, only);
           o.data = { ...o.data, replyTo: targets.length ? targets : undefined, replyNote: undefined };
         }
         const running = this.children.has(m.id);
@@ -2044,7 +2095,6 @@ export class Loop {
       paused: paused(db),
       blocked: this.health.blocked(this.now) ? (this.health.open()[0]?.kind ?? "problem") : null,
       repos: new Set(config.repos.keys()),
-      unsupported: new Set([...config.repos].filter(([, r]) => isGitlab(r.github)).map(([n]) => n)),
       full,
       started,
       notReady: new Map([...blockingRepos(db, config)].map(([name, r]) => [name, missingText(r)] as const)),
