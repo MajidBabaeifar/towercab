@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { applyBudgets, type Budgets, emptyBudgets } from "./budgets.ts";
 import { type Capacity, defaultParallel, readCapacity } from "./capacity.ts";
+import { parseGitlabProject, setGitlabHost } from "./forge/types.ts";
 import { DEFAULT_TEMPLATE, templateProblem } from "./notify-text.ts";
 import { DEFAULT_NETWORK } from "./pipeline/sandbox.ts";
 
@@ -105,7 +106,16 @@ export interface Config {
   };
   ui: { port: number };
   /** `drainMinutes`: how long a drain for an update waits before cutting runs off (LOOP-109). */
-  update: { auto: boolean; drainMinutes: number };
+  update: { auto: boolean; drainMinutes: number; channel: UpdateChannel };
+}
+
+/** LOOP-150: follow `main`, or only the release tags that are on it. */
+export type UpdateChannel = "main" | "release";
+
+function updateChannel(r: Reader, t: Record<string, unknown>): UpdateChannel {
+  const v = t.channel ?? "main";
+  if (v !== "main" && v !== "release") throw r.err('update.channel must be "main" or "release"');
+  return v;
 }
 
 /** SHD-8: the actions `[shadow].free` may list; confirming a draft always asks (SHD-14). */
@@ -179,7 +189,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
   const config: Config = {
     file,
     intents: {
-      remote: r.str(intents, "intents", "remote", ""),
+      remote: intentsRemote(r, r.str(intents, "intents", "remote", ""), gitlab),
       path: r.optPath(intents, "intents", "path"),
       cutoff: r.int(intents, "intents", "cutoff", 7, 1, 15),
       issueA: r.int(intents, "intents", "issue_a", 3, 1, 5),
@@ -248,6 +258,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
     update: {
       auto: r.bool(update, "update", "auto", true),
       drainMinutes: r.int(update, "update", "drain_minutes", 60, 1, 1440),
+      channel: updateChannel(r, update),
     },
   };
   if (config.telegram && (!config.telegram.botToken || !config.telegram.chatId)) {
@@ -272,6 +283,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       config.badRepos.set(name, (e as Error).message);
     }
   }
+  if (config.gitlab) setGitlabHost(new URL(config.gitlab.apiBase).host);
   return config;
 }
 
@@ -302,6 +314,26 @@ export function reloadObserver(config: Config): void {
 }
 
 /** GL-1: `api_base` is an https URL ending in `/api/v4` (http only for localhost, for tests). */
+/**
+ * GL-4: a GitLab intents repo (`gitlab:group/intents`, or its clone URL on the `api_base` host) is stored as
+ * the clone URL `https://<host>/<path>.git`; any other remote is kept as written.
+ */
+function intentsRemote(r: Reader, remote: string, gitlab: Record<string, unknown> | null): string {
+  const asked = remote.startsWith("gitlab:");
+  if (!gitlab) {
+    if (asked) throw r.err("intents.remote is a GitLab project, so [gitlab] (me, token_file) is required");
+    return remote;
+  }
+  const host = new URL(gitlabApiBase(r, gitlab)).host;
+  const path = parseGitlabProject(remote, host);
+  if (path === null) {
+    if (asked)
+      throw r.err(`intents.remote ${remote} isn't a GitLab project: write it as gitlab:group/intents`);
+    return remote;
+  }
+  return `https://${host}/${path}.git`;
+}
+
 function gitlabApiBase(r: Reader, t: Record<string, unknown>): string {
   const v = r.url(t, "gitlab", "api_base", "https://gitlab.com/api/v4");
   let u: URL;
@@ -426,7 +458,8 @@ export function clonePath(repo: RepoConfig, home: string): string {
 
 /** What `run` and `up` need beyond a valid file. */
 export function checkLoop(config: Config): void {
-  if (!config.github) throw new ConfigError(`config: ${config.file}: [github] is required (app_id, me)`);
+  if (!config.github && !config.gitlab)
+    throw new ConfigError(`config: ${config.file}: [github] is required (app_id, me)`);
   if (!config.intents.remote) throw new ConfigError(`config: ${config.file}: intents.remote is required`);
   if (config.repos.size === 0) {
     const bad = [...config.badRepos.values()][0];

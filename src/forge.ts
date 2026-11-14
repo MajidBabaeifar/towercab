@@ -205,6 +205,8 @@ export interface PrState {
   reviewDecision?: string;
   base?: string;
   reviews: PrReview[];
+  /** GL-15: approvals given before the last push (or whose time can't be read); they never count. RFC 3339, `""` if unreadable. */
+  staleApprovals?: { author: string; at: string; pushedAt: string }[];
   /** Conversation comments, then review comments. */
   comments: PrComment[];
 }
@@ -219,8 +221,8 @@ export interface BranchPr {
 export interface Forge {
   /** `[github].me`: the owner's login. */
   readonly me: string;
-  /** The bot user (commit author). */
-  bot(): Promise<Bot>;
+  /** The bot user (commit author); with `repo`, the bot of the host that repo lives on. */
+  bot(repo?: string): Promise<Bot>;
   /** Git arguments and environment that push and fetch `repo` as the bot. */
   gitAuth(repo: string): Promise<GitAuth>;
   /** The same forge acting as the owner (their own login), not the bot. */
