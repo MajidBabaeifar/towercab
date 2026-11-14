@@ -1280,7 +1280,7 @@ export class Loop {
     try {
       list = this.d.readProposed
         ? await this.d.readProposed()
-        : await this.d.github.readProposed(repo!, this.proposedCache, (await this.d.github.bot()).login);
+        : await this.d.github.readProposed(repo!, this.proposedCache, (await this.d.github.bot(repo!)).login);
     } catch (e) {
       this.proposedError = (e as Error).message;
       this.proposedFailedAt = this.now;
@@ -1447,8 +1447,14 @@ export class Loop {
     const from = this.identityOf(repo);
     const fromMe = from.me.toLowerCase();
     const fromBot = (await from.bot()).login.toLowerCase();
-    const name = (a: string): string =>
-      a.toLowerCase() === fromMe ? to.me : a.toLowerCase() === fromBot ? to.bot : a;
+    const host = isGitlab(repo) ? "gitlab" : "github";
+    // A stranger whose login equals the other host's owner or bot is not them: it gets a name that can't match.
+    const name = (a: string): string => {
+      const l = a.toLowerCase();
+      if (l === fromMe) return to.me;
+      if (l === fromBot) return to.bot;
+      return l === to.me.toLowerCase() || l === to.bot.toLowerCase() ? `${host}:${a}` : a;
+    };
     return {
       ...pr,
       ...(pr.author !== undefined ? { author: name(pr.author) } : {}),
@@ -1491,7 +1497,12 @@ export class Loop {
         const approve = approveRequested(m, prs, me, teamOn);
         if (approve !== null) {
           const target = approve === m.plan_pr ? intentsRepo! : repo.github;
-          const r = await this.d.github.mergePr(target, approve, { method: MERGE_METHOD });
+          // GL-15: the merge carries the head the approval was judged on, so a push after the check is refused.
+          const judged = approve === m.plan_pr ? prs.plan : approve === m.pr ? prs.code : prs.spec;
+          const r = await this.d.github.mergePr(target, approve, {
+            method: MERGE_METHOD,
+            ...(judged?.head ? { head: judged.head } : {}),
+          });
           this.d.log(
             `${label(m)}: the owner approved PR ${approve}; ${r.ok ? "merged" : `merge refused: ${r.reason}`}`,
           );
