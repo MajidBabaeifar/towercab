@@ -174,7 +174,7 @@ async function clearLeftover(cx: Ctx, m: Mission, head: string): Promise<Outcome
   } catch (e) {
     throw asEnv(e);
   }
-  const bot = (await cx.github.bot()).login;
+  const bot = (await cx.github.bot(repo.github)).login;
   const foreign = prs.find((p) => p.state === "OPEN" && !isBot(p.author, bot));
   if (foreign || !prs.some((p) => isBot(p.author, bot))) {
     return ask(

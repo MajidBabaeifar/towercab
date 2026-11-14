@@ -221,8 +221,8 @@ export interface BranchPr {
 export interface Forge {
   /** `[github].me`: the owner's login. */
   readonly me: string;
-  /** The bot user (commit author). */
-  bot(): Promise<Bot>;
+  /** The bot user (commit author); with `repo`, the bot of the host that repo lives on. */
+  bot(repo?: string): Promise<Bot>;
   /** Git arguments and environment that push and fetch `repo` as the bot. */
   gitAuth(repo: string): Promise<GitAuth>;
   /** The same forge acting as the owner (their own login), not the bot. */

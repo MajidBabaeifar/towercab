@@ -21,6 +21,9 @@ import { appKeyPath, type Config, ConfigError, checkLoop, configPath, loadConfig
 import { Db } from "./db.ts";
 import { doctor } from "./doctor.ts";
 import { GitLabForge } from "./forge/gitlab.ts";
+import { GitLabHost } from "./forge/gitlab-host.ts";
+import { GlabOwner } from "./forge/gitlab-owner.ts";
+import { routed } from "./forge/route.ts";
 import { parseGitlabProject } from "./forge/types.ts";
 import type { Forge } from "./forge.ts";
 import { fetchHttp } from "./github/app.ts";
@@ -129,6 +132,21 @@ function pkgVersion(): string {
   }
 }
 
+/** A GitHub that refuses every call: a GitLab-only installation has none (GL-3). */
+function refusingGitHub(): Host {
+  const why = new Error("repo add needs [github] (app_id, me)");
+  return new Proxy({} as Host, {
+    get: (_t, key) =>
+      key === "me"
+        ? ""
+        : key === "then" || key === "peekInstallHelp"
+          ? undefined
+          : key === "asOwner"
+            ? refusingGitHub
+            : () => Promise.reject(why),
+  });
+}
+
 /** A GitHub that refuses: a GitLab-only installation has none (GL-3). */
 const noGitHub: Pick<Forge, "repoInfo" | "gitAuth"> = {
   repoInfo: () => Promise.reject(new Error("repo add needs [github] (app_id, me)")),
@@ -150,8 +168,13 @@ function world(flags: { config?: string; home?: string }, tools: Tools): World {
   const home = Home.resolve(flags.home);
   const db = Db.openHome(home.db);
   loadRepos(config, db, Date.now() / 1000);
-  const github = config.github ? createGitHub({ config, tools, db, keyPath: appKeyPath(config) }) : null;
+  const onGithub = config.github ? createGitHub({ config, tools, db, keyPath: appKeyPath(config) }) : null;
   const gitlab = config.gitlab ? new GitLabForge({ ...config.gitlab, file: config.file }, fetchHttp) : null;
+  // GL-13: one host for everything; each call goes to the host its repo lives on.
+  const github =
+    gitlab && config.gitlab
+      ? routed(onGithub ?? refusingGitHub(), new GitLabHost(gitlab, new GlabOwner(tools, config.gitlab)))
+      : onGithub;
   let store: Promise<IntentStore> | null = null;
   return {
     config,
@@ -163,15 +186,21 @@ function world(flags: { config?: string; home?: string }, tools: Tools): World {
     store: () => {
       if (!store) {
         const gh = github;
+        const intentsGitlab = gitlab
+          ? parseGitlabProject(config.intents.remote, gitlab.host) !== null
+          : false;
         const intentsGithub = /github\.com[/:]([^/]+\/[^/.]+)/.exec(config.intents.remote)?.[1] ?? null;
         store = openStore({
           remote: config.intents.remote,
           path: config.intents.path ?? home.intents,
           tools,
+          gitlabHost: gitlab?.host,
           auth:
-            gh && intentsGithub && existsSync(appKeyPath(config))
-              ? () => gh.gitAuth(intentsGithub)
-              : undefined,
+            gitlab && intentsGitlab
+              ? () => gitlab.gitAuth()
+              : gh && intentsGithub && existsSync(appKeyPath(config))
+                ? () => gh.gitAuth(intentsGithub)
+                : undefined,
           cutoff: config.intents.cutoff,
           log: (t) => log.emit(t),
         });

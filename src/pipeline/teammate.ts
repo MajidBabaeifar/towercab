@@ -100,7 +100,7 @@ export async function teammateStep(cx: Ctx, m: Mission, kind: TeamKind): Promise
   const d = data(m);
   const n = kind === "code" ? m.pr : m.spec_pr;
   if (n === null) return null;
-  const bot = (await cx.github.bot()).login;
+  const bot = (await cx.github.bot(repo.github)).login;
   const e = await evaluate({ github: cx.github, tools: cx.tools, clone: cloneOf(cx, m) }, repo, {
     n,
     branch: kind === "code" ? m.branch : (d.specBranch ?? m.branch),
