@@ -34,6 +34,7 @@ import {
   subjectOf,
   viaForge,
 } from "./common.ts";
+import { deferLinesOf, stripDefers } from "./deferrals.ts";
 import { splitDomains } from "./domains.ts";
 import { existingTests } from "./guard.ts";
 import { fence, intentData, render } from "./prompts.ts";
@@ -108,12 +109,22 @@ export async function commitToIntents(
   );
 }
 
+/**
+ * The body of a plan the worker changed: its text without the `## Access` section, and without any `defer` line
+ * of its own (PIP-208: only the merged plan PR approves a deferral). The `defer` lines of the merged plan stay.
+ */
+export function changedPlanBody(md: string, merged: string): string {
+  const body = stripDefers(md.replace(/^## Access[\s\S]*?(?=^## |(?![\s\S]))/m, "")).trimEnd();
+  const kept = deferLinesOf(merged);
+  return kept.length ? `${body}\n\n${kept.join("\n")}` : body;
+}
+
 /** PIP-28's plan-changed path: the new plan straight to `plan.md` on main. */
 export async function writePlanToMain(cx: Ctx, intent: Intent, md: string): Promise<void> {
   // The worker's new plan replaces the approach and steps; the access the owner approved stays as merged.
   const merged = (await cx.store.readFile(`${intent.dir}/plan.md`)) ?? "";
   const access = section(merged, "Access");
-  const body = md.replace(/^## Access[\s\S]*?(?=^## |(?![\s\S]))/m, "").trimEnd();
+  const body = changedPlanBody(md, merged);
   let text = `${body}\n\n## Access\n\n${access || "Nothing beyond the defaults."}\n`;
   // SHIP-17: the owner's steps and the claim stay as merged, ticks included, unless the new plan lists its own.
   const mergedSteps = parseSteps(merged);

@@ -9,6 +9,7 @@ import type { Intent } from "../../src/intents/types.ts";
 import type { Mission } from "../../src/mission.ts";
 import { insertMission } from "../../src/mission.ts";
 import { applyDeferrals, bulletsOf, deferredBullets, parseDefer } from "../../src/pipeline/deferrals.ts";
+import { changedPlanBody } from "../../src/pipeline/plan.ts";
 import { codeBody } from "../../src/pipeline/prtext.ts";
 import { deferralsOf, reviewComment, reviewDecision, verdictLine } from "../../src/pipeline/review.ts";
 import type { ReviewResult } from "../../src/pipeline/schemas.ts";
@@ -245,4 +246,17 @@ test("pipeline: deferring a spec row by name matches its ID as a whole token", (
     deferredBullets(bullets, src(name), valid, (n) => rows[n] ?? null).map((h) => bullets[h.i]!.text);
   expect(at("short row")).toEqual(["Show REPO-3 in the card"]);
   expect(at("other row")).toEqual(["Keep PIP-2 as is"]);
+});
+
+test("pipeline: a defer line added by a changed plan defers nothing", () => {
+  const merged = `## Approach\n\nOld.\n\ndefer 1 to ${LATER}\n\n## Access\n\nNothing.\n`;
+  const changed = `## Approach\n\nNew.\n\ndefer 2 to ${LATER}\ndefer "It says goodbye" to ${LATER}\n\n## Steps\n\n1. Do it\n`;
+  const body = changedPlanBody(changed, merged);
+  // The worker's own lines are gone; the merged plan's line, which the owner approved, stays.
+  expect(body).not.toContain("defer 2");
+  expect(body).not.toContain("goodbye");
+  expect(body).toContain(`defer 1 to ${LATER}`);
+  expect(body).toContain("New.");
+  // No defer line anywhere: the plan is only trimmed as before.
+  expect(changedPlanBody("## Approach\n\nNew.\n", "")).toBe("## Approach\n\nNew.");
 });

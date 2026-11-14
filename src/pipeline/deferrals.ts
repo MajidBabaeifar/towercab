@@ -54,6 +54,20 @@ export function deferLines(text: string): Defer[] {
     .filter((d): d is Defer => d !== null);
 }
 
+/** `text` without its defer lines. */
+export const stripDefers = (text: string): string =>
+  text
+    .split("\n")
+    .filter((l) => parseDefer(l) === null)
+    .join("\n");
+
+/** The defer lines of `text`, as written (trimmed). */
+export const deferLinesOf = (text: string): string[] =>
+  text
+    .split("\n")
+    .filter((l) => parseDefer(l) !== null)
+    .map((l) => l.trim());
+
 /** The defer lines inside an intent's `## Answers` (`- <time>: <text>`), one per answer line. */
 export function answerDeferrals(answers: string): Defer[] {
   const out: Defer[] = [];
