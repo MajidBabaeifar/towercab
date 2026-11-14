@@ -1,5 +1,88 @@
 # Changelog
 
+## [3.0.0](https://github.com/MajidBabaeifar/towercab/compare/v2.0.0...v3.0.0) (2026-11-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* **pipeline:** locked-down sandbox ([#229](https://github.com/MajidBabaeifar/towercab/issues/229))
+
+### Features
+
+* **autonomy:** autonomy control per intent ([#246](https://github.com/MajidBabaeifar/towercab/issues/246)) ([70ea527](https://github.com/MajidBabaeifar/towercab/commit/70ea527b8ffa2a330b9d3e65db543d9007b4fd2d))
+* **autonomy:** owner-only intents ([#227](https://github.com/MajidBabaeifar/towercab/issues/227)) ([a022256](https://github.com/MajidBabaeifar/towercab/commit/a0222567721b5a85b9248b8d543d7fddf9e759db))
+* **gitlab:** gitlab ci results ([#309](https://github.com/MajidBabaeifar/towercab/issues/309)) ([3f7b986](https://github.com/MajidBabaeifar/towercab/commit/3f7b98653f7728056badef62aa2118532cfad64b))
+* **gitlab:** gitlab support ([#201](https://github.com/MajidBabaeifar/towercab/issues/201)) ([4517e67](https://github.com/MajidBabaeifar/towercab/commit/4517e672ad8c12ddcae6eaceda3f5a0d1f374e41))
+* **intents:** gitLab issues as intents ([#202](https://github.com/MajidBabaeifar/towercab/issues/202)) ([c616de2](https://github.com/MajidBabaeifar/towercab/commit/c616de26dedb1115e40e14ca86968ae7689f5ba1))
+* **issues:** check issue labels against intents ([#186](https://github.com/MajidBabaeifar/towercab/issues/186)) ([857042e](https://github.com/MajidBabaeifar/towercab/commit/857042e0522514d007381674dda246b1de7fa196))
+* **loop:** build slots free while waiting ([#185](https://github.com/MajidBabaeifar/towercab/issues/185)) ([3d30867](https://github.com/MajidBabaeifar/towercab/commit/3d30867ad5fc83b922eaae0b62d7fbb23b74dcdd))
+* **loop:** machine-sized parallel default ([#198](https://github.com/MajidBabaeifar/towercab/issues/198)) ([2bd12ca](https://github.com/MajidBabaeifar/towercab/commit/2bd12cab7668f50a350f2bf3773bd9374dfa2652))
+* **loop:** merge queue per repo ([#295](https://github.com/MajidBabaeifar/towercab/issues/295)) ([227771a](https://github.com/MajidBabaeifar/towercab/commit/227771ac8a8ddee2115bc56c4cbb033c2ea5e68e))
+* **loop:** one build per repo until CI passes ([#195](https://github.com/MajidBabaeifar/towercab/issues/195)) ([d3eb930](https://github.com/MajidBabaeifar/towercab/commit/d3eb930434b39fd06643e9eec4172682aa8e0167))
+* **loop:** pause stops all work ([#274](https://github.com/MajidBabaeifar/towercab/issues/274)) ([468d4eb](https://github.com/MajidBabaeifar/towercab/commit/468d4eb0236cac5ac108ba8b8dff7d848ac4151c))
+* **loop:** start intents while owner waits ([#187](https://github.com/MajidBabaeifar/towercab/issues/187)) ([fbea8dc](https://github.com/MajidBabaeifar/towercab/commit/fbea8dc4845e6c6df61a1854e1962bfe4ea82bf4))
+* **metrics:** spending limits and cost estimates ([#244](https://github.com/MajidBabaeifar/towercab/issues/244)) ([9388ac4](https://github.com/MajidBabaeifar/towercab/commit/9388ac49719ed6c2355689b4e0b0e7c01f5eb4bf))
+* **observer:** improvement observer ([#299](https://github.com/MajidBabaeifar/towercab/issues/299)) ([fe94d7e](https://github.com/MajidBabaeifar/towercab/commit/fe94d7e3ec76ce0e6dad7330b5b0634b58217dd0))
+* **pipeline:** a way out of every wait ([#173](https://github.com/MajidBabaeifar/towercab/issues/173)) ([6b55246](https://github.com/MajidBabaeifar/towercab/commit/6b55246ff182c36f24070ff0bfa4c77ff0ac524e))
+* **pipeline:** agent-named GitHub comments ([#232](https://github.com/MajidBabaeifar/towercab/issues/232)) ([c2e0104](https://github.com/MajidBabaeifar/towercab/commit/c2e0104d9dc7561b6dbd7a873191479cbf2a8280))
+* **pipeline:** batched test access questions ([#189](https://github.com/MajidBabaeifar/towercab/issues/189)) ([b2cb965](https://github.com/MajidBabaeifar/towercab/commit/b2cb9659bfa3072cc425f4eb5cf91d2dc773992c))
+* **pipeline:** code scanning alerts in repairs ([#206](https://github.com/MajidBabaeifar/towercab/issues/206)) ([62b0625](https://github.com/MajidBabaeifar/towercab/commit/62b0625820304bafbeced637b3e994c1ab66cd05))
+* **pipeline:** failed job logs in repairs ([#211](https://github.com/MajidBabaeifar/towercab/issues/211)) ([61e7bc4](https://github.com/MajidBabaeifar/towercab/commit/61e7bc43ab0d4285a6d3fb925f050b4e7e6644f0))
+* **pipeline:** fast lane for intents ([#322](https://github.com/MajidBabaeifar/towercab/issues/322)) ([972ecb3](https://github.com/MajidBabaeifar/towercab/commit/972ecb3d70273deaea94e841b34d372d22d58b37))
+* **pipeline:** ignore fixed old secret findings ([#255](https://github.com/MajidBabaeifar/towercab/issues/255)) ([ebaac5e](https://github.com/MajidBabaeifar/towercab/commit/ebaac5ebcbc3ec6424b13ef789342fc082bcc7a7))
+* **pipeline:** link new specs from readme ([#237](https://github.com/MajidBabaeifar/towercab/issues/237)) ([ca428db](https://github.com/MajidBabaeifar/towercab/commit/ca428db0c5d8181201c29ce9d415ae18df564ddc))
+* **pipeline:** locked-down sandbox ([#229](https://github.com/MajidBabaeifar/towercab/issues/229)) ([a8dabff](https://github.com/MajidBabaeifar/towercab/commit/a8dabffd94db9f759f16fd0350100e1580ea49ea))
+* **pipeline:** mechanical merge of additive conflicts ([#235](https://github.com/MajidBabaeifar/towercab/issues/235)) ([2775b3a](https://github.com/MajidBabaeifar/towercab/commit/2775b3a96dfeef9dbcaa0ff6454f1411f5d49095))
+* **pipeline:** multi-repo intents ([#190](https://github.com/MajidBabaeifar/towercab/issues/190)) ([b8e362b](https://github.com/MajidBabaeifar/towercab/commit/b8e362b56efb6d53ff7e28f16d63ffc823f53924))
+* **pipeline:** multi-run plan builds ([#310](https://github.com/MajidBabaeifar/towercab/issues/310)) ([0bc0f07](https://github.com/MajidBabaeifar/towercab/commit/0bc0f0787c2e4bca4918760ec7962900481a2d06))
+* **pipeline:** people part and folded agent part ([#294](https://github.com/MajidBabaeifar/towercab/issues/294)) ([d098005](https://github.com/MajidBabaeifar/towercab/commit/d0980056d99c307ed35064a3d47cd11648b8c8e2))
+* **pipeline:** replies to PR comments ([#303](https://github.com/MajidBabaeifar/towercab/issues/303)) ([aab70f2](https://github.com/MajidBabaeifar/towercab/commit/aab70f2a6ace9cbbed507a7e8ae82ffb6643ebb2))
+* **pipeline:** sandbox toolchains for rust, go, zig ([#300](https://github.com/MajidBabaeifar/towercab/issues/300)) ([3d0c6c9](https://github.com/MajidBabaeifar/towercab/commit/3d0c6c952cb3fc6c5d8235d4b4c36b858068801d))
+* **pipeline:** settle specs after two rounds ([#219](https://github.com/MajidBabaeifar/towercab/issues/219)) ([9f4ca44](https://github.com/MajidBabaeifar/towercab/commit/9f4ca44a4b71f58ab84f6756903d6aba5dbbc447))
+* **pipeline:** specialist reviewers ([#263](https://github.com/MajidBabaeifar/towercab/issues/263)) ([0f9799a](https://github.com/MajidBabaeifar/towercab/commit/0f9799a46cfa1900012d5f7a44e46b9a4f126f62))
+* **pipeline:** teammate review before merge ([#193](https://github.com/MajidBabaeifar/towercab/issues/193)) ([f20c7b0](https://github.com/MajidBabaeifar/towercab/commit/f20c7b0143ff2a2e2fd6de4da4e7c75da12c1cf5))
+* **pipeline:** unique requirement IDs across open PRs ([#197](https://github.com/MajidBabaeifar/towercab/issues/197)) ([f1e35de](https://github.com/MajidBabaeifar/towercab/commit/f1e35dea2e72a25b10c5728259475d2179de2fc9))
+* **pipeline:** wait table access in plans ([#273](https://github.com/MajidBabaeifar/towercab/issues/273)) ([1d4a984](https://github.com/MajidBabaeifar/towercab/commit/1d4a984fa851120d93c398b93d11fc2172325e8d))
+* **repo:** apply settings on click ([#261](https://github.com/MajidBabaeifar/towercab/issues/261)) ([48ff8a1](https://github.com/MajidBabaeifar/towercab/commit/48ff8a1df4e44a86c56dc9a503c283f7859f6655))
+* **repo:** auto-apply GitHub settings ([#182](https://github.com/MajidBabaeifar/towercab/issues/182)) ([8704d0d](https://github.com/MajidBabaeifar/towercab/commit/8704d0d50c309c3b61f3da7243b3477b8c621fc4))
+* **repo:** drafted verifying checks ([#217](https://github.com/MajidBabaeifar/towercab/issues/217)) ([a4b28ec](https://github.com/MajidBabaeifar/towercab/commit/a4b28ecfd49a8838d60f0e098f87e18afcd745d3))
+* **repo:** repo readiness checks ([#167](https://github.com/MajidBabaeifar/towercab/issues/167)) ([d1491d0](https://github.com/MajidBabaeifar/towercab/commit/d1491d0b89df5e7dd1d74c5eed5aaa44ecd8c7da))
+* **repo:** repo settings in TOWERCAB.md ([#205](https://github.com/MajidBabaeifar/towercab/issues/205)) ([bcd6971](https://github.com/MajidBabaeifar/towercab/commit/bcd69715ddc2b996a41831b5562307a9771152be))
+* **repos:** gitHub App install help ([#304](https://github.com/MajidBabaeifar/towercab/issues/304)) ([7e1608d](https://github.com/MajidBabaeifar/towercab/commit/7e1608dd5c3d68ca725808419fc7b7be82e5f6dc))
+* **shadow:** telegram shadow assistant ([#224](https://github.com/MajidBabaeifar/towercab/issues/224)) ([863a372](https://github.com/MajidBabaeifar/towercab/commit/863a37228360d8046b1ae32e85f566171d2b6a64))
+* **ship:** gitlab deployments adapter ([#316](https://github.com/MajidBabaeifar/towercab/issues/316)) ([4733f14](https://github.com/MajidBabaeifar/towercab/commit/4733f149b334b994b0ecc810a2f6255fbbf35f31))
+* **ship:** merge release pull requests ([#180](https://github.com/MajidBabaeifar/towercab/issues/180)) ([3a0d9d3](https://github.com/MajidBabaeifar/towercab/commit/3a0d9d333327a483804bfd01647b2a77bd34ece6))
+* **ship:** owner secret steps ([#188](https://github.com/MajidBabaeifar/towercab/issues/188)) ([3d57e5c](https://github.com/MajidBabaeifar/towercab/commit/3d57e5c1ebb06cbc0bdb510f42b72fe24893e30d))
+* **telegram:** act from telegram ([#281](https://github.com/MajidBabaeifar/towercab/issues/281)) ([070b32b](https://github.com/MajidBabaeifar/towercab/commit/070b32b807ca55b372ab2e370df4d96e4c1ae343))
+* **telegram:** telegram intent cards ([#293](https://github.com/MajidBabaeifar/towercab/issues/293)) ([8add792](https://github.com/MajidBabaeifar/towercab/commit/8add79229f8540a93c7f069cd61c50e98c8ec48a))
+* **ui:** board repo sorting ([#199](https://github.com/MajidBabaeifar/towercab/issues/199)) ([9b9792a](https://github.com/MajidBabaeifar/towercab/commit/9b9792a6b22326a106e920849a03959d2c497377))
+* **ui:** edit scores and boost ([#302](https://github.com/MajidBabaeifar/towercab/issues/302)) ([4b2e142](https://github.com/MajidBabaeifar/towercab/commit/4b2e142c0e05eee6a453b19d1add83087c813421))
+* **ui:** focus tab ([#179](https://github.com/MajidBabaeifar/towercab/issues/179)) ([61f8e78](https://github.com/MajidBabaeifar/towercab/commit/61f8e78a296a59ad5ba8fac54ffa32971e31ecf9))
+* **ui:** fold needs-you cards ([#191](https://github.com/MajidBabaeifar/towercab/issues/191)) ([3d04d5f](https://github.com/MajidBabaeifar/towercab/commit/3d04d5f833492a290a45f7ca29e15ba0ab311e3f))
+* **ui:** keyboard inbox ([#252](https://github.com/MajidBabaeifar/towercab/issues/252)) ([969632e](https://github.com/MajidBabaeifar/towercab/commit/969632ecc7b62858a3ba6d51cbba6c4a4b6fe9b5))
+* **ui:** overview needs-you first ([#233](https://github.com/MajidBabaeifar/towercab/issues/233)) ([9dbccbe](https://github.com/MajidBabaeifar/towercab/commit/9dbccbed933d7939bf9eb29c1a2e852678de2eae))
+* **ui:** pause and resume show they are working ([#297](https://github.com/MajidBabaeifar/towercab/issues/297)) ([16de6d1](https://github.com/MajidBabaeifar/towercab/commit/16de6d10a19f3f22236a93ac507cfc01b735be91))
+* **ui:** readable board, repo and intent pages ([#313](https://github.com/MajidBabaeifar/towercab/issues/313)) ([c2a5398](https://github.com/MajidBabaeifar/towercab/commit/c2a53982341b30b0992f81cef3548c781357cbad))
+
+
+### Bug Fixes
+
+* **events:** truthful release replies ([#196](https://github.com/MajidBabaeifar/towercab/issues/196)) ([8c93f88](https://github.com/MajidBabaeifar/towercab/commit/8c93f883a0d3c2ef7e086d464d42d282d420384b))
+* **loop:** bounded shutdown, stale lock cleanup ([#327](https://github.com/MajidBabaeifar/towercab/issues/327)) ([6c6052a](https://github.com/MajidBabaeifar/towercab/commit/6c6052adf8b956b608003e4bf9360570fe7a4ebd))
+* **loop:** separate limit for owner waits ([#240](https://github.com/MajidBabaeifar/towercab/issues/240)) ([a273d25](https://github.com/MajidBabaeifar/towercab/commit/a273d25a735be23a07df6d4093c172c0f18d841e))
+* **loop:** settle hand-closed intents ([#311](https://github.com/MajidBabaeifar/towercab/issues/311)) ([4683c31](https://github.com/MajidBabaeifar/towercab/commit/4683c31a678b8617b817dd018cf68b576b44c9d7))
+* **loop:** wait for after dependencies ([#215](https://github.com/MajidBabaeifar/towercab/issues/215)) ([ce18200](https://github.com/MajidBabaeifar/towercab/commit/ce18200b004c6d07af825faf3e78f3a5398b3eb6))
+* **pipeline:** any "as written" marks a reference ([#288](https://github.com/MajidBabaeifar/towercab/issues/288)) ([a06c432](https://github.com/MajidBabaeifar/towercab/commit/a06c4327ce22c33cb7ed8918793f1c1f502a2681))
+* **pipeline:** editable tests in repair rounds ([#213](https://github.com/MajidBabaeifar/towercab/issues/213)) ([c5020a8](https://github.com/MajidBabaeifar/towercab/commit/c5020a8a63b2bc223c47a7604f4596c522439bcf))
+* **pipeline:** fewer needless owner waits ([#314](https://github.com/MajidBabaeifar/towercab/issues/314)) ([c755674](https://github.com/MajidBabaeifar/towercab/commit/c755674b35cca59b7dd6db0f7ce42eef20a65fc1))
+* **pipeline:** keep a worker's work after its question ([#307](https://github.com/MajidBabaeifar/towercab/issues/307)) ([bc4bad6](https://github.com/MajidBabaeifar/towercab/commit/bc4bad6aad5ab37bd990b39a8f9d327f69007943))
+* **pipeline:** keep own spec IDs ([#258](https://github.com/MajidBabaeifar/towercab/issues/258)) ([ed7ff0d](https://github.com/MajidBabaeifar/towercab/commit/ed7ff0d3e3a073e1a38baa0a11c5573298d1459a))
+* **pipeline:** keep referenced spec IDs ([#270](https://github.com/MajidBabaeifar/towercab/issues/270)) ([8d77fbb](https://github.com/MajidBabaeifar/towercab/commit/8d77fbb9c83e80210593fb1754e75516a19ccf5d))
+* **pipeline:** mount node's install so npm resolves ([#296](https://github.com/MajidBabaeifar/towercab/issues/296)) ([3323315](https://github.com/MajidBabaeifar/towercab/commit/332331586fc1b1f86ce7b01c94a6c142c121f8c3))
+* **pipeline:** probe that a worker's shell can start ([#306](https://github.com/MajidBabaeifar/towercab/issues/306)) ([899111c](https://github.com/MajidBabaeifar/towercab/commit/899111c027ab5f650929420f06b7062b28a9b722))
+* **pipeline:** refuse placeholder plans, name failed checks ([#308](https://github.com/MajidBabaeifar/towercab/issues/308)) ([5897647](https://github.com/MajidBabaeifar/towercab/commit/589764756fce077087367ea1f1bcd56f596f1ac3))
+* **ui:** fixture port per checkout ([#323](https://github.com/MajidBabaeifar/towercab/issues/323)) ([3eeff0e](https://github.com/MajidBabaeifar/towercab/commit/3eeff0e78a9f3e238b845c1b4531f4d9c767a664))
+
 ## [2.0.0](https://github.com/MajidBabaeifar/towercab/compare/v1.0.0...v2.0.0) (2026-11-05)
 
 
