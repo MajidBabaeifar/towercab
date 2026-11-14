@@ -91,7 +91,16 @@ export interface Config {
   };
   ui: { port: number };
   /** `drainMinutes`: how long a drain for an update waits before cutting runs off (LOOP-109). */
-  update: { auto: boolean; drainMinutes: number };
+  update: { auto: boolean; drainMinutes: number; channel: UpdateChannel };
+}
+
+/** LOOP-150: follow `main`, or only the release tags that are on it. */
+export type UpdateChannel = "main" | "release";
+
+function updateChannel(r: Reader, t: Record<string, unknown>): UpdateChannel {
+  const v = t.channel ?? "main";
+  if (v !== "main" && v !== "release") throw r.err('update.channel must be "main" or "release"');
+  return v;
 }
 
 /** SHD-8: the actions `[shadow].free` may list; confirming a draft always asks (SHD-14). */
@@ -227,6 +236,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
     update: {
       auto: r.bool(update, "update", "auto", true),
       drainMinutes: r.int(update, "update", "drain_minutes", 60, 1, 1440),
+      channel: updateChannel(r, update),
     },
   };
   if (config.telegram && (!config.telegram.botToken || !config.telegram.chatId)) {

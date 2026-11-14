@@ -275,6 +275,8 @@ export class Loop {
   private drain: Drain | null = null;
   /** LOOP-108: the full commit of the `origin/main` an update failed on; no drain starts for it again. */
   private failedUpdate: string | null = null;
+  /** LOOP-151: release tags off main already logged as skipped. */
+  private skippedTags = new Set<string>();
   /** LOOP-105: the commit the checkout was at when this loop started, or null when unknown. */
   private startCommit: string | null = null;
   private last: { wall: number; mono: number } | null = null;
@@ -2205,6 +2207,9 @@ export class Loop {
       checkout: this.codeRoot(),
       idle,
       failed: this.failedUpdate,
+      channel: this.d.config.update.channel,
+      log: (m) => this.d.log(m),
+      skipped: this.skippedTags,
     });
     if (r.kind === "waiting") {
       // A newer main while draining changes the target, not the start: the limit counts from the first.
