@@ -6,11 +6,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AfterHold } from "../after.ts";
 import { type Agent, type AgentName, agentBudgetUsd, loadAgent } from "../agents.ts";
-import { effectiveA, effectiveAForWriter } from "../autonomy.ts";
+import { effectiveA, effectiveAForWriter, gateLevel } from "../autonomy.ts";
 import { withFlag } from "../autonomy-change.ts";
 import { git, gitSane } from "../checkout.ts";
 import { type ClaudeRun, freshContext, parseRun, prepareRun, type RunEnd, type RunKind } from "../claude.ts";
 import { clonePath, type RepoConfig } from "../config.ts";
+import { fastConfirmed } from "../fast.ts";
 import { classifyFailure, classifyRun } from "../faults.ts";
 import { must, type Result } from "../forge.ts";
 import {
@@ -373,6 +374,19 @@ export function effectiveOf(m: Mission, intent: Intent, files: RepoFiles): numbe
     return effectiveAForWriter(intent.a, files.towercab.maxAutonomy, ceiling);
   }
   return effectiveA(intent.a, files.towercab.maxAutonomy, intent.source);
+}
+
+/**
+ * FAST-9: the level the spec, plan and merge gates decide at: a fast-lane mark the owner confirmed applies the a5
+ * rows, under the repo's cap. Grants and the build keep `effectiveOf`.
+ */
+export function gateLevelOf(cx: Ctx, m: Mission, intent: Intent, files: RepoFiles): number {
+  return gateLevel(
+    effectiveOf(m, intent, files),
+    intent.fast === true && fastConfirmed(cx.db, intent.id),
+    files.towercab.maxAutonomy,
+    intent.source,
+  );
 }
 
 /** The worker's grants (AUT-14). */

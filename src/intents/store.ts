@@ -589,6 +589,14 @@ export class GitStore implements IntentStore {
   }
 
   async lastAChange(idOrSuffix: string): Promise<string | null> {
+    return this.lastFieldChange(idOrSuffix, "a");
+  }
+
+  async lastFastChange(idOrSuffix: string): Promise<string | null> {
+    return this.lastFieldChange(idOrSuffix, "fast");
+  }
+
+  private async lastFieldChange(idOrSuffix: string, field: string): Promise<string | null> {
     return this.locked(async () => {
       const found = findOpen(scan(this.path).listing, idOrSuffix);
       const rel = `${found.dir}/intent.md`;
@@ -600,14 +608,15 @@ export class GitStore implements IntentStore {
         "--format=%H",
         "--diff-merges=first-parent",
         "-s",
-        "-G^a:",
+        `-G^${field}:`,
         "--",
         rel,
       ]);
       const sha = r.stdout.trim();
       if (r.code !== 0 || !/^[0-9a-f]{40,64}$/.test(sha)) return null;
-      // The commit must really set the level the file has now; else nobody can be credited with it.
-      const level = (text: string) => /^a:[ \t]*(\S*)[ \t]*$/m.exec(text.split(/^---$/m)[1] ?? "")?.[1] ?? "";
+      // The commit must really set the value the file has now; else nobody can be credited with it.
+      const line = new RegExp(`^${field}:[ \\t]*(\\S*)[ \\t]*$`, "m");
+      const level = (text: string) => line.exec(text.split(/^---$/m)[1] ?? "")?.[1] ?? "";
       const then = await this.git(["show", `${sha}:${rel}`]);
       let now: string;
       try {

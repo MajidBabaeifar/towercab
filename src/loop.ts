@@ -13,6 +13,7 @@ import { removeCheckout } from "./checkout.ts";
 import { applyPending, intentPaused, noteIgnored, paused, recordAgentComment } from "./commands.ts";
 import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
+import { watchFast } from "./fast-watch.ts";
 import { fixFor, Health } from "./faults.ts";
 import {
   BackfillError,
@@ -1100,6 +1101,10 @@ export class Loop {
       listing,
     );
     await this.settleWriters(listing);
+    await watchFast(
+      { db, store: this.d.store, forge: this.d.github, now: this.now, log: this.d.log },
+      listing,
+    );
     for (const m of unfinished(db)) {
       if (m.step === "enter") continue;
       const intent = listing.open.find((i) => i.id === m.intent) ?? null;

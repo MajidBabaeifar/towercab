@@ -210,6 +210,7 @@ export function settingsPost(d: UsersApiDeps, who: Signed, b: Record<string, unk
 /** USR-7: the `can` action each page action needs. Anything not listed needs admin (`settings`). */
 const NEEDS: Record<string, Action> = {
   boost: "boost",
+  "set-fast": "edit",
   scores: "edit",
   merge: "merge",
   pass: "drop",

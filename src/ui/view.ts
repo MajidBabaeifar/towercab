@@ -78,6 +78,15 @@ export interface TopBar {
 export type ActionKey = "merge" | "pass" | "reply" | "retry" | "drop";
 export type CardKind = "spec" | "plan" | "code" | "question" | "blocked" | "release" | "autonomy";
 
+/** FAST-1, FAST-9: whether the intent is in the fast lane and whether the owner confirmed it. */
+export interface FastView {
+  on: boolean;
+  /** On and confirmed: its approvals pass as at a5. On and not confirmed: the page says `fast lane: waiting for your confirmation`. */
+  confirmed: boolean;
+  /** The service isn't running, so the page can't change anything. */
+  locked: boolean;
+}
+
 /** UI-257: the one control for an intent's autonomy. */
 export interface AutonomyView {
   /** The level the intent runs at now (a flagged raise doesn't count yet). */
@@ -675,6 +684,8 @@ export interface IntentPage {
   onlyYou?: string;
   /** UI-257: the autonomy control. */
   autonomy?: AutonomyView;
+  /** FAST-1, FAST-9: the fast lane mark; `confirmed` is false until the owner confirms a mark that did not come from them. */
+  fast?: FastView;
   /** UI-203: urgency and importance as controls, and the notes of UI-207 and UI-208. */
   controls?: ControlsView;
   paused?: boolean;
