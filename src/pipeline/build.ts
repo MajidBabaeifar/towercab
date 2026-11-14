@@ -246,8 +246,10 @@ async function mergeBaseBranch(cx: Ctx, m: Mission): Promise<string[] | null> {
 }
 
 /** PIP-227: marks a question the worker asked mid-build, so the round after the answer keeps its edits. */
-function keepWork(o: Outcome): Outcome {
-  return { ...o, data: { ...o.data, askedMidBuild: true } };
+function keepWork(o: Outcome, m?: Mission): Outcome {
+  // PIP-30: a question asked while repairing an unproven change is the owner's say on the proof.
+  const proof = m && data(m).repair?.kind === "proof" ? { proofWaited: true } : {};
+  return { ...o, data: { ...o.data, askedMidBuild: true, ...proof } };
 }
 
 export const buildHandler: Handler = {
@@ -440,7 +442,7 @@ export const buildHandler: Handler = {
     if (v.status === "blocked" && v.question) {
       // LOOP-107: a block that Towercab's own logs trace to a known setup error is retried once.
       const fault = setupFault(setupEvidence(cx, m, end));
-      if (!fault) return { done: keepWork(await ask(cx, m, v.question, "answer the question", v.brief)) };
+      if (!fault) return { done: keepWork(await ask(cx, m, v.question, "answer the question", v.brief), m) };
       const d = data(m);
       const key = `${m.stage}:${d.roundFrom ?? ""}`;
       const tried = d.setupRetried ?? {};
@@ -458,7 +460,7 @@ export const buildHandler: Handler = {
         ...v.question,
         context: `Towercab's own setup failed again after one automatic retry: ${fault.plain}. ${v.question.context}`,
       };
-      return { done: keepWork(await ask(cx, m, again, "answer the question", v.brief)) };
+      return { done: keepWork(await ask(cx, m, again, "answer the question", v.brief), m) };
     }
     // PIP-137: a helper edit that is more than additions waits for the owner, in the same question as
     // the tests the worker asked for (PIP-136). The edit stays in the checkout, unpublished.

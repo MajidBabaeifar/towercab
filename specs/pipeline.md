@@ -32,8 +32,10 @@ docs, until the repo's checks pass.
   again unchanged; with the owner's words it goes on, and after a CI repair that head's red is rerun
   once more (PIP-18). Timeout, budget used up, or no
   valid result → one continue with `Continue where you stopped.` and the step's full time budget
-  again, then the matching wait.
-- Verified by: `pipeline: build prompt has plan, intent and checks`, `pipeline: build commits as the bot`, `pipeline: no changes waits`, `pipeline: a repair that changes nothing waits`, `pipeline: after an answer an unchanged head gets CI again`, `pipeline: timeout continues once`
+  again, then the matching wait. When the result was there but refused (a missing field, a people
+  part over its limit, PIP-222), the continue of any agent says so instead: `Your last answer was not
+  accepted: <why>. Give your result again with that fixed; change nothing else.`
+- Verified by: `pipeline: a refused answer is asked again with the reason`, `pipeline: build prompt has plan, intent and checks`, `pipeline: build commits as the bot`, `pipeline: no changes waits`, `pipeline: a repair that changes nothing waits`, `pipeline: after an answer an unchanged head gets CI again`, `pipeline: timeout continues once`
 
 ### PIP-2 · Publish
 
@@ -325,8 +327,10 @@ Towercab checks that the PR's tests fail without the change, so the tests prove 
   that fails without the change, naming the commands the proof ran on base and saying that a change
   to how tests run isn't used there, so a worker that can't wire its test into them asks the owner; after the repairs → `waiting: tests don't prove the change`. After
   the owner answers, a proof that still fails to prove → publish with `data.unproven` (the gate then
-  sends the PR to the owner, PIP-7).
-- Verified by: `pipeline: proof red on base proves`, `pipeline: green on base repairs`, `pipeline: unproven goes to the owner`
+  sends the PR to the owner, PIP-7). A question the worker asks the owner during such a repair round
+  counts as that wait: after the owner's answer a change that is still unproven is published the same
+  way, with no second question and no `no changes` wait.
+- Verified by: `pipeline: an answered proof question sends the unproven change to the owner`, `pipeline: proof red on base proves`, `pipeline: green on base repairs`, `pipeline: unproven goes to the owner`
 
 ### PIP-31 · Test lock in repair rounds
 
@@ -1833,7 +1837,8 @@ An agent session that speaks on GitHub as the owner posts through Towercab, whic
 - The shadow's own comments (SHD-12) will carry the same marker with the name `shadow` when the shadow is built; the code here has no shadow yet, so nothing is done for it.
 - The command is allowed on every intent, an `a0` one included: it only posts, and on an `a0` intent what it posts is ignored as input (PIP-185). The agents' tools and the sandbox's `gh` stay as they are (PIP-70): the rule is an instruction in the agent prompts and `prompts/writing.md`, which tell a session that talks on GitHub for the owner to use this command instead of `gh pr comment`. Blocking raw `gh` for such sessions is a later option (see Decisions).
 - Readers of an answer (the yes/no and `allow` reading of PIP-138, PIP-141, and the feedback text of PIP-185) skip the leading agent lines: the marker, the `🤖 <agent> (for <owner>)` line and an older `[answered by … acting for the owner]` line. An agent's "Allow both." is read as an allow.
-- Verified by: `cli: reply --by writes the first line and marker`, `cli: reply refuses a missing or invalid agent name`, `cli: reply works on an a0 intent`, `pipeline: an agent reply is read for its answer`
+- An intent with no PR and no issue yet has nowhere to post: the same marked text is handed in as an answer (the `answer` command), and the command says so. On an `a0` intent that answer is refused, as every answer from the command line is ([AUT-33](autonomy.md)).
+- Verified by: `cli: reply --by writes the first line and marker`, `cli: reply refuses a missing or invalid agent name`, `cli: reply works on an a0 intent`, `pipeline: an agent reply is read for its answer`, `cli: reply without a PR or issue goes in as a marked answer`
 
 ### PIP-185 · An agent's comment under the owner's login is recorded, and ignored on an a0 intent
 

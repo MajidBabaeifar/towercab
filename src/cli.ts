@@ -26,7 +26,7 @@ import type { Forge } from "./forge.ts";
 import { fetchHttp } from "./github/app.ts";
 import { currentPr } from "./github/events.ts";
 import { createGitHub } from "./github/gh.ts";
-import { agentReply, approve as ownerApprove, replyTarget } from "./github/owner.ts";
+import { agentReply, agentReplyBody, approve as ownerApprove, replyTarget } from "./github/owner.ts";
 import type { Host } from "./handlers.ts";
 import { systemClock } from "./handlers.ts";
 import { Home } from "./home.ts";
@@ -533,8 +533,12 @@ async function run(
           }
         : null;
       const to = replyTarget(where?.repo ? where : null, intent.issue);
-      if (!to) throw new Error(`${intent.id} has no PR or issue to comment on yet`);
       const owner = w.config.github?.name || w.config.github?.me || "the owner";
+      if (!to) {
+        // PIP-184: nowhere to post yet, so the marked text goes in as an answer (refused on an a0 intent).
+        const body = agentReplyBody(v.by as string, owner, args.slice(1).join(" "));
+        return `no PR or issue yet, sent as an answer marked ${v.by}: ${await submit(w, "answer", intent.id, body)}`;
+      }
       await agentReply(w.github, to, v.by as string, owner, args.slice(1).join(" "));
       return `posted on ${to.repo}#${to.number} as ${v.by}, for ${owner}`;
     }
