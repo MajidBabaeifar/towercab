@@ -1509,7 +1509,12 @@ export class Loop {
       for (const c of pr?.comments ?? []) authors.add(c.author);
       for (const r of pr?.reviews ?? []) authors.add(r.author);
     }
-    const data = dataOf<{ writer?: { login?: string }; question?: unknown }>(m);
+    const data = dataOf<{
+      writer?: { login?: string };
+      question?: unknown;
+      accessAsk?: unknown;
+      testAsk?: unknown;
+    }>(m);
     const intent = this.listing?.open.find((i) => i.id === m.intent);
     return loginCheck(
       this.people,
@@ -1518,7 +1523,8 @@ export class Loop {
         repos: [m.repo, ...(intent?.repos ?? [])],
         adminOnly: ownerOnly(intent ? levelNow(this.d.db, intent) : null),
         writer: data.writer?.login ?? null,
-        asking: m.stage === "blocked" && !!data.question,
+        // An access or test-change ask grants the worker network or protected files: a maintainer decides it.
+        asking: m.stage === "blocked" && !!data.question && !data.accessAsk && !data.testAsk,
       },
       authors,
     );

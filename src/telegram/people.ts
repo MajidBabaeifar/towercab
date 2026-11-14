@@ -12,7 +12,7 @@ import type { SendOptions, TelegramUpdate } from "../telegram.ts";
 import type { Actor, UiActions } from "../ui/actions.ts";
 import { getUser, record } from "../users/store.ts";
 import { recordWriter, writerOf } from "../users/writer.ts";
-import { can, denial, type User } from "../users.ts";
+import { type Action, can, denial, type User } from "../users.ts";
 import type { ChatData } from "./chat.ts";
 import {
   cardLink,
@@ -84,12 +84,24 @@ export function personOfChat(db: Db, chat: string): (User & { name: string }) | 
 /** USR-12: who a wait is sent to. A viewer gets nothing; a contributor only questions on intents they wrote. */
 export function receives(
   user: User,
-  v: Pick<WaitView, "repo" | "question" | "onlyYou" | "intent">,
+  v: Pick<WaitView, "repo" | "repos" | "question" | "onlyYou" | "intent" | "grant">,
   writer: string | null,
 ): boolean {
   if (v.onlyYou) return user.role === "admin";
-  if (can(user, "approve", v.repo)) return true;
-  return v.question && writer === user.login && can(user, "answer", v.repo);
+  if (allRepos(v).every((r) => can(user, "approve", r))) return true;
+  return v.question && !v.grant && writer === user.login && allRepos(v).every((r) => can(user, "answer", r));
+}
+
+/** Every repo the wait's intent changes: the person's role must hold on all of them (USR-5, as `gateAction`). */
+const allRepos = (v: Pick<WaitView, "repo" | "repos">): string[] => (v.repos?.length ? v.repos : [v.repo]);
+
+/** The reason `user` may not do `action` on the wait, checking every repo; null when they may. */
+function refusal(user: User, action: Action, v: Pick<WaitView, "repo" | "repos">): string | null {
+  for (const r of allRepos(v)) {
+    const no = denial(user, action, r);
+    if (no) return no;
+  }
+  return null;
 }
 
 const OPS: Record<string, "merge" | "drop" | "retry"> = {
@@ -226,8 +238,7 @@ export class PeopleChat {
     const action = OPS[p.op];
     if (!action) return t.answer(cb.id, "That button is not valid.");
     // USR-11: what a chat may do is what the person's role allows on this repo.
-    const no =
-      denial(person, action, v.repo) ?? (v.onlyYou && person.role !== "admin" ? A0_ADMIN_ONLY : null);
+    const no = refusal(person, action, v) ?? (v.onlyYou && person.role !== "admin" ? A0_ADMIN_ONLY : null);
     if (no) return t.answer(cb.id, no);
     if (!v.actions.includes(action) || (v.question && action !== "drop")) {
       return t.answer(cb.id, "That is not offered here.");
@@ -257,13 +268,16 @@ export class PeopleChat {
     if (!row?.wait) return;
     const v = (await this.d.data.waits()).find((x) => x.waitId === row.wait);
     if (!v) return void (await this.say(u.chat, "That is already handled."));
-    const mine = writerOf(this.d.db, v.intent)?.login === person.login && can(person, "answer", v.repo);
+    const mine =
+      !v.grant &&
+      writerOf(this.d.db, v.intent)?.login === person.login &&
+      refusal(person, "answer", v) === null;
     const why =
       v.onlyYou && person.role !== "admin"
         ? A0_ADMIN_ONLY
         : v.question && mine
           ? null
-          : denial(person, "reply", v.repo);
+          : refusal(person, "reply", v);
     if (why) return void (await this.say(u.chat, why));
     const acts = this.d.actions.as?.(this.actor(person)) ?? this.d.actions;
     try {
@@ -312,7 +326,7 @@ export class PeopleChat {
         )!.telegram_chat;
         if (chat === owner || !receives(p, v, writerOf(db, v.intent)?.login ?? null)) continue;
         live.add(`${mission}:${chat}`);
-        const acts = !v.onlyYou && can(p, "approve", v.repo);
+        const acts = !v.onlyYou && refusal(p, "approve", v) === null;
         const text = waitText(v, cardLink(config.telegram, v.intent, v.pr?.url ?? null));
         const buttons = acts ? waitButtons(v) : [];
         const json = buttons.length ? JSON.stringify(buttons) : null;
