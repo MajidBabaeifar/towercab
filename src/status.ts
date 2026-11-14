@@ -21,11 +21,29 @@ import {
   workingIn,
 } from "./slots.ts";
 import { leftOf, type OwnerStep } from "./steps.ts";
+import type { VersionInfo } from "./update.ts";
 
 export interface Problem {
   kind: string;
   since: number;
   error: string;
+}
+
+/**
+ * LOOP-152: the running version for the first line (`1.0.0 (v1.1.0, 3f9c2ab)`, or just the commit with no
+ * release tag) and, on the release channel, whether a newer release waits.
+ */
+export function versionLine(v: VersionInfo, pkg: string): { version: string; update: string | null } {
+  const parts = v.name === v.commit ? [v.commit] : [v.name, v.commit];
+  if (!v.release && v.behind) parts.push(`${v.behind} behind main`);
+  return {
+    version: `${pkg} (${parts.join(", ")})`,
+    update: v.release
+      ? v.release.available
+        ? `update: ${v.release.available} is available`
+        : "up to date"
+      : null,
+  };
 }
 
 export interface StatusInput {
@@ -34,6 +52,8 @@ export interface StatusInput {
   listingError: string | null;
   running: number | null;
   version: string;
+  /** LOOP-152: the release channel's line; absent on the main channel. */
+  update?: string | null;
   now: number;
   problems: Problem[];
   /** The first line of `next`. */
@@ -85,6 +105,7 @@ export function renderStatus(s: StatusInput): string {
     s.db.meta("paused") === "1"
       ? `paused${s.running && pausedSuffix(s.db) ? `: ${pausedSuffix(s.db)}` : ""}`
       : "",
+    s.update ?? "",
     s.running && s.db.meta("draining") ? `draining for update to ${s.db.meta("draining")}` : "",
     s.problems.length ? "problems" : "",
   ]

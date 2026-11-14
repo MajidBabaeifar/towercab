@@ -91,7 +91,7 @@ test("config: loads defaults", () => {
   expect(c.github).toEqual({ appId: 7, me: "me", apiBase: "https://api.github.com" });
   expect(c.telegram).toBeNull();
   expect(c.ui).toEqual({ port: 7311 });
-  expect(c.update).toEqual({ auto: true, drainMinutes: 60 });
+  expect(c.update).toEqual({ auto: true, drainMinutes: 60, channel: "main" });
   expect(c.badRepos.size).toBe(0);
   // `~/` is expanded, and v1's [tasks] is read as [intents] when [intents] is absent.
   const t = parseConfig(
