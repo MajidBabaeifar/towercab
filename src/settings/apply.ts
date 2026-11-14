@@ -138,7 +138,21 @@ export async function applySettings(d: SettingsDeps, repo: RepoConfig): Promise<
         return held(`Nothing applied: no backup (${(e as Error).message})`);
       }
       const r = await s.run(guard.ok ? "apply" : "skip-ruleset", "owner");
-      if (forbidden(r)) return held(cannot(repo.github));
+      if (forbidden(r)) {
+        // REPO-31: the script may have changed some settings before GitHub refused, so what is stored comes
+        // from a new check, never from the gaps seen before the apply.
+        try {
+          return {
+            ...(await checkRepo(s, now, "owner")),
+            note: cannot(repo.github),
+            ...(guard.ok ? {} : { ruleset: guard.words }),
+          };
+        } catch {
+          return held(
+            `${cannot(repo.github)}. The apply may have stopped part-way, so the gaps shown may be out of date`,
+          );
+        }
+      }
       if (!guard.ok && r.code === 2) {
         return held(`Nothing applied: this ci release has no --skip-ruleset (${firstLine(r)})`, {
           ruleset: guard.words,

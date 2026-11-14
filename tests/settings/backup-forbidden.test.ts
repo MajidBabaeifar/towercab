@@ -38,7 +38,7 @@ test("repo: a forbidden backup read says the login cannot change the repo", asyn
   }
 });
 
-test("repo: only gh's HTTP 403 counts as forbidden", () => {
+test("repo: gh's HTTP 403, not-accessible and admin-rights errors count as forbidden", () => {
   const r = (stdout: string, stderr = "") => ({ code: 1, stdout, stderr, timedOut: false });
   expect(forbidden(r("see https://example.com/403 for details"))).toBe(false);
   expect(forbidden(r("branch 4030 has no protection"))).toBe(false);

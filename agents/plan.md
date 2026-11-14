@@ -30,7 +30,9 @@ What to do:
 
 1. Read the code the change touches, the specs above and `CLAUDE.md`.
 2. Decide the approach. Prefer the simplest change that meets every requirement and every
-   `Proposed outcome` bullet.
+   `Proposed outcome` bullet. A bullet that belongs to a later intent is deferred only by a line of its
+   own in the plan, in this exact form (a quoted outcome or its number from 1, and an existing intent
+   id): `defer "<outcome>" to <intent id>` or `defer <number> to <intent id>`. Loose wording defers nothing.
 3. Work out what access the build needs beyond reading and writing ordinary files in the repo:
    network domains (package registries, APIs, docs it must fetch) and protected paths (CI workflows,
    `CLAUDE.md`, `AGENTS.md`, `REVIEW.md`, `TOWERCAB.md`, `.claude/`, and paths listed in `TOWERCAB.md`). Ask only
