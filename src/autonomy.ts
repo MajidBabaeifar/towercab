@@ -35,6 +35,17 @@ export function effectiveA(aNow: number | null, cap: number, source: string | nu
 }
 
 /**
+ * AUT-23: effective `a` when `[auth]` is set: the writer's role sets the ceiling (a5 for an admin or a
+ * maintainer, or a confirmation by one; a4 for a contributor), whatever the file's `source` line says.
+ */
+export function effectiveAForWriter(aNow: number | null, cap: number, ceiling: number): number {
+  return Math.min(aNow ?? DEFAULT_A, cap, ceiling);
+}
+
+/** AUT-25: with `[auth]` set an a0 intent is decided by admins only. */
+export const A0_ADMIN_ONLY = "only an admin can decide an a0 intent";
+
+/**
  * FAST-9: the level the spec, plan and merge gates decide at. `a` is the effective level (`effectiveA`). A
  * fast-lane mark the owner confirmed applies the a5 rows of AUT-18, still under the repo's cap and the
  * `source` rule; it never lowers a level and never touches an a0 intent. Access grants keep using `a`.

@@ -200,13 +200,18 @@ export class GitHubForge implements Forge, GitHub {
     return this.soft(repo, ["pr", "ready", String(n), "-R", repo]);
   }
 
-  mergePr(repo: string, n: number, o: { method: MergeMethod; head?: string }): Promise<Result> {
+  mergePr(
+    repo: string,
+    n: number,
+    o: { method: MergeMethod; head?: string; body?: string },
+  ): Promise<Result> {
     return this.soft(repo, [
       "pr",
       "merge",
       String(n),
       MERGE_FLAG[o.method],
       ...(o.head ? ["--match-head-commit", o.head] : []),
+      ...(o.body ? ["--body", o.body] : []),
       "-R",
       repo,
     ]);
@@ -747,6 +752,27 @@ export class GitHubForge implements Forge, GitHub {
   }
   readProposed(repo: string, cache: ProposedCache, bot: string): Promise<ProposedPr[]> {
     return readProposed(this.raw, repo, cache, bot);
+  }
+
+  async teamMember(team: string, login: string): Promise<boolean> {
+    const [org, slug] = team.split("/");
+    if (!org || !slug) throw new Error(`${team} isn't org/team`);
+    const r = await this.raw.owner(
+      ["api", `orgs/${org}/teams/${slug}/memberships/${login}`, "--jq", ".state"],
+      {
+        timeoutMs: 20_000,
+      },
+    );
+    if (r.code === 0) return r.stdout.trim() === "active";
+    if (/\b404\b|Not Found/i.test(`${r.stdout}\n${r.stderr}`)) return false;
+    throw new Error(`GitHub couldn't say who is in ${team}`);
+  }
+
+  async accountExists(login: string): Promise<boolean> {
+    const r = await this.raw.owner(["api", `users/${login}`, "--jq", ".login"], { timeoutMs: 20_000 });
+    if (r.code === 0) return r.stdout.trim().length > 0;
+    if (/\b404\b|Not Found/i.test(`${r.stdout}\n${r.stderr}`)) return false;
+    throw new Error("GitHub couldn't be asked whether that account exists");
   }
 
   async ownerLogins(): Promise<string[]> {

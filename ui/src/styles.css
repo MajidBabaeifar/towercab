@@ -4965,3 +4965,77 @@ kbd {
   font-size: 0.85rem;
   color: var(--muted, inherit);
 }
+
+/* Users (UI-219..224) */
+.signin {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding-top: 15vh;
+  text-align: center;
+}
+.signin-note {
+  color: var(--muted, #666);
+}
+.account {
+  position: relative;
+}
+.account-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  min-width: 240px;
+  padding: 12px;
+  z-index: 20;
+}
+.account-menu p {
+  margin: 0 0 8px;
+}
+.telegram-code code {
+  font-weight: 600;
+}
+.deciders {
+  margin: 4px 0;
+}
+.admin .people {
+  width: 100%;
+  border-collapse: collapse;
+}
+.admin .people th,
+.admin .people td {
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line, #ddd);
+}
+.admin .people tr.disabled {
+  opacity: 0.6;
+}
+.admin .chip {
+  display: inline-block;
+  margin: 0 4px 2px 0;
+}
+.admin-add,
+.admin-team,
+.admin-settings,
+.admin-history {
+  margin-top: 24px;
+  display: grid;
+  gap: 8px;
+  max-width: 560px;
+}
+.admin-settings dl {
+  display: grid;
+  gap: 4px;
+}
+.admin-settings dl > div {
+  display: flex;
+  gap: 8px;
+}
+.admin-history ul {
+  list-style: none;
+  padding: 0;
+}
+.tl-actor {
+  margin: 0;
+}

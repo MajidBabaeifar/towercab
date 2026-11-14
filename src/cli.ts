@@ -57,6 +57,7 @@ import { buildChat } from "./telegram/wire.ts";
 import { Telegram } from "./telegram.ts";
 import { realTools, type Tools } from "./tools.ts";
 import { checkUpdate, version } from "./update.ts";
+import { recordWriter } from "./users/writer.ts";
 
 export const COMMANDS = [
   "up",
@@ -519,6 +520,10 @@ async function run(
       const i = await store.add({ repo: m[1]!, title: m[2]!.trim(), ...scores }, new Date());
       // FAST-1: the mark is written after the intent exists; the command line never confirms it (FAST-9).
       if (v.fast === true) await markFast({ db: w.db, store }, i.id, true, "cli");
+      // AUT-23: an intent made on this machine is the owner's (the first admin).
+      if (w.config.auth && w.config.github) {
+        recordWriter(w.db, i.id, { login: w.config.github.me.toLowerCase(), via: "cli" });
+      }
       return `${i.id} ${i.dir}/intent.md${v.fast === true ? " (fast lane)" : ""}`;
     }
     case "fast": {

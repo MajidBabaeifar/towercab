@@ -116,6 +116,19 @@ drain_minutes = 60
 # One table per repo Towercab works in; the name after repos. is yours to choose. Towercab imports
 # these tables into its database once, on its first start, and ignores them after that: add repos
 # later with `towercab repo add owner/name` or from the page, and change them with `towercab repo set`.
+# Several people (USR-3): sign-in with GitHub and roles. Leave this out for a Towercab with one owner.
+# [auth]
+# client_id = "Iv1.0123456789abcdef"
+# The name of the environment variable that holds the client secret.
+# client_secret_env = "TOWERCAB_OAUTH_SECRET"
+# The address people open the page at; GitHub's callback is <public_url>/auth/callback.
+# public_url = "https://towercab.example.com"
+# The address the page listens on (default 127.0.0.1: this machine only).
+# listen = "127.0.0.1"
+# Sign out after this many idle hours (default 12) and at most this many days (default 7).
+# session_hours = 12
+# session_days = 7
+
 [repos.web]
 # The repo on GitHub, as owner/name.
 github = "you/web"

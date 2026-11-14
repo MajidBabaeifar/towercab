@@ -77,6 +77,18 @@ export interface Config {
   github: { appId: number; me: string; apiBase: string; name?: string } | null;
   gitlab: GitLabConfig | null;
   telegram: { botToken: string; chatId: string; apiBase: string; uiUrl?: string } | null;
+  /**
+   * USR-6: `[auth]`, absent for a one-owner Towercab. Sign-in is on only when it is set.
+   * `clientSecretEnv` names the environment variable that holds the secret, never the secret.
+   */
+  auth?: {
+    clientId: string;
+    clientSecretEnv: string;
+    publicUrl: string;
+    listen: string;
+    sessionHours: number;
+    sessionDays: number;
+  };
   /** SHD-11: `[shadow]`: the owner's Claude session in Telegram and what it may do without asking. */
   shadow: { enabled: boolean; free: ShadowFree[]; dailyBudgetUsd: number; model: string | null };
   /** OBV-2, OBV-7, OBV-10: `[observer]`: on unless `enabled = false`; its own caps. */
@@ -145,6 +157,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
   const github = raw.github === undefined ? null : r.table(raw.github, "github");
   const gitlab = raw.gitlab === undefined ? null : r.table(raw.gitlab, "gitlab");
   const telegram = raw.telegram === undefined ? null : r.table(raw.telegram, "telegram");
+  const auth = raw.auth === undefined ? null : r.table(raw.auth, "auth");
   const ui = r.table(raw.ui, "ui");
   const update = r.table(raw.update, "update");
   const shadow = r.table(raw.shadow, "shadow");
@@ -216,6 +229,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       // TG-14: where the owner reaches the page from the phone; absent unless set.
       ...(telegram.ui_url === undefined ? {} : { uiUrl: r.url(telegram, "telegram", "ui_url", "") }),
     },
+    ...(auth ? { auth: parseAuth(r, auth) } : {}),
     shadow: {
       enabled: r.bool(shadow, "shadow", "enabled", false),
       free: free as ShadowFree[],
@@ -252,6 +266,25 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
     }
   }
   return config;
+}
+
+function parseAuth(r: Reader, t: Record<string, unknown>): NonNullable<Config["auth"]> {
+  const clientId = r.str(t, "auth", "client_id", "");
+  const clientSecretEnv = r.str(t, "auth", "client_secret_env", "");
+  if (!clientId) throw r.err("auth.client_id is required");
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(clientSecretEnv)) {
+    throw r.err("auth.client_secret_env must name an environment variable");
+  }
+  const listen = r.str(t, "auth", "listen", "127.0.0.1");
+  if (!listen || /\s/.test(listen)) throw r.err("auth.listen must be an address");
+  return {
+    clientId,
+    clientSecretEnv,
+    publicUrl: r.url(t, "auth", "public_url", ""),
+    listen,
+    sessionHours: r.int(t, "auth", "session_hours", 12, 1, 720),
+    sessionDays: r.int(t, "auth", "session_days", 7, 1, 90),
+  };
 }
 
 function parseObserver(r: Reader, t: Record<string, unknown>): Config["observer"] {

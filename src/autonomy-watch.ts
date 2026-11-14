@@ -13,6 +13,8 @@ export interface WatchDeps {
   /** Unix seconds. */
   now: number;
   log(line: string): void;
+  /** AUT-24: with `[auth]` set, whether this account may raise autonomy on all of these repos. */
+  raiser?(login: string, repos: string[]): Promise<boolean>;
 }
 
 /**
@@ -46,7 +48,17 @@ export async function watchAutonomy(d: WatchDeps, listing: Listing): Promise<voi
         continue;
       }
     }
-    const v = judgeProof(proof, d.forge.me);
+    // AUT-24: the commit's verified account counts when its role allows a raise on the intent's repos.
+    const account = proof?.verified
+      ? proof.committer === "web-flow"
+        ? proof.author
+        : proof.committer
+      : null;
+    const allowed =
+      account && d.raiser && (await d.raiser(account, [i.repo, ...(i.repos ?? [])]).catch(() => false))
+        ? account.toLowerCase()
+        : null;
+    const v = judgeProof(proof, d.forge.me, allowed);
     if (v.owner) {
       setAccepted(db, i.id, s.now);
       clearFlag(db, i.id);

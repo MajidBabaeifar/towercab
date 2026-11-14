@@ -14,8 +14,23 @@ import {
 } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, resolve, sep } from "node:path";
+import { ownerOnly } from "../autonomy.ts";
+import { levelNow } from "../autonomy-change.ts";
 import { isRepoName } from "../intents/features.ts";
 import type { IntentStore, Listing } from "../intents/types.ts";
+import {
+  gateAction,
+  meView,
+  settingsGet,
+  settingsPost,
+  telegramPost,
+  type UsersApiDeps,
+  usersPost,
+  usersView,
+} from "../users/api.ts";
+import type { Auth, Signed } from "../users/auth.ts";
+import { getUser } from "../users/store.ts";
+import { can, denial } from "../users.ts";
 import type { UiActions } from "./actions.ts";
 import { board } from "./board.ts";
 import { inbox, inboxAction } from "./inbox.ts";
@@ -26,6 +41,12 @@ import { activity, intentPage, overview, queue, RUN_NAME, redact, type UiSources
 import type { ActionReply } from "./view.ts";
 
 export interface UiOptions {
+  /** USR-3: sign-in; null = no `[auth]`, the page is the owner's and stays on 127.0.0.1 (USR-6). */
+  auth?: Auth | null;
+  /** USR-14: what the people and settings API reads and writes; needs `auth`. */
+  people?: UsersApiDeps | null;
+  /** The address to bind (`[auth].listen`, USR-7); only read when `auth` is set. */
+  listen?: string;
   /** 0 = any free port (tests, the fixture); the caller treats `[ui] port = 0` as off. */
   port: number;
   sources: UiSources;
@@ -114,6 +135,7 @@ const ACTIONS = new Set([
   "seen",
   "snooze",
   "unsnooze",
+  "confirm",
 ]);
 const INBOX_ACTIONS = new Set(["seen", "snooze", "unsnooze"]);
 const INTENT_ID = /^[A-Za-z0-9._-]{1,100}$/;
@@ -191,8 +213,14 @@ export function startUi(o: UiOptions): UiServer {
   const json = (res: ServerResponse, status: number, value: unknown) =>
     send(res, status, "application/json; charset=utf-8", redact(JSON.stringify(value), config));
 
+  const auth = o.auth ?? null;
+  /** A person's display name: their GitHub name when an admin gave one, else the login (USR-8). */
+  const nameOf = (login: string): string => getUser(o.sources.db, login)?.name || login;
   const hostOk = (host: string | undefined) =>
-    bound !== null && !!host && [`127.0.0.1:${bound}`, `localhost:${bound}`, `[::1]:${bound}`].includes(host);
+    bound !== null &&
+    !!host &&
+    ([`127.0.0.1:${bound}`, `localhost:${bound}`, `[::1]:${bound}`].includes(host) ||
+      (auth !== null && host === new URL(auth.origin).host));
 
   const indexHtml = (): string => {
     const file = join(o.distDir, "index.html");
@@ -277,14 +305,72 @@ export function startUi(o: UiOptions): UiServer {
       req.on("error", fail);
     });
 
-  const act = async (req: IncomingMessage, res: ServerResponse) => {
+  /** A POST's Origin and page token (UI-4); false after answering 403. */
+  const postOk = (req: IncomingMessage, res: ServerResponse): boolean => {
     const origin = req.headers.origin;
     const host = req.headers.host;
-    if (origin !== `http://${host}`) return json(res, 403, { ok: false, message: "Refused: wrong origin." });
+    // USR-4: with sign-in, a POST must come from `public_url`.
+    const fine = auth ? auth.originOk(origin) : origin === `http://${host}`;
+    if (!fine) {
+      json(res, 403, { ok: false, message: "Refused: wrong origin." });
+      return false;
+    }
     const t = req.headers["x-towercab-token"];
     if (typeof t !== "string" || !sameToken(t, token)) {
-      return json(res, 403, { ok: false, message: "Refused: the page is out of date. Reload it." });
+      json(res, 403, { ok: false, message: "Refused: the page is out of date. Reload it." });
+      return false;
     }
+    return true;
+  };
+
+  /** USR-14: the people and settings routes; `who` is the signed-in person. */
+  const peopleRoute = async (req: IncomingMessage, res: ServerResponse, path: string, who: Signed | null) => {
+    const d = o.people;
+    if (path === "/api/me" && req.method !== "POST") {
+      return json(
+        res,
+        200,
+        meView(
+          d ?? { db: o.sources.db, config, now: () => o.sources.clock.now(), exists: async () => true },
+          who,
+        ),
+      );
+    }
+    if (!d || !who) return json(res, 404, { error: "Not found." });
+    const reply = (r: { status: number; body: unknown }) => json(res, r.status, r.body);
+    const body = async (): Promise<Record<string, unknown> | null> => {
+      try {
+        const v = JSON.parse(await readBody(req)) as unknown;
+        if (typeof v === "object" && v !== null && !Array.isArray(v)) return v as Record<string, unknown>;
+      } catch {
+        // answered below
+      }
+      json(res, 400, { ok: false, message: "The request isn't JSON." });
+      return null;
+    };
+    if (req.method === "POST") {
+      if (!postOk(req, res)) return;
+      const b = await body();
+      if (!b) return;
+      if (path === "/api/me/telegram") return reply(telegramPost(d, who, b));
+      if (path === "/api/users") return reply(await usersPost(d, who, b));
+      if (path === "/api/settings") return reply(settingsPost(d, who, b));
+      return json(res, 404, { error: "Not found." });
+    }
+    if (path === "/api/users") {
+      const no = usersGuard(who);
+      return no ? reply(no) : json(res, 200, usersView(d, who));
+    }
+    if (path === "/api/settings") return reply(settingsGet(d, who));
+    return json(res, 404, { error: "Not found." });
+  };
+  const usersGuard = (who: Signed) =>
+    can(who.user, "manage_users")
+      ? null
+      : { status: 403, body: { ok: false, message: denial(who.user, "manage_users") } };
+
+  const act = async (req: IncomingMessage, res: ServerResponse, who: Signed | null) => {
+    if (!postOk(req, res)) return;
     let raw: string;
     try {
       raw = await readBody(req);
@@ -330,6 +416,30 @@ export function startUi(o: UiOptions): UiServer {
     const intent = typeof body.intent === "string" ? body.intent : typeof body.id === "string" ? body.id : "";
     const repo = typeof body.repo === "string" ? body.repo : "";
     if (!ACTIONS.has(action)) return json(res, 400, { ok: false, message: `Unknown action “${action}”.` });
+    // USR-7: the role decides, whatever the page showed.
+    if (who) {
+      // A proposal is gated on the repo its own intent file names, never on one the request supplies.
+      let gated: { a?: unknown; repo?: unknown } = body as { a?: unknown; repo?: unknown };
+      if (action === "accept" || action === "close") {
+        const n = typeof body.pr === "number" ? body.pr : 0;
+        const found = o.sources.proposed?.().list.find((p) => p.number === n);
+        const unreadable = !found?.intent && who.user.role !== "admin";
+        // The role's own reason comes first; an unreadable proposal is refused even for a role that may.
+        if (unreadable) {
+          const why = denial(who.user, action === "accept" ? "approve" : "drop");
+          return json(res, 403, {
+            ok: false,
+            message: why ?? "Can't tell which repo this proposal is for: its intent file can't be read.",
+          });
+        }
+        gated = { repo: found?.intent?.repo };
+      }
+      const why = await gateAction(who.user, action, gated, intent, async (id) => {
+        const i = await store.get(id);
+        return { repo: i.repo, repos: i.repos, a: i.a, a0: ownerOnly(levelNow(o.sources.db, i)) };
+      });
+      if (why) return json(res, 403, { ok: false, message: why });
+    }
     const proposal = action === "accept" || action === "close";
     const needsIntent = ![
       "pause",
@@ -372,11 +482,19 @@ export function startUi(o: UiOptions): UiServer {
         message: "Towercab isn't running, so this page is read-only. Start it with towercab up.",
       });
     }
-    const a = o.actions;
+    // USR-8: the action is recorded and worded as done by this person; without sign-in, by the owner.
+    const me = config.github?.me ?? "";
+    const a = o.actions.as
+      ? o.actions.as(
+          who
+            ? { login: who.user.login, name: nameOf(who.user.login), via: "page", signed: true }
+            : { login: me, name: me, via: "page", signed: false },
+        )
+      : o.actions;
     let reply: ActionReply;
     // UI-204, UI-205: the owner's edits of scores and autonomy; the reply may carry the new priority.
     if (action === "scores" || action === "boost") {
-      const actor = typeof body.actor === "string" ? body.actor : "";
+      const actor = who ? "" : typeof body.actor === "string" ? body.actor : "";
       const score = (v: unknown) => {
         if (v === undefined || v === null) return null;
         return typeof v === "number" ? v : Number.NaN;
@@ -400,104 +518,116 @@ export function startUi(o: UiOptions): UiServer {
     }
     try {
       // AUT-32: the page is the owner; an actor that says otherwise can't act on an a0 intent.
-      if (intent) await a.guard?.(intent, action, typeof body.actor === "string" ? body.actor : "");
+      if (intent)
+        await a.guard?.(intent, action, who ? "" : typeof body.actor === "string" ? body.actor : "");
       const no = () => Promise.reject(new Error("Secrets aren't available."));
       const noLimits = () => Promise.reject(new Error("Changing settings isn't available."));
-      const message = INBOX_ACTIONS.has(action)
-        ? await inboxAction(src, action, typeof body.item === "string" ? body.item : "", body.until)
-        : action === "autonomy"
-          ? await (a.autonomy ?? noLimits)(
-              intent,
-              typeof body.a === "number" ? body.a : Number.NaN,
-              typeof body.actor === "string" ? body.actor : "",
-            )
-          : action === "set-fast"
-            ? await (a.fast ?? noLimits)(
-                intent,
-                body.fast !== false,
-                typeof body.actor === "string" ? body.actor : "",
-              )
-            : action === "budgets"
-              ? await (a.budgets ?? noLimits)(
-                  typeof body.scope === "string" ? body.scope : "all",
-                  body.daily,
-                  body.monthly,
+      const message =
+        action === "confirm"
+          ? await (a.confirm ?? noLimits)(intent)
+          : INBOX_ACTIONS.has(action)
+            ? await inboxAction(src, action, typeof body.item === "string" ? body.item : "", body.until)
+            : action === "autonomy"
+              ? await (a.autonomy ?? noLimits)(
+                  intent,
+                  typeof body.a === "number" ? body.a : Number.NaN,
+                  who ? "" : typeof body.actor === "string" ? body.actor : "",
                 )
-              : action === "apply-settings"
-                ? await (a.applySettings ?? noLimits)(repo)
-                : action === "repo-settings"
-                  ? await (a.repoSettings ?? noLimits)(repo, body.changes, body.confirmed === true)
-                  : action === "repo-move"
-                    ? await (a.repoMove ?? noLimits)(repo)
-                    : action === "secret"
-                      ? await (a.secret ?? no)(
-                          intent,
-                          Number(body.n),
-                          typeof body.value === "string" ? body.value : "",
-                        )
-                      : action === "approve-secret"
-                        ? await (a.approveSecret ?? no)(intent, Number(body.n))
-                        : action === "merge"
-                          ? await a.merge(intent)
-                          : action === "pass"
-                            ? await (
-                                a.pass ?? (() => Promise.reject(new Error("Passing on isn't available.")))
-                              )(intent)
-                            : action === "reply"
-                              ? await a.reply(intent, typeof body.text === "string" ? body.text : "")
-                              : action === "retry"
-                                ? await a.retry(intent)
-                                : action === "drop"
-                                  ? await a.drop(intent)
-                                  : action === "done"
-                                    ? await (
-                                        a.done ??
-                                        (() => Promise.reject(new Error("Ending an intent isn't available.")))
-                                      )(intent, typeof body.text === "string" ? body.text : "")
-                                    : action === "steps"
-                                      ? await (
-                                          a.steps ??
-                                          (() =>
-                                            Promise.reject(new Error("Switching to steps isn't available.")))
-                                        )(intent)
-                                      : action === "start"
-                                        ? await a.start(intent)
-                                        : action === "step"
+              : action === "set-fast"
+                ? await (a.fast ?? noLimits)(
+                    intent,
+                    body.fast !== false,
+                    who ? "" : typeof body.actor === "string" ? body.actor : "",
+                  )
+                : action === "budgets"
+                  ? await (a.budgets ?? noLimits)(
+                      typeof body.scope === "string" ? body.scope : "all",
+                      body.daily,
+                      body.monthly,
+                    )
+                  : action === "apply-settings"
+                    ? await (a.applySettings ?? noLimits)(repo)
+                    : action === "repo-settings"
+                      ? await (a.repoSettings ?? noLimits)(repo, body.changes, body.confirmed === true)
+                      : action === "repo-move"
+                        ? await (a.repoMove ?? noLimits)(repo)
+                        : action === "secret"
+                          ? await (a.secret ?? no)(
+                              intent,
+                              Number(body.n),
+                              typeof body.value === "string" ? body.value : "",
+                            )
+                          : action === "approve-secret"
+                            ? await (a.approveSecret ?? no)(intent, Number(body.n))
+                            : action === "merge"
+                              ? await a.merge(intent)
+                              : action === "pass"
+                                ? await (
+                                    a.pass ?? (() => Promise.reject(new Error("Passing on isn't available.")))
+                                  )(intent)
+                                : action === "reply"
+                                  ? await a.reply(intent, typeof body.text === "string" ? body.text : "")
+                                  : action === "retry"
+                                    ? await a.retry(intent)
+                                    : action === "drop"
+                                      ? await a.drop(intent)
+                                      : action === "done"
+                                        ? await (
+                                            a.done ??
+                                            (() =>
+                                              Promise.reject(new Error("Ending an intent isn't available.")))
+                                          )(intent, typeof body.text === "string" ? body.text : "")
+                                        : action === "steps"
                                           ? await (
-                                              a.step ??
+                                              a.steps ??
                                               (() =>
-                                                Promise.reject(new Error("Ticking steps isn't available.")))
-                                            )(intent, Number(body.n), body.done !== false)
-                                          : action === "pause"
-                                            ? await a.pause(intent)
-                                            : action === "addRepo"
-                                              ? await a.addRepo(
-                                                  typeof body.github === "string" ? body.github : "",
-                                                  typeof body.name === "string" && body.name
-                                                    ? body.name
-                                                    : undefined,
-                                                )
-                                              : action === "features"
-                                                ? await a.features(repo)
-                                                : action === "accept"
-                                                  ? await a.accept(pr, head)
-                                                  : action === "close"
-                                                    ? await a.close(
-                                                        pr,
-                                                        typeof body.text === "string" ? body.text : undefined,
-                                                      )
-                                                    : action === "scanningGranted"
-                                                      ? await (
-                                                          a.scanningGranted ??
-                                                          (() => Promise.reject(new Error("Not available.")))
-                                                        )()
-                                                      : action === "shadowReset"
-                                                        ? await (
-                                                            a.shadowReset ??
-                                                            (() =>
-                                                              Promise.reject(new Error("Not available.")))
-                                                          )()
-                                                        : await a.resume(intent);
+                                                Promise.reject(
+                                                  new Error("Switching to steps isn't available."),
+                                                ))
+                                            )(intent)
+                                          : action === "start"
+                                            ? await a.start(intent)
+                                            : action === "step"
+                                              ? await (
+                                                  a.step ??
+                                                  (() =>
+                                                    Promise.reject(
+                                                      new Error("Ticking steps isn't available."),
+                                                    ))
+                                                )(intent, Number(body.n), body.done !== false)
+                                              : action === "pause"
+                                                ? await a.pause(intent)
+                                                : action === "addRepo"
+                                                  ? await a.addRepo(
+                                                      typeof body.github === "string" ? body.github : "",
+                                                      typeof body.name === "string" && body.name
+                                                        ? body.name
+                                                        : undefined,
+                                                    )
+                                                  : action === "features"
+                                                    ? await a.features(repo)
+                                                    : action === "accept"
+                                                      ? await a.accept(pr, head)
+                                                      : action === "close"
+                                                        ? await a.close(
+                                                            pr,
+                                                            typeof body.text === "string"
+                                                              ? body.text
+                                                              : undefined,
+                                                          )
+                                                        : action === "scanningGranted"
+                                                          ? await (
+                                                              a.scanningGranted ??
+                                                              (() =>
+                                                                Promise.reject(new Error("Not available.")))
+                                                            )()
+                                                          : action === "shadowReset"
+                                                            ? await (
+                                                                a.shadowReset ??
+                                                                (() =>
+                                                                  Promise.reject(new Error("Not available.")))
+                                                              )()
+                                                            : await a.resume(intent);
       reply = { ok: true, message };
     } catch (e) {
       reply = { ok: false, message: (e as Error).message };
@@ -520,12 +650,61 @@ export function startUi(o: UiOptions): UiServer {
     void tick();
   };
 
+  /** USR-3: `/auth/login` starts, `/auth/callback` finishes, a POST to `/auth/logout` ends the session. */
+  const authRoute = async (req: IncomingMessage, res: ServerResponse, url: URL) => {
+    if (!auth) return json(res, 404, { error: "Not found." });
+    const redirect = (location: string, cookies: string[]) =>
+      send(res, 302, "text/plain; charset=utf-8", "", { Location: location, "Set-Cookie": cookies });
+    if (req.method === "GET" && url.pathname === "/auth/login") {
+      const s = auth.start();
+      return redirect(s.location, s.cookies);
+    }
+    if (req.method === "GET" && url.pathname === "/auth/callback") {
+      const out = await auth.callback(
+        url.searchParams.get("code"),
+        url.searchParams.get("state"),
+        req.headers.cookie,
+      );
+      if (out.ok) return redirect(out.location, out.cookies);
+      const esc = (t: string) => t.replace(/[<>&"]/g, "");
+      // UI-219: a refused account sees which login GitHub gave and can try another.
+      const who = out.login
+        ? `<p>You are signed in to GitHub as <strong>${esc(out.login)}</strong>. <a href="https://github.com/logout">Sign out of GitHub</a></p>`
+        : "";
+      const page = `<!doctype html><meta charset="utf-8"><title>Towercab</title><h1>Towercab</h1><p class="refused">${esc(out.message)}</p>${who}<p><a href="/auth/login">Sign in with GitHub</a></p>`;
+      return send(res, out.status, "text/html; charset=utf-8", page);
+    }
+    if (req.method === "POST" && url.pathname === "/auth/logout") {
+      if (!auth.originOk(req.headers.origin))
+        return json(res, 403, { ok: false, message: "Refused: wrong origin." });
+      const who = await auth.authenticate(req.headers.cookie);
+      const cookies = who ? auth.logout(who.session) : [];
+      return send(res, 200, "application/json; charset=utf-8", '{"ok":true}', { "Set-Cookie": cookies });
+    }
+    return json(res, 404, { error: "Not found." });
+  };
+
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
     if (!hostOk(req.headers.host)) return send(res, 421, "text/plain; charset=utf-8", "Wrong host.");
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname;
+    if (auth && path.startsWith("/auth/")) return authRoute(req, res, url);
+    // USR-4: with sign-in every API request needs a live session.
+    let who: Signed | null = null;
+    if (auth && path.startsWith("/api/")) {
+      who = await auth.authenticate(req.headers.cookie);
+      if (!who) return json(res, 401, { error: "Sign in to use Towercab." });
+    }
+    if (
+      path === "/api/me" ||
+      path === "/api/me/telegram" ||
+      path === "/api/users" ||
+      path === "/api/settings"
+    ) {
+      return peopleRoute(req, res, path, who);
+    }
     if (req.method === "POST") {
-      if (path === "/api/actions") return act(req, res);
+      if (path === "/api/actions") return act(req, res, who);
       return json(res, 404, { error: "Not found." });
     }
     if (req.method !== "GET" && req.method !== "HEAD") {
@@ -628,7 +807,7 @@ export function startUi(o: UiOptions): UiServer {
 
   const listen = () => {
     if (stopped) return;
-    server.listen(o.port, "127.0.0.1");
+    server.listen(o.port, auth ? (o.listen ?? "127.0.0.1") : "127.0.0.1");
   };
   server.on("listening", () => {
     const addr = server.address();
@@ -642,7 +821,7 @@ export function startUi(o: UiOptions): UiServer {
     once(
       e.code === "EADDRINUSE"
         ? `ui: port ${o.port} is in use; trying again every ${Math.round((o.retryMs ?? 30_000) / 1000)} s`
-        : `ui: can't serve on 127.0.0.1:${o.port}: ${e.message}`,
+        : `ui: can't serve on ${auth ? (o.listen ?? "127.0.0.1") : "127.0.0.1"}:${o.port}: ${e.message}`,
     );
     retry = setTimeout(listen, o.retryMs ?? 30_000);
     retry.unref();

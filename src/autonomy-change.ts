@@ -106,11 +106,14 @@ export const WEB_COMMITTER = "web-flow";
 export function judgeProof(
   proof: { author: string | null; committer: string | null; verified: boolean } | null,
   me: string,
+  /** AUT-24: with `[auth]` set, the verified account the caller found allowed to raise on this repo. */
+  allowed: string | null = null,
 ): RaiseVerdict {
   const is = (l: string | null) => l !== null && l.toLowerCase() === me.toLowerCase();
   if (proof?.verified && (is(proof.committer) || (proof.committer === WEB_COMMITTER && is(proof.author)))) {
     return { owner: true, who: me };
   }
+  if (allowed !== null) return { owner: true, who: allowed };
   const who = [proof?.committer, proof?.author].find((l) => !!l && l !== WEB_COMMITTER) ?? null;
   // The owner's own account on a commit nobody can prove is theirs: the card says it is unverified.
   return { owner: false, who: !who ? "unknown" : is(who) ? `${who} (unverified)` : who };

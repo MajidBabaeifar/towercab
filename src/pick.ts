@@ -53,6 +53,8 @@ export interface PickState {
   started?: Set<string>;
   /** GitLab repos (GL-3): added, but the pipeline can't work on them yet, so none of their intents is picked. */
   unsupported?: Set<string>;
+  /** AUT-23: intents whose writer is a viewer or unmapped and that nobody confirmed → why they don't start. */
+  unconfirmed?: Map<string, string>;
   /** Repos set to block while not ready (LOOP-70) → `<n> missing (<items>)`. */
   notReady?: Map<string, string>;
   /** Models cooling down (LOOP-9) → until, as shown (`15:30`). */
@@ -142,6 +144,11 @@ export function decide(listing: Listing, state: PickState): Decision {
     const p = priorityOf(i);
     if (isParked(p, state.cutoff)) {
       d.skipped.push({ id: i.id, reason: `parked (p${p} < ${state.cutoff}): raise u or i to run it` });
+      continue;
+    }
+    const unconfirmed = state.unconfirmed?.get(i.id);
+    if (unconfirmed !== undefined) {
+      d.skipped.push({ id: i.id, reason: unconfirmed });
       continue;
     }
     if (!state.repos.has(i.repo)) {

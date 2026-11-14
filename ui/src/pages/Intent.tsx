@@ -18,10 +18,12 @@ import {
   StateChip,
   StepsChecklist,
   Time,
+  VIA,
 } from "../components.tsx";
 import { FastControl } from "../FastControl.tsx";
 import { ChevronLeft, External, PullRequest } from "../icons.tsx";
 import { Markdown } from "../md.tsx";
+import { useMe } from "../me.ts";
 import { Link } from "../router.tsx";
 import { ControlNotes, ScoreControl } from "../ScoreControls.tsx";
 import { StageMap } from "../StageMap.tsx";
@@ -66,6 +68,8 @@ function StepsBlock({ data, readOnly }: { data: Data; readOnly: boolean }) {
 }
 
 export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }) {
+  const who = useMe();
+  const signedIn = who.state === "in" && who.me.auth;
   const moves = (
     <details class="moves">
       <summary>
@@ -82,6 +86,13 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
               <div class="tl-body">
                 <p class={`tl-text${t.shadow || t.observer ? " tl-shadow" : ""}`}>{t.text}</p>
                 {t.why ? <p class="tl-why">{t.why}</p> : null}
+                {signedIn ? (
+                  <p class="tl-actor meta">
+                    {t.actor
+                      ? `${t.actor.name}${t.actor.via ? ` · ${VIA[t.actor.via] ?? t.actor.via}` : ""}`
+                      : "Towercab"}
+                  </p>
+                ) : null}
               </div>
               <span class="tl-lasted meta">
                 {t.lasted ? `for ${t.lasted}` : n === data.timeline.length - 1 ? "now" : ""}

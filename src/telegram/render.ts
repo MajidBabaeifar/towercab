@@ -10,6 +10,10 @@ export interface WaitView {
   intent: string;
   title: string;
   repo: string;
+  /** USR-5: every repo the intent changes, the lead first; a role must hold on each. Absent: just `repo`. */
+  repos?: string[];
+  /** The wait asks to grant the worker network or protected files: a contributor can't answer it. */
+  grant?: boolean;
   /** What the owner decides, in plain words. */
   ask: string;
   why: string | null;

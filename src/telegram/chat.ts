@@ -13,6 +13,7 @@ import { OFFSET, offset, statusText } from "../shadow/store.ts";
 import type { SendOptions, TelegramUpdate } from "../telegram.ts";
 import type { UiActions } from "../ui/actions.ts";
 import { type CardItem, type CardRow, Cards } from "./cards.ts";
+import { PeopleChat } from "./people.ts";
 import {
   cardLink,
   confirmButtons,
@@ -60,6 +61,8 @@ export interface ChatDeps {
   telegram: ChatApi;
   actions: UiActions;
   data: ChatData;
+  /** `/add <repo>: <title>` from a linked person's chat (USR-11). */
+  addIntent?(repo: string, title: string): Promise<{ id: string }>;
   /** Seconds between looks at the sent messages (default 10). */
   sweepEvery?: number;
   /** Waits for the long poll's retry; stopped with the chat. Tests give none and never start the poll. */
@@ -81,10 +84,24 @@ export class Chat {
   private lastSweep = Number.NEGATIVE_INFINITY;
   private lastCards = Number.NEGATIVE_INFINITY;
   private cards: Cards;
+  /** USR-11: the people's own chats; only with `[auth]`. */
+  private people: PeopleChat | null;
 
   constructor(d: ChatDeps) {
     this.d = d;
     this.cards = new Cards({ config: d.config, db: d.db, clock: d.clock, log: d.log, telegram: d.telegram });
+    this.people = d.config.auth
+      ? new PeopleChat({
+          config: d.config,
+          db: d.db,
+          clock: d.clock,
+          log: d.log,
+          telegram: d.telegram,
+          actions: d.actions,
+          data: d.data,
+          ...(d.addIntent ? { addIntent: d.addIntent } : {}),
+        })
+      : null;
   }
 
   private get chatId(): string {
@@ -155,6 +172,16 @@ export class Chat {
       for (const u of ups) {
         top = Math.max(top, u.id + 1);
         if (u.chat !== this.chatId) {
+          // USR-11: a linked person's chat, or `/link <code>` from any chat, goes to the people's side.
+          if (this.people && PeopleChat.accepts(db, u)) {
+            db.run(
+              "INSERT OR IGNORE INTO telegram_updates (update_id, at, data, state) VALUES (?, ?, ?, 'people')",
+              u.id,
+              clock.now(),
+              JSON.stringify(u),
+            );
+            continue;
+          }
           log(
             `telegram: ignored update ${u.id} from chat ${u.chat || "unknown"} (${u.callback ? "button" : u.text === null ? "other" : "message"})`,
           );
@@ -185,6 +212,7 @@ export class Chat {
       await this.handleStored();
       await this.syncCards();
       await this.sweep(false);
+      await this.people?.pass();
     } catch (e) {
       this.d.log(`telegram: ${(e as Error).message}`);
     }

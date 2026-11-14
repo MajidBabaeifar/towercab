@@ -1,4 +1,4 @@
-// The database (LOOP-37): one SQLite file, five tables and a key-value meta.
+// The database (LOOP-37): one SQLite file, its tables and a key-value meta.
 
 import { existsSync, renameSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -48,6 +48,29 @@ const OBSERVER = `CREATE TABLE observer_runs (id INTEGER PRIMARY KEY, trigger TE
 CREATE TABLE observer_proposals (pr INTEGER PRIMARY KEY, intent TEXT NOT NULL, run INTEGER NOT NULL, at REAL NOT NULL,
   title TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '[]');`;
 
+/** USR-2, USR-4, USR-11, USR-14: the people, their sessions, the log of changes and the Telegram link codes. */
+const USERS = `CREATE TABLE users (login TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL CHECK (role IN ('viewer','contributor','maintainer','admin')),
+  repos TEXT NOT NULL DEFAULT '{}', added_by TEXT NOT NULL, added REAL NOT NULL, disabled_at REAL,
+  last_seen REAL, telegram_chat TEXT);
+CREATE TABLE sessions (id INTEGER PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, login TEXT NOT NULL,
+  created REAL NOT NULL, last_seen REAL NOT NULL, expires REAL NOT NULL, revoked_at REAL);
+CREATE TABLE user_events (id INTEGER PRIMARY KEY, at REAL NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL,
+  target TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '');
+CREATE TABLE link_codes (code_hash TEXT PRIMARY KEY, login TEXT NOT NULL, expires REAL NOT NULL, used_at REAL);
+CREATE TABLE tg_card_chats (mission INTEGER NOT NULL, chat TEXT NOT NULL, message_id INTEGER, text TEXT NOT NULL DEFAULT '',
+  buttons TEXT, wait TEXT, decided_by TEXT, PRIMARY KEY (mission, chat));`;
+
+/** USR-8: who did it and through which channel, on the rows that record an action; added by migration 13. */
+const ACTOR = `, actor TEXT, via TEXT`;
+/** USR-11, USR-12: the Telegram chat an outbox message goes to (null: the owner's); added by migration 13. */
+const OUTBOX_CHAT = `, chat TEXT`;
+const USERS_ALTER = `ALTER TABLE transitions ADD COLUMN actor TEXT;
+ALTER TABLE transitions ADD COLUMN via TEXT;
+ALTER TABLE commands ADD COLUMN actor TEXT;
+ALTER TABLE commands ADD COLUMN via TEXT;
+ALTER TABLE outbox ADD COLUMN chat TEXT;`;
+
 /** LOOP-37 **Schema**, as written in specs/loop.md (a test compares them). */
 export const SCHEMA = `CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE missions (
@@ -66,24 +89,27 @@ CREATE TABLE missions (
   data TEXT NOT NULL DEFAULT '{}', created REAL NOT NULL, updated REAL NOT NULL, finished REAL);
 CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT IN ('done','stopped','unverified');
 CREATE TABLE transitions (id INTEGER PRIMARY KEY, mission INTEGER NOT NULL REFERENCES missions(id),
-  at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT);
+  at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT${ACTOR});
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
   name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost','unfreeze')),
   arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
-  created REAL NOT NULL, applied_at REAL, result TEXT);
+  created REAL NOT NULL, applied_at REAL, result TEXT${ACTOR});
 CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, created REAL NOT NULL,
-  sent_at REAL, tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0${OUTBOX_TG});
+  sent_at REAL, tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0${OUTBOX_TG}${OUTBOX_CHAT});
 ${REPOS}
 ${SHADOW}
 ${TELEGRAM}
 ${CARDS}
-${OBSERVER}`;
+${OBSERVER}
+${USERS}`;
 
 /** Migration i takes `user_version` from i to i+1. Later changes append. */
 export const MIGRATIONS: string[] = [
   SCHEMA.replace("'resume','start','done','steps'", "'resume'")
+    .replaceAll(ACTOR, "")
+    .replace(OUTBOX_CHAT, "")
     .replace(OUTBOX_TG, "")
-    .replace(`\n${REPOS}\n${SHADOW}\n${TELEGRAM}\n${CARDS}\n${OBSERVER}`, ""),
+    .replace(`\n${REPOS}\n${SHADOW}\n${TELEGRAM}\n${CARDS}\n${OBSERVER}\n${USERS}`, ""),
   // 2: `start` joins the commands (LOOP-63); the CHECK can't be altered, so the table is rebuilt.
   `CREATE TABLE commands_new (id INTEGER PRIMARY KEY,
   name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start')),
@@ -140,13 +166,16 @@ ALTER TABLE commands_new RENAME TO commands;`,
 INSERT INTO commands_new SELECT id, name, arg, text, source, created, applied_at, result FROM commands;
 DROP TABLE commands;
 ALTER TABLE commands_new RENAME TO commands;`,
+  // 13: the people, sessions, change log and link codes (USR-2, USR-4, USR-11, USR-14). Additive; `IF NOT EXISTS` for a re-upgrade after a manual rollback.
+  `${USERS.replaceAll("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ")}
+${USERS_ALTER}`,
 ];
 
 /**
  * Versions reached by migrations that only add (tables, columns, keys older code doesn't read): a
  * Towercab older than them can still use the database (LOOP-37).
  */
-export const ADDITIVE = new Set([3, 6, 7, 8, 9, 10, 11, 12]);
+export const ADDITIVE = new Set([3, 6, 7, 8, 9, 10, 11, 13]);
 // 10 and 12 only widen the CHECK on `commands` (same columns): older code reads the table as before, and a
 // `score`, `boost` or `unfreeze` row it doesn't know just gets an error result, so a rollback stays safe.
 
@@ -208,15 +237,30 @@ export class Db {
     }
     for (let i = v; i < MIGRATIONS.length; i++) {
       this.tx(() => {
-        // Migrations 6 and 8 add columns: after a manual rollback (LOOP-37) they are still there.
+        // Migrations 6, 8 and 13 add columns: after a manual rollback (LOOP-37) they are still there.
         const there =
           (i === 5 && this.hasColumn("repos", "teammate_review")) ||
           (i === 7 && this.hasColumn("outbox", "ended_at"));
-        if (!there) this.sql.exec(MIGRATIONS[i]!);
+        if (i === 12) this.sql.exec(this.withoutExisting(MIGRATIONS[i]!));
+        else if (!there) this.sql.exec(MIGRATIONS[i]!);
         this.sql.exec(`PRAGMA user_version = ${i + 1}`);
         this.setMeta("compatible_from", String(compatibleFrom(i + 1)));
       });
     }
+  }
+
+  /**
+   * A migration's `ALTER TABLE .. ADD COLUMN` lines minus the columns already there: a table rebuilt after a
+   * manual rollback (LOOP-37) lost some of them, another kept its own.
+   */
+  private withoutExisting(sql: string): string {
+    return sql
+      .split("\n")
+      .filter((line) => {
+        const m = /^ALTER TABLE (\w+) ADD COLUMN (\w+)/.exec(line);
+        return !(m && this.hasColumn(m[1]!, m[2]!));
+      })
+      .join("\n");
   }
 
   private hasColumn(table: string, column: string): boolean {

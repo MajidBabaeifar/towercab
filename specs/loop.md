@@ -1726,15 +1726,15 @@ CREATE TABLE missions (
   data TEXT NOT NULL DEFAULT '{}', created REAL NOT NULL, updated REAL NOT NULL, finished REAL);
 CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT IN ('done','stopped','unverified');
 CREATE TABLE transitions (id INTEGER PRIMARY KEY, mission INTEGER NOT NULL REFERENCES missions(id),
-  at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT);
+  at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT, actor TEXT, via TEXT);
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
   name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost','unfreeze')),
   arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
-  created REAL NOT NULL, applied_at REAL, result TEXT);
+  created REAL NOT NULL, applied_at REAL, result TEXT, actor TEXT, via TEXT);
 CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, created REAL NOT NULL,
   sent_at REAL, tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0,
   kind TEXT NOT NULL DEFAULT 'info', intent TEXT, wait TEXT, tg_message_id INTEGER, target TEXT, buttons TEXT,
-  ended_at REAL);
+  ended_at REAL, chat TEXT);
 CREATE TABLE repos (name TEXT PRIMARY KEY, github TEXT NOT NULL, path TEXT NOT NULL DEFAULT '',
   base TEXT NOT NULL, workers INTEGER NOT NULL DEFAULT 1, ahead INTEGER NOT NULL DEFAULT 3,
   env TEXT NOT NULL DEFAULT '{}', source TEXT NOT NULL, added REAL NOT NULL,
@@ -1756,6 +1756,17 @@ CREATE TABLE observer_runs (id INTEGER PRIMARY KEY, trigger TEXT NOT NULL, start
   dropped TEXT NOT NULL DEFAULT '[]', detail TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE observer_proposals (pr INTEGER PRIMARY KEY, intent TEXT NOT NULL, run INTEGER NOT NULL, at REAL NOT NULL,
   title TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '[]');
+CREATE TABLE users (login TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL CHECK (role IN ('viewer','contributor','maintainer','admin')),
+  repos TEXT NOT NULL DEFAULT '{}', added_by TEXT NOT NULL, added REAL NOT NULL, disabled_at REAL,
+  last_seen REAL, telegram_chat TEXT);
+CREATE TABLE sessions (id INTEGER PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, login TEXT NOT NULL,
+  created REAL NOT NULL, last_seen REAL NOT NULL, expires REAL NOT NULL, revoked_at REAL);
+CREATE TABLE user_events (id INTEGER PRIMARY KEY, at REAL NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL,
+  target TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '');
+CREATE TABLE link_codes (code_hash TEXT PRIMARY KEY, login TEXT NOT NULL, expires REAL NOT NULL, used_at REAL);
+CREATE TABLE tg_card_chats (mission INTEGER NOT NULL, chat TEXT NOT NULL, message_id INTEGER, text TEXT NOT NULL DEFAULT '',
+  buttons TEXT, wait TEXT, decided_by TEXT, PRIMARY KEY (mission, chat));
 ```
 
 **Transitions** (`next(stage, event)`; "next" = the next stage of the order; `U` = unexpected, counted

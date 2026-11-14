@@ -4,13 +4,14 @@
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { InboxPage as Data, InboxItem } from "../../../src/ui/view.ts";
-import { act, markSeen, snoozeItem, unsnoozeItem, useLive } from "../api.ts";
+import { act, confirmIntent, markSeen, snoozeItem, unsnoozeItem, useLive } from "../api.ts";
 import { CapCardView } from "../budgets.tsx";
 import { ErrorNote, NeedsCard, ProposedCard, Section, Skeleton } from "../components.tsx";
 import { Check } from "../icons.tsx";
 import { actsOnEnter, ignored, openShortcuts } from "../keys.ts";
 import { Modal } from "../Modal.tsx";
 import { Markdown } from "../md.tsx";
+import { gate, useMe } from "../me.ts";
 import { Link, navigate } from "../router.tsx";
 
 const SEEN_AFTER_MS = 3000;
@@ -60,6 +61,35 @@ function usePhone(): boolean {
   return on;
 }
 
+/** AUT-23: an intent written by a viewer or an unknown account; a maintainer confirms it before it starts. */
+function ConfirmCard({ item, readOnly }: { item: InboxItem; readOnly: boolean }) {
+  const who = useMe();
+  const g = gate(who.state === "in" ? who.me : null, "confirm", item.repo);
+  const [note, setNote] = useState("");
+  return (
+    <section class="confirm-card">
+      <p>
+        {item.confirm?.writer
+          ? `${item.confirm.writer} wrote this intent.`
+          : "Nobody could be named as its writer."}{" "}
+        It waits for a maintainer to confirm it.
+      </p>
+      {g.show ? (
+        <button
+          type="button"
+          class="btn primary"
+          disabled={readOnly || !g.allowed}
+          title={g.why || undefined}
+          onClick={async () => setNote((await confirmIntent(item.key)).message)}
+        >
+          Confirm
+        </button>
+      ) : null}
+      {note ? <p role="status">{note}</p> : null}
+    </section>
+  );
+}
+
 function Detail({ item, readOnly, onSnooze }: { item: InboxItem; readOnly: boolean; onSnooze(): void }) {
   return (
     <article
@@ -104,6 +134,8 @@ function Detail({ item, readOnly, onSnooze }: { item: InboxItem; readOnly: boole
         <ProposedCard card={item.proposed} readOnly={readOnly} />
       ) : item.cap ? (
         <CapCardView card={item.cap} readOnly={readOnly} />
+      ) : item.confirm ? (
+        <ConfirmCard item={item} readOnly={readOnly} />
       ) : null}
     </article>
   );

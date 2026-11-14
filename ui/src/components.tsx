@@ -49,6 +49,7 @@ import {
   Trash,
 } from "./icons.tsx";
 import { Markdown } from "./md.tsx";
+import { gate, useMe } from "./me.ts";
 import { asksFirst } from "./options.ts";
 import { Link, usePath } from "./router.tsx";
 import { sharedReason } from "./up-next.ts";
@@ -312,6 +313,14 @@ function useOutside(open: boolean, close: () => void) {
 
 const recommended = (rec: string, option: string) => rec.toLowerCase().startsWith(option.toLowerCase());
 
+/** UI-221: the channel an action came through, as the page words it. */
+export const VIA: Record<string, string> = {
+  page: "page",
+  github: "GitHub",
+  telegram: "Telegram",
+  cli: "command line",
+};
+
 /** UI-58: one thing waiting on the owner, with only the actions that answer it. */
 export function NeedsCard({
   card,
@@ -369,7 +378,15 @@ export function NeedsCard({
     if (action === "drop") setConfirm(false);
     if (r.ok) onActed?.(action);
   };
-  const can = (a: string) => !readOnly && card.actions.includes(a as Card["actions"][number]);
+  // UI-220: a viewer sees no buttons; a lower role than the action needs sees it disabled, with why.
+  const who = useMe();
+  const me = who.state === "in" ? who.me : null;
+  const roleAction = (a: string) => ({ pass: "approve", reply: card.question ? "answer" : "reply" })[a] ?? a;
+  const gated = (a: string) => gate(me, roleAction(a), card.repo);
+  const can = (a: string) =>
+    !readOnly && card.actions.includes(a as Card["actions"][number]) && gated(a).show;
+  const off = (a: string) => !gated(a).allowed;
+  const why = (a: string) => gated(a).why || undefined;
   // A plain brief is two to four sentences (PIP-106): shown whole up to about that, folded beyond.
   const people = card.people ?? card.brief;
   const path = usePath();
@@ -399,7 +416,8 @@ export function NeedsCard({
             <button
               type="button"
               class="btn primary"
-              disabled={busy !== null}
+              disabled={busy !== null || off("pass")}
+              title={why("pass")}
               onClick={() => void run("pass")}
             >
               <Merge size={16} />
@@ -410,7 +428,8 @@ export function NeedsCard({
             <button
               type="button"
               class="btn primary"
-              disabled={busy !== null}
+              disabled={busy !== null || off("merge")}
+              title={why("merge")}
               onClick={() => void run("merge")}
             >
               <Merge size={16} />
@@ -495,7 +514,13 @@ export function NeedsCard({
             {menu ? (
               <div class="menu" role="menu">
                 {can("retry") ? (
-                  <button type="button" role="menuitem" onClick={() => void run("retry")}>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={off("retry")}
+                    title={why("retry")}
+                    onClick={() => void run("retry")}
+                  >
                     <Restart size={16} />
                     <span>
                       Start over
@@ -508,6 +533,8 @@ export function NeedsCard({
                     type="button"
                     role="menuitem"
                     class="danger"
+                    disabled={off("drop")}
+                    title={why("drop")}
                     onClick={() => {
                       setMenu(false);
                       setConfirm(true);
@@ -551,6 +578,13 @@ export function NeedsCard({
       ) : null}
       <p class="ask">{card.ask}</p>
       {card.why ? <p class="why">{card.why}</p> : null}
+      {card.nobody ? (
+        <p class="meta deciders nobody" role="status">
+          {card.nobody}
+        </p>
+      ) : card.others?.length ? (
+        <p class="meta deciders">Can decide: {card.others.join(", ")}</p>
+      ) : null}
       {card.installHelp ? <InstallHelpBlock id={`card:${key}`} help={card.installHelp} /> : null}
       {card.autonomy ? (
         card.kind === "autonomy" ? (
@@ -741,7 +775,12 @@ export function NeedsCard({
             <span class="hint">
               {card.pr ? `Posted on the ${card.pr.label} as you.` : "Saved in the intent as your answer."}
             </span>
-            <button type="submit" class="btn primary" disabled={!draft.trim() || busy !== null}>
+            <button
+              type="submit"
+              class="btn primary"
+              disabled={!draft.trim() || busy !== null || off("reply")}
+              title={why("reply")}
+            >
               <Reply size={16} />
               {busy === "reply" ? "Sending…" : "Send reply"}
             </button>
@@ -752,6 +791,7 @@ export function NeedsCard({
         <p class={`done-note${card.done.stuck ? " stuck" : ""}`} role="status">
           {card.done.stuck ? <Alert size={16} /> : <Check size={16} />}
           <span>{card.done.text}</span>
+          {card.done.via ? <span class="meta"> · {VIA[card.done.via] ?? card.done.via}</span> : null}
         </p>
       ) : null}
       {q ? actionBar : null}

@@ -9,11 +9,14 @@ import type {
   ReposPage as ReposData,
   TopBar as Top,
 } from "../../src/ui/view.ts";
+import { AccountMenu } from "./AccountMenu.tsx";
 import { act, useLive } from "./api.ts";
 import { ErrorNote, Freshness, Skeleton } from "./components.tsx";
 import { Alert, Logo, Pause, Play, Spinner } from "./icons.tsx";
+import { type Me, useMe } from "./me.ts";
 import { Palette } from "./Palette.tsx";
 import { ActivityPage } from "./pages/Activity.tsx";
+import { AdminPage } from "./pages/Admin.tsx";
 import { BoardPage } from "./pages/Board.tsx";
 import { InboxPage } from "./pages/Inbox.tsx";
 import { IntentPage } from "./pages/Intent.tsx";
@@ -21,6 +24,7 @@ import { OverviewPage } from "./pages/Overview.tsx";
 import { ReposPage } from "./pages/Repos.tsx";
 import { Link, usePath } from "./router.tsx";
 import { Shortcuts } from "./Shortcuts.tsx";
+import { SignIn } from "./SignIn.tsx";
 
 const TABS = [
   ["/", "Inbox"],
@@ -91,11 +95,13 @@ function PauseButton({ top }: { top: Top }) {
   );
 }
 
-function TopBar({ top, path }: { top: Top | null; path: string }) {
+function TopBar({ top, path, me }: { top: Top | null; path: string; me: Me | null }) {
   // `/queue` is the Repos tab's old name (UI-140): old links land there.
   const at = path === "/queue" || path.startsWith("/queue/") ? "/repos" : path;
   const section =
-    ["/overview", "/board", "/repos", "/activity"].find((p) => at === p || at.startsWith(`${p}/`)) ?? "/";
+    ["/overview", "/board", "/repos", "/activity", "/admin"].find(
+      (p) => at === p || at.startsWith(`${p}/`),
+    ) ?? "/";
   return (
     <header class="topbar">
       <div class="topbar-inner">
@@ -148,6 +154,7 @@ function TopBar({ top, path }: { top: Top | null; path: string }) {
           </p>
         ) : null}
         {top ? <PauseButton top={top} /> : null}
+        {me?.auth ? <AccountMenu me={me} /> : null}
       </div>
       <nav class="tabs" aria-label="Pages">
         <div class="tabs-inner">
@@ -162,6 +169,15 @@ function TopBar({ top, path }: { top: Top | null; path: string }) {
               {href === "/" && top?.needs ? <span class="tab-badge">{top.needs}</span> : null}
             </Link>
           ))}
+          {me?.auth && me.role === "admin" ? (
+            <Link
+              href="/admin"
+              class={section === "/admin" ? "tab on" : "tab"}
+              aria-current={section === "/admin" ? "page" : undefined}
+            >
+              People
+            </Link>
+          ) : null}
           <span class="grow" />
           <Freshness />
         </div>
@@ -203,7 +219,7 @@ function BoardRoute() {
   return live.data ? <BoardPage data={live.data} /> : <Skeleton />;
 }
 
-function App() {
+function App({ me }: { me: Me }) {
   const path = usePath();
   const [pathname, search = ""] = path.split("?");
   const state = useLive<Overview>("/api/state");
@@ -242,7 +258,8 @@ function App() {
         onTitle={setIntentTitle}
       />
     );
-  } else if (pathname === "/board") page = <BoardRoute />;
+  } else if (pathname === "/admin") page = <AdminPage />;
+  else if (pathname === "/board") page = <BoardRoute />;
   else if (pathname === "/repos" || pathname === "/queue")
     page = <ReposRoute search={search} readOnly={top?.readOnly ?? true} />;
   else if (pathname === "/activity") page = <ActivityPage search={search} />;
@@ -261,7 +278,7 @@ function App() {
       <a class="skip" href="#main">
         Skip to content
       </a>
-      <TopBar top={top} path={pathname!} />
+      <TopBar top={top} path={pathname!} me={me} />
       {top?.banner ? (
         <div class="banner" role="status">
           <Alert size={16} />
@@ -276,5 +293,13 @@ function App() {
   );
 }
 
+// UI-219: with sign-in on and no session, the sign-in screen; with it off, the page as before.
+function Root() {
+  const who = useMe();
+  if (who.state === "loading") return <Skeleton />;
+  if (who.state === "out") return <SignIn was={who.was} />;
+  return <App me={who.me} />;
+}
+
 const root = document.getElementById("app");
-if (root) render(<App />, root);
+if (root) render(<Root />, root);

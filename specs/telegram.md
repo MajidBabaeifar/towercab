@@ -280,6 +280,13 @@ Telegram messages carry the part for people and a link, never the agent part.
 - A mission without a people part (a run from before PIP-221) shows the card as before, with no technical text added.
 - Verified by: `telegram: a card shows the people part and no agent text`, `telegram: a question message carries the people part and a link`, `telegram: no details block reaches a message`
 
+### Per-person chats
+
+With sign-in on ([USR-11](users.md), [USR-12](users.md)), each person links their own chat with a one-time
+code from the account menu. A card goes to every linked maintainer of its repo, each copy is kept in
+`tg_card_chats`, and when one person decides the other copies are edited to say who did. The owner's own chat
+keeps working as TG-1..23 describe. Without `[auth]` nothing changes.
+
 ## Out of scope
 
 - Each signed-in person's own chat, by role: a later intent (see TG-1).

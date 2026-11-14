@@ -570,6 +570,24 @@ export class GitStore implements IntentStore {
     return findOpen(await this.list(), idOrSuffix);
   }
 
+  async createdBy(idOrSuffix: string): Promise<string | null> {
+    return this.locked(async () => {
+      const found = findOpen(scan(this.path).listing, idOrSuffix);
+      const r = await this.git([
+        "log",
+        "--diff-filter=A",
+        "--format=%H",
+        "--diff-merges=first-parent",
+        "-s",
+        "--",
+        `${found.dir}/intent.md`,
+      ]);
+      const shas = r.stdout.trim().split("\n").filter(Boolean);
+      const sha = shas.at(-1) ?? "";
+      return r.code === 0 && /^[0-9a-f]{40,64}$/.test(sha) ? sha : null;
+    });
+  }
+
   async lastAChange(idOrSuffix: string): Promise<string | null> {
     return this.lastFieldChange(idOrSuffix, "a");
   }

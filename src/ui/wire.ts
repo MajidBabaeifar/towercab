@@ -6,6 +6,7 @@ import { pausedNow, runningSteps } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import { fixFor } from "../faults.ts";
+import { fetchHttp } from "../github/app.ts";
 import { ownerLogin } from "../github/owner.ts";
 import { type Host, systemClock } from "../handlers.ts";
 import type { Home } from "../home.ts";
@@ -19,6 +20,8 @@ import { checkoutRoot } from "../service.ts";
 import { applySettings } from "../settings/apply.ts";
 import { supplySecret } from "../ship/secret-steps.ts";
 import { version as gitVersion } from "../update.ts";
+import { Auth } from "../users/auth.ts";
+import { ensureFirstAdmin } from "../users/store.ts";
 import { createActions } from "./actions.ts";
 import { startUi, type UiServer } from "./server.ts";
 import { budgetReached, type Problem, type Skip, type UiSources, type UpNext } from "./state.ts";
@@ -128,7 +131,28 @@ export function sourcesOf(loop: Loop, home: Home): UiSources {
     prUrl: (repo, n) => `https://github.com/${repo}/pull/${n}`,
     intentUrl: (i) => loop.d.store.url(i),
     proposed: () => loop.proposedState(),
+    unconfirmed: () => loop.pickState().unconfirmed ?? new Map(),
   };
+}
+
+/** USR-3, USR-6: sign-in, only when `[auth]` is set. */
+export function authOf(loop: Loop, config: Config, github: Host): Auth | null {
+  if (!config.auth) return null;
+  const a = config.auth;
+  // USR-6: the owner is the first admin, so the first sign-in works before the loop's first pass.
+  ensureFirstAdmin(loop.d.db, config.github?.me ?? "", loop.d.clock.now());
+  return new Auth({
+    db: loop.d.db,
+    auth: a,
+    http: fetchHttp,
+    now: () => loop.d.clock.now(),
+    secret: () => process.env[a.clientSecretEnv] ?? "",
+    apiBase: config.github?.apiBase ?? "https://api.github.com",
+    inTeam: async (team, login) => {
+      if (!github.teamMember) throw new Error("this host can't list team members");
+      return github.teamMember(team, login);
+    },
+  });
 }
 
 export function startLoopUi(loop: Loop, config: Config, github: Host, home: Home): UiServer {
@@ -142,6 +166,16 @@ export function startLoopUi(loop: Loop, config: Config, github: Host, home: Home
   });
   return startUi({
     port: config.ui.port,
+    auth: authOf(loop, config, github),
+    people: config.auth
+      ? {
+          db: loop.d.db,
+          config,
+          now: () => loop.d.clock.now(),
+          exists: async (login) => (github.accountExists ? github.accountExists(login) : true),
+        }
+      : null,
+    ...(config.auth ? { listen: config.auth.listen } : {}),
     sources: sourcesOf(loop, home),
     actions: createActions({
       db: loop.d.db,
@@ -149,6 +183,7 @@ export function startLoopUi(loop: Loop, config: Config, github: Host, home: Home
       config,
       clock: loop.d.clock,
       github,
+      app: github,
       proposed: () => loop.proposedState().list,
       // REPO-16, REPO-19: the settings PR and the move, as the loop's own database, tools and forge do them.
       limits: {

@@ -25,6 +25,7 @@ export default defineConfig({
     "palette.spec.ts",
     "folds.spec.ts",
     "clarity.spec.ts",
+    "users.spec.ts",
   ],
   outputDir: "screenshots/.results",
   fullyParallel: false,

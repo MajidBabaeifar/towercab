@@ -3,6 +3,7 @@
 // intents; its only state is the owner's last visit and snoozes, kept in `meta` (UI-264), never in a mission.
 
 import type { Db } from "../db.ts";
+import { writerOf } from "../users/writer.ts";
 import { capCards } from "./budget-view.ts";
 import { proposedSection } from "./proposed.ts";
 import {
@@ -130,6 +131,37 @@ export async function inbox(src: UiSources): Promise<InboxPage> {
         prUrl: null,
         merge: false,
         ...stamp(key, null),
+      },
+    });
+  }
+  // AUT-23: an intent written by a viewer or an unknown account waits for a maintainer to confirm it.
+  const held = src.unconfirmed?.() ?? new Map<string, string>();
+  for (const i of s.listing?.open ?? []) {
+    const reason = held.get(i.id);
+    if (reason === undefined) continue;
+    const writer = writerOf(src.db, i.id)?.login ?? "";
+    found.push({
+      key: i.id,
+      rank: 0,
+      priority: 0,
+      since: Number.POSITIVE_INFINITY,
+      item: {
+        key: i.id,
+        kind: "confirm",
+        repo: i.repo,
+        title: i.title,
+        kindLabel: "Confirm",
+        since: null,
+        overview: overviewOf(i),
+        history: [],
+        card: null,
+        proposed: null,
+        cap: null,
+        confirm: { reason, writer },
+        pr: null,
+        prUrl: null,
+        merge: false,
+        ...stamp(i.id, null),
       },
     });
   }

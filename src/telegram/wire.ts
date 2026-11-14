@@ -8,7 +8,7 @@ import type { Clock, Host } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { IntentStore } from "../intents/types.ts";
 import type { Loop } from "../loop.ts";
-import { type Mission, unfinishedFor } from "../mission.ts";
+import { dataOf, type Mission, unfinishedFor } from "../mission.ts";
 import type { Telegram } from "../telegram.ts";
 import { createActions } from "../ui/actions.ts";
 import { inbox } from "../ui/inbox.ts";
@@ -48,12 +48,21 @@ export function buildChat(w: ChatWorld, telegram: Telegram, loop: () => Loop): C
     config: w.config,
     clock: w.clock,
     github: w.github,
+    app: w.github,
     proposed: () => loop().proposedState().list,
   });
-  const viewOf = (card: Card, id: string, head: string): WaitView => ({
+  const viewOf = (
+    card: Card,
+    id: string,
+    head: string,
+    m?: Mission,
+    intent?: { repos?: string[] },
+  ): WaitView => ({
     intent: card.intent,
     title: card.title,
     repo: card.repo,
+    repos: [card.repo, ...(intent?.repos ?? []).filter((r) => r !== card.repo)],
+    grant: m ? Boolean(dataOf(m).accessAsk || dataOf(m).testAsk) : false,
     ask: card.ask,
     why: card.why,
     people: card.people ?? null,
@@ -71,7 +80,15 @@ export function buildChat(w: ChatWorld, telegram: Telegram, loop: () => Loop): C
     const s = src();
     return waitsOf(s, await snapshot(s))
       .filter((x) => x.mission && !x.card.done)
-      .map((x) => viewOf(x.card, `${x.mission!.id}.${x.mission!.continued}`, x.mission!.head ?? ""));
+      .map((x) =>
+        viewOf(
+          x.card,
+          `${x.mission!.id}.${x.mission!.continued}`,
+          x.mission!.head ?? "",
+          x.mission!,
+          x.intent,
+        ),
+      );
   };
   /** TG-16, TG-17: one mission as its card shows it, with the wait whose buttons it carries. */
   const cardOf = (
@@ -82,7 +99,7 @@ export function buildChat(w: ChatWorld, telegram: Telegram, loop: () => Loop): C
   ): CardItem => {
     const finished = m.stage === "done" || m.stage === "stopped" || m.stage === "unverified";
     const open = wait && !wait.card.done ? wait : undefined;
-    const view = open ? viewOf(open.card, `${m.id}.${m.continued}`, m.head ?? "") : null;
+    const view = open ? viewOf(open.card, `${m.id}.${m.continued}`, m.head ?? "", m, open.intent) : null;
     const visited = w.db
       .all<{ from_stage: string; to_stage: string }>(
         "SELECT from_stage, to_stage FROM transitions WHERE mission = ? ORDER BY id",
@@ -187,5 +204,14 @@ export function buildChat(w: ChatWorld, telegram: Telegram, loop: () => Loop): C
       return p ? (await ownerForge(w.github.owner).prBrief(p.github, p.number)).head : null;
     },
   };
-  return new Chat({ config: w.config, db: w.db, clock: w.clock, log: w.log, telegram, actions, data });
+  return new Chat({
+    config: w.config,
+    db: w.db,
+    clock: w.clock,
+    log: w.log,
+    telegram,
+    actions,
+    data,
+    addIntent: (repo, title) => w.store.add({ repo, title, u: 3, i: 3, source: "telegram" }, new Date()),
+  });
 }
