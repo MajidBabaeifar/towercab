@@ -460,6 +460,7 @@ function All({ data }: { data: Data }) {
           <ReadinessChip badge={s.readiness} />
           {s.github ? <span class="meta mono">{s.github}</span> : null}
           {s.fileError ? <span class="why file-notice">{s.fileError}</span> : null}
+          {s.overlayNotice ? <span class="why file-notice">{s.overlayNotice}</span> : null}
           <span class="repo-card-counts">{counts(s)}</span>
           <span class="meta num">
             {s.spend.today} today · {s.spend.week} 7 days · {s.spend.all} all time

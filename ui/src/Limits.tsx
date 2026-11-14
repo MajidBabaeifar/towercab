@@ -2,7 +2,7 @@
 // the pending mark, the file's reason when it can't be read, and the one-time move.
 
 import { useState } from "preact/hooks";
-import type { ActionReply, LimitsView } from "../../src/ui/view.ts";
+import type { ActionReply, LimitsView, SettingsSources } from "../../src/ui/view.ts";
 import { openMove, saveLimits } from "./api.ts";
 import { Alert, Check } from "./icons.tsx";
 
@@ -119,6 +119,19 @@ export function Limits({ repo, l }: { repo: string; l: LimitsView }) {
         {KEYS.map(({ key, label, help }) => {
           const p = l.pending?.changes[key];
           const err = bad(key);
+          // UI-276: a value the overlay holds is changed in the overlay file, not from here.
+          const held = l.sources?.rows.find((r) => r.key === key);
+          if (held?.source === "overlay") {
+            return (
+              <div class="limit-row limit-overlay" key={key}>
+                <span class="label">{label}</span>
+                <div class="limit-field">
+                  <strong>{held.value}</strong> <span class="source-tag overlay">overlay</span>
+                </div>
+                <p class="hint">Set in {l.sources?.overlayPath ?? "the overlay file"}.</p>
+              </div>
+            );
+          }
           return (
             <div class="limit-row" key={key}>
               <label for={`limit-${key}`}>{label}</label>
@@ -204,7 +217,37 @@ export function Limits({ repo, l }: { repo: string; l: LimitsView }) {
         </p>
       ) : null}
       <Move repo={repo} l={l} />
+      {l.sources ? <Sources s={l.sources} /> : null}
     </section>
+  );
+}
+
+/** UI-276: each setting in effect with where it came from, the refused overlay lines and the notice. */
+export function Sources({ s }: { s: SettingsSources }) {
+  return (
+    <div class="setting-sources">
+      {s.error ? <FileNotice text={s.error} /> : null}
+      {s.notice ? (
+        <p class="why file-notice" role="status">
+          <Alert size={16} /> <span>{s.notice}</span>
+        </p>
+      ) : null}
+      {s.rows.length ? (
+        <ul class="source-list" aria-label="Where each setting comes from">
+          {s.rows.map((r) => (
+            <li key={r.key}>
+              <span class="source-key">{r.key}</span> <span class="source-value">{r.value}</span>{" "}
+              <span class={`source-tag ${r.source}`}>{r.source}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {s.refusals.map((line) => (
+        <p class="why" key={line}>
+          {line}
+        </p>
+      ))}
+    </div>
   );
 }
 

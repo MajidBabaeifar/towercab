@@ -4965,3 +4965,29 @@ kbd {
   font-size: 0.85rem;
   color: var(--muted, inherit);
 }
+
+/* UI-276: where a setting comes from. */
+.setting-sources {
+  margin-top: 0.75rem;
+}
+.source-list {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+.source-key {
+  font-weight: 600;
+}
+.source-tag {
+  font-size: 0.75rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0 0.5em;
+  opacity: 0.8;
+}
+.source-tag.overlay {
+  font-weight: 600;
+  opacity: 1;
+}

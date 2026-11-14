@@ -31,7 +31,8 @@ import { cooldown } from "../limits.ts";
 import { type Outcome, wait } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
 import { capReached, isMulti, runBudget } from "../parts.ts";
-import { loadRepoFiles, RepoError, type RepoFiles } from "../repo/files.ts";
+import { RepoError, type RepoFiles, type Verifying } from "../repo/files.ts";
+import { loadOverlay, loadRepoFilesWith } from "../repo/overlay.ts";
 import type { Risk } from "../risk.ts";
 import { checkoutRoot } from "../service.ts";
 import { combine, type OwnerStep, type PlanStep, parseNoneLive, parseSteps } from "../steps.ts";
@@ -293,6 +294,8 @@ export interface PipeData {
   /** Session cost already counted (MET-28). */
   sessionCost?: Record<string, number>;
   mergeTries?: number;
+  /** REPO-49: the checks the overlay gave at pick; kept when the repo later has its own. */
+  pinnedChecks?: Verifying;
   /** Someone else's commits are on the branch (takeRemote, CI's adopted head). */
   foreignHead?: boolean;
   /** Merge asked GitHub to update the branch: the next moved head is that, not someone else's. */
@@ -349,9 +352,21 @@ export function cloneOf(cx: Ctx, m: Mission): string {
 /** The repo files from the base branch of Towercab's clone (REPO-1). */
 export async function repoFiles(cx: Ctx, m: Mission): Promise<RepoFiles> {
   try {
-    const files = await loadRepoFiles(cx.tools, cloneOf(cx, m), cx.repo(m).base, cx.repo(m).github);
+    const repo = cx.repo(m);
+    const files = await loadRepoFilesWith(
+      cx.tools,
+      cloneOf(cx, m),
+      repo.base,
+      repo.github,
+      loadOverlay(cx.config.file, repo.name),
+    );
     // UI-257: the page shows a repo's cap beside the autonomy control.
     cx.db.setMeta(`a-cap:${m.repo}`, String(files.towercab.maxAutonomy));
+    // REPO-49: an intent that started on the overlay's checks keeps them when the repo gains its own.
+    const pinned = data(m).pinnedChecks;
+    if (pinned && files.replaced && files.sources) {
+      return { ...files, verifying: pinned, sources: { ...files.sources, checks: "overlay" } };
+    }
     return files;
   } catch (e) {
     if (e instanceof RepoError && e.kind === "git") throw new EnvError("github", e.message);

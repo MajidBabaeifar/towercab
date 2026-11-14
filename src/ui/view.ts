@@ -932,6 +932,19 @@ export interface InboxPage {
   stale: string | null;
 }
 
+/** UI-276: the settings in effect, each labelled with where it came from (repo, overlay or default). */
+export interface SettingsSources {
+  rows: { key: string; value: string; source: "repo" | "overlay" | "default" }[];
+  /** REPO-46: one line per overlay key refused. */
+  refusals: string[];
+  /** The overlay's `TOWERCAB.md`, where an overlay value is changed; null without an overlay. */
+  overlayPath: string | null;
+  /** An invalid overlay file's reason, or null. */
+  error: string | null;
+  /** REPO-49: the repo's own checks replaced the overlay's; null when they did not. */
+  notice: string | null;
+}
+
 /** UI-150 to UI-154: a repo's limits (`workers`, `ahead`) as its `TOWERCAB.md` holds them. */
 export interface LimitsView {
   values: { workers: number; ahead: number };
@@ -948,6 +961,8 @@ export interface LimitsView {
   /** UI-153: `TOWERCAB.md in <repo> can't be read: <reason>`, or null. */
   fileError: string | null;
   fileUrl: string | null;
+  /** UI-276: where each setting comes from; absent until the loop has read the repo. */
+  sources?: SettingsSources;
   move: {
     state: "waiting" | "open" | "closed" | "moved";
     pr: number | null;
@@ -989,6 +1004,8 @@ export interface RepoView {
 export interface RepoSummary {
   /** UI-153: the file's reason when `TOWERCAB.md` can't be read; absent otherwise. */
   fileError?: string;
+  /** UI-276: the notice that the repo's own checks replaced the overlay's; absent otherwise. */
+  overlayNotice?: string;
   readiness?: ReadinessBadge;
   repo: string;
   github: string;
@@ -1052,6 +1069,8 @@ export interface BoardCard {
 export interface BoardRepo {
   /** UI-153: the file's reason when `TOWERCAB.md` can't be read; absent otherwise. */
   fileError?: string;
+  /** UI-276: the notice that the repo's own checks replaced the overlay's; absent otherwise. */
+  overlayNotice?: string;
   readiness?: ReadinessBadge;
   /** "" for intents the listing doesn't know (the "unknown repo" lane). */
   repo: string;

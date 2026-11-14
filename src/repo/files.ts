@@ -11,8 +11,11 @@ import { bullets, fences, items, lines, sections, text } from "./markdown.ts";
 import { glob } from "./protected.ts";
 import { ITEMS, isItem, isKind, KINDS, type Kind, type Mode, type Waiver } from "./readiness.ts";
 
-/** The three files, in the order they are parsed. */
-export const FILES = ["CLAUDE.md", "REVIEW.md", "TOWERCAB.md"] as const;
+/** The files read from the base branch, in the order they are parsed (`AGENTS.md`: REPO-45). */
+export const FILES = ["CLAUDE.md", "REVIEW.md", "TOWERCAB.md", "AGENTS.md"] as const;
+
+/** Where a setting came from (REPO-44). */
+export type Source = "repo" | "overlay" | "default";
 
 export const VERIFYING_SECTION = "Verifying your work";
 
@@ -86,6 +89,14 @@ export interface RepoFiles {
   verifying: Verifying;
   review: Review;
   towercab: TowercabFile;
+  /** REPO-44: where each setting came from; present only when the repo has an overlay. */
+  sources?: Record<string, Source>;
+  /** REPO-46: one line per overlay key refused. */
+  refusals?: string[];
+  /** REPO-49: the repo's own checks replaced the overlay's (`hash` fingerprints the pair of texts). */
+  replaced?: { file: string; overlayFile: string; hash: string };
+  /** REPO-46: an accepted overlay kind; the kind stays unconfirmed (REPO-20). */
+  overlayKind?: Kind;
 }
 
 /** Why the repo files can't be used: no verifying block (REPO-5), an invalid file, or git failed. */
@@ -172,21 +183,81 @@ export function parseRepoFiles(
   review: string | null,
   towercab: string | null,
   slug: string = "",
+  agents: string | null = null,
 ): RepoFiles {
-  if (claude === null) throw RepoError.noVerifying();
+  return parseBase([claude, review, towercab, agents], null, slug).files;
+}
+
+/** The base branch's files in `FILES` order: text, why it can't be read, or absent. */
+export type RawFiles = (string | RepoError | null)[];
+
+/**
+ * REPO-45: the verifying section is `CLAUDE.md`'s when it has a checks block, else `AGENTS.md`'s, else
+ * `fallback` (the overlay's, REPO-44), else `noVerifying`. `from` says which. In file order, the first
+ * error wins (a missing CLAUDE.md before a bad REVIEW.md).
+ */
+export function parseBase(
+  raw: RawFiles,
+  fallback: Verifying | null,
+  slug = "",
+): { files: RepoFiles; from: "CLAUDE.md" | "AGENTS.md" | "overlay" } {
+  const [c, r, t, a] = [raw[0] ?? null, raw[1] ?? null, raw[2] ?? null, raw[3] ?? null];
+  if (c instanceof RepoError) throw c;
+  let verifying = c === null ? null : checksOf(c, "CLAUDE.md");
+  let from: "CLAUDE.md" | "AGENTS.md" | "overlay" = "CLAUDE.md";
+  if (!verifying) {
+    if (a instanceof RepoError) throw a;
+    verifying = a === null ? null : checksOf(a, "AGENTS.md");
+    from = "AGENTS.md";
+  }
+  if (!verifying) {
+    verifying = fallback;
+    from = "overlay";
+  }
+  if (!verifying) throw RepoError.noVerifying();
+  if (r instanceof RepoError) throw r;
+  if (t instanceof RepoError) throw t;
   return {
-    claudeMd: claude,
-    verifying: parseVerifying(claude),
-    review: review === null ? defaultReview() : inFile("REVIEW.md", () => parseReview(review)),
-    towercab:
-      towercab === null
-        ? defaultTowercab()
-        : inFile("TOWERCAB.md", () => {
-            const t = parseTowercab(towercab);
-            if (t.live) t.live = resolveAdapter(t.live, isGitlab(slug));
-            return t;
-          }),
+    from,
+    files: {
+      claudeMd: typeof c === "string" ? c : typeof a === "string" ? a : "",
+      verifying,
+      review: r === null ? defaultReview() : inFile("REVIEW.md", () => parseReview(r)),
+      towercab:
+        t === null
+          ? defaultTowercab()
+          : inFile("TOWERCAB.md", () => {
+              const tw = parseTowercab(t);
+              if (tw.live) tw.live = resolveAdapter(tw.live, isGitlab(slug));
+              return tw;
+            }),
+    },
   };
+}
+
+/** A file's verifying section; null when it has none (no section or no non-empty checks block). */
+function checksOf(text: string, file: string): Verifying | null {
+  try {
+    return parseVerifying(text, file);
+  } catch (e) {
+    if (e instanceof RepoError && e.kind === "noVerifying") return null;
+    throw e;
+  }
+}
+
+/** The keys a `TOWERCAB.md` front matter sets (REPO-44: a key it lacks is the overlay's to fill). */
+export function towercabKeys(file: string | null): Set<string> {
+  const keys = new Set<string>();
+  if (file === null) return keys;
+  const ls = lines(file);
+  const open = ls.findIndex((l) => l.trim() !== "");
+  if (open < 0 || ls[open]!.trim() !== "---") return keys;
+  for (const l of ls.slice(open + 1)) {
+    if (l.trim() === "---") break;
+    const k = KEY.exec(l)?.[1];
+    if (k !== undefined) keys.add(k);
+  }
+  return keys;
 }
 
 function inFile<T>(file: string, fn: () => T): T {
@@ -199,8 +270,8 @@ function inFile<T>(file: string, fn: () => T): T {
 }
 
 /** `CLAUDE.md` → its verifying section. No section or no non-empty ` ```checks ` → `noVerifying`. */
-export function parseVerifying(claude: string): Verifying {
-  return inFile("CLAUDE.md", () => {
+export function parseVerifying(claude: string, file = "CLAUDE.md"): Verifying {
+  return inFile(file, () => {
     const its = items(lines(claude));
     const [section] = sections(its, [VERIFYING_SECTION]);
     if (!section) throw RepoError.noVerifying();
@@ -479,16 +550,19 @@ export async function loadRepoFiles(
   base: string,
   slug: string = "",
 ): Promise<RepoFiles> {
+  return parseBase(await readBaseFiles(tools, clone, base), null, slug).files;
+}
+
+/** The raw texts of `FILES` from `refs/remotes/origin/<base>`: a text, why it can't be read, or null. */
+export async function readBaseFiles(
+  tools: Tools,
+  clone: string,
+  base: string,
+  ref = `refs/remotes/origin/${base}`,
+): Promise<RawFiles> {
   checkBase(clone, base);
-  const listing = await repoGit(tools, clone, [
-    "ls-tree",
-    "-z",
-    "--full-tree",
-    `refs/remotes/origin/${base}`,
-    "--",
-    ...FILES,
-  ]);
-  const texts: (string | RepoError | null)[] = [null, null, null];
+  const listing = await repoGit(tools, clone, ["ls-tree", "-z", "--full-tree", ref, "--", ...FILES]);
+  const texts: RawFiles = FILES.map(() => null);
   for (const entry of listing.split("\0").filter(Boolean)) {
     const tab = entry.indexOf("\t");
     if (tab < 0) continue;
@@ -506,16 +580,7 @@ export async function loadRepoFiles(
     else if (mode === "160000") texts[k] = notFile("a submodule");
     else texts[k] = notFile(`mode ${mode}`);
   }
-  // In file order, the first error wins (a missing CLAUDE.md before a bad REVIEW.md).
-  const [c, r, t] = texts;
-  if (c instanceof RepoError) throw c;
-  if (c === null || c === undefined) throw RepoError.noVerifying();
-  const verifying = parseVerifying(c);
-  for (const x of [r, t]) if (x instanceof RepoError) throw x;
-  return {
-    ...parseRepoFiles(c, (r as string | null) ?? null, (t as string | null) ?? null, slug),
-    verifying,
-  };
+  return texts;
 }
 
 const REPLACEMENT = String.fromCharCode(0xfffd);
