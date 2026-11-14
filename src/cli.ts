@@ -256,7 +256,11 @@ async function refuseOwnerOnly(w: World, intent: string): Promise<void> {
 /** Queue a command for the loop, or apply it here when no loop runs (LOOP-15). */
 async function submit(w: World, name: CommandName, arg = "", text = ""): Promise<string> {
   if (OWNER_ONLY_COMMANDS.includes(name)) await refuseOwnerOnly(w, arg);
-  const id = insertCommand(w.db, { name, arg, text, source: "cli" }, Date.now() / 1000);
+  const id = insertCommand(
+    w.db,
+    { name, arg, text, source: "cli", actor: w.config.github?.me ?? "owner" },
+    Date.now() / 1000,
+  );
   if (w.home.holder() === null) {
     const store = await w.store();
     const row = pendingCommands(w.db).find((r) => r.id === id)!;

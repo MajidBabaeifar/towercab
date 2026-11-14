@@ -1,6 +1,7 @@
 // The page's buttons (UI-66): each does what the owner would do on GitHub (as the owner, LOOP-38) or
 // in the CLI (a `commands` row the loop applies, LOOP-15).
 
+import { type Actor, actorColumns, currentActor, TOWERCAB } from "../actor.ts";
 import { ownerOnly, ownerOnlyLine, ownSource } from "../autonomy.ts";
 import {
   acceptedOf,
@@ -19,7 +20,8 @@ import type { Db } from "../db.ts";
 import { markFast } from "../fast.ts";
 import { askFeatures } from "../features.ts";
 import { ForgeBadReply, MERGE_METHOD, type PrBrief, type Result } from "../forge.ts";
-import { ownerForge } from "../github/forge.ts";
+import { forgeOf, ownerForge } from "../github/forge.ts";
+import { approvedByLine, type Decision, decidedByComment } from "../github/owner.ts";
 import { classifyFiles, type ProposedPr } from "../github/proposed.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { Home } from "../home.ts";
@@ -199,12 +201,25 @@ function firstLine(s: string): string {
 export function createActions(d: ActionDeps): UiActions {
   const command = (name: string, arg = "", text = "") => {
     d.db.run(
-      "INSERT INTO commands (name, arg, text, source, created) VALUES (?, ?, ?, 'ui', ?)",
+      "INSERT INTO commands (name, arg, text, source, created, actor, via) VALUES (?, ?, ?, 'ui', ?, ?, ?)",
       name,
       arg,
       text,
       d.clock.now(),
+      ...actorColumns(),
     );
+  };
+  // USR-10: with sign-in, the PR says who decided. Towercab comments as itself; without sign-in nothing changes.
+  const person = (): Actor | null => {
+    if (!d.config.auth) return null;
+    const a = currentActor();
+    return a.login === TOWERCAB.login ? null : a;
+  };
+  const announce = async (p: { github: string; number: number }, verb: Decision) => {
+    const a = person();
+    // As the App, not the owner: the owner's own comments are read as feedback.
+    const app = "gh" in d.github ? forgeOf(d.github as GitHub) : null;
+    if (a && app) await app.commentOnPr(p.github, p.number, decidedByComment(a, verb), { inline: true });
   };
   const pr = (m: Mission | undefined) => (m ? currentPr(m, d.config, d.store.github()) : null);
   const of = ownerForge(d.github.owner);
@@ -409,8 +424,13 @@ export function createActions(d: ActionDeps): UiActions {
       // SHD-12: the PR says who asked for the merge.
       if (tag)
         await of.commentOnPr(p.github, p.number, `${tag}Merging on your yes in Telegram.`, { inline: true });
+      await announce(p, "approved");
+      const by = person();
       refused(
-        await of.mergePr(p.github, p.number, { method: MERGE_METHOD }),
+        await of.mergePr(p.github, p.number, {
+          method: MERGE_METHOD,
+          ...(by ? { body: approvedByLine(by) } : {}),
+        }),
         `merge the ${p.label} #${p.number}`,
       );
       done(m, p, "merge");
@@ -434,7 +454,8 @@ export function createActions(d: ActionDeps): UiActions {
     },
 
     async reply(intent, text) {
-      const body = `${tag}${text.trim()}`;
+      const by = person();
+      const body = `${tag}${by ? `${decidedByComment(by, "answered")}:\n\n` : ""}${text.trim()}`;
       if (!text.trim()) throw new Error("Write a reply first.");
       if (body.length > MAX_REPLY) throw new Error(`The reply is too long: at most ${MAX_REPLY} characters.`);
       const m = unfinishedFor(d.db, intent);
@@ -480,7 +501,15 @@ export function createActions(d: ActionDeps): UiActions {
         const again = repeated(m, p, "drop");
         if (again) return again;
         refused(
-          await of.closePr(p.github, p.number, tag ? `${tag}Dropped on your yes in Telegram.` : undefined),
+          await of.closePr(
+            p.github,
+            p.number,
+            tag
+              ? `${tag}Dropped on your yes in Telegram.`
+              : person()
+                ? decidedByComment(person()!, "dropped")
+                : undefined,
+          ),
           `close the ${p.label} #${p.number}`,
         );
         done(m, p, "drop");
@@ -576,6 +605,8 @@ export function createActions(d: ActionDeps): UiActions {
       if (!canBoostIntent(found)) throw new Error("a5 is only for your own intents.");
       const started = unfinishedFor(d.db, found.id) || d.db.meta(`start:${found.id}`) !== null;
       command("boost", found.id);
+      const bp = pr(unfinishedFor(d.db, found.id));
+      if (bp) await announce(bp, "boosted");
       if (started) return "Boosted: a5. It runs from the next gate.";
       if (intentPaused(d.db, found.id)) return "Boosted: a5. It is paused, so it starts when you resume it.";
       return "Boosted: a5 and design started.";

@@ -1,6 +1,7 @@
 // Commands (LOOP-15): answer, retry, drop, pause, resume, start. The CLI and the UI insert a `commands` row;
 // the loop applies it on its next pass, or the CLI applies it itself when no loop runs.
 
+import { actorColumns, actorOfRow, runAs } from "./actor.ts";
 import { ownerOnly, ownerOnlyLine } from "./autonomy.ts";
 import { levelNow } from "./autonomy-change.ts";
 import type { Db } from "./db.ts";
@@ -38,25 +39,29 @@ export interface CommandRow {
   created: number;
   applied_at: number | null;
   result: string | null;
+  /** USR-8: who queued it and through which channel; empty on rows from before. */
+  actor?: string;
+  via?: string;
 }
 
 export const MAX_ANSWER = 2000;
 
 export function insertCommand(
   db: Db,
-  c: { name: CommandName; arg?: string; text?: string; source: string },
+  c: { name: CommandName; arg?: string; text?: string; source: string; actor?: string },
   now: number,
 ): number {
   if (c.name === "answer" && (!c.text?.trim() || c.text.length > MAX_ANSWER)) {
     throw new Error(`an answer is 1 to ${MAX_ANSWER} characters`);
   }
   return db.run(
-    "INSERT INTO commands (name, arg, text, source, created) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO commands (name, arg, text, source, created, actor, via) VALUES (?, ?, ?, ?, ?, ?, ?)",
     c.name,
     c.arg ?? "",
     c.text ?? "",
     c.source,
     now,
+    ...(c.actor ? [c.actor, "cli"] : actorColumns()),
   ).lastId;
 }
 
@@ -246,7 +251,9 @@ export async function applyCommand(cx: CommandCtx, row: CommandRow): Promise<str
         throw new Error(ownerOnlyLine(intent.id));
       }
     }
-    result = await run(cx, row);
+    // USR-8: what the command does is recorded as the person who queued it.
+    const who = actorOfRow(row.actor ?? "", row.via ?? "");
+    result = await (who ? runAs(who, () => run(cx, row)) : run(cx, row));
   } catch (e) {
     result = `${row.name}: ${(e as Error).message}`;
   }

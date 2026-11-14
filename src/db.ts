@@ -26,6 +26,9 @@ CREATE TABLE shadow_actions (id INTEGER PRIMARY KEY, at REAL NOT NULL, turn INTE
   action TEXT NOT NULL, intent TEXT NOT NULL DEFAULT '', pr INTEGER NOT NULL DEFAULT 0, outcome TEXT NOT NULL,
   detail TEXT NOT NULL DEFAULT '', UNIQUE (turn, idx));`;
 
+/** USR-8: who did it and through which channel; added to `transitions` and `commands` by migration 14. */
+const ACTOR = ", actor TEXT NOT NULL DEFAULT '', via TEXT NOT NULL DEFAULT ''";
+
 /** LOOP-128: what the outbox keeps of a Telegram message, to edit it later; added by migration 8. */
 const OUTBOX_TG = `,
   kind TEXT NOT NULL DEFAULT 'info', intent TEXT, wait TEXT, tg_message_id INTEGER, target TEXT, buttons TEXT,
@@ -84,11 +87,11 @@ CREATE TABLE missions (
   data TEXT NOT NULL DEFAULT '{}', created REAL NOT NULL, updated REAL NOT NULL, finished REAL);
 CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT IN ('done','stopped','unverified');
 CREATE TABLE transitions (id INTEGER PRIMARY KEY, mission INTEGER NOT NULL REFERENCES missions(id),
-  at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT);
+  at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT${ACTOR});
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
   name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost','unfreeze')),
   arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
-  created REAL NOT NULL, applied_at REAL, result TEXT);
+  created REAL NOT NULL, applied_at REAL, result TEXT${ACTOR});
 CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, created REAL NOT NULL,
   sent_at REAL, tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0${OUTBOX_TG});
 ${REPOS}
@@ -101,6 +104,7 @@ ${USERS}`;
 /** Migration i takes `user_version` from i to i+1. Later changes append. */
 export const MIGRATIONS: string[] = [
   SCHEMA.replace("'resume','start','done','steps'", "'resume'")
+    .replaceAll(ACTOR, "")
     .replace(OUTBOX_TG, "")
     .replace(`\n${REPOS}\n${SHADOW}\n${TELEGRAM}\n${CARDS}\n${OBSERVER}\n${USERS}`, ""),
   // 2: `start` joins the commands (LOOP-63); the CHECK can't be altered, so the table is rebuilt.
@@ -161,13 +165,18 @@ DROP TABLE commands;
 ALTER TABLE commands_new RENAME TO commands;`,
   // 13: people, sessions and who wrote each intent (USR-2, USR-4, AUT-23). Additive; `IF NOT EXISTS` for a re-upgrade after a manual rollback.
   USERS.replaceAll("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS "),
+  // 14: the actor and channel of each transition and command (USR-8). Additive: older code names its columns.
+  `ALTER TABLE transitions ADD COLUMN actor TEXT NOT NULL DEFAULT '';
+ALTER TABLE transitions ADD COLUMN via TEXT NOT NULL DEFAULT '';
+ALTER TABLE commands ADD COLUMN actor TEXT NOT NULL DEFAULT '';
+ALTER TABLE commands ADD COLUMN via TEXT NOT NULL DEFAULT '';`,
 ];
 
 /**
  * Versions reached by migrations that only add (tables, columns, keys older code doesn't read): a
  * Towercab older than them can still use the database (LOOP-37).
  */
-export const ADDITIVE = new Set([3, 6, 7, 8, 9, 10, 11, 12, 13]);
+export const ADDITIVE = new Set([3, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
 // 10 and 12 only widen the CHECK on `commands` (same columns): older code reads the table as before, and a
 // `score`, `boost` or `unfreeze` row it doesn't know just gets an error result, so a rollback stays safe.
 
@@ -232,7 +241,8 @@ export class Db {
         // Migrations 6 and 8 add columns: after a manual rollback (LOOP-37) they are still there.
         const there =
           (i === 5 && this.hasColumn("repos", "teammate_review")) ||
-          (i === 7 && this.hasColumn("outbox", "ended_at"));
+          (i === 7 && this.hasColumn("outbox", "ended_at")) ||
+          (i === 13 && this.hasColumn("transitions", "actor"));
         if (!there) this.sql.exec(MIGRATIONS[i]!);
         this.sql.exec(`PRAGMA user_version = ${i + 1}`);
         this.setMeta("compatible_from", String(compatibleFrom(i + 1)));

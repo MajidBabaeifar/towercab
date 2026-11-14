@@ -177,6 +177,22 @@ export function budgetChanges(db: Db): BudgetChange[] {
   }
 }
 
+/**
+ * USR-14: the ceiling the file sets for a budget (`cap_daily` / `cap_monthly` beside it), or null. The page may
+ * change a budget up to its cap; raising the cap itself is done by editing the file.
+ */
+export function budgetCap(file: string, scope: string, period: "daily" | "monthly"): number | null {
+  let raw: Record<string, unknown>;
+  try {
+    raw = parseToml(readFileSync(file, "utf8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const t = scope === "all" ? table(raw.agent) : table(table(raw.budget)[scope]);
+  const v = t[`cap_${period}`];
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
+}
+
 const fmt = (n: number | null) => (n === null ? "none" : Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`);
 
 /**
@@ -204,6 +220,13 @@ export function saveBudgets(
   };
   const log: BudgetChange[] = [];
   for (const period of ["daily", "monthly"] as const) {
+    const cap = budgetCap(d.config.file, scope, period);
+    const to = next[period];
+    if (cap !== null && to !== old[period] && (to === null || to > cap)) {
+      throw new Error(
+        `this is a security setting: edit the config file (the ${period} cap for ${scope} is ${fmt(cap)})`,
+      );
+    }
     if (next[period] === old[period]) continue;
     const [path, key] =
       repo === null

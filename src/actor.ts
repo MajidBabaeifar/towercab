@@ -39,3 +39,16 @@ export function currentActor(): Actor {
 export function actorLabel(a: Pick<Actor, "login" | "name" | "via">): string {
   return a.login === TOWERCAB.login ? "Towercab" : `${a.name || a.login} · ${a.via}`;
 }
+
+/** The `actor` and `via` columns of a transition or command row: Towercab's own steps have no channel. */
+export function actorColumns(a: Actor = currentActor()): [string, string] {
+  return a.login === TOWERCAB.login ? [TOWERCAB.login, ""] : [a.login, a.via];
+}
+
+const VIAS: readonly string[] = ["page", "github", "telegram", "cli"];
+
+/** An actor read back from a row's `actor` and `via` (empty: none recorded). */
+export function actorOfRow(login: string, via: string): Actor | null {
+  if (!login || login === TOWERCAB.login) return null;
+  return { login, name: login, role: null, via: (VIAS.includes(via) ? via : "cli") as Via };
+}
