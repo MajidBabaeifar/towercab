@@ -30,6 +30,7 @@ import type { Intent } from "../intents/types.ts";
 import { cooldown } from "../limits.ts";
 import { type Outcome, wait } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
+import { capReached, isMulti, runBudget } from "../parts.ts";
 import { loadRepoFiles, RepoError, type RepoFiles } from "../repo/files.ts";
 import type { Risk } from "../risk.ts";
 import { checkoutRoot } from "../service.ts";
@@ -45,6 +46,8 @@ import { type Access, type Question, type ReviewResult, SCHEMAS, withReply } fro
 export interface ShipData {
   /** The intent's merge commits, oldest first. */
   merges: string[];
+  /** What the platform says the deploy waits on, and since when (unix s; SHIP-38). */
+  pending?: { why: string; at: number };
   /** When the current wait for a deploy began (unix s). */
   since?: number;
   /** Fix rounds after a rollback (SHIP-11). */
@@ -119,6 +122,8 @@ export interface PipeData {
     e2e?: { tests: string[]; none_why: string } | null;
     /** INT-43: the repos of a multi-repo plan, in landing order; absent for a single-repo plan. */
     parts?: string[];
+    /** LOOP-78: the repos each part waits on, by repo. */
+    waitsOn?: Record<string, string[]>;
     /** PIP-106: the plan's plain brief. */
     brief?: string;
     /** SHIP-17, SHIP-21: the owner's steps and the "nothing to check live" claim the plan made. */
@@ -344,7 +349,7 @@ export function cloneOf(cx: Ctx, m: Mission): string {
 /** The repo files from the base branch of Towercab's clone (REPO-1). */
 export async function repoFiles(cx: Ctx, m: Mission): Promise<RepoFiles> {
   try {
-    const files = await loadRepoFiles(cx.tools, cloneOf(cx, m), cx.repo(m).base);
+    const files = await loadRepoFiles(cx.tools, cloneOf(cx, m), cx.repo(m).base, cx.repo(m).github);
     // UI-257: the page shows a repo's cap beside the autonomy control.
     cx.db.setMeta(`a-cap:${m.repo}`, String(files.towercab.maxAutonomy));
     return files;
@@ -454,6 +459,10 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
   // fix carries on; a working sandbox never gets this.
   const probe = cx.sandbox?.();
   if (probe && !probe.ok) return { done: wait("fix sandbox", probe.why) };
+  // LOOP-78: one cap for the whole intent; once it is reached no run starts for any part.
+  if (isMulti(m) && capReached(cx.config.agent.maxBudgetUsd, m)) {
+    return { done: wait("worker budget", "the intent's runs used up its budget") };
+  }
   const repo = cx.repo(m);
   const runs = cx.runs(m);
   const cache = cx.home.cache(repo.name);
@@ -505,7 +514,7 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
         : SCHEMAS[agent.schema]
       : null,
     session,
-    budgetUsd: agentBudgetUsd(agent, cx.config),
+    budgetUsd: runBudget(agentBudgetUsd(agent, cx.config), cx.config.agent.maxBudgetUsd, m, isMulti(m)),
     claudeMd: p.files.claudeMd,
     grants:
       p.kind === "worker"

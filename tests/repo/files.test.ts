@@ -475,7 +475,10 @@ test("repo: live block errors", () => {
     ["live: yes\n", "live: must be a mapping"],
     [`live:\n${suite}`, "live: url is required"],
     [`live:\n  url: http://a.dev\n${suite}`, "live: url must be an https:// URL"],
-    [`live:\n  url: https://a.dev\n  adapter: ssh\n${suite}`, "live: adapter must be github or command"],
+    [
+      `live:\n  url: https://a.dev\n  adapter: ssh\n${suite}`,
+      "live: adapter must be github, gitlab or command",
+    ],
     [
       `live:\n  url: https://a.dev\n  adapter: command\n${suite}`,
       "live: the command adapter needs live_command and rollback_command",
