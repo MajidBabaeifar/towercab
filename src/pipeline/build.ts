@@ -237,7 +237,7 @@ async function mergeBaseBranch(cx: Ctx, m: Mission): Promise<string[] | null> {
   const clone = cloneOf(cx, m);
   await git(cx.tools, clone, ["fetch", "--quiet", "origin"], await cx.github.gitAuth(repo.github));
   await refreshBase(cx.tools, clone, cx.checkout(m), repo.base);
-  const author = await botAuthor(cx);
+  const author = await botAuthor(cx, cx.repo(m).github);
   const merged = await coGit(cx, m, [...author, "merge", "--no-edit", `refs/remotes/origin/${repo.base}`])
     .then(() => true)
     .catch(() => false);
@@ -937,7 +937,13 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
     () => false,
   );
   if (staged || merging) {
-    await coGit(cx, m, [...(await botAuthor(cx)), "commit", "--quiet", "-m", commitTitle(m, intent)]);
+    await coGit(cx, m, [
+      ...(await botAuthor(cx, cx.repo(m).github)),
+      "commit",
+      "--quiet",
+      "-m",
+      commitTitle(m, intent),
+    ]);
   }
   const repo = cx.repo(m);
   // PIP-217: a run with plan steps still open that added no commit is no progress, not `no changes`.

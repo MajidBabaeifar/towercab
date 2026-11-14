@@ -3,6 +3,7 @@
 
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
+import { changeUrl } from "../forge/types.ts";
 import { dailyTaken, localDay, pastTime } from "./due.ts";
 import { costToday, proposalsSince, runsSince, WEEK_S } from "./store.ts";
 
@@ -47,7 +48,7 @@ export function reportText(db: Db, config: Config, now: number, intentsRepo: str
     if (proposals.length) {
       lines.push(`Proposed ${proposals.length}:`);
       for (const p of proposals.slice(0, 4))
-        lines.push(`- ${p.title}${intentsRepo ? ` https://github.com/${intentsRepo}/pull/${p.pr}` : ""}`);
+        lines.push(`- ${p.title}${intentsRepo ? ` ${changeUrl(intentsRepo, p.pr)}` : ""}`);
     }
     if (held.size) {
       lines.push(`Held back (over ${config.observer.maxProposalsPerWeek} a week):`);
