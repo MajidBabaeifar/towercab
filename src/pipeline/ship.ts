@@ -29,7 +29,7 @@ import {
   tail,
   viaForge,
 } from "./common.ts";
-import { endSecretPass, startSecretPass } from "./setup-pass.ts";
+import { endSecretPass, secretPassRan, startSecretPass } from "./setup-pass.ts";
 import { hasSetupSecrets } from "./setup-secrets.ts";
 
 export const MAX_FIXES = 2;
@@ -178,7 +178,10 @@ async function suiteEnded(
   end: ChildEnd,
   run: SuiteRun,
 ): Promise<Progress | SuitesDone> {
-  if (m.step === `${run.kind}-setup` && hasSetupSecrets(cx.config.file, m.repo)) {
+  if (
+    m.step === `${run.kind}-setup` &&
+    (secretPassRan(cx.checkout(m)) || hasSetupSecrets(cx.config.file, m.repo))
+  ) {
     // PIP-212, PIP-213: the setup secrets are redacted and searched for first; a hit stops the stage.
     const r = await endSecretPass(cx, m, end, cx.checkout(m));
     if ("done" in r) return r;

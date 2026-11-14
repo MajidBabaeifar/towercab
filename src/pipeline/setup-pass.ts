@@ -73,14 +73,29 @@ const read = (p: string): string => {
 const gitIn = (tools: Tools, dir: string, args: string[], env: Record<string, string> = {}) =>
   git(tools, dir, args, { args: [], env });
 
-/** The commit the branch started from: where it meets the base branch, else HEAD. */
-async function baseCommit(cx: Ctx, m: Mission, dir: string): Promise<string> {
+/** The commit the branch started from: where it meets the base branch. Without it the stage stops. */
+async function baseCommit(cx: Ctx, m: Mission, dir: string): Promise<string | null> {
   const ref = `refs/remotes/origin/${cx.repo(m).base}`;
   try {
-    return (await gitIn(cx.tools, dir, ["merge-base", "HEAD", ref])).trim();
+    return (await gitIn(cx.tools, dir, ["merge-base", "HEAD", ref])).trim() || null;
   } catch {
-    return (await gitIn(cx.tools, dir, ["rev-parse", "HEAD"])).trim();
+    return null;
   }
+}
+
+/** The secrets each running pass was started with, by checkout: redaction uses them, not the file as it is later. */
+const started = new Map<string, SetupSecrets>();
+
+/** True while a secret pass of the checkout `dir` has started and not yet been read. */
+export const secretPassRan = (dir: string): boolean => started.has(dir);
+
+function merged(a: SetupSecrets | null, b: SetupSecrets | null): SetupSecrets | null {
+  if (!a || !b) return a ?? b;
+  return {
+    env: { ...a.env, ...b.env },
+    tokens: [...a.tokens, ...b.tokens],
+    pairs: [...a.pairs, ...b.pairs],
+  };
 }
 
 /** A fresh export of `base`'s tree into `tree`: no `.git`, no ignored folder, nothing a worker wrote. */
@@ -119,6 +134,14 @@ export async function startSecretPass(cx: Ctx, m: Mission, o: PassOpts): Promise
       ),
     };
   const base = await baseCommit(cx, m, o.dir);
+  if (!base)
+    return {
+      done: wait(
+        "fix repo files",
+        `setup secrets need the commit where the branch left ${cx.repo(m).base}, and Towercab couldn't find it`,
+      ),
+    };
+  started.set(o.dir, secrets);
   const at = cx.record(m, m.step, {}, { setupSecret: { start: Date.now() - 2000, base } });
   const tree = setupTreeOf(o.dir);
   const creds = setupCredsOf(o.dir);
@@ -218,13 +241,19 @@ function hitOf(h: Hit): { done: Outcome } {
  * output into the checkout. A hit stops the stage; the worker never starts.
  */
 export async function endSecretPass(cx: Ctx, m: Mission, end: ChildEnd, dir: string): Promise<PassEnd> {
-  const secrets = load(cx, m);
+  const now = load(cx, m);
+  // The values the pass was given count, whatever the file holds now (it may have been rotated or removed).
+  const ran = started.get(dir) ?? null;
+  started.delete(dir);
+  const secrets = merged(ran, now && !("done" in now) ? now : null);
   const raw = `${read(end.stdout)}${read(end.stderr)}`;
-  if (!secrets || "done" in secrets) {
-    // The file went away or broke while setup ran: the output stays unread by the worker.
+  if (!secrets) {
+    // Nothing known to redact with: the output stays unread by the worker.
     writeFileSync(end.stdout, "");
     rmSync(end.stderr, { force: true });
-    return secrets && "done" in secrets ? secrets : { log: "", failed: end.code !== 0, open: [] };
+    rmSync(setupTreeOf(dir), { recursive: true, force: true });
+    rmSync(setupCredsOf(dir), { recursive: true, force: true });
+    return now && "done" in now ? now : { log: "", failed: end.code !== 0, open: [] };
   }
   const tree = setupTreeOf(dir);
   const creds = setupCredsOf(dir);
