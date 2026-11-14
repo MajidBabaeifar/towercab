@@ -4,6 +4,7 @@
 import type { Db } from "../db.ts";
 import { observerCosts } from "../observer/store.ts";
 import { shadowCosts } from "../shadow/store.ts";
+import { sideCosts } from "../side-runs.ts";
 import { localDate, money, type UiSources } from "./state.ts";
 import type { RepoSpendView } from "./view.ts";
 
@@ -122,6 +123,8 @@ export function spendPeriods(db: Db, now: number): { all: Periods; repos: Map<st
   for (const r of shadowCosts(db, from)) add(all, r.at, r.cost);
   // OBV-10: the observer's runs count overall and for no repo.
   for (const r of observerCosts(db, from)) add(all, r.at, r.cost);
+  // LOOP-125: the overlap checks count overall and for no repo.
+  for (const r of sideCosts(db, from)) add(all, r.at, r.cost);
   for (const t of db.all<{ id: number; at: number; cost: number }>(
     "SELECT id, at, cost FROM shadow_turns WHERE cost > 0 AND at >= ?",
     from,

@@ -142,8 +142,9 @@ web page shows what needs you, what is stuck, what is moving and what it costs
    checks the App can reach it, takes its default branch and clones it), then start the service with
    `bin/towercab up` and open the page with `bin/towercab ui`. More repos can be added later from the
    page or with `repo add`, without a restart.
-5. Add an intent with `bin/towercab add "web: Log in with a magic link" u3 i4`, or with the `/intent`
-   Claude Code skill (`./install.sh` links it).
+5. Add an intent with the page's "New intent" form, with `bin/towercab add "web: Log in with a magic link" u3 i4`
+   (at a terminal both first check for intents that overlap yours), or with the `/intent` Claude Code skill
+   (`./install.sh` links it).
 6. Optional, for plans that need a secret in a SOPS file ([specs/ship.md](specs/ship.md), SHIP-33..36):
    install `sops` (a version with `set --value-stdin`) and make the age key readable by the Towercab
    service only (`SOPS_AGE_KEY_FILE` in its environment). Towercab never passes it to a worker.
