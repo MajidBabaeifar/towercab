@@ -1469,7 +1469,12 @@ export class Loop {
           // PIP-45: the lead repo's `live` block, read from the base branch of Towercab's clone.
           let entry: ReleaseRepo;
           try {
-            const files = await loadRepoFiles(this.d.tools, clonePath(repo, this.d.home.root), repo.base);
+            const files = await loadRepoFiles(
+              this.d.tools,
+              clonePath(repo, this.d.home.root),
+              repo.base,
+              repo.github,
+            );
             entry = { name: m.repo, live: files.towercab.live ? { url: files.towercab.live.url } : null };
           } catch (e) {
             entry = { name: m.repo, live: null, unreadable: (e as Error).message };

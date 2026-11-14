@@ -220,7 +220,7 @@ which intent, with a link.
 The CLI covers running the service and the few actions that have no GitHub gesture.
 
 - `up`, `down`, `restart`, `logs` (LOOP-2); `run [--watch] [--intent <id>]`; `status`, `next`
-  (LOOP-13); `add` ([INT-2](intents.md)); `answer <id> <text>` (LOOP-38); `start <id>` (LOOP-63); `step <id> <n…|all>` ([SHIP-22](ship.md)); `retry <id>` (a fresh
+  (LOOP-13); `add` ([INT-2](intents.md)); `answer <id> <text>` (LOOP-38); `start <id>` (LOOP-63); `unfreeze <id>` (LOOP-81); `step <id> <n…|all>` ([SHIP-22](ship.md)); `retry <id>` (a fresh
   attempt); `drop <id>` ([PRI-9](priority.md)); `approve <id>` (merges the PR the intent waits on, as
   the owner, LOOP-38); `pause [id]`, `resume [id]` (one intent, SHD-22; the command line refuses `resume <id>` on an a0 intent, AUT-33); `repo add | remove | set | list` (LOOP-66, LOOP-67, LOOP-69); `ui` (opens
   the page); `doctor`; `update` (LOOP-35);
@@ -1729,7 +1729,7 @@ CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT 
 CREATE TABLE transitions (id INTEGER PRIMARY KEY, mission INTEGER NOT NULL REFERENCES missions(id),
   at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT);
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost','kind')),
+  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost','unfreeze','kind')),
   arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
   created REAL NOT NULL, applied_at REAL, result TEXT);
 CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, created REAL NOT NULL,
@@ -1831,6 +1831,8 @@ are stored in intent files and never change; each ask says plainly what the owne
 | `several repos` | blocked | This change spans several repos and Towercab can't build those yet, so nothing was built. Do the change yourself and say so, or drop the intent. |
 | `dependency stalled` | blocked | An intent this one waits for was rolled back or dropped, or has not finished in 3 days. Take it out of `after:`, start over or drop this intent; it carries on by itself once the other one is done. |
 | `bad repos:` | (intent only) | Fix which repos this intent changes: Towercab doesn't know one of the repos it names. Add the repo, or fix the intent's repos list. |
+| `freeze` | blocked | Merges in this change's repos have been paused for a long time. Reply to keep waiting, lift the pause, or drop the intent. |
+| `freeze lifted` | blocked | Merges are unpaused and nothing is merged yet. Reply when you are ready to pause them again and land the change, or drop the intent. |
 | `rolled back, revise` | blocked | The change broke the live app, two fixes didn't hold, and it was taken back out. Revise the intent, then start over (/retry). |
 | `rollback failed` | blocked | Taking the broken change back out failed, so nothing more goes live in this repo until you fix it. |
 | `your steps first` | blocked | Do these before this change merges: tick them off in Towercab, or reply to change the plan. |
