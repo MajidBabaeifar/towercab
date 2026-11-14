@@ -60,6 +60,7 @@ export const EVENTS = [
   "to_steps",
   "reviewed",
   "more_steps",
+  "unfreeze",
 ] as const;
 export type Event = (typeof EVENTS)[number];
 
@@ -205,6 +206,9 @@ export function next(
       if (stage === "approval:merge") return go("gate");
       if (stage === "approval:spec") return go("design");
       return K("ignore");
+    // LOOP-81: the owner lifts a freeze; only the `freeze` wait offers it.
+    case "unfreeze":
+      return stage === "blocked" ? K("continue") : K("ignore");
     case "resume":
       return stage === "merge" ? K("again") : K("ignore");
     // PIP-216: plan steps are still open after a push; the next build run carries on from the first one.
@@ -334,6 +338,15 @@ export const WAITS: Record<string, { stage: Stage; ask: string }> = {
     stage: "blocked",
     ask: "This change spans several repos and Towercab can't build those yet, so nothing was built. Do the change yourself and say so, or drop the intent.",
   },
+  // LOOP-81: merges in the intent's repos were frozen for too long, or the owner lifted the freeze.
+  freeze: {
+    stage: "blocked",
+    ask: "Merges in this change's repos have been paused for a long time. Reply to keep waiting, lift the pause, or drop the intent.",
+  },
+  "freeze lifted": {
+    stage: "blocked",
+    ask: "Merges are unpaused and nothing is merged yet. Reply when you are ready to pause them again and land the change, or drop the intent.",
+  },
   "rolled back, revise": {
     stage: "blocked",
     ask: "The change broke the live app, two fixes didn't hold, and it was taken back out. Revise the intent, then start over (/retry).",
@@ -354,7 +367,7 @@ export const WAITS: Record<string, { stage: Stage; ask: string }> = {
 };
 
 /** What the owner can do at a wait (LOOP-76); each is one event of the machine. */
-export type ExitKind = "continue" | "retry" | "steps" | "drop" | "done" | "merge" | "tick";
+export type ExitKind = "continue" | "retry" | "steps" | "drop" | "done" | "merge" | "tick" | "unfreeze";
 
 const APPROVE: ExitKind[] = ["merge", "retry", "drop"];
 const BASIC: ExitKind[] = ["continue", "retry", "drop"];
@@ -390,6 +403,8 @@ export const EXITS: Record<string, ExitKind[]> = {
   // LOOP-119: a reply would only come back to the same hold.
   "dependency stalled": ["retry", "drop"],
   "several repos": ["done", "retry", "drop"],
+  freeze: ["continue", "unfreeze", "drop"],
+  "freeze lifted": ["continue", "drop"],
   "rolled back, revise": BASIC,
   "rollback failed": BASIC,
   "your steps first": BASIC,
@@ -404,6 +419,7 @@ const EXIT_LABELS: Record<ExitKind, string> = {
   done: "Nothing to build: I did it myself",
   merge: "Merge",
   tick: "Tick the steps",
+  unfreeze: "Lift the pause",
 };
 
 export interface Exit {
@@ -444,6 +460,8 @@ export function exitEvent(kind: ExitKind, stage: Stage): Event {
       return "to_steps";
     case "tick":
       return "ok";
+    case "unfreeze":
+      return "unfreeze";
     case "merge":
       return stage === "approval:spec"
         ? "spec_merged"
@@ -476,6 +494,8 @@ export function continueTo(waiting: string | null, from: Stage | null): Stage {
   }
   if (waiting === "CI stuck") return "ci";
   if (waiting === "merge failed" || waiting === "your steps first") return "gate";
+  // LOOP-81: keeping a freeze waiting, or freezing again, goes back to the merge.
+  if (waiting === "freeze" || waiting === "freeze lifted") return "merge";
   // PIP-95: the answer is read where the question was asked.
   if ((waiting === "allow check writes" || waiting === "fix sandbox") && from) return from;
   if (from === "pick" || from === "design" || from === "plan") return from;
