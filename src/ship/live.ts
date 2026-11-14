@@ -17,7 +17,9 @@ export interface Suite {
 export interface Live {
   url: string;
   environment: string;
-  adapter: "github" | "command";
+  adapter: "github" | "gitlab" | "command";
+  /** The file names the adapter; absent when the host's default stands (SHIP-37). */
+  adapterSet?: true;
   liveCommand: string | null;
   rollbackCommand: string | null;
   /** Minutes to wait for a deploy. */
@@ -73,7 +75,8 @@ function liveOf(v: unknown): Live {
   if (!/^https:\/\/[^\s/]+/.test(url)) throw new Error("url must be an https:// URL");
   const environment = m.has("environment") ? text(m.get("environment"), "environment") : "production";
   const adapter = m.has("adapter") ? text(m.get("adapter"), "adapter") : "github";
-  if (adapter !== "github" && adapter !== "command") throw new Error("adapter must be github or command");
+  if (adapter !== "github" && adapter !== "gitlab" && adapter !== "command")
+    throw new Error("adapter must be github, gitlab or command");
   const liveCommand = m.has("live_command") ? text(m.get("live_command"), "live_command") : null;
   const rollbackCommand = m.has("rollback_command")
     ? text(m.get("rollback_command"), "rollback_command")
@@ -99,11 +102,25 @@ function liveOf(v: unknown): Live {
     url: url.replace(/\/+$/, ""),
     environment,
     adapter,
+    ...(m.has("adapter") ? { adapterSet: true as const } : {}),
     liveCommand,
     rollbackCommand,
     timeout,
     suites,
   };
+}
+
+/**
+ * SHIP-37: the adapter on the repo's host. A GitLab repo defaults to `gitlab`, a GitHub repo to `github`;
+ * the other host's adapter is an error (`live: …`).
+ */
+export function resolveAdapter(live: Live, gitlab: boolean): Live {
+  if (live.adapter === "gitlab" && !gitlab) throw new Error("live: the gitlab adapter is for GitLab repos");
+  if (live.adapter === "github" && gitlab) {
+    if (live.adapterSet) throw new Error("live: the github adapter is for GitHub repos");
+    return { ...live, adapter: "gitlab" };
+  }
+  return live;
 }
 
 function suiteOf(v: unknown, n: number): Suite {

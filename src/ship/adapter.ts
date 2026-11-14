@@ -3,11 +3,13 @@
 
 import { homedir } from "node:os";
 import { git } from "../checkout.ts";
+import type { GitLabDeployment } from "../forge/gitlab.ts";
+import { OutdatedJob } from "../forge/gitlab-ci.ts";
 import { ForgeDenied } from "../forge.ts";
 import { type Ctx, EnvError } from "../handlers.ts";
 import type { Mission } from "../mission.ts";
 import { checksMayWrite, commandDomains } from "../pipeline/checks.ts";
-import { viaForge } from "../pipeline/common.ts";
+import { asEnv, viaForge } from "../pipeline/common.ts";
 import { splitDomains } from "../pipeline/domains.ts";
 import { proxySocket } from "../pipeline/proxy.ts";
 import { cacheEnv, sandboxArgv, sandboxEnv } from "../pipeline/sandbox.ts";
@@ -15,7 +17,24 @@ import type { RunResult } from "../tools.ts";
 import { type Live, liveDomains, shipNetwork } from "./live.ts";
 import type { Secrets } from "./secrets.ts";
 
-export type DeployOutcome = { state: "live" } | { state: "failed"; why: string } | { state: "pending" };
+export type DeployOutcome =
+  | { state: "live" }
+  | { state: "failed"; why: string }
+  /** `why`: what the wait is on, when the platform says (SHIP-38). */
+  | { state: "pending"; why?: string };
+
+/** The part of `GitLabForge` the gitlab adapter uses (SHIP-37). */
+export interface GitlabDeploys {
+  deployments(slug: string, environment: string): Promise<GitLabDeployment[]>;
+  retryJob(slug: string, jobId: number): Promise<number>;
+}
+
+function gitlabOf(e: AdapterEnv): GitlabDeploys {
+  if (e.gitlab) return e.gitlab;
+  const f = e.cx.github as unknown as Partial<GitlabDeploys>;
+  if (typeof f.deployments === "function" && typeof f.retryJob === "function") return f as GitlabDeploys;
+  throw new EnvError("gitlab", "the gitlab adapter needs the GitLab forge, and this repo has none");
+}
 
 export interface RollbackAsk {
   sha: string;
@@ -45,12 +64,64 @@ export interface AdapterEnv {
   clone: string;
   /** The checkout the command adapter runs in. */
   dir: string;
+  /** The GitLab forge the gitlab adapter reads; absent: the mission's forge (`cx.github`). */
+  gitlab?: GitlabDeploys;
 }
 
 export const COMMAND_TIMEOUT_MS = 5 * 60_000;
 
 export function adapterOf(e: AdapterEnv): Adapter {
-  return e.live.adapter === "command" ? commandAdapter(e) : githubAdapter(e);
+  if (e.live.adapter === "command") return commandAdapter(e);
+  return e.live.adapter === "gitlab" ? gitlabAdapter(e) : githubAdapter(e);
+}
+
+const WAITING_FOR_APPROVAL = (environment: string) =>
+  `the deploy is waiting for approval: a person has to approve it in GitLab (${environment})`;
+
+/** SHIP-37, SHIP-38: GitLab's deployments of the environment; a rollback retries an old deploy job. */
+function gitlabAdapter(e: AdapterEnv): Adapter {
+  const slug = e.cx.repo(e.m).github;
+  const env = e.live.environment;
+  const list = () => viaForge(gitlabOf(e).deployments(slug, env));
+  const current = async () => (await list()).find((d) => d.status === "success")?.sha || null;
+  return {
+    current,
+    async outcome(sha) {
+      const all = await list();
+      const newest = all.find((d) => d.sha === sha);
+      if (newest?.status === "success") return { state: "live" };
+      if (newest?.status === "failed")
+        return { state: "failed", why: newest.job?.failureReason || "the deploy job failed" };
+      const now = all.find((d) => d.status === "success")?.sha;
+      if (now && now !== sha && (await contains(e, now, sha))) return { state: "live" };
+      if (newest?.status === "blocked") return { state: "pending", why: WAITING_FOR_APPROVAL(env) };
+      return { state: "pending" };
+    },
+    async rollback(ask) {
+      const mine = (await list()).filter((d) => d.sha === ask.sha);
+      // A retry this step already made (a crash after the POST) is reused, never made twice.
+      const made = mine.find((d) => d.job && Date.parse(d.createdAt) / 1000 >= ask.since - 1);
+      if (made?.job) return made.job.id;
+      const good = mine.find((d) => d.status === "success" && d.job);
+      if (!good?.job)
+        throw new RollbackRefused(
+          `no successful deployment of ${ask.sha.slice(0, 7)} in ${env} to run again`,
+        );
+      try {
+        return await gitlabOf(e).retryJob(slug, good.job.id);
+      } catch (err) {
+        if (err instanceof OutdatedJob)
+          throw new RollbackRefused(
+            `GitLab refused to re-run the deploy job of ${ask.sha.slice(0, 7)} because the setting Prevent outdated deployment jobs is on: turn it off for the ${env} environment`,
+          );
+        if (err instanceof ForgeDenied)
+          throw new RollbackRefused(
+            `Towercab's GitLab token needs permission to run jobs in the ${env} environment`,
+          );
+        throw asEnv(err);
+      }
+    },
+  };
 }
 
 /** Whether `newer` is `sha` or contains it, in Towercab's clone after a fetch. */

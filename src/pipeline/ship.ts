@@ -9,7 +9,7 @@ import { MERGE_METHOD } from "../forge.ts";
 import { type ChildEnd, type Ctx, EnvError, type Handler, type Progress } from "../handlers.ts";
 import { type Outcome, ok, red, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
-import { type Adapter, adapterOf, RollbackRefused, shipEnv } from "../ship/adapter.ts";
+import { type Adapter, adapterOf, type DeployOutcome, RollbackRefused, shipEnv } from "../ship/adapter.ts";
 import { type Live, liveDomains, shipNetwork, smokeSuites, suiteOrder } from "../ship/live.ts";
 import { readSecrets, type Secrets, secretsPath } from "../ship/secrets.ts";
 import { checksMayWrite, logPath, sandboxSpec } from "./checks.ts";
@@ -32,6 +32,8 @@ import {
 
 export const MAX_FIXES = 2;
 const HOLD_POLL = 60;
+/** SHIP-7, SHIP-38: a deploy wait that has lasted this long (5 minutes) sends the owner its reason. */
+const PENDING_NOTICE_S = 5 * 60;
 
 /** The `meta` key of a repo's last good version (SHIP-9). */
 export const lastGoodKey = (repo: string) => `lastgood:${repo}`;
@@ -218,22 +220,52 @@ export const deployHandler: Handler = {
       sc.ship = data(m).ship!;
     }
     const sha = sc.ship.merges.at(-1)!;
-    const o = await sc.adapter.outcome(sha);
-    if (o.state === "live") return { done: ok({ why: `${short(sha)} is live` }) };
-    if (o.state === "failed") return { done: shipRed(sc, "deploy", `the deploy failed: ${o.why}`, "") };
-    if (late(cx, sc.ship, sc.live))
-      return { done: shipRed(sc, "deploy", `not live after ${minutes(sc.live)}`, "") };
-    return { poll: cx.config.agent.ciPoll };
+    return deployProgress(cx, m, sc, sha, await sc.adapter.outcome(sha));
   },
   async finish() {
     return { poll: 0 };
   },
 };
 
+/** What the deploy step does with the adapter's answer for `sha` (SHIP-7, SHIP-38). */
+export function deployProgress(
+  cx: Ctx,
+  m: Mission,
+  sc: Pick<ShipCx, "live" | "ship">,
+  sha: string,
+  o: DeployOutcome,
+): Progress {
+  const clear = { ship: { ...sc.ship, pending: undefined } };
+  if (o.state === "live") return { done: ok({ why: `${short(sha)} is live`, data: clear }) };
+  if (o.state === "failed") return { done: shipRed(sc, "deploy", `the deploy failed: ${o.why}`, "") };
+  const why = o.why;
+  if (late(cx, sc.ship, sc.live))
+    return { done: shipRed(sc, "deploy", `not live after ${minutes(sc.live)}${why ? `: ${why}` : ""}`, "") };
+  // SHIP-38: what the wait is on is kept for the intent page, and the owner hears of it once.
+  const now = cx.clock.now();
+  let ship = sc.ship;
+  if (why && ship.pending?.why !== why) {
+    ship = data(cx.record(m, m.step, {}, { ship: { ...ship, pending: { why, at: now } } })).ship!;
+  } else if (!why && ship.pending) {
+    ship = data(cx.record(m, m.step, {}, clear)).ship!;
+  }
+  if (why && ship.pending && now - ship.pending.at >= PENDING_NOTICE_S) {
+    cx.db.run(
+      "INSERT OR IGNORE INTO outbox (key, mission, text, created) VALUES (?, NULL, ?, ?)",
+      `deploy-pending:${m.id}:${ship.since ?? 0}`,
+      `${why}\n${m.intent} (${m.repo})`.slice(0, 4000),
+      now,
+    );
+  }
+  return { poll: cx.config.agent.ciPoll };
+}
+
 /** A red deploy or e2e run: the rollback gets what failed (SHIP-10, SHIP-11). */
-function shipRed(sc: ShipCx, suite: string, why: string, log: string, path = ""): Outcome {
+function shipRed(sc: Pick<ShipCx, "ship">, suite: string, why: string, log: string, path = ""): Outcome {
   return red(why, {
-    data: { ship: { ...sc.ship, red: { suite, log: log || why, path }, since: undefined } },
+    data: {
+      ship: { ...sc.ship, red: { suite, log: log || why, path }, since: undefined, pending: undefined },
+    },
   });
 }
 
