@@ -95,3 +95,29 @@ export function runBudget(
 
 /** The cap is reached: every part stops at its next step and the mission asks once (LOOP-78). */
 export const capReached = (capUsd: number, m: Pick<Mission, "cost_usd">): boolean => m.cost_usd >= capUsd;
+
+/** LOOP-80: the next part to merge: the first unmerged part whose `waitsOn` repos have all merged; null when none is ready. */
+export function nextToLand(parts: PartState[]): PartState | null {
+  const merged = new Set(parts.filter((p) => p.merged).map((p) => p.repo));
+  return (
+    parts.find(
+      (p) => !p.merged && p.waitsOn.every((w) => merged.has(w) || !parts.some((x) => x.repo === w)),
+    ) ?? null
+  );
+}
+
+/**
+ * LOOP-82: the parts a red part at `repo` rolls back: it and every merged part after it in landing order,
+ * last landed first. Parts before it and parts not yet merged are left alone.
+ */
+export function rollbackSet(parts: PartState[], repo: string): PartState[] {
+  const at = parts.findIndex((p) => p.repo === repo);
+  if (at < 0) return [];
+  return parts
+    .slice(at)
+    .filter((p) => p.merged)
+    .reverse();
+}
+
+/** LOOP-81: the freeze has lasted `ageSecs` and the owner is due to be asked (`freezeWaitMin` minutes). */
+export const freezeDue = (ageSecs: number, freezeWaitMin: number): boolean => ageSecs >= freezeWaitMin * 60;
