@@ -1756,6 +1756,15 @@ CREATE TABLE observer_runs (id INTEGER PRIMARY KEY, trigger TEXT NOT NULL, start
   dropped TEXT NOT NULL DEFAULT '[]', detail TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE observer_proposals (pr INTEGER PRIMARY KEY, intent TEXT NOT NULL, run INTEGER NOT NULL, at REAL NOT NULL,
   title TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '[]');
+CREATE TABLE users (login TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL CHECK (role IN ('viewer','contributor','maintainer','admin')),
+  repos TEXT NOT NULL DEFAULT '{}', added_by TEXT NOT NULL, added REAL NOT NULL, disabled_at REAL,
+  last_seen REAL, telegram_chat TEXT);
+CREATE TABLE sessions (id INTEGER PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, login TEXT NOT NULL,
+  created REAL NOT NULL, last_seen REAL NOT NULL, expires REAL NOT NULL, revoked_at REAL);
+CREATE TABLE user_events (id INTEGER PRIMARY KEY, at REAL NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL,
+  target TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '');
+CREATE TABLE link_codes (code_hash TEXT PRIMARY KEY, login TEXT NOT NULL, expires REAL NOT NULL, used_at REAL);
 ```
 
 **Transitions** (`next(stage, event)`; "next" = the next stage of the order; `U` = unexpected, counted
