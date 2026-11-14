@@ -208,6 +208,7 @@ function NewIntentForm({ top, close }: { top: TopBar | null; close(): void }) {
       <h2 class="modal-title">New intent</h2>
       <form
         class="new-intent-form"
+        noValidate
         onSubmit={(e) => {
           e.preventDefault();
           void submit();
@@ -218,7 +219,6 @@ function NewIntentForm({ top, close }: { top: TopBar | null; close(): void }) {
           id="ni-repo"
           value={f.repo}
           disabled={locked}
-          required
           onChange={(e) => set("repo", (e.currentTarget as HTMLSelectElement).value)}
         >
           <option value="">Pick a repo</option>
@@ -235,7 +235,6 @@ function NewIntentForm({ top, close }: { top: TopBar | null; close(): void }) {
           autoComplete="off"
           value={f.title}
           disabled={locked}
-          required
           aria-describedby="ni-rule"
           onInput={(e) => set("title", (e.currentTarget as HTMLInputElement).value)}
         />
