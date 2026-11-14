@@ -25,7 +25,14 @@ import { shadowView } from "./shadow.ts";
 import { activity, intentPage, overview, queue, RUN_NAME, redact, type UiSources } from "./state.ts";
 import type { ActionReply } from "./view.ts";
 
+/** USR-5: what the person asking may do for a repo. Without `[auth]` the one owner is a maintainer (UI-216). */
+export type Role = "viewer" | "contributor" | "maintainer";
+
 export interface UiOptions {
+  /** The role of whoever sent `req` for `repo`; default: a maintainer. */
+  roleOf?: (req: IncomingMessage, repo: string) => Role;
+  /** The person's name for the timeline and proposals; default `owner via page`. */
+  who?: (req: IncomingMessage) => string;
   /** 0 = any free port (tests, the fixture); the caller treats `[ui] port = 0` as off. */
   port: number;
   sources: UiSources;
@@ -84,6 +91,8 @@ const TYPES: Record<string, string> = {
 const PAGES =
   /^\/(?:board|overview|repos|queue|activity|i\/[A-Za-z0-9._-]+|inbox(?:\/[A-Za-z0-9._-]+)?)?\/?$/;
 const ACTIONS = new Set([
+  "checkIntent",
+  "createIntent",
   "autonomy",
   "set-fast",
   "scores",
@@ -302,6 +311,14 @@ export function startUi(o: UiOptions): UiServer {
       n?: unknown;
       /** AUT-34: the level to set (`autonomy`). */
       a?: unknown;
+      /** UI-216: the new intent form's text and the intent to add it to (`checkIntent`, `createIntent`). */
+      title?: unknown;
+      problem?: unknown;
+      outcome?: unknown;
+      affected?: unknown;
+      constraints?: unknown;
+      questions?: unknown;
+      addTo?: unknown;
       /** FAST-1: on or off (`set-fast`). */
       fast?: unknown;
       /** LOOP-133: urgency and importance (`scores`). */
@@ -332,6 +349,8 @@ export function startUi(o: UiOptions): UiServer {
     if (!ACTIONS.has(action)) return json(res, 400, { ok: false, message: `Unknown action “${action}”.` });
     const proposal = action === "accept" || action === "close";
     const needsIntent = ![
+      "checkIntent",
+      "createIntent",
       "pause",
       "resume",
       "apply-settings",
@@ -374,6 +393,73 @@ export function startUi(o: UiOptions): UiServer {
     }
     const a = o.actions;
     let reply: ActionReply;
+    // UI-216: the new intent form. The mode follows the person's role, never the request.
+    if (action === "checkIntent" || action === "createIntent") {
+      const role = o.roleOf?.(req, repo) ?? "maintainer";
+      const text = (v: unknown) => (typeof v === "string" ? v : undefined);
+      // A score that is not a number reaches the writer as NaN, which refuses it.
+      const score = (v: unknown) =>
+        v === undefined || v === null ? undefined : typeof v === "number" ? v : Number.NaN;
+      const draft = {
+        repo,
+        title: typeof body.title === "string" ? body.title : "",
+        u: score(body.u),
+        i: score(body.i),
+        a: score(body.a),
+        problem: text(body.problem),
+        outcome: text(body.outcome),
+        affected: text(body.affected),
+        constraints: text(body.constraints),
+        questions: text(body.questions),
+      };
+      const addTo = typeof body.addTo === "string" && body.addTo ? body.addTo : undefined;
+      if (role === "viewer")
+        return json(res, 403, {
+          ok: false,
+          message: `Needs contributor on ${repo || "the repo"} (you are viewer)`,
+        });
+      if (addTo && role !== "maintainer")
+        return json(res, 403, {
+          ok: false,
+          message: `Needs maintainer on ${repo || "the repo"} (you are ${role})`,
+        });
+      if (addTo && !INTENT_ID.test(addTo)) return json(res, 400, { ok: false, message: "Which intent?" });
+      try {
+        if (action === "checkIntent") {
+          if (!a.checkIntent) throw new Error("Creating intents isn't available.");
+          const r = await a.checkIntent(draft, {
+            visible: (name) => (o.roleOf?.(req, name) ?? "maintainer") !== "viewer",
+          });
+          reply = {
+            ok: true,
+            message: "",
+            matches: r.matches.map((m) => ({ ...m, canAdd: m.canAdd && role === "maintainer" })),
+            ...(r.titleNote ? { titleNote: r.titleNote } : {}),
+          };
+        } else {
+          if (!a.createIntent) throw new Error("Creating intents isn't available.");
+          const r = await a.createIntent(draft, {
+            mode: role === "maintainer" ? "direct" : "proposal",
+            by: o.who?.(req) ?? "owner via page",
+            addTo,
+          });
+          reply = {
+            ok: true,
+            message: r.message,
+            id: r.id,
+            path: r.path,
+            added: r.added,
+            ...(r.proposal ? { proposal: true } : {}),
+            ...(r.pr ? { pr: r.pr, url: o.sources.prUrl(src.store.github() ?? "", r.pr) } : {}),
+          };
+        }
+      } catch (e) {
+        reply = { ok: false, message: (e as Error).message };
+      }
+      store.invalidate();
+      changed();
+      return json(res, reply.ok ? 200 : 422, reply);
+    }
     // UI-204, UI-205: the owner's edits of scores and autonomy; the reply may carry the new priority.
     if (action === "scores" || action === "boost") {
       const actor = typeof body.actor === "string" ? body.actor : "";

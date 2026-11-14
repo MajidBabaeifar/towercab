@@ -2331,6 +2331,7 @@ Because a refactor changes no behaviour, its proof is that the existing tests pa
 | [score](../agents/score.md) | Turns a GitHub issue into a scored intent ([INT-22](intents.md)); runs outside any mission in an empty folder. | Nothing: no tools. | none | `[agent].model` |
 | [shadow](../agents/shadow.md) | The owner's shadow in Telegram ([SHD-1](shadow.md)); one long-lived session, outside any mission, in an empty folder. | Nothing: no tools; Towercab runs its reads and actions. | resume | `[shadow].model`, else `[agent].model` |
 | [observer](../agents/observer.md) | Reads 14 days of how Towercab ran and proposes improvements ([OBV-1](observer.md)); runs outside any mission, in an empty folder. | Nothing: no tools, no network; Towercab builds its evidence and opens the proposals. | none | `[observer].model`, else `[agent].model` |
+| [overlap](../agents/overlap.md) | Compares a new intent with the existing ones and says which overlap ([INT-73](intents.md)); runs outside any mission, in an empty folder. | Nothing: no tools, no network; Towercab builds what it reads. | none | `[agent].model` |
 | [features](../agents/features.md) | Writes a repo's live features from its README and specs ([INT-39](intents.md)); runs outside any mission in a fresh checkout of base. | Read, Glob, Grep in the sandbox; no network. | none | `[agent].model` |
 
 Each file's front matter also holds the time and cost limits and the result schema (PIP-71). `repair`

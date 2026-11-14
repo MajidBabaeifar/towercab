@@ -57,6 +57,7 @@ export function holdPushes(tools: Tools, held: () => boolean): Tools {
         : tools.run(cmd, args, opts),
     spawn: (spec) => tools.spawn(spec),
     which: (cmd) => tools.which(cmd),
+    cutOff: () => tools.cutOff?.() ?? [],
   };
 }
 
