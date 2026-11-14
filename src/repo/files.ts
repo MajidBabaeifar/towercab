@@ -4,7 +4,8 @@
 import { dirname, resolve } from "node:path";
 import YAML from "yaml";
 import { isBranch } from "../config.ts";
-import { type Live, parseLive } from "../ship/live.ts";
+import { isGitlab } from "../forge/types.ts";
+import { type Live, parseLive, resolveAdapter } from "../ship/live.ts";
 import type { Tools } from "../tools.ts";
 import { bullets, fences, items, lines, sections, text } from "./markdown.ts";
 import { glob } from "./protected.ts";
@@ -170,13 +171,21 @@ export function parseRepoFiles(
   claude: string | null,
   review: string | null,
   towercab: string | null,
+  slug: string = "",
 ): RepoFiles {
   if (claude === null) throw RepoError.noVerifying();
   return {
     claudeMd: claude,
     verifying: parseVerifying(claude),
     review: review === null ? defaultReview() : inFile("REVIEW.md", () => parseReview(review)),
-    towercab: towercab === null ? defaultTowercab() : inFile("TOWERCAB.md", () => parseTowercab(towercab)),
+    towercab:
+      towercab === null
+        ? defaultTowercab()
+        : inFile("TOWERCAB.md", () => {
+            const t = parseTowercab(towercab);
+            if (t.live) t.live = resolveAdapter(t.live, isGitlab(slug));
+            return t;
+          }),
   };
 }
 
@@ -464,7 +473,12 @@ export function checkBase(clone: string, base: string): void {
  * PR; the caller fetches), then `parseRepoFiles`. Only regular files: a symlink, directory or
  * submodule in a file's place, or text that isn't UTF-8 → invalid.
  */
-export async function loadRepoFiles(tools: Tools, clone: string, base: string): Promise<RepoFiles> {
+export async function loadRepoFiles(
+  tools: Tools,
+  clone: string,
+  base: string,
+  slug: string = "",
+): Promise<RepoFiles> {
   checkBase(clone, base);
   const listing = await repoGit(tools, clone, [
     "ls-tree",
@@ -498,7 +512,10 @@ export async function loadRepoFiles(tools: Tools, clone: string, base: string): 
   if (c === null || c === undefined) throw RepoError.noVerifying();
   const verifying = parseVerifying(c);
   for (const x of [r, t]) if (x instanceof RepoError) throw x;
-  return { ...parseRepoFiles(c, (r as string | null) ?? null, (t as string | null) ?? null), verifying };
+  return {
+    ...parseRepoFiles(c, (r as string | null) ?? null, (t as string | null) ?? null, slug),
+    verifying,
+  };
 }
 
 const REPLACEMENT = String.fromCharCode(0xfffd);
