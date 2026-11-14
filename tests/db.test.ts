@@ -15,17 +15,23 @@ test("db: schema matches the spec", () => {
   );
   expect(tables.map((t) => t.name)).toEqual([
     "commands",
+    "intent_people",
     "meta",
     "missions",
     "observer_proposals",
     "observer_runs",
     "outbox",
     "repos",
+    "sessions",
     "shadow_actions",
     "shadow_turns",
     "telegram_updates",
     "tg_cards",
+    "tg_link_codes",
+    "tg_links",
     "transitions",
+    "user_events",
+    "users",
   ]);
 });
 

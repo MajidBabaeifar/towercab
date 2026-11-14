@@ -48,6 +48,24 @@ const OBSERVER = `CREATE TABLE observer_runs (id INTEGER PRIMARY KEY, trigger TE
 CREATE TABLE observer_proposals (pr INTEGER PRIMARY KEY, intent TEXT NOT NULL, run INTEGER NOT NULL, at REAL NOT NULL,
   title TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '[]');`;
 
+/**
+ * USR-2, USR-4, USR-8, USR-11, AUT-23: the people who may sign in (`repo_roles` is a JSON object), their
+ * sessions (only the token's hash), the log of changes to them, Telegram link codes and chats, and who wrote
+ * each intent.
+ */
+const USERS = `CREATE TABLE users (login TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL CHECK (role IN ('admin','maintainer','contributor','viewer')),
+  repo_roles TEXT NOT NULL DEFAULT '{}', added_by TEXT NOT NULL, added REAL NOT NULL, disabled_at REAL,
+  last_seen REAL);
+CREATE TABLE sessions (hash TEXT PRIMARY KEY, login TEXT NOT NULL, created REAL NOT NULL, last_seen REAL NOT NULL,
+  expires REAL NOT NULL, revoked_at REAL);
+CREATE TABLE user_events (id INTEGER PRIMARY KEY, at REAL NOT NULL, actor TEXT NOT NULL, what TEXT NOT NULL,
+  login TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '');
+CREATE TABLE tg_links (login TEXT PRIMARY KEY, chat TEXT NOT NULL UNIQUE, linked REAL NOT NULL);
+CREATE TABLE tg_link_codes (code TEXT PRIMARY KEY, login TEXT NOT NULL, expires REAL NOT NULL, used_at REAL);
+CREATE TABLE intent_people (intent TEXT PRIMARY KEY, writer TEXT, confirmed_by TEXT, confirmed_at REAL,
+  at REAL NOT NULL);`;
+
 /** LOOP-37 **Schema**, as written in specs/loop.md (a test compares them). */
 export const SCHEMA = `CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE missions (
@@ -77,13 +95,14 @@ ${REPOS}
 ${SHADOW}
 ${TELEGRAM}
 ${CARDS}
-${OBSERVER}`;
+${OBSERVER}
+${USERS}`;
 
 /** Migration i takes `user_version` from i to i+1. Later changes append. */
 export const MIGRATIONS: string[] = [
   SCHEMA.replace("'resume','start','done','steps'", "'resume'")
     .replace(OUTBOX_TG, "")
-    .replace(`\n${REPOS}\n${SHADOW}\n${TELEGRAM}\n${CARDS}\n${OBSERVER}`, ""),
+    .replace(`\n${REPOS}\n${SHADOW}\n${TELEGRAM}\n${CARDS}\n${OBSERVER}\n${USERS}`, ""),
   // 2: `start` joins the commands (LOOP-63); the CHECK can't be altered, so the table is rebuilt.
   `CREATE TABLE commands_new (id INTEGER PRIMARY KEY,
   name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start')),
@@ -140,13 +159,15 @@ ALTER TABLE commands_new RENAME TO commands;`,
 INSERT INTO commands_new SELECT id, name, arg, text, source, created, applied_at, result FROM commands;
 DROP TABLE commands;
 ALTER TABLE commands_new RENAME TO commands;`,
+  // 13: people, sessions and who wrote each intent (USR-2, USR-4, AUT-23). Additive; `IF NOT EXISTS` for a re-upgrade after a manual rollback.
+  USERS.replaceAll("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS "),
 ];
 
 /**
  * Versions reached by migrations that only add (tables, columns, keys older code doesn't read): a
  * Towercab older than them can still use the database (LOOP-37).
  */
-export const ADDITIVE = new Set([3, 6, 7, 8, 9, 10, 11, 12]);
+export const ADDITIVE = new Set([3, 6, 7, 8, 9, 10, 11, 12, 13]);
 // 10 and 12 only widen the CHECK on `commands` (same columns): older code reads the table as before, and a
 // `score`, `boost` or `unfreeze` row it doesn't know just gets an error result, so a rollback stays safe.
 
