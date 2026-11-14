@@ -16,7 +16,7 @@ waiting, never fewer safeguards.
 The owner marks an intent as fast lane from the page, the command line or Telegram, when adding it or later, and can take it out again.
 
 - Stored as `fast: true` in the intent's front matter ([INT-2](intents.md)); written and removed with `setField` / `removeField`, one commit to the intents repo like any intent edit, every other line byte-identical. Setting what is already set writes nothing.
-- Command line: `towercab add "<repo>: <title>" [uN] [iN] [aN] --fast`, `towercab fast <id>` and `towercab fast <id> --off`. Page: `POST /api/actions` `{action: "set-fast", id, fast}` (UI-66, `actor: owner`). Telegram: `/fast <id>` and `/fast <id> off`.
+- Command line: `towercab add "<repo>: <title>" [uN] [iN] [aN] --fast`, `towercab fast <id>` and `towercab fast <id> --off`. Page: `POST /api/actions` `{action: "set-fast", id, fast}` (UI-66, `actor: owner`). Telegram: `/fast <id>` and `/fast <id> off`, from the owner's chat only (FAST-9).
 - Refused with the reason when the intent is done or dropped (`fast: <id> is done or dropped`) or is an a0 intent from any channel but the page (AUT-31, AUT-33: `fast: <id> is a0, only you decide it on the page`).
 - Each change is recorded on the intent's timeline (who, on or off, which channel). A viewer cannot set it (USR).
 - Verified by: `fast: the field is written and removed on its own line`, `fast: add --fast writes the field`, `fast: the fast command sets and clears it`, `fast: the page sets it`, `fast: telegram sets it`, `fast: a done intent is refused`, `fast: an a0 intent is refused from the command line`
@@ -27,8 +27,8 @@ Each repo works on one fast-lane intent at a time; a second one waits as the nex
 
 - The current fast intent of a repo is the open one marked `fast` that has a mission or was started first, until it is finished, dropped or its mark is removed. Of several marked intents, the one with the highest priority (PRI-4) is the next fast one.
 - The next fast intent is not started; `status`, `next` and the page say `waiting: <id> is the fast lane of <repo>` (LOOP-64). An intent that already runs normally when it is marked keeps running as a normal one until the lane is free, then takes it.
-- A fast intent that waits for the owner keeps the lane: the owner's decision is the one thing the repo waits on.
-- Verified by: `fast: a second fast intent waits as the next fast one`, `fast: the lane frees when the first finishes`, `fast: a waiting owner decision keeps the lane`, `fast: a running intent that is marked takes the lane when it is free`
+- A fast intent that waits for the owner's decision (a high-risk gate, FAST-6, FAST-8) gives up the lane while it waits, so the next fast intent of the repo can start and run. When the owner decides, the first intent takes the lane back ahead of any other waiting fast intent. The one that took the lane meanwhile is never stopped: both run until one finishes, and no third fast intent starts in that time.
+- Verified by: `fast: a second fast intent waits as the next fast one`, `fast: the lane frees when the first finishes`, `fast: an intent waiting on the owner gives up the lane`, `fast: the owner's decision gives the lane back without stopping the other`, `fast: a running intent that is marked takes the lane when it is free`
 
 ### FAST-3 · A fast-lane intent starts at once
 
@@ -79,8 +79,8 @@ A fast-lane change merges as soon as checks are green and the review approves, a
 The fast lane changes order, waiting and who decides, never the checks, the review, the proof or the sandbox.
 
 - Every stage and every check of the intent's path runs (AUT-6). The repo's cap (AUT-8) still lowers the level the fast lane applies, an a0 intent stays with the owner (AUT-31), and `source` rules (AUT-13) are unchanged.
-- Counts as a raise of autonomy (AUT-35): when the mark comes from the page or the owner's GitHub account, FAST-6 to FAST-8 apply fully. When it comes from the command line or Telegram, FAST-2 to FAST-5 apply at once, and the gates follow the intent's own level until the owner confirms on the page (one confirmed click on the card, as in UI-258); the card says `fast lane: waiting for your confirmation`. An intent with `a` at a4 or a5 needs no confirmation.
-- Verified by: `fast: every check still runs`, `fast: a repo cap still applies`, `fast: an a0 intent stays with the owner`, `fast: a mark from the command line waits for confirmation to skip approvals`, `fast: a mark from the page skips approvals at once`
+- Counts as a raise of autonomy (AUT-35). A mark from the page, the owner's GitHub account or the owner's own Telegram chat (the chat the owner paired, a verified channel) applies FAST-6 to FAST-8 at once. A mark from the command line applies FAST-2 to FAST-5 at once, and the gates follow the intent's own level until the owner confirms on the page (one confirmed click on the card, as in UI-258), because agents can run the command line and must not raise their own gates; the card says `fast lane: waiting for your confirmation`. An intent with `a` at a4 or a5 needs no confirmation. A Telegram message from any other chat is ignored (TG-2).
+- Verified by: `fast: every check still runs`, `fast: a repo cap still applies`, `fast: an a0 intent stays with the owner`, `fast: a mark from the command line waits for confirmation to skip approvals`, `fast: a mark from the page skips approvals at once`, `fast: a mark from the owner's telegram chat skips approvals at once`, `fast: a mark from another telegram chat is ignored`
 
 ### FAST-10 · The page and the card show the fast lane and its progress
 
@@ -99,5 +99,7 @@ The page and the intent's card say the intent is in the fast lane and how far it
 ## Decisions
 
 - The fast lane applies the a5 gate table rather than a new one: one rule for "only high risk waits" (AUT-18), already understood and tested.
-- It counts as raising autonomy, so a mark from the command line or Telegram cannot skip approvals on its own (AUT-35): ordering is harmless, deciding for the owner is not.
+- It counts as raising autonomy, so a mark from the command line cannot skip approvals on its own (AUT-35): ordering is harmless, deciding for the owner is not. The owner's own Telegram chat is a verified channel and counts at once (owner's call, 2026-11-14).
+- A medium-risk fast-lane change merges and goes live without the owner; only high risk and a repo's cap stop it (owner's call, 2026-11-14).
+- An intent waiting on the owner's high-risk decision gives up the lane so the next fast intent can run (owner's call, 2026-11-14).
 - Questions are answered only with the worker's own recommendation, and never for access: the owner chose no automatic grants (autonomy.md Decisions).
