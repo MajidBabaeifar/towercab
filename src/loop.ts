@@ -89,6 +89,7 @@ import {
   update,
 } from "./mission.ts";
 import { Mutex } from "./mutex.ts";
+import { sendWebhooks, type Webhook } from "./notify.ts";
 import { type Sender, sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
@@ -164,6 +165,8 @@ export interface LoopDeps {
   log(line: string): void;
   /** Delivers outbox rows (Telegram), or null. */
   sender: Sender | null;
+  /** LOOP-146: the webhooks that get the same rows as `sender`. */
+  webhooks?: Webhook[];
   /** Read one PR (tests fake it). */
   readPr?: (repo: string, n: number) => Promise<PrState>;
   /** Read the intents repo's proposed intents (LOOP-92; tests fake it). */
@@ -2248,8 +2251,10 @@ export class Loop {
         this.now,
       );
     }
-    if (!this.d.sender) return;
-    await sendDue(this.d.db, this.d.sender, this.now, (row) => this.obsolete(row));
+    if (this.d.sender) await sendDue(this.d.db, this.d.sender, this.now, (row) => this.obsolete(row));
+    if (this.d.webhooks?.length) {
+      await sendWebhooks(this.d.db, this.d.webhooks, this.now, (row) => this.obsolete(row));
+    }
   }
 
   /** A waiting message whose wait is over is dropped (LOOP-14). */

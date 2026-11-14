@@ -13,6 +13,8 @@ export interface HttpRequest {
   headers?: Record<string, string>;
   body?: string;
   timeoutMs: number;
+  /** `manual`: a redirect is returned as the response, not followed (LOOP-147). */
+  redirect?: "manual";
 }
 
 export interface HttpResponse {
@@ -33,6 +35,7 @@ export const fetchHttp: Http = async (req) => {
       headers: req.headers,
       body: req.body,
       signal: AbortSignal.timeout(req.timeoutMs),
+      ...(req.redirect ? { redirect: req.redirect } : {}),
     });
     return { status: r.status, text: await r.text() };
   } catch (e) {
