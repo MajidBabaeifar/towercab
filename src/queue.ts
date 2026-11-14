@@ -3,6 +3,7 @@
 
 import { finished } from "./machine.ts";
 import { dataOf, type Mission } from "./mission.ts";
+import { isMulti } from "./parts.ts";
 
 export type Landing = { since: number };
 
@@ -20,7 +21,8 @@ export function landingOf(m: Mission): Landing | null {
 
 /** In the queue: at `merge`, or holding `landing` anywhere on its way back to `merge`. */
 export function inQueue(m: Mission): boolean {
-  return !finished(m.stage) && (m.stage === "merge" || landingOf(m) !== null);
+  // LOOP-80: a multi-repo mission lands its parts itself; it holds no place in a repo's queue.
+  return !finished(m.stage) && !isMulti(m) && (m.stage === "merge" || landingOf(m) !== null);
 }
 
 /** The queue of `repo`, head first: the landing mission, then by `queuedAt`, then priority, then id. */

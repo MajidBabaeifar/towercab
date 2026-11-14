@@ -14,6 +14,7 @@ export default defineConfig({
     "proposed.spec.ts",
     "readiness.spec.ts",
     "exits.spec.ts",
+    "parts.spec.ts",
     "board-sort.spec.ts",
     "limits.spec.ts",
     "shadow.spec.ts",

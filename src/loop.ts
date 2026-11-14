@@ -30,6 +30,7 @@ import { queueTokenNotice } from "./forge/gitlab-token.ts";
 import type { Routed } from "./forge/route.ts";
 import { changeUrl, isGitlab } from "./forge/types.ts";
 import { MERGE_METHOD } from "./forge.ts";
+import { frozenBy } from "./freeze.ts";
 import {
   agentComments,
   approveNotices,
@@ -94,7 +95,7 @@ import {
 import { Mutex } from "./mutex.ts";
 import { type Sender, sendDue } from "./outbox.ts";
 import { PartDriver } from "./partloop.ts";
-import { inPartStages, partsOf } from "./parts.ts";
+import { inLanding, inPartStages, partsOf } from "./parts.ts";
 import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import { type PipeData, prUrl as prLink } from "./pipeline/common.ts";
@@ -1799,8 +1800,8 @@ export class Loop {
     for (const listed of order) {
       let m = listed;
       if (!isWorking(m.stage) || m.step === "enter" || m.held || this.children.has(m.id)) continue;
-      // LOOP-78: a multi-repo mission's parts step on their own until every part has passed the gate.
-      if (inPartStages(m)) continue;
+      // LOOP-78, LOOP-80: the parts of a multi-repo mission step on their own and land in order.
+      if (inPartStages(m) || inLanding(m)) continue;
       if (this.parked.has(m.id)) continue;
       // LOOP-113: while paused only CI is looked at (a read of the checks); nothing else is due.
       if (this.isPaused() && m.stage !== "ci") continue;
@@ -1816,6 +1817,11 @@ export class Loop {
       if (this.opts.intent && this.targetId && m.intent !== this.targetId) continue;
       const h = this.d.handlers[m.stage];
       if (!h) continue;
+      // LOOP-79: another intent's freeze of this repo holds the merge; it starts when the freeze lifts.
+      if (m.stage === "merge") {
+        const by = frozenBy(db, m.repo);
+        if (by !== null && by !== m.id) continue;
+      }
       // LOOP-159: at `merge` only the head of the repo's merge queue steps; it marks itself landing.
       if (m.stage === "merge" && landingOf(m) === null) {
         if (headOf(unfinished(db), m.repo)?.id !== m.id) continue;

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { clearFlag, flagOf, setAccepted, setFlag } from "../src/autonomy-change.ts";
 import { parseConfig } from "../src/config.ts";
 import { Db } from "../src/db.ts";
+import { takeFreeze } from "../src/freeze.ts";
 import type { ProposedPr, ProposedState } from "../src/github/proposed.ts";
 import type { Clock } from "../src/handlers.ts";
 import { Home } from "../src/home.ts";
@@ -15,6 +16,7 @@ import type { Draft } from "../src/intents/create.ts";
 import type { MatchKind } from "../src/intents/overlap.ts";
 import type { Intent, IntentStore, Listing, Unreadable } from "../src/intents/types.ts";
 import type { Stage } from "../src/machine.ts";
+import { seedParts } from "../src/parts.ts";
 import {
   type Check,
   type Item,
@@ -515,6 +517,10 @@ export function buildFixture(
     async retry(intent) {
       calls.push({ action: "retry", intent });
       return "Towercab starts it over on its next pass.";
+    },
+    async unfreeze(intent) {
+      calls.push({ action: "unfreeze", intent });
+      return "Towercab lifts the freeze on its next pass.";
     },
     async drop(intent) {
       calls.push({ action: "drop", intent });
@@ -1532,6 +1538,42 @@ function exitsScene(f: Fixture): void {
   });
 }
 
+/**
+ * UI-165..167: a two-part intent at its merge with the freeze held an hour, a part of another waiting at
+ * its freeze limit with one part merged, and a second intent of the frozen repo held at its merge.
+ */
+function partsScene(f: Fixture): void {
+  const now = Math.floor(Date.now() / 1000);
+  const row = (intent: string) =>
+    f.db.get<{ id: number; data: string; branch: string; checkout: string }>(
+      "SELECT id, data, branch, checkout FROM missions WHERE intent = ? ORDER BY id DESC",
+      intent,
+    )!;
+  const parts = (r: { branch: string; checkout: string }, merged: boolean) =>
+    seedParts(
+      [
+        { repo: "infra", waitsOn: [] },
+        { repo: "web", waitsOn: ["infra"] },
+      ],
+      r,
+    ).map((p, i) => ({ ...p, atGate: true, pr: 40 + i, merged: merged && i === 0 }));
+  const ci = row(IDS.ci);
+  f.db.run(
+    "UPDATE missions SET stage = 'merge', step = '', data = ? WHERE id = ?",
+    JSON.stringify({ ...JSON.parse(ci.data), parts: parts(ci, false) }),
+    ci.id,
+  );
+  takeFreeze(f.db, ci.id, ["infra", "web"], now - 3600);
+  const held = row(IDS.building);
+  f.db.run("UPDATE missions SET stage = 'merge', step = '', repo = 'web' WHERE id = ?", held.id);
+  const code = row(IDS.code);
+  f.db.run(
+    "UPDATE missions SET stage = 'blocked', waiting = 'freeze', from_stage = 'merge', data = ? WHERE id = ?",
+    JSON.stringify({ ...JSON.parse(code.data), parts: parts(code, true) }),
+    code.id,
+  );
+}
+
 export async function serveFixture(
   port = 0,
   o: {
@@ -1539,6 +1581,7 @@ export async function serveFixture(
     proposed?: boolean;
     readiness?: boolean;
     exits?: boolean;
+    parts?: boolean;
     crowded?: boolean;
     flagged?: boolean;
     many?: boolean;
@@ -1546,6 +1589,7 @@ export async function serveFixture(
 ): Promise<{ fixture: Fixture; server: UiServer }> {
   const fixture = buildFixture(o);
   if (o.exits && !o.empty) exitsScene(fixture);
+  if (o.parts && !o.empty) partsScene(fixture);
   if (o.flagged && !o.empty) flagScene(fixture);
   const here = dirname(fileURLToPath(import.meta.url));
   const server = startUi({

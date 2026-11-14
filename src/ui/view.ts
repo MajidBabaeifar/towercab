@@ -134,6 +134,31 @@ export interface Question {
 export interface ExitView {
   do: string;
   label: string;
+  /** UI-167: asked before the button acts (a freeze lifted after a merge ends the intent unverified). */
+  confirm?: string;
+}
+
+/** UI-165: one part of a multi-repo intent. */
+export interface PartView {
+  repo: string;
+  stage: string;
+  /** The state in plain words. */
+  label: string;
+  pr: number | null;
+  prUrl: string | null;
+  waitsOn: string[];
+  merged: boolean;
+  /** "your answer", "a check", "the freeze of web", ...; null when it waits for nothing. */
+  waiting: string | null;
+}
+
+/** UI-167: a repo and the mission that froze it (`frozenBy`), or null. */
+export interface RepoFreeze {
+  repo: string;
+  frozenBy: number | null;
+  /** The intent's title and id, for "Merges frozen for <title>". */
+  title: string | null;
+  intent: string | null;
 }
 
 export interface Access {
@@ -228,6 +253,10 @@ export interface Card {
   autonomy?: AutonomyView;
   /** PIP-186: an agent answered for the owner and the intent acted on it: the agent's name. */
   decided_by_agent?: string | null;
+  /** UI-166: the repo of the part that needs the owner (a multi-repo intent). */
+  partRepo?: string;
+  /** UI-165: the parts of a multi-repo intent. */
+  parts?: PartView[];
 }
 
 export type PhaseStatus = "done" | "current" | "todo" | "skipped";
@@ -268,6 +297,12 @@ export interface Row {
   /** UI-257: the autonomy control. */
   autonomy?: AutonomyView;
   estimate?: EstimateLine;
+  /** UI-166: "3 repos" and the part furthest behind, for a multi-repo intent. */
+  repoCount?: string;
+  slowest?: string;
+  parts?: PartView[];
+  /** UI-166: "waiting for the freeze" while another intent froze its repo. */
+  freezeHold?: string;
 }
 
 /** UI-255: what an intent is expected to cost, or what it has spent against that. */
@@ -393,6 +428,13 @@ export interface Plane {
   ship?: { kind: "rollback" | "revert" | "fix"; mark: string };
   /** UI-110: why a plane waiting at merge is held ("Held until you resume"); absent otherwise. */
   held?: string;
+  /** UI-167: the parts of a multi-repo intent. */
+  parts?: PartView[];
+  freezeHold?: string;
+  /** UI-166: "3 repos", the part furthest behind, and the repo of a part that needs the owner. */
+  repoCount?: string;
+  slowest?: string;
+  partRepo?: string;
 }
 
 /** UI-109: why the airspace is stopped. The owner's pause can be resumed; a service pause cannot. */
@@ -418,6 +460,8 @@ export interface AirspaceView {
   countsText: string;
   /** One sentence for screen readers. */
   summary: string;
+  /** UI-167: per repo, the mission that froze it or null (`GET /api/state`). */
+  repos?: RepoFreeze[];
 }
 
 export interface Overview {
@@ -685,6 +729,12 @@ export interface IntentPage {
   decided_by_agent?: string | null;
   /** SHIP-32: "Published in v1.2.0" with its link, or "Merged, waiting for a release"; absent when the repo has no releases. */
   release?: { text: string; url: string | null };
+  /** UI-165: one row per repo of a multi-repo intent, the lead first. */
+  parts?: PartView[];
+  /** UI-165: "Merges frozen in infra, web for 2 h (limit 2 h)" while the freeze is held. */
+  freeze?: string;
+  /** UI-167: an intent that ended merged, not verified live: nothing was rolled back, `Land the rest` posts `retry`. */
+  rest?: { text: string; action: { do: "retry"; label: string } | null };
 }
 
 /** UI-160: one of the owner's steps, with when it was ticked. */
@@ -726,6 +776,8 @@ export interface Lane {
   github: string;
   /** "1 of 3 ahead": intents before build against `[repos.<r>].ahead` (UI-100). */
   ahead: string;
+  /** UI-166: "Merges frozen for <title>" while an intent holds this repo's freeze. */
+  frozen?: string;
   running: Row[];
   /** Queued in pick order, numbered: nothing but their turn holds them (UI-63). */
   upNext: QueueItem[];
@@ -1049,6 +1101,13 @@ export interface BoardCard {
   state: StateView;
   /** UI-125: rolling back, reverting, or in a fix round; absent otherwise. */
   ship?: { kind: "rollback" | "revert" | "fix"; mark: string };
+  /** UI-166: "3 repos" and the part furthest behind (a multi-repo intent). */
+  repoCount?: string;
+  slowest?: string;
+  /** UI-166: a part needs the owner: the repo it is in. */
+  needsRepo?: string;
+  /** UI-166: waiting at its merge for another intent's freeze. */
+  freezeHold?: string;
 }
 
 /** UI-133: one repo's row. */
@@ -1070,6 +1129,8 @@ export interface BoardRepo {
   /** UI-187: proposed intents for this repo. */
   proposed: number;
   spend: RepoSpendView;
+  /** UI-166: "Merges frozen for <title>" while an intent holds this repo's freeze. */
+  frozen?: string;
   /** Cards per column, in column order; columns without cards are absent. */
   cells: Partial<Record<BoardColumnKey, BoardCard[]>>;
 }

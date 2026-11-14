@@ -15,7 +15,12 @@ export type PartStage =
   | "review"
   | "gate"
   | "approval:merge"
-  | "blocked";
+  | "blocked"
+  // LOOP-80: the stages a part passes while the mission lands its parts.
+  | "deploy"
+  | "e2e"
+  | "rollback"
+  | "shipped";
 
 export interface PartState {
   repo: string;
@@ -49,6 +54,19 @@ export const inPartStages = (m: Mission): boolean =>
   isMulti(m) &&
   (PART_STAGES.includes(m.stage) ||
     (m.stage === "blocked" && m.from_stage !== null && PART_STAGES.includes(m.from_stage)));
+
+/** The mission stages in which its parts land, one at a time and in order (LOOP-80). */
+export const LANDING_STAGES: readonly string[] = ["merge", "deploy", "e2e", "rollback"];
+
+/** The mission is landing its parts: merging, deploying or checking them live, or rolling them back. */
+export const inLanding = (m: Mission): boolean => isMulti(m) && LANDING_STAGES.includes(m.stage);
+
+/** LOOP-80: the part the landing works on now, or null. */
+export function currentPart(m: Mission, parts: PartState[]): PartState | null {
+  if (m.stage === "merge") return nextToLand(parts);
+  if (m.stage === "rollback") return [...parts].reverse().find((p) => p.stage === "rollback") ?? null;
+  return parts.find((p) => p.stage === "deploy" || p.stage === "e2e") ?? null;
+}
 
 /** The plan's parts as stored at plan approval: repo and what it waits on, in landing order. */
 export interface PlanPart {
@@ -144,3 +162,13 @@ export function rollbackSet(parts: PartState[], repo: string): PartState[] {
 
 /** LOOP-81: the freeze has lasted `ageSecs` and the owner is due to be asked (`freezeWaitMin` minutes). */
 export const freezeDue = (ageSecs: number, freezeWaitMin: number): boolean => ageSecs >= freezeWaitMin * 60;
+
+/**
+ * LOOP-80: the mission no longer needs its freeze: it ended (done, unverified, dropped), or it went back to
+ * its parts (a rollback finished and the rolled-back parts are built again). While it merges, deploys, checks
+ * live or rolls back, and while it waits for the owner from one of those, the freeze holds.
+ */
+export const freezeOver = (m: Mission): boolean =>
+  ["done", "stopped", "unverified"].includes(m.stage) ||
+  PART_STAGES.includes(m.stage) ||
+  (m.stage === "blocked" && m.from_stage !== null && PART_STAGES.includes(m.from_stage));

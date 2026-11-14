@@ -5079,3 +5079,34 @@ kbd {
     box-shadow: var(--shadow-pop);
   }
 }
+
+/* UI-165..167: the parts of a multi-repo intent and its freeze. */
+.parts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+.part {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+}
+.part.merged .part-stage {
+  color: var(--ok, inherit);
+}
+.freeze-line,
+.freeze-chip {
+  font-weight: 600;
+}
+.board-repos,
+.board-needs-repo,
+.board-freeze-hold {
+  display: block;
+}
+.rest.card {
+  display: grid;
+  gap: 0.5rem;
+}

@@ -3,7 +3,7 @@
 
 import type { Db, SqlValue } from "./db.ts";
 import { COLUMNS, dataOf, getMission, insertMission, type Mission } from "./mission.ts";
-import { type PartState, seedParts } from "./parts.ts";
+import { LANDING_STAGES as LANDING, type PartState, seedParts } from "./parts.ts";
 import { type ShipFacts, shipFacts } from "./steps.ts";
 
 export const ORDER = [
@@ -63,6 +63,8 @@ export const EVENTS = [
   "more_steps",
   "unfreeze",
   "parts_gated",
+  "left_unverified",
+  "reland",
 ] as const;
 export type Event = (typeof EVENTS)[number];
 
@@ -120,6 +122,12 @@ export function next(
   if (finished(stage)) return K("ignore");
   const wait = isWait(stage);
   switch (event) {
+    // LOOP-81: the freeze was lifted after a part merged: merged, not verified live; nothing is rolled back.
+    case "reland":
+      // `apply` takes an intent that ended unverified back (LOOP-81); the table never moves a finished one.
+      return K("ignore");
+    case "left_unverified":
+      return stage === "blocked" ? go("unverified") : K("ignore");
     case "ok":
       if (wait || stage === "revert") return K("unexpected");
       // PIP-113: a steps-delivered intent has no deploy; its last tick ends it.
@@ -172,6 +180,11 @@ export function next(
       // A wait after shipping (a frozen repo, a revert) keeps reading its merged PR: no new ship.
       if (stage === "blocked" && from && (orderIndex(from) > orderIndex("merge") || isShipExtra(from)))
         return K("ignore");
+      // LOOP-80: the owner's approval of a multi-repo intent starts the landing; the parts merge one by one.
+      if (facts.landing)
+        return stage === "approval:merge" || (stage === "blocked" && from === "merge")
+          ? go("merge")
+          : K("ignore");
       if (stage === "approval:merge" || stage === "blocked") return go(facts.steps ? "steps" : "deploy");
       if (between(stage, "build", "merge")) return go(facts.steps ? "steps" : "deploy");
       return K("ignore");
@@ -417,6 +430,12 @@ export const EXITS: Record<string, ExitKind[]> = {
   "your steps": ["tick", "done", "retry", "drop"],
 };
 
+/** UI-167: the freeze waits name their buttons for what they do. */
+const FREEZE_LABELS: Record<string, Partial<Record<ExitKind, string>>> = {
+  freeze: { continue: "Keep waiting", unfreeze: "Unfreeze" },
+  "freeze lifted": { continue: "Freeze again" },
+};
+
 const EXIT_LABELS: Record<ExitKind, string> = {
   continue: "Reply",
   retry: "Start over",
@@ -446,7 +465,10 @@ export function exitsOf(waiting: string, stuck = false, code = false): Exit[] {
       .filter((k) => !(code && k === "done" && waitKey(waiting) === "your steps"))
       .map((k) => ({
         do: k,
-        label: k === "done" && waitKey(waiting) === "your steps" ? "I did all of it myself" : EXIT_LABELS[k],
+        label:
+          k === "done" && waitKey(waiting) === "your steps"
+            ? "I did all of it myself"
+            : (FREEZE_LABELS[waitKey(waiting)]?.[k] ?? EXIT_LABELS[k]),
       }))
   );
 }
@@ -610,7 +632,11 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
     if (!cur || cur.stage !== m.stage) return cur ?? m;
     let data = dataOf(cur);
     if (o.data) data = { ...data, ...o.data };
-    let n = next(cur.stage, o.event, cur.from_stage, shipFacts(data));
+    // LOOP-81: the owner's retry of a multi-repo intent that ended unverified lands the parts not yet merged.
+    let n: Next =
+      o.event === "reland" && cur.stage === "unverified" && Array.isArray(data.parts)
+        ? go("ci")
+        : next(cur.stage, o.event, cur.from_stage, shipFacts(data));
     if (n.kind === "unexpected") {
       cx.log?.(`unexpected ${o.event} at ${cur.stage}`);
       n = isWait(cur.stage) ? { kind: "ignore" } : { kind: "recover" };
@@ -643,6 +669,10 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
         cols.from_stage = null;
       }
       if (finished(to)) cols.finished = now;
+      else if (finished(cur.stage)) cols.finished = null;
+      if (to === "merge" && cur.stage === "approval:merge" && Array.isArray(data.parts)) {
+        data = { ...data, landApproved: true };
+      }
       // LOOP-159, LOOP-161: entering `merge` joins the repo's merge queue; a wait or the end leaves it,
       // so a mission back from the owner joins at the back.
       const leavesQueue = isWait(to) || finished(to) || !!extra.waiting;
@@ -788,7 +818,18 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
         break;
       }
       case "continue": {
-        const to = continueTo(cur.waiting, cur.from_stage);
+        // LOOP-80: after a failed merge of a part the landing goes on at the merge.
+        const multi = Array.isArray(data.parts);
+        const to =
+          multi && cur.waiting === "merge failed"
+            ? "merge"
+            : multi && cur.waiting === "rollback failed"
+              ? "rollback"
+              : multi && cur.waiting === "freeze" && cur.from_stage && LANDING.includes(cur.from_stage)
+                ? cur.from_stage
+                : continueTo(cur.waiting, cur.from_stage);
+        // LOOP-81: keeping a freeze waiting starts a new period.
+        if (cur.waiting === "freeze") data.freezeFrom = now;
         if (o.text) data.answer = o.text;
         // LOOP-77: an answer is new, with words or without (the owner removed `waiting`).
         if (o.text || o.counted) data.answers = (Number(data.answers) || 0) + 1;

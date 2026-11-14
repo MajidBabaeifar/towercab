@@ -16,7 +16,7 @@ import {
   waitMessage,
 } from "./machine.ts";
 import { dataOf, getMission, type Mission } from "./mission.ts";
-import { allAtGate, inPartStages, type PartState, partsOf } from "./parts.ts";
+import { allAtGate, inLanding, inPartStages, type PartState, partsOf, rollbackSet } from "./parts.ts";
 import { shipFacts } from "./steps.ts";
 
 /** The columns a part keeps as fields of its own; the rest of `Outcome.set` goes to its `cols`. */
@@ -25,7 +25,7 @@ const OWN: Record<string, keyof PartState> = { step: "step", pr: "pr", head: "he
 /** The part as a mission: the mission's row with the part's repo, PR, head, branch, checkout and stage on it. */
 export function project(m: Mission, p: PartState): Mission {
   const { parts: _parts, ...shared } = dataOf(m);
-  const data = { ...shared, ...(p.data ?? {}) };
+  const data = { ...shared, ...(p.data ?? {}), part: p.repo };
   return {
     ...m,
     ...(p.cols as Partial<Mission> | undefined),
@@ -117,6 +117,98 @@ function ask(cx: ApplyCtx, cur: Mission, repo: string, waiting: string, why: str
 }
 
 /**
+ * LOOP-80: what a handler reported about the part the landing works on. The mission waits for the owner as
+ * a whole (a failed merge stops the sequence at that part); a part that merged or shipped is written on its
+ * part, and the mission moves through `apply` when the last part is through. Null: nothing special, the
+ * generic outcomes (again, backoff, cool, recover) apply.
+ */
+function landed(cx: ApplyCtx, cur: Mission, part: PartState, o: Outcome): Mission | null {
+  const set = o.set ?? {};
+  const upd = (f: (p: PartState) => PartState) => writePart(cx, cur.id, part.repo, f);
+  const at = () => getMission(cx.db, cur.id)!;
+  const ask = (waiting: string, why: string | undefined) => apply(cx, at(), { event: "wait", waiting, why });
+  if (o.event === "wait") return ask(o.waiting!, o.why);
+  if (o.event === "closed" || o.event === "intent_removed") return apply(cx, cur, o);
+  if (cur.stage === "merge") {
+    if (o.event === "code_merged") {
+      upd((p) => lay({ ...p, merged: true, step: "", stage: "gate", waiting: null }, set, o.data));
+      if (partsOf(at()).every((p) => p.merged)) {
+        apply(cx, at(), { event: "code_merged", why: "every part is merged" });
+        for (const p of partsOf(at()))
+          writePart(cx, cur.id, p.repo, (x) => ({ ...x, stage: "deploy", step: "" }));
+      }
+      return at();
+    }
+    if (o.event === "head_moved" || o.event === "conflict") {
+      return ask("merge failed", o.why ?? `the pull request of ${part.repo} changed after the gate`);
+    }
+    return null;
+  }
+  if (cur.stage === "deploy" || cur.stage === "e2e") {
+    for (const [k, v] of Object.entries(o.meta ?? {})) cx.db.setMeta(k, v);
+    const done = (skipped: boolean) => {
+      upd((p) => lay({ ...p, stage: "shipped", step: "" }, set, { ...(o.data ?? {}), skipped }));
+      const left = partsOf(at()).some((p) => p.stage === "deploy" || p.stage === "e2e");
+      if (left) return at();
+      // Every part is through: the mission ends the way a single one does (SHIP-21 when none had a live block).
+      if (partsOf(at()).every((p) => p.data?.skipped === true)) {
+        const none = partsOf(at()).every((p) => String(p.data?.liveNoneWhy ?? "").trim() !== "");
+        const why = none ? { liveNoneWhy: String(partsOf(at())[0]!.data!.liveNoneWhy) } : undefined;
+        return apply(cx, at(), { event: "skip", ...(why ? { data: why } : {}) });
+      }
+      apply(cx, at(), { event: "ok", why: "every part is live" });
+      return apply(cx, at(), { event: "ok", why: "every part is live" });
+    };
+    if (o.event === "skip") return done(true);
+    if (o.event === "ok") {
+      if (part.stage === "deploy") {
+        upd((p) => lay({ ...p, stage: "e2e", step: "" }, set, o.data));
+        return at();
+      }
+      return done(false);
+    }
+    if (o.event === "red") {
+      // LOOP-82: this part and every merged part after it go back, last landed first; the parts before it
+      // stay merged and live, and parts not merged are left alone.
+      upd((p) => lay(p, set, o.data));
+      for (const r of rollbackSet(partsOf(at()), part.repo)) {
+        writePart(cx, cur.id, r.repo, (p) => ({
+          ...p,
+          stage: "rollback",
+          step: "",
+          waiting: null,
+          data: {
+            ...(p.data ?? {}),
+            ship: p.data?.ship ?? { merges: [String(p.cols?.merge_sha)], fixes: 0 },
+          },
+        }));
+      }
+      return apply(cx, at(), { event: "red", why: o.why });
+    }
+  }
+  if (cur.stage === "rollback") {
+    if (o.event === "ok") {
+      // The part is back on the last good version: it is built again, with a new PR (SHIP-10).
+      upd((p) =>
+        lay({ ...p, stage: "build", step: "", merged: false, atGate: false, waiting: null }, set, {
+          ...(o.data ?? {}),
+          skipped: undefined,
+          needsApproval: undefined,
+        }),
+      );
+      if (!partsOf(at()).some((p) => p.stage === "rollback")) {
+        return apply(cx, at(), { event: "ok", why: "every rolled-back part is back" });
+      }
+      return at();
+    }
+    if (o.event === "revert") {
+      return ask("rollback failed", o.why ?? `${part.repo}: the fixes didn't hold; revert it by hand`);
+    }
+  }
+  return null;
+}
+
+/**
  * LOOP-78: apply what a handler reported about one part, in one transaction. The part moves with the
  * transition table of the stages `build` to `gate` (`next`); a part that passes the gate stays there until
  * every part has, and then the mission itself leaves the parts through `apply` (`parts_gated`).
@@ -124,10 +216,20 @@ function ask(cx: ApplyCtx, cur: Mission, repo: string, waiting: string, why: str
 export function applyPart(cx: ApplyCtx, m: Mission, repo: string, o: Outcome): Mission {
   return cx.db.tx(() => {
     const cur = getMission(cx.db, m.id);
-    if (!cur || !inPartStages(cur)) return cur ?? m;
+    const landing = !!cur && inLanding(cur);
+    if (!cur || !(landing || inPartStages(cur))) return cur ?? m;
     const part = partsOf(cur).find((p) => p.repo === repo);
-    if (!part || part.atGate || part.merged) return cur;
-    const n = next(part.stage as Stage, o.event as Event, null, shipFacts(dataOf(cur)));
+    if (!part || (!landing && (part.atGate || part.merged))) return cur;
+    if (landing) {
+      const r = landed(cx, cur, part, o);
+      if (r) return r;
+    }
+    const n = next(
+      landing ? (cur.stage as Stage) : (part.stage as Stage),
+      o.event as Event,
+      null,
+      shipFacts(dataOf(cur)),
+    );
     const set = o.set ?? {};
     const upd = (f: (p: PartState) => PartState) => writePart(cx, cur.id, repo, f);
     switch (n.kind) {
@@ -155,7 +257,9 @@ export function applyPart(cx: ApplyCtx, m: Mission, repo: string, o: Outcome): M
         if (!o.waiting) throw new Error("bug: wait without a waiting text");
         // The owner's approval to merge is asked for the intent as a whole, when every part is at the gate.
         if (part.stage === "gate" && o.waiting === "review and merge PR") {
-          upd((p) => lay({ ...p, atGate: true, waiting: null }, set, o.data));
+          upd((p) =>
+            lay({ ...p, atGate: true, waiting: null }, set, { ...(o.data ?? {}), needsApproval: true }),
+          );
           break;
         }
         upd((p) => lay({ ...p, waiting: o.waiting! }, set, o.data));
@@ -195,7 +299,7 @@ export function applyPart(cx: ApplyCtx, m: Mission, repo: string, o: Outcome): M
       `${cur.intent} part ${repo} ${part.stage} (${o.event}${o.why ? `: ${oneLine(o.why, 120)}` : ""})`,
     );
     const after = getMission(cx.db, cur.id)!;
-    if (allAtGate(partsOf(after)))
+    if (!landing && allAtGate(partsOf(after)))
       return apply(cx, after, { event: "parts_gated", why: "every part passed the gate" });
     return after;
   });
