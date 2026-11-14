@@ -460,7 +460,18 @@ export function startUi(o: UiOptions): UiServer {
       const need = permissionOf(action);
       // An intent's own repo decides; a repo named in the body can't stand in for it.
       const found = intent ? await src.store.get(intent).catch(() => null) : null;
-      const where = intent ? (found?.repo ?? "") : repo;
+      // A proposal's own repo decides (never the body's); a global pause or resume is the default role's.
+      const proposed =
+        action === "accept" || action === "close"
+          ? src.proposed?.()?.list.find((x) => x.number === pr)
+          : undefined;
+      const where = intent
+        ? (found?.repo ?? "")
+        : proposal
+          ? (proposed?.intent?.repo ?? "")
+          : action === "pause" || action === "resume"
+            ? ""
+            : repo;
       // USR-9: a contributor may answer a question on an intent they wrote.
       const own =
         action === "reply" &&

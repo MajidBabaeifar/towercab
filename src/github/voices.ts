@@ -2,7 +2,7 @@
 // people (USR-2) and `can` decides instead of the owner's login (PIP-44). One value per intent and repo.
 
 import type { Db } from "../db.ts";
-import { can } from "../users.ts";
+import { can, roleOn } from "../users.ts";
 import { getUser, type StoredUser } from "../users-store.ts";
 
 export interface Voices {
@@ -22,6 +22,8 @@ export function voicesFor(
   user: (login: string) => StoredUser | null = (l) => getUser(db, l),
   /** The repo's full name as roles name it (`owner/name`). */
   repoFull = repo,
+  /** AUT-25: an a0 intent is decided by an admin only. */
+  adminOnly = false,
 ): Voices {
   const writer = db.get<{ writer: string | null }>(
     "SELECT writer FROM intent_people WHERE intent = ?",
@@ -32,10 +34,19 @@ export function voicesFor(
     return u && !u.disabled ? u : null;
   };
   return {
-    decides: (a) => can(known(a), "approve", repoFull),
+    decides: (a) => {
+      const u = known(a);
+      return can(u, "approve", repoFull) && (!adminOnly || roleOn(u!, repoFull) === "admin");
+    },
     answers: (a) => {
       const u = known(a);
-      return u !== null && !!writer && writer.toLowerCase() === a.toLowerCase() && can(u, "answer", repoFull);
+      return (
+        u !== null &&
+        (!adminOnly || roleOn(u, repoFull) === "admin") &&
+        !!writer &&
+        writer.toLowerCase() === a.toLowerCase() &&
+        can(u, "answer", repoFull)
+      );
     },
     nameOf: (a) => known(a)?.name || known(a)?.login || null,
   };

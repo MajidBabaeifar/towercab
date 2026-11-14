@@ -1544,7 +1544,9 @@ export class Loop {
   /** USR-9: who may speak on this intent's PRs; none without `[auth]`, so the owner's login decides (PIP-44). */
   private voicesFor(m: Mission, repoGithub: string): Voices | undefined {
     if (!this.d.config.auth) return undefined;
-    return voicesFor(this.d.db, m.repo, m.intent, undefined, m.repo || repoGithub);
+    const listed = this.listing?.open.find((i) => i.id === m.intent);
+    const adminOnly = ownerOnly(listed ? levelNow(this.d.db, listed) : null);
+    return voicesFor(this.d.db, m.repo, m.intent, undefined, m.repo || repoGithub, adminOnly);
   }
 
   /** USR-8: the person whose comment or review on GitHub is the newest that counts, as the actor of the move. */
