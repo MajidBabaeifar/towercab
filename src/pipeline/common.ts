@@ -77,6 +77,10 @@ export interface SecretState {
 }
 
 export interface PipeData {
+  /** INT-77: the kind the mission goes by, why, and who chose it (an owner's wins over a guess). */
+  kind?: string;
+  kindWhy?: string;
+  kindBy?: "guess" | "owner";
   design?: {
     type: string;
     scope: string;

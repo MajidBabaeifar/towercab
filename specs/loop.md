@@ -1773,6 +1773,7 @@ like a crash; `–` = ignored)
 | env_fail | backoff | backoff | backoff | backoff | backoff |
 | crash | recover | – | – | – | – |
 | spec_merged | design → plan; else – | → plan | – | – | from design → plan |
+| kind_routed | pick, design → plan for a lighter kind, pick → design for the others; a feature from plan … merge → design; else – | → plan (lighter kind) | – | – | – |
 | plan_merged | plan → build (steps delivery: `steps`); else – | – | → build (steps delivery: `steps`) | – | from plan → build (steps delivery: `steps`) |
 | code_merged | build … merge → deploy; else – | – | – | → deploy | → deploy, unless it came from deploy … revert |
 | closed | → stopped | → stopped | → stopped | → stopped | → stopped |

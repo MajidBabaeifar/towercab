@@ -263,6 +263,8 @@ export class Pipe {
   readonly bares: Record<string, string> = {};
   readonly prs: FakePr[] = [];
   readonly claudeCalls: ClaudeCall[] = [];
+  /** INT-77: the kind agent's runs, kept apart so flows that list `claudeCalls` keep their meaning. */
+  readonly kindCalls: ClaudeCall[] = [];
   /** Sandboxed runs (`bwrap`): kind, argv and where. */
   readonly sandboxRuns: { kind: string; argv: string[]; cwd: string }[] = [];
   /** `gh run rerun` run IDs. */
@@ -633,7 +635,7 @@ export class Pipe {
     } catch {
       // No settings file.
     }
-    this.claudeCalls.push({
+    (kind === "kind" ? this.kindCalls : this.claudeCalls).push({
       kind,
       prompt,
       argv: spec.argv,

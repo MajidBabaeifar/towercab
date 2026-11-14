@@ -49,6 +49,7 @@ import {
   viaForge,
 } from "./common.ts";
 import { docsTableOnly } from "./docsindex.ts";
+import { kindFinish, kindStep, needsKind } from "./kindrun.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { specBody } from "./prtext.ts";
 import { checkoutFacts, deliverReply, replyPatch, replySection } from "./reply.ts";
@@ -505,7 +506,10 @@ export const designHandler: Handler = {
     const d = data(m);
     // AUT-21: the owner's retry of a risk check that didn't finish: the checks, then the check again.
     if (m.step === "" && d.recheck) return specCi(cx, cx.record(m, "spec_ci", {}, { recheck: undefined }));
+    if (m.step === "" && (await needsKind(cx, m))) return kindStep(cx, m);
     switch (m.step) {
+      case "kind":
+        return kindStep(cx, m);
       case "":
       case "design":
         return designRun(cx, m);
@@ -526,6 +530,7 @@ export const designHandler: Handler = {
   },
 
   async finish(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
+    if (m.step === "kind") return kindFinish(cx, m, end);
     if (m.step === "risk") {
       const e = endRisk(cx, m, end, "spec");
       if ("progress" in e) return e.progress;
