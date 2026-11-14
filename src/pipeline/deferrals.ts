@@ -111,8 +111,10 @@ export function deferredBullets(
       else {
         const id = rowId(s.name);
         if (id) {
+          // The ID as a whole token: the row `REPO-3` is not named by a bullet about `REPO-31`.
+          const token = new RegExp(String.raw`(?<![A-Za-z0-9-])${id}(?![A-Za-z0-9])`);
           bullets.forEach((b, i) => {
-            if (b.text.includes(id)) add(i, s.to, s.by);
+            if (token.test(b.text)) add(i, s.to, s.by);
           });
         }
       }

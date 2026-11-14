@@ -8,7 +8,7 @@ import type { PrComment, PrState } from "../../src/github/prs.ts";
 import type { Intent } from "../../src/intents/types.ts";
 import type { Mission } from "../../src/mission.ts";
 import { insertMission } from "../../src/mission.ts";
-import { applyDeferrals, bulletsOf, parseDefer } from "../../src/pipeline/deferrals.ts";
+import { applyDeferrals, bulletsOf, deferredBullets, parseDefer } from "../../src/pipeline/deferrals.ts";
 import { codeBody } from "../../src/pipeline/prtext.ts";
 import { deferralsOf, reviewComment, reviewDecision, verdictLine } from "../../src/pipeline/review.ts";
 import type { ReviewResult } from "../../src/pipeline/schemas.ts";
@@ -232,4 +232,17 @@ test("pipeline: the PR body lists deferred outcomes", () => {
     `## Deferred\n\n- It says goodbye (moved to intent ${LATER}, deferred by the intent)`,
   );
   expect(codeBody(base)).not.toContain("## Deferred");
+});
+
+test("pipeline: deferring a spec row by name matches its ID as a whole token", () => {
+  const bullets = bulletsOf(
+    "- Show REPO-3 in the card\n- Fix REPO-31 and PIP-208..209\n- Keep PIP-2 as is\n",
+  );
+  const rows: Record<string, string> = { "short row": "REPO-3", "other row": "PIP-2" };
+  const src = (name: string) => [{ name, to: LATER, by: "the owner's comment" }];
+  const valid = new Set([LATER]);
+  const at = (name: string) =>
+    deferredBullets(bullets, src(name), valid, (n) => rows[n] ?? null).map((h) => bullets[h.i]!.text);
+  expect(at("short row")).toEqual(["Show REPO-3 in the card"]);
+  expect(at("other row")).toEqual(["Keep PIP-2 as is"]);
 });
