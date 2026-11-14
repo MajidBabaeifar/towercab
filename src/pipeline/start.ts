@@ -101,8 +101,9 @@ export const pickHandler: Handler = {
     } catch (e) {
       throw e instanceof EnvError ? e : asEnv(e);
     }
+    let files: Awaited<ReturnType<typeof repoFiles>>;
     try {
-      await repoFiles(cx, m);
+      files = await repoFiles(cx, m);
     } catch (e) {
       // REPO-5: a repo with no checks gets them set up, not a question.
       if (e instanceof RepoError && e.kind === "noVerifying") return settingUp(cx, m);
@@ -116,7 +117,9 @@ export const pickHandler: Handler = {
     await reserveIds(cx, m);
     const base = (await git(cx.tools, clone, ["rev-parse", `refs/remotes/origin/${repo.base}`])).trim();
     await freshCheckout(cx.tools, clone, cx.checkout(m), repo.base, m.branch);
-    return { done: ok({ set: { base_sha: base } }) };
+    // REPO-49: checks that came from the overlay stay this intent's, even if the repo gets its own later.
+    const pinned = files.sources?.checks === "overlay" ? { pinnedChecks: files.verifying } : undefined;
+    return { done: ok({ set: { base_sha: base }, ...(pinned ? { data: pinned } : {}) }) };
   },
   async finish() {
     return { poll: 0 };

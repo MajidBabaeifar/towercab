@@ -9,7 +9,7 @@ import { SCANNING_STEP, scanningPermissionMissing } from "../pipeline/alerts.ts"
 import { isApplying } from "../settings/apply.ts";
 import { storedSettings } from "../settings/store.ts";
 import { budgetsView } from "./budget-view.ts";
-import { fileErrorOf, limitsView } from "./limits.ts";
+import { fileErrorOf, limitsView, overlayNoticeOf } from "./limits.ts";
 import { proposedFor, proposedSection } from "./proposed.ts";
 import { readinessBadge, setupView, sharedGaps } from "./readiness.ts";
 import { type RepoSpend, repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
@@ -263,7 +263,8 @@ function at(t: number, now: number): string {
 }
 
 /** UI-153: the notice for a repo whose file can't be read, as spread into a card. */
-function fileNotice(src: UiSources, repo: string): { fileError?: string } {
+function fileNotice(src: UiSources, repo: string): { fileError?: string; overlayNotice?: string } {
   const e = fileErrorOf(src, repo);
-  return e ? { fileError: e } : {};
+  const o = overlayNoticeOf(src, repo);
+  return { ...(e ? { fileError: e } : {}), ...(o ? { overlayNotice: o } : {}) };
 }

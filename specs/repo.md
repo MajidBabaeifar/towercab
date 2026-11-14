@@ -1,6 +1,6 @@
 # Repo files
 
-**Status:** Live: REPO-1..13, REPO-14..19, REPO-20..27, REPO-30, REPO-33, REPO-38..42 · **Prefix:** REPO
+**Status:** Live: REPO-1..13, REPO-14..19, REPO-20..27, REPO-30, REPO-33, REPO-38..49 · **Prefix:** REPO
 
 ## Purpose
 
@@ -642,7 +642,7 @@ Towercab can read a repo's settings and checks from a folder in its own config d
   optional `TOWERCAB.md` and `verifying.md`. `TOWERCAB.md` has the front matter of REPO-1; `verifying.md` holds the
   blocks of REPO-2 (with or without the `## Verifying your work` heading). Both go through the same parser and
   grammar as the repo's files; an error reads `overlay <file>: <where>: <what>` and is handled like REPO-18's invalid file.
-- `loadOverlay(configDir, name)` reads regular files only (a symlink, directory or non-UTF-8 file → invalid) and
+- `loadOverlay(configFile, name)` (the folder of the config file) reads regular files only (a symlink, directory or non-UTF-8 file → invalid) and
   runs in the loop's process, never in a sandbox. `<name>` is the repo's configured name; one containing `/`, `..`
   or a leading `.` has no overlay.
 - The overlay lives outside every checkout, and no sandbox mounts it writable or at all, so a worker cannot

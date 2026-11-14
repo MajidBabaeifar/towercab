@@ -97,7 +97,7 @@ import { evaluate } from "./pipeline/teammate.ts";
 import { isParked, priority } from "./priority.ts";
 import { conflictHeld, headOf, landingOf } from "./queue.ts";
 import { blockingRepos, startReadiness as startReadinessCheck } from "./readiness.ts";
-import { loadRepoFiles } from "./repo/files.ts";
+import { loadOverlay, loadRepoFilesWith } from "./repo/overlay.ts";
 import { pollRepoSettings } from "./repo/poll.ts";
 import { missingText } from "./repo/readiness.ts";
 import { recordParser } from "./repo/settings.ts";
@@ -404,6 +404,7 @@ export class Loop {
           home: this.d.home.root,
           now,
           repos: this.d.config.repos,
+          configFile: this.d.config.file,
           exclusive: <T>(fn: () => Promise<T>) => this.cloneLock.run(fn),
         },
         this.d.log,
@@ -1473,11 +1474,12 @@ export class Loop {
           // PIP-45: the lead repo's `live` block, read from the base branch of Towercab's clone.
           let entry: ReleaseRepo;
           try {
-            const files = await loadRepoFiles(
+            const files = await loadRepoFilesWith(
               this.d.tools,
               clonePath(repo, this.d.home.root),
               repo.base,
               repo.github,
+              loadOverlay(this.d.config.file, repo.name),
             );
             entry = { name: m.repo, live: files.towercab.live ? { url: files.towercab.live.url } : null };
           } catch (e) {

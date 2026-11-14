@@ -26,6 +26,7 @@ import {
   repoGit,
   type TowercabFile,
 } from "./repo/files.ts";
+import { overlayReadiness } from "./repo/overlay.ts";
 import {
   type Check,
   checkItems,
@@ -222,11 +223,14 @@ export async function readRepo(d: ReadinessDeps, repo: RepoConfig): Promise<Stor
     .split("\n")
     .filter(Boolean);
 
-  const claude = paths.includes("CLAUDE.md") ? await show(d, clone, ref, "CLAUDE.md") : null;
+  // REPO-45: CLAUDE.md's checks, else AGENTS.md's.
   let verifying = false;
-  if (claude !== null) {
+  for (const file of ["CLAUDE.md", "AGENTS.md"]) {
+    if (verifying || !paths.includes(file)) continue;
+    const text = await show(d, clone, ref, file);
+    if (text === null) continue;
     try {
-      parseVerifying(claude);
+      parseVerifying(text, file);
       verifying = true;
     } catch {
       verifying = false;
@@ -254,8 +258,12 @@ export async function readRepo(d: ReadinessDeps, repo: RepoConfig): Promise<Stor
   }
   if (paths.includes("Cargo.toml")) manifests.cargoToml = await show(d, clone, ref, "Cargo.toml");
 
+  const suggested = suggestKind(paths, manifests);
+  // REPO-44: the overlay's checks and kind count when the repo has none; its kind stays unconfirmed.
+  const overlay = overlayReadiness(d.config.file, repo.name, suggested);
+  if (!verifying && overlay.verifying) verifying = true;
   const confirmed = tw.kind !== undefined;
-  const kind: Kind | null = tw.kind ?? suggestKind(paths, manifests);
+  const kind: Kind | null = tw.kind ?? overlay.kind ?? suggested;
 
   const flows = paths.filter((p) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(p)).slice(0, 30);
   let workflows = "";

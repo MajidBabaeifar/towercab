@@ -21,6 +21,7 @@ import type { Home } from "./home.ts";
 import { type HostState, hostState, profileStep } from "./pipeline/hostcheck.ts";
 import { apparmorProfile, type ProbeResult, sandboxProbe, userNamespaceDenied } from "./pipeline/probe.ts";
 import { refusedRepoEnv, toolchainBins, toolchainPlaces } from "./pipeline/sandbox.ts";
+import { overlayDoctor } from "./repo/overlay.ts";
 import { parseStored } from "./repo/readiness.ts";
 import { isMoved, readRecord } from "./repo/settings.ts";
 import { shipNetwork } from "./ship/live.ts";
@@ -162,6 +163,20 @@ export async function doctor(o: {
     lines.push(
       `${name}: ${repo.github} · ${existsSync(clonePath(repo, home.root)) ? "cloned" : "clones on first use"}`,
     );
+  }
+  // REPO-47: where each setting of a repo with an overlay comes from.
+  for (const [name, repo] of config.repos) {
+    const clone = clonePath(repo, home.root);
+    const r = await overlayDoctor(tools, {
+      configFile: config.file,
+      name,
+      clone,
+      base: repo.base,
+      slug: repo.github,
+      cloned: existsSync(clone),
+    });
+    lines.push(...r.lines);
+    if (!r.ok) ok = false;
   }
   // LOOP-72: repos with a missing or unknown item, and the waived ones.
   if (o.db) {
