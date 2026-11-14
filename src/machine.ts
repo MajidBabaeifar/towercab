@@ -3,6 +3,7 @@
 
 import type { Db, SqlValue } from "./db.ts";
 import { COLUMNS, dataOf, getMission, insertMission, type Mission } from "./mission.ts";
+import { type PartState, seedParts } from "./parts.ts";
 import { type ShipFacts, shipFacts } from "./steps.ts";
 
 export const ORDER = [
@@ -61,6 +62,7 @@ export const EVENTS = [
   "reviewed",
   "more_steps",
   "unfreeze",
+  "parts_gated",
 ] as const;
 export type Event = (typeof EVENTS)[number];
 
@@ -209,6 +211,10 @@ export function next(
     // LOOP-81: the owner lifts a freeze; only the `freeze` wait offers it.
     case "unfreeze":
       return stage === "blocked" ? K("continue") : K("ignore");
+    // LOOP-78: every part of a multi-repo mission has passed the gate; the mission goes on to merge.
+    case "parts_gated":
+      if (stage === "blocked" && from && between(from, "build", "gate")) return go("merge");
+      return between(stage, "build", "gate") ? go("merge") : K("ignore");
     case "resume":
       return stage === "merge" ? K("again") : K("ignore");
     // PIP-216: plan steps are still open after a push; the next build run carries on from the first one.
@@ -333,10 +339,10 @@ export const WAITS: Record<string, { stage: Stage; ask: string }> = {
     stage: "blocked",
     ask: "Fix which repos this intent changes: Towercab doesn't know one of the repos it names. Add the repo, or fix the intent's repos list.",
   },
-  // INT-44: until one pull request per repo is built (LOOP-78), an intent with `repos:` is not built or merged.
+  // INT-44: until the parts land in order (LOOP-80), an intent with `repos:` is built (LOOP-78) but not merged.
   "several repos": {
     stage: "blocked",
-    ask: "This change spans several repos and Towercab can't build those yet, so nothing was built. Do the change yourself and say so, or drop the intent.",
+    ask: "Every part of this change is built and checked, but Towercab can't land several repos in order yet, so nothing was merged. Merge the pull requests yourself in the order of the plan and say so, or drop the intent.",
   },
   // LOOP-81: merges in the intent's repos were frozen for too long, or the owner lifted the freeze.
   freeze: {
@@ -652,6 +658,24 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
         launched: undefined,
         ...(leavingWait ? { doneByYou: undefined, stuck: undefined } : {}),
       };
+      // LOOP-78: the plan's approval gives a multi-repo mission a part per repo, all at the start of build.
+      if (to === "build" && !data.parts && phaseOf(cur.stage, cur.from_stage) === "plan") {
+        const plan = data.plan as { parts?: string[]; waitsOn?: Record<string, string[]> } | undefined;
+        if (plan?.parts?.length) {
+          const seeded = seedParts(
+            plan.parts.map((repo) => ({ repo, waitsOn: plan.waitsOn?.[repo] ?? [] })),
+            cur,
+          );
+          data = { ...data, parts: seeded };
+        }
+      }
+      // LOOP-78: the owner answered for a part: every part that waited for them goes on.
+      if (cur.stage === "blocked" && !isWait(to) && Array.isArray(data.parts)) {
+        data = {
+          ...data,
+          parts: (data.parts as PartState[]).map((p) => (p.waiting ? { ...p, waiting: null } : p)),
+        };
+      }
       write(cols);
       db.run(
         "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) VALUES (?, ?, ?, ?, ?, ?)",

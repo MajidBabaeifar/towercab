@@ -1,6 +1,8 @@
 // LOOP-78: the parts of a multi-repo mission. One mission (LOOP-3) keeps `data.parts`: a part per repo of
 // the plan (INT-43), in landing order. Pure: the loop, the machine and the pages read parts through this.
 
+import { randomUUID } from "node:crypto";
+import type { SqlValue } from "./db.ts";
 import { dataOf, type Mission } from "./mission.ts";
 
 /** Stages a part runs through before the mission as a whole goes on (LOOP-78). */
@@ -30,7 +32,23 @@ export interface PartState {
   /** The part has passed the gate. */
   atGate: boolean;
   merged: boolean;
+  /** Mission columns this part keeps for itself (repairs, session, retry_at...), laid over the mission's row. */
+  cols?: Record<string, SqlValue>;
+  /** The part's own pipeline data (`missions.data` keys), laid over the mission's. */
+  data?: Record<string, unknown>;
 }
+
+/** The mission stages in which its parts are driven, each on its own (LOOP-78). */
+export const PART_STAGES: readonly string[] = ["build", "verify", "proof", "publish", "ci", "review", "gate"];
+
+/**
+ * The mission is in the parts: at a stage of theirs, or blocked on the owner by one of them (the other
+ * parts go on while it waits).
+ */
+export const inPartStages = (m: Mission): boolean =>
+  isMulti(m) &&
+  (PART_STAGES.includes(m.stage) ||
+    (m.stage === "blocked" && m.from_stage !== null && PART_STAGES.includes(m.from_stage)));
 
 /** The plan's parts as stored at plan approval: repo and what it waits on, in landing order. */
 export interface PlanPart {
@@ -51,7 +69,7 @@ export function seedParts(plan: PlanPart[], m: Pick<Mission, "branch" | "checkou
   return plan.map((p) => ({
     repo: p.repo,
     stage: "build",
-    step: "enter",
+    step: "",
     waiting: null,
     pr: null,
     head: null,
@@ -60,6 +78,7 @@ export function seedParts(plan: PlanPart[], m: Pick<Mission, "branch" | "checkou
     waitsOn: p.waitsOn,
     atGate: false,
     merged: false,
+    cols: { session: randomUUID() },
   }));
 }
 
@@ -75,7 +94,11 @@ export const waitingParts = (parts: PartState[]): PartState[] => parts.filter((p
 
 /** The repos whose parts count in `repo`'s slots: a part takes one build slot of its repo (LOOP-78). */
 export const partsInRepo = (ms: Mission[], repo: string): PartState[] =>
-  ms.flatMap((m) => partsOf(m).filter((p) => p.repo === repo && !p.atGate && !p.merged));
+  ms.flatMap((m) => partsOf(m).filter((p) => p.repo === repo && !p.merged));
+
+/** Does the mission take a slot of `repo`'s: its own repo, or the repo of a part not yet merged (LOOP-78)? */
+export const takesSlotIn = (m: Mission, repo: string): boolean =>
+  isMulti(m) ? partsOf(m).some((p) => p.repo === repo && !p.merged) : m.repo === repo;
 
 /**
  * LOOP-78: one spending cap covers the whole intent. `spent` is the mission's total over all parts (the

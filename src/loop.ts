@@ -93,6 +93,8 @@ import {
 } from "./mission.ts";
 import { Mutex } from "./mutex.ts";
 import { type Sender, sendDue } from "./outbox.ts";
+import { PartDriver } from "./partloop.ts";
+import { inPartStages, partsOf } from "./parts.ts";
 import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import { type PipeData, prUrl as prLink } from "./pipeline/common.ts";
@@ -243,6 +245,8 @@ export class Loop {
   /** The last probe's result; null before the first one. */
   private lastProbe: { ok: boolean; why: string } | null = null;
   private children = new Map<number, Running>();
+  /** LOOP-78: the parts of multi-repo missions run beside the missions, keyed by `unitKey`. */
+  private parts: PartDriver;
   /** MET-33: the budgets and caps reached now, and the missions they hold back. */
   private caps: Cap[] = [];
   private capHeld = new Set<number>();
@@ -304,6 +308,19 @@ export class Loop {
       store: holdStore(d.store, held),
     };
     this.opts = opts;
+    this.parts = new PartDriver({
+      db: this.d.db,
+      config: this.d.config,
+      clock: this.d.clock,
+      handlers: this.d.handlers,
+      log: (l) => this.d.log(l),
+      ctx: (t) => this.ctx(t),
+      applyCtx: () => this.applyCtx(),
+      lock: (fn) => this.cloneLock.run(fn),
+      unfinished: () => unfinished(this.d.db),
+      holding: () => this.codeMoved() !== null || this.drain !== null || this.isPaused(),
+      slotsUsed: () => this.slotsUsed(),
+    });
     this.inhibitor = new Inhibitor(this.d.tools, d.log);
     this.stopped = new Promise<void>((r) => {
       this.wake = r;
@@ -518,6 +535,7 @@ export class Loop {
       await within(idle, CUT_OFF_KILL_MS + 1000);
     }
     // LOOP-7: Claude runs get SIGTERM together, then SIGKILL for those still there after 10 s.
+    this.parts.killAll("SIGTERM");
     const live = [...this.children];
     for (const [, r] of live) r.handle.kill("SIGTERM");
     const ended = await Promise.all(live.map(([, r]) => within(r.handle.done, KILL_AFTER_MS)));
@@ -677,6 +695,7 @@ export class Loop {
     if (this.stopping) return { ...report, stop: true };
     // LOOP-111: missions back from a wait ask for their run before a ready build takes the free slot.
     await this.stepDue(!report.woke);
+    await this.parts.pass(!report.woke);
     this.releaseReady();
     if (this.stopping) return { ...report, stop: true };
     await this.probeSandbox();
@@ -710,6 +729,7 @@ export class Loop {
     const live = unfinished(db).filter((m) => working(m) && !this.cooling(m));
     report.idle =
       this.children.size === 0 &&
+      this.parts.running() === 0 &&
       this.featuresJob === null &&
       this.readinessJob === null &&
       this.settingsJob === null &&
@@ -936,7 +956,10 @@ export class Loop {
         this.d.log(`${label(m)}: the owner's note wasn't written to plan.md: the intent is already closed`);
       });
     }
-    if (finished(m.stage)) removeCheckout(this.d.home.abs(m.checkout));
+    if (finished(m.stage)) {
+      removeCheckout(this.d.home.abs(m.checkout));
+      for (const p of partsOf(m)) removeCheckout(this.d.home.abs(p.checkout));
+    }
     const set: Record<string, SqlValue> = { step: "" };
     if (m.stage === "merge" && paused(db)) set.held = 1;
     update(db, m.id, set, this.now);
@@ -973,6 +996,11 @@ export class Loop {
       [repo?.github, m.spec_pr],
       [this.d.store.github(), m.plan_pr],
       [repo?.github, m.pr],
+      // LOOP-78: a part has a PR of its own in its repo.
+      ...partsOf(m).map((p): [string | undefined, number | null] => [
+        this.d.config.repos.get(p.repo)?.github,
+        p.pr,
+      ]),
     ];
     return prs.filter((p): p is [string, number] => Boolean(p[0] && p[1]));
   }
@@ -1771,6 +1799,8 @@ export class Loop {
     for (const listed of order) {
       let m = listed;
       if (!isWorking(m.stage) || m.step === "enter" || m.held || this.children.has(m.id)) continue;
+      // LOOP-78: a multi-repo mission's parts step on their own until every part has passed the gate.
+      if (inPartStages(m)) continue;
       if (this.parked.has(m.id)) continue;
       // LOOP-113: while paused only CI is looked at (a read of the checks); nothing else is due.
       if (this.isPaused() && m.stage !== "ci") continue;
@@ -2070,7 +2100,7 @@ export class Loop {
   }
 
   slotsUsed(): number {
-    return [...this.children.values()].filter((r) => r.spec.slot && !r.exit).length;
+    return [...this.children.values()].filter((r) => r.spec.slot && !r.exit).length + this.parts.slots();
   }
 
   /** Plan-approved missions waiting for their repo's build slot (LOOP-61). */
