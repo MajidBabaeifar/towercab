@@ -2327,6 +2327,35 @@ A review with nothing that blocks is approved, even when the agent's own `approv
 - The summary's wording is never parsed for approval; the structured fields are the only input.
 - Verified by: `pipeline: a review with nothing blocking is approved when the flag says false`, `pipeline: a review with nothing blocking starts no fix round`, `pipeline: nits alone never block a review`, `pipeline: a blocking finding still fails a review the agent approved`, `pipeline: the review comment notes an overridden flag`, `pipeline: review prompt ties the flag and summary to the findings`
 
+### PIP-240 · A worker that reports every step built finishes the build, with or without a new commit
+
+When a build run reports that all steps are built, the build goes on to checks and review, even if that run added no commit because earlier runs had already committed the work.
+
+- A run that ends `done` with `steps_done: null` or `steps_done = steps_total` sets `data.build.steps_done` to `steps_total`, whether or not the branch head moved in that run. It is not a stalled run (PIP-217) and does not raise `stalled`; `stalled` is reset to 0.
+- With no new commit in the run, Towercab still verifies the branch head (PIP-23) and then publishes (PIP-2), so the review starts as for a run that did add a commit. A red verify is repaired as in PIP-18.
+- The `waiting: no changes` of PIP-1 applies only when the branch has no commit of the build at all (nothing ahead of base). Commits from earlier runs count, so a branch that already carries the steps never ends there.
+- This narrows the last sentence of PIP-217 ("with all steps built it does, as today") to a branch with no commits of the build.
+- Publish never sends a build back to build when `steps_done = steps_total`; the "N of M plan steps are built" return of PIP-216 happens only while `steps_done < steps_total`.
+- Verified by: `pipeline: a run that finds every step built and adds no commit goes on to review`, `pipeline: steps_done null with no new commit counts all steps done`, `pipeline: a branch with no build commit and all steps reported still ends in no changes`, `pipeline: the 0445 loop, steps committed by earlier runs and a run that adds nothing, reaches review`
+
+### PIP-241 · A run with no new commit is a stall only when the worker says steps are still open
+
+A build run that adds nothing counts against the build only when the worker itself reports steps still open.
+
+- The "no progress" of PIP-217 for a run without a new commit applies when the run ended `done` with `steps_done < steps_total` and no commit. A run with `steps_done: null` or `steps_done = steps_total` (PIP-240) is never a stall.
+- When the worker reports `steps_done` at or above what Towercab recorded, with no new commit, the recorded count follows the worker's report instead of staying at the old value (a run that finds steps 6–11 on the branch moves the count past 5). A `steps_done` lower than before still reads as no change (PIP-216).
+- The question after two stalls (PIP-217) is asked only for runs that reported open steps, so an answer to it is never followed by the same loop.
+- Verified by: `pipeline: a run with no new commit and steps open counts as a stall`, `pipeline: a run with no new commit and all steps reported is no stall`, `pipeline: a worker's higher steps_done moves the count without a commit`, `pipeline: the stall question is not asked for runs that reported all steps built`
+
+### PIP-242 · An empty or missing worker result is retried once and is not a stall
+
+A build run that ends with no result is run again once, and it never counts as a stalled run.
+
+- A build run whose result is empty, missing or not parseable (no `status`) gets one retry in the same session with a continue that asks only for the result (as PIP-1's continue). The retry is not a new run: it does not raise `data.build.runs` (PIP-218) and does not change `stalled`.
+- When the retry also returns no result, the mission waits as PIP-1 says for an invalid result, and `stalled` is unchanged. The next run after the owner's answer starts as a later run (PIP-219).
+- A run with a result is judged by PIP-216, PIP-217, PIP-240 and PIP-241 as before.
+- Verified by: `pipeline: an empty worker result is retried once`, `pipeline: an empty worker result is not a stall`, `pipeline: a second empty worker result waits for the owner and keeps the stall count`
+
 **Agents** (`agents/<name>.md`, PIP-76; loaded by `src/agents.ts`)
 
 | Agent | Purpose | May touch | Session | Model |
