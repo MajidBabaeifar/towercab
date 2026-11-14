@@ -34,6 +34,7 @@ import { agentReply, agentReplyBody, approve as ownerApprove, replyTarget } from
 import type { Host } from "./handlers.ts";
 import { systemClock } from "./handlers.ts";
 import { Home } from "./home.ts";
+import { recordWriter } from "./intent-people.ts";
 import { addToIntent, cannotAddTo, createIntent, type Draft } from "./intents/create.ts";
 import { checkOverlap, type Match } from "./intents/overlap.ts";
 import { openStore } from "./intents/store.ts";
@@ -590,6 +591,9 @@ async function run(
       const checking = v["no-check"] !== true && (interactive || v.check === true);
       const made = async () => {
         const c = await createIntent(deps, draft, "direct");
+        // AUT-23: an intent made on the command line is the owner's.
+        if (w.config.auth)
+          recordWriter(w.db, c.id, w.config.github?.me ?? null, Math.floor(Date.now() / 1000));
         // FAST-1: the mark is written after the intent exists; the command line never confirms it (FAST-9).
         if (v.fast === true) await markFast({ db: w.db, store }, c.id, true, "cli");
         return `${c.id} ${c.path}${v.fast === true ? " (fast lane)" : ""}`;

@@ -17,6 +17,7 @@ export const ACTION_PERMISSION: Record<string, UserAction> = {
   scores: "edit",
   boost: "boost",
   merge: "merge",
+  confirm: "confirm",
   pass: "drop",
   reply: "reply",
   retry: "retry",

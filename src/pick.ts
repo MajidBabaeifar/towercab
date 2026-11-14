@@ -55,6 +55,8 @@ export interface PickState {
   notReady?: Map<string, string>;
   /** Models cooling down (LOOP-9) → until, as shown (`15:30`). */
   cooling: Map<string, string>;
+  /** AUT-23: intents no contributor, maintainer or admin wrote or confirmed: held until one confirms them. */
+  unconfirmed?: Set<string>;
   /** Intents with an unfinished mission: never picked again (LOOP-4). */
   active: Set<string>;
   /** `[agent].model`: an intent without `model` runs on it. */
@@ -136,6 +138,10 @@ export function decide(listing: Listing, state: PickState): Decision {
     const p = priorityOf(i);
     if (isParked(p, state.cutoff)) {
       d.skipped.push({ id: i.id, reason: `parked (p${p} < ${state.cutoff}): raise u or i to run it` });
+      continue;
+    }
+    if (state.unconfirmed?.has(i.id)) {
+      d.skipped.push({ id: i.id, reason: "waiting for a maintainer to confirm it" });
       continue;
     }
     if (!state.repos.has(i.repo)) {

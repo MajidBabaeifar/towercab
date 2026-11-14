@@ -15,6 +15,8 @@ import {
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, resolve, sep } from "node:path";
 import { type Actor, runAs } from "../actor.ts";
+import { ownerOnly } from "../autonomy.ts";
+import { levelNow } from "../autonomy-change.ts";
 import type { AuthConfig } from "../config.ts";
 import { isRepoName } from "../intents/features.ts";
 import type { IntentStore, Listing } from "../intents/types.ts";
@@ -122,6 +124,7 @@ export const ACTIONS = new Set([
   "scores",
   "boost",
   "merge",
+  "confirm",
   "pass",
   "reply",
   "retry",
@@ -454,12 +457,22 @@ export function startUi(o: UiOptions): UiServer {
     if (A) {
       const need = permissionOf(action);
       // An intent's own repo decides; a repo named in the body can't stand in for it.
-      const where = intent ? ((await src.store.get(intent).catch(() => null))?.repo ?? "") : repo;
+      const found = intent ? await src.store.get(intent).catch(() => null) : null;
+      const where = intent ? (found?.repo ?? "") : repo;
       if (!need || !can(me!, need, where)) {
         return json(res, 403, {
           ok: false,
           message: need ? `Refused: ${refusal(me!, need, where)}.` : "Refused: unknown action.",
         });
+      }
+      // AUT-25: an a0 intent is decided by an admin only; pausing and the inbox's own marks stay open.
+      if (
+        found &&
+        ownerOnly(levelNow(src.db, found)) &&
+        roleOn(me!, where) !== "admin" &&
+        !["pause", "resume", "seen", "snooze", "unsnooze"].includes(action)
+      ) {
+        return json(res, 403, { ok: false, message: "Refused: only an admin can decide an a0 intent." });
       }
     }
     if (!o.actions) {
@@ -600,67 +613,77 @@ export function startUi(o: UiOptions): UiServer {
                         )
                       : action === "approve-secret"
                         ? await (a.approveSecret ?? no)(intent, Number(body.n))
-                        : action === "merge"
-                          ? await a.merge(intent)
-                          : action === "pass"
-                            ? await (
-                                a.pass ?? (() => Promise.reject(new Error("Passing on isn't available.")))
-                              )(intent)
-                            : action === "reply"
-                              ? await a.reply(intent, typeof body.text === "string" ? body.text : "")
-                              : action === "retry"
-                                ? await a.retry(intent)
-                                : action === "drop"
-                                  ? await a.drop(intent)
-                                  : action === "done"
-                                    ? await (
-                                        a.done ??
-                                        (() => Promise.reject(new Error("Ending an intent isn't available.")))
-                                      )(intent, typeof body.text === "string" ? body.text : "")
-                                    : action === "steps"
+                        : action === "confirm"
+                          ? await (
+                              a.confirm ?? (() => Promise.reject(new Error("Confirming isn't available.")))
+                            )(intent)
+                          : action === "merge"
+                            ? await a.merge(intent)
+                            : action === "pass"
+                              ? await (
+                                  a.pass ?? (() => Promise.reject(new Error("Passing on isn't available.")))
+                                )(intent)
+                              : action === "reply"
+                                ? await a.reply(intent, typeof body.text === "string" ? body.text : "")
+                                : action === "retry"
+                                  ? await a.retry(intent)
+                                  : action === "drop"
+                                    ? await a.drop(intent)
+                                    : action === "done"
                                       ? await (
-                                          a.steps ??
+                                          a.done ??
                                           (() =>
-                                            Promise.reject(new Error("Switching to steps isn't available.")))
-                                        )(intent)
-                                      : action === "start"
-                                        ? await a.start(intent)
-                                        : action === "step"
-                                          ? await (
-                                              a.step ??
-                                              (() =>
-                                                Promise.reject(new Error("Ticking steps isn't available.")))
-                                            )(intent, Number(body.n), body.done !== false)
-                                          : action === "pause"
-                                            ? await a.pause(intent)
-                                            : action === "addRepo"
-                                              ? await a.addRepo(
-                                                  typeof body.github === "string" ? body.github : "",
-                                                  typeof body.name === "string" && body.name
-                                                    ? body.name
-                                                    : undefined,
-                                                )
-                                              : action === "features"
-                                                ? await a.features(repo)
-                                                : action === "accept"
-                                                  ? await a.accept(pr, head)
-                                                  : action === "close"
-                                                    ? await a.close(
-                                                        pr,
-                                                        typeof body.text === "string" ? body.text : undefined,
-                                                      )
-                                                    : action === "scanningGranted"
-                                                      ? await (
-                                                          a.scanningGranted ??
-                                                          (() => Promise.reject(new Error("Not available.")))
-                                                        )()
-                                                      : action === "shadowReset"
+                                            Promise.reject(new Error("Ending an intent isn't available.")))
+                                        )(intent, typeof body.text === "string" ? body.text : "")
+                                      : action === "steps"
+                                        ? await (
+                                            a.steps ??
+                                            (() =>
+                                              Promise.reject(
+                                                new Error("Switching to steps isn't available."),
+                                              ))
+                                          )(intent)
+                                        : action === "start"
+                                          ? await a.start(intent)
+                                          : action === "step"
+                                            ? await (
+                                                a.step ??
+                                                (() =>
+                                                  Promise.reject(new Error("Ticking steps isn't available.")))
+                                              )(intent, Number(body.n), body.done !== false)
+                                            : action === "pause"
+                                              ? await a.pause(intent)
+                                              : action === "addRepo"
+                                                ? await a.addRepo(
+                                                    typeof body.github === "string" ? body.github : "",
+                                                    typeof body.name === "string" && body.name
+                                                      ? body.name
+                                                      : undefined,
+                                                  )
+                                                : action === "features"
+                                                  ? await a.features(repo)
+                                                  : action === "accept"
+                                                    ? await a.accept(pr, head)
+                                                    : action === "close"
+                                                      ? await a.close(
+                                                          pr,
+                                                          typeof body.text === "string"
+                                                            ? body.text
+                                                            : undefined,
+                                                        )
+                                                      : action === "scanningGranted"
                                                         ? await (
-                                                            a.shadowReset ??
+                                                            a.scanningGranted ??
                                                             (() =>
                                                               Promise.reject(new Error("Not available.")))
                                                           )()
-                                                        : await a.resume(intent);
+                                                        : action === "shadowReset"
+                                                          ? await (
+                                                              a.shadowReset ??
+                                                              (() =>
+                                                                Promise.reject(new Error("Not available.")))
+                                                            )()
+                                                          : await a.resume(intent);
       reply = { ok: true, message };
     } catch (e) {
       reply = { ok: false, message: (e as Error).message };

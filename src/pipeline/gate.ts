@@ -146,7 +146,7 @@ export const gateHandler: Handler = {
       : {};
     const g = gate({
       a: gateLevelOf(cx, m, intent, files),
-      accessA: effectiveOf(m, intent, files),
+      accessA: effectiveOf(m, intent, files, cx),
       ciGreen: d.ci?.result === "green" || d.ci?.result === "none",
       review: d.review ? { approved: d.review.approved } : null,
       unplanned,
@@ -159,7 +159,7 @@ export const gateHandler: Handler = {
       : "";
     if (!g.merge) return { done: wait("review and merge PR", g.why + steps, teammate) };
     // Beyond the gate table: work Towercab didn't check itself goes to the owner.
-    const a = effectiveOf(m, intent, files);
+    const a = effectiveOf(m, intent, files, cx);
     if (d.foreignHead) return { done: wait("review and merge PR", GATE_HOLD.foreign, teammate) };
     if (d.build?.planChanged && a !== 5) {
       return { done: wait("review and merge PR", GATE_HOLD.planChanged, teammate) };
