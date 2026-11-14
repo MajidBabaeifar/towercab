@@ -33,8 +33,9 @@ type Kind =
   | "stage"
   | "float"
   | "seconds"
-  | "count";
-type Value = number | string | string[];
+  | "count"
+  | "flag";
+type Value = number | string | string[] | boolean;
 
 const KINDS: Record<string, Kind> = {
   repo: "repo",
@@ -64,6 +65,7 @@ const KINDS: Record<string, Kind> = {
   cost: "float",
   agent_time: "seconds",
   attempts: "count",
+  fast: "flag",
 };
 
 const DESCRIBE: Record<Kind, string> = {
@@ -80,6 +82,7 @@ const DESCRIBE: Record<Kind, string> = {
   float: "a number",
   seconds: "an integer >= 0 (seconds)",
   count: "an integer >= 1",
+  flag: "true or false",
 };
 
 const KEY = /^([A-Za-z_][A-Za-z0-9_-]*):(?:[ \t]|$)/;
@@ -166,6 +169,9 @@ function check(key: string, kind: Kind, v: unknown, reading: boolean): Value {
     case "count":
       if (isInt(v) && v >= 1 && v <= 2 ** 32 - 1) return v;
       throw bad();
+    case "flag":
+      if (typeof v === "boolean") return v;
+      throw bad();
   }
 }
 
@@ -197,6 +203,7 @@ function quote(s: string): string {
 
 /** How a value is written: strings plain when they read back unchanged, else double-quoted; cost with 2 decimals; lists in flow style. */
 export function formatValue(key: string, v: Value): string {
+  if (typeof v === "boolean") return String(v);
   if (typeof v === "number") return KINDS[key] === "float" ? v.toFixed(2) : String(v);
   if (typeof v === "string") return readsBack(`k: ${v}`, v) ? v : quote(v);
   return `[${v.map((s) => (readsBack(`k: [${s}]`, [s]) ? s : quote(s))).join(", ")}]`;
@@ -379,7 +386,7 @@ export class IntentFile implements IntentEdit {
   }
 
   /** Set a known field (INT-5): its lines become one `key: value` line in place, a new key goes last; null removes it. */
-  setField(key: string, value: string | number | string[] | null): void {
+  setField(key: string, value: string | number | boolean | string[] | null): void {
     if (value === null) {
       this.removeField(key);
       return;
@@ -517,6 +524,7 @@ export class IntentFile implements IntentEdit {
       kind: str("kind"),
       issue: str("issue"),
       setup: this.isSetup(),
+      ...(v.get("fast") === true ? { fast: true } : {}),
       started: str("started"),
       unlock: list("unlock"),
       network: list("network"),

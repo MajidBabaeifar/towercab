@@ -10,7 +10,7 @@ import { getMission, type Mission } from "../mission.ts";
 import { type Risk, riskMd } from "../risk.ts";
 import { PASS_ON_WHY } from "../teammates.ts";
 import { testGrantsOf } from "./access.ts";
-import { data, effectiveOf, intentOf, mustForge, prUrl, repoFiles, viaForge } from "./common.ts";
+import { data, effectiveOf, gateLevelOf, intentOf, mustForge, prUrl, repoFiles, viaForge } from "./common.ts";
 import { type Checks, codeBody } from "./prtext.ts";
 import { HOLD_SECS, holder } from "./ship.ts";
 import { stepsBeforeMerge } from "./steps.ts";
@@ -149,7 +149,8 @@ export const gateHandler: Handler = {
       ? { data: { teammate: { ...data(m).teammate, unchecked: skipped } } }
       : {};
     const g = gate({
-      a: effectiveOf(m, intent, files),
+      a: gateLevelOf(cx, m, intent, files),
+      accessA: effectiveOf(m, intent, files),
       ciGreen: d.ci?.result === "green" || d.ci?.result === "none",
       review: d.review ? { approved: d.review.approved } : null,
       unplanned,

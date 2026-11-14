@@ -34,6 +34,16 @@ export function effectiveA(aNow: number | null, cap: number, source: string | nu
   return ownSource(source) ? a : Math.min(a, 4);
 }
 
+/**
+ * FAST-9: the level the spec, plan and merge gates decide at. `a` is the effective level (`effectiveA`). A
+ * fast-lane mark the owner confirmed applies the a5 rows of AUT-18, still under the repo's cap and the
+ * `source` rule; it never lowers a level and never touches an a0 intent. Access grants keep using `a`.
+ */
+export function gateLevel(a: number, confirmedFast: boolean, cap: number, source: string | null): number {
+  if (a === OWNER_ONLY || !confirmedFast) return a;
+  return Math.max(a, effectiveA(DEFAULT_A, cap, source));
+}
+
 /** AUT-9, AUT-13, AUT-35: the level an intent gets when its `a:` line is missing. */
 export function defaultLevel(source: string | null): number {
   return ownSource(source) ? DEFAULT_A : 4;
@@ -92,8 +102,10 @@ export function planGate(a: number, risk: RiskLevel | null, tests = false): bool
 
 /** What the gate decides on (PIP-7). */
 export interface GateInput {
-  /** Effective `a` (`effectiveA`). */
+  /** The level the gate decides at (`effectiveA`, or `gateLevel` for a confirmed fast lane). */
   a: number;
+  /** The level the worker's access was granted at, when it differs from `a` (FAST-9); default `a`. */
+  accessA?: number;
   /** CI green, or no CI on this repo (PIP-3). */
   ciGreen: boolean;
   /** The review's verdict, computed in code (PIP-5); null when none came back. */
@@ -125,7 +137,7 @@ export function gate(g: GateInput): { merge: true } | { merge: false; why: strin
   if (!g.ciGreen) return hold(GATE_WHY.ci);
   if (!g.review) return hold(GATE_WHY.noReview);
   if (!g.review.approved) return hold(GATE_WHY.review);
-  if (g.unplanned && g.a === 4) return hold(GATE_WHY.access);
+  if (g.unplanned && (g.accessA ?? g.a) === 4) return hold(GATE_WHY.access);
   if (!g.proven) return hold(GATE_WHY.proof);
   if (g.a === OWNER_ONLY) return hold("This intent is only yours: you merge it yourself.");
   if (g.a <= OWNER_MERGES) return hold(`At autonomy a${g.a} you merge every change yourself.`);

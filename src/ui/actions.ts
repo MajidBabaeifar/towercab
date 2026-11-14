@@ -16,6 +16,7 @@ import { saveBudgets } from "../budgets.ts";
 import { intentPaused, tickSteps } from "../commands.ts";
 import type { Config, RepoConfig } from "../config.ts";
 import type { Db } from "../db.ts";
+import { markFast } from "../fast.ts";
 import { askFeatures } from "../features.ts";
 import { ForgeBadReply, MERGE_METHOD, type PrBrief, type Result } from "../forge.ts";
 import { ownerForge } from "../github/forge.ts";
@@ -57,6 +58,11 @@ export interface UiActions {
   autonomy?(intent: string, a: number, actor?: string): Promise<string>;
   /** UI-283: set the intent's kind (INT-76); only the owner, and not past a stage the kind skips. */
   kind?(intent: string, kind: string, actor?: string): Promise<string>;
+  /**
+   * FAST-1, FAST-9: put the intent in the fast lane or take it out. From the page (actor `owner` or none) or the
+   * owner's own Telegram chat (`channel`, never taken from a request) it counts at once; the shadow is refused.
+   */
+  fast?(intent: string, on: boolean, actor?: string, channel?: "page" | "telegram"): Promise<string>;
   /** UI-204, LOOP-133: set urgency and/or importance (null: leave it); the new priority comes back. */
   scores?(
     intent: string,
@@ -426,6 +432,13 @@ export function createActions(d: ActionDeps): UiActions {
       if (refusal) throw new Error(refusal);
       command("kind", found.id, kind);
       return `Saved: ${kind}. It applies from the next pass.`;
+    },
+
+    async fast(intent, on, actor = "", channel = "page") {
+      if (d.actor === "shadow" || (actor !== "" && actor !== "owner")) {
+        throw new Error("only you can change the fast lane");
+      }
+      return markFast({ db: d.db, store: d.store }, intent, on, channel);
     },
 
     async scores(intent, u, i, actor = "") {

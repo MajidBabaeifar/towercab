@@ -67,7 +67,7 @@ export interface ChatDeps {
 }
 
 const PUBLIC_HELP =
-  "I understand /status, /focus, /queue, /pause and /resume. Reply to a question to answer it.";
+  "I understand /status, /focus, /queue, /pause, /resume and /fast. Reply to a question to answer it.";
 const MAX_LINES = 10;
 const POLL_SECONDS = 25;
 
@@ -255,6 +255,9 @@ export class Chat {
       case "pause":
       case "resume":
         this.say(u, await this.pause(cmd === "pause"));
+        return "done";
+      case "fast":
+        this.say(u, await this.fast(text));
         return "done";
       default:
         if (this.d.config.shadow.enabled) return "shadow";
@@ -598,6 +601,19 @@ export class Chat {
     }
     await this.d.actions.resume();
     return "Resumed.";
+  }
+
+  /** FAST-1, FAST-9: `/fast <id>` or `/fast <id> off`, from the owner's chat only (the update store drops the rest). */
+  private async fast(text: string): Promise<string> {
+    const [, id, word] = text.split(/\s+/);
+    if (!id || (word !== undefined && word.toLowerCase() !== "off"))
+      return "Say /fast <id> or /fast <id> off.";
+    if (!this.d.actions.fast) return "The fast lane isn't available.";
+    try {
+      return await this.d.actions.fast(id, word === undefined, "owner", "telegram");
+    } catch (e) {
+      return (e as Error).message;
+    }
   }
 
   // ---- messages that outlive their wait (TG-11, TG-12) -----------------------------------------------

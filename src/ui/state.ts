@@ -12,6 +12,7 @@ import { slotsText } from "../capacity.ts";
 import { agentCommentNotes, ignoredNotes, intentPaused } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
+import { fastConfirmed } from "../fast.ts";
 import type { ProposedState } from "../github/proposed.ts";
 import type { Clock } from "../handlers.ts";
 import type { Home } from "../home.ts";
@@ -71,6 +72,7 @@ import type {
   CardKind,
   ControlsView,
   ExistingTestView,
+  FastView,
   FocusHistory,
   GroundStop,
   InstallHelpView,
@@ -752,6 +754,12 @@ const KIND_LABELS: Record<CardKind, string> = {
   release: "Release PR",
   autonomy: "Autonomy raised",
 };
+
+/** FAST-1, FAST-9: the fast lane control's data for an intent. */
+export function fastView(src: UiSources, i: Intent): FastView {
+  const on = i.fast === true;
+  return { on, confirmed: on && fastConfirmed(src.db, i.id), locked: !src.running };
+}
 
 /** UI-257: the autonomy control's data for an intent. */
 export function autonomyView(src: UiSources, i: Intent): AutonomyView {
@@ -2664,6 +2672,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     e2eLog: e2eLogOf(src.home.root, id),
     ...(only ? { onlyYou: "Only you can answer or approve this." } : {}),
     ...(intent && !intent.done ? { autonomy: autonomyView(src, intent) } : {}),
+    ...(intent && !intent.done ? { fast: fastView(src, intent) } : {}),
     ...(intent && !intent.done ? { controls: controlsOf(src, intent, !!live, card) } : {}),
     ...(intentPaused(src.db, realId) ? { paused: true } : {}),
     agent_comments: agentCommentNotes(src.db, realId).map((c) => ({

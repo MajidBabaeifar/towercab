@@ -85,6 +85,11 @@ export function setAutonomy(id: string, a: number): Promise<ActionReply> {
   return post({ action: "autonomy", id, a, actor: "owner" });
 }
 
+/** FAST-1, FAST-9: put an intent in the fast lane or take it out; the page is the owner, so it confirms too. */
+export function setFast(id: string, fast: boolean): Promise<ActionReply> {
+  return post({ action: "set-fast", id, fast, actor: "owner" });
+}
+
 /** UI-204: change urgency and/or importance (1-5); the reply carries the new priority. */
 export function setScores(id: string, change: { u?: number; i?: number }): Promise<ActionReply> {
   return post({ action: "scores", id, ...change, actor: "owner" });
