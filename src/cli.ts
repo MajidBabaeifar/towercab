@@ -42,6 +42,7 @@ import * as log from "./log.ts";
 import { Loop } from "./loop.ts";
 import { type ApplyCtx, isWait } from "./machine.ts";
 import { type Mission, unfinishedFor } from "./mission.ts";
+import { buildWebhooks } from "./notify.ts";
 import { Observer } from "./observer/observer.ts";
 import { decide, nextText } from "./pick.ts";
 import { grantScanning } from "./pipeline/alerts.ts";
@@ -499,6 +500,7 @@ async function run(
           handlers: handlers(),
           log: (l) => log.emit(l),
           sender: chat ? chat.sender() : telegram,
+          webhooks: buildWebhooks(w.config, w.db, { log: (l) => log.emit(l) }),
           chat,
           shadow,
           observer,

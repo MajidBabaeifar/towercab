@@ -48,6 +48,10 @@ const OBSERVER = `CREATE TABLE observer_runs (id INTEGER PRIMARY KEY, trigger TE
 CREATE TABLE observer_proposals (pr INTEGER PRIMARY KEY, intent TEXT NOT NULL, run INTEGER NOT NULL, at REAL NOT NULL,
   title TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '[]');`;
 
+/** LOOP-146: which destination (`telegram`, `webhook:<name>`) has which outbox row; `sent_at` 0 = dropped. */
+const OUTBOX_SENT = `CREATE TABLE outbox_sent (key TEXT NOT NULL, dest TEXT NOT NULL, sent_at REAL,
+  tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0, PRIMARY KEY (key, dest));`;
+
 /** LOOP-37 **Schema**, as written in specs/loop.md (a test compares them). */
 export const SCHEMA = `CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE missions (
@@ -77,13 +81,14 @@ ${REPOS}
 ${SHADOW}
 ${TELEGRAM}
 ${CARDS}
-${OBSERVER}`;
+${OBSERVER}
+${OUTBOX_SENT}`;
 
 /** Migration i takes `user_version` from i to i+1. Later changes append. */
 export const MIGRATIONS: string[] = [
   SCHEMA.replace("'resume','start','done','steps'", "'resume'")
     .replace(OUTBOX_TG, "")
-    .replace(`\n${REPOS}\n${SHADOW}\n${TELEGRAM}\n${CARDS}\n${OBSERVER}`, ""),
+    .replace(`\n${REPOS}\n${SHADOW}\n${TELEGRAM}\n${CARDS}\n${OBSERVER}\n${OUTBOX_SENT}`, ""),
   // 2: `start` joins the commands (LOOP-63); the CHECK can't be altered, so the table is rebuilt.
   `CREATE TABLE commands_new (id INTEGER PRIMARY KEY,
   name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start')),
@@ -140,13 +145,18 @@ ALTER TABLE commands_new RENAME TO commands;`,
 INSERT INTO commands_new SELECT id, name, arg, text, source, created, applied_at, result FROM commands;
 DROP TABLE commands;
 ALTER TABLE commands_new RENAME TO commands;`,
+  // 13: which destination has which outbox row (LOOP-146). Additive; `IF NOT EXISTS` and `OR IGNORE` for a
+  // re-upgrade after a manual rollback. Telegram's history is seeded so nothing it sent is sent again.
+  `${OUTBOX_SENT.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ")}
+INSERT OR IGNORE INTO outbox_sent (key, dest, sent_at, tries, next_try)
+  SELECT key, 'telegram', sent_at, tries, next_try FROM outbox WHERE sent_at IS NOT NULL OR tries > 0;`,
 ];
 
 /**
  * Versions reached by migrations that only add (tables, columns, keys older code doesn't read): a
  * Towercab older than them can still use the database (LOOP-37).
  */
-export const ADDITIVE = new Set([3, 6, 7, 8, 9, 10, 11, 12]);
+export const ADDITIVE = new Set([3, 6, 7, 8, 9, 10, 11, 12, 13]);
 // 10 and 12 only widen the CHECK on `commands` (same columns): older code reads the table as before, and a
 // `score`, `boost` or `unfreeze` row it doesn't know just gets an error result, so a rollback stays safe.
 
