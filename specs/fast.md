@@ -1,6 +1,6 @@
 # Fast lane
 
-**Status:** Live: FAST-9 · **Prefix:** FAST
+**Status:** Live: FAST-2..5, FAST-9 · **Prefix:** FAST
 
 ## Purpose
 
