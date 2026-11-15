@@ -453,6 +453,25 @@ const STAGE_OF_KIND: Record<RunKind, string> = {
   observer: "design",
 };
 
+/** A lost session starts afresh: on the mission's row, or on the part when the mission is projected from one (LOOP-78). */
+/** The mission has parts, or is the projection of one (LOOP-78). */
+const inParts = (m: Mission): boolean => isMulti(m) || !!(data(m) as { part?: string }).part;
+
+export function resetSession(cx: Ctx, m: Mission): void {
+  const fresh = crypto.randomUUID();
+  const part = (data(m) as { part?: string }).part;
+  if (part) {
+    const row = cx.db.get<{ data: string }>("SELECT data FROM missions WHERE id = ?", m.id);
+    const d = JSON.parse(row?.data ?? "{}") as { parts?: { repo: string; cols?: Record<string, unknown> }[] };
+    for (const p of d.parts ?? []) {
+      if (p.repo === part) p.cols = { ...(p.cols ?? {}), session: fresh, session_used: 0 };
+    }
+    cx.db.run("UPDATE missions SET data = ? WHERE id = ?", JSON.stringify(d), m.id);
+    return;
+  }
+  cx.db.run("UPDATE missions SET session = ?, session_used = 0 WHERE id = ?", fresh, m.id);
+}
+
 /** Record the step, then spawn a Claude run (LOOP-6, LOOP-7, PIP-13, PIP-24). */
 export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string): Progress {
   // PIP-161, PIP-162: while the sandbox probe fails no Claude run starts: the owner gets the probe's error, or,
@@ -461,7 +480,7 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
   const probe = cx.sandbox?.();
   if (probe && !probe.ok) return { done: wait("fix sandbox", probe.why) };
   // LOOP-78: one cap for the whole intent; once it is reached no run starts for any part.
-  if (isMulti(m) && capReached(cx.config.agent.maxBudgetUsd, m)) {
+  if (inParts(m) && capReached(cx.config.agent.maxBudgetUsd, m)) {
     return { done: wait("worker budget", "the intent's runs used up its budget") };
   }
   const repo = cx.repo(m);
@@ -515,7 +534,7 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
         : SCHEMAS[agent.schema]
       : null,
     session,
-    budgetUsd: runBudget(agentBudgetUsd(agent, cx.config), cx.config.agent.maxBudgetUsd, m, isMulti(m)),
+    budgetUsd: runBudget(agentBudgetUsd(agent, cx.config), cx.config.agent.maxBudgetUsd, m, inParts(m)),
     claudeMd: p.files.claudeMd,
     grants:
       p.kind === "worker"
@@ -613,7 +632,7 @@ export function ended<T>(
       return { ok: true, value: parsed.value, costDelta: delta, secs: e.result.durationMs / 1000 };
     }
     case "sessionGone":
-      cx.db.run("UPDATE missions SET session = ?, session_used = 0 WHERE id = ?", crypto.randomUUID(), m.id);
+      resetSession(cx, m);
       return {
         ok: false,
         progress: { done: { event: "bad_result", why: "the session was gone; starting a fresh one" } },

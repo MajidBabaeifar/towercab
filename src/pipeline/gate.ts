@@ -185,9 +185,10 @@ export const MAX_BLOCKED_READS = 3;
 
 export const mergeHandler: Handler = {
   async step(cx, m) {
-    // INT-44: never merge only the lead of a multi-repo intent (LOOP-78 is not built yet); this also stops
-    // an intent that gained `repos:` after its build began.
-    if (((await intentOf(cx, m)).repos ?? []).length > 0) {
+    const d0 = data(m) as { part?: string };
+    // INT-44: never merge only the lead of a multi-repo intent: its parts land through the part driver
+    // (LOOP-80); this stops an intent that gained `repos:` after its build began and has no parts.
+    if (!d0.part && ((await intentOf(cx, m)).repos ?? []).length > 0) {
       return { done: wait("several repos", "The intent lists other repos in `repos:`.") };
     }
     const repo = cx.repo(m);

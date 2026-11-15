@@ -2,6 +2,7 @@
 // repo. Cards take their column from the airspace's planes, so the two never disagree; a plane whose
 // intent can't be found (no repo) goes to an "unknown repo" lane, last.
 
+import { frozenBy } from "../freeze.ts";
 import type { Intent } from "../intents/types.ts";
 import { fileErrorOf } from "./limits.ts";
 import { proposedSection } from "./proposed.ts";
@@ -81,8 +82,11 @@ export async function board(src: UiSources): Promise<BoardPage> {
         intent: p.intent,
         title: p.title,
         state: p.state,
-        ...(p.fast ? { fast: p.fast } : {}),
         ...(p.ship ? { ship: p.ship } : {}),
+        ...(p.repoCount ? { repoCount: p.repoCount, slowest: p.slowest! } : {}),
+        ...(p.partRepo ? { needsRepo: p.partRepo } : {}),
+        ...(p.freezeHold ? { freezeHold: p.freezeHold } : {}),
+        ...(p.fast ? { fast: p.fast } : {}),
       },
       false,
     );
@@ -135,7 +139,13 @@ export async function board(src: UiSources): Promise<BoardPage> {
     const readiness = readinessBadge(src.db, repo, shared);
     const at = changed.get(repo);
     const fileError = fileErrorOf(src, repo);
+    const by = frozenBy(src.db, repo);
+    const holder = by === null ? undefined : s.missions.find((x) => x.id === by);
+    const frozen = holder
+      ? `Merges frozen for ${s.intents.get(holder.intent)?.title ?? holder.intent}`
+      : null;
     return {
+      ...(frozen ? { frozen } : {}),
       ...(readiness ? { readiness } : {}),
       ...(fileError ? { fileError } : {}),
       repo,
