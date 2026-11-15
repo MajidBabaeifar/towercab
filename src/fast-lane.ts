@@ -65,3 +65,41 @@ export function stampsFor(ms: Mission[], open: Intent[]): { set: Mission[]; clea
   }
   return { set, clear };
 }
+
+/** FAST-10: the steps of an intent's path, in order. */
+export const FAST_STEPS = ["design", "plan", "build", "checks", "review", "merge"] as const;
+
+/** FAST-10: where a mission stands on the six steps, e.g. `build, 3 of 6`; null before the design starts. */
+export function fastProgress(m: Pick<Mission, "stage" | "from_stage">): string | null {
+  const s = m.stage === "blocked" && m.from_stage ? m.from_stage : m.stage;
+  const at = (n: number) => `${FAST_STEPS[n - 1]}, ${n} of ${FAST_STEPS.length}`;
+  switch (s) {
+    case "design":
+    case "approval:spec":
+      return at(1);
+    case "plan":
+    case "approval:plan":
+      return at(2);
+    case "build":
+      return at(3);
+    case "verify":
+    case "proof":
+    case "publish":
+    case "ci":
+      return at(4);
+    case "review":
+    case "gate":
+    case "approval:merge":
+      return at(5);
+    case "merge":
+      return at(6);
+    default:
+      return null;
+  }
+}
+
+/** FAST-10: the line a card shows for a fast-lane mission, e.g. `Fast lane · build, 3 of 6`. */
+export function fastLine(m: Pick<Mission, "stage" | "from_stage">): string {
+  const p = fastProgress(m);
+  return p ? `Fast lane · ${p}` : "Fast lane";
+}

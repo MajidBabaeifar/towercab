@@ -98,6 +98,7 @@ import { type Sender, sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import { type PipeData, prUrl as prLink } from "./pipeline/common.ts";
+import { fastAnswer } from "./pipeline/fast-answer.ts";
 import { writeTicks } from "./pipeline/steps.ts";
 import { evaluate } from "./pipeline/teammate.ts";
 import { isParked, priority } from "./priority.ts";
@@ -1156,6 +1157,17 @@ export class Loop {
       // LOOP-77: the owner removing `waiting` is an answer, though it has no words.
       if (o) this.move(m, o.event === "answered" ? { ...o, counted: true } : o);
     }
+    // FAST-7: a confirmed fast-lane intent's question is answered with the worker's recommendation.
+    for (const m of unfinished(db)) {
+      if (m.stage !== "blocked" || this.children.has(m.id)) continue;
+      const intent = listing.open.find((i) => i.id === m.intent) ?? null;
+      try {
+        const o = await fastAnswer(this.ctx(), m, intent);
+        if (o) this.move(m, o);
+      } catch (e) {
+        this.d.log(`${m.intent}: fast lane answer failed: ${(e as Error).message}`);
+      }
+    }
     const busy = new Set(unfinished(db).map((m) => m.intent));
     // `retry: fresh` on an intent with no mission: queue it again (LOOP-18).
     for (const i of listing.open) {
@@ -2034,6 +2046,10 @@ export class Loop {
     // LOOP-111: a mission that moves on without starting its run no longer asks for a slot.
     if (out.id === m.id && dataOf<{ returning?: number }>(out).returning !== undefined) {
       out = patchData(this.d.db, out, { returning: undefined }, this.now);
+    }
+    // FAST-8: a fast-lane mission starts to wait for the owner: Telegram is told on its next pass, not on its sweep.
+    if (out.id === m.id && out.stage !== m.stage && out.stage.startsWith("approval:") && isHolder(out)) {
+      this.d.db.setMeta("tg:urgent", "1");
     }
     if (out.stage !== m.stage || out.id !== m.id) {
       this.lastPrPoll.delete(m.id);

@@ -35,6 +35,8 @@ export interface CardView {
   final: string | null;
   /** TG-14: the link under the block, or null. */
   link: string | null;
+  /** FAST-10: `Fast lane · build, 3 of 6` for a fast-lane intent. */
+  fast?: string | null;
 }
 
 const chars = (s: string): string[] => [...s];
@@ -102,6 +104,7 @@ export function cardLines(v: CardView): string[] {
     clip(`◆ ${v.intent}`, WIDTH),
     ...limit(wrap(v.title), 2),
     clip(v.repo, WIDTH),
+    ...(v.fast ? wrap(v.fast) : []),
     ...status,
     ...trackLines(v.track),
   ];
@@ -114,10 +117,11 @@ export function cardText(v: CardView): string {
 }
 
 /** TG-20: one plain line, `<short title>: <ask>`. */
-export function pingText(v: Pick<CardView, "title" | "ask">): string {
+export function pingText(v: Pick<CardView, "title" | "ask"> & { fast?: string | null }): string {
   const ask = (v.ask ?? "").replace(/\s+/g, " ").trim();
   const title = clip(v.title.replace(/\s+/g, " ").trim(), 24);
-  return clip(`${title}: ${ask}`, PING_MAX);
+  // FAST-8: a fast-lane wait says so first.
+  return clip(`${v.fast ? "Fast lane · " : ""}${title}: ${ask}`, PING_MAX);
 }
 
 /** TG-17: the track's position for a stage, or -1 when the stage is not on the track (`pick`, `done`). */
