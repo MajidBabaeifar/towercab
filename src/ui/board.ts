@@ -77,7 +77,13 @@ export async function board(src: UiSources): Promise<BoardPage> {
     put(
       p.repo,
       key,
-      { intent: p.intent, title: p.title, state: p.state, ...(p.ship ? { ship: p.ship } : {}) },
+      {
+        intent: p.intent,
+        title: p.title,
+        state: p.state,
+        ...(p.fast ? { fast: p.fast } : {}),
+        ...(p.ship ? { ship: p.ship } : {}),
+      },
       false,
     );
   }

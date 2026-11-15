@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { InboxPage as Data, InboxItem } from "../../../src/ui/view.ts";
 import { act, markSeen, snoozeItem, unsnoozeItem, useLive } from "../api.ts";
 import { CapCardView } from "../budgets.tsx";
-import { ErrorNote, NeedsCard, ProposedCard, Section, Skeleton } from "../components.tsx";
+import { ErrorNote, FastBadge, NeedsCard, ProposedCard, Section, Skeleton } from "../components.tsx";
 import { Check } from "../icons.tsx";
 import { actsOnEnter, ignored, openShortcuts } from "../keys.ts";
 import { Modal } from "../Modal.tsx";
@@ -318,6 +318,7 @@ export function InboxPage({
       >
         <span class="chip chip-needs chip-sm">{i.kindLabel}</span>
         <span class="inbox-title">{i.title}</span>
+        <FastBadge text={i.card?.fast} />
         {fresh.current.has(i.key) ? <span class="chip-new">New</span> : null}
         <span class="inbox-meta meta">
           {i.repo}
