@@ -29,6 +29,7 @@ export default defineConfig({
     "auth.spec.ts",
     "roles.spec.ts",
     "admin-users.spec.ts",
+    "fast.spec.ts",
   ],
   outputDir: "screenshots/.results",
   fullyParallel: false,

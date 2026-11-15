@@ -14,6 +14,7 @@ import { removeCheckout } from "./checkout.ts";
 import { applyPending, intentPaused, noteIgnored, paused, recordAgentComment } from "./commands.ts";
 import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
+import { isHolder, laneOf, stampsFor } from "./fast-lane.ts";
 import { watchFast } from "./fast-watch.ts";
 import { fixFor, Health } from "./faults.ts";
 import {
@@ -104,6 +105,7 @@ import { type Sender, sendDue } from "./outbox.ts";
 import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import { type PipeData, prUrl as prLink } from "./pipeline/common.ts";
+import { fastAnswer } from "./pipeline/fast-answer.ts";
 import { writeTicks } from "./pipeline/steps.ts";
 import { evaluate } from "./pipeline/teammate.ts";
 import { isParked, priority } from "./priority.ts";
@@ -666,6 +668,7 @@ export class Loop {
     await this.enterDue();
     this.enforceTimeouts();
     await this.pollIntents(false);
+    this.stampLanes();
     this.releaseStalled();
     await this.pollProposed(false);
     await this.requeueKnownRepos();
@@ -1163,6 +1166,17 @@ export class Loop {
       const o = intentEvents(m, intent);
       // LOOP-77: the owner removing `waiting` is an answer, though it has no words.
       if (o) this.move(m, o.event === "answered" ? { ...o, counted: true } : o);
+    }
+    // FAST-7: a confirmed fast-lane intent's question is answered with the worker's recommendation.
+    for (const m of unfinished(db)) {
+      if (m.stage !== "blocked" || this.children.has(m.id)) continue;
+      const intent = listing.open.find((i) => i.id === m.intent) ?? null;
+      try {
+        const o = await fastAnswer(this.ctx(), m, intent);
+        if (o) this.move(m, o);
+      } catch (e) {
+        this.d.log(`${m.intent}: fast lane answer failed: ${(e as Error).message}`);
+      }
     }
     const busy = new Set(unfinished(db).map((m) => m.intent));
     // `retry: fresh` on an intent with no mission: queue it again (LOOP-18).
@@ -1819,8 +1833,9 @@ export class Loop {
     const all = unfinished(db);
     const back = [...new Set(all.map((m) => m.repo))].flatMap((r) => returningIn(all, r, this.listing));
     // LOOP-115: a mission the owner answered goes before the rest (the sort is stable).
+    // FAST-4: a fast-lane mission is first in line for the next free slot.
     const order = [...back, ...all.filter((m) => !back.includes(m))].sort(
-      (a, b) => Number(isAnswered(b)) - Number(isAnswered(a)),
+      (a, b) => Number(isHolder(b)) - Number(isHolder(a)) || Number(isAnswered(b)) - Number(isAnswered(a)),
     );
     for (const listed of order) {
       let m = listed;
@@ -1901,6 +1916,16 @@ export class Loop {
       patchData(db, m, { afterHold: read, idle: true, returning: undefined }, this.now);
     }
     return null;
+  }
+
+  /** FAST-2: hand the lane to the next fast intent when it is free, and take it off an intent that lost its mark. */
+  private stampLanes(): void {
+    const listing = this.listing;
+    if (!listing) return;
+    const ms = unfinished(this.d.db);
+    const { set, clear } = stampsFor(ms, listing.open);
+    for (const m of clear) patchData(this.d.db, m, { fastLane: undefined }, this.now);
+    for (const m of set) patchData(this.d.db, m, { fastLane: this.now }, this.now);
   }
 
   /** LOOP-119: a mission that waited for the owner about a dependency goes on once none is left. */
@@ -2073,6 +2098,10 @@ export class Loop {
     if (out.id === m.id && dataOf<{ returning?: number }>(out).returning !== undefined) {
       out = patchData(this.d.db, out, { returning: undefined }, this.now);
     }
+    // FAST-8: a fast-lane mission starts to wait for the owner: Telegram is told on its next pass, not on its sweep.
+    if (out.id === m.id && out.stage !== m.stage && out.stage.startsWith("approval:") && isHolder(out)) {
+      this.d.db.setMeta("tg:urgent", "1");
+    }
     if (out.stage !== m.stage || out.id !== m.id) {
       this.lastPrPoll.delete(m.id);
       this.d.db.delMeta(`poll:${m.id}`);
@@ -2085,20 +2114,22 @@ export class Loop {
     if (phaseOf(m.stage, m.from_stage) !== "plan") return false;
     const ms = unfinished(this.d.db);
     const workers = this.d.config.repos.get(m.repo)?.workers ?? 1;
-    if (this.repoFull(ms, m.repo, workers)) return true;
+    if (this.repoFull(ms, m.repo, workers, m)) return true;
+    // FAST-4: a fast-lane mission does not queue behind ready ones.
+    if (isHolder(m)) return false;
     return ms.some((x) => x.id !== m.id && x.repo === m.repo && isReady(x));
   }
 
   /**
    * LOOP-110, LOOP-111: no new build starts while `workers` missions work, while the repo holds the cap of
-   * missions between build and merge, or while a returning mission waits for the slot.
+   * missions between build and merge, or while a returning mission waits for the slot. FAST-4: a fast-lane
+   * mission (`first`) ignores the returning ones, unless one of them is in the lane too.
    */
-  private repoFull(ms: Mission[], repo: string, workers: number): boolean {
-    return (
-      workingIn(ms, repo).length >= workers ||
-      buildingIn(ms, repo).length >= capOf(workers) ||
-      returningIn(ms, repo, this.listing).length > 0
-    );
+  private repoFull(ms: Mission[], repo: string, workers: number, first?: Mission): boolean {
+    if (workingIn(ms, repo).length >= workers || buildingIn(ms, repo).length >= capOf(workers)) return true;
+    const back = returningIn(ms, repo, this.listing);
+    if (back.length === 0) return false;
+    return !(first && isHolder(first) && !isHolder(back[0]!));
   }
 
   /** Remember (once) that the plan is approved and the mission waits for the build slot. */
@@ -2114,9 +2145,8 @@ export class Loop {
       const workers = this.d.config.repos.get(repo)?.workers ?? 1;
       for (;;) {
         const ms = unfinished(this.d.db);
-        if (this.repoFull(ms, repo, workers)) break;
         const m = bestReady(ms, repo, this.listing);
-        if (!m) break;
+        if (!m || this.repoFull(ms, repo, workers, m)) break;
         this.pollAt.delete(m.id);
         apply(this.applyCtx(), m, { event: "plan_merged", why: "the build slot is free" });
       }
@@ -2206,6 +2236,12 @@ export class Loop {
     const started = new Set(
       db.all<{ key: string }>("SELECT key FROM meta WHERE key LIKE 'start:%'").map((r) => r.key.slice(6)),
     );
+    // FAST-2: the fast intent each repo works on now.
+    const lane = new Map<string, string>();
+    for (const name of config.repos.keys()) {
+      const busy = laneOf(ms, this.listing?.open ?? [], name).busy[0];
+      if (busy) lane.set(name, busy.intent);
+    }
     const cooling = new Map<string, string>();
     for (const row of db.all<{ key: string }>("SELECT key FROM meta WHERE key LIKE 'cooldown:%'")) {
       const model = row.key.slice("cooldown:".length);
@@ -2224,6 +2260,7 @@ export class Loop {
       active: new Set(unfinished(db).map((m) => m.intent)),
       defaultModel: config.agent.model,
       ...(config.auth ? { unconfirmed: this.unconfirmed() } : {}),
+      lane,
     };
   }
 
@@ -2275,9 +2312,11 @@ export class Loop {
   private async pick(): Promise<string | null> {
     const listing = this.listing;
     if (!listing) return null;
-    if (this.slotsUsed() >= this.d.config.agent.parallel) return null;
+    // FAST-4: at the global limit only a fast-lane intent starts; its run is first in line for a slot.
+    const full = this.slotsUsed() >= this.d.config.agent.parallel;
     let state = this.pickState();
-    let l = listing;
+    let l = full ? { ...listing, open: listing.open.filter((i) => i.fast === true) } : listing;
+    if (full && l.open.length === 0) return null;
     if (this.opts.intent) {
       if (this.targetId && this.d.db.get("SELECT 1 FROM missions WHERE intent = ?", this.targetId))
         return null;

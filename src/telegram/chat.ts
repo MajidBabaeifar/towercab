@@ -246,7 +246,10 @@ export class Chat {
         }
       }
       await this.handleStored();
-      await this.syncCards();
+      // FAST-8: a fast-lane mission started to wait for the owner: its card goes out now.
+      const urgent = this.d.db.meta("tg:urgent") !== null;
+      if (urgent) this.d.db.delMeta("tg:urgent");
+      await this.syncCards(urgent);
       await this.sweep(false);
     } catch (e) {
       this.d.log(`telegram: ${(e as Error).message}`);

@@ -61,6 +61,8 @@ export interface PickState {
   active: Set<string>;
   /** `[agent].model`: an intent without `model` runs on it. */
   defaultModel: string;
+  /** FAST-2: repo → the fast intent that holds its lane now; another fast intent of the repo waits. */
+  lane?: Map<string, string>;
 }
 
 /** The picker's answer. */
@@ -131,12 +133,21 @@ export function decide(listing: Listing, state: PickState): Decision {
   }
   const started = state.started ?? new Set<string>();
   const order = pickOrder(listing, state.cutoff);
-  const queue = [...order.filter((i) => started.has(i.id)), ...order.filter((i) => !started.has(i.id))];
+  // FAST-3: fast intents come right after the ones the owner started, before everything else.
+  const rank = (i: Intent) => (started.has(i.id) ? 0 : i.fast === true ? 1 : 2);
+  const queue = [...order].sort((a, b) => rank(a) - rank(b));
   for (const i of queue) {
     if (state.active.has(i.id)) continue;
-    // Parked intents wait for the owner: listed, never picked, nothing written.
+    const fast = i.fast === true;
+    // FAST-2: one fast intent per repo; a second waits as the next one.
+    const holder = fast ? state.lane?.get(i.repo) : undefined;
+    if (holder !== undefined && holder !== i.id) {
+      d.skipped.push({ id: i.id, reason: `waiting: ${holder} is the fast lane of ${i.repo}` });
+      continue;
+    }
+    // Parked intents wait for the owner: listed, never picked, nothing written. A fast one is not parked.
     const p = priorityOf(i);
-    if (isParked(p, state.cutoff)) {
+    if (!fast && isParked(p, state.cutoff)) {
       d.skipped.push({ id: i.id, reason: `parked (p${p} < ${state.cutoff}): raise u or i to run it` });
       continue;
     }
@@ -178,7 +189,7 @@ export function decide(listing: Listing, state: PickState): Decision {
       }
     }
     const model = i.model ?? state.defaultModel;
-    const held = started.has(i.id) ? null : heldBack(state.full.get(i.repo), i, listing);
+    const held = started.has(i.id) || fast ? null : heldBack(state.full.get(i.repo), i, listing);
     const until = state.cooling.get(model);
     const reason = state.paused
       ? "paused"

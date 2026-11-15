@@ -1,6 +1,7 @@
 // Who holds which place in a repo (LOOP-60, LOOP-61): intents ahead of build, the build slot, and
 // plan-approved intents waiting for it. Pure: the loop and the pages count with these.
 
+import { isHolder } from "./fast-lane.ts";
 import type { Listing } from "./intents/types.ts";
 import { finished, isWorking, phaseOf, type Stage, WAIT_STAGES } from "./machine.ts";
 import { dataOf, type Mission } from "./mission.ts";
@@ -121,6 +122,7 @@ export function returningIn(ms: Mission[], repo: string, listing: Listing | null
     .filter((m) => m.repo === repo && (returningSince(m) !== null || wantsBuild(m)))
     .sort(
       (a, b) =>
+        Number(isHolder(b)) - Number(isHolder(a)) ||
         Number(isAnswered(b)) - Number(isAnswered(a)) ||
         prio(b) - prio(a) ||
         since(a) - since(b) ||
@@ -137,6 +139,13 @@ export function waitsForCi(m: Mission): boolean {
 export function bestReady(ms: Mission[], repo: string, listing: Listing | null): Mission | null {
   const prio = prioOf(listing);
   const ready = ms.filter((m) => m.repo === repo && isReady(m));
-  ready.sort((a, b) => prio(b) - prio(a) || readySince(a)! - readySince(b)! || a.id - b.id);
+  // FAST-4: the fast-lane mission takes the free slot before any other.
+  ready.sort(
+    (a, b) =>
+      Number(isHolder(b)) - Number(isHolder(a)) ||
+      prio(b) - prio(a) ||
+      readySince(a)! - readySince(b)! ||
+      a.id - b.id,
+  );
   return ready[0] ?? null;
 }
