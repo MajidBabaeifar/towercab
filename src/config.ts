@@ -7,6 +7,7 @@ import { parse as parseToml } from "smol-toml";
 import { applyBudgets, type Budgets, emptyBudgets } from "./budgets.ts";
 import { type Capacity, defaultParallel, readCapacity } from "./capacity.ts";
 import { parseGitlabProject, setGitlabHost } from "./forge/types.ts";
+import { DEFAULT_TEMPLATE, templateProblem } from "./notify-text.ts";
 import { DEFAULT_NETWORK } from "./pipeline/sandbox.ts";
 
 /** PIP-157: `[agent]` keys that still parse so an old file loads, but no longer reach the sandbox. */
@@ -26,6 +27,17 @@ export interface RepoConfig {
   reviewers?: string[];
   /** GL-3: the host a `gitlab:` repo is cloned from (set from `[gitlab].api_base`, never stored). */
   host?: string;
+}
+
+/** LOOP-147: one `[[notify.webhook]]` table. */
+export interface WebhookConfig {
+  name: string;
+  /** Absolute path of the mode-600 file holding the URL. */
+  urlFile: string;
+  /** LOOP-148: a JSON document with `{text}` and `{link}`. */
+  template: string;
+  /** LOOP-149: `minimal` says only that something waits; `full` is Telegram's text. */
+  detail: "minimal" | "full";
 }
 
 /** GL-1: `[gitlab]`: where GitLab is, who the owner is there and where the bot's token is kept. */
@@ -92,6 +104,8 @@ export interface Config {
   github: { appId: number; me: string; apiBase: string; name?: string } | null;
   gitlab: GitLabConfig | null;
   telegram: { botToken: string; chatId: string; apiBase: string; uiUrl?: string } | null;
+  /** LOOP-146: `[[notify.webhook]]`: more places for the owner's messages, beside Telegram. */
+  notify: { webhooks: WebhookConfig[] };
   /** SHD-11: `[shadow]`: the owner's Claude session in Telegram and what it may do without asking. */
   shadow: { enabled: boolean; free: ShadowFree[]; dailyBudgetUsd: number; model: string | null };
   /** OBV-2, OBV-7, OBV-10: `[observer]`: on unless `enabled = false`; its own caps. */
@@ -157,6 +171,11 @@ export function loadConfig(file: string): Config {
     const why = tokenFileProblem(config.gitlab.tokenFile);
     if (why) throw new ConfigError(`config: ${file}: gitlab.token_file ${why}`);
   }
+  // LOOP-147: a webhook's URL file must exist and be mode 600; the URL itself is never read here.
+  for (const w of config.notify.webhooks) {
+    const why = tokenFileProblem(w.urlFile);
+    if (why) throw new ConfigError(`config: ${file}: notify.webhook.${w.name}.url_file ${why}`);
+  }
   return config;
 }
 
@@ -171,6 +190,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
   const github = raw.github === undefined ? null : r.table(raw.github, "github");
   const gitlab = raw.gitlab === undefined ? null : r.table(raw.gitlab, "gitlab");
   const telegram = raw.telegram === undefined ? null : r.table(raw.telegram, "telegram");
+  const notify = r.table(raw.notify, "notify");
   const ui = r.table(raw.ui, "ui");
   const update = r.table(raw.update, "update");
   const shadow = r.table(raw.shadow, "shadow");
@@ -243,6 +263,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       // TG-14: where the owner reaches the page from the phone; absent unless set.
       ...(telegram.ui_url === undefined ? {} : { uiUrl: r.url(telegram, "telegram", "ui_url", "") }),
     },
+    notify: { webhooks: parseWebhooks(r, notify.webhook) },
     shadow: {
       enabled: r.bool(shadow, "shadow", "enabled", false),
       free: free as ShadowFree[],
@@ -364,6 +385,31 @@ function gitlabApiBase(r: Reader, t: Record<string, unknown>): string {
     throw r.err("gitlab.api_base must be an https URL ending in /api/v4");
   }
   return u.href.replace(/\/$/, "");
+}
+
+/** LOOP-147..149: `[[notify.webhook]]`, each with a unique name. */
+function parseWebhooks(r: Reader, v: unknown): WebhookConfig[] {
+  if (v === undefined) return [];
+  if (!Array.isArray(v)) throw r.err("notify.webhook must be a list of [[notify.webhook]] tables");
+  const seen = new Set<string>();
+  return v.map((raw) => {
+    const t = r.table(raw, "notify.webhook");
+    const name = r.str(t, "notify.webhook", "name", "");
+    if (!/^[a-z0-9_-]+$/.test(name)) throw r.err("notify.webhook name must be set, using a-z, 0-9, _ and -");
+    if (seen.has(name)) throw r.err(`notify.webhook name ${name} is used twice`);
+    seen.add(name);
+    const key = `notify.webhook.${name}`;
+    const urlFile = r.str(t, key, "url_file", "");
+    if (!urlFile) throw r.err(`${key}.url_file is required`);
+    const path = expand(urlFile);
+    if (!isAbsolute(path)) throw r.err(`${key}.url_file must be absolute or start with ~/`);
+    const template = r.str(t, key, "template", DEFAULT_TEMPLATE);
+    const why = templateProblem(template);
+    if (why) throw r.err(`${key}.template ${why}`);
+    const detail = r.str(t, key, "detail", "minimal");
+    if (detail !== "minimal" && detail !== "full") throw r.err(`${key}.detail must be minimal or full`);
+    return { name, urlFile: path, template, detail };
+  });
 }
 
 function gitlabTokenFile(r: Reader, t: Record<string, unknown>): string {

@@ -51,6 +51,10 @@ const OBSERVER = `CREATE TABLE observer_runs (id INTEGER PRIMARY KEY, trigger TE
 CREATE TABLE observer_proposals (pr INTEGER PRIMARY KEY, intent TEXT NOT NULL, run INTEGER NOT NULL, at REAL NOT NULL,
   title TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '[]');`;
 
+/** LOOP-146: which destination (`telegram`, `webhook:<name>`) has which outbox row; `sent_at` 0 = dropped. */
+const OUTBOX_SENT = `CREATE TABLE outbox_sent (key TEXT NOT NULL, dest TEXT NOT NULL, sent_at REAL,
+  tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0, PRIMARY KEY (key, dest));`;
+
 /**
  * USR-2, USR-4, USR-8, USR-11, AUT-23: the people who may sign in (`repo_roles` is a JSON object), their
  * sessions (only the token's hash), the log of changes to them, Telegram link codes and chats, and who wrote
@@ -104,6 +108,7 @@ ${SHADOW}
 ${TELEGRAM}
 ${CARDS}
 ${OBSERVER}
+${OUTBOX_SENT}
 ${USERS}
 ${PERSON_CARDS}`;
 
@@ -112,7 +117,7 @@ export const MIGRATIONS: string[] = [
   SCHEMA.replace("'resume','start','done','steps'", "'resume'")
     .replaceAll(ACTOR, "")
     .replace(OUTBOX_TG, "")
-    .replace(`\n${REPOS}\n${SHADOW}\n${TELEGRAM}\n${CARDS}\n${OBSERVER}\n${USERS}\n${PERSON_CARDS}`, ""),
+    .replace(`\n${REPOS}\n${SHADOW}\n${TELEGRAM}\n${CARDS}\n${OBSERVER}\n${OUTBOX_SENT}\n${USERS}\n${PERSON_CARDS}`, ""),
   // 2: `start` joins the commands (LOOP-63); the CHECK can't be altered, so the table is rebuilt.
   `CREATE TABLE commands_new (id INTEGER PRIMARY KEY,
   name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start')),
@@ -169,14 +174,19 @@ ALTER TABLE commands_new RENAME TO commands;`,
 INSERT INTO commands_new SELECT id, name, arg, text, source, created, applied_at, result FROM commands;
 DROP TABLE commands;
 ALTER TABLE commands_new RENAME TO commands;`,
-  // 13: people, sessions and who wrote each intent (USR-2, USR-4, AUT-23). Additive; `IF NOT EXISTS` for a re-upgrade after a manual rollback.
+  // 13: which destination has which outbox row (LOOP-146). Additive; `IF NOT EXISTS` and `OR IGNORE` for a
+  // re-upgrade after a manual rollback. Telegram's history is seeded so nothing it sent is sent again.
+  `${OUTBOX_SENT.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ")}
+INSERT OR IGNORE INTO outbox_sent (key, dest, sent_at, tries, next_try)
+  SELECT key, 'telegram', sent_at, tries, next_try FROM outbox WHERE sent_at IS NOT NULL OR tries > 0;`,
+  // 14: people, sessions and who wrote each intent (USR-2, USR-4, AUT-23). Additive; `IF NOT EXISTS` for a re-upgrade after a manual rollback.
   USERS.replaceAll("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS "),
-  // 14: the actor and channel of each transition and command (USR-8). Additive: older code names its columns.
+  // 15: the actor and channel of each transition and command (USR-8). Additive: older code names its columns.
   `ALTER TABLE transitions ADD COLUMN actor TEXT NOT NULL DEFAULT '';
 ALTER TABLE transitions ADD COLUMN via TEXT NOT NULL DEFAULT '';
 ALTER TABLE commands ADD COLUMN actor TEXT NOT NULL DEFAULT '';
 ALTER TABLE commands ADD COLUMN via TEXT NOT NULL DEFAULT '';`,
-  // 15: the copies of a card in linked people's chats (USR-12). Additive; `IF NOT EXISTS` for a re-upgrade after a manual rollback.
+  // 16: the copies of a card in linked people's chats (USR-12). Additive; `IF NOT EXISTS` for a re-upgrade after a manual rollback.
   PERSON_CARDS.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS "),
 ];
 
@@ -184,7 +194,7 @@ ALTER TABLE commands ADD COLUMN via TEXT NOT NULL DEFAULT '';`,
  * Versions reached by migrations that only add (tables, columns, keys older code doesn't read): a
  * Towercab older than them can still use the database (LOOP-37).
  */
-export const ADDITIVE = new Set([3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+export const ADDITIVE = new Set([3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
 // 10 and 12 only widen the CHECK on `commands` (same columns): older code reads the table as before, and a
 // `score`, `boost` or `unfreeze` row it doesn't know just gets an error result, so a rollback stays safe.
 
@@ -250,7 +260,7 @@ export class Db {
         const there =
           (i === 5 && this.hasColumn("repos", "teammate_review")) ||
           (i === 7 && this.hasColumn("outbox", "ended_at")) ||
-          (i === 13 && this.hasColumn("transitions", "actor"));
+          (i === 14 && this.hasColumn("transitions", "actor"));
         if (!there) this.sql.exec(MIGRATIONS[i]!);
         this.sql.exec(`PRAGMA user_version = ${i + 1}`);
         this.setMeta("compatible_from", String(compatibleFrom(i + 1)));
