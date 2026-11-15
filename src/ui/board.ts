@@ -86,6 +86,7 @@ export async function board(src: UiSources): Promise<BoardPage> {
         ...(p.repoCount ? { repoCount: p.repoCount, slowest: p.slowest! } : {}),
         ...(p.partRepo ? { needsRepo: p.partRepo } : {}),
         ...(p.freezeHold ? { freezeHold: p.freezeHold } : {}),
+        ...(p.fast ? { fast: p.fast } : {}),
       },
       false,
     );

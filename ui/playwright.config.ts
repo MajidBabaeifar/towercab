@@ -27,6 +27,7 @@ export default defineConfig({
     "folds.spec.ts",
     "clarity.spec.ts",
     "new-intent.spec.ts",
+    "fast.spec.ts",
   ],
   outputDir: "screenshots/.results",
   fullyParallel: false,

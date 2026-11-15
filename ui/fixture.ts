@@ -16,6 +16,7 @@ import type { Draft } from "../src/intents/create.ts";
 import type { MatchKind } from "../src/intents/overlap.ts";
 import type { Intent, IntentStore, Listing, Unreadable } from "../src/intents/types.ts";
 import type { Stage } from "../src/machine.ts";
+import { patchData, unfinishedFor } from "../src/mission.ts";
 import { seedParts } from "../src/parts.ts";
 import {
   type Check,
@@ -232,6 +233,8 @@ export interface FakeActionCall {
   i?: number | null;
   /** UI-216: the new intent form's title. */
   title?: string;
+  /** FAST-1: the fast lane mark asked for. */
+  fast?: boolean;
 }
 
 export interface Fixture {
@@ -541,6 +544,13 @@ export function buildFixture(
       if (flag) clearFlag(db, intent);
       found.a = a;
       return "Saved. Applies from the next gate.";
+    },
+    async fast(intent, on) {
+      calls.push({ action: "fast", intent, fast: on });
+      const found = store.open.find((i) => i.id === intent);
+      if (!found) throw new Error(`there is no open intent ${intent}`);
+      found.fast = on;
+      return on ? "In the fast lane." : "Out of the fast lane.";
     },
     async scores(intent, u, i) {
       calls.push({ action: "scores", intent, u, i });
@@ -1585,12 +1595,14 @@ export async function serveFixture(
     crowded?: boolean;
     flagged?: boolean;
     many?: boolean;
+    fast?: boolean;
   } = {},
 ): Promise<{ fixture: Fixture; server: UiServer }> {
   const fixture = buildFixture(o);
   if (o.exits && !o.empty) exitsScene(fixture);
   if (o.parts && !o.empty) partsScene(fixture);
   if (o.flagged && !o.empty) flagScene(fixture);
+  if (o.fast && !o.empty) fastScene(fixture);
   const here = dirname(fileURLToPath(import.meta.url));
   const server = startUi({
     port,
@@ -1670,4 +1682,31 @@ export function flagScene(f: Fixture): void {
     commit: "0123456789abcdef",
     at: Date.now() / 1000 - 600,
   });
+}
+
+/**
+ * FAST-10: the code review of the docs repo waits for the owner with its place kept; the checkout page (web, in CI) holds the web repo's fast lane, with an automatic answer on record; the
+ * dark mode page is the next fast intent of that repo. The offline mode intent is not fast.
+ */
+export function fastScene(f: Fixture): void {
+  for (const id of [IDS.ci, IDS.queued, IDS.code]) {
+    const i = f.store.open.find((x) => x.id === id);
+    if (i) i.fast = true;
+  }
+  // The code review waits for the owner and keeps its place in the docs lane.
+  const waiting = unfinishedFor(f.db, IDS.code);
+  if (waiting) patchData(f.db, waiting, { fastLane: 1 }, Date.now() / 1000);
+  const m = unfinishedFor(f.db, IDS.ci);
+  if (m)
+    patchData(
+      f.db,
+      m,
+      {
+        fastLane: 1,
+        fastAnswers: [
+          { question: "Where does the button go?", answer: "Right", at: Date.now() / 1000 - 1800 },
+        ],
+      },
+      Date.now() / 1000,
+    );
 }

@@ -13,13 +13,14 @@ import { agentCommentNotes, ignoredNotes, intentPaused } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import { fastConfirmed } from "../fast.ts";
+import { fastLine, laneOf } from "../fast-lane.ts";
 import { frozenBy } from "../freeze.ts";
 import type { ProposedState } from "../github/proposed.ts";
 import type { Clock } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { Intent, IntentStore, Listing } from "../intents/types.ts";
 import { exitsOf, finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
-import { dataOf, forIntent, type Mission } from "../mission.ts";
+import { dataOf, forIntent, type Mission, unfinished } from "../mission.ts";
 import { observerNote } from "../observer/evidence.ts";
 import { observerCosts } from "../observer/store.ts";
 import { partsOf } from "../parts.ts";
@@ -766,10 +767,41 @@ const KIND_LABELS: Record<CardKind, string> = {
   autonomy: "Autonomy raised",
 };
 
+/**
+ * FAST-10: what a fast-lane intent's card says: `Fast lane · build, 3 of 6` for the one holding the lane (or waiting
+ * for the owner with its place kept), `next in the fast lane` while another holds it. Undefined for any other intent.
+ */
+export function fastLabel(src: UiSources, i: Intent | undefined, m: Mission | undefined): string | undefined {
+  if (!i || i.fast !== true || i.done) return undefined;
+  const live = m && !finished(m.stage) ? m : undefined;
+  const lane = laneOf(unfinished(src.db), [], i.repo);
+  const holds = live && dataOf<{ fastLane?: number }>(live).fastLane !== undefined;
+  if (!holds && lane.busy.length > 0) return "next in the fast lane";
+  return live ? fastLine(live) : "Fast lane";
+}
+
 /** FAST-1, FAST-9: the fast lane control's data for an intent. */
-export function fastView(src: UiSources, i: Intent): FastView {
+export function fastView(src: UiSources, i: Intent, m?: Mission): FastView {
   const on = i.fast === true;
-  return { on, confirmed: on && fastConfirmed(src.db, i.id), locked: !src.running };
+  const line = on ? fastLabel(src, i, m) : undefined;
+  const said = m
+    ? (dataOf<{ fastAnswers?: { question: string; answer: string; at: number }[] }>(m).fastAnswers ?? [])
+    : [];
+  return {
+    on,
+    confirmed: on && fastConfirmed(src.db, i.id),
+    locked: !src.running,
+    ...(line ? { line } : {}),
+    ...(said.length
+      ? {
+          answers: said.map((a) => ({
+            question: a.question,
+            answer: a.answer,
+            when: when(a.at, src.clock.now()),
+          })),
+        }
+      : {}),
+  };
 }
 
 /** UI-257: the autonomy control's data for an intent. */
@@ -964,8 +996,10 @@ export function missionCard(
   const gate = kind === "spec" || kind === "plan" ? kind : kind === "code" ? "code" : null;
   const risk = riskView(m, gate);
   const points = kind === "spec" ? (currentRisk(m, "spec")?.openPoints ?? []) : [];
+  const fast = fastLabel(src, intent, m);
   return {
     ...(risk ? { risk } : {}),
+    ...(fast ? { fast } : {}),
     ...(points.length ? { openPoints: points } : {}),
     ...installHelpOf(src, m.why),
     // UI-245: the checklist of UI-160 rides on the card.
@@ -1067,12 +1101,14 @@ export function missionRow(src: UiSources, s: Snap, m: Mission): Row {
   const inFlight = buildingIn(s.missions, m.repo).length;
   const summary = repoSummary(m);
   const hold = freezeHold(src.db, m);
+  const fast = fastLabel(src, s.intents.get(m.intent), m);
   return {
     ...(summary ? { ...summary, parts: partViews(m, (r, n) => prUrlOf(src, r, n)) } : {}),
     ...(hold ? { freezeHold: hold } : {}),
     intent: m.intent,
     title: titleOf(s, m.intent),
     repo: m.repo,
+    ...(fast ? { fast } : {}),
     state: missionState(s, m, src),
     phases: phases(m),
     step: ready
@@ -1261,6 +1297,7 @@ export function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: numbe
           ? [doneOf(src, m, s.now)?.text ?? askOf(m.waiting), `Waiting ${waited} · ${row.cost}`]
           : [back ?? `${row.step} · ${row.inStep}`, `${row.cost} · ${row.model}`],
       phases: row.phases,
+      ...(row.fast ? { fast: row.fast } : {}),
       ...(mark ? { ship: mark } : {}),
       ...(m.held && stop ? { held: heldWords(stop) } : {}),
       ...(row.parts ? { parts: row.parts } : {}),
@@ -1304,6 +1341,7 @@ export function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: numbe
         : [`#${place} in line · priority ${u.priority}`, why ?? "Starts when a slot is free."],
       canStart: src.running && !parked,
       phases: NOT_STARTED,
+      ...(i && fastLabel(src, i, undefined) ? { fast: fastLabel(src, i, undefined) } : {}),
     });
   }
   planes.sort((a, b) => STATIONS.indexOf(a.station) - STATIONS.indexOf(b.station));
@@ -2701,7 +2739,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     e2eLog: e2eLogOf(src.home.root, id),
     ...(only ? { onlyYou: "Only you can answer or approve this." } : {}),
     ...(intent && !intent.done ? { autonomy: autonomyView(src, intent) } : {}),
-    ...(intent && !intent.done ? { fast: fastView(src, intent) } : {}),
+    ...(intent && !intent.done ? { fast: fastView(src, intent, live ?? last ?? undefined) } : {}),
     ...(intent && !intent.done ? { controls: controlsOf(src, intent, !!live, card) } : {}),
     ...(intentPaused(src.db, realId) ? { paused: true } : {}),
     agent_comments: agentCommentNotes(src.db, realId).map((c) => ({
