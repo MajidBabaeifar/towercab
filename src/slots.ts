@@ -5,6 +5,7 @@ import { isHolder } from "./fast-lane.ts";
 import type { Listing } from "./intents/types.ts";
 import { finished, isWorking, phaseOf, type Stage, WAIT_STAGES } from "./machine.ts";
 import { dataOf, type Mission } from "./mission.ts";
+import { takesSlotIn } from "./parts.ts";
 import { priorityOf } from "./priority.ts";
 import { waitsInQueue } from "./queue.ts";
 
@@ -50,7 +51,7 @@ export function ownerAheadIn(ms: Mission[], repo: string): Mission[] {
 }
 
 export function buildingIn(ms: Mission[], repo: string): Mission[] {
-  return ms.filter((m) => m.repo === repo && isBuilding(m));
+  return ms.filter((m) => takesSlotIn(m, repo) && isBuilding(m));
 }
 
 /** LOOP-110: missions between build and merge per repo, working and waiting together, are at most this many. */

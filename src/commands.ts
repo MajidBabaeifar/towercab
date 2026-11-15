@@ -9,7 +9,8 @@ import { localTime } from "./intents/intent.ts";
 import type { Intent, IntentStore } from "./intents/types.ts";
 import { isKind, kindChangeRefusal, kindOf, WORK_KINDS } from "./kind.ts";
 import { type ApplyCtx, apply, exitsOf, wait, waitKey } from "./machine.ts";
-import { dataOf, type Mission, patchData, unfinishedFor } from "./mission.ts";
+import { dataOf, forIntent, type Mission, patchData, unfinishedFor } from "./mission.ts";
+import { partsOf } from "./parts.ts";
 import { parseAllow, readingReply, reverseRefusals } from "./pipeline/access.ts";
 import type { PipeData } from "./pipeline/common.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
@@ -414,6 +415,32 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
     case "retry": {
       const intent = await store.get(row.arg);
       const m = unfinishedFor(db, intent.id);
+      // LOOP-81: an intent that ended unverified lands the parts not yet merged: they pass their checks
+      // again on their current PRs, then merge in order under a new freeze.
+      const last = forIntent(db, intent.id).at(-1);
+      if (!m && last?.stage === "unverified" && partsOf(last).some((p) => !p.merged)) {
+        db.tx(() => {
+          const parts = partsOf(last).map((p) =>
+            p.merged
+              ? p
+              : {
+                  ...p,
+                  stage: "ci" as const,
+                  step: "",
+                  atGate: false,
+                  waiting: null,
+                  data: { ...(p.data ?? {}), needsApproval: undefined },
+                },
+          );
+          db.run(
+            "UPDATE missions SET data = ? WHERE id = ?",
+            JSON.stringify({ ...dataOf(last), parts }),
+            last.id,
+          );
+          apply(cx.applyCtx, last, { event: "reland", why: "the owner asked to land the rest" });
+        });
+        return `landing the rest of ${intent.id}: its unmerged parts are checked again, then merged in order`;
+      }
       if (m) {
         const again = recheck(m);
         if (again) {
@@ -437,6 +464,27 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       const offered = m?.stage === "blocked" && exitsOf(m.waiting ?? "").some((e) => e.do === "unfreeze");
       if (!m || !offered) throw new Error(`${intent.id} isn't at a freeze that can be lifted`);
       const freed = liftFreeze(db, m.id);
+      const parts = partsOf(m);
+      if (parts.some((p) => p.merged)) {
+        // A part is merged: the intent ends as merged, not verified live, and nothing is rolled back.
+        const list = (merged: boolean) =>
+          parts
+            .filter((p) => p.merged === merged)
+            .map((p) => p.repo)
+            .join(", ") || "none";
+        apply(cx.applyCtx, m, {
+          event: "left_unverified",
+          why: `You lifted the freeze after a merge: merged, not verified live. Merged: ${list(true)}. Not merged: ${list(false)}.`,
+        });
+        db.run(
+          "INSERT OR IGNORE INTO outbox (key, mission, text, created) VALUES (?, ?, ?, ?)",
+          `unverified:${m.id}`,
+          m.id,
+          `${intent.id} is merged but not verified live. Merged: ${list(true)}. Not merged: ${list(false)}. Reply retry to freeze again and land the rest in order.`,
+          cx.now.getTime() / 1000,
+        );
+        return `unfroze ${intent.id}${freed.length ? ` (${freed.join(", ")})` : ""}: merged, not verified live`;
+      }
       apply(cx.applyCtx, m, wait("freeze lifted", "You lifted the freeze; freeze again when you are ready."));
       return `unfroze ${intent.id}${freed.length ? ` (${freed.join(", ")})` : ""}`;
     }

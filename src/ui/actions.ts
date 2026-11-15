@@ -35,6 +35,7 @@ import { checkOverlap, type Match, type OverlapResult } from "../intents/overlap
 import type { IntentStore } from "../intents/types.ts";
 import { isKind, kindChangeRefusal, WORK_KINDS } from "../kind.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
+import { isMulti } from "../parts.ts";
 import { grantScanning } from "../pipeline/alerts.ts";
 import { ownerMergeRefusal } from "../pipeline/teammate.ts";
 import { canBoostIntent, changeScores } from "../scores.ts";
@@ -48,6 +49,8 @@ export interface UiActions {
   merge(intent: string): Promise<string>;
   reply(intent: string, text: string): Promise<string>;
   retry(intent: string): Promise<string>;
+  /** UI-167: lift the freeze of a multi-repo intent (`towercab unfreeze`). */
+  unfreeze(intent: string): Promise<string>;
   drop(intent: string): Promise<string>;
   start(intent: string): Promise<string>;
   /** UI-168, PIP-143: pass a change the automated review didn't approve on to the teammates. */
@@ -371,6 +374,20 @@ export function createActions(d: ActionDeps): UiActions {
       const m = unfinishedFor(d.db, intent);
       if (!m || !APPROVALS.has(m.stage))
         throw new Error("Nothing to merge: this intent isn't waiting for a merge.");
+      // LOOP-80: the owner's yes lands every part of a multi-repo intent; no single PR is merged here.
+      if (isMulti(m)) {
+        d.db.tx(() => {
+          const fresh = getMission(d.db, m.id);
+          if (!fresh || fresh.stage !== m.stage) return;
+          d.db.run(
+            "UPDATE missions SET data = ? WHERE id = ?",
+            JSON.stringify({ ...dataOf(fresh), ownerApproved: true }),
+            m.id,
+          );
+          d.db.setMeta(`poll:${m.id}`, "1");
+        });
+        return "Approved: Towercab freezes the repos and lands every part in order within a minute.";
+      }
       // PIP-143: a change the automated review didn't approve is passed on before it can merge.
       if ((dataOf(m) as { teammate?: { passNeeded?: boolean } }).teammate?.passNeeded === true) {
         throw new Error("Pass it on to your teammates first: they need to review it before it can merge.");
@@ -474,6 +491,14 @@ export function createActions(d: ActionDeps): UiActions {
       }
       command("retry", intent);
       return "Towercab starts it over on its next pass.";
+    },
+
+    async unfreeze(intent) {
+      const m = unfinishedFor(d.db, intent);
+      if (m?.stage !== "blocked" || m.waiting !== "freeze")
+        throw new Error("Nothing to unfreeze: this intent isn't waiting at a freeze.");
+      command("unfreeze", intent);
+      return "Towercab lifts the freeze on its next pass.";
     },
 
     async drop(intent) {

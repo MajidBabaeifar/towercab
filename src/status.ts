@@ -5,9 +5,10 @@ import { levelNow } from "./autonomy-change.ts";
 import { slotLines } from "./capacity.ts";
 import { pausedSuffix } from "./commands.ts";
 import type { Db } from "./db.ts";
+import { freezes } from "./freeze.ts";
 import type { Listing } from "./intents/types.ts";
-import { exitsOf, isWait, isWorking, waitInfo } from "./machine.ts";
-import { dataOf, type Mission, unfinished } from "./mission.ts";
+import { exitsOf, finished, isWait, isWorking, waitInfo } from "./machine.ts";
+import { dataOf, getMission, type Mission, unfinished } from "./mission.ts";
 import { queuePlace, waitsInQueue } from "./queue.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
 import {
@@ -210,6 +211,12 @@ export function renderStatus(s: StatusInput): string {
       const p = queuePlace(ms, m);
       if (p) lines.push(`queued to merge: ${m.intent} (#${p.n} of ${p.of})`);
     }
+  }
+  // LOOP-79: the repos whose merges a multi-repo intent holds, and why.
+  for (const f of freezes(s.db)) {
+    const m = getMission(s.db, f.mission);
+    if (m && !finished(m.stage))
+      lines.push(`frozen: ${f.repo} by ${m.intent} since ${time(f.since, s.now)} (merges there wait)`);
   }
   for (const w of s.waits ?? []) lines.push(`waiting: ${w}`);
   // LOOP-72: a repo missing setup, and whether that holds its new work back.

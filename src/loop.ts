@@ -31,6 +31,7 @@ import { queueTokenNotice } from "./forge/gitlab-token.ts";
 import type { Routed } from "./forge/route.ts";
 import { changeUrl, isGitlab } from "./forge/types.ts";
 import { MERGE_METHOD } from "./forge.ts";
+import { frozenBy } from "./freeze.ts";
 import {
   agentComments,
   approveNotices,
@@ -96,6 +97,9 @@ import {
 import { Mutex } from "./mutex.ts";
 import { sendWebhooks, type Webhook } from "./notify.ts";
 import { type Sender, sendDue } from "./outbox.ts";
+import { PartDriver } from "./partloop.ts";
+import { applyPart, patchPart } from "./partrun.ts";
+import { inLanding, inPartStages, partsOf } from "./parts.ts";
 import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
 import { type PipeData, prUrl as prLink } from "./pipeline/common.ts";
@@ -249,6 +253,8 @@ export class Loop {
   /** The last probe's result; null before the first one. */
   private lastProbe: { ok: boolean; why: string } | null = null;
   private children = new Map<number, Running>();
+  /** LOOP-78: the parts of multi-repo missions run beside the missions, keyed by `unitKey`. */
+  private parts: PartDriver;
   /** MET-33: the budgets and caps reached now, and the missions they hold back. */
   private caps: Cap[] = [];
   private capHeld = new Set<number>();
@@ -310,6 +316,19 @@ export class Loop {
       store: holdStore(d.store, held),
     };
     this.opts = opts;
+    this.parts = new PartDriver({
+      db: this.d.db,
+      config: this.d.config,
+      clock: this.d.clock,
+      handlers: this.d.handlers,
+      log: (l) => this.d.log(l),
+      ctx: (t) => this.ctx(t),
+      applyCtx: () => this.applyCtx(),
+      lock: (fn) => this.cloneLock.run(fn),
+      unfinished: () => unfinished(this.d.db),
+      holding: () => this.codeMoved() !== null || this.drain !== null || this.isPaused(),
+      slotsUsed: () => this.slotsUsed(),
+    });
     this.inhibitor = new Inhibitor(this.d.tools, d.log);
     this.stopped = new Promise<void>((r) => {
       this.wake = r;
@@ -364,6 +383,16 @@ export class Loop {
         if (m.busy) {
           const fresh = update(db, m.id, { child_pid: null, child_kind: null, child_since: null }, this.now);
           apply(this.applyCtx(), fresh, { event: "crash", why: "Towercab stopped while this step ran" });
+        }
+        // LOOP-78: a part's run is recorded on the part; the old run goes and the part's step is taken again.
+        for (const p of partsOf(m)) {
+          if (!p.cols?.child_pid) continue;
+          killGroup(Number(p.cols.child_pid), "SIGKILL");
+          patchPart(this.applyCtx(), m.id, p.repo, { child_pid: null, child_kind: null, child_since: null });
+          applyPart(this.applyCtx(), getMission(db, m.id)!, p.repo, {
+            event: "crash",
+            why: "Towercab stopped while this step ran",
+          });
         }
       }
     }
@@ -524,10 +553,12 @@ export class Loop {
       await within(idle, CUT_OFF_KILL_MS + 1000);
     }
     // LOOP-7: Claude runs get SIGTERM together, then SIGKILL for those still there after 10 s.
+    const partsStopped = this.parts.stopAll(KILL_AFTER_MS);
     const live = [...this.children];
     for (const [, r] of live) r.handle.kill("SIGTERM");
     const ended = await Promise.all(live.map(([, r]) => within(r.handle.done, KILL_AFTER_MS)));
     for (const [i, [, r]] of live.entries()) if (!ended[i]) r.handle.kill("SIGKILL");
+    await partsStopped;
     for (const [id, r] of live) {
       const m = getMission(this.d.db, id);
       if (m && !finished(m.stage)) {
@@ -684,6 +715,7 @@ export class Loop {
     if (this.stopping) return { ...report, stop: true };
     // LOOP-111: missions back from a wait ask for their run before a ready build takes the free slot.
     await this.stepDue(!report.woke);
+    await this.parts.pass(!report.woke);
     this.releaseReady();
     if (this.stopping) return { ...report, stop: true };
     await this.probeSandbox();
@@ -717,6 +749,7 @@ export class Loop {
     const live = unfinished(db).filter((m) => working(m) && !this.cooling(m));
     report.idle =
       this.children.size === 0 &&
+      this.parts.running() === 0 &&
       this.featuresJob === null &&
       this.readinessJob === null &&
       this.settingsJob === null &&
@@ -943,7 +976,10 @@ export class Loop {
         this.d.log(`${label(m)}: the owner's note wasn't written to plan.md: the intent is already closed`);
       });
     }
-    if (finished(m.stage)) removeCheckout(this.d.home.abs(m.checkout));
+    if (finished(m.stage)) {
+      removeCheckout(this.d.home.abs(m.checkout));
+      for (const p of partsOf(m)) removeCheckout(this.d.home.abs(p.checkout));
+    }
     const set: Record<string, SqlValue> = { step: "" };
     if (m.stage === "merge" && paused(db)) set.held = 1;
     update(db, m.id, set, this.now);
@@ -980,6 +1016,11 @@ export class Loop {
       [repo?.github, m.spec_pr],
       [this.d.store.github(), m.plan_pr],
       [repo?.github, m.pr],
+      // LOOP-78: a part has a PR of its own in its repo.
+      ...partsOf(m).map((p): [string | undefined, number | null] => [
+        this.d.config.repos.get(p.repo)?.github,
+        p.pr,
+      ]),
     ];
     return prs.filter((p): p is [string, number] => Boolean(p[0] && p[1]));
   }
@@ -1814,6 +1855,8 @@ export class Loop {
     for (const listed of order) {
       let m = listed;
       if (!isWorking(m.stage) || m.step === "enter" || m.held || this.children.has(m.id)) continue;
+      // LOOP-78, LOOP-80: the parts of a multi-repo mission step on their own and land in order.
+      if (inPartStages(m) || inLanding(m)) continue;
       if (this.parked.has(m.id)) continue;
       // LOOP-113: while paused only CI is looked at (a read of the checks); nothing else is due.
       if (this.isPaused() && m.stage !== "ci") continue;
@@ -1829,6 +1872,11 @@ export class Loop {
       if (this.opts.intent && this.targetId && m.intent !== this.targetId) continue;
       const h = this.d.handlers[m.stage];
       if (!h) continue;
+      // LOOP-79: another intent's freeze of this repo holds the merge; it starts when the freeze lifts.
+      if (m.stage === "merge") {
+        const by = frozenBy(db, m.repo);
+        if (by !== null && by !== m.id) continue;
+      }
       // LOOP-159: at `merge` only the head of the repo's merge queue steps; it marks itself landing.
       if (m.stage === "merge" && landingOf(m) === null) {
         if (headOf(unfinished(db), m.repo)?.id !== m.id) continue;
@@ -2128,7 +2176,7 @@ export class Loop {
   }
 
   slotsUsed(): number {
-    return [...this.children.values()].filter((r) => r.spec.slot && !r.exit).length;
+    return [...this.children.values()].filter((r) => r.spec.slot && !r.exit).length + this.parts.slots();
   }
 
   /** Plan-approved missions waiting for their repo's build slot (LOOP-61). */

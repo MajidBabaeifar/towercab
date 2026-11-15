@@ -261,11 +261,6 @@ export const buildHandler: Handler = {
     const d = data(m);
     switch (m.step) {
       case "": {
-        // INT-44: one PR per repo is not built yet (LOOP-78); building only the lead would merge a part of
-        // the feature, maybe before what it depends on. Nothing is built or merged until it is.
-        if (((await intentOf(cx, m)).repos ?? []).length > 0) {
-          return { done: wait("several repos", "The intent lists other repos in `repos:`.") };
-        }
         // PIP-116: the owner's answer on a test the worker asked for comes first.
         // PIP-227: a question asked mid-build keeps the work too, except in a conflict round, which merges first.
         const kept = Boolean(d.askedMidBuild) && d.repair?.kind !== "conflict";
