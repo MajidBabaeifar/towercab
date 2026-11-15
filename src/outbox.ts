@@ -78,6 +78,21 @@ export function waitObsolete(db: Db): (row: OutboxRow) => boolean {
   };
 }
 
+/** LOOP-146: Telegram's sent mark is also kept in `outbox_sent`, with the other destinations'. */
+function mirror(db: Db, key: string, at: number): void {
+  db.run(
+    "INSERT INTO outbox_sent (key, dest, sent_at) VALUES (?, 'telegram', ?) ON CONFLICT (key, dest) DO UPDATE SET sent_at = excluded.sent_at",
+    key,
+    at,
+  );
+}
+
+/** A row Telegram is done with: dropped (`at` 0) or sent. */
+function finish(db: Db, key: string, at: number): void {
+  db.run("UPDATE outbox SET sent_at = ? WHERE key = ?", at, key);
+  mirror(db, key, at);
+}
+
 /**
  * Unsent rows, oldest first: obsolete ones dropped (`sent_at = 0`); the rest sent until the first
  * failure or a row whose retry isn't due, which holds the ones after it. Sent: `sent_at = now`;
@@ -100,7 +115,7 @@ export async function sendDue(
   const out: SendResult = { sent: 0, dropped: 0, failed: null };
   for (const row of rows) {
     if (isObsolete(row)) {
-      db.run("UPDATE outbox SET sent_at = 0 WHERE key = ?", row.key);
+      finish(db, row.key, 0);
       out.dropped++;
       continue;
     }
@@ -118,7 +133,7 @@ export async function sendDue(
       } else {
         const p = await sender.prepare?.(row);
         if (p === "drop") {
-          db.run("UPDATE outbox SET sent_at = 0 WHERE key = ?", row.key);
+          finish(db, row.key, 0);
           out.dropped++;
           continue;
         }
@@ -131,7 +146,7 @@ export async function sendDue(
       }
     } catch (e) {
       if (e instanceof Refused) {
-        db.run("UPDATE outbox SET sent_at = 0 WHERE key = ?", row.key);
+        finish(db, row.key, 0);
         out.dropped++;
         continue;
       }
@@ -152,6 +167,7 @@ export async function sendDue(
       sentId ?? null,
       row.key,
     );
+    mirror(db, row.key, now);
     out.sent++;
   }
   return out;
