@@ -5079,3 +5079,20 @@ kbd {
     box-shadow: var(--shadow-pop);
   }
 }
+
+/* The fast lane (FAST-10) */
+
+.fast-badge {
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--mono);
+  white-space: normal;
+}
+
+.fast-answers {
+  margin: var(--s1) 0 0;
+  padding-left: var(--s4);
+  color: var(--text-2);
+  font-size: var(--t-sm);
+}

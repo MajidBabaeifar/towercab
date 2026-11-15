@@ -22,34 +22,46 @@ export function FastControl({
     setBusy(false);
   };
   return (
-    <span class="fast-lane">
-      <span class="meta">Fast lane</span>{" "}
-      {!view.on ? (
-        <button type="button" class="btn small" disabled={off} onClick={() => void go(true)}>
-          Put in the fast lane
-        </button>
-      ) : (
-        <>
-          {view.confirmed ? (
-            <span class="meta">in the fast lane</span>
-          ) : (
-            <span class="meta">fast lane: waiting for your confirmation</span>
-          )}{" "}
-          {view.confirmed ? null : (
-            <button type="button" class="btn primary small" disabled={off} onClick={() => void go(true)}>
-              Confirm
-            </button>
-          )}{" "}
-          <button type="button" class="btn small" disabled={off} onClick={() => void go(false)}>
-            Take out
+    <>
+      <span class="fast-lane">
+        <span class="meta">Fast lane</span>{" "}
+        {view.line ? <span class="chip chip-sm fast-badge">{view.line}</span> : null}{" "}
+        {!view.on ? (
+          <button type="button" class="btn small" disabled={off} onClick={() => void go(true)}>
+            Put in the fast lane
           </button>
-        </>
-      )}
-      {result && !result.ok ? (
-        <span class="meta error" role="status">
-          {result.message}
-        </span>
+        ) : (
+          <>
+            {view.confirmed ? (
+              <span class="meta">in the fast lane</span>
+            ) : (
+              <span class="meta">fast lane: waiting for your confirmation</span>
+            )}{" "}
+            {view.confirmed ? null : (
+              <button type="button" class="btn primary small" disabled={off} onClick={() => void go(true)}>
+                Confirm
+              </button>
+            )}{" "}
+            <button type="button" class="btn small" disabled={off} onClick={() => void go(false)}>
+              Take out
+            </button>
+          </>
+        )}
+        {result && !result.ok ? (
+          <span class="meta error" role="status">
+            {result.message}
+          </span>
+        ) : null}
+      </span>
+      {view.answers?.length ? (
+        <ul class="fast-answers" aria-label="Answered automatically">
+          {view.answers.map((a) => (
+            <li key={`${a.when.at}${a.question}`}>
+              Answered automatically: {a.question} <strong>{a.answer}</strong>
+            </li>
+          ))}
+        </ul>
       ) : null}
-    </span>
+    </>
   );
 }

@@ -11,7 +11,7 @@ import type {
   RepoSpendView,
 } from "../../../src/ui/view.ts";
 import { readSort, SORTS, type SortKey, sortLabel, sortRepos, writeSort } from "../board-sort.ts";
-import { ErrorNote, ReadinessChip, StateChip } from "../components.tsx";
+import { ErrorNote, FastBadge, ReadinessChip, StateChip } from "../components.tsx";
 import { ChevronDown } from "../icons.tsx";
 import { Link } from "../router.tsx";
 
@@ -49,6 +49,7 @@ function Card({ card }: { card: BoardCard }) {
         <span class="board-card-title" title={card.title}>
           {card.title}
         </span>
+        <FastBadge text={card.fast} />
         <span class="board-card-foot">
           {/* The note goes beside the chip, so a narrow card wraps it instead of cutting it. */}
           <StateChip state={{ ...card.state, note: null }} small />

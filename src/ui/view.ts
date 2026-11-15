@@ -88,6 +88,10 @@ export interface FastView {
   confirmed: boolean;
   /** The service isn't running, so the page can't change anything. */
   locked: boolean;
+  /** FAST-10: `Fast lane · build, 3 of 6`, or `next in the fast lane` while another intent holds the lane. */
+  line?: string;
+  /** FAST-7, FAST-10: the questions answered automatically with the recommendation. */
+  answers?: { question: string; answer: string; when: When }[];
 }
 
 /** UI-257: the one control for an intent's autonomy. */
@@ -195,6 +199,8 @@ export interface RiskView {
 
 /** UI-58: one wait on the owner. */
 export interface Card {
+  /** FAST-10: the fast lane label and progress of a fast intent. */
+  fast?: string;
   /** UI-211: set when the reason is that the App isn't installed. */
   installHelp?: InstallHelpView;
   intent: string;
@@ -265,6 +271,8 @@ export interface BuildProgress {
 
 /** UI-59: a moving intent. */
 export interface Row {
+  /** FAST-10: the fast lane label and progress of a fast intent. */
+  fast?: string;
   intent: string;
   title: string;
   repo: string;
@@ -396,6 +404,8 @@ export type StationKey =
 
 /** UI-78: one open intent on the airspace line. */
 export interface Plane {
+  /** FAST-10: the fast lane label and progress of a fast intent. */
+  fast?: string;
   intent: string;
   title: string;
   repo: string;
@@ -1063,6 +1073,8 @@ export interface BoardColumn {
 }
 
 export interface BoardCard {
+  /** FAST-10: the fast lane label and progress of a fast intent. */
+  fast?: string;
   intent: string;
   title: string;
   state: StateView;

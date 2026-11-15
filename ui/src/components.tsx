@@ -113,6 +113,11 @@ export function InstallHelpBlock({ id, help }: { id: string; help: InstallHelpVi
   );
 }
 
+/** FAST-10: the fast lane label and where the intent stands, e.g. `Fast lane · build, 3 of 6`. */
+export function FastBadge({ text }: { text?: string }) {
+  return text ? <span class="chip chip-sm fast-badge">{text}</span> : null;
+}
+
 export function StateChip({ state, small }: { state: StateView; small?: boolean }) {
   return (
     <span class={`chip chip-${state.key}${small ? " chip-sm" : ""}`}>
@@ -473,6 +478,7 @@ export function NeedsCard({
           <span>{card.kindLabel}</span>
         </span>
         {card.onlyYou ? <OnlyYou /> : null}
+        <FastBadge text={card.fast} />
         {card.decided_by_agent ? <span class="chip">agent for owner: {card.decided_by_agent}</span> : null}
         <span class="grow" />
         {card.since ? (
@@ -920,6 +926,7 @@ export function WorkRow({ row, readOnly = false }: { row: Row; readOnly?: boolea
         <span class="meta">
           {row.repo} · <Id id={row.intent} />
         </span>
+        <FastBadge text={row.fast} />
       </span>
       <span class="row-state">
         <StateChip state={row.state} small />

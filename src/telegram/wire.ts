@@ -3,6 +3,7 @@
 
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
+import { fastLine } from "../fast-lane.ts";
 import { ownerForge } from "../github/forge.ts";
 import type { Clock, Host } from "../handlers.ts";
 import type { Home } from "../home.ts";
@@ -122,6 +123,7 @@ export function buildChat(w: ChatWorld, telegram: Telegram, loop: () => Loop): C
         waitId: view?.waitId ?? null,
         final,
         link,
+        ...(snap.intents.get(m.intent)?.fast === true && !finished ? { fast: fastLine(m) } : {}),
       },
     };
   };
