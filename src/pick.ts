@@ -51,8 +51,6 @@ export interface PickState {
   full: Map<string, Places>;
   /** Intents the owner started with `start` (LOOP-63): they go over the limit, first. */
   started?: Set<string>;
-  /** GitLab repos (GL-3): added, but the pipeline can't work on them yet, so none of their intents is picked. */
-  unsupported?: Set<string>;
   /** Repos set to block while not ready (LOOP-70) → `<n> missing (<items>)`. */
   notReady?: Map<string, string>;
   /** Models cooling down (LOOP-9) → until, as shown (`15:30`). */
@@ -61,6 +59,8 @@ export interface PickState {
   active: Set<string>;
   /** `[agent].model`: an intent without `model` runs on it. */
   defaultModel: string;
+  /** FAST-2: repo → the fast intent that holds its lane now; another fast intent of the repo waits. */
+  lane?: Map<string, string>;
 }
 
 /** The picker's answer. */
@@ -121,10 +121,6 @@ export function heldText(h: Held, id: string): string {
     : `repo has ${h.working} intents working ahead (start ${id} to go now)`;
 }
 
-/** Why an intent on a GitLab repo is not picked: the pipeline is GitHub-only for now. */
-export const GITLAB_NOT_YET = (repo: string): string =>
-  `${repo} is a GitLab repo and the pipeline doesn't support GitLab yet: its intents wait`;
-
 /** LOOP-5: the picker's list (PRI-5) in order; the first intent nothing skips is picked. */
 export function decide(listing: Listing, state: PickState): Decision {
   const d: Decision = { pick: null, skipped: [], writes: [] };
@@ -135,22 +131,27 @@ export function decide(listing: Listing, state: PickState): Decision {
   }
   const started = state.started ?? new Set<string>();
   const order = pickOrder(listing, state.cutoff);
-  const queue = [...order.filter((i) => started.has(i.id)), ...order.filter((i) => !started.has(i.id))];
+  // FAST-3: fast intents come right after the ones the owner started, before everything else.
+  const rank = (i: Intent) => (started.has(i.id) ? 0 : i.fast === true ? 1 : 2);
+  const queue = [...order].sort((a, b) => rank(a) - rank(b));
   for (const i of queue) {
     if (state.active.has(i.id)) continue;
-    // Parked intents wait for the owner: listed, never picked, nothing written.
+    const fast = i.fast === true;
+    // FAST-2: one fast intent per repo; a second waits as the next one.
+    const holder = fast ? state.lane?.get(i.repo) : undefined;
+    if (holder !== undefined && holder !== i.id) {
+      d.skipped.push({ id: i.id, reason: `waiting: ${holder} is the fast lane of ${i.repo}` });
+      continue;
+    }
+    // Parked intents wait for the owner: listed, never picked, nothing written. A fast one is not parked.
     const p = priorityOf(i);
-    if (isParked(p, state.cutoff)) {
+    if (!fast && isParked(p, state.cutoff)) {
       d.skipped.push({ id: i.id, reason: `parked (p${p} < ${state.cutoff}): raise u or i to run it` });
       continue;
     }
     if (!state.repos.has(i.repo)) {
       d.writes.push({ id: i.id, waiting: "unknown repo", why: i.repo });
       d.skipped.push({ id: i.id, reason: `unknown repo ${i.repo}` });
-      continue;
-    }
-    if (state.unsupported?.has(i.repo)) {
-      d.skipped.push({ id: i.id, reason: GITLAB_NOT_YET(i.repo) });
       continue;
     }
     // INT-42: every other repo of a multi-repo intent must be one Towercab knows, and ready.
@@ -182,7 +183,7 @@ export function decide(listing: Listing, state: PickState): Decision {
       }
     }
     const model = i.model ?? state.defaultModel;
-    const held = started.has(i.id) ? null : heldBack(state.full.get(i.repo), i, listing);
+    const held = started.has(i.id) || fast ? null : heldBack(state.full.get(i.repo), i, listing);
     const until = state.cooling.get(model);
     const reason = state.paused
       ? "paused"

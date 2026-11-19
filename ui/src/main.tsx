@@ -12,6 +12,8 @@ import type {
 import { act, useLive } from "./api.ts";
 import { ErrorNote, Freshness, Skeleton } from "./components.tsx";
 import { Alert, Logo, Pause, Play, Spinner } from "./icons.tsx";
+import { openNewIntent } from "./keys.ts";
+import { NewIntentHost } from "./NewIntent.tsx";
 import { Palette } from "./Palette.tsx";
 import { ActivityPage } from "./pages/Activity.tsx";
 import { BoardPage } from "./pages/Board.tsx";
@@ -147,6 +149,11 @@ function TopBar({ top, path }: { top: Top | null; path: string }) {
             )}
           </p>
         ) : null}
+        {top && !top.readOnly && top.role !== "viewer" ? (
+          <button type="button" class="btn primary new-intent-btn" onClick={openNewIntent}>
+            New intent
+          </button>
+        ) : null}
         {top ? <PauseButton top={top} /> : null}
       </div>
       <nav class="tabs" aria-label="Pages">
@@ -272,6 +279,7 @@ function App() {
       {page}
       <Shortcuts />
       <Palette top={top} />
+      <NewIntentHost top={top} />
     </>
   );
 }

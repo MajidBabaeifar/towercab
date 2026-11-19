@@ -78,6 +78,16 @@ chat_id = "123456789"
 # Telegram API address.
 api_base = "https://api.telegram.org"
 
+# Optional: more places for the same messages, beside Telegram (one table per webhook; Slack, Mattermost,
+# Teams). The address is a secret: keep it alone on one line in a file only you can read (chmod 600).
+# [[notify.webhook]]
+# name = "team"
+# url_file = "~/.config/towercab/team-webhook.url"
+# "minimal" says only how many things wait, with a link to the page; "full" sends Telegram's text.
+# detail = "minimal"
+# The JSON body; {text} and {link} are filled in. This is the default.
+# template = '{"text": "{text}"}'
+
 [shadow]
 # Whether the shadow, one Claude session you talk to in Telegram, is on. It needs [telegram] above.
 enabled = false
@@ -112,6 +122,9 @@ port = 7311
 auto = true
 # Minutes an update waits for running work before cutting it off; reviews and builds get as long again.
 drain_minutes = 60
+# Which changes Towercab updates to: "main" (the default) follows every change to main; "release" waits
+# for a newer vMAJOR.MINOR.PATCH tag that is on main.
+# channel = "release"
 
 # One table per repo Towercab works in; the name after repos. is yours to choose. Towercab imports
 # these tables into its database once, on its first start, and ignores them after that: add repos

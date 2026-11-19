@@ -605,7 +605,10 @@ async function pollIssue(
  */
 export async function pollIssues(d: IssueDeps): Promise<void> {
   const errors: string[] = [];
-  const poll: Poll = { intents: d.store.github(), taken: null };
+  const intents = d.store.github();
+  // GL-16: intents come from the files of a GitLab intents repo only; its issues are not proposed there.
+  if (intents && isGitlab(intents)) return;
+  const poll: Poll = { intents, taken: null };
   for (const repo of d.config.repos.values()) {
     // INT-64: a GitLab repo is polled through `[gitlab]`; without it there is nothing to ask.
     const api = apiFor(d, repo);

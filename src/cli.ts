@@ -22,6 +22,9 @@ import { Db } from "./db.ts";
 import { doctor } from "./doctor.ts";
 import { markFast } from "./fast.ts";
 import { GitLabForge } from "./forge/gitlab.ts";
+import { GitLabHost } from "./forge/gitlab-host.ts";
+import { GlabOwner } from "./forge/gitlab-owner.ts";
+import { routed } from "./forge/route.ts";
 import { parseGitlabProject } from "./forge/types.ts";
 import type { Forge } from "./forge.ts";
 import { fetchHttp } from "./github/app.ts";
@@ -31,12 +34,15 @@ import { agentReply, agentReplyBody, approve as ownerApprove, replyTarget } from
 import type { Host } from "./handlers.ts";
 import { systemClock } from "./handlers.ts";
 import { Home } from "./home.ts";
+import { addToIntent, cannotAddTo, createIntent, type Draft } from "./intents/create.ts";
+import { checkOverlap, type Match } from "./intents/overlap.ts";
 import { openStore } from "./intents/store.ts";
 import type { IntentStore } from "./intents/types.ts";
 import * as log from "./log.ts";
 import { Loop } from "./loop.ts";
 import { type ApplyCtx, isWait } from "./machine.ts";
 import { type Mission, unfinishedFor } from "./mission.ts";
+import { buildWebhooks } from "./notify.ts";
 import { Observer } from "./observer/observer.ts";
 import { decide, nextText } from "./pick.ts";
 import { grantScanning } from "./pipeline/alerts.ts";
@@ -52,7 +58,7 @@ import { restoreBackup } from "./settings/backup.ts";
 import { resetShadow, statusText } from "./shadow/store.ts";
 import { buildShadow } from "./shadow/wire.ts";
 import { checkIds, readPrList } from "./specs-cli.ts";
-import { renderStatus } from "./status.ts";
+import { renderStatus, versionLine } from "./status.ts";
 import { buildChat } from "./telegram/wire.ts";
 import { Telegram } from "./telegram.ts";
 import { realTools, type Tools } from "./tools.ts";
@@ -96,7 +102,9 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   up | down | restart | logs      the systemd user service
   run [--watch] [--intent <id>]   the loop in the foreground
   status | next                   what is happening, and what runs next
-  add "<repo>: <title>" [uN iN aN] [--fast]
+  add "<repo>: <title>" [uN iN aN] [--fast] [--check | --no-check]
+                                  at a terminal: lists overlapping intents and asks first; in a script: writes,
+                                  and checks only with --check (a warning)
   fast <id> [--off]               put an intent in the fast lane (its approvals still wait for your click on the page)
   answer <id> <text>              answer a question (when there is no PR to reply on)
   answer <id> allow <path>…       allow a test you refused earlier, for the running mission
@@ -124,6 +132,23 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
 
 class UsageError extends Error {}
 
+/** LOOP-124: what `add` asks a person at a terminal; tests replace it. */
+export const terminal = {
+  interactive: (): boolean => Boolean(process.stdin.isTTY && process.stdout.isTTY),
+  /** One answer; an end of input answers "". */
+  ask: async (question: string): Promise<string> => {
+    const { createInterface } = await import("node:readline");
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    return new Promise<string>((done) => {
+      rl.once("close", () => done(""));
+      rl.question(question, (a) => {
+        done(a);
+        rl.close();
+      });
+    });
+  },
+};
+
 function pkgVersion(): string {
   try {
     return (JSON.parse(readFileSync(join(checkoutRoot(), "package.json"), "utf8")) as { version: string })
@@ -131,6 +156,21 @@ function pkgVersion(): string {
   } catch {
     return "unknown";
   }
+}
+
+/** A GitHub that refuses every call: a GitLab-only installation has none (GL-3). */
+function refusingGitHub(): Host {
+  const why = new Error("repo add needs [github] (app_id, me)");
+  return new Proxy({} as Host, {
+    get: (_t, key) =>
+      key === "me"
+        ? ""
+        : key === "then" || key === "peekInstallHelp"
+          ? undefined
+          : key === "asOwner"
+            ? refusingGitHub
+            : () => Promise.reject(why),
+  });
 }
 
 /** A GitHub that refuses: a GitLab-only installation has none (GL-3). */
@@ -154,8 +194,13 @@ function world(flags: { config?: string; home?: string }, tools: Tools): World {
   const home = Home.resolve(flags.home);
   const db = Db.openHome(home.db);
   loadRepos(config, db, Date.now() / 1000);
-  const github = config.github ? createGitHub({ config, tools, db, keyPath: appKeyPath(config) }) : null;
+  const onGithub = config.github ? createGitHub({ config, tools, db, keyPath: appKeyPath(config) }) : null;
   const gitlab = config.gitlab ? new GitLabForge({ ...config.gitlab, file: config.file }, fetchHttp) : null;
+  // GL-13: one host for everything; each call goes to the host its repo lives on.
+  const github =
+    gitlab && config.gitlab
+      ? routed(onGithub ?? refusingGitHub(), new GitLabHost(gitlab, new GlabOwner(tools, config.gitlab)))
+      : onGithub;
   let store: Promise<IntentStore> | null = null;
   return {
     config,
@@ -167,15 +212,21 @@ function world(flags: { config?: string; home?: string }, tools: Tools): World {
     store: () => {
       if (!store) {
         const gh = github;
+        const intentsGitlab = gitlab
+          ? parseGitlabProject(config.intents.remote, gitlab.host) !== null
+          : false;
         const intentsGithub = /github\.com[/:]([^/]+\/[^/.]+)/.exec(config.intents.remote)?.[1] ?? null;
         store = openStore({
           remote: config.intents.remote,
           path: config.intents.path ?? home.intents,
           tools,
+          gitlabHost: gitlab?.host,
           auth:
-            gh && intentsGithub && existsSync(appKeyPath(config))
-              ? () => gh.gitAuth(intentsGithub)
-              : undefined,
+            gitlab && intentsGitlab
+              ? () => gitlab.gitAuth()
+              : gh && intentsGithub && existsSync(appKeyPath(config))
+                ? () => gh.gitAuth(intentsGithub)
+                : undefined,
           cutoff: config.intents.cutoff,
           log: (t) => log.emit(t),
         });
@@ -244,6 +295,8 @@ export async function main(argv: string[], tools: Tools = realTools()): Promise<
         prs: { type: "string" },
         by: { type: "string" },
         now: { type: "boolean" },
+        check: { type: "boolean" },
+        "no-check": { type: "boolean" },
         fast: { type: "boolean" },
         off: { type: "boolean" },
       },
@@ -357,7 +410,16 @@ async function run(
       return r.ok ? 0 : 1;
     }
     case "update": {
-      const r = await checkUpdate({ tools, checkout: checkoutRoot(), idle: () => true });
+      // LOOP-151: the channel comes from the config; without a config file the check follows main.
+      const file = configPath(flags.config);
+      const channel = existsSync(file) ? loadConfig(file).update.channel : "main";
+      const r = await checkUpdate({
+        tools,
+        checkout: checkoutRoot(),
+        idle: () => true,
+        channel,
+        log: (m) => process.stderr.write(`${m}\n`),
+      });
       if (r.kind === "updated") return `updated ${r.from} → ${r.to}; run towercab restart to use it`;
       if (r.kind === "failed") throw new Error(`update failed and rolled back: ${r.why}`);
       return r.kind === "none" || r.kind === "unreachable" ? `nothing to update: ${r.why}` : "waiting";
@@ -438,6 +500,7 @@ async function run(
           handlers: handlers(),
           log: (l) => log.emit(l),
           sender: chat ? chat.sender() : telegram,
+          webhooks: buildWebhooks(w.config, w.db, { log: (l) => log.emit(l) }),
           chat,
           shadow,
           observer,
@@ -490,19 +553,26 @@ async function run(
       const next =
         decision && listing ? nextText(decision, listing, w.config.intents.cutoff) : `next: ${listingError}`;
       if (cmd === "next") return next;
-      const ver = await version({ tools, checkout: checkoutRoot() });
+      const ver = await version({ tools, checkout: checkoutRoot(), channel: w.config.update.channel });
+      const shown = versionLine(ver, pkgVersion());
       return renderStatus({
         db: w.db,
         listing,
         listingError,
         running: w.home.holder(),
-        version: `${pkgVersion()} (${ver.commit}${ver.behind ? `, ${ver.behind} behind main` : ""})`,
+        version: shown.version,
+        update: shown.update,
         now: Date.now() / 1000,
         problems: JSON.parse(w.db.meta("health") ?? "[]"),
         next: next.split("\n")[0]!,
         waits: next
           .split("\n")
-          .filter((l) => / \(start \S+ to go now\)$/.test(l) || / repo not ready: /.test(l))
+          .filter(
+            (l) =>
+              / \(start \S+ to go now\)$/.test(l) ||
+              / repo not ready: /.test(l) ||
+              / is the fast lane of /.test(l),
+          )
           .map((l) => l.replace(/^skipped: /, "")),
         prLink: (m) => dummy.subject(m).link,
         queued: dummy.queued(),
@@ -516,10 +586,89 @@ async function run(
       if (!m) throw new UsageError(`want "<repo>: <title>", got "${args[0]}"`);
       const scores = parseScores(args.slice(1));
       const store = await w.store();
-      const i = await store.add({ repo: m[1]!, title: m[2]!.trim(), ...scores }, new Date());
-      // FAST-1: the mark is written after the intent exists; the command line never confirms it (FAST-9).
-      if (v.fast === true) await markFast({ db: w.db, store }, i.id, true, "cli");
-      return `${i.id} ${i.dir}/intent.md${v.fast === true ? " (fast lane)" : ""}`;
+      const draft: Draft = { repo: m[1]!, title: m[2]!.trim(), ...scores };
+      const deps = { store, config: w.config, now: () => new Date() };
+      // LOOP-124: a person at a terminal is asked; a script writes as before and pays for the check only with --check.
+      const interactive = terminal.interactive();
+      const checking = v["no-check"] !== true && (interactive || v.check === true);
+      const made = async () => {
+        const c = await createIntent(deps, draft, "direct");
+        // FAST-1: the mark is written after the intent exists; the command line never confirms it (FAST-9).
+        if (v.fast === true) await markFast({ db: w.db, store }, c.id, true, "cli");
+        return `${c.id} ${c.path}${v.fast === true ? " (fast lane)" : ""}`;
+      };
+      if (!checking) return made();
+      let found: { matches: Match[]; titleNote?: string } | null = null;
+      try {
+        found = await checkOverlap(
+          {
+            config: w.config,
+            home: w.home,
+            tools,
+            clock: systemClock,
+            store,
+            db: w.db,
+            proposed: async () => {
+              const repo = store.github();
+              if (!w.github || !repo) return [];
+              return w.github.readProposed(repo, new Map(), (await w.github.bot()).login);
+            },
+          },
+          draft,
+        );
+      } catch (e) {
+        const why = (e as Error).message.replace(/^The overlap check failed: /, "");
+        process.stderr.write(`towercab: the overlap check failed: ${why} (skipped)\n`);
+        if (!interactive) return made();
+        const a = (await terminal.ask("Create anyway (y) or cancel (n)? [y/n] ")).trim().toLowerCase();
+        if (a !== "y") throw new Error("cancelled");
+        return made();
+      }
+      if (!found.matches.length && !found.titleNote) return made();
+      const listing = await store.list();
+      const addable = new Map<string, number>();
+      const lines: string[] = [];
+      const warn: string[] = [];
+      for (const x of found.matches) {
+        const intent = listing.open.find((i) => i.id === x.ref);
+        const why = intent ? cannotAddTo(intent, unfinishedFor(w.db, intent.id)) : "not an intent on main";
+        const n = intent && !why ? addable.size + 1 : 0;
+        if (n) addable.set(x.ref, n);
+        lines.push(`${n ? `${n}) ` : ""}${x.kind} ${x.ref} ${x.title}`, `  ${x.how}`);
+        if (intent && why) lines.push(`  already past design: write a new intent and link ${intent.id}`);
+        warn.push(`towercab: warning: this may overlap ${x.kind} ${x.ref} ${x.title}`, `  ${x.how}`);
+      }
+      if (found.titleNote) lines.push(`Title: ${found.titleNote}`);
+      if (!interactive) {
+        process.stderr.write(`${warn.join("\n")}\n`);
+        return made();
+      }
+      if (found.matches.length) {
+        process.stdout.write(`${lines.join("\n")}\n`);
+        const a = (
+          await terminal.ask(
+            addable.size
+              ? "Create anyway (y), add to one of them (its number), or cancel (n)? [y/n/<number>] "
+              : "Create anyway (y) or cancel (n)? [y/n] ",
+          )
+        )
+          .trim()
+          .toLowerCase();
+        if (a === "y") return made();
+        const to = [...addable].find(([, n]) => String(n) === a)?.[0];
+        if (!to) throw new Error("cancelled");
+        // The command line has only a title: it goes under Proposed outcome.
+        await addToIntent(
+          deps,
+          to,
+          { ...draft, outcome: draft.title },
+          unfinishedFor(w.db, to),
+          "owner via cli",
+        );
+        return `added to ${to}`;
+      }
+      process.stdout.write(`${lines.join("\n")}\n`);
+      return made();
     }
     case "fast": {
       need(1, "<id> [--off]");

@@ -68,6 +68,20 @@ export interface MrView {
   title: string;
 }
 
+/** A merge request as a list shows it. */
+export interface MrRow {
+  iid: number;
+  branch: string;
+  title: string;
+  body: string;
+  state: "OPEN" | "MERGED" | "CLOSED";
+  author: string;
+  head: string;
+  mergeCommit: string | null;
+  /** The branch lives in another project (a fork). */
+  crossProject: boolean;
+}
+
 /** SHIP-37: one deployment of an environment and the job that ran it. */
 export interface GitLabDeployment {
   id: number;
@@ -391,9 +405,16 @@ export class GitLabForge {
     if (!isObj(mr)) throw new Error("GitLab sent no merge request");
     const v = viewOf(mr);
     const comments: PrComment[] = [];
+    // GL-15: when each person approved, from GitLab's own "approved this merge request" notes.
+    const approvedNote = new Map<string, string>();
     for (const d of await this.list(this.mr(slug, iid, "/discussions"))) {
       for (const n of arr(d.notes)) {
-        if (n.system === true) continue;
+        if (n.system === true) {
+          const who = isObj(n.author) ? str(n.author.username) : "";
+          if (who && /^approved this merge request/i.test(str(n.body)))
+            approvedNote.set(who, str(n.created_at));
+          continue;
+        }
         const pos = isObj(n.position) ? n.position : null;
         const line = pos ? (pos.new_line ?? pos.old_line) : undefined;
         const path = pos ? str(pos.new_path) || str(pos.old_path) : "";
@@ -409,11 +430,21 @@ export class GitLabForge {
     }
     const reviews: PrReview[] = [];
     const ap = await this.call("GET", this.mr(slug, iid, "/approvals"));
+    const staleApprovals: { author: string; at: string; pushedAt: string }[] = [];
     if (ap.status >= 200 && ap.status < 300 && isObj(ap.json)) {
-      for (const a of arr(ap.json.approved_by)) {
+      const given = arr(ap.json.approved_by).flatMap((a) => {
         const user = isObj(a.user) ? str(a.user.username) : "";
-        if (user)
-          reviews.push({ author: user, state: "APPROVED", body: "", at: str(mr.updated_at), commit: v.head });
+        return user ? [{ user, at: str(a.approved_at) || approvedNote.get(user) || "" }] : [];
+      });
+      // GL-15: the push time is when GitLab received the newest commit, the newest version's `created_at`.
+      const pushedAt = given.length ? await this.pushedAt(slug, iid) : "";
+      const push = Date.parse(pushedAt);
+      for (const { user, at } of given) {
+        const t = Date.parse(at);
+        // Strictly later than the push; an equal or unreadable time does not count.
+        if (Number.isNaN(t) || Number.isNaN(push) || t <= push)
+          staleApprovals.push({ author: user, at, pushedAt });
+        else reviews.push({ author: user, state: "APPROVED", body: "", at, commit: null });
       }
     }
     const conflicts = mr.has_conflicts === true || v.status === "conflict";
@@ -430,8 +461,167 @@ export class GitLabForge {
       body: str(mr.description),
       isDraft: v.draft,
       reviews,
+      ...(staleApprovals.length ? { staleApprovals } : {}),
       comments,
     };
+  }
+
+  /** GL-15: `created_at` of the newest entry of the merge request's versions; `""` when unreadable. */
+  private async pushedAt(slug: string, iid: number): Promise<string> {
+    const r = await this.call("GET", this.mr(slug, iid, "/versions"));
+    if (!(r.status >= 200 && r.status < 300) || !Array.isArray(r.json)) return "";
+    let newest = "";
+    let at = Number.NaN;
+    for (const x of arr(r.json)) {
+      const t = Date.parse(str(x.created_at));
+      if (!Number.isNaN(t) && (Number.isNaN(at) || t > at)) {
+        at = t;
+        newest = str(x.created_at);
+      }
+    }
+    return newest;
+  }
+
+  /** The merge requests of one state (`opened`, `merged`, `all`), newest first, at most `limit`, optionally of one branch. */
+  async listMrs(
+    slug: string,
+    state: "opened" | "merged" | "all",
+    o: { branch?: string; limit?: number } = {},
+  ): Promise<MrRow[]> {
+    const q = `state=${state}&order_by=created_at&sort=desc${o.branch ? `&source_branch=${encodeURIComponent(o.branch)}` : ""}`;
+    const base = this.projectUrl(slug, `/merge_requests?${q}`);
+    const limit = o.limit ?? Number.POSITIVE_INFINITY;
+    const rows: Obj[] = [];
+    for (let page = 1; page <= MAX_PAGES && rows.length < limit; page++) {
+      const got = await this.ok("GET", `${base}&per_page=${PER_PAGE}&page=${page}`);
+      const part = Array.isArray(got) ? arr(got) : [];
+      rows.push(...part);
+      if (part.length < PER_PAGE) break;
+    }
+    return rows.slice(0, limit).flatMap((r) =>
+      typeof r.iid === "number"
+        ? [
+            {
+              iid: r.iid,
+              branch: str(r.source_branch),
+              title: str(r.title),
+              body: str(r.description),
+              state: str(r.state) === "merged" ? "MERGED" : str(r.state) === "closed" ? "CLOSED" : "OPEN",
+              author: isObj(r.author) ? str(r.author.username) : "",
+              head: str(r.sha),
+              mergeCommit: str(r.merge_commit_sha) || str(r.squash_commit_sha) || null,
+              crossProject:
+                typeof r.source_project_id === "number" && r.source_project_id !== r.target_project_id,
+            } satisfies MrRow,
+          ]
+        : [],
+    );
+  }
+
+  /** The people who approved a merge request, in GitLab's order; `[]` when the project has no approvals. */
+  async approvers(slug: string, iid: number): Promise<string[]> {
+    const r = await this.call("GET", this.mr(slug, iid, "/approvals"));
+    if (!(r.status >= 200 && r.status < 300) || !isObj(r.json)) return [];
+    return arr(r.json.approved_by).flatMap((a) =>
+      isObj(a.user) && str(a.user.username) ? [str(a.user.username)] : [],
+    );
+  }
+
+  /** The commit a branch points at. */
+  async branchHead(slug: string, branch: string): Promise<string> {
+    const b = await this.ok(
+      "GET",
+      this.projectUrl(slug, `/repository/branches/${encodeURIComponent(branch)}`),
+    );
+    const id = isObj(b) && isObj(b.commit) ? str(b.commit.id) : "";
+    if (!id) throw new Error(`GitLab did not say where ${branch} is`);
+    return id;
+  }
+
+  /** A file as text at `ref`; null when it is not there. */
+  async readFile(slug: string, path: string, ref: string): Promise<string | null> {
+    const url = this.projectUrl(
+      slug,
+      `/repository/files/${encodeURIComponent(path)}/raw?ref=${encodeURIComponent(ref)}`,
+    );
+    const r = await this.call("GET", url);
+    if (r.status >= 200 && r.status < 300) return r.text;
+    if (r.status === 404) return null;
+    throw failure("GET", url, r.status, r.json);
+  }
+
+  /** The commit two refs share, or null. */
+  async mergeBase(slug: string, a: string, b: string): Promise<string | null> {
+    const url = this.projectUrl(
+      slug,
+      `/repository/merge_base?refs[]=${encodeURIComponent(a)}&refs[]=${encodeURIComponent(b)}`,
+    );
+    const r = await this.call("GET", url);
+    if (!(r.status >= 200 && r.status < 300) || !isObj(r.json)) return null;
+    return str(r.json.id) || null;
+  }
+
+  /** The files of a merge request with their patches. */
+  async diffs(slug: string, iid: number): Promise<{ name: string; status: string; patch: string | null }[]> {
+    const out: { name: string; status: string; patch: string | null }[] = [];
+    for (const d of await this.list(this.mr(slug, iid, "/diffs"))) {
+      const name = str(d.new_path) || str(d.old_path);
+      if (!name) continue;
+      const status =
+        d.new_file === true
+          ? "added"
+          : d.deleted_file === true
+            ? "removed"
+            : d.renamed_file === true
+              ? "renamed"
+              : "modified";
+      out.push({ name, status, patch: str(d.diff) && d.too_large !== true ? str(d.diff) : null });
+    }
+    return out;
+  }
+
+  /** Delete a branch; one already gone counts as deleted. */
+  async deleteBranch(slug: string, branch: string): Promise<void> {
+    const url = this.projectUrl(slug, `/repository/branches/${encodeURIComponent(branch)}`);
+    const r = await this.call("DELETE", url);
+    if ((r.status >= 200 && r.status < 300) || r.status === 404) return;
+    throw failure("DELETE", url, r.status, r.json);
+  }
+
+  /** The id of a user by name, or null. */
+  private async userId(name: string): Promise<number | null> {
+    const got = await this.ok("GET", `/users?username=${encodeURIComponent(name)}`);
+    const u = Array.isArray(got) ? arr(got)[0] : undefined;
+    return u && typeof u.id === "number" ? u.id : null;
+  }
+
+  /** Make a person the assignee (`assignee_ids`) or ask them to review (`reviewer_ids`); false when GitLab refuses. */
+  async assign(slug: string, iid: number, name: string, as: "assignee" | "reviewer"): Promise<boolean> {
+    try {
+      const id = await this.userId(name);
+      if (id === null) return false;
+      await this.ok("PUT", this.mr(slug, iid), { [`${as}_ids`]: [id] });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Edit the bot's note whose first line is `marker`, else post `text`; whether it edited. */
+  async upsertNote(slug: string, iid: number, marker: string, text: string): Promise<{ edited: boolean }> {
+    const bot = (await this.bot()).login.toLowerCase();
+    let id: number | null = null;
+    for (const n of await this.list(this.mr(slug, iid, "/notes"))) {
+      const author = isObj(n.author) ? str(n.author.username).toLowerCase() : "";
+      const first = (str(n.body).split("\n", 1)[0] ?? "").trim();
+      if (n.system !== true && first === marker && author === bot && typeof n.id === "number") id = n.id;
+    }
+    if (id !== null) {
+      await this.ok("PUT", this.mr(slug, iid, `/notes/${id}`), { body: text });
+      return { edited: true };
+    }
+    await this.comment(slug, iid, text);
+    return { edited: false };
   }
 
   private issue(slug: string, iid: number, tail = ""): string {

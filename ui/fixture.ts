@@ -8,11 +8,16 @@ import { fileURLToPath } from "node:url";
 import { clearFlag, flagOf, setAccepted, setFlag } from "../src/autonomy-change.ts";
 import { parseConfig } from "../src/config.ts";
 import { Db } from "../src/db.ts";
+import { takeFreeze } from "../src/freeze.ts";
 import type { ProposedPr, ProposedState } from "../src/github/proposed.ts";
 import type { Clock } from "../src/handlers.ts";
 import { Home } from "../src/home.ts";
+import type { Draft } from "../src/intents/create.ts";
+import type { MatchKind } from "../src/intents/overlap.ts";
 import type { Intent, IntentStore, Listing, Unreadable } from "../src/intents/types.ts";
 import type { Stage } from "../src/machine.ts";
+import { patchData, unfinishedFor } from "../src/mission.ts";
+import { seedParts } from "../src/parts.ts";
 import {
   type Check,
   type Item,
@@ -226,6 +231,10 @@ export interface FakeActionCall {
   /** UI-204: the urgency and importance asked for (null: left as it is). */
   u?: number | null;
   i?: number | null;
+  /** UI-216: the new intent form's title. */
+  title?: string;
+  /** FAST-1: the fast lane mark asked for. */
+  fast?: boolean;
 }
 
 export interface Fixture {
@@ -512,6 +521,10 @@ export function buildFixture(
       calls.push({ action: "retry", intent });
       return "Towercab starts it over on its next pass.";
     },
+    async unfreeze(intent) {
+      calls.push({ action: "unfreeze", intent });
+      return "Towercab lifts the freeze on its next pass.";
+    },
     async drop(intent) {
       calls.push({ action: "drop", intent });
       return "Towercab drops it on its next pass.";
@@ -531,6 +544,13 @@ export function buildFixture(
       if (flag) clearFlag(db, intent);
       found.a = a;
       return "Saved. Applies from the next gate.";
+    },
+    async fast(intent, on) {
+      calls.push({ action: "fast", intent, fast: on });
+      const found = store.open.find((i) => i.id === intent);
+      if (!found) throw new Error(`there is no open intent ${intent}`);
+      found.fast = on;
+      return on ? "In the fast lane." : "Out of the fast lane.";
     },
     async scores(intent, u, i) {
       calls.push({ action: "scores", intent, u, i });
@@ -595,6 +615,92 @@ export function buildFixture(
     async features(repo) {
       calls.push({ action: "features", repo });
       return "Towercab reads the repo's README and specs and rewrites its live features within a few minutes.";
+    },
+
+    // UI-214, UI-216: the overlap check and the writer. A title that has a word of 5 letters or more in
+    // common with an intent overlaps it; a title with `FAIL` in it makes the check fail.
+    async checkIntent(draft: Draft) {
+      calls.push({ action: "checkIntent", repo: draft.repo, title: draft.title });
+      if (draft.title.includes("FAIL")) throw new Error("The overlap check failed: it timed out");
+      const words = draft.title
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w.length >= 5);
+      const matches = [...store.open, ...store.done]
+        .flatMap((i) => {
+          const hit = words.find((w) => i.title.toLowerCase().includes(w));
+          if (!hit) return [];
+          const kind: MatchKind = i.done
+            ? store.dropped.has(i.id)
+              ? "dropped"
+              : "done"
+            : priority(i.u, i.i) < config.intents.cutoff
+              ? "parked"
+              : "open";
+          const started = !i.done && i.stage !== null && i.stage !== "spec";
+          return [
+            {
+              kind,
+              ref: i.id,
+              title: i.title,
+              how: `Both are about “${hit}”`,
+              canAdd: !i.done && !started,
+              pastDesign: !i.done && started,
+            },
+          ];
+        })
+        .slice(0, 5);
+      return {
+        matches,
+        ...(draft.title.length < 20 ? { titleNote: "The title is shorter than a user story" } : {}),
+      };
+    },
+
+    async createIntent(draft: Draft, o) {
+      calls.push({
+        action: "createIntent",
+        repo: draft.repo,
+        title: draft.title,
+        ...(o.addTo ? { intent: o.addTo } : {}),
+      });
+      if (o.addTo) {
+        const found = store.open.find((i) => i.id === o.addTo);
+        if (!found) throw new Error(`no intent matches ${o.addTo}`);
+        if (found.stage !== null && found.stage !== "spec")
+          throw new Error(
+            `${found.id} is already past design, so new text would not change it. Write a new intent instead and link ${found.id} in it.`,
+          );
+        return {
+          id: found.id,
+          path: `${found.dir}/intent.md`,
+          added: true,
+          message: `Added to ${found.id}.`,
+        };
+      }
+      if (!draft.title.trim()) throw new Error("the title must be one non-empty line");
+      if (draft.title.includes("REFUSE")) throw new Error("The intents repo refused the push");
+      const id = `261109-${String(900 + store.open.length).padStart(4, "0")}-1`;
+      const made = makeIntent({
+        id,
+        title: draft.title,
+        repo: draft.repo,
+        u: draft.u ?? null,
+        i: draft.i ?? null,
+        a: draft.a ?? null,
+      });
+      // The fixture server has no roles, so a title with PROPOSAL in it stands for a contributor.
+      if (o.mode === "proposal" || draft.title.includes("PROPOSAL")) {
+        return {
+          id,
+          path: "",
+          added: false,
+          proposal: true,
+          pr: 301,
+          message: `Proposed ${id}. A maintainer will accept or close it.`,
+        };
+      }
+      store.open.push(made);
+      return { id, path: `${made.dir}/intent.md`, added: false, message: `Created ${id}.` };
     },
   };
 
@@ -1442,6 +1548,42 @@ function exitsScene(f: Fixture): void {
   });
 }
 
+/**
+ * UI-165..167: a two-part intent at its merge with the freeze held an hour, a part of another waiting at
+ * its freeze limit with one part merged, and a second intent of the frozen repo held at its merge.
+ */
+function partsScene(f: Fixture): void {
+  const now = Math.floor(Date.now() / 1000);
+  const row = (intent: string) =>
+    f.db.get<{ id: number; data: string; branch: string; checkout: string }>(
+      "SELECT id, data, branch, checkout FROM missions WHERE intent = ? ORDER BY id DESC",
+      intent,
+    )!;
+  const parts = (r: { branch: string; checkout: string }, merged: boolean) =>
+    seedParts(
+      [
+        { repo: "infra", waitsOn: [] },
+        { repo: "web", waitsOn: ["infra"] },
+      ],
+      r,
+    ).map((p, i) => ({ ...p, atGate: true, pr: 40 + i, merged: merged && i === 0 }));
+  const ci = row(IDS.ci);
+  f.db.run(
+    "UPDATE missions SET stage = 'merge', step = '', data = ? WHERE id = ?",
+    JSON.stringify({ ...JSON.parse(ci.data), parts: parts(ci, false) }),
+    ci.id,
+  );
+  takeFreeze(f.db, ci.id, ["infra", "web"], now - 3600);
+  const held = row(IDS.building);
+  f.db.run("UPDATE missions SET stage = 'merge', step = '', repo = 'web' WHERE id = ?", held.id);
+  const code = row(IDS.code);
+  f.db.run(
+    "UPDATE missions SET stage = 'blocked', waiting = 'freeze', from_stage = 'merge', data = ? WHERE id = ?",
+    JSON.stringify({ ...JSON.parse(code.data), parts: parts(code, true) }),
+    code.id,
+  );
+}
+
 export async function serveFixture(
   port = 0,
   o: {
@@ -1449,14 +1591,18 @@ export async function serveFixture(
     proposed?: boolean;
     readiness?: boolean;
     exits?: boolean;
+    parts?: boolean;
     crowded?: boolean;
     flagged?: boolean;
     many?: boolean;
+    fast?: boolean;
   } = {},
 ): Promise<{ fixture: Fixture; server: UiServer }> {
   const fixture = buildFixture(o);
   if (o.exits && !o.empty) exitsScene(fixture);
+  if (o.parts && !o.empty) partsScene(fixture);
   if (o.flagged && !o.empty) flagScene(fixture);
+  if (o.fast && !o.empty) fastScene(fixture);
   const here = dirname(fileURLToPath(import.meta.url));
   const server = startUi({
     port,
@@ -1536,4 +1682,31 @@ export function flagScene(f: Fixture): void {
     commit: "0123456789abcdef",
     at: Date.now() / 1000 - 600,
   });
+}
+
+/**
+ * FAST-10: the code review of the docs repo waits for the owner with its place kept; the checkout page (web, in CI) holds the web repo's fast lane, with an automatic answer on record; the
+ * dark mode page is the next fast intent of that repo. The offline mode intent is not fast.
+ */
+export function fastScene(f: Fixture): void {
+  for (const id of [IDS.ci, IDS.queued, IDS.code]) {
+    const i = f.store.open.find((x) => x.id === id);
+    if (i) i.fast = true;
+  }
+  // The code review waits for the owner and keeps its place in the docs lane.
+  const waiting = unfinishedFor(f.db, IDS.code);
+  if (waiting) patchData(f.db, waiting, { fastLane: 1 }, Date.now() / 1000);
+  const m = unfinishedFor(f.db, IDS.ci);
+  if (m)
+    patchData(
+      f.db,
+      m,
+      {
+        fastLane: 1,
+        fastAnswers: [
+          { question: "Where does the button go?", answer: "Right", at: Date.now() / 1000 - 1800 },
+        ],
+      },
+      Date.now() / 1000,
+    );
 }

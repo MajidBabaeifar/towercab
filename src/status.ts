@@ -5,9 +5,10 @@ import { levelNow } from "./autonomy-change.ts";
 import { slotLines } from "./capacity.ts";
 import { pausedSuffix } from "./commands.ts";
 import type { Db } from "./db.ts";
+import { freezes } from "./freeze.ts";
 import type { Listing } from "./intents/types.ts";
-import { exitsOf, isWait, isWorking, waitInfo } from "./machine.ts";
-import { dataOf, type Mission, unfinished } from "./mission.ts";
+import { exitsOf, finished, isWait, isWorking, waitInfo } from "./machine.ts";
+import { dataOf, getMission, type Mission, unfinished } from "./mission.ts";
 import { queuePlace, waitsInQueue } from "./queue.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
 import {
@@ -21,11 +22,29 @@ import {
   workingIn,
 } from "./slots.ts";
 import { leftOf, type OwnerStep } from "./steps.ts";
+import type { VersionInfo } from "./update.ts";
 
 export interface Problem {
   kind: string;
   since: number;
   error: string;
+}
+
+/**
+ * LOOP-152: the running version for the first line (`1.0.0 (v1.1.0, 3f9c2ab)`, or just the commit with no
+ * release tag) and, on the release channel, whether a newer release waits.
+ */
+export function versionLine(v: VersionInfo, pkg: string): { version: string; update: string | null } {
+  const parts = v.name === v.commit ? [v.commit] : [v.name, v.commit];
+  if (!v.release && v.behind) parts.push(`${v.behind} behind main`);
+  return {
+    version: `${pkg} (${parts.join(", ")})`,
+    update: v.release
+      ? v.release.available
+        ? `update: ${v.release.available} is available`
+        : "up to date"
+      : null,
+  };
 }
 
 export interface StatusInput {
@@ -34,6 +53,8 @@ export interface StatusInput {
   listingError: string | null;
   running: number | null;
   version: string;
+  /** LOOP-152: the release channel's line; absent on the main channel. */
+  update?: string | null;
   now: number;
   problems: Problem[];
   /** The first line of `next`. */
@@ -85,6 +106,7 @@ export function renderStatus(s: StatusInput): string {
     s.db.meta("paused") === "1"
       ? `paused${s.running && pausedSuffix(s.db) ? `: ${pausedSuffix(s.db)}` : ""}`
       : "",
+    s.update ?? "",
     s.running && s.db.meta("draining") ? `draining for update to ${s.db.meta("draining")}` : "",
     s.problems.length ? "problems" : "",
   ]
@@ -189,6 +211,12 @@ export function renderStatus(s: StatusInput): string {
       const p = queuePlace(ms, m);
       if (p) lines.push(`queued to merge: ${m.intent} (#${p.n} of ${p.of})`);
     }
+  }
+  // LOOP-79: the repos whose merges a multi-repo intent holds, and why.
+  for (const f of freezes(s.db)) {
+    const m = getMission(s.db, f.mission);
+    if (m && !finished(m.stage))
+      lines.push(`frozen: ${f.repo} by ${m.intent} since ${time(f.since, s.now)} (merges there wait)`);
   }
   for (const w of s.waits ?? []) lines.push(`waiting: ${w}`);
   // LOOP-72: a repo missing setup, and whether that holds its new work back.

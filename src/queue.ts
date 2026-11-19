@@ -1,8 +1,10 @@
 // The merge queue of a repo (LOOP-159..162): missions whose PR is ready to land, first in first out.
 // Only the head lands, repairs conflicts and merges. Pure: the loop and the pages count with these.
 
+import { isHolder } from "./fast-lane.ts";
 import { finished } from "./machine.ts";
 import { dataOf, type Mission } from "./mission.ts";
+import { isMulti } from "./parts.ts";
 
 export type Landing = { since: number };
 
@@ -20,10 +22,11 @@ export function landingOf(m: Mission): Landing | null {
 
 /** In the queue: at `merge`, or holding `landing` anywhere on its way back to `merge`. */
 export function inQueue(m: Mission): boolean {
-  return !finished(m.stage) && (m.stage === "merge" || landingOf(m) !== null);
+  // LOOP-80: a multi-repo mission lands its parts itself; it holds no place in a repo's queue.
+  return !finished(m.stage) && !isMulti(m) && (m.stage === "merge" || landingOf(m) !== null);
 }
 
-/** The queue of `repo`, head first: the landing mission, then by `queuedAt`, then priority, then id. */
+/** The queue of `repo`, head first: the landing mission, then fast-lane missions (FAST-5), then by `queuedAt`, then priority, then id. */
 export function queueOf(ms: Mission[], repo: string, prio: (m: Mission) => number = () => 0): Mission[] {
   const at = (m: Mission) => queuedAt(m) ?? m.updated;
   return ms
@@ -31,6 +34,8 @@ export function queueOf(ms: Mission[], repo: string, prio: (m: Mission) => numbe
     .sort(
       (a, b) =>
         Number(landingOf(b) !== null) - Number(landingOf(a) !== null) ||
+        // FAST-5: a fast-lane mission goes before every waiting one, never before the landing one.
+        Number(isHolder(b)) - Number(isHolder(a)) ||
         at(a) - at(b) ||
         prio(b) - prio(a) ||
         a.id - b.id,

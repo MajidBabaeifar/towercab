@@ -13,14 +13,17 @@ import { agentCommentNotes, ignoredNotes, intentPaused } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import { fastConfirmed } from "../fast.ts";
+import { fastLine, laneOf } from "../fast-lane.ts";
+import { frozenBy } from "../freeze.ts";
 import type { ProposedState } from "../github/proposed.ts";
 import type { Clock } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { Intent, IntentStore, Listing } from "../intents/types.ts";
 import { exitsOf, finished, isWait, phaseOf, type Stage, waitInfo } from "../machine.ts";
-import { dataOf, forIntent, type Mission } from "../mission.ts";
+import { dataOf, forIntent, type Mission, unfinished } from "../mission.ts";
 import { observerNote } from "../observer/evidence.ts";
 import { observerCosts } from "../observer/store.ts";
+import { partsOf } from "../parts.ts";
 import { testGrantsOf } from "../pipeline/access.ts";
 import type { SecretState } from "../pipeline/common.ts";
 import { section } from "../pipeline/prtext.ts";
@@ -32,6 +35,7 @@ import { canBoostIntent, scoreChanges, scoreWords } from "../scores.ts";
 import { actionSentence, actionsFor, shadowCosts } from "../shadow/store.ts";
 import { type Held, heldReleases, releaseLine, releaseTitle } from "../ship/releases.ts";
 import { MAX_FAILS } from "../ship/secret-steps.ts";
+import { sideCosts } from "../side-runs.ts";
 import {
   aheadIn,
   buildingIn,
@@ -50,6 +54,7 @@ import type { OwnerStep, SecretSpec } from "../steps.ts";
 import { whoText } from "../teammates.ts";
 import { budgetsView, capCards, topBudget } from "./budget-view.ts";
 import { estimateFor, estimateLine, frozenEstimate } from "./estimate.ts";
+import { freezeHold, freezeLine, partViews, repoSummary } from "./parts-view.ts";
 import { proposedSection } from "./proposed.ts";
 import { spendPeriods } from "./spend.ts";
 import type {
@@ -64,6 +69,7 @@ import type {
   CardKind,
   ControlsView,
   ExistingTestView,
+  ExitView,
   FastView,
   FocusHistory,
   GroundStop,
@@ -80,6 +86,7 @@ import type {
   Question,
   QueueItem,
   QueuePage,
+  RepoFreeze,
   RiskView,
   Row,
   SecretView,
@@ -148,6 +155,14 @@ export interface LogLine {
 }
 
 /** Everything the page reads; the loop provides it (the CLI too, read-only, UI-2). */
+/** What the page needs of the running version; `name` and `release` are absent in older fakes. */
+export type UiVersion = {
+  commit: string;
+  behind: number | null;
+  name?: string;
+  release?: { running: string | null; available: string | null } | null;
+};
+
 export interface UiSources {
   db: Db;
   store: IntentStore;
@@ -164,7 +179,7 @@ export interface UiSources {
   problems(): Problem[];
   /** UI-211: the install help for `owner/name`, when GitHub's App isn't installed there. */
   installHelp?(github: string): InstallHelpView | null;
-  version(): { commit: string; behind: number | null };
+  version(): UiVersion;
   /** The picker's whole list; the overview shows the first 5. */
   upNext(): UpNext[];
   /** A PR's URL; `repo` is `owner/name`. */
@@ -697,6 +712,12 @@ function repoGithub(src: UiSources, repo: string): string | null {
   return src.config.repos.get(repo)?.github ?? null;
 }
 
+/** The link of a part's PR in its repo. */
+function prUrlOf(src: UiSources, repo: string, n: number): string | null {
+  const gh = repoGithub(src, repo);
+  return gh ? `https://github.com/${gh}/pull/${n}` : null;
+}
+
 /** The PR a mission's phase is on: spec and code PRs in the repo, the plan PR in the intents repo. */
 export function currentPr(
   m: Mission,
@@ -746,10 +767,41 @@ const KIND_LABELS: Record<CardKind, string> = {
   autonomy: "Autonomy raised",
 };
 
+/**
+ * FAST-10: what a fast-lane intent's card says: `Fast lane · build, 3 of 6` for the one holding the lane (or waiting
+ * for the owner with its place kept), `next in the fast lane` while another holds it. Undefined for any other intent.
+ */
+export function fastLabel(src: UiSources, i: Intent | undefined, m: Mission | undefined): string | undefined {
+  if (!i || i.fast !== true || i.done) return undefined;
+  const live = m && !finished(m.stage) ? m : undefined;
+  const lane = laneOf(unfinished(src.db), [], i.repo);
+  const holds = live && dataOf<{ fastLane?: number }>(live).fastLane !== undefined;
+  if (!holds && lane.busy.length > 0) return "next in the fast lane";
+  return live ? fastLine(live) : "Fast lane";
+}
+
 /** FAST-1, FAST-9: the fast lane control's data for an intent. */
-export function fastView(src: UiSources, i: Intent): FastView {
+export function fastView(src: UiSources, i: Intent, m?: Mission): FastView {
   const on = i.fast === true;
-  return { on, confirmed: on && fastConfirmed(src.db, i.id), locked: !src.running };
+  const line = on ? fastLabel(src, i, m) : undefined;
+  const said = m
+    ? (dataOf<{ fastAnswers?: { question: string; answer: string; at: number }[] }>(m).fastAnswers ?? [])
+    : [];
+  return {
+    on,
+    confirmed: on && fastConfirmed(src.db, i.id),
+    locked: !src.running,
+    ...(line ? { line } : {}),
+    ...(said.length
+      ? {
+          answers: said.map((a) => ({
+            question: a.question,
+            answer: a.answer,
+            when: when(a.at, src.clock.now()),
+          })),
+        }
+      : {}),
+  };
 }
 
 /** UI-257: the autonomy control's data for an intent. */
@@ -932,14 +984,22 @@ export function missionCard(
       : stuck || onSteps(m)
         ? ["retry", "drop"]
         : ["reply", "retry", "drop"];
-  const exits = done
+  const mergedParts = partsOf(m).some((p) => p.merged);
+  const exits: ExitView[] = done
     ? []
-    : exitsOf(m.waiting ?? "", stuck, (dataOf(m) as { delivery?: string }).delivery !== "steps");
+    : exitsOf(m.waiting ?? "", stuck, (dataOf(m) as { delivery?: string }).delivery !== "steps").map((e) =>
+        e.do === "unfreeze" && mergedParts
+          ? { ...e, confirm: "A part is already merged: the intent will end as merged, not verified live." }
+          : e,
+      );
+  const waitingPart = partsOf(m).find((p) => p.waiting !== null);
   const gate = kind === "spec" || kind === "plan" ? kind : kind === "code" ? "code" : null;
   const risk = riskView(m, gate);
   const points = kind === "spec" ? (currentRisk(m, "spec")?.openPoints ?? []) : [];
+  const fast = fastLabel(src, intent, m);
   return {
     ...(risk ? { risk } : {}),
+    ...(fast ? { fast } : {}),
     ...(points.length ? { openPoints: points } : {}),
     ...installHelpOf(src, m.why),
     // UI-245: the checklist of UI-160 rides on the card.
@@ -970,6 +1030,8 @@ export function missionCard(
     ...(dataOf<{ answeredBy?: string | null }>(m).answeredBy
       ? { decided_by_agent: dataOf<{ answeredBy?: string | null }>(m).answeredBy }
       : {}),
+    ...(partsOf(m).length > 0 ? { parts: partViews(m, (r, n) => prUrlOf(src, r, n)) } : {}),
+    ...(waitingPart ? { partRepo: waitingPart.repo } : {}),
   };
 }
 
@@ -1037,10 +1099,16 @@ export function missionRow(src: UiSources, s: Snap, m: Mission): Row {
   const holder = workingIn(s.missions, m.repo)[0] ?? line[line.findIndex((x) => x.id === m.id) - 1];
   const workers = src.config.repos.get(m.repo)?.workers ?? 1;
   const inFlight = buildingIn(s.missions, m.repo).length;
+  const summary = repoSummary(m);
+  const hold = freezeHold(src.db, m);
+  const fast = fastLabel(src, s.intents.get(m.intent), m);
   return {
+    ...(summary ? { ...summary, parts: partViews(m, (r, n) => prUrlOf(src, r, n)) } : {}),
+    ...(hold ? { freezeHold: hold } : {}),
     intent: m.intent,
     title: titleOf(s, m.intent),
     repo: m.repo,
+    ...(fast ? { fast } : {}),
     state: missionState(s, m, src),
     phases: phases(m),
     step: ready
@@ -1229,8 +1297,15 @@ export function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: numbe
           ? [doneOf(src, m, s.now)?.text ?? askOf(m.waiting), `Waiting ${waited} · ${row.cost}`]
           : [back ?? `${row.step} · ${row.inStep}`, `${row.cost} · ${row.model}`],
       phases: row.phases,
+      ...(row.fast ? { fast: row.fast } : {}),
       ...(mark ? { ship: mark } : {}),
       ...(m.held && stop ? { held: heldWords(stop) } : {}),
+      ...(row.parts ? { parts: row.parts } : {}),
+      ...(row.freezeHold ? { freezeHold: row.freezeHold } : {}),
+      ...(row.repoCount ? { repoCount: row.repoCount, slowest: row.slowest! } : {}),
+      ...(partsOf(m).find((x) => x.waiting !== null)
+        ? { partRepo: partsOf(m).find((x) => x.waiting !== null)!.repo }
+        : {}),
     });
     seen.add(m.intent);
   }
@@ -1266,6 +1341,7 @@ export function airspaceOf(src: UiSources, s: Snap, list: UpNext[], needs: numbe
         : [`#${place} in line · priority ${u.priority}`, why ?? "Starts when a slot is free."],
       canStart: src.running && !parked,
       phases: NOT_STARTED,
+      ...(i && fastLabel(src, i, undefined) ? { fast: fastLabel(src, i, undefined) } : {}),
     });
   }
   planes.sort((a, b) => STATIONS.indexOf(a.station) - STATIONS.indexOf(b.station));
@@ -1483,6 +1559,12 @@ export function spend(db: Db, now: number): Spend {
     const k = localDate(r.at);
     byDay.set(k, (byDay.get(k) ?? 0) + r.cost);
   }
+  // LOOP-125: so are the overlap checks, which belong to no mission.
+  for (const r of sideCosts(db, now - 8 * DAY)) {
+    if (r.at > now) continue;
+    const k = localDate(r.at);
+    byDay.set(k, (byDay.get(k) ?? 0) + r.cost);
+  }
   const days: Spend["days"] = [];
   const t = new Date(now * 1000);
   for (let i = 6; i >= 0; i--) {
@@ -1580,14 +1662,24 @@ function healthOf(
   return { health: "Running", note: "Towercab is running." };
 }
 
-function versionText(v: { commit: string; behind: number | null }): TopBar["version"] {
+/** UI-278: the running version, and on the release channel the release that waits instead of the lag behind main. */
+function versionText(v: UiVersion): TopBar["version"] {
+  const commit = v.commit.slice(0, 7);
+  if (v.release) {
+    return {
+      commit,
+      name: v.name,
+      behind: null,
+      release: v.release.available ? `${v.release.available} available` : null,
+    };
+  }
   const behind =
     v.behind === null
       ? null
       : v.behind === 0
         ? "up to date"
         : `${v.behind} commit${v.behind === 1 ? "" : "s"} behind main`;
-  return { commit: v.commit.slice(0, 7), behind };
+  return { commit, name: v.name, behind, release: v.release };
 }
 
 /** A short hash of what is shown, so the page knows when to refetch (UI-65, UI-67). */
@@ -1851,7 +1943,19 @@ export async function overview(src: UiSources): Promise<Overview> {
       budgets: budgetsView(src.db, src.config, s.now, "all"),
       caps: capCards(src.db, src.config, s),
     },
-    airspace: airspaceOf(src, s, list, need.total),
+    airspace: {
+      ...airspaceOf(src, s, list, need.total),
+      repos: [...src.config.repos.keys()].map((repo): RepoFreeze => {
+        const by = frozenBy(src.db, repo);
+        const holder = by === null ? undefined : s.missions.find((x) => x.id === by);
+        return {
+          repo,
+          frozenBy: by,
+          title: holder ? titleOf(s, holder.intent) : null,
+          intent: holder?.intent ?? null,
+        };
+      }),
+    },
   };
   return { version: versionOf(body, `${dbMark(src.db)}:${s.listing?.head ?? ""}`), ...body };
 }
@@ -2635,7 +2739,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
     e2eLog: e2eLogOf(src.home.root, id),
     ...(only ? { onlyYou: "Only you can answer or approve this." } : {}),
     ...(intent && !intent.done ? { autonomy: autonomyView(src, intent) } : {}),
-    ...(intent && !intent.done ? { fast: fastView(src, intent) } : {}),
+    ...(intent && !intent.done ? { fast: fastView(src, intent, live ?? last ?? undefined) } : {}),
     ...(intent && !intent.done ? { controls: controlsOf(src, intent, !!live, card) } : {}),
     ...(intentPaused(src.db, realId) ? { paused: true } : {}),
     agent_comments: agentCommentNotes(src.db, realId).map((c) => ({
@@ -2668,6 +2772,25 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
   if (risk) body.risk = risk;
   const tests = last ? existingTestsOf(last) : [];
   if (tests.length) body.tests = tests;
+  // UI-165, UI-167: the parts of a multi-repo intent, its freeze, and the end that is merged but not live.
+  const multi = shown && partsOf(shown).length > 0 ? shown : null;
+  if (multi) {
+    const parts = partViews(multi, (r, n) => prUrlOf(src, r, n));
+    body.parts = parts;
+    const line = freezeLine(src.db, multi, s.now, src.config.agent.freezeWaitMin, duration);
+    if (line) body.freeze = line;
+    if (multi.stage === "unverified") {
+      const list = (merged: boolean) =>
+        parts
+          .filter((p) => p.merged === merged)
+          .map((p) => p.repo)
+          .join(", ") || "none";
+      body.rest = {
+        text: `Merged, not verified live. Merged: ${list(true)}. Not merged: ${list(false)}. Nothing was rolled back.`,
+        action: parts.some((p) => !p.merged) ? { do: "retry", label: "Land the rest" } : null,
+      };
+    }
+  }
   // UI-127: the latest plain brief (code, else plan, else spec), when no card already leads with one.
   if (!card && last) {
     for (const kind of ["code", "plan", "spec"] as const) {
@@ -2754,10 +2877,13 @@ export function lanesOf(src: UiSources, s: Snap): Lane[] {
           cost: i.cost !== null ? money(i.cost) : null,
         };
       });
+    const by = frozenBy(src.db, repo);
+    const holder = by === null ? undefined : s.missions.find((x) => x.id === by);
     return {
       repo,
       github: src.config.repos.get(repo)?.github ?? "",
       ahead: `${aheadN} of ${limit} ahead`,
+      ...(holder ? { frozen: `Merges frozen for ${titleOf(s, holder.intent)}` } : {}),
       running,
       upNext,
       waiting,

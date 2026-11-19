@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..163, UI-168, UI-184..197, UI-203..208, UI-211, UI-236..239, UI-242..251, UI-253..275, UI-279, UI-281..282 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..163, UI-165..167, UI-168, UI-184..197, UI-203..208, UI-211, UI-236..239, UI-242..251, UI-253..275, UI-279, UI-281..282, UI-213..218, UI-278 · **Prefix:** UI
 
 ## Purpose
 
@@ -99,6 +99,42 @@ An intent's page says what kind of work it is, which stages that kind skips, and
 - The intent page shows the kind (set or inferred, with the inferred one's reason, INT-77) and the skipped stages in plain words ("No spec PR: this is a bugfix"). Board cards show the kind as a small label. Fits 360 px, light and dark.
 - A control on the page sets the kind to one of the five values (INT-76) with `POST /api/actions` `{action: "set-kind", id, kind}` (UI-66, `actor: owner`), writing `kind` into the intent's front matter (INT-5). It is offered only for a stage that has not started; a kind that would lighten a mission already past a skipped stage is refused with the reason. For an `a0` intent only the owner can do it (AUT-32); a viewer never sees it (USR).
 - Verified by: `ui: the intent page shows the kind and the skipped stages`, `ui: the owner sets the kind from the page`, `ui: a kind change past the skipped stage is refused`, `ui: a viewer cannot set the kind`
+
+### UI-284 · A wait card says why it waits and links to the autonomy control
+
+A card that waits for the owner because of the intent's autonomy says so in plain words, says what Towercab would do at the next level, and links to where the level is changed.
+
+- Needs-you cards, the Board's waiting cards and the intent page show AUT-37's `why` and `next` right under the ask, in the plain words of AUT-36 (`Waiting because this intent asks you before merging plans (Ask at every gate, a2). At Merges when safe (a4) Towercab would merge it itself.`). A wait with another cause shows that cause only (AUT-37 returns nothing).
+- A link `Change autonomy` goes to the autonomy control (UI-257) on the intent's page, scrolled to it and focused; on the page itself it focuses the control. Raising still opens UI-257's confirm step, so the link changes nothing by itself and never raises on its own.
+- Counts as people part (UI-281): at most two sentences, no field names. Fits 360 px, light and dark.
+- Verified by: `ui: a wait card says which autonomy level caused it`, `ui: a wait card names what the next level would do`, `ui: the change autonomy link focuses the control`, `ui: a wait with another cause shows no autonomy text`
+
+### UI-285 · Autonomy shows its plain name everywhere
+
+Wherever the page shows an intent's autonomy, it shows the level's plain name, and the sentence is one hover or tap away.
+
+- The control (UI-257) labels its six choices with the names of AUT-36 (`a3 · Specs on its own`; at 360 px the short `a3` with the name under the chosen one), and each choice carries the sentence as its tooltip and `aria-description`. The raise confirm step (UI-257) names the level by name (`Raise to Merges when safe (a4)?`). The flag card (UI-258), cap text (`capped at a<n> by the repo`, UI-257), Activity rows (UI-64), Boost's confirm (UI-205), cards, the Board, Inbox and the create form (UI-203's autonomy choices) use the name too.
+- The grey `autonomy 2` metadata text is removed from cards and the page; the name replaces it.
+- Verified by: `ui: the autonomy control shows level names and sentences`, `ui: cards and the page show the name instead of autonomy n`, `ui: the raise confirmation names the level by name`, `ui: the flag card and activity use level names`
+
+### UI-286 · Stop now ends one intent's running agent
+
+The intent's page and card have a "Stop now" button that ends the agent working on that intent and holds the intent until the owner resumes it.
+
+- Shown only while a child (Claude run, check or setup) of that intent's mission is running. Its confirm step says what happens: `Stop the agent working on this intent now? Work it did is kept and it continues from where it stopped when you resume.` with "Stop now" and "Cancel". It posts `{action: "stop-now", id}` with `actor: owner` (UI-66); a `commands` row (LOOP-15) with the intent's id.
+- The loop applies it on its next pass like LOOP-114 does for everything: SIGTERM to that mission's child process group, SIGKILL after 10 s. The mission gets `interrupted`, which counts as no crash, repair or timeout (LOOP-7), and the other missions' children run on. It then holds like a per-intent pause (SHD-22, UI-239), so the next step doesn't start the agent again; the card says `Stopped by you` with a "Resume" button, and nothing is sent to the owner.
+- Resume continues a cut-off Claude run in its own session and runs a cut-off check again from its start (LOOP-114). The intent stays at its stage and keeps its counters.
+- This is not the global pause and not a drop: the intent and its branch stay as they are. The command line keeps refusing `pause <id> --now` (LOOP-114); only the page offers this. For an a0 intent only the owner can do it (AUT-32); who may press it follows who may pause that intent (UI-239, USR), and a viewer never sees it. Not offered with nothing running, and a second press while stopping shows `Stopping…` with a spinner (UI-282).
+- Recorded in the Activity page (UI-64) as kind `settings`, `stopped by you`, with the time.
+- Verified by: `ui: a running card offers stop now and nothing else does`, `ui: stop now asks for a confirmation`, `ui: stop now ends only that intent's agent`, `ui: a stopped intent holds and resume continues its session`, `ui: stop now shows stopping until it applied`, `ui: a viewer cannot stop an agent`, `loop: a stop now row interrupts one mission without a crash`
+
+### UI-287 · A running card says what the agent does next and what it may reach
+
+A card whose agent is running says what step comes next and what the agent can reach, in plain words.
+
+- The card (Board, overview and working rows, intent page) shows `Next: <plain stage name> (UI-56)` taken from the stage map's path for this kind (UI-272), or `Next: waiting for you` when the next step is a wait, and `May reach:` with one line from AUT-14 for the effective level (AUT-8): the network (default domains plus the plan's and the owner's grants, counted, with the full list on hover or tap), the protected paths it may write (none, only those the plan grants, or any), and `anything else it asks you first` (AUT-15). It is computed from the same grants the sandbox gets, so it can't differ from them.
+- `GET /api/state` carries `running: {next, reach: {network: [domain], paths: "none"|"planned"|"any"}}` for each running mission, null otherwise. Hidden for a mission that is not running. Fits 360 px, light and dark.
+- Verified by: `ui: a running card shows the next step`, `ui: a running card shows what the agent may reach`, `ui: reach follows the effective level and the plan's grants`, `ui: nothing is shown when the mission is not running`
 
 ### UI-58 · Needs you
 
@@ -1755,8 +1791,8 @@ The dashboard has a "New intent" button that opens a form shaped like the intent
 
 - Fields, in order: repo (a picker of Towercab's repos), title, urgency, importance, autonomy (segmented 1–5 and `a0`..`a5` as UI-203 and UI-257 build them, none chosen by default), then the text boxes Problem, Proposed outcome, Affected users and systems, Constraints, Open questions. Only repo and title are required (INT-2); a score left alone is not written (INT-71).
 - Next to the title the form shows the naming rule of INT-33 in plain words (`Write it as a user story: the product, then what someone can do or see, 4 to 20 words`) with its example; it does not change what is typed.
-- The button is in the top bar and in Cmd-K (UI-265). With `[auth]` a maintainer of the repo writes straight to the intents repo and a contributor proposes (INT-71); this is the Create of UI-220. The repo picker lists the repos where the person is at least a contributor; a viewer has no button. A contributor's form says `A maintainer will accept or close your intent.` under the buttons, and its autonomy choices stop at a4 (UI-206).
-- Verified by: `ui: the new intent form has the template's fields`, `ui: the form needs only a repo and a title`, `ui: the form shows the naming rule beside the title`, `ui: the new intent button is in the top bar and in search`, `ui: the repo picker lists only allowed repos`, `ui: a contributor's form says a maintainer will review it`, `ui: a viewer has no new intent button`
+- The button is in the top bar and in Cmd-K (UI-265); on a phone (480 px or narrower) it is a round "+" at the bottom right instead, so the top bar keeps UI-274's 100 px. With `[auth]` a maintainer of the repo writes straight to the intents repo and a contributor proposes (INT-71); this is the Create of UI-220. The repo picker lists Towercab's repos (the form takes the repos from the Repos page, so when sign-in limits repos per person the picker follows it); a viewer has no button. A contributor's form says `A maintainer will accept or close your intent.` under the buttons, and its autonomy choices stop at a4 (UI-206).
+- Verified by: `ui: the new intent form has the template's fields`, `ui: the form needs only a repo and a title`, `ui: the form shows the naming rule beside the title`, `ui: the new intent button is in the top bar and in search`, `ui: a contributor's form says a maintainer will review it`, `ui: a viewer has no new intent button`
 
 ### UI-214 · Create runs the overlap check first
 
@@ -1777,7 +1813,7 @@ With matches, the owner chooses; with none, the intent is created at once.
 
 The API has `checkIntent` and `createIntent` actions behind the form.
 
-- `POST /api/actions` (UI-65, UI-66) accepts `{action: "checkIntent", repo, title, u?, i?, a?, problem?, outcome?, affected?, constraints?, questions?}` with `actor: owner` and returns `{matches, titleNote?}` (INT-73); and `{action: "createIntent", ...same, addTo?: <id>}` which applies INT-72 and then INT-71, or INT-74 when `addTo` is set, and returns `{id, path, added: boolean, reply}`. `createIntent` does not run the check itself: the form decides after `checkIntent`.
+- `POST /api/actions` (UI-65, UI-66) accepts `{action: "checkIntent", repo, title, u?, i?, a?, problem?, outcome?, affected?, constraints?, questions?}` with `actor: owner` and returns `{matches, titleNote?}` (INT-73); and `{action: "createIntent", ...same, addTo?: <id>}` which applies INT-72 and then INT-71, or INT-74 when `addTo` is set, and returns `{id, path, added: boolean, message}`, and for a proposal `proposal: true`, `pr` and `url` instead of a path. `createIntent` does not run the check itself: the form decides after `checkIntent`.
 - A bad value, an unknown repo or id, or an intent that cannot be added to (INT-74, with its text) returns the error text and nothing is written. With `[auth]` both actions need the contributor role on the repo (UI-220, USR-5); `createIntent` uses `mode: "direct"` for a maintainer and `"proposal"` for a contributor, chosen by the server from the role, never by the request, and `addTo` needs the maintainer role. For a proposal the reply carries `proposal: true` and the PR's URL instead of a path. A refusal is a 403 with its reason (USR-7).
 - A repeated press cannot make two intents: `createIntent` with the same repo and title as one the same person created in the last 2 minutes (an intent, or an open proposal) is refused with `Already created as <id>`, and nothing is written; the form also disables Create while a request runs.
 - Verified by: `ui: checkIntent returns matches`, `ui: createIntent writes the intent and returns its id`, `ui: createIntent with addTo appends to the intent`, `ui: createIntent refuses a bad value and writes nothing`, `ui: createIntent refuses addTo for an intent past design`, `ui: a contributor's createIntent opens a proposal`, `ui: the mode follows the role, not the request`, `ui: addTo needs the maintainer role`, `ui: a repeated create is refused as already created`, `ui: the new intent actions need the contributor role`, `ui: API shapes`
@@ -1786,15 +1822,15 @@ The API has `checkIntent` and `createIntent` actions behind the form.
 
 After the intent is written, the page opens it.
 
-- On success the page goes to the new intent's page (UI-67 updates keep the page live) and shows `Created <id>.` once; after `addTo` it opens the existing intent and shows `Added to <id>.`. A contributor's proposal is not an intent yet: the page shows `Proposed <id>. A maintainer will accept or close it.` with a link to the pull request and opens the Inbox, where it shows as a proposed card (UI-184). The new intent shows in the Inbox and Board as any intent does, at the next state refresh, which the action's reply waits for (at most 5 s) so the page does not open on a missing intent.
+- On success the page goes to the new intent's page (UI-67 updates keep the page live) and shows `Created <id>.` once; after `addTo` it opens the existing intent and shows `Added to <id>.`. A contributor's proposal is not an intent yet: the page shows `Proposed <id>. A maintainer will accept or close it.` with a link to the pull request and opens the Inbox, where it shows as a proposed card (UI-184). The listing the page reads is dropped before the action replies, so the page never opens on a missing intent.
 - Verified by: `ui: a created intent opens its page`, `ui: adding to an intent opens that intent`, `ui: a proposal shows its pull request and the Inbox`, `ui: the page does not open on a missing intent`
 
 ### UI-218 · The form is safe to leave and works everywhere
 
 The form keeps what was typed after a refusal, fits a phone and works by keyboard.
 
-- After a refusal or Cancel the fields keep their text; the text is dropped after a success. The form fits 360 px, light and dark, every field has a label, Tab and Enter work, and the error line is announced. The screenshots (UI-275) include the empty form and the overlap list.
-- Verified by: `ui: the form keeps its text after a refusal`, `ui: the new intent form works by keyboard`, `ui: screenshots light, dark and mobile`
+- After a refusal or Cancel the fields keep their text; the text is dropped after a success. The form fits 360 px, light and dark, every field has a label, Tab and Enter work, and the error line is announced. The new intent specs save screenshots of the empty form and the overlap list, light, dark and on a phone.
+- Verified by: `ui: the form keeps its text after a refusal`, `ui: the new intent form works by keyboard`, `ui: the new intent screenshots`
 
 ## Out of scope
 

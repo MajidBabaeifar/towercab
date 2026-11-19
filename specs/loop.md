@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..121, LOOP-126..132, LOOP-133..135, LOOP-159..162, LOOP-122, LOOP-140..141 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..121, LOOP-126..132, LOOP-133..135, LOOP-159..162, LOOP-122, LOOP-140..141, LOOP-136..139, LOOP-124..125, LOOP-150..152, LOOP-146..149, LOOP-78..82 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -35,7 +35,7 @@ and its settings in one TOML file.
   run --watch`), then `systemctl --user daemon-reload` and `enable --now`. `down` = `disable --now`
   (missions stay). `restart` = `systemctl --user restart towercab` (a few seconds: no build).
   `logs` execs `journalctl --user -u towercab -f`. A failing `systemctl` → exit 1 with its stderr.
-- Not built yet: the unit will set `TimeoutStopSec=60`, so systemd waits a minute for a stop before killing the service; the loop's own stop budget stays far below it (LOOP-136). The **Unit** block below still shows the built value (30), because `service: unit file` compares it with the file `up` writes. The code PR changes the block and the unit to 60 together.
+- The unit sets `TimeoutStopSec=60`, so systemd waits a minute for a stop before killing the service; the loop's own stop budget stays far below it (LOOP-136).
 - Verified by: `service: unit file`, `service: up, down, restart, logs`
 
 ### LOOP-3 · State machine
@@ -871,8 +871,8 @@ When Towercab is told to stop, it gives running `gh` and `git` calls 10 seconds 
 
 - On SIGTERM or SIGINT the loop starts no new pass, poll, check or Claude run, and waits for the `gh` and `git` processes it started (through `Tools`) for at most 10 seconds (fixed, not a setting). Then it sends SIGTERM to each one's process group and SIGKILL 2 s later. A call cut off this way fails with `stopped: <command> was cut off at shutdown`. Its mission is not counted as a failure: the step is re-entered at the next start (LOOP-6).
 - The idle waits of `shutdown` (issues, features, readiness, settings, setup checks, limits, shadow) share this one deadline instead of waiting without limit; whatever is still running at the deadline is cut off the same way.
-- Claude runs keep their treatment: SIGTERM to the group, SIGKILL after 10 s, `interrupted` (LOOP-7); their sessions resume at the next start. All children are signalled at the same moment and waited for together, not one after another.
-- The whole stop therefore takes at most about 15 s (10 s grace + 2 s kill wait + a few seconds to write state), well under the `TimeoutStopSec=60` the unit will get (LOOP-2).
+- Claude runs keep their treatment: SIGTERM to the group, SIGKILL after 10 s, `interrupted` (LOOP-7); their sessions resume at the next start. All Claude runs are signalled at the same moment, once the `gh`/`git` calls are done or cut off, and waited for together, not one after another.
+- The whole stop therefore takes about 12 s when a call hangs, and at most about 25 s (10 s grace + 3 s kill wait + 10 s for Claude runs that ignore SIGTERM + a few seconds to write state), well under the `TimeoutStopSec=60` of the unit (LOOP-2).
 - Verified by: `shutdown: a gh call that never exits is killed after the grace period`, `shutdown: children are stopped together`, `shutdown: a git call that never exits is killed after the grace period`, `shutdown: no new work starts once stopping`, `shutdown: a cut-off call does not count as a failure`
 
 ### LOOP-137 · A stop that cut off a hanging call is a clean exit
@@ -888,7 +888,7 @@ After a stop that had to kill a hanging `gh` or `git` call, the next start finds
 At start, Towercab removes git lock files left in its own clones and checkouts by a process that no longer exists.
 
 - After crash recovery (LOOP-7) and before the first pass, the loop looks for `index.lock` and every other `*.lock` file inside the git directories of `repos/<name>/`, `work/*/` (including a checkout's `.git/worktrees/<name>/` entry in its clone) and the intents clone (`intents/`). Files outside git directories, and `towercab.lock` in the home, are never touched.
-- A lock is removed only when both hold: it is older than 2 minutes (by its modification time against the loop's clock), and no lock-holding `git` process is around. A lock fails the second test when any running `git` process (found through `Tools`) has its working directory anywhere inside the lock's checkout, in any other checkout that shares the same clone (the clone itself and all its worktrees), or in a subfolder of any of them. A process whose working directory cannot be read counts as inside.
+- A lock is removed only when both hold: it is older than 2 minutes (by its modification time against the loop's clock), and no lock-holding `git` process is around. A lock fails the second test when any running `git` process (read from `/proc`; not an external program, so not through `Tools`) has its working directory anywhere inside the lock's checkout, in any other checkout that shares the same clone (the clone itself and all its worktrees), or in a subfolder of any of them. A process whose working directory cannot be read counts as inside.
 - A lock that fails either test stays, and the log says which: `start: kept lock <path> (younger than 2 minutes)` or `start: kept lock <path> (git process <pid> running in <dir>)`. A kept lock is not retried at start; the step that meets it fails and is retried as for any other git error.
 - Only regular files named `*.lock` are removed; symbolic links are left alone.
 - Each removal is logged on its own line: `start: removed stale lock <path>`. A start with no lock found logs nothing. A removal that fails is logged and does not stop the start.
@@ -993,7 +993,7 @@ The owner can change the shape of the webhook body for chat services that expect
 - A webhook's `template` is a TOML string holding a JSON document; the default is `{"text": "{text}"}`. Two placeholders are replaced wherever they appear inside a JSON string: `{text}` (the whole message, as LOOP-149 builds it for that webhook) and `{link}` (the link alone, or an empty string). The value is inserted JSON-escaped, so quotes, newlines and non-ASCII characters in a title cannot break the document. Written in TOML: `template = '{"channel": "ops", "content": "{text}"}'`.
 - No other placeholder exists; any other `{…}` text stays as written. A placeholder outside a JSON string, or a template that is not valid JSON once both placeholders are replaced with a sample, fails the config load with `config: <file>: notify.webhook.<name>.template <why>`.
 - The message is capped at 4000 characters before it is inserted (LOOP-16).
-- Verified by: `webhook: the default body is {"text": …}`, `webhook: a template fills text and link`, `webhook: a title with quotes and newlines stays valid json`, `webhook: an unknown placeholder stays as written`, `webhook: an invalid template fails the config`
+- Verified by: `webhook: the default body has only a text field`, `webhook: a template fills text and link`, `webhook: a title with quotes and newlines stays valid json`, `webhook: an unknown placeholder stays as written`, `webhook: an invalid template fails the config`
 
 ### LOOP-149 · Webhook detail: full or minimal
 
@@ -1086,7 +1086,7 @@ On the command line, the install steps print under the error, and running the sa
 An overlap check runs when the owner asks for it, takes no slot, and its cost shows in the spend.
 
 - It runs in the process that serves the request (the page's server or the command), not in a pass, and takes no build slot (LOOP-110); at most 2 run at once, a third waits. Pause (LOOP-113) does not stop it, because the owner asked for it, but a draining service (LOOP-108) refuses it with `Towercab is restarting; try again in a minute`.
-- Its cost is stored as a run with no mission and kind `overlap`, and counts in the day's spend and in the caps' totals (MET-29, MET-33); the Spend view lists it as `Overlap checks`.
+- Its cost is stored as a side run (kind `overlap`, in `meta` under `side_runs`, kept 33 days, no mission) and counts in the day's and the month's spend and in the caps' totals (MET-29, MET-32, MET-33); the Spend view lists it with the other runs' sums, not as a line of its own.
 - Verified by: `overlap: a check takes no build slot`, `overlap: a check runs while paused`, `overlap: a draining service refuses a check`, `overlap: its cost counts in the day's spend`, `overlap: two checks at most run at once`
 
 ### LOOP-113 · Pause stops all new work
@@ -1756,6 +1756,8 @@ CREATE TABLE observer_runs (id INTEGER PRIMARY KEY, trigger TEXT NOT NULL, start
   dropped TEXT NOT NULL DEFAULT '[]', detail TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE observer_proposals (pr INTEGER PRIMARY KEY, intent TEXT NOT NULL, run INTEGER NOT NULL, at REAL NOT NULL,
   title TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '[]');
+CREATE TABLE outbox_sent (key TEXT NOT NULL, dest TEXT NOT NULL, sent_at REAL,
+  tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0, PRIMARY KEY (key, dest));
 ```
 
 **Transitions** (`next(stage, event)`; "next" = the next stage of the order; `U` = unexpected, counted
@@ -1785,6 +1787,7 @@ like a crash; `–` = ignored)
 | recheck ([AUT-21](autonomy.md)) | – | → design | → plan | → review | – |
 | reviewed (PIP-142, PIP-143) | – | → design | – | → gate | – |
 | resume | merge (held) → again; else – | – | – | – | – |
+| parts_gated (LOOP-78) | build … gate → merge, once every part has passed the gate; else – | – | – | – | from build … gate → merge |
 | owner_done (LOOP-76) | `steps` → done; else – | – | – | – | → done, only at a wait with the `done` exit (`no changes`, `your steps first`, `several repos`) |
 | covered_by (LOOP-156) | → done | → done | → done | → done | → done |
 | reopen (LOOP-157) | – | – | – | – | – (only a mission `done` by `covered_by` moves: → its `covered_from` stage) |
@@ -1826,7 +1829,7 @@ are stored in intent files and never change; each ask says plainly what the owne
 | `fix repo files` | blocked | One of the repo's files for Towercab can't be read. Fix it, then reply. |
 | `unknown repo` | (intent only) | Tell Towercab which repo this is for: add the repo, or fix the repo name in the intent. |
 | `bad after:` | (intent only) | Fix what this intent waits for: Towercab can't find one of the intents it names, or it was dropped. |
-| `several repos` | blocked | This change spans several repos and Towercab can't build those yet, so nothing was built. Do the change yourself and say so, or drop the intent. |
+| `several repos` | blocked | Every part of this change is built and checked, but Towercab can't land several repos in order yet, so nothing was merged. Merge the pull requests yourself in the order of the plan and say so, or drop the intent. |
 | `dependency stalled` | blocked | An intent this one waits for was rolled back or dropped, or has not finished in 3 days. Take it out of `after:`, start over or drop this intent; it carries on by itself once the other one is done. |
 | `bad repos:` | (intent only) | Fix which repos this intent changes: Towercab doesn't know one of the repos it names. Add the repo, or fix the intent's repos list. |
 | `freeze` | blocked | Merges in this change's repos have been paused for a long time. Reply to keep waiting, lift the pause, or drop the intent. |
@@ -1851,7 +1854,7 @@ Environment=PATH=<node dir>:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Restart=always
 RestartSec=5
 KillMode=mixed
-TimeoutStopSec=30
+TimeoutStopSec=60
 
 [Install]
 WantedBy=default.target

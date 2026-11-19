@@ -6,6 +6,7 @@ import { pausedNow, runningSteps } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import { fixFor } from "../faults.ts";
+import { changeUrl } from "../forge/types.ts";
 import { ownerLogin } from "../github/owner.ts";
 import { type Host, systemClock } from "../handlers.ts";
 import type { Home } from "../home.ts";
@@ -18,7 +19,7 @@ import { addFailures, beginAddRepo } from "../repos.ts";
 import { checkoutRoot } from "../service.ts";
 import { applySettings } from "../settings/apply.ts";
 import { supplySecret } from "../ship/secret-steps.ts";
-import { version as gitVersion } from "../update.ts";
+import { version as gitVersion, UNKNOWN_VERSION, type VersionInfo } from "../update.ts";
 import { createActions } from "./actions.ts";
 import { startUi, type UiServer } from "./server.ts";
 import { budgetReached, type Problem, type Skip, type UiSources, type UpNext } from "./state.ts";
@@ -105,11 +106,28 @@ export function addProblems(db: Db): Problem[] {
   }));
 }
 
+/** The running version (LOOP-152), read from the checkout at most every 30 s, never waiting on git. */
+function versionReader(
+  tools: import("../tools.ts").Tools,
+  channel: Config["update"]["channel"],
+): () => VersionInfo {
+  let version = UNKNOWN_VERSION;
+  let readAt = 0;
+  return () => {
+    if (Date.now() - readAt > 30_000) {
+      readAt = Date.now();
+      void gitVersion({ tools, checkout: checkoutRoot(), channel })
+        .then((v) => {
+          version = v;
+        })
+        .catch(() => {});
+    }
+    return version;
+  };
+}
+
 export function sourcesOf(loop: Loop, home: Home): UiSources {
-  let version = { commit: "unknown", behind: null as number | null };
-  void gitVersion({ tools: loop.d.tools, checkout: checkoutRoot() }).then((v) => {
-    version = v;
-  });
+  const version = versionReader(loop.d.tools, loop.d.config.update.channel);
   return {
     db: loop.d.db,
     store: loop.ownerStore,
@@ -123,9 +141,9 @@ export function sourcesOf(loop: Loop, home: Home): UiSources {
     pausedAt: () => pausedAt(loop.d.db),
     problems: () => problemsOf(loop),
     installHelp: (github) => loop.d.github.peekInstallHelp?.(github) ?? null,
-    version: () => version,
+    version,
     upNext: () => upNextOf(loop),
-    prUrl: (repo, n) => `https://github.com/${repo}/pull/${n}`,
+    prUrl: (repo, n) => changeUrl(repo, n),
     intentUrl: (i) => loop.d.store.url(i),
     proposed: () => loop.proposedState(),
   };
@@ -150,6 +168,14 @@ export function startLoopUi(loop: Loop, config: Config, github: Host, home: Home
       clock: loop.d.clock,
       github,
       proposed: () => loop.proposedState().list,
+      // UI-213..218, LOOP-125: the new intent form: the overlap check runs here, outside any mission and
+      // slot; a draining service refuses it; a contributor's proposal is opened as the App.
+      intentTools: {
+        home,
+        tools: loop.d.tools,
+        draining: () => loop.d.db.meta("draining") !== null,
+        proposal: { config, home, tools: loop.d.tools, github, who: "a contributor" },
+      },
       // REPO-16, REPO-19: the settings PR and the move, as the loop's own database, tools and forge do them.
       limits: {
         propose: (repo, changes, confirmed) => proposeSettings(settingsEnv(), repo, changes, confirmed),
@@ -229,10 +255,7 @@ export async function serveReadOnly(
   store: import("../intents/types.ts").IntentStore,
   tools: import("../tools.ts").Tools,
 ): Promise<UiServer> {
-  let version = { commit: "unknown", behind: null as number | null };
-  void gitVersion({ tools, checkout: checkoutRoot() }).then((v) => {
-    version = v;
-  });
+  const version = versionReader(tools, config.update.channel);
   const server = startUi({
     port: config.ui.port,
     sources: {
@@ -246,9 +269,9 @@ export async function serveReadOnly(
       runningSteps: () => 0,
       pausedAt: () => pausedAt(db),
       problems: () => [],
-      version: () => version,
+      version,
       upNext: () => [],
-      prUrl: (repo, n) => `https://github.com/${repo}/pull/${n}`,
+      prUrl: (repo, n) => changeUrl(repo, n),
       intentUrl: (i) => store.url(i),
     },
     actions: null,
