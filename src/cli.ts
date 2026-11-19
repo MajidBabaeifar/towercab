@@ -577,7 +577,12 @@ async function run(
         next: next.split("\n")[0]!,
         waits: next
           .split("\n")
-          .filter((l) => / \(start \S+ to go now\)$/.test(l) || / repo not ready: /.test(l))
+          .filter(
+            (l) =>
+              / \(start \S+ to go now\)$/.test(l) ||
+              / repo not ready: /.test(l) ||
+              / is the fast lane of /.test(l),
+          )
           .map((l) => l.replace(/^skipped: /, "")),
         prLink: (m) => dummy.subject(m).link,
         queued: dummy.queued(),

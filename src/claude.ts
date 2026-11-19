@@ -88,7 +88,12 @@ export function othersInHome(run: Pick<ClaudeRun, "cwd" | "runsDir" | "cache">):
     }
     for (const n of names) {
       const p = join(home, dir, n);
-      if (!own.has(p)) out.push(p);
+      if (own.has(p)) continue;
+      out.push(p);
+      // The folders of a setup with secrets (PIP-212) appear next to a checkout later; a run that started
+      // earlier would not see them in this list, so the names are denied before they exist.
+      if (dir === "work")
+        for (const x of ["setup-tree", "setup-creds", "setup-cache", "setup-index"]) out.push(`${p}-${x}`);
     }
   }
   return out;

@@ -162,6 +162,10 @@ export interface SandboxOpts {
   proxy?: string | null;
   /** The bwrap executable (default `bwrap`, found on the child's PATH). */
   bwrap?: string;
+  /** PIP-214: a separate tree bound at `checkout` in its place (no `.git`); the checkout itself is not mounted. */
+  tree?: string;
+  /** PIP-212: more folders bound writable (the setup credentials folder). */
+  extraBinds?: string[];
 }
 
 /**
@@ -210,8 +214,13 @@ export function sandboxArgv(o: SandboxOpts): string[] {
     for (const f of maskedIn(d)) a.push("--ro-bind", "/dev/null", f);
   }
   if (o.cache) a.push(o.cacheWritable ? "--bind" : "--ro-bind", o.cache, o.cache);
-  const git = join(o.checkout, ".git");
-  a.push("--bind", o.checkout, o.checkout, "--ro-bind-try", git, git, "--chdir", o.checkout);
+  for (const d of o.extraBinds ?? []) a.push("--bind", d, d);
+  if (o.tree) {
+    a.push("--bind", o.tree, o.checkout, "--chdir", o.checkout);
+  } else {
+    const git = join(o.checkout, ".git");
+    a.push("--bind", o.checkout, o.checkout, "--ro-bind-try", git, git, "--chdir", o.checkout);
+  }
   a.push("--", "sh", "-c", o.proxy ? withProxy(o.line) : o.line);
   return a;
 }

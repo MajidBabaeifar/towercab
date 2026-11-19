@@ -5079,3 +5079,51 @@ kbd {
     box-shadow: var(--shadow-pop);
   }
 }
+
+/* UI-165..167: the parts of a multi-repo intent and its freeze. */
+.parts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+.part {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+}
+.part.merged .part-stage {
+  color: var(--ok, inherit);
+}
+.freeze-line,
+.freeze-chip {
+  font-weight: 600;
+}
+.board-repos,
+.board-needs-repo,
+.board-freeze-hold {
+  display: block;
+}
+.rest.card {
+  display: grid;
+  gap: 0.5rem;
+}
+
+/* The fast lane (FAST-10) */
+
+.fast-badge {
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--mono);
+  white-space: normal;
+}
+
+.fast-answers {
+  margin: var(--s1) 0 0;
+  padding-left: var(--s4);
+  color: var(--text-2);
+  font-size: var(--t-sm);
+}

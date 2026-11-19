@@ -113,6 +113,11 @@ export function InstallHelpBlock({ id, help }: { id: string; help: InstallHelpVi
   );
 }
 
+/** FAST-10: the fast lane label and where the intent stands, e.g. `Fast lane · build, 3 of 6`. */
+export function FastBadge({ text }: { text?: string }) {
+  return text ? <span class="chip chip-sm fast-badge">{text}</span> : null;
+}
+
 export function StateChip({ state, small }: { state: StateView; small?: boolean }) {
   return (
     <span class={`chip chip-${state.key}${small ? " chip-sm" : ""}`}>
@@ -382,8 +387,12 @@ export function NeedsCard({
   const q = card.question;
   // UI-164: the question's own options are buttons; the exits it doesn't cover get a button here.
   const askedSteps = !!q?.options.some((o) => o.do === "steps");
+  // UI-167: the freeze waits offer Keep waiting / Freeze again (a reply) and Unfreeze beside drop.
+  const freezeExit = (e: { do: string; label: string }) =>
+    e.do === "unfreeze" ||
+    (e.do === "continue" && (e.label === "Keep waiting" || e.label === "Freeze again"));
   const extra = card.exits.filter(
-    (e) => (e.do === "done" || e.do === "steps") && !(e.do === "steps" && askedSteps),
+    (e) => ((e.do === "done" || e.do === "steps") && !(e.do === "steps" && askedSteps)) || freezeExit(e),
   );
   const pick = (o: { option: string; do?: string }) => {
     if (o.do === "steps") void run("steps");
@@ -472,7 +481,9 @@ export function NeedsCard({
           <StateIcon state="needs" size={14} />
           <span>{card.kindLabel}</span>
         </span>
+        {card.partRepo ? <span class="chip">{card.partRepo}</span> : null}
         {card.onlyYou ? <OnlyYou /> : null}
+        <FastBadge text={card.fast} />
         {card.decided_by_agent ? <span class="chip">agent for owner: {card.decided_by_agent}</span> : null}
         <span class="grow" />
         {card.since ? (
@@ -669,7 +680,11 @@ export function NeedsCard({
               type="button"
               class="btn"
               disabled={busy !== null}
-              onClick={() => void run(e.do, e.do === "done" ? note : undefined)}
+              onClick={() => {
+                if (e.do === "continue") void run("reply", e.label);
+                else if (e.do === "unfreeze" && e.confirm && !window.confirm(e.confirm)) return;
+                else void run(e.do, e.do === "done" ? note : undefined);
+              }}
             >
               {busy === e.do ? "Sending…" : e.label}
             </button>
@@ -919,12 +934,19 @@ export function WorkRow({ row, readOnly = false }: { row: Row; readOnly?: boolea
         </span>
         <span class="meta">
           {row.repo} · <Id id={row.intent} />
+          {row.repoCount ? (
+            <span>
+              {" "}
+              · {row.repoCount} · {row.slowest}
+            </span>
+          ) : null}
         </span>
+        <FastBadge text={row.fast} />
       </span>
       <span class="row-state">
         <StateChip state={row.state} small />
         <span class="row-step">
-          {row.behind ?? row.step}
+          {row.behind ?? row.freezeHold ?? row.step}
           {row.build ? <span class="meta build-steps"> · {row.build.label}</span> : null}
           {row.inStep ? <span class="meta"> · {row.inStep}</span> : null}
           {row.warning ? <span class="meta review-warning"> · {row.warning}</span> : null}
