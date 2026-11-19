@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { type Capacity, readCapacity, slotHint } from "./capacity.ts";
 import type { Config } from "./config.ts";
-import { appKeyPath, clonePath } from "./config.ts";
+import { appKeyPath, clonePath, readTokenFile } from "./config.ts";
 import type { Db } from "./db.ts";
 import { type GitLabForge, NEEDED_SCOPES } from "./forge/gitlab.ts";
 import { GlabOwner } from "./forge/gitlab-owner.ts";
@@ -18,6 +18,7 @@ import type { GitHub } from "./handlers.ts";
 export { ghVersionOk };
 
 import type { Home } from "./home.ts";
+import { urlProblem } from "./notify-text.ts";
 import { type HostState, hostState, profileStep } from "./pipeline/hostcheck.ts";
 import { apparmorProfile, type ProbeResult, sandboxProbe, userNamespaceDenied } from "./pipeline/probe.ts";
 import { refusedRepoEnv, toolchainBins, toolchainPlaces } from "./pipeline/sandbox.ts";
@@ -236,6 +237,15 @@ export async function doctor(o: {
         );
       }
     }
+  }
+  for (const wh of config.notify.webhooks) {
+    // LOOP-147: the file and the kind of URL, never the URL.
+    const f = readTokenFile(wh.urlFile);
+    const why = "why" in f ? `url_file ${wh.urlFile} ${f.why}` : urlProblem(f.token);
+    lines.push(
+      why ? `webhook ${wh.name}: ${why}` : `webhook ${wh.name}: ${wh.detail} messages, url in ${wh.urlFile}`,
+    );
+    if (why) ok = false;
   }
   lines.push(
     `telegram: ${config.telegram ? `chat ${config.telegram.chatId}${config.telegram.uiUrl ? `, links to ${config.telegram.uiUrl}` : ", links to the PR (no ui_url)"}` : "not configured (no messages)"}`,

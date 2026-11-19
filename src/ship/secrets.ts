@@ -16,10 +16,15 @@ export function secretsPath(configFile: string, repo: string): string {
   return join(dirname(configFile), "secrets", `${repo}.env`);
 }
 
+/** Group or other permission bits set → an Error naming the fix (SHIP-2, PIP-211). */
+export function assertPrivate(path: string): void {
+  if ((statSync(path).mode & 0o077) !== 0) throw new Error(`${path} is readable by others; chmod 600 it`);
+}
+
 /** Reads the file; none → no secrets. Group or other permission bits → an Error naming the fix. */
 export function readSecrets(path: string): Secrets {
   if (!existsSync(path)) return secretsOf({});
-  if ((statSync(path).mode & 0o077) !== 0) throw new Error(`${path} is readable by others; chmod 600 it`);
+  assertPrivate(path);
   const env: Record<string, string> = {};
   for (const raw of readFileSync(path, "utf8").split(/\r?\n/)) {
     const l = raw.trim();

@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..121, LOOP-126..132, LOOP-133..135, LOOP-159..162, LOOP-122, LOOP-140..141, LOOP-136..139, LOOP-124..125, LOOP-150..152 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..121, LOOP-126..132, LOOP-133..135, LOOP-159..162, LOOP-122, LOOP-140..141, LOOP-136..139, LOOP-124..125, LOOP-150..152, LOOP-146..149, LOOP-78..82 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -993,7 +993,7 @@ The owner can change the shape of the webhook body for chat services that expect
 - A webhook's `template` is a TOML string holding a JSON document; the default is `{"text": "{text}"}`. Two placeholders are replaced wherever they appear inside a JSON string: `{text}` (the whole message, as LOOP-149 builds it for that webhook) and `{link}` (the link alone, or an empty string). The value is inserted JSON-escaped, so quotes, newlines and non-ASCII characters in a title cannot break the document. Written in TOML: `template = '{"channel": "ops", "content": "{text}"}'`.
 - No other placeholder exists; any other `{…}` text stays as written. A placeholder outside a JSON string, or a template that is not valid JSON once both placeholders are replaced with a sample, fails the config load with `config: <file>: notify.webhook.<name>.template <why>`.
 - The message is capped at 4000 characters before it is inserted (LOOP-16).
-- Verified by: `webhook: the default body is {"text": …}`, `webhook: a template fills text and link`, `webhook: a title with quotes and newlines stays valid json`, `webhook: an unknown placeholder stays as written`, `webhook: an invalid template fails the config`
+- Verified by: `webhook: the default body has only a text field`, `webhook: a template fills text and link`, `webhook: a title with quotes and newlines stays valid json`, `webhook: an unknown placeholder stays as written`, `webhook: an invalid template fails the config`
 
 ### LOOP-149 · Webhook detail: full or minimal
 
@@ -1756,6 +1756,8 @@ CREATE TABLE observer_runs (id INTEGER PRIMARY KEY, trigger TEXT NOT NULL, start
   dropped TEXT NOT NULL DEFAULT '[]', detail TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE observer_proposals (pr INTEGER PRIMARY KEY, intent TEXT NOT NULL, run INTEGER NOT NULL, at REAL NOT NULL,
   title TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '[]');
+CREATE TABLE outbox_sent (key TEXT NOT NULL, dest TEXT NOT NULL, sent_at REAL,
+  tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0, PRIMARY KEY (key, dest));
 ```
 
 **Transitions** (`next(stage, event)`; "next" = the next stage of the order; `U` = unexpected, counted
@@ -1785,6 +1787,7 @@ like a crash; `–` = ignored)
 | recheck ([AUT-21](autonomy.md)) | – | → design | → plan | → review | – |
 | reviewed (PIP-142, PIP-143) | – | → design | – | → gate | – |
 | resume | merge (held) → again; else – | – | – | – | – |
+| parts_gated (LOOP-78) | build … gate → merge, once every part has passed the gate; else – | – | – | – | from build … gate → merge |
 | owner_done (LOOP-76) | `steps` → done; else – | – | – | – | → done, only at a wait with the `done` exit (`no changes`, `your steps first`, `several repos`) |
 | covered_by (LOOP-156) | → done | → done | → done | → done | → done |
 | reopen (LOOP-157) | – | – | – | – | – (only a mission `done` by `covered_by` moves: → its `covered_from` stage) |
@@ -1826,7 +1829,7 @@ are stored in intent files and never change; each ask says plainly what the owne
 | `fix repo files` | blocked | One of the repo's files for Towercab can't be read. Fix it, then reply. |
 | `unknown repo` | (intent only) | Tell Towercab which repo this is for: add the repo, or fix the repo name in the intent. |
 | `bad after:` | (intent only) | Fix what this intent waits for: Towercab can't find one of the intents it names, or it was dropped. |
-| `several repos` | blocked | This change spans several repos and Towercab can't build those yet, so nothing was built. Do the change yourself and say so, or drop the intent. |
+| `several repos` | blocked | Every part of this change is built and checked, but Towercab can't land several repos in order yet, so nothing was merged. Merge the pull requests yourself in the order of the plan and say so, or drop the intent. |
 | `dependency stalled` | blocked | An intent this one waits for was rolled back or dropped, or has not finished in 3 days. Take it out of `after:`, start over or drop this intent; it carries on by itself once the other one is done. |
 | `bad repos:` | (intent only) | Fix which repos this intent changes: Towercab doesn't know one of the repos it names. Add the repo, or fix the intent's repos list. |
 | `freeze` | blocked | Merges in this change's repos have been paused for a long time. Reply to keep waiting, lift the pause, or drop the intent. |
