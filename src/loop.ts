@@ -146,6 +146,7 @@ import {
 } from "./tools.ts";
 import { freezeEstimate } from "./ui/estimate.ts";
 import { checkUpdate, RESTART_CODE } from "./update.ts";
+import { detectWsl } from "./wsl.ts";
 
 /** LOOP-115: the stages a change reaches when its CI is green; it holds no slot while it waits in them. */
 const LATER_THAN_CI: ReadonlySet<string> = new Set(["review", "gate", "merge"]);
@@ -587,6 +588,8 @@ export class Loop {
   /** The pass loop until stopped (LOOP-12). */
   async run(): Promise<number> {
     await this.open();
+    // LOOP-142: under WSL, keep Windows awake with a powershell.exe child.
+    this.inhibitor.setWsl((await detectWsl(this.d.tools)) !== null);
     let inFlight: Promise<PassReport> | undefined;
     while (!this.stopping) {
       const pass = this.pass();

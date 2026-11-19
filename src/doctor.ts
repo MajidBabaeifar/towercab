@@ -3,7 +3,7 @@
 
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { type Capacity, readCapacity, slotHint } from "./capacity.ts";
 import type { Config } from "./config.ts";
 import { appKeyPath, clonePath, readTokenFile } from "./config.ts";
@@ -27,8 +27,31 @@ import { isMoved, readRecord } from "./repo/settings.ts";
 import { shipNetwork } from "./ship/live.ts";
 import { tooFewListed } from "./teammates.ts";
 import type { Tools } from "./tools.ts";
+import {
+  detectWsl,
+  hasVmIdleTimeout,
+  isUnderMnt,
+  POWERSHELL,
+  pid1IsSystemd,
+  powershellPath,
+  readWslConfig,
+} from "./wsl.ts";
 
 export const TOOLS = ["git", "gh", "claude", "bwrap", "systemd-inhibit", "systemctl", "journalctl"];
+
+/** LOOP-143: a secrets file Towercab reads: the App key, the GitLab token, and `config.toml` when it holds one. */
+export function looseSecretFiles(config: Config): string[] {
+  const files = [appKeyPath(config)];
+  if (config.gitlab) files.push(config.gitlab.tokenFile);
+  if (config.telegram?.botToken) files.push(config.file);
+  return files.filter((f) => {
+    try {
+      return (statSync(f).mode & 0o077) !== 0;
+    } catch {
+      return false;
+    }
+  });
+}
 
 export interface DoctorResult {
   lines: string[];
@@ -43,6 +66,8 @@ export async function doctor(o: {
   /** GL-9: Towercab's GitLab, when `[gitlab]` is configured. */
   gitlab?: GitLabForge | null;
   quick: boolean;
+  /** LOOP-145: the self-update's check; a loose secrets file is a warning there, not a failure. */
+  forUpdate?: boolean;
   /** The HOME whose toolchains are listed (PIP-226); the real one when absent. */
   userHome?: string;
   /** The database, for the readiness lines (LOOP-72). */
@@ -101,6 +126,58 @@ export async function doctor(o: {
     }
   }
   lines.push(`toolchain PATH: ${toolchainBins(userHome).join(":")}`);
+
+  // LOOP-143: under WSL, what commonly breaks there; the `/mnt/` lines come before the secrets lines.
+  const release = await detectWsl(tools);
+  let wslSystemd = false;
+  if (release !== null) {
+    lines.push(`wsl: ${release}`);
+    wslSystemd = await pid1IsSystemd(tools);
+    if (!wslSystemd) {
+      lines.push(
+        "wsl: systemd is not PID 1: enable it with [boot] systemd=true in /etc/wsl.conf, then run wsl --shutdown",
+      );
+      ok = false;
+    }
+    const places: [string, string][] = [
+      ["config", dirname(resolve(config.file))],
+      ["home", resolve(home.root)],
+      ...[...config.repos.values()].map((r): [string, string] => [r.name, resolve(clonePath(r, home.root))]),
+    ];
+    for (const [what, p] of places) {
+      if (!isUnderMnt(p)) continue;
+      lines.push(`wsl: ${what} ${p} is under /mnt/: keep it in the Linux file system (for example under ~)`);
+      ok = false;
+    }
+  }
+  // LOOP-143, LOOP-145: a secrets file others can read, on every platform.
+  for (const f of looseSecretFiles(config)) {
+    const fix =
+      release !== null && isUnderMnt(resolve(f))
+        ? `a /mnt/ path cannot hold mode 600: move it into the Linux file system`
+        : `chmod 600 ${f}`;
+    if (o.forUpdate) {
+      lines.push(`warning: ${f} is readable by others: ${fix}`);
+    } else {
+      lines.push(`secrets: ${f} is readable by others: ${fix}`);
+      ok = false;
+    }
+  }
+  if (release !== null) {
+    const shell = powershellPath(tools);
+    if (!shell) {
+      lines.push(`warning: wsl: ${POWERSHELL} is not on PATH, so Windows may sleep while missions run`);
+    }
+    if (wslSystemd) {
+      const text = shell ? await readWslConfig(tools, shell) : null;
+      const fix = "set vmIdleTimeout=-1 under [wsl2] in %UserProfile%\\.wslconfig, then run wsl --shutdown";
+      if (text === null) {
+        lines.push(`warning: wsl: .wslconfig could not be read, so no keep-alive is known: ${fix}`);
+      } else if (!hasVmIdleTimeout(text)) {
+        lines.push(`warning: wsl: no keep-alive, WSL may stop its VM and Towercab with it: ${fix}`);
+      }
+    }
+  }
   if (o.quick) return { lines, ok };
 
   // PIP-163: the sandbox probe; PIP-162: the narrow fix where user namespaces are restricted.
@@ -134,8 +211,7 @@ export async function doctor(o: {
     lines.push(`github app: ${key} is missing (register the App from ops/github-app.json)`);
     ok = false;
   } else if ((statSync(key).mode & 0o077) !== 0) {
-    lines.push(`github app: ${key} is readable by others: chmod 600 it`);
-    ok = false;
+    // Reported with the other secrets files above; the App is not asked while its key is loose.
   } else if (o.github) {
     try {
       const bot = await o.github.bot();
