@@ -5,9 +5,9 @@
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import { isGitlab } from "../forge/types.ts";
-import { MERGE_METHOD } from "../forge.ts";
 import { forgeOf } from "../github/forge.ts";
 import type { GitHub } from "../handlers.ts";
+import { mergeWithRepoMethod } from "../merge-method.ts";
 import { dataOf, getMission, type Mission, patchData } from "../mission.ts";
 import { parseTowercab } from "../repo/files.ts";
 import { DAY_S, decideRelease, type MainChecks, type PrFile } from "./release.ts";
@@ -194,7 +194,7 @@ async function releasePr(d: ReleaseDeps, name: string, github: string, base: str
   // Main is read again just before the merge; the merge names the PR head that was inspected.
   const again = { sha: await forgeOf(d.github).branchHead(github, base) };
   if (again.sha !== main.sha) return;
-  const m = await forgeOf(d.github).mergePr(github, pr.number, { method: MERGE_METHOD, head: pr.head });
+  const m = await mergeWithRepoMethod(forgeOf(d.github), d.config, github, pr.number, { head: pr.head });
   if (m.ok) {
     d.db.delMeta(KEY + name);
     d.log(`merged release PR #${pr.number} of ${name}`);

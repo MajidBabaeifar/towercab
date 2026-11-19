@@ -6,11 +6,12 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { planGate, riskWhy } from "../autonomy.ts";
 import { git } from "../checkout.ts";
-import { type Forge, MERGE_METHOD } from "../forge.ts";
+import type { Forge } from "../forge.ts";
 import { PausedHold } from "../github/paused.ts";
 import type { ChildEnd, Ctx, GitHub, Handler, Progress } from "../handlers.ts";
 import type { Intent } from "../intents/types.ts";
 import { wait } from "../machine.ts";
+import { mergeWithRepoMethod } from "../merge-method.ts";
 import type { Mission } from "../mission.ts";
 import { runSet } from "../repo/runset.ts";
 import { currentRisk, riskMd } from "../risk.ts";
@@ -437,7 +438,7 @@ async function gateStep(cx: Ctx, m: Mission): Promise<Progress> {
     return { done: wait("approve plan", why) };
   }
   const github = cx.store.github()!;
-  mustForge(await cx.github.mergePr(github, m.plan_pr!, { method: MERGE_METHOD }), "gh pr merge");
+  mustForge(await mergeWithRepoMethod(cx.github, cx.config, github, m.plan_pr!), "gh pr merge");
   return { done: { event: "plan_merged", why: `a${a}, ${level} risk: Towercab approved its own plan` } };
 }
 

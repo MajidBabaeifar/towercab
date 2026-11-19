@@ -12,10 +12,10 @@ import { ensureClone, git, gitEnv, NO_HOOKS } from "./checkout.ts";
 import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db } from "./db.ts";
 import { isGitlab } from "./forge/types.ts";
-import { MERGE_METHOD } from "./forge.ts";
 import type { Clock, Host } from "./handlers.ts";
 import type { Home } from "./home.ts";
 import type { IntentStore } from "./intents/types.ts";
+import { mergeWithRepoMethod } from "./merge-method.ts";
 import { type Mission, unfinished } from "./mission.ts";
 import { script } from "./pipeline/checks.ts";
 import { bucket } from "./pipeline/ci.ts";
@@ -462,7 +462,7 @@ async function drivePr(d: SetupDeps, repo: RepoConfig, rec: SetupRecord): Promis
     }
     return next;
   }
-  const r = await d.github.mergePr(repo.github, pr, { method: MERGE_METHOD, head });
+  const r = await mergeWithRepoMethod(d.github, d.config, repo.github, pr, { head });
   if (!r.ok) d.log(`${repo.name}: couldn't merge the setup PR #${pr}: ${r.reason}`);
   return next;
 }

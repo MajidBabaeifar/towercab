@@ -10,11 +10,12 @@ export type Row = Record<string, SqlValue>;
 const REPOS = `CREATE TABLE repos (name TEXT PRIMARY KEY, github TEXT NOT NULL, path TEXT NOT NULL DEFAULT '',
   base TEXT NOT NULL, workers INTEGER NOT NULL DEFAULT 1, ahead INTEGER NOT NULL DEFAULT 3,
   env TEXT NOT NULL DEFAULT '{}', source TEXT NOT NULL, added REAL NOT NULL,
-  teammate_review INTEGER NOT NULL DEFAULT 0, reviewers TEXT NOT NULL DEFAULT '');`;
+  teammate_review INTEGER NOT NULL DEFAULT 0, reviewers TEXT NOT NULL DEFAULT '',
+  merge_method TEXT NOT NULL DEFAULT 'squash');`;
 
-/** The `repos` table as migration 3 made it, before LOOP-83's columns. */
+/** The `repos` table as migration 3 made it, before LOOP-83's and LOOP-153's columns. */
 const REPOS_V3 = REPOS.replace(
-  ",\n  teammate_review INTEGER NOT NULL DEFAULT 0, reviewers TEXT NOT NULL DEFAULT '');",
+  ",\n  teammate_review INTEGER NOT NULL DEFAULT 0, reviewers TEXT NOT NULL DEFAULT '',\n  merge_method TEXT NOT NULL DEFAULT 'squash');",
   ");",
 );
 
@@ -150,13 +151,15 @@ ALTER TABLE commands_new RENAME TO commands;`,
   `${OUTBOX_SENT.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ")}
 INSERT OR IGNORE INTO outbox_sent (key, dest, sent_at, tries, next_try)
   SELECT key, 'telegram', sent_at, tries, next_try FROM outbox WHERE sent_at IS NOT NULL OR tries > 0;`,
+  // 14: a repo's merge method (LOOP-153). Additive; skipped when the column is already there after a manual rollback.
+  "ALTER TABLE repos ADD COLUMN merge_method TEXT NOT NULL DEFAULT 'squash';",
 ];
 
 /**
  * Versions reached by migrations that only add (tables, columns, keys older code doesn't read): a
  * Towercab older than them can still use the database (LOOP-37).
  */
-export const ADDITIVE = new Set([3, 6, 7, 8, 9, 10, 11, 12, 13]);
+export const ADDITIVE = new Set([3, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
 // 10 and 12 only widen the CHECK on `commands` (same columns): older code reads the table as before, and a
 // `score`, `boost` or `unfreeze` row it doesn't know just gets an error result, so a rollback stays safe.
 
@@ -221,7 +224,8 @@ export class Db {
         // Migrations 6 and 8 add columns: after a manual rollback (LOOP-37) they are still there.
         const there =
           (i === 5 && this.hasColumn("repos", "teammate_review")) ||
-          (i === 7 && this.hasColumn("outbox", "ended_at"));
+          (i === 7 && this.hasColumn("outbox", "ended_at")) ||
+          (i === 13 && this.hasColumn("repos", "merge_method"));
         if (!there) this.sql.exec(MIGRATIONS[i]!);
         this.sql.exec(`PRAGMA user_version = ${i + 1}`);
         this.setMeta("compatible_from", String(compatibleFrom(i + 1)));

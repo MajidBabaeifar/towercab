@@ -18,6 +18,7 @@ import type { GitHub } from "./handlers.ts";
 export { ghVersionOk };
 
 import type { Home } from "./home.ts";
+import { readMergeWarnings } from "./merge-method.ts";
 import { urlProblem } from "./notify-text.ts";
 import { type HostState, hostState, profileStep } from "./pipeline/hostcheck.ts";
 import { apparmorProfile, type ProbeResult, sandboxProbe, userNamespaceDenied } from "./pipeline/probe.ts";
@@ -189,6 +190,11 @@ export async function doctor(o: {
       capacity: o.capacity ?? readCapacity(),
     });
     if (hint) lines.push(hint);
+  }
+  // LOOP-155: a warning (never a failure) when a repo's merge method isn't allowed, or is rebase.
+  if (o.github && !o.quick) {
+    const forge = forgeOf(o.github);
+    for (const repo of config.repos.values()) lines.push(...(await readMergeWarnings(forge, repo)));
   }
   // LOOP-84: a warning (never a failure) when the host needs approvals that Towercab isn't waiting for.
   if (o.github) {

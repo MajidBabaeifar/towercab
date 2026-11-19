@@ -18,7 +18,7 @@ import type { Config, RepoConfig } from "../config.ts";
 import type { Db } from "../db.ts";
 import { markFast } from "../fast.ts";
 import { askFeatures } from "../features.ts";
-import { ForgeBadReply, MERGE_METHOD, type PrBrief, type Result } from "../forge.ts";
+import { ForgeBadReply, type PrBrief, type Result } from "../forge.ts";
 import { ownerForge } from "../github/forge.ts";
 import { classifyFiles, type ProposedPr } from "../github/proposed.ts";
 import type { Clock, GitHub } from "../handlers.ts";
@@ -33,6 +33,7 @@ import {
 } from "../intents/create.ts";
 import { checkOverlap, type Match, type OverlapResult } from "../intents/overlap.ts";
 import type { IntentStore } from "../intents/types.ts";
+import { mergeWithRepoMethod } from "../merge-method.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
 import { isMulti } from "../parts.ts";
 import { grantScanning } from "../pipeline/alerts.ts";
@@ -348,7 +349,7 @@ export function createActions(d: ActionDeps): UiActions {
       const known = d.proposed?.().find((p) => p.number === n);
       if (known && !known.acceptable) throw changed(n);
       if (now.draft) refused(await of.markReady(now.repo, n), `mark PR #${n} ready`);
-      refused(await of.mergePr(now.repo, n, { method: MERGE_METHOD, head }), `merge PR #${n}`);
+      refused(await mergeWithRepoMethod(of, d.config, now.repo, n, { head }), `merge PR #${n}`);
       readNow();
       return `Merged PR #${n} as you. The intent is on main; Towercab picks it up within a minute.`;
     },
@@ -427,7 +428,7 @@ export function createActions(d: ActionDeps): UiActions {
       if (tag)
         await of.commentOnPr(p.github, p.number, `${tag}Merging on your yes in Telegram.`, { inline: true });
       refused(
-        await of.mergePr(p.github, p.number, { method: MERGE_METHOD }),
+        await mergeWithRepoMethod(of, d.config, p.github, p.number),
         `merge the ${p.label} #${p.number}`,
       );
       done(m, p, "merge");

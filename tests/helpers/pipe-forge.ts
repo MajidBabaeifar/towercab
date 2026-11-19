@@ -11,6 +11,7 @@ import {
   ForgeDenied,
   type IssueRow,
   type IssueText,
+  type MergeMethod,
   type PrState,
 } from "../../src/forge.ts";
 import { ownBranch } from "../../src/github/branches.ts";
@@ -167,7 +168,7 @@ export class PipeForge extends FakeForge implements GitHub {
     this.log(`ready ${repo}#${n}`);
     return { ok: true, reason: "" };
   }
-  override async mergePr(repo: string, n: number, o: { method: "squash"; head?: string }) {
+  override async mergePr(repo: string, n: number, o: { method: MergeMethod; head?: string }) {
     this.log(`merge ${repo}#${n} ${o.method}${o.head ? ` head=${o.head}` : ""}`);
     const p = this.find(repo, n);
     if (!p) return { ok: false, reason: `no PR ${repo}#${n}` };

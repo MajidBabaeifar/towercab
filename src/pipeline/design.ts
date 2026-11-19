@@ -7,13 +7,13 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { riskWhy, specGate } from "../autonomy.ts";
 import { git, refreshBase } from "../checkout.ts";
-import { MERGE_METHOD } from "../forge.ts";
 import { SPEC_CONFLICT_REVISIONS, SPEC_CONFLICT_TEXT } from "../github/events.ts";
 import { PausedHold } from "../github/paused.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import { renameFeature } from "../intents/features.ts";
 import { plainLine, TITLE_MAX, titleProblem } from "../intents/naming.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
+import { mergeWithRepoMethod } from "../merge-method.ts";
 import type { Mission } from "../mission.ts";
 import { currentRisk, openPointsMd, openPointsWhy, type Risk, riskMd } from "../risk.ts";
 import {
@@ -800,7 +800,7 @@ async function decide(cx: Ctx, m: Mission): Promise<Progress> {
   if (owner) return { done: owner };
   const repo = cx.repo(m);
   mustForge(
-    await cx.github.mergePr(repo.github, m.spec_pr!, { method: MERGE_METHOD, head: m.head! }),
+    await mergeWithRepoMethod(cx.github, cx.config, repo.github, m.spec_pr!, { head: m.head! }),
     "gh pr merge",
   );
   // The squashed spec is now on base: the build starts from there.

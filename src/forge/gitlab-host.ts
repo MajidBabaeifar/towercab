@@ -171,6 +171,10 @@ export class GitLabHost implements Forge {
       return fail(e);
     }
   }
+  /** LOOP-153: GitLab repos always squash (GL-5); there is nothing to read. */
+  async allowedMergeMethods(_repo: string): Promise<MergeMethod[] | null> {
+    return null;
+  }
   async closePr(repo: string, n: number, comment?: string): Promise<Result> {
     try {
       await this.gl.close(repo, n, comment);
