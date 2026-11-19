@@ -235,6 +235,7 @@ export function planBody(
   risk = "",
   brief = "",
   delivery: "code" | "steps" = "code",
+  kindLine = "",
 ): string {
   const approach =
     section(planMd, "Approach")
@@ -247,6 +248,7 @@ export function planBody(
   ];
   const body = [
     plainMd(brief),
+    kindLine,
     risk,
     ...detailsMd([approach], brief),
     asks.length
@@ -300,6 +302,8 @@ export interface CodeBody {
   reviewDetails: string | null;
   /** PIP-119: outcomes only the owner can do, as a checklist. */
   ownerSteps?: { bullet: string; why: string }[];
+  /** PIP-229: the commands applied in the sandbox, with their results. */
+  applied?: { command: string; why: string; code: number; secs: number; tail: string }[];
   /** PIP-209: outcomes counted as met because the owner deferred them. */
   deferred?: { bullet: string; to: string; by: string }[];
   /** The `## Risk` section (PIP-99, `riskMd`); "" when not assessed. */
@@ -353,6 +357,21 @@ export function codeBody(b: CodeBody): string {
         `- Test proof: ${b.checks.proof}`,
         `- CI: ${b.checks.ci}`,
         `- Review: ${b.checks.review}`,
+      ].join("\n"),
+    );
+  }
+  if (b.applied?.length) {
+    tech.push(
+      [
+        "## What was applied",
+        "",
+        ...b.applied.map(
+          (a) =>
+            `- \`${a.command}\` (${a.why}): ${a.code === 0 ? "ok" : `exit ${a.code}`}, ${a.secs} s\n\n  \`\`\`text\n${a.tail
+              .split("\n")
+              .map((l) => `  ${l}`)
+              .join("\n")}\n  \`\`\``,
+        ),
       ].join("\n"),
     );
   }
