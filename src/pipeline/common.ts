@@ -43,6 +43,7 @@ import { foldMd, plainMd, splitTwoPart, twoPartMd } from "./prtext.ts";
 import type { PendingReply } from "./reply.ts";
 import { cacheEnv, DEFAULT_NETWORK } from "./sandbox.ts";
 import { type Access, type Question, type ReviewResult, SCHEMAS, withReply } from "./schemas.ts";
+import { hasSetupSecrets } from "./setup-secrets.ts";
 
 /** `missions.data`, as the pipeline uses it. */
 export interface ShipData {
@@ -266,6 +267,10 @@ export interface PipeData {
   /** `<stage>:<round start>`: the build round already retried once for a known setup error (LOOP-107). */
   setupRetried?: Record<string, boolean>;
   setup?: string;
+  /** PIP-214: where the secret pass of the repo's setup started (ms) and the commit it exported. */
+  setupSecret?: { start: number; base: string };
+  /** PIP-214: the owner was asked about a private package; the answer restarts the setup. */
+  openAsk?: boolean;
   verify?: { log: string; result: "green" | "red" };
   shots?: string[];
   proof?: "proven" | "none needed" | "not proven" | typeof REFACTOR_PROOF;
@@ -568,7 +573,8 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
     guardRules: p.guard ?? null,
     allowMore: p.allowMore,
     cacheEnv: cacheEnv(cache, repo),
-    cache,
+    // PIP-212: a repo with setup secrets gets its shared cache read-only for the worker, whatever PIP-95 allowed.
+    cache: hasSetupSecrets(cx.config.file, repo.name) ? null : cache,
     config: cx.config,
   };
   return {

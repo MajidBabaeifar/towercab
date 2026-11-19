@@ -70,6 +70,8 @@ import { fence, intentData, render } from "./prompts.ts";
 import { replyPatch, replySection } from "./reply.ts";
 import { type Access, parseResult, type Question } from "./schemas.ts";
 import { type SetupEvidence, setupFault } from "./setup-faults.ts";
+import { dropOpenCache, endSecretPass, openPass, type PassOpts, startSecretPass } from "./setup-pass.ts";
+import { hasSetupSecrets } from "./setup-secrets.ts";
 
 /** LOOP-106: skew retries per mission within `SKEW_WINDOW` seconds, before the owner is asked. */
 const SKEW_LIMIT = 3;
@@ -404,6 +406,13 @@ export const buildHandler: Handler = {
       case "setup":
       case "setup-done":
         return setupOrWorker(cx, m);
+      case "setup-secret":
+        return (
+          (await startSecretPass(cx, m, setupPass(cx, m, (await repoFiles(cx, m)).verifying.setup, ""))) ??
+          setupOrWorker(cx, cx.record(m, "setup"))
+        );
+      case "setup-open":
+        return openPass(cx, m, setupPass(cx, m, (await repoFiles(cx, m)).verifying.setup, "-open"));
       case "access":
       case "worker":
         return spawnWorker(cx, m);
@@ -415,6 +424,25 @@ export const buildHandler: Handler = {
   },
 
   async finish(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
+    if (m.step === "setup-secret") {
+      // PIP-212, PIP-214: the install output is searched before the worker starts; a hit stops the stage.
+      const r = await endSecretPass(cx, m, end, cx.checkout(m));
+      if ("done" in r) return r;
+      if (r.failed) cx.log(`${m.intent}: setup failed (verify runs it again): ${tail(r.log, 300)}`);
+      if (r.open.length > 0) {
+        const files = await repoFiles(cx, m);
+        return openPass(cx, cx.record(m, "setup-open"), setupPass(cx, m, files.verifying.setup, "-open"));
+      }
+      return spawnWorker(cx, cx.record(m, "setup-done", {}, { setup: cx.checkout(m) }));
+    }
+    if (m.step === "setup-open") {
+      dropOpenCache(cx.checkout(m));
+      if (end.code !== 0)
+        cx.log(
+          `${m.intent}: the setup without secrets failed (verify runs it again): ${tail(readLog(end.stdout), 300)}`,
+        );
+      return spawnWorker(cx, cx.record(m, "setup-done", {}, { setup: cx.checkout(m) }));
+    }
     if (m.step === "setup") {
       if (end.code !== 0)
         cx.log(`${m.intent}: setup failed (verify runs it again): ${tail(readLog(end.stdout), 300)}`);
@@ -829,12 +857,31 @@ async function restoreFromBase(cx: Ctx, m: Mission, paths: string[]): Promise<vo
   }
 }
 
+/** The options of one setup pass of the build (PIP-214): `build-setup.log`, and `-open` for pass 2. */
+function setupPass(cx: Ctx, m: Mission, lines: string[], suffix: string): PassOpts {
+  return {
+    kind: "setup",
+    dir: cx.checkout(m),
+    lines,
+    log: logPath(cx, m, "build", `build-setup${suffix}.log`),
+    timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
+  };
+}
+
 async function setupOrWorker(cx: Ctx, m: Mission): Promise<Progress> {
   const d = data(m);
   if (d.setup === cx.checkout(m)) return spawnWorker(cx, m);
   const files = await repoFiles(cx, m);
   if (!files.verifying.setup.length)
     return spawnWorker(cx, cx.record(m, "setup-done", {}, { setup: cx.checkout(m) }));
+  if (hasSetupSecrets(cx.config.file, m.repo)) {
+    const secret = await startSecretPass(
+      cx,
+      cx.record(m, "setup-secret"),
+      setupPass(cx, m, files.verifying.setup, ""),
+    );
+    if (secret) return secret;
+  }
   return {
     spawn: sandboxSpec(cx, m, {
       kind: "setup",

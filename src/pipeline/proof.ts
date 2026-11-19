@@ -18,6 +18,8 @@ import { hasCi, quote, runSet } from "../repo/runset.ts";
 import { withoutE2e } from "../ship/live.ts";
 import { checksMayWrite, logPath, sandboxSpec } from "./checks.ts";
 import { cloneOf, coGit, data, grants, intentOf, repoFiles, tail } from "./common.ts";
+import { endSecretPass, type PassOpts, startSecretPass } from "./setup-pass.ts";
+import { hasSetupSecrets } from "./setup-secrets.ts";
 import { changedTests, MAX_REPAIRS } from "./verify.ts";
 
 const proofDir = (cx: Ctx, m: Mission) => `${cx.checkout(m)}-proof`;
@@ -53,6 +55,15 @@ export const proofHandler: Handler = {
       await createCheckout(cx.tools, cloneOf(cx, m), dir, repo.base, `${m.branch}-proof`);
       const fresh = cx.record(m, "setup");
       if (files.verifying.setup.length === 0) return lay(cx, fresh, tests);
+      // PIP-212: the repo's setup secrets reach this setup too, in a clean export of the base tree.
+      if (hasSetupSecrets(cx.config.file, m.repo)) {
+        const secret = await startSecretPass(
+          cx,
+          cx.record(fresh, "setup-secret"),
+          proofSetup(cx, fresh, dir, files.verifying.setup),
+        );
+        if (secret) return secret;
+      }
       return {
         spawn: sandboxSpec(cx, fresh, {
           kind: "proof-setup",
@@ -65,10 +76,20 @@ export const proofHandler: Handler = {
       };
     }
     if (m.step === "head") return head(cx, m);
+    if (m.step === "setup-secret") {
+      const again = await startSecretPass(cx, m, proofSetup(cx, m, proofDir(cx, m), files.verifying.setup));
+      if (again) return again;
+    }
     return lay(cx, m, tests);
   },
 
   async finish(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
+    if (m.step === "setup-secret") {
+      const r = await endSecretPass(cx, m, end, proofDir(cx, m));
+      if ("done" in r) return r;
+      const files = await repoFiles(cx, m);
+      return lay(cx, m, withoutE2e(await changedTests(cx, m, files.towercab.tests), files.towercab.live));
+    }
     if (m.step === "setup") {
       const files = await repoFiles(cx, m);
       return lay(cx, m, withoutE2e(await changedTests(cx, m, files.towercab.tests), files.towercab.live));
@@ -133,6 +154,16 @@ async function refactorProof(cx: Ctx, m: Mission, tests: string[]): Promise<Prog
         },
       },
     }),
+  };
+}
+
+function proofSetup(cx: Ctx, m: Mission, dir: string, lines: string[]): PassOpts {
+  return {
+    kind: "proof-setup",
+    dir,
+    lines,
+    log: logPath(cx, m, "proof", "proof-setup.log"),
+    timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
   };
 }
 
