@@ -94,6 +94,7 @@ async function updateBody(cx: Ctx, m: Mission): Promise<void> {
     },
     reviewDetails: d.review?.details ?? null,
     ownerSteps: d.ownerSteps,
+    deferred: d.deferred,
     risk: d.review ? riskMd(codeRisk(m)) : "",
     footer: { intentUrl: cx.store.url(intent), costUsd: m.cost_usd, secs: m.agent_secs },
     issue: { url: intent.issue, repo: repo.github },

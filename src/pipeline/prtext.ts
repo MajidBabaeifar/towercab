@@ -300,6 +300,8 @@ export interface CodeBody {
   reviewDetails: string | null;
   /** PIP-119: outcomes only the owner can do, as a checklist. */
   ownerSteps?: { bullet: string; why: string }[];
+  /** PIP-209: outcomes counted as met because the owner deferred them. */
+  deferred?: { bullet: string; to: string; by: string }[];
   /** The `## Risk` section (PIP-99, `riskMd`); "" when not assessed. */
   risk?: string;
   footer: Footer;
@@ -361,6 +363,14 @@ export function codeBody(b: CodeBody): string {
   const stepsMd = b.ownerSteps?.length
     ? ["## For you to do", "", ...b.ownerSteps.map((s) => `- [ ] ${s.bullet} (${s.why})`)].join("\n")
     : "";
+  // PIP-209: what the owner deferred stays open beside the owner steps, never folded away.
+  const deferredMd = b.deferred?.length
+    ? [
+        "## Deferred",
+        "",
+        ...b.deferred.map((x) => `- ${x.bullet} (moved to intent ${x.to}, deferred by ${x.by})`),
+      ].join("\n")
+    : "";
   // PIP-220: the IDs are agent detail: folded with a people part, open without.
   const ids = b.specIds.length ? `**Spec IDs:** ${b.specIds.join(", ")}` : "";
   const reviewText = b.reviewDetails?.trim() ?? "";
@@ -370,12 +380,14 @@ export function codeBody(b: CodeBody): string {
     // PIP-108: what the owner decides on stays open (the risk, access beyond the plan); the worker's
     // text, the checks and the review fold under "Agent context".
     if (stepsMd) parts.push(stepsMd);
+    if (deferredMd) parts.push(deferredMd);
     if (unplanned) parts.push(unplanned);
     if (testsMd) parts.push(testsMd);
     parts.push(...detailsMd([...tech, review, ids], b.brief));
   } else {
     parts.push(...tech);
     if (stepsMd) parts.push(stepsMd);
+    if (deferredMd) parts.push(deferredMd);
     if (unplanned) parts.push(unplanned);
     if (testsMd) parts.push(testsMd);
   }
