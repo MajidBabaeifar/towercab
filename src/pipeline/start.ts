@@ -3,12 +3,13 @@
 import { ensureClone, freshCheckout, git } from "../checkout.ts";
 import { isGitlab } from "../forge/types.ts";
 import { type Ctx, EnvError, type Handler, type Progress } from "../handlers.ts";
+import { isKind, type WorkKind } from "../kind.ts";
 import { ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { RepoError } from "../repo/files.ts";
 import { dropSetup, getSetup, putSetup, startSetup, WAIT_PREFIX } from "../setup-checks.ts";
 import { moveIds, namedAsWritten, parseIds } from "../specids.ts";
-import { asEnv, cloneOf, intentOf, prUrl, repoFiles, repoFilesWait } from "./common.ts";
+import { asEnv, cloneOf, data, intentOf, prUrl, repoFiles, repoFilesWait } from "./common.ts";
 import { IDS_UNCHECKED_BASE, takenIds } from "./design.ts";
 
 const prefixOf = (id: string) => id.slice(0, id.lastIndexOf("-"));
@@ -92,6 +93,18 @@ async function settingUp(cx: Ctx, m: Mission): Promise<Progress> {
   return { done: wait("add CLAUDE.md verifying block", why) };
 }
 
+/** INT-77: the outcome that keeps a kind in the mission and sends it by that kind (PIP-228). */
+function routedBy(
+  kind: WorkKind,
+  by: "guess" | "owner",
+  why: string,
+  set: Record<string, string> = {},
+): Progress {
+  const d = { kind, kindWhy: why, kindBy: by };
+  const lighter = kind === "bugfix" || kind === "refactor" || kind === "infra";
+  return { done: lighter ? { event: "kind_routed", set, data: d } : ok({ set, data: d }) };
+}
+
 export const pickHandler: Handler = {
   async step(cx: Ctx, m: Mission): Promise<Progress> {
     const repo = cx.repo(m);
@@ -111,12 +124,19 @@ export const pickHandler: Handler = {
       throw e;
     }
     // The repo has checks now: an ended record has done its work (waiting intents carry on without it).
-    const ended = getSetup(cx.db, repo.name);
-    if (ended && ["merged", "closed", "failed"].includes(ended.state)) dropSetup(cx.db, repo.name);
+    const record = getSetup(cx.db, repo.name);
+    if (record && ["merged", "closed", "failed"].includes(record.state)) dropSetup(cx.db, repo.name);
     await reserveIds(cx, m);
     const base = (await git(cx.tools, clone, ["rev-parse", `refs/remotes/origin/${repo.base}`])).trim();
     await freshCheckout(cx.tools, clone, cx.checkout(m), repo.base, m.branch);
-    return { done: ok({ set: { base_sha: base } }) };
+    const set = { base_sha: base };
+    // INT-77: a kind the intent sets is the owner's and skips the agent; an earlier guess is kept.
+    const intent = await intentOf(cx, m);
+    if (isKind(intent.kind)) return routedBy(intent.kind, "owner", "", set);
+    const kept = data(m).kind;
+    if (isKind(kept)) return routedBy(kept, data(m).kindBy ?? "guess", data(m).kindWhy ?? "", set);
+    // No kind yet: the design stage's first step asks the agent (a feature goes there anyway).
+    return { done: ok({ set }) };
   },
   async finish() {
     return { poll: 0 };

@@ -100,7 +100,7 @@ export const LOW_RISK = {
 };
 
 /** Kinds `script` never answers: they answer from `queue(kind)` or `respond` only. */
-const UNSCRIPTED = new Set(["risk"]);
+const UNSCRIPTED = new Set(["risk", "kind"]);
 
 export interface ClaudeCall {
   kind: string;
@@ -263,6 +263,8 @@ export class Pipe {
   readonly bares: Record<string, string> = {};
   readonly prs: FakePr[] = [];
   readonly claudeCalls: ClaudeCall[] = [];
+  /** INT-77: the kind agent's runs, kept apart so flows that list `claudeCalls` keep their meaning. */
+  readonly kindCalls: ClaudeCall[] = [];
   /** Sandboxed runs (`bwrap`): kind, argv and where. */
   readonly sandboxRuns: { kind: string; argv: string[]; cwd: string }[] = [];
   /** `gh run rerun` run IDs. */
@@ -300,6 +302,8 @@ export class Pipe {
    */
   readonly respond: Partial<Record<string, ClaudeScript>> = {
     risk: () => ({ structured: LOW_RISK, cost: 0, durationMs: 0 }),
+    // INT-77: the kind agent answers `feature` for free, so flows that don't care keep the full path.
+    kind: () => ({ structured: { kind: "feature", why: "A test default." }, cost: 0, durationMs: 0 }),
   };
   /** Overrides a sandbox run; return null to run it with `sh`. */
   sandbox: ((spec: ChildSpec) => ChildExit | null) | null = null;
@@ -631,7 +635,7 @@ export class Pipe {
     } catch {
       // No settings file.
     }
-    this.claudeCalls.push({
+    (kind === "kind" ? this.kindCalls : this.claudeCalls).push({
       kind,
       prompt,
       argv: spec.argv,

@@ -5,6 +5,7 @@ import type { Intent } from "../intents/types.ts";
 import { finished, next, type Outcome, type Stage } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
 import { parseAllow } from "../pipeline/access.ts";
+import { type Defer, deferLines } from "../pipeline/deferrals.ts";
 import { recheck } from "../risk.ts";
 import { stripAgentHeader } from "./agent-header.ts";
 import { agentOfBody } from "./comments.ts";
@@ -386,12 +387,19 @@ export function prEvents(
     const text = feedback.map((s) => (kinds.size > 1 ? `(${s.kind} PR) ${s.text}` : s.text)).join("\n\n");
     // `data.answer` too: `apply` keeps `text` only on a continue, the worker's prompt needs it after
     // any move back to build, design or plan.
+    // PIP-208: a `defer` line counts only in the owner's own comments: never a teammate's, never an agent's.
+    const defers = feedback.filter((s) => s.own && !s.agent).flatMap((s) => deferLines(s.text));
+    const kept = dataOf<{ deferrals?: Defer[] }>(m).deferrals ?? [];
     return {
       event: m.stage === "blocked" ? "answered" : "feedback",
       text,
       set: { feedback_seen: latest(feedback) },
       // PIP-185: when every word came from marked agents, the answer says who gave it for the owner.
-      data: { answer: text, ...answeredBy(feedback) },
+      data: {
+        answer: text,
+        ...answeredBy(feedback),
+        ...(defers.length ? { deferrals: [...kept, ...defers] } : {}),
+      },
     };
   }
   const retries = fresh.filter((s) => s.text === RETRY);

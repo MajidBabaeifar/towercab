@@ -4,6 +4,8 @@
 // assesses the change for the gate. A change in a specialist area (PIP-197) is also read by that
 // specialist after the general review; code joins the results before it decides (PIP-198).
 
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { gitEnv, NO_HOOKS } from "../checkout.ts";
 import type { ChildEnd, Ctx, Handler, Progress } from "../handlers.ts";
 import { ok, red } from "../machine.ts";
@@ -13,6 +15,18 @@ import { currentRisk } from "../risk.ts";
 import { e2eText } from "../ship/live.ts";
 import { check } from "../tools.ts";
 import { coGit, data, ended, intentOf, note, repoFiles, spawnRun } from "./common.ts";
+import {
+  answerDeferrals,
+  applyDeferrals,
+  type Bullet,
+  bulletsOf,
+  type Deferred,
+  deferLines,
+  deferredBlock,
+  deferredBullets,
+  type Hit,
+  type Source,
+} from "./deferrals.ts";
 import { fence, intentData, render } from "./prompts.ts";
 import { twoPartMd } from "./prtext.ts";
 import { endRisk, spawnRisk } from "./risk.ts";
@@ -37,6 +51,8 @@ export interface ReviewDecision {
   round: number | null;
   /** The agent said yes but a check said no. */
   overridden: boolean;
+  /** PIP-208: outcomes counted as met because the owner deferred them. */
+  deferred: Deferred[];
 }
 
 /** PIP-120: what the worker can fix in a review, in plain words. */
@@ -58,10 +74,11 @@ export function approvedOf(r: ReviewResult): boolean {
 }
 
 /** PIP-119..121: the decision for a review, given the fix rounds already used. */
-export function reviewDecision(r: ReviewResult, fixes: number): ReviewDecision {
+export function reviewDecision(r: ReviewResult, fixes: number, deferred: Deferred[] = []): ReviewDecision {
   const fixable = fixableOf(r);
   const approved = r.approved && fixable.length === 0;
   return {
+    deferred,
     approved,
     fixable,
     ownerSteps: r.outcomes.filter((o) => o.owner && !o.met).map((o) => ({ bullet: o.bullet, why: o.why })),
@@ -74,8 +91,11 @@ export function reviewDecision(r: ReviewResult, fixes: number): ReviewDecision {
 export function verdictLine(d: ReviewDecision): string {
   const reasons = d.fixable.join("; ");
   let line: string;
-  if (d.approved) line = "Approve";
-  else if (d.round !== null) {
+  if (d.approved) {
+    line = "Approve";
+    if (d.deferred.length)
+      line += ` (${d.deferred.length === 1 ? "one outcome is" : `${d.deferred.length} outcomes are`} counted as met because you deferred ${d.deferred.length === 1 ? "it" : "them"})`;
+  } else if (d.round !== null) {
     line = `Sending back for fixes (round ${d.round} of ${MAX_REVIEW_FIXES}): ${reasons}`;
   } else if (d.fixable.length) line = `Not approved: ${reasons}. The fix rounds are used up.`;
   else
@@ -87,7 +107,7 @@ export function verdictLine(d: ReviewDecision): string {
 }
 
 /** The Review comment's body: the summary, then findings (nits capped by REVIEW.md), the owner's steps. */
-export function reviewComment(r: ReviewResult, review: Review): string {
+export function reviewComment(r: ReviewResult, review: Review, deferred: Deferred[] = []): string {
   const important = r.findings.filter((f) => f.severity === "important");
   const nits = r.findings.filter((f) => f.severity === "nit").slice(0, review.nitCap);
   const line = (f: ReviewResult["findings"][number]) =>
@@ -98,8 +118,15 @@ export function reviewComment(r: ReviewResult, review: Review): string {
   const steps = r.outcomes.filter((o) => o.owner && !o.met);
   if (steps.length)
     parts.push(`**For you to do**\n\n${steps.map((o) => `- ${o.bullet} (${o.why})`).join("\n")}`);
+  if (deferred.length) parts.push(deferredMd(deferred));
   const state = (o: ReviewResult["outcomes"][number]) =>
-    o.owner && !o.met ? "Owner step" : o.met ? "Met" : "Not met";
+    o.owner && !o.met
+      ? "Owner step"
+      : deferred.some((x) => x.bullet === o.bullet)
+        ? "Deferred"
+        : o.met
+          ? "Met"
+          : "Not met";
   const outcomes = r.outcomes.map((o) => `- ${state(o)}: ${o.bullet} (${o.why})`).join("\n");
   if (outcomes) parts.push(`<details><summary>Outcomes</summary>\n\n${outcomes}\n\n</details>`);
   return parts.join("\n\n");
@@ -232,6 +259,7 @@ async function reviewPrompt(
   const shots = d.shots?.length
     ? `Screenshots of the UI after the change (read them with the Read tool):\n${d.shots.map((s) => `- ${s}`).join("\n")}`
     : "";
+  const found = await deferralsOf(cx, m, intent);
   return render(agent, {
     intent: intentData(intent.text),
     spec_ids: d.design?.specIds.join(", ") || "none",
@@ -240,7 +268,14 @@ async function reviewPrompt(
     ci: d.ci?.result === "none" ? "no CI on this repo" : "green",
     screenshots: shots,
     diff_cmd: `git diff refs/remotes/origin/${repo.base}...HEAD`,
-    e2e: [e2eText(files.towercab.live, "review"), noneLiveText(d.liveNoneWhy)].filter(Boolean).join("\n\n"),
+    // Notes on top of the diff: how to read the live checks, and what the owner deferred (PIP-208).
+    e2e: [
+      e2eText(files.towercab.live, "review"),
+      noneLiveText(d.liveNoneWhy),
+      deferredBlock(found.bullets, found.hits),
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
   });
 }
 
@@ -275,12 +310,16 @@ async function specialistEnd(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progre
 }
 
 /** The review's result (joined with its specialists') → the comment, and the fix round or the risk run. */
-async function conclude(cx: Ctx, m: Mission, v: ReviewResult, round: number): Promise<Progress> {
+async function conclude(cx: Ctx, m: Mission, reviewed: ReviewResult, round: number): Promise<Progress> {
   const files = await repoFiles(cx, m);
   const fixes = data(m).reviewFixes ?? 0;
-  const decision = reviewDecision(v, fixes);
+  // PIP-208: an outcome the owner deferred counts as met, so it never overrides an Approve.
+  const intent = await intentOf(cx, m);
+  const found = await deferralsOf(cx, m, intent);
+  const { result: v, deferred } = applyDeferrals(reviewed, found.bullets, found.hits);
+  const decision = reviewDecision(v, fixes, deferred);
   const approved = decision.approved;
-  const body = reviewComment(v, files.review);
+  const body = reviewComment(v, files.review, deferred);
   // PIP-220: the people part opens the comment (PIP-121: the verdict before it), the findings and the
   // review's own agent text folded after it.
   const text = v.brief.trim()
@@ -304,6 +343,7 @@ async function conclude(cx: Ctx, m: Mission, v: ReviewResult, round: number): Pr
         data: {
           review,
           ownerSteps,
+          deferred,
           reviewFixes: decision.round,
           repair: { what: REVIEW_FIX, details: body, kind: "review" },
           specialists: null,
@@ -311,5 +351,53 @@ async function conclude(cx: Ctx, m: Mission, v: ReviewResult, round: number): Pr
       }),
     };
   }
-  return spawnRisk(cx, cx.record(m, m.step, {}, { review, ownerSteps, specialists: null }), "code");
+  return spawnRisk(cx, cx.record(m, m.step, {}, { review, ownerSteps, deferred, specialists: null }), "code");
+}
+
+/** PIP-209: the Deferred list, one line per outcome with the intent it moved to and who said so. */
+export function deferredMd(deferred: Deferred[]): string {
+  return `**Deferred**\n\n${deferred.map((x) => `- ${x.bullet} (moved to intent ${x.to}, deferred by ${x.by})`).join("\n")}`;
+}
+
+/** The spec row names of the checkout (`### <ID> · <name>`), looked up by name. */
+function rowIdOf(dir: string): (name: string) => string | null {
+  const rows = new Map<string, string>();
+  try {
+    for (const f of readdirSync(join(dir, "specs")).filter((x) => x.endsWith(".md"))) {
+      for (const line of readFileSync(join(dir, "specs", f), "utf8").split("\n")) {
+        const h = /^### ([A-Z]+-\d+) · (.+)$/.exec(line);
+        if (h) rows.set(h[2]!.trim().replace(/\s+/g, " ").toLowerCase(), h[1]!);
+      }
+    }
+  } catch {
+    // No spec files: a quoted name then matches only a bullet's own text.
+  }
+  return (name) => rows.get(name.trim().replace(/\s+/g, " ").toLowerCase()) ?? null;
+}
+
+/**
+ * PIP-208: the intent's `Proposed outcome` bullets and the ones deferred. Only three sources count: the owner's
+ * `defer` lines (comments kept in `data.deferrals`, and `## Answers` of the intent), a `deferred: <id>` mark on
+ * the bullet, and a `defer` line in the merged plan (never the plan of an unmerged PR). The named intent must
+ * exist and not be this one.
+ */
+export async function deferralsOf(
+  cx: Pick<Ctx, "store" | "checkout">,
+  m: Mission,
+  intent: Awaited<ReturnType<typeof intentOf>>,
+): Promise<{ bullets: Bullet[]; hits: Hit[] }> {
+  const bullets = bulletsOf(intent.sections.get("Proposed outcome"));
+  const sources: Source[] = [
+    ...(data(m).deferrals ?? []).map((d) => ({ ...d, by: "the owner's comment" })),
+    ...answerDeferrals(intent.sections.get("Answers") ?? "").map((d) => ({ ...d, by: "the owner's answer" })),
+    ...deferLines((await cx.store.readFile(`${intent.dir}/plan.md`)) ?? "").map((d) => ({
+      ...d,
+      by: "the approved plan",
+    })),
+  ];
+  // An intent that doesn't exist (open or done), or this one, defers nothing.
+  const listing = await cx.store.list();
+  const valid = new Set([...listing.open, ...listing.done].map((i) => i.id));
+  valid.delete(intent.id);
+  return { bullets, hits: deferredBullets(bullets, sources, valid, rowIdOf(cx.checkout(m))) };
 }
