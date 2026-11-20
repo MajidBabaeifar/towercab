@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..75, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..121, LOOP-126..132, LOOP-133..135, LOOP-159..162, LOOP-122, LOOP-140..141, LOOP-136..139, LOOP-124..125, LOOP-150..152, LOOP-146..149, LOOP-78..82, LOOP-153..155 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..121, LOOP-126..132, LOOP-133..135, LOOP-159..162, LOOP-122, LOOP-140..141, LOOP-136..139, LOOP-124..125, LOOP-150..152, LOOP-146..149, LOOP-142..145, LOOP-163, LOOP-78..82, LOOP-153..155 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -862,6 +862,7 @@ Boosting an intent sets its autonomy to a5 and, when it has not started, starts 
 `towercab score <id> [u=<1-5>] [i=<1-5>]` changes an intent's urgency and importance from the command line.
 
 - Inserts a `score` row in `commands` (LOOP-15; applied by the loop, or by the CLI with no loop) and applies LOOP-133. At least one of `u=`, `i=` is required; no argument or a bad value is a usage error (exit 2); a refusal prints `towercab: <reason>` and exits 1. It prints the new priority and whether the intent is parked.
+- A `kind` row in `commands` (UI-283; `text` is the kind) writes `kind` into the intent and moves a mission that has not passed the stage the kind skips (`kind_routed`, PIP-228); like `score` it counts only from the page at a0 (AUT-33). The owner's comment `kind: <value>` on the mission's PR does the same (INT-77).
 - There is no command-line command for `a` or for boost: raising autonomy stays on the page and GitHub (AUT-35) and `boost` rows from the command line are dropped (LOOP-134). An a0 intent refuses `score` like `start` (AUT-33), because the command line cannot tell the owner from an agent: only the page and GitHub change it.
 - Verified by: `cli: score changes u and i`, `cli: score needs a value`, `cli: score refuses a bad value`, `cli: score is refused on an a0 intent`, `commands: score applied without a loop`
 
@@ -924,6 +925,7 @@ On Windows through WSL2, Towercab keeps Windows from sleeping while missions are
 
 - WSL is detected when the kernel release (`/proc/sys/kernel/osrelease`) contains `microsoft`, case-insensitively. The check goes through `Tools`, so tests fake it.
 - In WSL the inhibitor of LOOP-11 is a `powershell.exe` child instead of `systemd-inhibit`: it calls `SetThreadExecutionState` from `kernel32.dll` with `ES_CONTINUOUS | ES_SYSTEM_REQUIRED` (`0x80000001`) and then sleeps until killed. The child is started, killed and restarted under the same rules as in LOOP-11 (working stage, nothing driven, shutdown), and the wake check applies unchanged.
+- `powershell.exe` is run by the bare name when `PATH` has it, else by `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe` when that exists, because the systemd service's `PATH` has no Windows directory; the same program reads `.wslconfig` (LOOP-143). The child's environment is `PATH` plus `WSL_INTEROP`, `WSL_DISTRO_NAME` and `WSLENV` when set.
 - The execution state belongs to the PowerShell process's thread, so Windows drops it when the child ends, however it ends.
 - Outside WSL the inhibitor stays `systemd-inhibit` as in LOOP-11.
 - A missing `powershell.exe` is not fatal: the loop runs without the inhibitor and `doctor` warns (LOOP-143).
@@ -949,9 +951,18 @@ Under WSL, `towercab doctor` checks the things that commonly break there and say
 
 The self-update check only warns about a secrets file that others can read, so a permissions slip can't keep Towercab from updating.
 
-- The check of LOOP-35 runs `bin/towercab doctor --quick --for-update`. With that flag the loose-secrets line of LOOP-143 prints as a warning (`warning: <path> is readable by others: chmod 600 <path>`) and does not change the exit code. Every other failure of `doctor --quick` still fails the update and rolls it back.
-- A warning in that check does not stop the update and sends no `self-update failed` message. The full `doctor` (without the flag) and the Problems block (UI-277) still show it as a failure with the `chmod 600` fix, on every platform.
+- The check of LOOP-35 for a checkout on `main` runs `bin/towercab doctor --quick --for-update`; a move on the release channel or off a release tag runs plain `doctor --quick` (LOOP-150..152), which behaves the same. On the command line, `doctor --quick` always prints the loose-secrets line of LOOP-143 as a warning (`warning: <path> is readable by others: chmod 600 <path>`) that does not change the exit code, with or without `--for-update`; the flag is accepted and changes nothing more. So the update check of a Towercab that predates the flag, which runs plain `doctor --quick`, does not roll back on a loose file either. Every other failure of `doctor --quick` still fails the update and rolls it back.
+- A warning in that check does not stop the update and sends no `self-update failed` message. The full `doctor` (without `--quick`) and the Problems block (UI-277) still show it as a failure with the `chmod 600` fix, on every platform. The `doctor` function itself fails on it unless called with its `forUpdate` option, which the command line sets for `--quick`.
 - Verified by: `update: a loose secrets file only warns`, `update: another doctor failure still rolls back`, `doctor: --for-update turns a loose secrets file into a warning`, `doctor: a loose secrets file fails without the flag`
+
+### LOOP-163 · Workers cannot reach the Windows side under WSL
+
+Under WSL, no worker or sandboxed command can read the Windows drives or start a Windows program.
+
+- When WSL is detected (LOOP-142): `/mnt` (every drive mount) is in the Claude run's `denyRead`, and the bwrap argv of every sandboxed command has `--tmpfs /mnt` after `--tmpfs /run` and before the checkout is bound. Outside WSL neither is added.
+- `/run/WSL` (the sockets that start Windows programs) is in `HOST_SOCKETS`, so it is always hidden from runs.
+- `WSL_INTEROP`, `WSLENV` and `WSL_DISTRO_NAME` are dropped from every run's and sandboxed command's environment, and a repo variable of those names is refused (PIP-159). Only the keep-awake `powershell.exe` child (LOOP-142) keeps them.
+- Verified by: `sandbox: WSL drives and interop are hidden from workers`, `sandbox: WSL interop variables are not passed to runs`
 
 ### LOOP-144 · A guide for Windows through WSL2
 
@@ -1726,11 +1737,11 @@ CREATE TABLE missions (
   data TEXT NOT NULL DEFAULT '{}', created REAL NOT NULL, updated REAL NOT NULL, finished REAL);
 CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT IN ('done','stopped','unverified');
 CREATE TABLE transitions (id INTEGER PRIMARY KEY, mission INTEGER NOT NULL REFERENCES missions(id),
-  at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT);
+  at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT, actor TEXT NOT NULL DEFAULT '', via TEXT NOT NULL DEFAULT '');
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost','unfreeze')),
+  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost','unfreeze','kind')),
   arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
-  created REAL NOT NULL, applied_at REAL, result TEXT);
+  created REAL NOT NULL, applied_at REAL, result TEXT, actor TEXT NOT NULL DEFAULT '', via TEXT NOT NULL DEFAULT '');
 CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, created REAL NOT NULL,
   sent_at REAL, tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0,
   kind TEXT NOT NULL DEFAULT 'info', intent TEXT, wait TEXT, tg_message_id INTEGER, target TEXT, buttons TEXT,
@@ -1759,6 +1770,21 @@ CREATE TABLE observer_proposals (pr INTEGER PRIMARY KEY, intent TEXT NOT NULL, r
   title TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '[]');
 CREATE TABLE outbox_sent (key TEXT NOT NULL, dest TEXT NOT NULL, sent_at REAL,
   tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0, PRIMARY KEY (key, dest));
+CREATE TABLE users (login TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL CHECK (role IN ('admin','maintainer','contributor','viewer')),
+  repo_roles TEXT NOT NULL DEFAULT '{}', added_by TEXT NOT NULL, added REAL NOT NULL, disabled_at REAL,
+  last_seen REAL);
+CREATE TABLE sessions (hash TEXT PRIMARY KEY, login TEXT NOT NULL, created REAL NOT NULL, last_seen REAL NOT NULL,
+  expires REAL NOT NULL, revoked_at REAL);
+CREATE TABLE user_events (id INTEGER PRIMARY KEY, at REAL NOT NULL, actor TEXT NOT NULL, what TEXT NOT NULL,
+  login TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '');
+CREATE TABLE tg_links (login TEXT PRIMARY KEY, chat TEXT NOT NULL UNIQUE, linked REAL NOT NULL);
+CREATE TABLE tg_link_codes (code TEXT PRIMARY KEY, login TEXT NOT NULL, expires REAL NOT NULL, used_at REAL);
+CREATE TABLE intent_people (intent TEXT PRIMARY KEY, writer TEXT, confirmed_by TEXT, confirmed_at REAL,
+  at REAL NOT NULL);
+CREATE TABLE tg_person_cards (mission INTEGER NOT NULL, login TEXT NOT NULL, chat TEXT NOT NULL,
+  intent TEXT NOT NULL, message_id INTEGER, text TEXT NOT NULL DEFAULT '', buttons TEXT, wait TEXT,
+  final INTEGER NOT NULL DEFAULT 0, handled_by TEXT, PRIMARY KEY (mission, login));
 ```
 
 **Transitions** (`next(stage, event)`; "next" = the next stage of the order; `U` = unexpected, counted
@@ -1776,6 +1802,7 @@ like a crash; `–` = ignored)
 | env_fail | backoff | backoff | backoff | backoff | backoff |
 | crash | recover | – | – | – | – |
 | spec_merged | design → plan; else – | → plan | – | – | from design → plan |
+| kind_routed | pick, design → plan for a lighter kind, pick → design for the others; a feature from plan … merge → design; else – | → plan (lighter kind) | – | – | – |
 | plan_merged | plan → build (steps delivery: `steps`); else – | – | → build (steps delivery: `steps`) | – | from plan → build (steps delivery: `steps`) |
 | code_merged | build … merge → deploy; else – | – | – | → deploy | → deploy, unless it came from deploy … revert |
 | closed | → stopped | → stopped | → stopped | → stopped | → stopped |

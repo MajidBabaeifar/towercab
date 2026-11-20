@@ -1539,11 +1539,17 @@ function exitsScene(f: Fixture): void {
   set(IDS.question, "answer the question", (d) => {
     d.question = q;
   });
+  // LOOP-76: this one holds an open code PR with 3 commits, so its exits ask before they close it.
   set(IDS.plan, "no changes", (d) => {
     d.question = undefined;
+    d.openPr = { number: 12, commits: 3 };
   });
   set(IDS.code, "no changes", (d) => {
     d.question = undefined;
+    d.stuck = true;
+  });
+  // LOOP-77: a stuck wait that offers neither steps nor done: only start over and drop.
+  set(IDS.ci, "CI red", (d) => {
     d.stuck = true;
   });
 }

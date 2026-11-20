@@ -1,6 +1,6 @@
 # Intents
 
-**Status:** Live: INT-1..44, INT-51..53, INT-60..68, INT-71..74 · **Prefix:** INT
+**Status:** Live: INT-1..44, INT-51..53, INT-60..68, INT-71..74, INT-76..77 · **Prefix:** INT
 
 ## Purpose
 
@@ -671,6 +671,14 @@ A GitLab issue is scored, proposed as an intent PR, deduplicated and label-check
 - A GitHub and a GitLab issue never share an intent, because dedupe is on the full `issue:` URL.
 - Verified by: `gitlab issues: an issue becomes one intent PR`, `gitlab issues: a done intent blocks its issue`, `gitlab issues: a labelled issue with no intent is proposed once`, `gitlab issues: the scoring run gets no tools`
 
+### INT-70 · An intent can set its intensity
+
+The owner can write how hard an intent is checked and reviewed in the intent file.
+
+- Optional front matter field `intensity`: one of `light`, `standard`, `thorough` (any case). It sets the level of both the checks and the review of that intent ([PIP-187](pipeline.md)..[PIP-191](pipeline.md)). Without it Towercab picks the level (PIP-189).
+- Any other value, or a non-string, makes the file unreadable (INT-11) with the reason `intensity must be light, standard or thorough`. The field is read and written like the other owner fields: edited with `setField`/`removeField`, other lines byte-identical.
+- Verified by: `intents: intensity is read from the front matter`, `intents: a wrong intensity makes the file unreadable`
+
 ### INT-71 · One writer for a new intent
 
 The page and `towercab add` create an intent through the same function, and what it writes is what a hand-written intent would be.
@@ -731,7 +739,7 @@ An intent can say what kind of work it is, and the kind decides how much of the 
 
 When an intent has no kind, Towercab reads it once and picks one, and the owner can see why and change it.
 
-- At `pick`, a mission whose intent has no `kind` runs the `kind` agent (no tools, `[agent].model`; its cost counts in the mission): it gets the intent text as data and returns `{kind, why}` (`why` is one plain line, at most 160 characters). The result is kept in the mission (`data.kind`, `data.kindWhy`); the intent file is not edited. A failed or invalid run counts as `feature`, the full path, and is noted on the timeline.
+- At the first step of the design stage, a mission whose intent has no `kind` runs the `kind` agent (no tools, `[agent].model`; its cost counts in the mission): it gets the intent text as data and returns `{kind, why}` (`why` is one plain line, at most 160 characters). The result is kept in the mission (`data.kind`, `data.kindWhy`); the intent file is not edited. A failed or invalid run counts as `feature`, the full path, and is noted on the timeline.
 - Doubt goes to the full path: the agent is told to answer `feature` unless the intent clearly fits a lighter kind. A `kind` set in the intent always wins over the inferred one, and a change from the page (UI-283) is written to the front matter and replaces it.
 - The code PR that builds this adds `agents/kind.md` and its row in the agents table of `pipeline.md` (PIP-76) together, since the spec check requires the table and the agent files to match.
 - A guessed kind takes effect at once: nothing waits for the owner to confirm it. The first PR of the mission (the plan PR for `bugfix`, `refactor` and `infra`, the spec PR for `spec-only`) says in plain words which kind was guessed and why, and that one reply switches it.

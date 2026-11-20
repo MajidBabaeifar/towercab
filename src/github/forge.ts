@@ -204,7 +204,11 @@ export class GitHubForge implements Forge, GitHub {
     return this.soft(repo, ["pr", "ready", String(n), "-R", repo]);
   }
 
-  async mergePr(repo: string, n: number, o: { method: MergeMethod; head?: string }): Promise<Result> {
+  async mergePr(
+    repo: string,
+    n: number,
+    o: { method: MergeMethod; head?: string; body?: string },
+  ): Promise<Result> {
     // LOOP-154: a merge commit is titled with the PR's title (GitHub's own would be `Merge pull request #n
     // from …`); a squash commit is titled as it always was; a rebase has no commit of its own.
     let subject = "";
@@ -222,6 +226,7 @@ export class GitHubForge implements Forge, GitHub {
       MERGE_FLAG[o.method],
       ...(subject ? ["--subject", subject] : []),
       ...(o.head ? ["--match-head-commit", o.head] : []),
+      ...(o.body ? ["--body", o.body] : []),
       "-R",
       repo,
     ]);
@@ -309,6 +314,12 @@ export class GitHubForge implements Forge, GitHub {
       head: String(v.headRefOid ?? ""),
       merged: Boolean(v.mergedAt),
     };
+  }
+
+  async prCommits(repo: string, n: number): Promise<{ state: string; commits: number }> {
+    const v = await this.view<{ state?: unknown; commits?: unknown }>(repo, n, "state,commits");
+    if (!Array.isArray(v.commits)) throw new ForgeBadReply("no commits");
+    return { state: String(v.state), commits: v.commits.length };
   }
 
   prFiles(repo: string, n: number): Promise<FileChange[]> {

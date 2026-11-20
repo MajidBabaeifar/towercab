@@ -2,6 +2,7 @@
 // and the card for a raise somebody else made.
 
 import { expect, test } from "@playwright/test";
+import { openDetails } from "./details.ts";
 import { IDS, serveFixture } from "./fixture.ts";
 
 async function open(o: { flagged?: boolean } = {}) {
@@ -18,7 +19,8 @@ test("ui: the intent page changes autonomy", async ({ page }) => {
   const { fixture, server, base } = await open();
   try {
     await page.goto(`${base}/i/${IDS.plan}`);
-    const control = page.locator("main.intent .autonomy").first();
+    await openDetails(page);
+    const control = page.locator(".page.intent .autonomy").first();
     await expect(seg(control, 3)).toHaveAttribute("aria-pressed", "true");
     await expect(seg(control, 3)).toContainText("(current)");
     await seg(control, 1).click();
@@ -28,7 +30,7 @@ test("ui: the intent page changes autonomy", async ({ page }) => {
     expect(fixture.calls.filter((c) => c.action === "autonomy")).toEqual([
       { action: "autonomy", intent: IDS.plan, a: 1 },
     ]);
-    await expect(seg(page.locator("main.intent .autonomy").first(), 1)).toHaveAttribute(
+    await expect(seg(page.locator(".page.intent .autonomy").first(), 1)).toHaveAttribute(
       "aria-pressed",
       "true",
     );
@@ -57,7 +59,8 @@ test("ui: raising autonomy asks for a confirmation that names the level", async 
   const { fixture, server, base } = await open();
   try {
     await page.goto(`${base}/i/${IDS.plan}`);
-    const control = page.locator("main.intent .autonomy").first();
+    await openDetails(page);
+    const control = page.locator(".page.intent .autonomy").first();
     await seg(control, 4).click();
     const dialog = control.getByRole("alertdialog");
     await expect(dialog).toContainText("Raise to a4?");
@@ -77,7 +80,8 @@ test("ui: lowering autonomy is one click", async ({ page }) => {
   const { fixture, server, base } = await open();
   try {
     await page.goto(`${base}/i/${IDS.plan}`);
-    const control = page.locator("main.intent .autonomy").first();
+    await openDetails(page);
+    const control = page.locator(".page.intent .autonomy").first();
     await seg(control, 0).click();
     await expect(control.getByRole("alertdialog")).toHaveCount(0);
     await expect.poll(() => fixture.calls.filter((c) => c.action === "autonomy").length).toBe(1);
@@ -92,7 +96,8 @@ test("ui: cancelling the confirmation writes nothing", async ({ page }) => {
   const { fixture, server, base } = await open();
   try {
     await page.goto(`${base}/i/${IDS.plan}`);
-    const control = page.locator("main.intent .autonomy").first();
+    await openDetails(page);
+    const control = page.locator(".page.intent .autonomy").first();
     await seg(control, 5).click();
     await control.getByRole("button", { name: "Cancel" }).click();
     await expect(control.getByRole("alertdialog")).toHaveCount(0);

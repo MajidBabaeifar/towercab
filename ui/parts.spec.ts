@@ -4,6 +4,7 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
+import { openDetails } from "./details.ts";
 import { IDS, serveFixture } from "./fixture.ts";
 
 const SHOTS = resolve(process.env.TOWERCAB_SHOTS ?? join(import.meta.dirname, "screenshots"));
@@ -30,6 +31,7 @@ test("ui: parts screenshots light, dark and mobile", async ({ browser }) => {
       const page = await ctx.newPage();
       const look = async (path: string, name: string, wanted: string[]) => {
         await page.goto(`${base}${path}`);
+        if (path.startsWith("/i/")) await openDetails(page);
         await page.waitForLoadState("networkidle");
         const text = (await page.locator("body").textContent()) ?? "";
         for (const w of wanted) expect(text, `${name} ${m.mode}`).toContain(w);

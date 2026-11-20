@@ -1,6 +1,7 @@
 // Acting as the owner (LOOP-38): what the owner starts from the UI or the CLI happens on GitHub
 // under the owner's own `gh` login, never the App's.
 
+import type { Actor } from "../actor.ts";
 import type { RepoConfig } from "../config.ts";
 import { type Forge, must } from "../forge.ts";
 import type { IntentStore } from "../intents/types.ts";
@@ -111,3 +112,13 @@ export async function agentReply(
   if (to.kind === "pr") must(await gh.asOwner().commentOnPr(to.repo, to.number, body), "gh pr comment");
   else await gh.asOwner().commentOnIssue(to.repo, to.number, body);
 }
+
+/** What Towercab says on a PR about who decided (USR-10); it comments as itself, never as the person. */
+export type Decision = "approved" | "answered" | "dropped" | "boosted";
+
+export function decidedByComment(a: Pick<Actor, "login" | "name" | "via">, verb: Decision): string {
+  return `${verb} by ${a.name || a.login} in Towercab (${a.via})`;
+}
+
+/** USR-10: the line a merge commit body carries for the person whose approval it is. */
+export const approvedByLine = (a: Pick<Actor, "login">): string => `Approved-by: ${a.login}`;

@@ -209,14 +209,18 @@ export async function restoreSettings(gh: GitHub, repo: string, b: SettingsSnaps
     | undefined;
   const now = nowList ?? [];
   const nowIds = new Set(now.map((r) => r.id));
-  for (const rs of b.rulesets) {
-    const body = pick(rs, RULESET_KEYS);
-    if (nowIds.has(rs.id)) await put(`ruleset ${rs.name}`, `/rulesets/${rs.id}`, "PUT", body);
-    else await put(`ruleset ${rs.name} (recreated)`, "/rulesets", "POST", body);
+  // REPO-31: without the current list a ruleset that still exists would be created twice, so none is written.
+  if (nowList === undefined) out[out.length - 1] += "; rulesets left as they are";
+  else {
+    for (const rs of b.rulesets) {
+      const body = pick(rs, RULESET_KEYS);
+      if (nowIds.has(rs.id)) await put(`ruleset ${rs.name}`, `/rulesets/${rs.id}`, "PUT", body);
+      else await put(`ruleset ${rs.name} (recreated)`, "/rulesets", "POST", body);
+    }
+    const saved = new Set(b.rulesets.map((r) => r.id));
+    for (const rs of now)
+      if (!saved.has(rs.id)) out.push(`Not in the backup, left as it is: ruleset ${rs.name}`);
   }
-  const saved = new Set(b.rulesets.map((r) => r.id));
-  for (const rs of now)
-    if (!saved.has(rs.id)) out.push(`Not in the backup, left as it is: ruleset ${rs.name}`);
 
   for (const [branch, p] of Object.entries(b.protection)) {
     const path = `/branches/${encodeURIComponent(branch)}/protection`;

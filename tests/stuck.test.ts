@@ -4,7 +4,7 @@ import { expect, test } from "vitest";
 import { applyCommand, insertCommand } from "../src/commands.ts";
 import { Db } from "../src/db.ts";
 import type { Intent, IntentStore } from "../src/intents/types.ts";
-import { apply, exitsOf, wait } from "../src/machine.ts";
+import { apply, exitsOf, listExits, wait } from "../src/machine.ts";
 import { dataOf, insertMission, unfinishedFor } from "../src/mission.ts";
 import { renderStatus } from "../src/status.ts";
 import { exitsWorld } from "./helpers/exits.ts";
@@ -96,7 +96,43 @@ test("cli: answer on a stuck mission is refused", async () => {
   };
   const r = await applyCommand({ db, store, applyCtx, now: new Date(now * 1000) }, row);
   expect(r).toBe(
-    `answer: ${ID} is stuck at no changes: a reply would land here again; use steps, done, retry or drop`,
+    `answer: ${ID} is stuck at no changes: a reply would land here again; use done, steps, retry or drop`,
   );
   expect(unfinishedFor(db, ID)?.stage).toBe("blocked");
+});
+
+test("cli: the stuck refusal lists only the exits the wait offers", async () => {
+  const ID = "261026-1000";
+  const refusal = async (waiting: string) => {
+    const db = Db.memory();
+    const now = 1_793_000_000;
+    const store = {
+      get: async () => ({ id: ID, stage: null, waiting }) as Intent,
+      update: async () => ({}) as Intent,
+    } as unknown as IntentStore;
+    const applyCtx = { db, now, subject: () => ({ title: "t", repo: "web", link: null }) };
+    const m = db.tx(() =>
+      insertMission(db, { intent: ID, slug: "t", repo: "web", model: "opus", a: 3 }, now),
+    );
+    db.run("UPDATE missions SET stage = 'build' WHERE id = ?", m.id);
+    const w = apply(applyCtx, unfinishedFor(db, ID)!, wait(waiting));
+    apply(applyCtx, apply(applyCtx, w, { event: "answered" }), wait(waiting));
+    const row = {
+      id: insertCommand(db, { name: "answer", arg: ID, text: "please try", source: "cli" }, now),
+      name: "answer" as const,
+      arg: ID,
+      text: "please try",
+      source: "cli",
+      created: now,
+      applied_at: null,
+      result: null,
+    };
+    return applyCommand({ db, store, applyCtx, now: new Date(now * 1000) }, row);
+  };
+  // `done` and `steps` only where the wait has them.
+  expect(await refusal("no changes")).toContain("use done, steps, retry or drop");
+  expect(await refusal("CI red")).toContain("use retry or drop");
+  expect(await refusal("CI red")).not.toMatch(/steps|done/);
+  expect(listExits(exitsOf("your steps first", true))).toBe("done, retry or drop");
+  expect(listExits(exitsOf("setting up checks", true))).toBe("retry or drop");
 });

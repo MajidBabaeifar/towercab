@@ -236,7 +236,7 @@ test("update: a failed commit is not drained for again", async () => {
   await until(w, () => w.spawns.includes(B));
   for (let i = 0; i < 3; i++) await pass(w);
   expect(w.p.db.meta("draining")).toBeNull();
-  expect(w.p.tools.lines(w.doctor)).toEqual(["doctor --quick"]);
+  expect(w.p.tools.lines(w.doctor)).toEqual(["doctor --quick --for-update"]);
   // Main moves past the failed commit: the next drain starts.
   pushFiles(w.bare, { "src/a.ts": "3\n" });
   await pass(w);

@@ -5,10 +5,12 @@ import type { Intent } from "../intents/types.ts";
 import { finished, next, type Outcome, type Stage } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
 import { parseAllow } from "../pipeline/access.ts";
+import { type Defer, deferLines } from "../pipeline/deferrals.ts";
 import { recheck } from "../risk.ts";
 import { stripAgentHeader } from "./agent-header.ts";
 import { agentOfBody } from "./comments.ts";
 import type { PrState } from "./prs.ts";
+import type { Voices } from "./voices.ts";
 
 export type PrKind = "spec" | "plan" | "code";
 
@@ -113,6 +115,14 @@ export function isOwner(author: string, me: string): boolean {
   return me !== "" && author.toLowerCase() === me.toLowerCase();
 }
 
+/**
+ * Whose word moves an intent: the owner (PIP-44), or with `voices` (USR-9) a maintainer or admin of the
+ * intent's repo. One maintainer is enough.
+ */
+export function decides(author: string, me: string, voices?: Voices): boolean {
+  return voices ? voices.decides(author) : isOwner(author, me);
+}
+
 /** A bot's login as GitHub's REST (`x[bot]`) or GraphQL (`x`, `app/x`) shows it. */
 export function isBot(author: string, botLogin: string): boolean {
   const norm = (s: string) =>
@@ -159,13 +169,22 @@ export function excerptOf(text: string): string {
 }
 
 /** The owner's comments and steering reviews on the read PRs, oldest first (commands included). */
-function ownerSaid(prs: Prs, me: string, botLogin: string, ownerOnlyIntent = false): Said[] {
+function ownerSaid(
+  prs: Prs,
+  me: string,
+  botLogin: string,
+  ownerOnlyIntent = false,
+  voices?: Voices,
+  /** USR-9: an open question, which the intent's writer may answer in a plain comment. */
+  asked = false,
+): Said[] {
   const out: Said[] = [];
   for (const kind of KINDS) {
     const pr = prs[kind];
     if (!pr) continue;
     for (const c of pr.comments) {
-      if (!isOwner(c.author, me) || isBot(c.author, botLogin) || !c.body.trim()) continue;
+      if (isBot(c.author, botLogin) || !c.body.trim()) continue;
+      if (!decides(c.author, me, voices) && !answersAsk(c.author, c.body, voices, asked)) continue;
       // PIP-185: an agent's comment under the owner's login is ignored on an a0 intent, else it counts.
       const agent = agentOfBody(c.body) ?? undefined;
       if (agent && ownerOnlyIntent) continue;
@@ -179,7 +198,7 @@ function ownerSaid(prs: Prs, me: string, botLogin: string, ownerOnlyIntent = fal
       });
     }
     for (const r of pr.reviews) {
-      if (!isOwner(r.author, me)) continue;
+      if (!decides(r.author, me, voices)) continue;
       const own = { id: `review-${r.at}`, url: "", thread: "" };
       if (r.state === "CHANGES_REQUESTED") {
         out.push({ kind, at: r.at, text: r.body.trim() || "Changes requested.", own });
@@ -189,6 +208,12 @@ function ownerSaid(prs: Prs, me: string, botLogin: string, ownerOnlyIntent = fal
     }
   }
   return out.sort((a, b) => (newer(a.at, b.at) ? 1 : newer(b.at, a.at) ? -1 : 0));
+}
+
+/** USR-9: the writer's plain comment answers an open question; a command or a `allow` never does. */
+function answersAsk(author: string, body: string, voices: Voices | undefined, asked: boolean): boolean {
+  const t = body.trim();
+  return Boolean(voices && asked && voices.answers(author) && !t.startsWith("/") && parseAllow(t) === null);
 }
 
 /** A reply on a PR that doesn't count (AUT-32): who, where, and a stable key so it is noted once. */
@@ -204,21 +229,51 @@ export interface IgnoredReply {
  * AUT-32: on an owner-only intent, the comments and reviews from anyone but the owner or Towercab's own
  * bot. PIP-44 already ignores them; this lists them so the loop can note each once on the intent.
  */
-export function ignoredReplies(m: Mission, prs: Prs, me: string, botLogin: string): IgnoredReply[] {
+export function ignoredReplies(
+  m: Mission,
+  prs: Prs,
+  me: string,
+  botLogin: string,
+  voices?: Voices,
+): IgnoredReply[] {
   const out: IgnoredReply[] = [];
   for (const kind of KINDS) {
     const pr = prs[kind];
     if (!pr) continue;
     const base = { kind, pr: prNumber(m, kind) };
     for (const c of pr.comments) {
-      if (isOwner(c.author, me) || isBot(c.author, botLogin) || !c.body.trim()) continue;
+      if (decides(c.author, me, voices) || isBot(c.author, botLogin) || !c.body.trim()) continue;
       out.push({ ...base, key: `${kind}:comment:${c.id}`, author: c.author, what: "comment" });
     }
     for (const r of pr.reviews) {
-      if (isOwner(r.author, me) || isBot(r.author, botLogin)) continue;
+      if (decides(r.author, me, voices) || isBot(r.author, botLogin)) continue;
       const counts = r.state === "APPROVED" || r.state === "CHANGES_REQUESTED" || r.body.trim() !== "";
       if (!counts || r.state === "PENDING" || r.state === "DISMISSED") continue;
       out.push({ ...base, key: `${kind}:review:${r.author}:${r.at}`, author: r.author, what: "review" });
+    }
+  }
+  return out;
+}
+
+/** USR-9: a known person's comment that moves nothing, shown on the timeline with their name once. */
+export interface VoiceNote {
+  key: string;
+  text: string;
+}
+
+/** USR-9: comments from known people that don't count (a contributor's other words, a viewer's). */
+export function voiceNotes(m: Mission, prs: Prs, botLogin: string, voices: Voices): VoiceNote[] {
+  const out: VoiceNote[] = [];
+  const asked = m.stage === "blocked";
+  for (const kind of KINDS) {
+    for (const c of prs[kind]?.comments ?? []) {
+      const name = voices.nameOf(c.author);
+      if (!name || isBot(c.author, botLogin) || !c.body.trim() || voices.decides(c.author)) continue;
+      if (answersAsk(c.author, c.body, voices, asked)) continue;
+      out.push({
+        key: `${kind}:voice:${c.id}`,
+        text: `${name} commented on the ${kind} PR: ${excerptOf(c.body)}`,
+      });
     }
   }
   return out;
@@ -235,11 +290,17 @@ export interface AgentComment {
 }
 
 /** PIP-185: the comments under the owner's login that an agent marked, for the record (any level). */
-export function agentComments(m: Mission, prs: Prs, me: string, botLogin: string): AgentComment[] {
+export function agentComments(
+  m: Mission,
+  prs: Prs,
+  me: string,
+  botLogin: string,
+  voices?: Voices,
+): AgentComment[] {
   const out: AgentComment[] = [];
   for (const kind of KINDS) {
     for (const c of prs[kind]?.comments ?? []) {
-      if (!isOwner(c.author, me) || isBot(c.author, botLogin)) continue;
+      if (!decides(c.author, me, voices) || isBot(c.author, botLogin)) continue;
       const agent = agentOfBody(c.body);
       if (!agent) continue;
       const text = c.body.split("\n").slice(1).join(" ").replace(/\s+/g, " ").trim();
@@ -317,8 +378,9 @@ function freshFeedback(
   botLogin: string,
   team: TeamReads | undefined,
   ownerOnlyIntent: boolean,
+  voices?: Voices,
 ): { fresh: Said[]; feedback: Said[] } {
-  const mine = ownerSaid(prs, me, botLogin, ownerOnlyIntent);
+  const mine = ownerSaid(prs, me, botLogin, ownerOnlyIntent, voices, m.stage === "blocked");
   const said = team ? [...mine, ...reviewerSaid(prs, team)] : mine;
   const fresh = said.filter((s) => newer(s.at, m.feedback_seen));
   // PIP-141: `allow <path>` reverses a refusal (not feedback), unless a test question is open.
@@ -343,8 +405,9 @@ export function feedbackTargets(
   botLogin: string,
   team?: TeamReads,
   ownerOnlyIntent = false,
+  voices?: Voices,
 ): ReplyTarget[] {
-  const { feedback } = freshFeedback(m, prs, me, botLogin, team, ownerOnlyIntent);
+  const { feedback } = freshFeedback(m, prs, me, botLogin, team, ownerOnlyIntent, voices);
   return feedback.flatMap((s) =>
     s.own
       ? [{ kind: s.kind, id: s.own.id, thread: s.own.thread, url: s.own.url, excerpt: excerptOf(s.text) }]
@@ -365,6 +428,7 @@ export function prEvents(
   team?: TeamReads,
   ownerOnlyIntent = false,
   queueHeld = false,
+  voices?: Voices,
 ): Outcome | null {
   if (finished(m.stage)) return null;
   const cur = currentPr(m);
@@ -380,18 +444,25 @@ export function prEvents(
     if (prs[kind]?.state === "CLOSED" && prNumber(m, kind) !== null) return { event: "closed" };
   }
 
-  const { fresh, feedback } = freshFeedback(m, prs, me, botLogin, team, ownerOnlyIntent);
+  const { fresh, feedback } = freshFeedback(m, prs, me, botLogin, team, ownerOnlyIntent, voices);
   if (feedback.length > 0) {
     const kinds = new Set(feedback.map((s) => s.kind));
     const text = feedback.map((s) => (kinds.size > 1 ? `(${s.kind} PR) ${s.text}` : s.text)).join("\n\n");
     // `data.answer` too: `apply` keeps `text` only on a continue, the worker's prompt needs it after
     // any move back to build, design or plan.
+    // PIP-208: a `defer` line counts only in the owner's own comments: never a teammate's, never an agent's.
+    const defers = feedback.filter((s) => s.own && !s.agent).flatMap((s) => deferLines(s.text));
+    const kept = dataOf<{ deferrals?: Defer[] }>(m).deferrals ?? [];
     return {
       event: m.stage === "blocked" ? "answered" : "feedback",
       text,
       set: { feedback_seen: latest(feedback) },
       // PIP-185: when every word came from marked agents, the answer says who gave it for the owner.
-      data: { answer: text, ...answeredBy(feedback) },
+      data: {
+        answer: text,
+        ...answeredBy(feedback),
+        ...(defers.length ? { deferrals: [...kept, ...defers] } : {}),
+      },
     };
   }
   const retries = fresh.filter((s) => s.text === RETRY);
@@ -462,7 +533,13 @@ export function prEvents(
  * PIP-43: the owner's Approve review, newer than `feedback_seen` and on the PR's current head,
  * on the open PR the mission waits on → that PR's number, for Towercab to merge as the owner.
  */
-export function approveRequested(m: Mission, prs: Prs, me: string, teamOn = false): number | null {
+export function approveRequested(
+  m: Mission,
+  prs: Prs,
+  me: string,
+  teamOn = false,
+  voices?: Voices,
+): number | null {
   const kind = WAITS_ON[m.stage];
   // PIP-144: in a repo that needs a teammate's review the owner's Approve never merges.
   if (!kind || (teamOn && kind !== "plan")) return null;
@@ -471,7 +548,7 @@ export function approveRequested(m: Mission, prs: Prs, me: string, teamOn = fals
   if (!pr || n === null || pr.state !== "OPEN") return null;
   const ok = pr.reviews.some(
     (r) =>
-      isOwner(r.author, me) &&
+      decides(r.author, me, voices) &&
       r.state === "APPROVED" &&
       newer(r.at, m.feedback_seen) &&
       (r.commit === null || r.commit === pr.head),
@@ -528,7 +605,13 @@ export interface ApproveAsk {
  * PIP-144: the owner's Approve reviews on the PR the mission waits on that no bot reply carrying their
  * marker answers. They neither merge nor count, so the owner is told once what to do instead.
  */
-export function approveNotices(m: Mission, prs: Prs, me: string, botLogin: string): ApproveAsk[] {
+export function approveNotices(
+  m: Mission,
+  prs: Prs,
+  me: string,
+  botLogin: string,
+  voices?: Voices,
+): ApproveAsk[] {
   const kind = WAITS_ON[m.stage];
   if (!kind || kind === "plan" || finished(m.stage)) return [];
   const pr = prs[kind];
@@ -536,7 +619,7 @@ export function approveNotices(m: Mission, prs: Prs, me: string, botLogin: strin
   if (!pr || n === null || pr.state !== "OPEN") return [];
   const out: ApproveAsk[] = [];
   for (const r of pr.reviews) {
-    if (!isOwner(r.author, me) || r.state !== "APPROVED" || !r.at) continue;
+    if (!decides(r.author, me, voices) || r.state !== "APPROVED" || !r.at) continue;
     const marker = approveMarker(r.at);
     if (pr.comments.some((b) => isBot(b.author, botLogin) && b.body.includes(marker))) continue;
     out.push({ kind, pr: n, marker });
@@ -597,6 +680,7 @@ export function releaseRequested(
   me: string,
   botLogin: string,
   repos: ReleaseRepo[],
+  voices?: Voices,
 ): ReleaseAsk[] {
   if (finished(m.stage)) return [];
   const text = releaseText(m.stage, repos);
@@ -606,7 +690,7 @@ export function releaseRequested(
     const n = prNumber(m, kind);
     if (!pr || n === null) continue;
     for (const c of pr.comments) {
-      if (!isOwner(c.author, me) || c.body.trim() !== RELEASE || !c.id) continue;
+      if (!decides(c.author, me, voices) || c.body.trim() !== RELEASE || !c.id) continue;
       const marker = `<!-- towercab:release:${c.id} -->`;
       const answered = pr.comments.some((b) => isBot(b.author, botLogin) && b.body.includes(marker));
       if (!answered) out.push({ kind, pr: n, commentId: c.id, reply: releaseReply(c.id, text) });
@@ -637,6 +721,7 @@ export function reversalRequested(
   me: string,
   botLogin: string,
   ownerOnlyIntent = false,
+  voices?: Voices,
 ): ReversalAsk[] {
   const open = dataOf<{ testAsk?: unknown; accessAsk?: unknown }>(m);
   if (finished(m.stage) || open.testAsk || open.accessAsk) return [];
@@ -646,7 +731,7 @@ export function reversalRequested(
     const n = prNumber(m, kind);
     if (!pr || n === null) continue;
     for (const c of pr.comments) {
-      if (!isOwner(c.author, me) || !c.id || !newer(c.at, m.feedback_seen)) continue;
+      if (!decides(c.author, me, voices) || !c.id || !newer(c.at, m.feedback_seen)) continue;
       // PIP-185: on an a0 intent an agent's marked comment cannot lift a refusal.
       if (ownerOnlyIntent && agentOfBody(c.body)) continue;
       const paths = parseAllow(c.body);

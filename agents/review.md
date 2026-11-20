@@ -58,6 +58,9 @@ rest of the change as usual. Use `owner` only for what the builder cannot do in 
 something it did badly or left out. Towercab decides what happens next from your fields, and the
 verdict line of the comment is written by Towercab, so judge each field on its own.
 
+Outcomes that the notes above list as deferred are not yours to judge: still return one entry for each, and write
+what you saw in `why`, but Towercab counts them as met.
+
 Return the JSON result: `brief`, `approved`, `outcomes` (one per bullet, in order, each with `bullet`,
 `met`, `owner` and `why`), `tests_weakened`,
 `plan_followed`, `findings` (each with `severity`, `pass`, `file`, `line`, `what`), `door`, `red_lines`, `agent` (Markdown: the detail for agents, which may be empty) and `summary`: Markdown for the owner, opening with

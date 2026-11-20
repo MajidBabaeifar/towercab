@@ -49,6 +49,20 @@ export interface GitLabConfig {
   tokenFile: string;
 }
 
+/** USR-3, USR-4: the `[auth]` table. The client secret is read from the environment variable it names. */
+export interface AuthConfig {
+  clientId: string;
+  clientSecretEnv: string;
+  /** The https address people reach the page at, no trailing slash; the OAuth callback and Origin check use it. */
+  publicUrl: string;
+  /** The address the page listens on; `127.0.0.1` unless the file says otherwise. */
+  listen: string;
+  /** Idle time before a session ends (USR-4). */
+  sessionHours: number;
+  /** The most a session lasts (USR-4). */
+  sessionDays: number;
+}
+
 export interface Config {
   file: string;
   intents: { remote: string; path: string | null; cutoff: number; issueA: number; ownerWaits: number };
@@ -107,6 +121,8 @@ export interface Config {
     model: string | null;
   };
   ui: { port: number };
+  /** USR-3, USR-6: `[auth]`: GitHub sign-in for a team; null keeps the single owner (no sign-in). */
+  auth: AuthConfig | null;
   /** `drainMinutes`: how long a drain for an update waits before cutting runs off (LOOP-109). */
   update: { auto: boolean; drainMinutes: number; channel: UpdateChannel };
 }
@@ -181,6 +197,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
   const update = r.table(raw.update, "update");
   const shadow = r.table(raw.shadow, "shadow");
   const observer = r.table(raw.observer, "observer");
+  const auth = raw.auth === undefined ? null : r.table(raw.auth, "auth");
   const free = r.strList(shadow, "shadow", "free", []);
   for (const f of free) {
     if (!(SHADOW_FREE as readonly string[]).includes(f)) {
@@ -257,6 +274,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
     },
     observer: parseObserver(r, observer),
     ui: { port: r.int(ui, "ui", "port", 7311, 0, 65535) },
+    auth: auth && parseAuth(r, auth),
     update: {
       auto: r.bool(update, "update", "auto", true),
       drainMinutes: r.int(update, "update", "drain_minutes", 60, 1, 1440),
@@ -287,6 +305,25 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
   }
   if (config.gitlab) setGitlabHost(new URL(config.gitlab.apiBase).host);
   return config;
+}
+
+function parseAuth(r: Reader, t: Record<string, unknown>): AuthConfig {
+  const clientId = r.str(t, "auth", "client_id", "");
+  if (!/^[A-Za-z0-9._-]+$/.test(clientId))
+    throw r.err("auth.client_id is required (the GitHub App's client id)");
+  const clientSecretEnv = r.str(t, "auth", "client_secret_env", "");
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(clientSecretEnv)) {
+    throw r.err("auth.client_secret_env must name an environment variable (the secret is never in the file)");
+  }
+  if (t.public_url === undefined) throw r.err("auth.public_url is required (where people open the page)");
+  return {
+    clientId,
+    clientSecretEnv,
+    publicUrl: r.url(t, "auth", "public_url", ""),
+    listen: r.word(t, "auth", "listen", "127.0.0.1"),
+    sessionHours: r.int(t, "auth", "session_hours", 12, 1, 24 * 30),
+    sessionDays: r.int(t, "auth", "session_days", 7, 1, 365),
+  };
 }
 
 function parseObserver(r: Reader, t: Record<string, unknown>): Config["observer"] {

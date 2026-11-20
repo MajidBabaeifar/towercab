@@ -45,10 +45,14 @@ export async function mergeWithRepoMethod(
   config: { repos: ReadonlyMap<string, RepoConfig> },
   github: string,
   n: number,
-  o: { head?: string } = {},
+  o: { head?: string; body?: string } = {},
 ): Promise<Result> {
   const method = await resolveMergeMethod(forge, config.repos, github);
-  const r = await forge.mergePr(github, n, { method, ...(o.head ? { head: o.head } : {}) });
+  const r = await forge.mergePr(github, n, {
+    method,
+    ...(o.head ? { head: o.head } : {}),
+    ...(o.body ? { body: o.body } : {}),
+  });
   if (r.ok || !REFUSED.test(r.reason)) return r;
   const name = known(config.repos, github)?.name ?? github;
   return {

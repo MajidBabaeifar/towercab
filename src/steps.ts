@@ -47,6 +47,8 @@ export interface ShipFacts {
   delivery?: boolean;
   /** The mission has steps to tick (PIP-113). */
   hasSteps?: boolean;
+  /** PIP-228: the mission's kind (INT-76); absent counts as `feature`. */
+  kind?: string;
   /** LOOP-80: a multi-repo mission with parts still to merge: a merge approval goes back to the merge. */
   landing?: boolean;
 }
@@ -60,9 +62,11 @@ export function shipFacts(d: {
   liveNoneWhy?: string;
   ship?: { fixes?: number };
   delivery?: string;
+  kind?: string;
   parts?: unknown;
 }): ShipFacts {
   return {
+    kind: d.kind,
     delivery: d.delivery === "steps",
     hasSteps: (d.steps ?? []).length > 0,
     steps: unticked(d.steps, "after").length > 0 && !(d.ship?.fixes ?? 0),

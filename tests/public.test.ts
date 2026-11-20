@@ -81,6 +81,33 @@ test("public: README says not affiliated", () => {
   }
 });
 
+test("public: README claims Windows only with the guide present", () => {
+  const guide = existsSync("docs/windows-wsl.md") ? read("docs/windows-wsl.md") : "";
+  // LOOP-144: the guide exists, in order, and says what is not supported.
+  expect(guide).toMatch(/WSL2/);
+  const order = [
+    "## 1. Install Ubuntu in WSL2",
+    "## 2. Turn on systemd",
+    "## 3. Keep everything in the Linux file system",
+    "## 4. Install the tools and log in",
+    "## 5. Allow the sandbox",
+    "## 6. Keep the WSL VM running",
+    "## 7. Install, check and start",
+    "## 8. Open the UI",
+  ];
+  const at = order.map((s) => guide.indexOf(s));
+  expect(
+    at.every((i) => i >= 0),
+    at.join(),
+  ).toBe(true);
+  expect([...at].sort((a, b) => a - b)).toEqual(at);
+  for (const s of ["systemd=true", "/mnt/", "gh auth login", "vmIdleTimeout", "localhost:7311"])
+    expect(guide).toContain(s);
+  // The README's Requirements name Windows only once the guide is there.
+  const requirements = read("README.md").split("## Requirements")[1]!.split("\n## ")[0]!;
+  if (/windows|wsl/i.test(requirements)) expect(requirements).toContain("docs/windows-wsl.md");
+});
+
 test("public: README shows the screenshot and website", () => {
   const readme = read("README.md");
   const top = readme.split("## How it works")[0]!;

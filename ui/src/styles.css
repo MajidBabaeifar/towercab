@@ -2726,7 +2726,7 @@ a.pr-tile:hover {
 
 .repo-all {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr));
   gap: var(--s2);
 }
 
@@ -4966,6 +4966,32 @@ kbd {
   color: var(--muted, inherit);
 }
 
+/* UI-276: where a setting comes from. */
+.setting-sources {
+  margin-top: 0.75rem;
+}
+.source-list {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+.source-key {
+  font-weight: 600;
+}
+.source-tag {
+  font-size: 0.75rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0 0.5em;
+  opacity: 0.8;
+}
+.source-tag.overlay {
+  font-weight: 600;
+  opacity: 1;
+}
+
 /* New intent (UI-213..218) */
 
 .new-intent {
@@ -5080,6 +5106,119 @@ kbd {
   }
 }
 
+/* USR / UI-219..224: sign-in, account menu, admin page. */
+.signin {
+  max-width: 28rem;
+  margin: 12vh auto;
+  padding: 0 1rem;
+  display: grid;
+  gap: 1rem;
+  justify-items: start;
+}
+.signin-note {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border, #8884);
+  border-radius: 0.5rem;
+}
+.signin-note.error {
+  border-color: var(--bad, #c0392b);
+}
+.link-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+.account {
+  position: relative;
+}
+.account-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.25rem);
+  z-index: 20;
+  min-width: 16rem;
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--panel, Canvas);
+  border: 1px solid var(--border, #8884);
+  border-radius: 0.5rem;
+  box-shadow: 0 6px 24px #0003;
+}
+.account-who {
+  display: grid;
+  margin: 0;
+}
+.telegram-code code {
+  font-size: 1.25rem;
+  letter-spacing: 0.1em;
+}
+.users-page {
+  display: grid;
+  gap: 1.5rem;
+}
+.users-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.users-table th,
+.users-table td {
+  text-align: left;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border, #8884);
+  vertical-align: top;
+}
+.users-table tr.disabled {
+  opacity: 0.6;
+}
+.users-table .sessions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.users-table .row-actions {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+.users-add,
+.users-team,
+.users-settings {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 32rem;
+}
+.users-add label,
+.users-team label,
+.setting-row label {
+  display: grid;
+  gap: 0.25rem;
+}
+.users-history ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+.security-settings {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+.tl-by {
+  margin: 0;
+}
+@media (max-width: 480px) {
+  .users-table {
+    display: block;
+    overflow-x: auto;
+  }
+}
 /* UI-165..167: the parts of a multi-repo intent and its freeze. */
 .parts-list {
   list-style: none;
@@ -5126,4 +5265,379 @@ kbd {
   padding-left: var(--s4);
   color: var(--text-2);
   font-size: var(--t-sm);
+}
+
+/* FRAME-1..6: the sidebar and the main pane; on a phone the sidebar is a drawer. */
+.frame {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  min-height: 100vh;
+}
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: var(--s2) var(--s1);
+}
+.side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--s1);
+}
+.side-close,
+.menu-btn,
+.scrim {
+  display: none;
+}
+.side-new {
+  margin: 0 var(--s1);
+}
+.side-pinned,
+.side-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.side-pin,
+.side-row {
+  display: grid;
+  gap: 2px;
+  padding: 6px var(--s1);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  text-decoration: none;
+}
+.side-pin {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+}
+.side-pin:hover,
+.side-row:hover {
+  background: var(--surface-2);
+}
+.side-pin.on,
+.side-row.on {
+  background: var(--accent-soft);
+}
+.side-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+.side-count.hot {
+  color: var(--needs);
+}
+.side-list {
+  flex: 1;
+}
+.side-repo-name {
+  font-size: var(--t-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  margin: var(--s2) var(--s1) var(--s-half);
+}
+.side-row {
+  grid-template-columns: 10px minmax(0, 1fr);
+  column-gap: var(--s1);
+}
+.side-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 6px;
+  background: var(--text-3);
+  grid-row: span 2;
+}
+.side-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--t-sm);
+}
+.side-meta {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+.side-empty {
+  color: var(--text-3);
+  padding: var(--s1);
+  font-size: var(--t-sm);
+}
+.side-dot.tone-needs {
+  background: var(--needs-edge);
+}
+.side-dot.tone-working {
+  background: var(--working);
+}
+.side-dot.tone-blocked {
+  background: var(--stalled);
+}
+.side-dot.tone-done,
+.side-dot.tone-live {
+  background: var(--done);
+}
+.side-meta .tone-needs {
+  color: var(--needs);
+}
+.side-meta .tone-blocked {
+  color: var(--stalled);
+}
+.frame-main {
+  min-width: 0;
+}
+.frame-bar {
+  display: flex;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.frame-bar {
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border-bottom: 1px solid var(--line);
+}
+.frame-bar .topbar {
+  flex: 1;
+  min-width: 0;
+  position: static;
+  border-bottom: 0;
+  background: none;
+  backdrop-filter: none;
+}
+@media (max-width: 860px) {
+  .frame-bar .topbar-inner {
+    padding: var(--s1);
+    gap: var(--s1);
+  }
+}
+
+/* CHAT-1..10: one intent as a chat. */
+.chat-page {
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: var(--s2) var(--s3) var(--s6);
+}
+.chat-head {
+  display: flex;
+  gap: var(--s2);
+  align-items: flex-start;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: var(--s2);
+}
+.chat-head h1 {
+  font-size: var(--t-lg);
+  margin: 0 0 var(--s-half);
+}
+.chat-pr {
+  margin-left: var(--s1);
+}
+.chat-body {
+  display: grid;
+  gap: var(--s3);
+}
+.chat-page.with-details .chat-body {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 420px);
+}
+.chat-details {
+  border-left: 1px solid var(--line);
+  padding-left: var(--s2);
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+  position: sticky;
+  top: 72px;
+}
+.chat-details .page {
+  padding: 0;
+}
+.chat-thread {
+  list-style: none;
+  margin: var(--s2) 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s2);
+}
+.chat-msg {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--s1) var(--s2);
+}
+.chat-msg.role-owner {
+  background: var(--accent-soft);
+  margin-left: 15%;
+}
+.chat-msg.role-prompt {
+  background: var(--surface-2);
+}
+.chat-who {
+  display: flex;
+  gap: var(--s1);
+  align-items: baseline;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+  margin: 0 0 var(--s-half);
+}
+.chat-who span:first-child {
+  font-weight: 600;
+  color: var(--text-2);
+}
+.chat-status {
+  margin-left: auto;
+}
+.chat-status.st-failed,
+.chat-note {
+  color: var(--stalled);
+}
+.chat-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  max-height: 320px;
+  overflow: auto;
+  background: var(--surface-2);
+  padding: var(--s1);
+  border-radius: var(--radius-sm);
+}
+.chat-result {
+  border-left: 3px solid var(--line-strong);
+}
+.tool-err .chat-result {
+  border-left-color: var(--stalled);
+}
+.chat-tools summary,
+.chat-prompt summary {
+  cursor: pointer;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+.chat-tools ol {
+  padding-left: var(--s2);
+}
+.chat-divider,
+.chat-event {
+  display: flex;
+  gap: var(--s1);
+  font-size: var(--t-xs);
+  color: var(--text-3);
+  justify-content: center;
+  text-align: center;
+}
+.chat-divider {
+  border-top: 1px solid var(--line);
+  padding-top: var(--s1);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.chat-event.tone-warn {
+  color: var(--stalled);
+}
+.chat-earlier,
+.chat-missing,
+.chat-empty {
+  text-align: center;
+  color: var(--text-3);
+}
+.chat-card {
+  margin: var(--s2) 0;
+}
+.composer {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  padding: var(--s1) 0;
+  display: grid;
+  gap: var(--s1);
+}
+.composer textarea {
+  width: 100%;
+  font: inherit;
+  padding: var(--s1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+.composer-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s2);
+}
+.composer-closed {
+  color: var(--text-3);
+  text-align: center;
+  padding: var(--s2);
+}
+.overview-more h2 {
+  margin-top: var(--s4);
+}
+
+@media (max-width: 860px) {
+  .frame {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(320px, 86vw);
+    z-index: 40;
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition:
+      transform 0.2s ease,
+      visibility 0.2s;
+  }
+  .drawer-open .sidebar {
+    transform: none;
+    visibility: visible;
+    box-shadow: var(--shadow-pop);
+  }
+  .side-close,
+  .menu-btn {
+    display: inline-flex;
+  }
+  .scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: rgb(0 0 0 / 0.3);
+    border: 0;
+  }
+  .chat-page {
+    padding: var(--s1) var(--s2) var(--s6);
+  }
+  .chat-page.with-details .chat-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .chat-details {
+    border-left: 0;
+    padding-left: 0;
+    position: static;
+    max-height: none;
+  }
+  .chat-msg.role-owner {
+    margin-left: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
+  }
+}
+/* CHAT-9: on a chat the floating New intent button would cover the composer; the sidebar has one. */
+body:has(.chat-page) .new-intent-fab {
+  display: none;
 }

@@ -1,15 +1,27 @@
 // AUT-35: a raise of `a` in the intents repo counts only when the owner's GitHub account made it.
 
-import { acceptedOf, clearFlag, flagOf, judgeProof, seen, setAccepted, setFlag } from "./autonomy-change.ts";
+import {
+  acceptedOf,
+  clearFlag,
+  flagOf,
+  judgeAccount,
+  judgeProof,
+  seen,
+  setAccepted,
+  setFlag,
+} from "./autonomy-change.ts";
 import { noteIgnored } from "./commands.ts";
 import type { Db } from "./db.ts";
 import type { Forge } from "./forge.ts";
 import type { IntentStore, Listing } from "./intents/types.ts";
+import type { Person } from "./users.ts";
 
 export interface WatchDeps {
   db: Db;
   store: IntentStore;
   forge: Pick<Forge, "commitProof" | "me">;
+  /** USR-5: with `[auth]`, the people; a raise counts when its account may `raise` on the intent's repo (AUT-24). */
+  users?: (login: string) => Person | null;
   /** Unix seconds. */
   now: number;
   log(line: string): void;
@@ -46,7 +58,7 @@ export async function watchAutonomy(d: WatchDeps, listing: Listing): Promise<voi
         continue;
       }
     }
-    const v = judgeProof(proof, d.forge.me);
+    const v = d.users ? judgeAccount(proof, d.users, "raise", i.repo) : judgeProof(proof, d.forge.me);
     if (v.owner) {
       setAccepted(db, i.id, s.now);
       clearFlag(db, i.id);

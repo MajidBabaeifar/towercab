@@ -21,7 +21,7 @@ function world(
       if (args[1] === "view") {
         return {
           code: 0,
-          stdout: JSON.stringify({ state: prState, mergedAt: null }),
+          stdout: JSON.stringify({ state: prState, mergedAt: null, commits: [] }),
           stderr: "",
           timedOut: false,
         };
@@ -84,6 +84,7 @@ test("ui: actions go through GitHub as the owner", async () => {
     ["pr", "merge", "57", "--squash", "-R", "owner/web"],
     ["pr", "comment", "58", "-R", "owner/web", "--body", "The flaky test is known; skip it."],
     ["pr", "comment", "58", "-R", "owner/web", "--body", "/retry"],
+    ["pr", "view", "60", "-R", "owner/web", "--json", "state,commits"],
     ["pr", "close", "60", "-R", "owner/web"],
   ]);
   expect(w.commands()).toEqual([]);
