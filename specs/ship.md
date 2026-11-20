@@ -529,8 +529,7 @@ The deploy contract page tells a GitLab team what their deploy job must do.
 ## Out of scope
 
 - Database migrations: a rollback only swaps the version. The review asks for backward-compatible
-  migrations where that is possible, but doesn't block on it. Migration-aware rollback is parked
-  (intent 261030-0401).
+  migrations where that is possible, but doesn't block on it. Migration-aware rollback is not built.
 - Staging and preview environments before production (parked, intent 261030-0401-2).
 - Watching the live app after green, alerts and incidents: the AI SRE (parked, intent 261030-0401-3).
 - A release gate and rollback rehearsals (v1's PIP-34, PIP-35). `/release` only reports what the ship

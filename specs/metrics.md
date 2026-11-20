@@ -115,7 +115,7 @@ Before an intent starts, Towercab estimates what it will cost from what similar 
 
 ## Out of scope
 
-- Grafana, OTLP export, Claude Code telemetry, eval pass rates (parked).
+- Grafana, OTLP export, Claude Code telemetry, eval pass rates (parked, intent 261026-2204-5).
 
 ## Decisions
 

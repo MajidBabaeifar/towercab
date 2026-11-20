@@ -6,6 +6,7 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { git, refreshBase } from "../checkout.ts";
 import { classifyRun } from "../faults.ts";
 import { type ChildEnd, type Ctx, EnvError, type Handler, type Progress } from "../handlers.ts";
+import { withKey } from "../jira/key.ts";
 import { type Outcome, ok, red, wait } from "../machine.ts";
 import { mergeWithRepoMethod, resolveMergeMethod } from "../merge-method.ts";
 import type { Mission } from "../mission.ts";
@@ -562,7 +563,7 @@ export const revertHandler: Handler = {
           cx.github.openPr(repo.github, {
             base: repo.base,
             head: branch,
-            title: `Revert: ${intent.title}`,
+            title: withKey(intent, `Revert: ${intent.title}`),
             body,
           }),
         );

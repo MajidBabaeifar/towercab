@@ -40,6 +40,7 @@ import { addToIntent, cannotAddTo, createIntent, type Draft } from "./intents/cr
 import { checkOverlap, type Match } from "./intents/overlap.ts";
 import { openStore } from "./intents/store.ts";
 import type { IntentStore } from "./intents/types.ts";
+import { JiraClient } from "./jira/client.ts";
 import * as log from "./log.ts";
 import { Loop } from "./loop.ts";
 import { type ApplyCtx, isWait } from "./machine.ts";
@@ -533,6 +534,7 @@ async function run(
           store,
           github: w.github!,
           gitlab: w.gitlab,
+          jira: w.config.jira ? new JiraClient({ ...w.config.jira, file: w.config.file }, fetchHttp) : null,
           handlers: handlers(),
           log: (l) => log.emit(l),
           sender: chat ? chat.sender() : telegram,

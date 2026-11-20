@@ -207,12 +207,12 @@ export class GitHubForge implements Forge, GitHub {
   async mergePr(
     repo: string,
     n: number,
-    o: { method: MergeMethod; head?: string; body?: string },
+    o: { method: MergeMethod; head?: string; subject?: string; body?: string },
   ): Promise<Result> {
     // LOOP-154: a merge commit is titled with the PR's title (GitHub's own would be `Merge pull request #n
     // from …`); a squash commit is titled as it always was; a rebase has no commit of its own.
-    let subject = "";
-    if (o.method === "merge") {
+    let subject = o.subject ?? "";
+    if (!subject && o.method === "merge") {
       try {
         subject = (await this.view<{ title?: string }>(repo, n, "title")).title?.trim() ?? "";
       } catch {
@@ -224,8 +224,8 @@ export class GitHubForge implements Forge, GitHub {
       "merge",
       String(n),
       MERGE_FLAG[o.method],
-      ...(subject ? ["--subject", subject] : []),
       ...(o.head ? ["--match-head-commit", o.head] : []),
+      ...(subject ? ["--subject", subject] : []),
       ...(o.body ? ["--body", o.body] : []),
       "-R",
       repo,

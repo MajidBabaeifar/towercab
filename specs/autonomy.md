@@ -39,7 +39,7 @@ in the build went beyond the approved plan, and its risk is low.
 
 ### AUT-5 · a5: deploy and e2e
 
-Removed: the ship stage is parked (intent 261026-2204-4). a5 now means AUT-13.
+Removed: replaced by AUT-13 (a5 now means AUT-13).
 
 ### AUT-6 · Validation never shrinks
 
@@ -82,7 +82,7 @@ the owner didn't write, by AUT-13.
 
 ### AUT-10 · Caps after a revert
 
-Removed: reverts are parked with the ship stage.
+Removed: not built; a revert exists (SHIP-12) but no repo cap follows one.
 
 ### AUT-11 · Spec gate
 
@@ -377,7 +377,7 @@ When a gate waits for the owner only because of the intent's autonomy, the wait 
 
 - Raising autonomy automatically.
 - Repo caps after a revert (not built; the ship stage itself is live, [SHIP-12](ship.md)).
-- Tracking how often the owner overrides the risk gate (parked for a later batch).
+- Tracking how often the owner overrides the risk gate (not built).
 
 ## Decisions
 

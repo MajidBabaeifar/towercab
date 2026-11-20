@@ -75,6 +75,10 @@ import {
   NoOpenIntentError,
   SyncError,
 } from "./intents/types.ts";
+import type { JiraClient } from "./jira/client.ts";
+import { branchSlug } from "./jira/key.ts";
+import { syncJira } from "./jira/notes.ts";
+import { pollJira } from "./jira/poll.ts";
 import { kindChangeRefusal, kindOf, parseKindComment, type WorkKind } from "./kind.ts";
 import { type GitProc, lockRoots, removeStaleLocks } from "./locks.ts";
 import {
@@ -181,6 +185,8 @@ export interface LoopDeps {
   github: Host;
   /** INT-64: GitLab, for the issues of `gitlab:…` repos. */
   gitlab?: GitLabForge | null;
+  /** JIRA-1: Jira, when `[jira]` is configured. */
+  jira?: JiraClient | null;
   handlers: Handlers;
   log(line: string): void;
   /** Delivers outbox rows (Telegram), or null. */
@@ -276,6 +282,10 @@ export class Loop {
   private lastSettingsPoll = 0;
   private lastReleasePoll = 0;
   private issuesRun: Promise<void> | null = null;
+  private lastJiraPoll = 0;
+  private jiraRun: Promise<void> | null = null;
+  /** JIRA-7: the intents whose ticket was fully told for their current state. */
+  private jiraSettled = new Map<string, string>();
   /** INT-39: the feature-list backfill running now, and how to stop it. */
   private featuresJob: Promise<void> | null = null;
   private readinessJob: Promise<void> | null = null;
@@ -529,6 +539,7 @@ export class Loop {
       this.settingsJob !== null ||
       this.setupJob !== null ||
       this.issuesRun !== null ||
+      this.jiraRun !== null ||
       this.d.shadow?.busy() ||
       this.d.observer?.busy()
     )
@@ -548,6 +559,7 @@ export class Loop {
     const idle = (async () => {
       await running?.catch(() => undefined);
       await this.issuesIdle();
+      await this.jiraIdle();
       await this.featuresIdle();
       await this.readinessIdle();
       await this.settingsIdle();
@@ -675,6 +687,7 @@ export class Loop {
       this.lastIntentsPoll = 0;
       this.lastProposedPoll = 0;
       this.lastIssuesPoll = 0;
+      this.lastJiraPoll = 0;
       this.d.log("woke from suspend; polling everything before any timeout");
     }
     this.last = nowPoint;
@@ -717,6 +730,7 @@ export class Loop {
     // LOOP-105, LOOP-108: with the checkout moved or an update waiting, running children finish but
     // nothing new starts.
     if (this.codeMoved() === null && this.drain === null && !this.isPaused()) this.startIssues(false);
+    if (this.codeMoved() === null && this.drain === null && !this.isPaused()) this.startJira(false);
     await this.pollPrs();
     // LOOP-113: settings and release PRs are followed with writes (merges, comments): not while paused.
     if (!this.isPaused()) {
@@ -1507,6 +1521,57 @@ export class Loop {
     );
     this.issuesRun = run.finally(() => {
       this.issuesRun = null;
+    });
+  }
+
+  /** Resolves when no Jira poll is running (tests and shutdown wait for it). */
+  async jiraIdle(): Promise<void> {
+    while (this.jiraRun) await this.jiraRun;
+  }
+
+  /**
+   * JIRA-4, JIRA-7: the Jira poll, every 300 s of the loop's clock and on start: new tickets become
+   * intent proposals, then every Jira-born intent's ticket is brought up to date. It runs on its own and
+   * never more than once at a time; its failures are a `jira` fault, which never holds work back.
+   */
+  private startJira(force: boolean): void {
+    const jira = this.d.jira;
+    if (this.jiraRun || !jira || !this.d.config.jira || !this.d.config.github) return;
+    if (!force && this.now - this.lastJiraPoll < ISSUES_POLL_S) return;
+    this.lastJiraPoll = this.now;
+    const deps = {
+      config: this.d.config,
+      home: this.d.home,
+      tools: this.d.tools,
+      clock: this.d.clock,
+      store: this.d.store,
+      github: this.d.github,
+      log: this.d.log,
+      busy: () => new Set(unfinished(this.d.db).map((m) => m.intent)),
+      jira,
+    };
+    const run = (async () => {
+      const errors: string[] = [];
+      for (const step of [
+        () => pollJira(deps),
+        () => syncJira({ ...deps, db: this.d.db }, this.jiraSettled),
+      ]) {
+        try {
+          await step();
+        } catch (e) {
+          errors.push((e as Error).message);
+        }
+      }
+      if (errors.length) throw new Error(errors.join("; "));
+    })().then(
+      () => this.health.ok("jira"),
+      (e: Error) => {
+        this.health.fail("jira", e.message, this.now);
+        this.d.log(`reading Jira failed: ${e.message}`);
+      },
+    );
+    this.jiraRun = run.finally(() => {
+      this.jiraRun = null;
     });
   }
 
@@ -2451,7 +2516,7 @@ export class Loop {
         this.d.db,
         {
           intent: pick.id,
-          slug: pick.slug,
+          slug: branchSlug(pick),
           repo: pick.repo,
           model: pick.model ?? this.d.config.agent.model,
           a: pick.a,
