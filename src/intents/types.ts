@@ -20,6 +20,8 @@ export interface Intent {
   model: string | null;
   review: string | null;
   source: string | null;
+  /** INT-76: `feature`, `bugfix`, `refactor`, `infra` or `spec-only`; absent = not set. */
+  kind?: string | null;
   /** The GitHub issue this intent came from (INT-23). */
   issue: string | null;
   /** `setup: true` (LOOP-71): the intent that sets a repo up; allowed in a blocking repo. */
