@@ -1832,6 +1832,13 @@ The form keeps what was typed after a refusal, fits a phone and works by keyboar
 - After a refusal or Cancel the fields keep their text; the text is dropped after a success. The form fits 360 px, light and dark, every field has a label, Tab and Enter work, and the error line is announced. The new intent specs save screenshots of the empty form and the overlap list, light, dark and on a phone.
 - Verified by: `ui: the form keeps its text after a refusal`, `ui: the new intent form works by keyboard`, `ui: the new intent screenshots`
 
+### UI-252 · The intent page shows the level of checks and review
+
+The intent page and its card show how hard the change is checked and reviewed, and who chose that.
+
+- Once a level is chosen ([PIP-187](pipeline.md)), the page shows `Checks and review: <level>` with its reason and "set by you" or "chosen by Towercab". `GET /api/intents/<id>` includes `intensity: {level, why, by} | null`; the card shows a small tag only for light and thorough.
+- Verified by: `ui: the intent page shows the level and who chose it`, `ui: the intent api returns the intensity`
+
 ## Out of scope
 
 - Editing intents in the page, except their autonomy (UI-257), scores (UI-203) and adding text to an open one (INT-74, UI-215): the owner edits other fields in the intents repo or with `/intent`.
