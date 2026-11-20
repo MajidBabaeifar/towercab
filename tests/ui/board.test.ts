@@ -2,7 +2,8 @@
 
 import { afterEach, expect, test } from "vitest";
 import { Db } from "../../src/db.ts";
-import { board } from "../../src/ui/board.ts";
+import { clearRoute } from "../../src/route.ts";
+import { board, sidebar } from "../../src/ui/board.ts";
 import { repoSpend, spendByRepo, spendTotals } from "../../src/ui/spend.ts";
 import { ago, overview, spend } from "../../src/ui/state.ts";
 import type { BoardColumnKey } from "../../src/ui/view.ts";
@@ -244,4 +245,24 @@ test("ui: board api gives each repo its sort keys", async () => {
   const unknown = await board(f.sources);
   expect(unknown.repos.at(-1)).toMatchObject({ repo: "", index: unknown.repos.length - 1, changedAt: null });
   f.state.upNext.pop();
+});
+
+test("ui: intents waiting their turn stay out of counts and the board", async () => {
+  const f = fixture();
+  const before = placed(await board(f.sources));
+  const building = f.db.all<{ intent: string }>(
+    "SELECT intent FROM missions WHERE stage IN ('build','ci','review','gate','approval:merge') AND merge_sha IS NULL",
+  );
+  expect(building.length).toBeGreaterThan(0);
+  const ids = clearRoute(f.db, null, NOW);
+  expect(ids.length).toBeGreaterThan(0);
+  const after = placed(await board(f.sources));
+  for (const id of ids) {
+    expect(before[id]).toBeDefined();
+    expect(after[id]).toBeUndefined();
+  }
+  const side = await sidebar(f.sources);
+  expect(side.waiting).toBe(ids.length);
+  const o = await overview(f.sources);
+  expect(JSON.stringify(o)).not.toContain(ids[0]!);
 });

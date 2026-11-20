@@ -79,6 +79,27 @@ test("chat: a run's transcript becomes messages with tool calls folded", () => {
   expect(msgs[2]!.text).toBe("Done.");
 });
 
+test("chat: tool-only turns join the agent message before them", () => {
+  const w = world(TRANSCRIPT);
+  const [run] = runsOf(w.runs, "261101-0900");
+  const call = (id: string, at: string) =>
+    line({
+      type: "assistant",
+      timestamp: at,
+      message: { content: [{ type: "tool_use", id, name: "Edit", input: {} }] },
+    });
+  const t = [
+    TRANSCRIPT[0]!,
+    TRANSCRIPT[1]!,
+    call("t2", "2026-11-19T10:00:07Z"),
+    call("t3", "2026-11-19T10:00:08Z"),
+    TRANSCRIPT[3]!,
+  ];
+  const msgs = parseTranscript(t.join("\n"), run!);
+  expect(msgs.map((m) => m.role)).toEqual(["prompt", "agent", "agent"]);
+  expect(msgs[1]!.tools.map((x) => x.name)).toEqual(["Read", "Edit", "Edit"]);
+});
+
 test("chat: Towercab's own copy of a transcript is preferred and kept at run end", () => {
   const w = world(TRANSCRIPT);
   const [run] = runsOf(w.runs, "261101-0900");

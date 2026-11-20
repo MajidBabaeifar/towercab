@@ -1,6 +1,6 @@
 # UI
 
-**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..163, UI-165..167, UI-168, UI-184..197, UI-203..208, UI-211, UI-236..239, UI-242..251, UI-253..276, UI-279, UI-281..283, UI-213..218, UI-219..224, UI-278, UI-277 · **Prefix:** UI
+**Status:** Live: UI-1..82, UI-100..112, UI-120..128, UI-130..131, UI-133..137, UI-140..163, UI-165..167, UI-168, UI-184..197, UI-203..208, UI-211, UI-236..239, UI-242..251, UI-253..276, UI-279, UI-281..283, UI-213..218, UI-219..224, UI-278, UI-277, UI-288..289 · **Prefix:** UI
 
 ## Purpose
 
@@ -1825,6 +1825,25 @@ The intent page and its card show how hard the change is checked and reviewed, a
 
 - Once a level is chosen ([PIP-187](pipeline.md)), the page shows `Checks and review: <level>` with its reason and "set by you" or "chosen by Towercab". `GET /api/intents/<id>` includes `intensity: {level, why, by} | null`; the card shows a small tag only for light and thorough.
 - Verified by: `ui: the intent page shows the level and who chose it`, `ui: the intent api returns the intensity`
+
+
+### UI-288 · Pages don't wait for git
+
+A page opens at once even while the loop fetches or writes the intents.
+
+- The page server reads the intents list through a cache kept for 5 s (`src/ui/list-cache.ts`); calls at
+  the same time share one read, and a write through the store (`add`, `update`, `editFeatures`) makes
+  the next read fresh.
+- Verified by: `ui: pages read the intents list through a short cache`
+
+### UI-289 · Intents waiting their turn stay out of sight
+
+The counts, Overview and Board leave out the intents paused by a cleared route (LOOP-165).
+
+- `snapshot` leaves out their missions and their open intents, so the top bar's count, the Overview and
+  the Board don't show them; the intent page and Activity still do (`snapshot(src, {all: true})`).
+  The sidebar counts them (`turnWaiters`).
+- Verified by: `ui: intents waiting their turn stay out of counts and the board`
 
 ## Out of scope
 
