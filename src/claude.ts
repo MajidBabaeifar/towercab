@@ -214,7 +214,21 @@ export function disallowed(config: Config): string[] {
   for (const p of SECRET_PATHS) d.push(SECRET_FILES.has(p) ? `Read(~/${p})` : `Read(~/${p}/**)`);
   // Towercab's own config and App key, wherever `--config` put them.
   for (const p of configSecrets(config)) d.push(`Read(/${p})`);
+  // REPO-43: the per-repo overlay is Towercab's, never a worker's.
+  for (const o of overlayDenied(config))
+    d.push(`Read(/${o.replace(/^\//, "")})`, `Read(/${o.replace(/^\//, "")}/**)`);
   return d;
+}
+
+/** REPO-43: the folder of every repo's overlay, next to the config file: unreadable and unwritable to a worker. */
+export function overlayRoot(config: Config): string {
+  return join(dirname(resolve(config.file)), "repos");
+}
+
+/** The overlay folder when there is one (like the other denied paths, only what exists is named). */
+export function overlayDenied(config: Config): string[] {
+  const root = overlayRoot(config);
+  return existsSync(root) ? [root] : [];
 }
 
 /** The config file and `app.pem` next to it, absolute. */
@@ -272,13 +286,14 @@ export function claudeSettings(
   const denyRead = [
     ...SECRET_PATHS.map((p) => join(o.home, p)),
     ...configSecrets(run.config),
+    ...overlayDenied(run.config),
     ...othersInHome(run),
   ];
   // PIP-157: unix sockets are never bound in, and the host's are hidden, whatever the config says.
   denyRead.push(...HOST_SOCKETS);
   // LOOP-163: under WSL every Windows drive is mounted below /mnt, and the worker must not read them.
   if (o.wsl ?? isWslHost()) denyRead.push("/mnt");
-  const denyWrite = [join(resolve(run.cwd), ".git")];
+  const denyWrite = [join(resolve(run.cwd), ".git"), ...overlayDenied(run.config)];
   // PIP-100: an agent without Edit or Write only reads, so its Bash can't write the checkout either
   // (`git diff --output=<file>` from text planted in a diff).
   const agent = loadAgent(run.agent ?? run.kind);

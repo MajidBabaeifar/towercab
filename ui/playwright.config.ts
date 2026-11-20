@@ -17,6 +17,7 @@ export default defineConfig({
     "parts.spec.ts",
     "board-sort.spec.ts",
     "limits.spec.ts",
+    "overlay.spec.ts",
     "shadow.spec.ts",
     "overview-order.spec.ts",
     "autonomy.spec.ts",
