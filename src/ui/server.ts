@@ -33,7 +33,8 @@ import {
 } from "../users-store.ts";
 import type { UiActions } from "./actions.ts";
 import type { Auth } from "./auth.ts";
-import { board } from "./board.ts";
+import { board, sidebar } from "./board.ts";
+import { chatPage } from "./chat-page.ts";
 import { inbox, inboxAction } from "./inbox.ts";
 import { observerView } from "./observer.ts";
 import { repos } from "./repos.ts";
@@ -118,7 +119,7 @@ const TYPES: Record<string, string> = {
 };
 
 const PAGES =
-  /^\/(?:signin|users|board|overview|repos|queue|activity|i\/[A-Za-z0-9._-]+|inbox(?:\/[A-Za-z0-9._-]+)?)?\/?$/;
+  /^\/(?:signin|users|needs|board|overview|repos|queue|activity|i\/[A-Za-z0-9._-]+|inbox(?:\/[A-Za-z0-9._-]+)?)?\/?$/;
 export const ACTIONS = new Set([
   "checkIntent",
   "createIntent",
@@ -131,6 +132,7 @@ export const ACTIONS = new Set([
   "confirm",
   "pass",
   "reply",
+  "chat",
   "retry",
   "unfreeze",
   "drop",
@@ -654,77 +656,84 @@ export function startUi(o: UiOptions): UiServer {
                                   )(intent)
                                 : action === "reply"
                                   ? await a.reply(intent, typeof body.text === "string" ? body.text : "")
-                                  : action === "retry"
-                                    ? await a.retry(intent)
-                                    : action === "unfreeze"
-                                      ? await a.unfreeze(intent)
-                                      : action === "drop"
-                                        ? await a.drop(intent, body.confirmed === true)
-                                        : action === "done"
-                                          ? await (
-                                              a.done ??
-                                              (() =>
-                                                Promise.reject(
-                                                  new Error("Ending an intent isn't available."),
-                                                ))
-                                            )(
-                                              intent,
-                                              typeof body.text === "string" ? body.text : "",
-                                              body.confirmed === true,
-                                            )
-                                          : action === "steps"
+                                  : action === "chat"
+                                    ? await (a.chat ?? (() => Promise.reject(new Error("Not available."))))(
+                                        intent,
+                                        typeof body.text === "string" ? body.text : "",
+                                      )
+                                    : action === "retry"
+                                      ? await a.retry(intent)
+                                      : action === "unfreeze"
+                                        ? await a.unfreeze(intent)
+                                        : action === "drop"
+                                          ? await a.drop(intent, body.confirmed === true)
+                                          : action === "done"
                                             ? await (
-                                                a.steps ??
+                                                a.done ??
                                                 (() =>
                                                   Promise.reject(
-                                                    new Error("Switching to steps isn't available."),
+                                                    new Error("Ending an intent isn't available."),
                                                   ))
-                                              )(intent, body.confirmed === true)
-                                            : action === "start"
-                                              ? await a.start(intent)
-                                              : action === "step"
-                                                ? await (
-                                                    a.step ??
-                                                    (() =>
-                                                      Promise.reject(
-                                                        new Error("Ticking steps isn't available."),
-                                                      ))
-                                                  )(intent, Number(body.n), body.done !== false)
-                                                : action === "pause"
-                                                  ? await a.pause(intent)
-                                                  : action === "addRepo"
-                                                    ? await a.addRepo(
-                                                        typeof body.github === "string" ? body.github : "",
-                                                        typeof body.name === "string" && body.name
-                                                          ? body.name
-                                                          : undefined,
-                                                      )
-                                                    : action === "features"
-                                                      ? await a.features(repo)
-                                                      : action === "accept"
-                                                        ? await a.accept(pr, head)
-                                                        : action === "close"
-                                                          ? await a.close(
-                                                              pr,
-                                                              typeof body.text === "string"
-                                                                ? body.text
-                                                                : undefined,
-                                                            )
-                                                          : action === "scanningGranted"
-                                                            ? await (
-                                                                a.scanningGranted ??
-                                                                (() =>
-                                                                  Promise.reject(new Error("Not available.")))
-                                                              )()
-                                                            : action === "shadowReset"
+                                              )(
+                                                intent,
+                                                typeof body.text === "string" ? body.text : "",
+                                                body.confirmed === true,
+                                              )
+                                            : action === "steps"
+                                              ? await (
+                                                  a.steps ??
+                                                  (() =>
+                                                    Promise.reject(
+                                                      new Error("Switching to steps isn't available."),
+                                                    ))
+                                                )(intent, body.confirmed === true)
+                                              : action === "start"
+                                                ? await a.start(intent)
+                                                : action === "step"
+                                                  ? await (
+                                                      a.step ??
+                                                      (() =>
+                                                        Promise.reject(
+                                                          new Error("Ticking steps isn't available."),
+                                                        ))
+                                                    )(intent, Number(body.n), body.done !== false)
+                                                  : action === "pause"
+                                                    ? await a.pause(intent)
+                                                    : action === "addRepo"
+                                                      ? await a.addRepo(
+                                                          typeof body.github === "string" ? body.github : "",
+                                                          typeof body.name === "string" && body.name
+                                                            ? body.name
+                                                            : undefined,
+                                                        )
+                                                      : action === "features"
+                                                        ? await a.features(repo)
+                                                        : action === "accept"
+                                                          ? await a.accept(pr, head)
+                                                          : action === "close"
+                                                            ? await a.close(
+                                                                pr,
+                                                                typeof body.text === "string"
+                                                                  ? body.text
+                                                                  : undefined,
+                                                              )
+                                                            : action === "scanningGranted"
                                                               ? await (
-                                                                  a.shadowReset ??
+                                                                  a.scanningGranted ??
                                                                   (() =>
                                                                     Promise.reject(
                                                                       new Error("Not available."),
                                                                     ))
                                                                 )()
-                                                              : await a.resume(intent);
+                                                              : action === "shadowReset"
+                                                                ? await (
+                                                                    a.shadowReset ??
+                                                                    (() =>
+                                                                      Promise.reject(
+                                                                        new Error("Not available."),
+                                                                      ))
+                                                                  )()
+                                                                : await a.resume(intent);
       reply = { ok: true, message };
     } catch (e) {
       // LOOP-76: an exit that closes an open PR with commits asks first; the page shows the text and asks again.
@@ -849,6 +858,7 @@ export function startUi(o: UiOptions): UiServer {
     if (path === "/api/state") return json(res, 200, await overview(src));
     if (path === "/api/queue") return json(res, 200, await queue(src));
     if (path === "/api/board") return json(res, 200, await board(src));
+    if (path === "/api/sidebar") return json(res, 200, await sidebar(src));
     if (path === "/api/shadow") return json(res, 200, shadowView(src));
     if (path === "/api/observer") return json(res, 200, observerView(src));
     if (path === "/api/inbox") return json(res, 200, await inbox(src));
@@ -875,7 +885,15 @@ export function startUi(o: UiOptions): UiServer {
         }),
       );
     }
-    let m = /^\/api\/intents\/([^/]+)$/.exec(path);
+    // CHAT-3, CHAT-6: an intent's thread, a page at a time (`before` pages back).
+    let m = /^\/api\/intents\/([^/]+)\/chat$/.exec(path);
+    if (m) {
+      const id = decodeURIComponent(m[1]!);
+      if (!INTENT_ID.test(id)) return json(res, 404, { error: `There is no intent ${id}.` });
+      const b = url.searchParams.get("before");
+      return json(res, 200, chatPage(src, id, b === null ? undefined : Number(b) || 0));
+    }
+    m = /^\/api\/intents\/([^/]+)$/.exec(path);
     if (m) {
       const id = decodeURIComponent(m[1]!);
       const page = INTENT_ID.test(id) ? await intentPage(src, id) : null;

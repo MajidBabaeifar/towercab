@@ -27,6 +27,7 @@ export default defineConfig({
     "palette.spec.ts",
     "folds.spec.ts",
     "clarity.spec.ts",
+    "frame.spec.ts",
     "new-intent.spec.ts",
     "auth.spec.ts",
     "roles.spec.ts",

@@ -38,7 +38,7 @@ import {
 import { checkOverlap, type Match, type OverlapResult } from "../intents/overlap.ts";
 import type { IntentStore } from "../intents/types.ts";
 import { isKind, kindChangeRefusal, WORK_KINDS } from "../kind.ts";
-import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
+import { dataOf, forIntent, getMission, type Mission, unfinishedFor } from "../mission.ts";
 import { isMulti } from "../parts.ts";
 import { grantScanning } from "../pipeline/alerts.ts";
 import { ownerMergeRefusal } from "../pipeline/teammate.ts";
@@ -46,6 +46,7 @@ import { canBoostIntent, changeScores } from "../scores.ts";
 import { resetShadow } from "../shadow/store.ts";
 import { approveSecret } from "../ship/secret-steps.ts";
 import type { Tools } from "../tools.ts";
+import { hasEnded, intentsWithQueued, MAX_CHAT, queuedOf, saveQueued, waitsOnOwner } from "./chat.ts";
 import { currentPr, type DoneNote, validNote } from "./state.ts";
 
 /** What the page can do; each resolves to one sentence saying what happened, or throws the error. */
@@ -54,6 +55,10 @@ export interface UiActions {
   /** AUT-23: a maintainer or admin confirms an intent whose writer has a lower role or none. */
   confirm?(intent: string): Promise<string>;
   reply(intent: string, text: string): Promise<string>;
+  /** CHAT-8: the owner's chat message: sent as a reply when the intent waits on them, else queued. */
+  chat?(intent: string, text: string): Promise<string>;
+  /** CHAT-8: send the queued messages of intents that now wait on the owner. */
+  deliverChats?(): Promise<void>;
   retry(intent: string): Promise<string>;
   /** UI-167: lift the freeze of a multi-repo intent (`towercab unfreeze`). */
   unfreeze(intent: string): Promise<string>;
@@ -525,6 +530,56 @@ export function createActions(d: ActionDeps): UiActions {
       }
       command("answer", intent, body);
       return "Answer saved to the intent. Towercab goes on with it on its next pass.";
+    },
+
+    async chat(intent, text) {
+      const t = text.trim();
+      if (!t) throw new Error("Write a message first.");
+      if (t.length > MAX_CHAT) throw new Error(`The message is too long: at most ${MAX_CHAT} characters.`);
+      if (hasEnded(forIntent(d.db, intent)))
+        throw new Error("This intent has ended, so nothing reads new messages. Write a new intent instead.");
+      const list = queuedOf(d.db, intent);
+      const id = list.reduce((n, q) => Math.max(n, q.id), 0) + 1;
+      list.push({ id, at: d.clock.now(), by: d.actor ?? "you", text: t, status: "queued", note: null });
+      saveQueued(d.db, intent, list);
+      await this.deliverChats?.();
+      const sent = queuedOf(d.db, intent).find((q) => q.id === id);
+      return sent?.status === "sent"
+        ? (sent.note ?? "Sent.")
+        : sent?.status === "failed"
+          ? `Not sent: ${sent.note}`
+          : "Queued: it goes in when the intent next waits on you.";
+    },
+
+    async deliverChats() {
+      for (const intent of intentsWithQueued(d.db)) {
+        const m = unfinishedFor(d.db, intent);
+        const list = queuedOf(d.db, intent);
+        if (!m && !hasEnded(forIntent(d.db, intent))) continue;
+        if (!m) {
+          for (const q of list)
+            if (q.status === "queued")
+              Object.assign(q, { status: "failed", note: "The intent ended first." });
+          saveQueued(d.db, intent, list);
+          continue;
+        }
+        // CHAT-8: never while a worker runs; the reply is how a waiting intent takes the owner's words.
+        if (!waitsOnOwner(m)) continue;
+        const waiting = list.filter((q) => q.status === "queued");
+        if (!waiting.length) continue;
+        const body = waiting.map((q) => q.text).join("\n\n");
+        let note: string;
+        let status: "sent" | "failed" = "sent";
+        try {
+          note = await this.reply(intent, body);
+        } catch (e) {
+          status = "failed";
+          note = (e as Error).message;
+        }
+        const fresh = queuedOf(d.db, intent);
+        for (const q of fresh) if (waiting.some((w) => w.id === q.id)) Object.assign(q, { status, note });
+        saveQueued(d.db, intent, fresh);
+      }
     },
 
     async scanningGranted() {

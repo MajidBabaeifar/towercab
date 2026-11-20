@@ -21,6 +21,8 @@ export const ACTION_PERMISSION: Record<string, UserAction> = {
   confirm: "confirm",
   pass: "drop",
   reply: "reply",
+  // CHAT-8: a chat message goes in as a reply, so it needs the same right.
+  chat: "reply",
   retry: "retry",
   drop: "drop",
   start: "start",

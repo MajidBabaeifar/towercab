@@ -216,91 +216,96 @@ export function startLoopUi(loop: Loop, config: Config, github: Host, home: Home
     now: loop.now,
     repos: config.repos,
   });
+  const actions = createActions({
+    db: loop.d.db,
+    store: loop.d.store,
+    config,
+    clock: loop.d.clock,
+    github,
+    proposed: () => loop.proposedState().list,
+    // UI-213..218, LOOP-125: the new intent form: the overlap check runs here, outside any mission and
+    // slot; a draining service refuses it; a contributor's proposal is opened as the App.
+    intentTools: {
+      home,
+      tools: loop.d.tools,
+      draining: () => loop.d.db.meta("draining") !== null,
+      proposal: { config, home, tools: loop.d.tools, github, who: "a contributor" },
+    },
+    // REPO-16, REPO-19: the settings PR and the move, as the loop's own database, tools and forge do them.
+    limits: {
+      propose: (repo, changes, confirmed) => proposeSettings(settingsEnv(), repo, changes, confirmed),
+      move: (repo) => reopenMove(settingsEnv(), repo),
+    },
+    // REPO-39: Apply runs the settings script as the owner, for the one repo named.
+    applySettings: async (name) => {
+      const repo = config.repos.get(name);
+      if (!repo) throw new Error(`${name} isn't a repo Towercab knows`);
+      await ownerLogin(github);
+      const r = await applySettings(
+        {
+          config,
+          home,
+          db: loop.d.db,
+          tools: loop.d.tools,
+          clock: loop.d.clock,
+          github,
+          log: loop.d.log,
+        },
+        repo,
+      );
+      return r.state === "ok"
+        ? `Applied. The standard settings are in place on ${repo.github}.`
+        : (r.note ?? `Applied, but ${r.gaps.length} setting${r.gaps.length === 1 ? "" : "s"} still differ.`);
+    },
+    // SHIP-35: a typed secret goes straight to `sops`; the value stays in this request.
+    supplySecret: (intent, n, value) =>
+      supplySecret(
+        {
+          db: loop.d.db,
+          tools: loop.d.tools,
+          github,
+          config,
+          home,
+          clock: loop.d.clock,
+          log: loop.d.log,
+        },
+        intent,
+        n,
+        value,
+      ),
+    // UI-130: answer once the checks pass; the clone runs on, and the page's live update shows the
+    // repo (or, on failure, a problem) when it ends.
+    addRepo: async (gh, name) => {
+      const p = await beginAddRepo(
+        {
+          db: loop.d.db,
+          config,
+          tools: loop.d.tools,
+          github,
+          home: home.root,
+          now: loop.now,
+          source: "ui",
+        },
+        gh,
+        name,
+      );
+      p.done.then(
+        (r) => loop.d.log(`added repo ${r.name} (${r.github})`),
+        (e: Error) => loop.d.log(`adding repo ${p.repo.name} failed: ${e.message}`),
+      );
+      return p.repo;
+    },
+  });
+  // CHAT-8: queued chat messages go in when their intent waits on the owner; checked every 10 s.
+  const chats = setInterval(() => {
+    void actions.deliverChats?.().catch((e: Error) => loop.d.log(`chat: ${e.message}`));
+  }, 10_000);
+  chats.unref?.();
   return startUi({
     port: config.ui.port,
     auth: authOf(loop.d.db, config, () => loop.d.clock.now()),
     sources: sourcesOf(loop, home),
-    actions: createActions({
-      db: loop.d.db,
-      store: loop.d.store,
-      config,
-      clock: loop.d.clock,
-      github,
-      proposed: () => loop.proposedState().list,
-      // UI-213..218, LOOP-125: the new intent form: the overlap check runs here, outside any mission and
-      // slot; a draining service refuses it; a contributor's proposal is opened as the App.
-      intentTools: {
-        home,
-        tools: loop.d.tools,
-        draining: () => loop.d.db.meta("draining") !== null,
-        proposal: { config, home, tools: loop.d.tools, github, who: "a contributor" },
-      },
-      // REPO-16, REPO-19: the settings PR and the move, as the loop's own database, tools and forge do them.
-      limits: {
-        propose: (repo, changes, confirmed) => proposeSettings(settingsEnv(), repo, changes, confirmed),
-        move: (repo) => reopenMove(settingsEnv(), repo),
-      },
-      // REPO-39: Apply runs the settings script as the owner, for the one repo named.
-      applySettings: async (name) => {
-        const repo = config.repos.get(name);
-        if (!repo) throw new Error(`${name} isn't a repo Towercab knows`);
-        await ownerLogin(github);
-        const r = await applySettings(
-          {
-            config,
-            home,
-            db: loop.d.db,
-            tools: loop.d.tools,
-            clock: loop.d.clock,
-            github,
-            log: loop.d.log,
-          },
-          repo,
-        );
-        return r.state === "ok"
-          ? `Applied. The standard settings are in place on ${repo.github}.`
-          : (r.note ??
-              `Applied, but ${r.gaps.length} setting${r.gaps.length === 1 ? "" : "s"} still differ.`);
-      },
-      // SHIP-35: a typed secret goes straight to `sops`; the value stays in this request.
-      supplySecret: (intent, n, value) =>
-        supplySecret(
-          {
-            db: loop.d.db,
-            tools: loop.d.tools,
-            github,
-            config,
-            home,
-            clock: loop.d.clock,
-            log: loop.d.log,
-          },
-          intent,
-          n,
-          value,
-        ),
-      // UI-130: answer once the checks pass; the clone runs on, and the page's live update shows the
-      // repo (or, on failure, a problem) when it ends.
-      addRepo: async (gh, name) => {
-        const p = await beginAddRepo(
-          {
-            db: loop.d.db,
-            config,
-            tools: loop.d.tools,
-            github,
-            home: home.root,
-            now: loop.now,
-            source: "ui",
-          },
-          gh,
-          name,
-        );
-        p.done.then(
-          (r) => loop.d.log(`added repo ${r.name} (${r.github})`),
-          (e: Error) => loop.d.log(`adding repo ${p.repo.name} failed: ${e.message}`),
-        );
-        return p.repo;
-      },
-    }),
+    actions,
     distDir: DIST,
     log: (l) => loop.d.log(`ui: ${l}`),
   });

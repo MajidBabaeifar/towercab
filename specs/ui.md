@@ -178,15 +178,8 @@ The overview shows what Towercab will start next and why the others wait.
 
 ### UI-62 · Intent page
 
-One page per intent shows its whole story: the three PRs, the current state, what happened when,
-and the intent itself.
+Removed → CHAT-1: an intent opens as a chat ([chat.md](chat.md)); this page's content (PRs, timeline, stage map, steps, files, settings) is its Details panel.
 
-- `/i/<id>`: title, repo, scores; the current state sentence; the three PRs (spec, plan, code) with
-  state (open, merged, closed, not needed) and links; the needs-you card when it waits (UI-58); a
-  timeline of moves in plain words with times and durations; cost and agent time per attempt; the
-  intent's sections and `## Answers`, rendered; links to run files (logs, prompts, results) of each
-  step. The stage map (UI-73..77) takes over the time per step and the run files.
-- Verified by: `ui: intent page shows the three PRs`, `ui: timeline in plain words`
 
 ### UI-63 · Queue per repo
 
@@ -1485,14 +1478,8 @@ Cmd-K (Ctrl-K elsewhere) opens one box that finds intents, repos and PRs and run
 
 ### UI-266 · The Inbox is the home page, and the Overview stays one tab away
 
-The Inbox replaces Focus as the page Towercab opens on; the Overview keeps its own address and every old link still works.
+Removed → FRAME-1: the sidebar frame ([frame.md](frame.md)) replaces the tab bar; `/` stays the Inbox, `/overview` the Overview, and old links (`/focus`, `/#needs-<id>`) still redirect as before.
 
-- This covers intent 261105-2152-14. `/` is the Inbox (UI-259). The tabs read Inbox, Overview, Board, Repos, Activity; Focus is gone. The Overview moves to `/overview`. `GET /api/focus` goes away. This replaces UI-192, UI-195 and UI-196; UI-193's pick order, UI-194's content and UI-197's actions and phone rules live on for the Inbox.
-- Old links keep working: `/focus` redirects to `/`, and an old Overview link with a fragment (`/#proposed-<PR number>`, `/#needs-<id>`) opens the Inbox on that item (or, if the item is no longer a wait, the Overview with the fragment). Repo, intent and Board links are unchanged. The tab bar marks the current page.
-- The tab title keeps the needs-you count, `(<n>) Towercab` plus the page's name after the first tab, with `n` equal to UI-244's `needs` on every page (snoozed items included); it is `Towercab` at 0.
-- The Overview keeps its headline, Problems, Working, Up next and airspace (UI-246's order, without the Needs you cards and Proposed); in their place one line `<n> need you · <p> proposed` links to the Inbox. The Board's "Needs you" chips and `<n> proposed` (UI-244, UI-187) link to the Inbox. The crowded Overview (UI-251) is no taller than 2,300 px at 1280 px wide (3,334 px with the cards); its rows are still tall, so a shorter page needs the rows themselves redesigned.
-- `ui/fixture.ts` carries at least 5 waits, 18 proposals and 36 queued; the Inbox and Overview screenshots (light, dark, mobile) use it.
-- Verified by: `ui: the root page is the inbox and the overview has its own address`, `ui: focus redirects to the inbox`, `ui: old overview fragments open the inbox item`, `ui: the tab title keeps the needs count`, `ui: the overview links to the inbox instead of listing cards`, `ui: the crowded overview is shorter than with its cards`, `ui: screenshots light, dark and mobile`
 
 ### UI-267 · Long lists fold under a header
 
@@ -1791,8 +1778,8 @@ The dashboard has a "New intent" button that opens a form shaped like the intent
 
 - Fields, in order: repo (a picker of Towercab's repos), title, urgency, importance, autonomy (segmented 1–5 and `a0`..`a5` as UI-203 and UI-257 build them, none chosen by default), then the text boxes Problem, Proposed outcome, Affected users and systems, Constraints, Open questions. Only repo and title are required (INT-2); a score left alone is not written (INT-71).
 - Next to the title the form shows the naming rule of INT-33 in plain words (`Write it as a user story: the product, then what someone can do or see, 4 to 20 words`) with its example; it does not change what is typed.
-- The button is in the top bar and in Cmd-K (UI-265); on a phone (480 px or narrower) it is a round "+" at the bottom right instead, so the top bar keeps UI-274's 100 px. With `[auth]` a maintainer of the repo writes straight to the intents repo and a contributor proposes (INT-71); this is the Create of UI-220. The repo picker lists Towercab's repos (the form takes the repos from the Repos page, so when sign-in limits repos per person the picker follows it); a viewer has no button. A contributor's form says `A maintainer will accept or close your intent.` under the buttons, and its autonomy choices stop at a4 (UI-206).
-- Verified by: `ui: the new intent form has the template's fields`, `ui: the form needs only a repo and a title`, `ui: the form shows the naming rule beside the title`, `ui: the new intent button is in the top bar and in search`, `ui: a contributor's form says a maintainer will review it`, `ui: a viewer has no new intent button`
+- The button is at the top of the sidebar (FRAME-3) and in Cmd-K (UI-265); on a phone it is in the sidebar drawer. With `[auth]` a maintainer of the repo writes straight to the intents repo and a contributor proposes (INT-71); this is the Create of UI-220. The repo picker lists Towercab's repos (the form takes the repos from the Repos page, so when sign-in limits repos per person the picker follows it); a viewer has no button. A contributor's form says `A maintainer will accept or close your intent.` under the buttons, and its autonomy choices stop at a4 (UI-206).
+- Verified by: `ui: the new intent form has the template's fields`, `ui: the form needs only a repo and a title`, `ui: the form shows the naming rule beside the title`, `ui: the new intent button is in the sidebar and in search`, `ui: a contributor's form says a maintainer will review it`, `ui: a viewer has no new intent button`
 
 ### UI-214 · Create runs the overlap check first
 
