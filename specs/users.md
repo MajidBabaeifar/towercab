@@ -150,7 +150,7 @@ All users share one set of repos, intents and one cost view; there are no separa
 ## Out of scope
 
 - More than one approval before a merge: one maintainer is enough for now; several is a later intent.
-- Several companies or customers on one Towercab, and intents in a database (a parked intent).
+- Several companies or customers on one Towercab, and intents in a database (not planned).
 - Passwords, SSO providers other than GitHub, API keys for scripts.
 - A person's own settings beyond linking Telegram.
 

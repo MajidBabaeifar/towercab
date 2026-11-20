@@ -105,7 +105,7 @@ Removed: not used in v1 (no drafts were ever made). Issues now arrive as intent 
 
 ### INT-8 · Other machine routes
 
-Removed: depended on maintain and review findings, both parked.
+Removed: depended on maintain, whose intent is closed, and on review findings (parked as intent 261026-2204-3).
 
 ### INT-9 · The /intent skill
 

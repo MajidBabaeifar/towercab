@@ -1,6 +1,6 @@
 # Maintain
 
-**Status:** Removed: parked as intent 261026-2204-2 · **Prefix:** MNT
+**Status:** Removed: its intent 261026-2204-2 is closed · **Prefix:** MNT
 
 ## Purpose
 
@@ -12,13 +12,13 @@ branch `rust`.
 
 ### MNT-1 to MNT-8 · Bands, detection, diagnosis, triage, lessons
 
-Removed: parked as intent 261026-2204-2.
+Removed: not built; its intent 261026-2204-2 is closed and the observer replaces it (OBV-1).
 
 ## Out of scope
 
-Everything; see the parked intent.
+Everything; see the closed intent.
 
 ## Decisions
 
-- Parked rather than ported: it needs weeks of metrics to mean anything, and v2 drops the Grafana
+- Not ported: it needs weeks of metrics to mean anything, and v2 drops the Grafana
   export it read from.

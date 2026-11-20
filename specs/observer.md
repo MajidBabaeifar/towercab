@@ -6,7 +6,7 @@
 
 The observer is a read-only agent that watches how Towercab runs and proposes improvements as
 intents: a check that keeps failing, a stage that is always slow, costly runs, waits the owner always
-answers the same way, cards the owner finds unclear. It replaces the parked self-monitoring of
+answers the same way, cards the owner finds unclear. It replaces the closed self-monitoring of
 [maintain.md](maintain.md). It serves the owner, who otherwise notices these patterns only by chance.
 
 ## Requirements
@@ -177,7 +177,7 @@ Each observer run is kept with when it ran, why, what it cost and what came of i
 
 ## Decisions
 
-- It replaces the parked self-monitoring (intent 261026-2204-2): fixed bands need weeks of data and
+- It replaces the closed self-monitoring (intent 261026-2204-2): fixed bands need weeks of data and
   never fired, while an agent reading the evidence can say why something is slow and what to change.
 - It is on by default, because an observer the owner must remember to start would not notice what the
   owner does not notice; its small cap and the proposal step bound what it can cost or do.

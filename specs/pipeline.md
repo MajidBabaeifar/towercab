@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..194, PIP-196..214, PIP-216..226, PIP-228..233 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..194, PIP-196..215, PIP-216..226, PIP-228..233 · **Prefix:** PIP
 
 ## Purpose
 
@@ -110,7 +110,7 @@ After the review, code decides whether Towercab merges the code PR or the owner 
 
 ### PIP-8 · Deploy
 
-Removed: the ship stage is parked (intent 261026-2204-4).
+Removed: replaced by SHIP-7 (the ship stage waits for the deploy).
 
 ### PIP-9 · e2e
 
@@ -174,11 +174,11 @@ A stale check never counts, and a first red or cancelled Actions run is rerun on
 
 ### PIP-19 · Revert mission
 
-Removed: parked with the ship stage.
+Removed: replaced by SHIP-12.
 
 ### PIP-20 · e2e triage
 
-Removed: parked with the ship stage.
+Removed: replaced by SHIP-11 (a red e2e suite starts a fix round).
 
 ### PIP-21 · Reading the intent's PRs
 
@@ -355,11 +355,11 @@ Removed: parked as intent 261026-2204-5.
 
 ### PIP-34 · Release gate
 
-Removed: parked with the ship stage (intent 261026-2204-4).
+Removed: not built in v2; releases are made by release-please and merged by Towercab (SHIP-30).
 
 ### PIP-35 · Rollback rehearsal
 
-Removed: parked with the ship stage.
+Removed: not built in v2; a rollback is checked by the smoke suites that run after it (SHIP-10).
 
 ### PIP-36 · Findings feed CLAUDE.md
 
@@ -455,7 +455,7 @@ Two short commands cover what a GitHub action can't express.
   - a `live` block, after the merge: what it is waiting for now (the owner's steps, the deploy, the
     e2e suites, a rollback or a revert), in one sentence each;
   - a `live` block, finished (`done`): it is live and passed its tests.
-  The text never says the ship stage is parked or switched off.
+  The text never says the ship stage is off, unavailable or switched off.
 - Verified by: `events: retry command`, `events: release without a live block says merging is the last step`, `events: release with a live block says what the ship stage does`, `events: release of a multi-repo intent has a line per repo`, `events: release after the merge says what it waits for`
 
 ### PIP-46 · plan.md

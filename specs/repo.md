@@ -39,7 +39,7 @@ never from a PR or a working tree.
 
 ### REPO-3 · Live, release and rollback blocks
 
-Removed: the ship stage is parked (intent 261026-2204-4).
+Removed: replaced by SHIP-1 (the live block).
 
 ### REPO-4 · REVIEW.md
 
@@ -745,7 +745,7 @@ When a repo starts to have checks of its own and an overlay's checks exist, the 
 
 ## Out of scope
 
-- Live, release and rollback blocks; rulesets (parked).
+- Rulesets (parked, intent 261026-2204-5). The live block is SHIP-1.
 
 ## Decisions
 
