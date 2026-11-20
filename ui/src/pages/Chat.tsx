@@ -26,9 +26,9 @@ function detailsDefault(): boolean {
     const kept = localStorage.getItem(DETAILS_KEY);
     if (kept !== null) return kept === "1";
   } catch {
-    // No storage: fall back to the screen width.
+    // No storage: start folded.
   }
-  return matchMedia("(min-width: 1100px)").matches;
+  return false;
 }
 
 const fmt = (at: number) =>
@@ -228,7 +228,7 @@ export function ChatView({
   onTitle(t: string): void;
 }) {
   const live = useLive<Data>(`/api/intents/${encodeURIComponent(id)}`);
-  // CHAT-1: Details starts open on a wide screen, folded on a phone; the owner's choice is remembered.
+  // CHAT-1: Details starts folded; the owner's choice is remembered in this browser.
   const [details, setDetailsState] = useState(detailsDefault);
   const setDetails = (v: boolean) => {
     setDetailsState(v);

@@ -5594,10 +5594,14 @@ kbd {
     width: min(320px, 86vw);
     z-index: 40;
     transform: translateX(-100%);
-    transition: transform 0.2s ease;
+    visibility: hidden;
+    transition:
+      transform 0.2s ease,
+      visibility 0.2s;
   }
   .drawer-open .sidebar {
     transform: none;
+    visibility: visible;
     box-shadow: var(--shadow-pop);
   }
   .side-close,
@@ -5633,7 +5637,7 @@ kbd {
     transition: none;
   }
 }
-/* FRAME-3: New intent lives in the sidebar; the floating button would cover the chat composer on a phone. */
-.new-intent-fab {
+/* CHAT-9: on a chat the floating New intent button would cover the composer; the sidebar has one. */
+body:has(.chat-page) .new-intent-fab {
   display: none;
 }

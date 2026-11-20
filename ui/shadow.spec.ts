@@ -3,6 +3,7 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
+import { openDetails } from "./details.ts";
 import { IDS, seedShadow, serveFixture } from "./fixture.ts";
 
 const SHOTS = resolve(process.env.TOWERCAB_SHOTS ?? join(import.meta.dirname, "screenshots"));
@@ -23,6 +24,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => stop());
 
 async function settle(page: Page) {
+  if (/\/i\//.test(page.url())) await openDetails(page);
   await page.waitForSelector(".page");
   await page.waitForLoadState("networkidle");
 }
