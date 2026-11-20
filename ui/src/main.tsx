@@ -8,6 +8,7 @@ import type {
   ReposPage as ReposData,
   TopBar as Top,
 } from "../../src/ui/view.ts";
+import { AccountMenu } from "./AccountMenu.tsx";
 import { act, useLive } from "./api.ts";
 import { ErrorNote, Freshness, Skeleton } from "./components.tsx";
 import { Frame } from "./Frame.tsx";
@@ -20,8 +21,11 @@ import { ChatView } from "./pages/Chat.tsx";
 import { InboxPage } from "./pages/Inbox.tsx";
 import { OverviewPage } from "./pages/Overview.tsx";
 import { ReposPage } from "./pages/Repos.tsx";
+import { UsersPage } from "./pages/Users.tsx";
 import { Link, usePath } from "./router.tsx";
 import { Shortcuts } from "./Shortcuts.tsx";
+import { SignIn } from "./SignIn.tsx";
+import { canCreateAnywhere, useSession } from "./session.ts";
 
 function HealthPill({ top }: { top: Top }) {
   const cls = { Running: "ok", Paused: "paused", Problem: "bad", "Not running": "off" }[top.health];
@@ -84,8 +88,9 @@ function PauseButton({ top }: { top: Top }) {
   );
 }
 
-/** FRAME-5: the bar over the main pane: health, counts, spend and pause (the tabs are gone). */
+/** FRAME-5: the bar over the main pane: health, counts, spend, pause and the account (the tabs are gone). */
 function TopBar({ top }: { top: Top | null }) {
+  const { me } = useSession();
   return (
     <div class="topbar">
       <div class="topbar-inner">
@@ -133,7 +138,15 @@ function TopBar({ top }: { top: Top | null }) {
             )}
           </p>
         ) : null}
-        {top ? <PauseButton top={top} /> : null}
+        {top && (!me?.auth || me.role === "admin" || me.role === "maintainer") ? (
+          <PauseButton top={top} />
+        ) : null}
+        {me?.auth && me.role === "admin" ? (
+          <Link href="/users" class="btn ghost admin-link">
+            People
+          </Link>
+        ) : null}
+        {me?.auth ? <AccountMenu me={me} /> : null}
       </div>
     </div>
   );
@@ -153,6 +166,17 @@ function BoardRoute() {
 }
 
 function App() {
+  const session = useSession();
+  const [expired, setExpired] = useState(false);
+  useEffect(() => {
+    if (session.state === "out") setExpired(location.pathname !== "/signin");
+  }, [session.state]);
+  if (session.state === "loading") return <Skeleton />;
+  if (session.state === "out" || location.pathname === "/signin") return <SignIn expired={expired} />;
+  return <Pages />;
+}
+
+function Pages() {
   const path = usePath();
   const [pathname, search = ""] = path.split("?");
   const state = useLive<Overview>("/api/state");
@@ -191,7 +215,8 @@ function App() {
         onTitle={setIntentTitle}
       />
     );
-  } else if (pathname === "/board") page = <BoardRoute />;
+  } else if (pathname === "/users") page = <UsersPage />;
+  else if (pathname === "/board") page = <BoardRoute />;
   else if (pathname === "/repos" || pathname === "/queue")
     page = <ReposRoute search={search} readOnly={top?.readOnly ?? true} />;
   else if (pathname === "/activity") page = <ActivityPage search={search} />;

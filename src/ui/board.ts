@@ -4,7 +4,7 @@
 
 import { frozenBy } from "../freeze.ts";
 import type { Intent } from "../intents/types.ts";
-import { fileErrorOf } from "./limits.ts";
+import { fileErrorOf, overlayNoticeOf } from "./limits.ts";
 import { proposedSection } from "./proposed.ts";
 import { readinessBadge, sharedGaps } from "./readiness.ts";
 import { lastSevenDays, repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
@@ -147,6 +147,7 @@ export async function board(src: UiSources): Promise<BoardPage> {
     const readiness = readinessBadge(src.db, repo, shared);
     const at = changed.get(repo);
     const fileError = fileErrorOf(src, repo);
+    const overlayNotice = overlayNoticeOf(src, repo);
     const by = frozenBy(src.db, repo);
     const holder = by === null ? undefined : s.missions.find((x) => x.id === by);
     const frozen = holder
@@ -156,6 +157,7 @@ export async function board(src: UiSources): Promise<BoardPage> {
       ...(frozen ? { frozen } : {}),
       ...(readiness ? { readiness } : {}),
       ...(fileError ? { fileError } : {}),
+      ...(overlayNotice ? { overlayNotice } : {}),
       repo,
       github: src.config.repos.get(repo)?.github ?? "",
       waiting: need.byRepo.get(repo)?.missions ?? 0,

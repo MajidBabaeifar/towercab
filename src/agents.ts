@@ -18,6 +18,7 @@ export const AGENT_NAMES = [
   "risk",
   "merge-review",
   "score",
+  "kind",
   "features",
   "shadow",
   "observer",

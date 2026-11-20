@@ -25,7 +25,7 @@ import { FastControl } from "../FastControl.tsx";
 import { ChevronLeft, External, PullRequest } from "../icons.tsx";
 import { Markdown } from "../md.tsx";
 import { Link } from "../router.tsx";
-import { ControlNotes, ScoreControl } from "../ScoreControls.tsx";
+import { ControlNotes, KindControl, ScoreControl } from "../ScoreControls.tsx";
 import { StageMap } from "../StageMap.tsx";
 
 const PR_WORDS: Record<PrView["state"], string> = {
@@ -147,6 +147,7 @@ export function IntentPage({
               <span class="tl-dot" aria-hidden="true" />
               <div class="tl-body">
                 <p class={`tl-text${t.shadow || t.observer ? " tl-shadow" : ""}`}>{t.text}</p>
+                {t.by ? <p class="tl-by meta">{t.by}</p> : null}
                 {t.why ? <p class="tl-why">{t.why}</p> : null}
               </div>
               <span class="tl-lasted meta">
@@ -205,6 +206,7 @@ export function IntentPage({
       {data.autonomy ? <AutonomyControl intent={data.id} view={data.autonomy} readOnly={readOnly} /> : null}
       {data.fast ? <FastControl intent={data.id} view={data.fast} readOnly={readOnly} /> : null}
       {data.controls ? <ScoreControl intent={data.id} view={data.controls} readOnly={readOnly} /> : null}
+      {data.controls ? <KindControl intent={data.id} view={data.controls} readOnly={readOnly} /> : null}
       {data.controls ? <ControlNotes view={data.controls} /> : null}
       {!readOnly && (data.onlyYou || data.paused) ? (
         <PauseButton intent={data.id} paused={data.paused === true} />

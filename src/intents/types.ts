@@ -20,6 +20,8 @@ export interface Intent {
   model: string | null;
   review: string | null;
   source: string | null;
+  /** INT-76: `feature`, `bugfix`, `refactor`, `infra` or `spec-only`; absent = not set. */
+  kind?: string | null;
   /** The GitHub issue this intent came from (INT-23). */
   issue: string | null;
   /** `setup: true` (LOOP-71): the intent that sets a repo up; allowed in a blocking repo. */
@@ -122,6 +124,11 @@ export interface IntentStore {
    * A store that can't tell leaves it out; every raise is then judged as from an unknown account.
    */
   lastAChange?(idOrSuffix: string): Promise<string | null>;
+  /**
+   * AUT-23: the sha of the commit that added the intent's file, or null. A store that can't tell leaves it
+   * out; the intent then has no writer.
+   */
+  addedCommit?(idOrSuffix: string): Promise<string | null>;
   /** FAST-9: the same for the `fast:` line, so a mark pushed to the intents repo can be judged like a raise. */
   lastFastChange?(idOrSuffix: string): Promise<string | null>;
   /** Read a file in the intents repo's `main` (e.g. a plan.md), or null. */

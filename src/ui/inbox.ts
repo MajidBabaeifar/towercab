@@ -6,6 +6,7 @@ import type { Db } from "../db.ts";
 import { capCards } from "./budget-view.ts";
 import { proposedSection } from "./proposed.ts";
 import {
+  confirmCard,
   dbMark,
   historyOf,
   needCounts,
@@ -130,6 +131,35 @@ export async function inbox(src: UiSources): Promise<InboxPage> {
         prUrl: null,
         merge: false,
         ...stamp(key, null),
+      },
+    });
+  }
+  // AUT-23: an intent a viewer or an unknown account wrote waits here until a maintainer confirms it.
+  for (const id of src.unconfirmed?.() ?? []) {
+    const i = s.intents.get(id);
+    if (!i || i.done) continue;
+    const card = confirmCard(src, i);
+    found.push({
+      key: id,
+      rank: 0,
+      priority: 0,
+      since: Number.POSITIVE_INFINITY,
+      item: {
+        key: id,
+        kind: "card",
+        repo: i.repo,
+        title: i.title,
+        kindLabel: "Confirm",
+        since: null,
+        overview: overviewOf(i),
+        history: [],
+        card,
+        proposed: null,
+        cap: null,
+        pr: null,
+        prUrl: null,
+        merge: false,
+        ...stamp(id, null),
       },
     });
   }

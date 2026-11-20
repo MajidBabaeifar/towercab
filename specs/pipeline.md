@@ -1,6 +1,6 @@
 # Pipeline
 
-**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..194, PIP-196..207, PIP-210..214, PIP-216..226 · **Prefix:** PIP
+**Status:** Live: PIP-1..54, PIP-70..83, PIP-85..100, PIP-106..121, PIP-130..172, PIP-182..186, PIP-192..194, PIP-196..214, PIP-216..226, PIP-228..233 · **Prefix:** PIP
 
 ## Purpose
 
@@ -1861,6 +1861,52 @@ The intent page lists the owner-account comments that agents wrote, so the owner
 - `GET /api/intents/<id>` includes the comments as `agent_comments: [{agent, url, at, excerpt, acted_on}]` in time order, an empty list when there are none; the card's data (and the page's) has `decided_by_agent: <name>` when an agent answered for the owner, and no such key otherwise.
 - Verified by: `ui: the intent page lists agent comments written under the owner's login`, `ui: the intent api returns agent comments`, `ui: a card shows agent for owner after an agent's answer`
 
+### PIP-187 · Checks and review have three levels of intensity
+
+The checks and the review of a change each run at one of three levels: light, standard or thorough.
+
+- One level per mission, `missions.data.intensity` = `{level, why, by}` (`by` = `owner` or `towercab`), used by verify (PIP-23) and review (PIP-4). Standard is what Towercab did before this requirement, so a mission with no level behaves as it always has.
+- The level applies to a mission's code PR only. Spec and plan stages, the risk agent (PIP-96) and the gates do not change with it.
+- Verified by: `intensity: no level means standard`, `intensity: the level is kept on the mission`
+
+### PIP-188 · What each level of checks runs
+
+Light checks run the quick set, standard checks run what the repo's rules say, and thorough checks run everything the repo offers.
+
+- Light: the ` ```fast ` lines of [REPO-9](repo.md) even when the repo has no CI; a repo without a `fast` block runs `checks`. The proof stage (the changed tests run against base) and screenshots are skipped.
+- Standard: the run set of REPO-9 unchanged.
+- Thorough: the full ` ```checks ` lines even when the repo has CI, then the repo's ` ```screenshots ` block when it has one. Repair rounds (`repairs`, 2) are the same at every level.
+- CI (PIP-3) is not affected: it always runs what the repo's workflows say.
+- Verified by: `intensity: light checks run the fast lines without CI`, `intensity: thorough checks run the full checks with CI`, `intensity: standard checks keep the run set`
+
+### PIP-189 · What each level of review does
+
+Light review reads once with the default passes, standard review is today's review, and thorough review reads twice.
+
+- Light: the default passes only (`Bugs`, `Security`, `Compliance`; [REPO-4](repo.md)), the `REVIEW.md` red lines still checked, nits dropped, and the model one step lower than standard: the worker's model, unless the intent's `review` names one.
+- Standard: PIP-4 unchanged.
+- Thorough: the standard review, then a second review run in a new session, with the first one's findings withheld. Findings of both are merged (the same file, line and pass counted once) and the verdict (PIP-5) is computed from the merge. It posts one Review comment (PIP-42). Both runs' cost counts (MET-28).
+- An intent's `review` model (PIP-4) still wins at every level.
+- Verified by: `intensity: light review uses the default passes and no nits`, `intensity: thorough review runs twice and merges the findings`, `intensity: an intent's review model wins at every level`
+
+### PIP-190 · Towercab picks the level from the kind and the risk
+
+Without an owner's setting, Towercab picks the level from what kind of change it is and how risky the plan judged it.
+
+- Kind, from the plan's list of files: `docs` when every path is Markdown or under `specs/` or `docs/`, else `code`.
+- Start from the plan gate's risk level (AUT-16): low → light, medium → standard, high → thorough. A `docs` kind lowers it by one step, to light at the lowest. A plan with no assessment (AUT-19) is standard.
+- Chosen when the mission enters build, with `why` as a plain sentence (`Light: a small, safe documentation change.`). If the code gate's risk (PIP-96) comes out high after a lighter review, the PR gets one more review at thorough before the gate decides; a thorough review is never repeated for this.
+- Verified by: `intensity: the level follows kind and plan risk`, `intensity: a plan with no risk is standard`, `intensity: high code risk after a light review reruns the review thorough`
+
+### PIP-191 · The owner's level wins
+
+The owner's `intensity` replaces Towercab's choice for that intent.
+
+- An intent with `intensity` (INT-70) gets `by: owner` and that level, at any risk. The extra thorough review after a high code risk (PIP-190) does not apply: the owner's level stays.
+- Changing `intensity` on a running intent takes effect at its next verify or review run; a result already kept is not redone.
+- The Review comment and the PR body say the level and who chose it (`Review: thorough, set by you` / `Review: light, chosen from the kind and risk of the change`).
+- Verified by: `intensity: the owner's level replaces the pick`, `intensity: a changed level applies to the next run`, `github: the review comment names the level and who chose it`
+
 ### PIP-192 · A secret finding fixed in a later commit is ignored by fingerprint
 
 When a secrets check fails only on commits older than the pull request's head, in test or fixture files, and the head no longer has the flagged text, the repair round is told to add exactly those findings to `.gitleaksignore`.
@@ -2264,7 +2310,7 @@ A bugfix, a refactor, an infrastructure change and a spec-only change each skip 
   | `infra` | plan, build, verify, apply (PIP-229), publish, ci, review, gate, merge, ship | design, the spec PR and the proof |
   | `spec-only` | design, the spec PR (PIP-230) | plan, build, the code PR and ship |
 
-- The skip is one move in the machine's table, recorded as an event with the kind (`kind_routed`), made by `apply` in one `Db.tx` (LOOP-3): `pick` goes to `plan` for `bugfix`, `refactor` and `infra`, to `design` for the others. The phase (`stage`, INT-5) shows `plan` and `code` as usual; the page shows which stages were skipped and why (UI-283).
+- The skip is one move in the machine's table, recorded as an event with the kind (`kind_routed`), made by `apply` in one `Db.tx` (LOOP-3): `pick` goes to `plan` for `bugfix`, `refactor` and `infra` when the intent sets the kind, and to `design` otherwise; the first step of `design` moves a guessed lighter kind (INT-77) on to `plan`. The phase (`stage`, INT-5) shows `plan` and `code` as usual; the page shows which stages were skipped and why (UI-283).
 - A kind never skips CI, the review or the merge gate: only the stages named above are skipped, and the intent's own checks stay (AUT-6).
 - With no design step there is no `spec_ids` list: the plan's `Covers:` line (PIP-46) is empty and the review's bullets come from the intent's own outcomes (PIP-5).
 - Verified by: `pipeline: a bugfix goes from pick to plan with no spec PR`, `pipeline: a refactor and an infra change skip the spec PR`, `pipeline: a feature keeps the full path`, `pipeline: a kind never skips ci review or the merge gate`, `machine: kind_routed moves pick by kind`
@@ -2424,6 +2470,7 @@ A build run that ends with no result is run again once, and it never counts as a
 | [score](../agents/score.md) | Turns a GitHub issue into a scored intent ([INT-22](intents.md)); runs outside any mission in an empty folder. | Nothing: no tools. | none | `[agent].model` |
 | [shadow](../agents/shadow.md) | The owner's shadow in Telegram ([SHD-1](shadow.md)); one long-lived session, outside any mission, in an empty folder. | Nothing: no tools; Towercab runs its reads and actions. | resume | `[shadow].model`, else `[agent].model` |
 | [observer](../agents/observer.md) | Reads 14 days of how Towercab ran and proposes improvements ([OBV-1](observer.md)); runs outside any mission, in an empty folder. | Nothing: no tools, no network; Towercab builds its evidence and opens the proposals. | none | `[observer].model`, else `[agent].model` |
+| [kind](../agents/kind.md) | Picks an intent's kind when the owner has not set one ([INT-77](intents.md)); runs once, at the first step of the design stage, in the mission. | Nothing: no tools. | none | `[agent].model` |
 | [overlap](../agents/overlap.md) | Compares a new intent with the existing ones and says which overlap ([INT-73](intents.md)); runs outside any mission, in an empty folder. | Nothing: no tools, no network; Towercab builds what it reads. | none | `[agent].model` |
 | [features](../agents/features.md) | Writes a repo's live features from its README and specs ([INT-39](intents.md)); runs outside any mission in a fresh checkout of base. | Read, Glob, Grep in the sandbox; no network. | none | `[agent].model` |
 

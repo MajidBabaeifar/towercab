@@ -5,8 +5,10 @@ import { capReason, capsOf } from "../budgets.ts";
 import { pausedNow, runningSteps } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
+import { looseSecretFiles } from "../doctor.ts";
 import { fixFor } from "../faults.ts";
 import { changeUrl } from "../forge/types.ts";
+import { fetchHttp } from "../github/app.ts";
 import { ownerLogin } from "../github/owner.ts";
 import { type Host, systemClock } from "../handlers.ts";
 import type { Home } from "../home.ts";
@@ -20,7 +22,10 @@ import { checkoutRoot } from "../service.ts";
 import { applySettings } from "../settings/apply.ts";
 import { supplySecret } from "../ship/secret-steps.ts";
 import { version as gitVersion, UNKNOWN_VERSION, type VersionInfo } from "../update.ts";
+import { seedOwner } from "../users-store.ts";
 import { createActions } from "./actions.ts";
+import { Auth } from "./auth.ts";
+import type { UiAuth } from "./server.ts";
 import { startUi, type UiServer } from "./server.ts";
 import { budgetReached, type Problem, type Skip, type UiSources, type UpNext } from "./state.ts";
 
@@ -93,7 +98,16 @@ export function problemsOf(loop: Loop): Problem[] {
     });
   }
   out.push(...addProblems(loop.d.db));
+  out.push(...secretsProblems(loop.d.config));
   return out;
+}
+
+/** UI-277: one row per secrets file that others can read, with the command that fixes it. */
+export function secretsProblems(config: Config): Problem[] {
+  return looseSecretFiles(config).map((f) => ({
+    title: `${f} is readable by others`,
+    fix: `Run chmod 600 ${f}`,
+  }));
 }
 
 /** UI-130: a repo added from the page whose clone failed, until it is added again. */
@@ -146,6 +160,50 @@ export function sourcesOf(loop: Loop, home: Home): UiSources {
     prUrl: (repo, n) => changeUrl(repo, n),
     intentUrl: (i) => loop.d.store.url(i),
     proposed: () => loop.proposedState(),
+    unconfirmed: () => [...(loop.pickState().unconfirmed ?? [])],
+  };
+}
+
+/**
+ * USR-3, USR-6: sign-in for the page when `[auth]` is set, else none. The owner is the first admin, so an
+ * admin can always get in. The client secret comes from the environment, never from the file.
+ */
+export function authOf(db: Db, config: Config, now: () => number): UiAuth | undefined {
+  const a = config.auth;
+  if (!a) return undefined;
+  seedOwner(db, config.github?.me ?? "", now());
+  const limits = { idleSecs: a.sessionHours * 3600, maxSecs: a.sessionDays * 86_400 };
+  const apiBase = config.github?.apiBase;
+  const app = {
+    clientId: a.clientId,
+    clientSecret: process.env[a.clientSecretEnv] ?? "",
+    redirectUri: `${a.publicUrl}/api/auth/callback`,
+    ...(apiBase && apiBase !== "https://api.github.com"
+      ? { apiBase, webBase: apiBase.replace(/\/api\/v3$/, "") }
+      : {}),
+  };
+  return {
+    config: a,
+    limits,
+    auth: new Auth({ db, app, http: fetchHttp, limits }),
+    users: {
+      db,
+      config,
+      now,
+      limits,
+      lookup: async (login) => {
+        const r = await fetchHttp({
+          method: "GET",
+          url: `${apiBase ?? "https://api.github.com"}/users/${encodeURIComponent(login)}`,
+          headers: { accept: "application/vnd.github+json" },
+          timeoutMs: 10_000,
+        });
+        if (r.status === 404) return null;
+        if (r.status !== 200) throw new Error(`GitHub answered ${r.status} when looking up ${login}`);
+        const b = JSON.parse(r.text) as { login?: string; name?: string | null };
+        return b.login ? { login: b.login, name: b.name ?? "" } : null;
+      },
+    },
   };
 }
 
@@ -245,6 +303,7 @@ export function startLoopUi(loop: Loop, config: Config, github: Host, home: Home
   chats.unref?.();
   return startUi({
     port: config.ui.port,
+    auth: authOf(loop.d.db, config, () => loop.d.clock.now()),
     sources: sourcesOf(loop, home),
     actions,
     distDir: DIST,
