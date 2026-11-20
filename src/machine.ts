@@ -1,6 +1,7 @@
 // The one state machine (LOOP-3, **Transitions**, **Waits**). Only `apply` moves a mission.
 // A red line (REVIEW.md): a wrong move here merges, stops or loses work silently.
 
+import { actorColumns } from "./actor.ts";
 import type { Db, SqlValue } from "./db.ts";
 import { isKind, needsDesign } from "./kind.ts";
 import { COLUMNS, dataOf, getMission, insertMission, type Mission } from "./mission.ts";
@@ -750,13 +751,14 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
       }
       write(cols);
       db.run(
-        "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why, actor, via) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         cur.id,
         now,
         cur.stage,
         o.event,
         to,
         why,
+        ...actorColumns(),
       );
       cx.log?.(`${cur.intent} ${cur.stage} → ${to} (${o.event}${why ? `: ${oneLine(why, 120)}` : ""})`);
     };
@@ -817,13 +819,14 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
         write({ ...set, step: cur.step === "enter" ? "enter" : cur.step, busy: 0 });
         if (o.record) {
           db.run(
-            "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why, actor, via) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             cur.id,
             now,
             cur.stage,
             o.event,
             cur.stage,
             o.why ?? null,
+            ...actorColumns(),
           );
         }
         break;

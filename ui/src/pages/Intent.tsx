@@ -136,6 +136,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
               <span class="tl-dot" aria-hidden="true" />
               <div class="tl-body">
                 <p class={`tl-text${t.shadow || t.observer ? " tl-shadow" : ""}`}>{t.text}</p>
+                {t.by ? <p class="tl-by meta">{t.by}</p> : null}
                 {t.why ? <p class="tl-why">{t.why}</p> : null}
               </div>
               <span class="tl-lasted meta">

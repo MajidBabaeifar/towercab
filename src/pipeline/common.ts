@@ -26,6 +26,7 @@ import {
 import type { ReplyTarget } from "../github/events.ts";
 import { PausedHold } from "../github/paused.ts";
 import { type ChildEnd, type Ctx, EnvError, type GitHub, type Progress } from "../handlers.ts";
+import { authorityOf } from "../intent-people.ts";
 import { plainLine, SUBJECT_MAX } from "../intents/naming.ts";
 import type { Intent } from "../intents/types.ts";
 import type { REFACTOR_PROOF } from "../kind.ts";
@@ -405,8 +406,13 @@ export function repoFilesWait(e: unknown): Outcome | null {
   return null;
 }
 
-export function effectiveOf(_m: Mission, intent: Intent, files: RepoFiles): number {
-  return effectiveA(intent.a, files.towercab.maxAutonomy, intent.source);
+/** AUT-23: with `[auth]`, the role of the intent's writer or confirmer at this moment, else undefined. */
+export function authorityFor(cx: Ctx | undefined, m: Mission, intent: Intent): number | undefined {
+  return cx?.config?.auth ? authorityOf(cx.db, intent.id, m.repo) : undefined;
+}
+
+export function effectiveOf(m: Mission, intent: Intent, files: RepoFiles, cx?: Ctx): number {
+  return effectiveA(intent.a, files.towercab.maxAutonomy, intent.source, authorityFor(cx, m, intent));
 }
 
 /**
@@ -415,10 +421,11 @@ export function effectiveOf(_m: Mission, intent: Intent, files: RepoFiles): numb
  */
 export function gateLevelOf(cx: Ctx, m: Mission, intent: Intent, files: RepoFiles): number {
   return gateLevel(
-    effectiveOf(m, intent, files),
+    effectiveOf(m, intent, files, cx),
     intent.fast === true && fastConfirmed(cx.db, intent.id),
     files.towercab.maxAutonomy,
     intent.source,
+    authorityFor(cx, m, intent),
   );
 }
 
@@ -426,7 +433,7 @@ export function gateLevelOf(cx: Ctx, m: Mission, intent: Intent, files: RepoFile
 export function grants(m: Mission, intent: Intent, files: RepoFiles, _cx?: Ctx) {
   const d = data(m);
   return grantsFor({
-    a: effectiveOf(m, intent, files),
+    a: effectiveOf(m, intent, files, _cx),
     source: intent.source,
     plan: d.granted ?? null,
     unlock: intent.unlock,

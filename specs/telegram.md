@@ -18,8 +18,8 @@ Towercab acts on messages and button presses from the owner's chat and ignores e
 - An update counts only when its chat id equals `telegram.chat_id`, for text, replies, commands and button
   presses alike. Any other update is dropped with no reply and no change, and logged once per update with the
   chat id and update type, never the text or the token.
-- Today there is one accepted chat. Accepting each signed-in person's own chat, by role, is a later intent;
-  the check sits in one place so it can grow into a lookup of chat → person.
+- With `[auth]` unset there is one accepted chat. With it set, a chat linked to a person ([USR-11](users.md)) is
+  accepted too, by what that person's role allows ([USR-12](users.md)); the check is one lookup of chat → person.
 - Verified by: `telegram: updates from another chat are ignored and logged`, `telegram: a button press from another chat does nothing`
 
 ### TG-2 · Same actions as the page, no new powers

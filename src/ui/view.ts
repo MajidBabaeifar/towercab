@@ -78,7 +78,7 @@ export interface TopBar {
   banner: string | null;
 }
 
-export type ActionKey = "merge" | "pass" | "reply" | "retry" | "drop";
+export type ActionKey = "merge" | "pass" | "reply" | "retry" | "drop" | "confirm";
 export type CardKind = "spec" | "plan" | "code" | "question" | "blocked" | "release" | "autonomy";
 
 /** FAST-1, FAST-9: whether the intent is in the fast lane and whether the owner confirmed it. */
@@ -274,6 +274,12 @@ export interface Card {
   shadow?: boolean;
   /** UI-243: the intent was proposed by the observer (`source: observer`). */
   observer?: boolean;
+  /** UI-221: the last move a person made on it ("Merged by Ana · GitHub"). */
+  lastBy?: string;
+  /** UI-221: the people who may decide it, by name. */
+  alsoCanDecide?: string[];
+  /** UI-221: who already handled the wait, while Towercab moves on. */
+  handledBy?: string;
   /** UI-239: the intent is a0: only the owner can answer or approve it, shown as "only you". */
   onlyYou?: boolean;
   /** UI-257: the autonomy control. */
@@ -530,6 +536,8 @@ export interface TimelineItem {
   shadow?: boolean;
   /** UI-243: the observer did this. */
   observer?: boolean;
+  /** UI-221: who did it and how ("Ana · page"), "Towercab" for its own step; none before people were recorded. */
+  by?: string;
 }
 
 /** UI-242: `GET /api/observer`. */

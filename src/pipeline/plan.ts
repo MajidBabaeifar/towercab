@@ -323,7 +323,7 @@ async function push(cx: Ctx, m: Mission): Promise<Progress> {
   const intent = await intentOf(cx, m);
   const files = await repoFiles(cx, m);
   const d = data(m);
-  const a = effectiveOf(m, intent, files);
+  const a = effectiveOf(m, intent, files, cx);
   const branch = planBranch(intent);
   const { dir } = await intentsClone(cx);
   const before = await git(cx.tools, dir, [
