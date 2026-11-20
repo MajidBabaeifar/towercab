@@ -39,6 +39,7 @@ test("config: loads defaults", () => {
     cutoff: 7,
     issueA: 3,
     ownerWaits: 4,
+    intake: "auto",
   });
   expect(c.agent).toEqual({
     model: "opus",
@@ -105,6 +106,7 @@ test("config: loads defaults", () => {
     cutoff: 9,
     issueA: 3,
     ownerWaits: 4,
+    intake: "auto",
   });
   expect(t.agent.toolchain).toEqual([join(homedir(), "bin"), "/opt/x"]);
   expect(parseConfig({ tasks: { remote: "old" }, intents: { remote: "new" } }, "f").intents.remote).toBe(

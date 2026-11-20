@@ -74,7 +74,15 @@ export interface AuthConfig {
 
 export interface Config {
   file: string;
-  intents: { remote: string; path: string | null; cutoff: number; issueA: number; ownerWaits: number };
+  intents: {
+    remote: string;
+    path: string | null;
+    cutoff: number;
+    issueA: number;
+    ownerWaits: number;
+    /** LOOP-167: `manual` starts only the intents the owner sends in. */
+    intake: "auto" | "manual";
+  };
   agent: {
     model: string;
     reviewModel: string | null;
@@ -231,6 +239,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       cutoff: r.int(intents, "intents", "cutoff", 7, 1, 15),
       issueA: r.int(intents, "intents", "issue_a", 3, 1, 5),
       ownerWaits: r.int(intents, "intents", "owner_waits", 4, 1, 16),
+      intake: intakeOf(r.str(intents, "intents", "intake", "auto")),
     },
     agent: {
       model: r.word(agent, "agent", "model", "opus"),
@@ -695,4 +704,10 @@ class Reader {
     }
     return out;
   }
+}
+
+/** LOOP-167: `[intents].intake`. */
+function intakeOf(v: string): "auto" | "manual" {
+  if (v === "auto" || v === "manual") return v;
+  throw new ConfigError(`config: intents.intake must be auto or manual, got ${v}`);
 }

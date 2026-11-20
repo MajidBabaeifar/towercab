@@ -55,6 +55,7 @@ import { handlers } from "./pipeline/index.ts";
 import { ownerMergeRefusal } from "./pipeline/teammate.ts";
 import { parseScores } from "./priority.ts";
 import { addRepo, loadRepos, removeRepo, repoLine, repoList, setRepo } from "./repos.ts";
+import { clearRoute } from "./route.ts";
 import { parseScoreWords } from "./scores.ts";
 import { checkoutRoot, down, logsArgv, restart, up } from "./service.ts";
 import { restoreBackup } from "./settings/backup.ts";
@@ -123,6 +124,7 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   steps <id>                      you will do it by hand: the intent becomes steps for you to tick
   pause [id] | resume [id]        pause holds all new work and every change on GitHub; running steps finish
   pause --now                     also stops the running steps (they continue after resume)
+  pause --route [repo]            pause every intent past its plan; they resume one per repo, where they stopped
   repo add <owner/name> [--name <short>] | repo remove <name> | repo list
   repo set <name> key=value…      workers, ahead, base, path, env (NAME=value or a JSON object)
   shadow reset | shadow status    clear the shadow's conversation; what it is doing and what it cost today
@@ -322,6 +324,7 @@ export async function main(argv: string[], tools: Tools = realTools()): Promise<
         by: { type: "string" },
         yes: { type: "boolean" },
         now: { type: "boolean" },
+        route: { type: "boolean" },
         check: { type: "boolean" },
         "no-check": { type: "boolean" },
         fast: { type: "boolean" },
@@ -788,6 +791,15 @@ async function run(
       return tickSteps(w.db, id, which, true, new Date());
     }
     case "pause":
+      // LOOP-165: pause every intent past its plan; they come back one per repo.
+      if (v.route === true) {
+        const repo = args[0] ?? null;
+        if (repo !== null && !w.config.repos.has(repo)) throw new Error(`no repo named ${repo}`);
+        const ids = clearRoute(w.db, repo, Date.now() / 1000);
+        return ids.length
+          ? `paused ${ids.length} past their plan: ${ids.join(", ")}; they resume one per repo as the road clears`
+          : "nothing past its plan to pause";
+      }
       // LOOP-114: `--now` stops the runs going; it is for the whole of Towercab, not one intent.
       if (v.now === true && (args[0] ?? "") !== "")
         throw new Error("--now stops everything: use it without an intent");

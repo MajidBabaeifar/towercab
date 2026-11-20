@@ -125,6 +125,11 @@ function Sidebar({
             </ul>
           </section>
         ))}
+        {live.data?.waiting ? (
+          <p class="side-empty">
+            {live.data.waiting} paused {live.data.waiting === 1 ? "intent waits" : "intents wait"} their turn.
+          </p>
+        ) : null}
       </div>
     </nav>
   );

@@ -3,6 +3,7 @@
 // intents; its only state is the owner's last visit and snoozes, kept in `meta` (UI-264), never in a mission.
 
 import type { Db } from "../db.ts";
+import { waitsTurn } from "../route.ts";
 import { capCards } from "./budget-view.ts";
 import { proposedSection } from "./proposed.ts";
 import {
@@ -82,6 +83,8 @@ export async function inbox(src: UiSources): Promise<InboxPage> {
   for (const w of waitsOf(src, s)) {
     // UI-105: the owner already acted from the page; the wait only lingers until the loop moves on.
     if (w.card.done) continue;
+    // LOOP-165: an intent waiting its turn stays out of the inbox until it is resumed.
+    if (waitsTurn(src.db, w.card.intent)) continue;
     const since = w.card.since?.at ?? null;
     found.push({
       key: w.card.intent,
