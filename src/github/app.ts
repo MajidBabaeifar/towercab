@@ -20,6 +20,8 @@ export interface HttpRequest {
 export interface HttpResponse {
   status: number;
   text: string;
+  /** The `Retry-After` header (seconds), when the answer had one. */
+  retryAfter?: string;
 }
 
 /** HTTP behind one function so tests fake it; rejects only on a network failure or timeout. */
@@ -37,7 +39,8 @@ export const fetchHttp: Http = async (req) => {
       signal: AbortSignal.timeout(req.timeoutMs),
       ...(req.redirect ? { redirect: req.redirect } : {}),
     });
-    return { status: r.status, text: await r.text() };
+    const retryAfter = r.headers.get("retry-after");
+    return { status: r.status, text: await r.text(), ...(retryAfter ? { retryAfter } : {}) };
   } catch (e) {
     const err = e as Error & { cause?: { code?: string; message?: string } };
     if (err.name === "TimeoutError") throw new Error(`timed out after ${req.timeoutMs / 1000} s`);

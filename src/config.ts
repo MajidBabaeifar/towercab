@@ -47,6 +47,17 @@ export interface GitLabConfig {
   tokenFile: string;
 }
 
+/** JIRA-1, JIRA-3: `[jira]`: the site, the owner's account, the token file, the filter and the repo mapping. */
+export interface JiraConfig {
+  /** `https://acme.atlassian.net`, no trailing slash. */
+  site: string;
+  email: string;
+  tokenFile: string;
+  jql: string;
+  /** Repo name → selectors (`project:ABC`, `component:Billing`, `label:api`), lowercased. */
+  repos: Map<string, { kind: "project" | "component" | "label"; value: string }[]>;
+}
+
 /** USR-3, USR-4: the `[auth]` table. The client secret is read from the environment variable it names. */
 export interface AuthConfig {
   clientId: string;
@@ -103,6 +114,8 @@ export interface Config {
   ignoredRepos: Map<string, string>;
   github: { appId: number; me: string; apiBase: string; name?: string } | null;
   gitlab: GitLabConfig | null;
+  /** JIRA-1: null without a `[jira]` table: nothing about Jira runs. */
+  jira: JiraConfig | null;
   telegram: { botToken: string; chatId: string; apiBase: string; uiUrl?: string } | null;
   /** LOOP-146: `[[notify.webhook]]`: more places for the owner's messages, beside Telegram. */
   notify: { webhooks: WebhookConfig[] };
@@ -171,6 +184,10 @@ export function loadConfig(file: string): Config {
     const why = tokenFileProblem(config.gitlab.tokenFile);
     if (why) throw new ConfigError(`config: ${file}: gitlab.token_file ${why}`);
   }
+  if (config.jira) {
+    const why = tokenFileProblem(config.jira.tokenFile);
+    if (why) throw new ConfigError(`config: ${file}: jira.token_file ${why}`);
+  }
   // LOOP-147: a webhook's URL file must exist and be mode 600; the URL itself is never read here.
   for (const w of config.notify.webhooks) {
     const why = tokenFileProblem(w.urlFile);
@@ -189,6 +206,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
   const agent = r.table(raw.agent, "agent");
   const github = raw.github === undefined ? null : r.table(raw.github, "github");
   const gitlab = raw.gitlab === undefined ? null : r.table(raw.gitlab, "gitlab");
+  const jira = raw.jira === undefined ? null : r.table(raw.jira, "jira");
   const telegram = raw.telegram === undefined ? null : r.table(raw.telegram, "telegram");
   const notify = r.table(raw.notify, "notify");
   const ui = r.table(raw.ui, "ui");
@@ -256,6 +274,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       me: r.gitlabLogin(gitlab),
       tokenFile: gitlabTokenFile(r, gitlab),
     },
+    jira: jira && parseJira(r, jira),
     telegram: telegram && {
       botToken: r.str(telegram, "telegram", "bot_token", ""),
       chatId: String(telegram.chat_id ?? ""),
@@ -301,8 +320,55 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       config.badRepos.set(name, (e as Error).message);
     }
   }
+  // JIRA-3: the mapping names `[repos]` repos only.
+  if (config.jira) {
+    for (const name of config.jira.repos.keys()) {
+      if (!config.fileRepos.has(name) && !config.badRepos.has(name))
+        throw r.err(`jira.repos names an unknown repo ${name}`);
+    }
+  }
   if (config.gitlab) setGitlabHost(new URL(config.gitlab.apiBase).host);
   return config;
+}
+
+/** JIRA-1, JIRA-3: `[jira]` and `[jira.repos]`. */
+function parseJira(r: Reader, t: Record<string, unknown>): JiraConfig {
+  let site: URL;
+  try {
+    site = new URL(r.str(t, "jira", "site", ""));
+  } catch {
+    throw r.err("jira.site must be an https URL");
+  }
+  const local = site.hostname === "localhost" || site.hostname === "127.0.0.1";
+  if (site.protocol !== "https:" && !(local && site.protocol === "http:"))
+    throw r.err("jira.site must be an https URL");
+  const email = r.str(t, "jira", "email", "").trim();
+  if (!email) throw r.err("jira.email is required");
+  const file = r.str(t, "jira", "token_file", "");
+  if (!file) throw r.err("jira.token_file is required");
+  const tokenFile = expand(file);
+  if (!isAbsolute(tokenFile)) throw r.err("jira.token_file must be absolute or start with ~/");
+  const jql = r.str(t, "jira", "jql", "").trim();
+  if (!jql) throw r.err("jira.jql must not be empty");
+  const repos: JiraConfig["repos"] = new Map();
+  const map = r.table(t.repos, "jira.repos");
+  for (const [name, v] of Object.entries(map)) {
+    const list = r.strList(map, "jira.repos", name, []);
+    if (!Array.isArray(v) || list.length === 0)
+      throw r.err(`jira.repos.${name} must be a list like ["project:ABC"]`);
+    repos.set(
+      name,
+      list.map((s) => {
+        const m = /^(project|component|label):(.+)$/i.exec(s.trim());
+        if (!m) throw r.err(`jira.repos.${name}: ${s} is not project:, component: or label:`);
+        return {
+          kind: m[1]!.toLowerCase() as "project" | "component" | "label",
+          value: m[2]!.trim().toLowerCase(),
+        };
+      }),
+    );
+  }
+  return { site: site.origin, email, tokenFile, jql, repos };
 }
 
 function parseAuth(r: Reader, t: Record<string, unknown>): AuthConfig {

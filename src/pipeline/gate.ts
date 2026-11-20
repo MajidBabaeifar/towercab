@@ -4,13 +4,24 @@ import { gate } from "../autonomy.ts";
 import { MERGE_METHOD } from "../forge.ts";
 import { conflictOutcome } from "../github/events.ts";
 import type { Ctx, Handler } from "../handlers.ts";
+import { jiraKey } from "../jira/key.ts";
 import { REFACTOR_PROOF } from "../kind.ts";
 import { ok, wait } from "../machine.ts";
 import { getMission, type Mission } from "../mission.ts";
 import { type Risk, riskMd } from "../risk.ts";
 import { PASS_ON_WHY } from "../teammates.ts";
 import { testGrantsOf } from "./access.ts";
-import { data, effectiveOf, gateLevelOf, intentOf, mustForge, prUrl, repoFiles, viaForge } from "./common.ts";
+import {
+  commitTitle,
+  data,
+  effectiveOf,
+  gateLevelOf,
+  intentOf,
+  mustForge,
+  prUrl,
+  repoFiles,
+  viaForge,
+} from "./common.ts";
 import { type Checks, codeBody } from "./prtext.ts";
 import { HOLD_SECS, holder } from "./ship.ts";
 import { stepsBeforeMerge } from "./steps.ts";
@@ -218,7 +229,14 @@ export const mergeHandler: Handler = {
       case "CLEAN":
       case "HAS_HOOKS": {
         const fresh = cx.record(m, "merging", { merged_by: "towercab" });
-        const r = await cx.github.mergePr(repo.github, m.pr!, { method: MERGE_METHOD, head: m.head! });
+        const intent = await intentOf(cx, m);
+        // JIRA-9: the PR title starts with the ticket key, so the squash commit says it as a scope instead.
+        const subject = jiraKey(intent) ? commitTitle(m, intent) : undefined;
+        const r = await cx.github.mergePr(repo.github, m.pr!, {
+          method: MERGE_METHOD,
+          head: m.head!,
+          ...(subject ? { subject } : {}),
+        });
         if (!r.ok) return { done: wait("merge failed", r.reason.split("\n")[0]) };
         void fresh;
         return { poll: 1 };

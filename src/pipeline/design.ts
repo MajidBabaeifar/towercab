@@ -42,6 +42,8 @@ import {
   cloneOf,
   coGit,
   data,
+  docsCommit,
+  docsPrTitle,
   ended,
   gateLevelOf,
   intentOf,
@@ -722,7 +724,7 @@ async function commit(cx: Ctx, m: Mission): Promise<Progress> {
     "commit",
     "--quiet",
     "-m",
-    `docs(specs): ${subjectOf(m, intent)}`,
+    docsCommit("specs", m, intent),
   ]);
   await dropOthers(cx, m);
   return pushSpec(cx, m);
@@ -797,7 +799,7 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
         cx.github.openPr(repo.github, {
           base: repo.base,
           head: d.specBranch!,
-          title: `docs(specs): ${subjectOf(m, intent)}`,
+          title: docsPrTitle("specs", m, intent),
           body,
         }),
       );

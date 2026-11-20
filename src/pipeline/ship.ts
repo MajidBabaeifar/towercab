@@ -7,6 +7,7 @@ import { git, refreshBase } from "../checkout.ts";
 import { classifyRun } from "../faults.ts";
 import { MERGE_METHOD } from "../forge.ts";
 import { type ChildEnd, type Ctx, EnvError, type Handler, type Progress } from "../handlers.ts";
+import { withKey } from "../jira/key.ts";
 import { type Outcome, ok, red, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { type Adapter, adapterOf, type DeployOutcome, RollbackRefused, shipEnv } from "../ship/adapter.ts";
@@ -547,7 +548,7 @@ export const revertHandler: Handler = {
           cx.github.openPr(repo.github, {
             base: repo.base,
             head: branch,
-            title: `Revert: ${intent.title}`,
+            title: withKey(intent, `Revert: ${intent.title}`),
             body,
           }),
         );

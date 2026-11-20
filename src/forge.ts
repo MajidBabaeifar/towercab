@@ -243,8 +243,15 @@ export interface Forge {
   updatePrBody(repo: string, n: number, body: string): Promise<void>;
   commentOnPr(repo: string, n: number, text: string, how?: { inline?: boolean }): Promise<Result>;
   markReady(repo: string, n: number): Promise<Result>;
-  /** `body`: the merge commit's message body (USR-10: `Approved-by: <login>`). */
-  mergePr(repo: string, n: number, o: { method: MergeMethod; head?: string; body?: string }): Promise<Result>;
+  /**
+   * `subject` (JIRA-9): the squash commit's title, when it must not be the PR's. `body`: the merge
+   * commit's message body (USR-10: `Approved-by: <login>`).
+   */
+  mergePr(
+    repo: string,
+    n: number,
+    o: { method: MergeMethod; head?: string; subject?: string; body?: string },
+  ): Promise<Result>;
   closePr(repo: string, n: number, comment?: string): Promise<Result>;
   /** Merge the base branch into the change request's head, if the head is still `expectedHead`. */
   updateBranch(repo: string, n: number, expectedHead: string): Promise<void>;

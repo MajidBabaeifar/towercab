@@ -18,6 +18,7 @@ import { newId, slugOf } from "../intents/id.ts";
 import { plainLine, TITLE_MAX } from "../intents/naming.ts";
 import { intentText } from "../intents/store.ts";
 import type { Intent, IntentStore, Listing, NewIntent } from "../intents/types.ts";
+import { KEY_PREFIX, withKey } from "../jira/key.ts";
 import { oneLine } from "../machine.ts";
 import { prUrl } from "../pipeline/common.ts";
 import { commitToIntents } from "../pipeline/plan.ts";
@@ -267,20 +268,20 @@ async function scoreOnce(d: IssueDeps, text: string, product: string): Promise<S
 }
 
 /** A bad result is retried once (INT-22). */
-async function score(d: IssueDeps, text: string, product: string): Promise<Scored> {
+export async function score(d: IssueDeps, text: string, product: string): Promise<Scored> {
   const first = await scoreOnce(d, text, product);
   return first.kind === "bad" ? scoreOnce(d, text, product) : first;
 }
 
 /** One line, no leading list marker or heading. */
-function plain(s: string): string {
+export function plain(s: string): string {
   return oneLine(s, 400)
     .replace(/^(?:[-*]\s+|#+\s*)/, "")
     .trim();
 }
 
 /** The intent's body from a score (INT-23). Model text cannot open a section of its own. */
-function bodyOf(s: ScoreResult): string {
+export function bodyOf(s: ScoreResult): string {
   const problem = s.problem
     .split("\n")
     .map((l) => l.replace(/^\s{0,3}#+\s*/, ""))
@@ -372,7 +373,7 @@ async function announce(
 }
 
 /** True when some intent file that cannot be read mentions `url` (INT-26). */
-async function mentionedInUnreadable(d: IssueDeps, listing: Listing, url: string): Promise<boolean> {
+export async function mentionedInUnreadable(d: IssueDeps, listing: Listing, url: string): Promise<boolean> {
   for (const u of listing.unreadable) {
     if (!u.path.endsWith("intent.md")) continue;
     const text = await d.store.readFile(u.path).catch(() => null);
@@ -382,7 +383,7 @@ async function mentionedInUnreadable(d: IssueDeps, listing: Listing, url: string
 }
 
 /** What one poll shares between issues: the IDs handed out so far (INT-23). */
-interface Poll {
+export interface Poll {
   /** The intents repo on GitHub; null when its remote isn't GitHub. */
   intents: string | null;
   /** IDs on `main`, in other open intent PRs, and handed out in this poll; null until first needed. */
@@ -390,7 +391,7 @@ interface Poll {
 }
 
 /** The intents repo on GitHub: without one no issue can be proposed (INT-23). */
-function intentsRepo(poll: Poll): string {
+export function intentsRepo(poll: Poll): string {
   if (!poll.intents)
     throw new Error("the intents repo isn't on GitHub, so an issue can't be proposed as an intent PR");
   return poll.intents;
@@ -408,15 +409,16 @@ async function takenIds(d: IssueDeps, poll: Poll, listing: Listing): Promise<Set
     ...listing.unreadable.flatMap((u) => (u.id ? [u.id] : [])),
   ]);
   for (const p of open) {
-    const m = /^docs\(intents\): add (\S+) /.exec(p.title ?? "");
-    if (p.branch.startsWith("issue/") && m) taken.add(m[1]!);
+    // JIRA-9: a ticket's proposal title may start with its key.
+    const m = new RegExp(`^${KEY_PREFIX}docs\\(intents\\): add (\\S+) `).exec(p.title ?? "");
+    if ((p.branch.startsWith("issue/") || p.branch.startsWith("jira/")) && m) taken.add(m[1]!);
   }
   poll.taken = taken;
   return taken;
 }
 
 /** INT-23: commit the intent on its branch of the intents repo and open the PR; returns its URL. */
-async function propose(
+export async function propose(
   d: IssueDeps,
   poll: Poll,
   listing: Listing,
@@ -425,6 +427,8 @@ async function propose(
   issueUrl: string,
   reasons: string,
   lost = false,
+  /** JIRA-9: the ticket key that starts the PR's title. */
+  key?: string,
 ): Promise<string> {
   const intents = intentsRepo(poll);
   const now = new Date(d.clock.now() * 1000);
@@ -446,7 +450,7 @@ async function propose(
   const n2 = await d.github.openPr(intents, {
     base: "main",
     head: branch,
-    title,
+    title: key ? withKey({ jira: key }, title) : title,
     body: proposalBody({ issueUrl, reasons, a: n.a ?? d.config.intents.issueA, lost }),
   });
   if (n2 === null) throw new Error("gh pr create printed no PR URL");

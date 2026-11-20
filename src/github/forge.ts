@@ -203,7 +203,7 @@ export class GitHubForge implements Forge, GitHub {
   mergePr(
     repo: string,
     n: number,
-    o: { method: MergeMethod; head?: string; body?: string },
+    o: { method: MergeMethod; head?: string; subject?: string; body?: string },
   ): Promise<Result> {
     return this.soft(repo, [
       "pr",
@@ -211,6 +211,7 @@ export class GitHubForge implements Forge, GitHub {
       String(n),
       MERGE_FLAG[o.method],
       ...(o.head ? ["--match-head-commit", o.head] : []),
+      ...(o.subject ? ["--subject", o.subject] : []),
       ...(o.body ? ["--body", o.body] : []),
       "-R",
       repo,
