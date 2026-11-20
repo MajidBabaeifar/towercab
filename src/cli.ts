@@ -614,6 +614,7 @@ async function run(
         prLink: (m) => dummy.subject(m).link,
         queued: dummy.queued(),
         workers: (repo) => w.config.repos.get(repo)?.workers ?? 1,
+        onePastPlan: w.config.agent.onePastPlan,
         limit: w.config.agent.parallel,
       });
     }

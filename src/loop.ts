@@ -2283,7 +2283,11 @@ export class Loop {
    * mission (`first`) ignores the returning ones, unless one of them is in the lane too.
    */
   private repoFull(ms: Mission[], repo: string, workers: number, first?: Mission): boolean {
-    if (workingIn(ms, repo).length >= workers || buildingIn(ms, repo).length >= capOf(workers)) return true;
+    if (
+      workingIn(ms, repo).length >= workers ||
+      buildingIn(ms, repo).length >= capOf(workers, this.d.config.agent.onePastPlan)
+    )
+      return true;
     const back = returningIn(ms, repo, this.listing);
     if (back.length === 0) return false;
     return !(first && isHolder(first) && !isHolder(back[0]!));

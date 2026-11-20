@@ -83,6 +83,8 @@ export interface Config {
     reviewTimeoutMin: number;
     checkTimeoutMin: number;
     maxBudgetUsd: number;
+    /** LOOP-164: one mission per repo between build and merge. */
+    onePastPlan: boolean;
     /** PIP-218: build runs of one intent before the owner is asked, when a plan needs several. */
     maxBuildRuns: number;
     dailyBudgetUsd: number | null;
@@ -256,6 +258,7 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       env: r.env(agent, "agent", "env"),
       network: r.strList(agent, "agent", "network", [...DEFAULT_NETWORK]),
       sandboxUnixSockets: r.bool(agent, "agent", "sandbox_unix_sockets", false),
+      onePastPlan: r.bool(agent, "agent", "one_past_plan", true),
       ignored: IGNORED_AGENT_KEYS.filter((k) => k in agent),
     },
     repos: new Map(),

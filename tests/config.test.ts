@@ -44,6 +44,7 @@ test("config: loads defaults", () => {
     model: "opus",
     reviewModel: null,
     parallel: 1,
+    onePastPlan: true,
     buildTimeoutMin: 60,
     reviewTimeoutMin: 15,
     checkTimeoutMin: 10,
