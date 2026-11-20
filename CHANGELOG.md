@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.1.0](https://github.com/MajidBabaeifar/towercab/compare/v3.0.0...v3.1.0) (2026-11-20)
+
+
+### Features
+
+* **jira:** jira ticket intents ([#341](https://github.com/MajidBabaeifar/towercab/issues/341)) ([b52ec7c](https://github.com/MajidBabaeifar/towercab/commit/b52ec7c1bf32b838899f5f8ff11e16881f02b9b1))
+* **loop:** one intent per repo past plan, clear the route ([#344](https://github.com/MajidBabaeifar/towercab/issues/344)) ([55de9ef](https://github.com/MajidBabaeifar/towercab/commit/55de9ef0c4dc2c68d8d3b8510d7babf8df8bd26f))
+
+
+### Bug Fixes
+
+* **ui:** hide waiting intents, group tool calls, cache intents list ([#345](https://github.com/MajidBabaeifar/towercab/issues/345)) ([28c8477](https://github.com/MajidBabaeifar/towercab/commit/28c8477e320c3652ef1abc689bd0c592ce883f95))
+
 ## [3.0.0](https://github.com/MajidBabaeifar/towercab/compare/v2.0.0...v3.0.0) (2026-11-20)
 
 
