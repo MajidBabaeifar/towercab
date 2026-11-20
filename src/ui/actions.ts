@@ -1,6 +1,7 @@
 // The page's buttons (UI-66): each does what the owner would do on GitHub (as the owner, LOOP-38) or
 // in the CLI (a `commands` row the loop applies, LOOP-15).
 
+import { type Actor, actorColumns, currentActor, TOWERCAB } from "../actor.ts";
 import { ownerOnly, ownerOnlyLine, ownSource } from "../autonomy.ts";
 import {
   acceptedOf,
@@ -20,10 +21,12 @@ import { ExitNeedsConfirm, type ExitWarning, exitWarning } from "../exit-warning
 import { markFast } from "../fast.ts";
 import { askFeatures } from "../features.ts";
 import { ForgeBadReply, MERGE_METHOD, type PrBrief, type Result } from "../forge.ts";
-import { ownerForge } from "../github/forge.ts";
+import { forgeOf, ownerForge } from "../github/forge.ts";
+import { approvedByLine, type Decision, decidedByComment } from "../github/owner.ts";
 import { classifyFiles, type ProposedPr } from "../github/proposed.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { Home } from "../home.ts";
+import { authorityOf, confirmIntent, mayFull, recordWriter } from "../intent-people.ts";
 import {
   addToIntent,
   cannotAddTo,
@@ -48,6 +51,8 @@ import { currentPr, type DoneNote, validNote } from "./state.ts";
 /** What the page can do; each resolves to one sentence saying what happened, or throws the error. */
 export interface UiActions {
   merge(intent: string): Promise<string>;
+  /** AUT-23: a maintainer or admin confirms an intent whose writer has a lower role or none. */
+  confirm?(intent: string): Promise<string>;
   reply(intent: string, text: string): Promise<string>;
   retry(intent: string): Promise<string>;
   /** UI-167: lift the freeze of a multi-repo intent (`towercab unfreeze`). */
@@ -211,12 +216,25 @@ function firstLine(s: string): string {
 export function createActions(d: ActionDeps): UiActions {
   const command = (name: string, arg = "", text = "") => {
     d.db.run(
-      "INSERT INTO commands (name, arg, text, source, created) VALUES (?, ?, ?, 'ui', ?)",
+      "INSERT INTO commands (name, arg, text, source, created, actor, via) VALUES (?, ?, ?, 'ui', ?, ?, ?)",
       name,
       arg,
       text,
       d.clock.now(),
+      ...actorColumns(),
     );
+  };
+  // USR-10: with sign-in, the PR says who decided. Towercab comments as itself; without sign-in nothing changes.
+  const person = (): Actor | null => {
+    if (!d.config?.auth) return null;
+    const a = currentActor();
+    return a.login === TOWERCAB.login ? null : a;
+  };
+  const announce = async (p: { github: string; number: number }, verb: Decision) => {
+    const a = person();
+    // As the App, not the owner: the owner's own comments are read as feedback.
+    const app = "gh" in d.github ? forgeOf(d.github as GitHub) : null;
+    if (a && app) await app.commentOnPr(p.github, p.number, decidedByComment(a, verb), { inline: true });
   };
   const pr = (m: Mission | undefined) => (m ? currentPr(m, d.config, d.store.github()) : null);
   const of = ownerForge(d.github.owner);
@@ -227,7 +245,14 @@ export function createActions(d: ActionDeps): UiActions {
 
   /** UI-105, UI-106: remember the action for display and ask the loop to read the PR on its next pass. */
   const done = (m: Mission, p: { number: number } | null, action: DoneNote["action"]) => {
-    const note: DoneNote = { action, stage: m.stage, pr: p?.number ?? 0, at: d.clock.now() };
+    const who = currentActor();
+    const note: DoneNote = {
+      action,
+      stage: m.stage,
+      pr: p?.number ?? 0,
+      at: d.clock.now(),
+      ...(d.config?.auth ? { by: who.login, via: who.via } : {}),
+    };
     d.db.tx(() => {
       const fresh = getMission(d.db, m.id);
       if (!fresh || fresh.stage !== m.stage) return;
@@ -343,6 +368,8 @@ export function createActions(d: ActionDeps): UiActions {
         o.mode,
       );
       made.set(key, { at: now, id: c.id || `PR #${c.pr}` });
+      // AUT-23: the writer is the signed-in person; the file's own lines say nothing about it.
+      if (d.config?.auth && c.id) recordWriter(d.db, c.id, currentActor().login, now);
       if (c.proposal) {
         return {
           id: c.id,
@@ -381,6 +408,17 @@ export function createActions(d: ActionDeps): UiActions {
       refused(await of.closePr(now.repo, n, why), `close PR #${n}`);
       readNow();
       return `Closed PR #${n}. The intent never reaches main.`;
+    },
+
+    async confirm(intent) {
+      const found = await d.store.get(intent);
+      if (found.done) throw new Error("It is done or dropped.");
+      const who = currentActor();
+      if (!confirmIntent(d.db, found.id, who.login, d.clock.now())) {
+        return "Already confirmed: nothing changes.";
+      }
+      command("confirm", found.id);
+      return `Confirmed by ${who.name}: it can run now.`;
     },
 
     async merge(intent) {
@@ -442,8 +480,13 @@ export function createActions(d: ActionDeps): UiActions {
       // SHD-12: the PR says who asked for the merge.
       if (tag)
         await of.commentOnPr(p.github, p.number, `${tag}Merging on your yes in Telegram.`, { inline: true });
+      await announce(p, "approved");
+      const by = person();
       refused(
-        await of.mergePr(p.github, p.number, { method: MERGE_METHOD }),
+        await of.mergePr(p.github, p.number, {
+          method: MERGE_METHOD,
+          ...(by ? { body: approvedByLine(by) } : {}),
+        }),
         `merge the ${p.label} #${p.number}`,
       );
       done(m, p, "merge");
@@ -467,7 +510,8 @@ export function createActions(d: ActionDeps): UiActions {
     },
 
     async reply(intent, text) {
-      const body = `${tag}${text.trim()}`;
+      const by = person();
+      const body = `${tag}${by ? `${decidedByComment(by, "answered")}:\n\n` : ""}${text.trim()}`;
       if (!text.trim()) throw new Error("Write a reply first.");
       if (body.length > MAX_REPLY) throw new Error(`The reply is too long: at most ${MAX_REPLY} characters.`);
       const m = unfinishedFor(d.db, intent);
@@ -528,7 +572,15 @@ export function createActions(d: ActionDeps): UiActions {
         if (again) return again;
         await closing(m, confirmed);
         refused(
-          await of.closePr(p.github, p.number, tag ? `${tag}Dropped on your yes in Telegram.` : undefined),
+          await of.closePr(
+            p.github,
+            p.number,
+            tag
+              ? `${tag}Dropped on your yes in Telegram.`
+              : person()
+                ? decidedByComment(person()!, "dropped")
+                : undefined,
+          ),
           `close the ${p.label} #${p.number}`,
         );
         done(m, p, "drop");
@@ -555,7 +607,10 @@ export function createActions(d: ActionDeps): UiActions {
       if (!Number.isInteger(a) || a < 0 || a > 5) throw new Error("Autonomy is a0 to a5.");
       const found = await d.store.get(intent);
       // UI-206: a5 is for the owner's own intents; the page doesn't offer it, and the API refuses it.
-      if (a === 5 && !ownSource(found.source)) throw new Error("a5 is only for your own intents.");
+      if (a === 5 && !d.config?.auth && !ownSource(found.source))
+        throw new Error("a5 is only for your own intents.");
+      if (a === 5 && d.config?.auth && !mayFull(authorityOf(d.db, found.id, found.repo)))
+        throw new Error("a5 is only for intents an admin or maintainer wrote or confirmed.");
       const flag = flagOf(d.db, found.id);
       const shown = flag ? flag.from : writtenLevel(found);
       const owner = d.actor !== "shadow" && (actor === "" || actor === "owner");
@@ -635,9 +690,16 @@ export function createActions(d: ActionDeps): UiActions {
       }
       const found = await d.store.get(intent);
       if (found.done) throw new Error("It is done or dropped.");
-      if (!canBoostIntent(found)) throw new Error("a5 is only for your own intents.");
+      if (d.config?.auth ? !mayFull(authorityOf(d.db, found.id, found.repo)) : !canBoostIntent(found))
+        throw new Error(
+          d.config?.auth
+            ? "a5 is only for intents an admin or maintainer wrote or confirmed."
+            : "a5 is only for your own intents.",
+        );
       const started = unfinishedFor(d.db, found.id) || d.db.meta(`start:${found.id}`) !== null;
       command("boost", found.id);
+      const bp = pr(unfinishedFor(d.db, found.id));
+      if (bp) await announce(bp, "boosted");
       if (started) return "Boosted: a5. It runs from the next gate.";
       if (intentPaused(d.db, found.id)) return "Boosted: a5. It is paused, so it starts when you resume it.";
       return "Boosted: a5 and design started.";

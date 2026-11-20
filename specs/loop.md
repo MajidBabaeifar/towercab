@@ -1737,11 +1737,11 @@ CREATE TABLE missions (
   data TEXT NOT NULL DEFAULT '{}', created REAL NOT NULL, updated REAL NOT NULL, finished REAL);
 CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT IN ('done','stopped','unverified');
 CREATE TABLE transitions (id INTEGER PRIMARY KEY, mission INTEGER NOT NULL REFERENCES missions(id),
-  at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT);
+  at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT, actor TEXT NOT NULL DEFAULT '', via TEXT NOT NULL DEFAULT '');
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
   name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost','unfreeze','kind')),
   arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
-  created REAL NOT NULL, applied_at REAL, result TEXT);
+  created REAL NOT NULL, applied_at REAL, result TEXT, actor TEXT NOT NULL DEFAULT '', via TEXT NOT NULL DEFAULT '');
 CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, created REAL NOT NULL,
   sent_at REAL, tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0,
   kind TEXT NOT NULL DEFAULT 'info', intent TEXT, wait TEXT, tg_message_id INTEGER, target TEXT, buttons TEXT,
@@ -1769,6 +1769,21 @@ CREATE TABLE observer_proposals (pr INTEGER PRIMARY KEY, intent TEXT NOT NULL, r
   title TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '[]');
 CREATE TABLE outbox_sent (key TEXT NOT NULL, dest TEXT NOT NULL, sent_at REAL,
   tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0, PRIMARY KEY (key, dest));
+CREATE TABLE users (login TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL CHECK (role IN ('admin','maintainer','contributor','viewer')),
+  repo_roles TEXT NOT NULL DEFAULT '{}', added_by TEXT NOT NULL, added REAL NOT NULL, disabled_at REAL,
+  last_seen REAL);
+CREATE TABLE sessions (hash TEXT PRIMARY KEY, login TEXT NOT NULL, created REAL NOT NULL, last_seen REAL NOT NULL,
+  expires REAL NOT NULL, revoked_at REAL);
+CREATE TABLE user_events (id INTEGER PRIMARY KEY, at REAL NOT NULL, actor TEXT NOT NULL, what TEXT NOT NULL,
+  login TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '');
+CREATE TABLE tg_links (login TEXT PRIMARY KEY, chat TEXT NOT NULL UNIQUE, linked REAL NOT NULL);
+CREATE TABLE tg_link_codes (code TEXT PRIMARY KEY, login TEXT NOT NULL, expires REAL NOT NULL, used_at REAL);
+CREATE TABLE intent_people (intent TEXT PRIMARY KEY, writer TEXT, confirmed_by TEXT, confirmed_at REAL,
+  at REAL NOT NULL);
+CREATE TABLE tg_person_cards (mission INTEGER NOT NULL, login TEXT NOT NULL, chat TEXT NOT NULL,
+  intent TEXT NOT NULL, message_id INTEGER, text TEXT NOT NULL DEFAULT '', buttons TEXT, wait TEXT,
+  final INTEGER NOT NULL DEFAULT 0, handled_by TEXT, PRIMARY KEY (mission, login));
 ```
 
 **Transitions** (`next(stage, event)`; "next" = the next stage of the order; `U` = unexpected, counted

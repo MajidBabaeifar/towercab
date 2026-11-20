@@ -5106,6 +5106,119 @@ kbd {
   }
 }
 
+/* USR / UI-219..224: sign-in, account menu, admin page. */
+.signin {
+  max-width: 28rem;
+  margin: 12vh auto;
+  padding: 0 1rem;
+  display: grid;
+  gap: 1rem;
+  justify-items: start;
+}
+.signin-note {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border, #8884);
+  border-radius: 0.5rem;
+}
+.signin-note.error {
+  border-color: var(--bad, #c0392b);
+}
+.link-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+.account {
+  position: relative;
+}
+.account-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.25rem);
+  z-index: 20;
+  min-width: 16rem;
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--panel, Canvas);
+  border: 1px solid var(--border, #8884);
+  border-radius: 0.5rem;
+  box-shadow: 0 6px 24px #0003;
+}
+.account-who {
+  display: grid;
+  margin: 0;
+}
+.telegram-code code {
+  font-size: 1.25rem;
+  letter-spacing: 0.1em;
+}
+.users-page {
+  display: grid;
+  gap: 1.5rem;
+}
+.users-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.users-table th,
+.users-table td {
+  text-align: left;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border, #8884);
+  vertical-align: top;
+}
+.users-table tr.disabled {
+  opacity: 0.6;
+}
+.users-table .sessions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.users-table .row-actions {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+.users-add,
+.users-team,
+.users-settings {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 32rem;
+}
+.users-add label,
+.users-team label,
+.setting-row label {
+  display: grid;
+  gap: 0.25rem;
+}
+.users-history ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+.security-settings {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+.tl-by {
+  margin: 0;
+}
+@media (max-width: 480px) {
+  .users-table {
+    display: block;
+    overflow-x: auto;
+  }
+}
 /* UI-165..167: the parts of a multi-repo intent and its freeze. */
 .parts-list {
   list-style: none;

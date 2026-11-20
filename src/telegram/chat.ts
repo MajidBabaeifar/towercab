@@ -2,17 +2,23 @@
 // through the page's own actions, messages edited when their wait is handled. `Chat` is the only reader of
 // `getUpdates`; each update is stored before the offset moves past it, then handled once in a loop pass.
 
+import { type Actor, ownerActor, runAs } from "../actor.ts";
 import { ownerOnlyLine } from "../autonomy.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
 import type { Clock } from "../handlers.ts";
+import { peopleOf } from "../intent-people.ts";
 import { envBackoff, finished } from "../machine.ts";
 import { getMission, unfinishedFor } from "../mission.ts";
 import type { Button, OutboxRow, Sender } from "../outbox.ts";
 import { OFFSET, offset, statusText } from "../shadow/store.ts";
 import type { SendOptions, TelegramUpdate } from "../telegram.ts";
 import type { UiActions } from "../ui/actions.ts";
+import { can, refusal, roleOn, type UserAction } from "../users.ts";
+import { getUser, type StoredUser } from "../users-store.ts";
 import { type CardItem, type CardRow, Cards } from "./cards.ts";
+import { linkedUser, redeemLinkCode } from "./people.ts";
+import { PersonCards, type PersonRow } from "./person-cards.ts";
 import {
   cardLink,
   closeConfirmText,
@@ -42,6 +48,8 @@ export interface ChatData {
   prHead(intent: string): Promise<string | null>;
   /** TG-16: the cards to keep up to date: every unfinished mission, and the ended ones whose card is open. */
   cards(): Promise<CardItem[]>;
+  /** USR-11: the repo of an intent that is not running yet (a held one), for `/confirm`. */
+  repoOf?(intent: string): Promise<string | null>;
 }
 
 /** The Bot API calls the chat makes (`Telegram`; tests give it a fake HTTP). */
@@ -49,7 +57,7 @@ export interface ChatApi {
   updates(offset: number, timeoutSec: number): Promise<TelegramUpdate[]>;
   send(text: string, buttons?: Button[][], opts?: SendOptions): Promise<number | undefined>;
   edit(message: number, text: string, buttons?: Button[][], opts?: SendOptions): Promise<void>;
-  remove(message: number): Promise<void>;
+  remove(message: number, chat?: string): Promise<void>;
   answer(callback: string, text: string): Promise<void>;
 }
 
@@ -67,9 +75,17 @@ export interface ChatDeps {
   sleep?: (ms: number) => Promise<void>;
 }
 
+/** Who sent the update being handled: the owner's chat, a linked person's, or a chat nobody linked. */
+interface Who {
+  chat: string;
+  user: StoredUser | null;
+}
+
 const PUBLIC_HELP =
   "I understand /status, /focus, /queue, /pause, /resume and /fast. Reply to a question to answer it.";
 const MAX_LINES = 10;
+/** USR-11: `/link <code>` (or Telegram's `/start <code>`) from a chat that is not linked yet. */
+const LINK = /^\/(?:link|start)(?:@\w+)?\s+\S+/i;
 const POLL_SECONDS = 25;
 
 const trim = (s: string, max: number): string => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
@@ -82,10 +98,55 @@ export class Chat {
   private lastSweep = Number.NEGATIVE_INFINITY;
   private lastCards = Number.NEGATIVE_INFINITY;
   private cards: Cards;
+  private people: PersonCards;
+  private who: Who = { chat: "", user: null };
+  /** What the handled update sent straight to a person's chat; awaited when it is done. */
+  private direct: Promise<unknown>[] = [];
 
   constructor(d: ChatDeps) {
     this.d = d;
     this.cards = new Cards({ config: d.config, db: d.db, clock: d.clock, log: d.log, telegram: d.telegram });
+    this.people = new PersonCards({ config: d.config, db: d.db, log: d.log, telegram: d.telegram });
+    this.who = { chat: this.chatId, user: null };
+  }
+
+  /** USR-11: with `[auth]`, linked people's chats are heard too. */
+  private get teams(): boolean {
+    return !!this.d.config.auth;
+  }
+
+  /** The update comes from a chat that is not the owner's. */
+  private get theirs(): boolean {
+    return this.who.chat !== this.chatId;
+  }
+
+  /** The name the messages and cards give the person who acts: "you" in the owner's chat. */
+  private get by(): string {
+    return this.who.user ? this.who.user.name || this.who.user.login : "you";
+  }
+
+  /** The name other chats are told: the owner's name, or the person's. */
+  private get byName(): string {
+    if (this.who.user) return this.by;
+    const me = this.d.config.github?.me;
+    return (me && getUser(this.d.db, me)?.name) || me || "the owner";
+  }
+
+  private actorOf(): Actor {
+    const u = this.who.user;
+    if (!u) return ownerActor(this.d.config.github?.me ?? "owner", "telegram");
+    return { login: u.login, name: u.name || u.login, role: u.role, via: "telegram" };
+  }
+
+  /** USR-11: may this chat's person do `action` on `repo`? The owner's chat always may. */
+  private allowed(action: UserAction, repo: string): string | null {
+    const u = this.who.user;
+    if (!u && this.theirs) return "that chat is not linked to a person";
+    return !u || can(u, action, repo) ? null : refusal(u, action, repo);
+  }
+
+  private defer(p: Promise<unknown>): void {
+    this.direct.push(p.catch((e) => this.d.log(`telegram: ${(e as Error).message}`)));
   }
 
   private get chatId(): string {
@@ -155,7 +216,9 @@ export class Chat {
       let top = offset(db);
       for (const u of ups) {
         top = Math.max(top, u.id + 1);
-        if (u.chat !== this.chatId) {
+        const known =
+          u.chat === this.chatId || (this.teams && (!!linkedUser(db, u.chat) || LINK.test(u.text ?? "")));
+        if (!known) {
           log(
             `telegram: ignored update ${u.id} from chat ${u.chat || "unknown"} (${u.callback ? "button" : u.text === null ? "other" : "message"})`,
           );
@@ -206,6 +269,7 @@ export class Chat {
       return;
     }
     await this.cards.sync(items);
+    if (this.teams) await this.people.sync(items);
   }
 
   // ---- storing and handling -------------------------------------------------------------------------
@@ -229,21 +293,29 @@ export class Chat {
       }
       mark("handling");
       try {
-        mark(await this.handle(u));
+        this.who = { chat: u.chat, user: u.chat === this.chatId ? null : linkedUser(db, u.chat) };
+        this.direct = [];
+        mark(await runAs(this.actorOf(), () => this.handle(u)));
       } catch (e) {
         this.d.log(`telegram: update ${u.id}: ${(e as Error).message}`);
         mark("done");
       }
+      await Promise.all(this.direct);
     }
   }
 
   private async handle(u: TelegramUpdate): Promise<"done" | "shadow"> {
     if (u.callback) {
+      // USR-11: a press stored while the chat was linked, handled after the person was removed, does nothing.
+      if (this.theirs && !this.who.user) return "done";
       await this.press(u, u.callback);
       return "done";
     }
     const text = u.text?.trim();
     if (!text) return "done";
+    if (this.teams && this.theirs && LINK.test(text)) return this.linking(u, text);
+    // USR-11: a chat nobody linked (or whose person was disabled since) gets nothing.
+    if (this.theirs && !this.who.user) return "done";
     if (u.replyTo && !text.startsWith("/") && (await this.reply(u, text, u.replyTo))) return "done";
     const cmd = /^\/(\w+)(?:@\w+)?(?:\s|$)/.exec(text)?.[1]?.toLowerCase();
     switch (cmd) {
@@ -257,16 +329,53 @@ export class Chat {
         this.say(u, await this.queue());
         return "done";
       case "pause":
-      case "resume":
-        this.say(u, await this.pause(cmd === "pause"));
+      case "resume": {
+        const no = this.allowed(cmd, "");
+        this.say(u, no ? `That needs more than your role: ${no}.` : await this.pause(cmd === "pause"));
         return "done";
-      case "fast":
-        this.say(u, await this.fast(text));
+      }
+      case "fast": {
+        const no = this.allowed("edit", "");
+        this.say(u, no ? `That needs more than your role: ${no}.` : await this.fast(text));
+        return "done";
+      }
+      case "confirm":
+        this.say(u, await this.confirm(text));
         return "done";
       default:
-        if (this.d.config.shadow.enabled) return "shadow";
+        if (this.d.config.shadow.enabled && !this.theirs) return "shadow";
         this.say(u, PUBLIC_HELP);
         return "done";
+    }
+  }
+
+  /** USR-11: a code from the account menu ties this chat to its person. */
+  private async linking(u: TelegramUpdate, text: string): Promise<"done"> {
+    const code = text.split(/\s+/)[1] ?? "";
+    const user = redeemLinkCode(this.d.db, code, u.chat, this.d.clock.now());
+    this.defer(
+      this.d.telegram.send(
+        user
+          ? `Linked: this chat is now ${user.name || user.login}'s. You get what waits on you.`
+          : "That code did not work: it is wrong, used or older than 10 minutes. Make a new one on your account menu.",
+        undefined,
+        { chat: u.chat },
+      ),
+    );
+    return "done";
+  }
+
+  /** AUT-23: `/confirm <intent>` lets an intent a viewer wrote, or nobody, run. */
+  private async confirm(text: string): Promise<string> {
+    const intent = text.split(/\s+/)[1] ?? "";
+    if (!intent) return "Say which one: /confirm <intent id>.";
+    const repo = (await this.d.data.repoOf?.(intent).catch(() => null)) ?? "";
+    const no = this.allowed("confirm", repo);
+    if (no) return `That needs more than your role: ${no}.`;
+    try {
+      return (await this.d.actions.confirm?.(intent)) ?? "Confirming is not available here.";
+    } catch (e) {
+      return (e as Error).message;
     }
   }
 
@@ -298,15 +407,27 @@ export class Chat {
   }
 
   private say(u: TelegramUpdate, text: string): void {
+    if (this.theirs) {
+      this.defer(this.d.telegram.send(text, undefined, { chat: this.who.chat }));
+      return;
+    }
     this.put(`tg:say:${u.id}:${this.seq()}`, "info", text);
   }
 
   private answer(u: TelegramUpdate, text: string): void {
+    if (this.theirs && u.callback) {
+      this.defer(this.d.telegram.answer(u.callback.id, text));
+      return;
+    }
     this.put(`tg:answer:${u.id}`, "answer", text, { target: u.callback?.id });
   }
 
   private editRow(row: OutboxRow, text: string, buttons?: Button[][]): void {
-    if (row.tg_message_id === null) return;
+    if (row.tg_message_id == null) return;
+    if (this.theirs) {
+      this.defer(this.d.telegram.edit(row.tg_message_id, text, buttons, { chat: this.who.chat }));
+      return;
+    }
     this.put(`tg:edit:${this.seq()}`, "edit", text, { target: String(row.tg_message_id), buttons });
   }
 
@@ -329,7 +450,30 @@ export class Chat {
     };
   }
 
+  /** A person's copy of a card, shaped like a sent row so the buttons treat it as a card. */
+  private personRow(c: PersonRow): OutboxRow {
+    return {
+      key: `pcard:${c.mission}:${c.login}`,
+      mission: c.mission,
+      text: c.text,
+      created: 0,
+      sent_at: 0,
+      tries: 0,
+      next_try: 0,
+      kind: "card",
+      intent: c.intent,
+      wait: c.wait,
+      tg_message_id: c.message_id,
+      buttons: c.buttons,
+      ended_at: null,
+    };
+  }
+
   private rowOf(message: number): OutboxRow | undefined {
+    if (this.theirs) {
+      const c = this.people.byMessage(this.who.chat, message);
+      return c ? this.personRow(c) : undefined;
+    }
     const card = this.cards.byMessage(message);
     if (card) return this.cardRow(card);
     return this.d.db.get<OutboxRow>(
@@ -406,7 +550,10 @@ export class Chat {
     if (!action) return this.answer(u, "That button is not valid.");
     // AUT-32, AUT-33: an owner-only intent is decided on the page or GitHub, whatever the message once offered.
     const refuse = async (): Promise<string | null> => {
-      if (v.onlyYou) return ownerOnlyLine(v.intent);
+      const role = this.who.user ? roleOn(this.who.user, v.repo) : null;
+      if (v.onlyYou && role !== "admin") return ownerOnlyLine(v.intent);
+      const no = this.allowed(action, v.repo);
+      if (no) return `That needs more than your role: ${no}.`;
       try {
         await actions.guard?.(v.intent, action, "telegram");
         return null;
@@ -450,8 +597,13 @@ export class Chat {
       this.end(
         v.intent,
         v.waitId,
-        { merge: "✅ merged by you", drop: "🗑 dropped by you", retry: "↩️ started over by you" }[action],
+        {
+          merge: `✅ merged by ${this.by}`,
+          drop: `🗑 dropped by ${this.by}`,
+          retry: `↩️ started over by ${this.by}`,
+        }[action],
       );
+      this.handled(v.intent, v.waitId);
       // The card showed the confirm: show where the intent stands now (TG-19).
       this.cards.invalidate(v.intent);
       await this.syncCards(true);
@@ -460,6 +612,11 @@ export class Chat {
       this.answer(u, (e as Error).message);
       if (row) this.refresh(row, v);
     }
+  }
+
+  /** USR-12: the copies in other chats say who decided. */
+  private handled(intent: string, wait: string): void {
+    if (this.teams) this.defer(this.people.handled(intent, wait, this.byName));
   }
 
   private refresh(row: OutboxRow, v: WaitView): void {
@@ -486,12 +643,14 @@ export class Chat {
       this.answer(u, "That is already handled.");
       return void (await this.sweep(true));
     }
+    const no = this.allowed(p.op === "a" ? "approve" : "drop", found.repo);
+    if (no) return this.answer(u, `That needs more than your role: ${no}.`);
     try {
       const said = p.op === "a" ? await this.d.actions.accept(pr, p.b) : await this.d.actions.close(pr);
       this.answer(u, said);
-      this.end(`proposal:${pr}`, p.b, p.op === "a" ? "✅ accepted by you" : "🗑 closed by you");
+      this.end(`proposal:${pr}`, p.b, p.op === "a" ? `✅ accepted by ${this.by}` : `🗑 closed by ${this.by}`);
       if (row && row.ended_at === null && row.intent === null)
-        this.endRow(row, p.op === "a" ? "✅ accepted by you" : "🗑 closed by you");
+        this.endRow(row, p.op === "a" ? `✅ accepted by ${this.by}` : `🗑 closed by ${this.by}`);
     } catch (e) {
       this.answer(u, (e as Error).message);
     }
@@ -502,24 +661,34 @@ export class Chat {
   /** True when the text answered a question; false when it goes elsewhere. */
   private async reply(u: TelegramUpdate, text: string, to: number): Promise<boolean> {
     // TG-6, TG-20: a reply to an intent's card or its ping answers the question the card asks.
-    const card = this.cards.byMessage(to);
-    const row = card ? undefined : this.rowOf(to);
-    if (!card && (!row?.intent || !row.wait || !row.text.includes(REPLY_LINE))) return false;
-    const intent = card ? card.intent : row!.intent!;
-    const shown = card ? card.ping_wait : row!.wait!;
+    const mine = this.theirs ? this.people.byMessage(this.who.chat, to) : undefined;
+    const card = this.theirs ? undefined : this.cards.byMessage(to);
+    const row = card || mine || this.theirs ? undefined : this.rowOf(to);
+    const copy = card ?? mine;
+    if (!copy && (!row?.intent || !row.wait || !row.text.includes(REPLY_LINE))) return false;
+    const intent = card ? card.intent : mine ? mine.intent : row!.intent!;
+    const shown = card ? card.ping_wait : mine ? mine.wait : row!.wait!;
     const v = (await this.d.data.waits()).find((x) => x.intent === intent);
-    if (card && v && !v.question) return false;
-    if (card && !v && !shown) return false;
+    if (copy && v && !v.question) return false;
+    if (copy && !v && !shown) return false;
     if (!v || (shown && v.waitId !== shown)) {
       this.say(u, "That is already handled.");
       await this.sweep(true);
       return true;
     }
     try {
-      if (v.onlyYou) throw new Error(ownerOnlyLine(v.intent));
+      const role = this.who.user ? roleOn(this.who.user, v.repo) : null;
+      if (v.onlyYou && (this.theirs ? role !== "admin" : true)) throw new Error(ownerOnlyLine(v.intent));
+      // USR-12: a contributor may answer on an intent they wrote; everyone else needs `reply`.
+      const writer = peopleOf(this.d.db, v.intent)?.writer;
+      const own = !!this.who.user && writer === this.who.user.login.toLowerCase();
+      const no =
+        own && this.who.user && can(this.who.user, "answer", v.repo) ? null : this.allowed("reply", v.repo);
+      if (no) throw new Error(`That needs more than your role: ${no}.`);
       await this.d.actions.guard?.(v.intent, "reply", "telegram");
       const said = await this.d.actions.reply(v.intent, text);
-      this.end(v.intent, v.waitId, "✅ answered by you");
+      this.end(v.intent, v.waitId, `✅ answered by ${this.by}`);
+      this.handled(v.intent, v.waitId);
       this.say(u, said);
     } catch (e) {
       this.say(u, (e as Error).message);

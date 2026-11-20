@@ -35,6 +35,7 @@ import { agentReply, agentReplyBody, approve as ownerApprove, replyTarget } from
 import type { Host } from "./handlers.ts";
 import { systemClock } from "./handlers.ts";
 import { Home } from "./home.ts";
+import { recordWriter } from "./intent-people.ts";
 import { addToIntent, cannotAddTo, createIntent, type Draft } from "./intents/create.ts";
 import { checkOverlap, type Match } from "./intents/overlap.ts";
 import { openStore } from "./intents/store.ts";
@@ -64,6 +65,7 @@ import { buildChat } from "./telegram/wire.ts";
 import { Telegram } from "./telegram.ts";
 import { realTools, type Tools } from "./tools.ts";
 import { checkUpdate, version } from "./update.ts";
+import { listUsers } from "./users-store.ts";
 
 export const COMMANDS = [
   "up",
@@ -94,6 +96,7 @@ export const COMMANDS = [
   "repo",
   "shadow",
   "settings",
+  "users",
   "hook",
   "specs",
 ] as const;
@@ -122,6 +125,7 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   repo add <owner/name> [--name <short>] | repo remove <name> | repo list
   repo set <name> key=value…      workers, ahead, base, path, env (NAME=value or a JSON object)
   shadow reset | shadow status    clear the shadow's conversation; what it is doing and what it cost today
+  users list                      the people who may sign in, with roles (read-only: manage them on the page)
   settings restore <repo>         put back the settings saved before the last apply
   settings scanning-granted       the GitHub App now has Code scanning alerts (read)
   ui [--no-open]                  open the web page
@@ -273,7 +277,11 @@ async function confirmClose(w: World, intent: string, yes: boolean): Promise<voi
 /** Queue a command for the loop, or apply it here when no loop runs (LOOP-15). */
 async function submit(w: World, name: CommandName, arg = "", text = ""): Promise<string> {
   if (OWNER_ONLY_COMMANDS.includes(name)) await refuseOwnerOnly(w, arg);
-  const id = insertCommand(w.db, { name, arg, text, source: "cli" }, Date.now() / 1000);
+  const id = insertCommand(
+    w.db,
+    { name, arg, text, source: "cli", actor: w.config.github?.me ?? "owner" },
+    Date.now() / 1000,
+  );
   if (w.home.holder() === null) {
     const store = await w.store();
     const row = pendingCommands(w.db).find((r) => r.id === id)!;
@@ -620,6 +628,9 @@ async function run(
       const checking = v["no-check"] !== true && (interactive || v.check === true);
       const made = async () => {
         const c = await createIntent(deps, draft, "direct");
+        // AUT-23: an intent made on the command line is the owner's.
+        if (w.config.auth)
+          recordWriter(w.db, c.id, w.config.github?.me ?? null, Math.floor(Date.now() / 1000));
         // FAST-1: the mark is written after the intent exists; the command line never confirms it (FAST-9).
         if (v.fast === true) await markFast({ db: w.db, store }, c.id, true, "cli");
         return `${c.id} ${c.path}${v.fast === true ? " (fast lane)" : ""}`;
@@ -827,6 +838,18 @@ async function run(
     }
     case "repo":
       return repo(w, args, v.name as string | undefined);
+    case "users": {
+      // USR-6: for recovery when nobody can sign in; the command line stays the owner's and changes nothing here.
+      if (args[0] !== "list") throw new UsageError("users list");
+      if (!w.config.auth) return "no [auth] section: Towercab has one owner and no sign-in";
+      const rows = listUsers(w.db).map(
+        (u) =>
+          `${u.login}\t${u.disabled ? "disabled" : u.role}${Object.entries(u.repoRoles ?? {})
+            .map(([r, role]) => ` ${r}=${role}`)
+            .join("")}`,
+      );
+      return rows.length ? rows.join("\n") : "nobody yet: the owner is added when Towercab starts";
+    }
     case "settings":
       return settingsCommand(w, args);
     case "ui": {
