@@ -15,6 +15,10 @@ describe("stage comments", () => {
     expect(lines[1]).toBe("**Review** · round 2");
     expect(text).toBe("<!-- towercab:review:2 -->\n**Review** · round 2\n\nLooks right.\n");
     expect(stageMarker("CI", 1)).toBe("<!-- towercab:ci:1 -->");
+    // PIP-182: with an author, the header names the agent and the intent after the step.
+    expect(stageComment("Review", 2, "ok", { agent: "reviewer", intent: "261001-0900" }).split("\n")[1]).toBe(
+      "**Review** · reviewer · 261001-0900 · round 2",
+    );
 
     // Towercab's own comment never causes an event, even with the owner's words in it.
     const db = testDb();

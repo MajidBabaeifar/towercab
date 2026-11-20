@@ -6,6 +6,7 @@ import { stageMarker } from "../../src/github/comments.ts";
 import { approveRequested, prEvents } from "../../src/github/events.ts";
 import { getMission, insertMission } from "../../src/mission.ts";
 import { FakeGitLab, gitlabConfig } from "../helpers/gitlab.ts";
+import { FakeGitLabTimes } from "../helpers/gitlab-times.ts";
 import { testDb } from "../helpers/world.ts";
 
 const SLUG = "gitlab:group/sub/project";
@@ -15,6 +16,16 @@ function world() {
   gl.project("group/sub/project");
   const f = new GitLabForge(gitlabConfig().cfg, gl.http);
   return { gl, f };
+}
+
+const AFTER_PUSH = "2026-11-05T10:01:00Z";
+
+/** A fake GitLab that knows when the newest commit was pushed (the first merge request). */
+function timed() {
+  const gl = new FakeGitLabTimes();
+  gl.project("group/sub/project");
+  gl.versions.set(1, ["2026-11-05T10:00:00Z"]);
+  return { gl, f: new GitLabForge(gitlabConfig().cfg, gl.http) };
 }
 
 function mission(stage: string, cols: Record<string, string | number | null> = {}) {
@@ -65,6 +76,20 @@ test("gitlab: edits its own stage comment by marker", async () => {
   expect(m.notes).toHaveLength(2);
   expect(m.notes[0]!.body.startsWith(stageMarker("Build", 1))).toBe(true);
   expect(m.notes[0]!.body).toContain("second");
+});
+
+test("gitlab: a stage note names the agent and the intent", async () => {
+  const { gl, f } = world();
+  const m = gl.mr("group/sub/project");
+  const by = { agent: "planner", intent: "261106-0530" };
+  await f.upsertStageComment(SLUG, 1, "Question", 1, "which?", by);
+  expect(m.notes[0]!.body.split("\n").slice(0, 2)).toEqual([
+    stageMarker("Question", 1),
+    "**Question** · planner · 261106-0530 · round 1",
+  ]);
+  // A note from before the header changed is still found by its marker and edited.
+  expect(await f.upsertStageComment(SLUG, 1, "Question", 1, "again", by)).toEqual({ edited: true });
+  expect(m.notes).toHaveLength(1);
 });
 
 test("gitlab: never edits a note it did not write", async () => {
@@ -186,9 +211,10 @@ test("gitlab: a conflict is an event", async () => {
 });
 
 test("gitlab: the owner's approval merges", async () => {
-  const { gl, f } = world();
+  const { gl, f } = timed();
   const m = gl.mr("group/sub/project");
   m.approvedBy.push("owner");
+  gl.approvedAt.set("1:owner", AFTER_PUSH);
   const mi = mission("approval:merge", {
     pr: 1,
     head: m.sha,
@@ -199,13 +225,16 @@ test("gitlab: the owner's approval merges", async () => {
 });
 
 test("gitlab: an approval is the approved_by list", async () => {
-  const { gl, f } = world();
+  const { gl, f } = timed();
   const m = gl.mr("group/sub/project");
   m.approvedBy.push("alice", "bob");
+  gl.approvedAt.set("1:alice", AFTER_PUSH);
+  gl.approvedAt.set("1:bob", AFTER_PUSH);
   const pr = await f.readPr(SLUG, 1);
+  // GL-15: an approval counts by its time, not by a commit.
   expect(pr.reviews.map((r) => [r.author, r.state, r.commit])).toEqual([
-    ["alice", "APPROVED", m.sha],
-    ["bob", "APPROVED", m.sha],
+    ["alice", "APPROVED", null],
+    ["bob", "APPROVED", null],
   ]);
 });
 

@@ -74,9 +74,11 @@ test("forge: readChecks parses the rollup and failedLog reads a run", async () =
   expect(r.checks).toMatchObject([{ name: "test", kind: "run", conclusion: "FAILURE", run: 55 }]);
   expect(await w.forge.failedLog("me/web", 55)).toBe("boom\n");
   await w.forge.rerunFailed("me/web", 55);
+  await w.forge.cancelRun("me/web", 55);
   expect(w.lines().slice(1)).toEqual([
     "run view 55 -R me/web --log-failed",
     "run rerun 55 -R me/web --failed",
+    "run cancel 55 -R me/web",
   ]);
 });
 

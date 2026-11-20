@@ -1,6 +1,6 @@
 # Repo files
 
-**Status:** Live: REPO-1..13, REPO-14..19, REPO-20..27, REPO-30..32 · **Prefix:** REPO
+**Status:** Live: REPO-1..13, REPO-14..19, REPO-20..27, REPO-30..31, REPO-33, REPO-38..49 · **Prefix:** REPO
 
 ## Purpose
 
@@ -409,8 +409,9 @@ Towercab checks the standard GitHub settings of every registered repo once a day
   (`apply-settings v<x.y.z> <check|apply> <owner/name>`). No such tag → the item is `unknown` with
   `No ci release to run the standard settings from: tag a v* release on ci's main`; Towercab never
   falls back to the head.
-- Each run sets `GH_TOKEN` to the App's installation token for the repo's owner and passes only the
-  repo named (`apply-settings [--check] <owner/name>` acts on the repos it is given and asks nothing).
+- The daily run only reads: it is always `apply-settings --check <owner/name>`, never without `--check`, with
+  `GH_TOKEN` set to the App's installation token for the repo's owner, and for one repo named. Nothing
+  here applies anything (a read the App is refused is repeated as the owner, [REPO-41](#repo-41--the-app-needs-no-administration-permission)); applying is the owner's click ([REPO-39](#repo-39--apply-by-the-owners-click)).
 - The repo page lists the gaps in plain words and the time of the last check; `ok` says
   `Standard settings in place`. A check that cannot run is `unknown` and keeps the last result
   ([REPO-27](#repo-27--a-check-that-cannot-run)). The check never blocks work: it only warns, and
@@ -419,17 +420,17 @@ Towercab checks the standard GitHub settings of every registered repo once a day
 
 ### REPO-31 · Applying the settings
 
-With the owner's opt-in, Towercab applies the standard settings itself and checks again, and without it only reports.
+When the owner clicks Apply, Towercab applies the standard settings to that repo and checks again; it never applies on its own.
 
-- Config `[github] settings = "check" | "apply"`, default `check`; anything else → `settings must be check
-  or apply`. It is the installation's switch; with `check`, nothing in this row runs. Once it is
-  `apply`, every repo is applied to unless its `TOWERCAB.md` says `settings: check`
-  ([REPO-1](#repo-1--read-from-the-base-branch)'s keys gain `settings`; only `check` is allowed, any
-  other value → `settings: <v> isn't check`, which makes the file invalid).
-- Per repo, when REPO-30 finds gaps and the repo is to be applied to: (1) the guard below, (2) the backup
-  below, (3) `apply-settings <owner/name>` (no `--check`) from the pinned release, (4) `--check` again,
-  stored as the result. Still `gaps` after the apply → the remaining lines are shown and Towercab does
-  not apply again until the next daily check; it never loops. A repo with no gaps is not touched.
+- Changed by the intent 261106-0510: the opt-in switch `[github] settings = "check" | "apply"` and the
+  `TOWERCAB.md` key `settings: check` are gone. Nothing applies without the click of
+  [REPO-39](#repo-39--apply-by-the-owners-click). A leftover `[github] settings` key in the config is
+  ignored, and a `settings: check` line in `TOWERCAB.md` is still accepted and ignored, so no existing
+  file becomes invalid ([REPO-1](#repo-1--read-from-the-base-branch)).
+- Per Apply, for the one repo clicked: (1) the guard below, (2) the backup below, (3) `apply-settings
+  <owner/name>` (no `--check`) from the pinned release, as the owner ([REPO-39](#repo-39--apply-by-the-owners-click)),
+  (4) `--check` again, stored as the result. Still `gaps` after the apply → the remaining lines are shown
+  and nothing more happens until the next click; it never loops. A repo with no gaps has no Apply and is not touched.
 - Towercab keeps no list of settings: what is applied is whatever the pinned script applies
   ([REPO-25](#repo-25--the-settings-check)).
 - **Ruleset guard.** The ruleset requires check names that the pinned script names itself: Towercab runs
@@ -454,49 +455,111 @@ With the owner's opt-in, Towercab applies the standard settings itself and check
   protection) is saved as absent. The last 5 files
   per repo are kept, older ones are deleted. A backup that cannot be read or written in full → nothing
   is applied.
-- **Restore.** `towercab settings restore <repo>` writes back, with the App token, only what the newest
+- **Restore.** `towercab settings restore <repo>` writes back, with the owner's own `gh` login (as in
+  [REPO-39](#repo-39--apply-by-the-owners-click); the App cannot write settings), only what the newest
   backup saved: the repo's settings and `security_and_analysis` (`PATCH repos/<r>`), each saved ruleset
   (`PUT`, recreated when deleted), the saved branch protections, the workflow permissions, and vulnerability
   alerts on or off as saved. A part saved as absent is not touched. Anything added since (a ruleset not
   in the backup, branch protection the backup lacks) is left alone and listed in the output as `Not in the
   backup, left as it is: <what>`. It prints what it restored and the backup's time; no backup → `<repo>
-  has no saved settings`; unknown repo → as in [LOOP-69](loop.md)'s text; a forbidden write is REPO-32's
-  permission message. It does not need the loop to be running.
-- Verified by: `repo: settings stay check-only by default`, `repo: TOWERCAB.md settings check keeps a repo check-only`, `repo: a bad TOWERCAB.md settings value is invalid`, `repo: apply runs the script then checks again`, `repo: a gap that survives the apply is not retried until the next day`, `repo: a bad settings mode is rejected`, `repo: the required check names come from the plan`, `repo: a green main gets the whole apply`, `repo: a main not green gets everything but the ruleset`, `repo: a release without skip-ruleset applies nothing to a repo not green`, `repo: apply backs up everything the script can change and keeps 5`, `repo: the backup includes another branch the plan names`, `repo: no backup, no apply`, `cli: settings restore writes back what was saved`, `cli: settings restore lists what was added since and leaves it`
+  has no saved settings`; unknown repo → as in [LOOP-69](loop.md)'s text; a forbidden write is
+  [REPO-40](#repo-40--an-apply-the-owner-cannot-make)'s message. It does not need the loop to be running.
+- **Unreadable rulesets.** When the current rulesets cannot be read, restore skips the whole ruleset
+  part (no `PUT`, no `POST`) and lists `Could not read the current rulesets: <reason>; rulesets left as they are`, because a
+  ruleset that still exists would be created twice. The other parts are still restored.
+- **A refused apply after a partial one.** When a 403 ends an apply after the script already changed
+  something, Towercab runs `--check` again before it stores a result, so the card shows the gaps that really remain and
+  never `Nothing applied` over stale gaps. A re-check that cannot run keeps the last result and says the apply stopped part-way.
+- Verified by: `repo: apply runs the script then checks again`, `repo: the required check names come from the plan`, `repo: a green main gets the whole apply`, `repo: a main not green gets everything but the ruleset`, `repo: a release without skip-ruleset applies nothing to a repo not green`, `repo: apply backs up everything the script can change and keeps 5`, `repo: the backup includes another branch the plan names`, `repo: no backup, no apply`, `cli: settings restore writes back what was saved`, `cli: settings restore lists what was added since and leaves it`, `cli: settings restore skips rulesets it cannot read`, `repo: a refused apply after a partial one re-checks before storing`
 
 ### REPO-32 · A missing permission is said once
 
-If the GitHub App cannot change settings, `towercab doctor` says so in one line and the owner gets one step, never a wait without an exit.
-
-- Applying (REPO-31) needs the App's Administration (write) permission. A 403 or "Resource not accessible"
-  from the apply is that permission missing (not a network failure, [LOOP-10](loop.md)): it is stored
-  (`settings-permission`) and nothing more is applied until `doctor` or the next daily check sees it
-  granted.
-- `doctor` prints one line while `settings = "apply"` and the permission is missing: `GitHub App lacks
-  Administration (write): grant it at <app settings URL> so Towercab can apply settings`. With `check`, or
-  with the permission present, it says nothing about it.
-- The owner gets one step, shown with the repo's gaps and not once per repo: `Grant the Towercab GitHub
-  App the Administration (write) permission`, ticked by the owner. Ticking it clears
-  `settings-permission` so the next check applies again. No mission waits on it.
-- Verified by: `doctor: missing Administration permission is one line`, `repo: a forbidden apply becomes one owner step`, `repo: a forbidden apply is not retried until the step is ticked`
+Removed: Towercab no longer applies settings with the GitHub App, so the App needs no Administration permission and `doctor` has nothing to say about it ([REPO-41](#repo-41--the-app-needs-no-administration-permission)). The stored `settings-permission` value and the "Grant the App the Administration permission" owner step are dropped; a value left in `meta` is ignored.
 
 ### REPO-33 · A settings-only intent is done by Towercab
 
-An intent whose whole outcome is a GitHub settings change is delivered as steps Towercab does itself, not as a code change.
+An intent whose whole outcome is a GitHub settings change is delivered as owner steps that the repo's Apply button finishes.
 
-- A plan with `delivery: steps` ([PIP-112](pipeline.md)) whose steps are all the standard settings (the
-  plan marks them `by: towercab`) is not handed to the owner: with `settings = "apply"`, the repo not
-  set to `settings: check` and the permission present, Towercab runs REPO-31 (guard and backup
-  included) for the intent's repo with the pinned `ci` tool, and ticks each step itself once its
-  `--check` is `ok`; the intent then ends done as in [PIP-113](pipeline.md), with no branch and no
-  code pull request. A ruleset step held back by the guard stays unticked and
-  is listed for the owner with the guard's words.
-- With `check` (global or in the repo's `TOWERCAB.md`), or with the permission missing (REPO-32), the same steps are listed for the owner as
-  ordinary owner steps ([SHIP-17](ship.md)) with the gaps as their text, so the intent has an exit
-  and never waits without one: a forbidden apply during the run turns the remaining steps into owner
-  steps the same way. A
-  setting outside the standard list (not in `ci`'s script) stays an owner step.
-- Verified by: `repo: a settings-only intent is applied and ticked by Towercab`, `repo: a settings-only intent falls back to owner steps`
+- A plan with `delivery: steps` ([PIP-112](pipeline.md)) whose steps are all the standard settings is
+  listed for the owner as ordinary owner steps ([SHIP-17](ship.md)) with the gaps as their text, so the
+  intent has an exit and never waits without one. Towercab does not apply them itself.
+- When an Apply ([REPO-39](#repo-39--apply-by-the-owners-click)) for the intent's repo ends with its
+  `--check` `ok`, Towercab ticks those steps and the intent ends done as in [PIP-113](pipeline.md), with
+  no branch and no code pull request. The steps Apply ticks are those whose text starts `Apply the standard GitHub
+  settings` (the plan's instructions ask for that wording); other steps stay the owner's. A ruleset step held back by the guard stays unticked and is listed
+  for the owner with the guard's words. A setting outside the standard list (not in `ci`'s script) stays an owner step.
+- Verified by: `repo: a settings-only intent becomes owner steps`, `repo: an apply that ends ok ticks a settings-only intent's steps`
+
+### REPO-38 · The plan on the repo card
+
+When a repo has settings gaps, its card shows exactly what Apply would change.
+
+- Right after a daily check that ends `gaps` (and again after an Apply that leaves gaps), Towercab
+  runs the pinned `apply-settings --plan <owner/name>` ([REPO-31](#repo-31--applying-the-settings)'s
+  guard reads the same output) with the App's token, which only reads, or as the owner when the App is refused
+  ([REPO-41](#repo-41--the-app-needs-no-administration-permission)), and stores its JSON beside the
+  result in `settings:<repo>` (`plan`). A release without `--plan`, or a failing run, stores no plan
+  and the card says `The plan is not available from this ci release`; Apply stays offered.
+- The card lists each change in plain words (setting, now → after) with a primary **Apply** button.
+  `ok` and `unknown` show no button. Fits 360 px, light and dark, works by keyboard.
+- `GET /api/repos` carries `settings: { state, gaps, plan, checkedAt, applying }`; no token is sent.
+- Verified by: `repo: a gaps check stores the plan`, `repo: a release without plan shows no plan`, `ui: a repo with gaps shows the plan and Apply`, `ui: a repo with settings in place shows no Apply`
+
+### REPO-39 · Apply by the owner's click
+
+Apply runs the standard settings script for that one repo with the owner's own GitHub login, then checks again.
+
+- The UI posts `{action: "apply-settings", repo}` (UI-66's actions). The server refuses a repo that is
+  unknown, has no `gaps` state, or is not the card's repo, and takes no other argument.
+- The run goes through the owner identity (`Forge.asOwner()`, [REPO-31](#repo-31--applying-the-settings)'s
+  steps: guard, backup, apply, check again): `apply-settings` gets no `GH_TOKEN` from Towercab, so it
+  uses the owner's `gh` login, and exactly one `<owner/name>` argument. Reads for the guard and
+  backup use the owner's login too. The login is checked first as in the other owner actions
+  (`ownerLogin`); none → `no owner login: run gh auth login`.
+- Only one apply per repo runs at a time; a second click while it runs is refused. The card shows
+  `Applying…`, then the result of the new check, and the Activity page (UI-64) records kind `settings`
+  with the repo, the `ci` tag and the outcome.
+- Nothing else applies: the daily check, a fetch, a mission or `doctor` never runs `apply-settings`
+  without `--check` or `--plan`.
+- Verified by: `repo: apply runs as the owner for one repo only`, `repo: apply is refused for a repo without gaps`, `repo: two applies for one repo do not overlap`, `repo: nothing applies without the click`, `repo: the daily check never applies`, `repo: a gap that survives the apply is not retried until the next click`, `repo: an old settings key is ignored`, `ui: Apply posts the action and shows the new check`
+
+### REPO-40 · An apply the owner cannot make
+
+If the owner's login is not allowed to change a repo's settings, the card says so once and nothing is half done.
+
+- A 403 or "Resource not accessible" from the apply, or an owner login without admin rights on the repo, is
+  not a network failure ([LOOP-10](loop.md)): the card shows `Your GitHub login can't change this repo's
+  settings: it needs admin on <owner/name>`. Nothing is retried, no mission waits, and the last check
+  result stands.
+- The backup already taken is kept. A network failure is classified as in [LOOP-10](loop.md) and the
+  owner may click again.
+- Verified by: `repo: a forbidden owner apply says so once`, `repo: a network failure in an apply can be clicked again`
+
+### REPO-41 · The App needs no Administration permission
+
+Towercab and `doctor` work with the GitHub App as it is, without the Administration permission.
+
+- The App's needed permissions no longer list Administration; `doctor` prints nothing about it, whether it is
+  granted or not.
+- Some settings (branch protection rules, for one) cannot be read with the App's token (a 403 or "Resource not
+  accessible"). The daily check and the plan then run once more, still only with `--check` or `--plan`, as the
+  owner ([REPO-39](#repo-39--apply-by-the-owners-click)'s identity), so those gaps are found and Apply is offered for
+  them too. This read-only retry writes nothing and needs no click. With no owner login, or a refusal that
+  stays, the item is `unknown` ([REPO-27](#repo-27--a-check-that-cannot-run)), not an error.
+- Verified by: `doctor: no Administration line whatever the App has`, `repo: a check the App cannot read is read as the owner`, `repo: a read as the owner never writes`, `repo: a check nobody can read is unknown`
+
+### REPO-42 · A repo adds its own specialist paths
+
+A repo can say in `REVIEW.md` which of its files call in a specialist reviewer, on top of the shared default list.
+
+- `## Specialist paths` in `REVIEW.md` (REPO-4): bullets `security: <glob>, <glob>` and `infra: <glob>, <glob>`
+  (area name case-insensitive, globs as in `protected`). Several bullets for one area add up. An unknown
+  area name or an empty glob is ignored, not an error. No section → the default list only
+  ([PIP-197](pipeline.md)).
+- The globs extend the shared default, never replace it, and come from the base branch only (REPO-1).
+- Towercab's own `REVIEW.md` lists its own files there (the sandbox, guard and access code, the GitHub
+  code under `src/github/`, the `agents/` prompts and its deploy files); the shared default does not.
+- Verified by: `repo: REVIEW.md specialist paths`, `repo: REVIEW.md without specialist paths`, `repo: unknown specialist area is ignored`
 
 ### REPO-34 · Drafting a verifying section
 
@@ -571,6 +634,99 @@ The owner is asked to add a verifying section only when Towercab found no check 
   reported in that ask, not proposed.
 - Verified by: `repo: no passing draft asks the owner`, `repo: the ask names what was tried`
 
+### REPO-43 · A per-repo overlay outside the checkout
+
+Towercab can read a repo's settings and checks from a folder in its own config directory, so a shared team repo needs no Towercab file.
+
+- The overlay of repo `<name>` is `<config dir>/repos/<name>/` (default `~/.config/towercab/repos/<name>/`), with
+  optional `TOWERCAB.md` and `verifying.md`. `TOWERCAB.md` has the front matter of REPO-1; `verifying.md` holds the
+  blocks of REPO-2 (with or without the `## Verifying your work` heading). Both go through the same parser and
+  grammar as the repo's files; an error reads `overlay <file>: <where>: <what>` and is handled like REPO-18's invalid file.
+- `loadOverlay(configFile, name)` (the folder of the config file) reads regular files only (a symlink, directory or non-UTF-8 file → invalid) and
+  runs in the loop's process, never in a sandbox. `<name>` is the repo's configured name; one containing `/`, `..`
+  or a leading `.` has no overlay.
+- The overlay lives outside every checkout, and no sandbox mounts it writable or at all, so a worker cannot
+  change it ([PIP-24](pipeline.md)). No Towercab file needs to be committed to the repo.
+- Verified by: `repo: overlay files are read from the config directory`, `repo: an invalid overlay file is reported`, `repo: an overlay path escape is refused`, `repo: the overlay is not mounted in the sandbox`
+
+### REPO-44 · Where each setting comes from
+
+The repo's own files come first, and the overlay fills only what the repo leaves out.
+
+- Settings are merged per key. A key set in the base branch's `TOWERCAB.md` is the repo's. A key it lacks (or a repo
+  with no `TOWERCAB.md`) takes the overlay's value, else the default. The checks come from the repo (REPO-45's files)
+  when it has a non-empty ` ```checks ` block; only otherwise from the overlay's `verifying.md`, and then Towercab
+  does not draft a setup PR (REPO-34..36), because it has checks.
+- Every merged value carries its source, `repo`, `overlay` or `default`, kept for REPO-47.
+- Verified by: `repo: a repo key wins over the overlay`, `repo: an absent key takes the overlay`, `repo: the overlay's checks apply only without repo checks`, `repo: an overlay with checks skips the setup PR`
+
+### REPO-45 · Checks from AGENTS.md
+
+The verifying section is also read from `AGENTS.md` when `CLAUDE.md` has none.
+
+- `loadRepoFiles` (REPO-1) also reads `AGENTS.md` from the base branch with the same rules. A `CLAUDE.md` with a
+  non-empty ` ```checks ` block under `## Verifying your work` is used alone; otherwise `AGENTS.md`'s section
+  (REPO-2) is used. The two are never mixed block by block. Neither → REPO-44's overlay, then REPO-5.
+- Verified by: `repo: verifying section read from AGENTS.md`, `repo: CLAUDE.md verifying wins over AGENTS.md`
+
+### REPO-46 · The overlay can only tighten
+
+When the repo sets a limit itself, the overlay can make it stricter but never looser.
+
+- For a key the repo sets, the effective value is the stricter of the two: `max_autonomy` the lower number;
+  `protected` the union of both lists. Any other key the repo sets (`tests`, `live`, `releases`, `kind`, `readiness`,
+  `waive`, `go_live`, `workers`, `ahead`) keeps the repo's value, and the overlay's different value is refused with
+  the line below.
+- For a key the repo leaves out, the overlay is held to Towercab's default: it may be as strict or stricter, never
+  looser. Accepted: `max_autonomy` 1–5 (the default 5 is the loosest), `protected` globs (any list only adds),
+  `releases: manual`, `workers` and `ahead` at or below their defaults, `readiness`, and `kind` only under the rule below. Refused: `live`,
+  `waive` and `go_live` (they skip a requirement or state a way to go live on its own), `tests` other than the
+  default list, `workers`/`ahead` above the default, and overlay checks that check nothing (REPO-35's rule: at
+  least one command reading the repo's own files). A refused key is dropped, not the whole overlay.
+- An overlay `kind` (the repo has none) is accepted only when it equals `suggestKind` ([REPO-21](#repo-21--suggesting-a-kind)),
+  or when its `requiredSetup` ([REPO-22](#repo-22--required-setup-per-kind)) contains every item the suggested kind
+  requires, so deploy, live tests and the go-live statement are kept (`service` over `site`, `cli` or `library`;
+  `site` over `spec-only`). Otherwise it is refused with `overlay kind refused: <k> drops <items> that <inferred>
+  needs`, and the suggested kind is used. With no suggestion, any valid kind is accepted, since each adds to the
+  every-repo list. An accepted overlay kind stays unconfirmed (REPO-20): readiness only warns, as for a suggestion.
+- Every refusal, for a key the repo sets or leaves out, is one line: `overlay <key> refused: looser than <the repo's
+  value|the default>`. It shows in `doctor` (REPO-47) and on the repo page (UI-276). The overlay never adds to the
+  granted paths of a plan ([AUT-14](autonomy.md)), so a protected glob from it blocks like the repo's own.
+- The guard still protects the repo's own `CLAUDE.md`, `AGENTS.md`, `REVIEW.md` and `TOWERCAB.md` and `.git/**`
+  whatever the overlay says (REPO-8); an overlay cannot remove a path from the protected list.
+- Verified by: `repo: the overlay lowers max_autonomy`, `repo: the overlay cannot raise max_autonomy`, `repo: overlay protected paths add to the repo's`, `repo: a loosening overlay key is refused with one line`, `repo: an omitted key is held to the default`, `repo: an overlay that loosens the default is refused`, `repo: overlay checks that check nothing are refused`, `repo: an overlay kind matching the inferred one is accepted`, `repo: an overlay kind that keeps the inferred setup is accepted`, `repo: an overlay kind that drops inferred setup is refused`, `repo: an overlay kind stays unconfirmed`, `repo: the overlay cannot unprotect the repo's own files`
+
+### REPO-47 · Doctor shows where settings come from
+
+`towercab doctor` says, for each setting of a repo, whether it came from the repo, the overlay or the default.
+
+- For each repo with an overlay, `doctor` prints `<name>: <key> = <value> (repo|overlay|default)` for `max_autonomy`,
+  `protected`, the checks, and each other key in effect, plus REPO-46's refusal lines, REPO-49's replaced-checks line and REPO-43's errors.
+  A repo without an overlay prints nothing extra. `doctor` changes nothing and its exit code does not change for a
+  valid overlay; an invalid one counts as a failed check like an invalid `TOWERCAB.md`.
+- Verified by: `doctor: settings show their source`, `doctor: an invalid overlay fails`, `doctor: no overlay prints no source lines`
+
+### REPO-48 · Settings in the overlay are not changed by a pull request
+
+A settings change that Towercab makes never writes the overlay into the repo, and never opens a PR for a value that only the overlay holds.
+
+- REPO-16's settings PR and REPO-19's move change only the repo's `TOWERCAB.md`. A key held by the overlay is shown as
+  overlay-sourced (UI-276); changing it is done by editing the overlay file, and the page says so, with its path.
+- Verified by: `repo: a settings PR never copies overlay values`, `repo: an overlay key is not saved through a PR`
+
+### REPO-49 · Owner told when repo checks replace the overlay's
+
+When a repo starts to have checks of its own and an overlay's checks exist, the owner is told once, with both named, and nothing switches silently.
+
+- Trigger: the base branch has a non-empty ` ```checks ` block (CLAUDE.md or AGENTS.md, REPO-45) and the overlay's
+  `verifying.md` also has one. From then on the repo's checks run (REPO-44).
+- One notice per repo and per pair of block texts, kept in `meta` so a restart or the next fetch does not repeat it:
+  a notice card on the repo's page and its card in the All view (UI-276) and one Telegram message
+  ([TG](telegram.md), sent once, no buttons): `<name>: the repo now has its own checks (<file> on <base>), so the
+  overlay's checks in <overlay path> are no longer used.` Changing either block's text sends a new notice.
+- The notice changes nothing and asks nothing; an intent already running keeps the checks it started with.
+- Verified by: `repo: repo checks replacing overlay checks send one notice`, `repo: the same pair does not notify twice`, `repo: a running intent keeps its checks`
+
 **Grammar** (`src/repo/markdown.ts`)
 
 - Every file: UTF-8, a leading BOM dropped, lines split on `\n`, a trailing `\r` dropped. The first
@@ -604,3 +760,10 @@ The owner is asked to add a verifying section only when Towercab found no check 
   checker is left out and said so in the PR body, rather than guessed; a draft that cannot be shown to
   pass is never proposed (the owner is asked instead); and no setup PR is merged by Towercab if its
   review finds a command that is not a pure check.
+- The overlay (REPO-43..49) only ever tightens: where it conflicts with the repo or with Towercab's default,
+  the value is refused and the stricter one stands. A refused key is dropped alone, the rest of the overlay applies.
+- An overlay `kind` that is accepted stays unconfirmed (REPO-20), so it can warn but never hold work back; only
+  a `kind` committed to the repo does that, as today. With no inferred kind any valid kind is accepted, because
+  every kind only adds required setup.
+- A repo that gains its own checks overrides the overlay's at once, with one notice (REPO-49) and no question;
+  running intents keep the checks they started with.

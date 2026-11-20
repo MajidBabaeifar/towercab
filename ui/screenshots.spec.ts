@@ -10,17 +10,19 @@ const SHOTS = resolve(process.env.TOWERCAB_SHOTS ?? join(import.meta.dirname, "s
 
 const PAGES = [
   {
-    name: "overview",
+    name: "inbox",
     path: "/",
-    expect: [
-      "things need you",
-      "Rate-limit the public API",
-      "Merge plan PR",
-      "Problems",
-      "Working",
-      "Up next",
-      "Airspace",
-    ],
+    expect: ["Inbox", "need you", "? shortcuts", "Rate-limit the public API"],
+  },
+  {
+    name: "inbox-item",
+    path: "/inbox/261025-0910-1",
+    expect: ["Inbox", "Rate-limit the public API", "Merge plan PR"],
+  },
+  {
+    name: "overview",
+    path: "/overview",
+    expect: ["things need you", "Problems", "Working", "Up next", "Airspace"],
   },
   {
     name: "intent",
@@ -126,7 +128,7 @@ test("ui: the built page has no external resources", async ({ page }) => {
 });
 
 test("ui: update keeps typed text", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/inbox/261026-0815-2");
   await settle(page);
   const box = page.locator('[data-intent="261026-0815-2"] textarea');
   await box.fill("One totals row per currency, please.");
@@ -148,7 +150,7 @@ test("ui: the card shows its brief first and folds the details", async ({ browse
   for (const m of [MODES[0], MODES[1], MODES[2]]) {
     const ctx = await browser.newContext({ colorScheme: m.scheme, viewport: m.viewport });
     const page = await ctx.newPage();
-    await page.goto("/");
+    await page.goto("/inbox/261025-0910-1");
     await settle(page);
     // UI-126: the plan card leads with its plain brief; the technical plan is folded under Details.
     const card = page.locator('[data-intent="261025-0910-1"]');
@@ -201,6 +203,9 @@ test("ui: empty page says so", async ({ browser }) => {
       const page = await ctx.newPage();
       await page.goto(`http://localhost:${server.port()}/`);
       await settle(page);
+      await expect(page.locator("body")).toContainText("Nothing needs you.");
+      await page.goto(`http://localhost:${server.port()}/overview`);
+      await settle(page);
       const body = page.locator("body");
       for (const text of [
         "Nothing needs you.",
@@ -242,12 +247,15 @@ test("ui: board folds a repo and remembers it", async ({ browser }) => {
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     await expect(card).toHaveCount(0);
     if (m.mode === "light") {
-      // At 1280 px every column fits; narrower, only the board scrolls sideways, and its column headers
-      // stay on top while it scrolls down.
+      // UI-271: busy columns are at least 180 px and the board keeps the page width, so it may scroll
+      // sideways at 1280 px, but only inside itself; its column headers stay on top while it scrolls down.
       const board = page.locator(".board");
       const sizes = () => board.evaluate((e) => ({ scroll: e.scrollWidth, client: e.clientWidth }));
       const wide = await sizes();
-      expect(wide.scroll).toBeLessThanOrEqual(wide.client);
+      expect(wide.client).toBeLessThanOrEqual(1120);
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+      ).toBeLessThanOrEqual(0);
       await page.setViewportSize({ width: 960, height: 900 });
       const narrow = await sizes();
       expect(narrow.scroll).toBeGreaterThan(narrow.client);
@@ -288,7 +296,7 @@ test("ui: airspace card opens under a plane", async ({ browser }) => {
   for (const scheme of ["light", "dark"] as const) {
     const ctx = await browser.newContext({ colorScheme: scheme, viewport: { width: 1280, height: 900 } });
     const page = await ctx.newPage();
-    await page.goto("/");
+    await page.goto("/overview");
     await settle(page);
     const plane = page.locator(CI_PLANE);
     await plane.hover();
@@ -318,7 +326,7 @@ test("ui: airspace card opens under a plane", async ({ browser }) => {
   // Keyboard: focus opens the card, Escape closes it.
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  await page.goto("/");
+  await page.goto("/overview");
   await settle(page);
   await page.locator(CI_PLANE).locator("xpath=..").focus();
   await expect(page.locator(".air-card")).toContainText("Faster checkout page");
@@ -331,7 +339,7 @@ test("ui: airspace card opens under a plane", async ({ browser }) => {
 });
 
 test("ui: airspace can be hidden", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/overview");
   await settle(page);
   await expect(page.locator(".air")).toBeVisible();
   await page.getByRole("button", { name: "Hide airspace" }).click();
@@ -351,7 +359,7 @@ test("ui: airspace motion stops with reduced motion", async ({ browser }) => {
   const animated = async (reducedMotion: "reduce" | "no-preference") => {
     const ctx = await browser.newContext({ reducedMotion });
     const page = await ctx.newPage();
-    await page.goto("/");
+    await page.goto("/overview");
     await settle(page);
     await page.locator(CI_PLANE).hover();
     await expect(page.locator(".air-card")).toBeVisible();
@@ -382,7 +390,7 @@ const GITHUB_DOWN = {
 
 test("ui: airspace dims held stations and tags a plane waiting at merge", async ({ browser }) => {
   const { fixture, server } = await serveFixture(0);
-  const url = `http://localhost:${server.port()}/`;
+  const url = `http://localhost:${server.port()}/overview`;
   try {
     for (const m of MODES) {
       const ctx = await browser.newContext({
@@ -391,6 +399,8 @@ test("ui: airspace dims held stations and tags a plane waiting at merge", async 
         isMobile: m.mode === "mobile",
         hasTouch: m.mode === "mobile",
       });
+      // UI-246: the airspace starts folded on a phone; this test is about the open strip.
+      await ctx.addInitScript(() => localStorage.setItem("towercab.airspace", "shown"));
       const page = await ctx.newPage();
       const air = page.locator(".air-section");
       const noSideways = () => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -455,7 +465,7 @@ test("ui: ground stop adds no motion with reduced motion", async ({ browser }) =
     fixture.state.pausedAt = fixture.sources.clock.now() - 3600;
     const ctx = await browser.newContext({ reducedMotion: "reduce" });
     const page = await ctx.newPage();
-    await page.goto(`http://localhost:${server.port()}/`);
+    await page.goto(`http://localhost:${server.port()}/overview`);
     await settle(page);
     await expect(page.locator(".air-band")).toHaveCount(1);
     const moving = await page.$$eval(
@@ -487,7 +497,7 @@ test("ui: tab title starts with a pause mark while paused", async ({ browser }) 
   const { fixture, server } = await serveFixture(0);
   try {
     const page = await (await browser.newContext()).newPage();
-    await page.goto(`http://localhost:${server.port()}/`);
+    await page.goto(`http://localhost:${server.port()}/overview`);
     await settle(page);
     await expect(page).toHaveTitle(/^\(\d+\) Towercab/);
     fixture.state.paused = true;
@@ -503,4 +513,17 @@ test("ui: tab title starts with a pause mark while paused", async ({ browser }) 
     await server.stop();
     fixture.cleanup();
   }
+});
+
+test("ui: pause shows it is working until the state changes", async ({ page }) => {
+  await page.goto("/");
+  await settle(page);
+  // The action is accepted but the loop has not applied it yet: the button waits for the new state.
+  await page.route("**/api/actions", (r) =>
+    r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true }) }),
+  );
+  await page.locator(".topbar").getByRole("button", { name: "Pause" }).click();
+  const busy = page.locator(".topbar").getByRole("button", { name: "Pausing…" });
+  await expect(busy).toBeVisible();
+  await expect(busy).toBeDisabled();
 });

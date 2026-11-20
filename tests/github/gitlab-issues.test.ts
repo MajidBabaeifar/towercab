@@ -196,7 +196,7 @@ test("gitlab issues: an a-label sets the autonomy", async () => {
     [`https://gitlab.test/${PROJECT}/-/issues/2`, 2],
   ]);
   // a5 is still capped at a4 for an issue (AUT-13).
-  expect(effectiveA(5, 5, 5, "issue")).toBe(4);
+  expect(effectiveA(5, 5, "issue")).toBe(4);
 });
 
 test("gitlab issues: missing labels are created in the project", async () => {

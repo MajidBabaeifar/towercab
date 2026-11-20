@@ -45,6 +45,15 @@ export class FakeApi {
   readonly tokens: [number, string][] = [];
   /** A status every call gets, or "net" for a network failure. */
   down: number | "net" | null = null;
+  /** `GET /app` answers 500. */
+  appDown = false;
+  /** `GET /users/<owner>/installation` answers 500. */
+  lookupDown = false;
+  /** The App's installation on an account (`GET /users/<owner>/installation`). */
+  readonly accounts = new Map<
+    string,
+    { id: number; repository_selection: string; account: { type: string } }
+  >();
   private installs = new Map<string, number>();
   private live = new Set<number>();
   private clock: Clock;
@@ -82,7 +91,16 @@ export class FakeApi {
       const expires = new Date((this.clock.now() + 3600) * 1000).toISOString().replace(/\.\d+Z$/, "Z");
       return reply(201, { token, expires_at: expires });
     }
-    if (path === "/app") return reply(200, { slug: "towercab", id: 5 });
+    m = /^\/users\/([^/]+)\/installation$/.exec(path);
+    if (m) {
+      if (this.lookupDown) return reply(500, { message: "down" });
+      const seat = this.accounts.get(m[1]!);
+      return seat === undefined ? reply(404, { message: "Not Found" }) : reply(200, seat);
+    }
+    if (path === "/app") {
+      if (this.appDown) return reply(500, { message: "down" });
+      return reply(200, { slug: "towercab", id: 5, name: "Towercab Bot" });
+    }
     if (path === "/users/towercab%5Bbot%5D") return reply(200, { login: BOT, id: 42 });
     return reply(404, { message: "Not Found" });
   };

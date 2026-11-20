@@ -11,6 +11,8 @@ path = "~/intents"
 cutoff = 7
 # Autonomy level (1-5) of an intent filed as a GitHub issue without an a1..a5 label.
 issue_a = 3
+# Most specs and plans per repo that may wait on you at once; a repo at this limit starts no new intent.
+owner_waits = 4
 
 [agent]
 # Claude model for the work.
@@ -35,17 +37,17 @@ ci_poll = 30
 ci_grace = 120
 # Seconds CI may stay pending before the intent waits on it (60-86400).
 ci_wait = 1800
-# PATH for sandboxed commands.
+# Ignored: the sandbox's PATH is fixed in code (it is not a setting). Kept so an older file still loads.
 path = "/usr/local/bin:/usr/bin:/bin"
-# Absolute directories (or ~/...) with your tools, such as claude, added to PATH.
+# Ignored: the sandbox's tool directories are fixed in code. Kept so an older file still loads.
 toolchain = ["~/.local/bin"]
-# Network domains a worker may reach by default.
+# Ignored: the default network list is fixed in code; other domains come from a plan or your answer.
 network = ["registry.npmjs.org", "*.npmjs.org", "github.com", "*.github.com", "*.githubusercontent.com"]
-# Whether the sandbox may use Unix sockets.
+# Ignored: the sandbox never binds Unix sockets in. Kept so an older file still loads.
 sandbox_unix_sockets = false
 
 [agent.env]
-# Environment variables passed to every worker (name = "value").
+# Ignored: use a repo's own variables instead (towercab repo set <name> env=NAME=value). Kept so an older file still loads.
 EXAMPLE_VARIABLE = "placeholder"
 
 [github]
@@ -53,6 +55,8 @@ EXAMPLE_VARIABLE = "placeholder"
 app_id = 123456
 # Your GitHub login.
 me = "your-login"
+# Your first name, for the line `towercab reply` puts on an agent's comments (default: your login).
+# name = "Your Name"
 # GitHub API address (change it only for GitHub Enterprise).
 api_base = "https://api.github.com"
 
@@ -74,6 +78,41 @@ chat_id = "123456789"
 # Telegram API address.
 api_base = "https://api.telegram.org"
 
+# Optional: more places for the same messages, beside Telegram (one table per webhook; Slack, Mattermost,
+# Teams). The address is a secret: keep it alone on one line in a file only you can read (chmod 600).
+# [[notify.webhook]]
+# name = "team"
+# url_file = "~/.config/towercab/team-webhook.url"
+# "minimal" says only how many things wait, with a link to the page; "full" sends Telegram's text.
+# detail = "minimal"
+# The JSON body; {text} and {link} are filled in. This is the default.
+# template = '{"text": "{text}"}'
+
+[shadow]
+# Whether the shadow, one Claude session you talk to in Telegram, is on. It needs [telegram] above.
+enabled = false
+# Actions it may take without asking you first. It always asks before the others; "confirm" always asks.
+free = []
+# What the shadow may spend per day (USD); it stops until midnight at the cap and never pauses other work.
+daily_budget_usd = 5
+# The model it uses (default: [agent] model).
+# model = "opus"
+
+[observer]
+# The observer reads how Towercab ran and proposes improvements as intents for you to accept or close.
+# It only reads, and it is on unless you turn it off here.
+enabled = true
+# When it runs each day (local time); it also runs after notable events.
+daily_at = "06:00"
+# The most proposals it opens in any seven days.
+max_proposals_per_week = 3
+# What it may spend per day (USD); it counts toward your overall budget and never pauses other work.
+daily_budget_usd = 3
+# What one run may spend (USD).
+max_budget_usd = 1.5
+# The model it uses (default: [agent] model).
+# model = "opus"
+
 [ui]
 # Port of the local web page (0 turns it off).
 port = 7311
@@ -83,6 +122,9 @@ port = 7311
 auto = true
 # Minutes an update waits for running work before cutting it off; reviews and builds get as long again.
 drain_minutes = 60
+# Which changes Towercab updates to: "main" (the default) follows every change to main; "release" waits
+# for a newer vMAJOR.MINOR.PATCH tag that is on main.
+# channel = "release"
 
 # One table per repo Towercab works in; the name after repos. is yours to choose. Towercab imports
 # these tables into its database once, on its first start, and ignores them after that: add repos

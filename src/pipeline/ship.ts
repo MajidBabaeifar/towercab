@@ -6,12 +6,11 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { git, refreshBase } from "../checkout.ts";
 import { classifyRun } from "../faults.ts";
 import { MERGE_METHOD } from "../forge.ts";
-import { prsOnBranch } from "../github/branches.ts";
 import { type ChildEnd, type Ctx, EnvError, type Handler, type Progress } from "../handlers.ts";
 import { type Outcome, ok, red, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
-import { type Adapter, adapterOf, RollbackRefused, shipEnv } from "../ship/adapter.ts";
-import { type Live, smokeSuites, suiteOrder } from "../ship/live.ts";
+import { type Adapter, adapterOf, type DeployOutcome, RollbackRefused, shipEnv } from "../ship/adapter.ts";
+import { type Live, liveDomains, shipNetwork, smokeSuites, suiteOrder } from "../ship/live.ts";
 import { readSecrets, type Secrets, secretsPath } from "../ship/secrets.ts";
 import { checksMayWrite, logPath, sandboxSpec } from "./checks.ts";
 import { ciState } from "./ci.ts";
@@ -30,9 +29,13 @@ import {
   tail,
   viaForge,
 } from "./common.ts";
+import { endSecretPass, secretPassRan, startSecretPass } from "./setup-pass.ts";
+import { hasSetupSecrets } from "./setup-secrets.ts";
 
 export const MAX_FIXES = 2;
 const HOLD_POLL = 60;
+/** SHIP-7, SHIP-38: a deploy wait that has lasted this long (5 minutes) sends the owner its reason. */
+const PENDING_NOTICE_S = 5 * 60;
 
 /** The `meta` key of a repo's last good version (SHIP-9). */
 export const lastGoodKey = (repo: string) => `lastgood:${repo}`;
@@ -100,16 +103,25 @@ async function startSuites(
   const { n, data: nd } = nextN(fresh, "e2e");
   const at = cx.record(fresh, fresh.step, {}, nd);
   const sha = (await coGit(cx, at, ["rev-parse", "HEAD"])).trim();
+  // PIP-212: the repo's setup secrets reach this setup too, in a clean export of the checkout's commit.
+  const secret = await startSecretPass(cx, at, {
+    kind: "e2e-setup",
+    dir: cx.checkout(at),
+    lines: files.verifying.setup,
+    log: logPath(cx, at, "e2e", `${n}-setup.log`),
+    timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
+  });
+  if (secret) return secret;
   return {
     spawn: sandboxSpec(cx, at, {
       kind: "e2e-setup",
       lines: files.verifying.setup,
       dir: cx.checkout(at),
-      network: true,
       cacheWritable: true,
       log: logPath(cx, at, "e2e", `${n}-setup.log`),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
       extraEnv: shipEnv(sc, sha),
+      domains: [...liveDomains(sc.live), ...shipNetwork(cx.db, cx.repo(at).name)],
     }),
   };
 }
@@ -126,11 +138,11 @@ async function nextSuite(cx: Ctx, m: Mission, sc: ShipCx): Promise<Progress> {
       kind: "e2e",
       lines: [suite.command],
       dir: cx.checkout(at),
-      network: true,
       cacheWritable: checksMayWrite(cx, at),
       log: logPath(cx, at, "e2e", `${n}-${suite.name}.log`),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
       extraEnv: shipEnv(sc, sha),
+      domains: [...liveDomains(sc.live), ...shipNetwork(cx.db, cx.repo(at).name)],
     }),
   };
 }
@@ -166,6 +178,14 @@ async function suiteEnded(
   end: ChildEnd,
   run: SuiteRun,
 ): Promise<Progress | SuitesDone> {
+  if (
+    m.step === `${run.kind}-setup` &&
+    (secretPassRan(cx.checkout(m)) || hasSetupSecrets(cx.config.file, m.repo))
+  ) {
+    // PIP-212, PIP-213: the setup secrets are redacted and searched for first; a hit stops the stage.
+    const r = await endSecretPass(cx, m, end, cx.checkout(m));
+    if ("done" in r) return r;
+  }
   const log = keptLog(end, sc.secrets);
   const e = sc.ship.e2e!;
   if (m.step === `${run.kind}-setup`) {
@@ -219,22 +239,52 @@ export const deployHandler: Handler = {
       sc.ship = data(m).ship!;
     }
     const sha = sc.ship.merges.at(-1)!;
-    const o = await sc.adapter.outcome(sha);
-    if (o.state === "live") return { done: ok({ why: `${short(sha)} is live` }) };
-    if (o.state === "failed") return { done: shipRed(sc, "deploy", `the deploy failed: ${o.why}`, "") };
-    if (late(cx, sc.ship, sc.live))
-      return { done: shipRed(sc, "deploy", `not live after ${minutes(sc.live)}`, "") };
-    return { poll: cx.config.agent.ciPoll };
+    return deployProgress(cx, m, sc, sha, await sc.adapter.outcome(sha));
   },
   async finish() {
     return { poll: 0 };
   },
 };
 
+/** What the deploy step does with the adapter's answer for `sha` (SHIP-7, SHIP-38). */
+export function deployProgress(
+  cx: Ctx,
+  m: Mission,
+  sc: Pick<ShipCx, "live" | "ship">,
+  sha: string,
+  o: DeployOutcome,
+): Progress {
+  const clear = { ship: { ...sc.ship, pending: undefined } };
+  if (o.state === "live") return { done: ok({ why: `${short(sha)} is live`, data: clear }) };
+  if (o.state === "failed") return { done: shipRed(sc, "deploy", `the deploy failed: ${o.why}`, "") };
+  const why = o.why;
+  if (late(cx, sc.ship, sc.live))
+    return { done: shipRed(sc, "deploy", `not live after ${minutes(sc.live)}${why ? `: ${why}` : ""}`, "") };
+  // SHIP-38: what the wait is on is kept for the intent page, and the owner hears of it once.
+  const now = cx.clock.now();
+  let ship = sc.ship;
+  if (why && ship.pending?.why !== why) {
+    ship = data(cx.record(m, m.step, {}, { ship: { ...ship, pending: { why, at: now } } })).ship!;
+  } else if (!why && ship.pending) {
+    ship = data(cx.record(m, m.step, {}, clear)).ship!;
+  }
+  if (why && ship.pending && now - ship.pending.at >= PENDING_NOTICE_S) {
+    cx.db.run(
+      "INSERT OR IGNORE INTO outbox (key, mission, text, created) VALUES (?, NULL, ?, ?)",
+      `deploy-pending:${m.id}:${ship.since ?? 0}`,
+      `${why}\n${m.intent} (${m.repo})`.slice(0, 4000),
+      now,
+    );
+  }
+  return { poll: cx.config.agent.ciPoll };
+}
+
 /** A red deploy or e2e run: the rollback gets what failed (SHIP-10, SHIP-11). */
-function shipRed(sc: ShipCx, suite: string, why: string, log: string, path = ""): Outcome {
+function shipRed(sc: Pick<ShipCx, "ship">, suite: string, why: string, log: string, path = ""): Outcome {
   return red(why, {
-    data: { ship: { ...sc.ship, red: { suite, log: log || why, path }, since: undefined } },
+    data: {
+      ship: { ...sc.ship, red: { suite, log: log || why, path }, since: undefined, pending: undefined },
+    },
   });
 }
 
@@ -467,7 +517,7 @@ export const revertHandler: Handler = {
       await git(cx.tools, clone, ["fetch", "--quiet", "origin"], await cx.github.gitAuth(repo.github));
       await checkoutAt(cx, m, null);
       await coGit(cx, m, ["checkout", "--quiet", "-B", branch, `refs/remotes/origin/${repo.base}`]);
-      const author = await botAuthor(cx);
+      const author = await botAuthor(cx, cx.repo(m).github);
       for (const sha of [...sc.ship.merges].reverse()) {
         try {
           await coGit(cx, m, [...author, "revert", "--no-edit", sha]);
@@ -489,7 +539,7 @@ export const revertHandler: Handler = {
     if (m.step === "pr") {
       const r = sc.ship.revert!;
       let pr =
-        (await prsOnBranch(cx.github, repo.github, branch)).find((p) => p.state === "OPEN")?.number ?? null;
+        (await cx.github.prsOnBranch(repo.github, branch)).find((p) => p.state === "OPEN")?.number ?? null;
       if (!pr) {
         const intent = await intentOf(cx, m);
         const body = revertBody(sc, intent.title);

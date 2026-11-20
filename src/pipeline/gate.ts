@@ -4,12 +4,13 @@ import { gate } from "../autonomy.ts";
 import { MERGE_METHOD } from "../forge.ts";
 import { conflictOutcome } from "../github/events.ts";
 import type { Ctx, Handler } from "../handlers.ts";
+import { REFACTOR_PROOF } from "../kind.ts";
 import { ok, wait } from "../machine.ts";
 import { getMission, type Mission } from "../mission.ts";
 import { type Risk, riskMd } from "../risk.ts";
 import { PASS_ON_WHY } from "../teammates.ts";
 import { testGrantsOf } from "./access.ts";
-import { data, effectiveOf, intentOf, mustForge, prUrl, repoFiles, viaForge } from "./common.ts";
+import { data, effectiveOf, gateLevelOf, intentOf, mustForge, prUrl, repoFiles, viaForge } from "./common.ts";
 import { type Checks, codeBody } from "./prtext.ts";
 import { HOLD_SECS, holder } from "./ship.ts";
 import { stepsBeforeMerge } from "./steps.ts";
@@ -58,9 +59,11 @@ export function checksLine(m: Mission): Checks {
     proof:
       d.proof === "proven"
         ? "the new tests fail without the change"
-        : d.proof === "none needed"
-          ? "not needed (no behaviour change)"
-          : "no test fails without the change",
+        : d.proof === REFACTOR_PROOF
+          ? REFACTOR_PROOF
+          : d.proof === "none needed"
+            ? "not needed (no behaviour change)"
+            : "no test fails without the change",
     ci: d.ci?.result === "none" ? "no CI on this repo" : "green",
     review: d.review
       ? d.review.approved
@@ -86,6 +89,7 @@ async function updateBody(cx: Ctx, m: Mission): Promise<void> {
       ...(d.unplanned?.paths ?? []).map((x) => ({ what: `writing ${x.glob}`, why: x.why })),
     ],
     tests: testGrantsOf(d),
+    applied: d.applied,
     specIds: d.design?.specIds ?? [],
     links: {
       intentUrl: cx.store.url(intent),
@@ -94,6 +98,7 @@ async function updateBody(cx: Ctx, m: Mission): Promise<void> {
     },
     reviewDetails: d.review?.details ?? null,
     ownerSteps: d.ownerSteps,
+    deferred: d.deferred,
     risk: d.review ? riskMd(codeRisk(m)) : "",
     footer: { intentUrl: cx.store.url(intent), costUsd: m.cost_usd, secs: m.agent_secs },
     issue: { url: intent.issue, repo: repo.github },
@@ -145,7 +150,8 @@ export const gateHandler: Handler = {
       ? { data: { teammate: { ...data(m).teammate, unchecked: skipped } } }
       : {};
     const g = gate({
-      a: effectiveOf(m, intent, files),
+      a: gateLevelOf(cx, m, intent, files),
+      accessA: effectiveOf(m, intent, files),
       ciGreen: d.ci?.result === "green" || d.ci?.result === "none",
       review: d.review ? { approved: d.review.approved } : null,
       unplanned,
@@ -184,9 +190,10 @@ export const MAX_BLOCKED_READS = 3;
 
 export const mergeHandler: Handler = {
   async step(cx, m) {
-    // INT-44: never merge only the lead of a multi-repo intent (LOOP-78 is not built yet); this also stops
-    // an intent that gained `repos:` after its build began.
-    if (((await intentOf(cx, m)).repos ?? []).length > 0) {
+    const d0 = data(m) as { part?: string };
+    // INT-44: never merge only the lead of a multi-repo intent: its parts land through the part driver
+    // (LOOP-80); this stops an intent that gained `repos:` after its build began and has no parts.
+    if (!d0.part && ((await intentOf(cx, m)).repos ?? []).length > 0) {
       return { done: wait("several repos", "The intent lists other repos in `repos:`.") };
     }
     const repo = cx.repo(m);

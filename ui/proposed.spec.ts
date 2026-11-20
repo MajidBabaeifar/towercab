@@ -35,26 +35,31 @@ test("ui: screenshots light, dark and mobile", async ({ browser }) => {
       const page = await ctx.newPage();
       const noSideways = () => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
 
+      // UI-266: the proposals are rows of the Inbox, and the one selected shows its card.
       await page.goto(`${base}/`);
       await settle(page);
-      const section = page.locator("#proposed");
-      await expect(section).toContainText("Proposed");
-      await expect(section.locator(".proposed-card")).toHaveCount(5);
-      await expect(section.locator(".proposed-card").first()).toContainText(
-        "Export invoices as a spreadsheet",
-      );
-      await expect(section.locator("#proposed-202")).toContainText("Draft");
-      await expect(section.locator("#proposed-203")).toContainText("would be parked");
+      await expect(page.locator(".inbox-row")).toHaveCount(9);
+      await expect(page.locator(".inbox-row").first()).toContainText("Export invoices as a spreadsheet");
+      // On a phone the list stands alone; elsewhere the first item's card is beside it.
+      if (m.mode !== "mobile") await expect(page.locator(".inbox-detail #proposed-201")).toBeVisible();
+      await page.goto(`${base}/inbox/proposed-202`);
+      await settle(page);
+      await expect(page.locator("#proposed-202")).toContainText("Draft");
+      await page.goto(`${base}/inbox/proposed-203`);
+      await settle(page);
+      await expect(page.locator("#proposed-203")).toContainText("would be parked");
       // A GitHub-only proposal says why it can't be accepted.
-      await expect(section.locator("#proposed-204")).toContainText("Changes more than one intent");
-      await expect(section.locator("#proposed-204").getByRole("button", { name: "Accept" })).toBeDisabled();
-      expect(await noSideways(), `overview ${m.mode} scrolls sideways`).toBeLessThanOrEqual(0);
-      await page.screenshot({ path: join(SHOTS, `proposed-overview-${m.mode}.png`), fullPage: true });
+      await page.goto(`${base}/inbox/proposed-204`);
+      await settle(page);
+      await expect(page.locator("#proposed-204")).toContainText("Changes more than one intent");
+      await expect(page.locator("#proposed-204").getByRole("button", { name: "Accept" })).toBeDisabled();
+      expect(await noSideways(), `inbox ${m.mode} scrolls sideways`).toBeLessThanOrEqual(0);
+      await page.screenshot({ path: join(SHOTS, `proposed-inbox-${m.mode}.png`), fullPage: true });
 
       await page.goto(`${base}/repos?repo=web`);
       await settle(page);
       await expect(page.locator(".repo-page")).toContainText("Proposed");
-      await expect(page.locator(".proposed-card")).toHaveCount(2);
+      await expect(page.locator(".proposed-row")).toHaveCount(2);
       expect(await noSideways(), `repo ${m.mode} scrolls sideways`).toBeLessThanOrEqual(0);
       await page.screenshot({ path: join(SHOTS, `proposed-repo-${m.mode}.png`), fullPage: true });
 
@@ -69,14 +74,20 @@ test("ui: screenshots light, dark and mobile", async ({ browser }) => {
 
     // Accept and Close from the card; the card goes.
     const page = await browser.newPage();
+    // An old link, `/#proposed-202`, opens that proposal in the Inbox (UI-266).
     await page.goto(`${base}/#proposed-202`);
     await settle(page);
+    await expect(page).toHaveURL(`${base}/inbox/proposed-202`);
+    await page.goto(`${base}/inbox/proposed-201`);
+    await settle(page);
     await page.locator("#proposed-201").getByRole("button", { name: "Accept" }).click();
-    await expect(page.locator("#proposed-201")).toHaveCount(0);
+    await expect(page.locator("#inbox-row-proposed-201")).toHaveCount(0);
+    await page.goto(`${base}/inbox/proposed-203`);
+    await settle(page);
     await page.locator("#proposed-203").getByRole("button", { name: "Close" }).click();
     await page.locator("#proposed-203 input").fill("Not now.");
     await page.locator("#proposed-203").getByRole("button", { name: "Close the PR" }).click();
-    await expect(page.locator("#proposed-203")).toHaveCount(0);
+    await expect(page.locator("#inbox-row-proposed-203")).toHaveCount(0);
     expect(fixture.calls.filter((c) => c.pr).map((c) => [c.action, c.pr, c.text ?? null])).toEqual([
       ["accept", 201, null],
       ["close", 203, "Not now."],

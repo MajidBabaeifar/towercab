@@ -5,13 +5,19 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { clearFlag, flagOf, setAccepted, setFlag } from "../src/autonomy-change.ts";
 import { parseConfig } from "../src/config.ts";
 import { Db } from "../src/db.ts";
+import { takeFreeze } from "../src/freeze.ts";
 import type { ProposedPr, ProposedState } from "../src/github/proposed.ts";
 import type { Clock } from "../src/handlers.ts";
 import { Home } from "../src/home.ts";
+import type { Draft } from "../src/intents/create.ts";
+import type { MatchKind } from "../src/intents/overlap.ts";
 import type { Intent, IntentStore, Listing, Unreadable } from "../src/intents/types.ts";
 import type { Stage } from "../src/machine.ts";
+import { patchData, unfinishedFor } from "../src/mission.ts";
+import { seedParts } from "../src/parts.ts";
 import {
   type Check,
   type Item,
@@ -220,6 +226,15 @@ export interface FakeActionCall {
   done?: boolean;
   pr?: number;
   head?: string;
+  /** UI-257: the level asked for. */
+  a?: number;
+  /** UI-204: the urgency and importance asked for (null: left as it is). */
+  u?: number | null;
+  i?: number | null;
+  /** UI-216: the new intent form's title. */
+  title?: string;
+  /** FAST-1: the fast lane mark asked for. */
+  fast?: boolean;
 }
 
 export interface Fixture {
@@ -265,10 +280,13 @@ export const IDS = {
   done4: "261020-0830-1",
   landed: "261026-0640-1",
   dropped: "261022-1010-1",
+  /** UI-251: only in the crowded fixture. */
+  stepsWait: "261026-1330-1",
+  specReview: "261026-1340-1",
 } as const;
 
 /** UI-184: the fixture's proposed intents: a draft, a parked one, a GitHub-only one and an unknown repo. */
-export function proposals(now: number): ProposedPr[] {
+export function proposals(now: number, crowded = false): ProposedPr[] {
   const mk = (
     n: number,
     title: string,
@@ -300,6 +318,15 @@ export function proposals(now: number): ProposedPr[] {
       reason: "Changes more than one intent",
     }),
     mk(205, "Billing portal for the CRM", "crm", 4, 4),
+    // UI-251: the live page's crowd: many proposals of one shape.
+    ...(crowded
+      ? Array.from({ length: 13 }, (_, n) => ["web", "api", "docs", "mobile", "infra", "blog"][n % 6]!).map(
+          (repo, n) =>
+            mk(230 + n, `${repo} is set up as a repo and ready for work`, repo, 3, 3, {
+              createdAt: now - (3 + n) * HOUR,
+            }),
+        )
+      : []),
   ];
 }
 
@@ -330,7 +357,7 @@ export function setupProposal(now: number): ProposedPr {
 }
 
 /** UI-155..157: `web` blocks until it is set up, `api` has an unconfirmed kind, `docs` could not be checked. */
-function storeReadiness(db: Db, now: number): void {
+function storeReadiness(db: Db, now: number, many = false): void {
   const put = (
     repo: string,
     kind: Kind,
@@ -358,12 +385,35 @@ function storeReadiness(db: Db, now: number): void {
       words: "The standard settings could not be checked: add the ci repo to Towercab",
     },
   });
+  if (!many) return;
+  // UI-269: no release job on five of the seven checked repos, so it is a shared gap.
+  put("tool", "cli", true, "warn", { release: { state: "missing" } });
+  put("lib", "library", true, "warn", { release: { state: "missing" } });
+  put("site", "site", true, "warn", { release: { state: "missing" }, live: { state: "missing" } });
+  put("ops", "infra", true, "warn", {
+    release: { state: "missing" },
+    settings: {
+      state: "unknown",
+      words:
+        "The standard settings could not be checked: gh api repos/acme/ops/actions/permissions/workflow: gh: Resource not accessible by integration (HTTP 403)",
+    },
+  });
 }
 
 /** Build the fixture home; `now` defaults to the real clock so relative times read naturally. `empty`
  * gives a home with nothing in it (UI-70). */
 export function buildFixture(
-  o: { now?: number; root?: string; empty?: boolean; proposed?: boolean; readiness?: boolean } = {},
+  o: {
+    now?: number;
+    root?: string;
+    empty?: boolean;
+    proposed?: boolean;
+    readiness?: boolean;
+    /** UI-251: many proposals and a mission waiting on the owner's steps, as on the live page. */
+    crowded?: boolean;
+    /** UI-275: more than eight repos, several not ready, and a CLI repo's finished change. */
+    many?: boolean;
+  } = {},
 ): Fixture {
   const now = o.now ?? Date.now() / 1000;
   const root = o.root ?? mkdtempSync(join(tmpdir(), "tc-ui-fixture-"));
@@ -372,7 +422,7 @@ export function buildFixture(
   const config = parseConfig(
     {
       intents: { remote: "https://github.com/acme/intents.git" },
-      agent: { daily_budget_usd: 40 },
+      agent: { daily_budget_usd: 40, monthly_budget_usd: 900 },
       github: { app_id: 1, me: "owner" },
       repos: {
         web: { github: "acme/web", workers: 2 },
@@ -381,6 +431,7 @@ export function buildFixture(
         mobile: { github: "acme/mobile" },
         infra: { github: "acme/infra" },
         blog: { github: "acme/blog" },
+        ...(o.many ? MANY_REPOS : {}),
       },
     },
     join(root, "config.toml"),
@@ -388,6 +439,8 @@ export function buildFixture(
 
   const store = new MemStore();
   if (!o.empty) seed(db, store, home, now);
+  if (o.crowded && !o.empty) crowdScene(db, store, now);
+  if (o.many && !o.empty) manyScene(db, store, now);
   const state: Fixture["state"] = {
     proposed: { list: [], error: null, failedAt: null },
     paused: false,
@@ -403,17 +456,20 @@ export function buildFixture(
           { intent: IDS.held, priority: 8, skip: { kind: "after", intent: IDS.ci } },
           { intent: IDS.parked2, priority: 6, skip: { kind: "parked" } },
           { intent: IDS.parked1, priority: 5, skip: { kind: "parked" } },
+          ...(o.crowded
+            ? CROWD_QUEUE.map((intent) => ({ intent, priority: 9, skip: { kind: "ahead", n: 3, limit: 3 } }))
+            : []),
         ]) as UpNext[],
   };
   state.proposed = {
     list: [
-      ...(o.proposed && !o.empty ? proposals(now) : []),
+      ...((o.proposed || o.crowded) && !o.empty ? proposals(now, o.crowded) : []),
       ...(o.readiness && !o.empty ? [setupProposal(now)] : []),
     ],
     error: null,
     failedAt: null,
   };
-  if (o.readiness && !o.empty) storeReadiness(db, now);
+  if (o.readiness && !o.empty) storeReadiness(db, now, o.many);
   const logs: LogLine[] = o.empty
     ? []
     : [
@@ -446,7 +502,7 @@ export function buildFixture(
         : state.upNext,
     prUrl: (repo, n) => `https://github.com/${repo}/pull/${n}`,
     intentUrl: (i) => store.url(i),
-    ...(o.proposed || o.readiness ? { proposed: () => state.proposed } : {}),
+    ...(o.proposed || o.readiness || o.crowded ? { proposed: () => state.proposed } : {}),
     logs: () => logs,
   };
 
@@ -465,6 +521,10 @@ export function buildFixture(
       calls.push({ action: "retry", intent });
       return "Towercab starts it over on its next pass.";
     },
+    async unfreeze(intent) {
+      calls.push({ action: "unfreeze", intent });
+      return "Towercab lifts the freeze on its next pass.";
+    },
     async drop(intent) {
       calls.push({ action: "drop", intent });
       return "Towercab drops it on its next pass.";
@@ -472,6 +532,48 @@ export function buildFixture(
     async start(intent) {
       calls.push({ action: "start", intent });
       return "Starting its design on the next pass, even if the repo is full.";
+    },
+    async autonomy(intent, a) {
+      calls.push({ action: "autonomy", intent, a });
+      if (!Number.isInteger(a) || a < 0 || a > 5) throw new Error("Autonomy is a0 to a5.");
+      const found = store.open.find((i) => i.id === intent);
+      if (!found) throw new Error(`there is no open intent ${intent}`);
+      // The fixture's one refusal: the intents repo can't be pushed to (UI-257).
+      if (intent === IDS.upnext && a === 0) throw new Error("The intents repo refused the push.");
+      const flag = flagOf(db, intent);
+      if (flag) clearFlag(db, intent);
+      found.a = a;
+      return "Saved. Applies from the next gate.";
+    },
+    async fast(intent, on) {
+      calls.push({ action: "fast", intent, fast: on });
+      const found = store.open.find((i) => i.id === intent);
+      if (!found) throw new Error(`there is no open intent ${intent}`);
+      found.fast = on;
+      return on ? "In the fast lane." : "Out of the fast lane.";
+    },
+    async scores(intent, u, i) {
+      calls.push({ action: "scores", intent, u, i });
+      for (const v of [u, i]) {
+        if (v !== null && (!Number.isInteger(v) || v < 1 || v > 5)) throw new Error("A score is 1 to 5.");
+      }
+      const found = store.open.find((x) => x.id === intent);
+      if (!found) throw new Error(`there is no open intent ${intent}`);
+      if (u !== null) found.u = u;
+      if (i !== null) found.i = i;
+      const p = priority(found.u, found.i);
+      return { message: "Saved. The queue is reordered.", priority: p, parked: p < config.intents.cutoff };
+    },
+    async boost(intent) {
+      calls.push({ action: "boost", intent });
+      const found = store.open.find((x) => x.id === intent);
+      if (!found) throw new Error(`there is no open intent ${intent}`);
+      if (found.source !== null && found.source !== "me") throw new Error("a5 is only for your own intents.");
+      const flag = flagOf(db, intent);
+      if (flag) clearFlag(db, intent);
+      found.a = 5;
+      found.lowerWhy = null;
+      return "Boosted: a5. It runs from the next gate.";
     },
     async step(intent, n, done) {
       calls.push({ action: "step", intent, n, done });
@@ -514,6 +616,92 @@ export function buildFixture(
       calls.push({ action: "features", repo });
       return "Towercab reads the repo's README and specs and rewrites its live features within a few minutes.";
     },
+
+    // UI-214, UI-216: the overlap check and the writer. A title that has a word of 5 letters or more in
+    // common with an intent overlaps it; a title with `FAIL` in it makes the check fail.
+    async checkIntent(draft: Draft) {
+      calls.push({ action: "checkIntent", repo: draft.repo, title: draft.title });
+      if (draft.title.includes("FAIL")) throw new Error("The overlap check failed: it timed out");
+      const words = draft.title
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w.length >= 5);
+      const matches = [...store.open, ...store.done]
+        .flatMap((i) => {
+          const hit = words.find((w) => i.title.toLowerCase().includes(w));
+          if (!hit) return [];
+          const kind: MatchKind = i.done
+            ? store.dropped.has(i.id)
+              ? "dropped"
+              : "done"
+            : priority(i.u, i.i) < config.intents.cutoff
+              ? "parked"
+              : "open";
+          const started = !i.done && i.stage !== null && i.stage !== "spec";
+          return [
+            {
+              kind,
+              ref: i.id,
+              title: i.title,
+              how: `Both are about “${hit}”`,
+              canAdd: !i.done && !started,
+              pastDesign: !i.done && started,
+            },
+          ];
+        })
+        .slice(0, 5);
+      return {
+        matches,
+        ...(draft.title.length < 20 ? { titleNote: "The title is shorter than a user story" } : {}),
+      };
+    },
+
+    async createIntent(draft: Draft, o) {
+      calls.push({
+        action: "createIntent",
+        repo: draft.repo,
+        title: draft.title,
+        ...(o.addTo ? { intent: o.addTo } : {}),
+      });
+      if (o.addTo) {
+        const found = store.open.find((i) => i.id === o.addTo);
+        if (!found) throw new Error(`no intent matches ${o.addTo}`);
+        if (found.stage !== null && found.stage !== "spec")
+          throw new Error(
+            `${found.id} is already past design, so new text would not change it. Write a new intent instead and link ${found.id} in it.`,
+          );
+        return {
+          id: found.id,
+          path: `${found.dir}/intent.md`,
+          added: true,
+          message: `Added to ${found.id}.`,
+        };
+      }
+      if (!draft.title.trim()) throw new Error("the title must be one non-empty line");
+      if (draft.title.includes("REFUSE")) throw new Error("The intents repo refused the push");
+      const id = `261109-${String(900 + store.open.length).padStart(4, "0")}-1`;
+      const made = makeIntent({
+        id,
+        title: draft.title,
+        repo: draft.repo,
+        u: draft.u ?? null,
+        i: draft.i ?? null,
+        a: draft.a ?? null,
+      });
+      // The fixture server has no roles, so a title with PROPOSAL in it stands for a contributor.
+      if (o.mode === "proposal" || draft.title.includes("PROPOSAL")) {
+        return {
+          id,
+          path: "",
+          added: false,
+          proposal: true,
+          pr: 301,
+          message: `Proposed ${id}. A maintainer will accept or close it.`,
+        };
+      }
+      store.open.push(made);
+      return { id, path: `${made.dir}/intent.md`, added: false, message: `Created ${id}.` };
+    },
   };
 
   return {
@@ -530,6 +718,168 @@ export function buildFixture(
       rmSync(root, { recursive: true, force: true });
     },
   };
+}
+
+/** UI-251: a mission merged and waiting for the owner's steps (UI-245). */
+/** UI-266: the 36 queued of the live page: four up next as in the plain fixture and these 32 behind them. */
+const CROWD_QUEUE = Array.from({ length: 32 }, (_, n) => `261015-${1000 + n}-1`);
+
+function crowdScene(db: Db, store: MemStore, now: number): void {
+  for (const [n, id] of CROWD_QUEUE.entries())
+    store.open.push(
+      makeIntent({
+        id,
+        title: `Queued job ${n + 1}: tidy the ${["web", "api", "docs"][n % 3]} settings`,
+        repo: ["web", "api", "docs"][n % 3]!,
+        u: 3,
+        i: 3,
+      }),
+    );
+  store.open.push(
+    makeIntent({
+      id: IDS.stepsWait,
+      title: "Send invoice emails from the new domain",
+      repo: "web",
+      u: 3,
+      i: 4,
+      stage: "code",
+      waiting: "your steps",
+    }),
+  );
+  // UI-248: a spec review with a risk and open points, the tall card of the live page.
+  store.open.push(
+    makeIntent({
+      id: IDS.specReview,
+      title: "Let teams share saved reports",
+      repo: "api",
+      u: 4,
+      i: 4,
+      stage: "spec",
+      waiting: "approve spec",
+    }),
+  );
+  addMission(db, now, {
+    intent: IDS.specReview,
+    repo: "api",
+    stage: "approval:spec",
+    from: "design",
+    waiting: "approve spec",
+    spec: 120,
+    cost: 0.9,
+    agent: 600,
+    created: 2 * HOUR,
+    moves: [
+      [2 * HOUR - 20, "pick", "ok", "design"],
+      [HOUR, "design", "wait", "approval:spec"],
+    ],
+    data: {
+      design: { brief: "Teams can share a saved report with each other instead of mailing a file around." },
+      riskOf: { spec: "" },
+      risk: {
+        spec: {
+          level: "medium",
+          said: "medium",
+          raised: null,
+          blast: { size: "medium", who: "Every team that saves reports." },
+          door: { kind: "two-way", why: "The sharing switch can be turned off again." },
+          certainty: { level: "medium", why: "The sharing rules are new and only read in review." },
+          summary: "Sharing is new, but it can be switched off.",
+          openPoints: [
+            {
+              point: "Who may see a shared report?",
+              why: "Teams or the whole company changes the privacy rules.",
+            },
+            { point: "Do shared reports expire?", why: "Without expiry they pile up." },
+            { point: "Can a viewer copy a report?", why: "Copies escape later edits." },
+          ],
+          of: "",
+        },
+      },
+    },
+  });
+  addMission(db, now, {
+    intent: IDS.stepsWait,
+    repo: "web",
+    stage: "steps",
+    waiting: "your steps",
+    pr: 230,
+    plan: 40,
+    cost: 2.1,
+    agent: 1800,
+    created: 6 * HOUR,
+    moves: [
+      [6 * HOUR - 20, "pick", "ok", "design"],
+      [5 * HOUR, "design", "ok", "plan"],
+      [4 * HOUR, "plan", "wait", "approval:plan"],
+      [3 * HOUR + 30 * MIN, "approval:plan", "plan_merged", "build"],
+      [3 * HOUR, "merge", "ok", "steps"],
+    ],
+    data: {
+      steps: [
+        {
+          n: 1,
+          when: "after",
+          text: "Add the DNS records for mail.acme.test",
+          why: "Mail from the new domain is rejected without them.",
+          done_at: null,
+        },
+      ],
+    },
+  });
+}
+
+/** UI-275: a finished change in a CLI repo, to show a stage map with stages that cannot apply. */
+const CLI_DONE = "261026-0930-1";
+
+/** UI-275: the repos added by `many`: a CLI, a library, a site and an ops repo. */
+const MANY_REPOS = {
+  tool: { github: "acme/tool" },
+  lib: { github: "acme/lib" },
+  site: { github: "acme/site" },
+  ops: { github: "acme/ops" },
+};
+
+function manyScene(db: Db, store: MemStore, now: number): void {
+  const iso = (t: number) => new Date(t * 1000).toISOString();
+  store.done.push(
+    makeIntent({
+      id: CLI_DONE,
+      title: "Add a --json flag to the export command",
+      repo: "tool",
+      done: true,
+      stage: "done",
+      cost: 3.2,
+      agentTime: 1500,
+      attempts: 1,
+      finished: iso(now - 5 * HOUR),
+    }),
+  );
+  addMission(db, now, {
+    intent: CLI_DONE,
+    repo: "tool",
+    stage: "done",
+    spec: 150,
+    plan: 30,
+    pr: 31,
+    cost: 3.2,
+    agent: 1500,
+    created: 9 * HOUR,
+    moves: [
+      [9 * HOUR - 20, "pick", "ok", "design"],
+      [8 * HOUR, "design", "wait", "approval:spec"],
+      [7 * HOUR, "approval:spec", "spec_merged", "plan"],
+      [6 * HOUR + 30 * MIN, "plan", "wait", "approval:plan"],
+      [6 * HOUR, "approval:plan", "plan_merged", "build"],
+      [5 * HOUR + 50 * MIN, "build", "ok", "verify"],
+      [5 * HOUR + 40 * MIN, "verify", "ok", "proof"],
+      [5 * HOUR + 35 * MIN, "proof", "ok", "publish"],
+      [5 * HOUR + 30 * MIN, "publish", "ok", "ci"],
+      [5 * HOUR + 20 * MIN, "ci", "ok", "review"],
+      [5 * HOUR + 10 * MIN, "review", "ok", "gate"],
+      [5 * HOUR + 5 * MIN, "gate", "wait", "approval:merge"],
+      [5 * HOUR, "approval:merge", "code_merged", "done"],
+    ],
+  });
 }
 
 /** The fixture's intents, missions and run files. */
@@ -614,7 +964,6 @@ function seed(db: Db, store: MemStore, home: Home, now: number): void {
       repo: "blog",
       u: 3,
       i: 4,
-      source: "issue",
       issue: "https://github.com/acme/blog/issues/12",
     }),
     makeIntent({ id: IDS.queued, title: "Dark mode for the settings page", repo: "web", u: 2, i: 4 }),
@@ -1190,21 +1539,76 @@ function exitsScene(f: Fixture): void {
   set(IDS.question, "answer the question", (d) => {
     d.question = q;
   });
+  // LOOP-76: this one holds an open code PR with 3 commits, so its exits ask before they close it.
   set(IDS.plan, "no changes", (d) => {
     d.question = undefined;
+    d.openPr = { number: 12, commits: 3 };
   });
   set(IDS.code, "no changes", (d) => {
     d.question = undefined;
     d.stuck = true;
   });
+  // LOOP-77: a stuck wait that offers neither steps nor done: only start over and drop.
+  set(IDS.ci, "CI red", (d) => {
+    d.stuck = true;
+  });
+}
+
+/**
+ * UI-165..167: a two-part intent at its merge with the freeze held an hour, a part of another waiting at
+ * its freeze limit with one part merged, and a second intent of the frozen repo held at its merge.
+ */
+function partsScene(f: Fixture): void {
+  const now = Math.floor(Date.now() / 1000);
+  const row = (intent: string) =>
+    f.db.get<{ id: number; data: string; branch: string; checkout: string }>(
+      "SELECT id, data, branch, checkout FROM missions WHERE intent = ? ORDER BY id DESC",
+      intent,
+    )!;
+  const parts = (r: { branch: string; checkout: string }, merged: boolean) =>
+    seedParts(
+      [
+        { repo: "infra", waitsOn: [] },
+        { repo: "web", waitsOn: ["infra"] },
+      ],
+      r,
+    ).map((p, i) => ({ ...p, atGate: true, pr: 40 + i, merged: merged && i === 0 }));
+  const ci = row(IDS.ci);
+  f.db.run(
+    "UPDATE missions SET stage = 'merge', step = '', data = ? WHERE id = ?",
+    JSON.stringify({ ...JSON.parse(ci.data), parts: parts(ci, false) }),
+    ci.id,
+  );
+  takeFreeze(f.db, ci.id, ["infra", "web"], now - 3600);
+  const held = row(IDS.building);
+  f.db.run("UPDATE missions SET stage = 'merge', step = '', repo = 'web' WHERE id = ?", held.id);
+  const code = row(IDS.code);
+  f.db.run(
+    "UPDATE missions SET stage = 'blocked', waiting = 'freeze', from_stage = 'merge', data = ? WHERE id = ?",
+    JSON.stringify({ ...JSON.parse(code.data), parts: parts(code, true) }),
+    code.id,
+  );
 }
 
 export async function serveFixture(
   port = 0,
-  o: { empty?: boolean; proposed?: boolean; readiness?: boolean; exits?: boolean } = {},
+  o: {
+    empty?: boolean;
+    proposed?: boolean;
+    readiness?: boolean;
+    exits?: boolean;
+    parts?: boolean;
+    crowded?: boolean;
+    flagged?: boolean;
+    many?: boolean;
+    fast?: boolean;
+  } = {},
 ): Promise<{ fixture: Fixture; server: UiServer }> {
   const fixture = buildFixture(o);
   if (o.exits && !o.empty) exitsScene(fixture);
+  if (o.parts && !o.empty) partsScene(fixture);
+  if (o.flagged && !o.empty) flagScene(fixture);
+  if (o.fast && !o.empty) fastScene(fixture);
   const here = dirname(fileURLToPath(import.meta.url));
   const server = startUi({
     port,
@@ -1231,4 +1635,84 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   };
   process.on("SIGINT", bye);
   process.on("SIGTERM", bye);
+}
+
+/**
+ * UI-236 to UI-238: the shadow is on. It drafted the up-next intent (`source: shadow`), replied on and
+ * asked to merge the intent whose plan waits, spent some of its cap, and the page's Reset works.
+ */
+export function seedShadow(f: Fixture, now: number): void {
+  f.sources.config.shadow.enabled = true;
+  const draft = f.store.open.find((i) => i.id === IDS.upnext);
+  if (draft) draft.source = "shadow";
+  const row = (ago: number, action: string, intent: string, outcome: string, detail = "") =>
+    f.db.run(
+      "INSERT INTO shadow_actions (at, turn, idx, action, intent, pr, outcome, detail) VALUES (?, NULL, 0, ?, ?, 0, ?, ?)",
+      now - ago,
+      action,
+      intent,
+      outcome,
+      detail,
+    );
+  row(3600, "draft", IDS.upnext, "done");
+  row(1800, "reply", IDS.question, "done");
+  row(600, "merge", IDS.plan, "held", "waiting for your yes");
+  row(300, "start", IDS.queued, "refused", "it has already started");
+  f.db.setMeta(
+    "shadow.pending",
+    JSON.stringify([
+      { row: 3, action: "merge", intent: IDS.plan, repo: "", title: "", text: "", at: now - 600 },
+    ]),
+  );
+  f.db.run(
+    "INSERT INTO shadow_turns (at, role, text, state, cost) VALUES (?, 'owner', 'hi', 'done', 1.25)",
+    now - 120,
+  );
+  f.actions.shadowReset = async () => {
+    f.db.run("DELETE FROM shadow_turns");
+    f.db.delMeta("shadow.pending");
+    return "Cleared the shadow's conversation. Its log of actions stays.";
+  };
+}
+
+/** UI-258: someone else raised the plan-review intent from a2 to a5; it keeps running at a2. */
+export function flagScene(f: Fixture): void {
+  const i = f.store.open.find((x) => x.id === IDS.plan);
+  if (!i) return;
+  i.a = 5;
+  setAccepted(f.db, IDS.plan, 2);
+  setFlag(f.db, IDS.plan, {
+    who: "mallory",
+    from: 2,
+    to: 5,
+    commit: "0123456789abcdef",
+    at: Date.now() / 1000 - 600,
+  });
+}
+
+/**
+ * FAST-10: the code review of the docs repo waits for the owner with its place kept; the checkout page (web, in CI) holds the web repo's fast lane, with an automatic answer on record; the
+ * dark mode page is the next fast intent of that repo. The offline mode intent is not fast.
+ */
+export function fastScene(f: Fixture): void {
+  for (const id of [IDS.ci, IDS.queued, IDS.code]) {
+    const i = f.store.open.find((x) => x.id === id);
+    if (i) i.fast = true;
+  }
+  // The code review waits for the owner and keeps its place in the docs lane.
+  const waiting = unfinishedFor(f.db, IDS.code);
+  if (waiting) patchData(f.db, waiting, { fastLane: 1 }, Date.now() / 1000);
+  const m = unfinishedFor(f.db, IDS.ci);
+  if (m)
+    patchData(
+      f.db,
+      m,
+      {
+        fastLane: 1,
+        fastAnswers: [
+          { question: "Where does the button go?", answer: "Right", at: Date.now() / 1000 - 1800 },
+        ],
+      },
+      Date.now() / 1000,
+    );
 }

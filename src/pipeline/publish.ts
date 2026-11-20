@@ -2,11 +2,11 @@
 // branch as the bot, open the code PR the first time.
 
 import { git } from "../checkout.ts";
-import { type BranchPr, deleteBranch, prsOnBranch } from "../github/branches.ts";
+import type { BranchPr } from "../github/branches.ts";
 import { isBot } from "../github/events.ts";
 import { closeIfOpen } from "../github/prs.ts";
-import { assignOwner } from "../github/teammates.ts";
 import type { Ctx, Handler, Progress } from "../handlers.ts";
+import { kindOf } from "../kind.ts";
 import { type Outcome, ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { CONTROL, Protected } from "../repo/protected.ts";
@@ -39,7 +39,9 @@ import {
   publishRefusals,
   sameAsBase,
 } from "./guard.ts";
+import { checkOutgrown } from "./outgrown.ts";
 import { codeBody } from "./prtext.ts";
+import { checkoutFacts, deliverReply } from "./reply.ts";
 
 /**
  * The wait for a diff that touches paths it may not (PIP-29, PIP-31). PIP-152: the tests among them are
@@ -119,6 +121,9 @@ export const publishHandler: Handler = {
       ),
     );
     if (bad.length) return { done: refusalWait(bad, d.lockedTests ?? []) };
+    // PIP-231: a lighter kind whose change outgrows its path is asked about first.
+    const outgrew = await checkOutgrown(cx, m, kindOf(intent.kind, d));
+    if (outgrew) return outgrew;
     if (m.pr && (await takeRemote(cx, m, m.branch)) === "conflict") {
       await coGit(cx, m, ["merge", "--abort"]).catch(() => "");
       return {
@@ -170,11 +175,11 @@ async function clearLeftover(cx: Ctx, m: Mission, head: string): Promise<Outcome
   if (!sha || sha === head) return null;
   let prs: BranchPr[];
   try {
-    prs = await prsOnBranch(cx.github, repo.github, m.branch);
+    prs = await cx.github.prsOnBranch(repo.github, m.branch);
   } catch (e) {
     throw asEnv(e);
   }
-  const bot = (await cx.github.bot()).login;
+  const bot = (await cx.github.bot(repo.github)).login;
   const foreign = prs.find((p) => p.state === "OPEN" && !isBot(p.author, bot));
   if (foreign || !prs.some((p) => isBot(p.author, bot))) {
     return ask(
@@ -189,7 +194,7 @@ async function clearLeftover(cx: Ctx, m: Mission, head: string): Promise<Outcome
   const why = `Towercab started this intent over, so this PR is closed. The new attempt pushes its own work to \`${m.branch}\` and opens its own PR.`;
   for (const p of prs) if (p.state === "OPEN") await closeOwn(cx, repo.github, p.number, why);
   try {
-    await deleteBranch(cx.github, repo.github, m.branch, cx.store.github());
+    await cx.github.deleteBranch(repo.github, m.branch, cx.store.github());
   } catch (e) {
     throw asEnv(e);
   }
@@ -204,8 +209,38 @@ async function closeOwn(cx: Ctx, github: string, n: number, why: string): Promis
   }
 }
 
+/**
+ * PIP-216, PIP-218: with plan steps still open the pushed run is not the end of the build. The next run
+ * starts in a fresh session (PIP-219) and uses no repair; at `[agent].max_build_runs` runs the owner is
+ * asked instead, and a reply grants another set.
+ */
+function afterPush(cx: Ctx, m: Mission, o: Outcome): Outcome {
+  const b = data(m).build;
+  if (!b || b.stepsTotal === undefined || (b.stepsDone ?? 0) >= b.stepsTotal) return o;
+  const done = b.stepsDone ?? 0;
+  const runs = b.runs ?? 0;
+  const fresh = { session: crypto.randomUUID(), session_used: 0 };
+  if (runs >= cx.config.agent.maxBuildRuns) {
+    return wait(
+      "worker budget",
+      `${runs} build runs built ${done} of ${b.stepsTotal} plan steps; reply to let it carry on with ${cx.config.agent.maxBuildRuns} more runs.`,
+      { set: { ...o.set, ...fresh }, data: { build: { ...b, runs: 0, stalled: 0, due: true } } },
+    );
+  }
+  return {
+    event: "more_steps",
+    why: `${done} of ${b.stepsTotal} plan steps are built; run ${runs + 1} carries on from step ${done + 1}`,
+    set: { ...o.set, ...fresh, repairs: 0, ci_repairs: 0 },
+    data: { build: { ...b, stalled: 0, due: true } },
+  };
+}
+
 async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
-  if (m.pr) return { done: ok() };
+  // PIP-204: the revision is pushed by now; its reply goes up before the checks run.
+  const sent = await deliverReply(cx, m, (r) => checkoutFacts(cx, m, r.before));
+  if (sent.retry) return { poll: cx.config.agent.ciPoll };
+  m = sent.m;
+  if (m.pr) return { done: afterPush(cx, m, ok()) };
   const repo = cx.repo(m);
   const intent = await intentOf(cx, m);
   const d = data(m);
@@ -239,9 +274,9 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
     );
     if (!n) throw new Error("GitHub gave no pull request number");
     // PIP-146: the owner answers for the PR.
-    if (repo.teammateReview && !(await assignOwner(cx.github, repo.github, n))) {
+    if (repo.teammateReview && !(await cx.github.assignOwner(repo.github, n))) {
       cx.log(`${m.intent}: couldn't assign ${cx.github.me} to PR ${n}`);
     }
   }
-  return { done: ok({ set: { pr: n } }) };
+  return { done: afterPush(cx, m, ok({ set: { pr: n } })) };
 }

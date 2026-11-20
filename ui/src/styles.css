@@ -73,8 +73,9 @@
   --ok-bg: #e7f6ee;
   --err: #b42318;
   --err-bg: #fdecea;
-  --warn: #8a4a00;
-  --warn-bg: #fff6e5;
+  /* UI-268: its own hue (rose), never the amber of --needs. */
+  --warn: #a3134f;
+  --warn-bg: #fdeaf2;
   --bar: #c7cbf5;
   --bar-today: #4338ca;
 }
@@ -127,8 +128,8 @@
     --ok-bg: rgb(60 200 130 / 0.12);
     --err: #ff9a8f;
     --err-bg: rgb(255 100 90 / 0.13);
-    --warn: #f7c04a;
-    --warn-bg: rgb(247 192 74 / 0.1);
+    --warn: #f9a8d4;
+    --warn-bg: rgb(244 114 182 / 0.12);
     --bar: #3a3f6e;
     --bar-today: #8b8cf8;
   }
@@ -473,6 +474,11 @@ code {
   color: var(--text-3);
   font-size: var(--t-xs);
   white-space: nowrap;
+}
+
+/* UI-274: the copy on the counts line is for phones only. */
+.counts .fresh {
+  display: none;
 }
 
 .fresh-dot {
@@ -2981,16 +2987,59 @@ a.pr-tile:hover {
     padding: 0 var(--s2);
   }
 
+  /* UI-274: the sticky bar is at most 100 px tall at 375 px: tight rows, and "Updated" on the counts line. */
   .topbar-inner {
-    gap: var(--s1) 12px;
-    padding-top: var(--s1);
-    padding-bottom: var(--s1);
+    gap: 2px 12px;
+    min-height: 0;
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+
+  .tabs-inner {
+    min-height: 36px;
   }
 
   .counts {
     order: 5;
     width: 100%;
     font-size: var(--t-xs);
+  }
+
+  /* One line whatever the font: the counts clip, "Updated" keeps its room. */
+  .counts {
+    flex-wrap: nowrap;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    gap: 0 var(--s1);
+  }
+
+  .counts > :not(.fresh) {
+    flex-shrink: 1;
+    min-width: 0;
+  }
+
+  .counts .fresh {
+    flex-shrink: 0;
+  }
+
+  /* The slots note goes (its tooltip stays on wider screens) so "Updated" fits the line. */
+  .counts .slots-note {
+    display: none;
+  }
+
+  .counts .fresh {
+    display: inline-flex;
+    margin-left: auto;
+    gap: 4px;
+  }
+
+  .counts .fresh .fresh-word {
+    display: inline;
+  }
+
+  .tabs-inner .fresh {
+    display: none;
   }
 
   .top-spend {
@@ -3600,9 +3649,7 @@ a.pr-tile:hover {
 
 /* Board (UI-133 to UI-136): stations across, repos down; only the board scrolls sideways. */
 
-.board-page {
-  max-width: none;
-}
+/* UI-271: the board keeps the page width (--max) so its edges line up with the top bar; it scrolls inside. */
 
 .board-sort {
   display: flex;
@@ -3691,6 +3738,18 @@ a.pr-tile:hover {
 .board-col-count {
   color: var(--text-3);
   font-weight: 500;
+}
+
+/* UI-271: an empty station is a narrow strip with its name written upright. */
+.board-col-head.narrow .board-col-label {
+  writing-mode: vertical-rl;
+  white-space: nowrap;
+}
+
+.board-shared {
+  margin: 0 0 var(--s1);
+  font-size: var(--t-xs);
+  color: var(--text-2);
 }
 
 .board-lane-head {
@@ -3797,6 +3856,18 @@ a.pr-tile:hover {
   font-weight: 500;
   line-height: 1.35;
   overflow-wrap: anywhere;
+  /* UI-271: long titles cut after three lines; the full title is the tooltip. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+/* A chip wraps inside its card rather than being cut off. */
+.board-card-foot .chip {
+  max-width: 100%;
+  white-space: normal;
 }
 
 .board-card-foot {
@@ -4093,9 +4164,12 @@ a.pr-tile:hover {
   min-width: 0;
 }
 
-/* UI-155..157: a repo missing setup. The warning colour, never the "Needs you" one. */
+/* UI-155..157, UI-268: a repo missing setup. The warning colour (rose), never the "Needs you" amber. */
 .ready-badge {
   display: inline-block;
+  /* UI-268: sized to its text, even inside a flex column. */
+  align-self: flex-start;
+  width: fit-content;
   padding: 0 0.5em;
   border: 1px solid var(--warn);
   border-radius: 999px;
@@ -4110,11 +4184,41 @@ a.pr-tile:hover {
 }
 .repo-setup {
   border-left: 4px solid var(--warn);
-  margin-block-end: 1rem;
+  /* UI-270: the padding of the other cards, in the spacing tokens. */
+  padding: var(--s2);
+  margin-block-end: var(--s2);
 }
 .setup-items {
-  margin: 0.5rem 0;
-  padding-inline-start: 1.1rem;
+  margin: var(--s1) 0;
+  padding-inline-start: var(--s3);
+}
+.setup-raw {
+  margin-top: var(--s-half, 4px);
+  font-size: var(--t-xs);
+}
+.setup-raw code {
+  display: block;
+  overflow-wrap: anywhere;
+}
+/* UI-269: a gap most repos share, said once. */
+.shared-gaps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-half, 4px);
+  margin: 0 0 var(--s2);
+  padding: 0;
+  list-style: none;
+  font-size: var(--t-sm);
+  color: var(--text-2);
+}
+.shared-gap::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: var(--s1);
+  border-radius: 50%;
+  background: var(--warn);
 }
 .setup-state {
   color: var(--warn);
@@ -4162,6 +4266,80 @@ a.pr-tile:hover {
   justify-items: start;
 }
 
+/* The observer (UI-242, UI-243): its tag reuses the shadow's; the note shows evidence and gain first. */
+
+.observer-note {
+  margin: var(--s2) 0;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.observer-note p {
+  margin: var(--s1) 0;
+}
+
+.observer-panel .meta {
+  margin: var(--s1) 0;
+}
+
+/* The shadow (UI-236 to UI-238) */
+
+.shadow-tag {
+  display: inline-block;
+  margin-left: var(--s1);
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.shadow-actions {
+  display: grid;
+  gap: var(--s1);
+  margin: var(--s1) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shadow-action .shadow-tag {
+  margin-left: 0;
+}
+
+.shadow-refused .shadow-text {
+  color: var(--text-2);
+  text-decoration: line-through;
+  text-decoration-color: var(--line-strong);
+}
+
+.shadow-pending {
+  margin: var(--s1) 0;
+  color: var(--needs);
+  font-size: var(--t-sm);
+}
+
+.shadow-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1);
+}
+
+.shadow-panel .btn {
+  min-height: 44px;
+}
+
+.tl-shadow {
+  font-style: italic;
+}
+
 /* Owner-only intents (UI-239): a text label, and a Pause button that is easy to hit on a phone. */
 .chip-only-you {
   border: 1px solid var(--line-strong);
@@ -4172,4 +4350,806 @@ a.pr-tile:hover {
 
 .pause-intent .btn {
   min-height: 44px;
+}
+
+/* UI-247: a proposed intent takes one compact row. */
+.proposed-rows {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.proposed-row {
+  padding: 8px var(--s2);
+  border-bottom: 1px solid var(--line);
+  scroll-margin-top: 72px;
+}
+
+.proposed-row:last-child {
+  border-bottom: 0;
+}
+
+.proposed-line {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 12px;
+}
+
+.proposed-line .proposed-title {
+  grid-column: 1;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proposed-line .chip-draft {
+  grid-column: 1;
+  justify-self: start;
+}
+
+.proposed-gh {
+  display: none;
+}
+
+.proposed-facts {
+  grid-column: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proposed-line .proposed-actions {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  gap: 6px;
+}
+
+.proposed-line .proposed-actions .btn {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 4px 10px;
+}
+
+.proposed-row .proposed-close,
+.proposed-row .proposed-why,
+.proposed-row .result {
+  margin: 6px 0 0;
+}
+
+.proposed-more {
+  margin-top: var(--s1);
+}
+
+/* UI-248: the risk and the open points fold to one line each. */
+.risk-fold > summary,
+.points-fold > summary {
+  cursor: pointer;
+  margin: 0;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.risk-fold {
+  padding: 10px var(--s2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.risk-fold[open] > summary,
+.points-fold[open] > summary {
+  margin-bottom: var(--s1);
+}
+
+.risk-fold .risk {
+  padding: 0;
+  background: none;
+}
+
+.points-fold li > details > summary {
+  cursor: pointer;
+}
+
+.card-steps {
+  padding: 12px var(--s2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.up-shared {
+  margin: 0 0 var(--s1);
+}
+
+@media (min-width: 720px) {
+  .proposed-line {
+    grid-template-columns: 1fr auto auto;
+  }
+
+  .proposed-gh {
+    display: inline-flex;
+    grid-column: 2;
+  }
+
+  .proposed-line .proposed-actions {
+    grid-column: 3;
+  }
+}
+
+/* Autonomy control (UI-257, UI-258) */
+
+.autonomy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin: var(--s1) 0;
+  min-width: 0;
+}
+
+.row .autonomy {
+  grid-column: 1 / -1;
+}
+
+.autonomy-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.seg {
+  min-width: 40px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+
+.seg:first-child {
+  border-left: 0;
+}
+
+.seg:hover:not(:disabled):not(.current) {
+  background: var(--surface-2);
+}
+
+.seg.current {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.seg:disabled {
+  cursor: default;
+}
+
+.seg:focus-visible,
+.autonomy .btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.autonomy-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.autonomy-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+
+.autonomy-flag {
+  color: var(--text-2);
+}
+
+@media (max-width: 720px), (pointer: coarse) {
+  .seg,
+  .autonomy .btn {
+    min-height: 44px;
+  }
+
+  .seg {
+    min-width: 44px;
+  }
+}
+
+/* UI-256: the top bar's spend turns amber at 80 % of the budget and red at 100 %. */
+.top-spend.amber .num {
+  color: var(--needs-edge);
+}
+
+.top-spend.red .num {
+  color: var(--err);
+}
+
+/* UI-255: the estimate line and its bar. */
+.estimate {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.est-bar {
+  display: block;
+  height: 4px;
+  min-width: 80px;
+  border-radius: 2px;
+  background: var(--surface-2);
+}
+
+.est-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.estimate.amber .est-bar i {
+  background: var(--needs-edge);
+}
+
+/* UI-253, UI-254: the budget form and the cap card. */
+.budget-form {
+  display: grid;
+  gap: var(--s2);
+}
+
+.budget-form label {
+  display: grid;
+  gap: 2px;
+}
+
+.form-error {
+  color: var(--err);
+}
+
+.cap-card .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+/* UI-259 to UI-267: the Inbox, its dialogs and the fold header. */
+
+.section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.section-toggle .fold-chev {
+  transition: transform 0.15s;
+}
+
+.section-toggle[aria-expanded="false"] .fold-chev {
+  transform: rotate(-90deg);
+}
+
+.inbox-link {
+  margin: 0 0 var(--s2);
+  font-weight: 600;
+}
+
+.inbox-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+
+.inbox-head h1 {
+  font-size: var(--t-lg);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.inbox-count {
+  color: var(--text-2);
+}
+
+.inbox-hint {
+  margin-left: auto;
+}
+
+.inbox-note {
+  margin-bottom: var(--s1);
+}
+
+.inbox-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+  gap: var(--s3);
+  align-items: start;
+}
+
+.inbox-list {
+  position: sticky;
+  top: var(--s1);
+  max-height: calc(100vh - 2 * var(--s2));
+  overflow-y: auto;
+}
+
+.inbox-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  margin-bottom: var(--s1);
+}
+
+.inbox-filter input {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.inbox-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.inbox-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "chip title new" "meta meta meta";
+  align-items: center;
+  gap: 2px 8px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.inbox-row.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.inbox-row:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.inbox-row .chip {
+  grid-area: chip;
+}
+
+.inbox-title {
+  grid-area: title;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.chip-new {
+  grid-area: new;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--t-xs);
+  font-weight: 600;
+}
+
+.inbox-meta,
+.inbox-wake {
+  grid-column: 1 / -1;
+}
+
+.inbox-detail {
+  animation: inbox-fade 0.2s ease-out;
+}
+
+@keyframes inbox-fade {
+  from {
+    opacity: 0.4;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inbox-detail {
+    animation: none;
+  }
+}
+
+.inbox-back {
+  min-height: 44px;
+  margin-bottom: var(--s2);
+}
+
+/* UI-260: below 640 px the list stands alone and a row opens the card on its own screen. */
+@media (max-width: 639px) {
+  .inbox-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .inbox-list {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .inbox-card .inbox-list {
+    display: none;
+  }
+
+  .inbox:not(.inbox-card) .inbox-pane {
+    display: none;
+  }
+
+  .inbox-row {
+    min-height: 52px;
+  }
+
+  .inbox .btn,
+  .section-toggle {
+    min-height: 44px;
+  }
+}
+
+.modal-back {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh var(--s2) var(--s2);
+  background: rgb(16 24 40 / 0.45);
+}
+
+.modal {
+  width: min(560px, 100%);
+  max-height: 76vh;
+  overflow-y: auto;
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--s2);
+}
+
+.modal-title {
+  margin-bottom: var(--s1);
+  font-size: var(--t-md);
+  font-weight: 600;
+}
+
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  margin-top: var(--s2);
+}
+
+.shortcuts div {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: var(--s1);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+kbd {
+  padding: 1px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--surface-2);
+  font-family: var(--mono, monospace);
+  font-size: var(--t-xs);
+}
+
+.palette {
+  padding: var(--s1);
+}
+
+.palette-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.palette-list,
+.palette-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.palette-group {
+  margin: var(--s1) 0 2px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.palette-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s1);
+  min-height: 36px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.palette-row[aria-selected="true"] {
+  background: var(--accent-soft);
+}
+
+/* The inbox detail is one card around the intent's story; a flag box inside a card is not a second card. */
+.needs-card.inbox-detail-card,
+.needs-card.nested {
+  display: block;
+  padding: 0;
+}
+
+.needs-card.inbox-detail-card::before,
+.needs-card.nested::before {
+  content: none;
+}
+
+.needs-card.autonomy-flagbox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--needs-edge);
+  border-radius: var(--radius-sm);
+}
+
+.agent-link {
+  font-size: 0.85rem;
+  color: var(--muted, inherit);
+}
+
+/* UI-276: where a setting comes from. */
+.setting-sources {
+  margin-top: 0.75rem;
+}
+.source-list {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+.source-key {
+  font-weight: 600;
+}
+.source-tag {
+  font-size: 0.75rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0 0.5em;
+  opacity: 0.8;
+}
+.source-tag.overlay {
+  font-weight: 600;
+  opacity: 1;
+}
+
+/* New intent (UI-213..218) */
+
+.new-intent {
+  width: min(640px, 100%);
+}
+
+.new-intent-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+.new-intent-form label {
+  font-weight: 500;
+}
+
+.new-intent-form input,
+.new-intent-form select,
+.new-intent-form textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font: inherit;
+}
+
+.new-intent-form input:focus-visible,
+.new-intent-form select:focus-visible,
+.new-intent-form textarea:focus-visible {
+  outline-offset: 0;
+  border-color: var(--focus);
+}
+
+.new-intent-scores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+.new-intent-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.overlaps ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: 0;
+  list-style: none;
+}
+
+.overlaps li {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding-bottom: var(--s1);
+  border-bottom: 1px solid var(--line);
+}
+
+.banner-ok {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1);
+}
+
+@media (max-width: 480px) {
+  .modal-back:has(.new-intent) {
+    padding-top: var(--s1);
+  }
+
+  .new-intent {
+    max-height: 94vh;
+  }
+}
+
+.new-intent-form .seg {
+  align-items: center;
+  justify-content: center;
+}
+
+/* UI-274: on a phone the top bar keeps two rows, so the button floats instead (outside the bar). */
+.new-intent-fab {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  .topbar .new-intent-btn {
+    display: none;
+  }
+
+  .new-intent-fab {
+    position: fixed;
+    right: var(--s2);
+    bottom: var(--s2);
+    z-index: 40;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 52px;
+    height: 52px;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 28px;
+    line-height: 1;
+    box-shadow: var(--shadow-pop);
+  }
+}
+
+/* UI-165..167: the parts of a multi-repo intent and its freeze. */
+.parts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+.part {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+}
+.part.merged .part-stage {
+  color: var(--ok, inherit);
+}
+.freeze-line,
+.freeze-chip {
+  font-weight: 600;
+}
+.board-repos,
+.board-needs-repo,
+.board-freeze-hold {
+  display: block;
+}
+.rest.card {
+  display: grid;
+  gap: 0.5rem;
+}
+
+/* The fast lane (FAST-10) */
+
+.fast-badge {
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--mono);
+  white-space: normal;
+}
+
+.fast-answers {
+  margin: var(--s1) 0 0;
+  padding-left: var(--s4);
+  color: var(--text-2);
+  font-size: var(--t-sm);
 }

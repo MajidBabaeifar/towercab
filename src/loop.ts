@@ -4,12 +4,18 @@
 import { readFileSync, rmSync, statSync } from "node:fs";
 import { type AfterHold, afterState, heldText, holdTrigger, nextHold } from "./after.ts";
 import { ownerOnly } from "./autonomy.ts";
+import { levelNow } from "./autonomy-change.ts";
+import { watchAutonomy } from "./autonomy-watch.ts";
 import { Inhibitor, woke } from "./awake.ts";
+import { type Cap, capKey, capReason, capsOf, needsRun, reloadBudgets, runDue } from "./budgets.ts";
 import { slotStep } from "./capacity.ts";
 import { removeCheckout } from "./checkout.ts";
-import { applyPending, intentPaused, noteIgnored, paused } from "./commands.ts";
+import { applyPending, intentPaused, noteIgnored, paused, recordAgentComment } from "./commands.ts";
 import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
+import { exitWarning } from "./exit-warning.ts";
+import { isHolder, laneOf, stampsFor } from "./fast-lane.ts";
+import { watchFast } from "./fast-watch.ts";
 import { fixFor, Health } from "./faults.ts";
 import {
   BackfillError,
@@ -22,12 +28,16 @@ import {
   setFeaturesRun,
 } from "./features.ts";
 import type { GitLabForge } from "./forge/gitlab.ts";
-import { isGitlab } from "./forge/types.ts";
+import { queueTokenNotice } from "./forge/gitlab-token.ts";
+import type { Routed } from "./forge/route.ts";
+import { changeUrl, isGitlab } from "./forge/types.ts";
 import { MERGE_METHOD } from "./forge.ts";
-import { retireBranch } from "./github/branches.ts";
+import { frozenBy } from "./freeze.ts";
 import {
+  agentComments,
   approveNotices,
   approveRequested,
+  feedbackTargets,
   ignoredReplies,
   intentEvents,
   prEvents,
@@ -35,23 +45,32 @@ import {
   releaseRequested,
   reversalMarker,
   reversalRequested,
+  staleApprovalNotices,
   type TeamReads,
 } from "./github/events.ts";
 import { pollIssues } from "./github/issues.ts";
+import { holdPushes, holdStore, holdWrites, PausedHold } from "./github/paused.ts";
 import {
   MORE_THAN_FILE,
   MORE_THAN_ONE,
   type ProposedCache,
   type ProposedPr,
   type ProposedState,
-  readProposed,
 } from "./github/proposed.ts";
-import { closeIfOpen, type PrState, readPr } from "./github/prs.ts";
+import { closeIfOpen, type PrState } from "./github/prs.ts";
 import { type ChildEnd, type Clock, type Ctx, EnvError, type Handlers, type Host } from "./handlers.ts";
 import { readHead } from "./head.ts";
 import type { Home } from "./home.ts";
 import { removeFeature, setFeature } from "./intents/features.ts";
-import { type Intent, type IntentStore, type Listing, SyncError } from "./intents/types.ts";
+import {
+  type Intent,
+  type IntentStore,
+  type Listing,
+  NoOpenIntentError,
+  SyncError,
+} from "./intents/types.ts";
+import { kindChangeRefusal, kindOf, parseKindComment, type WorkKind } from "./kind.ts";
+import { type GitProc, lockRoots, removeStaleLocks } from "./locks.ts";
 import {
   type ApplyCtx,
   apply,
@@ -77,15 +96,21 @@ import {
   update,
 } from "./mission.ts";
 import { Mutex } from "./mutex.ts";
-import { sendDue } from "./outbox.ts";
+import { sendWebhooks, type Webhook } from "./notify.ts";
+import { type Sender, sendDue } from "./outbox.ts";
+import { PartDriver } from "./partloop.ts";
+import { applyPart, patchPart } from "./partrun.ts";
+import { inLanding, inPartStages, partsOf } from "./parts.ts";
 import { decide, orphans, type PickState, type Places } from "./pick.ts";
 import { readingReply, reverseRefusals } from "./pipeline/access.ts";
-import type { PipeData } from "./pipeline/common.ts";
+import { type PipeData, prUrl as prLink } from "./pipeline/common.ts";
+import { fastAnswer } from "./pipeline/fast-answer.ts";
 import { writeTicks } from "./pipeline/steps.ts";
 import { evaluate } from "./pipeline/teammate.ts";
 import { isParked, priority } from "./priority.ts";
+import { conflictHeld, headOf, landingOf } from "./queue.ts";
 import { blockingRepos, startReadiness as startReadinessCheck } from "./readiness.ts";
-import { loadRepoFiles } from "./repo/files.ts";
+import { loadOverlay, loadRepoFilesWith } from "./repo/overlay.ts";
 import { pollRepoSettings } from "./repo/poll.ts";
 import { missingText } from "./repo/readiness.ts";
 import { recordParser } from "./repo/settings.ts";
@@ -112,9 +137,17 @@ import {
 } from "./slots.ts";
 import { leftOf, type OwnerStep, parseDelivery, unticked } from "./steps.ts";
 import { APPROVE_NOTICE } from "./teammates.ts";
-import { type ChildHandle, KILL_AFTER_MS, killGroup, type Tools } from "./tools.ts";
-import { budgetReached } from "./ui/state.ts";
+import {
+  type ChildHandle,
+  CUT_OFF_KILL_MS,
+  KILL_AFTER_MS,
+  killGroup,
+  STOP_GRACE_MS,
+  type Tools,
+} from "./tools.ts";
+import { freezeEstimate } from "./ui/estimate.ts";
 import { checkUpdate, RESTART_CODE } from "./update.ts";
+import { detectWsl } from "./wsl.ts";
 
 /** LOOP-115: the stages a change reaches when its CI is green; it holds no slot while it waits in them. */
 const LATER_THAN_CI: ReadonlySet<string> = new Set(["review", "gate", "merge"]);
@@ -143,7 +176,9 @@ export interface LoopDeps {
   handlers: Handlers;
   log(line: string): void;
   /** Delivers outbox rows (Telegram), or null. */
-  sender: { send(text: string): Promise<void> } | null;
+  sender: Sender | null;
+  /** LOOP-146: the webhooks that get the same rows as `sender`. */
+  webhooks?: Webhook[];
   /** Read one PR (tests fake it). */
   readPr?: (repo: string, n: number) => Promise<PrState>;
   /** Read the intents repo's proposed intents (LOOP-92; tests fake it). */
@@ -158,8 +193,20 @@ export interface LoopDeps {
   readinessLimitMs?: number;
   /** The checkout this loop's code runs from (LOOP-105); default the one this file is in. */
   codeRoot?: string;
+  /** PIP-163: proves the sandbox holds before a mission is picked (default none; the `run` command sets it). */
+  sandboxProbe?: () => Promise<{ ok: boolean; why: string }>;
   /** INT-39: when a backfill run's time is up (default a real timer; tests resolve it themselves). */
   featuresDeadline?: (ms: number) => Promise<void>;
+  /** LOOP-126: the owner's Telegram chat, handled each pass (even while paused); none: no chat. */
+  chat?: { pass(): Promise<void>; stop(): void };
+  /** LOOP-129, LOOP-130: the shadow, passed each pass; none: no shadow. */
+  shadow?: { pass(): Promise<void>; busy(): boolean; stop(): Promise<void> };
+  /** OBV-2: the observer, passed each pass; none: no observer. */
+  observer?: { pass(): Promise<void>; busy(): boolean; stop(): Promise<void> };
+  /** LOOP-138: the running git processes (default: read from `/proc`); tests fake them. */
+  gitProcs?: () => GitProc[];
+  /** LOOP-136: how long running `gh` and `git` calls get at a stop (default 10 s, fixed; tests shorten it). */
+  stopGraceMs?: number;
 }
 
 export interface LoopOpts {
@@ -202,7 +249,17 @@ export class Loop {
   readonly d: LoopDeps;
   readonly health = new Health();
   readonly inhibitor: Inhibitor;
+  /** PIP-163: when the sandbox probe last ran (null = not yet) and whether it passed. */
+  private probedAt: number | null = null;
+  private probeOk = false;
+  /** The last probe's result; null before the first one. */
+  private lastProbe: { ok: boolean; why: string } | null = null;
   private children = new Map<number, Running>();
+  /** LOOP-78: the parts of multi-repo missions run beside the missions, keyed by `unitKey`. */
+  private parts: PartDriver;
+  /** MET-33: the budgets and caps reached now, and the missions they hold back. */
+  private caps: Cap[] = [];
+  private capHeld = new Set<number>();
   private pollAt = new Map<number, number>();
   private listing: Listing | null = null;
   private listingError: string | null = null;
@@ -235,18 +292,59 @@ export class Loop {
   private drain: Drain | null = null;
   /** LOOP-108: the full commit of the `origin/main` an update failed on; no drain starts for it again. */
   private failedUpdate: string | null = null;
+  /** LOOP-151: release tags off main already logged as skipped. */
+  private skippedTags = new Set<string>();
   /** LOOP-105: the commit the checkout was at when this loop started, or null when unknown. */
   private startCommit: string | null = null;
   private last: { wall: number; mono: number } | null = null;
   private stopping = false;
+  /** LOOP-136: resolves when `stop` is called, so a waiting loop wakes at once. */
+  private readonly stopped: Promise<void>;
+  private wake: () => void = () => {};
+  /** LOOP-136: set once calls were cut off at a stop; their failures are not the mission's. */
+  private cutOffDone = false;
   exitCode = 0;
   private opts: LoopOpts;
   private targetId: string | null = null;
 
   constructor(d: LoopDeps, opts: LoopOpts) {
-    this.d = d;
+    // LOOP-113: while paused, nothing the loop or a stage does changes GitHub; the owner's commands do.
+    const held = () => paused(d.db);
+    this.ownerStore = d.store;
+    this.d = {
+      ...d,
+      github: holdWrites(d.github, held),
+      tools: holdPushes(d.tools, held),
+      store: holdStore(d.store, held),
+    };
     this.opts = opts;
-    this.inhibitor = new Inhibitor(d.tools, d.log);
+    this.parts = new PartDriver({
+      db: this.d.db,
+      config: this.d.config,
+      clock: this.d.clock,
+      handlers: this.d.handlers,
+      log: (l) => this.d.log(l),
+      ctx: (t) => this.ctx(t),
+      applyCtx: () => this.applyCtx(),
+      lock: (fn) => this.cloneLock.run(fn),
+      unfinished: () => unfinished(this.d.db),
+      holding: () => this.codeMoved() !== null || this.drain !== null || this.isPaused(),
+      slotsUsed: () => this.slotsUsed(),
+    });
+    this.inhibitor = new Inhibitor(this.d.tools, d.log);
+    this.stopped = new Promise<void>((r) => {
+      this.wake = r;
+    });
+  }
+
+  /** The intents store without the pause hold: the owner's own commands write through it. */
+  readonly ownerStore: IntentStore;
+  /** LOOP-113: runs that ended while a write was held; their `finish` is asked again after resume. */
+  private parked = new Map<number, { r: Running; stage: string; step: string }>();
+
+  /** LOOP-113: the owner has paused; no new child starts and nothing changes GitHub. */
+  private isPaused(): boolean {
+    return paused(this.d.db);
   }
 
   get now(): number {
@@ -262,10 +360,9 @@ export class Loop {
     const repo = this.d.config.repos.get(m.repo);
     const prNo = m.pr ?? m.plan_pr ?? m.spec_pr;
     let link: string | null = null;
-    if (m.pr && repo) link = `https://github.com/${repo.github}/pull/${m.pr}`;
-    else if (m.plan_pr && this.d.store.github())
-      link = `https://github.com/${this.d.store.github()}/pull/${m.plan_pr}`;
-    else if (m.spec_pr && repo) link = `https://github.com/${repo.github}/pull/${m.spec_pr}`;
+    if (m.pr && repo) link = changeUrl(repo.github, m.pr);
+    else if (m.plan_pr && this.d.store.github()) link = changeUrl(this.d.store.github()!, m.plan_pr);
+    else if (m.spec_pr && repo) link = changeUrl(repo.github, m.spec_pr);
     else if (i) link = this.d.store.url(i);
     void prNo;
     return { title: i?.title ?? m.intent, repo: m.repo, link };
@@ -289,6 +386,16 @@ export class Loop {
           const fresh = update(db, m.id, { child_pid: null, child_kind: null, child_since: null }, this.now);
           apply(this.applyCtx(), fresh, { event: "crash", why: "Towercab stopped while this step ran" });
         }
+        // LOOP-78: a part's run is recorded on the part; the old run goes and the part's step is taken again.
+        for (const p of partsOf(m)) {
+          if (!p.cols?.child_pid) continue;
+          killGroup(Number(p.cols.child_pid), "SIGKILL");
+          patchPart(this.applyCtx(), m.id, p.repo, { child_pid: null, child_kind: null, child_since: null });
+          applyPart(this.applyCtx(), getMission(db, m.id)!, p.repo, {
+            event: "crash",
+            why: "Towercab stopped while this step ran",
+          });
+        }
       }
     }
     db.setMeta("running", `${process.pid} ${Math.floor(this.now)}`);
@@ -298,12 +405,25 @@ export class Loop {
     if (this.startCommit) db.setMeta("code_commit", this.startCommit);
     else db.delMeta("code_commit");
     loadRepos(this.d.config, db, this.now);
+    // LOOP-138: a killed git left its lock files behind; the sync below (LOOP-139) needs them gone.
+    removeStaleLocks({
+      roots: lockRoots(
+        this.d.home.root,
+        this.d.home.intents,
+        [...this.d.config.repos.values()].map((r) => clonePath(r, this.d.home.root)),
+      ),
+      now: this.now,
+      log: this.d.log,
+      ...(this.d.gitProcs ? { procs: this.d.gitProcs } : {}),
+    });
     // REPO-19: the first run of the settings reader is recorded once (and again after a rollback).
     await recordParser(db, this.d.tools, this.codeRoot(), this.startCommit, this.now).catch(() => undefined);
     recoverFeatures(db, this.now);
     await this.pollIntents(true);
     await this.pollProposed(true);
     this.startIssues(true);
+    // GL-17: once per start, the token's expiry; the notice is keyed by its date, so it is sent once.
+    if (this.d.gitlab) await queueTokenNotice(this.d.gitlab, db, this.now);
   }
 
   /**
@@ -311,8 +431,36 @@ export class Loop {
    * minute, as a background job like the readiness check: the pass never waits on it, and its fetch
    * holds the clone lock.
    */
+  /**
+   * PIP-163, PIP-161: at start, and every minute while it fails, proves the sandbox holds. A failed probe is a
+   * `sandbox` fault, which blocks picking (there is no running without the sandbox); a pass clears it.
+   */
+  private async probeSandbox(): Promise<void> {
+    const probe = this.d.sandboxProbe;
+    if (!probe) return;
+    if (this.probeOk || (this.probedAt !== null && this.now - this.probedAt < 60)) return;
+    this.probedAt = this.now;
+    const r = await probe();
+    this.probeOk = r.ok;
+    this.lastProbe = r;
+    if (r.ok) {
+      this.health.ok("sandbox");
+      this.d.log("sandbox: the start probe passed");
+    } else {
+      this.health.fail("sandbox", r.why, this.now);
+      this.d.log(`sandbox: the start probe failed: ${r.why}`);
+    }
+  }
+
   private pollSettings(): void {
-    if (!this.d.limits || this.limitsJob || this.drain !== null || this.codeMoved() !== null) return;
+    if (
+      !this.d.limits ||
+      this.limitsJob ||
+      this.drain !== null ||
+      this.isPaused() ||
+      this.codeMoved() !== null
+    )
+      return;
     const forced = this.d.db.meta("repo-poll") !== null;
     if (!forced && this.now - this.lastSettingsPoll < INTENTS_POLL_S) return;
     this.lastSettingsPoll = this.now;
@@ -330,6 +478,7 @@ export class Loop {
           home: this.d.home.root,
           now,
           repos: this.d.config.repos,
+          configFile: this.d.config.file,
           exclusive: <T>(fn: () => Promise<T>) => this.cloneLock.run(fn),
         },
         this.d.log,
@@ -371,7 +520,9 @@ export class Loop {
       this.readinessJob !== null ||
       this.settingsJob !== null ||
       this.setupJob !== null ||
-      this.issuesRun !== null
+      this.issuesRun !== null ||
+      this.d.shadow?.busy() ||
+      this.d.observer?.busy()
     )
       return;
     this.d.log(
@@ -381,21 +532,37 @@ export class Loop {
   }
 
   /** Clean exit: children get SIGTERM, then SIGKILL; their missions are `interrupted`. */
-  async shutdown(): Promise<void> {
-    await this.issuesIdle();
+  async shutdown(running?: Promise<unknown>): Promise<void> {
+    // LOOP-136: the pass in flight and the background jobs get one grace period between them; `gh` and
+    // `git` calls still running at its end are cut off, and the exit follows at once.
+    const graceMs = this.d.stopGraceMs ?? STOP_GRACE_MS;
     this.stopFeatures();
-    await this.featuresIdle();
-    await this.readinessIdle();
-    await this.settingsIdle();
-    await this.setupChecksIdle();
-    await this.limitsIdle();
-    for (const [id, r] of this.children) {
-      r.handle.kill("SIGTERM");
-      const done = await Promise.race([
-        r.handle.done.then(() => true),
-        sleep(KILL_AFTER_MS).then(() => false),
-      ]);
-      if (!done) r.handle.kill("SIGKILL");
+    const idle = (async () => {
+      await running?.catch(() => undefined);
+      await this.issuesIdle();
+      await this.featuresIdle();
+      await this.readinessIdle();
+      await this.settingsIdle();
+      await this.setupChecksIdle();
+      await this.limitsIdle();
+      this.d.chat?.stop();
+      await this.d.shadow?.stop();
+      await this.d.observer?.stop();
+    })().catch((e: Error) => this.d.log(`stop: ${e.message}`));
+    if (!(await within(idle, graceMs))) {
+      this.cutOffDone = true;
+      for (const c of this.d.tools.cutOff?.() ?? [])
+        this.d.log(`stop: cut off ${c} after ${graceMs / 1000}s`);
+      await within(idle, CUT_OFF_KILL_MS + 1000);
+    }
+    // LOOP-7: Claude runs get SIGTERM together, then SIGKILL for those still there after 10 s.
+    const partsStopped = this.parts.stopAll(KILL_AFTER_MS);
+    const live = [...this.children];
+    for (const [, r] of live) r.handle.kill("SIGTERM");
+    const ended = await Promise.all(live.map(([, r]) => within(r.handle.done, KILL_AFTER_MS)));
+    for (const [i, [, r]] of live.entries()) if (!ended[i]) r.handle.kill("SIGKILL");
+    await partsStopped;
+    for (const [id, r] of live) {
       const m = getMission(this.d.db, id);
       if (m && !finished(m.stage)) {
         const runS = (this.d.clock.mono() - r.startMono) / 1000;
@@ -417,18 +584,28 @@ export class Loop {
   stop(code = 0): void {
     this.stopping = true;
     this.exitCode = code;
+    this.wake();
   }
 
   /** The pass loop until stopped (LOOP-12). */
   async run(): Promise<number> {
     await this.open();
+    // LOOP-142: under WSL, keep Windows awake with a powershell.exe child.
+    this.inhibitor.setWsl((await detectWsl(this.d.tools)) !== null);
+    let inFlight: Promise<PassReport> | undefined;
     while (!this.stopping) {
-      const r = await this.pass();
+      const pass = this.pass();
+      // LOOP-136: a stop during a pass does not wait for the pass; `shutdown` gives it the grace period.
+      const r = await Promise.race([pass, this.stopped.then(() => null)]);
+      if (r === null) {
+        inFlight = pass;
+        break;
+      }
       if (r.stop) break;
       if (!this.opts.watch && r.idle) break;
-      await sleep(PASS_MS);
+      await within(this.stopped, PASS_MS);
     }
-    await this.shutdown();
+    await this.shutdown(inFlight);
     return this.exitCode;
   }
 
@@ -443,6 +620,7 @@ export class Loop {
       store: d.store,
       github: d.github,
       timeouts,
+      ...(d.sandboxProbe ? { sandbox: () => this.lastProbe } : {}),
       log: d.log,
       repo: (m) => {
         const r = d.config.repos.get(m.repo);
@@ -478,6 +656,8 @@ export class Loop {
   async pass(): Promise<PassReport> {
     const { db, clock } = this.d;
     const report: PassReport = { idle: false, stop: false, picked: null, woke: false, target: null };
+    // LOOP-136: once told to stop, the loop takes no new work.
+    if (this.stopping) return { ...report, stop: true };
     const nowPoint = { wall: clock.now(), mono: clock.mono() };
     if (this.last && woke(this.last, nowPoint, PASS_MS / 1000)) {
       report.woke = true;
@@ -494,22 +674,30 @@ export class Loop {
     db.setMeta("health", JSON.stringify(this.health.open()));
     // LOOP-68: repos added or removed since the last pass (by the CLI or the page).
     syncRepos(this.d.config, db);
+    // MET-31, MET-33: budgets are read from the file again, then the caps that are reached.
+    reloadBudgets(this.d.config);
+    this.refreshCaps();
 
     // Commands from the CLI and the UI.
     for (const c of await applyPending({
       db,
-      store: this.d.store,
+      store: this.ownerStore,
       applyCtx: this.applyCtx(),
       now: new Date(this.now * 1000),
+      cutoff: this.d.config.intents.cutoff,
     })) {
       this.d.log(`command ${c.id}: ${c.result}`);
     }
 
-    await this.syncSteps();
+    // LOOP-114: `pause --now` cuts off what runs; the pause itself is LOOP-113.
+    this.stopForPause();
+    // LOOP-113: ticks and secrets are written to the intents repo; not while paused.
+    if (!this.isPaused()) await this.syncSteps();
     await this.reap();
     await this.enterDue();
     this.enforceTimeouts();
     await this.pollIntents(false);
+    this.stampLanes();
     this.releaseStalled();
     await this.pollProposed(false);
     await this.requeueKnownRepos();
@@ -520,18 +708,29 @@ export class Loop {
     this.enforceDrain();
     // LOOP-105, LOOP-108: with the checkout moved or an update waiting, running children finish but
     // nothing new starts.
-    if (this.codeMoved() === null && this.drain === null) this.startIssues(false);
+    if (this.codeMoved() === null && this.drain === null && !this.isPaused()) this.startIssues(false);
     await this.pollPrs();
-    this.pollSettings();
-    await this.pollReleases();
+    // LOOP-113: settings and release PRs are followed with writes (merges, comments): not while paused.
+    if (!this.isPaused()) {
+      this.pollSettings();
+      await this.pollReleases();
+    }
     this.releaseReady();
+    // LOOP-136: a stop that came during the pass starts no step and picks nothing.
+    if (this.stopping) return { ...report, stop: true };
     // LOOP-111: missions back from a wait ask for their run before a ready build takes the free slot.
     await this.stepDue(!report.woke);
+    await this.parts.pass(!report.woke);
     this.releaseReady();
+    if (this.stopping) return { ...report, stop: true };
+    await this.probeSandbox();
     if (
+      // PIP-163: with a probe, nothing is picked until the sandbox has held (no waiting for the 15 minutes
+      // a fault takes to block picks).
+      (!this.d.sandboxProbe || this.probeOk) &&
       !paused(db) &&
       !this.health.blocked(this.now) &&
-      !budgetReached(db, this.d.config, this.now) &&
+      !this.caps.some((c) => c.scope === "all") &&
       this.codeMoved() === null &&
       this.drain === null
     ) {
@@ -540,6 +739,11 @@ export class Loop {
     }
     await this.selfUpdate();
     this.restartIfMoved();
+    // LOOP-130: the shadow reads the chat and reaps or starts a turn; its child runs beside the pass.
+    await this.d.chat?.pass();
+    await this.d.shadow?.pass();
+    // OBV-2: the observer reaps a finished run or starts one that is due; its child runs beside the pass.
+    await this.d.observer?.pass();
     await this.sendMessages();
 
     // A change waiting days on the owner's steps is not work: the machine may sleep and the loop is idle.
@@ -550,10 +754,13 @@ export class Loop {
     const live = unfinished(db).filter((m) => working(m) && !this.cooling(m));
     report.idle =
       this.children.size === 0 &&
+      this.parts.running() === 0 &&
       this.featuresJob === null &&
       this.readinessJob === null &&
       this.settingsJob === null &&
       this.setupJob === null &&
+      !this.d.shadow?.busy() &&
+      !this.d.observer?.busy() &&
       live.length === 0 &&
       report.picked === null;
     if (this.targetId) {
@@ -572,6 +779,15 @@ export class Loop {
 
   /** Children that ended → their handler's `finish` (LOOP-12). */
   private async reap(): Promise<void> {
+    // LOOP-113: a result whose write was held while paused is applied once the pause is over.
+    if (!this.isPaused()) {
+      for (const [id, p] of [...this.parked]) {
+        this.parked.delete(id);
+        const m = getMission(this.d.db, id);
+        if (!m || finished(m.stage) || m.stage !== p.stage || m.step !== p.step) continue;
+        await this.finishRun(id, p.r, m);
+      }
+    }
     for (const [id, r] of [...this.children]) {
       if (!r.exit) continue;
       this.children.delete(id);
@@ -590,20 +806,35 @@ export class Loop {
         this.move(update(this.d.db, m.id, { child_model: null }, this.now), { event: "interrupted" });
         continue;
       }
-      dropIfEmpty(r.spec.stderr);
-      const end: ChildEnd = {
-        ...r.exit,
-        timedOut: r.timedOut,
-        runMs,
-        stdout: r.spec.stdout,
-        stderr: r.spec.stderr,
-      };
-      const h = this.d.handlers[fresh.stage];
-      if (!h) continue;
-      // A Claude run that ended without a network or auth failure: Claude is reachable.
-      await this.drive(fresh, () => h.finish(this.ctx(), fresh, end), r.spec.model !== undefined);
-      if (!this.children.has(id)) update(this.d.db, id, { child_model: null }, this.now);
+      await this.finishRun(id, r, fresh);
     }
+  }
+
+  /** The handler's `finish` for a run that ended (LOOP-12); a held write parks it until resume (LOOP-113). */
+  private async finishRun(id: number, r: Running, fresh: Mission): Promise<void> {
+    dropIfEmpty(r.spec.stderr);
+    const end: ChildEnd = {
+      ...r.exit!,
+      timedOut: r.timedOut,
+      runMs: this.d.clock.mono() - r.startMono,
+      stdout: r.spec.stdout,
+      stderr: r.spec.stderr,
+    };
+    const h = this.d.handlers[fresh.stage];
+    if (!h) return;
+    // A Claude run that ended without a network or auth failure: Claude is reachable.
+    const held = await this.drive(fresh, () => h.finish(this.ctx(), fresh, end), r.spec.model !== undefined);
+    if (held) {
+      // The handler recorded its result before the write (LOOP-6): when the step moved on, `step` goes on
+      // from there; otherwise `finish` is asked again.
+      const cur = getMission(this.d.db, id);
+      if (cur && !finished(cur.stage) && cur.stage === fresh.stage && cur.step === fresh.step) {
+        this.parked.set(id, { r, stage: cur.stage, step: cur.step });
+        return;
+      }
+      update(this.d.db, id, { busy: 0 }, this.now);
+    }
+    if (!this.children.has(id)) update(this.d.db, id, { child_model: null }, this.now);
   }
 
   /**
@@ -658,10 +889,14 @@ export class Loop {
 
   /** Entry effects of every mission whose step is `enter` (LOOP-6), finished ones too. */
   private async enterDue(): Promise<void> {
+    // LOOP-113: entry effects write to GitHub and the intents repo; they are made after resume.
+    if (this.isPaused()) return;
     for (const m of this.d.db.all<Mission>("SELECT * FROM missions WHERE step = 'enter' ORDER BY id")) {
       try {
         await this.cloneLock.run(() => this.enter(m));
       } catch (e) {
+        // LOOP-113: the entry's write is held by the pause; it is made after resume.
+        if (e instanceof PausedHold) continue;
         this.d.log(`${label(m)}: entering ${m.stage} failed, retrying next pass: ${(e as Error).message}`);
       }
     }
@@ -688,8 +923,13 @@ export class Loop {
         const data = dataOf<{ dropped?: boolean; steps?: OwnerStep[] }>(m);
         const repo = this.d.config.repos.get(m.repo);
         const prUrl = (n: number | null, gh: string | null | undefined) =>
-          n && gh ? `https://github.com/${gh}/pull/${n}` : null;
-        await store.update(
+          n && gh ? changeUrl(gh, n) : null;
+        // LOOP-140: an intent the owner already closed by hand has no file left to write.
+        const update = (...a: Parameters<IntentStore["update"]>) =>
+          store.update(...a).catch((e: unknown) => {
+            if (!(e instanceof NoOpenIntentError) || !finished(m.stage)) throw e;
+          });
+        await update(
           m.intent,
           m.stage,
           (e) => {
@@ -735,9 +975,16 @@ export class Loop {
     await this.switchedToSteps(m);
     // LOOP-76: the owner's note, ticked, goes to the plan of an intent they finished themselves.
     if (m.stage === "done" && (dataOf(m) as PipeData).stepsDirty !== undefined) {
-      await writeTicks(this.ctx(), m);
+      // LOOP-140: an intent already closed by hand has no open plan left to tick.
+      await writeTicks(this.ctx(), m).catch((e: unknown) => {
+        if (!(e instanceof NoOpenIntentError)) throw e;
+        this.d.log(`${label(m)}: the owner's note wasn't written to plan.md: the intent is already closed`);
+      });
     }
-    if (finished(m.stage)) removeCheckout(this.d.home.abs(m.checkout));
+    if (finished(m.stage)) {
+      removeCheckout(this.d.home.abs(m.checkout));
+      for (const p of partsOf(m)) removeCheckout(this.d.home.abs(p.checkout));
+    }
     const set: Record<string, SqlValue> = { step: "" };
     if (m.stage === "merge" && paused(db)) set.held = 1;
     update(db, m.id, set, this.now);
@@ -774,6 +1021,11 @@ export class Loop {
       [repo?.github, m.spec_pr],
       [this.d.store.github(), m.plan_pr],
       [repo?.github, m.pr],
+      // LOOP-78: a part has a PR of its own in its repo.
+      ...partsOf(m).map((p): [string | undefined, number | null] => [
+        this.d.config.repos.get(p.repo)?.github,
+        p.pr,
+      ]),
     ];
     return prs.filter((p): p is [string, number] => Boolean(p[0] && p[1]));
   }
@@ -833,7 +1085,7 @@ export class Loop {
         ? "Closed: the owner did this by hand, so there is nothing to merge."
         : "Closed: the owner will do this by hand, so there is nothing to merge.",
     );
-    const gone = await retireBranch(this.d.github, repo.github, m.pr, this.d.store.github());
+    const gone = await this.d.github.retireBranch(repo.github, m.pr, this.d.store.github());
     if (gone) this.d.log(`${label(m)}: deleted branch ${gone} of ${repo.github}#${m.pr}`);
     update(this.d.db, m.id, { pr: null }, this.now);
   }
@@ -842,7 +1094,7 @@ export class Loop {
     const prs = this.missionPrs(m);
     if (why) for (const [github, n] of prs) await closeIfOpen(this.d.github, github, n, why);
     for (const [github, n] of prs) {
-      const gone = await retireBranch(this.d.github, github, n, this.d.store.github());
+      const gone = await this.d.github.retireBranch(github, n, this.d.store.github());
       if (gone) this.d.log(`${label(m)}: deleted branch ${gone} of ${github}#${n}`);
     }
   }
@@ -860,6 +1112,27 @@ export class Loop {
         r.termAt = mono;
         r.handle.kill("SIGTERM");
       }
+    }
+  }
+
+  /**
+   * LOOP-114: after `pause --now`, every run still going gets SIGTERM (SIGKILL after 10 s by
+   * `enforceTimeouts`), and its mission is `interrupted` when the child is reaped: its session
+   * continues after resume and nothing is counted as a crash.
+   */
+  private stopForPause(): void {
+    if (this.d.db.meta("paused_now") !== "1") return;
+    if (!this.isPaused() || this.children.size === 0) {
+      this.d.db.delMeta("paused_now");
+      return;
+    }
+    const mono = this.d.clock.mono();
+    for (const [id, r] of this.children) {
+      if (r.exit || r.termAt !== null) continue;
+      r.interrupted = true;
+      r.termAt = mono;
+      r.handle.kill("SIGTERM");
+      this.d.log(`paused now: stopped the ${r.spec.kind} of mission ${id}`);
     }
   }
 
@@ -906,11 +1179,22 @@ export class Loop {
       this.githubOk();
     } catch (e) {
       this.listingError = (e as Error).message;
-      this.health.fail("github", this.listingError, this.now);
+      // LOOP-136: a call cut off at a stop says nothing about GitHub.
+      if (!this.cutOffDone) this.health.fail("github", this.listingError, this.now);
+      // LOOP-139: at start a failed sync is logged; the next pass tries again.
+      if (force) this.d.log(`intents: ${this.listingError}`);
       return;
     }
     const listing = this.listing;
     const db = this.d.db;
+    await watchAutonomy(
+      { db, store: this.d.store, forge: this.d.github, now: this.now, log: this.d.log },
+      listing,
+    );
+    await watchFast(
+      { db, store: this.d.store, forge: this.d.github, now: this.now, log: this.d.log },
+      listing,
+    );
     for (const m of unfinished(db)) {
       if (m.step === "enter") continue;
       const intent = listing.open.find((i) => i.id === m.intent) ?? null;
@@ -919,6 +1203,17 @@ export class Loop {
       const o = intentEvents(m, intent);
       // LOOP-77: the owner removing `waiting` is an answer, though it has no words.
       if (o) this.move(m, o.event === "answered" ? { ...o, counted: true } : o);
+    }
+    // FAST-7: a confirmed fast-lane intent's question is answered with the worker's recommendation.
+    for (const m of unfinished(db)) {
+      if (m.stage !== "blocked" || this.children.has(m.id)) continue;
+      const intent = listing.open.find((i) => i.id === m.intent) ?? null;
+      try {
+        const o = await fastAnswer(this.ctx(), m, intent);
+        if (o) this.move(m, o);
+      } catch (e) {
+        this.d.log(`${m.intent}: fast lane answer failed: ${(e as Error).message}`);
+      }
     }
     const busy = new Set(unfinished(db).map((m) => m.intent));
     // `retry: fresh` on an intent with no mission: queue it again (LOOP-18).
@@ -979,7 +1274,14 @@ export class Loop {
    * read. A failure keeps the last result.
    */
   private startReadiness(): void {
-    if (!this.d.readiness || this.readinessJob || this.drain !== null || this.codeMoved() !== null) return;
+    if (
+      !this.d.readiness ||
+      this.readinessJob ||
+      this.drain !== null ||
+      this.isPaused() ||
+      this.codeMoved() !== null
+    )
+      return;
     const deps = {
       config: this.d.config,
       home: this.d.home,
@@ -1010,7 +1312,14 @@ export class Loop {
    * repo, as a background job like the readiness check, one at a time; its fetch holds the clone lock.
    */
   private startSettings(): void {
-    if (!this.d.readiness || this.settingsJob || this.drain !== null || this.codeMoved() !== null) return;
+    if (
+      !this.d.readiness ||
+      this.settingsJob ||
+      this.drain !== null ||
+      this.isPaused() ||
+      this.codeMoved() !== null
+    )
+      return;
     const deps = {
       config: this.d.config,
       home: this.d.home,
@@ -1035,7 +1344,7 @@ export class Loop {
    * job like the settings check, one repo at a time; its fetch holds the clone lock.
    */
   private startSetupChecks(): void {
-    if (this.setupJob || this.drain !== null || this.codeMoved() !== null) return;
+    if (this.setupJob || this.drain !== null || this.isPaused() || this.codeMoved() !== null) return;
     if (!setupWork(this.d.db, this.d.config, this.d.clock.now())) return;
     this.setupJob = setupChecksPass({
       config: this.d.config,
@@ -1100,7 +1409,7 @@ export class Loop {
     try {
       list = this.d.readProposed
         ? await this.d.readProposed()
-        : await readProposed(this.d.github, repo!, this.proposedCache, (await this.d.github.bot()).login);
+        : await this.d.github.readProposed(repo!, this.proposedCache, (await this.d.github.bot(repo!)).login);
     } catch (e) {
       this.proposedError = (e as Error).message;
       this.proposedFailedAt = this.now;
@@ -1142,6 +1451,11 @@ export class Loop {
     return isParked(p, this.d.config.intents.cutoff) ? "would be parked" : `priority ${p}`;
   }
 
+  /** The last read of the intents repo, for the observer (OBV-6). */
+  currentListing(): Listing | null {
+    return this.listing;
+  }
+
   /** For the page (UI-184) and the actions (INT-53). */
   proposedState(): ProposedState {
     return { list: this.proposed ?? [], error: this.proposedError, failedAt: this.proposedFailedAt };
@@ -1157,7 +1471,7 @@ export class Loop {
    * (scoring takes minutes) and never more than once at a time.
    */
   private startIssues(force: boolean): void {
-    if (this.issuesRun || !this.d.config.github) return;
+    if (this.issuesRun || !this.d.config.github || this.isPaused()) return;
     if (!force && this.now - this.lastIssuesPoll < ISSUES_POLL_S) return;
     this.lastIssuesPoll = this.now;
     const run = pollIssues({
@@ -1251,9 +1565,51 @@ export class Loop {
     });
   }
 
+  /** GL-14: the owner's login and the bot of the host `repo` lives on (one host: the same as the host's own). */
+  private identityOf(repo: string): { me: string; bot(): Promise<{ login: string }> } {
+    const h = this.d.github as Partial<Routed> & Host;
+    return h.identityOf?.(repo) ?? { me: h.me, bot: () => h.bot() };
+  }
+
+  /** A PR read on another host, with its owner and bot named as they are on the code's host. */
+  private async renamed(pr: PrState, repo: string, to: { me: string; bot: string }): Promise<PrState> {
+    const from = this.identityOf(repo);
+    const fromMe = from.me.toLowerCase();
+    const fromBot = (await from.bot()).login.toLowerCase();
+    const host = isGitlab(repo) ? "gitlab" : "github";
+    // A stranger whose login equals the other host's owner or bot is not them: it gets a name that can't match.
+    const name = (a: string): string => {
+      const l = a.toLowerCase();
+      if (l === fromMe) return to.me;
+      if (l === fromBot) return to.bot;
+      return l === to.me.toLowerCase() || l === to.bot.toLowerCase() ? `${host}:${a}` : a;
+    };
+    return {
+      ...pr,
+      ...(pr.author !== undefined ? { author: name(pr.author) } : {}),
+      reviews: pr.reviews.map((r) => ({ ...r, author: name(r.author) })),
+      comments: pr.comments.map((c) => ({ ...c, author: name(c.author) })),
+      ...(pr.staleApprovals
+        ? { staleApprovals: pr.staleApprovals.map((x) => ({ ...x, author: name(x.author) })) }
+        : {}),
+    };
+  }
+
   /** PR reads (LOOP-18, PIP-21): every 60 s per mission with a PR. */
+  /**
+   * LOOP-76, UI-164: the open code PR that an exit of this wait would close, with its commit count, for the
+   * card's confirm. The exit itself checks again, so a stale note only costs the page a round trip.
+   */
+  private async noteOpenPr(m: Mission, github: string): Promise<void> {
+    if (m.stage !== "blocked" && m.stage !== "approval:merge" && m.stage !== "steps") return;
+    const w = await exitWarning(this.d.github, github, m.pr);
+    const note = w ? { number: w.pr, commits: w.commits } : null;
+    const had = (dataOf(m) as { openPr?: unknown }).openPr ?? null;
+    if (JSON.stringify(had) !== JSON.stringify(note)) patchData(this.d.db, m, { openPr: note }, this.now);
+  }
+
   private async pollPrs(): Promise<void> {
-    const read = this.d.readPr ?? ((repo: string, n: number) => readPr(this.d.github, repo, n));
+    const read = this.d.readPr ?? ((repo: string, n: number) => this.d.github.readPr(repo, n));
     for (const m of unfinished(this.d.db)) {
       if (m.step === "enter" || (!m.spec_pr && !m.plan_pr && !m.pr)) continue;
       // UI-106: the page acted on this PR, so read it now instead of at the next minute.
@@ -1270,29 +1626,48 @@ export class Loop {
         if (m.plan_pr && intentsRepo) prs.plan = await read(intentsRepo, m.plan_pr);
         if (m.pr) prs.code = await read(repo.github, m.pr);
         this.githubOk();
+        // GL-14: the owner and the bot are those of the host the code lives on; a plan PR on the other host
+        // is read under that host's names, so its authors are renamed to these before any event is computed.
+        const ident = this.identityOf(repo.github);
+        const me = ident.me;
+        const bot = (await ident.bot()).login;
+        if (prs.plan && intentsRepo && isGitlab(intentsRepo) !== isGitlab(repo.github)) {
+          prs.plan = await this.renamed(prs.plan, intentsRepo, { me, bot });
+        }
+        if (prs.code && m.pr) await this.noteOpenPr(m, repo.github);
         const teamOn = repo.teammateReview === true;
-        const approve = approveRequested(m, prs, this.d.github.me, teamOn);
+        const approve = approveRequested(m, prs, me, teamOn);
         if (approve !== null) {
           const target = approve === m.plan_pr ? intentsRepo! : repo.github;
-          const r = await this.d.github.mergePr(target, approve, { method: MERGE_METHOD });
+          // GL-15: the merge carries the head the approval was judged on, so a push after the check is refused.
+          const judged = approve === m.plan_pr ? prs.plan : approve === m.pr ? prs.code : prs.spec;
+          const r = await this.d.github.mergePr(target, approve, {
+            method: MERGE_METHOD,
+            ...(judged?.head ? { head: judged.head } : {}),
+          });
           this.d.log(
             `${label(m)}: the owner approved PR ${approve}; ${r.ok ? "merged" : `merge refused: ${r.reason}`}`,
           );
           this.lastPrPoll.delete(m.id);
           continue;
         }
-        const bot = (await this.d.github.bot()).login;
-        let asks = releaseRequested(m, prs, this.d.github.me, bot, []);
+        let asks = releaseRequested(m, prs, me, bot, []);
         if (asks.length > 0) {
           // PIP-45: the lead repo's `live` block, read from the base branch of Towercab's clone.
           let entry: ReleaseRepo;
           try {
-            const files = await loadRepoFiles(this.d.tools, clonePath(repo, this.d.home.root), repo.base);
+            const files = await loadRepoFilesWith(
+              this.d.tools,
+              clonePath(repo, this.d.home.root),
+              repo.base,
+              repo.github,
+              loadOverlay(this.d.config.file, repo.name),
+            );
             entry = { name: m.repo, live: files.towercab.live ? { url: files.towercab.live.url } : null };
           } catch (e) {
             entry = { name: m.repo, live: null, unreadable: (e as Error).message };
           }
-          asks = releaseRequested(m, prs, this.d.github.me, bot, [entry]);
+          asks = releaseRequested(m, prs, me, bot, [entry]);
         }
         for (const ask of asks) {
           const target = ask.kind === "plan" ? intentsRepo! : repo.github;
@@ -1301,7 +1676,9 @@ export class Loop {
         // PIP-141: the owner's `allow <path>` reverses a refusal, when no worker holds the mission's data.
         let reversed = false;
         if (!this.children.has(m.id)) {
-          for (const ask of reversalRequested(m, prs, this.d.github.me, bot)) {
+          const listedNow = this.listing?.open.find((i) => i.id === m.intent);
+          const onlyYou = ownerOnly(listedNow ? levelNow(this.d.db, listedNow) : null);
+          for (const ask of reversalRequested(m, prs, me, bot, onlyYou)) {
             let said: string;
             try {
               const r = reverseRefusals(dataOf(m) as PipeData, ask.paths);
@@ -1327,7 +1704,7 @@ export class Loop {
         let team: TeamReads | undefined;
         if (teamOn) {
           team = await this.teamReads(m, repo, prs, bot);
-          for (const ask of approveNotices(m, prs, this.d.github.me, bot)) {
+          for (const ask of approveNotices(m, prs, me, bot)) {
             // PIP-144: the owner's Approve neither merges nor counts: say so once.
             const text = team?.approved
               ? APPROVE_NOTICE.after
@@ -1337,10 +1714,16 @@ export class Loop {
             await this.d.github.commentOnPr(repo.github, ask.pr, `${ask.marker}\n${text}`);
           }
         }
+        // GL-15: an approval given before the last push never counts: say so once.
+        for (const ask of staleApprovalNotices(m, prs, bot)) {
+          const target = ask.kind === "plan" ? intentsRepo! : repo.github;
+          await this.d.github.commentOnPr(target, ask.pr, `${ask.marker}\n${ask.text}`);
+        }
         // AUT-32: on an owner-only intent a reply from anyone else is ignored (PIP-44) and noted once.
         const listed = this.listing?.open.find((i) => i.id === m.intent);
-        if (ownerOnly(listed?.a ?? null, m.a_at_pick)) {
-          for (const r of ignoredReplies(m, prs, this.d.github.me, bot)) {
+        const levelListed = listed ? levelNow(this.d.db, listed) : null;
+        if (ownerOnly(levelListed)) {
+          for (const r of ignoredReplies(m, prs, me, bot)) {
             noteIgnored(
               this.d.db,
               m.intent,
@@ -1350,10 +1733,50 @@ export class Loop {
             );
           }
         }
-        const o = prEvents(pastMerges(m, prs), prs, this.d.github.me, bot, team);
+        // PIP-185: comments an agent marked under the owner's login are recorded once, at any level.
+        const only = ownerOnly(levelListed);
+        for (const c of agentComments(m, prs, me, bot)) {
+          const target = c.kind === "plan" ? intentsRepo : repo.github;
+          recordAgentComment(this.d.db, m.intent, c.key, {
+            agent: c.agent,
+            url: c.pr && target ? prLink(target, c.pr) : "",
+            at: Date.parse(c.at) / 1000 || this.now,
+            excerpt: c.excerpt,
+            actedOn: !only,
+          });
+          if (only) {
+            noteIgnored(
+              this.d.db,
+              m.intent,
+              c.key,
+              `ignored a comment from ${c.agent}, an agent writing under your login, on the ${c.kind} PR${c.pr ? ` #${c.pr}` : ""}: this intent is only yours`,
+              this.now,
+            );
+          }
+        }
+        const held = conflictHeld(unfinished(this.d.db), m);
+        const o = prEvents(pastMerges(m, prs), prs, me, bot, team, only, held);
         if (!o) continue;
+        if (o.event === "feedback" || o.event === "answered") {
+          // A later answer by the owner clears the agent's name.
+          const d = (o.data ?? {}) as { answeredBy?: string | null };
+          o.data = { ...d, answeredBy: d.answeredBy ?? null };
+        }
+        // PIP-203: the owner's own comment starts a revision that answers it. Towercab's conflict revision
+        // (PIP-81) and an answer to a question are not revisions of that kind, so they get no reply (LOOP-121).
+        if (o.event === "feedback" && !(o.data as { mergeMain?: boolean } | undefined)?.mergeMain) {
+          const targets = feedbackTargets(m, prs, me, bot, team, only);
+          o.data = { ...o.data, replyTo: targets.length ? targets : undefined, replyNote: undefined };
+        }
         const running = this.children.has(m.id);
         if (running && !["code_merged", "spec_merged", "plan_merged", "closed"].includes(o.event)) continue;
+        // INT-77: the owner's whole comment `kind: <value>` switches the kind and its path; it is no answer.
+        const switchTo =
+          (o.event === "feedback" || o.event === "answered") && o.text ? parseKindComment(o.text) : null;
+        if (switchTo) {
+          await this.switchKind(m, switchTo);
+          continue;
+        }
         // PIP-145: what an approving reviewer wrote goes to the PR's record, nothing more.
         const notes = (o.data as { approvalNotes?: string[] } | undefined)?.approvalNotes ?? [];
         if (o.event === "reviewed" && notes.length > 0) {
@@ -1365,11 +1788,30 @@ export class Loop {
         // PIP-112: the merged plan.md is the record of the delivery, edits in the plan PR included.
         this.move(o.event === "plan_merged" ? await this.deliveryFromPlan(m) : m, o);
       } catch (e) {
+        // LOOP-113: a reply or merge held by the pause is made after resume; the PR is read again then.
+        if (e instanceof PausedHold) continue;
         const msg = (e as Error).message;
         this.health.fail("github", msg, this.now);
         this.d.log(`${label(m)}: reading its PRs failed: ${msg}`);
       }
     }
+  }
+
+  /** INT-77: write the owner's kind to the intent and put the mission on its path, unless that stage has started. */
+  private async switchKind(m: Mission, kind: WorkKind): Promise<void> {
+    const intent = await this.d.store.get(m.intent);
+    if (kindOf(intent.kind, dataOf(m) as { kind?: string }) === kind && intent.kind === kind) return;
+    const refusal = kindChangeRefusal(kind, m.stage === "blocked" ? (m.from_stage ?? m.stage) : m.stage);
+    if (refusal) {
+      this.d.log(`${label(m)}: ignored "kind: ${kind}": ${refusal}`);
+      return;
+    }
+    await this.d.store.update(m.intent, "set kind", (e) => e.setField("kind", kind));
+    this.move(m, {
+      event: "kind_routed",
+      why: `the owner replied kind: ${kind}`,
+      data: { kind, kindBy: "owner", kindWhy: "You set it." },
+    });
   }
 
   /**
@@ -1425,14 +1867,22 @@ export class Loop {
     const all = unfinished(db);
     const back = [...new Set(all.map((m) => m.repo))].flatMap((r) => returningIn(all, r, this.listing));
     // LOOP-115: a mission the owner answered goes before the rest (the sort is stable).
+    // FAST-4: a fast-lane mission is first in line for the next free slot.
     const order = [...back, ...all.filter((m) => !back.includes(m))].sort(
-      (a, b) => Number(isAnswered(b)) - Number(isAnswered(a)),
+      (a, b) => Number(isHolder(b)) - Number(isHolder(a)) || Number(isAnswered(b)) - Number(isAnswered(a)),
     );
     for (const listed of order) {
       let m = listed;
       if (!isWorking(m.stage) || m.step === "enter" || m.held || this.children.has(m.id)) continue;
+      // LOOP-78, LOOP-80: the parts of a multi-repo mission step on their own and land in order.
+      if (inPartStages(m) || inLanding(m)) continue;
+      if (this.parked.has(m.id)) continue;
+      // LOOP-113: while paused only CI is looked at (a read of the checks); nothing else is due.
+      if (this.isPaused() && m.stage !== "ci") continue;
       // SHD-22: a paused intent starts no further stage until it is resumed.
       if (intentPaused(db, m.intent)) continue;
+      // MET-33: a reached cap holds what was not underway when it was reached.
+      if (this.capHeld.has(m.id)) continue;
       // LOOP-105: no step of a loop whose checkout moved under it runs.
       if (this.codeMoved() !== null) break;
       if (queued.has(m.id) || this.cooling(m)) continue;
@@ -1441,6 +1891,16 @@ export class Loop {
       if (this.opts.intent && this.targetId && m.intent !== this.targetId) continue;
       const h = this.d.handlers[m.stage];
       if (!h) continue;
+      // LOOP-79: another intent's freeze of this repo holds the merge; it starts when the freeze lifts.
+      if (m.stage === "merge") {
+        const by = frozenBy(db, m.repo);
+        if (by !== null && by !== m.id) continue;
+      }
+      // LOOP-159: at `merge` only the head of the repo's merge queue steps; it marks itself landing.
+      if (m.stage === "merge" && landingOf(m) === null) {
+        if (headOf(unfinished(db), m.repo)?.id !== m.id) continue;
+        m = patchData(db, m, { landing: { since: this.now } }, this.now);
+      }
       // LOOP-117: before a build starts or goes on, the intent's current `after` is read again.
       if (m.stage === "build" && m.pr === null && m.step !== "commit") {
         const checked = this.holdByAfter(m);
@@ -1461,7 +1921,11 @@ export class Loop {
         update(db, m.id, { data: JSON.stringify(rest) }, this.now);
       }
       const fresh = update(db, m.id, { busy: 1 }, this.now);
-      await this.drive(fresh, () => h.step(this.ctx(timeouts), fresh));
+      if (await this.drive(fresh, () => h.step(this.ctx(timeouts), fresh))) {
+        // LOOP-113: a write was held by the pause; the step is asked for again after resume.
+        update(db, m.id, { busy: 0 }, this.now);
+        this.pollAt.set(m.id, this.now + DRAIN_RETRY_S);
+      }
     }
   }
 
@@ -1495,6 +1959,16 @@ export class Loop {
     return null;
   }
 
+  /** FAST-2: hand the lane to the next fast intent when it is free, and take it off an intent that lost its mark. */
+  private stampLanes(): void {
+    const listing = this.listing;
+    if (!listing) return;
+    const ms = unfinished(this.d.db);
+    const { set, clear } = stampsFor(ms, listing.open);
+    for (const m of clear) patchData(this.d.db, m, { fastLane: undefined }, this.now);
+    for (const m of set) patchData(this.d.db, m, { fastLane: this.now }, this.now);
+  }
+
   /** LOOP-119: a mission that waited for the owner about a dependency goes on once none is left. */
   private releaseStalled(): void {
     const listing = this.listing;
@@ -1515,20 +1989,25 @@ export class Loop {
     m: Mission,
     call: () => Promise<import("./handlers.ts").Progress>,
     claudeRun = false,
-  ): Promise<void> {
+  ): Promise<boolean> {
     let p: import("./handlers.ts").Progress;
     try {
       p = await this.cloneLock.run(call);
     } catch (e) {
+      // LOOP-113: a write held by the pause is no failure: the step is asked for again after resume.
+      if (e instanceof PausedHold) return true;
       const cur = getMission(this.d.db, m.id) ?? m;
-      if (e instanceof EnvError) {
+      if (this.cutOffDone) {
+        // LOOP-136: a call cut off at the stop is no failure of the step; it runs again at the next start.
+        this.move(cur, { event: "interrupted" });
+      } else if (e instanceof EnvError) {
         this.health.fail(e.fault, e.message, this.now);
         this.move(cur, { event: "env_fail", why: e.message });
       } else {
         this.d.log(`${label(cur)}: ${cur.stage}: ${(e as Error).stack ?? (e as Error).message}`);
         this.move(cur, { event: "crash", why: (e as Error).message });
       }
-      return;
+      return false;
     }
     const cur = getMission(this.d.db, m.id) ?? m;
     if ("done" in p) {
@@ -1552,13 +2031,14 @@ export class Loop {
       // older code): drop the run; the step is asked for again after the restart.
       if (this.codeMoved() !== null) {
         update(this.d.db, m.id, { busy: 0 }, this.now);
-        return;
+        return false;
       }
       // LOOP-108: an update waits for running work to end, so no new child starts; asked again later.
-      if (this.drain !== null) {
+      // LOOP-113: so does a pause.
+      if (this.drain !== null || this.isPaused()) {
         update(this.d.db, m.id, { busy: 0 }, this.now);
         this.pollAt.set(m.id, this.now + DRAIN_RETRY_S);
-        return;
+        return false;
       }
       // LOOP-111: a mission back from outside the slots takes a free one, or waits for it without starting.
       if (dataOf<{ idle?: boolean }>(cur).idle === true && isBuilding(cur)) {
@@ -1570,7 +2050,7 @@ export class Loop {
             patchData(this.d.db, getMission(this.d.db, m.id) ?? cur, { returning: this.now }, this.now);
           }
           this.pollAt.set(m.id, this.now + 1);
-          return;
+          return false;
         }
       }
       if (spec.slot && this.slotsUsed() >= this.d.config.agent.parallel) {
@@ -1581,7 +2061,7 @@ export class Loop {
           patchData(this.d.db, cur, { slot_wait_since: this.now, slot_wait_step: step }, this.now);
         }
         this.pollAt.set(m.id, this.now + 1);
-        return;
+        return false;
       }
       // The step's budget minus the run time it already spent (a restart or a limit wait in between
       // never adds to it, LOOP-12).
@@ -1593,7 +2073,7 @@ export class Loop {
       } catch (e) {
         this.health.fail(`tool:${spec.argv[0]}`, (e as Error).message, this.now);
         this.move(cur, { event: "env_fail", why: (e as Error).message });
-        return;
+        return false;
       }
       const r: Running = {
         handle,
@@ -1630,6 +2110,7 @@ export class Loop {
         this.now,
       );
     }
+    return false;
   }
 
   move(m: Mission, o: Outcome): Mission {
@@ -1658,6 +2139,10 @@ export class Loop {
     if (out.id === m.id && dataOf<{ returning?: number }>(out).returning !== undefined) {
       out = patchData(this.d.db, out, { returning: undefined }, this.now);
     }
+    // FAST-8: a fast-lane mission starts to wait for the owner: Telegram is told on its next pass, not on its sweep.
+    if (out.id === m.id && out.stage !== m.stage && out.stage.startsWith("approval:") && isHolder(out)) {
+      this.d.db.setMeta("tg:urgent", "1");
+    }
     if (out.stage !== m.stage || out.id !== m.id) {
       this.lastPrPoll.delete(m.id);
       this.d.db.delMeta(`poll:${m.id}`);
@@ -1670,20 +2155,22 @@ export class Loop {
     if (phaseOf(m.stage, m.from_stage) !== "plan") return false;
     const ms = unfinished(this.d.db);
     const workers = this.d.config.repos.get(m.repo)?.workers ?? 1;
-    if (this.repoFull(ms, m.repo, workers)) return true;
+    if (this.repoFull(ms, m.repo, workers, m)) return true;
+    // FAST-4: a fast-lane mission does not queue behind ready ones.
+    if (isHolder(m)) return false;
     return ms.some((x) => x.id !== m.id && x.repo === m.repo && isReady(x));
   }
 
   /**
    * LOOP-110, LOOP-111: no new build starts while `workers` missions work, while the repo holds the cap of
-   * missions between build and merge, or while a returning mission waits for the slot.
+   * missions between build and merge, or while a returning mission waits for the slot. FAST-4: a fast-lane
+   * mission (`first`) ignores the returning ones, unless one of them is in the lane too.
    */
-  private repoFull(ms: Mission[], repo: string, workers: number): boolean {
-    return (
-      workingIn(ms, repo).length >= workers ||
-      buildingIn(ms, repo).length >= capOf(workers) ||
-      returningIn(ms, repo, this.listing).length > 0
-    );
+  private repoFull(ms: Mission[], repo: string, workers: number, first?: Mission): boolean {
+    if (workingIn(ms, repo).length >= workers || buildingIn(ms, repo).length >= capOf(workers)) return true;
+    const back = returningIn(ms, repo, this.listing);
+    if (back.length === 0) return false;
+    return !(first && isHolder(first) && !isHolder(back[0]!));
   }
 
   /** Remember (once) that the plan is approved and the mission waits for the build slot. */
@@ -1699,9 +2186,8 @@ export class Loop {
       const workers = this.d.config.repos.get(repo)?.workers ?? 1;
       for (;;) {
         const ms = unfinished(this.d.db);
-        if (this.repoFull(ms, repo, workers)) break;
         const m = bestReady(ms, repo, this.listing);
-        if (!m) break;
+        if (!m || this.repoFull(ms, repo, workers, m)) break;
         this.pollAt.delete(m.id);
         apply(this.applyCtx(), m, { event: "plan_merged", why: "the build slot is free" });
       }
@@ -1709,7 +2195,7 @@ export class Loop {
   }
 
   slotsUsed(): number {
-    return [...this.children.values()].filter((r) => r.spec.slot && !r.exit).length;
+    return [...this.children.values()].filter((r) => r.spec.slot && !r.exit).length + this.parts.slots();
   }
 
   /** Plan-approved missions waiting for their repo's build slot (LOOP-61). */
@@ -1732,6 +2218,44 @@ export class Loop {
     }
   }
 
+  /**
+   * MET-33: the caps reached now. When one is first reached, the missions working then are *underway*: they
+   * finish their run and go on until their next wait on the owner. After that wait (and any mission not
+   * underway) the cap holds their runs until it lifts. Kept in `meta.caps` so a restart keeps it.
+   */
+  private refreshCaps(): void {
+    const { db, config } = this.d;
+    this.caps = capsOf(db, config, this.now);
+    let saved: Record<string, number[]> = {};
+    try {
+      saved = JSON.parse(db.meta("caps") ?? "{}") as Record<string, number[]>;
+    } catch {
+      saved = {};
+    }
+    const mission = unfinished(db);
+    const held = new Set<number>();
+    const kept: Record<string, number[]> = {};
+    for (const c of this.caps) {
+      const key = capKey(c, this.now);
+      const mine = mission.filter((m) => c.scope === "all" || m.repo === c.scope);
+      let allow = saved[key];
+      if (!allow) {
+        allow = mine.filter((m) => isWorking(m.stage)).map((m) => m.id);
+        this.d.log(`${capReason(c)}: $${c.spent.toFixed(2)} of $${c.cap.toFixed(2)}; new work waits`);
+      }
+      allow = allow.filter((id) => {
+        const m = mine.find((x) => x.id === id);
+        // PIP-218: the next run of a long build is new work, so a cap holds it between runs.
+        return m !== undefined && !isWait(m.stage) && !runDue(m);
+      });
+      kept[key] = allow;
+      for (const m of mine) if (needsRun(m) && !allow.includes(m.id)) held.add(m.id);
+    }
+    this.capHeld = held;
+    const text = JSON.stringify(kept);
+    if (text !== (db.meta("caps") ?? "{}")) db.setMeta("caps", text);
+  }
+
   private cooling(m: Mission): boolean {
     return m.limit_model !== null && this.cooldownUntil(m.limit_model) !== null;
   }
@@ -1746,12 +2270,19 @@ export class Loop {
         working: workingAheadIn(ms, name).length,
         owner: ownerAheadIn(ms, name).length,
         limit: repo.ahead,
+        ownerLimit: config.intents.ownerWaits,
         ids: aheadIn(ms, name).map((m) => m.intent),
       });
     }
     const started = new Set(
       db.all<{ key: string }>("SELECT key FROM meta WHERE key LIKE 'start:%'").map((r) => r.key.slice(6)),
     );
+    // FAST-2: the fast intent each repo works on now.
+    const lane = new Map<string, string>();
+    for (const name of config.repos.keys()) {
+      const busy = laneOf(ms, this.listing?.open ?? [], name).busy[0];
+      if (busy) lane.set(name, busy.intent);
+    }
     const cooling = new Map<string, string>();
     for (const row of db.all<{ key: string }>("SELECT key FROM meta WHERE key LIKE 'cooldown:%'")) {
       const model = row.key.slice("cooldown:".length);
@@ -1763,13 +2294,13 @@ export class Loop {
       paused: paused(db),
       blocked: this.health.blocked(this.now) ? (this.health.open()[0]?.kind ?? "problem") : null,
       repos: new Set(config.repos.keys()),
-      unsupported: new Set([...config.repos].filter(([, r]) => isGitlab(r.github)).map(([n]) => n)),
       full,
       started,
       notReady: new Map([...blockingRepos(db, config)].map(([name, r]) => [name, missingText(r)] as const)),
       cooling,
       active: new Set(unfinished(db).map((m) => m.intent)),
       defaultModel: config.agent.model,
+      lane,
     };
   }
 
@@ -1777,9 +2308,11 @@ export class Loop {
   private async pick(): Promise<string | null> {
     const listing = this.listing;
     if (!listing) return null;
-    if (this.slotsUsed() >= this.d.config.agent.parallel) return null;
+    // FAST-4: at the global limit only a fast-lane intent starts; its run is first in line for a slot.
+    const full = this.slotsUsed() >= this.d.config.agent.parallel;
     let state = this.pickState();
-    let l = listing;
+    let l = full ? { ...listing, open: listing.open.filter((i) => i.fast === true) } : listing;
+    if (full && l.open.length === 0) return null;
     if (this.opts.intent) {
       if (this.targetId && this.d.db.get("SELECT 1 FROM missions WHERE intent = ?", this.targetId))
         return null;
@@ -1791,6 +2324,9 @@ export class Loop {
     }
     // SHD-22: a paused intent is not picked either.
     l = { ...l, open: l.open.filter((i) => !intentPaused(this.d.db, i.id)) };
+    // MET-33: a repo whose cap is reached picks nothing; the other repos carry on.
+    const capped = new Set(this.caps.map((c) => c.scope));
+    l = { ...l, open: l.open.filter((i) => !capped.has(i.repo)) };
     const decision = decide(l, state);
     for (const w of decision.writes) {
       try {
@@ -1812,7 +2348,7 @@ export class Loop {
       // LOOP-68: the repo may have been removed since this pass read the repos (another process).
       if (!this.d.db.get("SELECT 1 FROM repos WHERE name = ?", pick.repo)) return null;
       this.d.db.delMeta(`start:${pick.id}`);
-      return insertMission(
+      const made = insertMission(
         this.d.db,
         {
           intent: pick.id,
@@ -1823,6 +2359,8 @@ export class Loop {
         },
         this.now,
       );
+      // MET-34: the estimate is frozen at start.
+      return freezeEstimate(this.d.db, made, this.now);
     });
     if (!m) {
       this.d.log(`${pick.id}: its repo ${pick.repo} was just removed; not picked`);
@@ -1842,7 +2380,9 @@ export class Loop {
       this.featuresJob === null &&
       this.readinessJob === null &&
       this.settingsJob === null &&
-      this.setupJob === null;
+      this.setupJob === null &&
+      !this.d.shadow?.busy() &&
+      !this.d.observer?.busy();
     // A drain whose children are gone updates at once instead of at the next minute.
     if (!(this.drain !== null && idle()) && this.now - this.lastUpdate < UPDATE_POLL_S) return;
     this.lastUpdate = this.now;
@@ -1851,6 +2391,9 @@ export class Loop {
       checkout: this.codeRoot(),
       idle,
       failed: this.failedUpdate,
+      channel: this.d.config.update.channel,
+      log: (m) => this.d.log(m),
+      skipped: this.skippedTags,
     });
     if (r.kind === "waiting") {
       // A newer main while draining changes the target, not the start: the limit counts from the first.
@@ -1894,8 +2437,10 @@ export class Loop {
         this.now,
       );
     }
-    if (!this.d.sender) return;
-    await sendDue(this.d.db, this.d.sender, this.now, (row) => this.obsolete(row));
+    if (this.d.sender) await sendDue(this.d.db, this.d.sender, this.now, (row) => this.obsolete(row));
+    if (this.d.webhooks?.length) {
+      await sendWebhooks(this.d.db, this.d.webhooks, this.now, (row) => this.obsolete(row));
+    }
   }
 
   /** A waiting message whose wait is over is dropped (LOOP-14). */
@@ -1940,8 +2485,22 @@ export function clockTime(unix: number, now: number): string {
   return sameDay ? hm : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+/** Whether `p` settled within `ms`; the timer does not outlive the wait. */
+async function within(p: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      p.then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((r) => {
+        timer = setTimeout(() => r(false), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Read a run file as text, or "". */

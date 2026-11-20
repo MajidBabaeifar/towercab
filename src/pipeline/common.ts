@@ -6,31 +6,52 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AfterHold } from "../after.ts";
 import { type Agent, type AgentName, agentBudgetUsd, loadAgent } from "../agents.ts";
-import { effectiveA } from "../autonomy.ts";
+import { effectiveA, gateLevel } from "../autonomy.ts";
+import { withFlag } from "../autonomy-change.ts";
 import { git, gitSane } from "../checkout.ts";
 import { type ClaudeRun, freshContext, parseRun, prepareRun, type RunEnd, type RunKind } from "../claude.ts";
 import { clonePath, type RepoConfig } from "../config.ts";
+import { fastConfirmed } from "../fast.ts";
 import { classifyFailure, classifyRun } from "../faults.ts";
+import { changeUrl } from "../forge/types.ts";
 import { must, type Result } from "../forge.ts";
-import { type Step, upsertStageComment } from "../github/comments.ts";
+import {
+  agentOf,
+  answeredByLine,
+  type By,
+  type Step,
+  type TwoPart,
+  upsertStageComment,
+} from "../github/comments.ts";
+import type { ReplyTarget } from "../github/events.ts";
+import { PausedHold } from "../github/paused.ts";
 import { type ChildEnd, type Ctx, EnvError, type GitHub, type Progress } from "../handlers.ts";
 import { plainLine, SUBJECT_MAX } from "../intents/naming.ts";
 import type { Intent } from "../intents/types.ts";
+import type { REFACTOR_PROOF } from "../kind.ts";
 import { cooldown } from "../limits.ts";
 import { type Outcome, wait } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
-import { loadRepoFiles, RepoError, type RepoFiles } from "../repo/files.ts";
+import { capReached, isMulti, runBudget } from "../parts.ts";
+import { RepoError, type RepoFiles, type Verifying } from "../repo/files.ts";
+import { loadOverlay, loadRepoFilesWith } from "../repo/overlay.ts";
 import type { Risk } from "../risk.ts";
 import { checkoutRoot } from "../service.ts";
 import { combine, type OwnerStep, type PlanStep, parseNoneLive, parseSteps } from "../steps.ts";
 import { grantsFor, parseAccess, type TestAsk } from "./access.ts";
-import { cacheEnv } from "./sandbox.ts";
-import { type Access, type Question, SCHEMAS } from "./schemas.ts";
+import type { Mech } from "./mechanical.ts";
+import { foldMd, plainMd, splitTwoPart, twoPartMd } from "./prtext.ts";
+import type { PendingReply } from "./reply.ts";
+import { cacheEnv, DEFAULT_NETWORK } from "./sandbox.ts";
+import { type Access, type Question, type ReviewResult, SCHEMAS, withReply } from "./schemas.ts";
+import { hasSetupSecrets } from "./setup-secrets.ts";
 
 /** `missions.data`, as the pipeline uses it. */
 export interface ShipData {
   /** The intent's merge commits, oldest first. */
   merges: string[];
+  /** What the platform says the deploy waits on, and since when (unix s; SHIP-38). */
+  pending?: { why: string; at: number };
   /** When the current wait for a deploy began (unix s). */
   since?: number;
   /** Fix rounds after a rollback (SHIP-11). */
@@ -64,6 +85,10 @@ export interface SecretState {
 }
 
 export interface PipeData {
+  /** INT-77: the kind the mission goes by, why, and who chose it (an owner's wins over a guess). */
+  kind?: string;
+  kindWhy?: string;
+  kindBy?: "guess" | "owner";
   design?: {
     type: string;
     scope: string;
@@ -95,6 +120,8 @@ export interface PipeData {
   specRed?: boolean;
   /** Heads of the spec PR whose red checks were rerun (PIP-18). */
   specReruns?: Record<string, boolean>;
+  /** Heads of the spec PR whose hung runs were cancelled (PIP-171). */
+  specHung?: Record<string, boolean>;
   plan?: {
     md: string;
     access: Access;
@@ -103,12 +130,22 @@ export interface PipeData {
     e2e?: { tests: string[]; none_why: string } | null;
     /** INT-43: the repos of a multi-repo plan, in landing order; absent for a single-repo plan. */
     parts?: string[];
+    /** LOOP-78: the repos each part waits on, by repo. */
+    waitsOn?: Record<string, string[]>;
     /** PIP-106: the plan's plain brief. */
     brief?: string;
     /** SHIP-17, SHIP-21: the owner's steps and the "nothing to check live" claim the plan made. */
     ownerSteps?: PlanStep[];
     liveNoneWhy?: string;
+    /** PIP-229: the commands an `infra` plan has the build apply in the sandbox. */
+    apply?: { command: string; why: string }[];
   };
+  /** PIP-229: the commands applied so far, with their results; `applyAt` is the next one to run. */
+  applied?: AppliedRun[];
+  applyAt?: number;
+  /** PIP-231: the question "Move this to the full path?" is open; and the owner chose to keep the kind. */
+  kindAsk?: boolean;
+  kindKept?: boolean;
   /** PIP-112, PIP-113: absent counts as `code`; `steps` means the owner does the work. */
   delivery?: "code" | "steps";
   /** LOOP-77: the last blocked wait (key, head, count of owner answers) and whether it came back unchanged. */
@@ -126,7 +163,11 @@ export interface PipeData {
   stepsDirty?: number;
   /** The merged plan's ticked access. */
   granted?: Access;
+  /** AUT-15: access the owner allowed mid-build (never granted by Towercab itself). */
   unplanned?: Omit<Access, "tests">;
+  /** AUT-15: access the owner refused mid-build, and the request being asked about. */
+  refusedAccess?: Omit<Access, "tests">;
+  accessAsk?: Omit<Access, "tests">;
   /** PIP-116: existing tests the owner allowed or refused mid-build, and the one being asked about. */
   testAllowed?: { path: string; why: string }[];
   refusedTests?: { path: string; why: string }[];
@@ -139,14 +180,28 @@ export interface PipeData {
   mergeOpened?: string[];
   /** The owner's last words for the worker (an answer, feedback). */
   answer?: string;
+  /** PIP-203: the owner's comments the running revision answers (set with the `feedback` event). */
+  replyTo?: ReplyTarget[];
+  /** PIP-204: replies written so far, for the next one's round. */
+  replyRounds?: number;
+  /** PIP-204: a reply written and not yet posted, until it is. */
+  reply?: PendingReply;
+  /** LOOP-120: the posted reply's gist and link, for the next owner wait's message; used once. */
+  replyNote?: { gist: string; url: string };
   /** Why the next build round runs: a repair's what and details. */
   repair?: {
     what: string;
     details: string;
     kind: "verify" | "proof" | "ci" | "conflict" | "e2e" | "review";
+    /** PIP-192: an ignore round: the only lines it may add to `.gitleaksignore`, and the details to fall back to. */
+    ignore?: { fingerprints: string[]; fallback: string };
   };
   /** Conflict rounds of the code PR since the owner last commented (`seen` = `feedback_seen`; PIP-134). */
   conflictRounds?: { n: number; seen: string | null };
+  /** PIP-167..169: a conflict resolved by code, until the review carries over or a worker round starts. */
+  mech?: Mech;
+  /** PIP-167: the mechanical resolution failed its checks; the next conflict round goes to the worker. */
+  mechFailed?: boolean;
   /** Review fix rounds sent back to build (PIP-98). */
   reviewFixes?: number;
   /**
@@ -160,6 +215,10 @@ export interface PipeData {
   approvalNotes?: string[];
   /** PIP-119: outcomes only the owner can do, from the last review. */
   ownerSteps?: { bullet: string; why: string }[];
+  /** PIP-208: the `defer` lines of the owner's comments, kept as they arrive. */
+  deferrals?: { name?: string; n?: number; to: string }[];
+  /** PIP-208, PIP-209: the outcomes the last review counted as met because they were deferred. */
+  deferred?: { bullet: string; to: string; by: string; unmet: boolean }[];
   /** The risk agent's assessment per gate (PIP-96, AUT-16); null = the run didn't finish. */
   risk?: { spec?: Risk | null; plan?: Risk | null; code?: Risk | null };
   /** What each gate's assessment was of (`Risk.of`), kept also when the run didn't finish. */
@@ -172,6 +231,8 @@ export interface PipeData {
   ship?: ShipData;
   /** HEAD when the current build round began (PIP-1). */
   roundFrom?: string;
+  /** PIP-227: the worker stopped mid-build with a question; its uncommitted work stays for the next round. */
+  askedMidBuild?: boolean;
   /** LOOP-115: the owner answered a wait; the next build round merges the base branch first. */
   answered?: boolean;
   /** LOOP-117: the mission waits at build for the intents its intent file says it comes after. */
@@ -179,26 +240,58 @@ export interface PipeData {
   /** Head at the end of the last non-repair round (PIP-31). */
   lockHead?: string;
   /** `brief`: the worker's plain brief of what changed (PIP-106). */
-  build?: { pr: string | null; notes: string; planChanged: string | null; brief?: string };
+  build?: {
+    pr: string | null;
+    notes: string;
+    planChanged: string | null;
+    brief?: string;
+    /** PIP-216: plan steps built so far and in the plan; absent for a plan of one run. */
+    stepsDone?: number;
+    stepsTotal?: number;
+    /** PIP-218: build runs of this code phase since the owner last let it carry on (repairs not counted). */
+    runs?: number;
+    /** PIP-217: runs in a row that added no passing commit. */
+    stalled?: number;
+    /** PIP-219: the note the last run left for the next one. */
+    handoff?: string;
+    /** The next worker run is a new run of the long build, in a fresh session (PIP-219). */
+    due?: boolean;
+    /** The round that just ended was a run, not a repair or an answer round. */
+    lastRun?: boolean;
+  };
   /** The step whose child really started (LOOP-4); a step re-entered without it never ran. */
   launched?: string;
   /** Runs per kind, for file names. */
   n?: Record<string, number>;
   /** `<kind>`: a cut-off run gets one continue (PIP-1). */
   continued?: Record<string, boolean>;
+  /** `<kind>`: why the run's answer was refused, told to the one continue (PIP-1). */
+  refusedWhy?: Record<string, string>;
   /** Unix times of the build runs refused for guard version skew; an hour's worth counts (LOOP-106). */
   skew?: number[];
   /** `<stage>:<round start>`: the build round already retried once for a known setup error (LOOP-107). */
   setupRetried?: Record<string, boolean>;
   setup?: string;
+  /** PIP-214: where the secret pass of the repo's setup started (ms) and the commit it exported. */
+  setupSecret?: { start: number; base: string };
+  /** PIP-214: the owner was asked about a private package; the answer restarts the setup. */
+  openAsk?: boolean;
   verify?: { log: string; result: "green" | "red" };
   shots?: string[];
-  proof?: "proven" | "none needed" | "not proven";
+  proof?: "proven" | "none needed" | "not proven" | typeof REFACTOR_PROOF;
   proofWaited?: boolean;
   /** The lines the proof ran on base, and whether they are the PR's checks block (PIP-54). */
   proofLines?: { lines: string[]; fromPr: boolean };
   unproven?: boolean;
-  ci?: { result: "green" | "none" | "pending"; reruns?: Record<string, boolean>; since?: number };
+  ci?: {
+    result: "green" | "none" | "pending";
+    reruns?: Record<string, boolean>;
+    /** Heads whose hung runs were cancelled (PIP-171). */
+    hung?: Record<string, boolean>;
+    /** Heads that were given an ignore round or an owner question for an old secrets finding (PIP-192, PIP-196). */
+    ignored?: Record<string, boolean>;
+    since?: number;
+  };
   review?: {
     approved: boolean;
     door: "one-way" | "two-way";
@@ -209,9 +302,23 @@ export interface PipeData {
     /** PIP-106: the review's plain brief. */
     brief?: string;
   } | null;
+  /**
+   * PIP-197: a review waiting for its specialists. `pid` = the diff reviewed, `round` = the Review comment's
+   * number, `general` = the general review's result, `areas` = the specialists called in, in run order,
+   * `done` = the results in so far.
+   */
+  specialists?: {
+    pid: string;
+    round: number;
+    general: ReviewResult;
+    areas: ("security" | "infra")[];
+    done: Partial<Record<"security" | "infra", ReviewResult>>;
+  } | null;
   /** Session cost already counted (MET-28). */
   sessionCost?: Record<string, number>;
   mergeTries?: number;
+  /** REPO-49: the checks the overlay gave at pick; kept when the repo later has its own. */
+  pinnedChecks?: Verifying;
   /** Someone else's commits are on the branch (takeRemote, CI's adopted head). */
   foreignHead?: boolean;
   /** Merge asked GitHub to update the branch: the next moved head is that, not someone else's. */
@@ -257,7 +364,8 @@ export function tail(text: string, max = TAIL): string {
 
 /** The intent of a mission (open or done). */
 export async function intentOf(cx: Ctx, m: Mission): Promise<Intent> {
-  return cx.store.get(m.intent);
+  // AUT-8, AUT-35: the level is read now, at each gate; a raise nobody confirmed does not count yet.
+  return withFlag(cx.db, await cx.store.get(m.intent));
 }
 
 export function cloneOf(cx: Ctx, m: Mission): string {
@@ -267,7 +375,22 @@ export function cloneOf(cx: Ctx, m: Mission): string {
 /** The repo files from the base branch of Towercab's clone (REPO-1). */
 export async function repoFiles(cx: Ctx, m: Mission): Promise<RepoFiles> {
   try {
-    return await loadRepoFiles(cx.tools, cloneOf(cx, m), cx.repo(m).base);
+    const repo = cx.repo(m);
+    const files = await loadRepoFilesWith(
+      cx.tools,
+      cloneOf(cx, m),
+      repo.base,
+      repo.github,
+      loadOverlay(cx.config.file, repo.name),
+    );
+    // UI-257: the page shows a repo's cap beside the autonomy control.
+    cx.db.setMeta(`a-cap:${m.repo}`, String(files.towercab.maxAutonomy));
+    // REPO-49: an intent that started on the overlay's checks keeps them when the repo gains its own.
+    const pinned = data(m).pinnedChecks;
+    if (pinned && files.replaced && files.sources) {
+      return { ...files, verifying: pinned, sources: { ...files.sources, checks: "overlay" } };
+    }
+    return files;
   } catch (e) {
     if (e instanceof RepoError && e.kind === "git") throw new EnvError("github", e.message);
     throw e;
@@ -282,12 +405,25 @@ export function repoFilesWait(e: unknown): Outcome | null {
   return null;
 }
 
-export function effectiveOf(m: Mission, intent: Intent, files: RepoFiles): number {
-  return effectiveA(m.a_at_pick, intent.a, files.towercab.maxAutonomy, intent.source);
+export function effectiveOf(_m: Mission, intent: Intent, files: RepoFiles): number {
+  return effectiveA(intent.a, files.towercab.maxAutonomy, intent.source);
+}
+
+/**
+ * FAST-9: the level the spec, plan and merge gates decide at: a fast-lane mark the owner confirmed applies the a5
+ * rows, under the repo's cap. Grants and the build keep `effectiveOf`.
+ */
+export function gateLevelOf(cx: Ctx, m: Mission, intent: Intent, files: RepoFiles): number {
+  return gateLevel(
+    effectiveOf(m, intent, files),
+    intent.fast === true && fastConfirmed(cx.db, intent.id),
+    files.towercab.maxAutonomy,
+    intent.source,
+  );
 }
 
 /** The worker's grants (AUT-14). */
-export function grants(m: Mission, intent: Intent, files: RepoFiles, cx: Ctx) {
+export function grants(m: Mission, intent: Intent, files: RepoFiles, _cx?: Ctx) {
   const d = data(m);
   return grantsFor({
     a: effectiveOf(m, intent, files),
@@ -295,9 +431,18 @@ export function grants(m: Mission, intent: Intent, files: RepoFiles, cx: Ctx) {
     plan: d.granted ?? null,
     unlock: intent.unlock,
     network: intent.network,
-    defaults: cx.config.agent.network,
+    defaults: [...DEFAULT_NETWORK],
     unplanned: d.unplanned ?? null,
   });
+}
+
+/** PIP-229: one applied command and what happened. */
+export interface AppliedRun {
+  command: string;
+  why: string;
+  code: number;
+  secs: number;
+  tail: string;
 }
 
 export function nextN(m: Mission, kind: string): { n: number; data: Partial<PipeData> } {
@@ -320,6 +465,8 @@ export interface RunPlan {
   files: RepoFiles;
   intent: Intent;
   guard?: ClaudeRun["guardRules"];
+  /** Allow rules added to the agent's own (PIP-230). */
+  allowMore?: string[];
   /** The stage folder of its files when the kind runs in more than one stage (LOOP-39). */
   stage?: string;
 }
@@ -349,11 +496,42 @@ const STAGE_OF_KIND: Record<RunKind, string> = {
   // The risk agent runs at three gates; its handler names the stage folder (PIP-96).
   risk: "review",
   score: "design",
+  kind: "design",
   features: "design",
+  shadow: "design",
+  observer: "design",
 };
+
+/** A lost session starts afresh: on the mission's row, or on the part when the mission is projected from one (LOOP-78). */
+/** The mission has parts, or is the projection of one (LOOP-78). */
+const inParts = (m: Mission): boolean => isMulti(m) || !!(data(m) as { part?: string }).part;
+
+export function resetSession(cx: Ctx, m: Mission): void {
+  const fresh = crypto.randomUUID();
+  const part = (data(m) as { part?: string }).part;
+  if (part) {
+    const row = cx.db.get<{ data: string }>("SELECT data FROM missions WHERE id = ?", m.id);
+    const d = JSON.parse(row?.data ?? "{}") as { parts?: { repo: string; cols?: Record<string, unknown> }[] };
+    for (const p of d.parts ?? []) {
+      if (p.repo === part) p.cols = { ...(p.cols ?? {}), session: fresh, session_used: 0 };
+    }
+    cx.db.run("UPDATE missions SET data = ? WHERE id = ?", JSON.stringify(d), m.id);
+    return;
+  }
+  cx.db.run("UPDATE missions SET session = ?, session_used = 0 WHERE id = ?", fresh, m.id);
+}
 
 /** Record the step, then spawn a Claude run (LOOP-6, LOOP-7, PIP-13, PIP-24). */
 export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string): Progress {
+  // PIP-161, PIP-162: while the sandbox probe fails no Claude run starts: the owner gets the probe's error, or,
+  // where user namespaces are restricted and the profile is missing, the one install command. A retry after the
+  // fix carries on; a working sandbox never gets this.
+  const probe = cx.sandbox?.();
+  if (probe && !probe.ok) return { done: wait("fix sandbox", probe.why) };
+  // LOOP-78: one cap for the whole intent; once it is reached no run starts for any part.
+  if (inParts(m) && capReached(cx.config.agent.maxBudgetUsd, m)) {
+    return { done: wait("worker budget", "the intent's runs used up its budget") };
+  }
   const repo = cx.repo(m);
   const runs = cx.runs(m);
   const cache = cx.home.cache(repo.name);
@@ -370,6 +548,12 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
   else session = { mode: m.session_used ? "resume" : "new", id: m.session };
   const fresh = cx.record(m, p.step, {}, nd);
   let prompt = resumed && resumePrompt ? resumePrompt : p.prompt;
+  // PIP-1: the one continue after a refused answer says what was wrong with it.
+  const refusedWhy = reentered ? data(m).refusedWhy?.[p.kind] : undefined;
+  if (refusedWhy) {
+    const note = `Your last answer was not accepted: ${refusedWhy}. Give your result again with that fixed; change nothing else.`;
+    prompt = resumed && resumePrompt ? note : `${prompt}\n\n${note}`;
+  }
   // A resumed step on a new worker session: the old one was gone (LOOP-7), so the new one is
   // told where the work is, then given the step's task.
   if (resumed && onWorkerSession && session.mode === "new") {
@@ -392,17 +576,24 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
     stage: p.stage ?? STAGE_OF_KIND[p.kind],
     n,
     prompt,
-    schema: agent.schema ? SCHEMAS[agent.schema] : null,
+    // PIP-203: a revision the owner's comments started is also asked for `reply`.
+    schema: agent.schema
+      ? data(fresh).replyTo?.length && ["design", "plan", "build"].includes(agent.schema)
+        ? withReply(SCHEMAS[agent.schema])
+        : SCHEMAS[agent.schema]
+      : null,
     session,
-    budgetUsd: agentBudgetUsd(agent, cx.config),
+    budgetUsd: runBudget(agentBudgetUsd(agent, cx.config), cx.config.agent.maxBudgetUsd, m, inParts(m)),
     claudeMd: p.files.claudeMd,
     grants:
       p.kind === "worker"
         ? grants(fresh, p.intent, p.files, cx)
-        : { domains: cx.config.agent.network, paths: [], open: false },
+        : { domains: [...DEFAULT_NETWORK], paths: [] },
     guardRules: p.guard ?? null,
-    cacheEnv: cacheEnv(cache, cx.config, repo),
-    cache,
+    allowMore: p.allowMore,
+    cacheEnv: cacheEnv(cache, repo),
+    // PIP-212: a repo with setup secrets gets its shared cache read-only for the worker, whatever PIP-95 allowed.
+    cache: hasSetupSecrets(cx.config.file, repo.name) ? null : cache,
     config: cx.config,
   };
   return {
@@ -438,7 +629,8 @@ export function ended<T>(
   });
   const d = data(m);
   const continued = d.continued ?? {};
-  const once = (waiting: string, why: string): Ended<T> => {
+  const once = (waiting: string, why: string, refusedWhy?: string): Ended<T> => {
+    const refused = { ...d.refusedWhy, [kind]: refusedWhy };
     if (!continued[kind]) {
       return {
         ok: false,
@@ -448,14 +640,18 @@ export function ended<T>(
             why,
             // The one continue gets the step's whole budget again.
             set: { step_secs: 0 },
-            data: { continued: { ...continued, [kind]: true } },
+            data: { continued: { ...continued, [kind]: true }, refusedWhy: refused },
           },
         },
       };
     }
     return {
       ok: false,
-      progress: { done: wait(waiting, why, { data: { continued: { ...continued, [kind]: false } } }) },
+      progress: {
+        done: wait(waiting, why, {
+          data: { continued: { ...continued, [kind]: false }, refusedWhy: { ...refused, [kind]: undefined } },
+        }),
+      },
     };
   };
   if (end.timedOut) return once("worker timeout", "the run hit its time limit");
@@ -465,7 +661,7 @@ export function ended<T>(
       const parsed = parse(e.result.structuredOutput);
       if (!parsed.ok) {
         if (env) throw new EnvError(env.kind, env.why);
-        return once("no result", parsed.why);
+        return once("no result", parsed.why, parsed.why);
       }
       // The first success on a model ends its cooldown and resets its backoff (LOOP-9).
       cx.db.delMeta(`cooldown:${model}`);
@@ -474,9 +670,9 @@ export function ended<T>(
       const before = d.sessionCost?.[sessionKey] ?? 0;
       const delta = Math.max(0, e.result.costUsd - before);
       const now = cx.clock.now();
-      const runs = [...(d.runs ?? []), { at: now, cost: delta }].filter((r) => r.at > now - 30 * 86400);
+      const runs = [...(d.runs ?? []), { at: now, cost: delta }].filter((r) => r.at > now - 62 * 86400);
       cx.db.run(
-        "UPDATE missions SET cost_usd = cost_usd + ?, agent_secs = agent_secs + ?, data = json_set(data, '$.sessionCost', json(?), '$.continued', json(?), '$.runs', json(?)) WHERE id = ?",
+        "UPDATE missions SET cost_usd = cost_usd + ?, agent_secs = agent_secs + ?, data = json_remove(json_set(data, '$.sessionCost', json(?), '$.continued', json(?), '$.runs', json(?)), '$.refusedWhy') WHERE id = ?",
         delta,
         e.result.durationMs / 1000,
         JSON.stringify({ ...(d.sessionCost ?? {}), [sessionKey]: e.result.costUsd }),
@@ -487,7 +683,7 @@ export function ended<T>(
       return { ok: true, value: parsed.value, costDelta: delta, secs: e.result.durationMs / 1000 };
     }
     case "sessionGone":
-      cx.db.run("UPDATE missions SET session = ?, session_used = 0 WHERE id = ?", crypto.randomUUID(), m.id);
+      resetSession(cx, m);
       return {
         ok: false,
         progress: { done: { event: "bad_result", why: "the session was gone; starting a fresh one" } },
@@ -544,8 +740,11 @@ export async function coGit(cx: Ctx, m: Mission, args: string[]): Promise<string
 }
 
 /** `-c user.name=… -c user.email=…` of the App's bot, for Towercab's commits. */
-export async function botAuthor(cx: { github: Pick<GitHub, "bot"> }): Promise<string[]> {
-  const bot = await cx.github.bot();
+export async function botAuthor(
+  cx: { github: { bot(repo?: string): Promise<{ login: string; email: string }> } },
+  repo?: string,
+): Promise<string[]> {
+  const bot = await cx.github.bot(repo);
   return ["-c", `user.name=${bot.login}`, "-c", `user.email=${bot.email}`, "-c", "commit.gpgsign=false"];
 }
 
@@ -651,7 +850,7 @@ export function mustForge(o: Result, what: string): void {
 }
 
 export function prUrl(github: string, n: number): string {
-  return `https://github.com/${github}/pull/${n}`;
+  return changeUrl(github, n);
 }
 
 /** The intent's current PR (code > plan > spec), with its repo. */
@@ -670,13 +869,21 @@ export const EFFECTS = {
   drop: "Drop the intent",
 } as const;
 
-/** A question in Markdown (PIP-41), led by its plain brief when it has one (PIP-106). */
+/** PIP-182: who a stage comment of mission `m` is from: the agent of the step, and the intent. */
+const byOf = (m: Mission, step: Step): By => ({ agent: agentOf(step, m.stage), intent: m.intent });
+
+/**
+ * A question in Markdown (PIP-41). With a brief it opens with the people part (PIP-220) and the
+ * question's context is folded as agent context; without one the question itself is the people part.
+ */
 export function questionMd(q: Question, brief = ""): string {
   const opts = q.options
     .map((o) => `- **${o.option}**: ${o.then}${o.do ? ` _(${EFFECTS[o.do]})_` : ""}`)
     .join("\n");
-  const plain = brief.trim() ? `**In plain words:** ${brief.trim()}\n\n` : "";
-  return `${plain}${q.context.trim()}\n\n**${q.question.trim()}**\n\n${opts}\n\n**Recommendation:** ${q.recommendation.trim()}\n\nReply to this comment to answer; Towercab continues with your reply.`;
+  const ask = `**${q.question.trim()}**\n\n${opts}\n\n**Recommendation:** ${q.recommendation.trim()}\n\nReply to this comment to answer; Towercab continues with your reply.`;
+  // PIP-220: a question asked without a brief opens with its own one-line question as the people part.
+  const people = brief.trim() || q.question.trim();
+  return [plainMd(people), ask, foldMd(q.context)].filter(Boolean).join("\n\n");
 }
 
 /**
@@ -693,18 +900,35 @@ export async function ask(
   const repo = cx.repo(m);
   const pr = currentPr(cx, m, repo);
   const body = questionMd(q, brief);
-  if (pr) await upsertStageComment(cx.github, pr.github, pr.n, "Question", m.continued + 1, body);
+  if (pr)
+    await upsertStageComment(
+      cx.github,
+      pr.github,
+      pr.n,
+      "Question",
+      m.continued + 1,
+      body,
+      byOf(m, "Question"),
+    );
   else await cx.store.update(m.intent, "question", (e) => e.setSection("Towercab", body));
   return wait(waiting, q.question, { data: { question: q, brief: brief.trim() || undefined } });
 }
 
 /** A stage comment on the current PR, never failing the step. */
-export async function note(cx: Ctx, m: Mission, step: Step, round: number, body: string): Promise<void> {
+export async function note(
+  cx: Ctx,
+  m: Mission,
+  step: Step,
+  round: number,
+  body: string | TwoPart,
+): Promise<void> {
   const pr = currentPr(cx, m, cx.repo(m));
   if (!pr) return;
   try {
-    await upsertStageComment(cx.github, pr.github, pr.n, step, round, body);
+    await upsertStageComment(cx.github, pr.github, pr.n, step, round, body, byOf(m, step));
   } catch (e) {
+    // LOOP-113: held by the pause, not failed: the step is asked again after resume.
+    if (e instanceof PausedHold) throw e;
     cx.log(`${m.intent}: couldn't post the ${step} comment: ${(e as Error).message}`);
   }
 }
@@ -716,14 +940,21 @@ export async function note(cx: Ctx, m: Mission, step: Step, round: number, body:
  */
 export async function tellOwner(cx: Ctx, m: Mission, body: string, keep = ""): Promise<void> {
   const pr = currentPr(cx, m, cx.repo(m));
+  // PIP-185: an answer an agent gave for the owner says so.
+  const agent = dataOf<{ answeredBy?: string | null }>(m).answeredBy;
   try {
+    // PIP-220: the reply opens with its people part; the rest is folded. Inside the try: a shape
+    // problem is logged, it never fails the step.
+    const two = body.trim() ? twoPartMd(splitTwoPart(body)) : body;
+    const said = agent ? `${answeredByLine(agent)}\n\n${two}` : two;
     if (pr) {
-      await upsertStageComment(cx.github, pr.github, pr.n, "Answer", m.continued, body);
+      await upsertStageComment(cx.github, pr.github, pr.n, "Answer", m.continued, said, byOf(m, "Answer"));
     } else {
-      const text = keep ? `${body}\n\n${keep}` : body;
+      const text = keep ? `${said}\n\n${keep}` : said;
       await cx.store.update(m.intent, "answer", (e) => e.setSection("Towercab", text));
     }
   } catch (e) {
+    if (e instanceof PausedHold) throw e;
     cx.log(`${m.intent}: couldn't say how the answer was read: ${(e as Error).message}`);
   }
 }
@@ -798,7 +1029,7 @@ export async function takeRemote(
     .then(() => true)
     .catch(() => false);
   if (isAncestor) return "none";
-  const merged = await coGit(cx, m, [...(await botAuthor(cx)), "merge", "--no-edit", ref])
+  const merged = await coGit(cx, m, [...(await botAuthor(cx, cx.repo(m).github)), "merge", "--no-edit", ref])
     .then(() => true)
     .catch(() => false);
   cx.record(m, m.step, {}, { foreignHead: true });

@@ -125,7 +125,15 @@ test("ui: a repo page shows waived items with their reason", async () => {
   const f = fixture();
   store(f, "web", { missing: [], waived: { publish: "not released yet" } });
   const setup = (await repos(f.sources, "web")).repo!.setup!;
-  expect(setup.items).toEqual([{ item: "publish", state: "waived", words: "Waived: not released yet" }]);
+  expect(setup.items).toEqual([
+    {
+      item: "publish",
+      state: "waived",
+      words: "Waived: not released yet",
+      plain: "Waived: not released yet",
+      raw: null,
+    },
+  ]);
   // A waived item is not a gap: no badge.
   expect((await repos(f.sources, null)).chips.find((c) => c.repo === "web")?.readiness).toBeUndefined();
 });
@@ -160,32 +168,37 @@ test("ui: stage map lists every stage for every repo", () => {
   const m = { attempt: 1, created: NOW - 700, stage: "done" as const };
   const ids = (repo?: { kind: Kind | null; hasLive: boolean; goLive: string | null }) =>
     stageMap(m, MERGED, [], NOW, repo).stages.map((s) => s.id);
-  // A repo whose setup was read: the same full list for every kind.
-  const full = ids({ kind: "library", hasLive: false, goLive: null });
+  // UI-272: a repo with something to deploy lists the ship stages; the same list for every such kind.
+  const full = ids({ kind: "service", hasLive: true, goLive: null });
   for (const stage of SHIP) expect(full).toContain(stage);
-  expect(ids({ kind: "service", hasLive: true, goLive: null })).toEqual(full);
-  expect(ids({ kind: null, hasLive: false, goLive: null })).toEqual(full);
+  expect(ids({ kind: "site", hasLive: false, goLive: null })).toEqual(full);
+  // Stages that cannot apply are left out; every other stage is still listed.
+  const library = ids({ kind: "library", hasLive: false, goLive: null });
+  for (const stage of SHIP) expect(library).not.toContain(stage);
+  expect(library).toEqual(full.filter((id) => !SHIP.includes(id)));
   // Applicable ship stages that were never reached are "not reached", not skipped.
   const service = stageMap(m, MERGED, [], NOW, { kind: "service", hasLive: true, goLive: null });
   expect(service.stages.find((s) => s.id === "deploy")).toMatchObject({ outcome: "not reached", note: null });
+  expect(service.offPath).toBeNull();
   // Unknown repo setup: the map it always had.
   expect(ids()).not.toContain("deploy");
 });
 
 test("ui: ship stages are skipped with the kind's reason", async () => {
   const m = { attempt: 1, created: NOW - 700, stage: "done" as const };
-  const note = (kind: Kind | null, goLive: string | null = null, id = "deploy") => {
-    const s = stageMap(m, MERGED, [], NOW, { kind, hasLive: false, goLive }).stages.find((x) => x.id === id)!;
-    return [s.outcome, s.note];
-  };
-  expect(note("library")).toEqual(["skipped", "a library has nothing to deploy"]);
-  expect(note("cli", null, "e2e")).toEqual(["skipped", "a CLI has nothing to deploy"]);
-  expect(note("spec-only", null, "rollback")).toEqual(["skipped", "a spec-only repo has nothing to deploy"]);
-  expect(note("infra", "ansible on merge", "revert")).toEqual([
-    "skipped",
+  // UI-159, UI-272: the kind's reason is the tooltip of the one line that sums the stages up.
+  const off = (kind: Kind | null, goLive: string | null = null) =>
+    stageMap(m, MERGED, [], NOW, { kind, hasLive: false, goLive }).offPath;
+  expect(off("library")).toEqual({
+    names: ["deploying", "live tests", "rollback", "reverting"],
+    reason: "a library has nothing to deploy",
+  });
+  expect(off("cli")?.reason).toBe("a CLI has nothing to deploy");
+  expect(off("spec-only")?.reason).toBe("a spec-only repo has nothing to deploy");
+  expect(off("infra", "ansible on merge")?.reason).toBe(
     "this repo's changes go live outside Towercab: ansible on merge",
-  ]);
-  expect(note(null)).toEqual(["skipped", "kind not set"]);
+  );
+  expect(off(null)?.reason).toBe("kind not set");
   // A stage the attempt did visit keeps its own outcome.
   const visited = stageMap(
     m,
@@ -205,6 +218,7 @@ test("ui: ship stages are skipped with the kind's reason", async () => {
   expect(plain!.attempts[0]!.map.stages.map((s) => s.id)).not.toContain("rollback");
   store(f, "docs", { kind: "library" });
   const page = await intentPage(f.sources, IDS.code);
-  const rollback = page!.attempts[0]!.map.stages.find((s) => s.id === "rollback");
-  expect(rollback).toMatchObject({ outcome: "skipped", note: "a library has nothing to deploy" });
+  const map = page!.attempts[0]!.map;
+  expect(map.stages.map((s) => s.id)).not.toContain("rollback");
+  expect(map.offPath).toMatchObject({ reason: "a library has nothing to deploy" });
 });

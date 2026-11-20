@@ -392,7 +392,8 @@ test("repo: Towercab's own files parse", () => {
   expect(own.verifying.fast).toEqual(["npm run lint", "npm run typecheck", "npx vitest run {tests}"]);
   expect(own.review.passes.map((p) => p.name)).toEqual(["Bugs", "Security", "Compliance"]);
   expect(own.review.redLines.some((l) => l.includes("src/machine.ts"))).toBe(true);
-  expect(own.towercab).toEqual({
+  // The limits (`ahead`, `workers`, …) are the owner's to change in TOWERCAB.md, so they are not pinned here.
+  expect(own.towercab).toMatchObject({
     maxAutonomy: 5,
     protected: ["src/machine.ts"],
     tests: ["tests/**"],
@@ -474,7 +475,10 @@ test("repo: live block errors", () => {
     ["live: yes\n", "live: must be a mapping"],
     [`live:\n${suite}`, "live: url is required"],
     [`live:\n  url: http://a.dev\n${suite}`, "live: url must be an https:// URL"],
-    [`live:\n  url: https://a.dev\n  adapter: ssh\n${suite}`, "live: adapter must be github or command"],
+    [
+      `live:\n  url: https://a.dev\n  adapter: ssh\n${suite}`,
+      "live: adapter must be github, gitlab or command",
+    ],
     [
       `live:\n  url: https://a.dev\n  adapter: command\n${suite}`,
       "live: the command adapter needs live_command and rollback_command",

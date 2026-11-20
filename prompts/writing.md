@@ -115,7 +115,20 @@ The sentence says what the system does, not how it is built. The detail is preci
 interfaces, fields, commands, limits and error texts. `Verified by` names the exact test titles that
 check it. Never reuse an ID; a dropped requirement keeps its heading and says `Removed: <why>`.
 
+## Speaking for the owner
+
+If you comment on GitHub in the owner's name (an answer to an open point, a hint, a merge note), do not
+use `gh pr comment`: post with `towercab reply <intent id> --by <your name> "<text>"`. It posts under the
+owner's login, but marks the comment as yours, so the owner can tell it from their own words, and an
+owner-only intent ignores it. Towercab's own comments already name their agent.
+
 ## Before you hand it over
 
 Read it once as the owner would, on a phone, with no context. Cut every sentence that does not help
 them decide or check. If something is uncertain, say so plainly instead of hedging every line.
+
+## People part, agent part
+
+Every text for a person has two parts, and results return them as separate fields: `brief` (the risk agent's `summary`) is the people part, and the technical fields (`pr`, `plan`, `notes`, `agent`) are the agent part.
+
+The people part is at most 5 lines and 600 characters: what happened, why it matters and what (if anything) the owner decides. It holds no file lists, code, findings or IDs. Everything else is the agent part: Towercab folds it under "Agent context" after the people part, so it stays available but out of the way. Towercab refuses a people part that is longer or that holds agent detail, and asks you once for a shorter one.

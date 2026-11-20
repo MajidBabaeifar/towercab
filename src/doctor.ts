@@ -2,9 +2,11 @@
 // self-update check (LOOP-35): config, tools and modules only, no network.
 
 import { existsSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { type Capacity, readCapacity, slotHint } from "./capacity.ts";
 import type { Config } from "./config.ts";
-import { appKeyPath, clonePath } from "./config.ts";
+import { appKeyPath, clonePath, readTokenFile } from "./config.ts";
 import type { Db } from "./db.ts";
 import { type GitLabForge, NEEDED_SCOPES } from "./forge/gitlab.ts";
 import { GlabOwner } from "./forge/gitlab-owner.ts";
@@ -16,13 +18,41 @@ import type { GitHub } from "./handlers.ts";
 export { ghVersionOk };
 
 import type { Home } from "./home.ts";
+import { urlProblem } from "./notify-text.ts";
+import { type HostState, hostState, profileStep } from "./pipeline/hostcheck.ts";
+import { apparmorProfile, type ProbeResult, sandboxProbe, userNamespaceDenied } from "./pipeline/probe.ts";
+import { refusedRepoEnv, toolchainBins, toolchainPlaces } from "./pipeline/sandbox.ts";
+import { overlayDoctor } from "./repo/overlay.ts";
 import { parseStored } from "./repo/readiness.ts";
 import { isMoved, readRecord } from "./repo/settings.ts";
-import { permissionLine } from "./settings/store.ts";
+import { shipNetwork } from "./ship/live.ts";
 import { tooFewListed } from "./teammates.ts";
 import type { Tools } from "./tools.ts";
+import {
+  detectWsl,
+  hasVmIdleTimeout,
+  isUnderMnt,
+  POWERSHELL,
+  pid1IsSystemd,
+  powershellPath,
+  readWslConfig,
+} from "./wsl.ts";
 
 export const TOOLS = ["git", "gh", "claude", "bwrap", "systemd-inhibit", "systemctl", "journalctl"];
+
+/** LOOP-143: a secrets file Towercab reads: the App key, the GitLab token, and `config.toml` when it holds one. */
+export function looseSecretFiles(config: Config): string[] {
+  const files = [appKeyPath(config)];
+  if (config.gitlab) files.push(config.gitlab.tokenFile);
+  if (config.telegram?.botToken) files.push(config.file);
+  return files.filter((f) => {
+    try {
+      return (statSync(f).mode & 0o077) !== 0;
+    } catch {
+      return false;
+    }
+  });
+}
 
 export interface DoctorResult {
   lines: string[];
@@ -37,11 +67,19 @@ export async function doctor(o: {
   /** GL-9: Towercab's GitLab, when `[gitlab]` is configured. */
   gitlab?: GitLabForge | null;
   quick: boolean;
+  /** LOOP-145: the self-update's check; a loose secrets file is a warning there, not a failure. */
+  forUpdate?: boolean;
+  /** The HOME whose toolchains are listed (PIP-226); the real one when absent. */
+  userHome?: string;
   /** The database, for the readiness lines (LOOP-72). */
   db?: Db;
   /** Unix seconds and the machine's cores and memory, for the slots line (LOOP-104); real ones when absent. */
   now?: number;
   capacity?: Capacity;
+  /** The sandbox probe (PIP-163); the real one when absent. */
+  probe?: () => Promise<ProbeResult>;
+  /** The host's user-namespace state (PIP-162); the real one when absent. */
+  host?: () => HostState;
 }): Promise<DoctorResult> {
   const { config, home, tools } = o;
   const lines: string[] = [`config: ${config.file}`, `home: ${home.root}`, `node: ${process.version}`];
@@ -61,7 +99,110 @@ export async function doctor(o: {
     lines.push(`glab: ${p ?? "missing"}`);
     if (!p) ok = false;
   }
+  // PIP-157, PIP-159: keys that no longer reach the sandbox, and repo variables it leaves out.
+  for (const k of config.agent.ignored) {
+    lines.push(`config: [agent] ${k} is ignored: the sandbox's settings are fixed in code`);
+  }
+  for (const name of config.repos.keys()) {
+    const extra = o.db ? shipNetwork(o.db, name) : [];
+    if (extra.length) lines.push(`${name}: ship commands may also reach ${extra.join(", ")}`);
+  }
+  for (const [name, repo] of config.repos) {
+    for (const r of refusedRepoEnv(repo.env)) {
+      lines.push(`${name}: env ${r.name} is left out of the sandbox: ${r.why}`);
+    }
+  }
+  // PIP-226: the toolchains the sandbox binds; a missing one is information, not a fault.
+  const userHome = o.userHome ?? homedir();
+  const bound = toolchainPlaces(userHome);
+  const places = [".cargo/bin", ".rustup", ".local/go", ".local/zig-*", ".local/node"];
+  for (const p of places) {
+    if (p.endsWith("zig-*")) {
+      const zigs = bound.filter((d) => d.startsWith(join(userHome, ".local", "zig-")));
+      if (zigs.length === 0) lines.push(`toolchain ${join(userHome, p)}: not found`);
+      for (const z of zigs) lines.push(`toolchain ${z}: bound`);
+    } else {
+      const d = join(userHome, p);
+      lines.push(`toolchain ${d}: ${bound.includes(d) ? "bound" : "not found"}`);
+    }
+  }
+  lines.push(`toolchain PATH: ${toolchainBins(userHome).join(":")}`);
+
+  // LOOP-143: under WSL, what commonly breaks there; the `/mnt/` lines come before the secrets lines.
+  const release = await detectWsl(tools);
+  let wslSystemd = false;
+  if (release !== null) {
+    lines.push(`wsl: ${release}`);
+    wslSystemd = await pid1IsSystemd(tools);
+    if (!wslSystemd) {
+      lines.push(
+        "wsl: systemd is not PID 1: enable it with [boot] systemd=true in /etc/wsl.conf, then run wsl --shutdown",
+      );
+      ok = false;
+    }
+    const places: [string, string][] = [
+      ["config", dirname(resolve(config.file))],
+      ["home", resolve(home.root)],
+      ...[...config.repos.values()].map((r): [string, string] => [r.name, resolve(clonePath(r, home.root))]),
+    ];
+    for (const [what, p] of places) {
+      if (!isUnderMnt(p)) continue;
+      lines.push(`wsl: ${what} ${p} is under /mnt/: keep it in the Linux file system (for example under ~)`);
+      ok = false;
+    }
+  }
+  // LOOP-143, LOOP-145: a secrets file others can read, on every platform.
+  for (const f of looseSecretFiles(config)) {
+    const fix =
+      release !== null && isUnderMnt(resolve(f))
+        ? `a /mnt/ path cannot hold mode 600: move it into the Linux file system`
+        : `chmod 600 ${f}`;
+    if (o.forUpdate) {
+      lines.push(`warning: ${f} is readable by others: ${fix}`);
+    } else {
+      lines.push(`secrets: ${f} is readable by others: ${fix}`);
+      ok = false;
+    }
+  }
+  if (release !== null) {
+    const shell = powershellPath(tools);
+    if (!shell) {
+      lines.push(`warning: wsl: ${POWERSHELL} is not on PATH, so Windows may sleep while missions run`);
+    }
+    if (wslSystemd) {
+      const text = shell ? await readWslConfig(tools, shell) : null;
+      const fix = "set vmIdleTimeout=-1 under [wsl2] in %UserProfile%\\.wslconfig, then run wsl --shutdown";
+      if (text === null) {
+        lines.push(`warning: wsl: .wslconfig could not be read, so no keep-alive is known: ${fix}`);
+      } else if (!hasVmIdleTimeout(text)) {
+        lines.push(`warning: wsl: no keep-alive, WSL may stop its VM and Towercab with it: ${fix}`);
+      }
+    }
+  }
   if (o.quick) return { lines, ok };
+
+  // PIP-163: the sandbox probe; PIP-162: the narrow fix where user namespaces are restricted.
+  const bwrapPath = tools.which("bwrap");
+  if (bwrapPath) {
+    const version = await tools.run(bwrapPath, ["--version"]).catch(() => null);
+    lines.push(`bwrap version: ${version?.stdout.trim() || "unknown"}`);
+    const probe = await (o.probe ?? (() => sandboxProbe(tools)))();
+    lines.push(`sandbox: ${probe.ok ? "the probe held" : `the probe failed: ${probe.why}`}`);
+    if (!probe.ok) {
+      ok = false;
+      // PIP-162: the one owner step, only when the probe failed and the restriction is on without the profile,
+      // or with Ubuntu's stock profile refusing the worker's shell.
+      const step = profileStep((o.host ?? hostState)(), bwrapPath, probe);
+      if (step)
+        lines.push(`owner step: ${step.title}; run:`, ...step.commands.split("\n").map((l) => `  ${l}`));
+      if (userNamespaceDenied(probe.why)) {
+        lines.push(
+          "sandbox: Ubuntu may restrict user namespaces; allow only this bwrap with this AppArmor profile:",
+          ...apparmorProfile(bwrapPath).map((l) => `  ${l}`),
+        );
+      }
+    }
+  }
 
   const v = await ghVersion(tools);
   lines.push(`gh version: ${v.version}${v.ok ? "" : ": Towercab needs 2.46 or newer"}`);
@@ -71,8 +212,7 @@ export async function doctor(o: {
     lines.push(`github app: ${key} is missing (register the App from ops/github-app.json)`);
     ok = false;
   } else if ((statSync(key).mode & 0o077) !== 0) {
-    lines.push(`github app: ${key} is readable by others: chmod 600 it`);
-    ok = false;
+    // Reported with the other secrets files above; the App is not asked while its key is loose.
   } else if (o.github) {
     try {
       const bot = await o.github.bot();
@@ -91,9 +231,6 @@ export async function doctor(o: {
         : `gh login: not logged in as ${me} (run gh auth login): the UI's actions need it`,
     );
   }
-  // REPO-32: said once, and only while Towercab is meant to apply settings.
-  const perm = o.db && config.githubSettings === "apply" ? permissionLine(o.db) : null;
-  if (perm) lines.push(perm);
   if (config.gitlab && o.gitlab) {
     const g = await gitlabLines(o.gitlab, new GlabOwner(tools, config.gitlab), o.now ?? Date.now() / 1000);
     lines.push(...g.lines);
@@ -103,6 +240,20 @@ export async function doctor(o: {
     lines.push(
       `${name}: ${repo.github} · ${existsSync(clonePath(repo, home.root)) ? "cloned" : "clones on first use"}`,
     );
+  }
+  // REPO-47: where each setting of a repo with an overlay comes from.
+  for (const [name, repo] of config.repos) {
+    const clone = clonePath(repo, home.root);
+    const r = await overlayDoctor(tools, {
+      configFile: config.file,
+      name,
+      clone,
+      base: repo.base,
+      slug: repo.github,
+      cloned: existsSync(clone),
+    });
+    lines.push(...r.lines);
+    if (!r.ok) ok = false;
   }
   // LOOP-72: repos with a missing or unknown item, and the waived ones.
   if (o.db) {
@@ -163,8 +314,17 @@ export async function doctor(o: {
       }
     }
   }
+  for (const wh of config.notify.webhooks) {
+    // LOOP-147: the file and the kind of URL, never the URL.
+    const f = readTokenFile(wh.urlFile);
+    const why = "why" in f ? `url_file ${wh.urlFile} ${f.why}` : urlProblem(f.token);
+    lines.push(
+      why ? `webhook ${wh.name}: ${why}` : `webhook ${wh.name}: ${wh.detail} messages, url in ${wh.urlFile}`,
+    );
+    if (why) ok = false;
+  }
   lines.push(
-    `telegram: ${config.telegram ? `chat ${config.telegram.chatId}` : "not configured (no messages)"}`,
+    `telegram: ${config.telegram ? `chat ${config.telegram.chatId}${config.telegram.uiUrl ? `, links to ${config.telegram.uiUrl}` : ", links to the PR (no ui_url)"}` : "not configured (no messages)"}`,
   );
   return { lines, ok };
 }

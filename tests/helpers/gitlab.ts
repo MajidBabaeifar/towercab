@@ -36,6 +36,33 @@ export interface FakeMr {
   merge_commit_sha: string | null;
   notes: FakeNote[];
   approvedBy: string[];
+  /** GL-11: the merge request's pipelines. */
+  pipelines?: FakePipeline[];
+}
+
+export interface FakeJob {
+  id: number;
+  name: string;
+  status: string;
+  allow_failure?: boolean;
+  trace?: string;
+}
+
+export interface FakePipeline {
+  id: number;
+  sha: string;
+  created_at: string;
+  jobs: FakeJob[];
+}
+
+/** SHIP-37: a deployment of an environment and the job that ran it. */
+export interface FakeDeployment {
+  id: number;
+  environment: string;
+  status: string;
+  sha: string;
+  created_at: string;
+  job: { id: number; status: string; failure_reason?: string };
 }
 
 export interface FakeProject {
@@ -75,6 +102,53 @@ export class FakeGitLab {
   /** Page size, small so tests can see pagination. */
   perPage = 100;
   private nextNote = 1;
+  private nextPipeline = 1;
+  private nextJob = 1;
+  /** GL-12: when set, `…/retry` answers 403 with this message. */
+  retryRefusal: string | null = null;
+  /** SHIP-37: the deployments of every project, and the retries of their jobs (`POST …/jobs/:id/retry`). */
+  readonly deploys: FakeDeployment[] = [];
+  readonly jobRetries: number[] = [];
+  /** SHIP-37: when set, a job retry answers with this status and message. */
+  jobRefusal: { status: number; message: string } | null = null;
+  private nextDeployment = 1;
+  /** The clock of retried deployments (RFC 3339). */
+  retryAt = "2026-11-05T10:30:00Z";
+
+  /** SHIP-37: a deployment of `sha` to `environment` run by a fresh job. */
+  deploy(
+    environment: string,
+    sha: string,
+    status: string,
+    o: { created_at?: string; failure_reason?: string } = {},
+  ): FakeDeployment {
+    const d: FakeDeployment = {
+      id: this.nextDeployment++,
+      environment,
+      status,
+      sha,
+      created_at: o.created_at ?? "2026-11-05T10:00:00Z",
+      job: { id: 1000 + this.nextJob++, status, failure_reason: o.failure_reason },
+    };
+    this.deploys.push(d);
+    return d;
+  }
+
+  /** GL-11: a pipeline on `m` with jobs given as `[name, status, extra]`. */
+  pipeline(
+    m: FakeMr,
+    jobs: [string, string, Partial<FakeJob>?][],
+    o: { sha?: string; created_at?: string } = {},
+  ): FakePipeline {
+    const p: FakePipeline = {
+      id: this.nextPipeline++,
+      sha: o.sha ?? m.sha,
+      created_at: o.created_at ?? "2026-11-05T10:00:00Z",
+      jobs: jobs.map(([name, status, extra]) => ({ id: this.nextJob++, name, status, ...extra })),
+    };
+    m.pipelines = [...(m.pipelines ?? []), p];
+    return p;
+  }
 
   project(path: string, base = "main"): FakeProject {
     const p: FakeProject = { path, default_branch: base, mrs: [], approvals: true };
@@ -155,6 +229,57 @@ export class FakeGitLab {
         web_url: `https://gitlab.test/${p.path}/-/merge_requests/${m.iid}`,
       });
     }
+    const allPipelines = p.mrs.flatMap((x) => x.pipelines ?? []);
+    const pj = /^\/pipelines\/(\d+)\/(jobs|retry|cancel)$/.exec(rest);
+    if (pj) {
+      const pl = allPipelines.find((x) => x.id === Number(pj[1]));
+      if (!pl) return reply(404, { message: "404 Pipeline Not Found" });
+      const jobView = (j: FakeJob) => ({
+        id: j.id,
+        name: j.name,
+        status: j.status,
+        allow_failure: j.allow_failure ?? false,
+        web_url: `https://gitlab.test/${p.path}/-/jobs/${j.id}`,
+      });
+      if (pj[2] === "jobs" && req.method === "GET") return page(pl.jobs.map(jobView));
+      if (pj[2] === "retry" && req.method === "POST") {
+        if (this.retryRefusal) return reply(403, { message: this.retryRefusal });
+        for (const j of pl.jobs) if (["failed", "canceled"].includes(j.status)) j.status = "running";
+        return reply(201, { id: pl.id });
+      }
+      if (pj[2] === "cancel" && req.method === "POST") {
+        for (const j of pl.jobs) if (["pending", "running"].includes(j.status)) j.status = "canceled";
+        return reply(200, { id: pl.id });
+      }
+    }
+    const tr = /^\/jobs\/(\d+)\/trace$/.exec(rest);
+    if (tr && req.method === "GET") {
+      const job = allPipelines.flatMap((x) => x.jobs).find((j) => j.id === Number(tr[1]));
+      return job ? { status: 200, text: job.trace ?? "" } : reply(404, { message: "404 Job Not Found" });
+    }
+    if (rest === "/deployments" && req.method === "GET") {
+      const env = u.searchParams.get("environment");
+      const rows = this.deploys
+        .filter((d) => !env || d.environment === env)
+        .sort((a, b) => b.id - a.id)
+        .map((d) => ({
+          id: d.id,
+          status: d.status,
+          sha: d.sha,
+          created_at: d.created_at,
+          deployable: { id: d.job.id, status: d.job.status, failure_reason: d.job.failure_reason ?? null },
+        }));
+      return page(rows);
+    }
+    const jr = /^\/jobs\/(\d+)\/retry$/.exec(rest);
+    if (jr && req.method === "POST") {
+      if (this.jobRefusal) return reply(this.jobRefusal.status, { message: this.jobRefusal.message });
+      const old = this.deploys.find((d) => d.job.id === Number(jr[1]));
+      if (!old) return reply(404, { message: "404 Job Not Found" });
+      this.jobRetries.push(old.job.id);
+      const again = this.deploy(old.environment, old.sha, "running", { created_at: this.retryAt });
+      return reply(201, { id: again.job.id });
+    }
     const mm = /^\/merge_requests\/(\d+)(\/.*)?$/.exec(rest);
     if (!mm) return reply(404, { message: "404 Not Found" });
     const m = p.mrs.find((x) => x.iid === Number(mm[1]));
@@ -174,6 +299,11 @@ export class FakeGitLab {
       m.merged_at = "2026-11-05T11:00:00Z";
       m.merge_commit_sha = "b".repeat(40);
       return reply(200, this.view(m));
+    }
+    if (tail === "/pipelines" && req.method === "GET") {
+      return page(
+        (m.pipelines ?? []).map(({ id, sha, created_at }) => ({ id, sha, created_at, status: "running" })),
+      );
     }
     if (tail === "/rebase" && req.method === "PUT") return reply(202, { rebase_in_progress: true });
     if (tail === "/notes" && req.method === "GET") return page(m.notes);

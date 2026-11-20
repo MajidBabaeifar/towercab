@@ -17,7 +17,7 @@ Add a `live` block to the repo's `TOWERCAB.md` front matter:
 live:
   url: https://app.example.com        # where the e2e tests point (BASE_URL)
   environment: production             # the deploy environment to watch
-  adapter: github                     # github (default) or command
+  adapter: github                     # github (default), gitlab (default on GitLab) or command
   timeout: 20                         # minutes to wait for a deploy
   suites:
     - name: smoke
@@ -91,6 +91,40 @@ Tailscale.
   commit.
 - **Your own deployer:** anything that receives GitHub's `deployment` webhook and can post Deployment
   statuses fits.
+
+## The gitlab adapter (default for GitLab repos)
+
+A repo hosted on GitLab uses this adapter when the `live` block names none. Towercab reads the
+deployments GitLab records for the environment, as its GitLab token, and never deploys itself.
+
+- **Name the environment.** The deploy job needs `environment:` with the same name as the `live`
+  block's `environment` (`production` if the block names none). GitLab records one deployment per run of
+  that job, with the commit it ran for.
+- **Deploy `CI_COMMIT_SHA`.** The job deploys the commit it was started for, not "latest". Towercab
+  treats the newest `success` deployment as what is live, and a newer live commit that contains the one it
+  waits for also counts. A failed deployment turns red with the job's failure reason.
+- **Rollback re-runs an older job.** To go back, Towercab retries the job of the newest successful
+  deployment of the last good commit, so that job must be able to deploy that commit again.
+- **Approval.** A protected environment can require a person to approve the deploy. Towercab shows
+  that as waiting, not as a failure, tells you after 5 minutes that a person has to approve it in GitLab,
+  and never approves itself. Unapproved after `timeout` minutes it turns red with the same reason.
+- **Allow older jobs to run again.** Turn the project setting "Prevent outdated deployment jobs" off for
+  the environment Towercab rolls back; with it on, GitLab refuses the retry and the rollback fails.
+- **Token role.** Towercab's token must be allowed to run that environment's jobs; for a protected
+  environment, add its user to the environment's allowed deployers.
+
+```yaml
+# .gitlab-ci.yml
+deploy:
+  stage: deploy
+  environment:
+    name: production            # the live block's environment
+    url: https://app.example.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - ./ops/deploy.sh "$CI_COMMIT_SHA"
+```
 
 ## The command adapter
 

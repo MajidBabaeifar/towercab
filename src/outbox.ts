@@ -13,12 +13,43 @@ export interface OutboxRow {
   sent_at: number | null;
   tries: number;
   next_try: number;
+  /** LOOP-128: `info`, `focus`, `edit` (an `editMessageText`) or `answer` (an `answerCallbackQuery`); a wait has a mission. */
+  kind?: string;
+  intent?: string | null;
+  wait?: string | null;
+  tg_message_id?: number | null;
+  /** For `edit` the message id, for `answer` the callback id. */
+  target?: string | null;
+  /** JSON `Button[][]`, or null. */
+  buttons?: string | null;
+  /** When the wait the message is about ended (it is not edited again). */
+  ended_at?: number | null;
 }
+
+/** One inline-keyboard button: its label and `callback_data` (TG-3). */
+export interface Button {
+  text: string;
+  data: string;
+}
+
+/** Telegram refused an edit or an answer (message gone or too old): drop it, it will never work. */
+export class Refused extends Error {}
 
 /** Where messages go (Telegram; tests fake it). Rejects when the message wasn't sent. */
 export interface Sender {
-  send(text: string): Promise<void>;
+  /** Resolves with the Telegram message id when it has one. */
+  send(text: string, buttons?: Button[][]): Promise<number | undefined | void>;
+  edit?(message: number, text: string, buttons?: Button[][]): Promise<void>;
+  answer?(callback: string, text: string): Promise<void>;
+  /**
+   * LOOP-128: the text and buttons a wait's row has when it goes out, or null for the stored text.
+   * "drop": the row is not sent at all (TG-16: the intent's card says it).
+   */
+  prepare?(row: OutboxRow): Promise<{ text: string; buttons?: Button[][] } | "drop" | null>;
 }
+
+/** LOOP-128: rows whose wait ended are kept this long. */
+export const KEEP_SECONDS = 30 * 86400;
 
 export interface SendResult {
   sent: number;
@@ -47,6 +78,21 @@ export function waitObsolete(db: Db): (row: OutboxRow) => boolean {
   };
 }
 
+/** LOOP-146: Telegram's sent mark is also kept in `outbox_sent`, with the other destinations'. */
+function mirror(db: Db, key: string, at: number): void {
+  db.run(
+    "INSERT INTO outbox_sent (key, dest, sent_at) VALUES (?, 'telegram', ?) ON CONFLICT (key, dest) DO UPDATE SET sent_at = excluded.sent_at",
+    key,
+    at,
+  );
+}
+
+/** A row Telegram is done with: dropped (`at` 0) or sent. */
+function finish(db: Db, key: string, at: number): void {
+  db.run("UPDATE outbox SET sent_at = ? WHERE key = ?", at, key);
+  mirror(db, key, at);
+}
+
 /**
  * Unsent rows, oldest first: obsolete ones dropped (`sent_at = 0`); the rest sent until the first
  * failure or a row whose retry isn't due, which holds the ones after it. Sent: `sent_at = now`;
@@ -58,18 +104,52 @@ export async function sendDue(
   now: number,
   isObsolete: (row: OutboxRow) => boolean = waitObsolete(db),
 ): Promise<SendResult> {
-  const rows = db.all<OutboxRow>("SELECT * FROM outbox WHERE sent_at IS NULL ORDER BY created, rowid");
+  // LOOP-128: old rows go; a press is answered ahead of everything else, so its button stops spinning.
+  db.run(
+    "DELETE FROM outbox WHERE sent_at IS NOT NULL AND COALESCE(NULLIF(sent_at, 0), created) < ? AND (kind IN ('edit', 'answer', 'info') OR ended_at IS NOT NULL OR tg_message_id IS NULL)",
+    now - KEEP_SECONDS,
+  );
+  const rows = db.all<OutboxRow>(
+    "SELECT * FROM outbox WHERE sent_at IS NULL ORDER BY (kind = 'answer') DESC, created, rowid",
+  );
   const out: SendResult = { sent: 0, dropped: 0, failed: null };
   for (const row of rows) {
     if (isObsolete(row)) {
-      db.run("UPDATE outbox SET sent_at = 0 WHERE key = ?", row.key);
+      finish(db, row.key, 0);
       out.dropped++;
       continue;
     }
-    if (row.next_try > now) break;
+    if (row.next_try > now && row.kind !== "answer") break;
+    let sentId: number | undefined;
+    let text = row.text;
+    let buttons: Button[][] | undefined = row.buttons ? (JSON.parse(row.buttons) as Button[][]) : undefined;
     try {
-      await sender.send(row.text);
+      if (row.kind === "answer") {
+        if (!sender.answer) throw new Refused("no answers");
+        await sender.answer(row.target ?? "", row.text);
+      } else if (row.kind === "edit") {
+        if (!sender.edit) throw new Refused("no edits");
+        await sender.edit(Number(row.target), row.text, buttons);
+      } else {
+        const p = await sender.prepare?.(row);
+        if (p === "drop") {
+          finish(db, row.key, 0);
+          out.dropped++;
+          continue;
+        }
+        if (p) {
+          text = p.text;
+          buttons = p.buttons;
+        }
+        const id = await sender.send(text, buttons);
+        if (typeof id === "number") sentId = id;
+      }
     } catch (e) {
+      if (e instanceof Refused) {
+        finish(db, row.key, 0);
+        out.dropped++;
+        continue;
+      }
       db.run(
         "UPDATE outbox SET tries = ?, next_try = ? WHERE key = ?",
         row.tries + 1,
@@ -79,7 +159,15 @@ export async function sendDue(
       out.failed = e instanceof Error ? e.message : String(e);
       break;
     }
-    db.run("UPDATE outbox SET sent_at = ? WHERE key = ?", now, row.key);
+    db.run(
+      "UPDATE outbox SET sent_at = ?, text = ?, buttons = ?, tg_message_id = ? WHERE key = ?",
+      now,
+      text,
+      buttons?.length ? JSON.stringify(buttons) : null,
+      sentId ?? null,
+      row.key,
+    );
+    mirror(db, row.key, now);
     out.sent++;
   }
   return out;

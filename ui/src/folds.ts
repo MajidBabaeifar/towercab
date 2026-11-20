@@ -59,3 +59,32 @@ export function pruneFolds(waiting: string[]): void {
   }
   if (changed) save();
 }
+
+const LIST_KEY = "towercab.lists.folded";
+let foldedLists: Set<string> | null = null;
+
+function lists(): Set<string> {
+  if (foldedLists) return foldedLists;
+  foldedLists = new Set();
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(LIST_KEY) ?? "[]");
+    if (Array.isArray(v)) for (const id of v) if (typeof id === "string") foldedLists.add(id);
+  } catch {
+    // No storage, or not JSON: every list starts open (UI-267).
+  }
+  return foldedLists;
+}
+
+/** UI-267: is this list folded? Lists start open. */
+export const listFolded = (id: string): boolean => lists().has(id);
+
+/** UI-267: remember a list's fold in this browser; without storage it lasts until the page reloads. */
+export function setListFolded(id: string, folded: boolean): void {
+  if (folded) lists().add(id);
+  else lists().delete(id);
+  try {
+    localStorage.setItem(LIST_KEY, JSON.stringify([...lists()]));
+  } catch {
+    // No storage: the in-memory set still keeps it across live updates.
+  }
+}

@@ -6,45 +6,61 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ownerOnly, ownerOnlyLine } from "./autonomy.ts";
+import { levelNow } from "./autonomy-change.ts";
 import {
   applyCommand,
   type CommandName,
   commandResult,
   insertCommand,
   OWNER_ONLY_COMMANDS,
+  paused,
   pendingCommands,
   tickSteps,
 } from "./commands.ts";
 import { appKeyPath, type Config, ConfigError, checkLoop, configPath, loadConfig } from "./config.ts";
 import { Db } from "./db.ts";
 import { doctor } from "./doctor.ts";
+import { confirmExit } from "./exit-warning.ts";
+import { markFast } from "./fast.ts";
 import { GitLabForge } from "./forge/gitlab.ts";
+import { GitLabHost } from "./forge/gitlab-host.ts";
+import { GlabOwner } from "./forge/gitlab-owner.ts";
+import { routed } from "./forge/route.ts";
 import { parseGitlabProject } from "./forge/types.ts";
 import type { Forge } from "./forge.ts";
 import { fetchHttp } from "./github/app.ts";
+import { currentPr } from "./github/events.ts";
 import { createGitHub } from "./github/gh.ts";
-import { approve as ownerApprove } from "./github/owner.ts";
+import { agentReply, agentReplyBody, approve as ownerApprove, replyTarget } from "./github/owner.ts";
 import type { Host } from "./handlers.ts";
 import { systemClock } from "./handlers.ts";
 import { Home } from "./home.ts";
+import { addToIntent, cannotAddTo, createIntent, type Draft } from "./intents/create.ts";
+import { checkOverlap, type Match } from "./intents/overlap.ts";
 import { openStore } from "./intents/store.ts";
 import type { IntentStore } from "./intents/types.ts";
 import * as log from "./log.ts";
 import { Loop } from "./loop.ts";
 import { type ApplyCtx, isWait } from "./machine.ts";
 import { type Mission, unfinishedFor } from "./mission.ts";
+import { buildWebhooks } from "./notify.ts";
+import { Observer } from "./observer/observer.ts";
 import { decide, nextText } from "./pick.ts";
 import { grantScanning } from "./pipeline/alerts.ts";
 import { guardMain } from "./pipeline/guard.ts";
+import { checkSandbox } from "./pipeline/hostcheck.ts";
 import { handlers } from "./pipeline/index.ts";
 import { ownerMergeRefusal } from "./pipeline/teammate.ts";
 import { parseScores } from "./priority.ts";
 import { addRepo, loadRepos, removeRepo, repoLine, repoList, setRepo } from "./repos.ts";
+import { parseScoreWords } from "./scores.ts";
 import { checkoutRoot, down, logsArgv, restart, up } from "./service.ts";
 import { restoreBackup } from "./settings/backup.ts";
-import { grantPermission } from "./settings/store.ts";
+import { resetShadow, statusText } from "./shadow/store.ts";
+import { buildShadow } from "./shadow/wire.ts";
 import { checkIds, readPrList } from "./specs-cli.ts";
-import { renderStatus } from "./status.ts";
+import { renderStatus, versionLine } from "./status.ts";
+import { buildChat } from "./telegram/wire.ts";
 import { Telegram } from "./telegram.ts";
 import { realTools, type Tools } from "./tools.ts";
 import { checkUpdate, version } from "./update.ts";
@@ -59,12 +75,16 @@ export const COMMANDS = [
   "next",
   "add",
   "answer",
+  "reply",
   "retry",
   "drop",
   "start",
+  "fast",
+  "score",
   "step",
   "done",
   "steps",
+  "unfreeze",
   "approve",
   "pause",
   "resume",
@@ -72,6 +92,7 @@ export const COMMANDS = [
   "doctor",
   "update",
   "repo",
+  "shadow",
   "settings",
   "hook",
   "specs",
@@ -82,29 +103,52 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   up | down | restart | logs      the systemd user service
   run [--watch] [--intent <id>]   the loop in the foreground
   status | next                   what is happening, and what runs next
-  add "<repo>: <title>" [uN iN aN]
+  add "<repo>: <title>" [uN iN aN] [--fast] [--check | --no-check]
+                                  at a terminal: lists overlapping intents and asks first; in a script: writes,
+                                  and checks only with --check (a warning)
+  fast <id> [--off]               put an intent in the fast lane (its approvals still wait for your click on the page)
   answer <id> <text>              answer a question (when there is no PR to reply on)
   answer <id> allow <path>…       allow a test you refused earlier, for the running mission
+  reply <id> --by <agent> <text>  an agent speaks for you on the PR (or issue): marked as the agent's
   approve <id>                    merge the PR the intent waits on, as you
-  retry <id> | drop <id>
+  retry <id> | drop <id>          drop, done and steps ask first when they would close an open PR with commits: add --yes
   start <id>                      begin that intent's design now, even when the repo is full
-  step <id> <n…|all>              tick off steps the plan lists for you (the change then goes on)
+  score <id> u=N i=N              change urgency and/or importance (1-5); autonomy stays on the page
+  step <id> <n…|all>             tick off steps the plan lists for you (the change then goes on)
   done <id> [note]                you did the work yourself: ends the intent; the note is kept as a ticked step
   steps <id>                      you will do it by hand: the intent becomes steps for you to tick
-  pause [id] | resume [id]
+  pause [id] | resume [id]        pause holds all new work and every change on GitHub; running steps finish
+  pause --now                     also stops the running steps (they continue after resume)
   repo add <owner/name> [--name <short>] | repo remove <name> | repo list
   repo set <name> key=value…      workers, ahead, base, path, env (NAME=value or a JSON object)
+  shadow reset | shadow status    clear the shadow's conversation; what it is doing and what it cost today
   settings restore <repo>         put back the settings saved before the last apply
-  settings granted                the GitHub App now has Administration (write)
   settings scanning-granted       the GitHub App now has Code scanning alerts (read)
   ui [--no-open]                  open the web page
   specs check-ids [--base <ref>] [--prs <file>]
                                   fail when a spec adds a requirement ID the base branch or another open PR has
-  doctor [--quick]                what is missing
+  doctor [--quick]                what is missing (--quick: loose key files only warn)
   update                          update this checkout to the latest main now
 `;
 
 class UsageError extends Error {}
+
+/** LOOP-124: what `add` asks a person at a terminal; tests replace it. */
+export const terminal = {
+  interactive: (): boolean => Boolean(process.stdin.isTTY && process.stdout.isTTY),
+  /** One answer; an end of input answers "". */
+  ask: async (question: string): Promise<string> => {
+    const { createInterface } = await import("node:readline");
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    return new Promise<string>((done) => {
+      rl.once("close", () => done(""));
+      rl.question(question, (a) => {
+        done(a);
+        rl.close();
+      });
+    });
+  },
+};
 
 function pkgVersion(): string {
   try {
@@ -113,6 +157,21 @@ function pkgVersion(): string {
   } catch {
     return "unknown";
   }
+}
+
+/** A GitHub that refuses every call: a GitLab-only installation has none (GL-3). */
+function refusingGitHub(): Host {
+  const why = new Error("repo add needs [github] (app_id, me)");
+  return new Proxy({} as Host, {
+    get: (_t, key) =>
+      key === "me"
+        ? ""
+        : key === "then" || key === "peekInstallHelp"
+          ? undefined
+          : key === "asOwner"
+            ? refusingGitHub
+            : () => Promise.reject(why),
+  });
 }
 
 /** A GitHub that refuses: a GitLab-only installation has none (GL-3). */
@@ -136,8 +195,13 @@ function world(flags: { config?: string; home?: string }, tools: Tools): World {
   const home = Home.resolve(flags.home);
   const db = Db.openHome(home.db);
   loadRepos(config, db, Date.now() / 1000);
-  const github = config.github ? createGitHub({ config, tools, db, keyPath: appKeyPath(config) }) : null;
+  const onGithub = config.github ? createGitHub({ config, tools, db, keyPath: appKeyPath(config) }) : null;
   const gitlab = config.gitlab ? new GitLabForge({ ...config.gitlab, file: config.file }, fetchHttp) : null;
+  // GL-13: one host for everything; each call goes to the host its repo lives on.
+  const github =
+    gitlab && config.gitlab
+      ? routed(onGithub ?? refusingGitHub(), new GitLabHost(gitlab, new GlabOwner(tools, config.gitlab)))
+      : onGithub;
   let store: Promise<IntentStore> | null = null;
   return {
     config,
@@ -149,15 +213,21 @@ function world(flags: { config?: string; home?: string }, tools: Tools): World {
     store: () => {
       if (!store) {
         const gh = github;
+        const intentsGitlab = gitlab
+          ? parseGitlabProject(config.intents.remote, gitlab.host) !== null
+          : false;
         const intentsGithub = /github\.com[/:]([^/]+\/[^/.]+)/.exec(config.intents.remote)?.[1] ?? null;
         store = openStore({
           remote: config.intents.remote,
           path: config.intents.path ?? home.intents,
           tools,
+          gitlabHost: gitlab?.host,
           auth:
-            gh && intentsGithub && existsSync(appKeyPath(config))
-              ? () => gh.gitAuth(intentsGithub)
-              : undefined,
+            gitlab && intentsGitlab
+              ? () => gitlab.gitAuth()
+              : gh && intentsGithub && existsSync(appKeyPath(config))
+                ? () => gh.gitAuth(intentsGithub)
+                : undefined,
           cutoff: config.intents.cutoff,
           log: (t) => log.emit(t),
         });
@@ -180,9 +250,24 @@ function applyCtx(db: Db): ApplyCtx {
 async function refuseOwnerOnly(w: World, intent: string): Promise<void> {
   if (intent === "") return;
   const found = await (await w.store()).get(intent).catch(() => null);
-  if (found && ownerOnly(found.a, unfinishedFor(w.db, found.id)?.a_at_pick ?? null)) {
+  if (found && ownerOnly(levelNow(w.db, found))) {
     throw new Error(ownerOnlyLine(found.id));
   }
+}
+
+/** LOOP-76: `done`, `steps` and `drop` that would close an open code PR with commits need `--yes`. */
+async function confirmClose(w: World, intent: string, yes: boolean): Promise<void> {
+  if (yes) return;
+  await confirmExit(
+    {
+      db: w.db,
+      store: await w.store(),
+      forge: w.github,
+      githubOf: (repo) => w.config.repos.get(repo)?.github ?? null,
+    },
+    intent,
+    yes,
+  );
 }
 
 /** Queue a command for the loop, or apply it here when no loop runs (LOOP-15). */
@@ -192,7 +277,10 @@ async function submit(w: World, name: CommandName, arg = "", text = ""): Promise
   if (w.home.holder() === null) {
     const store = await w.store();
     const row = pendingCommands(w.db).find((r) => r.id === id)!;
-    return applyCommand({ db: w.db, store, applyCtx: applyCtx(w.db), now: new Date() }, row);
+    return applyCommand(
+      { db: w.db, store, applyCtx: applyCtx(w.db), now: new Date(), cutoff: w.config.intents.cutoff },
+      row,
+    );
   }
   for (let i = 0; i < 20; i++) {
     const r = commandResult(w.db, id);
@@ -218,9 +306,17 @@ export async function main(argv: string[], tools: Tools = realTools()): Promise<
         intent: { type: "string" },
         "no-open": { type: "boolean" },
         quick: { type: "boolean" },
+        "for-update": { type: "boolean" },
         name: { type: "string" },
         base: { type: "string" },
         prs: { type: "string" },
+        by: { type: "string" },
+        yes: { type: "boolean" },
+        now: { type: "boolean" },
+        check: { type: "boolean" },
+        "no-check": { type: "boolean" },
+        fast: { type: "boolean" },
+        off: { type: "boolean" },
       },
     });
   } catch (e) {
@@ -308,7 +404,16 @@ async function run(
           if (e instanceof ConfigError) return `config: ${e.message}`;
           throw e;
         }
-        const r = await doctor({ config, home: Home.resolve(flags.home), tools, github: null, quick: true });
+        const r = await doctor({
+          config,
+          home: Home.resolve(flags.home),
+          tools,
+          github: null,
+          quick: true,
+          // LOOP-145: the quick check is the self-update's, and an older Towercab calls it without
+          // `--for-update`: a loose secrets file is a warning here whether or not the flag is given.
+          forUpdate: true,
+        });
         process.stdout.write(`${r.lines.join("\n")}\n`);
         return r.ok ? 0 : 1;
       }
@@ -332,7 +437,16 @@ async function run(
       return r.ok ? 0 : 1;
     }
     case "update": {
-      const r = await checkUpdate({ tools, checkout: checkoutRoot(), idle: () => true });
+      // LOOP-151: the channel comes from the config; without a config file the check follows main.
+      const file = configPath(flags.config);
+      const channel = existsSync(file) ? loadConfig(file).update.channel : "main";
+      const r = await checkUpdate({
+        tools,
+        checkout: checkoutRoot(),
+        idle: () => true,
+        channel,
+        log: (m) => process.stderr.write(`${m}\n`),
+      });
       if (r.kind === "updated") return `updated ${r.from} → ${r.to}; run towercab restart to use it`;
       if (r.kind === "failed") throw new Error(`update failed and rolled back: ${r.why}`);
       return r.kind === "none" || r.kind === "unreachable" ? `nothing to update: ${r.why}` : "waiting";
@@ -348,7 +462,59 @@ async function run(
       const lock = w.home.lock();
       log.init(w.home.logFile);
       const store = await w.store();
-      const loop = new Loop(
+      const telegram = w.config.telegram ? new Telegram(w.config.telegram) : null;
+      // LOOP-126: the chat (buttons, replies, commands) runs in a watching loop whenever Telegram is set.
+      const chat =
+        v.watch && telegram
+          ? buildChat(
+              {
+                config: w.config,
+                home: w.home,
+                db: w.db,
+                clock: systemClock,
+                store,
+                github: w.github!,
+                log: (l) => log.emit(l),
+              },
+              telegram,
+              () => loop,
+            )
+          : undefined;
+      // SHD-1: the shadow reads the owner's chat only in a watching loop, with `[shadow] enabled`.
+      const shadow =
+        v.watch && w.config.shadow.enabled
+          ? buildShadow(
+              {
+                config: w.config,
+                home: w.home,
+                db: w.db,
+                tools,
+                clock: systemClock,
+                store,
+                github: w.github!,
+                log: (l) => log.emit(l),
+              },
+              chat ? chat.shadowSource() : telegram,
+              () => loop,
+            )
+          : undefined;
+      // OBV-2: the observer is on unless `[observer] enabled = false`, and runs only in a watching loop.
+      const observer = v.watch
+        ? new Observer({
+            config: w.config,
+            home: w.home,
+            db: w.db,
+            tools,
+            clock: systemClock,
+            github: w.github!,
+            store,
+            log: (l) => log.emit(l),
+            listing: () => loop.currentListing(),
+            proposed: () => loop.proposedState().list,
+            health: { fail: (k, e, n) => loop.health.fail(k, e, n), ok: (k) => loop.health.ok(k) },
+          })
+        : undefined;
+      const loop: Loop = new Loop(
         {
           config: w.config,
           home: w.home,
@@ -360,13 +526,20 @@ async function run(
           gitlab: w.gitlab,
           handlers: handlers(),
           log: (l) => log.emit(l),
-          sender: w.config.telegram ? new Telegram(w.config.telegram) : null,
+          sender: chat ? chat.sender() : telegram,
+          webhooks: buildWebhooks(w.config, w.db, { log: (l) => log.emit(l) }),
+          chat,
+          shadow,
+          observer,
           selfUpdate: Boolean(v.watch),
           readiness: true,
           limits: true,
+          // PIP-163, PIP-162: the sandbox must hold before anything is picked or any Claude run starts.
+          sandboxProbe: () => checkSandbox(tools),
         },
         { watch: Boolean(v.watch), intent: v.intent as string | undefined },
       );
+      chat?.start();
       const stop = () => loop.stop(0);
       process.on("SIGTERM", stop);
       process.on("SIGINT", stop);
@@ -407,19 +580,26 @@ async function run(
       const next =
         decision && listing ? nextText(decision, listing, w.config.intents.cutoff) : `next: ${listingError}`;
       if (cmd === "next") return next;
-      const ver = await version({ tools, checkout: checkoutRoot() });
+      const ver = await version({ tools, checkout: checkoutRoot(), channel: w.config.update.channel });
+      const shown = versionLine(ver, pkgVersion());
       return renderStatus({
         db: w.db,
         listing,
         listingError,
         running: w.home.holder(),
-        version: `${pkgVersion()} (${ver.commit}${ver.behind ? `, ${ver.behind} behind main` : ""})`,
+        version: shown.version,
+        update: shown.update,
         now: Date.now() / 1000,
         problems: JSON.parse(w.db.meta("health") ?? "[]"),
         next: next.split("\n")[0]!,
         waits: next
           .split("\n")
-          .filter((l) => / \(start \S+ to go now\)$/.test(l) || / repo not ready: /.test(l))
+          .filter(
+            (l) =>
+              / \(start \S+ to go now\)$/.test(l) ||
+              / repo not ready: /.test(l) ||
+              / is the fast lane of /.test(l),
+          )
           .map((l) => l.replace(/^skipped: /, "")),
         prLink: (m) => dummy.subject(m).link,
         queued: dummy.queued(),
@@ -433,26 +613,155 @@ async function run(
       if (!m) throw new UsageError(`want "<repo>: <title>", got "${args[0]}"`);
       const scores = parseScores(args.slice(1));
       const store = await w.store();
-      const i = await store.add({ repo: m[1]!, title: m[2]!.trim(), ...scores }, new Date());
-      return `${i.id} ${i.dir}/intent.md`;
+      const draft: Draft = { repo: m[1]!, title: m[2]!.trim(), ...scores };
+      const deps = { store, config: w.config, now: () => new Date() };
+      // LOOP-124: a person at a terminal is asked; a script writes as before and pays for the check only with --check.
+      const interactive = terminal.interactive();
+      const checking = v["no-check"] !== true && (interactive || v.check === true);
+      const made = async () => {
+        const c = await createIntent(deps, draft, "direct");
+        // FAST-1: the mark is written after the intent exists; the command line never confirms it (FAST-9).
+        if (v.fast === true) await markFast({ db: w.db, store }, c.id, true, "cli");
+        return `${c.id} ${c.path}${v.fast === true ? " (fast lane)" : ""}`;
+      };
+      if (!checking) return made();
+      let found: { matches: Match[]; titleNote?: string } | null = null;
+      try {
+        found = await checkOverlap(
+          {
+            config: w.config,
+            home: w.home,
+            tools,
+            clock: systemClock,
+            store,
+            db: w.db,
+            proposed: async () => {
+              const repo = store.github();
+              if (!w.github || !repo) return [];
+              return w.github.readProposed(repo, new Map(), (await w.github.bot()).login);
+            },
+          },
+          draft,
+        );
+      } catch (e) {
+        const why = (e as Error).message.replace(/^The overlap check failed: /, "");
+        process.stderr.write(`towercab: the overlap check failed: ${why} (skipped)\n`);
+        if (!interactive) return made();
+        const a = (await terminal.ask("Create anyway (y) or cancel (n)? [y/n] ")).trim().toLowerCase();
+        if (a !== "y") throw new Error("cancelled");
+        return made();
+      }
+      if (!found.matches.length && !found.titleNote) return made();
+      const listing = await store.list();
+      const addable = new Map<string, number>();
+      const lines: string[] = [];
+      const warn: string[] = [];
+      for (const x of found.matches) {
+        const intent = listing.open.find((i) => i.id === x.ref);
+        const why = intent ? cannotAddTo(intent, unfinishedFor(w.db, intent.id)) : "not an intent on main";
+        const n = intent && !why ? addable.size + 1 : 0;
+        if (n) addable.set(x.ref, n);
+        lines.push(`${n ? `${n}) ` : ""}${x.kind} ${x.ref} ${x.title}`, `  ${x.how}`);
+        if (intent && why) lines.push(`  already past design: write a new intent and link ${intent.id}`);
+        warn.push(`towercab: warning: this may overlap ${x.kind} ${x.ref} ${x.title}`, `  ${x.how}`);
+      }
+      if (found.titleNote) lines.push(`Title: ${found.titleNote}`);
+      if (!interactive) {
+        process.stderr.write(`${warn.join("\n")}\n`);
+        return made();
+      }
+      if (found.matches.length) {
+        process.stdout.write(`${lines.join("\n")}\n`);
+        const a = (
+          await terminal.ask(
+            addable.size
+              ? "Create anyway (y), add to one of them (its number), or cancel (n)? [y/n/<number>] "
+              : "Create anyway (y) or cancel (n)? [y/n] ",
+          )
+        )
+          .trim()
+          .toLowerCase();
+        if (a === "y") return made();
+        const to = [...addable].find(([, n]) => String(n) === a)?.[0];
+        if (!to) throw new Error("cancelled");
+        // The command line has only a title: it goes under Proposed outcome.
+        await addToIntent(
+          deps,
+          to,
+          { ...draft, outcome: draft.title },
+          unfinishedFor(w.db, to),
+          "owner via cli",
+        );
+        return `added to ${to}`;
+      }
+      process.stdout.write(`${lines.join("\n")}\n`);
+      return made();
+    }
+    case "fast": {
+      need(1, "<id> [--off]");
+      return markFast({ db: w.db, store: await w.store() }, args[0]!, v.off !== true, "cli");
     }
     case "answer":
       need(2, "<id> <text>");
       return submit(w, "answer", args[0], args.slice(1).join(" "));
+    case "reply": {
+      // PIP-184: allowed on every intent, an a0 one included: it only posts, and a0 ignores what it posts.
+      need(2, "<id> --by <agent> <text>");
+      if (v.by === undefined) throw new UsageError("reply needs --by <agent>");
+      if (!w.github) throw new Error(`reply needs [github] in ${w.config.file} (app_id, me)`);
+      if (paused(w.db)) throw new Error("paused: resume first, nothing changes on GitHub while paused");
+      const intent = await (await w.store()).get(args[0]!);
+      const m = unfinishedFor(w.db, intent.id);
+      const repo = w.config.repos.get(m?.repo ?? intent.repo);
+      const cur = m ? currentPr(m) : null;
+      const where = cur
+        ? {
+            repo: cur.kind === "plan" ? ((await w.store()).github() ?? "") : (repo?.github ?? ""),
+            number: cur.number,
+          }
+        : null;
+      const to = replyTarget(where?.repo ? where : null, intent.issue);
+      const owner = w.config.github?.name || w.config.github?.me || "the owner";
+      if (!to) {
+        // PIP-184: nowhere to post yet, so the marked text goes in as an answer (refused on an a0 intent).
+        const body = agentReplyBody(v.by as string, owner, args.slice(1).join(" "));
+        return `no PR or issue yet, sent as an answer marked ${v.by}: ${await submit(w, "answer", intent.id, body)}`;
+      }
+      await agentReply(w.github, to, v.by as string, owner, args.slice(1).join(" "));
+      return `posted on ${to.repo}#${to.number} as ${v.by}, for ${owner}`;
+    }
     case "retry":
       need(1, "<id>");
       return submit(w, "retry", args[0]);
     case "drop":
       need(1, "<id>");
+      await confirmClose(w, args[0]!, v.yes === true);
       return submit(w, "drop", args[0]);
     case "start":
       need(1, "<id>");
       return submit(w, "start", args[0]);
+    case "score": {
+      // LOOP-135: urgency and importance only; autonomy and Boost stay on the page and GitHub (AUT-35).
+      need(2, "<id> u=N and/or i=N");
+      try {
+        parseScoreWords(args.slice(1));
+      } catch (e) {
+        throw new UsageError((e as Error).message);
+      }
+      const intent = await (await w.store()).get(args[0]!);
+      if (intent.done) throw new Error(`${intent.id} is done or dropped`);
+      return submit(w, "score", intent.id, args.slice(1).join(" "));
+    }
     case "done":
       need(1, "<id> [note]");
+      await confirmClose(w, args[0]!, v.yes === true);
       return submit(w, "done", args[0], args.slice(1).join(" "));
+    case "unfreeze":
+      need(1, "<id>");
+      return submit(w, "unfreeze", args[0]);
     case "steps":
       need(1, "<id>");
+      await confirmClose(w, args[0]!, v.yes === true);
       return submit(w, "steps", args[0]);
     case "step": {
       need(2, "<id> <n…|all>");
@@ -465,11 +774,15 @@ async function run(
       return tickSteps(w.db, id, which, true, new Date());
     }
     case "pause":
-      return submit(w, "pause", args[0] ?? "");
+      // LOOP-114: `--now` stops the runs going; it is for the whole of Towercab, not one intent.
+      if (v.now === true && (args[0] ?? "") !== "")
+        throw new Error("--now stops everything: use it without an intent");
+      return submit(w, "pause", args[0] ?? "", v.now === true ? "now" : "");
     case "resume":
       return submit(w, "resume", args[0] ?? "");
     case "approve": {
       need(1, "<id>");
+      if (paused(w.db)) throw new Error("paused: resume first, nothing is merged while paused");
       const store = await w.store();
       const intent = await store.get(args[0]!);
       await refuseOwnerOnly(w, intent.id);
@@ -503,6 +816,15 @@ async function run(
       await ownerApprove(w.github, gh, n);
       return `merged ${gh}#${n} as ${w.config.github?.me}; Towercab continues on its next read`;
     }
+    case "shadow": {
+      // LOOP-131: the same as `/reset` and `/status` in the chat; a running loop sees the reset at its next turn.
+      if (args[0] === "reset") {
+        resetShadow(w.db);
+        return "the shadow's conversation is cleared; its action log is kept";
+      }
+      if (args[0] === "status") return statusText(w.db, w.config.shadow, systemClock.now());
+      throw new UsageError("shadow reset | shadow status");
+    }
     case "repo":
       return repo(w, args, v.name as string | undefined);
     case "settings":
@@ -532,24 +854,19 @@ async function run(
   }
 }
 
-/** `settings restore <repo>` (REPO-31) and `settings granted` (REPO-32). */
+/** `settings restore <repo>` (REPO-31) and `settings scanning-granted`. */
 export async function settingsCommand(
   w: Pick<World, "config" | "home" | "db" | "tools" | "github">,
   args: string[],
 ): Promise<string> {
   const [sub, name] = args;
-  if (sub === "granted" && args.length === 1) {
-    return grantPermission(w.db)
-      ? "noted: Towercab applies settings again at its next check"
-      : "nothing to clear: the GitHub App was not missing the permission";
-  }
   if (sub === "scanning-granted" && args.length === 1) {
     return grantScanning(w.db)
       ? "noted: Towercab reads code scanning alerts again on the next red check"
       : "nothing to clear: the GitHub App was not missing the permission";
   }
   if (sub !== "restore" || !name || args.length !== 2)
-    throw new UsageError("settings restore <repo> | settings granted | settings scanning-granted");
+    throw new UsageError("settings restore <repo> | settings scanning-granted");
   const repo = w.config.repos.get(name);
   if (!repo) throw new Error(`${name} isn't a repo Towercab knows (towercab repo list)`);
   if (!w.github) throw new Error(`settings restore needs [github] in ${w.config.file} (app_id, me)`);

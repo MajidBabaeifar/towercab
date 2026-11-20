@@ -18,8 +18,22 @@ export async function getJson<T>(path: string): Promise<T> {
   return body as T;
 }
 
-export function act(action: string, intent?: string, text?: string): Promise<ActionReply> {
-  return post({ action, intent, text });
+export function act(
+  action: string,
+  intent?: string,
+  text?: string,
+  confirmed?: boolean,
+): Promise<ActionReply> {
+  return post({ action, intent, text, ...(confirmed ? { confirmed: true } : {}) });
+}
+
+/** UI-253: save a scope's budget (`all`) or a repo's caps; an amount left out stays, null removes it. */
+export function saveBudgets(
+  scope: string,
+  daily?: number | null,
+  monthly?: number | null,
+): Promise<ActionReply> {
+  return post({ action: "budgets", scope, daily, monthly });
 }
 
 /** UI-160, SHIP-22: tick (or untick) one of the owner's steps. */
@@ -42,6 +56,30 @@ export function addRepo(github: string, name?: string): Promise<ActionReply> {
   return post({ action: "addRepo", github, name });
 }
 
+/** What the new intent form sends (UI-216). */
+export interface IntentDraft {
+  repo: string;
+  title: string;
+  u?: number;
+  i?: number;
+  a?: number;
+  problem?: string;
+  outcome?: string;
+  affected?: string;
+  constraints?: string;
+  questions?: string;
+}
+
+/** UI-214: the overlap check; the reply lists the matches. */
+export function checkIntent(draft: IntentDraft): Promise<ActionReply> {
+  return post({ action: "checkIntent", ...draft });
+}
+
+/** UI-216: write the intent, or add its text to `addTo`. */
+export function createIntent(draft: IntentDraft, addTo?: string): Promise<ActionReply> {
+  return post({ action: "createIntent", ...draft, ...(addTo ? { addTo } : {}) });
+}
+
 /** UI-185: merge a proposed intent's PR, as the card showed it at `head`. */
 export function acceptProposed(pr: number, head: string): Promise<ActionReply> {
   return post({ action: "accept", pr, head });
@@ -50,6 +88,11 @@ export function acceptProposed(pr: number, head: string): Promise<ActionReply> {
 /** UI-185: close a proposed intent's PR with a reason (empty: the default). */
 export function closeProposed(pr: number, text: string): Promise<ActionReply> {
   return post({ action: "close", pr, text: text.trim() || undefined });
+}
+
+/** REPO-39: apply the standard settings of one repo with the owner's own login. */
+export function applySettings(repo: string): Promise<ActionReply> {
+  return post({ action: "apply-settings", repo });
 }
 
 /** UI-151: open (or update) the PR that changes a repo's limits; `null` takes a key out of the file. */
@@ -64,6 +107,31 @@ export function saveLimits(
 /** UI-154: open the PR that moves a repo's limits into its file again. */
 export function openMove(repo: string): Promise<ActionReply> {
   return post({ action: "repo-move", repo });
+}
+
+/** UI-257: set an intent's autonomy (0–5); the page is the owner (AUT-35). */
+export function setAutonomy(id: string, a: number): Promise<ActionReply> {
+  return post({ action: "autonomy", id, a, actor: "owner" });
+}
+
+/** FAST-1, FAST-9: put an intent in the fast lane or take it out; the page is the owner, so it confirms too. */
+export function setFast(id: string, fast: boolean): Promise<ActionReply> {
+  return post({ action: "set-fast", id, fast, actor: "owner" });
+}
+
+/** UI-204: change urgency and/or importance (1-5); the reply carries the new priority. */
+export function setScores(id: string, change: { u?: number; i?: number }): Promise<ActionReply> {
+  return post({ action: "scores", id, ...change, actor: "owner" });
+}
+
+/** UI-283: set the intent's kind. */
+export function setKind(id: string, kind: string): Promise<ActionReply> {
+  return post({ action: "set-kind", id, kind, actor: "owner" });
+}
+
+/** UI-205: a5, and the start of an intent that has not started. */
+export function boostIntent(id: string): Promise<ActionReply> {
+  return post({ action: "boost", id, actor: "owner" });
 }
 
 /** UI-144: read the repo again for its feature list. */
@@ -168,4 +236,18 @@ export function useLive<T>(path: string): Live<T> {
     };
   }, [load]);
   return state;
+}
+
+/** UI-264: the owner looked at the Inbox; the server stamps its own clock. */
+export function markSeen(): Promise<ActionReply> {
+  return post({ action: "seen" });
+}
+
+/** UI-264: put an item aside until `until` (unix seconds). */
+export function snoozeItem(item: string, until: number): Promise<ActionReply> {
+  return post({ action: "snooze", item, until });
+}
+
+export function unsnoozeItem(item: string): Promise<ActionReply> {
+  return post({ action: "unsnooze", item });
 }

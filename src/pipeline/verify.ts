@@ -6,6 +6,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statS
 import { join } from "node:path";
 import { classifyRun } from "../faults.ts";
 import { type ChildEnd, type Ctx, EnvError, type Handler, type Progress } from "../handlers.ts";
+import { kindOf } from "../kind.ts";
 import { ok, red, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { glob } from "../repo/protected.ts";
@@ -20,7 +21,31 @@ import {
   readOnlyCachePath,
   sandboxSpec,
 } from "./checks.ts";
-import { ask, cloneOf, coGit, data, nextN, repoFiles, tail } from "./common.ts";
+import {
+  ask,
+  cloneOf,
+  coGit,
+  data,
+  ended,
+  intentOf,
+  nextN,
+  note,
+  repoFiles,
+  spawnRun,
+  tail,
+} from "./common.ts";
+import { intentData, render } from "./prompts.ts";
+import { twoPartOr } from "./prtext.ts";
+import { parseResult } from "./schemas.ts";
+import {
+  dropOpenCache,
+  endSecretPass,
+  openPass,
+  type PassOpts,
+  privateQuestion,
+  startSecretPass,
+} from "./setup-pass.ts";
+import { hasSetupSecrets, manifestChanges, needsPrivate } from "./setup-secrets.ts";
 
 export const MAX_REPAIRS = 2;
 export const MAX_SHOTS = 20;
@@ -79,16 +104,53 @@ export const verifyHandler: Handler = {
       cx.db.setMeta(checksWriteKey(repo), "1");
       cx.log(`${m.intent}: the checks of ${repo} may now write to its build cache`);
     }
+    // PIP-214: the owner answered about a private package; the setup starts again.
+    if (data(m).openAsk) {
+      const answer = data(m).answer ?? "";
+      const clear = { openAsk: undefined, answer: undefined };
+      // "Use public packages instead": the worker changes the manifests, in a repair round that reads the answer.
+      if (/public/i.test(answer)) {
+        if (m.repairs >= MAX_REPAIRS)
+          return {
+            done: wait("checks red", `Still failing after ${MAX_REPAIRS} fix attempts: private packages.`),
+          };
+        const what =
+          "The owner chose public packages: change the manifests so they install from public registries.";
+        return {
+          done: red(what, {
+            set: { repairs: m.repairs + 1 },
+            data: {
+              ...clear,
+              repair: { what, details: `The owner answered: ${tail(answer, 500)}`, kind: "verify" },
+            },
+          }),
+        };
+      }
+      m = cx.record(m, "setup", {}, clear);
+    }
     const { n, data: nd } = nextN(m, "verify");
+    if (m.step === "setup-secret") {
+      const again = await startSecretPass(cx, m, setupPass(cx, m, files.verifying.setup, ""));
+      return again ?? { done: { event: "bad_result", why: "the setup secrets file is gone" } };
+    }
+    if (m.step === "setup-open") return openPass(cx, m, setupPass(cx, m, files.verifying.setup, "-open"));
     if (m.step === "" || m.step === "setup") {
       const fresh = cx.record(m, "setup", {}, nd);
       if (files.verifying.setup.length === 0) return checks(cx, cx.record(fresh, "checks"));
+      // PIP-214: a repo with setup secrets installs them in a clean export of the base tree first.
+      if (hasSetupSecrets(cx.config.file, m.repo)) {
+        const secret = await startSecretPass(
+          cx,
+          cx.record(fresh, "setup-secret"),
+          setupPass(cx, fresh, files.verifying.setup, ""),
+        );
+        if (secret) return secret;
+      }
       return {
         spawn: sandboxSpec(cx, fresh, {
           kind: "setup",
           lines: files.verifying.setup,
           dir: cx.checkout(fresh),
-          network: true,
           cacheWritable: true,
           log: logPath(cx, fresh, "verify", `verify-${n}-setup.log`),
           timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
@@ -96,12 +158,29 @@ export const verifyHandler: Handler = {
       };
     }
     if (m.step === "checks") return checks(cx, m);
+    if (m.step === "apply") return applyNext(cx, m);
     if (m.step === "shots") return shots(cx, m);
+    if (m.step === "merge-review") return mergeReview(cx, m);
     return { done: { event: "bad_result", why: `unknown verify step ${m.step}` } };
   },
 
   async finish(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
+    if (m.step === "merge-review") return mergeReviewEnd(cx, m, end);
+    if (m.step === "setup-secret") return secretEnded(cx, m, end);
     const log = `${read(end.stdout)}${read(end.stderr)}`;
+    if (m.step === "setup-open") {
+      dropOpenCache(cx.checkout(m));
+      if (end.code === 0) return checks(cx, cx.record(m, "checks"));
+      if (needsPrivate(log)) {
+        const base = data(m).setupSecret?.base ?? "HEAD";
+        const changed = manifestChanges((await coGit(cx, m, ["diff", "--name-only", base])).split("\n"));
+        const o = await ask(cx, m, privateQuestion(changed, log));
+        return { done: { ...o, data: { ...o.data, openAsk: true, answer: undefined } } };
+      }
+      const env = classifyRun(log);
+      if (env) throw new EnvError(env.kind, env.why);
+      return failed(cx, m, "The repo's setup failed.", log);
+    }
     if (m.step === "setup") {
       if (end.code !== 0) {
         const env = classifyRun(log);
@@ -114,7 +193,10 @@ export const verifyHandler: Handler = {
       if (end.timedOut) return failed(cx, m, "The checks timed out.", log);
       if (end.code !== 0) {
         const cache = cx.home.cache(cx.repo(m).name);
-        const ro = checksMayWrite(cx, m) ? null : readOnlyCachePath(log, cache);
+        const ro =
+          checksMayWrite(cx, m) || hasSetupSecrets(cx.config.file, m.repo)
+            ? null
+            : readOnlyCachePath(log, cache);
         if (ro) {
           // PIP-95: not the code's fault, so no repair round; the owner decides.
           const o = await ask(cx, m, cacheWriteQuestion(cx.repo(m).name, cache, ro), "allow check writes");
@@ -124,11 +206,14 @@ export const verifyHandler: Handler = {
         if (env) throw new EnvError(env.kind, env.why);
         return failed(cx, m, "The checks failed.", log);
       }
-      const files = await repoFiles(cx, m);
-      if (files.verifying.screenshots)
-        return shots(cx, cx.record(m, "shots", {}, { verify: { log: tail(log, 2000), result: "green" } }));
-      return { done: ok({ data: { verify: { log: tail(log, 2000), result: "green" } } }) };
+      // PIP-229: an infra change is applied in the sandbox once the checks are green.
+      if (await hasApply(cx, m)) {
+        const green = { verify: { log: tail(log, 2000), result: "green" as const } };
+        return applyNext(cx, cx.record(m, "apply", {}, { ...green, applyAt: 0, applied: [] }));
+      }
+      return afterGreen(cx, m, log);
     }
+    if (m.step === "apply") return applyEnd(cx, m, end, log);
     if (m.step === "shots") {
       const dir = join(cx.checkout(m), ".towercab-shots");
       const n = data(m).n?.verify ?? 1;
@@ -154,8 +239,94 @@ export const verifyHandler: Handler = {
   },
 };
 
+/** Green checks (and a green apply): a merge by code is read on its diff, else screenshots, else on. */
+async function afterGreen(cx: Ctx, m: Mission, log: string): Promise<Progress> {
+  const files = await repoFiles(cx, m);
+  const verify = { log: tail(log, 2000), result: "green" as const };
+  // PIP-169: a merge made by code is read on its own diff before it goes on; no screenshots for it.
+  if (data(m).mech) return mergeReview(cx, cx.record(m, "merge-review", {}, { verify }));
+  if (files.verifying.screenshots) return shots(cx, cx.record(m, "shots", {}, { verify }));
+  return { done: ok({ data: { verify } }) };
+}
+
+/** PIP-229: whether the plan of an infra mission has commands to apply. */
+async function hasApply(cx: Ctx, m: Mission): Promise<boolean> {
+  if (kindOf((await intentOf(cx, m)).kind, data(m)) !== "infra") return false;
+  return (data(m).plan?.apply?.length ?? 0) > 0;
+}
+
+/** PIP-229: run the next apply command in the sandbox, as the build's checks do; none left → on. */
+async function applyNext(cx: Ctx, m: Mission): Promise<Progress> {
+  const list = data(m).plan?.apply ?? [];
+  const i = data(m).applyAt ?? 0;
+  const next = list[i];
+  if (!next) return afterGreen(cx, m, data(m).verify?.log ?? "");
+  const n = data(m).n?.verify ?? 1;
+  return {
+    spawn: sandboxSpec(cx, m, {
+      kind: "apply",
+      lines: [next.command],
+      dir: cx.checkout(m),
+      cacheWritable: checksMayWrite(cx, m),
+      log: logPath(cx, m, "verify", `verify-${n}-apply-${i + 1}.log`),
+      timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
+    }),
+  };
+}
+
+/** PIP-229: record the command's result; a failure is a repair round like a red check. */
+async function applyEnd(cx: Ctx, m: Mission, end: ChildEnd, log: string): Promise<Progress> {
+  const list = data(m).plan?.apply ?? [];
+  const i = data(m).applyAt ?? 0;
+  const cmd = list[i]!;
+  const code = end.timedOut ? 124 : end.code;
+  const run = {
+    command: cmd.command,
+    why: cmd.why,
+    code,
+    secs: Math.round(end.runMs / 1000),
+    tail: tail(log, 2000).split("\n").slice(-20).join("\n"),
+  };
+  const applied = [...(data(m).applied ?? []), run];
+  if (code !== 0) {
+    const env = classifyRun(log);
+    if (env) throw new EnvError(env.kind, env.why);
+    return failed(cx, cx.record(m, "apply", {}, { applied }), `Applying \`${cmd.command}\` failed.`, log);
+  }
+  return applyNext(cx, cx.record(m, "apply", {}, { applied, applyAt: i + 1 }));
+}
+
+/** The options of one setup pass (PIP-214): its log is `verify-<n>-setup<suffix>.log`. */
+function setupPass(cx: Ctx, m: Mission, lines: string[], suffix: string): PassOpts {
+  const n = data(m).n?.verify ?? 1;
+  return {
+    kind: "setup",
+    dir: cx.checkout(m),
+    lines,
+    log: logPath(cx, m, "verify", `verify-${n}-setup${suffix}.log`),
+    timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
+  };
+}
+
+/** PIP-212..214: the secret pass ended: nothing copied on a hit, then pass 2 when a manifest changed. */
+async function secretEnded(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
+  const r = await endSecretPass(cx, m, end, cx.checkout(m));
+  if ("done" in r) return r;
+  if (r.failed) {
+    const env = classifyRun(r.log);
+    if (env) throw new EnvError(env.kind, env.why);
+    return failed(cx, m, "The repo's setup failed.", r.log);
+  }
+  if (r.open.length > 0) {
+    const files = await repoFiles(cx, m);
+    return openPass(cx, cx.record(m, "setup-open"), setupPass(cx, m, files.verifying.setup, "-open"));
+  }
+  return checks(cx, cx.record(m, "checks"));
+}
+
 async function checks(cx: Ctx, m: Mission): Promise<Progress> {
-  const lines = await runLines(cx, m);
+  // PIP-167: a merge made by code runs the repo's full checks, not the fast subset.
+  const lines = data(m).mech ? (await repoFiles(cx, m)).verifying.checks : await runLines(cx, m);
   const n = data(m).n?.verify ?? 1;
   if (lines.length === 0) return { done: ok({ why: "no local checks: CI runs the suite" }) };
   return {
@@ -163,7 +334,6 @@ async function checks(cx: Ctx, m: Mission): Promise<Progress> {
       kind: "checks",
       lines,
       dir: cx.checkout(m),
-      network: false,
       cacheWritable: checksMayWrite(cx, m),
       log: logPath(cx, m, "verify", `verify-${n}.log`),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000 * Math.max(1, lines.length),
@@ -182,7 +352,6 @@ async function shots(cx: Ctx, m: Mission): Promise<Progress> {
       kind: "shots",
       lines: [files.verifying.screenshots!],
       dir: cx.checkout(m),
-      network: false,
       cacheWritable: checksMayWrite(cx, m),
       log: logPath(cx, m, "verify", `shots-${n}.log`),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
@@ -191,13 +360,107 @@ async function shots(cx: Ctx, m: Mission): Promise<Progress> {
   };
 }
 
-/** A red verify: a repair round, or after the repairs `checks red`. */
-function failed(cx: Ctx, m: Mission, what: string, log: string): Progress {
-  void cx;
-  if (m.repairs >= MAX_REPAIRS)
-    return { done: wait("checks red", `Still failing after ${MAX_REPAIRS} fix attempts: ${what}`) };
+/**
+ * PIP-167, PIP-169: a merge made by code that didn't pass is thrown away (it was never pushed) and the
+ * worker's conflict round runs; the failed attempt is not a round or a repair.
+ */
+async function dropMechanical(cx: Ctx, m: Mission, why: string): Promise<Progress> {
+  await coGit(cx, m, ["reset", "--hard", "--quiet", data(m).mech!.ours]);
+  cx.log(`${m.intent}: the merge made by code is dropped: ${why}`);
   return {
-    done: red(what, {
+    done: red(`the merge made by code is dropped (${why}); the worker resolves the conflict`, {
+      data: {
+        mech: undefined,
+        mechFailed: true,
+        repair: { what: "The PR conflicts with its base branch.", details: "", kind: "conflict" },
+      },
+    }),
+  };
+}
+
+/** PIP-169: the short review of the merge commit alone (its diff against the PR head before the merge). */
+async function mergeReview(cx: Ctx, m: Mission): Promise<Progress> {
+  const mech = data(m).mech!;
+  const intent = await intentOf(cx, m);
+  return spawnRun(cx, m, {
+    kind: "review",
+    agent: "merge-review",
+    step: "merge-review",
+    stage: "verify",
+    prompt: render("merge-review", {
+      intent: intentData(intent.text),
+      diff_cmd: `git diff ${mech.ours} HEAD`,
+      resolved: mech.notes.map((n) => `- ${n}`).join("\n"),
+    }),
+    files: await repoFiles(cx, m),
+    intent,
+  });
+}
+
+async function mergeReviewEnd(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
+  const mech = data(m).mech!;
+  const r = ended(cx, m, "review", end, (v) => parseResult("merge_review", v));
+  if (!r.ok) {
+    // A review that can't finish is no yes: the worker takes the conflict as before.
+    if ("done" in r.progress && r.progress.done.event === "wait")
+      return dropMechanical(cx, m, "its review didn't finish");
+    return r.progress;
+  }
+  const v = r.value;
+  const round = data(m).n?.review ?? 1;
+  const plain = v.summary.trim();
+  const lost = v.lost.map((l) => `- \`${l.file}\`: ${l.what}`).join("\n");
+  await note(
+    cx,
+    m,
+    "Verify",
+    round,
+    // PIP-220: the verdict and summary are the people part; the lost files are agent context.
+    twoPartOr(
+      `**Merge review:** ${v.kept_both ? "both sides kept" : "a side was lost, so the worker resolves the conflict"}\n\n${plain}`,
+      lost,
+    ),
+  );
+  if (!v.kept_both) return dropMechanical(cx, m, "the merge review found a side lost");
+  return { done: ok({ why: "the merge kept both sides", data: { mech: { ...mech, reviewed: true } } }) };
+}
+
+const FAILING = /^\s*(?:[×✗✖]|FAIL\b|not ok\b|error(?:\[| TS\d+|:)|.*\b(?:AssertionError|panicked at)\b)/;
+
+/**
+ * What failed, for a person (PIP-23): up to three lines of the log that name a failing test or error, else its
+ * last line; colour codes removed, each cut to 100 characters. Empty when the log says nothing.
+ */
+export function failingLines(log: string): string {
+  const lines = log
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: strips terminal colour codes.
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("$ "));
+  const hits = [...new Set(lines.filter((l) => FAILING.test(l)))];
+  const picked = hits.length ? hits.slice(0, 3) : lines.slice(-1);
+  const more = hits.length > 3 ? ` (and ${hits.length - 3} more)` : "";
+  return picked.map((l) => (l.length > 100 ? `${l.slice(0, 99)}…` : l)).join("; ") + more;
+}
+
+/** A red verify: a repair round, or after the repairs `checks red`. */
+async function failed(cx: Ctx, m: Mission, what: string, log: string): Promise<Progress> {
+  if (data(m).mech) return dropMechanical(cx, m, `${what.replace(/\.$/, "").toLowerCase()}`);
+  // The owner reads which test or error it was, not only that something failed.
+  const which = failingLines(log);
+  const said = which ? `${what.replace(/\.$/, "")}: ${which}` : what;
+  if (m.repairs >= MAX_REPAIRS) {
+    // PIP-217: a run of a long build whose checks stay red after the repairs is no progress.
+    const b = data(m).build;
+    const why = `Still failing after ${MAX_REPAIRS} fix attempts: ${said}`;
+    if (b && b.stepsTotal !== undefined && (b.stepsDone ?? 0) < b.stepsTotal) {
+      return { done: wait("checks red", why, { data: { build: { ...b, stalled: (b.stalled ?? 0) + 1 } } }) };
+    }
+    return { done: wait("checks red", why) };
+  }
+  return {
+    done: red(said, {
       set: { repairs: m.repairs + 1 },
       data: {
         repair: { what, details: tail(log), kind: "verify" },

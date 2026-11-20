@@ -53,7 +53,7 @@ test("ship: adapters answer the same questions", () => {
         ],
       ]),
     );
-  for (const kind of ["github", "command"]) {
+  for (const kind of ["github", "gitlab", "command"]) {
     const a = adapterOf({
       cx: { repo: () => ({ github: "owner/web" }) } as unknown as Ctx,
       m: {} as Mission,

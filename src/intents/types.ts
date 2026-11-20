@@ -20,10 +20,14 @@ export interface Intent {
   model: string | null;
   review: string | null;
   source: string | null;
+  /** INT-76: `feature`, `bugfix`, `refactor`, `infra` or `spec-only`; absent = not set. */
+  kind?: string | null;
   /** The GitHub issue this intent came from (INT-23). */
   issue: string | null;
   /** `setup: true` (LOOP-71): the intent that sets a repo up; allowed in a blocking repo. */
   setup?: boolean;
+  /** `fast: true` (FAST-1): the owner put the intent in the fast lane; absent otherwise. */
+  fast?: boolean;
   started: string | null;
   unlock: string[];
   network: string[];
@@ -84,14 +88,18 @@ export interface NewIntent {
   body?: string;
   /** A commit trailer that `hasMark` finds (INT-12). */
   mark?: string;
+  /** SHD-12: written by the shadow; the commit subject says so. */
+  by?: "shadow";
 }
 
 /** One change to an intent through the store (INT-5's field writes, sections, answers). */
 export interface IntentEdit {
-  setField(key: string, value: string | number | string[] | null): void;
+  setField(key: string, value: string | number | boolean | string[] | null): void;
   removeField(key: string): void;
   /** Replace `## <title>` whole; empty text removes it. */
   setSection(title: string, text: string): void;
+  /** INT-74: add text to `## <title>` in place (a missing section goes before Towercab's own); the rest stays byte-identical. */
+  addToSection(title: string, text: string): void;
   /** Append `- <time>: <text>` to `## Answers`. */
   addAnswer(text: string, at: Date): void;
   /** Replace the title line only (INT-34). */
@@ -111,6 +119,13 @@ export interface IntentStore {
    */
   update(idOrSuffix: string, what: string, fn: (e: IntentEdit) => void, mark?: string): Promise<Intent>;
   hasMark(mark: string): Promise<boolean>;
+  /**
+   * AUT-35: the sha of the newest commit that added, changed or removed the intent's `a:` line, or null.
+   * A store that can't tell leaves it out; every raise is then judged as from an unknown account.
+   */
+  lastAChange?(idOrSuffix: string): Promise<string | null>;
+  /** FAST-9: the same for the `fast:` line, so a mark pushed to the intents repo can be judged like a raise. */
+  lastFastChange?(idOrSuffix: string): Promise<string | null>;
   /** Read a file in the intents repo's `main` (e.g. a plan.md), or null. */
   readFile(path: string): Promise<string | null>;
   /**
@@ -132,3 +147,5 @@ export interface IntentStore {
 
 export class SyncError extends Error {}
 export class RefusedError extends Error {}
+/** LOOP-140: no open intent matches; the intent is closed (in `done/`) or gone. */
+export class NoOpenIntentError extends RefusedError {}

@@ -1,6 +1,6 @@
 # Intents
 
-**Status:** Live: INT-1..44, INT-51..53, INT-60..68 · **Prefix:** INT
+**Status:** Live: INT-1..44, INT-51..53, INT-60..68, INT-71..74, INT-76..77 · **Prefix:** INT
 
 ## Purpose
 
@@ -425,7 +425,6 @@ live, and when its work stops for good its line goes.
   retries the entry on the next pass; any other refusal (a symlink, bytes that aren't UTF-8) is
   logged and the mission moves on.
 - Verified by: `features: a picked intent gets an in-progress line, other lines stay byte-identical`, `features: done marks the line live, keeping the owner's wording`, `features: a dropped intent's line is removed`, `features: the loop tracks an intent from pick to done`, `features: a dropped intent's line goes`, `features: an unreadable feature list doesn't hold a mission`
-
 ### INT-39 · Writing the list from the repo
 
 When a repo has no list of its own yet, Towercab reads the repo's README and specs once and writes
@@ -679,6 +678,74 @@ The owner can write how hard an intent is checked and reviewed in the intent fil
 - Optional front matter field `intensity`: one of `light`, `standard`, `thorough` (any case). It sets the level of both the checks and the review of that intent ([PIP-187](pipeline.md)..[PIP-191](pipeline.md)). Without it Towercab picks the level (PIP-189).
 - Any other value, or a non-string, makes the file unreadable (INT-11) with the reason `intensity must be light, standard or thorough`. The field is read and written like the other owner fields: edited with `setField`/`removeField`, other lines byte-identical.
 - Verified by: `intents: intensity is read from the front matter`, `intents: a wrong intensity makes the file unreadable`
+
+### INT-71 · One writer for a new intent
+
+The page and `towercab add` create an intent through the same function, and what it writes is what a hand-written intent would be.
+
+- One function (`createIntent`, `src/intents/create.ts`) takes `{repo, title, u?, i?, a?, problem?, outcome?, affected?, constraints?, questions?}` and writes `intents/<id>-<slug>/intent.md` with the ID and slug of INT-3. Front matter: `repo`, then `u`, `i`, `a` only when given, `source: me`, `started` (now, local offset), as INT-2 describes for `add`; a score left at its default is not written. The body is a blank line, `# Intent: <title>`, then one `## <section>` for each text that is not blank, in the template's order (`Problem`, `Proposed outcome`, `Affected users and systems`, `Constraints`, `Open questions`); the text is kept as typed.
+- The caller says who writes: `mode: "direct"` for the owner and for a maintainer of the repo (with `[auth]`, USR-5; without it, the one owner), `mode: "proposal"` for a contributor. A direct write is one commit to `main` of the intents repo, pushed like any edit of the owner's (INT-4, INT-24 replay on a rejected push); the generated views (INT-6) follow as they do for a hand-written intent. A failed push leaves no folder behind and reports the reason.
+- A proposal writes the same file with `source: proposal` instead of `source: me`, and it does not reach `main`: it goes on a branch `proposal/<id>` in Towercab's own clone, opened as the App's pull request `docs(intents): add <id> <title>` (INT-23's way, with its ID rule: handed out against `main`'s folders and the IDs of open proposal PRs). The body names the contributor's login and says that merging accepts it and closing it says no. A maintainer accepts or closes it as INT-51..53 say; Towercab never merges it. A proposal's `a` is at most 4 (AUT-13). A step re-run after a crash finds the PR by its branch and opens no second one.
+- `towercab add "<repo>: <title>" [uN] [iN] [aN]` calls this function with `mode: "direct"` and no sections and prints what INT-2 says; it is no longer a second writer. A later store for intents (an open intent PR, "Intents in a database for the hosted service") changes this function only.
+- Verified by: `intents: createIntent writes the same file as a hand-written intent`, `intents: createIntent writes only the sections given`, `intents: createIntent leaves default scores out`, `intents: createIntent commits to main and pushes`, `intents: a failed push leaves no folder`, `intents: add goes through createIntent`, `intents: a contributor's intent is a proposal PR with source proposal`, `intents: a proposal never reaches main before it is merged`, `intents: a proposal's autonomy is capped at a4`, `intents: a crash before the PR comment opens no second proposal`
+
+### INT-72 · An intent is checked before it is written
+
+What the owner is about to write is checked as written: the repo must be one of Towercab's, the title is never rewritten, and the scores must be valid.
+
+- `repo` must be a configured repo; `u`, `i` 1–5, `a` 0–5 (0–4 for a proposal, INT-71); the title is one line of 1–100 characters with no control characters, `<`, `>` or backticks. A bad value is refused with the reason and nothing is written. The title is never cleaned or rewritten here (INT-36's `plainLine` is for agents only). A section is at most 20,000 characters.
+- A title outside INT-33's naming rule (`titleProblem`: fewer than 4 or more than 20 words) is allowed: it is only pointed out by the overlap check (INT-73) as a note, and the owner decides.
+- Verified by: `intents: createIntent refuses an unknown repo`, `intents: createIntent refuses a bad score`, `intents: createIntent refuses a title with markup or two lines`, `intents: createIntent keeps a title that breaks the naming rule`
+
+### INT-73 · The overlap check
+
+An agent that only reads compares the new intent with the existing ones and says which overlap and how.
+
+- `checkOverlap(draft)` runs a read-only agent (`agents/overlap.md`, no tools, no network, no write access). It is given the draft (repo, title, sections) and, inline, the intents of `main` that are open, parked (PRI-5), done or dropped (id, repo, title, stage, the first 600 characters of the Problem), and the open pull requests of the intents repo that add an intent (as `PR#<number>`: the intent's repo and title as INT-51 reads them; the pull request's text is not read). Unreadable intents (INT-11) are left out. With `[auth]` the bundle holds only intents and proposals of repos where the person has a role (USR-5), so a contributor's check never shows another repo's titles. The draft and every intent text are given as data in a fenced block, with the instruction that nothing inside them is an order; the agent has no tools, and its output is checked against the shape below, so text in an intent cannot make it act.
+- Result: `{matches: [{kind: "open"|"parked"|"done"|"dropped"|"pr", ref, title, how}], titleNote?}`, at most 5 matches, strongest first; `how` is one plain line (`plainLine`, at most 160) on how the two overlap. A `ref` that is not in what the agent was given is dropped. `titleNote` is set only when the title breaks the naming rule (INT-33) and says so in one line, without a replacement title.
+- A read that fails (the store, GitHub) or an agent run that fails, times out (120 s) or returns something that is not the shape above gives the error `The overlap check failed: <reason>`; the callers say the check was skipped if the owner goes on (UI-215, LOOP-124). Nothing is written by the check.
+- The run's cost is recorded as a side run of kind `overlap` and counts in the day's spend (MET-29, outside any mission; LOOP-125). A run that fails after it cost something is recorded too.
+- Verified by: `overlap: matches name open, parked, done and pr intents with a line on how`, `overlap: a match outside the given intents is dropped`, `overlap: the title note never carries a new title`, `overlap: the agent gets no tools`, `overlap: a failed run is an error not an empty list`, `overlap: unreadable intents are not sent`, `overlap: at most five matches`, `overlap: a contributor's bundle holds only repos they have a role in`, `overlap: text inside an intent is sent as data`
+
+### INT-74 · Adding to an existing intent
+
+The owner can add what they wrote to an existing open or parked intent instead of creating a new one.
+
+- `addToIntent(id, draft)` appends each non-blank section of the draft to the same section of that intent's `intent.md`, after a blank line, creating the section at the end of the body when it is missing (before `## Towercab`, `## Answers` and `## Original title` when they exist). The title, repo and scores of the draft are ignored; the front matter and every other line stay byte-identical (`setField`'s rule, INT-24). It is one commit to `main`, pushed like INT-71.
+- Allowed only for an intent that is open (parked included) and still at design: its `stage` is `spec` (INT-2) and it has no mission, or its mission is at the design step. An intent that is past design (`stage` `plan` or `code`, or a mission beyond design), done, dropped or unreadable, or one that is only a pull request, is refused with the reason and nothing is written. For one past design the text is `<id> is already past design, so new text would not change it. Write a new intent instead and link <id> in it.`, with `<id>` the old intent's ID (a link in the page). Nothing is saved and no mission is restarted.
+- `canAddTo(intent)` in code (not the agent) decides this, so the form and `add` offer "add to this one" only where it will be accepted. Only a direct writer (INT-71) may add: a contributor's proposal cannot edit an intent on `main`.
+- The addition is recorded in its commit as a trailer `Added-by: <who>` (the page: `<name> via page`; the command line: `owner via cli`), which is what the intent's history shows.
+- Verified by: `intents: addToIntent appends to the matching sections`, `intents: addToIntent creates a missing section before the Towercab sections`, `intents: addToIntent leaves the front matter alone`, `intents: addToIntent refuses a done intent`, `intents: addToIntent refuses an intent past design and says to write a new one`, `intents: addToIntent refuses a contributor`, `intents: an addition is on the timeline`
+
+### INT-75 · A covered intent keeps its feature line
+
+An intent closed as covered by another keeps its line in the feature list, marked with the intent that covered it.
+
+- Replaces INT-38's removal for this case only: entering `done` by `covered_by` (LOOP-156) keeps the line and appends `(covered by <id>)`, the ID linked as `DONE.md` links it (INT-6). The status is `live` once the covering intent's line is live and `in progress` before, and the line follows the covering line from then on. The owner's wording stays; only the status word and the mark change (INT-37).
+- When the covering intent is dropped or stopped (LOOP-158), the covered intent stays done and its line goes back to its own wording, without the covered mark, as `- [planned] <sentence> (not delivered) <!-- intent <id> -->`; it is not removed. If the covering intent later ends done again (a reopen that finishes), the line is marked covered again.
+- `reopen` (LOOP-157) removes the mark and restores the status the line had before the cover; a `(not delivered)` line becomes `in progress`. Entering `stopped` still removes the line (INT-38).
+- Verified by: `features: a covered intent keeps its line marked covered by the other`, `features: a covered line follows the covering intent's status`, `features: reopen restores the feature line`, `features: a dropped covering intent marks the line not delivered`
+
+### INT-76 · An intent has a kind
+
+An intent can say what kind of work it is, and the kind decides how much of the full path it goes through.
+
+- `kind` is an optional front-matter key, written by the owner or from the page (UI-283): `bugfix`, `refactor`, `infra` (infrastructure and configuration), `feature` or `spec-only` (a change that lives only in the specs and the repo's settings files, or only in steps the owner does). Any other value is a field error and the intent is unreadable (INT-11).
+- Missing means "not set": Towercab infers one (INT-77). A set `kind` is never changed by Towercab; it is only written with `setField` (INT-5), so the other lines stay byte-identical.
+- The paths of the kinds are PIP-228..PIP-232.
+- Verified by: `intents: kind is one of five values`, `intents: an unknown kind makes the intent unreadable`, `intents: setting kind keeps other lines`
+
+### INT-77 · Towercab infers the kind when the owner has not set it
+
+When an intent has no kind, Towercab reads it once and picks one, and the owner can see why and change it.
+
+- At the first step of the design stage, a mission whose intent has no `kind` runs the `kind` agent (no tools, `[agent].model`; its cost counts in the mission): it gets the intent text as data and returns `{kind, why}` (`why` is one plain line, at most 160 characters). The result is kept in the mission (`data.kind`, `data.kindWhy`); the intent file is not edited. A failed or invalid run counts as `feature`, the full path, and is noted on the timeline.
+- Doubt goes to the full path: the agent is told to answer `feature` unless the intent clearly fits a lighter kind. A `kind` set in the intent always wins over the inferred one, and a change from the page (UI-283) is written to the front matter and replaces it.
+- The code PR that builds this adds `agents/kind.md` and its row in the agents table of `pipeline.md` (PIP-76) together, since the spec check requires the table and the agent files to match.
+- A guessed kind takes effect at once: nothing waits for the owner to confirm it. The first PR of the mission (the plan PR for `bugfix`, `refactor` and `infra`, the spec PR for `spec-only`) says in plain words which kind was guessed and why, and that one reply switches it.
+- One reply switches the kind: the owner's comment on that PR `kind: <value>` (PIP-44, PIP-45), or the page (UI-283). Towercab writes `kind` to the intent (INT-76) and puts the mission on that kind's path (PIP-228) at the next stage that has not started; a mission already past a stage the new kind needs goes back to it (for `feature`, to design, PIP-231). A comment from anyone else is ignored as in PIP-44.
+- A guess never lowers the review: a change the risk agent judges high (PIP-96) is held for the owner at its gates whatever the kind, as PIP-232 says.
+- Verified by: `kind: the agent gets the intent as data and no tools`, `kind: a set kind skips the agent`, `kind: a failed run counts as feature and is noted`, `kind: the inferred kind and its reason are kept in the mission`, `kind: a guessed lighter kind takes effect without waiting`, `kind: the first PR says the guess and its reason`, `kind: one reply from the owner switches the kind and its path`
 
 ## Out of scope
 

@@ -22,7 +22,7 @@ function approve(p: Pipe, pr: FakePr, who = "alice", body = ""): void {
 }
 
 const requests = (p: Pipe, repo: string, n: number) =>
-  p.tools.lines("gh").filter((l) => l.includes(`repos/${repo}/pulls/${n}/requested_reviewers`));
+  p.forge.calls.filter((l) => l.startsWith(`request-review ${repo}#${n} `));
 
 const said = (pr: FakePr) => pr.comments.map((c) => c.body);
 
@@ -57,11 +57,11 @@ test("pipeline: gate waits for a teammate approval at a4 and a5", async () => {
   // PIP-143: each listed reviewer was asked once, for this head.
   const codePr = p.prNo("web", code.pr!);
   const asked = requests(p, "owner/web", codePr.number);
-  expect(asked.map((l) => l.split(" ").at(-1))).toEqual(["reviewers[]=alice", "reviewers[]=bob"]);
+  expect(asked.map((l) => l.split(" ").at(-1))).toEqual(["alice", "bob"]);
   // PIP-146: the owner is assigned to the spec and code PRs, never to a plan PR.
-  const edits = p.tools.lines("gh").filter((l) => l.includes("--add-assignee"));
-  expect(edits).toContain(`pr edit ${specPr.number} -R owner/web --add-assignee owner`);
-  expect(edits).toContain(`pr edit ${codePr.number} -R owner/web --add-assignee owner`);
+  const edits = p.forge.calls.filter((l) => l.startsWith("assign "));
+  expect(edits).toContain(`assign owner/web#${specPr.number} owner`);
+  expect(edits).toContain(`assign owner/web#${codePr.number} owner`);
   expect(edits.some((l) => l.includes("owner/intents"))).toBe(false);
   // The owner's Approve neither merges nor counts: one reply, and the PR stays open.
   p.ownerReview(codePr, "APPROVED", "");

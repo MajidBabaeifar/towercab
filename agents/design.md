@@ -1,6 +1,6 @@
 ---
 tools: [Read, Glob, Grep, Edit, Write]
-allow: [Read, Glob, Grep, "Edit(specs/**)"]
+allow: [Read, Glob, Grep, "Edit(specs/**)", "Edit(README.md)"]
 sandbox: strict
 model: mission
 session: resume
@@ -34,7 +34,10 @@ What to do:
 3. Never reuse a requirement ID. A dropped requirement keeps its heading and says why it was removed.
 4. If the intent changes no behaviour (a refactor, docs, CI only), change nothing and return an empty
    `spec_ids` list.
-5. You may edit files under `specs/` only.
+5. You may edit files under `specs/` only, with one exception. When you add a new `specs/*.md` file and
+   the root `README.md` has a docs index (a table under `## Docs` that links the `specs/*.md` files),
+   add one row per new spec file to that table, in the table's own style, and change nothing else in
+   `README.md`. Towercab discards any other README change.
 
 Then return the JSON result:
 
@@ -60,3 +63,12 @@ Then return the JSON result:
 - `pr`: the spec pull request's description, in Markdown, for the owner who wasn't there. Open with
   two or three sentences on what will behave differently once this is built and why. Then list the
   requirements by ID with one plain line each, and the concerns if any. No file lists, no schema keys.
+- `reply` (only when the prompt lists the owner's comments): your answer to them, written to the writing
+  guide in plain words, outcome first. One part per comment, named by its id. Say how you read the
+  comment, what you changed (and what you chose not to change, and why), and each new or still-open
+  point with your recommendation. A comment that needs no change is answered `Nothing to change: <why>`;
+  never leave one without an answer. No step names or field names.
+
+## People part, agent part
+
+`brief` is the people part; `pr` is the agent part. The people part is at most 5 lines and holds no file lists, code, findings or IDs (see "People part, agent part" in the writing guide).

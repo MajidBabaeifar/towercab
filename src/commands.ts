@@ -2,18 +2,35 @@
 // the loop applies it on its next pass, or the CLI applies it itself when no loop runs.
 
 import { ownerOnly, ownerOnlyLine } from "./autonomy.ts";
+import { levelNow } from "./autonomy-change.ts";
 import type { Db } from "./db.ts";
+import { liftFreeze } from "./freeze.ts";
 import { localTime } from "./intents/intent.ts";
-import type { IntentStore } from "./intents/types.ts";
-import { type ApplyCtx, apply, exitsOf, waitKey } from "./machine.ts";
-import { dataOf, type Mission, patchData, unfinishedFor } from "./mission.ts";
+import type { Intent, IntentStore } from "./intents/types.ts";
+import { isKind, kindChangeRefusal, kindOf, WORK_KINDS } from "./kind.ts";
+import { type ApplyCtx, apply, exitsOf, listExits, wait, waitKey } from "./machine.ts";
+import { dataOf, forIntent, type Mission, patchData, unfinishedFor } from "./mission.ts";
+import { partsOf } from "./parts.ts";
 import { parseAllow, readingReply, reverseRefusals } from "./pipeline/access.ts";
 import type { PipeData } from "./pipeline/common.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
 import { recheck } from "./risk.ts";
+import { changeScores, parseScoreWords, raiseToFull } from "./scores.ts";
 import { checklist, type OwnerStep } from "./steps.ts";
 
-export type CommandName = "answer" | "retry" | "drop" | "pause" | "resume" | "start" | "done" | "steps";
+export type CommandName =
+  | "answer"
+  | "retry"
+  | "drop"
+  | "pause"
+  | "resume"
+  | "start"
+  | "done"
+  | "steps"
+  | "score"
+  | "boost"
+  | "unfreeze"
+  | "kind";
 
 export interface CommandRow {
   id: number;
@@ -59,6 +76,8 @@ export interface CommandCtx {
   store: IntentStore;
   applyCtx: ApplyCtx;
   now: Date;
+  /** `[intents].cutoff` (PRI-5), to say whether a score change parks the intent; default 7. */
+  cutoff?: number;
 }
 
 /**
@@ -101,6 +120,27 @@ export function paused(db: Db): boolean {
   return db.meta("paused") === "1";
 }
 
+/** LOOP-114: `pause --now` was asked and the runs are still being stopped. */
+export function pausedNow(db: Db): boolean {
+  return db.meta("paused_now") === "1";
+}
+
+/** LOOP-113: the runs going now, whichever mission they belong to. */
+export function runningSteps(db: Db): number {
+  return (
+    db.get<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM missions WHERE child_pid IS NOT NULL AND stage NOT IN ('done','stopped','unverified')",
+    )?.n ?? 0
+  );
+}
+
+/** LOOP-113, LOOP-114: the words after "paused" while runs are going; empty when none. */
+export function pausedSuffix(db: Db): string {
+  const n = runningSteps(db);
+  if (n === 0) return "";
+  return pausedNow(db) ? `stopping ${n} running steps` : `${n} running steps finishing`;
+}
+
 /** SHD-22: whether one intent is paused (`pause <id>`): no further stage starts until it is resumed. */
 export function intentPaused(db: Db, intent: string): boolean {
   return db.meta(`paused:${intent}`) === "1";
@@ -115,6 +155,9 @@ export const OWNER_ONLY_COMMANDS: readonly CommandName[] = [
   "retry",
   "steps",
   "resume",
+  "score",
+  "unfreeze",
+  "kind",
 ];
 
 /** An ignored reply or command noted on an a0 intent (AUT-32, AUT-33). */
@@ -131,6 +174,33 @@ export function noteIgnored(db: Db, intent: string, key: string, text: string, n
   return true;
 }
 
+/** PIP-185, PIP-186: a comment under the owner's login that an agent marked. */
+export interface AgentCommentNote {
+  agent: string;
+  url: string;
+  /** Epoch seconds. */
+  at: number;
+  excerpt: string;
+  /** Whether the intent acted on it (false at a0). */
+  actedOn: boolean;
+}
+
+/** PIP-185: record the agent's comment once per `key` (the comment's id). */
+export function recordAgentComment(db: Db, intent: string, key: string, c: AgentCommentNote): boolean {
+  const k = `agentcomment:${intent}:${key}`;
+  if (db.meta(k) !== null) return false;
+  db.setMeta(k, JSON.stringify(c));
+  return true;
+}
+
+/** PIP-186: the agent comments recorded on an intent, oldest first. */
+export function agentCommentNotes(db: Db, intent: string): AgentCommentNote[] {
+  return db
+    .all<{ value: string }>("SELECT value FROM meta WHERE key LIKE ? ESCAPE '\\'", `agentcomment:${intent}:%`)
+    .map((r) => JSON.parse(r.value) as AgentCommentNote)
+    .sort((a, b) => a.at - b.at);
+}
+
 /** The notes of ignored replies on an intent, oldest first. */
 export function ignoredNotes(db: Db, intent: string): IgnoredNote[] {
   return db
@@ -143,10 +213,32 @@ export function ignoredNotes(db: Db, intent: string): IgnoredNote[] {
 export async function applyCommand(cx: CommandCtx, row: CommandRow): Promise<string> {
   let result: string;
   try {
+    // AUT-35: no command changes autonomy (the table refuses the name); a row that claims to is dropped and noted.
+    if ((row.name as string) === "autonomy") {
+      noteIgnored(
+        cx.db,
+        row.arg || "-",
+        `command:${row.id}`,
+        `ignored "autonomy" from the ${row.source}: only you can raise autonomy`,
+        cx.now.getTime() / 1000,
+      );
+      throw new Error("only you can raise autonomy: use GitHub or the page");
+    }
+    // LOOP-134: Boost raises autonomy, so like a raise it counts only from the page (AUT-35).
+    if (row.name === "boost" && row.source !== "ui") {
+      noteIgnored(
+        cx.db,
+        row.arg || "-",
+        `command:${row.id}`,
+        `ignored "boost" from the ${row.source}: only you can raise autonomy`,
+        cx.now.getTime() / 1000,
+      );
+      throw new Error("only you can raise autonomy: use the page");
+    }
     // AUT-33: only the page counts for an a0 intent; a row from anywhere else is dropped and noted.
     if (row.source !== "ui" && row.arg !== "" && OWNER_ONLY_COMMANDS.includes(row.name)) {
       const intent = await cx.store.get(row.arg).catch(() => null);
-      if (intent && ownerOnly(intent.a, unfinishedFor(cx.db, intent.id)?.a_at_pick ?? null)) {
+      if (intent && ownerOnly(levelNow(cx.db, intent))) {
         const at = cx.now.getTime() / 1000;
         noteIgnored(
           cx.db,
@@ -177,6 +269,24 @@ export async function applyPending(cx: CommandCtx): Promise<{ id: number; result
   return out;
 }
 
+/** LOOP-63: mark an intent to start over the limits; refused when it is done, started or its repo is not ready. */
+function startIntent(db: Db, intent: Intent): void {
+  if (intent.stage === "dropped") throw new Error(`${intent.id} is done or dropped`);
+  if (unfinishedFor(db, intent.id) || db.meta(`start:${intent.id}`) !== null) {
+    throw new Error(`${intent.id} has already started`);
+  }
+  // LOOP-70: a blocking repo starts nothing but its setup intent.
+  const ready = parseStored(db.meta(`readiness:${intent.repo}`))?.readiness;
+  if (ready?.blocks && intent.setup !== true) {
+    throw new Error(
+      `${intent.repo} is not ready: ${missing(ready)
+        .map((i) => i.item)
+        .join(", ")}`,
+    );
+  }
+  db.setMeta(`start:${intent.id}`, "1");
+}
+
 async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
   const { db, store } = cx;
   switch (row.name) {
@@ -190,6 +300,11 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       // UI-111: the time of the first pause, so the page can say since when.
       if (!paused(db)) db.setMeta("paused_at", cx.now.toISOString());
       db.setMeta("paused", "1");
+      // LOOP-114: `--now` also stops the runs going; the loop does it on its next pass and forgets the flag.
+      if (row.text === "now") {
+        db.setMeta("paused_now", "1");
+        return "paused now: nothing new starts, running steps are stopped, and GitHub is left alone until you resume";
+      }
       return "paused: nothing new starts, and merges wait until you resume";
     }
     case "resume": {
@@ -200,6 +315,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       }
       db.delMeta("paused");
       db.delMeta("paused_at");
+      db.delMeta("paused_now");
       const held = db.all<Mission>(
         "SELECT * FROM missions WHERE held = 1 AND stage NOT IN ('done','stopped','unverified')",
       );
@@ -214,7 +330,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       const m = unfinishedFor(db, intent.id);
       // PIP-141: `allow <path>` reverses a refusal, unless a test question is open (then it is its answer).
       const paths = parseAllow(row.text);
-      if (paths && m && !(dataOf(m) as PipeData).testAsk) {
+      if (paths && m && !(dataOf(m) as PipeData).testAsk && !(dataOf(m) as PipeData).accessAsk) {
         const r = reverseRefusals(dataOf(m) as PipeData, paths);
         await store.update(intent.id, "answer", (e) => e.addAnswer(row.text, cx.now));
         const said = readingReply({ allowed: r.moved, refused: [], undecided: [] });
@@ -232,7 +348,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       // LOOP-77: a reply to a wait that came back with nothing new would only land on it again.
       if (m?.stage === "blocked" && (dataOf(m) as PipeData).stuck) {
         throw new Error(
-          `${intent.id} is stuck at ${waitKey(m.waiting ?? "")}: a reply would land here again; use steps, done, retry or drop`,
+          `${intent.id} is stuck at ${waitKey(m.waiting ?? "")}: a reply would land here again; use ${listExits(exitsOf(m.waiting ?? "", true, (dataOf(m) as PipeData).delivery !== "steps"))}`,
         );
       }
       await store.update(intent.id, "answer", (e) => {
@@ -247,25 +363,84 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
     }
     case "start": {
       const intent = await store.get(row.arg);
-      if (intent.stage === "dropped") throw new Error(`${intent.id} is done or dropped`);
-      if (unfinishedFor(db, intent.id) || db.meta(`start:${intent.id}`) !== null) {
-        throw new Error(`${intent.id} has already started`);
-      }
-      // LOOP-70: a blocking repo starts nothing but its setup intent.
-      const ready = parseStored(db.meta(`readiness:${intent.repo}`))?.readiness;
-      if (ready?.blocks && intent.setup !== true) {
-        throw new Error(
-          `${intent.repo} is not ready: ${missing(ready)
-            .map((i) => i.item)
-            .join(", ")}`,
-        );
-      }
-      db.setMeta(`start:${intent.id}`, "1");
+      startIntent(db, intent);
       return `starting ${intent.id}: its design begins on the next pass, over the limit if need be`;
+    }
+    case "score": {
+      // LOOP-133, LOOP-135: `text` is `u=N i=N`, already checked by the CLI and the page.
+      const r = await changeScores(
+        { db, store, now: cx.now.getTime() / 1000, cutoff: cx.cutoff ?? 7 },
+        row.arg,
+        parseScoreWords(row.text.split(/\s+/).filter(Boolean)),
+        row.source,
+      );
+      return r.message;
+    }
+    case "kind": {
+      // UI-283, INT-77: the owner's kind goes into the intent, and a mission that has not passed its stage follows it.
+      const kind = row.text.trim();
+      if (!isKind(kind)) throw new Error(`"${kind}" is not a kind: use ${WORK_KINDS.join(", ")}`);
+      const intent = await store.get(row.arg);
+      const m = unfinishedFor(db, intent.id);
+      const refusal = m
+        ? kindChangeRefusal(kind, m.stage === "blocked" ? (m.from_stage ?? m.stage) : m.stage)
+        : null;
+      if (refusal) throw new Error(refusal);
+      if (intent.kind !== kind) await store.update(intent.id, "set kind", (e) => e.setField("kind", kind));
+      if (m && kindOf(null, dataOf(m) as PipeData) !== kind) {
+        apply(cx.applyCtx, m, {
+          event: "kind_routed",
+          why: "you set the kind",
+          data: { kind, kindBy: "owner", kindWhy: "You set it." },
+        });
+      }
+      return `${intent.id} is ${kind}`;
+    }
+    case "boost": {
+      // LOOP-134: a5 first (one commit), then what `start` does for an intent without a mission.
+      const { found } = await raiseToFull({ db, store, now: cx.now.getTime() / 1000 }, row.arg);
+      if (unfinishedFor(db, found.id) || db.meta(`start:${found.id}`) !== null) {
+        return `boosted ${found.id}: a5 from its next gate`;
+      }
+      if (intentPaused(db, found.id)) {
+        return `boosted ${found.id}: a5; it is paused, so it starts when you resume it`;
+      }
+      try {
+        startIntent(db, found);
+      } catch (e) {
+        return `boosted ${found.id}: a5; not started: ${(e as Error).message}`;
+      }
+      return `boosted ${found.id}: a5, and its design begins on the next pass, over the limit if need be`;
     }
     case "retry": {
       const intent = await store.get(row.arg);
       const m = unfinishedFor(db, intent.id);
+      // LOOP-81: an intent that ended unverified lands the parts not yet merged: they pass their checks
+      // again on their current PRs, then merge in order under a new freeze.
+      const last = forIntent(db, intent.id).at(-1);
+      if (!m && last?.stage === "unverified" && partsOf(last).some((p) => !p.merged)) {
+        db.tx(() => {
+          const parts = partsOf(last).map((p) =>
+            p.merged
+              ? p
+              : {
+                  ...p,
+                  stage: "ci" as const,
+                  step: "",
+                  atGate: false,
+                  waiting: null,
+                  data: { ...(p.data ?? {}), needsApproval: undefined },
+                },
+          );
+          db.run(
+            "UPDATE missions SET data = ? WHERE id = ?",
+            JSON.stringify({ ...dataOf(last), parts }),
+            last.id,
+          );
+          apply(cx.applyCtx, last, { event: "reland", why: "the owner asked to land the rest" });
+        });
+        return `landing the rest of ${intent.id}: its unmerged parts are checked again, then merged in order`;
+      }
       if (m) {
         const again = recheck(m);
         if (again) {
@@ -281,6 +456,37 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
         e.removeField("retry");
       });
       return `${intent.id} is queued for a fresh attempt`;
+    }
+    case "unfreeze": {
+      // LOOP-81: lift the freeze the intent holds; nothing freezes again until the owner asks.
+      const intent = await store.get(row.arg);
+      const m = unfinishedFor(db, intent.id);
+      const offered = m?.stage === "blocked" && exitsOf(m.waiting ?? "").some((e) => e.do === "unfreeze");
+      if (!m || !offered) throw new Error(`${intent.id} isn't at a freeze that can be lifted`);
+      const freed = liftFreeze(db, m.id);
+      const parts = partsOf(m);
+      if (parts.some((p) => p.merged)) {
+        // A part is merged: the intent ends as merged, not verified live, and nothing is rolled back.
+        const list = (merged: boolean) =>
+          parts
+            .filter((p) => p.merged === merged)
+            .map((p) => p.repo)
+            .join(", ") || "none";
+        apply(cx.applyCtx, m, {
+          event: "left_unverified",
+          why: `You lifted the freeze after a merge: merged, not verified live. Merged: ${list(true)}. Not merged: ${list(false)}.`,
+        });
+        db.run(
+          "INSERT OR IGNORE INTO outbox (key, mission, text, created) VALUES (?, ?, ?, ?)",
+          `unverified:${m.id}`,
+          m.id,
+          `${intent.id} is merged but not verified live. Merged: ${list(true)}. Not merged: ${list(false)}. Reply retry to freeze again and land the rest in order.`,
+          cx.now.getTime() / 1000,
+        );
+        return `unfroze ${intent.id}${freed.length ? ` (${freed.join(", ")})` : ""}: merged, not verified live`;
+      }
+      apply(cx.applyCtx, m, wait("freeze lifted", "You lifted the freeze; freeze again when you are ready."));
+      return `unfroze ${intent.id}${freed.length ? ` (${freed.join(", ")})` : ""}`;
     }
     case "done": {
       // LOOP-76: the owner did the work themselves; their note becomes a ticked step of the plan.

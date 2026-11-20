@@ -60,8 +60,8 @@ test("pipeline: red is rerun once", () => {
   // One rerun per head, before that head's red counts.
   expect(runs.size).toBe(3);
   expect(p.reruns).toEqual([...runs.values()]);
-  expect(p.tools.lines("gh").filter((l) => l.startsWith("run rerun"))).toEqual(
-    [...runs.values()].map((r) => `run rerun ${r} -R owner/web --failed`),
+  expect(p.forge.calls.filter((l) => l.startsWith("rerun "))).toEqual(
+    [...runs.values()].map((r) => `rerun owner/web ${r}`),
   );
 });
 
@@ -69,9 +69,7 @@ test("pipeline: later rounds only push", () => {
   const code = p.prs.filter((x) => x.repo === "owner/web" && x.head === `towercab/${ID}-${SLUG}`);
   expect(code).toHaveLength(1);
   expect(
-    p.tools
-      .lines("gh")
-      .filter((l) => l.startsWith("pr create") && l.includes(`--head towercab/${ID}-${SLUG} `)),
+    p.forge.calls.filter((l) => l.startsWith("open owner/web#") && l.endsWith(` towercab/${ID}-${SLUG}`)),
   ).toHaveLength(1);
   expect(m.pr).toBe(code[0]!.number);
   // Three rounds, three heads, all on the same PR; the last is the mission's.

@@ -3,21 +3,23 @@
 import { ensureClone, freshCheckout, git } from "../checkout.ts";
 import { isGitlab } from "../forge/types.ts";
 import { type Ctx, EnvError, type Handler, type Progress } from "../handlers.ts";
+import { isKind, type WorkKind } from "../kind.ts";
 import { ok, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { RepoError } from "../repo/files.ts";
 import { dropSetup, getSetup, putSetup, startSetup, WAIT_PREFIX } from "../setup-checks.ts";
-import { moveIds, parseIds } from "../specids.ts";
-import { asEnv, cloneOf, intentOf, prUrl, repoFiles, repoFilesWait } from "./common.ts";
-import { takenIds } from "./design.ts";
+import { moveIds, namedAsWritten, parseIds } from "../specids.ts";
+import { asEnv, cloneOf, data, intentOf, prUrl, repoFiles, repoFilesWait } from "./common.ts";
+import { IDS_UNCHECKED_BASE, takenIds } from "./design.ts";
 
 const prefixOf = (id: string) => id.slice(0, id.lastIndexOf("-"));
 
 /**
  * PIP-131: the IDs the intent reserves (`spec IDs:` in `## Proposed outcome`) are checked against the
- * base branch and the other open spec PRs. A prefix with a clash gets its whole reserved range moved to
- * the next free numbers, written back to the intent; no clash, or open PRs that can't be read (the design
- * checks again before the spec PR opens), leaves the intent untouched.
+ * base branch and the other open spec PRs. A prefix with a clash gets its reserved range moved to the next
+ * free numbers, written back to the intent; no clash, or open PRs that can't be read (the design checks
+ * again before the spec PR opens), leaves the intent untouched. IDs that are the intent's own (PIP-202) are
+ * never moved.
  */
 async function reserveIds(cx: Ctx, m: Mission): Promise<void> {
   const intent = await intentOf(cx, m);
@@ -28,11 +30,20 @@ async function reserveIds(cx: Ctx, m: Mission): Promise<void> {
   if (!reserved.length) return;
   const t = await takenIds(cx, m);
   if (t.unchecked !== null) return;
+  if (t.baseUnchecked !== null) {
+    cx.log(`${m.intent}: ${IDS_UNCHECKED_BASE}: ${t.baseUnchecked}`);
+    return;
+  }
   const used = new Set([...t.base, ...t.open.flatMap((p) => p.ids)]);
-  const clash = new Set(reserved.filter((id) => used.has(id)).map(prefixOf));
+  // PIP-202: an ID is the intent's own when its own spec PR wrote it, or the intent names it as already
+  // written; it is never moved. Merged PRs that can't be read leave only the intent's own words.
+  // PIP-210: wording that says a row exists makes the ID a reference, but only with a row on the base branch.
+  const worded = namedAsWritten(intent.sections.get("Proposed outcome") ?? "").filter((id) => t.base.has(id));
+  const own = new Set([...t.own, ...worded]);
+  const clash = new Set(reserved.filter((id) => used.has(id) && !own.has(id)).map(prefixOf));
   if (!clash.size) return;
-  const moving = reserved.filter((id) => clash.has(prefixOf(id)));
-  const map = moveIds(moving, [...used, ...reserved.filter((id) => !clash.has(prefixOf(id)))]);
+  const moving = reserved.filter((id) => clash.has(prefixOf(id)) && !own.has(id));
+  const map = moveIds(moving, [...used, ...reserved.filter((id) => !moving.includes(id))]);
   cx.record(m, "reserve", {}, { idsRenumbered: Object.fromEntries(map) });
   try {
     await cx.store.update(m.intent, "renumber spec IDs", (e) => e.replaceInBody(map));
@@ -82,6 +93,19 @@ async function settingUp(cx: Ctx, m: Mission): Promise<Progress> {
   return { done: wait("add CLAUDE.md verifying block", why) };
 }
 
+/** INT-77: the outcome that keeps a kind in the mission and sends it by that kind (PIP-228). */
+function routedBy(
+  kind: WorkKind,
+  by: "guess" | "owner",
+  why: string,
+  set: Record<string, string> = {},
+  extra: Record<string, unknown> = {},
+): Progress {
+  const d = { ...extra, kind, kindWhy: why, kindBy: by };
+  const lighter = kind === "bugfix" || kind === "refactor" || kind === "infra";
+  return { done: lighter ? { event: "kind_routed", set, data: d } : ok({ set, data: d }) };
+}
+
 export const pickHandler: Handler = {
   async step(cx: Ctx, m: Mission): Promise<Progress> {
     const repo = cx.repo(m);
@@ -91,8 +115,9 @@ export const pickHandler: Handler = {
     } catch (e) {
       throw e instanceof EnvError ? e : asEnv(e);
     }
+    let files: Awaited<ReturnType<typeof repoFiles>>;
     try {
-      await repoFiles(cx, m);
+      files = await repoFiles(cx, m);
     } catch (e) {
       // REPO-5: a repo with no checks gets them set up, not a question.
       if (e instanceof RepoError && e.kind === "noVerifying") return settingUp(cx, m);
@@ -101,12 +126,21 @@ export const pickHandler: Handler = {
       throw e;
     }
     // The repo has checks now: an ended record has done its work (waiting intents carry on without it).
-    const ended = getSetup(cx.db, repo.name);
-    if (ended && ["merged", "closed", "failed"].includes(ended.state)) dropSetup(cx.db, repo.name);
+    const record = getSetup(cx.db, repo.name);
+    if (record && ["merged", "closed", "failed"].includes(record.state)) dropSetup(cx.db, repo.name);
     await reserveIds(cx, m);
     const base = (await git(cx.tools, clone, ["rev-parse", `refs/remotes/origin/${repo.base}`])).trim();
     await freshCheckout(cx.tools, clone, cx.checkout(m), repo.base, m.branch);
-    return { done: ok({ set: { base_sha: base } }) };
+    const set = { base_sha: base };
+    // REPO-49: checks that came from the overlay stay this intent's, even if the repo gets its own later.
+    const pinned = files.sources?.checks === "overlay" ? { pinnedChecks: files.verifying } : {};
+    // INT-77: a kind the intent sets is the owner's and skips the agent; an earlier guess is kept.
+    const intent = await intentOf(cx, m);
+    if (isKind(intent.kind)) return routedBy(intent.kind, "owner", "", set, pinned);
+    const kept = data(m).kind;
+    if (isKind(kept)) return routedBy(kept, data(m).kindBy ?? "guess", data(m).kindWhy ?? "", set, pinned);
+    // No kind yet: the design stage's first step asks the agent (a feature goes there anyway).
+    return { done: ok({ set, ...(Object.keys(pinned).length ? { data: pinned } : {}) }) };
   },
   async finish() {
     return { poll: 0 };

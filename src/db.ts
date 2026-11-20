@@ -18,6 +18,40 @@ const REPOS_V3 = REPOS.replace(
   ");",
 );
 
+/** SHD-15, SHD-19: the shadow's conversation and the log of what it did. */
+const SHADOW = `CREATE TABLE shadow_turns (id INTEGER PRIMARY KEY, update_id INTEGER UNIQUE, at REAL NOT NULL,
+  role TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'done', cost REAL NOT NULL DEFAULT 0,
+  folded INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE shadow_actions (id INTEGER PRIMARY KEY, at REAL NOT NULL, turn INTEGER, idx INTEGER NOT NULL DEFAULT 0,
+  action TEXT NOT NULL, intent TEXT NOT NULL DEFAULT '', pr INTEGER NOT NULL DEFAULT 0, outcome TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '', UNIQUE (turn, idx));`;
+
+/** LOOP-128: what the outbox keeps of a Telegram message, to edit it later; added by migration 8. */
+const OUTBOX_TG = `,
+  kind TEXT NOT NULL DEFAULT 'info', intent TEXT, wait TEXT, tg_message_id INTEGER, target TEXT, buttons TEXT,
+  ended_at REAL`;
+
+/** LOOP-126: the owner's Telegram updates, stored once before the offset moves past them. */
+const TELEGRAM = `CREATE TABLE telegram_updates (update_id INTEGER PRIMARY KEY, at REAL NOT NULL, data TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'new');`;
+
+/** TG-16: the one Telegram card of a mission (an attempt at an intent), its ping and what was last shown. */
+const CARDS = `CREATE TABLE tg_cards (mission INTEGER PRIMARY KEY, intent TEXT NOT NULL, message_id INTEGER,
+  text TEXT NOT NULL DEFAULT '', buttons TEXT, ping_id INTEGER, ping_wait TEXT,
+  final INTEGER NOT NULL DEFAULT 0, tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0);`;
+
+/** OBV-12: each observer run, and the proposals it opened (kept 90 days). */
+const OBSERVER = `CREATE TABLE observer_runs (id INTEGER PRIMARY KEY, trigger TEXT NOT NULL, started REAL NOT NULL,
+  ended REAL, cost REAL NOT NULL DEFAULT 0, outcome TEXT NOT NULL DEFAULT 'running',
+  findings INTEGER NOT NULL DEFAULT 0, proposals INTEGER NOT NULL DEFAULT 0, comments INTEGER NOT NULL DEFAULT 0,
+  dropped TEXT NOT NULL DEFAULT '[]', detail TEXT NOT NULL DEFAULT '{}');
+CREATE TABLE observer_proposals (pr INTEGER PRIMARY KEY, intent TEXT NOT NULL, run INTEGER NOT NULL, at REAL NOT NULL,
+  title TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '[]');`;
+
+/** LOOP-146: which destination (`telegram`, `webhook:<name>`) has which outbox row; `sent_at` 0 = dropped. */
+const OUTBOX_SENT = `CREATE TABLE outbox_sent (key TEXT NOT NULL, dest TEXT NOT NULL, sent_at REAL,
+  tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0, PRIMARY KEY (key, dest));`;
+
 /** LOOP-37 **Schema**, as written in specs/loop.md (a test compares them). */
 export const SCHEMA = `CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE missions (
@@ -38,16 +72,23 @@ CREATE UNIQUE INDEX missions_one_per_intent ON missions(intent) WHERE stage NOT 
 CREATE TABLE transitions (id INTEGER PRIMARY KEY, mission INTEGER NOT NULL REFERENCES missions(id),
   at REAL NOT NULL, from_stage TEXT NOT NULL, event TEXT NOT NULL, to_stage TEXT NOT NULL, why TEXT);
 CREATE TABLE commands (id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps')),
+  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost','unfreeze','kind')),
   arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
   created REAL NOT NULL, applied_at REAL, result TEXT);
 CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, created REAL NOT NULL,
-  sent_at REAL, tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0);
-${REPOS}`;
+  sent_at REAL, tries INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0${OUTBOX_TG});
+${REPOS}
+${SHADOW}
+${TELEGRAM}
+${CARDS}
+${OBSERVER}
+${OUTBOX_SENT}`;
 
 /** Migration i takes `user_version` from i to i+1. Later changes append. */
 export const MIGRATIONS: string[] = [
-  SCHEMA.replace("'resume','start','done','steps'", "'resume'").replace(`\n${REPOS}`, ""),
+  SCHEMA.replace("'resume','start','done','steps'", "'resume'")
+    .replace(OUTBOX_TG, "")
+    .replace(`\n${REPOS}\n${SHADOW}\n${TELEGRAM}\n${CARDS}\n${OBSERVER}\n${OUTBOX_SENT}`, ""),
   // 2: `start` joins the commands (LOOP-63); the CHECK can't be altered, so the table is rebuilt.
   `CREATE TABLE commands_new (id INTEGER PRIMARY KEY,
   name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start')),
@@ -73,13 +114,59 @@ ALTER TABLE commands_new RENAME TO commands;`,
   // 6: a repo can need a teammate's review (LOOP-83). Additive.
   `ALTER TABLE repos ADD COLUMN teammate_review INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE repos ADD COLUMN reviewers TEXT NOT NULL DEFAULT '';`,
+  // 7: the shadow's turns and actions (SHD-15, SHD-19). Additive; `IF NOT EXISTS` for a re-upgrade after a manual rollback.
+  SHADOW.replaceAll("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS "),
+  // 8: the outbox remembers Telegram messages so they can be edited, and the owner's updates are stored (LOOP-126, LOOP-128).
+  `ALTER TABLE outbox ADD COLUMN kind TEXT NOT NULL DEFAULT 'info';
+ALTER TABLE outbox ADD COLUMN intent TEXT;
+ALTER TABLE outbox ADD COLUMN wait TEXT;
+ALTER TABLE outbox ADD COLUMN tg_message_id INTEGER;
+ALTER TABLE outbox ADD COLUMN target TEXT;
+ALTER TABLE outbox ADD COLUMN buttons TEXT;
+ALTER TABLE outbox ADD COLUMN ended_at REAL;
+${TELEGRAM.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ")}`,
+  // 9: one Telegram card per mission (TG-16). Additive; `IF NOT EXISTS` for a re-upgrade after a manual rollback.
+  CARDS.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS "),
+  // 10: `score` and `boost` join the commands (LOOP-134, LOOP-135); the CHECK can't be altered, so the table is rebuilt.
+  `CREATE TABLE commands_new (id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost')),
+  arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
+  created REAL NOT NULL, applied_at REAL, result TEXT);
+INSERT INTO commands_new SELECT id, name, arg, text, source, created, applied_at, result FROM commands;
+DROP TABLE commands;
+ALTER TABLE commands_new RENAME TO commands;`,
+  // 11: the observer's runs and proposals (OBV-12). Additive; `IF NOT EXISTS` for a re-upgrade after a manual rollback.
+  OBSERVER.replaceAll("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS "),
+  // 12: `unfreeze` joins the commands (LOOP-81); the CHECK can't be altered, so the table is rebuilt.
+  `CREATE TABLE commands_new (id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost','unfreeze')),
+  arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
+  created REAL NOT NULL, applied_at REAL, result TEXT);
+INSERT INTO commands_new SELECT id, name, arg, text, source, created, applied_at, result FROM commands;
+DROP TABLE commands;
+ALTER TABLE commands_new RENAME TO commands;`,
+  // 13: which destination has which outbox row (LOOP-146). Additive; `IF NOT EXISTS` and `OR IGNORE` for a
+  // re-upgrade after a manual rollback. Telegram's history is seeded so nothing it sent is sent again.
+  `${OUTBOX_SENT.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ")}
+INSERT OR IGNORE INTO outbox_sent (key, dest, sent_at, tries, next_try)
+  SELECT key, 'telegram', sent_at, tries, next_try FROM outbox WHERE sent_at IS NOT NULL OR tries > 0;`,
+  // 14: `kind` joins the commands (UI-283); the CHECK can't be altered, so the table is rebuilt.
+  `CREATE TABLE commands_new (id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL CHECK (name IN ('answer','retry','drop','pause','resume','start','done','steps','score','boost','unfreeze','kind')),
+  arg TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
+  created REAL NOT NULL, applied_at REAL, result TEXT);
+INSERT INTO commands_new SELECT id, name, arg, text, source, created, applied_at, result FROM commands;
+DROP TABLE commands;
+ALTER TABLE commands_new RENAME TO commands;`,
 ];
 
 /**
  * Versions reached by migrations that only add (tables, columns, keys older code doesn't read): a
  * Towercab older than them can still use the database (LOOP-37).
  */
-export const ADDITIVE = new Set([3, 6]);
+export const ADDITIVE = new Set([3, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+// 10 and 12 only widen the CHECK on `commands` (same columns): older code reads the table as before, and a
+// `score`, `boost` or `unfreeze` row it doesn't know just gets an error result, so a rollback stays safe. 14 is the same for `kind`.
 
 /** The oldest Towercab (by its migration count) that can open a database at `version`. */
 export function compatibleFrom(version: number): number {
@@ -139,8 +226,11 @@ export class Db {
     }
     for (let i = v; i < MIGRATIONS.length; i++) {
       this.tx(() => {
-        // Migration 6 adds columns: after a manual rollback (LOOP-37) they are still there.
-        if (i !== 5 || !this.hasColumn("repos", "teammate_review")) this.sql.exec(MIGRATIONS[i]!);
+        // Migrations 6 and 8 add columns: after a manual rollback (LOOP-37) they are still there.
+        const there =
+          (i === 5 && this.hasColumn("repos", "teammate_review")) ||
+          (i === 7 && this.hasColumn("outbox", "ended_at"));
+        if (!there) this.sql.exec(MIGRATIONS[i]!);
         this.sql.exec(`PRAGMA user_version = ${i + 1}`);
         this.setMeta("compatible_from", String(compatibleFrom(i + 1)));
       });

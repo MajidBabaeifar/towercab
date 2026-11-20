@@ -11,7 +11,7 @@ import type {
   RepoSpendView,
 } from "../../../src/ui/view.ts";
 import { readSort, SORTS, type SortKey, sortLabel, sortRepos, writeSort } from "../board-sort.ts";
-import { ErrorNote, ReadinessChip, StateChip } from "../components.tsx";
+import { ErrorNote, FastBadge, ReadinessChip, StateChip } from "../components.tsx";
 import { ChevronDown } from "../icons.tsx";
 import { Link } from "../router.tsx";
 
@@ -46,13 +46,23 @@ function Card({ card }: { card: BoardCard }) {
   return (
     <li>
       <Link class="board-card" href={`/i/${card.intent}`}>
-        <span class="board-card-title">{card.title}</span>
+        <span class="board-card-title" title={card.title}>
+          {card.title}
+        </span>
+        <FastBadge text={card.fast} />
         <span class="board-card-foot">
           {/* The note goes beside the chip, so a narrow card wraps it instead of cutting it. */}
           <StateChip state={{ ...card.state, note: null }} small />
           {card.state.note ? <span class="meta">{card.state.note}</span> : null}
           {card.ship ? <span class={`board-ship board-ship-${card.ship.kind}`}>{card.ship.mark}</span> : null}
         </span>
+        {card.repoCount ? (
+          <span class="board-repos meta">
+            {card.repoCount} · {card.slowest}
+          </span>
+        ) : null}
+        {card.needsRepo ? <span class="board-needs-repo meta">{card.needsRepo} needs you</span> : null}
+        {card.freezeHold ? <span class="board-freeze-hold meta">{card.freezeHold}</span> : null}
       </Link>
     </li>
   );
@@ -82,6 +92,8 @@ function LaneHead({ repo, folded, onToggle }: { repo: BoardRepo; folded: boolean
         </Link>
       ) : null}
       {repo.fileError ? <span class="why file-notice">{repo.fileError}</span> : null}
+      {repo.overlayNotice ? <span class="why file-notice">{repo.overlayNotice}</span> : null}
+      {repo.frozen ? <span class="freeze-chip">{repo.frozen}</span> : null}
       <span class="meta">
         {repo.github ? <span class="mono">{repo.github} · </span> : null}
         {repo.open} open · {repo.done} done in the last 7 days
@@ -92,9 +104,9 @@ function LaneHead({ repo, folded, onToggle }: { repo: BoardRepo; folded: boolean
   );
 }
 
-// Narrow enough that ten columns, three of them empty, fit a 1280 px screen.
-const FULL = 144;
-const NARROW = 64;
+// UI-271: a station with cards is at least 180 px wide; an empty one is a narrow strip.
+const FULL = 180;
+const NARROW = 48;
 
 const EMPTY_LANE = "Nothing open, and nothing done in the last 7 days.";
 
@@ -211,7 +223,7 @@ export function BoardPage({ data }: { data: Data }) {
           {data.proposed ? (
             <>
               {" "}
-              <Link href="/#proposed">{data.proposed} proposed</Link>
+              <Link href="/">{data.proposed} proposed</Link>
             </>
           ) : null}
         </p>
@@ -243,6 +255,10 @@ export function BoardPage({ data }: { data: Data }) {
               {announce}
             </p>
           </div>
+          {/* UI-269: gaps most repos share, said once. */}
+          {data.shared.length ? (
+            <p class="board-shared">{data.shared.map((g) => `${g.count} repos: ${g.words}`).join(" · ")}</p>
+          ) : null}
           <Grid data={sorted} folded={folded} toggle={toggle} />
           <List data={sorted} folded={folded} toggle={toggle} />
         </>

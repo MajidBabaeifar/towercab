@@ -3,6 +3,7 @@
 
 import type { GitHub } from "../handlers.ts";
 import { parseIntent } from "../intents/intent.ts";
+import { type ObserverNote, observerNote } from "../observer/evidence.ts";
 import { check, type RunResult } from "../tools.ts";
 import { jsonStream } from "./prs.ts";
 
@@ -16,6 +17,8 @@ export interface ProposedIntent {
   source: string | null;
   /** LOOP-71: `setup: true`; absent for an ordinary intent. */
   setup?: true;
+  /** UI-243: an observer proposal's evidence and expected gain; absent for any other source. */
+  observer?: ObserverNote;
 }
 
 export interface ProposedPr {
@@ -85,6 +88,7 @@ export function classifyFiles(files: FileChange[]): Classified | null {
 export function parseProposed(text: string): { intent: ProposedIntent } | { error: string } {
   try {
     const i = parseIntent(text);
+    const note = i.source === "observer" ? observerNote(i.sections) : null;
     return {
       intent: {
         title: i.title,
@@ -94,6 +98,7 @@ export function parseProposed(text: string): { intent: ProposedIntent } | { erro
         a: i.a,
         source: i.source,
         ...(i.setup === true ? { setup: true as const } : {}),
+        ...(note ? { observer: note } : {}),
       },
     };
   } catch (e) {

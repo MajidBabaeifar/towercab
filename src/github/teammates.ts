@@ -3,10 +3,11 @@
 
 import { git } from "../checkout.ts";
 import type { RepoConfig } from "../config.ts";
+import type { Forge, PrState } from "../forge.ts";
 import type { GitHub } from "../handlers.ts";
 import { CODEOWNERS_PATHS, FILES_LIMIT, type TeamInput } from "../teammates.ts";
 import type { Tools } from "../tools.ts";
-import { jsonStream, type PrState } from "./prs.ts";
+import { jsonStream } from "./prs.ts";
 
 /** `CODEOWNERS` from the base branch (so a PR can't change its own owners); null when it can't be read. */
 export async function readCodeowners(gh: GitHub, github: string, base: string): Promise<string | null> {
@@ -103,9 +104,9 @@ export async function readRequired(gh: GitHub, github: string, base: string): Pr
   return required;
 }
 
-/** The rules' input for one PR: the setting, the PR and what GitHub says of its files and owners. */
+/** The rules' input for one PR: the setting, the PR and what the host says of its files and owners. */
 export async function readTeamInput(
-  gh: GitHub,
+  forge: Forge,
   repo: RepoConfig,
   github: string,
   n: number,
@@ -113,12 +114,12 @@ export async function readTeamInput(
   bot: string,
 ): Promise<TeamInput> {
   const [codeowners, files] = await Promise.all([
-    readCodeowners(gh, github, pr.base ?? repo.base),
-    readFiles(gh, github, n),
+    forge.codeowners(github, pr.base ?? repo.base),
+    forge.changedPaths(github, n),
   ]);
   return {
     listed: repo.reviewers ?? [],
-    me: gh.me,
+    me: forge.me,
     bot,
     author: pr.author ?? "",
     codeowners,
@@ -133,7 +134,7 @@ export async function readTeamInput(
  */
 export async function sameDiffCommits(o: {
   tools: Tools;
-  github: GitHub;
+  github: Pick<GitHub, "gitAuth">;
   repo: string;
   clone: string;
   base: string;

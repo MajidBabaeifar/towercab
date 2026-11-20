@@ -106,6 +106,8 @@ export function build(o: Record<string, unknown> = {}) {
     plan_changed: null,
     lower_a: null,
     lower_why: null,
+    steps_done: null,
+    handoff: null,
     ...o,
   };
 }

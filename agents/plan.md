@@ -30,7 +30,9 @@ What to do:
 
 1. Read the code the change touches, the specs above and `CLAUDE.md`.
 2. Decide the approach. Prefer the simplest change that meets every requirement and every
-   `Proposed outcome` bullet.
+   `Proposed outcome` bullet. A bullet that belongs to a later intent is deferred only by a line of its
+   own in the plan, in this exact form (a quoted outcome or its number from 1, and an existing intent
+   id): `defer "<outcome>" to <intent id>` or `defer <number> to <intent id>`. Loose wording defers nothing.
 3. Work out what access the build needs beyond reading and writing ordinary files in the repo:
    network domains (package registries, APIs, docs it must fetch) and protected paths (CI workflows,
    `CLAUDE.md`, `AGENTS.md`, `REVIEW.md`, `TOWERCAB.md`, `.claude/`, and paths listed in `TOWERCAB.md`). Ask only
@@ -46,6 +48,10 @@ What to do:
    naming the file or behaviour that makes it necessary. Don't list tests the build only adds to or
    expects to leave alone; a helper that only gets new exported functions, types or constants needs no
    entry. Asking for them now saves the worker from stopping to ask later.
+   A plan that adds an owner wait or a new question needs a `WAITS` entry and an `EXITS` entry in the
+   wait table of `src/machine.ts`. For every such wait or ask, put `src/machine.ts` in `access.paths`
+   with the `why` `wait table entries only`. If the plan also changes transitions or `apply`, give a
+   `why` that says so instead.
 
 Return the JSON result:
 
@@ -77,6 +83,9 @@ Return the JSON result:
   sentence. A step is anything the worker can't do: a secret, an apply on a server, an account or a
   setting on a platform. A step Towercab or CI can do is not one. Nothing needed: an empty list.
   Towercab lists the steps in `plan.md` and makes the owner tick them off.
+  A step that applies the repo's standard GitHub settings starts its text with `Apply the standard GitHub
+  settings`: the repo's page has an Apply button that does it with the owner's login, and ticks the step
+  once the settings are in place.
   A secret the change needs in a SOPS-encrypted file of a registered repo is a step with `secret`
   (otherwise `null`): `{repo, file, key, purpose, source, length, alphabet}`. `repo` is the repo's short
   name, `file` the path in it, `key` the name inside the file, `purpose` one sentence on what it is for.
@@ -94,3 +103,12 @@ Return the JSON result:
   (docs, CI or tests only), one sentence saying why. Leave it empty for any change a user could notice.
 - `e2e`: in a repo with e2e suites, `tests` (the e2e test files the build adds or changes) and
   `none_why` (empty, or why the change needs no e2e test). `null` in a repo without suites.
+- `reply` (only when the prompt lists the owner's comments): your answer to them, written to the writing
+  guide in plain words, outcome first. One part per comment, named by its id. Say how you read the
+  comment, what you changed in the plan (and what you chose not to change, and why), and each new or
+  still-open point with your recommendation. A comment that needs no change is answered
+  `Nothing to change: <why>`; never leave one without an answer. No step names or field names.
+
+## People part, agent part
+
+`brief` is the people part; `plan` is the agent part. The people part is at most 5 lines and holds no file lists, code, findings or IDs (see "People part, agent part" in the writing guide).

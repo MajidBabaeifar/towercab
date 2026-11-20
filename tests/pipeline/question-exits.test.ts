@@ -16,6 +16,8 @@ const BUILD = (options: unknown[]) => ({
   plan_changed: null,
   lower_a: null,
   lower_why: null,
+  steps_done: null,
+  handoff: null,
 });
 // biome-ignore lint/suspicious/noThenProperty: the spec's key; never awaited.
 const opt = (o: Record<string, unknown>) => ({ option: "a", then: "b", ...o });

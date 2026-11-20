@@ -53,6 +53,8 @@ export interface TopBar {
   /** One sentence under the health pill's hover. */
   healthNote: string;
   needs: number;
+  /** UI-244: of `needs`, the proposed intents; the rest are missions and intents waiting (`needs - proposed`). */
+  proposed: number;
   working: number;
   queued: number;
   /** "2 need you · 1 working · 3 queued". */
@@ -63,8 +65,13 @@ export interface TopBar {
   /** "of $20.00" when a daily budget is set. */
   budget: string | null;
   overBudget: boolean;
-  version: { commit: string; behind: string | null };
+  /** UI-256: spend against the budgets; `note` is the words that go with amber or red. */
+  budgetChip?: { text: string; level: "ok" | "amber" | "red"; note: string | null };
+  /** UI-278: `name` is the release tag or short commit; `release` is `<tag> available` on the release channel. */
+  version: { commit: string; name?: string; behind: string | null; release?: string | null };
   paused: boolean;
+  /** USR-5: what the person may do; absent without `[auth]`, where the one owner is a maintainer (UI-213). */
+  role?: "viewer" | "contributor" | "maintainer";
   /** No actions: the CLI serves the page without a loop (UI-2). */
   readOnly: boolean;
   /** A banner across the page, e.g. "Towercab isn't running". */
@@ -72,7 +79,71 @@ export interface TopBar {
 }
 
 export type ActionKey = "merge" | "pass" | "reply" | "retry" | "drop";
-export type CardKind = "spec" | "plan" | "code" | "question" | "blocked" | "release";
+export type CardKind = "spec" | "plan" | "code" | "question" | "blocked" | "release" | "autonomy";
+
+/** FAST-1, FAST-9: whether the intent is in the fast lane and whether the owner confirmed it. */
+export interface FastView {
+  on: boolean;
+  /** On and confirmed: its approvals pass as at a5. On and not confirmed: the page says `fast lane: waiting for your confirmation`. */
+  confirmed: boolean;
+  /** The service isn't running, so the page can't change anything. */
+  locked: boolean;
+  /** FAST-10: `Fast lane · build, 3 of 6`, or `next in the fast lane` while another intent holds the lane. */
+  line?: string;
+  /** FAST-7, FAST-10: the questions answered automatically with the recommendation. */
+  answers?: { question: string; answer: string; when: When }[];
+}
+
+/** UI-257: the one control for an intent's autonomy. */
+export interface AutonomyView {
+  /** The level the intent runs at now (a flagged raise doesn't count yet). */
+  a: number;
+  /** The repo's cap when it is below a5 (AUT-8). */
+  cap: number | null;
+  /** AUT-35, UI-258: a raise somebody else made, waiting for the owner. */
+  flag?: { who: string; from: number; to: number };
+  /** What each level lets Towercab do without asking, for the confirm step (index = level). */
+  notes: string[];
+  /** The page is read-only, or the intent is finished. */
+  locked: boolean;
+  /** UI-206: the highest level offered: 5 for the owner's own intents, 4 for any other source. */
+  max: number;
+}
+
+/** UI-203, UI-205, UI-207, UI-208: the score controls, Boost, and what a card says about autonomy. */
+export interface ControlsView {
+  u: number;
+  i: number;
+  priority: number;
+  parked: boolean;
+  /** UI-205: the Boost button is offered. */
+  canBoost: boolean;
+  /** UI-205: what the Boost confirm says it allows (and that it starts the intent now). */
+  boostNote: string;
+  /** UI-207: why a plane at a5 waits for the owner; null when it doesn't. */
+  waitWhy: string | null;
+  /** UI-208: `Lowered to a<n> by the worker: <why>`; null when nothing was lowered. */
+  lowered: string | null;
+  /** UI-283: the intent's kind, what it skips, and the control that sets it. */
+  kind: KindView;
+}
+
+/** UI-283: an intent's kind as the page shows it. */
+export interface KindView {
+  value: string;
+  /** "Bugfix", "Infrastructure change"... */
+  label: string;
+  /** `owner`: set in the intent or from the page; `guess`: inferred (INT-77); `default`: none yet, so the full path. */
+  by: "owner" | "guess" | "default";
+  /** The inferred kind's reason (INT-77), or null. */
+  why: string | null;
+  /** The stages this kind skips, in plain words. */
+  skipped: string[];
+  /** The control is offered (the page can act and the intent is not finished). */
+  canSet: boolean;
+  /** The five kinds; `refused` is why one cannot be taken now (UI-283), or null. */
+  options: { value: string; label: string; refused: string | null }[];
+}
 
 export interface Question {
   context: string;
@@ -86,6 +157,31 @@ export interface Question {
 export interface ExitView {
   do: string;
   label: string;
+  /** UI-167: asked before the button acts (a freeze lifted after a merge ends the intent unverified). */
+  confirm?: string;
+}
+
+/** UI-165: one part of a multi-repo intent. */
+export interface PartView {
+  repo: string;
+  stage: string;
+  /** The state in plain words. */
+  label: string;
+  pr: number | null;
+  prUrl: string | null;
+  waitsOn: string[];
+  merged: boolean;
+  /** "your answer", "a check", "the freeze of web", ...; null when it waits for nothing. */
+  waiting: string | null;
+}
+
+/** UI-167: a repo and the mission that froze it (`frozenBy`), or null. */
+export interface RepoFreeze {
+  repo: string;
+  frozenBy: number | null;
+  /** The intent's title and id, for "Merges frozen for <title>". */
+  title: string | null;
+  intent: string | null;
 }
 
 export interface Access {
@@ -119,6 +215,8 @@ export interface RiskView {
   blast: string;
   door: string;
   certainty: string;
+  /** UI-248: the three in one line: "Medium risk · easy to undo · fairly sure it works". */
+  line: string;
   summary: string;
   /** Why the floor raised the level (AUT-17), or null. */
   raised: string | null;
@@ -126,6 +224,10 @@ export interface RiskView {
 
 /** UI-58: one wait on the owner. */
 export interface Card {
+  /** FAST-10: the fast lane label and progress of a fast intent. */
+  fast?: string;
+  /** UI-211: set when the reason is that the App isn't installed. */
+  installHelp?: InstallHelpView;
   intent: string;
   title: string;
   repo: string;
@@ -137,6 +239,10 @@ export interface Card {
   since: When | null;
   /** UI-126: Markdown, the plain brief of what it waits on (no code words); Towercab's note as a fallback. */
   brief: string | null;
+  /** UI-281: the people part of PIP-220 (the brief, at most 5 lines); cards show this and no agent text. */
+  people?: string | null;
+  /** UI-281: the agent part (technical text), folded on the intent page and a link on a card; null for none. */
+  agent?: string | null;
   /** The plain reason it waits for the owner, one paragraph; a blocked wait's technical reason is in `details`. */
   why: string | null;
   /** UI-126: Markdown, the technical text agents feed on (concerns, findings, logs), folded under "Details". */
@@ -149,6 +255,8 @@ export interface Card {
   exits: ExitView[];
   /** LOOP-77: the wait came back with nothing new; a reply would land on it again. */
   stuck: boolean;
+  /** LOOP-76, UI-164: the open code PR that `done`, `steps` or drop would close; `commits` null: not readable. */
+  openPr?: { number: number; commits: number | null; text: string };
   mergeLabel: string | null;
   /** UI-105: the owner already acted from the page and the mission has not moved on; no buttons then. */
   done: { action: "merge" | "drop" | "retry" | "done" | "steps"; text: string; stuck: boolean } | null;
@@ -156,12 +264,26 @@ export interface Card {
   addRepo: { name: string; github: string } | null;
   /** AUT-20: the risk of what it waits on; null when none was judged (or the check didn't finish). */
   risk?: RiskView | null;
+  /** UI-245: the owner's steps, when the wait is on them (the checklist of UI-160). */
+  steps?: StepView[];
   /** PIP-97: the spec's open points for the owner (spec cards only). */
   openPoints?: { point: string; why: string }[];
   /** PIP-147: the host asks for approvals the reviewers can't give (UI-168). */
   warning?: string;
+  /** UI-236: the intent is a draft of the shadow's (`source: shadow`). */
+  shadow?: boolean;
+  /** UI-243: the intent was proposed by the observer (`source: observer`). */
+  observer?: boolean;
   /** UI-239: the intent is a0: only the owner can answer or approve it, shown as "only you". */
   onlyYou?: boolean;
+  /** UI-257: the autonomy control. */
+  autonomy?: AutonomyView;
+  /** PIP-186: an agent answered for the owner and the intent acted on it: the agent's name. */
+  decided_by_agent?: string | null;
+  /** UI-166: the repo of the part that needs the owner (a multi-repo intent). */
+  partRepo?: string;
+  /** UI-165: the parts of a multi-repo intent. */
+  parts?: PartView[];
 }
 
 export type PhaseStatus = "done" | "current" | "todo" | "skipped";
@@ -171,8 +293,17 @@ export interface Phase {
   status: PhaseStatus;
 }
 
+/** UI-279: plan steps built so far, and the words for them. */
+export interface BuildProgress {
+  stepsDone: number;
+  stepsTotal: number;
+  label: string;
+}
+
 /** UI-59: a moving intent. */
 export interface Row {
+  /** FAST-10: the fast lane label and progress of a fast intent. */
+  fast?: string;
   intent: string;
   title: string;
   repo: string;
@@ -181,14 +312,74 @@ export interface Row {
   step: string;
   inStep: string;
   cost: string;
+  /** UI-279: "step 3 of 6" while a plan of several steps builds; null otherwise. */
+  build?: BuildProgress | null;
   model: string;
   /** For a queued row: what it waits behind, in words. */
   behind: string | null;
   /** PIP-147: the host asks for approvals the reviewers can't give (UI-168). */
   warning?: string;
+  /** UI-236: the intent is a draft of the shadow's. */
+  shadow?: boolean;
+  /** UI-243: the intent was proposed by the observer. */
+  observer?: boolean;
+  /** UI-257: the autonomy control. */
+  autonomy?: AutonomyView;
+  estimate?: EstimateLine;
+  /** UI-166: "3 repos" and the part furthest behind, for a multi-repo intent. */
+  repoCount?: string;
+  slowest?: string;
+  parts?: PartView[];
+  /** UI-166: "waiting for the freeze" while another intent froze its repo. */
+  freezeHold?: string;
+}
+
+/** UI-255: what an intent is expected to cost, or what it has spent against that. */
+export interface EstimateLine {
+  text: string;
+  /** Spent so far as a share of the estimate, 0–100; null before it starts. */
+  pct: number | null;
+  /** Spent is above the usual range (the bar turns amber). */
+  over: boolean;
+}
+
+/** UI-253: a scope's budget amounts (`all`, or a repo) and what is spent so far. */
+export interface BudgetsView {
+  scope: string;
+  daily: number | null;
+  monthly: number | null;
+  spentDay: string;
+  spentMonth: string;
+  spentDayUsd: number;
+  spentMonthUsd: number;
+  where: string;
+}
+
+/** UI-254: a reached cap, as a Needs you card. */
+export interface CapCard {
+  key: string;
+  scope: string;
+  period: "day" | "month";
+  title: string;
+  line: string;
+  reason: string;
+  capUsd: number;
+  spentUsd: number;
+  raiseTo: number;
+  /** Intents that would start but wait behind it. */
+  waiting: number;
+}
+
+/** UI-211: how to install the GitHub App on a repo it can't reach (LOOP-122), folded under "See more". */
+export interface InstallHelpView {
+  app: string | null;
+  url: string;
+  steps: string[];
 }
 
 export interface ProblemView {
+  /** UI-211: set when the reason is that the App isn't installed. */
+  installHelp?: InstallHelpView;
   key: string;
   title: string;
   detail: string | null;
@@ -209,6 +400,7 @@ export interface UpNextView {
   reason: string | null;
   /** The "Start now" button is offered (UI-101). */
   canStart: boolean;
+  estimate?: EstimateLine;
 }
 
 export interface SpendDay {
@@ -225,6 +417,10 @@ export interface SpendView {
   todayUsd: number;
   budgetUsd: number | null;
   days: SpendDay[];
+  /** UI-253: the overall budget; present on the overview (`GET /api/state`). */
+  budgets?: BudgetsView;
+  /** UI-254: a card for each reached budget or cap, among the Needs you cards. */
+  caps?: CapCard[];
 }
 
 /** UI-78: the airspace's stations, in line order. */
@@ -245,6 +441,8 @@ export type StationKey =
 
 /** UI-78: one open intent on the airspace line. */
 export interface Plane {
+  /** FAST-10: the fast lane label and progress of a fast intent. */
+  fast?: string;
   intent: string;
   title: string;
   repo: string;
@@ -255,10 +453,19 @@ export interface Plane {
   phases: Phase[];
   /** The "Start now" button is offered (UI-101). */
   canStart: boolean;
+  /** UI-205, UI-207, UI-208: Boost, the wait reason and the lowering note. */
+  controls?: ControlsView;
   /** UI-125: rolling back, reverting, or in a fix round; absent otherwise. */
   ship?: { kind: "rollback" | "revert" | "fix"; mark: string };
   /** UI-110: why a plane waiting at merge is held ("Held until you resume"); absent otherwise. */
   held?: string;
+  /** UI-167: the parts of a multi-repo intent. */
+  parts?: PartView[];
+  freezeHold?: string;
+  /** UI-166: "3 repos", the part furthest behind, and the repo of a part that needs the owner. */
+  repoCount?: string;
+  slowest?: string;
+  partRepo?: string;
 }
 
 /** UI-109: why the airspace is stopped. The owner's pause can be resumed; a service pause cannot. */
@@ -284,12 +491,14 @@ export interface AirspaceView {
   countsText: string;
   /** One sentence for screen readers. */
   summary: string;
+  /** UI-167: per repo, the mission that froze it or null (`GET /api/state`). */
+  repos?: RepoFreeze[];
 }
 
 export interface Overview {
   version: string;
   top: TopBar;
-  /** UI-184: every proposed intent, before the needs-you cards; absent when Towercab isn't reading them. */
+  /** UI-184: every proposed intent, after the needs-you cards; absent when Towercab isn't reading them. */
   proposed?: ProposedSection;
   needs: Card[];
   problems: ProblemView[];
@@ -317,6 +526,57 @@ export interface TimelineItem {
   /** How long it stayed after this move ("12 min"), null for the current one. */
   lasted: string | null;
   tone: "move" | "wait" | "error" | "done";
+  /** UI-236: the shadow did this. */
+  shadow?: boolean;
+  /** UI-243: the observer did this. */
+  observer?: boolean;
+}
+
+/** UI-242: `GET /api/observer`. */
+export interface ObserverView {
+  enabled: boolean;
+  /** The last run, or null before the first. */
+  lastRun: {
+    at: When;
+    trigger: string;
+    outcome: string;
+    proposals: number;
+    comments: number;
+    why: string | null;
+  } | null;
+  proposalsThisWeek: number;
+  maxPerWeek: number;
+  spentToday: string;
+  cap: string;
+  spentUsd: number;
+  capUsd: number;
+  /** The daily cap is reached: no further run today. */
+  capReached: boolean;
+  /** When the last weekly report went out: a day `YYYY-MM-DD`, or null. */
+  lastReport: string | null;
+}
+
+/** UI-237: one thing the shadow did, asked or refused. */
+export interface ShadowActionView {
+  id: number;
+  at: When;
+  /** A sentence, without the tag. */
+  text: string;
+  outcome: "done" | "refused" | "held";
+  intent: string | null;
+  pr: { number: number; url: string } | null;
+}
+
+/** UI-237: `GET /api/shadow`. */
+export interface ShadowView {
+  enabled: boolean;
+  actions: ShadowActionView[];
+  /** Asked, waiting for the owner's yes in Telegram. */
+  pending: { action: string; intent: string }[];
+  spentToday: string;
+  cap: string;
+  spentUsd: number;
+  capUsd: number;
 }
 
 /** The stages of the map, in pipeline order (UI-72). `other` only holds files no stage claims (LOOP-42). */
@@ -402,6 +662,8 @@ export interface StageNodeView {
   visits: VisitView[];
   /** Everything it wrote, newest last. */
   files: StageFileView[];
+  /** UI-273: for a finished wait on the owner, what they did and when. */
+  decision: { who: string; what: string; at: When } | null;
 }
 
 /** One attempt's path through the pipeline (UI-72..74). */
@@ -411,6 +673,8 @@ export interface StageMapView {
   visits: VisitView[];
   /** Every stage in pipeline order, reached or not. */
   stages: StageNodeView[];
+  /** UI-272: stages left out because this repo has nothing for them, and why. */
+  offPath: { names: string[]; reason: string } | null;
   /** The stage that matters most (UI-75): waiting on you, else last red, else current, else the last. */
   open: StageId | null;
   towercab: string;
@@ -427,6 +691,16 @@ export interface AttemptView {
   map: StageMapView;
 }
 
+/** PIP-186: a comment an agent wrote under the owner's login. */
+export interface AgentCommentView {
+  agent: string;
+  url: string;
+  at: When;
+  excerpt: string;
+  /** False when the intent ignored it (a0). */
+  acted_on: boolean;
+}
+
 export interface IntentPage {
   version: string;
   id: string;
@@ -434,9 +708,17 @@ export interface IntentPage {
   repo: string;
   /** "Priority 11 · urgency 3, importance 4". */
   scores: string;
+  /** UI-236: a draft of the shadow's (`source: shadow`). */
+  shadow?: boolean;
+  /** UI-243: proposed by the observer (`source: observer`). */
+  observer?: boolean;
+  /** UI-243: its evidence links and expected gain, shown above the rest of the text. */
+  observerNote?: { evidence: string; gain: string };
   /** The "Start now" button is offered (UI-101). */
   canStart: boolean;
   state: StateView;
+  /** UI-279: the plan step being built. */
+  build?: BuildProgress | null;
   sentence: string;
   prs: PrView[];
   card: Card | null;
@@ -465,9 +747,25 @@ export interface IntentPage {
   nothingLive?: string | null;
   /** UI-239: set for an a0 intent, with the line to show; `paused` is this intent's own pause (SHD-22). */
   onlyYou?: string;
+  /** UI-257: the autonomy control. */
+  autonomy?: AutonomyView;
+  /** FAST-1, FAST-9: the fast lane mark; `confirmed` is false until the owner confirms a mark that did not come from them. */
+  fast?: FastView;
+  /** UI-203: urgency and importance as controls, and the notes of UI-207 and UI-208. */
+  controls?: ControlsView;
   paused?: boolean;
+  /** PIP-186: the comments agents wrote under the owner's login, oldest first. */
+  agent_comments: AgentCommentView[];
+  /** PIP-186: the agent that answered for the owner, when the intent acted on it. */
+  decided_by_agent?: string | null;
   /** SHIP-32: "Published in v1.2.0" with its link, or "Merged, waiting for a release"; absent when the repo has no releases. */
   release?: { text: string; url: string | null };
+  /** UI-165: one row per repo of a multi-repo intent, the lead first. */
+  parts?: PartView[];
+  /** UI-165: "Merges frozen in infra, web for 2 h (limit 2 h)" while the freeze is held. */
+  freeze?: string;
+  /** UI-167: an intent that ended merged, not verified live: nothing was rolled back, `Land the rest` posts `retry`. */
+  rest?: { text: string; action: { do: "retry"; label: string } | null };
 }
 
 /** UI-160: one of the owner's steps, with when it was ticked. */
@@ -509,6 +807,8 @@ export interface Lane {
   github: string;
   /** "1 of 3 ahead": intents before build against `[repos.<r>].ahead` (UI-100). */
   ahead: string;
+  /** UI-166: "Merges frozen for <title>" while an intent holds this repo's freeze. */
+  frozen?: string;
   running: Row[];
   /** Queued in pick order, numbered: nothing but their turn holds them (UI-63). */
   upNext: QueueItem[];
@@ -538,12 +838,31 @@ export interface ReadinessBadge {
   name: string;
 }
 
+/** UI-269: a setup item most repos lack, said once. */
+export interface SharedGap {
+  item: string;
+  /** Repos missing it. */
+  count: number;
+  /** Repos with a readiness result. */
+  total: number;
+  /** The item in a few words: "no release job". */
+  words: string;
+}
+
 /** UI-156: the "Set up this repo" section. */
 export interface SetupView {
   kind: string | null;
   confirmed: boolean;
   blocks: boolean;
-  items: { item: string; state: "missing" | "unknown" | "waived"; words: string }[];
+  items: {
+    item: string;
+    state: "missing" | "unknown" | "waived";
+    words: string;
+    /** UI-270: the gap in plain words, with what to do. */
+    plain: string;
+    /** UI-270: the raw error behind it, shown folded; null when there is none. */
+    raw: string | null;
+  }[];
   /** Whether new intents wait or only a warning shows. */
   sentence: string;
   /** Lines to add to `TOWERCAB.md`. */
@@ -559,7 +878,7 @@ export interface RepoChip {
   repo: string;
   /** Open intents: in progress, up next, waiting and parked. */
   open: number;
-  /** Of them, waiting on the owner. */
+  /** Of them, waiting on the owner, proposed intents included (UI-244). */
   needs: number;
 }
 
@@ -617,6 +936,10 @@ export interface ProposedCard {
   canAccept: boolean;
   /** Shown beside the disabled Accept. */
   acceptWhy: string | null;
+  /** UI-243: proposed by the observer (`source: observer`). */
+  observer?: boolean;
+  /** UI-243: its evidence and expected gain, shown first. */
+  observerNote?: { evidence: string; gain: string };
 }
 
 /** UI-184, UI-188: the proposed cards in priority order, and a notice when the list may be old. */
@@ -636,10 +959,16 @@ export interface SettingsView {
   notes: string[];
   /** When it was checked, unix seconds; 0 when never. */
   at: number;
-  /** REPO-32: the one step the owner has, shared by every repo; null when nothing is missing. */
-  step: string | null;
-  /** The step's button works: Towercab runs (a read-only page can't act). */
-  canGrant: boolean;
+  /** UI-270: the same time, relative and exact; null when never or when the page has no clock. */
+  checked: When | null;
+  /** REPO-38: what Apply would change; empty when the plan has no lines to show. */
+  plan: { what: string; now?: string; after?: string }[];
+  /** REPO-38: why there is no plan to show, or null. */
+  planNote: string | null;
+  /** REPO-39: an Apply is running for this repo now. */
+  applying: boolean;
+  /** REPO-39: the Apply button is offered (gaps, and Towercab runs). */
+  canApply: boolean;
 }
 
 /** UI-194: what one finished phase did, in its plain brief. */
@@ -648,32 +977,58 @@ export interface FocusHistory {
   text: string;
 }
 
-/** UI-194: the one wait Focus shows: a needs-you card or a proposed intent, with its context. */
-export interface FocusItem {
-  /** The intent's ID, or `proposed-<PR number>`: what the page keys the item by. */
+/** UI-259: one row of the Inbox: a needs-you card, a reached cap or a proposed intent, with its context. */
+export interface InboxItem {
+  /** The intent's ID, `proposed-<PR number>` or `cap-<scope>-<period>`: what the URL and the page key it by. */
   key: string;
+  kind: "card" | "cap" | "proposed";
   repo: string;
   title: string;
+  /** "Plan review", "Proposed", "Budget". */
+  kindLabel: string;
+  /** When the wait began (unix s); null when unknown. */
+  since: number | null;
   /** The first sentence of the intent's Problem; null when it has none. */
   overview: string | null;
   history: FocusHistory[];
   card: Card | null;
   proposed: ProposedCard | null;
+  cap: CapCard | null;
+  /** The PR the item is about, for `o` (UI-261). */
+  pr: number | null;
+  prUrl: string | null;
+  /** The card's main action is a merge, so `m` applies (UI-261). */
+  merge: boolean;
+  /** UI-264: began after the owner's last visit, or a snooze ran out after it. */
+  new: boolean;
+  /** UI-264: the wake time (unix s) while snoozed. */
+  snoozedUntil: number | null;
 }
 
-/** UI-192, UI-196: `GET /api/focus`. */
-export interface FocusPage {
+/** UI-259: `GET /api/inbox`. */
+export interface InboxPage {
   version: string;
-  item: FocusItem | null;
-  /** The other waits, without the one shown. */
-  more: number;
-  /** UI-195: the `skip` keys the server was asked to leave out. */
-  asked: string[];
-  /** UI-195: those of them that still wait on the owner. */
-  skipped: string[];
+  items: InboxItem[];
+  /** UI-244's count; snoozed items are in it. */
+  needs: number;
+  /** UI-264: the owner's last visit (unix s) as the server holds it; null before the first. */
+  lastVisit: number | null;
   readOnly: boolean;
   /** UI-188's notice when the proposed list may be old. */
   stale: string | null;
+}
+
+/** UI-276: the settings in effect, each labelled with where it came from (repo, overlay or default). */
+export interface SettingsSources {
+  rows: { key: string; value: string; source: "repo" | "overlay" | "default" }[];
+  /** REPO-46: one line per overlay key refused. */
+  refusals: string[];
+  /** The overlay's `TOWERCAB.md`, where an overlay value is changed; null without an overlay. */
+  overlayPath: string | null;
+  /** An invalid overlay file's reason, or null. */
+  error: string | null;
+  /** REPO-49: the repo's own checks replaced the overlay's; null when they did not. */
+  notice: string | null;
 }
 
 /** UI-150 to UI-154: a repo's limits (`workers`, `ahead`) as its `TOWERCAB.md` holds them. */
@@ -692,6 +1047,8 @@ export interface LimitsView {
   /** UI-153: `TOWERCAB.md in <repo> can't be read: <reason>`, or null. */
   fileError: string | null;
   fileUrl: string | null;
+  /** UI-276: where each setting comes from; absent until the loop has read the repo. */
+  sources?: SettingsSources;
   move: {
     state: "waiting" | "open" | "closed" | "moved";
     pr: number | null;
@@ -706,6 +1063,8 @@ export interface LimitsView {
 export interface RepoView {
   /** UI-150: the limits form. */
   limits: LimitsView;
+  /** UI-253: this repo's daily and monthly caps. */
+  budgets?: BudgetsView;
   settings: SettingsView;
   /** UI-156: what the repo is missing; absent when nothing is. */
   setup?: SetupView;
@@ -731,6 +1090,8 @@ export interface RepoView {
 export interface RepoSummary {
   /** UI-153: the file's reason when `TOWERCAB.md` can't be read; absent otherwise. */
   fileError?: string;
+  /** UI-276: the notice that the repo's own checks replaced the overlay's; absent otherwise. */
+  overlayNotice?: string;
   readiness?: ReadinessBadge;
   repo: string;
   github: string;
@@ -754,8 +1115,8 @@ export interface ReposPage {
   all: RepoSummary[];
   /** The totals over every repo (UI-137). */
   spend: RepoSpendView;
-  /** REPO-32: the one settings step the owner has (the same on every repo page), or null. */
-  settingsStep: { text: string; canGrant: boolean } | null;
+  /** UI-269: setup items most repos lack. */
+  shared: SharedGap[];
   /** PIP-150: the one step for the code scanning alerts permission. */
   scanningStep: { text: string; canGrant: boolean } | null;
   /** What went wrong: the intents repo can't be read, or the asked-for repo doesn't exist. */
@@ -783,17 +1144,28 @@ export interface BoardColumn {
 }
 
 export interface BoardCard {
+  /** FAST-10: the fast lane label and progress of a fast intent. */
+  fast?: string;
   intent: string;
   title: string;
   state: StateView;
   /** UI-125: rolling back, reverting, or in a fix round; absent otherwise. */
   ship?: { kind: "rollback" | "revert" | "fix"; mark: string };
+  /** UI-166: "3 repos" and the part furthest behind (a multi-repo intent). */
+  repoCount?: string;
+  slowest?: string;
+  /** UI-166: a part needs the owner: the repo it is in. */
+  needsRepo?: string;
+  /** UI-166: waiting at its merge for another intent's freeze. */
+  freezeHold?: string;
 }
 
 /** UI-133: one repo's row. */
 export interface BoardRepo {
   /** UI-153: the file's reason when `TOWERCAB.md` can't be read; absent otherwise. */
   fileError?: string;
+  /** UI-276: the notice that the repo's own checks replaced the overlay's; absent otherwise. */
+  overlayNotice?: string;
   readiness?: ReadinessBadge;
   /** "" for intents the listing doesn't know (the "unknown repo" lane). */
   repo: string;
@@ -809,6 +1181,8 @@ export interface BoardRepo {
   /** UI-187: proposed intents for this repo. */
   proposed: number;
   spend: RepoSpendView;
+  /** UI-166: "Merges frozen for <title>" while an intent holds this repo's freeze. */
+  frozen?: string;
   /** Cards per column, in column order; columns without cards are absent. */
   cells: Partial<Record<BoardColumnKey, BoardCard[]>>;
 }
@@ -821,11 +1195,13 @@ export interface BoardPage {
   proposed?: number;
   /** UI-137: the totals over every repo. */
   spend: RepoSpendView;
+  /** UI-269: setup items most repos lack, said once above the columns. */
+  shared: SharedGap[];
   /** The intents repo can't be read: what went wrong, shown above the board. */
   error: string | null;
 }
 
-export type ActivityKind = "move" | "wait" | "error" | "log";
+export type ActivityKind = "move" | "wait" | "error" | "log" | "settings";
 
 export interface ActivityItem {
   key: string;
@@ -852,4 +1228,27 @@ export interface ActivityPage {
 export interface ActionReply {
   ok: boolean;
   message: string;
+  /** UI-204: after a score change, the new priority and whether the intent is parked. */
+  priority?: number;
+  parked?: boolean;
+  /** LOOP-76: the action would close an open PR with commits; asked again with `confirmed: true`. */
+  confirm?: { pr: number; commits: number | null; text: string };
+  /** UI-216: the overlap check's matches (`checkIntent`), and a note on a title that breaks the naming rule. */
+  matches?: {
+    kind: string;
+    ref: string;
+    title: string;
+    how: string;
+    url?: string;
+    canAdd?: boolean;
+    pastDesign?: boolean;
+  }[];
+  titleNote?: string;
+  /** UI-216: what `createIntent` wrote: the intent's ID and file, whether text was added to an existing one, or a proposal's pull request. */
+  id?: string;
+  path?: string;
+  added?: boolean;
+  proposal?: boolean;
+  pr?: number;
+  url?: string;
 }

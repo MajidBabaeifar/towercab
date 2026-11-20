@@ -81,15 +81,8 @@ test("issues: a failed read skips the label check", async () => {
   const { p, deps } = await world();
   p.queue("score", scored());
   const it = queued(p, "someone");
-  const d = deps();
-  const github = {
-    ...d.github,
-    gh: (repo: string, args: string[], o?: never) =>
-      args[0] === "pr" && args[1] === "list"
-        ? Promise.resolve({ code: 1, stdout: "", stderr: "HTTP 502" })
-        : d.github.gh(repo, args, o),
-  } as IssueDeps["github"];
-  await expect(pollIssues({ ...d, github })).rejects.toThrow(/gh pr list/);
+  p.forge.failNext("prsOnBranch", 1, "gh pr list: HTTP 502");
+  await expect(pollIssues(deps())).rejects.toThrow(/gh pr list/);
   expect(proposals(p)).toEqual([]);
   expect(it.comments).toEqual([]);
   expect(it.labels).toEqual([QUEUED_LABEL]);
@@ -163,10 +156,10 @@ test("issues: a crash does not write the missing intent twice", async () => {
   p.queue("score", scored(), scored());
   const it = queued(p, "someone");
   // The comment fails after the PR is open.
-  p.issueFail = (args) => (args[1] === "comment" ? "HTTP 502" : null);
+  p.forge.failNext("commentOnIssue", 99, "HTTP 502");
   await expect(poll()).rejects.toThrow();
   expect(proposals(p)).toHaveLength(1);
-  p.issueFail = null;
+  p.forge.failNext("commentOnIssue", 0);
   await poll();
   expect(proposals(p)).toHaveLength(1);
   expect(p.claudeCalls).toHaveLength(1);
@@ -207,10 +200,10 @@ test("issues: a closed-PR comment is written once", async () => {
   await poll();
   proposals(p)[0]!.state = "CLOSED";
   // The comment fails first; the label stays, and the retry writes it.
-  p.issueFail = (args) => (args[1] === "comment" ? "HTTP 502" : null);
+  p.forge.failNext("commentOnIssue", 99, "HTTP 502");
   await expect(poll()).rejects.toThrow();
   expect(it.labels).toEqual([PROPOSED_LABEL]);
-  p.issueFail = null;
+  p.forge.failNext("commentOnIssue", 0);
   await poll();
   await poll();
   await poll();

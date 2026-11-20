@@ -17,6 +17,7 @@ import {
   writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { blobUrl, parseGitlabProject } from "../forge/types.ts";
 import { alive } from "../home.ts";
 import { emit } from "../log.ts";
 import { cmpIntents } from "../priority.ts";
@@ -30,6 +31,7 @@ import {
   type IntentStore,
   type Listing,
   type NewIntent,
+  NoOpenIntentError,
   RefusedError,
   SyncError,
   type Unreadable,
@@ -66,6 +68,8 @@ export interface StoreOptions {
   tools: Tools;
   /** Network calls (clone, fetch, push) act as this returns (LOOP-19). */
   auth?: GitAuth;
+  /** `[gitlab].api_base`'s host: a remote on it is a GitLab project (GL-4). */
+  gitlabHost?: string;
   /** Commit author; default `towercab <towercab@localhost>`. */
   author?: { name: string; email: string };
   /** `[intents].cutoff` for `TODO.md` (default 7). */
@@ -237,6 +241,12 @@ export function findOpen(listing: Listing, s: string): Intent {
 export function githubOf(remote: string): string | null {
   const m = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(remote);
   return m ? `${m[1]}/${m[2]}` : null;
+}
+
+/** The slug of the intents repo a remote names: `owner/name` on GitHub, `gitlab:group/intents` on `gitlabHost`, else null. */
+export function intentsSlug(remote: string, gitlabHost: string | null): string | null {
+  const gl = gitlabHost ? parseGitlabProject(remote, gitlabHost) : null;
+  return gl ? `gitlab:${gl}` : githubOf(remote);
 }
 
 const held = new Map<string, Promise<void>>();
@@ -569,6 +579,46 @@ export class GitStore implements IntentStore {
     return findOpen(await this.list(), idOrSuffix);
   }
 
+  async lastAChange(idOrSuffix: string): Promise<string | null> {
+    return this.lastFieldChange(idOrSuffix, "a");
+  }
+
+  async lastFastChange(idOrSuffix: string): Promise<string | null> {
+    return this.lastFieldChange(idOrSuffix, "fast");
+  }
+
+  private async lastFieldChange(idOrSuffix: string, field: string): Promise<string | null> {
+    return this.locked(async () => {
+      const found = findOpen(scan(this.path).listing, idOrSuffix);
+      const rel = `${found.dir}/intent.md`;
+      // A merge commit is diffed against its first parent, so a level changed while resolving a merge is
+      // found in the merge itself and not credited to an older commit.
+      const r = await this.git([
+        "log",
+        "-n1",
+        "--format=%H",
+        "--diff-merges=first-parent",
+        "-s",
+        `-G^${field}:`,
+        "--",
+        rel,
+      ]);
+      const sha = r.stdout.trim();
+      if (r.code !== 0 || !/^[0-9a-f]{40,64}$/.test(sha)) return null;
+      // The commit must really set the value the file has now; else nobody can be credited with it.
+      const line = new RegExp(`^${field}:[ \\t]*(\\S*)[ \\t]*$`, "m");
+      const level = (text: string) => line.exec(text.split(/^---$/m)[1] ?? "")?.[1] ?? "";
+      const then = await this.git(["show", `${sha}:${rel}`]);
+      let now: string;
+      try {
+        now = readFileSync(join(this.path, rel), "utf8");
+      } catch {
+        return null;
+      }
+      return then.code === 0 && level(then.stdout) === level(now) ? sha : null;
+    });
+  }
+
   async add(n: NewIntent, now: Date): Promise<Intent> {
     const title = n.title.trim();
     const text = intentText(n, now);
@@ -579,7 +629,10 @@ export class GitStore implements IntentStore {
       this.writeFile(`${dir}/intent.md`, text);
       const f = IntentFile.parse(text);
       [f.id, f.slug, f.dir] = [id, slug, dir];
-      return { msg: `towercab: add ${id}${n.mark ? `\n\n${n.mark}` : ""}`, out: f.intent };
+      return {
+        msg: `towercab: ${n.by === "shadow" ? "[shadow] " : ""}add ${id}${n.mark ? `\n\n${n.mark}` : ""}`,
+        out: f.intent,
+      };
     });
   }
 
@@ -593,7 +646,8 @@ export class GitStore implements IntentStore {
     let pinned: string | null = null;
     return this.write(async (s) => {
       const found = findOpen(s.listing, pinned ?? idOrSuffix);
-      if (pinned !== null && found.id !== pinned) throw new RefusedError(`no open intent matches ${pinned}`);
+      if (pinned !== null && found.id !== pinned)
+        throw new NoOpenIntentError(`no open intent matches ${pinned}`);
       pinned = found.id;
       const f = s.files.get(found.id)!.clone();
       const before = f.render();
@@ -679,13 +733,14 @@ export class GitStore implements IntentStore {
     }
   }
 
+  /** The intents repo's slug: `owner/name` on GitHub, `gitlab:group/intents` on GitLab; null for any other remote. */
   github(): string | null {
-    return githubOf(this.o.remote);
+    return intentsSlug(this.o.remote, this.o.gitlabHost ?? null);
   }
 
   url(i: Intent): string | null {
     const gh = this.github();
-    return gh ? `https://github.com/${gh}/blob/main/${i.dir}/intent.md` : null;
+    return gh ? blobUrl(gh, "main", `${i.dir}/intent.md`) : null;
   }
 }
 

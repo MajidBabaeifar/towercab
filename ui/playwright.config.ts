@@ -2,7 +2,9 @@
 
 import { defineConfig, devices } from "@playwright/test";
 
-const PORT = Number(process.env.TOWERCAB_FIXTURE_PORT ?? 7398);
+// Each checkout gets its own port, so parallel builds on one machine don't collide on the fixture server.
+const own = [...process.cwd()].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % 1000;
+const PORT = Number(process.env.TOWERCAB_FIXTURE_PORT ?? 7398 + own);
 
 export default defineConfig({
   testDir: ".",
@@ -11,11 +13,22 @@ export default defineConfig({
     "stages.spec.ts",
     "proposed.spec.ts",
     "readiness.spec.ts",
-    "focus.spec.ts",
     "exits.spec.ts",
-    "needs-fold.spec.ts",
+    "parts.spec.ts",
     "board-sort.spec.ts",
     "limits.spec.ts",
+    "overlay.spec.ts",
+    "shadow.spec.ts",
+    "overview-order.spec.ts",
+    "autonomy.spec.ts",
+    "autonomy-inbox.spec.ts",
+    "inbox.spec.ts",
+    "inbox-keys.spec.ts",
+    "palette.spec.ts",
+    "folds.spec.ts",
+    "clarity.spec.ts",
+    "new-intent.spec.ts",
+    "fast.spec.ts",
   ],
   outputDir: "screenshots/.results",
   fullyParallel: false,

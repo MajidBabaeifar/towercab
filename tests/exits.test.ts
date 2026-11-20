@@ -157,3 +157,14 @@ test("status: waits list their exits", () => {
   );
   expect(dataOf(w.m).stuck).toBeUndefined();
 });
+
+test("machine: done is offered at your steps first", () => {
+  // Both steps waits end with `done`, as the plan said; the other exits stay.
+  expect(exitsOf("your steps first").map((e) => e.do)).toEqual(["continue", "done", "retry", "drop"]);
+  expect(exitsOf("your steps", false, false).map((e) => e.do)).toContain("done");
+  const w = exitsWorld();
+  w.set({ stage: "gate" });
+  w.move(wait("your steps first", "do these first"));
+  expect(w.m.waiting).toBe("your steps first");
+  expect(w.move({ event: "owner_done", why: "the owner did it themselves" }).stage).toBe("done");
+});

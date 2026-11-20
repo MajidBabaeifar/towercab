@@ -30,6 +30,8 @@ const BUILD = {
   plan_changed: null,
   lower_a: 2,
   lower_why: "risky",
+  steps_done: 2,
+  handoff: null,
 };
 
 test("schemas: closed objects, every key required", () => {

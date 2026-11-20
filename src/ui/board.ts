@@ -2,10 +2,11 @@
 // repo. Cards take their column from the airspace's planes, so the two never disagree; a plane whose
 // intent can't be found (no repo) goes to an "unknown repo" lane, last.
 
+import { frozenBy } from "../freeze.ts";
 import type { Intent } from "../intents/types.ts";
-import { fileErrorOf } from "./limits.ts";
+import { fileErrorOf, overlayNoticeOf } from "./limits.ts";
 import { proposedSection } from "./proposed.ts";
-import { readinessBadge } from "./readiness.ts";
+import { readinessBadge, sharedGaps } from "./readiness.ts";
 import { lastSevenDays, repoSpendView, spendByRepo, spendTotals } from "./spend.ts";
 import {
   ago,
@@ -13,6 +14,7 @@ import {
   dbMark,
   finishedState,
   localDate,
+  needCounts,
   snapshot,
   type UiSources,
   versionOf,
@@ -39,7 +41,9 @@ export async function board(src: UiSources): Promise<BoardPage> {
   const s = await snapshot(src);
   const withMission = new Set(s.missions.map((m) => m.intent));
   const list = src.upNext().filter((u) => !withMission.has(u.intent));
-  const air = airspaceOf(src, s, list, 0);
+  // UI-244: the count every screen shares.
+  const need = needCounts(src, s);
+  const air = airspaceOf(src, s, list, need.total);
 
   const repos: string[] = [...src.config.repos.keys()];
   const cells = new Map<string, Partial<Record<BoardColumnKey, BoardCard[]>>>();
@@ -74,7 +78,16 @@ export async function board(src: UiSources): Promise<BoardPage> {
     put(
       p.repo,
       key,
-      { intent: p.intent, title: p.title, state: p.state, ...(p.ship ? { ship: p.ship } : {}) },
+      {
+        intent: p.intent,
+        title: p.title,
+        state: p.state,
+        ...(p.ship ? { ship: p.ship } : {}),
+        ...(p.repoCount ? { repoCount: p.repoCount, slowest: p.slowest! } : {}),
+        ...(p.partRepo ? { needsRepo: p.partRepo } : {}),
+        ...(p.freezeHold ? { freezeHold: p.freezeHold } : {}),
+        ...(p.fast ? { fast: p.fast } : {}),
+      },
       false,
     );
   }
@@ -120,19 +133,26 @@ export async function board(src: UiSources): Promise<BoardPage> {
   )) {
     changed.set(r.repo, r.at);
   }
+  // UI-269: the same repos and rule as the Repos page, folded lanes included.
+  const shared = sharedGaps(src.db, src.config.repos.keys());
   const rows: BoardRepo[] = repos.map((repo, index) => {
-    const readiness = readinessBadge(src.db, repo);
+    const readiness = readinessBadge(src.db, repo, shared);
     const at = changed.get(repo);
     const fileError = fileErrorOf(src, repo);
+    const overlayNotice = overlayNoticeOf(src, repo);
+    const by = frozenBy(src.db, repo);
+    const holder = by === null ? undefined : s.missions.find((x) => x.id === by);
+    const frozen = holder
+      ? `Merges frozen for ${s.intents.get(holder.intent)?.title ?? holder.intent}`
+      : null;
     return {
+      ...(frozen ? { frozen } : {}),
       ...(readiness ? { readiness } : {}),
       ...(fileError ? { fileError } : {}),
+      ...(overlayNotice ? { overlayNotice } : {}),
       repo,
       github: src.config.repos.get(repo)?.github ?? "",
-      waiting: Object.values(cells.get(repo) ?? {}).reduce(
-        (n, list) => n + (list ?? []).filter((c) => c.state.key === "needs").length,
-        0,
-      ),
+      waiting: need.byRepo.get(repo)?.missions ?? 0,
       changedAt: at === undefined ? null : new Date(at * 1000).toISOString(),
       index,
       open: counts.get(repo)?.open ?? 0,
@@ -151,6 +171,7 @@ export async function board(src: UiSources): Promise<BoardPage> {
     repos: rows,
     ...(src.proposed ? { proposed: proposals.length } : {}),
     spend: repoSpendView(spendTotals(spend)),
+    shared,
     error: s.listError
       ? `Towercab can't read the intents repo, so the board shows only intents that have started. ${s.listError}`
       : null,

@@ -2,23 +2,30 @@
 // the folded list of moves, cost and the intent's own text.
 
 import { useState } from "preact/hooks";
-import type { IntentPage as Data, PrView, StepView } from "../../../src/ui/view.ts";
-import { approveSecret, sendSecret, tickStep } from "../api.ts";
+import type { ActionReply, IntentPage as Data, PartView, PrView } from "../../../src/ui/view.ts";
+import { AutonomyControl } from "../AutonomyControl.tsx";
+import { act } from "../api.ts";
 import {
   Details,
   Id,
   NeedsCard,
+  ObserverNote,
+  ObserverTag,
   OnlyYou,
   PauseButton,
   RiskBlock,
   Section,
+  ShadowTag,
   StartButton,
   StateChip,
+  StepsChecklist,
   Time,
 } from "../components.tsx";
+import { FastControl } from "../FastControl.tsx";
 import { ChevronLeft, External, PullRequest } from "../icons.tsx";
 import { Markdown } from "../md.tsx";
 import { Link } from "../router.tsx";
+import { ControlNotes, KindControl, ScoreControl } from "../ScoreControls.tsx";
 import { StageMap } from "../StageMap.tsx";
 
 const PR_WORDS: Record<PrView["state"], string> = {
@@ -28,6 +35,59 @@ const PR_WORDS: Record<PrView["state"], string> = {
   "not needed": "Not needed",
   "not yet": "Not yet",
 };
+
+/** UI-165: one row per repo of a multi-repo intent. */
+function Parts({ parts, freeze }: { parts: PartView[]; freeze?: string }) {
+  return (
+    <Section title="Parts" class="parts">
+      {freeze ? (
+        <p class="freeze-line" role="status">
+          {freeze}
+        </p>
+      ) : null}
+      <ul class="parts-list">
+        {parts.map((p) => (
+          <li key={p.repo} class={`part${p.merged ? " merged" : ""}`}>
+            <span class="part-repo mono">{p.repo}</span>
+            <span class="part-stage">{p.label}</span>
+            {p.prUrl ? (
+              <a class="part-pr" href={p.prUrl} target="_blank" rel="noopener noreferrer">
+                PR #{p.pr}
+              </a>
+            ) : null}
+            {p.waiting ? <span class="part-wait meta">waiting for {p.waiting}</span> : null}
+          </li>
+        ))}
+      </ul>
+    </Section>
+  );
+}
+
+/** UI-167: the intent ended merged, not verified live; `Land the rest` posts `retry`. */
+function LandRest({ id, rest }: { id: string; rest: NonNullable<Data["rest"]> }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ActionReply | null>(null);
+  const go = async () => {
+    setBusy(true);
+    setResult(await act("retry", id));
+    setBusy(false);
+  };
+  return (
+    <section class="card rest" aria-label="Merged, not verified live">
+      <p>{rest.text}</p>
+      {rest.action ? (
+        <button type="button" class="btn primary" disabled={busy} onClick={go}>
+          {busy ? "Sending…" : rest.action.label}
+        </button>
+      ) : null}
+      {result ? (
+        <span class={result.ok ? "meta" : "meta error"} role="status">
+          {result.message}
+        </span>
+      ) : null}
+    </section>
+  );
+}
 
 function PrTile({ pr }: { pr: PrView }) {
   const body = (
@@ -50,114 +110,12 @@ function PrTile({ pr }: { pr: PrView }) {
   );
 }
 
-/** SHIP-35: the field for a supplied secret; the value is sent once and the field cleared. */
-function SecretField({ intent, step }: { intent: string; step: StepView }) {
-  const [value, setValue] = useState("");
-  const [note, setNote] = useState("");
-  const sec = step.secret!;
-  const send = async () => {
-    const v = value;
-    setValue("");
-    const r = await sendSecret(intent, step.n, v);
-    setNote(r.message);
-  };
-  return (
-    <div class="secret-field">
-      {sec.source === "supply" && !sec.pr ? (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void send();
-          }}
-        >
-          <input
-            type="password"
-            autocomplete="off"
-            aria-label={`Value for ${sec.key} in ${sec.file}`}
-            value={value}
-            onInput={(e) => setValue((e.currentTarget as HTMLInputElement).value)}
-          />
-          <button type="submit" disabled={!value}>
-            Save {sec.key}
-          </button>
-        </form>
-      ) : null}
-      {sec.pr ? (
-        <p>
-          <a href={sec.pr.url} target="_blank" rel="noopener noreferrer">
-            Pull request #{sec.pr.number}
-          </a>{" "}
-          {sec.approved ? (
-            "approved; Towercab merges it."
-          ) : (
-            <button
-              type="button"
-              onClick={() => void approveSecret(intent, step.n).then((r) => setNote(r.message))}
-            >
-              Approve secret {sec.key} for {sec.file}
-            </button>
-          )}
-        </p>
-      ) : null}
-      {sec.error ? (
-        <p class="step-why">
-          {sec.error}
-          {sec.stopped ? (
-            <button
-              type="button"
-              onClick={() => void approveSecret(intent, step.n).then((r) => setNote(r.message))}
-            >
-              Try again
-            </button>
-          ) : null}
-        </p>
-      ) : null}
-      {note ? <p class="step-why">{note}</p> : null}
-    </div>
-  );
-}
-
 /** UI-160: the owner's steps as a checklist; ticking one posts the step action. */
 function StepsBlock({ data, readOnly }: { data: Data; readOnly: boolean }) {
-  const steps = data.steps ?? [];
-  const group = (when: StepView["when"], title: string) => {
-    const list = steps.filter((s) => s.when === when);
-    if (!list.length) return null;
-    return (
-      <>
-        <h3>{title}</h3>
-        <ul>
-          {list.map((s) => (
-            <li key={s.n}>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={s.doneAt !== null}
-                  disabled={readOnly || !!s.secret}
-                  onChange={(e) => void tickStep(data.id, s.n, (e.currentTarget as HTMLInputElement).checked)}
-                />
-                <span>
-                  {s.text}
-                  {s.why ? <span class="step-why">{s.why}</span> : null}
-                  {s.doneAt ? (
-                    <span class="step-time">
-                      Ticked <Time when={s.doneAt} />
-                    </span>
-                  ) : null}
-                </span>
-              </label>
-              {s.secret && !readOnly && s.doneAt === null ? <SecretField intent={data.id} step={s} /> : null}
-            </li>
-          ))}
-        </ul>
-      </>
-    );
-  };
   return (
     <section class={`card pad steps-block${data.stepsWait ? " waiting" : ""}`} aria-label="Your steps">
       <p class="access-head">Your steps</p>
-      {group("before", "Before the change merges")}
-      {group("after", "After the change merges")}
+      <StepsChecklist intent={data.id} steps={data.steps ?? []} readOnly={readOnly} />
     </section>
   );
 }
@@ -177,7 +135,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
               </span>
               <span class="tl-dot" aria-hidden="true" />
               <div class="tl-body">
-                <p class="tl-text">{t.text}</p>
+                <p class={`tl-text${t.shadow || t.observer ? " tl-shadow" : ""}`}>{t.text}</p>
                 {t.why ? <p class="tl-why">{t.why}</p> : null}
               </div>
               <span class="tl-lasted meta">
@@ -193,7 +151,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
   );
   return (
     <main class="page intent" id="main">
-      <Link class="back" href="/">
+      <Link class="back" href="/overview">
         <ChevronLeft size={16} />
         Overview
       </Link>
@@ -201,6 +159,8 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
         <div class="intent-title">
           <h1>
             {data.title} {data.onlyYou ? <OnlyYou /> : null}
+            {data.shadow ? <ShadowTag /> : null}
+            {data.observer ? <ObserverTag /> : null}
           </h1>
           <p class="meta">
             {data.repo} · <Id id={data.id} />
@@ -226,7 +186,14 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
         <StateChip state={data.state} />
       </header>
       <p class="sentence">{data.sentence}</p>
+      {data.build ? <p class="build-steps meta">{data.build.label}</p> : null}
+      {data.observerNote ? <ObserverNote note={data.observerNote} /> : null}
       {data.onlyYou ? <p class="meta only-you-line">{data.onlyYou}</p> : null}
+      {data.autonomy ? <AutonomyControl intent={data.id} view={data.autonomy} readOnly={readOnly} /> : null}
+      {data.fast ? <FastControl intent={data.id} view={data.fast} readOnly={readOnly} /> : null}
+      {data.controls ? <ScoreControl intent={data.id} view={data.controls} readOnly={readOnly} /> : null}
+      {data.controls ? <KindControl intent={data.id} view={data.controls} readOnly={readOnly} /> : null}
+      {data.controls ? <ControlNotes view={data.controls} /> : null}
       {!readOnly && (data.onlyYou || data.paused) ? (
         <PauseButton intent={data.id} paused={data.paused === true} />
       ) : null}
@@ -236,7 +203,33 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
           <PrTile key={p.label} pr={p} />
         ))}
       </section>
-      {data.card ? <NeedsCard card={data.card} readOnly={readOnly} linkTitle={false} /> : null}
+      {data.agent_comments.length ? (
+        <section class="card pad agent-comments" aria-label="Written in your name by agents">
+          <p class="access-head">Written in your name by agents</p>
+          <ul>
+            {data.agent_comments.map((c, n) => (
+              <li key={n}>
+                <span class="chip">agent, for you</span> <strong>{c.agent}</strong>
+                {" · "}
+                {c.url ? (
+                  <a href={c.url} target="_blank" rel="noopener noreferrer">
+                    comment <External size={12} />
+                  </a>
+                ) : (
+                  "comment"
+                )}
+                {" · "}
+                <Time when={c.at} short />
+                {c.acted_on ? "" : " · ignored: this intent is only yours"}
+                <p class="meta">{c.excerpt}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {data.card ? (
+        <NeedsCard card={data.card} readOnly={readOnly} linkTitle={false} showSteps={false} />
+      ) : null}
       {data.steps?.length ? <StepsBlock data={data} readOnly={readOnly} /> : null}
       {data.nothingLive ? <p class="meta">Nothing to check live: {data.nothingLive}</p> : null}
       {data.release ? (
@@ -251,8 +244,8 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
         </p>
       ) : null}
       {data.brief ? (
-        <section class="card pad plain-brief" aria-label="In plain words">
-          <p class="access-head">In plain words</p>
+        <section class="card pad plain-brief" aria-label="For people">
+          <p class="access-head">For people</p>
           <Markdown text={data.brief} />
           {data.details ? <Details id={`page:${data.id}`} text={data.details} /> : null}
         </section>
@@ -281,6 +274,8 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
       <Section title="How it went" class="path">
         {data.attempts.length ? <StageMap id={data.id} attempts={data.attempts} moves={moves} /> : moves}
       </Section>
+      {data.parts ? <Parts parts={data.parts} freeze={data.freeze} /> : null}
+      {data.rest ? <LandRest id={data.id} rest={data.rest} /> : null}
       <div class="cols">
         <div class="col-main">
           {data.sections.length || data.answers ? (

@@ -500,3 +500,52 @@ test("status: a ready mission behind a mission waiting for CI says so", () => {
   const ready = mission(db, D, 2, { ready: NOW });
   expect(status(db, [ready.id])).toContain("T3 · ready to build, behind 261026-1000, waiting for CI");
 });
+
+test("status: a mission behind the merge queue head shows its place", () => {
+  const db = Db.memory();
+  mission(db, A, 10, { queuedAt: NOW - 30, landing: { since: NOW - 20 } });
+  mission(db, B, 10, { queuedAt: NOW - 20 });
+  mission(db, C, 10, { queuedAt: NOW - 10 });
+  const text = status(db, [], 3);
+  expect(text).toContain("queued to merge: 261026-1001 (#2 of 3)");
+  expect(text).toContain("queued to merge: 261026-1002 (#3 of 3)");
+  expect(text).not.toContain("queued to merge: 261026-1000");
+  expect(text).toContain("build slots: web 1 of 3 used, 2 waiting outside slots");
+});
+
+test("loop: three missions on one repo land in order", async () => {
+  // A fake forge: the merge waits until opened; B's and C's PRs clash with the base once each.
+  let open = false;
+  const dirty = new Set([B, C]);
+  const landed: string[] = [];
+  const conflicts: string[] = [];
+  const stepsAtMerge: string[] = [];
+  const handlers = fake((m) => {
+    if (m.stage === "pick" || m.stage === "design") return { done: ok() };
+    if (m.stage === "plan") return { done: wait("approve plan") };
+    if (m.stage !== "merge") return { done: ok() };
+    stepsAtMerge.push(m.intent);
+    if (!open) return { poll: 30 };
+    if (dirty.delete(m.intent)) {
+      conflicts.push(m.intent);
+      return { done: { event: "conflict", why: "the PR conflicts with its base" } };
+    }
+    landed.push(m.intent);
+    return { done: { event: "code_merged", set: { merge_sha: `sha-${m.intent}`, merged_by: "towercab" } } };
+  });
+  const p = await setup([{ id: A }, { id: B }, { id: C }], handlers, 3);
+  for (const id of [A, B, C]) {
+    approvePlan(p, id);
+    await pass(p, 12);
+  }
+  for (const id of [A, B, C]) expect(stageOf(p, id)).toBe("merge");
+  // Only the head stepped at merge; the others wait without a conflict round and hold no slot.
+  expect(new Set(stepsAtMerge)).toEqual(new Set([A]));
+  expect(dataOfIntent(p, A).landing).toBeDefined();
+  expect(dataOfIntent(p, B).landing).toBeUndefined();
+  expect(conflicts).toEqual([]);
+  open = true;
+  await pass(p, 40);
+  expect(landed).toEqual([A, B, C]);
+  expect(conflicts).toEqual([B, C]);
+});

@@ -2,7 +2,9 @@
 // A red line (REVIEW.md): a wrong move here merges, stops or loses work silently.
 
 import type { Db, SqlValue } from "./db.ts";
+import { isKind, needsDesign } from "./kind.ts";
 import { COLUMNS, dataOf, getMission, insertMission, type Mission } from "./mission.ts";
+import { LANDING_STAGES as LANDING, PART_STAGES, type PartState, seedParts } from "./parts.ts";
 import { type ShipFacts, shipFacts } from "./steps.ts";
 
 export const ORDER = [
@@ -59,6 +61,12 @@ export const EVENTS = [
   "owner_done",
   "to_steps",
   "reviewed",
+  "more_steps",
+  "kind_routed",
+  "unfreeze",
+  "parts_gated",
+  "left_unverified",
+  "reland",
 ] as const;
 export type Event = (typeof EVENTS)[number];
 
@@ -103,6 +111,25 @@ export function orderIndex(s: Stage): number {
 const between = (s: Stage, a: WorkStage, b: WorkStage) =>
   orderIndex(s) >= orderIndex(a) && orderIndex(s) <= orderIndex(b);
 
+/** PIP-228: the kind a mission goes by; a missing or unknown one is `feature`. */
+const kindIn = (facts: ShipFacts) => (isKind(facts.kind) ? facts.kind : "feature");
+
+/**
+ * PIP-228, INT-77: where a kind put on a mission sends it. Before `plan` a lighter kind skips the spec PR;
+ * from the plan on, only a kind that needs a spec PR moves it back to `design`; a lighter kind never moves
+ * a mission that is already past the stage it would skip (PIP-231).
+ */
+function routed(stage: Stage, from: Stage | null, facts: ShipFacts): Next {
+  const at = isWait(stage) ? (from ?? stage) : stage;
+  const kind = kindIn(facts);
+  const design = needsDesign(kind);
+  if (at === "pick") return go(design ? "design" : "plan");
+  if (at === "design" || at === "approval:spec") return design ? K("ignore") : go("plan");
+  // Past the design: a kind with a spec PR starts it; a lighter one changes nothing.
+  if (design && kind === "feature" && (at === "plan" || between(at, "build", "merge"))) return go("design");
+  return K("ignore");
+}
+
 /**
  * The transition table. `from` is the stage a wait was entered from (blocked uses it for
  * `spec_merged`/`plan_merged`).
@@ -116,10 +143,20 @@ export function next(
   if (finished(stage)) return K("ignore");
   const wait = isWait(stage);
   switch (event) {
+    // LOOP-81: the freeze was lifted after a part merged: merged, not verified live; nothing is rolled back.
+    case "reland":
+      // `apply` takes an intent that ended unverified back (LOOP-81); the table never moves a finished one.
+      return K("ignore");
+    case "left_unverified":
+      return stage === "blocked" ? go("unverified") : K("ignore");
     case "ok":
       if (wait || stage === "revert") return K("unexpected");
       // PIP-113: a steps-delivered intent has no deploy; its last tick ends it.
       if (stage === "steps" && facts.delivery) return go("done");
+      // PIP-230: a spec-only change ends at its spec PR (no spec change: nothing to merge).
+      if (stage === "design" && kindIn(facts) === "spec-only") return go("done");
+      // PIP-228: a lighter kind has no spec PR, so a mission still at `pick` goes straight to the plan.
+      if (stage === "pick" && !needsDesign(kindIn(facts))) return go("plan");
       if (stage === "rollback") return go("build");
       return go(ORDER[orderIndex(stage) + 1]!);
     case "red":
@@ -145,10 +182,15 @@ export function next(
       return K("backoff");
     case "crash":
       return wait ? K("ignore") : K("recover");
-    case "spec_merged":
-      if (stage === "design" || stage === "approval:spec") return go("plan");
-      if (stage === "blocked" && from === "design") return go("plan");
+    case "spec_merged": {
+      // PIP-230: merging the spec PR of a spec-only change ends the mission.
+      const after = kindIn(facts) === "spec-only" ? "done" : "plan";
+      if (stage === "design" || stage === "approval:spec") return go(after);
+      if (stage === "blocked" && from === "design") return go(after);
       return K("ignore");
+    }
+    case "kind_routed":
+      return routed(stage, from, facts);
     case "plan_merged":
       // PIP-113: a steps-delivered intent skips the build and the code PR.
       if (stage === "plan" || stage === "approval:plan") return go(facts.delivery ? "steps" : "build");
@@ -168,6 +210,11 @@ export function next(
       // A wait after shipping (a frozen repo, a revert) keeps reading its merged PR: no new ship.
       if (stage === "blocked" && from && (orderIndex(from) > orderIndex("merge") || isShipExtra(from)))
         return K("ignore");
+      // LOOP-80: the owner's approval of a multi-repo intent starts the landing; the parts merge one by one.
+      if (facts.landing)
+        return stage === "approval:merge" || (stage === "blocked" && from === "merge")
+          ? go("merge")
+          : K("ignore");
       if (stage === "approval:merge" || stage === "blocked") return go(facts.steps ? "steps" : "deploy");
       if (between(stage, "build", "merge")) return go(facts.steps ? "steps" : "deploy");
       return K("ignore");
@@ -204,8 +251,19 @@ export function next(
       if (stage === "approval:merge") return go("gate");
       if (stage === "approval:spec") return go("design");
       return K("ignore");
+    // LOOP-81: the owner lifts a freeze; only the `freeze` wait offers it.
+    case "unfreeze":
+      return stage === "blocked" ? K("continue") : K("ignore");
+    // LOOP-78: every part of a multi-repo mission has passed the gate; the mission goes on to merge.
+    case "parts_gated":
+      if (stage === "blocked" && from && between(from, "build", "gate")) return go("merge");
+      return between(stage, "build", "gate") ? go("merge") : K("ignore");
     case "resume":
       return stage === "merge" ? K("again") : K("ignore");
+    // PIP-216: plan steps are still open after a push; the next build run carries on from the first one.
+    case "more_steps":
+      if (stage === "publish") return go("build");
+      return wait ? K("ignore") : K("unexpected");
   }
 }
 
@@ -247,6 +305,10 @@ export const WAITS: Record<string, { stage: Stage; ask: string }> = {
   "allow check writes": {
     stage: "blocked",
     ask: "Decide if the tests may write to this machine's shared build cache: reply allow or no.",
+  },
+  "fix sandbox": {
+    stage: "blocked",
+    ask: "Towercab's sandbox can't start, so no Claude run does: fix what the message says (for the AppArmor profile, run the command shown), then retry.",
   },
   "tests don't prove the change": {
     stage: "blocked",
@@ -320,10 +382,19 @@ export const WAITS: Record<string, { stage: Stage; ask: string }> = {
     stage: "blocked",
     ask: "Fix which repos this intent changes: Towercab doesn't know one of the repos it names. Add the repo, or fix the intent's repos list.",
   },
-  // INT-44: until one pull request per repo is built (LOOP-78), an intent with `repos:` is not built or merged.
+  // INT-44: until the parts land in order (LOOP-80), an intent with `repos:` is built (LOOP-78) but not merged.
   "several repos": {
     stage: "blocked",
-    ask: "This change spans several repos and Towercab can't build those yet, so nothing was built. Do the change yourself and say so, or drop the intent.",
+    ask: "Every part of this change is built and checked, but Towercab can't land several repos in order yet, so nothing was merged. Merge the pull requests yourself in the order of the plan and say so, or drop the intent.",
+  },
+  // LOOP-81: merges in the intent's repos were frozen for too long, or the owner lifted the freeze.
+  freeze: {
+    stage: "blocked",
+    ask: "Merges in this change's repos have been paused for a long time. Reply to keep waiting, lift the pause, or drop the intent.",
+  },
+  "freeze lifted": {
+    stage: "blocked",
+    ask: "Merges are unpaused and nothing is merged yet. Reply when you are ready to pause them again and land the change, or drop the intent.",
   },
   "rolled back, revise": {
     stage: "blocked",
@@ -345,7 +416,7 @@ export const WAITS: Record<string, { stage: Stage; ask: string }> = {
 };
 
 /** What the owner can do at a wait (LOOP-76); each is one event of the machine. */
-export type ExitKind = "continue" | "retry" | "steps" | "drop" | "done" | "merge" | "tick";
+export type ExitKind = "continue" | "retry" | "steps" | "drop" | "done" | "merge" | "tick" | "unfreeze";
 
 const APPROVE: ExitKind[] = ["merge", "retry", "drop"];
 const BASIC: ExitKind[] = ["continue", "retry", "drop"];
@@ -361,6 +432,7 @@ export const EXITS: Record<string, ExitKind[]> = {
   "answer the question": ["continue", "steps", "retry", "drop"],
   "checks red": BASIC,
   "allow check writes": BASIC,
+  "fix sandbox": BASIC,
   "tests don't prove the change": BASIC,
   "CI red": BASIC,
   "CI stuck": BASIC,
@@ -380,10 +452,19 @@ export const EXITS: Record<string, ExitKind[]> = {
   // LOOP-119: a reply would only come back to the same hold.
   "dependency stalled": ["retry", "drop"],
   "several repos": ["done", "retry", "drop"],
+  freeze: ["continue", "unfreeze", "drop"],
+  "freeze lifted": ["continue", "drop"],
   "rolled back, revise": BASIC,
   "rollback failed": BASIC,
-  "your steps first": BASIC,
+  // LOOP-76: both steps waits offer `done`; the open code PR is closed behind a confirm.
+  "your steps first": ["continue", "done", "retry", "drop"],
   "your steps": ["tick", "done", "retry", "drop"],
+};
+
+/** UI-167: the freeze waits name their buttons for what they do. */
+const FREEZE_LABELS: Record<string, Partial<Record<ExitKind, string>>> = {
+  freeze: { continue: "Keep waiting", unfreeze: "Unfreeze" },
+  "freeze lifted": { continue: "Freeze again" },
 };
 
 const EXIT_LABELS: Record<ExitKind, string> = {
@@ -394,6 +475,7 @@ const EXIT_LABELS: Record<ExitKind, string> = {
   done: "Nothing to build: I did it myself",
   merge: "Merge",
   tick: "Tick the steps",
+  unfreeze: "Lift the pause",
 };
 
 export interface Exit {
@@ -414,9 +496,18 @@ export function exitsOf(waiting: string, stuck = false, code = false): Exit[] {
       .filter((k) => !(code && k === "done" && waitKey(waiting) === "your steps"))
       .map((k) => ({
         do: k,
-        label: k === "done" && waitKey(waiting) === "your steps" ? "I did all of it myself" : EXIT_LABELS[k],
+        label:
+          k === "done" && waitKey(waiting) === "your steps"
+            ? "I did all of it myself"
+            : (FREEZE_LABELS[waitKey(waiting)]?.[k] ?? EXIT_LABELS[k]),
       }))
   );
+}
+
+/** The exits in plain words for a sentence: `retry or drop`, `steps, done, retry or drop` (LOOP-77). */
+export function listExits(exits: Exit[]): string {
+  const words = exits.map((e) => e.do as string);
+  return words.length > 1 ? `${words.slice(0, -1).join(", ")} or ${words.at(-1)}` : (words[0] ?? "");
 }
 
 /** The event an exit sends to the machine at a wait's stage (LOOP-76's walk uses it). */
@@ -434,6 +525,8 @@ export function exitEvent(kind: ExitKind, stage: Stage): Event {
       return "to_steps";
     case "tick":
       return "ok";
+    case "unfreeze":
+      return "unfreeze";
     case "merge":
       return stage === "approval:spec"
         ? "spec_merged"
@@ -466,8 +559,10 @@ export function continueTo(waiting: string | null, from: Stage | null): Stage {
   }
   if (waiting === "CI stuck") return "ci";
   if (waiting === "merge failed" || waiting === "your steps first") return "gate";
+  // LOOP-81: keeping a freeze waiting, or freezing again, goes back to the merge.
+  if (waiting === "freeze" || waiting === "freeze lifted") return "merge";
   // PIP-95: the answer is read where the question was asked.
-  if (waiting === "allow check writes" && from) return from;
+  if ((waiting === "allow check writes" || waiting === "fix sandbox") && from) return from;
   if (from === "pick" || from === "design" || from === "plan") return from;
   return "build";
 }
@@ -536,7 +631,13 @@ export function envBackoff(retries: number): number {
 }
 
 /** The text of a wait's message (LOOP-14): the ask, title and repo, why, link. */
-export function waitMessage(waiting: string, s: Subject, why: string | null, stuck = false): string {
+export function waitMessage(
+  waiting: string,
+  s: Subject,
+  why: string | null,
+  stuck = false,
+  reply?: { gist: string; url: string },
+): string {
   const lines = [waitInfo(waiting).ask];
   // LOOP-77: a wait that came back with nothing new offers only the exits that change something.
   if (stuck) {
@@ -545,6 +646,8 @@ export function waitMessage(waiting: string, s: Subject, why: string | null, stu
   }
   lines.push(`${s.title} (${s.repo})`);
   if (why) lines.push(oneLine(why, 300));
+  // LOOP-120: the reply Towercab just posted, in the same message as the ask.
+  if (reply) lines.push(`Towercab replied to your comment: ${oneLine(reply.gist, 250)}`, reply.url);
   if (s.link) lines.push(s.link);
   return lines.join("\n").slice(0, 4000);
 }
@@ -566,7 +669,11 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
     if (!cur || cur.stage !== m.stage) return cur ?? m;
     let data = dataOf(cur);
     if (o.data) data = { ...data, ...o.data };
-    let n = next(cur.stage, o.event, cur.from_stage, shipFacts(data));
+    // LOOP-81: the owner's retry of a multi-repo intent that ended unverified lands the parts not yet merged.
+    let n: Next =
+      o.event === "reland" && cur.stage === "unverified" && Array.isArray(data.parts)
+        ? go("ci")
+        : next(cur.stage, o.event, cur.from_stage, shipFacts(data));
     if (n.kind === "unexpected") {
       cx.log?.(`unexpected ${o.event} at ${cur.stage}`);
       n = isWait(cur.stage) ? { kind: "ignore" } : { kind: "recover" };
@@ -599,12 +706,48 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
         cols.from_stage = null;
       }
       if (finished(to)) cols.finished = now;
+      else if (finished(cur.stage)) cols.finished = null;
+      // LOOP-80: the owner's yes holds for one landing: leaving the landing, or asking again, clears it.
+      if (Array.isArray(data.parts)) {
+        if (to === "merge" && cur.stage === "approval:merge") {
+          data = { ...data, landApproved: true, ownerApproved: undefined };
+        } else if (to === "approval:merge" || PART_STAGES.includes(to)) {
+          data = { ...data, landApproved: undefined, ownerApproved: undefined };
+        }
+      }
+      // LOOP-159, LOOP-161: entering `merge` joins the repo's merge queue; a wait or the end leaves it,
+      // so a mission back from the owner joins at the back.
+      const leavesQueue = isWait(to) || finished(to) || !!extra.waiting;
+      const queue = leavesQueue
+        ? { queuedAt: undefined, landing: undefined }
+        : to === "merge" && typeof data.queuedAt !== "number"
+          ? { queuedAt: now }
+          : {};
       // The new stage's steps haven't launched anything (LOOP-4).
       data = {
         ...data,
+        ...queue,
         launched: undefined,
         ...(leavingWait ? { doneByYou: undefined, stuck: undefined } : {}),
       };
+      // LOOP-78: the plan's approval gives a multi-repo mission a part per repo, all at the start of build.
+      if (to === "build" && !data.parts && phaseOf(cur.stage, cur.from_stage) === "plan") {
+        const plan = data.plan as { parts?: string[]; waitsOn?: Record<string, string[]> } | undefined;
+        if (plan?.parts?.length) {
+          const seeded = seedParts(
+            plan.parts.map((repo) => ({ repo, waitsOn: plan.waitsOn?.[repo] ?? [] })),
+            cur,
+          );
+          data = { ...data, parts: seeded };
+        }
+      }
+      // LOOP-78: the owner answered for a part: every part that waited for them goes on.
+      if (cur.stage === "blocked" && !isWait(to) && Array.isArray(data.parts)) {
+        data = {
+          ...data,
+          parts: (data.parts as PartState[]).map((p) => (p.waiting ? { ...p, waiting: null } : p)),
+        };
+      }
       write(cols);
       db.run(
         "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) VALUES (?, ?, ?, ?, ?, ?)",
@@ -642,13 +785,17 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
       const fromStage = isWait(cur.stage) ? cur.from_stage : cur.stage;
       // A new wait from inside a wait still counts as a new message.
       const continued = isWait(cur.stage) ? cur.continued + 1 : cur.continued;
+      // LOOP-120: the reply just posted rides on the message of the owner's next approval, once.
+      const note = data.replyNote as { gist: string; url: string } | undefined;
+      const reply = note && info.stage.startsWith("approval:") ? note : undefined;
+      if (note) data = { ...data, replyNote: undefined };
       move(info.stage, { waiting, from_stage: fromStage, continued }, why);
       const key = `${cur.id}:${waitKey(waiting)}:${continued}`;
       db.run(
         "INSERT OR IGNORE INTO outbox (key, mission, text, created) VALUES (?, ?, ?, ?)",
         key,
         cur.id,
-        waitMessage(waiting, cx.subject(cur), why, data.stuck === true),
+        waitMessage(waiting, cx.subject(cur), why, data.stuck === true, reply),
         now,
       );
     };
@@ -713,7 +860,20 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
         break;
       }
       case "continue": {
-        const to = continueTo(cur.waiting, cur.from_stage);
+        // LOOP-80: after a failed merge of a part the landing goes on at the merge.
+        const multi = Array.isArray(data.parts);
+        const to =
+          multi && cur.waiting === "merge failed"
+            ? "merge"
+            : multi && cur.waiting === "rollback failed"
+              ? "rollback"
+              : multi && cur.waiting === "freeze" && cur.from_stage && LANDING.includes(cur.from_stage)
+                ? cur.from_stage
+                : continueTo(cur.waiting, cur.from_stage);
+        // LOOP-81: keeping a freeze waiting starts a new period.
+        if (cur.waiting === "freeze") data.freezeFrom = now;
+        // LOOP-78: the owner's reply lets the parts carry on: the cap counts from the spend now.
+        if (cur.waiting === "worker budget" && multi) data.capBase = cur.cost_usd;
         if (o.text) data.answer = o.text;
         // LOOP-77: an answer is new, with words or without (the owner removed `waiting`).
         if (o.text || o.counted) data.answers = (Number(data.answers) || 0) + 1;

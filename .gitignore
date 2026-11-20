@@ -5,3 +5,4 @@ node_modules/
 /playwright-report/
 .towercab/
 .towercab-*/
+/.escape-*/

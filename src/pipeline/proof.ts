@@ -9,14 +9,17 @@ import { dirname, join } from "node:path";
 import { createCheckout, git, removeCheckout } from "../checkout.ts";
 import { classifyRun } from "../faults.ts";
 import { type ChildEnd, type Ctx, EnvError, type Handler, type Progress } from "../handlers.ts";
+import { kindOf, REFACTOR_PROOF } from "../kind.ts";
 import { ok, red, wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { parseVerifying, type RepoFiles, type Verifying } from "../repo/files.ts";
-import { CONTROL, Protected } from "../repo/protected.ts";
+import { CONTROL, glob, Protected } from "../repo/protected.ts";
 import { hasCi, quote, runSet } from "../repo/runset.ts";
 import { withoutE2e } from "../ship/live.ts";
 import { checksMayWrite, logPath, sandboxSpec } from "./checks.ts";
 import { cloneOf, coGit, data, grants, intentOf, repoFiles, tail } from "./common.ts";
+import { endSecretPass, type PassOpts, startSecretPass } from "./setup-pass.ts";
+import { hasSetupSecrets } from "./setup-secrets.ts";
 import { changedTests, MAX_REPAIRS } from "./verify.ts";
 
 const proofDir = (cx: Ctx, m: Mission) => `${cx.checkout(m)}-proof`;
@@ -32,9 +35,17 @@ function read(p: string): string {
 export const proofHandler: Handler = {
   async step(cx, m) {
     const d = data(m);
-    const needed = (d.design?.specIds.length ?? 0) > 0 || d.design?.type === "fix";
-    if (!needed) return { done: ok({ why: "no proof needed", data: { proof: "none needed" } }) };
+    const kind = kindOf((await intentOf(cx, m)).kind, d);
+    // PIP-229: an infra change is applied, not proven by a failing test.
+    if (kind === "infra") {
+      return { done: ok({ why: "an infra change is applied, not proven", data: { proof: "none needed" } }) };
+    }
     const files = await repoFiles(cx, m);
+    // PIP-233: a refactor is proven by its existing tests staying as they are.
+    if (kind === "refactor") return refactorProof(cx, m, files.towercab.tests);
+    // A bugfix has no spec IDs, but it still needs its red→green proof (PIP-228).
+    const needed = (d.design?.specIds.length ?? 0) > 0 || d.design?.type === "fix" || kind === "bugfix";
+    if (!needed) return { done: ok({ why: "no proof needed", data: { proof: "none needed" } }) };
     const tests = withoutE2e(await changedTests(cx, m, files.towercab.tests), files.towercab.live);
     if (tests.length === 0) return notProven(cx, m, "The change adds or changes no test files.");
     if (m.step === "" || m.step === "setup") {
@@ -44,12 +55,20 @@ export const proofHandler: Handler = {
       await createCheckout(cx.tools, cloneOf(cx, m), dir, repo.base, `${m.branch}-proof`);
       const fresh = cx.record(m, "setup");
       if (files.verifying.setup.length === 0) return lay(cx, fresh, tests);
+      // PIP-212: the repo's setup secrets reach this setup too, in a clean export of the base tree.
+      if (hasSetupSecrets(cx.config.file, m.repo)) {
+        const secret = await startSecretPass(
+          cx,
+          cx.record(fresh, "setup-secret"),
+          proofSetup(cx, fresh, dir, files.verifying.setup),
+        );
+        if (secret) return secret;
+      }
       return {
         spawn: sandboxSpec(cx, fresh, {
           kind: "proof-setup",
           lines: files.verifying.setup,
           dir,
-          network: true,
           cacheWritable: true,
           log: logPath(cx, fresh, "proof", "proof-setup.log"),
           timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
@@ -57,10 +76,20 @@ export const proofHandler: Handler = {
       };
     }
     if (m.step === "head") return head(cx, m);
+    if (m.step === "setup-secret") {
+      const again = await startSecretPass(cx, m, proofSetup(cx, m, proofDir(cx, m), files.verifying.setup));
+      if (again) return again;
+    }
     return lay(cx, m, tests);
   },
 
   async finish(cx: Ctx, m: Mission, end: ChildEnd): Promise<Progress> {
+    if (m.step === "setup-secret") {
+      const r = await endSecretPass(cx, m, end, proofDir(cx, m));
+      if ("done" in r) return r;
+      const files = await repoFiles(cx, m);
+      return lay(cx, m, withoutE2e(await changedTests(cx, m, files.towercab.tests), files.towercab.live));
+    }
     if (m.step === "setup") {
       const files = await repoFiles(cx, m);
       return lay(cx, m, withoutE2e(await changedTests(cx, m, files.towercab.tests), files.towercab.live));
@@ -80,6 +109,63 @@ export const proofHandler: Handler = {
     );
   },
 };
+
+/** PIP-233: green when no existing test file was edited, renamed or removed; new tests are fine. */
+async function refactorProof(cx: Ctx, m: Mission, tests: string[]): Promise<Progress> {
+  const out = await coGit(cx, m, [
+    "diff",
+    "--name-only",
+    "--diff-filter=MRD",
+    `refs/remotes/origin/${cx.repo(m).base}...HEAD`,
+  ]);
+  const ms = tests.map((g) => glob(g));
+  const touched = out.split("\n").filter((p) => p && ms.some((match) => match(p)));
+  if (touched.length === 0) {
+    return {
+      done: ok({
+        why: "no existing test changed",
+        data: { proof: REFACTOR_PROOF },
+      }),
+    };
+  }
+  if (data(m).proofWaited) {
+    return {
+      done: ok({
+        why: "unproven; the owner decides at the gate",
+        data: { proof: "not proven", unproven: true },
+      }),
+    };
+  }
+  if (m.repairs >= MAX_REPAIRS) {
+    return {
+      done: wait("tests don't prove the change", `A refactor changed existing tests: ${touched.join(", ")}`, {
+        data: { proofWaited: true },
+      }),
+    };
+  }
+  return {
+    done: red("a refactor changed an existing test", {
+      set: { repairs: m.repairs + 1 },
+      data: {
+        repair: {
+          what: `A refactor must leave the existing tests as they are, but these changed: ${touched.join(", ")}. Restore them and make the refactor pass without editing them.`,
+          details: touched.join("\n"),
+          kind: "proof",
+        },
+      },
+    }),
+  };
+}
+
+function proofSetup(cx: Ctx, m: Mission, dir: string, lines: string[]): PassOpts {
+  return {
+    kind: "proof-setup",
+    dir,
+    lines,
+    log: logPath(cx, m, "proof", "proof-setup.log"),
+    timeoutMs: cx.config.agent.checkTimeoutMin * 60_000,
+  };
+}
 
 /** Lay the PR's test files over base (from the head commit, regular files only), then run the checks. */
 async function lay(cx: Ctx, m: Mission, tests: string[]): Promise<Progress> {
@@ -104,7 +190,6 @@ async function lay(cx: Ctx, m: Mission, tests: string[]): Promise<Progress> {
       kind: "proof",
       lines: script,
       dir,
-      network: false,
       cacheWritable: checksMayWrite(cx, fresh),
       log: logPath(cx, fresh, "proof", "proof.log"),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000 * Math.max(1, script.length),
@@ -155,7 +240,6 @@ function head(cx: Ctx, m: Mission): Progress {
       kind: "proof-head",
       lines,
       dir: cx.checkout(m),
-      network: false,
       cacheWritable: checksMayWrite(cx, m),
       log: logPath(cx, m, "proof", "proof-head.log"),
       timeoutMs: cx.config.agent.checkTimeoutMin * 60_000 * Math.max(1, lines.length),

@@ -36,7 +36,7 @@ test("ui: a0 intents show only you", async () => {
   expect((await needs()).find((c) => c.intent === IDS.question)!.onlyYou).toBeUndefined();
   expect((await intentPage(w.f.sources, IDS.question))!.onlyYou).toBeUndefined();
 
-  w.f.db.run("UPDATE missions SET a_at_pick = 0 WHERE intent = ?", IDS.question);
+  w.f.store.open.find((i) => i.id === IDS.question)!.a = 0;
   expect((await needs()).find((c) => c.intent === IDS.question)!.onlyYou).toBe(true);
   expect((await needs()).find((c) => c.intent === IDS.plan)!.onlyYou).toBeUndefined();
 
@@ -71,7 +71,7 @@ test("ui: an intent can be paused and resumed from the page", async () => {
     { name: "resume", arg: "", source: "ui" },
   ]);
   // An actor other than the owner can't act on an a0 intent from the page's API, but may pause it.
-  w.f.db.run("UPDATE missions SET a_at_pick = 0 WHERE intent = ?", IDS.question);
+  w.f.store.open.find((i) => i.id === IDS.question)!.a = 0;
   await expect(w.actions.guard!(IDS.question, "reply", "shadow")).rejects.toThrow(
     `${IDS.question} is only yours: use GitHub or the page`,
   );

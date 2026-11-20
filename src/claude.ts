@@ -14,10 +14,13 @@ import { appKeyPath, type Config } from "./config.ts";
 import { classifyFailure } from "./faults.ts";
 import { type Limit, limitOf } from "./limits.ts";
 import { oneLine } from "./machine.ts";
+import { splitDomains } from "./pipeline/domains.ts";
 import { type GuardRules, writeGuardRules } from "./pipeline/guard.ts";
+import { sandboxPath } from "./pipeline/sandbox.ts";
 import type { JsonSchema } from "./pipeline/schemas.ts";
 import { Protected } from "./repo/protected.ts";
 import type { ChildSpec } from "./tools.ts";
+import { INTEROP_VARS, isWslHost } from "./wsl.ts";
 
 /** The prompt of a run resumed after a cut-off (a crash, a kill, a limit wait). */
 export const CONTINUE = "Continue where you stopped.";
@@ -85,14 +88,26 @@ export function othersInHome(run: Pick<ClaudeRun, "cwd" | "runsDir" | "cache">):
     }
     for (const n of names) {
       const p = join(home, dir, n);
-      if (!own.has(p)) out.push(p);
+      if (own.has(p)) continue;
+      out.push(p);
+      // The folders of a setup with secrets (PIP-212) appear next to a checkout later; a run that started
+      // earlier would not see them in this list, so the names are denied before they exist.
+      if (dir === "work")
+        for (const x of ["setup-tree", "setup-creds", "setup-cache", "setup-index"]) out.push(`${p}-${x}`);
     }
   }
   return out;
 }
 
 /** Sockets that reach the host's power, hidden when Unix sockets are allowed. */
-export const HOST_SOCKETS = ["/var/run/docker.sock", "/run/docker.sock", "/run/dbus", "/run/user"];
+// `/run/WSL` holds the sockets WSL uses to start Windows programs (LOOP-163).
+export const HOST_SOCKETS = [
+  "/var/run/docker.sock",
+  "/run/docker.sock",
+  "/run/dbus",
+  "/run/user",
+  "/run/WSL",
+];
 
 /** Environment variables never passed to a run (LOOP-19). */
 const TOKENS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"];
@@ -100,9 +115,30 @@ const TOKENS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTER
 /** The writing guide (PIP-39), appended to every run's system file. */
 export const WRITING_GUIDE = fileURLToPath(new URL("../prompts/writing.md", import.meta.url));
 
-export type RunKind = "design" | "plan" | "worker" | "review" | "risk" | "score" | "features";
+export type RunKind =
+  | "design"
+  | "plan"
+  | "worker"
+  | "review"
+  | "risk"
+  | "score"
+  | "kind"
+  | "features"
+  | "shadow"
+  | "observer";
 
-export const RUN_KINDS: RunKind[] = ["design", "plan", "worker", "review", "risk", "score", "features"];
+export const RUN_KINDS: RunKind[] = [
+  "design",
+  "plan",
+  "worker",
+  "review",
+  "risk",
+  "score",
+  "kind",
+  "features",
+  "shadow",
+  "observer",
+];
 
 /** One `claude -p` run. */
 export interface ClaudeRun {
@@ -129,10 +165,12 @@ export interface ClaudeRun {
   /** The base branch's `CLAUDE.md` (REPO-1); empty without one. */
   claudeMd: string;
   /** What the run may reach (AUT-14, `grantsFor`). */
-  grants: { domains: string[]; paths: string[]; open: boolean };
+  grants: { domains: string[]; paths: string[]; open?: false };
   /** The worker's guard (PIP-29): written to `<runs>/guard.json`, its hook and denyWrite added. */
   guardRules?: GuardRules | null;
-  /** `cacheEnv` (LOOP-34): the cache's variables, `[agent].env`, `[repos.<r>].env`. */
+  /** Allow rules added to the agent file's own (PIP-230: the settings files for a spec-only design). */
+  allowMore?: string[];
+  /** `cacheEnv` (LOOP-34): the cache's variables, the repo's `[repos.<r>].env` that passes PIP-159. */
   cacheEnv: Record<string, string>;
   /** The repo cache directory: writable in the sandbox. */
   cache?: string | null;
@@ -176,7 +214,21 @@ export function disallowed(config: Config): string[] {
   for (const p of SECRET_PATHS) d.push(SECRET_FILES.has(p) ? `Read(~/${p})` : `Read(~/${p}/**)`);
   // Towercab's own config and App key, wherever `--config` put them.
   for (const p of configSecrets(config)) d.push(`Read(/${p})`);
+  // REPO-43: the per-repo overlay is Towercab's, never a worker's.
+  for (const o of overlayDenied(config))
+    d.push(`Read(/${o.replace(/^\//, "")})`, `Read(/${o.replace(/^\//, "")}/**)`);
   return d;
+}
+
+/** REPO-43: the folder of every repo's overlay, next to the config file: unreadable and unwritable to a worker. */
+export function overlayRoot(config: Config): string {
+  return join(dirname(resolve(config.file)), "repos");
+}
+
+/** The overlay folder when there is one (like the other denied paths, only what exists is named). */
+export function overlayDenied(config: Config): string[] {
+  const root = overlayRoot(config);
+  return existsSync(root) ? [root] : [];
 }
 
 /** The config file and `app.pem` next to it, absolute. */
@@ -207,7 +259,7 @@ export function claudeArgv(run: ClaudeRun): string[] {
     "--tools",
     k.tools.join(","),
     // An empty list would make `--allowedTools` swallow `--disallowedTools` as its value.
-    ...(k.allow.length ? ["--allowedTools", ...k.allow] : []),
+    ...(k.allow.length ? ["--allowedTools", ...k.allow, ...(run.allowMore ?? [])] : []),
     "--disallowedTools",
     ...disallowed(run.config),
     ...othersInHome(run).flatMap((p) => [
@@ -225,19 +277,23 @@ export function claudeArgv(run: ClaudeRun): string[] {
 /**
  * The `--settings` file: the sandbox (secret paths unreadable; `<cwd>/.git`, blocked protected paths
  * and locked tests unwritable; the cache writable; the granted domains), WebFetch per granted domain
- * (any at a5), and the worker's guard hook.
+ * (never every domain, AUT-26), and the worker's guard hook.
  */
 export function claudeSettings(
   run: ClaudeRun,
-  o: { towercabExe: string; home: string },
+  o: { towercabExe: string; home: string; wsl?: boolean },
 ): Record<string, unknown> {
   const denyRead = [
     ...SECRET_PATHS.map((p) => join(o.home, p)),
     ...configSecrets(run.config),
+    ...overlayDenied(run.config),
     ...othersInHome(run),
   ];
-  if (run.config.agent.sandboxUnixSockets) denyRead.push(...HOST_SOCKETS);
-  const denyWrite = [join(resolve(run.cwd), ".git")];
+  // PIP-157: unix sockets are never bound in, and the host's are hidden, whatever the config says.
+  denyRead.push(...HOST_SOCKETS);
+  // LOOP-163: under WSL every Windows drive is mounted below /mnt, and the worker must not read them.
+  if (o.wsl ?? isWslHost()) denyRead.push("/mnt");
+  const denyWrite = [join(resolve(run.cwd), ".git"), ...overlayDenied(run.config)];
   // PIP-100: an agent without Edit or Write only reads, so its Bash can't write the checkout either
   // (`git diff --output=<file>` from text planted in a diff).
   const agent = loadAgent(run.agent ?? run.kind);
@@ -269,13 +325,13 @@ export function claudeSettings(
     allowUnsandboxedCommands: false,
     filesystem,
   };
+  // AUT-26: only granted domains that are real domains (PIP-164); never `*`.
+  const domains = splitDomains(run.grants.domains).valid;
   const network: Record<string, unknown> = {};
-  if (run.grants.domains.length) network.allowedDomains = [...run.grants.domains];
-  if (run.config.agent.sandboxUnixSockets) network.allowAllUnixSockets = true;
+  if (domains.length) network.allowedDomains = domains;
   if (Object.keys(network).length) sandbox.network = network;
   const s: Record<string, unknown> = { sandbox };
-  const allow = run.grants.domains.map((d) => `WebFetch(domain:${d})`);
-  if (run.grants.open) allow.push("WebFetch(domain:*)");
+  const allow = domains.map((d) => `WebFetch(domain:${d})`);
   if (allow.length) s.permissions = { allow };
   if (run.guardRules) {
     const command = `${shellQuote(o.towercabExe)} hook guard ${shellQuote(join(runDir(run), "guard.json"))}`;
@@ -286,15 +342,17 @@ export function claudeSettings(
   return s;
 }
 
-/** A run's whole environment: HOME, PATH = `[agent].path`, LANG, the cache env; never a GitHub token. */
+/** A run's whole environment: HOME, PATH (a constant, PIP-157), LANG, the cache env; never a GitHub token. */
 export function claudeEnv(run: ClaudeRun, home: string): Record<string, string> {
   const env: Record<string, string> = {
     HOME: home,
-    PATH: run.config.agent.path,
+    PATH: sandboxPath(home),
     LANG: process.env.LANG || "C.UTF-8",
     ...run.cacheEnv,
   };
   for (const t of TOKENS) delete env[t];
+  // LOOP-163: no run can start a Windows program.
+  for (const k of INTEROP_VARS) delete env[k];
   // SHIP-36: the age key stays with Towercab's own process.
   for (const k of Object.keys(env)) if (/^(SOPS_|AGE_)/i.test(k)) delete env[k];
   return env;

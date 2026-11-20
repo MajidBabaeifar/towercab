@@ -8,6 +8,9 @@ on:
 
 permissions: {}
 
+# PIP-170: every job that runs steps has a time limit, so a hung job fails instead of running for GitHub's
+# 6 hours. `checks` and `sast` call shared workflows, where `timeout-minutes` is not allowed on the caller;
+# Towercab cancels and reruns a run that hangs (PIP-171).
 jobs:
   checks:
     name: "Checks: PR title, secrets, actions, dependencies"
@@ -28,6 +31,7 @@ jobs:
   check:
     name: "Node 22: lint, typecheck, tests"
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: read
@@ -41,6 +45,23 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: bwrap and its AppArmor profile
+        # PIP-160, PIP-162: the escape suite always runs here, so a bwrap that is missing or can't start fails
+        # the job. Ubuntu 24.04 restricts unprivileged user namespaces; the profile lets only this bwrap use
+        # them, the restriction itself stays on.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo tee /etc/apparmor.d/towercab-bwrap >/dev/null <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile towercab-bwrap $(command -v bwrap) flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r /etc/apparmor.d/towercab-bwrap
+          bwrap --version
+          bwrap --unshare-net --ro-bind / / true
       - run: npm ci
       - run: npm run check
       - name: Spec IDs against other open pull requests
@@ -64,6 +85,7 @@ jobs:
   screenshots:
     name: "Playwright: UI screenshots"
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -88,6 +110,7 @@ jobs:
     if: always()
     needs: [checks, sast, check, screenshots]
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions: {}
     steps:
       - name: All jobs passed or were skipped

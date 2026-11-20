@@ -66,7 +66,7 @@ test(
       expect(m.why).toContain("still fail after one revision");
       expect(m.why).toContain("spec-check");
       expect(p.prNo("web", m.spec_pr!).state).toBe("OPEN");
-      expect(p.tools.lines("gh").some((l) => l.startsWith("pr merge"))).toBe(false);
+      expect(p.forge.calls.some((l) => l.startsWith("merge "))).toBe(false);
       expect(JSON.parse(m.data).specRedRevisions).toBe(1);
     }),
   60_000,

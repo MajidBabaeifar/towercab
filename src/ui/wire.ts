@@ -1,9 +1,14 @@
 // The running loop's sources for the page (UI-1): what the UI reads from the loop, and its actions.
 
 import { join } from "node:path";
+import { capReason, capsOf } from "../budgets.ts";
+import { pausedNow, runningSteps } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
+import { looseSecretFiles } from "../doctor.ts";
 import { fixFor } from "../faults.ts";
+import { changeUrl } from "../forge/types.ts";
+import { ownerLogin } from "../github/owner.ts";
 import { type Host, systemClock } from "../handlers.ts";
 import type { Home } from "../home.ts";
 import type { Intent } from "../intents/types.ts";
@@ -13,8 +18,9 @@ import { isParked, pickOrder, priorityOf } from "../priority.ts";
 import { proposeSettings, reopenMove, type SettingsEnv } from "../repo/settings.ts";
 import { addFailures, beginAddRepo } from "../repos.ts";
 import { checkoutRoot } from "../service.ts";
+import { applySettings } from "../settings/apply.ts";
 import { supplySecret } from "../ship/secret-steps.ts";
-import { version as gitVersion } from "../update.ts";
+import { version as gitVersion, UNKNOWN_VERSION, type VersionInfo } from "../update.ts";
 import { createActions } from "./actions.ts";
 import { startUi, type UiServer } from "./server.ts";
 import { budgetReached, type Problem, type Skip, type UiSources, type UpNext } from "./state.ts";
@@ -34,6 +40,12 @@ export function upNextOf(loop: Loop): UpNext[] {
   const config = loop.d.config;
   const state = loop.pickState();
   const doneIds = listing.doneIds;
+  // MET-33: a reached budget or the repo's cap, in plain words.
+  const caps = capsOf(loop.d.db, config, loop.now);
+  const capped = (repo: string) => {
+    const c = caps.find((x) => x.scope === "all" || x.scope === repo);
+    return c ? capReason(c) : null;
+  };
   return pickOrder(listing, 1)
     .filter((i) => !state.active.has(i.id))
     .map((i: Intent) => {
@@ -42,6 +54,7 @@ export function upNextOf(loop: Loop): UpNext[] {
       const blocker = i.after.find((a) => !doneIds.has(a));
       if (state.paused) skip = { kind: "paused" };
       else if (state.blocked) skip = { kind: "unreachable", what: state.blocked };
+      else if (capped(i.repo)) skip = { kind: "other", text: `Waiting: ${capped(i.repo)}.` };
       else if (isParked(p, config.intents.cutoff)) skip = { kind: "parked" };
       else if (blocker) skip = { kind: "after", intent: blocker };
       else if (state.notReady?.has(i.repo) && i.setup !== true) {
@@ -50,7 +63,7 @@ export function upNextOf(loop: Loop): UpNext[] {
       } else {
         const held = state.started?.has(i.id) ? null : heldBack(state.full.get(i.repo), i, listing);
         if (held?.kind === "working") skip = { kind: "ahead", n: held.working, limit: held.limit };
-        else if (held) skip = { kind: "cap", working: held.working, owner: held.owner, cap: held.cap };
+        else if (held) skip = { kind: "owner", n: held.owner, limit: held.limit };
         const model = i.model ?? config.agent.model;
         const until = loop.cooldownUntil(model);
         if (!skip && until) skip = { kind: "cooling", model, until };
@@ -76,12 +89,21 @@ export function problemsOf(loop: Loop): Problem[] {
   });
   if (budgetReached(loop.d.db, loop.d.config, now)) {
     out.push({
-      title: "Today's budget is spent",
-      fix: "Nothing new starts until midnight. Raise [agent].daily_budget_usd to go on today.",
+      title: "The budget is spent",
+      fix: "Nothing new starts until the period ends. Raise the budget on the overview to go on now.",
     });
   }
   out.push(...addProblems(loop.d.db));
+  out.push(...secretsProblems(loop.d.config));
   return out;
+}
+
+/** UI-277: one row per secrets file that others can read, with the command that fixes it. */
+export function secretsProblems(config: Config): Problem[] {
+  return looseSecretFiles(config).map((f) => ({
+    title: `${f} is readable by others`,
+    fix: `Run chmod 600 ${f}`,
+  }));
 }
 
 /** UI-130: a repo added from the page whose clone failed, until it is added again. */
@@ -94,24 +116,44 @@ export function addProblems(db: Db): Problem[] {
   }));
 }
 
+/** The running version (LOOP-152), read from the checkout at most every 30 s, never waiting on git. */
+function versionReader(
+  tools: import("../tools.ts").Tools,
+  channel: Config["update"]["channel"],
+): () => VersionInfo {
+  let version = UNKNOWN_VERSION;
+  let readAt = 0;
+  return () => {
+    if (Date.now() - readAt > 30_000) {
+      readAt = Date.now();
+      void gitVersion({ tools, checkout: checkoutRoot(), channel })
+        .then((v) => {
+          version = v;
+        })
+        .catch(() => {});
+    }
+    return version;
+  };
+}
+
 export function sourcesOf(loop: Loop, home: Home): UiSources {
-  let version = { commit: "unknown", behind: null as number | null };
-  void gitVersion({ tools: loop.d.tools, checkout: checkoutRoot() }).then((v) => {
-    version = v;
-  });
+  const version = versionReader(loop.d.tools, loop.d.config.update.channel);
   return {
     db: loop.d.db,
-    store: loop.d.store,
+    store: loop.ownerStore,
     config: loop.d.config,
     clock: loop.d.clock,
     home,
     running: true,
     paused: () => loop.d.db.meta("paused") === "1",
+    runningSteps: () => runningSteps(loop.d.db),
+    pausedNow: () => pausedNow(loop.d.db),
     pausedAt: () => pausedAt(loop.d.db),
     problems: () => problemsOf(loop),
-    version: () => version,
+    installHelp: (github) => loop.d.github.peekInstallHelp?.(github) ?? null,
+    version,
     upNext: () => upNextOf(loop),
-    prUrl: (repo, n) => `https://github.com/${repo}/pull/${n}`,
+    prUrl: (repo, n) => changeUrl(repo, n),
     intentUrl: (i) => loop.d.store.url(i),
     proposed: () => loop.proposedState(),
   };
@@ -136,10 +178,40 @@ export function startLoopUi(loop: Loop, config: Config, github: Host, home: Home
       clock: loop.d.clock,
       github,
       proposed: () => loop.proposedState().list,
+      // UI-213..218, LOOP-125: the new intent form: the overlap check runs here, outside any mission and
+      // slot; a draining service refuses it; a contributor's proposal is opened as the App.
+      intentTools: {
+        home,
+        tools: loop.d.tools,
+        draining: () => loop.d.db.meta("draining") !== null,
+        proposal: { config, home, tools: loop.d.tools, github, who: "a contributor" },
+      },
       // REPO-16, REPO-19: the settings PR and the move, as the loop's own database, tools and forge do them.
       limits: {
         propose: (repo, changes, confirmed) => proposeSettings(settingsEnv(), repo, changes, confirmed),
         move: (repo) => reopenMove(settingsEnv(), repo),
+      },
+      // REPO-39: Apply runs the settings script as the owner, for the one repo named.
+      applySettings: async (name) => {
+        const repo = config.repos.get(name);
+        if (!repo) throw new Error(`${name} isn't a repo Towercab knows`);
+        await ownerLogin(github);
+        const r = await applySettings(
+          {
+            config,
+            home,
+            db: loop.d.db,
+            tools: loop.d.tools,
+            clock: loop.d.clock,
+            github,
+            log: loop.d.log,
+          },
+          repo,
+        );
+        return r.state === "ok"
+          ? `Applied. The standard settings are in place on ${repo.github}.`
+          : (r.note ??
+              `Applied, but ${r.gaps.length} setting${r.gaps.length === 1 ? "" : "s"} still differ.`);
       },
       // SHIP-35: a typed secret goes straight to `sops`; the value stays in this request.
       supplySecret: (intent, n, value) =>
@@ -193,10 +265,7 @@ export async function serveReadOnly(
   store: import("../intents/types.ts").IntentStore,
   tools: import("../tools.ts").Tools,
 ): Promise<UiServer> {
-  let version = { commit: "unknown", behind: null as number | null };
-  void gitVersion({ tools, checkout: checkoutRoot() }).then((v) => {
-    version = v;
-  });
+  const version = versionReader(tools, config.update.channel);
   const server = startUi({
     port: config.ui.port,
     sources: {
@@ -207,11 +276,12 @@ export async function serveReadOnly(
       home,
       running: false,
       paused: () => db.meta("paused") === "1",
+      runningSteps: () => 0,
       pausedAt: () => pausedAt(db),
       problems: () => [],
-      version: () => version,
+      version,
       upNext: () => [],
-      prUrl: (repo, n) => `https://github.com/${repo}/pull/${n}`,
+      prUrl: (repo, n) => changeUrl(repo, n),
       intentUrl: (i) => store.url(i),
     },
     actions: null,

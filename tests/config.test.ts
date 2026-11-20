@@ -6,8 +6,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { main } from "../src/cli.ts";
-import { checkLoop, clonePath, DEFAULT_NETWORK, loadConfig, parseConfig } from "../src/config.ts";
+import { checkLoop, clonePath, loadConfig, parseConfig } from "../src/config.ts";
 import { Home } from "../src/home.ts";
+import { DEFAULT_NETWORK } from "../src/pipeline/sandbox.ts";
 import { FakeTools } from "./helpers/tools.ts";
 import { tempDir } from "./helpers/world.ts";
 
@@ -37,6 +38,7 @@ test("config: loads defaults", () => {
     path: null,
     cutoff: 7,
     issueA: 3,
+    ownerWaits: 4,
   });
   expect(c.agent).toEqual({
     model: "opus",
@@ -46,6 +48,7 @@ test("config: loads defaults", () => {
     reviewTimeoutMin: 15,
     checkTimeoutMin: 10,
     maxBudgetUsd: 10,
+    maxBuildRuns: 3,
     dailyBudgetUsd: null,
     ciPoll: 30,
     ciGrace: 120,
@@ -54,8 +57,9 @@ test("config: loads defaults", () => {
     path: "/opt/node/bin:/usr/bin:/bin",
     toolchain: [join(process.env.HOME, ".local/bin")],
     env: {},
-    network: DEFAULT_NETWORK,
+    network: [...DEFAULT_NETWORK],
     sandboxUnixSockets: false,
+    ignored: [],
   });
   expect(DEFAULT_NETWORK).toEqual([
     "registry.npmjs.org",
@@ -87,20 +91,36 @@ test("config: loads defaults", () => {
   expect(c.github).toEqual({ appId: 7, me: "me", apiBase: "https://api.github.com" });
   expect(c.telegram).toBeNull();
   expect(c.ui).toEqual({ port: 7311 });
-  expect(c.update).toEqual({ auto: true, drainMinutes: 60 });
+  expect(c.update).toEqual({ auto: true, drainMinutes: 60, channel: "main" });
   expect(c.badRepos.size).toBe(0);
   // `~/` is expanded, and v1's [tasks] is read as [intents] when [intents] is absent.
   const t = parseConfig(
     { tasks: { remote: "r", path: "~/intents", cutoff: 9 }, agent: { toolchain: ["~/bin", "/opt/x"] } },
     "/x/config.toml",
   );
-  expect(t.intents).toEqual({ remote: "r", path: join(homedir(), "intents"), cutoff: 9, issueA: 3 });
+  expect(t.intents).toEqual({
+    remote: "r",
+    path: join(homedir(), "intents"),
+    cutoff: 9,
+    issueA: 3,
+    ownerWaits: 4,
+  });
   expect(t.agent.toolchain).toEqual([join(homedir(), "bin"), "/opt/x"]);
   expect(parseConfig({ tasks: { remote: "old" }, intents: { remote: "new" } }, "f").intents.remote).toBe(
     "new",
   );
   const tg = parseConfig({ telegram: { bot_token: "t", chat_id: 42 } }, "f").telegram;
   expect(tg).toEqual({ botToken: "t", chatId: "42", apiBase: "https://api.telegram.org" });
+});
+
+test("config: owner_waits default and range", () => {
+  const read = (intents: Record<string, unknown>) =>
+    parseConfig({ intents: { remote: "r", ...intents } }, "f");
+  expect(read({}).intents.ownerWaits).toBe(4);
+  expect(read({ owner_waits: 2 }).intents.ownerWaits).toBe(2);
+  expect(read({ owner_waits: 16 }).intents.ownerWaits).toBe(16);
+  expect(() => read({ owner_waits: 0 })).toThrow("intents.owner_waits must be an integer 1-16");
+  expect(() => read({ owner_waits: 17 })).toThrow("intents.owner_waits must be an integer 1-16");
 });
 
 test("config: bad values name the key", async () => {

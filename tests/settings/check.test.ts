@@ -42,7 +42,10 @@ test("repo: settings run from the latest ci release tag on main", async () => {
   await refetchCi(s);
   const out = await settingsPass(s.deps, s.web);
   expect(out).toMatchObject({ state: "gaps", tag: "v2.0.0", gaps: ["merge rules are off"] });
-  expect(s.script.runs).toEqual([["--check", "owner/web"]]);
+  expect(s.script.runs).toEqual([
+    ["--check", "owner/web"],
+    ["--plan", "owner/web"],
+  ]);
 });
 
 test("repo: no ci release tag is unknown, never the head", async () => {
@@ -86,7 +89,8 @@ test("repo: settings gaps are stored and shown on the repo page", async () => {
     state: "gaps",
     summary: "1 standard setting differs",
     gaps: ["merge rules are off"],
-    step: null,
+    canApply: true,
+    applying: false,
   });
   expect(v.at).toBeGreaterThan(0);
   s.script.gaps = [];

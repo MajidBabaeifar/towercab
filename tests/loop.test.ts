@@ -286,6 +286,19 @@ async function ahead(p: Pipe, n = 8) {
   for (let i = 0; i < n; i++) await pass(p);
 }
 
+/** `[intents]` of the test config with `owner_waits` set (LOOP-132). */
+const ownerWaits = (n: number) => ({
+  intents: { remote: "https://github.com/owner/intents.git", cutoff: 1, owner_waits: n },
+});
+
+/** Every design ends at the spec, and every plan at the plan, for the owner to merge. */
+const waits = fake((m) => {
+  if (m.stage === "pick") return { done: ok() };
+  if (m.stage === "design") return { done: wait("approve spec") };
+  if (m.stage === "plan") return { done: wait("approve plan") };
+  return { done: ok() };
+});
+
 /** Designs never finish by themselves: an intent stays "working" until the test moves it. */
 const designing = fake((m) => {
   if (m.stage === "pick") return { done: ok() };
@@ -389,39 +402,96 @@ test("loop: an intent that outranks every intent ahead starts below the cap", as
   expect(byIntent(p, E)).toHaveLength(1);
 });
 
-test("loop: at the cap only a higher priority intent starts", async () => {
+test("loop: at the working limit only a higher priority intent starts", async () => {
   const p = new Pipe(TARGET, files({ id: A }, { id: B }, { id: C }));
-  await p.start({ repos: { web: { github: "owner/web", ahead: 1 } } }, { handlers: staged });
+  await p.start({ repos: { web: { github: "owner/web", ahead: 1 } } }, { handlers: designing });
   await ahead(p, 12);
-  // Two wait on the owner: the cap of 2 holds the third, which ties the others.
-  expect([A, B].map((id) => stageOf(p, id))).toEqual(["approval:plan", "approval:plan"]);
+  // One is being designed: it takes the only place, and the others tie it.
+  expect(stageOf(p, A)).toBe("design");
   expect(byIntent(p, C)).toEqual([]);
   expect(decide(await p.store.list(), p.loop.pickState()).skipped).toContainEqual({
     id: C,
-    reason: `repo is at the cap of 2 intents before build, 0 working and 2 waiting on the owner (start ${C} to go now)`,
+    reason: `repo has 1 intents working ahead (start ${C} to go now)`,
   });
-  // One that outranks both starts, over the cap.
+  // One that outranks it starts, over the working limit.
   pushFiles(p.bares.intents!, files({ id: E, u: 5, i: 5 }));
   await ahead(p, 12);
+  p.clock.advance(120);
+  await ahead(p, 4);
   expect(byIntent(p, E)).toHaveLength(1);
   expect(byIntent(p, C)).toEqual([]);
 });
 
-test("loop: an equal priority intent does not pass the cap", async () => {
+test("loop: an equal priority intent does not pass the working limit", async () => {
   const p = new Pipe(TARGET, files({ id: A, u: 5, i: 5 }, { id: B, u: 5, i: 5 }, { id: C, u: 5, i: 5 }));
-  await p.start({ repos: { web: { github: "owner/web", ahead: 1 } } }, { handlers: staged });
+  await p.start({ repos: { web: { github: "owner/web", ahead: 1 } } }, { handlers: designing });
   await ahead(p, 12);
+  expect(stageOf(p, A)).toBe("design");
+  expect(byIntent(p, B)).toEqual([]);
   expect(byIntent(p, C)).toEqual([]);
 });
 
-test("loop: the cap is twice ahead", async () => {
-  for (const n of [1, 2, 3]) {
-    const xs = Array.from({ length: 2 * n + 1 }, (_, k) => ({ id: `26102${k}-1000` }));
-    const p = new Pipe(TARGET, files(...xs));
-    await p.start({ repos: { web: { github: "owner/web", ahead: n } } }, { handlers: staged });
-    await ahead(p, 4 * xs.length);
-    expect(unfinished(p.db)).toHaveLength(2 * n);
-  }
+test("loop: with ahead 2 and two intents waiting on the owner at spec a third is picked", async () => {
+  const p = new Pipe(TARGET, files({ id: A }, { id: B }, { id: C }, { id: D }));
+  await p.start({ repos: { web: { github: "owner/web", ahead: 2 } } }, { handlers: waits });
+  await ahead(p, 16);
+  expect([A, B, C, D].map((id) => stageOf(p, id))).toEqual(Array(4).fill("approval:spec"));
+  expect(
+    decide(await p.store.list(), p.loop.pickState()).skipped.filter((s) =>
+      /cap|waiting on you/.test(s.reason),
+    ),
+  ).toEqual([]);
+});
+
+test("loop: owner waits at plan do not count toward ahead", async () => {
+  const p = new Pipe(TARGET, files({ id: A }, { id: B }, { id: C }));
+  await p.start({ repos: { web: { github: "owner/web", ahead: 2 } } }, { handlers: staged });
+  await ahead(p, 12);
+  expect([A, B, C].map((id) => stageOf(p, id))).toEqual(Array(3).fill("approval:plan"));
+});
+
+test("loop: a repo at owner_waits waiting intents starts no new one", async () => {
+  const p = new Pipe(TARGET, files({ id: A }, { id: B }, { id: C }));
+  await p.start(
+    { ...ownerWaits(2), repos: { web: { github: "owner/web", ahead: 1 } } },
+    { handlers: staged },
+  );
+  await ahead(p, 12);
+  expect([A, B].map((id) => stageOf(p, id))).toEqual(["approval:plan", "approval:plan"]);
+  expect(byIntent(p, C)).toEqual([]);
+  expect(decide(await p.store.list(), p.loop.pickState()).skipped).toContainEqual({
+    id: C,
+    reason: `repo has 2 intents waiting on you (start ${C} to go now)`,
+  });
+  // The owner approves A's plan: it leaves the waiting intents and C is picked.
+  approvePlan(p, A);
+  await ahead(p, 12);
+  expect(byIntent(p, C)).toHaveLength(1);
+});
+
+test("loop: an outranking intent does not pass owner_waits", async () => {
+  const p = new Pipe(TARGET, files({ id: A }, { id: B }, { id: C }));
+  await p.start(
+    { ...ownerWaits(2), repos: { web: { github: "owner/web", ahead: 1 } } },
+    { handlers: staged },
+  );
+  await ahead(p, 12);
+  expect([A, B].map((id) => stageOf(p, id))).toEqual(["approval:plan", "approval:plan"]);
+  pushFiles(p.bares.intents!, files({ id: E, u: 5, i: 5 }));
+  await ahead(p, 12);
+  p.clock.advance(120);
+  await ahead(p, 4);
+  expect(byIntent(p, E)).toEqual([]);
+  expect(byIntent(p, C)).toEqual([]);
+});
+
+test("loop: the cap of twice ahead no longer holds a repo back", async () => {
+  // Three intents wait on the owner with `ahead = 1`: the old cap of 2 would have held the third.
+  const p = new Pipe(TARGET, files({ id: A }, { id: B }, { id: C }));
+  await p.start({ repos: { web: { github: "owner/web", ahead: 1 } } }, { handlers: staged });
+  await ahead(p, 12);
+  expect(unfinished(p.db)).toHaveLength(3);
+  expect([A, B, C].map((id) => stageOf(p, id))).toEqual(Array(3).fill("approval:plan"));
 });
 
 test("loop: one intent builds at a time per repo", async () => {
@@ -481,9 +551,12 @@ test("loop: the free build slot goes to the highest priority plan-approved inten
 
 test("loop: a ready intent does not count as ahead", async () => {
   const p = new Pipe(TARGET, files({ id: A, u: 5, i: 5 }, { id: B }, { id: C }, { id: D, u: 3, i: 3 }));
-  await p.start({ repos: { web: { github: "owner/web", ahead: 1 } } }, { handlers: building });
+  await p.start(
+    { ...ownerWaits(2), repos: { web: { github: "owner/web", ahead: 1 } } },
+    { handlers: building },
+  );
   await ahead(p, 12);
-  // Two wait on the owner, which is the cap for `ahead = 1`.
+  // Two wait on the owner, which is `owner_waits` here.
   expect([stageOf(p, A), stageOf(p, B)]).toEqual(["approval:plan", "approval:plan"]);
   expect([C, D].map((id) => byIntent(p, id).length)).toEqual([0, 0]);
   approvePlan(p, A);
@@ -499,14 +572,17 @@ test("loop: a ready intent does not count as ahead", async () => {
   expect(byIntent(p, D)).toHaveLength(1);
 });
 
-test("loop: a ready intent does not count toward the cap", async () => {
+test("loop: a ready intent does not count toward ahead", async () => {
   const p = new Pipe(TARGET, files({ id: A, u: 5, i: 5 }, { id: B }, { id: C }));
-  await p.start({ repos: { web: { github: "owner/web", ahead: 1 } } }, { handlers: building });
+  await p.start(
+    { ...ownerWaits(2), repos: { web: { github: "owner/web", ahead: 1 } } },
+    { handlers: building },
+  );
   await ahead(p, 12);
   approvePlan(p, A);
   await ahead(p, 12);
-  // A builds; B and C wait on the owner, which is the cap of 2. B's plan is approved while A builds: B is
-  // ready, and no longer counts toward the cap.
+  // A builds; B and C wait on the owner, which is `owner_waits` here. B's plan is approved while A builds: B
+  // is ready, and no longer counts as ahead.
   approvePlan(p, B);
   await ahead(p, 12);
   expect(JSON.parse(byIntent(p, B)[0]!.data).ready).toBeTypeOf("number");

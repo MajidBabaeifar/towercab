@@ -17,7 +17,9 @@ export interface Suite {
 export interface Live {
   url: string;
   environment: string;
-  adapter: "github" | "command";
+  adapter: "github" | "gitlab" | "command";
+  /** The file names the adapter; absent when the host's default stands (SHIP-37). */
+  adapterSet?: true;
   liveCommand: string | null;
   rollbackCommand: string | null;
   /** Minutes to wait for a deploy. */
@@ -26,6 +28,33 @@ export interface Live {
 }
 
 export const DEFAULT_TIMEOUT_MIN = 20;
+
+/** The `meta` key of a repo's owner-approved platform domains for its ship commands (`repo set ship_network=`). */
+export const shipNetworkKey = (repo: string): string => `ship-network:${repo}`;
+
+/** The domains the owner approved for `repo`'s ship commands; [] when none. */
+export function shipNetwork(db: { meta(key: string): string | null }, repo: string): string[] {
+  try {
+    const v = JSON.parse(db.meta(shipNetworkKey(repo)) ?? "[]") as unknown;
+    return Array.isArray(v) ? v.filter((d): d is string => typeof d === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The live app's host, the one domain the ship stage's commands may reach beyond the registry list and the
+ * plan's grants (SHIP-5, SHIP-9): it is the app the change was just shipped to. A platform's API is a plan
+ * grant, not a repo-file setting. [] when the URL has no usable host.
+ */
+export function liveDomains(live: Pick<Live, "url">): string[] {
+  try {
+    const host = new URL(live.url).hostname;
+    return host ? [host] : [];
+  } catch {
+    return [];
+  }
+}
 
 const LIVE_KEYS = ["url", "environment", "adapter", "live_command", "rollback_command", "timeout", "suites"];
 const SUITE_KEYS = ["name", "command", "tests", "paths", "smoke"];
@@ -46,7 +75,8 @@ function liveOf(v: unknown): Live {
   if (!/^https:\/\/[^\s/]+/.test(url)) throw new Error("url must be an https:// URL");
   const environment = m.has("environment") ? text(m.get("environment"), "environment") : "production";
   const adapter = m.has("adapter") ? text(m.get("adapter"), "adapter") : "github";
-  if (adapter !== "github" && adapter !== "command") throw new Error("adapter must be github or command");
+  if (adapter !== "github" && adapter !== "gitlab" && adapter !== "command")
+    throw new Error("adapter must be github, gitlab or command");
   const liveCommand = m.has("live_command") ? text(m.get("live_command"), "live_command") : null;
   const rollbackCommand = m.has("rollback_command")
     ? text(m.get("rollback_command"), "rollback_command")
@@ -72,11 +102,25 @@ function liveOf(v: unknown): Live {
     url: url.replace(/\/+$/, ""),
     environment,
     adapter,
+    ...(m.has("adapter") ? { adapterSet: true as const } : {}),
     liveCommand,
     rollbackCommand,
     timeout,
     suites,
   };
+}
+
+/**
+ * SHIP-37: the adapter on the repo's host. A GitLab repo defaults to `gitlab`, a GitHub repo to `github`;
+ * the other host's adapter is an error (`live: …`).
+ */
+export function resolveAdapter(live: Live, gitlab: boolean): Live {
+  if (live.adapter === "gitlab" && !gitlab) throw new Error("live: the gitlab adapter is for GitLab repos");
+  if (live.adapter === "github" && gitlab) {
+    if (live.adapterSet) throw new Error("live: the github adapter is for GitHub repos");
+    return { ...live, adapter: "gitlab" };
+  }
+  return live;
 }
 
 function suiteOf(v: unknown, n: number): Suite {

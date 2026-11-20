@@ -1,16 +1,12 @@
 // Branches Towercab made for its PRs (PIP-86..89): who has PRs on one, and deleting it once its PR is
 // closed. Merged branches are the repo setting's job (`delete_branch_on_merge`), not ours.
 
+import type { BranchPr } from "../forge.ts";
 import type { GitHub } from "../handlers.ts";
 import { check } from "../tools.ts";
 import { isBot } from "./events.ts";
 
-export interface BranchPr {
-  number: number;
-  state: "OPEN" | "MERGED" | "CLOSED";
-  /** The login as `gh` prints it (`app/x`, `x`, `x[bot]`). */
-  author: string;
-}
+export type { BranchPr } from "../forge.ts";
 
 /** The PRs, in any state, whose head is `branch` (`gh pr list --head`). */
 export async function prsOnBranch(gh: GitHub, repo: string, branch: string): Promise<BranchPr[]> {

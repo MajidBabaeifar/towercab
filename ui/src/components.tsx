@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type {
   ActionReply,
   Card,
+  InstallHelpView,
   Phase,
   ProblemView,
   ProposedCard as ProposedCardData,
@@ -16,12 +17,23 @@ import type {
   Row,
   SpendView,
   StateView,
+  StepView,
   UpNextView,
   When,
 } from "../../src/ui/view.ts";
 import { AddRepoForm } from "./AddRepo.tsx";
-import { acceptProposed, act, closeProposed, useFreshness } from "./api.ts";
-import { foldedOn, forgetFold, setFolded, waitKey } from "./folds.ts";
+import { AutonomyControl, FlagButtons } from "./AutonomyControl.tsx";
+import {
+  acceptProposed,
+  act,
+  approveSecret,
+  closeProposed,
+  sendSecret,
+  tickStep,
+  useFreshness,
+} from "./api.ts";
+import { EstimateBar } from "./budgets.tsx";
+import { foldedOn, forgetFold, listFolded, setFolded, setListFolded, waitKey } from "./folds.ts";
 import {
   Alert,
   Check,
@@ -36,9 +48,11 @@ import {
   StateIcon,
   Trash,
 } from "./icons.tsx";
+import { Modal } from "./Modal.tsx";
 import { Markdown } from "./md.tsx";
 import { asksFirst } from "./options.ts";
-import { Link } from "./router.tsx";
+import { Link, usePath } from "./router.tsx";
+import { sharedReason } from "./up-next.ts";
 
 const drafts = new Map<string, string>();
 const results = new Map<string, ActionReply>();
@@ -46,7 +60,7 @@ const expanded = new Set<string>();
 /** UI-126: the "Details" folds a viewer opened, by key, so a refetch keeps them open. */
 const detailsOpen = new Set<string>();
 
-/** UI-126, UI-127: the technical text, folded under "Details" until asked for. */
+/** UI-126, UI-127, UI-281: the agent part, folded under "Agent context" until asked for. */
 export function Details({ id, text }: { id: string; text: string }) {
   const [open, setOpen] = useState(detailsOpen.has(id));
   return (
@@ -60,12 +74,49 @@ export function Details({ id, text }: { id: string; text: string }) {
         setOpen(now);
       }}
     >
-      <summary>Details</summary>
+      <summary>Agent context</summary>
       <div class="details-body">
         <Markdown text={text} />
       </div>
     </details>
   );
+}
+
+/** UI-211: how to install the GitHub App on a repo it can't reach, folded under "See more". */
+export function InstallHelpBlock({ id, help }: { id: string; help: InstallHelpView }) {
+  const [open, setOpen] = useState(detailsOpen.has(`install:${id}`));
+  return (
+    <details
+      class="details-fold install-help"
+      open={open}
+      onToggle={(e) => {
+        const now = (e.currentTarget as HTMLDetailsElement).open;
+        if (now) detailsOpen.add(`install:${id}`);
+        else detailsOpen.delete(`install:${id}`);
+        setOpen(now);
+      }}
+    >
+      <summary>See more</summary>
+      <div class="details-body">
+        {help.app ? <p>App: {help.app}</p> : null}
+        <ol>
+          {help.steps.map((s) => (
+            <li key={s}>{s}</li>
+          ))}
+        </ol>
+        <p>
+          <a href={help.url} target="_blank" rel="noopener">
+            {help.url}
+          </a>
+        </p>
+      </div>
+    </details>
+  );
+}
+
+/** FAST-10: the fast lane label and where the intent stands, e.g. `Fast lane · build, 3 of 6`. */
+export function FastBadge({ text }: { text?: string }) {
+  return text ? <span class="chip chip-sm fast-badge">{text}</span> : null;
 }
 
 export function StateChip({ state, small }: { state: StateView; small?: boolean }) {
@@ -110,6 +161,36 @@ export function Id({ id }: { id: string }) {
   return <span class="id">{id}</span>;
 }
 
+/** UI-236: marks what the shadow wrote or did; a text label, not colour alone. */
+export function ShadowTag() {
+  return <span class="shadow-tag">[shadow]</span>;
+}
+
+/** UI-243: marks what the observer proposed; a text label, not colour alone. */
+export function ObserverTag() {
+  return <span class="shadow-tag observer-tag">[observer]</span>;
+}
+
+/** UI-243: the evidence links and the expected gain of an observer proposal, shown before the rest. */
+export function ObserverNote({ note }: { note: { evidence: string; gain: string } }) {
+  return (
+    <section class="observer-note" aria-label="Evidence and expected gain">
+      {note.evidence ? (
+        <>
+          <p class="access-head">Evidence</p>
+          <Markdown text={note.evidence} />
+        </>
+      ) : null}
+      {note.gain ? (
+        <>
+          <p class="access-head">Expected gain</p>
+          <Markdown text={note.gain} />
+        </>
+      ) : null}
+    </section>
+  );
+}
+
 export function Section(props: {
   title: string;
   count?: number;
@@ -117,15 +198,47 @@ export function Section(props: {
   children: ComponentChildren;
   class?: string;
   id?: string;
+  /** UI-267: the list's name in the browser's fold memory; the header then has a toggle and always a count. */
+  fold?: string;
+  /** UI-267: open whatever was remembered (a link points inside it). */
+  forceOpen?: boolean;
 }) {
+  const [folded, setFolded] = useState(props.fold ? listFolded(props.fold) : false);
+  const hidden = folded && !props.forceOpen;
+  const body = `${props.fold ?? "section"}-body`;
+  const count = props.count !== undefined && (props.fold || props.count > 0) ? props.count : null;
   return (
     <section class={`section${props.class ? ` ${props.class}` : ""}`} id={props.id} aria-label={props.title}>
       <header class="section-head">
-        <h2>{props.title}</h2>
-        {props.count !== undefined && props.count > 0 ? <span class="count">{props.count}</span> : null}
+        <h2>
+          {props.fold ? (
+            <button
+              type="button"
+              class="section-toggle"
+              aria-expanded={!hidden}
+              aria-controls={body}
+              onClick={() => {
+                setListFolded(props.fold!, !hidden);
+                setFolded(!hidden);
+              }}
+            >
+              <ChevronDown size={14} class="fold-chev" />
+              {props.title}
+            </button>
+          ) : (
+            props.title
+          )}
+        </h2>
+        {count !== null ? <span class="count">{count}</span> : null}
         {props.aside ? <span class="section-aside">{props.aside}</span> : null}
       </header>
-      {props.children}
+      {props.fold ? (
+        <div id={body} hidden={hidden}>
+          {props.children}
+        </div>
+      ) : (
+        props.children
+      )}
     </section>
   );
 }
@@ -211,11 +324,14 @@ export function NeedsCard({
   readOnly,
   linkTitle = true,
   foldable = false,
+  showSteps = true,
   onActed,
 }: {
   card: Card;
   readOnly: boolean;
   linkTitle?: boolean;
+  /** UI-245: the checklist of the owner's steps; the intent page shows its own. */
+  showSteps?: boolean;
   /** UI-189: the overview lets the card fold to one line. */
   foldable?: boolean;
   /** UI-195: called after an action the loop accepted, so Focus can move on at once. */
@@ -248,11 +364,23 @@ export function NeedsCard({
     drafts.set(key, t);
     setDraftState(t);
   };
-  const run = async (action: string, text?: string) => {
+  // LOOP-76: `done` and `steps` that would close an open PR with commits ask first, in a dialog.
+  const [exitAsk, setExitAsk] = useState<{ action: string; text?: string; warning: string } | null>(null);
+  const [dropWarn, setDropWarn] = useState<string | null>(null);
+  const run = async (action: string, text?: string, confirmed = false) => {
     setBusy(action);
     setMenu(false);
-    const r = await act(action, key, text);
+    const r = await act(action, key, text, confirmed);
     setBusy(null);
+    // The loop's note was missing or old: the server's answer is the warning, and the same confirm follows.
+    if (r.confirm) {
+      if (action === "drop") {
+        setDropWarn(r.confirm.text);
+        setConfirm(true);
+      } else setExitAsk({ action, text, warning: r.confirm.text });
+      return;
+    }
+    setExitAsk(null);
     results.set(key, r);
     setResult(r);
     if (r.ok && action === "reply") setDraft("");
@@ -261,7 +389,9 @@ export function NeedsCard({
   };
   const can = (a: string) => !readOnly && card.actions.includes(a as Card["actions"][number]);
   // A plain brief is two to four sentences (PIP-106): shown whole up to about that, folded beyond.
-  const long = (card.brief?.length ?? 0) > 480;
+  const people = card.people ?? card.brief;
+  const path = usePath();
+  const long = (people?.length ?? 0) > 480;
   const toggle = () => {
     if (open) expanded.delete(key);
     else expanded.add(key);
@@ -270,15 +400,60 @@ export function NeedsCard({
   const q = card.question;
   // UI-164: the question's own options are buttons; the exits it doesn't cover get a button here.
   const askedSteps = !!q?.options.some((o) => o.do === "steps");
+  // UI-167: the freeze waits offer Keep waiting / Freeze again (a reply) and Unfreeze beside drop.
+  const freezeExit = (e: { do: string; label: string }) =>
+    e.do === "unfreeze" ||
+    (e.do === "continue" && (e.label === "Keep waiting" || e.label === "Freeze again"));
   const extra = card.exits.filter(
-    (e) => (e.do === "done" || e.do === "steps") && !(e.do === "steps" && askedSteps),
+    (e) => ((e.do === "done" || e.do === "steps") && !(e.do === "steps" && askedSteps)) || freezeExit(e),
   );
+  const go = (action: string, text?: string) => {
+    if (card.openPr) setExitAsk({ action, text, warning: card.openPr.text });
+    else void run(action, text);
+  };
   const pick = (o: { option: string; do?: string }) => {
-    if (o.do === "steps") void run("steps");
+    if (o.do === "steps") go("steps");
     else if (o.do === "drop") setConfirm(true);
     else if (o.do === "continue" && !asksFirst(o.option)) void run("reply", o.option);
     else setDraft(o.option);
   };
+  const actionBar = (
+    <>
+      {(can("merge") && card.mergeLabel) || can("pass") || card.pr ? (
+        <footer class="card-actions">
+          {can("pass") ? (
+            <button
+              type="button"
+              class="btn primary"
+              disabled={busy !== null}
+              onClick={() => void run("pass")}
+            >
+              <Merge size={16} />
+              {busy === "pass" ? "Passing on…" : "Pass on to teammates"}
+            </button>
+          ) : null}
+          {can("merge") && card.mergeLabel ? (
+            <button
+              type="button"
+              class="btn primary"
+              disabled={busy !== null}
+              onClick={() => void run("merge")}
+            >
+              <Merge size={16} />
+              {busy === "merge" ? "Merging…" : card.mergeLabel}
+            </button>
+          ) : null}
+          {card.pr ? (
+            <a class="btn ghost" href={card.pr.url} target="_blank" rel="noopener noreferrer">
+              <PullRequest size={16} />
+              {card.pr.label}
+              <External size={14} class="muted-icon" />
+            </a>
+          ) : null}
+        </footer>
+      ) : null}
+    </>
+  );
   return (
     <article
       class={`card needs-card kind-${card.kind}${card.stuck ? " stuck-card" : ""}${folded ? " folded" : ""}`}
@@ -323,7 +498,10 @@ export function NeedsCard({
           <StateIcon state="needs" size={14} />
           <span>{card.kindLabel}</span>
         </span>
+        {card.partRepo ? <span class="chip">{card.partRepo}</span> : null}
         {card.onlyYou ? <OnlyYou /> : null}
+        <FastBadge text={card.fast} />
+        {card.decided_by_agent ? <span class="chip">agent for owner: {card.decided_by_agent}</span> : null}
         <span class="grow" />
         {card.since ? (
           <span class="meta">
@@ -385,6 +563,8 @@ export function NeedsCard({
             ) : (
               <Link href={`/i/${key}`}>{card.title}</Link>
             )}
+            {card.shadow ? <ShadowTag /> : null}
+            {card.observer ? <ObserverTag /> : null}
           </h3>
           <p class="meta">
             {card.repo}
@@ -399,14 +579,22 @@ export function NeedsCard({
       ) : null}
       <p class="ask">{card.ask}</p>
       {card.why ? <p class="why">{card.why}</p> : null}
+      {card.installHelp ? <InstallHelpBlock id={`card:${key}`} help={card.installHelp} /> : null}
+      {card.autonomy ? (
+        card.kind === "autonomy" ? (
+          <FlagButtons intent={key} view={card.autonomy} readOnly={readOnly} />
+        ) : (
+          <AutonomyControl intent={key} view={card.autonomy} readOnly={readOnly} compact />
+        )
+      ) : null}
       {card.warning ? (
         <p class="why review-warning" role="status">
           <Alert size={16} /> {card.warning}
         </p>
       ) : null}
-      {card.brief ? (
+      {people ? (
         <div class={`brief${long && !open ? " clamped" : ""}`}>
-          <Markdown text={card.brief} />
+          <Markdown text={people} />
           {long ? (
             <button type="button" class="link-btn" aria-expanded={open} onClick={toggle}>
               {open ? "Less" : "More"}
@@ -414,18 +602,35 @@ export function NeedsCard({
           ) : null}
         </div>
       ) : null}
-      {card.risk ? <RiskBlock risk={card.risk} /> : null}
+      {q ? null : actionBar}
+      {showSteps && card.steps?.length ? (
+        <div class="steps-block card-steps">
+          <p class="access-head">Your steps</p>
+          <StepsChecklist intent={key} steps={card.steps} readOnly={readOnly} />
+        </div>
+      ) : null}
+      {card.risk ? (
+        <details class="risk-fold">
+          <summary>{card.risk.line}</summary>
+          <RiskBlock risk={card.risk} />
+        </details>
+      ) : null}
       {card.openPoints?.length ? (
-        <div class="access">
-          <p class="access-head">Open points for you to decide</p>
+        <details class="access points-fold">
+          <summary class="access-head">
+            {card.openPoints.length} open point{card.openPoints.length === 1 ? "" : "s"} for you
+          </summary>
           <ul class="points">
             {card.openPoints.map((p) => (
               <li key={p.point}>
-                {p.point} <span class="access-why">{p.why}</span>
+                <details>
+                  <summary>{p.point}</summary>
+                  <span class="access-why">{p.why}</span>
+                </details>
               </li>
             ))}
           </ul>
-        </div>
+        </details>
       ) : null}
       {q ? (
         <div class="question">
@@ -492,7 +697,11 @@ export function NeedsCard({
               type="button"
               class="btn"
               disabled={busy !== null}
-              onClick={() => void run(e.do, e.do === "done" ? note : undefined)}
+              onClick={() => {
+                if (e.do === "continue") void run("reply", e.label);
+                else if (e.do === "unfreeze" && e.confirm && !window.confirm(e.confirm)) return;
+                else go(e.do, e.do === "done" ? note : undefined);
+              }}
             >
               {busy === e.do ? "Sending…" : e.label}
             </button>
@@ -531,7 +740,16 @@ export function NeedsCard({
       {card.addRepo && !readOnly ? (
         <AddRepoForm name={card.addRepo.name} initial={card.addRepo.github} />
       ) : null}
-      {card.details ? <Details id={`card:${key}`} text={card.details} /> : null}
+      {card.details ? (
+        // UI-281: a card shows no agent text; on the intent's page or the opened Inbox card it is folded, elsewhere a link.
+        path === `/i/${key}` || path === `/inbox/${key}` ? (
+          <Details id={`card:${key}`} text={card.details} />
+        ) : (
+          <Link class="agent-link" href={`/i/${key}`}>
+            Agent context
+          </Link>
+        )
+      ) : null}
       {can("reply") ? (
         <form
           class="reply"
@@ -568,54 +786,24 @@ export function NeedsCard({
           <span>{card.done.text}</span>
         </p>
       ) : null}
-      {(can("merge") && card.mergeLabel) || can("pass") || card.pr ? (
-        <footer class="card-actions">
-          {can("pass") ? (
-            <button
-              type="button"
-              class="btn primary"
-              disabled={busy !== null}
-              onClick={() => void run("pass")}
-            >
-              <Merge size={16} />
-              {busy === "pass" ? "Passing on…" : "Pass on to teammates"}
-            </button>
-          ) : null}
-          {can("merge") && card.mergeLabel ? (
-            <button
-              type="button"
-              class="btn primary"
-              disabled={busy !== null}
-              onClick={() => void run("merge")}
-            >
-              <Merge size={16} />
-              {busy === "merge" ? "Merging…" : card.mergeLabel}
-            </button>
-          ) : null}
-          {card.pr ? (
-            <a class="btn ghost" href={card.pr.url} target="_blank" rel="noopener noreferrer">
-              <PullRequest size={16} />
-              {card.pr.label}
-              <External size={14} class="muted-icon" />
-            </a>
-          ) : null}
-        </footer>
-      ) : null}
+      {q ? actionBar : null}
       {readOnly ? <p class="meta readonly-note">Read-only: Towercab isn't running.</p> : null}
       {confirm ? (
         <div class="confirm" role="alertdialog" aria-label="Confirm drop">
           <p>
             Drop “{card.title}”?{" "}
-            {card.pr
-              ? `This closes the ${card.pr.label} and stops the intent.`
-              : "Towercab stops working on it."}
+            {dropWarn ??
+              card.openPr?.text ??
+              (card.pr
+                ? `This closes the ${card.pr.label} and stops the intent.`
+                : "Towercab stops working on it.")}
           </p>
           <div class="confirm-row">
             <button
               type="button"
               class="btn danger"
               disabled={busy !== null}
-              onClick={() => void run("drop")}
+              onClick={() => void run("drop", undefined, true)}
             >
               {busy === "drop" ? "Dropping…" : "Drop it"}
             </button>
@@ -624,6 +812,25 @@ export function NeedsCard({
             </button>
           </div>
         </div>
+      ) : null}
+      {exitAsk ? (
+        <Modal label="Confirm" onClose={() => setExitAsk(null)} focus=".confirm-no">
+          <h2 class="modal-title">Close the pull request?</h2>
+          <p>{exitAsk.warning}</p>
+          <div class="modal-actions">
+            <button type="button" class="btn confirm-no" onClick={() => setExitAsk(null)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn danger"
+              disabled={busy !== null}
+              onClick={() => void run(exitAsk.action, exitAsk.text, true)}
+            >
+              {busy === exitAsk.action ? "Sending…" : "OK"}
+            </button>
+          </div>
+        </Modal>
       ) : null}
       {result ? (
         <p class={`result ${result.ok ? "ok" : "err"}`} role="status">
@@ -635,25 +842,159 @@ export function NeedsCard({
   );
 }
 
+/** SHIP-35: the field for a supplied secret; the value is sent once and the field cleared. */
+function SecretField({ intent, step }: { intent: string; step: StepView }) {
+  const [value, setValue] = useState("");
+  const [note, setNote] = useState("");
+  const sec = step.secret!;
+  const send = async () => {
+    const v = value;
+    setValue("");
+    const r = await sendSecret(intent, step.n, v);
+    setNote(r.message);
+  };
+  return (
+    <div class="secret-field">
+      {sec.source === "supply" && !sec.pr ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void send();
+          }}
+        >
+          <input
+            type="password"
+            autocomplete="off"
+            aria-label={`Value for ${sec.key} in ${sec.file}`}
+            value={value}
+            onInput={(e) => setValue((e.currentTarget as HTMLInputElement).value)}
+          />
+          <button type="submit" disabled={!value}>
+            Save {sec.key}
+          </button>
+        </form>
+      ) : null}
+      {sec.pr ? (
+        <p>
+          <a href={sec.pr.url} target="_blank" rel="noopener noreferrer">
+            Pull request #{sec.pr.number}
+          </a>{" "}
+          {sec.approved ? (
+            "approved; Towercab merges it."
+          ) : (
+            <button
+              type="button"
+              onClick={() => void approveSecret(intent, step.n).then((r) => setNote(r.message))}
+            >
+              Approve secret {sec.key} for {sec.file}
+            </button>
+          )}
+        </p>
+      ) : null}
+      {sec.error ? (
+        <p class="step-why">
+          {sec.error}
+          {sec.stopped ? (
+            <button
+              type="button"
+              onClick={() => void approveSecret(intent, step.n).then((r) => setNote(r.message))}
+            >
+              Try again
+            </button>
+          ) : null}
+        </p>
+      ) : null}
+      {note ? <p class="step-why">{note}</p> : null}
+    </div>
+  );
+}
+
+/** UI-160: the owner's steps, before-merge ones first; ticking one posts the step action. */
+export function StepsChecklist({
+  intent,
+  steps,
+  readOnly,
+}: {
+  intent: string;
+  steps: StepView[];
+  readOnly: boolean;
+}) {
+  const group = (when: StepView["when"], title: string) => {
+    const list = steps.filter((s) => s.when === when);
+    if (!list.length) return null;
+    return (
+      <>
+        <h3>{title}</h3>
+        <ul>
+          {list.map((s) => (
+            <li key={s.n}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={s.doneAt !== null}
+                  disabled={readOnly || !!s.secret}
+                  onChange={(e) => void tickStep(intent, s.n, (e.currentTarget as HTMLInputElement).checked)}
+                />
+                <span>
+                  {s.text}
+                  {s.why ? <span class="step-why">{s.why}</span> : null}
+                  {s.doneAt ? (
+                    <span class="step-time">
+                      Ticked <Time when={s.doneAt} />
+                    </span>
+                  ) : null}
+                </span>
+              </label>
+              {s.secret && !readOnly && s.doneAt === null ? <SecretField intent={intent} step={s} /> : null}
+            </li>
+          ))}
+        </ul>
+      </>
+    );
+  };
+  return (
+    <>
+      {group("before", "Before the change merges")}
+      {group("after", "After the change merges")}
+    </>
+  );
+}
+
 /** UI-59: a moving intent. */
-export function WorkRow({ row }: { row: Row }) {
+export function WorkRow({ row, readOnly = false }: { row: Row; readOnly?: boolean }) {
   return (
     <Link class="row" href={`/i/${row.intent}`}>
       <span class="row-main">
-        <span class="row-title">{row.title}</span>
+        <span class="row-title">
+          {row.title}
+          {row.shadow ? <ShadowTag /> : null}
+          {row.observer ? <ObserverTag /> : null}
+        </span>
         <span class="meta">
           {row.repo} · <Id id={row.intent} />
+          {row.repoCount ? (
+            <span>
+              {" "}
+              · {row.repoCount} · {row.slowest}
+            </span>
+          ) : null}
         </span>
+        <FastBadge text={row.fast} />
       </span>
       <span class="row-state">
         <StateChip state={row.state} small />
         <span class="row-step">
-          {row.behind ?? row.step}
+          {row.behind ?? row.freezeHold ?? row.step}
+          {row.build ? <span class="meta build-steps"> · {row.build.label}</span> : null}
           {row.inStep ? <span class="meta"> · {row.inStep}</span> : null}
           {row.warning ? <span class="meta review-warning"> · {row.warning}</span> : null}
         </span>
       </span>
       {row.behind ? null : <Phases phases={row.phases} />}
+      {row.autonomy ? (
+        <AutonomyControl intent={row.intent} view={row.autonomy} readOnly={readOnly} compact />
+      ) : null}
+      {row.estimate ? <EstimateBar line={row.estimate} /> : null}
       <span class="row-num">
         <span class="num">{row.cost}</span>
         <span class="meta">{row.model}</span>
@@ -669,6 +1010,7 @@ export function ProblemItem({ p }: { p: ProblemView }) {
       <div class="problem-body">
         <p class="problem-title">{p.title}</p>
         {p.detail ? <p class={`problem-detail${p.code ? " code" : ""}`}>{p.detail}</p> : null}
+        {p.installHelp ? <InstallHelpBlock id={`problem:${p.key}`} help={p.installHelp} /> : null}
         <p class="problem-fix">{p.fix}</p>
       </div>
       {p.intent ? (
@@ -732,27 +1074,33 @@ export function OnlyYou() {
 }
 
 export function UpNextList({ items, start = 1 }: { items: UpNextView[]; start?: number }) {
+  // UI-250: a reason every row shares is said once, above the list.
+  const shared = sharedReason(items);
   return (
-    <ol class="upnext">
-      {items.map((u, n) => (
-        <li key={u.intent} class={`up up-${u.state.key}`}>
-          <span class="pos">{n + start}</span>
-          <div class="up-body">
-            <Link class="up-title" href={`/i/${u.intent}`}>
-              {u.title}
-            </Link>
-            <span class="up-meta">
-              <StateChip state={u.state} small />
-              <span class="meta">
-                {u.repo} · priority {u.priority}
+    <>
+      {shared ? <p class="up-shared meta">{shared}</p> : null}
+      <ol class="upnext">
+        {items.map((u, n) => (
+          <li key={u.intent} class={`up up-${u.state.key}`}>
+            <span class="pos">{n + start}</span>
+            <div class="up-body">
+              <Link class="up-title" href={`/i/${u.intent}`}>
+                {u.title}
+              </Link>
+              <span class="up-meta">
+                <StateChip state={u.state} small />
+                <span class="meta">
+                  {u.repo} · priority {u.priority}
+                </span>
               </span>
-            </span>
-            {u.reason ? <span class="up-reason">{u.reason}</span> : null}
-            {u.canStart ? <StartButton intent={u.intent} /> : null}
-          </div>
-        </li>
-      ))}
-    </ol>
+              {u.reason && !shared ? <span class="up-reason">{u.reason}</span> : null}
+              {u.estimate ? <EstimateBar line={u.estimate} /> : null}
+              {u.canStart ? <StartButton intent={u.intent} /> : null}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </>
   );
 }
 
@@ -875,10 +1223,13 @@ const proposedResults = new Map<number, ActionReply>();
 export function ProposedCard({
   card,
   readOnly,
+  compact = false,
   onActed,
 }: {
   card: ProposedCardData;
   readOnly: boolean;
+  /** UI-247: one line (two when it needs a reason or the close box) instead of a card. */
+  compact?: boolean;
   /** UI-195: called after Accept or Close went through, so Focus can move on at once. */
   onActed?: (action: string) => void;
 }) {
@@ -905,12 +1256,101 @@ export function ProposedCard({
     .filter(Boolean)
     .join(" ");
   const why = readOnly ? "Towercab isn't running." : card.acceptWhy;
+  if (compact) {
+    return (
+      <article class="proposed-row" id={`proposed-${card.pr}`}>
+        <div class="proposed-line">
+          {card.draft ? <span class="chip chip-sm chip-draft">Draft</span> : null}
+          <a
+            class="proposed-title"
+            href={card.textUrl ?? card.prUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            title="Read the intent"
+          >
+            {card.title}
+          </a>
+          {card.observer ? <ObserverTag /> : null}
+          <a
+            class="proposed-gh"
+            href={card.prUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            aria-label={`Open on GitHub: ${card.title}`}
+            title="Open on GitHub"
+          >
+            <PullRequest size={14} />
+          </a>
+          <span class="meta proposed-facts">
+            {card.repo ? <span class="mono">{card.repo}</span> : <span>repo unknown</span>}
+            {card.priorityText ? <span> · {card.priorityText}</span> : null}
+            <span> · {card.waiting}</span>
+          </span>
+          {closing ? null : (
+            <span class="proposed-actions">
+              <button
+                type="button"
+                class="btn primary"
+                disabled={readOnly || !card.canAccept || busy !== null}
+                title={why ?? undefined}
+                onClick={() => run("accept", () => acceptProposed(card.pr, card.head))}
+              >
+                {busy === "accept" ? "Accepting…" : "Accept"}
+              </button>
+              <button
+                type="button"
+                class="btn"
+                disabled={readOnly || busy !== null}
+                onClick={() => setClosing(true)}
+              >
+                Close
+              </button>
+            </span>
+          )}
+        </div>
+        {closing ? (
+          <div class="proposed-close">
+            <label>
+              <span class="meta">Why close it? (optional)</span>
+              <input
+                type="text"
+                value={reason}
+                placeholder="Not going ahead."
+                onInput={(e) => setReason((e.currentTarget as HTMLInputElement).value)}
+              />
+            </label>
+            <button
+              type="button"
+              class="btn"
+              disabled={busy !== null}
+              onClick={() => run("close", () => closeProposed(card.pr, reason))}
+            >
+              {busy === "close" ? "Closing…" : "Close the PR"}
+            </button>
+            <button type="button" class="btn ghost" onClick={() => setClosing(false)}>
+              Cancel
+            </button>
+          </div>
+        ) : why ? (
+          <p class="meta proposed-why">{why}</p>
+        ) : null}
+        {result ? (
+          <p class={`result ${result.ok ? "ok" : "err"}`} role="status">
+            {result.message}
+          </p>
+        ) : null}
+      </article>
+    );
+  }
   return (
     <article class="card proposed-card" id={`proposed-${card.pr}`}>
       <header class="proposed-head">
         <span class="chip chip-sm">Proposed</span>
         {card.draft ? <span class="chip chip-sm chip-draft">Draft</span> : null}
-        <h3>{card.title}</h3>
+        <h3>
+          {card.title}
+          {card.observer ? <ObserverTag /> : null}
+        </h3>
       </header>
       <p class="meta proposed-meta">
         {card.repo ? <span class="mono">{card.repo}</span> : <span>repo unknown</span>}
@@ -919,6 +1359,7 @@ export function ProposedCard({
         <span> · {card.from}</span>
         <span> · {card.waiting}</span>
       </p>
+      {card.observerNote ? <ObserverNote note={card.observerNote} /> : null}
       {card.problem ? <p class="proposed-problem">{card.problem}</p> : null}
       <div class="proposed-links">
         <a href={card.prUrl} target="_blank" rel="noreferrer noopener">
@@ -984,19 +1425,28 @@ export function ProposedCard({
   );
 }
 
-/** UI-184, UI-186, UI-188: the proposed cards in order, with the notice of a failed read. */
+/** UI-184, UI-186, UI-188, UI-247, UI-267: the proposed rows in order, under a header that folds them. */
 export function ProposedList({ data, readOnly, id }: { data: ProposedData; readOnly: boolean; id?: string }) {
+  // A link to a proposal (LOOP-93's message) opens the list if it was folded.
+  const target = /^#proposed-(\d+)$/.exec(location.hash)?.[1];
+  const linked = target !== undefined && data.cards.some((c) => String(c.pr) === target);
   useEffect(() => {
-    const m = /^#proposed-(\d+)$/.exec(location.hash);
-    if (m) document.getElementById(`proposed-${m[1]}`)?.scrollIntoView();
-  }, []);
+    if (target) document.getElementById(`proposed-${target}`)?.scrollIntoView();
+  }, [target]);
   if (!data.cards.length) return null;
   return (
-    <Section title="Proposed" count={data.cards.length} id={id} class="proposed-section">
+    <Section
+      title="Proposed"
+      count={data.cards.length}
+      id={id}
+      class="proposed-section"
+      fold="proposed"
+      forceOpen={linked}
+    >
       {data.stale ? <p class="proposed-stale meta">{data.stale}</p> : null}
-      <div class="cards">
+      <div class="proposed-rows">
         {data.cards.map((c) => (
-          <ProposedCard key={c.pr} card={c} readOnly={readOnly} />
+          <ProposedCard key={c.pr} card={c} readOnly={readOnly} compact />
         ))}
       </div>
     </Section>

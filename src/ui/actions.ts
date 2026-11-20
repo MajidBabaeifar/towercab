@@ -1,21 +1,48 @@
 // The page's buttons (UI-66): each does what the owner would do on GitHub (as the owner, LOOP-38) or
 // in the CLI (a `commands` row the loop applies, LOOP-15).
 
-import { ownerOnly, ownerOnlyLine } from "../autonomy.ts";
-import { tickSteps } from "../commands.ts";
+import { ownerOnly, ownerOnlyLine, ownSource } from "../autonomy.ts";
+import {
+  acceptedOf,
+  clearFlag,
+  flagOf,
+  levelNow,
+  recordChange,
+  setAccepted,
+  setFlag,
+  writtenLevel,
+} from "../autonomy-change.ts";
+import { saveBudgets } from "../budgets.ts";
+import { intentPaused, tickSteps } from "../commands.ts";
 import type { Config, RepoConfig } from "../config.ts";
 import type { Db } from "../db.ts";
+import { ExitNeedsConfirm, type ExitWarning, exitWarning } from "../exit-warning.ts";
+import { markFast } from "../fast.ts";
 import { askFeatures } from "../features.ts";
 import { ForgeBadReply, MERGE_METHOD, type PrBrief, type Result } from "../forge.ts";
 import { ownerForge } from "../github/forge.ts";
 import { classifyFiles, type ProposedPr } from "../github/proposed.ts";
 import type { Clock, GitHub } from "../handlers.ts";
+import type { Home } from "../home.ts";
+import {
+  addToIntent,
+  cannotAddTo,
+  checkDraft,
+  createIntent,
+  type Draft,
+  type Mode,
+} from "../intents/create.ts";
+import { checkOverlap, type Match, type OverlapResult } from "../intents/overlap.ts";
 import type { IntentStore } from "../intents/types.ts";
+import { isKind, kindChangeRefusal, WORK_KINDS } from "../kind.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
+import { isMulti } from "../parts.ts";
 import { grantScanning } from "../pipeline/alerts.ts";
 import { ownerMergeRefusal } from "../pipeline/teammate.ts";
-import { grantPermission } from "../settings/store.ts";
+import { canBoostIntent, changeScores } from "../scores.ts";
+import { resetShadow } from "../shadow/store.ts";
 import { approveSecret } from "../ship/secret-steps.ts";
+import type { Tools } from "../tools.ts";
 import { currentPr, type DoneNote, validNote } from "./state.ts";
 
 /** What the page can do; each resolves to one sentence saying what happened, or throws the error. */
@@ -23,20 +50,46 @@ export interface UiActions {
   merge(intent: string): Promise<string>;
   reply(intent: string, text: string): Promise<string>;
   retry(intent: string): Promise<string>;
-  drop(intent: string): Promise<string>;
+  /** UI-167: lift the freeze of a multi-repo intent (`towercab unfreeze`). */
+  unfreeze(intent: string): Promise<string>;
+  /** LOOP-76: `confirmed` when the owner saw the warning of an open PR with commits that this closes. */
+  drop(intent: string, confirmed?: boolean): Promise<string>;
   start(intent: string): Promise<string>;
+  /** LOOP-76: what closing the intent's open code PR would lose, for a confirm that is not the page's (Telegram). */
+  closeWarning?(intent: string): Promise<ExitWarning | null>;
   /** UI-168, PIP-143: pass a change the automated review didn't approve on to the teammates. */
   pass?(intent: string): Promise<string>;
   /** UI-160, SHIP-22: tick (or untick) one of the owner's steps. */
   step?(intent: string, n: number, done: boolean): Promise<string>;
-  /** REPO-32: the owner granted the App Administration (write); settings are applied again. */
-  granted?(): Promise<string>;
+  /** REPO-39: the owner's Apply: the standard settings of one repo, with their own login. */
+  applySettings?(repo: string): Promise<string>;
   /** PIP-150: the owner granted the App Code scanning alerts (read); alerts are read again. */
   scanningGranted?(): Promise<string>;
   /** UI-164, LOOP-76: "I did it myself": ends the intent; the note becomes a ticked step. */
-  done?(intent: string, note: string): Promise<string>;
+  done?(intent: string, note: string, confirmed?: boolean): Promise<string>;
   /** UI-164, PIP-113: the owner does it by hand; the intent becomes steps. */
-  steps?(intent: string): Promise<string>;
+  steps?(intent: string, confirmed?: boolean): Promise<string>;
+  /**
+   * AUT-34, AUT-35, UI-257: set the intent's autonomy to `a` (0–5) in one commit. Only the page (actor
+   * `owner` or none) may; a raise from any other actor is refused, and so is a lowering by the shadow.
+   */
+  autonomy?(intent: string, a: number, actor?: string): Promise<string>;
+  /** UI-283: set the intent's kind (INT-76); only the owner, and not past a stage the kind skips. */
+  kind?(intent: string, kind: string, actor?: string): Promise<string>;
+  /**
+   * FAST-1, FAST-9: put the intent in the fast lane or take it out. From the page (actor `owner` or none) or the
+   * owner's own Telegram chat (`channel`, never taken from a request) it counts at once; the shadow is refused.
+   */
+  fast?(intent: string, on: boolean, actor?: string, channel?: "page" | "telegram"): Promise<string>;
+  /** UI-204, LOOP-133: set urgency and/or importance (null: leave it); the new priority comes back. */
+  scores?(
+    intent: string,
+    u: number | null,
+    i: number | null,
+    actor?: string,
+  ): Promise<{ message: string; priority: number; parked: boolean }>;
+  /** UI-205, LOOP-134: a5, and the start of an intent that has not started. */
+  boost?(intent: string, actor?: string): Promise<string>;
   /** SHD-22: pause everything, or one intent when `intent` is given. */
   pause(intent?: string): Promise<string>;
   resume(intent?: string): Promise<string>;
@@ -52,13 +105,52 @@ export interface UiActions {
   approveSecret?(intent: string, n: number): Promise<string>;
   /** UI-151: open (or update) the PR that changes the repo's limits; `confirmed` in the first day (REPO-14). */
   repoSettings?(repo: string, changes: unknown, confirmed: boolean): Promise<string>;
+  /** UI-253: save the budget (`all`) or a repo's caps to `config.toml`; they apply at once. */
+  budgets?(scope: string, daily: unknown, monthly: unknown): Promise<string>;
   /** UI-154: open the move PR again (REPO-19). */
   repoMove?(repo: string): Promise<string>;
   /** INT-53: merge the proposed intent's PR `pr` as the owner, if it still is at `head`. */
   accept(pr: number, head: string): Promise<string>;
   /** INT-53: comment `text` (default `Not going ahead.`) and close the proposed intent's PR. */
   close(pr: number, text?: string): Promise<string>;
+  /** UI-216, INT-73: the intents and open proposals that overlap `draft`; `visible` limits them to the person's repos. */
+  checkIntent?(
+    draft: Draft,
+    o?: { visible?: (repo: string) => boolean },
+  ): Promise<{ matches: CheckedMatch[]; titleNote?: string }>;
+  /** UI-216, INT-71, INT-74: write the intent (`direct` or as a `proposal`), or add the draft's text to `addTo`. */
+  createIntent?(draft: Draft, o: { mode: Mode; by: string; addTo?: string }): Promise<CreatedReply>;
+  /** UI-238, SHD-17: clear the shadow's conversation, summary and pending actions; its action log stays. */
+  shadowReset?(): Promise<string>;
 }
+
+/** A match and whether the page may offer "add my text to this one" (INT-74); the server also needs the maintainer role. */
+export type CheckedMatch = Match & { canAdd: boolean; pastDesign: boolean };
+
+/** What `createIntent` answers (UI-216). */
+export interface CreatedReply {
+  id: string;
+  path: string;
+  added: boolean;
+  proposal?: boolean;
+  pr?: number;
+  message: string;
+}
+
+/** What the new intent form needs beyond the page's own sources (UI-216, LOOP-125). */
+export interface IntentTools {
+  home: Home;
+  tools: Tools;
+  /** LOOP-108: a draining service refuses a check. */
+  draining?: () => boolean;
+  /** INT-71: what a contributor's proposal needs; none: proposals are refused. */
+  proposal?: { config: Config; home: Home; tools: Tools; github: GitHub; who: string } | null;
+  towercabExe?: string;
+  userHome?: string;
+}
+
+/** A repeat of the same create by the same person within this long is refused (UI-216). */
+export const REPEAT_S = 120;
 
 export interface ActionDeps {
   db: Db;
@@ -76,11 +168,22 @@ export interface ActionDeps {
     propose(repo: string, changes: unknown, confirmed: boolean): Promise<string>;
     move(repo: string): Promise<string>;
   } | null;
+  /** REPO-39: Apply for one repo, bound to the loop's database, tools and forge; null: not available. */
+  applySettings?: ((repo: string) => Promise<string>) | null;
   /** The loop's last list of proposed intents (LOOP-92); Accept refuses one whose file can't be read. */
   proposed?: () => ProposedPr[];
   /** SHIP-35: writes a typed secret; none: the page can't take one. */
   supplySecret?: (intent: string, n: number, value: string) => Promise<string>;
+  /** LOOP-76: every exit that reaches these actions was already confirmed in the caller's own words (Telegram). */
+  confirmed?: boolean;
+  /** The new intent form (UI-213..218); without it the page can't create intents. */
+  intentTools?: IntentTools | null;
+  /** SHD-12: the shadow's own actions: what it writes on GitHub starts with `[shadow] `. */
+  actor?: "shadow";
 }
+
+/** SHD-12: the tag on whatever the shadow writes. */
+export const SHADOW_TAG = "[shadow] ";
 
 export const DEFAULT_CLOSE_REASON = "Not going ahead.";
 
@@ -117,6 +220,7 @@ export function createActions(d: ActionDeps): UiActions {
   };
   const pr = (m: Mission | undefined) => (m ? currentPr(m, d.config, d.store.github()) : null);
   const of = ownerForge(d.github.owner);
+  const tag = d.actor === "shadow" ? SHADOW_TAG : "";
   const refused = (r: Result, what: string) => {
     if (!r.ok) throw new Error(`GitHub refused to ${what}: ${firstLine(r.reason)}`);
   };
@@ -140,6 +244,13 @@ export function createActions(d: ActionDeps): UiActions {
       throw new Error(`You already ${PAST[n.action]} the ${p.label} #${p.number}; Towercab is moving on.`);
     }
     return `Already ${PAST[action]}; Towercab is moving on.`;
+  };
+
+  /** LOOP-76: an exit that closes the mission's open code PR with commits needs the owner's confirmation. */
+  const closing = async (m: Mission | undefined, confirmed: boolean) => {
+    if (confirmed || d.confirmed || !m?.pr) return;
+    const w = await exitWarning(of, d.config.repos.get(m.repo)?.github ?? null, m.pr);
+    if (w) throw new ExitNeedsConfirm(w);
   };
 
   /** INT-53: the PR as GitHub has it now, read as the owner. */
@@ -166,7 +277,85 @@ export function createActions(d: ActionDeps): UiActions {
   /** Ask the loop to read the intents repo's PRs now (UI-106's way). */
   const readNow = () => d.db.setMeta("proposed:poll", "1");
 
+  const made = new Map<string, { at: number; id: string }>();
+  const intentTools = () => {
+    if (!d.intentTools) throw new Error("Creating intents isn't available.");
+    return d.intentTools;
+  };
+
   return {
+    async checkIntent(draft, o = {}) {
+      const t = intentTools();
+      // A bad value is refused before the check is paid for.
+      const checked = checkDraft(draft, d.config, "direct");
+      const found: OverlapResult = await checkOverlap(
+        {
+          config: d.config,
+          home: t.home,
+          tools: t.tools,
+          clock: d.clock,
+          store: d.store,
+          db: d.db,
+          proposed: () => d.proposed?.() ?? [],
+          draining: t.draining,
+          visible: o.visible,
+          towercabExe: t.towercabExe,
+          userHome: t.userHome,
+        },
+        checked,
+      );
+      const listing = await d.store.list();
+      return {
+        ...found,
+        matches: found.matches.map((m) => {
+          const intent = listing.open.find((i) => i.id === m.ref);
+          const no = intent ? cannotAddTo(intent, unfinishedFor(d.db, intent.id)) : "not an open intent";
+          return {
+            ...m,
+            canAdd: intent !== undefined && no === null,
+            pastDesign: intent !== undefined && no !== null,
+          };
+        }),
+      };
+    },
+
+    async createIntent(draft, o) {
+      const t = intentTools();
+      if (o.addTo) {
+        const i = await addToIntent(
+          { store: d.store },
+          o.addTo,
+          draft,
+          unfinishedFor(d.db, o.addTo),
+          o.by,
+          o.mode,
+        );
+        return { id: i.id, path: `${i.dir}/intent.md`, added: true, message: `Added to ${i.id}.` };
+      }
+      const checked = checkDraft(draft, d.config, o.mode);
+      const key = `${o.by}|${checked.repo}|${checked.title}`;
+      const now = d.clock.now();
+      const before = made.get(key);
+      if (before && now - before.at < REPEAT_S) throw new Error(`Already created as ${before.id}`);
+      const c = await createIntent(
+        { store: d.store, config: d.config, now: () => new Date(now * 1000), proposal: t.proposal },
+        checked,
+        o.mode,
+      );
+      made.set(key, { at: now, id: c.id || `PR #${c.pr}` });
+      if (c.proposal) {
+        return {
+          id: c.id,
+          path: "",
+          added: false,
+          proposal: true,
+          ...(c.pr ? { pr: c.pr } : {}),
+          message: `Proposed ${c.id}. A maintainer will accept or close it.`,
+        };
+      }
+      return { id: c.id, path: c.path, added: false, message: `Created ${c.id}.` };
+    },
+
     async accept(n, head) {
       const now = await look(n);
       if (now.state !== "OPEN" || now.head !== head) throw changed(n);
@@ -198,6 +387,20 @@ export function createActions(d: ActionDeps): UiActions {
       const m = unfinishedFor(d.db, intent);
       if (!m || !APPROVALS.has(m.stage))
         throw new Error("Nothing to merge: this intent isn't waiting for a merge.");
+      // LOOP-80: the owner's yes lands every part of a multi-repo intent; no single PR is merged here.
+      if (isMulti(m)) {
+        d.db.tx(() => {
+          const fresh = getMission(d.db, m.id);
+          if (!fresh || fresh.stage !== m.stage) return;
+          d.db.run(
+            "UPDATE missions SET data = ? WHERE id = ?",
+            JSON.stringify({ ...dataOf(fresh), ownerApproved: true }),
+            m.id,
+          );
+          d.db.setMeta(`poll:${m.id}`, "1");
+        });
+        return "Approved: Towercab freezes the repos and lands every part in order within a minute.";
+      }
       // PIP-143: a change the automated review didn't approve is passed on before it can merge.
       if ((dataOf(m) as { teammate?: { passNeeded?: boolean } }).teammate?.passNeeded === true) {
         throw new Error("Pass it on to your teammates first: they need to review it before it can merge.");
@@ -236,6 +439,9 @@ export function createActions(d: ActionDeps): UiActions {
       if (state.state === "CLOSED") {
         throw new Error(`The ${p.label} #${p.number} is closed, so there is nothing to merge.`);
       }
+      // SHD-12: the PR says who asked for the merge.
+      if (tag)
+        await of.commentOnPr(p.github, p.number, `${tag}Merging on your yes in Telegram.`, { inline: true });
       refused(
         await of.mergePr(p.github, p.number, { method: MERGE_METHOD }),
         `merge the ${p.label} #${p.number}`,
@@ -261,8 +467,8 @@ export function createActions(d: ActionDeps): UiActions {
     },
 
     async reply(intent, text) {
-      const body = text.trim();
-      if (!body) throw new Error("Write a reply first.");
+      const body = `${tag}${text.trim()}`;
+      if (!text.trim()) throw new Error("Write a reply first.");
       if (body.length > MAX_REPLY) throw new Error(`The reply is too long: at most ${MAX_REPLY} characters.`);
       const m = unfinishedFor(d.db, intent);
       const p = pr(m);
@@ -275,12 +481,6 @@ export function createActions(d: ActionDeps): UiActions {
       }
       command("answer", intent, body);
       return "Answer saved to the intent. Towercab goes on with it on its next pass.";
-    },
-
-    async granted() {
-      return grantPermission(d.db)
-        ? "Noted. Towercab applies the standard settings again at its next check."
-        : "Nothing to clear: the GitHub App was not missing the permission.";
     },
 
     async scanningGranted() {
@@ -306,13 +506,31 @@ export function createActions(d: ActionDeps): UiActions {
       return "Towercab starts it over on its next pass.";
     },
 
-    async drop(intent) {
+    async closeWarning(intent) {
+      const m = unfinishedFor(d.db, intent);
+      if (!m?.pr) return null;
+      return exitWarning(of, d.config.repos.get(m.repo)?.github ?? null, m.pr);
+    },
+
+    async unfreeze(intent) {
+      const m = unfinishedFor(d.db, intent);
+      if (m?.stage !== "blocked" || m.waiting !== "freeze")
+        throw new Error("Nothing to unfreeze: this intent isn't waiting at a freeze.");
+      command("unfreeze", intent);
+      return "Towercab lifts the freeze on its next pass.";
+    },
+
+    async drop(intent, confirmed = false) {
       const m = unfinishedFor(d.db, intent);
       const p = pr(m);
       if (m && p) {
         const again = repeated(m, p, "drop");
         if (again) return again;
-        refused(await of.closePr(p.github, p.number), `close the ${p.label} #${p.number}`);
+        await closing(m, confirmed);
+        refused(
+          await of.closePr(p.github, p.number, tag ? `${tag}Dropped on your yes in Telegram.` : undefined),
+          `close the ${p.label} #${p.number}`,
+        );
         done(m, p, "drop");
         return `Closed the ${p.label} #${p.number}; the intent is dropped.`;
       }
@@ -333,11 +551,103 @@ export function createActions(d: ActionDeps): UiActions {
         : "Paused: nothing new starts until you resume.";
     },
 
+    async autonomy(intent, a, actor = "") {
+      if (!Number.isInteger(a) || a < 0 || a > 5) throw new Error("Autonomy is a0 to a5.");
+      const found = await d.store.get(intent);
+      // UI-206: a5 is for the owner's own intents; the page doesn't offer it, and the API refuses it.
+      if (a === 5 && !ownSource(found.source)) throw new Error("a5 is only for your own intents.");
+      const flag = flagOf(d.db, found.id);
+      const shown = flag ? flag.from : writtenLevel(found);
+      const owner = d.actor !== "shadow" && (actor === "" || actor === "owner");
+      // AUT-35: no command and no shadow action changes the level; a raise counts only from the page.
+      if (!owner) {
+        throw new Error(a > shown ? "only you can raise autonomy" : "only you can change autonomy");
+      }
+      const written = writtenLevel(found);
+      if (a === written) {
+        // Nothing to write: the file already says it (accepting a flagged raise lands here).
+        if (!flag) return `Already at a${a}.`;
+        setAccepted(d.db, found.id, a);
+        clearFlag(d.db, found.id);
+        recordChange(d.db, { intent: found.id, from: shown, to: a, at: d.clock.now() });
+        return "Saved. Applies from the next gate.";
+      }
+      // The accepted level moves before the push, so the loop never flags Towercab's own commit.
+      const was = acceptedOf(d.db, found.id);
+      setAccepted(d.db, found.id, a);
+      clearFlag(d.db, found.id);
+      try {
+        await d.store.update(found.id, "set autonomy", (e) => {
+          e.setField("a", a);
+          // UI-208: the owner set the level again, so the worker's note about lowering it goes.
+          e.removeField("lower_why");
+        });
+      } catch (e) {
+        if (was !== null) setAccepted(d.db, found.id, was);
+        if (flag) setFlag(d.db, found.id, flag);
+        throw e;
+      }
+      recordChange(d.db, { intent: found.id, from: shown, to: a, at: d.clock.now() });
+      return "Saved. Applies from the next gate.";
+    },
+
+    async kind(intent, kind, actor = "") {
+      if (d.actor === "shadow" || (actor !== "" && actor !== "owner"))
+        throw new Error("only you can change the kind");
+      if (!isKind(kind)) throw new Error(`Kind is one of ${WORK_KINDS.join(", ")}.`);
+      const found = await d.store.get(intent);
+      const m = unfinishedFor(d.db, found.id);
+      const refusal = m
+        ? kindChangeRefusal(kind, m.stage === "blocked" ? (m.from_stage ?? m.stage) : m.stage)
+        : null;
+      if (refusal) throw new Error(refusal);
+      command("kind", found.id, kind);
+      return `Saved: ${kind}. It applies from the next pass.`;
+    },
+
+    async fast(intent, on, actor = "", channel = "page") {
+      if (d.actor === "shadow" || (actor !== "" && actor !== "owner")) {
+        throw new Error("only you can change the fast lane");
+      }
+      return markFast({ db: d.db, store: d.store }, intent, on, channel);
+    },
+
+    async scores(intent, u, i, actor = "") {
+      if (d.actor === "shadow" || (actor !== "" && actor !== "owner")) {
+        throw new Error("only you can change scores");
+      }
+      const r = await changeScores(
+        { db: d.db, store: d.store, now: d.clock.now(), cutoff: d.config.intents.cutoff },
+        intent,
+        { ...(u !== null ? { u } : {}), ...(i !== null ? { i } : {}) },
+        "ui",
+      );
+      return {
+        message: r.changed ? "Saved. The queue is reordered." : r.message,
+        priority: r.priority,
+        parked: r.parked,
+      };
+    },
+
+    async boost(intent, actor = "") {
+      if (d.actor === "shadow" || (actor !== "" && actor !== "owner")) {
+        throw new Error("only you can raise autonomy");
+      }
+      const found = await d.store.get(intent);
+      if (found.done) throw new Error("It is done or dropped.");
+      if (!canBoostIntent(found)) throw new Error("a5 is only for your own intents.");
+      const started = unfinishedFor(d.db, found.id) || d.db.meta(`start:${found.id}`) !== null;
+      command("boost", found.id);
+      if (started) return "Boosted: a5. It runs from the next gate.";
+      if (intentPaused(d.db, found.id)) return "Boosted: a5. It is paused, so it starts when you resume it.";
+      return "Boosted: a5 and design started.";
+    },
+
     async guard(intent, action, actor) {
       if (actor === "owner" || actor === "") return;
       if (action === "pause") return;
       const found = await d.store.get(intent).catch(() => null);
-      if (found && ownerOnly(found.a, unfinishedFor(d.db, found.id)?.a_at_pick ?? null)) {
+      if (found && ownerOnly(levelNow(d.db, found))) {
         throw new Error(ownerOnlyLine(found.id));
       }
     },
@@ -356,17 +666,19 @@ export function createActions(d: ActionDeps): UiActions {
       return approveSecret(d.db, d.clock, intent, n);
     },
 
-    async done(intent, note) {
+    async done(intent, note, confirmed = false) {
       const m = unfinishedFor(d.db, intent);
       if (!m) throw new Error("Nothing to finish: this intent isn't waiting on you.");
+      await closing(m, confirmed);
       command("done", intent, note.trim().slice(0, 300));
       done(m, pr(m), "done");
       return "Marked as done by you. Towercab ends the intent on its next pass.";
     },
 
-    async steps(intent) {
+    async steps(intent, confirmed = false) {
       const m = unfinishedFor(d.db, intent);
       if (!m) throw new Error("Nothing to switch: this intent isn't waiting on you.");
+      await closing(m, confirmed);
       command("steps", intent);
       done(m, pr(m), "steps");
       return "Switched to steps for you to do. Towercab sets it up on its next pass.";
@@ -390,9 +702,23 @@ export function createActions(d: ActionDeps): UiActions {
       return d.limits.propose(repo, changes, confirmed);
     },
 
+    async budgets(scope, daily, monthly) {
+      return saveBudgets(d, scope, daily, monthly);
+    },
+
+    async applySettings(repo) {
+      if (!d.applySettings) throw new Error("Towercab isn't running, so it can't apply settings now.");
+      return d.applySettings(repo);
+    },
+
     async repoMove(repo) {
       if (!d.limits) throw new Error("Towercab isn't running, so it can't open a pull request now.");
       return d.limits.move(repo);
+    },
+
+    async shadowReset() {
+      resetShadow(d.db);
+      return "Cleared the shadow's conversation. Its log of actions stays.";
     },
 
     async features(repo) {

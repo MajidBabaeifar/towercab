@@ -4,24 +4,14 @@ import { closeSync, fstatSync, openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
+import { applyBudgets, type Budgets, emptyBudgets } from "./budgets.ts";
 import { type Capacity, defaultParallel, readCapacity } from "./capacity.ts";
+import { parseGitlabProject, setGitlabHost } from "./forge/types.ts";
+import { DEFAULT_TEMPLATE, templateProblem } from "./notify-text.ts";
+import { DEFAULT_NETWORK } from "./pipeline/sandbox.ts";
 
-export const DEFAULT_NETWORK = [
-  "registry.npmjs.org",
-  "*.npmjs.org",
-  "pypi.org",
-  "files.pythonhosted.org",
-  "crates.io",
-  "*.crates.io",
-  "proxy.golang.org",
-  "sum.golang.org",
-  "github.com",
-  "*.github.com",
-  "*.githubusercontent.com",
-  "docs.rs",
-  "nodejs.org",
-  "developer.mozilla.org",
-];
+/** PIP-157: `[agent]` keys that still parse so an old file loads, but no longer reach the sandbox. */
+export const IGNORED_AGENT_KEYS = ["path", "toolchain", "env", "network", "sandbox_unix_sockets"];
 
 export interface RepoConfig {
   name: string;
@@ -39,6 +29,17 @@ export interface RepoConfig {
   host?: string;
 }
 
+/** LOOP-147: one `[[notify.webhook]]` table. */
+export interface WebhookConfig {
+  name: string;
+  /** Absolute path of the mode-600 file holding the URL. */
+  urlFile: string;
+  /** LOOP-148: a JSON document with `{text}` and `{link}`. */
+  template: string;
+  /** LOOP-149: `minimal` says only that something waits; `full` is Telegram's text. */
+  detail: "minimal" | "full";
+}
+
 /** GL-1: `[gitlab]`: where GitLab is, who the owner is there and where the bot's token is kept. */
 export interface GitLabConfig {
   apiBase: string;
@@ -48,7 +49,7 @@ export interface GitLabConfig {
 
 export interface Config {
   file: string;
-  intents: { remote: string; path: string | null; cutoff: number; issueA: number };
+  intents: { remote: string; path: string | null; cutoff: number; issueA: number; ownerWaits: number };
   agent: {
     model: string;
     reviewModel: string | null;
@@ -57,6 +58,8 @@ export interface Config {
     reviewTimeoutMin: number;
     checkTimeoutMin: number;
     maxBudgetUsd: number;
+    /** PIP-218: build runs of one intent before the owner is asked, when a plan needs several. */
+    maxBuildRuns: number;
     dailyBudgetUsd: number | null;
     ciPoll: number;
     ciGrace: number;
@@ -68,27 +71,56 @@ export interface Config {
     env: Record<string, string>;
     network: string[];
     sandboxUnixSockets: boolean;
+    /** PIP-157: the sandbox keys above that the file sets; they parse but are never read. */
+    ignored: string[];
   };
   /**
    * The repos Towercab works on. Filled from the file by `parseConfig`, then from the database by
    * `loadRepos` (LOOP-65); the same Map all along, so a repo added at runtime is seen everywhere.
    */
   repos: Map<string, RepoConfig>;
+  /** MET-31: the monthly budget and the repos' caps, re-read from the file every pass. */
+  budgets: Budgets;
   /** The file's valid `[repos.<name>]` tables, imported into the database once (LOOP-65). */
   fileRepos: Map<string, RepoConfig>;
   /** Repo tables that failed to validate: name → reason. They fail only what uses that repo. */
   badRepos: Map<string, string>;
   /** Repo tables Towercab ignores because the repo is in its database: name → what to do (LOOP-65). */
   ignoredRepos: Map<string, string>;
-  github: { appId: number; me: string; apiBase: string } | null;
+  github: { appId: number; me: string; apiBase: string; name?: string } | null;
   gitlab: GitLabConfig | null;
-  /** REPO-31: `[github] settings`: `check` (default) or `apply` the standard GitHub settings. */
-  githubSettings: "check" | "apply";
-  telegram: { botToken: string; chatId: string; apiBase: string } | null;
+  telegram: { botToken: string; chatId: string; apiBase: string; uiUrl?: string } | null;
+  /** LOOP-146: `[[notify.webhook]]`: more places for the owner's messages, beside Telegram. */
+  notify: { webhooks: WebhookConfig[] };
+  /** SHD-11: `[shadow]`: the owner's Claude session in Telegram and what it may do without asking. */
+  shadow: { enabled: boolean; free: ShadowFree[]; dailyBudgetUsd: number; model: string | null };
+  /** OBV-2, OBV-7, OBV-10: `[observer]`: on unless `enabled = false`; its own caps. */
+  observer: {
+    enabled: boolean;
+    dailyAt: string;
+    maxProposalsPerWeek: number;
+    dailyBudgetUsd: number;
+    maxBudgetUsd: number;
+    bundleKb: number;
+    model: string | null;
+  };
   ui: { port: number };
   /** `drainMinutes`: how long a drain for an update waits before cutting runs off (LOOP-109). */
-  update: { auto: boolean; drainMinutes: number };
+  update: { auto: boolean; drainMinutes: number; channel: UpdateChannel };
 }
+
+/** LOOP-150: follow `main`, or only the release tags that are on it. */
+export type UpdateChannel = "main" | "release";
+
+function updateChannel(r: Reader, t: Record<string, unknown>): UpdateChannel {
+  const v = t.channel ?? "main";
+  if (v !== "main" && v !== "release") throw r.err('update.channel must be "main" or "release"');
+  return v;
+}
+
+/** SHD-8: the actions `[shadow].free` may list; confirming a draft always asks (SHD-14). */
+export const SHADOW_FREE = ["merge", "boost", "drop"] as const;
+export type ShadowFree = (typeof SHADOW_FREE)[number];
 
 export class ConfigError extends Error {}
 
@@ -123,6 +155,11 @@ export function loadConfig(file: string): Config {
     const why = tokenFileProblem(config.gitlab.tokenFile);
     if (why) throw new ConfigError(`config: ${file}: gitlab.token_file ${why}`);
   }
+  // LOOP-147: a webhook's URL file must exist and be mode 600; the URL itself is never read here.
+  for (const w of config.notify.webhooks) {
+    const why = tokenFileProblem(w.urlFile);
+    if (why) throw new ConfigError(`config: ${file}: notify.webhook.${w.name}.url_file ${why}`);
+  }
   return config;
 }
 
@@ -137,16 +174,26 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
   const github = raw.github === undefined ? null : r.table(raw.github, "github");
   const gitlab = raw.gitlab === undefined ? null : r.table(raw.gitlab, "gitlab");
   const telegram = raw.telegram === undefined ? null : r.table(raw.telegram, "telegram");
+  const notify = r.table(raw.notify, "notify");
   const ui = r.table(raw.ui, "ui");
   const update = r.table(raw.update, "update");
+  const shadow = r.table(raw.shadow, "shadow");
+  const observer = r.table(raw.observer, "observer");
+  const free = r.strList(shadow, "shadow", "free", []);
+  for (const f of free) {
+    if (!(SHADOW_FREE as readonly string[]).includes(f)) {
+      throw r.err(`shadow.free: ${f} is not one of ${SHADOW_FREE.join(", ")}`);
+    }
+  }
 
   const config: Config = {
     file,
     intents: {
-      remote: r.str(intents, "intents", "remote", ""),
+      remote: intentsRemote(r, r.str(intents, "intents", "remote", ""), gitlab),
       path: r.optPath(intents, "intents", "path"),
       cutoff: r.int(intents, "intents", "cutoff", 7, 1, 15),
       issueA: r.int(intents, "intents", "issue_a", 3, 1, 5),
+      ownerWaits: r.int(intents, "intents", "owner_waits", 4, 1, 16),
     },
     agent: {
       model: r.word(agent, "agent", "model", "opus"),
@@ -156,6 +203,14 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       reviewTimeoutMin: r.int(agent, "agent", "review_timeout", 15, 1, 1440),
       checkTimeoutMin: r.int(agent, "agent", "check_timeout", 10, 1, 1440),
       maxBudgetUsd: r.num(agent, "agent", "max_budget_usd", 10, 0, 1000),
+      // PIP-218: a bad value is ignored (the default stays), never a reason to stop loading the file.
+      maxBuildRuns: (() => {
+        try {
+          return r.int(agent, "agent", "max_build_runs", 3, 1, 50);
+        } catch {
+          return 3;
+        }
+      })(),
       dailyBudgetUsd: r.optNum(agent, "agent", "daily_budget_usd", 0, 100000),
       ciPoll: r.int(agent, "agent", "ci_poll", 30, 5, 3600),
       ciGrace: r.int(agent, "agent", "ci_grace", 120, 0, 3600),
@@ -164,10 +219,12 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       path: r.str(agent, "agent", "path", process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"),
       toolchain: r.dirs(agent, "agent", "toolchain", ["~/.local/bin"]),
       env: r.env(agent, "agent", "env"),
-      network: r.strList(agent, "agent", "network", DEFAULT_NETWORK),
+      network: r.strList(agent, "agent", "network", [...DEFAULT_NETWORK]),
       sandboxUnixSockets: r.bool(agent, "agent", "sandbox_unix_sockets", false),
+      ignored: IGNORED_AGENT_KEYS.filter((k) => k in agent),
     },
     repos: new Map(),
+    budgets: emptyBudgets(),
     fileRepos: new Map(),
     badRepos: new Map(),
     ignoredRepos: new Map(),
@@ -175,27 +232,43 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       appId: r.int(github, "github", "app_id", 0, 1, Number.MAX_SAFE_INTEGER),
       me: r.login(github, "github", "me"),
       apiBase: r.url(github, "github", "api_base", "https://api.github.com"),
+      ...(r.str(github, "github", "name", "") ? { name: r.str(github, "github", "name", "") } : {}),
     },
     gitlab: gitlab && {
       apiBase: gitlabApiBase(r, gitlab),
       me: r.gitlabLogin(gitlab),
       tokenFile: gitlabTokenFile(r, gitlab),
     },
-    githubSettings: settingsMode(r, github ?? {}),
     telegram: telegram && {
       botToken: r.str(telegram, "telegram", "bot_token", ""),
       chatId: String(telegram.chat_id ?? ""),
       apiBase: r.url(telegram, "telegram", "api_base", "https://api.telegram.org"),
+      // TG-14: where the owner reaches the page from the phone; absent unless set.
+      ...(telegram.ui_url === undefined ? {} : { uiUrl: r.url(telegram, "telegram", "ui_url", "") }),
     },
+    notify: { webhooks: parseWebhooks(r, notify.webhook) },
+    shadow: {
+      enabled: r.bool(shadow, "shadow", "enabled", false),
+      free: free as ShadowFree[],
+      dailyBudgetUsd: r.num(shadow, "shadow", "daily_budget_usd", 5, 0, 100000),
+      model: r.optWord(shadow, "shadow", "model"),
+    },
+    observer: parseObserver(r, observer),
     ui: { port: r.int(ui, "ui", "port", 7311, 0, 65535) },
     update: {
       auto: r.bool(update, "update", "auto", true),
       drainMinutes: r.int(update, "update", "drain_minutes", 60, 1, 1440),
+      channel: updateChannel(r, update),
     },
   };
   if (config.telegram && (!config.telegram.botToken || !config.telegram.chatId)) {
     throw new ConfigError(`config: ${file}: telegram.bot_token and telegram.chat_id are required`);
   }
+  if (config.shadow.enabled && !config.telegram) {
+    throw new ConfigError(`config: ${file}: shadow.enabled needs a [telegram] section`);
+  }
+
+  applyBudgets(config, raw);
 
   const repos = raw.repos;
   if (repos !== undefined && (typeof repos !== "object" || repos === null || Array.isArray(repos))) {
@@ -210,10 +283,57 @@ export function parseConfig(raw: Record<string, unknown>, file: string, capacity
       config.badRepos.set(name, (e as Error).message);
     }
   }
+  if (config.gitlab) setGitlabHost(new URL(config.gitlab.apiBase).host);
   return config;
 }
 
+function parseObserver(r: Reader, t: Record<string, unknown>): Config["observer"] {
+  const dailyAt = r.str(t, "observer", "daily_at", "06:00");
+  // OBV-2: a local time `HH:MM`.
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(dailyAt)) throw r.err("observer.daily_at must be a time like 06:00");
+  return {
+    enabled: r.bool(t, "observer", "enabled", true),
+    dailyAt,
+    maxProposalsPerWeek: r.int(t, "observer", "max_proposals_per_week", 3, 1, 10),
+    dailyBudgetUsd: r.num(t, "observer", "daily_budget_usd", 3, 0, 100000),
+    maxBudgetUsd: r.num(t, "observer", "max_budget_usd", 1.5, 0, 100000),
+    bundleKb: r.int(t, "observer", "bundle_kb", 400, 10, 4000),
+    model: r.optWord(t, "observer", "model"),
+  };
+}
+
+/** OBV-2: read `[observer]` from the file again, so an edit applies without a restart; a bad value keeps the last good one. */
+export function reloadObserver(config: Config): void {
+  try {
+    const raw = parseToml(readFileSync(config.file, "utf8")) as Record<string, unknown>;
+    const r = new Reader(config.file);
+    config.observer = parseObserver(r, r.table(raw.observer, "observer"));
+  } catch {
+    // a missing file or a bad value keeps what is in force
+  }
+}
+
 /** GL-1: `api_base` is an https URL ending in `/api/v4` (http only for localhost, for tests). */
+/**
+ * GL-4: a GitLab intents repo (`gitlab:group/intents`, or its clone URL on the `api_base` host) is stored as
+ * the clone URL `https://<host>/<path>.git`; any other remote is kept as written.
+ */
+function intentsRemote(r: Reader, remote: string, gitlab: Record<string, unknown> | null): string {
+  const asked = remote.startsWith("gitlab:");
+  if (!gitlab) {
+    if (asked) throw r.err("intents.remote is a GitLab project, so [gitlab] (me, token_file) is required");
+    return remote;
+  }
+  const host = new URL(gitlabApiBase(r, gitlab)).host;
+  const path = parseGitlabProject(remote, host);
+  if (path === null) {
+    if (asked)
+      throw r.err(`intents.remote ${remote} isn't a GitLab project: write it as gitlab:group/intents`);
+    return remote;
+  }
+  return `https://${host}/${path}.git`;
+}
+
 function gitlabApiBase(r: Reader, t: Record<string, unknown>): string {
   const v = r.url(t, "gitlab", "api_base", "https://gitlab.com/api/v4");
   let u: URL;
@@ -228,6 +348,31 @@ function gitlabApiBase(r: Reader, t: Record<string, unknown>): string {
     throw r.err("gitlab.api_base must be an https URL ending in /api/v4");
   }
   return u.href.replace(/\/$/, "");
+}
+
+/** LOOP-147..149: `[[notify.webhook]]`, each with a unique name. */
+function parseWebhooks(r: Reader, v: unknown): WebhookConfig[] {
+  if (v === undefined) return [];
+  if (!Array.isArray(v)) throw r.err("notify.webhook must be a list of [[notify.webhook]] tables");
+  const seen = new Set<string>();
+  return v.map((raw) => {
+    const t = r.table(raw, "notify.webhook");
+    const name = r.str(t, "notify.webhook", "name", "");
+    if (!/^[a-z0-9_-]+$/.test(name)) throw r.err("notify.webhook name must be set, using a-z, 0-9, _ and -");
+    if (seen.has(name)) throw r.err(`notify.webhook name ${name} is used twice`);
+    seen.add(name);
+    const key = `notify.webhook.${name}`;
+    const urlFile = r.str(t, key, "url_file", "");
+    if (!urlFile) throw r.err(`${key}.url_file is required`);
+    const path = expand(urlFile);
+    if (!isAbsolute(path)) throw r.err(`${key}.url_file must be absolute or start with ~/`);
+    const template = r.str(t, key, "template", DEFAULT_TEMPLATE);
+    const why = templateProblem(template);
+    if (why) throw r.err(`${key}.template ${why}`);
+    const detail = r.str(t, key, "detail", "minimal");
+    if (detail !== "minimal" && detail !== "full") throw r.err(`${key}.detail must be minimal or full`);
+    return { name, urlFile: path, template, detail };
+  });
 }
 
 function gitlabTokenFile(r: Reader, t: Record<string, unknown>): string {
@@ -268,14 +413,6 @@ export function readTokenFile(file: string): { token: string } | { why: string }
 export function tokenFileProblem(file: string): string | null {
   const r = readTokenFile(file);
   return "why" in r ? r.why : null;
-}
-
-/** REPO-31: `[github] settings` is `check` (default) or `apply`. */
-function settingsMode(r: Reader, github: Record<string, unknown>): "check" | "apply" {
-  const v = github.settings;
-  if (v === undefined || v === "check") return "check";
-  if (v === "apply") return "apply";
-  throw r.err("settings must be check or apply");
 }
 
 function parseRepo(r: Reader, name: string, raw: unknown): RepoConfig {
@@ -321,7 +458,8 @@ export function clonePath(repo: RepoConfig, home: string): string {
 
 /** What `run` and `up` need beyond a valid file. */
 export function checkLoop(config: Config): void {
-  if (!config.github) throw new ConfigError(`config: ${config.file}: [github] is required (app_id, me)`);
+  if (!config.github && !config.gitlab)
+    throw new ConfigError(`config: ${config.file}: [github] is required (app_id, me)`);
   if (!config.intents.remote) throw new ConfigError(`config: ${config.file}: intents.remote is required`);
   if (config.repos.size === 0) {
     const bad = [...config.badRepos.values()][0];

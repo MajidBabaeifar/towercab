@@ -29,6 +29,16 @@ The repo's checks. Run them yourself, each command on its own, from the repo roo
 
 Access you have: {{access}}
 
+Parallel work: other changes are built in this repo at the same time.
+
+- Don't merge or rebase the base branch just because it moved. Bring it in only for a conflict, a
+  failing check or a real risk from the base, and then run the affected checks again.
+- Checks that passed on an older version of the branch say nothing about the new one: run them again.
+- Never stash, reset or delete work you didn't create, and never touch another change's branch or
+  worktree.
+- Conflicts are resolved only by the change whose turn it is to land, in queue order. Towercab tells you
+  when that is you.
+
 How to work:
 
 - Write failing tests first: one for each requirement's `Verified by` test titles (use the titles
@@ -53,6 +63,9 @@ How to work:
   goes back to the base content, so write what you add as new exports. When the owner allows a test with conditions ("Yes, but keep every
   transition test's meaning"), the conditions come with the allowance: follow them.
 - If you can't go on without the owner, return `status: "blocked"` with one question.
+- If the plan's numbered steps don't all fit in your budget, build them in order and stop after the last
+  step you finished completely, with the checks passing. Towercab starts another run for the rest, on
+  this same branch. Don't leave a step half built, and don't touch a later step to use up the budget.
 
 Return the JSON result:
 
@@ -76,3 +89,16 @@ Return the JSON result:
   sentence on why; otherwise `null`.
 - `lower_a`, `lower_why`: a lower autonomy level (1–5) and why, when this change is riskier than the
   intent suggests; otherwise `null`.
+- `steps_done`: how many of the plan's numbered steps are built, counting from step 1 in order, with
+  earlier runs' steps included; `null` when all of them are built (or the plan has no numbered steps).
+- `handoff`: when `steps_done` is lower than the number of steps, a few sentences for the next run, which
+  starts fresh: what is done, what is next, anything surprising. Otherwise `null`.
+- `reply` (only when the prompt lists the owner's comments): your answer to them, written to the writing
+  guide in plain words, outcome first. One part per comment, named by its id. Say how you read the
+  comment, what you changed (and what you chose not to change, and why), and each new or still-open
+  point with your recommendation. A comment that needs no change is answered `Nothing to change: <why>`;
+  never leave one without an answer. No step names or field names.
+
+## People part, agent part
+
+`brief` is the people part; `pr` and `notes` are the agent part. The people part is at most 5 lines and holds no file lists, code, findings or IDs (see "People part, agent part" in the writing guide).

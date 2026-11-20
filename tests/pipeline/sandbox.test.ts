@@ -4,24 +4,27 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { Home } from "../../src/home.ts";
-import { cacheEnv, sandboxArgv, sandboxEnv } from "../../src/pipeline/sandbox.ts";
+import {
+  cacheEnv,
+  sandboxArgv,
+  sandboxEnv,
+  sandboxPath,
+  withProxy as withProxyLine,
+} from "../../src/pipeline/sandbox.ts";
 import { tempDir, testConfig } from "../helpers/world.ts";
 
 test("pipeline: sandbox argv", () => {
-  const root = tempDir();
-  const bin = join(root, "bin");
-  mkdirSync(bin);
+  const home = tempDir();
+  const bin = join(home, ".local", "bin");
+  mkdirSync(bin, { recursive: true });
   writeFileSync(join(bin, "credentials.toml"), "token");
   writeFileSync(join(bin, ".npmrc"), "//registry:_authToken=x");
   const o = {
     checkout: "/h/work/261001-0900-1",
-    home: "/home/me",
-    toolchain: [bin, join(root, "missing")],
+    home,
     cache: "/h/cache/web",
-    network: false,
     cacheWritable: false,
     line: "npm test",
-    resolv: "/run/systemd/resolve/stub-resolv.conf",
   };
   const common = [
     "--unshare-pid",
@@ -39,9 +42,9 @@ test("pipeline: sandbox argv", () => {
     "--tmpfs",
     "/run",
   ];
-  const tail = (bind: string) => [
+  const tail = (bind: string, line: string) => [
     "--tmpfs",
-    "/home/me",
+    home,
     "--tmpfs",
     "/tmp",
     "--ro-bind",
@@ -67,24 +70,35 @@ test("pipeline: sandbox argv", () => {
     "--",
     "sh",
     "-c",
-    "npm test",
+    line,
   ];
-  // Checks: no network, no resolv.conf.
-  expect(sandboxArgv(o)).toEqual(["bwrap", "--unshare-net", ...common, ...tail("--ro-bind")]);
-  // Setup: network, resolv.conf bound back, the cache writable.
-  expect(sandboxArgv({ ...o, network: true, cacheWritable: true })).toEqual([
-    "bwrap",
-    ...common,
-    "--ro-bind-try",
-    o.resolv,
-    o.resolv,
-    ...tail("--bind"),
+  // No proxy: no network at all, nothing bound for one.
+  expect(sandboxArgv(o)).toEqual(["bwrap", "--unshare-net", ...common, ...tail("--ro-bind", "npm test")]);
+  // Setup: the cache writable and a proxy: the node, the bridge and the socket are bound after /run is
+  // a tmpfs, and the line starts the bridge first. The network is still unshared (PIP-158).
+  const sock = "/tmp/tc-proxy-1/abc.sock";
+  const withProxy = sandboxArgv({ ...o, cacheWritable: true, proxy: sock });
+  expect(withProxy.slice(0, 2)).toEqual(["bwrap", "--unshare-net"]);
+  const run = withProxy.indexOf("/run");
+  expect(withProxy.slice(run + 1, run + 10)).toEqual([
+    "--ro-bind",
+    process.execPath,
+    "/run/tc/node",
+    "--ro-bind",
+    expect.stringMatching(/proxy-bridge\.ts$/),
+    "/run/tc/bridge.ts",
+    "--bind",
+    sock,
+    "/run/tc/proxy.sock",
   ]);
-  // No cache, no resolv.conf to bind.
-  const plain = sandboxArgv({ ...o, network: true, cache: null, resolv: null, bwrap: "/usr/bin/bwrap" });
+  expect(withProxy.at(-3)).toBe("sh");
+  expect(withProxy.at(-1)).toBe(withProxyLine("npm test"));
+  expect(withProxy.at(-1)).toContain("HTTPS_PROXY=http://127.0.0.1:3128");
+  expect(withProxy).toContain("--bind");
+  // No cache, a custom bwrap.
+  const plain = sandboxArgv({ ...o, cache: null, bwrap: "/usr/bin/bwrap" });
   expect(plain[0]).toBe("/usr/bin/bwrap");
   expect(plain).not.toContain("/h/cache/web");
-  expect(plain).not.toContain(o.resolv);
 });
 
 test("cache: one cache per repo across missions", () => {
@@ -98,24 +112,27 @@ test("cache: one cache per repo across missions", () => {
   const first = home.cache("web");
   expect(home.cache("web")).toBe(first);
   expect(home.cache("api")).not.toBe(first);
-  const env = cacheEnv(first, config, web);
+  // `[agent].env` is ignored (PIP-157); `[repos.<r>].env` comes last when it passes PIP-159.
+  const env = cacheEnv(first, web, "/home/me");
   expect(env).toEqual({
+    GOPATH: join(first, "go", "path"),
+    GOMODCACHE: join(first, "go", "path", "pkg", "mod"),
+    ZIG_GLOBAL_CACHE_DIR: join(first, "zig", "global"),
+    ZIG_LOCAL_CACHE_DIR: join(first, "zig", "local"),
     XDG_CACHE_HOME: join(first, "xdg"),
-    // `[agent].env` after the cache's variables, `[repos.<r>].env` last.
-    npm_config_cache: "/agent/npm",
+    npm_config_cache: join(first, "npm"),
     CARGO_HOME: join(first, "cargo"),
     CARGO_TARGET_DIR: join(first, "target"),
     GOCACHE: "/repo/go",
     PIP_CACHE_DIR: join(first, "pip"),
-    CRATE_CC_NO_DEFAULTS: "1",
   });
-  expect(cacheEnv(home.cache("api"), config, config.repos.get("api")!).CARGO_HOME).toBe(
+  expect(cacheEnv(home.cache("api"), config.repos.get("api")!).CARGO_HOME).toBe(
     join(home.root, "cache", "api", "cargo"),
   );
   const sb = sandboxEnv("/home/me", config, env);
   expect(sb).toMatchObject({
     HOME: "/home/me",
-    PATH: config.agent.path,
+    PATH: sandboxPath("/home/me"),
     TMPDIR: "/tmp",
     GOCACHE: "/repo/go",
   });

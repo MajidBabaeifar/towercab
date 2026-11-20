@@ -17,8 +17,15 @@ test("db: schema matches the spec", () => {
     "commands",
     "meta",
     "missions",
+    "observer_proposals",
+    "observer_runs",
     "outbox",
+    "outbox_sent",
     "repos",
+    "shadow_actions",
+    "shadow_turns",
+    "telegram_updates",
+    "tg_cards",
     "transitions",
   ]);
 });

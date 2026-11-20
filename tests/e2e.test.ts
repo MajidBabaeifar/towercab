@@ -128,7 +128,7 @@ test("e2e: an a5 intent goes from pick to done", async () => {
   // The code PR reads like a person wrote it, then Towercab's facts.
   const code = p.prs[2]!;
   // PIP-108: the plain brief first, then the worker's technical text.
-  expect(code.body).toMatch(/^## In plain words\n\nVisitors now see a hello\.\n\n## Risk: low/);
+  expect(code.body).toMatch(/^## For people\n\nVisitors now see a hello\.\n\n## Risk: low/);
   expect(code.body).toContain("## What this does\n\nThe page says hello.");
   expect(code.body).toContain("- Test proof: the new tests fail without the change");
   expect(code.comments.some((c) => c.body.includes("<!-- towercab:review:1 -->"))).toBe(true);
