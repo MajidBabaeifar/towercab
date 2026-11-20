@@ -10,6 +10,7 @@ import { type Forge, MERGE_METHOD } from "../forge.ts";
 import { PausedHold } from "../github/paused.ts";
 import type { ChildEnd, Ctx, GitHub, Handler, Progress } from "../handlers.ts";
 import type { Intent } from "../intents/types.ts";
+import { branchSlug } from "../jira/key.ts";
 import { wait } from "../machine.ts";
 import type { Mission } from "../mission.ts";
 import { runSet } from "../repo/runset.ts";
@@ -22,6 +23,8 @@ import {
   botAuthor,
   cloneOf,
   data,
+  docsCommit,
+  docsPrTitle,
   effectiveOf,
   ended,
   gateLevelOf,
@@ -31,7 +34,6 @@ import {
   prUrl,
   repoFiles,
   spawnRun,
-  subjectOf,
   viaForge,
 } from "./common.ts";
 import { deferLinesOf, stripDefers } from "./deferrals.ts";
@@ -79,7 +81,7 @@ async function intentsClone(
 }
 
 export function planBranch(intent: Intent): string {
-  return `plan/${intent.id}-${intent.slug}`;
+  return `plan/${intent.id}-${branchSlug(intent)}`;
 }
 
 /** Commit `files` (relative path → text) on `branch` of the intents repo, based on `from`, and push. */
@@ -326,7 +328,7 @@ async function push(cx: Ctx, m: Mission): Promise<Progress> {
     branch,
     "origin/main",
     { [`${intent.dir}/plan.md`]: md },
-    `docs(plan): ${subjectOf(m, intent)}`,
+    docsCommit("plan", m, intent),
   );
   return openPr(cx, cx.record(m, "pr"));
 }
@@ -388,7 +390,7 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
         cx.github.openPr(github, {
           base: "main",
           head: branch,
-          title: `docs(plan): ${subjectOf(m, intent)}`,
+          title: docsPrTitle("plan", m, intent),
           body,
         }),
       );

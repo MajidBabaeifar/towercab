@@ -1,6 +1,6 @@
 # Jira
 
-**Status:** Draft · **Prefix:** JIRA
+**Status:** Live · **Prefix:** JIRA
 
 ## Purpose
 

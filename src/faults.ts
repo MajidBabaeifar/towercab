@@ -48,6 +48,7 @@ export function classifyRun(text: string): { kind: string; why: string } | null 
 /** What the owner does about a fault kind (the message's fix line). */
 export function fixFor(kind: string): string {
   if (kind === "github") return "check the network and the GitHub App (ops/github-app.json, app.pem)";
+  if (kind === "jira") return "check [jira] in the config: the site, the email and the token file";
   if (kind === "claude") return "run claude and /login, or check the network";
   if (kind === "sandbox")
     return "the sandbox can't start, so nothing runs: check bwrap with towercab doctor; where Ubuntu restricts user namespaces, install the AppArmor profile for bwrap that doctor prints";
@@ -96,7 +97,7 @@ export class Health {
 
   /** The faults that can hold work back: the observer's (OBV-12) never does. */
   private blocking(): OpenFault[] {
-    return this.open().filter((f) => f.kind !== "observer");
+    return this.open().filter((f) => f.kind !== "observer" && f.kind !== "jira");
   }
 
   /** A fault has been open for 15 minutes: picks pause. */

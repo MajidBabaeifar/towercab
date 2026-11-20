@@ -200,13 +200,18 @@ export class GitHubForge implements Forge, GitHub {
     return this.soft(repo, ["pr", "ready", String(n), "-R", repo]);
   }
 
-  mergePr(repo: string, n: number, o: { method: MergeMethod; head?: string }): Promise<Result> {
+  mergePr(
+    repo: string,
+    n: number,
+    o: { method: MergeMethod; head?: string; subject?: string },
+  ): Promise<Result> {
     return this.soft(repo, [
       "pr",
       "merge",
       String(n),
       MERGE_FLAG[o.method],
       ...(o.head ? ["--match-head-commit", o.head] : []),
+      ...(o.subject ? ["--subject", o.subject] : []),
       "-R",
       repo,
     ]);

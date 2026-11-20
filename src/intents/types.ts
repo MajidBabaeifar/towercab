@@ -22,6 +22,8 @@ export interface Intent {
   source: string | null;
   /** The GitHub issue this intent came from (INT-23). */
   issue: string | null;
+  /** JIRA-5: the Jira ticket key this intent came from. */
+  jira?: string | null;
   /** `setup: true` (LOOP-71): the intent that sets a repo up; allowed in a blocking repo. */
   setup?: boolean;
   /** `fast: true` (FAST-1): the owner put the intent in the fast lane; absent otherwise. */

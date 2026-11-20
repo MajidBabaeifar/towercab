@@ -15,8 +15,8 @@ import {
   ask,
   branchInTheWay,
   cloneOf,
+  codePrTitle,
   coGit,
-  commitTitle,
   data,
   grants,
   intentOf,
@@ -263,7 +263,7 @@ async function openPr(cx: Ctx, m: Mission): Promise<Progress> {
       cx.github.openPr(repo.github, {
         base: repo.base,
         head: m.branch,
-        title: commitTitle(m, intent),
+        title: codePrTitle(m, intent),
         body,
       }),
     );

@@ -28,6 +28,7 @@ import { PausedHold } from "../github/paused.ts";
 import { type ChildEnd, type Ctx, EnvError, type GitHub, type Progress } from "../handlers.ts";
 import { plainLine, SUBJECT_MAX } from "../intents/naming.ts";
 import type { Intent } from "../intents/types.ts";
+import { jiraKey, withKey } from "../jira/key.ts";
 import { cooldown } from "../limits.ts";
 import { type Outcome, wait } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
@@ -948,12 +949,33 @@ export function subjectOf(m: Mission, intent: Intent): string {
   return lowerFirst(plainLine(data(m).design?.subject ?? "", SUBJECT_MAX) || intent.title);
 }
 
-/** The Conventional Commit line of the change (from the design; a plain `feat` without one). */
+/**
+ * The Conventional Commit line of the change (from the design; a plain `feat` without one). JIRA-9: the
+ * intent's ticket key is its scope.
+ */
 export function commitTitle(m: Mission, intent: Intent): string {
   const d = data(m).design;
   const type = d?.type || "feat";
-  const scope = d?.scope ? `(${d.scope})` : "";
+  const key = jiraKey(intent);
+  const scope = key ? `(${key})` : d?.scope ? `(${d.scope})` : "";
   return `${type}${scope}${d?.breaking ? "!" : ""}: ${subjectOf(m, intent)}`;
+}
+
+/** JIRA-9: the code PR's title: the design's own scope, the ticket key in front. */
+export function codePrTitle(m: Mission, intent: Intent): string {
+  const d = data(m).design;
+  const scope = d?.scope ? `(${d.scope})` : "";
+  return withKey(intent, `${d?.type || "feat"}${scope}${d?.breaking ? "!" : ""}: ${subjectOf(m, intent)}`);
+}
+
+/** JIRA-9: the spec or plan commit line: `docs(specs): …`, or `docs(<KEY>): …` for a keyed intent. */
+export function docsCommit(kind: "specs" | "plan", m: Mission, intent: Intent): string {
+  return `docs(${jiraKey(intent) ?? kind}): ${subjectOf(m, intent)}`;
+}
+
+/** JIRA-9: the spec or plan PR's title: `<KEY>: docs(specs): …`. */
+export function docsPrTitle(kind: "specs" | "plan", m: Mission, intent: Intent): string {
+  return withKey(intent, `docs(${kind}): ${subjectOf(m, intent)}`);
 }
 
 function lowerFirst(s: string): string {
