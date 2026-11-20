@@ -236,16 +236,13 @@ test("ui: the root page is the inbox and the overview has its own address", asyn
     await page.goto(`${f.base}/`);
     await settle(page);
     await expect(page.locator("h1")).toHaveText("Inbox");
-    const tabs = page.getByRole("navigation", { name: "Pages" }).locator("a.tab");
-    await expect(tabs).toHaveText([/^Inbox/, "Overview", "Board", "Repos", "Activity"]);
-    await expect(tabs.first()).toHaveAttribute("aria-current", "page");
-    await page.getByRole("link", { name: "Overview", exact: true }).click();
+    // FRAME-3: the sidebar's pinned links replace the tabs.
+    const side = page.getByRole("navigation", { name: "Intents" });
+    await expect(side.getByRole("link", { name: /^Needs you/ })).toBeVisible();
+    await side.getByRole("link", { name: "Overview", exact: true }).click();
     await expect(page).toHaveURL(`${f.base}/overview`);
     await expect(page.locator("main.overview")).toBeVisible();
-    await expect(page.getByRole("link", { name: "Overview", exact: true })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    await expect(side.getByRole("link", { name: "Overview", exact: true })).toHaveClass(/\bon\b/);
     // The address works on its own, and /focus lands on the inbox.
     await page.goto(`${f.base}/overview`);
     await expect(page.locator("main.overview")).toBeVisible();

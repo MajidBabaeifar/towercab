@@ -4,33 +4,24 @@ import { type JSX, render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type {
   BoardPage as BoardData,
-  IntentPage as IntentData,
   Overview,
   ReposPage as ReposData,
   TopBar as Top,
 } from "../../src/ui/view.ts";
 import { act, useLive } from "./api.ts";
 import { ErrorNote, Freshness, Skeleton } from "./components.tsx";
-import { Alert, Logo, Pause, Play, Spinner } from "./icons.tsx";
-import { openNewIntent } from "./keys.ts";
+import { Frame } from "./Frame.tsx";
+import { Alert, Pause, Play, Spinner } from "./icons.tsx";
 import { NewIntentHost } from "./NewIntent.tsx";
 import { Palette } from "./Palette.tsx";
 import { ActivityPage } from "./pages/Activity.tsx";
 import { BoardPage } from "./pages/Board.tsx";
+import { ChatView } from "./pages/Chat.tsx";
 import { InboxPage } from "./pages/Inbox.tsx";
-import { IntentPage } from "./pages/Intent.tsx";
 import { OverviewPage } from "./pages/Overview.tsx";
 import { ReposPage } from "./pages/Repos.tsx";
 import { Link, usePath } from "./router.tsx";
 import { Shortcuts } from "./Shortcuts.tsx";
-
-const TABS = [
-  ["/", "Inbox"],
-  ["/overview", "Overview"],
-  ["/board", "Board"],
-  ["/repos", "Repos"],
-  ["/activity", "Activity"],
-] as const;
 
 function HealthPill({ top }: { top: Top }) {
   const cls = { Running: "ok", Paused: "paused", Problem: "bad", "Not running": "off" }[top.health];
@@ -93,18 +84,11 @@ function PauseButton({ top }: { top: Top }) {
   );
 }
 
-function TopBar({ top, path }: { top: Top | null; path: string }) {
-  // `/queue` is the Repos tab's old name (UI-140): old links land there.
-  const at = path === "/queue" || path.startsWith("/queue/") ? "/repos" : path;
-  const section =
-    ["/overview", "/board", "/repos", "/activity"].find((p) => at === p || at.startsWith(`${p}/`)) ?? "/";
+/** FRAME-5: the bar over the main pane: health, counts, spend and pause (the tabs are gone). */
+function TopBar({ top }: { top: Top | null }) {
   return (
-    <header class="topbar">
+    <div class="topbar">
       <div class="topbar-inner">
-        <Link href="/" class="brand" aria-label="Towercab inbox">
-          <Logo size={28} />
-          <span>Towercab</span>
-        </Link>
         {top ? <HealthPill top={top} /> : null}
         {top ? (
           <p class="counts">
@@ -149,52 +133,10 @@ function TopBar({ top, path }: { top: Top | null; path: string }) {
             )}
           </p>
         ) : null}
-        {top && !top.readOnly && top.role !== "viewer" ? (
-          <button type="button" class="btn primary new-intent-btn" onClick={openNewIntent}>
-            New intent
-          </button>
-        ) : null}
         {top ? <PauseButton top={top} /> : null}
       </div>
-      <nav class="tabs" aria-label="Pages">
-        <div class="tabs-inner">
-          {TABS.map(([href, label]) => (
-            <Link
-              key={href}
-              href={href}
-              class={section === href ? "tab on" : "tab"}
-              aria-current={section === href ? "page" : undefined}
-            >
-              {label}
-              {href === "/" && top?.needs ? <span class="tab-badge">{top.needs}</span> : null}
-            </Link>
-          ))}
-          <span class="grow" />
-          <Freshness />
-        </div>
-      </nav>
-    </header>
+    </div>
   );
-}
-
-function IntentRoute({ id, readOnly, onTitle }: { id: string; readOnly: boolean; onTitle(t: string): void }) {
-  const live = useLive<IntentData>(`/api/intents/${encodeURIComponent(id)}`);
-  const title = live.data?.title;
-  useEffect(() => {
-    if (title) onTitle(title);
-  }, [title, onTitle]);
-  if (live.error && !live.data) {
-    return (
-      <main class="page" id="main">
-        <ErrorNote text={live.error} />
-        <p>
-          <Link href="/overview">Back to the overview</Link>
-        </p>
-      </main>
-    );
-  }
-  if (!live.data) return <Skeleton />;
-  return <IntentPage data={live.data} readOnly={readOnly} />;
 }
 
 function ReposRoute({ search, readOnly }: { search: string; readOnly: boolean }) {
@@ -242,10 +184,10 @@ function App() {
   let page: JSX.Element;
   if (intent) {
     page = (
-      <IntentRoute
+      <ChatView
         key={intent}
         id={decodeURIComponent(intent)}
-        readOnly={top?.readOnly ?? true}
+        readOnly={(top?.readOnly ?? true) || top?.role === "viewer"}
         onTitle={setIntentTitle}
       />
     );
@@ -262,21 +204,38 @@ function App() {
       />
     );
   else if (state.error && !state.data) page = <ErrorNote text={state.error} />;
-  else page = state.data ? <OverviewPage data={state.data} /> : <Skeleton />;
+  else
+    page = state.data ? (
+      <>
+        <OverviewPage data={state.data} />
+        <section class="page overview-more" aria-label="More">
+          <p class="overview-links">
+            <Link href="/activity">Activity</Link> · <Link href="/board">Board on its own page</Link>
+          </p>
+          <details class="overview-board">
+            <summary>Board</summary>
+            <BoardRoute />
+          </details>
+        </section>
+      </>
+    ) : (
+      <Skeleton />
+    );
   return (
     <>
       <a class="skip" href="#main">
         Skip to content
       </a>
-      <TopBar top={top} path={pathname!} />
-      {top?.banner ? (
-        <div class="banner" role="status">
-          <Alert size={16} />
-          {top.banner}
-        </div>
-      ) : null}
-      {state.error && state.data ? <div class="banner banner-err">{state.error}</div> : null}
-      {page}
+      <Frame top={top} path={pathname!} bar={<TopBar top={top} />}>
+        {top?.banner ? (
+          <div class="banner" role="status">
+            <Alert size={16} />
+            {top.banner}
+          </div>
+        ) : null}
+        {state.error && state.data ? <div class="banner banner-err">{state.error}</div> : null}
+        {page}
+      </Frame>
       <Shortcuts />
       <Palette top={top} />
       <NewIntentHost top={top} />

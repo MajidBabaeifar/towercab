@@ -1210,3 +1210,66 @@ export interface ActionReply {
   pr?: number;
   url?: string;
 }
+
+/** CHAT-5: one tool call of an agent turn, shown folded. */
+export interface ChatTool {
+  name: string;
+  input: string;
+  result: string | null;
+  error: boolean;
+}
+
+/** CHAT-5, CHAT-8: one message: the run's prompt, the agent, a user turn, or the owner's own message. */
+export interface ChatMessage {
+  type: "message";
+  key: string;
+  role: "prompt" | "agent" | "user" | "owner";
+  /** Unix seconds. */
+  at: number;
+  text: string;
+  tools: ChatTool[];
+  /** CHAT-8: the owner's message is `queued` until the intent waits on them, then `sent` (or `failed`). */
+  status?: "queued" | "sent" | "failed";
+  note?: string | null;
+  by?: string;
+}
+
+/** CHAT-3: a divider between runs, or one of Towercab's moves. */
+export interface ChatMark {
+  type: "divider" | "event";
+  key: string;
+  at: number;
+  text: string;
+  tone?: "muted" | "warn";
+}
+
+export type ChatItem = ChatMessage | ChatMark;
+
+/** CHAT-3..9: a page of an intent's thread, oldest first. */
+export interface ChatPage {
+  intent: string;
+  items: ChatItem[];
+  /** CHAT-6: pass as `before` to load the older page; null at the start. */
+  before: number | null;
+  total: number;
+  /** CHAT-7: runs whose transcript is gone. */
+  missing: number;
+  composer: { open: boolean; note: string };
+}
+
+/** FRAME-2: one intent in the sidebar. */
+export interface SideItem {
+  intent: string;
+  title: string;
+  repo: string;
+  stage: "spec" | "plan" | "code" | "ship" | "queue";
+  state: StateView;
+  needsYou: boolean;
+}
+
+/** FRAME-2: the sidebar: open intents by repo, and how many wait on the owner. */
+export interface SidebarView {
+  version: string;
+  needs: number;
+  repos: { repo: string; items: SideItem[] }[];
+}

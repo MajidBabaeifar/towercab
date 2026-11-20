@@ -19,7 +19,15 @@ import {
   type UiSources,
   versionOf,
 } from "./state.ts";
-import type { BoardCard, BoardColumn, BoardColumnKey, BoardPage, BoardRepo } from "./view.ts";
+import type {
+  BoardCard,
+  BoardColumn,
+  BoardColumnKey,
+  BoardPage,
+  BoardRepo,
+  SidebarView,
+  SideItem,
+} from "./view.ts";
 
 const COLUMNS: { key: BoardColumnKey; label: string }[] = [
   { key: "queue", label: "Queue" },
@@ -175,4 +183,47 @@ export async function board(src: UiSources): Promise<BoardPage> {
       : null,
   };
   return { version: versionOf(body, dbMark(src.db)), ...body };
+}
+
+/** FRAME-2: the board's columns as the sidebar's four stages (and the queue before them). */
+const SIDE_STAGE: Record<Exclude<BoardColumnKey, "done">, SideItem["stage"]> = {
+  queue: "queue",
+  gate: "queue",
+  spec: "spec",
+  "spec-review": "spec",
+  plan: "plan",
+  "plan-review": "plan",
+  code: "code",
+  ci: "code",
+  "code-review": "code",
+  deploy: "ship",
+  e2e: "ship",
+};
+
+/** FRAME-2: the sidebar (`GET /api/sidebar`): the board's open intents by repo, in the board's order. */
+export async function sidebar(src: UiSources): Promise<SidebarView> {
+  const b = await board(src);
+  let needs = 0;
+  const repos = b.repos
+    .map((r) => {
+      const items: SideItem[] = [];
+      for (const col of b.columns) {
+        if (col.key === "done") continue;
+        for (const c of r.cells[col.key] ?? []) {
+          const needsYou = c.state.key === "needs";
+          if (needsYou) needs++;
+          items.push({
+            intent: c.intent,
+            title: c.title,
+            repo: r.repo,
+            stage: SIDE_STAGE[col.key],
+            state: c.state,
+            needsYou,
+          });
+        }
+      }
+      return { repo: r.repo, items };
+    })
+    .filter((r) => r.items.length);
+  return { version: b.version, needs, repos };
 }

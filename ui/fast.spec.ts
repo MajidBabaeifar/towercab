@@ -1,6 +1,7 @@
 // FAST-10: the page shows the fast lane label and progress, the next fast intent, and sets the mark.
 
 import { expect, test } from "@playwright/test";
+import { openDetails } from "./details.ts";
 import { IDS, serveFixture } from "./fixture.ts";
 
 test.use({ viewport: { width: 360, height: 800 } });
@@ -17,6 +18,7 @@ test("ui: a fast lane card shows the label and progress", async ({ page }) => {
     const row = page.getByRole("option", { name: /Rewrite the getting-started guide/ });
     await expect(row.locator(".fast-badge")).toHaveText("Fast lane · review, 5 of 6");
     await page.goto(`${base}/i/${IDS.ci}`);
+    await openDetails(page);
     await expect(page.locator(".fast-badge").first()).toHaveText("Fast lane · checks, 4 of 6");
     await expect(page.getByText("Answered automatically: Where does the button go?")).toContainText("Right");
     await page.emulateMedia({ colorScheme: "dark" });
@@ -43,6 +45,7 @@ test("ui: the owner sets the fast lane from the page", async ({ page }) => {
   const { fixture, server, base } = await open({});
   try {
     await page.goto(`${base}/i/${IDS.building}`);
+    await openDetails(page);
     await page.getByRole("button", { name: "Put in the fast lane" }).click();
     await expect.poll(() => fixture.calls.filter((c) => c.action === "fast").length).toBe(1);
     expect(fixture.calls.at(-1)).toEqual({ action: "fast", intent: IDS.building, fast: true });

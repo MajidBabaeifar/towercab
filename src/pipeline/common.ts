@@ -36,6 +36,7 @@ import { loadRepoFiles, RepoError, type RepoFiles } from "../repo/files.ts";
 import type { Risk } from "../risk.ts";
 import { checkoutRoot } from "../service.ts";
 import { combine, type OwnerStep, type PlanStep, parseNoneLive, parseSteps } from "../steps.ts";
+import { keepTranscript } from "../ui/chat.ts";
 import { grantsFor, parseAccess, type TestAsk } from "./access.ts";
 import type { Mech } from "./mechanical.ts";
 import { foldMd, plainMd, splitTwoPart, twoPartMd } from "./prtext.ts";
@@ -575,6 +576,8 @@ export function ended<T>(
 ): Ended<T> {
   const out = readText(end.stdout);
   const err = readText(end.stderr);
+  // CHAT-4: keep the run's transcript next to its result before Claude Code's cleanup can remove it.
+  keepTranscript(end.stdout);
   // The model that ran (the review's may differ from the mission's): a limit cools that one.
   const model = m.child_model ?? m.model;
   const e: RunEnd = parseRun(out, err, end.code, {

@@ -192,6 +192,8 @@ key, and the web page shows what each intent cost.
 | [specs/telegram.md](specs/telegram.md) | Buttons, replies and commands in Telegram |
 | [specs/users.md](specs/users.md) | Several people with roles |
 | [specs/observer.md](specs/observer.md) | An agent that watches how Towercab runs and proposes improvements |
+| [specs/frame.md](specs/frame.md) | The page's frame: intents in a sidebar |
+| [specs/chat.md](specs/chat.md) | Each intent as a chat you can write into |
 | [specs/fast.md](specs/fast.md) | The fast lane for urgent intents |
 
 Want to help? Read [CONTRIBUTING.md](CONTRIBUTING.md); everyone taking part follows the

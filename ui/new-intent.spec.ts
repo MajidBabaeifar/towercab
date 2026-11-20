@@ -109,12 +109,14 @@ test("ui: the form shows the naming rule beside the title", async ({ page }) => 
   }
 });
 
-test("ui: the new intent button is in the top bar and in search", async ({ page }) => {
+test("ui: the new intent button is in the sidebar and in search", async ({ page }) => {
   const f = await inboxFixture();
   try {
     await page.goto(`${f.base}/`);
     await settle(page);
-    await expect(page.locator(".topbar").getByRole("button", { name: "New intent" })).toBeVisible();
+    await expect(
+      page.getByRole("navigation", { name: "Intents" }).getByRole("button", { name: "+ New intent" }),
+    ).toBeVisible();
     await page.keyboard.press("Control+k");
     await page.getByRole("combobox").fill("new intent");
     await page.getByRole("option", { name: /new intent/i }).click();
