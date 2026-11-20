@@ -54,8 +54,11 @@ export function buildingIn(ms: Mission[], repo: string): Mission[] {
   return ms.filter((m) => takesSlotIn(m, repo) && isBuilding(m));
 }
 
-/** LOOP-110: missions between build and merge per repo, working and waiting together, are at most this many. */
-export const capOf = (workers: number): number => 3 * workers;
+/**
+ * LOOP-110: missions between build and merge per repo, working and waiting together, are at most this many.
+ * LOOP-164: with `[agent].one_past_plan` (the default) it is one, whatever the repo's `workers`.
+ */
+export const capOf = (workers: number, onePastPlan = false): number => (onePastPlan ? 1 : 3 * workers);
 
 /**
  * LOOP-110: a mission from build through merge that only waits holds no slot: it is at `approval:merge`,

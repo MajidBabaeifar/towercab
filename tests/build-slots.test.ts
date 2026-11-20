@@ -549,3 +549,21 @@ test("loop: three missions on one repo land in order", async () => {
   expect(landed).toEqual([A, B, C]);
   expect(conflicts).toEqual([B, C]);
 });
+
+test("loop: with one past plan a second intent waits until the first merges", async () => {
+  const p = new Pipe(TARGET, files({ id: A }, { id: D }));
+  await p.start(
+    { ...web(), agent: { one_past_plan: true } },
+    { handlers: world({ owner: [A], holds: [D] }) },
+  );
+  await pass(p, 8);
+  approvePlan(p, A);
+  await pass(p, 3);
+  expect(stageOf(p, A)).toBe("approval:merge");
+  approvePlan(p, D);
+  await pass(p, 4);
+  expect(stageOf(p, D)).toBe("approval:plan");
+  merged(p, A);
+  await pass(p, 4);
+  expect(stageOf(p, D)).toBe("build");
+});

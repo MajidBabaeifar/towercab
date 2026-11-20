@@ -118,7 +118,7 @@ import { type PipeData, prUrl as prLink } from "./pipeline/common.ts";
 import { fastAnswer } from "./pipeline/fast-answer.ts";
 import { writeTicks } from "./pipeline/steps.ts";
 import { evaluate } from "./pipeline/teammate.ts";
-import { isParked, priority } from "./priority.ts";
+import { isParked, priority, priorityOf } from "./priority.ts";
 import { conflictHeld, headOf, landingOf } from "./queue.ts";
 import { blockingRepos, startReadiness as startReadinessCheck } from "./readiness.ts";
 import { loadOverlay, loadRepoFilesWith } from "./repo/overlay.ts";
@@ -126,6 +126,7 @@ import { pollRepoSettings } from "./repo/poll.ts";
 import { missingText } from "./repo/readiness.ts";
 import { recordParser } from "./repo/settings.ts";
 import { loadRepos, syncRepos } from "./repos.ts";
+import { nextTurns } from "./route.ts";
 import { checkoutRoot } from "./service.ts";
 import { nextSettingsDue, settingsCycle } from "./settings/apply.ts";
 import { dropMerged, resumable, setupChecksPass, setupWork } from "./setup-checks.ts";
@@ -740,6 +741,14 @@ export class Loop {
     this.releaseReady();
     // LOOP-136: a stop that came during the pass starts no step and picks nothing.
     if (this.stopping) return { ...report, stop: true };
+    // LOOP-166: a repo whose road is clear resumes the next intent waiting its turn.
+    if (!this.isPaused()) {
+      const prio = (id: string) => {
+        const i = this.listing?.open.find((x) => x.id === id);
+        return i ? priorityOf(i) : 0;
+      };
+      for (const id of nextTurns(this.d.db, prio)) this.d.log(`${id}: its turn after the cleared route`);
+    }
     // LOOP-111: missions back from a wait ask for their run before a ready build takes the free slot.
     await this.stepDue(!report.woke);
     await this.parts.pass(!report.woke);
@@ -2283,7 +2292,11 @@ export class Loop {
    * mission (`first`) ignores the returning ones, unless one of them is in the lane too.
    */
   private repoFull(ms: Mission[], repo: string, workers: number, first?: Mission): boolean {
-    if (workingIn(ms, repo).length >= workers || buildingIn(ms, repo).length >= capOf(workers)) return true;
+    if (
+      workingIn(ms, repo).length >= workers ||
+      buildingIn(ms, repo).length >= capOf(workers, this.d.config.agent.onePastPlan)
+    )
+      return true;
     const back = returningIn(ms, repo, this.listing);
     if (back.length === 0) return false;
     return !(first && isHolder(first) && !isHolder(back[0]!));
@@ -2407,6 +2420,7 @@ export class Loop {
     }
     return {
       cutoff: config.intents.cutoff,
+      manual: config.intents.intake === "manual",
       paused: paused(db),
       blocked: this.health.blocked(this.now) ? (this.health.open()[0]?.kind ?? "problem") : null,
       repos: new Set(config.repos.keys()),

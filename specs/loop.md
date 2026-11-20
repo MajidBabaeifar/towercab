@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..121, LOOP-126..132, LOOP-133..135, LOOP-159..162, LOOP-122, LOOP-140..141, LOOP-136..139, LOOP-124..125, LOOP-150..152, LOOP-146..149, LOOP-142..145, LOOP-163, LOOP-78..82 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..121, LOOP-126..132, LOOP-133..135, LOOP-159..162, LOOP-122, LOOP-140..141, LOOP-136..139, LOOP-124..125, LOOP-150..152, LOOP-146..149, LOOP-142..145, LOOP-163, LOOP-78..82, LOOP-164..167 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -661,7 +661,7 @@ A mission that has its checks green and only waits for a person's review, the ga
   waiting for GitHub checks holds it.
 - Cap: a repo has at most `3 × workers` missions between `build` and `merge`, working and waiting
   together (6 with the default). At the cap a ready mission does not start `build` even with a free slot.
-  The cap is not a new setting. `start` (LOOP-63) does not skip it.
+  `start` (LOOP-63) does not skip it. Changed by LOOP-164: with `[agent].one_past_plan` (the default) the cap is 1.
 - A slot is free when fewer than `workers` missions are working. The free slot goes to the ready mission
   with the highest priority, as in LOOP-61, unless a returning mission wants it (LOOP-111).
 - `[agent].parallel` (LOOP-4) is unchanged and still caps every Claude run and check.
@@ -1900,6 +1900,50 @@ WantedBy=default.target
 | `pick.ts`, `limits.ts`, `faults.ts`, `awake.ts`, `service.ts`, `status.ts`, `commands.ts`, `outbox.ts`, `telegram.ts`, `update.ts`, `doctor.ts` | One requirement each, as named. |
 | `github/app.ts`, `github/gh.ts`, `github/prs.ts`, `github/events.ts`, `github/owner.ts` | LOOP-19, 20, 18, 38. |
 | `checkout.ts` | LOOP-8, 34. |
+
+
+### LOOP-164 · One intent per repo past the plan
+
+A repo works on one intent at a time once its plan is approved: the next one starts building only after the current one has merged or ended.
+
+- `[agent].one_past_plan` (boolean, default `true`) sets the cap of LOOP-110 to 1 for every repo,
+  whatever its `workers`; `false` brings back `3 × workers`. With it on, a ready mission does not start `build`
+  while another mission of its repo is between `build` and `merge`, working or waiting. Specs and plans
+  of other intents still go ahead (LOOP-60). `start` (LOOP-63) does not skip it; a fast-lane mission
+  (FAST-4) waits for it too.
+- Verified by: `loop: with one past plan a second intent waits until the first merges`
+
+
+### LOOP-165 · Clear the route
+
+The owner can pause every intent past its plan at once, so they stop piling up and drop out of the inbox and the sidebar until their turn.
+
+- `towercab pause --route [repo]` pauses (SHD-22) every unpaused intent of the repo, or of every repo,
+  between `build` and `merge`, and marks it as waiting its turn (`meta route:<id>` = the time). Work
+  already running finishes its step; nothing is reset, so no work is lost. An intent the owner had
+  paused already is left as it is.
+- An intent waiting its turn leaves the inbox (UI-264) and the sidebar's list (FRAME-2); the sidebar
+  says instead how many wait: "n paused intents wait their turn." (`SidebarView.waiting`).
+- Verified by: `route: clearing the route pauses every intent past its plan`
+
+### LOOP-166 · They come back one at a time, where they stopped
+
+Each repo takes back one paused intent at a time, the one that got furthest first, and it goes on from the stage it stopped at.
+
+- Each pass (not while Towercab is paused), for each repo where no unpaused intent is between `build`
+  and `merge`, the loop resumes the intent waiting its turn that reached the latest stage, then the
+  highest priority, then the one paused first. It keeps its stage, branch, PR and counters.
+- `resume <id>` by the owner resumes one at once and ends its wait for a turn.
+- Verified by: `route: one intent per repo resumes, the furthest first, where it stopped`, `route: the owner's resume ends the wait for a turn`
+
+### LOOP-167 · Manual intake
+
+The owner can stop new intents from entering the flow on their own and send each one in by hand.
+
+- `[intents].intake = "manual"` (default `"auto"`): the picker (LOOP-5) passes over every intent the
+  owner has not started (`start <id>`, `boost`, or Start on the page, LOOP-63), with the reason
+  `manual intake: start it to send it in`. A fast intent (FAST-1) still goes in, since the owner marked it.
+- Verified by: `pick: manual intake starts only what the owner sends in`
 
 ## Out of scope
 

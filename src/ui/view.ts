@@ -1321,5 +1321,7 @@ export interface SideItem {
 export interface SidebarView {
   version: string;
   needs: number;
+  /** LOOP-165: intents waiting their turn, left out of `repos`. */
+  waiting: number;
   repos: { repo: string; items: SideItem[] }[];
 }

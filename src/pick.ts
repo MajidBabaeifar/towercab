@@ -49,6 +49,8 @@ export interface PickState {
   repos: Set<string>;
   /** Every repo's intents ahead of build (LOOP-60, LOOP-100): working, waiting on the owner, the limit. */
   full: Map<string, Places>;
+  /** LOOP-167: only intents the owner started (or fast ones) are picked. */
+  manual?: boolean;
   /** Intents the owner started with `start` (LOOP-63): they go over the limit, first. */
   started?: Set<string>;
   /** Repos set to block while not ready (LOOP-70) → `<n> missing (<items>)`. */
@@ -139,6 +141,10 @@ export function decide(listing: Listing, state: PickState): Decision {
   for (const i of queue) {
     if (state.active.has(i.id)) continue;
     const fast = i.fast === true;
+    if (state.manual && !started.has(i.id) && !fast) {
+      d.skipped.push({ id: i.id, reason: "manual intake: start it to send it in" });
+      continue;
+    }
     // FAST-2: one fast intent per repo; a second waits as the next one.
     const holder = fast ? state.lane?.get(i.repo) : undefined;
     if (holder !== undefined && holder !== i.id) {

@@ -388,7 +388,7 @@ export class Pipe {
         github: { app_id: 1, me: "owner" },
         repos: { web: { github: "owner/web" } },
         ...rest,
-        agent: { ci_grace: 0, ci_poll: 5, toolchain: [], ...(agent ?? {}) },
+        agent: { ci_grace: 0, ci_poll: 5, toolchain: [], one_past_plan: false, ...(agent ?? {}) },
       },
       join(this.home.root, "config.toml"),
     );

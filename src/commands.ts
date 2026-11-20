@@ -16,6 +16,7 @@ import { parseAllow, readingReply, reverseRefusals } from "./pipeline/access.ts"
 import type { PipeData } from "./pipeline/common.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
 import { recheck } from "./risk.ts";
+import { endTurnWait } from "./route.ts";
 import { changeScores, parseScoreWords, raiseToFull } from "./scores.ts";
 import { checklist, type OwnerStep } from "./steps.ts";
 
@@ -318,6 +319,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       if (row.arg !== "") {
         const intent = await store.get(row.arg);
         db.delMeta(`paused:${intent.id}`);
+        endTurnWait(db, intent.id);
         return `resumed ${intent.id}`;
       }
       db.delMeta("paused");

@@ -1213,7 +1213,7 @@ export function missionRow(src: UiSources, s: Snap, m: Mission): Row {
     build: buildProgress(m),
     model: modelName(m.child_model ?? m.model),
     behind: ready
-      ? inFlight >= capOf(workers)
+      ? inFlight >= capOf(workers, src.config.agent.onePastPlan)
         ? `Ready to build; the repo has ${inFlight} changes between build and merge, ${idleIn(s.missions, m.repo).length} of them waiting, the most it takes.`
         : holder
           ? `Ready to build, behind “${titleOf(s, holder.intent)}”${waitsForCi(holder) ? ", which is waiting for its checks" : ""}.`

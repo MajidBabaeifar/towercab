@@ -65,6 +65,8 @@ export interface StatusInput {
   queued: Set<number>;
   /** A repo's `workers` (LOOP-110); 1 when absent. */
   workers?: (repo: string) => number;
+  /** LOOP-164: one mission per repo between build and merge. */
+  onePastPlan?: boolean;
   /** `[agent].parallel` (LOOP-104); the runs line is left out when absent. */
   limit?: number;
 }
@@ -178,10 +180,10 @@ export function renderStatus(s: StatusInput): string {
     for (const m of queued) {
       const w = workersOf(m.repo);
       const building = buildingIn(ms, m.repo);
-      if (building.length >= capOf(w)) {
+      if (building.length >= capOf(w, s.onePastPlan)) {
         const idle = idleIn(ms, m.repo).length;
         lines.push(
-          `- ${title(m)} · waiting: repo is at the cap of ${capOf(w)} missions between build and merge, ${building.length - idle} working and ${idle} waiting`,
+          `- ${title(m)} · waiting: repo is at the cap of ${capOf(w, s.onePastPlan)} missions between build and merge, ${building.length - idle} working and ${idle} waiting`,
         );
         continue;
       }
@@ -201,7 +203,7 @@ export function renderStatus(s: StatusInput): string {
     const w = workersOf(repo);
     const idle = idleIn(ms, repo).length;
     lines.push(
-      `build slots: ${repo} ${building.length - idle} of ${w} used, ${idle} waiting outside slots (cap ${capOf(w)})`,
+      `build slots: ${repo} ${building.length - idle} of ${w} used, ${idle} waiting outside slots (cap ${capOf(w, s.onePastPlan)})`,
     );
     // LOOP-116: who holds the slots, and whether they wait for GitHub's checks.
     for (const m of workingIn(ms, repo))

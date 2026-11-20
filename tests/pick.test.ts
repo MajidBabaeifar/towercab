@@ -233,3 +233,15 @@ test("pick: an intent that outranks every intent ahead is never held", () => {
   expect(d2.pick).toBeNull();
   expect(d2.skipped[0]!.reason).toBe("repo has 2 intents working ahead (start 261001-0001 to go now)");
 });
+
+test("pick: manual intake starts only what the owner sends in", () => {
+  const l = listing([
+    at("intents/261001-0900-web", "u: 5\ni: 5\n", "web", "Web"),
+    at("intents/261001-0901-api", "", "api", "Api"),
+  ]);
+  const d = decide(l, state(["web", "api"], { manual: true }));
+  expect(d.pick).toBeNull();
+  expect(d.skipped[0]).toEqual({ id: "261001-0900", reason: "manual intake: start it to send it in" });
+  const sent = decide(l, state(["web", "api"], { manual: true, started: new Set(["261001-0901"]) }));
+  expect(sent.pick?.id).toBe("261001-0901");
+});
