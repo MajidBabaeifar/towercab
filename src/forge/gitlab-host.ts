@@ -162,7 +162,11 @@ export class GitLabHost implements Forge {
       return fail(e);
     }
   }
-  async mergePr(repo: string, n: number, o: { method: MergeMethod; head?: string }): Promise<Result> {
+  async mergePr(
+    repo: string,
+    n: number,
+    o: { method: MergeMethod; head?: string; body?: string },
+  ): Promise<Result> {
     try {
       const head = o.head ?? (await this.gl.view(repo, n)).head;
       const r = await this.gl.merge(repo, n, head);
@@ -170,6 +174,10 @@ export class GitLabHost implements Forge {
     } catch (e) {
       return fail(e);
     }
+  }
+  /** LOOP-153: GitLab repos always squash (GL-5); there is nothing to read. */
+  async allowedMergeMethods(_repo: string): Promise<MergeMethod[] | null> {
+    return null;
   }
   async closePr(repo: string, n: number, comment?: string): Promise<Result> {
     try {

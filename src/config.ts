@@ -25,6 +25,8 @@ export interface RepoConfig {
   /** LOOP-83: changes need a teammate's approval; `reviewers` are the logins that may give it. */
   teammateReview?: boolean;
   reviewers?: string[];
+  /** LOOP-153: how the repo's PRs are merged; absent means `squash`. */
+  mergeMethod?: "squash" | "merge" | "rebase" | "auto";
   /** GL-3: the host a `gitlab:` repo is cloned from (set from `[gitlab].api_base`, never stored). */
   host?: string;
 }

@@ -2,8 +2,10 @@
 // under the owner's own `gh` login, never the App's.
 
 import type { Actor } from "../actor.ts";
-import { type Forge, MERGE_METHOD, must } from "../forge.ts";
+import type { RepoConfig } from "../config.ts";
+import { type Forge, must } from "../forge.ts";
 import type { IntentStore } from "../intents/types.ts";
+import { mergeWithRepoMethod } from "../merge-method.ts";
 import { agentMarker } from "./comments.ts";
 
 /** The active github.com login in `gh auth status` output (gh 2.46 and older wordings). */
@@ -32,10 +34,15 @@ export async function ownerLogin(gh: Forge): Promise<string> {
   return who;
 }
 
-/** `approve`: squash-merge PR `pr` of `repo` as the owner. */
-export async function approve(gh: Forge, repo: string, pr: number): Promise<void> {
+/** `approve`: merge PR `pr` of `repo` as the owner, by the repo's merge method (LOOP-154; squash without `config`). */
+export async function approve(
+  gh: Forge,
+  repo: string,
+  pr: number,
+  config: { repos: ReadonlyMap<string, RepoConfig> } = { repos: new Map() },
+): Promise<void> {
   await ownerLogin(gh);
-  must(await gh.asOwner().mergePr(repo, pr, { method: MERGE_METHOD }), "gh pr merge");
+  must(await mergeWithRepoMethod(gh.asOwner(), config, repo, pr), "gh pr merge");
 }
 
 /** A reply from the UI: a comment on PR `pr` of `repo` as the owner. */

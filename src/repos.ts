@@ -11,6 +11,7 @@ import type { GitLabForge } from "./forge/gitlab.ts";
 import { gitlabPath, isGitlab, parseGitlabProject } from "./forge/types.ts";
 import type { Forge } from "./forge.ts";
 import { AppNotInstalled } from "./github/app.ts";
+import { MERGE_SETTINGS, type MergeSetting } from "./merge-method.ts";
 import { splitDomains } from "./pipeline/domains.ts";
 import { envRefusal } from "./pipeline/sandbox.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
@@ -33,7 +34,10 @@ interface RepoRow {
   added: number;
   teammate_review?: number;
   reviewers?: string;
+  merge_method?: string;
 }
+
+const isMergeSetting = (v: string): v is MergeSetting => (MERGE_SETTINGS as readonly string[]).includes(v);
 
 /** The meta key that marks a config table as imported: it is never imported again. */
 const importedKey = (name: string) => `repo-imported:${name}`;
@@ -56,6 +60,10 @@ function toRepo(r: RepoRow): RepoConfig {
     // LOOP-83: only a repo that sets them carries them.
     ...(Number(r.teammate_review ?? 0) === 1 ? { teammateReview: true } : {}),
     ...(r.reviewers ? { reviewers: r.reviewers.split(",").filter(Boolean) } : {}),
+    // LOOP-153: only a repo that sets one other than the default carries it.
+    ...(r.merge_method && r.merge_method !== "squash" && isMergeSetting(r.merge_method)
+      ? { mergeMethod: r.merge_method }
+      : {}),
   };
 }
 
@@ -539,6 +547,11 @@ export function setRepo(db: Db, config: Config, name: string, pairs: string[], b
         const list = reviewersOf(value, config.github?.me ?? "", bot);
         if (list.length > 0) r.reviewers = list;
         else delete r.reviewers;
+      } else if (key === "merge_method") {
+        if (!isMergeSetting(value)) throw new Error("merge_method must be squash, merge, rebase or auto");
+        if (isGitlab(r.github)) throw new Error("merge_method is only for GitHub repos");
+        if (value === "squash") delete r.mergeMethod;
+        else r.mergeMethod = value;
       } else if (key === "ship_network") {
         // The platform domains the repo's deploy and rollback commands may reach (SHIP-5): the owner's, kept
         // in the database, never in a repo file.
@@ -560,7 +573,7 @@ export function setRepo(db: Db, config: Config, name: string, pairs: string[], b
       }
     }
     db.run(
-      "UPDATE repos SET path = ?, base = ?, workers = ?, ahead = ?, env = ?, teammate_review = ?, reviewers = ? WHERE name = ?",
+      "UPDATE repos SET path = ?, base = ?, workers = ?, ahead = ?, env = ?, teammate_review = ?, reviewers = ?, merge_method = ? WHERE name = ?",
       r.path,
       r.base,
       r.workers,
@@ -568,6 +581,7 @@ export function setRepo(db: Db, config: Config, name: string, pairs: string[], b
       JSON.stringify(r.env),
       r.teammateReview ? 1 : 0,
       (r.reviewers ?? []).join(","),
+      r.mergeMethod ?? "squash",
       name,
     );
     return r;
@@ -584,7 +598,37 @@ export function repoLine(repo: RepoConfig, home: string): string {
   const team = repo.teammateReview
     ? ` · teammate review: ${repo.reviewers?.length ? repo.reviewers.join(", ") : "CODEOWNERS"}`
     : "";
-  return `${repo.name}: ${repo.github} · base ${repo.base} · ${w} · ahead ${repo.ahead} · ${clonePath(repo, home)}${env}${team}`;
+  const merge = repo.mergeMethod ? ` · merge: ${repo.mergeMethod}` : "";
+  return `${repo.name}: ${repo.github} · base ${repo.base} · ${w} · ahead ${repo.ahead} · ${clonePath(repo, home)}${env}${team}${merge}`;
+}
+
+/**
+ * LOOP-153: `setRepo` for pairs that may set `merge_method=rebase`: rebase is a last resort, so it is
+ * accepted only when the host allows it and nothing else. The host is asked before anything changes.
+ */
+export async function setRepoChecked(
+  db: Db,
+  config: Config,
+  forge: Forge | null,
+  name: string,
+  pairs: string[],
+  bot = "",
+): Promise<RepoConfig> {
+  const repo = config.repos.get(name);
+  if (repo && !isGitlab(repo.github) && pairs.some((p) => p === "merge_method=rebase")) {
+    const allowed = forge ? await forge.allowedMergeMethods(repo.github).catch(() => null) : null;
+    if (allowed === null) {
+      throw new Error(
+        `merge_method: can't read ${repo.github}'s merge settings to check that rebase is the only method allowed`,
+      );
+    }
+    if (allowed.includes("squash") || allowed.includes("merge") || !allowed.includes("rebase")) {
+      throw new Error(
+        `merge_method: rebase is only for repos that allow nothing else (${allowed.join(", ") || "none"}): use squash, merge or auto`,
+      );
+    }
+  }
+  return setRepo(db, config, name, pairs, bot);
 }
 
 /** LOOP-67: `repo list`, one line per repo. */

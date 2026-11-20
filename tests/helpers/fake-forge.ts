@@ -193,6 +193,12 @@ export class FakeForge implements Forge {
     p.mergeCommit = `merge-${n}`;
     return ok;
   }
+  /** LOOP-153: the merge methods the host allows per repo; a repo not listed can't be read (null). */
+  readonly allowedMethods = new Map<string, MergeMethod[]>();
+  async allowedMergeMethods(repo: string): Promise<MergeMethod[] | null> {
+    this.log(`allowed-merge-methods ${repo}`);
+    return this.allowedMethods.get(repo) ?? null;
+  }
   async closePr(repo: string, n: number, comment?: string): Promise<Result> {
     const p = this.pr(repo, n);
     p.state = "CLOSED";

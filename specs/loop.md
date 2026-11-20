@@ -1,6 +1,6 @@
 # Loop
 
-**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..121, LOOP-126..132, LOOP-133..135, LOOP-159..162, LOOP-122, LOOP-140..141, LOOP-136..139, LOOP-124..125, LOOP-150..152, LOOP-146..149, LOOP-142..145, LOOP-163, LOOP-78..82 · **Prefix:** LOOP
+**Status:** Live: LOOP-1..42, LOOP-60..77, LOOP-83..84, LOOP-92..93, LOOP-100..104, LOOP-105..109, LOOP-110..112, LOOP-113..121, LOOP-126..132, LOOP-133..135, LOOP-159..162, LOOP-122, LOOP-140..141, LOOP-136..139, LOOP-124..125, LOOP-150..152, LOOP-146..149, LOOP-142..145, LOOP-163, LOOP-78..82, LOOP-153..155 · **Prefix:** LOOP
 
 ## Purpose
 
@@ -1323,7 +1323,7 @@ intents that waited for it start.
 - `auto` is opt-in and follows what the host allows: when Towercab merges, it reads the repo's allowed methods and takes the first allowed of `squash`, `merge`. It takes `rebase` only when neither is allowed. If the settings cannot be read, or no method is allowed, it uses `squash`.
 - Rebase is a last resort. `repo set merge_method=rebase` is accepted only when the host allows rebase merges and neither squash nor merge; otherwise it refuses with `merge_method: rebase is only for repos that allow nothing else (<allowed>): use squash, merge or auto`, and when the settings cannot be read, with `merge_method: can't read <owner/name>'s merge settings to check that rebase is the only method allowed`.
 - The allowed methods come from a new `Forge` read, `allowedMergeMethods(repo)` (GitHub: `allow_squash_merge`, `allow_merge_commit`, `allow_rebase_merge` of `gh api repos/<r>`). `Forge.mergePr` takes the resolved method in its `method` option, which grows from `"squash"` to `"squash" | "merge" | "rebase"`; callers pass the repo's resolved method instead of the `MERGE_METHOD` constant.
-- Other refusals, in addition to LOOP-69's: `merge_method must be squash, merge, rebase or auto`. The unknown-key refusal of LOOP-69 lists `merge_method`. The running loop uses the new value from its next pass (LOOP-68), including for missions already in flight.
+- Other refusals, in addition to LOOP-69's: `merge_method must be squash, merge, rebase or auto`. The unknown-key refusal of LOOP-69 keeps its text. The running loop uses the new value from its next pass (LOOP-68), including for missions already in flight.
 - Only GitHub repos use it. A GitLab repo keeps squashing (GL-5) and `repo set` on it refuses `merge_method` with `merge_method is only for GitHub repos`.
 - Verified by: `repos: set merge_method`, `repos: merge_method refuses an unknown value`, `repos: merge_method auto takes the first allowed method`, `repos: merge_method auto takes rebase only when nothing else is allowed`, `repos: merge_method auto falls back to squash`, `repos: merge_method rebase is refused when squash or merge is allowed`, `repos: merge_method rebase is refused when the settings can't be read`, `cli: repo list shows a merge method other than squash`, `repos: merge_method is refused on a GitLab repo`
 
@@ -1332,9 +1332,9 @@ intents that waited for it start.
 Each merge Towercab or the owner's page makes uses the repo's merge method instead of a fixed squash.
 
 - The `Forge` merge call (`mergePr`, src/forge.ts) takes the method from LOOP-153 (`auto` resolved first) as its `method` option and `GitHubForge` maps it to `--squash`, `--merge` or `--rebase`. This covers the pipeline's merge (PIP-22), the spec and plan merges (PIP-50, PIP-51), release PRs (SHIP), the owner's `approve` (LOOP-38) and the page's merge and accept buttons (UI-107, INT-53), with the head check unchanged. Wherever another spec says "squash-merge" or `--squash` for a GitHub repo, it now means the repo's method.
-- With `squash` or `merge`, the commit title is the PR's Conventional Commit title (PIP-111), passed as the subject, so release tooling that reads history sees it. With `rebase` the host keeps each commit's own message and Towercab sets no title.
+- With `squash` the merge is made exactly as before (`--squash`, no override), so the squash commit keeps the host's squash title, the PR's Conventional Commit title (PIP-111), and release tooling that reads history keeps working. With `merge` the PR's title is read and passed as the commit subject, as the host's own would be `Merge pull request #<n> from …`. With `rebase` the host keeps each commit's own message and Towercab sets no title.
 - When the host refuses the method (`Merge commits are not allowed on this repository`, `Squash merges are not allowed…`, `Rebase merges are not allowed…`), the mission records `merge failed: <method> merges are not allowed on <repo>: run towercab repo set <name> merge_method=<other>` instead of the host's text alone. It does not retry with another method.
-- Verified by: `merge: uses the repo's method`, `merge: squash keeps the PR title as the commit title`, `merge: merge commit keeps the PR title as the subject`, `merge: rebase sets no title`, `merge: a refused method names the setting to change`, `merge: auto uses the method the repo allows`, `owner: approve merges with the repo's method`
+- Verified by: `merge: uses the repo's method`, `merge: squash is made as before, with no title override`, `merge: merge commit keeps the PR title as the subject`, `merge: rebase sets no title`, `merge: a refused method names the setting to change`, `merge: auto uses the method the repo allows`, `owner: approve merges with the repo's method`
 
 ### LOOP-155 · repo add and doctor warn about a method the repo forbids
 
@@ -1749,7 +1749,8 @@ CREATE TABLE outbox (key TEXT PRIMARY KEY, mission INTEGER, text TEXT NOT NULL, 
 CREATE TABLE repos (name TEXT PRIMARY KEY, github TEXT NOT NULL, path TEXT NOT NULL DEFAULT '',
   base TEXT NOT NULL, workers INTEGER NOT NULL DEFAULT 1, ahead INTEGER NOT NULL DEFAULT 3,
   env TEXT NOT NULL DEFAULT '{}', source TEXT NOT NULL, added REAL NOT NULL,
-  teammate_review INTEGER NOT NULL DEFAULT 0, reviewers TEXT NOT NULL DEFAULT '');
+  teammate_review INTEGER NOT NULL DEFAULT 0, reviewers TEXT NOT NULL DEFAULT '',
+  merge_method TEXT NOT NULL DEFAULT 'squash');
 CREATE TABLE shadow_turns (id INTEGER PRIMARY KEY, update_id INTEGER UNIQUE, at REAL NOT NULL,
   role TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'done', cost REAL NOT NULL DEFAULT 0,
   folded INTEGER NOT NULL DEFAULT 0);

@@ -5,9 +5,9 @@
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { git, refreshBase } from "../checkout.ts";
 import { classifyRun } from "../faults.ts";
-import { MERGE_METHOD } from "../forge.ts";
 import { type ChildEnd, type Ctx, EnvError, type Handler, type Progress } from "../handlers.ts";
 import { type Outcome, ok, red, wait } from "../machine.ts";
+import { mergeWithRepoMethod } from "../merge-method.ts";
 import type { Mission } from "../mission.ts";
 import { type Adapter, adapterOf, type DeployOutcome, RollbackRefused, shipEnv } from "../ship/adapter.ts";
 import { type Live, liveDomains, shipNetwork, smokeSuites, suiteOrder } from "../ship/live.ts";
@@ -561,7 +561,7 @@ export const revertHandler: Handler = {
       const st = await ciState(cx, repo.github, r.pr!, r.head, m.pushed_at ?? cx.clock.now());
       if (st.kind === "green" || st.kind === "none") {
         const fresh = cx.record(m, "merge");
-        const res = await cx.github.mergePr(repo.github, r.pr!, { method: MERGE_METHOD, head: r.head! });
+        const res = await mergeWithRepoMethod(cx.github, cx.config, repo.github, r.pr!, { head: r.head! });
         if (!res.ok)
           return {
             done: frozen(`GitHub refused to merge the revert PR: ${res.reason.split("\n")[0]}`),

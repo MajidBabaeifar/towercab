@@ -32,7 +32,6 @@ import type { GitLabForge } from "./forge/gitlab.ts";
 import { queueTokenNotice } from "./forge/gitlab-token.ts";
 import type { Routed } from "./forge/route.ts";
 import { changeUrl, isGitlab } from "./forge/types.ts";
-import { MERGE_METHOD } from "./forge.ts";
 import { frozenBy } from "./freeze.ts";
 import {
   agentComments,
@@ -91,6 +90,7 @@ import {
   wait,
   waitInfo,
 } from "./machine.ts";
+import { mergeWithRepoMethod } from "./merge-method.ts";
 import {
   dataOf,
   getMission,
@@ -1684,10 +1684,13 @@ export class Loop {
           const target = approve === m.plan_pr ? intentsRepo! : repo.github;
           // GL-15: the merge carries the head the approval was judged on, so a push after the check is refused.
           const judged = approve === m.plan_pr ? prs.plan : approve === m.pr ? prs.code : prs.spec;
-          const r = await this.d.github.mergePr(target, approve, {
-            method: MERGE_METHOD,
-            ...(judged?.head ? { head: judged.head } : {}),
-          });
+          const r = await mergeWithRepoMethod(
+            this.d.github,
+            this.d.config,
+            target,
+            approve,
+            judged?.head ? { head: judged.head } : {},
+          );
           this.d.log(
             `${label(m)}: the owner approved PR ${approve}; ${r.ok ? "merged" : `merge refused: ${r.reason}`}`,
           );

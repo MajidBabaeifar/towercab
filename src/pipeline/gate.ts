@@ -1,11 +1,11 @@
 // The `gate` (PIP-7, AUT-3, AUT-4, AUT-15, AUT-18) and `merge` (PIP-22) stages, in code only.
 
 import { gate } from "../autonomy.ts";
-import { MERGE_METHOD } from "../forge.ts";
 import { conflictOutcome } from "../github/events.ts";
 import type { Ctx, Handler } from "../handlers.ts";
 import { REFACTOR_PROOF } from "../kind.ts";
 import { ok, wait } from "../machine.ts";
+import { mergeWithRepoMethod } from "../merge-method.ts";
 import { getMission, type Mission } from "../mission.ts";
 import { type Risk, riskMd } from "../risk.ts";
 import { PASS_ON_WHY } from "../teammates.ts";
@@ -218,7 +218,7 @@ export const mergeHandler: Handler = {
       case "CLEAN":
       case "HAS_HOOKS": {
         const fresh = cx.record(m, "merging", { merged_by: "towercab" });
-        const r = await cx.github.mergePr(repo.github, m.pr!, { method: MERGE_METHOD, head: m.head! });
+        const r = await mergeWithRepoMethod(cx.github, cx.config, repo.github, m.pr!, { head: m.head! });
         if (!r.ok) return { done: wait("merge failed", r.reason.split("\n")[0]) };
         void fresh;
         return { poll: 1 };

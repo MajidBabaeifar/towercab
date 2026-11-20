@@ -8,10 +8,11 @@ import { ensureClone, git } from "../checkout.ts";
 import { tickSteps } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
-import { type Forge, MERGE_METHOD, must } from "../forge.ts";
+import { type Forge, must } from "../forge.ts";
 import { forgeOf } from "../github/forge.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { Home } from "../home.ts";
+import { mergeWithRepoMethod } from "../merge-method.ts";
 import { dataOf, getMission, type Mission, patchData, unfinishedFor } from "../mission.ts";
 import type { SecretState } from "../pipeline/common.ts";
 import { type OwnerStep, type SecretSpec, unticked } from "../steps.ts";
@@ -242,7 +243,7 @@ async function advanceOne(env: SecretEnv, m: Mission, s: OwnerStep & { secret: S
         setState(env.db, env.clock, m.id, s.n, null);
         env.log(`${m.intent}: the pull request for ${key} was closed; starting over`);
       } else if (state === "OPEN" && st.approved) {
-        must(await forgeOf(env.github).mergePr(c.github, st.pr, { method: MERGE_METHOD }), "gh pr merge");
+        must(await mergeWithRepoMethod(forgeOf(env.github), env.config, c.github, st.pr), "gh pr merge");
         env.log(`${m.intent}: merged the pull request for ${key}`);
       }
       return;

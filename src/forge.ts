@@ -8,9 +8,9 @@
 import type { ProposedCache, ProposedPr } from "./github/proposed.ts";
 
 /** How a change request is merged. */
-export type MergeMethod = "squash";
+export type MergeMethod = "squash" | "merge" | "rebase";
 
-/** The one way Towercab merges. */
+/** LOOP-153: the method a repo merges by when it sets none (and always on GitLab). */
 export const MERGE_METHOD: MergeMethod = "squash";
 
 /** The host refused for lack of permission. */
@@ -245,6 +245,8 @@ export interface Forge {
   markReady(repo: string, n: number): Promise<Result>;
   /** `body`: the merge commit's message body (USR-10: `Approved-by: <login>`). */
   mergePr(repo: string, n: number, o: { method: MergeMethod; head?: string; body?: string }): Promise<Result>;
+  /** LOOP-153: the merge methods `repo` allows, or null when the host's settings can't be read. */
+  allowedMergeMethods(repo: string): Promise<MergeMethod[] | null>;
   closePr(repo: string, n: number, comment?: string): Promise<Result>;
   /** Merge the base branch into the change request's head, if the head is still `expectedHead`. */
   updateBranch(repo: string, n: number, expectedHead: string): Promise<void>;

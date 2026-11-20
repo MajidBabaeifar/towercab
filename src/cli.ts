@@ -43,6 +43,7 @@ import type { IntentStore } from "./intents/types.ts";
 import * as log from "./log.ts";
 import { Loop } from "./loop.ts";
 import { type ApplyCtx, isWait } from "./machine.ts";
+import { readMergeWarnings } from "./merge-method.ts";
 import { type Mission, unfinishedFor } from "./mission.ts";
 import { buildWebhooks } from "./notify.ts";
 import { Observer } from "./observer/observer.ts";
@@ -53,7 +54,7 @@ import { checkSandbox } from "./pipeline/hostcheck.ts";
 import { handlers } from "./pipeline/index.ts";
 import { ownerMergeRefusal } from "./pipeline/teammate.ts";
 import { parseScores } from "./priority.ts";
-import { addRepo, loadRepos, removeRepo, repoLine, repoList, setRepo } from "./repos.ts";
+import { addRepo, loadRepos, removeRepo, repoLine, repoList, setRepoChecked } from "./repos.ts";
 import { parseScoreWords } from "./scores.ts";
 import { checkoutRoot, down, logsArgv, restart, up } from "./service.ts";
 import { restoreBackup } from "./settings/backup.ts";
@@ -824,7 +825,7 @@ async function run(
           : m.stage === "approval:spec"
             ? [repo.github, m.spec_pr!]
             : [repo.github, m.pr!];
-      await ownerApprove(w.github, gh, n);
+      await ownerApprove(w.github, gh, n, w.config);
       return `merged ${gh}#${n} as ${w.config.github?.me}; Towercab continues on its next read`;
     }
     case "shadow": {
@@ -936,7 +937,9 @@ async function repo(w: World, args: string[], name: string | undefined): Promise
       arg,
       name,
     );
-    return `added ${r.name}: ${r.github}, base ${r.base}, cloned`;
+    // LOOP-155: a warning, never a failure, when the repo does not allow the method it will be merged by.
+    const warnings = w.github ? await readMergeWarnings(w.github, r) : [];
+    return [`added ${r.name}: ${r.github}, base ${r.base}, cloned`, ...warnings].join("\n");
   }
   if (sub === "set" && arg && args.length >= 3) {
     // LOOP-83: the bot can't be a reviewer; its login is asked only when a list is set, and a GitHub
@@ -948,7 +951,8 @@ async function repo(w: World, args: string[], name: string | undefined): Promise
         () => "",
       );
     }
-    return `set ${repoLine(setRepo(w.db, w.config, arg, args.slice(2), bot), w.home.root)}`;
+    const set = await setRepoChecked(w.db, w.config, w.github ?? null, arg, args.slice(2), bot);
+    return `set ${repoLine(set, w.home.root)}`;
   }
   throw new UsageError(REPO_USAGE);
 }

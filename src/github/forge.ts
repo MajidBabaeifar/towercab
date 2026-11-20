@@ -47,7 +47,11 @@ import {
   requestReviewers,
 } from "./teammates.ts";
 
-const MERGE_FLAG: Record<MergeMethod, string> = { squash: "--squash" };
+const MERGE_FLAG: Record<MergeMethod, string> = {
+  squash: "--squash",
+  merge: "--merge",
+  rebase: "--rebase",
+};
 
 const first = (text: string): string =>
   text
@@ -200,21 +204,54 @@ export class GitHubForge implements Forge, GitHub {
     return this.soft(repo, ["pr", "ready", String(n), "-R", repo]);
   }
 
-  mergePr(
+  async mergePr(
     repo: string,
     n: number,
     o: { method: MergeMethod; head?: string; body?: string },
   ): Promise<Result> {
+    // LOOP-154: a merge commit is titled with the PR's title (GitHub's own would be `Merge pull request #n
+    // from …`); a squash commit is titled as it always was; a rebase has no commit of its own.
+    let subject = "";
+    if (o.method === "merge") {
+      try {
+        subject = (await this.view<{ title?: string }>(repo, n, "title")).title?.trim() ?? "";
+      } catch {
+        // The title can't be read: the host's own title is used rather than failing the merge.
+      }
+    }
     return this.soft(repo, [
       "pr",
       "merge",
       String(n),
       MERGE_FLAG[o.method],
+      ...(subject ? ["--subject", subject] : []),
       ...(o.head ? ["--match-head-commit", o.head] : []),
       ...(o.body ? ["--body", o.body] : []),
       "-R",
       repo,
     ]);
+  }
+
+  async allowedMergeMethods(repo: string): Promise<MergeMethod[] | null> {
+    const r = await this.raw.gh(repo, ["api", `repos/${repo}`]);
+    if (r.code !== 0) return null;
+    try {
+      const v = JSON.parse(r.stdout) as Record<string, unknown>;
+      if (
+        typeof v.allow_squash_merge !== "boolean" &&
+        typeof v.allow_merge_commit !== "boolean" &&
+        typeof v.allow_rebase_merge !== "boolean"
+      ) {
+        return null;
+      }
+      const out: MergeMethod[] = [];
+      if (v.allow_squash_merge === true) out.push("squash");
+      if (v.allow_merge_commit === true) out.push("merge");
+      if (v.allow_rebase_merge === true) out.push("rebase");
+      return out;
+    } catch {
+      return null;
+    }
   }
 
   closePr(repo: string, n: number, comment?: string): Promise<Result> {

@@ -20,7 +20,7 @@ import type { Db } from "../db.ts";
 import { ExitNeedsConfirm, type ExitWarning, exitWarning } from "../exit-warning.ts";
 import { markFast } from "../fast.ts";
 import { askFeatures } from "../features.ts";
-import { ForgeBadReply, MERGE_METHOD, type PrBrief, type Result } from "../forge.ts";
+import { ForgeBadReply, type PrBrief, type Result } from "../forge.ts";
 import { forgeOf, ownerForge } from "../github/forge.ts";
 import { approvedByLine, type Decision, decidedByComment } from "../github/owner.ts";
 import { classifyFiles, type ProposedPr } from "../github/proposed.ts";
@@ -38,6 +38,7 @@ import {
 import { checkOverlap, type Match, type OverlapResult } from "../intents/overlap.ts";
 import type { IntentStore } from "../intents/types.ts";
 import { isKind, kindChangeRefusal, WORK_KINDS } from "../kind.ts";
+import { mergeWithRepoMethod } from "../merge-method.ts";
 import { dataOf, forIntent, getMission, type Mission, unfinishedFor } from "../mission.ts";
 import { isMulti } from "../parts.ts";
 import { grantScanning } from "../pipeline/alerts.ts";
@@ -396,7 +397,7 @@ export function createActions(d: ActionDeps): UiActions {
       const known = d.proposed?.().find((p) => p.number === n);
       if (known && !known.acceptable) throw changed(n);
       if (now.draft) refused(await of.markReady(now.repo, n), `mark PR #${n} ready`);
-      refused(await of.mergePr(now.repo, n, { method: MERGE_METHOD, head }), `merge PR #${n}`);
+      refused(await mergeWithRepoMethod(of, d.config, now.repo, n, { head }), `merge PR #${n}`);
       readNow();
       return `Merged PR #${n} as you. The intent is on main; Towercab picks it up within a minute.`;
     },
@@ -488,8 +489,7 @@ export function createActions(d: ActionDeps): UiActions {
       await announce(p, "approved");
       const by = person();
       refused(
-        await of.mergePr(p.github, p.number, {
-          method: MERGE_METHOD,
+        await mergeWithRepoMethod(of, d.config, p.github, p.number, {
           ...(by ? { body: approvedByLine(by) } : {}),
         }),
         `merge the ${p.label} #${p.number}`,
