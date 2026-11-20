@@ -87,10 +87,12 @@ export class Cards {
 
   async sync(items: CardItem[]): Promise<void> {
     let ops = 0;
-    for (const { view, wait } of items) {
-      if (ops >= MAX_PER_PASS) return;
+    // FAST-8: fast-lane cards go first, and are not counted against the limit of a pass.
+    const ordered = [...items].sort((a, b) => Number(!!b.view.fast) - Number(!!a.view.fast));
+    for (const { view, wait } of ordered) {
+      if (!view.fast && ops >= MAX_PER_PASS) return;
       try {
-        if (await this.one(view, wait)) ops++;
+        if ((await this.one(view, wait)) && !view.fast) ops++;
       } catch (e) {
         this.fail(view.mission, e);
       }

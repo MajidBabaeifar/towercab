@@ -34,7 +34,9 @@ import {
 } from "../intents/create.ts";
 import { checkOverlap, type Match, type OverlapResult } from "../intents/overlap.ts";
 import type { IntentStore } from "../intents/types.ts";
+import { isKind, kindChangeRefusal, WORK_KINDS } from "../kind.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
+import { isMulti } from "../parts.ts";
 import { grantScanning } from "../pipeline/alerts.ts";
 import { ownerMergeRefusal } from "../pipeline/teammate.ts";
 import { canBoostIntent, changeScores } from "../scores.ts";
@@ -48,6 +50,8 @@ export interface UiActions {
   merge(intent: string): Promise<string>;
   reply(intent: string, text: string): Promise<string>;
   retry(intent: string): Promise<string>;
+  /** UI-167: lift the freeze of a multi-repo intent (`towercab unfreeze`). */
+  unfreeze(intent: string): Promise<string>;
   /** LOOP-76: `confirmed` when the owner saw the warning of an open PR with commits that this closes. */
   drop(intent: string, confirmed?: boolean): Promise<string>;
   start(intent: string): Promise<string>;
@@ -70,6 +74,8 @@ export interface UiActions {
    * `owner` or none) may; a raise from any other actor is refused, and so is a lowering by the shadow.
    */
   autonomy?(intent: string, a: number, actor?: string): Promise<string>;
+  /** UI-283: set the intent's kind (INT-76); only the owner, and not past a stage the kind skips. */
+  kind?(intent: string, kind: string, actor?: string): Promise<string>;
   /**
    * FAST-1, FAST-9: put the intent in the fast lane or take it out. From the page (actor `owner` or none) or the
    * owner's own Telegram chat (`channel`, never taken from a request) it counts at once; the shadow is refused.
@@ -381,6 +387,20 @@ export function createActions(d: ActionDeps): UiActions {
       const m = unfinishedFor(d.db, intent);
       if (!m || !APPROVALS.has(m.stage))
         throw new Error("Nothing to merge: this intent isn't waiting for a merge.");
+      // LOOP-80: the owner's yes lands every part of a multi-repo intent; no single PR is merged here.
+      if (isMulti(m)) {
+        d.db.tx(() => {
+          const fresh = getMission(d.db, m.id);
+          if (!fresh || fresh.stage !== m.stage) return;
+          d.db.run(
+            "UPDATE missions SET data = ? WHERE id = ?",
+            JSON.stringify({ ...dataOf(fresh), ownerApproved: true }),
+            m.id,
+          );
+          d.db.setMeta(`poll:${m.id}`, "1");
+        });
+        return "Approved: Towercab freezes the repos and lands every part in order within a minute.";
+      }
       // PIP-143: a change the automated review didn't approve is passed on before it can merge.
       if ((dataOf(m) as { teammate?: { passNeeded?: boolean } }).teammate?.passNeeded === true) {
         throw new Error("Pass it on to your teammates first: they need to review it before it can merge.");
@@ -492,6 +512,14 @@ export function createActions(d: ActionDeps): UiActions {
       return exitWarning(of, d.config.repos.get(m.repo)?.github ?? null, m.pr);
     },
 
+    async unfreeze(intent) {
+      const m = unfinishedFor(d.db, intent);
+      if (m?.stage !== "blocked" || m.waiting !== "freeze")
+        throw new Error("Nothing to unfreeze: this intent isn't waiting at a freeze.");
+      command("unfreeze", intent);
+      return "Towercab lifts the freeze on its next pass.";
+    },
+
     async drop(intent, confirmed = false) {
       const m = unfinishedFor(d.db, intent);
       const p = pr(m);
@@ -561,6 +589,20 @@ export function createActions(d: ActionDeps): UiActions {
       }
       recordChange(d.db, { intent: found.id, from: shown, to: a, at: d.clock.now() });
       return "Saved. Applies from the next gate.";
+    },
+
+    async kind(intent, kind, actor = "") {
+      if (d.actor === "shadow" || (actor !== "" && actor !== "owner"))
+        throw new Error("only you can change the kind");
+      if (!isKind(kind)) throw new Error(`Kind is one of ${WORK_KINDS.join(", ")}.`);
+      const found = await d.store.get(intent);
+      const m = unfinishedFor(d.db, found.id);
+      const refusal = m
+        ? kindChangeRefusal(kind, m.stage === "blocked" ? (m.from_stage ?? m.stage) : m.stage)
+        : null;
+      if (refusal) throw new Error(refusal);
+      command("kind", found.id, kind);
+      return `Saved: ${kind}. It applies from the next pass.`;
     },
 
     async fast(intent, on, actor = "", channel = "page") {

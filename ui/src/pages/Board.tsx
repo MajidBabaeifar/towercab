@@ -11,7 +11,7 @@ import type {
   RepoSpendView,
 } from "../../../src/ui/view.ts";
 import { readSort, SORTS, type SortKey, sortLabel, sortRepos, writeSort } from "../board-sort.ts";
-import { ErrorNote, ReadinessChip, StateChip } from "../components.tsx";
+import { ErrorNote, FastBadge, ReadinessChip, StateChip } from "../components.tsx";
 import { ChevronDown } from "../icons.tsx";
 import { Link } from "../router.tsx";
 
@@ -49,12 +49,20 @@ function Card({ card }: { card: BoardCard }) {
         <span class="board-card-title" title={card.title}>
           {card.title}
         </span>
+        <FastBadge text={card.fast} />
         <span class="board-card-foot">
           {/* The note goes beside the chip, so a narrow card wraps it instead of cutting it. */}
           <StateChip state={{ ...card.state, note: null }} small />
           {card.state.note ? <span class="meta">{card.state.note}</span> : null}
           {card.ship ? <span class={`board-ship board-ship-${card.ship.kind}`}>{card.ship.mark}</span> : null}
         </span>
+        {card.repoCount ? (
+          <span class="board-repos meta">
+            {card.repoCount} · {card.slowest}
+          </span>
+        ) : null}
+        {card.needsRepo ? <span class="board-needs-repo meta">{card.needsRepo} needs you</span> : null}
+        {card.freezeHold ? <span class="board-freeze-hold meta">{card.freezeHold}</span> : null}
       </Link>
     </li>
   );
@@ -84,6 +92,8 @@ function LaneHead({ repo, folded, onToggle }: { repo: BoardRepo; folded: boolean
         </Link>
       ) : null}
       {repo.fileError ? <span class="why file-notice">{repo.fileError}</span> : null}
+      {repo.overlayNotice ? <span class="why file-notice">{repo.overlayNotice}</span> : null}
+      {repo.frozen ? <span class="freeze-chip">{repo.frozen}</span> : null}
       <span class="meta">
         {repo.github ? <span class="mono">{repo.github} · </span> : null}
         {repo.open} open · {repo.done} done in the last 7 days

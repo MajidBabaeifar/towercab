@@ -127,7 +127,7 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   ui [--no-open]                  open the web page
   specs check-ids [--base <ref>] [--prs <file>]
                                   fail when a spec adds a requirement ID the base branch or another open PR has
-  doctor [--quick]                what is missing
+  doctor [--quick]                what is missing (--quick: loose key files only warn)
   update                          update this checkout to the latest main now
 `;
 
@@ -306,6 +306,7 @@ export async function main(argv: string[], tools: Tools = realTools()): Promise<
         intent: { type: "string" },
         "no-open": { type: "boolean" },
         quick: { type: "boolean" },
+        "for-update": { type: "boolean" },
         name: { type: "string" },
         base: { type: "string" },
         prs: { type: "string" },
@@ -403,7 +404,16 @@ async function run(
           if (e instanceof ConfigError) return `config: ${e.message}`;
           throw e;
         }
-        const r = await doctor({ config, home: Home.resolve(flags.home), tools, github: null, quick: true });
+        const r = await doctor({
+          config,
+          home: Home.resolve(flags.home),
+          tools,
+          github: null,
+          quick: true,
+          // LOOP-145: the quick check is the self-update's, and an older Towercab calls it without
+          // `--for-update`: a loose secrets file is a warning here whether or not the flag is given.
+          forUpdate: true,
+        });
         process.stdout.write(`${r.lines.join("\n")}\n`);
         return r.ok ? 0 : 1;
       }
@@ -584,7 +594,12 @@ async function run(
         next: next.split("\n")[0]!,
         waits: next
           .split("\n")
-          .filter((l) => / \(start \S+ to go now\)$/.test(l) || / repo not ready: /.test(l))
+          .filter(
+            (l) =>
+              / \(start \S+ to go now\)$/.test(l) ||
+              / repo not ready: /.test(l) ||
+              / is the fast lane of /.test(l),
+          )
           .map((l) => l.replace(/^skipped: /, "")),
         prLink: (m) => dummy.subject(m).link,
         queued: dummy.queued(),

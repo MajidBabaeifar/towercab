@@ -4966,6 +4966,32 @@ kbd {
   color: var(--muted, inherit);
 }
 
+/* UI-276: where a setting comes from. */
+.setting-sources {
+  margin-top: 0.75rem;
+}
+.source-list {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+.source-key {
+  font-weight: 600;
+}
+.source-tag {
+  font-size: 0.75rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0 0.5em;
+  opacity: 0.8;
+}
+.source-tag.overlay {
+  font-weight: 600;
+  opacity: 1;
+}
+
 /* New intent (UI-213..218) */
 
 .new-intent {
@@ -5078,4 +5104,52 @@ kbd {
     line-height: 1;
     box-shadow: var(--shadow-pop);
   }
+}
+
+/* UI-165..167: the parts of a multi-repo intent and its freeze. */
+.parts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+.part {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+}
+.part.merged .part-stage {
+  color: var(--ok, inherit);
+}
+.freeze-line,
+.freeze-chip {
+  font-weight: 600;
+}
+.board-repos,
+.board-needs-repo,
+.board-freeze-hold {
+  display: block;
+}
+.rest.card {
+  display: grid;
+  gap: 0.5rem;
+}
+
+/* The fast lane (FAST-10) */
+
+.fast-badge {
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--mono);
+  white-space: normal;
+}
+
+.fast-answers {
+  margin: var(--s1) 0 0;
+  padding-left: var(--s4);
+  color: var(--text-2);
+  font-size: var(--t-sm);
 }

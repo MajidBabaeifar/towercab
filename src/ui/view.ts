@@ -88,6 +88,10 @@ export interface FastView {
   confirmed: boolean;
   /** The service isn't running, so the page can't change anything. */
   locked: boolean;
+  /** FAST-10: `Fast lane · build, 3 of 6`, or `next in the fast lane` while another intent holds the lane. */
+  line?: string;
+  /** FAST-7, FAST-10: the questions answered automatically with the recommendation. */
+  answers?: { question: string; answer: string; when: When }[];
 }
 
 /** UI-257: the one control for an intent's autonomy. */
@@ -120,6 +124,25 @@ export interface ControlsView {
   waitWhy: string | null;
   /** UI-208: `Lowered to a<n> by the worker: <why>`; null when nothing was lowered. */
   lowered: string | null;
+  /** UI-283: the intent's kind, what it skips, and the control that sets it. */
+  kind: KindView;
+}
+
+/** UI-283: an intent's kind as the page shows it. */
+export interface KindView {
+  value: string;
+  /** "Bugfix", "Infrastructure change"... */
+  label: string;
+  /** `owner`: set in the intent or from the page; `guess`: inferred (INT-77); `default`: none yet, so the full path. */
+  by: "owner" | "guess" | "default";
+  /** The inferred kind's reason (INT-77), or null. */
+  why: string | null;
+  /** The stages this kind skips, in plain words. */
+  skipped: string[];
+  /** The control is offered (the page can act and the intent is not finished). */
+  canSet: boolean;
+  /** The five kinds; `refused` is why one cannot be taken now (UI-283), or null. */
+  options: { value: string; label: string; refused: string | null }[];
 }
 
 export interface Question {
@@ -134,6 +157,31 @@ export interface Question {
 export interface ExitView {
   do: string;
   label: string;
+  /** UI-167: asked before the button acts (a freeze lifted after a merge ends the intent unverified). */
+  confirm?: string;
+}
+
+/** UI-165: one part of a multi-repo intent. */
+export interface PartView {
+  repo: string;
+  stage: string;
+  /** The state in plain words. */
+  label: string;
+  pr: number | null;
+  prUrl: string | null;
+  waitsOn: string[];
+  merged: boolean;
+  /** "your answer", "a check", "the freeze of web", ...; null when it waits for nothing. */
+  waiting: string | null;
+}
+
+/** UI-167: a repo and the mission that froze it (`frozenBy`), or null. */
+export interface RepoFreeze {
+  repo: string;
+  frozenBy: number | null;
+  /** The intent's title and id, for "Merges frozen for <title>". */
+  title: string | null;
+  intent: string | null;
 }
 
 export interface Access {
@@ -176,6 +224,8 @@ export interface RiskView {
 
 /** UI-58: one wait on the owner. */
 export interface Card {
+  /** FAST-10: the fast lane label and progress of a fast intent. */
+  fast?: string;
   /** UI-211: set when the reason is that the App isn't installed. */
   installHelp?: InstallHelpView;
   intent: string;
@@ -230,6 +280,10 @@ export interface Card {
   autonomy?: AutonomyView;
   /** PIP-186: an agent answered for the owner and the intent acted on it: the agent's name. */
   decided_by_agent?: string | null;
+  /** UI-166: the repo of the part that needs the owner (a multi-repo intent). */
+  partRepo?: string;
+  /** UI-165: the parts of a multi-repo intent. */
+  parts?: PartView[];
 }
 
 export type PhaseStatus = "done" | "current" | "todo" | "skipped";
@@ -248,6 +302,8 @@ export interface BuildProgress {
 
 /** UI-59: a moving intent. */
 export interface Row {
+  /** FAST-10: the fast lane label and progress of a fast intent. */
+  fast?: string;
   intent: string;
   title: string;
   repo: string;
@@ -270,6 +326,12 @@ export interface Row {
   /** UI-257: the autonomy control. */
   autonomy?: AutonomyView;
   estimate?: EstimateLine;
+  /** UI-166: "3 repos" and the part furthest behind, for a multi-repo intent. */
+  repoCount?: string;
+  slowest?: string;
+  parts?: PartView[];
+  /** UI-166: "waiting for the freeze" while another intent froze its repo. */
+  freezeHold?: string;
 }
 
 /** UI-255: what an intent is expected to cost, or what it has spent against that. */
@@ -379,6 +441,8 @@ export type StationKey =
 
 /** UI-78: one open intent on the airspace line. */
 export interface Plane {
+  /** FAST-10: the fast lane label and progress of a fast intent. */
+  fast?: string;
   intent: string;
   title: string;
   repo: string;
@@ -395,6 +459,13 @@ export interface Plane {
   ship?: { kind: "rollback" | "revert" | "fix"; mark: string };
   /** UI-110: why a plane waiting at merge is held ("Held until you resume"); absent otherwise. */
   held?: string;
+  /** UI-167: the parts of a multi-repo intent. */
+  parts?: PartView[];
+  freezeHold?: string;
+  /** UI-166: "3 repos", the part furthest behind, and the repo of a part that needs the owner. */
+  repoCount?: string;
+  slowest?: string;
+  partRepo?: string;
 }
 
 /** UI-109: why the airspace is stopped. The owner's pause can be resumed; a service pause cannot. */
@@ -420,6 +491,8 @@ export interface AirspaceView {
   countsText: string;
   /** One sentence for screen readers. */
   summary: string;
+  /** UI-167: per repo, the mission that froze it or null (`GET /api/state`). */
+  repos?: RepoFreeze[];
 }
 
 export interface Overview {
@@ -687,6 +760,12 @@ export interface IntentPage {
   decided_by_agent?: string | null;
   /** SHIP-32: "Published in v1.2.0" with its link, or "Merged, waiting for a release"; absent when the repo has no releases. */
   release?: { text: string; url: string | null };
+  /** UI-165: one row per repo of a multi-repo intent, the lead first. */
+  parts?: PartView[];
+  /** UI-165: "Merges frozen in infra, web for 2 h (limit 2 h)" while the freeze is held. */
+  freeze?: string;
+  /** UI-167: an intent that ended merged, not verified live: nothing was rolled back, `Land the rest` posts `retry`. */
+  rest?: { text: string; action: { do: "retry"; label: string } | null };
 }
 
 /** UI-160: one of the owner's steps, with when it was ticked. */
@@ -728,6 +807,8 @@ export interface Lane {
   github: string;
   /** "1 of 3 ahead": intents before build against `[repos.<r>].ahead` (UI-100). */
   ahead: string;
+  /** UI-166: "Merges frozen for <title>" while an intent holds this repo's freeze. */
+  frozen?: string;
   running: Row[];
   /** Queued in pick order, numbered: nothing but their turn holds them (UI-63). */
   upNext: QueueItem[];
@@ -937,6 +1018,19 @@ export interface InboxPage {
   stale: string | null;
 }
 
+/** UI-276: the settings in effect, each labelled with where it came from (repo, overlay or default). */
+export interface SettingsSources {
+  rows: { key: string; value: string; source: "repo" | "overlay" | "default" }[];
+  /** REPO-46: one line per overlay key refused. */
+  refusals: string[];
+  /** The overlay's `TOWERCAB.md`, where an overlay value is changed; null without an overlay. */
+  overlayPath: string | null;
+  /** An invalid overlay file's reason, or null. */
+  error: string | null;
+  /** REPO-49: the repo's own checks replaced the overlay's; null when they did not. */
+  notice: string | null;
+}
+
 /** UI-150 to UI-154: a repo's limits (`workers`, `ahead`) as its `TOWERCAB.md` holds them. */
 export interface LimitsView {
   values: { workers: number; ahead: number };
@@ -953,6 +1047,8 @@ export interface LimitsView {
   /** UI-153: `TOWERCAB.md in <repo> can't be read: <reason>`, or null. */
   fileError: string | null;
   fileUrl: string | null;
+  /** UI-276: where each setting comes from; absent until the loop has read the repo. */
+  sources?: SettingsSources;
   move: {
     state: "waiting" | "open" | "closed" | "moved";
     pr: number | null;
@@ -994,6 +1090,8 @@ export interface RepoView {
 export interface RepoSummary {
   /** UI-153: the file's reason when `TOWERCAB.md` can't be read; absent otherwise. */
   fileError?: string;
+  /** UI-276: the notice that the repo's own checks replaced the overlay's; absent otherwise. */
+  overlayNotice?: string;
   readiness?: ReadinessBadge;
   repo: string;
   github: string;
@@ -1046,17 +1144,28 @@ export interface BoardColumn {
 }
 
 export interface BoardCard {
+  /** FAST-10: the fast lane label and progress of a fast intent. */
+  fast?: string;
   intent: string;
   title: string;
   state: StateView;
   /** UI-125: rolling back, reverting, or in a fix round; absent otherwise. */
   ship?: { kind: "rollback" | "revert" | "fix"; mark: string };
+  /** UI-166: "3 repos" and the part furthest behind (a multi-repo intent). */
+  repoCount?: string;
+  slowest?: string;
+  /** UI-166: a part needs the owner: the repo it is in. */
+  needsRepo?: string;
+  /** UI-166: waiting at its merge for another intent's freeze. */
+  freezeHold?: string;
 }
 
 /** UI-133: one repo's row. */
 export interface BoardRepo {
   /** UI-153: the file's reason when `TOWERCAB.md` can't be read; absent otherwise. */
   fileError?: string;
+  /** UI-276: the notice that the repo's own checks replaced the overlay's; absent otherwise. */
+  overlayNotice?: string;
   readiness?: ReadinessBadge;
   /** "" for intents the listing doesn't know (the "unknown repo" lane). */
   repo: string;
@@ -1072,6 +1181,8 @@ export interface BoardRepo {
   /** UI-187: proposed intents for this repo. */
   proposed: number;
   spend: RepoSpendView;
+  /** UI-166: "Merges frozen for <title>" while an intent holds this repo's freeze. */
+  frozen?: string;
   /** Cards per column, in column order; columns without cards are absent. */
   cells: Partial<Record<BoardColumnKey, BoardCard[]>>;
 }
