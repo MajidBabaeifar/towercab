@@ -7,7 +7,7 @@ import { git, refreshBase } from "../checkout.ts";
 import { classifyRun } from "../faults.ts";
 import { type ChildEnd, type Ctx, EnvError, type Handler, type Progress } from "../handlers.ts";
 import { type Outcome, ok, red, wait } from "../machine.ts";
-import { mergeWithRepoMethod } from "../merge-method.ts";
+import { mergeWithRepoMethod, resolveMergeMethod } from "../merge-method.ts";
 import type { Mission } from "../mission.ts";
 import { type Adapter, adapterOf, type DeployOutcome, RollbackRefused, shipEnv } from "../ship/adapter.ts";
 import { type Live, liveDomains, shipNetwork, smokeSuites, suiteOrder } from "../ship/live.ts";
@@ -495,6 +495,11 @@ function fixRound(m: Mission, sc: ShipCx, ship: ShipData, target: string): Outco
 
 // ── revert (SHIP-12) ─────────────────────────────────────────────────────────────────────────────
 
+/** The `git revert` arguments for a recorded merge: a merge commit needs `-m 1`. */
+export function revertArgs(sha: string, parents: number): string[] {
+  return ["revert", "--no-edit", ...(parents > 1 ? ["-m", "1"] : []), sha];
+}
+
 export const revertHandler: Handler = {
   async step(cx, m) {
     const sc = await shipCx(cx, m);
@@ -513,6 +518,14 @@ export const revertHandler: Handler = {
     }
     const rv = sc.ship.revert!;
     if (m.step === "branch") {
+      // LOOP-154: a rebase merge leaves several commits, and the host names only the last one.
+      if ((await resolveMergeMethod(cx.github, cx.config.repos, repo.github)) === "rebase") {
+        return {
+          done: frozen(
+            `${repo.base} was merged by rebase, so the change is several commits and can't be reverted automatically: revert it by hand`,
+          ),
+        };
+      }
       const clone = cloneOf(cx, m);
       await git(cx.tools, clone, ["fetch", "--quiet", "origin"], await cx.github.gitAuth(repo.github));
       await checkoutAt(cx, m, null);
@@ -520,7 +533,9 @@ export const revertHandler: Handler = {
       const author = await botAuthor(cx, cx.repo(m).github);
       for (const sha of [...sc.ship.merges].reverse()) {
         try {
-          await coGit(cx, m, [...author, "revert", "--no-edit", sha]);
+          // LOOP-154: a merge commit (two parents) is reverted against its first parent.
+          const parents = (await coGit(cx, m, ["rev-list", "--parents", "-n", "1", sha])).trim().split(/\s+/);
+          await coGit(cx, m, [...author, ...revertArgs(sha, parents.length - 1)]);
         } catch {
           await coGit(cx, m, ["revert", "--abort"]).catch(() => "");
           return { done: frozen(`reverting ${short(sha)} on ${repo.base} conflicts`) };
