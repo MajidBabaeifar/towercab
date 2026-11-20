@@ -65,7 +65,7 @@ test("users: a pr comment names who approved", async () => {
     "answered by Ana Diaz in Towercab (page):\n\nPlease keep it small.",
   ]);
   const d = world(true);
-  await runAs(ana, () => d.actions.drop("a-code"));
+  await runAs(ana, () => d.actions.drop("a-code", true));
   expect(d.owner).toContainEqual([
     "pr",
     "close",

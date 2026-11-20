@@ -3,6 +3,7 @@
 
 import { ownerOnlyLine } from "../autonomy.ts";
 import type { Config } from "../config.ts";
+import { closeQuestion, type ExitWarning } from "../exit-warning.ts";
 import type { Button } from "../outbox.ts";
 
 /** One wait on the owner, as the messages need it. */
@@ -102,6 +103,11 @@ export function confirmText(op: "M" | "D", v: WaitView): string {
   if (op === "D") return `Drop ${oneLine(v.title, 80)}? This closes its PR.`;
   const pr = v.pr ? `the ${v.pr.label} #${v.pr.number} of ` : "";
   return `Merge ${pr}${oneLine(v.title, 80)} into ${v.base}?`;
+}
+
+/** LOOP-76: the confirm of a drop that closes an open PR with commits: the warning, then the question. */
+export function closeConfirmText(w: ExitWarning): string {
+  return `${w.text}\n${closeQuestion(w)}`;
 }
 
 /** TG-3: Accept and Close for a proposed intent; the head is its version (UI-185). */

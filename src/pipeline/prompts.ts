@@ -15,6 +15,7 @@ export const AGENT_VARS: Record<AgentName, string[]> = {
   risk: ["gate", "intent", "change", "context", "open_points"],
   "merge-review": ["intent", "diff_cmd", "resolved"],
   score: ["issue", "product"],
+  kind: ["intent"],
   features: ["repo", "current", "listed"],
   shadow: ["earlier", "state", "results", "message"],
   observer: ["bundle", "steering", "repos", "limit"],

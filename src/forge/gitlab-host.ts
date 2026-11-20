@@ -193,6 +193,10 @@ export class GitLabHost implements Forge {
     const v = await this.gl.view(repo, n);
     return { state: v.state, draft: v.draft, head: v.head, merged: v.state === "MERGED" };
   }
+  async prCommits(repo: string, n: number): Promise<{ state: string; commits: number }> {
+    const v = await this.gl.view(repo, n);
+    return { state: v.state, commits: await this.gl.commitCount(repo, n) };
+  }
   async prFiles(repo: string, n: number): Promise<FileChange[]> {
     return (await this.gl.diffs(repo, n)).map((d) => ({ filename: d.name, status: d.status }));
   }

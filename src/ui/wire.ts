@@ -5,6 +5,7 @@ import { capReason, capsOf } from "../budgets.ts";
 import { pausedNow, runningSteps } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
+import { looseSecretFiles } from "../doctor.ts";
 import { fixFor } from "../faults.ts";
 import { changeUrl } from "../forge/types.ts";
 import { fetchHttp } from "../github/app.ts";
@@ -97,7 +98,16 @@ export function problemsOf(loop: Loop): Problem[] {
     });
   }
   out.push(...addProblems(loop.d.db));
+  out.push(...secretsProblems(loop.d.config));
   return out;
+}
+
+/** UI-277: one row per secrets file that others can read, with the command that fixes it. */
+export function secretsProblems(config: Config): Problem[] {
+  return looseSecretFiles(config).map((f) => ({
+    title: `${f} is readable by others`,
+    fix: `Run chmod 600 ${f}`,
+  }));
 }
 
 /** UI-130: a repo added from the page whose clone failed, until it is added again. */

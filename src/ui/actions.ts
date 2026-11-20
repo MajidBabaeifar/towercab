@@ -17,6 +17,7 @@ import { saveBudgets } from "../budgets.ts";
 import { intentPaused, tickSteps } from "../commands.ts";
 import type { Config, RepoConfig } from "../config.ts";
 import type { Db } from "../db.ts";
+import { ExitNeedsConfirm, type ExitWarning, exitWarning } from "../exit-warning.ts";
 import { markFast } from "../fast.ts";
 import { askFeatures } from "../features.ts";
 import { ForgeBadReply, MERGE_METHOD, type PrBrief, type Result } from "../forge.ts";
@@ -36,7 +37,9 @@ import {
 } from "../intents/create.ts";
 import { checkOverlap, type Match, type OverlapResult } from "../intents/overlap.ts";
 import type { IntentStore } from "../intents/types.ts";
+import { isKind, kindChangeRefusal, WORK_KINDS } from "../kind.ts";
 import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
+import { isMulti } from "../parts.ts";
 import { grantScanning } from "../pipeline/alerts.ts";
 import { ownerMergeRefusal } from "../pipeline/teammate.ts";
 import { canBoostIntent, changeScores } from "../scores.ts";
@@ -52,8 +55,13 @@ export interface UiActions {
   confirm?(intent: string): Promise<string>;
   reply(intent: string, text: string): Promise<string>;
   retry(intent: string): Promise<string>;
-  drop(intent: string): Promise<string>;
+  /** UI-167: lift the freeze of a multi-repo intent (`towercab unfreeze`). */
+  unfreeze(intent: string): Promise<string>;
+  /** LOOP-76: `confirmed` when the owner saw the warning of an open PR with commits that this closes. */
+  drop(intent: string, confirmed?: boolean): Promise<string>;
   start(intent: string): Promise<string>;
+  /** LOOP-76: what closing the intent's open code PR would lose, for a confirm that is not the page's (Telegram). */
+  closeWarning?(intent: string): Promise<ExitWarning | null>;
   /** UI-168, PIP-143: pass a change the automated review didn't approve on to the teammates. */
   pass?(intent: string): Promise<string>;
   /** UI-160, SHIP-22: tick (or untick) one of the owner's steps. */
@@ -63,14 +71,16 @@ export interface UiActions {
   /** PIP-150: the owner granted the App Code scanning alerts (read); alerts are read again. */
   scanningGranted?(): Promise<string>;
   /** UI-164, LOOP-76: "I did it myself": ends the intent; the note becomes a ticked step. */
-  done?(intent: string, note: string): Promise<string>;
+  done?(intent: string, note: string, confirmed?: boolean): Promise<string>;
   /** UI-164, PIP-113: the owner does it by hand; the intent becomes steps. */
-  steps?(intent: string): Promise<string>;
+  steps?(intent: string, confirmed?: boolean): Promise<string>;
   /**
    * AUT-34, AUT-35, UI-257: set the intent's autonomy to `a` (0–5) in one commit. Only the page (actor
    * `owner` or none) may; a raise from any other actor is refused, and so is a lowering by the shadow.
    */
   autonomy?(intent: string, a: number, actor?: string): Promise<string>;
+  /** UI-283: set the intent's kind (INT-76); only the owner, and not past a stage the kind skips. */
+  kind?(intent: string, kind: string, actor?: string): Promise<string>;
   /**
    * FAST-1, FAST-9: put the intent in the fast lane or take it out. From the page (actor `owner` or none) or the
    * owner's own Telegram chat (`channel`, never taken from a request) it counts at once; the shadow is refused.
@@ -169,6 +179,8 @@ export interface ActionDeps {
   proposed?: () => ProposedPr[];
   /** SHIP-35: writes a typed secret; none: the page can't take one. */
   supplySecret?: (intent: string, n: number, value: string) => Promise<string>;
+  /** LOOP-76: every exit that reaches these actions was already confirmed in the caller's own words (Telegram). */
+  confirmed?: boolean;
   /** The new intent form (UI-213..218); without it the page can't create intents. */
   intentTools?: IntentTools | null;
   /** SHD-12: the shadow's own actions: what it writes on GitHub starts with `[shadow] `. */
@@ -257,6 +269,13 @@ export function createActions(d: ActionDeps): UiActions {
       throw new Error(`You already ${PAST[n.action]} the ${p.label} #${p.number}; Towercab is moving on.`);
     }
     return `Already ${PAST[action]}; Towercab is moving on.`;
+  };
+
+  /** LOOP-76: an exit that closes the mission's open code PR with commits needs the owner's confirmation. */
+  const closing = async (m: Mission | undefined, confirmed: boolean) => {
+    if (confirmed || d.confirmed || !m?.pr) return;
+    const w = await exitWarning(of, d.config.repos.get(m.repo)?.github ?? null, m.pr);
+    if (w) throw new ExitNeedsConfirm(w);
   };
 
   /** INT-53: the PR as GitHub has it now, read as the owner. */
@@ -406,6 +425,20 @@ export function createActions(d: ActionDeps): UiActions {
       const m = unfinishedFor(d.db, intent);
       if (!m || !APPROVALS.has(m.stage))
         throw new Error("Nothing to merge: this intent isn't waiting for a merge.");
+      // LOOP-80: the owner's yes lands every part of a multi-repo intent; no single PR is merged here.
+      if (isMulti(m)) {
+        d.db.tx(() => {
+          const fresh = getMission(d.db, m.id);
+          if (!fresh || fresh.stage !== m.stage) return;
+          d.db.run(
+            "UPDATE missions SET data = ? WHERE id = ?",
+            JSON.stringify({ ...dataOf(fresh), ownerApproved: true }),
+            m.id,
+          );
+          d.db.setMeta(`poll:${m.id}`, "1");
+        });
+        return "Approved: Towercab freezes the repos and lands every part in order within a minute.";
+      }
       // PIP-143: a change the automated review didn't approve is passed on before it can merge.
       if ((dataOf(m) as { teammate?: { passNeeded?: boolean } }).teammate?.passNeeded === true) {
         throw new Error("Pass it on to your teammates first: they need to review it before it can merge.");
@@ -517,12 +550,27 @@ export function createActions(d: ActionDeps): UiActions {
       return "Towercab starts it over on its next pass.";
     },
 
-    async drop(intent) {
+    async closeWarning(intent) {
+      const m = unfinishedFor(d.db, intent);
+      if (!m?.pr) return null;
+      return exitWarning(of, d.config.repos.get(m.repo)?.github ?? null, m.pr);
+    },
+
+    async unfreeze(intent) {
+      const m = unfinishedFor(d.db, intent);
+      if (m?.stage !== "blocked" || m.waiting !== "freeze")
+        throw new Error("Nothing to unfreeze: this intent isn't waiting at a freeze.");
+      command("unfreeze", intent);
+      return "Towercab lifts the freeze on its next pass.";
+    },
+
+    async drop(intent, confirmed = false) {
       const m = unfinishedFor(d.db, intent);
       const p = pr(m);
       if (m && p) {
         const again = repeated(m, p, "drop");
         if (again) return again;
+        await closing(m, confirmed);
         refused(
           await of.closePr(
             p.github,
@@ -598,6 +646,20 @@ export function createActions(d: ActionDeps): UiActions {
       return "Saved. Applies from the next gate.";
     },
 
+    async kind(intent, kind, actor = "") {
+      if (d.actor === "shadow" || (actor !== "" && actor !== "owner"))
+        throw new Error("only you can change the kind");
+      if (!isKind(kind)) throw new Error(`Kind is one of ${WORK_KINDS.join(", ")}.`);
+      const found = await d.store.get(intent);
+      const m = unfinishedFor(d.db, found.id);
+      const refusal = m
+        ? kindChangeRefusal(kind, m.stage === "blocked" ? (m.from_stage ?? m.stage) : m.stage)
+        : null;
+      if (refusal) throw new Error(refusal);
+      command("kind", found.id, kind);
+      return `Saved: ${kind}. It applies from the next pass.`;
+    },
+
     async fast(intent, on, actor = "", channel = "page") {
       if (d.actor === "shadow" || (actor !== "" && actor !== "owner")) {
         throw new Error("only you can change the fast lane");
@@ -666,17 +728,19 @@ export function createActions(d: ActionDeps): UiActions {
       return approveSecret(d.db, d.clock, intent, n);
     },
 
-    async done(intent, note) {
+    async done(intent, note, confirmed = false) {
       const m = unfinishedFor(d.db, intent);
       if (!m) throw new Error("Nothing to finish: this intent isn't waiting on you.");
+      await closing(m, confirmed);
       command("done", intent, note.trim().slice(0, 300));
       done(m, pr(m), "done");
       return "Marked as done by you. Towercab ends the intent on its next pass.";
     },
 
-    async steps(intent) {
+    async steps(intent, confirmed = false) {
       const m = unfinishedFor(d.db, intent);
       if (!m) throw new Error("Nothing to switch: this intent isn't waiting on you.");
+      await closing(m, confirmed);
       command("steps", intent);
       done(m, pr(m), "steps");
       return "Switched to steps for you to do. Towercab sets it up on its next pass.";

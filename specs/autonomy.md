@@ -344,6 +344,35 @@ A raise of an intent's autonomy counts only when the owner makes it on the web p
 - Like a0, this is a rule Towercab's own shadow, agents and CLI follow, not a security boundary (see Decisions): the owner's `gh` login on this machine cannot be told from the owner.
 - Verified by: `autonomy: the page raises a`, `autonomy: a shadow raise is refused`, `autonomy: a raising command row from the cli is dropped`, `autonomy: a raise by the owner on github counts`, `autonomy: a push is judged by the verified github account`, `autonomy: an unsigned push naming the owner is flagged`, `autonomy: a verified web commit by the owner counts`, `autonomy: a commit signed by the owner and verified counts`, `autonomy: a raise by another account is flagged and not written back`, `autonomy: deleting the a line by another account is flagged as a raise to the default`, `autonomy: deleting the a line by the owner counts`, `autonomy: a flagged raise runs at the lower level`, `autonomy: accepting a flagged raise lifts the flag`
 
+### AUT-36 · Every autonomy level has a plain name
+
+Each level a0 to a5 has one short plain name and one plain sentence saying who decides at it, so nobody needs this file to read a level.
+
+- One table in code (`src/autonomy.ts`), the only source of the words, with the level, `name` and `sentence`, as the gates above decide today:
+
+  | Level | Name | Sentence |
+  |---|---|---|
+  | a0 | Only you | Only you decide; Towercab never acts on its own (AUT-31). |
+  | a1 | Ask at every step | You merge the spec, the plan and the code (AUT-3, AUT-11, AUT-12). |
+  | a2 | Ask at every gate | You merge the spec, the plan and the code; the same gates as a1 today. |
+  | a3 | Specs on its own | Towercab merges a low-risk spec; you merge the plan and the code. |
+  | a4 | Merges when safe | Towercab merges spec, plan and code when the risk is low and every check passes (AUT-4, AUT-18). |
+  | a5 | On its own | Towercab merges unless the risk is high; only for your own intents (AUT-13). |
+
+- The names are the words of the UI (UI-284..UI-287), PR text and Telegram text for a level; the short form `a<n>` stays beside the name where a person types or compares levels (the intent file, the command line).
+- `GET /api/state` and an intent's API carry `autonomyName` and `autonomySentence` beside `a`.
+- Verified by: `autonomy: every level has a name and a sentence`, `autonomy: the level table matches the gate functions`
+
+### AUT-37 · A wait caused by autonomy says which level and what the next level would do
+
+When a gate waits for the owner only because of the intent's autonomy, the wait says so, and says what Towercab would do at the lowest level that would let it go on.
+
+- `autonomyWhy(gate, a, cap, source, risk)` (`src/autonomy.ts`) uses the same functions as the gates (`specGate`, `planGate`, the merge gate, `riskWaits`), so the text can't disagree with what happens. It returns `null` when autonomy is not the reason, and then the wait keeps its own reason: open points on the spec (PIP-97), unplanned access (AUT-15), no or high risk (AUT-18, AUT-19), a0 (AUT-31), a flagged raise (AUT-35), red CI or a review that didn't approve.
+- Otherwise it returns `why` and `next`. `why`: `This intent asks you before merging <the spec|the plan|the code> (<name>, a<n>).` `next`: the lowest level above the current one at which the gate, with the risk already recorded for it, would not wait, and what Towercab would then do: `At <name> (a<m>) Towercab would merge it itself.` When that level is above what the repo's cap (AUT-8) or the intent's source (AUT-13) allows, `next` says what stops it instead (`The repo caps this intent at a<k>, so you still decide.`). When even a5 would wait, it says why (`Even a5 asks you here: the change is high risk.`) and offers no level.
+- Not recorded risk yet → `next` is absent rather than guessed.
+- Kept with the stage's wait on the mission (`waiting.why`, `waiting.next`) and carried in the API; Telegram's ask for the same wait uses the same two sentences.
+- Verified by: `autonomy: a wait says its autonomy level and the level that would go on alone`, `autonomy: a wait caused by something else says nothing about autonomy`, `autonomy: the next level respects the repo cap and the source`, `autonomy: a high risk change says no level would go on alone`, `autonomy: the text follows the gate functions`
+
 ## Out of scope
 
 - Raising autonomy automatically.

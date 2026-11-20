@@ -29,11 +29,13 @@ import { type ChildEnd, type Ctx, EnvError, type GitHub, type Progress } from ".
 import { authorityOf } from "../intent-people.ts";
 import { plainLine, SUBJECT_MAX } from "../intents/naming.ts";
 import type { Intent } from "../intents/types.ts";
+import type { REFACTOR_PROOF } from "../kind.ts";
 import { cooldown } from "../limits.ts";
 import { type Outcome, wait } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
 import { capReached, isMulti, runBudget } from "../parts.ts";
-import { loadRepoFiles, RepoError, type RepoFiles } from "../repo/files.ts";
+import { RepoError, type RepoFiles, type Verifying } from "../repo/files.ts";
+import { loadOverlay, loadRepoFilesWith } from "../repo/overlay.ts";
 import type { Risk } from "../risk.ts";
 import { checkoutRoot } from "../service.ts";
 import { combine, type OwnerStep, type PlanStep, parseNoneLive, parseSteps } from "../steps.ts";
@@ -43,6 +45,7 @@ import { foldMd, plainMd, splitTwoPart, twoPartMd } from "./prtext.ts";
 import type { PendingReply } from "./reply.ts";
 import { cacheEnv, DEFAULT_NETWORK } from "./sandbox.ts";
 import { type Access, type Question, type ReviewResult, SCHEMAS, withReply } from "./schemas.ts";
+import { hasSetupSecrets } from "./setup-secrets.ts";
 
 /** `missions.data`, as the pipeline uses it. */
 export interface ShipData {
@@ -83,6 +86,10 @@ export interface SecretState {
 }
 
 export interface PipeData {
+  /** INT-77: the kind the mission goes by, why, and who chose it (an owner's wins over a guess). */
+  kind?: string;
+  kindWhy?: string;
+  kindBy?: "guess" | "owner";
   design?: {
     type: string;
     scope: string;
@@ -131,7 +138,15 @@ export interface PipeData {
     /** SHIP-17, SHIP-21: the owner's steps and the "nothing to check live" claim the plan made. */
     ownerSteps?: PlanStep[];
     liveNoneWhy?: string;
+    /** PIP-229: the commands an `infra` plan has the build apply in the sandbox. */
+    apply?: { command: string; why: string }[];
   };
+  /** PIP-229: the commands applied so far, with their results; `applyAt` is the next one to run. */
+  applied?: AppliedRun[];
+  applyAt?: number;
+  /** PIP-231: the question "Move this to the full path?" is open; and the owner chose to keep the kind. */
+  kindAsk?: boolean;
+  kindKept?: boolean;
   /** PIP-112, PIP-113: absent counts as `code`; `steps` means the owner does the work. */
   delivery?: "code" | "steps";
   /** LOOP-77: the last blocked wait (key, head, count of owner answers) and whether it came back unchanged. */
@@ -201,6 +216,10 @@ export interface PipeData {
   approvalNotes?: string[];
   /** PIP-119: outcomes only the owner can do, from the last review. */
   ownerSteps?: { bullet: string; why: string }[];
+  /** PIP-208: the `defer` lines of the owner's comments, kept as they arrive. */
+  deferrals?: { name?: string; n?: number; to: string }[];
+  /** PIP-208, PIP-209: the outcomes the last review counted as met because they were deferred. */
+  deferred?: { bullet: string; to: string; by: string; unmet: boolean }[];
   /** The risk agent's assessment per gate (PIP-96, AUT-16); null = the run didn't finish. */
   risk?: { spec?: Risk | null; plan?: Risk | null; code?: Risk | null };
   /** What each gate's assessment was of (`Risk.of`), kept also when the run didn't finish. */
@@ -254,9 +273,13 @@ export interface PipeData {
   /** `<stage>:<round start>`: the build round already retried once for a known setup error (LOOP-107). */
   setupRetried?: Record<string, boolean>;
   setup?: string;
+  /** PIP-214: where the secret pass of the repo's setup started (ms) and the commit it exported. */
+  setupSecret?: { start: number; base: string };
+  /** PIP-214: the owner was asked about a private package; the answer restarts the setup. */
+  openAsk?: boolean;
   verify?: { log: string; result: "green" | "red" };
   shots?: string[];
-  proof?: "proven" | "none needed" | "not proven";
+  proof?: "proven" | "none needed" | "not proven" | typeof REFACTOR_PROOF;
   proofWaited?: boolean;
   /** The lines the proof ran on base, and whether they are the PR's checks block (PIP-54). */
   proofLines?: { lines: string[]; fromPr: boolean };
@@ -295,6 +318,8 @@ export interface PipeData {
   /** Session cost already counted (MET-28). */
   sessionCost?: Record<string, number>;
   mergeTries?: number;
+  /** REPO-49: the checks the overlay gave at pick; kept when the repo later has its own. */
+  pinnedChecks?: Verifying;
   /** Someone else's commits are on the branch (takeRemote, CI's adopted head). */
   foreignHead?: boolean;
   /** Merge asked GitHub to update the branch: the next moved head is that, not someone else's. */
@@ -351,9 +376,21 @@ export function cloneOf(cx: Ctx, m: Mission): string {
 /** The repo files from the base branch of Towercab's clone (REPO-1). */
 export async function repoFiles(cx: Ctx, m: Mission): Promise<RepoFiles> {
   try {
-    const files = await loadRepoFiles(cx.tools, cloneOf(cx, m), cx.repo(m).base, cx.repo(m).github);
+    const repo = cx.repo(m);
+    const files = await loadRepoFilesWith(
+      cx.tools,
+      cloneOf(cx, m),
+      repo.base,
+      repo.github,
+      loadOverlay(cx.config.file, repo.name),
+    );
     // UI-257: the page shows a repo's cap beside the autonomy control.
     cx.db.setMeta(`a-cap:${m.repo}`, String(files.towercab.maxAutonomy));
+    // REPO-49: an intent that started on the overlay's checks keeps them when the repo gains its own.
+    const pinned = data(m).pinnedChecks;
+    if (pinned && files.replaced && files.sources) {
+      return { ...files, verifying: pinned, sources: { ...files.sources, checks: "overlay" } };
+    }
     return files;
   } catch (e) {
     if (e instanceof RepoError && e.kind === "git") throw new EnvError("github", e.message);
@@ -406,6 +443,15 @@ export function grants(m: Mission, intent: Intent, files: RepoFiles, _cx?: Ctx) 
   });
 }
 
+/** PIP-229: one applied command and what happened. */
+export interface AppliedRun {
+  command: string;
+  why: string;
+  code: number;
+  secs: number;
+  tail: string;
+}
+
 export function nextN(m: Mission, kind: string): { n: number; data: Partial<PipeData> } {
   const counts = { ...(data(m).n ?? {}) };
   counts[kind] = (counts[kind] ?? 0) + 1;
@@ -426,6 +472,8 @@ export interface RunPlan {
   files: RepoFiles;
   intent: Intent;
   guard?: ClaudeRun["guardRules"];
+  /** Allow rules added to the agent's own (PIP-230). */
+  allowMore?: string[];
   /** The stage folder of its files when the kind runs in more than one stage (LOOP-39). */
   stage?: string;
 }
@@ -455,10 +503,30 @@ const STAGE_OF_KIND: Record<RunKind, string> = {
   // The risk agent runs at three gates; its handler names the stage folder (PIP-96).
   risk: "review",
   score: "design",
+  kind: "design",
   features: "design",
   shadow: "design",
   observer: "design",
 };
+
+/** A lost session starts afresh: on the mission's row, or on the part when the mission is projected from one (LOOP-78). */
+/** The mission has parts, or is the projection of one (LOOP-78). */
+const inParts = (m: Mission): boolean => isMulti(m) || !!(data(m) as { part?: string }).part;
+
+export function resetSession(cx: Ctx, m: Mission): void {
+  const fresh = crypto.randomUUID();
+  const part = (data(m) as { part?: string }).part;
+  if (part) {
+    const row = cx.db.get<{ data: string }>("SELECT data FROM missions WHERE id = ?", m.id);
+    const d = JSON.parse(row?.data ?? "{}") as { parts?: { repo: string; cols?: Record<string, unknown> }[] };
+    for (const p of d.parts ?? []) {
+      if (p.repo === part) p.cols = { ...(p.cols ?? {}), session: fresh, session_used: 0 };
+    }
+    cx.db.run("UPDATE missions SET data = ? WHERE id = ?", JSON.stringify(d), m.id);
+    return;
+  }
+  cx.db.run("UPDATE missions SET session = ?, session_used = 0 WHERE id = ?", fresh, m.id);
+}
 
 /** Record the step, then spawn a Claude run (LOOP-6, LOOP-7, PIP-13, PIP-24). */
 export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string): Progress {
@@ -468,7 +536,7 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
   const probe = cx.sandbox?.();
   if (probe && !probe.ok) return { done: wait("fix sandbox", probe.why) };
   // LOOP-78: one cap for the whole intent; once it is reached no run starts for any part.
-  if (isMulti(m) && capReached(cx.config.agent.maxBudgetUsd, m)) {
+  if (inParts(m) && capReached(cx.config.agent.maxBudgetUsd, m)) {
     return { done: wait("worker budget", "the intent's runs used up its budget") };
   }
   const repo = cx.repo(m);
@@ -522,15 +590,17 @@ export function spawnRun(cx: Ctx, m: Mission, p: RunPlan, resumePrompt?: string)
         : SCHEMAS[agent.schema]
       : null,
     session,
-    budgetUsd: runBudget(agentBudgetUsd(agent, cx.config), cx.config.agent.maxBudgetUsd, m, isMulti(m)),
+    budgetUsd: runBudget(agentBudgetUsd(agent, cx.config), cx.config.agent.maxBudgetUsd, m, inParts(m)),
     claudeMd: p.files.claudeMd,
     grants:
       p.kind === "worker"
         ? grants(fresh, p.intent, p.files, cx)
         : { domains: [...DEFAULT_NETWORK], paths: [] },
     guardRules: p.guard ?? null,
+    allowMore: p.allowMore,
     cacheEnv: cacheEnv(cache, repo),
-    cache,
+    // PIP-212: a repo with setup secrets gets its shared cache read-only for the worker, whatever PIP-95 allowed.
+    cache: hasSetupSecrets(cx.config.file, repo.name) ? null : cache,
     config: cx.config,
   };
   return {
@@ -620,7 +690,7 @@ export function ended<T>(
       return { ok: true, value: parsed.value, costDelta: delta, secs: e.result.durationMs / 1000 };
     }
     case "sessionGone":
-      cx.db.run("UPDATE missions SET session = ?, session_used = 0 WHERE id = ?", crypto.randomUUID(), m.id);
+      resetSession(cx, m);
       return {
         ok: false,
         progress: { done: { event: "bad_result", why: "the session was gone; starting a fresh one" } },

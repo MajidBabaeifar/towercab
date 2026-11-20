@@ -1,8 +1,10 @@
 // One intent's whole story (UI-62): state, the three PRs, the stage map with its logs (UI-73 to UI-77),
 // the folded list of moves, cost and the intent's own text.
 
-import type { IntentPage as Data, PrView } from "../../../src/ui/view.ts";
+import { useState } from "preact/hooks";
+import type { ActionReply, IntentPage as Data, PartView, PrView } from "../../../src/ui/view.ts";
 import { AutonomyControl } from "../AutonomyControl.tsx";
+import { act } from "../api.ts";
 import {
   Details,
   Id,
@@ -23,7 +25,7 @@ import { FastControl } from "../FastControl.tsx";
 import { ChevronLeft, External, PullRequest } from "../icons.tsx";
 import { Markdown } from "../md.tsx";
 import { Link } from "../router.tsx";
-import { ControlNotes, ScoreControl } from "../ScoreControls.tsx";
+import { ControlNotes, KindControl, ScoreControl } from "../ScoreControls.tsx";
 import { StageMap } from "../StageMap.tsx";
 
 const PR_WORDS: Record<PrView["state"], string> = {
@@ -33,6 +35,59 @@ const PR_WORDS: Record<PrView["state"], string> = {
   "not needed": "Not needed",
   "not yet": "Not yet",
 };
+
+/** UI-165: one row per repo of a multi-repo intent. */
+function Parts({ parts, freeze }: { parts: PartView[]; freeze?: string }) {
+  return (
+    <Section title="Parts" class="parts">
+      {freeze ? (
+        <p class="freeze-line" role="status">
+          {freeze}
+        </p>
+      ) : null}
+      <ul class="parts-list">
+        {parts.map((p) => (
+          <li key={p.repo} class={`part${p.merged ? " merged" : ""}`}>
+            <span class="part-repo mono">{p.repo}</span>
+            <span class="part-stage">{p.label}</span>
+            {p.prUrl ? (
+              <a class="part-pr" href={p.prUrl} target="_blank" rel="noopener noreferrer">
+                PR #{p.pr}
+              </a>
+            ) : null}
+            {p.waiting ? <span class="part-wait meta">waiting for {p.waiting}</span> : null}
+          </li>
+        ))}
+      </ul>
+    </Section>
+  );
+}
+
+/** UI-167: the intent ended merged, not verified live; `Land the rest` posts `retry`. */
+function LandRest({ id, rest }: { id: string; rest: NonNullable<Data["rest"]> }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ActionReply | null>(null);
+  const go = async () => {
+    setBusy(true);
+    setResult(await act("retry", id));
+    setBusy(false);
+  };
+  return (
+    <section class="card rest" aria-label="Merged, not verified live">
+      <p>{rest.text}</p>
+      {rest.action ? (
+        <button type="button" class="btn primary" disabled={busy} onClick={go}>
+          {busy ? "Sending…" : rest.action.label}
+        </button>
+      ) : null}
+      {result ? (
+        <span class={result.ok ? "meta" : "meta error"} role="status">
+          {result.message}
+        </span>
+      ) : null}
+    </section>
+  );
+}
 
 function PrTile({ pr }: { pr: PrView }) {
   const body = (
@@ -138,6 +193,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
       {data.autonomy ? <AutonomyControl intent={data.id} view={data.autonomy} readOnly={readOnly} /> : null}
       {data.fast ? <FastControl intent={data.id} view={data.fast} readOnly={readOnly} /> : null}
       {data.controls ? <ScoreControl intent={data.id} view={data.controls} readOnly={readOnly} /> : null}
+      {data.controls ? <KindControl intent={data.id} view={data.controls} readOnly={readOnly} /> : null}
       {data.controls ? <ControlNotes view={data.controls} /> : null}
       {!readOnly && (data.onlyYou || data.paused) ? (
         <PauseButton intent={data.id} paused={data.paused === true} />
@@ -219,6 +275,8 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
       <Section title="How it went" class="path">
         {data.attempts.length ? <StageMap id={data.id} attempts={data.attempts} moves={moves} /> : moves}
       </Section>
+      {data.parts ? <Parts parts={data.parts} freeze={data.freeze} /> : null}
+      {data.rest ? <LandRest id={data.id} rest={data.rest} /> : null}
       <div class="cols">
         <div class="col-main">
           {data.sections.length || data.answers ? (

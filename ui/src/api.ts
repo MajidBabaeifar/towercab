@@ -50,8 +50,13 @@ export async function signOut(): Promise<void> {
   );
 }
 
-export function act(action: string, intent?: string, text?: string): Promise<ActionReply> {
-  return post({ action, intent, text });
+export function act(
+  action: string,
+  intent?: string,
+  text?: string,
+  confirmed?: boolean,
+): Promise<ActionReply> {
+  return post({ action, intent, text, ...(confirmed ? { confirmed: true } : {}) });
 }
 
 /** UI-253: save a scope's budget (`all`) or a repo's caps; an amount left out stays, null removes it. */
@@ -149,6 +154,11 @@ export function setFast(id: string, fast: boolean): Promise<ActionReply> {
 /** UI-204: change urgency and/or importance (1-5); the reply carries the new priority. */
 export function setScores(id: string, change: { u?: number; i?: number }): Promise<ActionReply> {
   return post({ action: "scores", id, ...change, actor: "owner" });
+}
+
+/** UI-283: set the intent's kind. */
+export function setKind(id: string, kind: string): Promise<ActionReply> {
+  return post({ action: "set-kind", id, kind, actor: "owner" });
 }
 
 /** UI-205: a5, and the start of an intent that has not started. */

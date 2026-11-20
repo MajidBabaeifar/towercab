@@ -8,8 +8,10 @@ import type { Db } from "./db.ts";
 import { liftFreeze } from "./freeze.ts";
 import { localTime } from "./intents/intent.ts";
 import type { Intent, IntentStore } from "./intents/types.ts";
-import { type ApplyCtx, apply, exitsOf, wait, waitKey } from "./machine.ts";
-import { dataOf, type Mission, patchData, unfinishedFor } from "./mission.ts";
+import { isKind, kindChangeRefusal, kindOf, WORK_KINDS } from "./kind.ts";
+import { type ApplyCtx, apply, exitsOf, listExits, wait, waitKey } from "./machine.ts";
+import { dataOf, forIntent, type Mission, patchData, unfinishedFor } from "./mission.ts";
+import { partsOf } from "./parts.ts";
 import { parseAllow, readingReply, reverseRefusals } from "./pipeline/access.ts";
 import type { PipeData } from "./pipeline/common.ts";
 import { missing, parseStored } from "./repo/readiness.ts";
@@ -28,7 +30,8 @@ export type CommandName =
   | "steps"
   | "score"
   | "boost"
-  | "unfreeze";
+  | "unfreeze"
+  | "kind";
 
 export interface CommandRow {
   id: number;
@@ -159,6 +162,7 @@ export const OWNER_ONLY_COMMANDS: readonly CommandName[] = [
   "resume",
   "score",
   "unfreeze",
+  "kind",
 ];
 
 /** An ignored reply or command noted on an a0 intent (AUT-32, AUT-33). */
@@ -351,7 +355,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       // LOOP-77: a reply to a wait that came back with nothing new would only land on it again.
       if (m?.stage === "blocked" && (dataOf(m) as PipeData).stuck) {
         throw new Error(
-          `${intent.id} is stuck at ${waitKey(m.waiting ?? "")}: a reply would land here again; use steps, done, retry or drop`,
+          `${intent.id} is stuck at ${waitKey(m.waiting ?? "")}: a reply would land here again; use ${listExits(exitsOf(m.waiting ?? "", true, (dataOf(m) as PipeData).delivery !== "steps"))}`,
         );
       }
       await store.update(intent.id, "answer", (e) => {
@@ -379,6 +383,26 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       );
       return r.message;
     }
+    case "kind": {
+      // UI-283, INT-77: the owner's kind goes into the intent, and a mission that has not passed its stage follows it.
+      const kind = row.text.trim();
+      if (!isKind(kind)) throw new Error(`"${kind}" is not a kind: use ${WORK_KINDS.join(", ")}`);
+      const intent = await store.get(row.arg);
+      const m = unfinishedFor(db, intent.id);
+      const refusal = m
+        ? kindChangeRefusal(kind, m.stage === "blocked" ? (m.from_stage ?? m.stage) : m.stage)
+        : null;
+      if (refusal) throw new Error(refusal);
+      if (intent.kind !== kind) await store.update(intent.id, "set kind", (e) => e.setField("kind", kind));
+      if (m && kindOf(null, dataOf(m) as PipeData) !== kind) {
+        apply(cx.applyCtx, m, {
+          event: "kind_routed",
+          why: "you set the kind",
+          data: { kind, kindBy: "owner", kindWhy: "You set it." },
+        });
+      }
+      return `${intent.id} is ${kind}`;
+    }
     case "boost": {
       // LOOP-134: a5 first (one commit), then what `start` does for an intent without a mission.
       const { found } = await raiseToFull({ db, store, now: cx.now.getTime() / 1000 }, row.arg);
@@ -398,6 +422,32 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
     case "retry": {
       const intent = await store.get(row.arg);
       const m = unfinishedFor(db, intent.id);
+      // LOOP-81: an intent that ended unverified lands the parts not yet merged: they pass their checks
+      // again on their current PRs, then merge in order under a new freeze.
+      const last = forIntent(db, intent.id).at(-1);
+      if (!m && last?.stage === "unverified" && partsOf(last).some((p) => !p.merged)) {
+        db.tx(() => {
+          const parts = partsOf(last).map((p) =>
+            p.merged
+              ? p
+              : {
+                  ...p,
+                  stage: "ci" as const,
+                  step: "",
+                  atGate: false,
+                  waiting: null,
+                  data: { ...(p.data ?? {}), needsApproval: undefined },
+                },
+          );
+          db.run(
+            "UPDATE missions SET data = ? WHERE id = ?",
+            JSON.stringify({ ...dataOf(last), parts }),
+            last.id,
+          );
+          apply(cx.applyCtx, last, { event: "reland", why: "the owner asked to land the rest" });
+        });
+        return `landing the rest of ${intent.id}: its unmerged parts are checked again, then merged in order`;
+      }
       if (m) {
         const again = recheck(m);
         if (again) {
@@ -421,6 +471,27 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       const offered = m?.stage === "blocked" && exitsOf(m.waiting ?? "").some((e) => e.do === "unfreeze");
       if (!m || !offered) throw new Error(`${intent.id} isn't at a freeze that can be lifted`);
       const freed = liftFreeze(db, m.id);
+      const parts = partsOf(m);
+      if (parts.some((p) => p.merged)) {
+        // A part is merged: the intent ends as merged, not verified live, and nothing is rolled back.
+        const list = (merged: boolean) =>
+          parts
+            .filter((p) => p.merged === merged)
+            .map((p) => p.repo)
+            .join(", ") || "none";
+        apply(cx.applyCtx, m, {
+          event: "left_unverified",
+          why: `You lifted the freeze after a merge: merged, not verified live. Merged: ${list(true)}. Not merged: ${list(false)}.`,
+        });
+        db.run(
+          "INSERT OR IGNORE INTO outbox (key, mission, text, created) VALUES (?, ?, ?, ?)",
+          `unverified:${m.id}`,
+          m.id,
+          `${intent.id} is merged but not verified live. Merged: ${list(true)}. Not merged: ${list(false)}. Reply retry to freeze again and land the rest in order.`,
+          cx.now.getTime() / 1000,
+        );
+        return `unfroze ${intent.id}${freed.length ? ` (${freed.join(", ")})` : ""}: merged, not verified live`;
+      }
       apply(cx.applyCtx, m, wait("freeze lifted", "You lifted the freeze; freeze again when you are ready."));
       return `unfroze ${intent.id}${freed.length ? ` (${freed.join(", ")})` : ""}`;
     }

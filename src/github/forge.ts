@@ -279,6 +279,12 @@ export class GitHubForge implements Forge, GitHub {
     };
   }
 
+  async prCommits(repo: string, n: number): Promise<{ state: string; commits: number }> {
+    const v = await this.view<{ state?: unknown; commits?: unknown }>(repo, n, "state,commits");
+    if (!Array.isArray(v.commits)) throw new ForgeBadReply("no commits");
+    return { state: String(v.state), commits: v.commits.length };
+  }
+
   prFiles(repo: string, n: number): Promise<FileChange[]> {
     return fetchFiles((a) => this.raw.gh(repo, a), repo, n);
   }

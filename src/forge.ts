@@ -250,6 +250,8 @@ export interface Forge {
   updateBranch(repo: string, n: number, expectedHead: string): Promise<void>;
   mergeStatus(repo: string, n: number): Promise<MergeStatus>;
   prBrief(repo: string, n: number): Promise<PrBrief>;
+  /** LOOP-76: the change request's state and how many commits it holds. Throws the host's reason. */
+  prCommits(repo: string, n: number): Promise<{ state: string; commits: number }>;
   prFiles(repo: string, n: number): Promise<FileChange[]>;
 
   /**

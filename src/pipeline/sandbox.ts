@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RepoConfig } from "../config.ts";
+import { INTEROP_VARS, isWslHost, withoutInterop } from "../wsl.ts";
 
 /** Files masked (`--ro-bind /dev/null <dir>/<name>`) in each toolchain directory that has them. */
 export const MASKED = [
@@ -155,10 +156,16 @@ export interface SandboxOpts {
   cache: string | null;
   cacheWritable: boolean;
   line: string;
+  /** Under WSL, `/mnt` (every Windows drive) is hidden by an empty tmpfs (LOOP-163); detected when absent. */
+  wsl?: boolean;
   /** The proxy's unix socket (`proxySocket`), or null: nothing is reachable. */
   proxy?: string | null;
   /** The bwrap executable (default `bwrap`, found on the child's PATH). */
   bwrap?: string;
+  /** PIP-214: a separate tree bound at `checkout` in its place (no `.git`); the checkout itself is not mounted. */
+  tree?: string;
+  /** PIP-212: more folders bound writable (the setup credentials folder). */
+  extraBinds?: string[];
 }
 
 /**
@@ -186,6 +193,8 @@ export function sandboxArgv(o: SandboxOpts): string[] {
     "--tmpfs",
     "/run",
   );
+  // LOOP-163: the Windows drives are not the worker's to read or write.
+  if (o.wsl ?? isWslHost()) a.push("--tmpfs", "/mnt");
   if (o.proxy) {
     a.push(
       "--ro-bind",
@@ -205,8 +214,13 @@ export function sandboxArgv(o: SandboxOpts): string[] {
     for (const f of maskedIn(d)) a.push("--ro-bind", "/dev/null", f);
   }
   if (o.cache) a.push(o.cacheWritable ? "--bind" : "--ro-bind", o.cache, o.cache);
-  const git = join(o.checkout, ".git");
-  a.push("--bind", o.checkout, o.checkout, "--ro-bind-try", git, git, "--chdir", o.checkout);
+  for (const d of o.extraBinds ?? []) a.push("--bind", d, d);
+  if (o.tree) {
+    a.push("--bind", o.tree, o.checkout, "--chdir", o.checkout);
+  } else {
+    const git = join(o.checkout, ".git");
+    a.push("--bind", o.checkout, o.checkout, "--ro-bind-try", git, git, "--chdir", o.checkout);
+  }
   a.push("--", "sh", "-c", o.proxy ? withProxy(o.line) : o.line);
   return a;
 }
@@ -248,6 +262,7 @@ const SECRET_VALUE = [
 export function envRefusal(name: string, value: string): string | null {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return "the name is not a valid variable name";
   if (TOKEN_NAME.test(name)) return "the name looks like a token, key, secret, password or login";
+  if (INTEROP_VARS.includes(name)) return "the sandbox keeps Windows programs out of reach";
   if (FIXED_NAME.test(name) || /^(LD_|SOPS_|AGE_)/i.test(name))
     return "the sandbox sets or protects this variable";
   if (SECRET_VALUE.some((p) => p.test(value))) return "the value looks like a secret";
@@ -306,7 +321,7 @@ export function sandboxEnv(
   cache: Record<string, string>,
 ): Record<string, string> {
   return withoutAgeKey({
-    ...cache,
+    ...withoutInterop(cache),
     HOME: home,
     PATH: sandboxPath(home),
     LANG: process.env.LANG || "C.UTF-8",

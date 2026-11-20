@@ -12,6 +12,7 @@ import { splitDomains } from "./domains.ts";
 import { proxySocket } from "./proxy.ts";
 import { cacheEnv, DEFAULT_NETWORK, sandboxArgv, sandboxEnv } from "./sandbox.ts";
 import type { Question } from "./schemas.ts";
+import { hasSetupSecrets } from "./setup-secrets.ts";
 
 /** A shell script running each line in order, stopping at the first failure. */
 export function script(lines: string[]): string {
@@ -19,7 +20,7 @@ export function script(lines: string[]): string {
 }
 
 export interface SandboxRun {
-  kind: "setup" | "checks" | "proof-setup" | "proof" | "proof-head" | "shots" | "e2e-setup" | "e2e";
+  kind: "setup" | "checks" | "apply" | "proof-setup" | "proof" | "proof-head" | "shots" | "e2e-setup" | "e2e";
   lines: string[];
   /** The checkout to run in (the mission's, or the proof's). */
   dir: string;
@@ -29,6 +30,14 @@ export interface SandboxRun {
   extraEnv?: Record<string, string>;
   /** Domains beyond `commandDomains`: the ship stage adds the live app's host (SHIP-5, SHIP-9). */
   domains?: string[];
+  /** PIP-214: run in this separate tree, bound at `dir`; the checkout is not mounted. */
+  tree?: string;
+  /** PIP-212: more folders bound writable (the setup credentials folder). */
+  extraBinds?: string[];
+  /** PIP-214: only the built-in registry list, no plan grants or owner answers (the pass without secrets). */
+  builtinOnly?: boolean;
+  /** PIP-212: a cache of its own in place of the repo's shared one. */
+  cache?: string;
 }
 
 /**
@@ -47,7 +56,7 @@ export function commandDomains(m: Mission): string[] {
 
 export function sandboxSpec(cx: Ctx, m: Mission, r: SandboxRun): ChildSpec {
   const repo = cx.repo(m);
-  const cache = cx.home.cache(repo.name);
+  const cache = r.cache ?? cx.home.cache(repo.name);
   const home = homedir();
   return {
     kind: r.kind,
@@ -56,11 +65,16 @@ export function sandboxSpec(cx: Ctx, m: Mission, r: SandboxRun): ChildSpec {
       home,
       cache,
       // PIP-158: the same domains for every command, through the allowlist proxy.
-      proxy: proxySocket([...commandDomains(m), ...splitDomains(r.domains ?? []).valid], (l) => cx.log(l)),
+      proxy: proxySocket(
+        [...(r.builtinOnly ? DEFAULT_NETWORK : commandDomains(m)), ...splitDomains(r.domains ?? []).valid],
+        (l) => cx.log(l),
+      ),
       cacheWritable: r.cacheWritable,
       line: script(r.lines),
+      tree: r.tree,
+      extraBinds: r.extraBinds,
     }),
-    cwd: r.dir,
+    cwd: r.tree ?? r.dir,
     env: { ...sandboxEnv(home, cx.config, cacheEnv(cache, repo, home)), ...(r.extraEnv ?? {}) },
     stdout: r.log,
     stderr: `${r.log}.err`,
@@ -79,6 +93,8 @@ export const checksWriteKey = (repo: string): string => `checks-write:${repo}`;
 
 /** The owner let this repo's checks, proof, screenshots and e2e write to its cache (PIP-95). */
 export function checksMayWrite(cx: Ctx, m: Mission): boolean {
+  // PIP-212: branch code never writes the cache that a pass with setup secrets reads.
+  if (hasSetupSecrets(cx.config.file, m.repo)) return false;
   return cx.db.meta(checksWriteKey(cx.repo(m).name)) === "1";
 }
 
