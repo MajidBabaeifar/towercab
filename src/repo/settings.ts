@@ -366,6 +366,8 @@ export async function fetchBase(d: ProposeDeps, repo: RepoConfig, clone: string)
 
 export interface SettingsEnv extends ProposeDeps {
   repos: Map<string, RepoConfig>;
+  /** The config file; its folder holds the per-repo overlays (REPO-43). Absent: no overlay is read. */
+  configFile?: string;
   /** The loop's clone lock: the fetch runs inside it, never beside a mission step. */
   exclusive?: <T>(fn: () => Promise<T>) => Promise<T>;
 }

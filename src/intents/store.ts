@@ -583,6 +583,22 @@ export class GitStore implements IntentStore {
     return this.lastFieldChange(idOrSuffix, "a");
   }
 
+  async addedCommit(idOrSuffix: string): Promise<string | null> {
+    return this.locked(async () => {
+      const found = findOpen(scan(this.path).listing, idOrSuffix);
+      const r = await this.git([
+        "log",
+        "--diff-filter=A",
+        "--format=%H",
+        "-s",
+        "--",
+        `${found.dir}/intent.md`,
+      ]);
+      const sha = r.stdout.trim().split("\n").pop() ?? "";
+      return r.code === 0 && /^[0-9a-f]{40,64}$/.test(sha) ? sha : null;
+    });
+  }
+
   async lastFastChange(idOrSuffix: string): Promise<string | null> {
     return this.lastFieldChange(idOrSuffix, "fast");
   }

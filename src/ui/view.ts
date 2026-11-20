@@ -78,7 +78,7 @@ export interface TopBar {
   banner: string | null;
 }
 
-export type ActionKey = "merge" | "pass" | "reply" | "retry" | "drop";
+export type ActionKey = "merge" | "pass" | "reply" | "retry" | "drop" | "confirm";
 export type CardKind = "spec" | "plan" | "code" | "question" | "blocked" | "release" | "autonomy";
 
 /** FAST-1, FAST-9: whether the intent is in the fast lane and whether the owner confirmed it. */
@@ -124,6 +124,25 @@ export interface ControlsView {
   waitWhy: string | null;
   /** UI-208: `Lowered to a<n> by the worker: <why>`; null when nothing was lowered. */
   lowered: string | null;
+  /** UI-283: the intent's kind, what it skips, and the control that sets it. */
+  kind: KindView;
+}
+
+/** UI-283: an intent's kind as the page shows it. */
+export interface KindView {
+  value: string;
+  /** "Bugfix", "Infrastructure change"... */
+  label: string;
+  /** `owner`: set in the intent or from the page; `guess`: inferred (INT-77); `default`: none yet, so the full path. */
+  by: "owner" | "guess" | "default";
+  /** The inferred kind's reason (INT-77), or null. */
+  why: string | null;
+  /** The stages this kind skips, in plain words. */
+  skipped: string[];
+  /** The control is offered (the page can act and the intent is not finished). */
+  canSet: boolean;
+  /** The five kinds; `refused` is why one cannot be taken now (UI-283), or null. */
+  options: { value: string; label: string; refused: string | null }[];
 }
 
 export interface Question {
@@ -236,6 +255,8 @@ export interface Card {
   exits: ExitView[];
   /** LOOP-77: the wait came back with nothing new; a reply would land on it again. */
   stuck: boolean;
+  /** LOOP-76, UI-164: the open code PR that `done`, `steps` or drop would close; `commits` null: not readable. */
+  openPr?: { number: number; commits: number | null; text: string };
   mergeLabel: string | null;
   /** UI-105: the owner already acted from the page and the mission has not moved on; no buttons then. */
   done: { action: "merge" | "drop" | "retry" | "done" | "steps"; text: string; stuck: boolean } | null;
@@ -253,6 +274,12 @@ export interface Card {
   shadow?: boolean;
   /** UI-243: the intent was proposed by the observer (`source: observer`). */
   observer?: boolean;
+  /** UI-221: the last move a person made on it ("Merged by Ana · GitHub"). */
+  lastBy?: string;
+  /** UI-221: the people who may decide it, by name. */
+  alsoCanDecide?: string[];
+  /** UI-221: who already handled the wait, while Towercab moves on. */
+  handledBy?: string;
   /** UI-239: the intent is a0: only the owner can answer or approve it, shown as "only you". */
   onlyYou?: boolean;
   /** UI-257: the autonomy control. */
@@ -509,6 +536,8 @@ export interface TimelineItem {
   shadow?: boolean;
   /** UI-243: the observer did this. */
   observer?: boolean;
+  /** UI-221: who did it and how ("Ana · page"), "Towercab" for its own step; none before people were recorded. */
+  by?: string;
 }
 
 /** UI-242: `GET /api/observer`. */
@@ -997,6 +1026,19 @@ export interface InboxPage {
   stale: string | null;
 }
 
+/** UI-276: the settings in effect, each labelled with where it came from (repo, overlay or default). */
+export interface SettingsSources {
+  rows: { key: string; value: string; source: "repo" | "overlay" | "default" }[];
+  /** REPO-46: one line per overlay key refused. */
+  refusals: string[];
+  /** The overlay's `TOWERCAB.md`, where an overlay value is changed; null without an overlay. */
+  overlayPath: string | null;
+  /** An invalid overlay file's reason, or null. */
+  error: string | null;
+  /** REPO-49: the repo's own checks replaced the overlay's; null when they did not. */
+  notice: string | null;
+}
+
 /** UI-150 to UI-154: a repo's limits (`workers`, `ahead`) as its `TOWERCAB.md` holds them. */
 export interface LimitsView {
   values: { workers: number; ahead: number };
@@ -1013,6 +1055,8 @@ export interface LimitsView {
   /** UI-153: `TOWERCAB.md in <repo> can't be read: <reason>`, or null. */
   fileError: string | null;
   fileUrl: string | null;
+  /** UI-276: where each setting comes from; absent until the loop has read the repo. */
+  sources?: SettingsSources;
   move: {
     state: "waiting" | "open" | "closed" | "moved";
     pr: number | null;
@@ -1054,6 +1098,8 @@ export interface RepoView {
 export interface RepoSummary {
   /** UI-153: the file's reason when `TOWERCAB.md` can't be read; absent otherwise. */
   fileError?: string;
+  /** UI-276: the notice that the repo's own checks replaced the overlay's; absent otherwise. */
+  overlayNotice?: string;
   readiness?: ReadinessBadge;
   repo: string;
   github: string;
@@ -1126,6 +1172,8 @@ export interface BoardCard {
 export interface BoardRepo {
   /** UI-153: the file's reason when `TOWERCAB.md` can't be read; absent otherwise. */
   fileError?: string;
+  /** UI-276: the notice that the repo's own checks replaced the overlay's; absent otherwise. */
+  overlayNotice?: string;
   readiness?: ReadinessBadge;
   /** "" for intents the listing doesn't know (the "unknown repo" lane). */
   repo: string;
@@ -1191,6 +1239,8 @@ export interface ActionReply {
   /** UI-204: after a score change, the new priority and whether the intent is parked. */
   priority?: number;
   parked?: boolean;
+  /** LOOP-76: the action would close an open PR with commits; asked again with `confirmed: true`. */
+  confirm?: { pr: number; commits: number | null; text: string };
   /** UI-216: the overlap check's matches (`checkIntent`), and a note on a title that breaks the naming rule. */
   matches?: {
     kind: string;
@@ -1209,4 +1259,67 @@ export interface ActionReply {
   proposal?: boolean;
   pr?: number;
   url?: string;
+}
+
+/** CHAT-5: one tool call of an agent turn, shown folded. */
+export interface ChatTool {
+  name: string;
+  input: string;
+  result: string | null;
+  error: boolean;
+}
+
+/** CHAT-5, CHAT-8: one message: the run's prompt, the agent, a user turn, or the owner's own message. */
+export interface ChatMessage {
+  type: "message";
+  key: string;
+  role: "prompt" | "agent" | "user" | "owner";
+  /** Unix seconds. */
+  at: number;
+  text: string;
+  tools: ChatTool[];
+  /** CHAT-8: the owner's message is `queued` until the intent waits on them, then `sent` (or `failed`). */
+  status?: "queued" | "sent" | "failed";
+  note?: string | null;
+  by?: string;
+}
+
+/** CHAT-3: a divider between runs, or one of Towercab's moves. */
+export interface ChatMark {
+  type: "divider" | "event";
+  key: string;
+  at: number;
+  text: string;
+  tone?: "muted" | "warn";
+}
+
+export type ChatItem = ChatMessage | ChatMark;
+
+/** CHAT-3..9: a page of an intent's thread, oldest first. */
+export interface ChatPage {
+  intent: string;
+  items: ChatItem[];
+  /** CHAT-6: pass as `before` to load the older page; null at the start. */
+  before: number | null;
+  total: number;
+  /** CHAT-7: runs whose transcript is gone. */
+  missing: number;
+  composer: { open: boolean; note: string };
+}
+
+/** FRAME-2: one intent in the sidebar. */
+export interface SideItem {
+  intent: string;
+  title: string;
+  repo: string;
+  stage: "spec" | "plan" | "code" | "ship" | "queue";
+  state: StateView;
+  needsYou: boolean;
+}
+
+/** FRAME-2: the sidebar: open intents by repo, and how many wait on the owner. */
+export interface SidebarView {
+  version: string;
+  needs: number;
+  repos: { repo: string; items: SideItem[] }[];
 }

@@ -20,6 +20,7 @@ import { sandboxPath } from "./pipeline/sandbox.ts";
 import type { JsonSchema } from "./pipeline/schemas.ts";
 import { Protected } from "./repo/protected.ts";
 import type { ChildSpec } from "./tools.ts";
+import { INTEROP_VARS, isWslHost } from "./wsl.ts";
 
 /** The prompt of a run resumed after a cut-off (a crash, a kill, a limit wait). */
 export const CONTINUE = "Continue where you stopped.";
@@ -99,7 +100,14 @@ export function othersInHome(run: Pick<ClaudeRun, "cwd" | "runsDir" | "cache">):
 }
 
 /** Sockets that reach the host's power, hidden when Unix sockets are allowed. */
-export const HOST_SOCKETS = ["/var/run/docker.sock", "/run/docker.sock", "/run/dbus", "/run/user"];
+// `/run/WSL` holds the sockets WSL uses to start Windows programs (LOOP-163).
+export const HOST_SOCKETS = [
+  "/var/run/docker.sock",
+  "/run/docker.sock",
+  "/run/dbus",
+  "/run/user",
+  "/run/WSL",
+];
 
 /** Environment variables never passed to a run (LOOP-19). */
 const TOKENS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"];
@@ -114,6 +122,7 @@ export type RunKind =
   | "review"
   | "risk"
   | "score"
+  | "kind"
   | "features"
   | "shadow"
   | "observer";
@@ -125,6 +134,7 @@ export const RUN_KINDS: RunKind[] = [
   "review",
   "risk",
   "score",
+  "kind",
   "features",
   "shadow",
   "observer",
@@ -158,6 +168,8 @@ export interface ClaudeRun {
   grants: { domains: string[]; paths: string[]; open?: false };
   /** The worker's guard (PIP-29): written to `<runs>/guard.json`, its hook and denyWrite added. */
   guardRules?: GuardRules | null;
+  /** Allow rules added to the agent file's own (PIP-230: the settings files for a spec-only design). */
+  allowMore?: string[];
   /** `cacheEnv` (LOOP-34): the cache's variables, the repo's `[repos.<r>].env` that passes PIP-159. */
   cacheEnv: Record<string, string>;
   /** The repo cache directory: writable in the sandbox. */
@@ -202,7 +214,21 @@ export function disallowed(config: Config): string[] {
   for (const p of SECRET_PATHS) d.push(SECRET_FILES.has(p) ? `Read(~/${p})` : `Read(~/${p}/**)`);
   // Towercab's own config and App key, wherever `--config` put them.
   for (const p of configSecrets(config)) d.push(`Read(/${p})`);
+  // REPO-43: the per-repo overlay is Towercab's, never a worker's.
+  for (const o of overlayDenied(config))
+    d.push(`Read(/${o.replace(/^\//, "")})`, `Read(/${o.replace(/^\//, "")}/**)`);
   return d;
+}
+
+/** REPO-43: the folder of every repo's overlay, next to the config file: unreadable and unwritable to a worker. */
+export function overlayRoot(config: Config): string {
+  return join(dirname(resolve(config.file)), "repos");
+}
+
+/** The overlay folder when there is one (like the other denied paths, only what exists is named). */
+export function overlayDenied(config: Config): string[] {
+  const root = overlayRoot(config);
+  return existsSync(root) ? [root] : [];
 }
 
 /** The config file and `app.pem` next to it, absolute. */
@@ -233,7 +259,7 @@ export function claudeArgv(run: ClaudeRun): string[] {
     "--tools",
     k.tools.join(","),
     // An empty list would make `--allowedTools` swallow `--disallowedTools` as its value.
-    ...(k.allow.length ? ["--allowedTools", ...k.allow] : []),
+    ...(k.allow.length ? ["--allowedTools", ...k.allow, ...(run.allowMore ?? [])] : []),
     "--disallowedTools",
     ...disallowed(run.config),
     ...othersInHome(run).flatMap((p) => [
@@ -255,16 +281,19 @@ export function claudeArgv(run: ClaudeRun): string[] {
  */
 export function claudeSettings(
   run: ClaudeRun,
-  o: { towercabExe: string; home: string },
+  o: { towercabExe: string; home: string; wsl?: boolean },
 ): Record<string, unknown> {
   const denyRead = [
     ...SECRET_PATHS.map((p) => join(o.home, p)),
     ...configSecrets(run.config),
+    ...overlayDenied(run.config),
     ...othersInHome(run),
   ];
   // PIP-157: unix sockets are never bound in, and the host's are hidden, whatever the config says.
   denyRead.push(...HOST_SOCKETS);
-  const denyWrite = [join(resolve(run.cwd), ".git")];
+  // LOOP-163: under WSL every Windows drive is mounted below /mnt, and the worker must not read them.
+  if (o.wsl ?? isWslHost()) denyRead.push("/mnt");
+  const denyWrite = [join(resolve(run.cwd), ".git"), ...overlayDenied(run.config)];
   // PIP-100: an agent without Edit or Write only reads, so its Bash can't write the checkout either
   // (`git diff --output=<file>` from text planted in a diff).
   const agent = loadAgent(run.agent ?? run.kind);
@@ -322,6 +351,8 @@ export function claudeEnv(run: ClaudeRun, home: string): Record<string, string> 
     ...run.cacheEnv,
   };
   for (const t of TOKENS) delete env[t];
+  // LOOP-163: no run can start a Windows program.
+  for (const k of INTEROP_VARS) delete env[k];
   // SHIP-36: the age key stays with Towercab's own process.
   for (const k of Object.keys(env)) if (/^(SOPS_|AGE_)/i.test(k)) delete env[k];
   return env;

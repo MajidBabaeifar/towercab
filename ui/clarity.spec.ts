@@ -4,6 +4,7 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type Browser, expect, type Page, test } from "@playwright/test";
+import { openDetails } from "./details.ts";
 import { serveFixture } from "./fixture.ts";
 
 const SHOTS = resolve(process.env.TOWERCAB_SHOTS ?? join(import.meta.dirname, "screenshots"));
@@ -15,6 +16,7 @@ async function open(browser: Browser, width: number, height: number) {
   const page = await ctx.newPage();
   const go = async (path: string) => {
     await page.goto(`http://localhost:${server.port()}${path}`);
+    if (path.startsWith("/i/")) await openDetails(page);
     await page.waitForSelector(".page");
     await page.waitForLoadState("networkidle");
   };
@@ -241,6 +243,7 @@ test("ui: clarity screenshots light, dark and mobile", async ({ browser }) => {
       const page = await ctx.newPage();
       for (const p of pages) {
         await page.goto(`http://localhost:${server.port()}${p.path}`);
+        if (p.path.startsWith("/i/")) await openDetails(page);
         await page.waitForSelector(".page");
         await page.waitForLoadState("networkidle");
         await expect(page.locator("body")).toContainText(p.expect);

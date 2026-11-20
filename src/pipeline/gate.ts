@@ -5,6 +5,7 @@ import { MERGE_METHOD } from "../forge.ts";
 import { conflictOutcome } from "../github/events.ts";
 import type { Ctx, Handler } from "../handlers.ts";
 import { jiraKey } from "../jira/key.ts";
+import { REFACTOR_PROOF } from "../kind.ts";
 import { ok, wait } from "../machine.ts";
 import { getMission, type Mission } from "../mission.ts";
 import { type Risk, riskMd } from "../risk.ts";
@@ -69,9 +70,11 @@ export function checksLine(m: Mission): Checks {
     proof:
       d.proof === "proven"
         ? "the new tests fail without the change"
-        : d.proof === "none needed"
-          ? "not needed (no behaviour change)"
-          : "no test fails without the change",
+        : d.proof === REFACTOR_PROOF
+          ? REFACTOR_PROOF
+          : d.proof === "none needed"
+            ? "not needed (no behaviour change)"
+            : "no test fails without the change",
     ci: d.ci?.result === "none" ? "no CI on this repo" : "green",
     review: d.review
       ? d.review.approved
@@ -97,6 +100,7 @@ async function updateBody(cx: Ctx, m: Mission): Promise<void> {
       ...(d.unplanned?.paths ?? []).map((x) => ({ what: `writing ${x.glob}`, why: x.why })),
     ],
     tests: testGrantsOf(d),
+    applied: d.applied,
     specIds: d.design?.specIds ?? [],
     links: {
       intentUrl: cx.store.url(intent),
@@ -158,7 +162,7 @@ export const gateHandler: Handler = {
       : {};
     const g = gate({
       a: gateLevelOf(cx, m, intent, files),
-      accessA: effectiveOf(m, intent, files),
+      accessA: effectiveOf(m, intent, files, cx),
       ciGreen: d.ci?.result === "green" || d.ci?.result === "none",
       review: d.review ? { approved: d.review.approved } : null,
       unplanned,
@@ -171,7 +175,7 @@ export const gateHandler: Handler = {
       : "";
     if (!g.merge) return { done: wait("review and merge PR", g.why + steps, teammate) };
     // Beyond the gate table: work Towercab didn't check itself goes to the owner.
-    const a = effectiveOf(m, intent, files);
+    const a = effectiveOf(m, intent, files, cx);
     if (d.foreignHead) return { done: wait("review and merge PR", GATE_HOLD.foreign, teammate) };
     if (d.build?.planChanged && a !== 5) {
       return { done: wait("review and merge PR", GATE_HOLD.planChanged, teammate) };

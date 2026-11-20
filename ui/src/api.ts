@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import type { ActionReply } from "../../src/ui/view.ts";
+import { SIGNED_OUT } from "./session.ts";
 
 const token = document.querySelector('meta[name="towercab-token"]')?.getAttribute("content") ?? "";
 
@@ -14,12 +15,48 @@ export async function getJson<T>(path: string): Promise<T> {
     throw new Error("Can't reach Towercab. Is it still running?");
   }
   const body = (await r.json().catch(() => null)) as (T & { error?: string }) | null;
+  if (r.status === 401) dispatchEvent(new Event(SIGNED_OUT));
   if (!r.ok) throw new Error(body?.error ?? `Towercab answered ${r.status}.`);
   return body as T;
 }
 
-export function act(action: string, intent?: string, text?: string): Promise<ActionReply> {
-  return post({ action, intent, text });
+/** USR-14, UI-223: a call to `/api/users`, `/api/settings` or `/api/me/telegram` with one JSON body. */
+export async function callJson<T extends { ok?: boolean; message?: string }>(
+  path: string,
+  body: Record<string, unknown>,
+): Promise<T> {
+  try {
+    const r = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Towercab-Token": token },
+      body: JSON.stringify(body),
+    });
+    if (r.status === 401) dispatchEvent(new Event(SIGNED_OUT));
+    return ((await r.json().catch(() => null)) ?? {
+      ok: false,
+      message: `Towercab answered ${r.status}.`,
+    }) as T;
+  } catch {
+    return { ok: false, message: "Can't reach Towercab. Is it still running?" } as T;
+  } finally {
+    bump();
+  }
+}
+
+/** A person ended their own session. */
+export async function signOut(): Promise<void> {
+  await fetch("/api/auth/logout", { method: "POST", headers: { "X-Towercab-Token": token } }).catch(
+    () => null,
+  );
+}
+
+export function act(
+  action: string,
+  intent?: string,
+  text?: string,
+  confirmed?: boolean,
+): Promise<ActionReply> {
+  return post({ action, intent, text, ...(confirmed ? { confirmed: true } : {}) });
 }
 
 /** UI-253: save a scope's budget (`all`) or a repo's caps; an amount left out stays, null removes it. */
@@ -119,6 +156,11 @@ export function setScores(id: string, change: { u?: number; i?: number }): Promi
   return post({ action: "scores", id, ...change, actor: "owner" });
 }
 
+/** UI-283: set the intent's kind. */
+export function setKind(id: string, kind: string): Promise<ActionReply> {
+  return post({ action: "set-kind", id, kind, actor: "owner" });
+}
+
 /** UI-205: a5, and the start of an intent that has not started. */
 export function boostIntent(id: string): Promise<ActionReply> {
   return post({ action: "boost", id, actor: "owner" });
@@ -137,6 +179,7 @@ async function post(req: Record<string, unknown>): Promise<ActionReply> {
       body: JSON.stringify(req),
     });
     const body = (await r.json().catch(() => null)) as ActionReply | null;
+    if (r.status === 401) dispatchEvent(new Event(SIGNED_OUT));
     return body ?? { ok: false, message: `Towercab answered ${r.status}.` };
   } catch {
     return { ok: false, message: "Can't reach Towercab. Is it still running?" };

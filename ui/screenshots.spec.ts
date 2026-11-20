@@ -4,6 +4,7 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
+import { openDetails } from "./details.ts";
 import { serveFixture } from "./fixture.ts";
 
 const SHOTS = resolve(process.env.TOWERCAB_SHOTS ?? join(import.meta.dirname, "screenshots"));
@@ -83,6 +84,7 @@ const MODES = [
 ] as const;
 
 async function settle(page: Page) {
+  if (/\/i\//.test(page.url())) await openDetails(page);
   await page.waitForSelector(".page");
   await page.waitForLoadState("networkidle");
 }
@@ -133,13 +135,13 @@ test("ui: update keeps typed text", async ({ page }) => {
   const box = page.locator('[data-intent="261026-0815-2"] textarea');
   await box.fill("One totals row per currency, please.");
   // Open the plan card's menu too: it must stay open.
-  const before = await page.locator(".tab-badge").textContent();
+  const before = await page.locator(".side-count").first().textContent();
   // Pausing changes what the page shows, so it refetches.
   await page.getByRole("button", { name: "Pause" }).click();
   await expect(page.locator(".health")).toHaveText(/Paused|Problem/);
   await expect(page.locator(".topbar").getByRole("button", { name: "Resume" })).toBeVisible();
   await expect(box).toHaveValue("One totals row per currency, please.");
-  expect(await page.locator(".tab-badge").textContent()).toBe(before);
+  expect(await page.locator(".side-count").first().textContent()).toBe(before);
   await page.locator(".topbar").getByRole("button", { name: "Resume" }).click();
   await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
   await expect(box).toHaveValue("One totals row per currency, please.");
@@ -507,7 +509,7 @@ test("ui: tab title starts with a pause mark while paused", async ({ browser }) 
     await expect(page).not.toHaveTitle(/⏸/, { timeout: 10000 });
     // It also shows on another page of the app.
     fixture.state.paused = true;
-    await page.locator('.tabs a[href="/activity"]').click();
+    await page.goto(`http://localhost:${server.port()}/activity`);
     await expect(page).toHaveTitle(/^⏸ .*Activity/, { timeout: 10000 });
   } finally {
     await server.stop();

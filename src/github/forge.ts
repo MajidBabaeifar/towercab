@@ -203,7 +203,7 @@ export class GitHubForge implements Forge, GitHub {
   mergePr(
     repo: string,
     n: number,
-    o: { method: MergeMethod; head?: string; subject?: string },
+    o: { method: MergeMethod; head?: string; subject?: string; body?: string },
   ): Promise<Result> {
     return this.soft(repo, [
       "pr",
@@ -212,6 +212,7 @@ export class GitHubForge implements Forge, GitHub {
       MERGE_FLAG[o.method],
       ...(o.head ? ["--match-head-commit", o.head] : []),
       ...(o.subject ? ["--subject", o.subject] : []),
+      ...(o.body ? ["--body", o.body] : []),
       "-R",
       repo,
     ]);
@@ -277,6 +278,12 @@ export class GitHubForge implements Forge, GitHub {
       head: String(v.headRefOid ?? ""),
       merged: Boolean(v.mergedAt),
     };
+  }
+
+  async prCommits(repo: string, n: number): Promise<{ state: string; commits: number }> {
+    const v = await this.view<{ state?: unknown; commits?: unknown }>(repo, n, "state,commits");
+    if (!Array.isArray(v.commits)) throw new ForgeBadReply("no commits");
+    return { state: String(v.state), commits: v.commits.length };
   }
 
   prFiles(repo: string, n: number): Promise<FileChange[]> {

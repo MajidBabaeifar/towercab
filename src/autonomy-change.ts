@@ -4,6 +4,7 @@
 import { defaultLevel } from "./autonomy.ts";
 import type { Db } from "./db.ts";
 import type { Intent } from "./intents/types.ts";
+import { can, type Person, type UserAction } from "./users.ts";
 
 /** AUT-35: a raise that doesn't count until the owner decides. */
 export interface RaiseFlag {
@@ -114,6 +115,31 @@ export function judgeProof(
   const who = [proof?.committer, proof?.author].find((l) => !!l && l !== WEB_COMMITTER) ?? null;
   // The owner's own account on a commit nobody can prove is theirs: the card says it is unverified.
   return { owner: false, who: !who ? "unknown" : is(who) ? `${who} (unverified)` : who };
+}
+
+/** The GitHub login a verified commit proves (AUT-23, AUT-24), else null: never the commit's own name or e-mail. */
+export function verifiedLogin(
+  proof: { author: string | null; committer: string | null; verified: boolean } | null,
+): string | null {
+  if (!proof?.verified) return null;
+  const login = proof.committer === WEB_COMMITTER ? proof.author : proof.committer;
+  return login && login !== WEB_COMMITTER ? login.toLowerCase() : null;
+}
+
+/**
+ * AUT-24: with users, a raise counts when the verified account is a person who may do `action` on the repo
+ * (maintainer or admin). `owner` keeps the name of `RaiseVerdict`; `login` is the verified account.
+ */
+export function judgeAccount(
+  proof: { author: string | null; committer: string | null; verified: boolean } | null,
+  person: (login: string) => Person | null,
+  action: UserAction,
+  repo: string,
+): RaiseVerdict & { login: string | null } {
+  const login = verifiedLogin(proof);
+  if (login && can(person(login), action, repo)) return { owner: true, who: login, login };
+  const who = [proof?.committer, proof?.author].find((l) => !!l && l !== WEB_COMMITTER) ?? null;
+  return { owner: false, who: !who ? "unknown" : login ? `${who} (role too low)` : who, login };
 }
 
 export interface Seen {

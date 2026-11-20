@@ -92,6 +92,7 @@ function LaneHead({ repo, folded, onToggle }: { repo: BoardRepo; folded: boolean
         </Link>
       ) : null}
       {repo.fileError ? <span class="why file-notice">{repo.fileError}</span> : null}
+      {repo.overlayNotice ? <span class="why file-notice">{repo.overlayNotice}</span> : null}
       {repo.frozen ? <span class="freeze-chip">{repo.frozen}</span> : null}
       <span class="meta">
         {repo.github ? <span class="mono">{repo.github} · </span> : null}

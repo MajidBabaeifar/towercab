@@ -1,13 +1,15 @@
 // Commands (LOOP-15): answer, retry, drop, pause, resume, start. The CLI and the UI insert a `commands` row;
 // the loop applies it on its next pass, or the CLI applies it itself when no loop runs.
 
+import { actorColumns, actorOfRow, runAs } from "./actor.ts";
 import { ownerOnly, ownerOnlyLine } from "./autonomy.ts";
 import { levelNow } from "./autonomy-change.ts";
 import type { Db } from "./db.ts";
 import { liftFreeze } from "./freeze.ts";
 import { localTime } from "./intents/intent.ts";
 import type { Intent, IntentStore } from "./intents/types.ts";
-import { type ApplyCtx, apply, exitsOf, wait, waitKey } from "./machine.ts";
+import { isKind, kindChangeRefusal, kindOf, WORK_KINDS } from "./kind.ts";
+import { type ApplyCtx, apply, exitsOf, listExits, wait, waitKey } from "./machine.ts";
 import { dataOf, forIntent, type Mission, patchData, unfinishedFor } from "./mission.ts";
 import { partsOf } from "./parts.ts";
 import { parseAllow, readingReply, reverseRefusals } from "./pipeline/access.ts";
@@ -28,7 +30,8 @@ export type CommandName =
   | "steps"
   | "score"
   | "boost"
-  | "unfreeze";
+  | "unfreeze"
+  | "kind";
 
 export interface CommandRow {
   id: number;
@@ -39,25 +42,29 @@ export interface CommandRow {
   created: number;
   applied_at: number | null;
   result: string | null;
+  /** USR-8: who queued it and through which channel; empty on rows from before. */
+  actor?: string;
+  via?: string;
 }
 
 export const MAX_ANSWER = 2000;
 
 export function insertCommand(
   db: Db,
-  c: { name: CommandName; arg?: string; text?: string; source: string },
+  c: { name: CommandName; arg?: string; text?: string; source: string; actor?: string },
   now: number,
 ): number {
   if (c.name === "answer" && (!c.text?.trim() || c.text.length > MAX_ANSWER)) {
     throw new Error(`an answer is 1 to ${MAX_ANSWER} characters`);
   }
   return db.run(
-    "INSERT INTO commands (name, arg, text, source, created) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO commands (name, arg, text, source, created, actor, via) VALUES (?, ?, ?, ?, ?, ?, ?)",
     c.name,
     c.arg ?? "",
     c.text ?? "",
     c.source,
     now,
+    ...(c.actor ? [c.actor, "cli"] : actorColumns()),
   ).lastId;
 }
 
@@ -155,6 +162,7 @@ export const OWNER_ONLY_COMMANDS: readonly CommandName[] = [
   "resume",
   "score",
   "unfreeze",
+  "kind",
 ];
 
 /** An ignored reply or command noted on an a0 intent (AUT-32, AUT-33). */
@@ -247,7 +255,9 @@ export async function applyCommand(cx: CommandCtx, row: CommandRow): Promise<str
         throw new Error(ownerOnlyLine(intent.id));
       }
     }
-    result = await run(cx, row);
+    // USR-8: what the command does is recorded as the person who queued it.
+    const who = actorOfRow(row.actor ?? "", row.via ?? "");
+    result = await (who ? runAs(who, () => run(cx, row)) : run(cx, row));
   } catch (e) {
     result = `${row.name}: ${(e as Error).message}`;
   }
@@ -345,7 +355,7 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
       // LOOP-77: a reply to a wait that came back with nothing new would only land on it again.
       if (m?.stage === "blocked" && (dataOf(m) as PipeData).stuck) {
         throw new Error(
-          `${intent.id} is stuck at ${waitKey(m.waiting ?? "")}: a reply would land here again; use steps, done, retry or drop`,
+          `${intent.id} is stuck at ${waitKey(m.waiting ?? "")}: a reply would land here again; use ${listExits(exitsOf(m.waiting ?? "", true, (dataOf(m) as PipeData).delivery !== "steps"))}`,
         );
       }
       await store.update(intent.id, "answer", (e) => {
@@ -372,6 +382,26 @@ async function run(cx: CommandCtx, row: CommandRow): Promise<string> {
         row.source,
       );
       return r.message;
+    }
+    case "kind": {
+      // UI-283, INT-77: the owner's kind goes into the intent, and a mission that has not passed its stage follows it.
+      const kind = row.text.trim();
+      if (!isKind(kind)) throw new Error(`"${kind}" is not a kind: use ${WORK_KINDS.join(", ")}`);
+      const intent = await store.get(row.arg);
+      const m = unfinishedFor(db, intent.id);
+      const refusal = m
+        ? kindChangeRefusal(kind, m.stage === "blocked" ? (m.from_stage ?? m.stage) : m.stage)
+        : null;
+      if (refusal) throw new Error(refusal);
+      if (intent.kind !== kind) await store.update(intent.id, "set kind", (e) => e.setField("kind", kind));
+      if (m && kindOf(null, dataOf(m) as PipeData) !== kind) {
+        apply(cx.applyCtx, m, {
+          event: "kind_routed",
+          why: "you set the kind",
+          data: { kind, kindBy: "owner", kindWhy: "You set it." },
+        });
+      }
+      return `${intent.id} is ${kind}`;
     }
     case "boost": {
       // LOOP-134: a5 first (one commit), then what `start` does for an intent without a mission.
