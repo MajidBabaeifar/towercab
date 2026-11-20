@@ -561,6 +561,11 @@ export class GitLabForge {
     return str(r.json.id) || null;
   }
 
+  /** LOOP-76: how many commits a merge request holds. */
+  async commitCount(slug: string, iid: number): Promise<number> {
+    return (await this.list(this.mr(slug, iid, "/commits"))).length;
+  }
+
   /** The files of a merge request with their patches. */
   async diffs(slug: string, iid: number): Promise<{ name: string; status: string; patch: string | null }[]> {
     const out: { name: string; status: string; patch: string | null }[] = [];

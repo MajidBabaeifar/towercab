@@ -1038,7 +1038,7 @@ function realActions(f: Fixture, now: () => number, state = "OPEN") {
     github: {
       owner: async (args) => {
         calls.push(args);
-        const stdout = args[1] === "view" ? JSON.stringify({ state, mergedAt: null }) : "";
+        const stdout = args[1] === "view" ? JSON.stringify({ state, mergedAt: null, commits: [] }) : "";
         return { code: 0, stdout, stderr: "", timedOut: false };
       },
     },

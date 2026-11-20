@@ -124,6 +124,8 @@ export function buildShadow(
     clock: w.clock,
     github: w.github,
     actor: "shadow",
+    // LOOP-76: a drop reaches these actions after the owner's yes (SHD-8), or because they let it run free.
+    confirmed: true,
     proposed: () => loop().proposedState().list,
   });
   const exec = new Executor({

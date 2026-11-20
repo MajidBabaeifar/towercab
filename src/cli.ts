@@ -20,6 +20,7 @@ import {
 import { appKeyPath, type Config, ConfigError, checkLoop, configPath, loadConfig } from "./config.ts";
 import { Db } from "./db.ts";
 import { doctor } from "./doctor.ts";
+import { confirmExit } from "./exit-warning.ts";
 import { markFast } from "./fast.ts";
 import { GitLabForge } from "./forge/gitlab.ts";
 import { GitLabHost } from "./forge/gitlab-host.ts";
@@ -110,7 +111,7 @@ const USAGE = `usage: towercab [--config <file>] [--home <dir>] <command>
   answer <id> allow <path>…       allow a test you refused earlier, for the running mission
   reply <id> --by <agent> <text>  an agent speaks for you on the PR (or issue): marked as the agent's
   approve <id>                    merge the PR the intent waits on, as you
-  retry <id> | drop <id>
+  retry <id> | drop <id>          drop, done and steps ask first when they would close an open PR with commits: add --yes
   start <id>                      begin that intent's design now, even when the repo is full
   score <id> u=N i=N              change urgency and/or importance (1-5); autonomy stays on the page
   step <id> <n…|all>             tick off steps the plan lists for you (the change then goes on)
@@ -254,6 +255,21 @@ async function refuseOwnerOnly(w: World, intent: string): Promise<void> {
   }
 }
 
+/** LOOP-76: `done`, `steps` and `drop` that would close an open code PR with commits need `--yes`. */
+async function confirmClose(w: World, intent: string, yes: boolean): Promise<void> {
+  if (yes) return;
+  await confirmExit(
+    {
+      db: w.db,
+      store: await w.store(),
+      forge: w.github,
+      githubOf: (repo) => w.config.repos.get(repo)?.github ?? null,
+    },
+    intent,
+    yes,
+  );
+}
+
 /** Queue a command for the loop, or apply it here when no loop runs (LOOP-15). */
 async function submit(w: World, name: CommandName, arg = "", text = ""): Promise<string> {
   if (OWNER_ONLY_COMMANDS.includes(name)) await refuseOwnerOnly(w, arg);
@@ -295,6 +311,7 @@ export async function main(argv: string[], tools: Tools = realTools()): Promise<
         base: { type: "string" },
         prs: { type: "string" },
         by: { type: "string" },
+        yes: { type: "boolean" },
         now: { type: "boolean" },
         check: { type: "boolean" },
         "no-check": { type: "boolean" },
@@ -718,6 +735,7 @@ async function run(
       return submit(w, "retry", args[0]);
     case "drop":
       need(1, "<id>");
+      await confirmClose(w, args[0]!, v.yes === true);
       return submit(w, "drop", args[0]);
     case "start":
       need(1, "<id>");
@@ -736,12 +754,14 @@ async function run(
     }
     case "done":
       need(1, "<id> [note]");
+      await confirmClose(w, args[0]!, v.yes === true);
       return submit(w, "done", args[0], args.slice(1).join(" "));
     case "unfreeze":
       need(1, "<id>");
       return submit(w, "unfreeze", args[0]);
     case "steps":
       need(1, "<id>");
+      await confirmClose(w, args[0]!, v.yes === true);
       return submit(w, "steps", args[0]);
     case "step": {
       need(2, "<id> <n…|all>");

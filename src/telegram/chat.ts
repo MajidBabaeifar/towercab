@@ -15,6 +15,7 @@ import type { UiActions } from "../ui/actions.ts";
 import { type CardItem, type CardRow, Cards } from "./cards.ts";
 import {
   cardLink,
+  closeConfirmText,
   confirmButtons,
   confirmText,
   decode,
@@ -419,10 +420,12 @@ export class Chat {
       return this.answer(u, "That is not offered here.");
     if (p.op === "m" || p.op === "d") {
       this.answer(u, p.op === "m" ? "Tap Yes to merge." : "Tap Yes to drop.");
+      // LOOP-76: a drop that would close an open PR with commits says so and asks "Close PR with N commits?".
+      const warn = p.op === "d" ? await actions.closeWarning?.(v.intent).catch(() => null) : null;
       if (row)
         this.editRow(
           row,
-          confirmText(p.op === "m" ? "M" : "D", v),
+          warn ? closeConfirmText(warn) : confirmText(p.op === "m" ? "M" : "D", v),
           confirmButtons(p.op === "m" ? "M" : "D", v),
         );
       return;

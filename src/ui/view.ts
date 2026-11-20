@@ -255,6 +255,8 @@ export interface Card {
   exits: ExitView[];
   /** LOOP-77: the wait came back with nothing new; a reply would land on it again. */
   stuck: boolean;
+  /** LOOP-76, UI-164: the open code PR that `done`, `steps` or drop would close; `commits` null: not readable. */
+  openPr?: { number: number; commits: number | null; text: string };
   mergeLabel: string | null;
   /** UI-105: the owner already acted from the page and the mission has not moved on; no buttons then. */
   done: { action: "merge" | "drop" | "retry" | "done" | "steps"; text: string; stuck: boolean } | null;
@@ -1229,6 +1231,8 @@ export interface ActionReply {
   /** UI-204: after a score change, the new priority and whether the intent is parked. */
   priority?: number;
   parked?: boolean;
+  /** LOOP-76: the action would close an open PR with commits; asked again with `confirmed: true`. */
+  confirm?: { pr: number; commits: number | null; text: string };
   /** UI-216: the overlap check's matches (`checkIntent`), and a note on a title that breaks the naming rule. */
   matches?: {
     kind: string;

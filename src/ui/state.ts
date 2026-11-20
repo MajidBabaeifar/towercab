@@ -12,6 +12,7 @@ import { slotsText } from "../capacity.ts";
 import { agentCommentNotes, ignoredNotes, intentPaused } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
+import { generalWarningText, warningText } from "../exit-warning.ts";
 import { fastConfirmed } from "../fast.ts";
 import { fastLine, laneOf } from "../fast-lane.ts";
 import { frozenBy } from "../freeze.ts";
@@ -548,6 +549,8 @@ type MissionData = {
   doneByYou?: DoneNote;
   /** LOOP-77: the wait came back with nothing new. */
   stuck?: boolean;
+  /** LOOP-76: written by the loop's PR read. */
+  openPr?: { number: number; commits: number | null } | null;
   /** PIP-143: the change waits for the owner to pass it on to the teammates. */
   teammate?: { passNeeded?: boolean };
   /** PIP-147: the host asks for approvals the reviewers can't give. */
@@ -943,6 +946,14 @@ export function releaseCard(h: Held, now: number): Card {
   };
 }
 
+/** LOOP-76: the loop's note of the open code PR, with the words of the confirm. */
+function openPrView(o: { number: number; commits: number | null }) {
+  return {
+    ...o,
+    text: o.commits === null ? generalWarningText() : warningText(o.number, o.commits),
+  };
+}
+
 /** A release card has no wait of its own: no ways out to offer and nothing stuck (the fields #173 added to `Card`). */
 const RELEASE_WAIT = { exits: [], stuck: false };
 
@@ -1059,6 +1070,7 @@ export function missionCard(
     actions,
     exits,
     stuck,
+    ...(!done && dataOf<MissionData>(m).openPr ? { openPr: openPrView(dataOf<MissionData>(m).openPr!) } : {}),
     mergeLabel: approval && pr && !done && !passing ? MERGE_LABELS[kind]! : null,
     done,
     addRepo: null,

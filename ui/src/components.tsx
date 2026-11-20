@@ -48,6 +48,7 @@ import {
   StateIcon,
   Trash,
 } from "./icons.tsx";
+import { Modal } from "./Modal.tsx";
 import { Markdown } from "./md.tsx";
 import { asksFirst } from "./options.ts";
 import { Link, usePath } from "./router.tsx";
@@ -363,11 +364,23 @@ export function NeedsCard({
     drafts.set(key, t);
     setDraftState(t);
   };
-  const run = async (action: string, text?: string) => {
+  // LOOP-76: `done` and `steps` that would close an open PR with commits ask first, in a dialog.
+  const [exitAsk, setExitAsk] = useState<{ action: string; text?: string; warning: string } | null>(null);
+  const [dropWarn, setDropWarn] = useState<string | null>(null);
+  const run = async (action: string, text?: string, confirmed = false) => {
     setBusy(action);
     setMenu(false);
-    const r = await act(action, key, text);
+    const r = await act(action, key, text, confirmed);
     setBusy(null);
+    // The loop's note was missing or old: the server's answer is the warning, and the same confirm follows.
+    if (r.confirm) {
+      if (action === "drop") {
+        setDropWarn(r.confirm.text);
+        setConfirm(true);
+      } else setExitAsk({ action, text, warning: r.confirm.text });
+      return;
+    }
+    setExitAsk(null);
     results.set(key, r);
     setResult(r);
     if (r.ok && action === "reply") setDraft("");
@@ -394,8 +407,12 @@ export function NeedsCard({
   const extra = card.exits.filter(
     (e) => ((e.do === "done" || e.do === "steps") && !(e.do === "steps" && askedSteps)) || freezeExit(e),
   );
+  const go = (action: string, text?: string) => {
+    if (card.openPr) setExitAsk({ action, text, warning: card.openPr.text });
+    else void run(action, text);
+  };
   const pick = (o: { option: string; do?: string }) => {
-    if (o.do === "steps") void run("steps");
+    if (o.do === "steps") go("steps");
     else if (o.do === "drop") setConfirm(true);
     else if (o.do === "continue" && !asksFirst(o.option)) void run("reply", o.option);
     else setDraft(o.option);
@@ -683,7 +700,7 @@ export function NeedsCard({
               onClick={() => {
                 if (e.do === "continue") void run("reply", e.label);
                 else if (e.do === "unfreeze" && e.confirm && !window.confirm(e.confirm)) return;
-                else void run(e.do, e.do === "done" ? note : undefined);
+                else go(e.do, e.do === "done" ? note : undefined);
               }}
             >
               {busy === e.do ? "Sending…" : e.label}
@@ -775,16 +792,18 @@ export function NeedsCard({
         <div class="confirm" role="alertdialog" aria-label="Confirm drop">
           <p>
             Drop “{card.title}”?{" "}
-            {card.pr
-              ? `This closes the ${card.pr.label} and stops the intent.`
-              : "Towercab stops working on it."}
+            {dropWarn ??
+              card.openPr?.text ??
+              (card.pr
+                ? `This closes the ${card.pr.label} and stops the intent.`
+                : "Towercab stops working on it.")}
           </p>
           <div class="confirm-row">
             <button
               type="button"
               class="btn danger"
               disabled={busy !== null}
-              onClick={() => void run("drop")}
+              onClick={() => void run("drop", undefined, true)}
             >
               {busy === "drop" ? "Dropping…" : "Drop it"}
             </button>
@@ -793,6 +812,25 @@ export function NeedsCard({
             </button>
           </div>
         </div>
+      ) : null}
+      {exitAsk ? (
+        <Modal label="Confirm" onClose={() => setExitAsk(null)} focus=".confirm-no">
+          <h2 class="modal-title">Close the pull request?</h2>
+          <p>{exitAsk.warning}</p>
+          <div class="modal-actions">
+            <button type="button" class="btn confirm-no" onClick={() => setExitAsk(null)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn danger"
+              disabled={busy !== null}
+              onClick={() => void run(exitAsk.action, exitAsk.text, true)}
+            >
+              {busy === exitAsk.action ? "Sending…" : "OK"}
+            </button>
+          </div>
+        </Modal>
       ) : null}
       {result ? (
         <p class={`result ${result.ok ? "ok" : "err"}`} role="status">

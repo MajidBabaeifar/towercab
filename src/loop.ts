@@ -13,6 +13,7 @@ import { removeCheckout } from "./checkout.ts";
 import { applyPending, intentPaused, noteIgnored, paused, recordAgentComment } from "./commands.ts";
 import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
+import { exitWarning } from "./exit-warning.ts";
 import { isHolder, laneOf, stampsFor } from "./fast-lane.ts";
 import { watchFast } from "./fast-watch.ts";
 import { fixFor, Health } from "./faults.ts";
@@ -1595,6 +1596,18 @@ export class Loop {
   }
 
   /** PR reads (LOOP-18, PIP-21): every 60 s per mission with a PR. */
+  /**
+   * LOOP-76, UI-164: the open code PR that an exit of this wait would close, with its commit count, for the
+   * card's confirm. The exit itself checks again, so a stale note only costs the page a round trip.
+   */
+  private async noteOpenPr(m: Mission, github: string): Promise<void> {
+    if (m.stage !== "blocked" && m.stage !== "approval:merge" && m.stage !== "steps") return;
+    const w = await exitWarning(this.d.github, github, m.pr);
+    const note = w ? { number: w.pr, commits: w.commits } : null;
+    const had = (dataOf(m) as { openPr?: unknown }).openPr ?? null;
+    if (JSON.stringify(had) !== JSON.stringify(note)) patchData(this.d.db, m, { openPr: note }, this.now);
+  }
+
   private async pollPrs(): Promise<void> {
     const read = this.d.readPr ?? ((repo: string, n: number) => this.d.github.readPr(repo, n));
     for (const m of unfinished(this.d.db)) {
@@ -1621,6 +1634,7 @@ export class Loop {
         if (prs.plan && intentsRepo && isGitlab(intentsRepo) !== isGitlab(repo.github)) {
           prs.plan = await this.renamed(prs.plan, intentsRepo, { me, bot });
         }
+        if (prs.code && m.pr) await this.noteOpenPr(m, repo.github);
         const teamOn = repo.teammateReview === true;
         const approve = approveRequested(m, prs, me, teamOn);
         if (approve !== null) {
