@@ -25,6 +25,7 @@ import { version as gitVersion, UNKNOWN_VERSION, type VersionInfo } from "../upd
 import { seedOwner } from "../users-store.ts";
 import { createActions } from "./actions.ts";
 import { Auth } from "./auth.ts";
+import { listCache } from "./list-cache.ts";
 import type { UiAuth } from "./server.ts";
 import { startUi, type UiServer } from "./server.ts";
 import { budgetReached, type Problem, type Skip, type UiSources, type UpNext } from "./state.ts";
@@ -144,7 +145,8 @@ export function sourcesOf(loop: Loop, home: Home): UiSources {
   const version = versionReader(loop.d.tools, loop.d.config.update.channel);
   return {
     db: loop.d.db,
-    store: loop.ownerStore,
+    // UI-288: pages read the list through a short cache.
+    store: listCache(loop.ownerStore, 5),
     config: loop.d.config,
     clock: loop.d.clock,
     home,

@@ -178,7 +178,11 @@ export function parseTranscript(text: string, run: RunRef): ChatMessage[] {
         msg.tools.push(t);
       }
     }
-    if (msg.text || msg.tools.length) out.push(msg);
+    // CHAT-5: a turn of only tool calls joins the agent's message before it, so a run reads as a few
+    // messages with their calls folded, not one bubble per call.
+    const prev = out.at(-1);
+    if (!msg.text && msg.tools.length && prev?.role === "agent") prev.tools.push(...msg.tools);
+    else if (msg.text || msg.tools.length) out.push(msg);
   }
   return out;
 }

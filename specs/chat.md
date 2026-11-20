@@ -57,9 +57,10 @@ Each turn shows as a message; tool calls are folded under it.
 
 - The run's first user turn is Towercab's prompt, folded under "Towercab's instructions for this run".
   An agent turn shows its text as Markdown and `n tool calls: <names>` folded; each call shows its input
-  and its result (each cut to 2,000 characters), an error result marked. Meta lines and other entry
-  types are skipped.
-- Verified by: `chat: a run's transcript becomes messages with tool calls folded`
+  and its result (each cut to 2,000 characters), an error result marked. A turn of only tool calls
+  joins the agent's message before it, so calls group under the text that led to them. Meta lines and
+  other entry types are skipped.
+- Verified by: `chat: a run's transcript becomes messages with tool calls folded`, `chat: tool-only turns join the agent message before them`
 
 ### CHAT-6 · Long threads load the latest first
 

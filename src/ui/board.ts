@@ -4,7 +4,7 @@
 
 import { frozenBy } from "../freeze.ts";
 import type { Intent } from "../intents/types.ts";
-import { waitsTurn } from "../route.ts";
+import { turnWaiters } from "../route.ts";
 import { fileErrorOf, overlayNoticeOf } from "./limits.ts";
 import { proposedSection } from "./proposed.ts";
 import { readinessBadge, sharedGaps } from "./readiness.ts";
@@ -207,18 +207,14 @@ const SIDE_STAGE: Record<Exclude<BoardColumnKey, "done">, SideItem["stage"]> = {
 export async function sidebar(src: UiSources): Promise<SidebarView> {
   const b = await board(src);
   let needs = 0;
-  let waiting = 0;
+  // LOOP-165: intents waiting their turn are left out of the board; the sidebar counts them.
+  const waiting = turnWaiters(src.db).length;
   const repos = b.repos
     .map((r) => {
       const items: SideItem[] = [];
       for (const col of b.columns) {
         if (col.key === "done") continue;
         for (const c of r.cells[col.key] ?? []) {
-          // LOOP-165: an intent waiting its turn is counted, not listed.
-          if (waitsTurn(src.db, c.intent)) {
-            waiting++;
-            continue;
-          }
           const needsYou = c.state.key === "needs";
           if (needsYou) needs++;
           items.push({

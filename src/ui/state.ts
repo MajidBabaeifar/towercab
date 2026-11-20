@@ -4,7 +4,6 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-
 import { ownerOnly, ownSource, RAISE_NOTES } from "../autonomy.ts";
 import { changesOf, flagOf, levelNow, type RaiseFlag, writtenLevel } from "../autonomy-change.ts";
 import { budgetChanges, capsOf } from "../budgets.ts";
@@ -41,6 +40,7 @@ import { waitsInQueue } from "../queue.ts";
 import { type Kind, parseStored, stageSkip } from "../repo/readiness.ts";
 import { usualOwner } from "../repos.ts";
 import { currentRisk, type Risk, type RiskGate, riskWords } from "../risk.ts";
+import { waitsTurn } from "../route.ts";
 import { canBoostIntent, scoreChanges, scoreWords } from "../scores.ts";
 import { actionSentence, actionsFor, shadowCosts } from "../shadow/store.ts";
 import { type Held, heldReleases, releaseLine, releaseTitle } from "../ship/releases.ts";
@@ -496,7 +496,11 @@ export interface Snap {
   paused: boolean;
 }
 
-export async function snapshot(src: UiSources): Promise<Snap> {
+/**
+ * LOOP-165: by default an intent waiting its turn after a cleared route is left out (its mission and its
+ * open listing), so counts, the Overview and the Board don't show it; `all` keeps it (intent page, Activity).
+ */
+export async function snapshot(src: UiSources, opts: { all?: boolean } = {}): Promise<Snap> {
   const now = src.clock.now();
   let listing: Listing | null = null;
   let listError: string | null = null;
@@ -507,9 +511,11 @@ export async function snapshot(src: UiSources): Promise<Snap> {
   }
   const intents = new Map<string, Intent>();
   for (const i of [...(listing?.done ?? []), ...(listing?.open ?? [])]) intents.set(i.id, i);
-  const missions = src.db.all<Mission>(
-    "SELECT * FROM missions WHERE stage NOT IN ('done','stopped','unverified') ORDER BY id",
-  );
+  const missions = src.db
+    .all<Mission>("SELECT * FROM missions WHERE stage NOT IN ('done','stopped','unverified') ORDER BY id")
+    .filter((m) => opts.all || !waitsTurn(src.db, m.intent));
+  if (listing && !opts.all)
+    listing = { ...listing, open: listing.open.filter((i) => !waitsTurn(src.db, i.id)) };
   const entered = new Map<number, number>();
   for (const r of src.db.all<{ mission: number; at: number }>(
     "SELECT mission, MAX(at) AS at FROM transitions WHERE mission IN (SELECT id FROM missions WHERE stage NOT IN ('done','stopped','unverified')) GROUP BY mission",
@@ -2623,7 +2629,7 @@ function sentenceOf(
 
 /** The intent page's data (`GET /api/intents/<id>`); null when there is no such intent. */
 export async function intentPage(src: UiSources, id: string): Promise<IntentPage | null> {
-  const s = await snapshot(src);
+  const s = await snapshot(src, { all: true });
   let intent: Intent | null = s.intents.get(id) ?? null;
   if (!intent) {
     try {
@@ -3037,7 +3043,7 @@ const ID_IN_LOG = /\b(\d{6}-\d{4}-\d+)\b/;
 
 /** The activity page's data (`GET /api/activity?intent=&repo=&kind=&since=`), newest first. */
 export async function activity(src: UiSources, f: ActivityFilters = {}): Promise<ActivityPage> {
-  const s = await snapshot(src);
+  const s = await snapshot(src, { all: true });
   const since = sinceOf(f.since, s.now);
   const limit = Math.min(Math.max(f.limit ?? 100, 1), 500);
   const offset = Math.max(f.offset ?? 0, 0);
