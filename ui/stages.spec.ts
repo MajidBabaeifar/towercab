@@ -2,6 +2,7 @@
 // intent (261024-1130-1): two attempts, a repair loop, a skipped proof and a wait on the owner.
 
 import { expect, type Page, test } from "@playwright/test";
+import { openDetails } from "./details.ts";
 
 const CODE = "/i/261024-1130-1";
 const STAGES = [
@@ -21,7 +22,7 @@ const STAGES = [
 ];
 
 async function settle(page: Page) {
-  await page.waitForSelector(".page");
+  await openDetails(page);
   await page.waitForLoadState("networkidle");
 }
 

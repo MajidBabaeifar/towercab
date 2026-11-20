@@ -1,6 +1,7 @@
 // The page's buttons (UI-66): each does what the owner would do on GitHub (as the owner, LOOP-38) or
 // in the CLI (a `commands` row the loop applies, LOOP-15).
 
+import { type Actor, actorColumns, currentActor, TOWERCAB } from "../actor.ts";
 import { ownerOnly, ownerOnlyLine, ownSource } from "../autonomy.ts";
 import {
   acceptedOf,
@@ -16,13 +17,16 @@ import { saveBudgets } from "../budgets.ts";
 import { intentPaused, tickSteps } from "../commands.ts";
 import type { Config, RepoConfig } from "../config.ts";
 import type { Db } from "../db.ts";
+import { ExitNeedsConfirm, type ExitWarning, exitWarning } from "../exit-warning.ts";
 import { markFast } from "../fast.ts";
 import { askFeatures } from "../features.ts";
 import { ForgeBadReply, MERGE_METHOD, type PrBrief, type Result } from "../forge.ts";
-import { ownerForge } from "../github/forge.ts";
+import { forgeOf, ownerForge } from "../github/forge.ts";
+import { approvedByLine, type Decision, decidedByComment } from "../github/owner.ts";
 import { classifyFiles, type ProposedPr } from "../github/proposed.ts";
 import type { Clock, GitHub } from "../handlers.ts";
 import type { Home } from "../home.ts";
+import { authorityOf, confirmIntent, mayFull, recordWriter } from "../intent-people.ts";
 import {
   addToIntent,
   cannotAddTo,
@@ -34,7 +38,7 @@ import {
 import { checkOverlap, type Match, type OverlapResult } from "../intents/overlap.ts";
 import type { IntentStore } from "../intents/types.ts";
 import { isKind, kindChangeRefusal, WORK_KINDS } from "../kind.ts";
-import { dataOf, getMission, type Mission, unfinishedFor } from "../mission.ts";
+import { dataOf, forIntent, getMission, type Mission, unfinishedFor } from "../mission.ts";
 import { isMulti } from "../parts.ts";
 import { grantScanning } from "../pipeline/alerts.ts";
 import { ownerMergeRefusal } from "../pipeline/teammate.ts";
@@ -42,17 +46,27 @@ import { canBoostIntent, changeScores } from "../scores.ts";
 import { resetShadow } from "../shadow/store.ts";
 import { approveSecret } from "../ship/secret-steps.ts";
 import type { Tools } from "../tools.ts";
+import { hasEnded, intentsWithQueued, MAX_CHAT, queuedOf, saveQueued, waitsOnOwner } from "./chat.ts";
 import { currentPr, type DoneNote, validNote } from "./state.ts";
 
 /** What the page can do; each resolves to one sentence saying what happened, or throws the error. */
 export interface UiActions {
   merge(intent: string): Promise<string>;
+  /** AUT-23: a maintainer or admin confirms an intent whose writer has a lower role or none. */
+  confirm?(intent: string): Promise<string>;
   reply(intent: string, text: string): Promise<string>;
+  /** CHAT-8: the owner's chat message: sent as a reply when the intent waits on them, else queued. */
+  chat?(intent: string, text: string): Promise<string>;
+  /** CHAT-8: send the queued messages of intents that now wait on the owner. */
+  deliverChats?(): Promise<void>;
   retry(intent: string): Promise<string>;
   /** UI-167: lift the freeze of a multi-repo intent (`towercab unfreeze`). */
   unfreeze(intent: string): Promise<string>;
-  drop(intent: string): Promise<string>;
+  /** LOOP-76: `confirmed` when the owner saw the warning of an open PR with commits that this closes. */
+  drop(intent: string, confirmed?: boolean): Promise<string>;
   start(intent: string): Promise<string>;
+  /** LOOP-76: what closing the intent's open code PR would lose, for a confirm that is not the page's (Telegram). */
+  closeWarning?(intent: string): Promise<ExitWarning | null>;
   /** UI-168, PIP-143: pass a change the automated review didn't approve on to the teammates. */
   pass?(intent: string): Promise<string>;
   /** UI-160, SHIP-22: tick (or untick) one of the owner's steps. */
@@ -62,9 +76,9 @@ export interface UiActions {
   /** PIP-150: the owner granted the App Code scanning alerts (read); alerts are read again. */
   scanningGranted?(): Promise<string>;
   /** UI-164, LOOP-76: "I did it myself": ends the intent; the note becomes a ticked step. */
-  done?(intent: string, note: string): Promise<string>;
+  done?(intent: string, note: string, confirmed?: boolean): Promise<string>;
   /** UI-164, PIP-113: the owner does it by hand; the intent becomes steps. */
-  steps?(intent: string): Promise<string>;
+  steps?(intent: string, confirmed?: boolean): Promise<string>;
   /**
    * AUT-34, AUT-35, UI-257: set the intent's autonomy to `a` (0–5) in one commit. Only the page (actor
    * `owner` or none) may; a raise from any other actor is refused, and so is a lowering by the shadow.
@@ -170,6 +184,8 @@ export interface ActionDeps {
   proposed?: () => ProposedPr[];
   /** SHIP-35: writes a typed secret; none: the page can't take one. */
   supplySecret?: (intent: string, n: number, value: string) => Promise<string>;
+  /** LOOP-76: every exit that reaches these actions was already confirmed in the caller's own words (Telegram). */
+  confirmed?: boolean;
   /** The new intent form (UI-213..218); without it the page can't create intents. */
   intentTools?: IntentTools | null;
   /** SHD-12: the shadow's own actions: what it writes on GitHub starts with `[shadow] `. */
@@ -205,12 +221,25 @@ function firstLine(s: string): string {
 export function createActions(d: ActionDeps): UiActions {
   const command = (name: string, arg = "", text = "") => {
     d.db.run(
-      "INSERT INTO commands (name, arg, text, source, created) VALUES (?, ?, ?, 'ui', ?)",
+      "INSERT INTO commands (name, arg, text, source, created, actor, via) VALUES (?, ?, ?, 'ui', ?, ?, ?)",
       name,
       arg,
       text,
       d.clock.now(),
+      ...actorColumns(),
     );
+  };
+  // USR-10: with sign-in, the PR says who decided. Towercab comments as itself; without sign-in nothing changes.
+  const person = (): Actor | null => {
+    if (!d.config?.auth) return null;
+    const a = currentActor();
+    return a.login === TOWERCAB.login ? null : a;
+  };
+  const announce = async (p: { github: string; number: number }, verb: Decision) => {
+    const a = person();
+    // As the App, not the owner: the owner's own comments are read as feedback.
+    const app = "gh" in d.github ? forgeOf(d.github as GitHub) : null;
+    if (a && app) await app.commentOnPr(p.github, p.number, decidedByComment(a, verb), { inline: true });
   };
   const pr = (m: Mission | undefined) => (m ? currentPr(m, d.config, d.store.github()) : null);
   const of = ownerForge(d.github.owner);
@@ -221,7 +250,14 @@ export function createActions(d: ActionDeps): UiActions {
 
   /** UI-105, UI-106: remember the action for display and ask the loop to read the PR on its next pass. */
   const done = (m: Mission, p: { number: number } | null, action: DoneNote["action"]) => {
-    const note: DoneNote = { action, stage: m.stage, pr: p?.number ?? 0, at: d.clock.now() };
+    const who = currentActor();
+    const note: DoneNote = {
+      action,
+      stage: m.stage,
+      pr: p?.number ?? 0,
+      at: d.clock.now(),
+      ...(d.config?.auth ? { by: who.login, via: who.via } : {}),
+    };
     d.db.tx(() => {
       const fresh = getMission(d.db, m.id);
       if (!fresh || fresh.stage !== m.stage) return;
@@ -238,6 +274,13 @@ export function createActions(d: ActionDeps): UiActions {
       throw new Error(`You already ${PAST[n.action]} the ${p.label} #${p.number}; Towercab is moving on.`);
     }
     return `Already ${PAST[action]}; Towercab is moving on.`;
+  };
+
+  /** LOOP-76: an exit that closes the mission's open code PR with commits needs the owner's confirmation. */
+  const closing = async (m: Mission | undefined, confirmed: boolean) => {
+    if (confirmed || d.confirmed || !m?.pr) return;
+    const w = await exitWarning(of, d.config.repos.get(m.repo)?.github ?? null, m.pr);
+    if (w) throw new ExitNeedsConfirm(w);
   };
 
   /** INT-53: the PR as GitHub has it now, read as the owner. */
@@ -330,6 +373,8 @@ export function createActions(d: ActionDeps): UiActions {
         o.mode,
       );
       made.set(key, { at: now, id: c.id || `PR #${c.pr}` });
+      // AUT-23: the writer is the signed-in person; the file's own lines say nothing about it.
+      if (d.config?.auth && c.id) recordWriter(d.db, c.id, currentActor().login, now);
       if (c.proposal) {
         return {
           id: c.id,
@@ -368,6 +413,17 @@ export function createActions(d: ActionDeps): UiActions {
       refused(await of.closePr(now.repo, n, why), `close PR #${n}`);
       readNow();
       return `Closed PR #${n}. The intent never reaches main.`;
+    },
+
+    async confirm(intent) {
+      const found = await d.store.get(intent);
+      if (found.done) throw new Error("It is done or dropped.");
+      const who = currentActor();
+      if (!confirmIntent(d.db, found.id, who.login, d.clock.now())) {
+        return "Already confirmed: nothing changes.";
+      }
+      command("confirm", found.id);
+      return `Confirmed by ${who.name}: it can run now.`;
     },
 
     async merge(intent) {
@@ -429,8 +485,13 @@ export function createActions(d: ActionDeps): UiActions {
       // SHD-12: the PR says who asked for the merge.
       if (tag)
         await of.commentOnPr(p.github, p.number, `${tag}Merging on your yes in Telegram.`, { inline: true });
+      await announce(p, "approved");
+      const by = person();
       refused(
-        await of.mergePr(p.github, p.number, { method: MERGE_METHOD }),
+        await of.mergePr(p.github, p.number, {
+          method: MERGE_METHOD,
+          ...(by ? { body: approvedByLine(by) } : {}),
+        }),
         `merge the ${p.label} #${p.number}`,
       );
       done(m, p, "merge");
@@ -454,7 +515,8 @@ export function createActions(d: ActionDeps): UiActions {
     },
 
     async reply(intent, text) {
-      const body = `${tag}${text.trim()}`;
+      const by = person();
+      const body = `${tag}${by ? `${decidedByComment(by, "answered")}:\n\n` : ""}${text.trim()}`;
       if (!text.trim()) throw new Error("Write a reply first.");
       if (body.length > MAX_REPLY) throw new Error(`The reply is too long: at most ${MAX_REPLY} characters.`);
       const m = unfinishedFor(d.db, intent);
@@ -468,6 +530,56 @@ export function createActions(d: ActionDeps): UiActions {
       }
       command("answer", intent, body);
       return "Answer saved to the intent. Towercab goes on with it on its next pass.";
+    },
+
+    async chat(intent, text) {
+      const t = text.trim();
+      if (!t) throw new Error("Write a message first.");
+      if (t.length > MAX_CHAT) throw new Error(`The message is too long: at most ${MAX_CHAT} characters.`);
+      if (hasEnded(forIntent(d.db, intent)))
+        throw new Error("This intent has ended, so nothing reads new messages. Write a new intent instead.");
+      const list = queuedOf(d.db, intent);
+      const id = list.reduce((n, q) => Math.max(n, q.id), 0) + 1;
+      list.push({ id, at: d.clock.now(), by: d.actor ?? "you", text: t, status: "queued", note: null });
+      saveQueued(d.db, intent, list);
+      await this.deliverChats?.();
+      const sent = queuedOf(d.db, intent).find((q) => q.id === id);
+      return sent?.status === "sent"
+        ? (sent.note ?? "Sent.")
+        : sent?.status === "failed"
+          ? `Not sent: ${sent.note}`
+          : "Queued: it goes in when the intent next waits on you.";
+    },
+
+    async deliverChats() {
+      for (const intent of intentsWithQueued(d.db)) {
+        const m = unfinishedFor(d.db, intent);
+        const list = queuedOf(d.db, intent);
+        if (!m && !hasEnded(forIntent(d.db, intent))) continue;
+        if (!m) {
+          for (const q of list)
+            if (q.status === "queued")
+              Object.assign(q, { status: "failed", note: "The intent ended first." });
+          saveQueued(d.db, intent, list);
+          continue;
+        }
+        // CHAT-8: never while a worker runs; the reply is how a waiting intent takes the owner's words.
+        if (!waitsOnOwner(m)) continue;
+        const waiting = list.filter((q) => q.status === "queued");
+        if (!waiting.length) continue;
+        const body = waiting.map((q) => q.text).join("\n\n");
+        let note: string;
+        let status: "sent" | "failed" = "sent";
+        try {
+          note = await this.reply(intent, body);
+        } catch (e) {
+          status = "failed";
+          note = (e as Error).message;
+        }
+        const fresh = queuedOf(d.db, intent);
+        for (const q of fresh) if (waiting.some((w) => w.id === q.id)) Object.assign(q, { status, note });
+        saveQueued(d.db, intent, fresh);
+      }
     },
 
     async scanningGranted() {
@@ -493,6 +605,12 @@ export function createActions(d: ActionDeps): UiActions {
       return "Towercab starts it over on its next pass.";
     },
 
+    async closeWarning(intent) {
+      const m = unfinishedFor(d.db, intent);
+      if (!m?.pr) return null;
+      return exitWarning(of, d.config.repos.get(m.repo)?.github ?? null, m.pr);
+    },
+
     async unfreeze(intent) {
       const m = unfinishedFor(d.db, intent);
       if (m?.stage !== "blocked" || m.waiting !== "freeze")
@@ -501,14 +619,23 @@ export function createActions(d: ActionDeps): UiActions {
       return "Towercab lifts the freeze on its next pass.";
     },
 
-    async drop(intent) {
+    async drop(intent, confirmed = false) {
       const m = unfinishedFor(d.db, intent);
       const p = pr(m);
       if (m && p) {
         const again = repeated(m, p, "drop");
         if (again) return again;
+        await closing(m, confirmed);
         refused(
-          await of.closePr(p.github, p.number, tag ? `${tag}Dropped on your yes in Telegram.` : undefined),
+          await of.closePr(
+            p.github,
+            p.number,
+            tag
+              ? `${tag}Dropped on your yes in Telegram.`
+              : person()
+                ? decidedByComment(person()!, "dropped")
+                : undefined,
+          ),
           `close the ${p.label} #${p.number}`,
         );
         done(m, p, "drop");
@@ -535,7 +662,10 @@ export function createActions(d: ActionDeps): UiActions {
       if (!Number.isInteger(a) || a < 0 || a > 5) throw new Error("Autonomy is a0 to a5.");
       const found = await d.store.get(intent);
       // UI-206: a5 is for the owner's own intents; the page doesn't offer it, and the API refuses it.
-      if (a === 5 && !ownSource(found.source)) throw new Error("a5 is only for your own intents.");
+      if (a === 5 && !d.config?.auth && !ownSource(found.source))
+        throw new Error("a5 is only for your own intents.");
+      if (a === 5 && d.config?.auth && !mayFull(authorityOf(d.db, found.id, found.repo)))
+        throw new Error("a5 is only for intents an admin or maintainer wrote or confirmed.");
       const flag = flagOf(d.db, found.id);
       const shown = flag ? flag.from : writtenLevel(found);
       const owner = d.actor !== "shadow" && (actor === "" || actor === "owner");
@@ -615,9 +745,16 @@ export function createActions(d: ActionDeps): UiActions {
       }
       const found = await d.store.get(intent);
       if (found.done) throw new Error("It is done or dropped.");
-      if (!canBoostIntent(found)) throw new Error("a5 is only for your own intents.");
+      if (d.config?.auth ? !mayFull(authorityOf(d.db, found.id, found.repo)) : !canBoostIntent(found))
+        throw new Error(
+          d.config?.auth
+            ? "a5 is only for intents an admin or maintainer wrote or confirmed."
+            : "a5 is only for your own intents.",
+        );
       const started = unfinishedFor(d.db, found.id) || d.db.meta(`start:${found.id}`) !== null;
       command("boost", found.id);
+      const bp = pr(unfinishedFor(d.db, found.id));
+      if (bp) await announce(bp, "boosted");
       if (started) return "Boosted: a5. It runs from the next gate.";
       if (intentPaused(d.db, found.id)) return "Boosted: a5. It is paused, so it starts when you resume it.";
       return "Boosted: a5 and design started.";
@@ -646,17 +783,19 @@ export function createActions(d: ActionDeps): UiActions {
       return approveSecret(d.db, d.clock, intent, n);
     },
 
-    async done(intent, note) {
+    async done(intent, note, confirmed = false) {
       const m = unfinishedFor(d.db, intent);
       if (!m) throw new Error("Nothing to finish: this intent isn't waiting on you.");
+      await closing(m, confirmed);
       command("done", intent, note.trim().slice(0, 300));
       done(m, pr(m), "done");
       return "Marked as done by you. Towercab ends the intent on its next pass.";
     },
 
-    async steps(intent) {
+    async steps(intent, confirmed = false) {
       const m = unfinishedFor(d.db, intent);
       if (!m) throw new Error("Nothing to switch: this intent isn't waiting on you.");
+      await closing(m, confirmed);
       command("steps", intent);
       done(m, pr(m), "steps");
       return "Switched to steps for you to do. Towercab sets it up on its next pass.";

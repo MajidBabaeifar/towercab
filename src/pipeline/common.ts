@@ -26,6 +26,7 @@ import {
 import type { ReplyTarget } from "../github/events.ts";
 import { PausedHold } from "../github/paused.ts";
 import { type ChildEnd, type Ctx, EnvError, type GitHub, type Progress } from "../handlers.ts";
+import { authorityOf } from "../intent-people.ts";
 import { plainLine, SUBJECT_MAX } from "../intents/naming.ts";
 import type { Intent } from "../intents/types.ts";
 import type { REFACTOR_PROOF } from "../kind.ts";
@@ -33,10 +34,12 @@ import { cooldown } from "../limits.ts";
 import { type Outcome, wait } from "../machine.ts";
 import { dataOf, type Mission } from "../mission.ts";
 import { capReached, isMulti, runBudget } from "../parts.ts";
-import { loadRepoFiles, RepoError, type RepoFiles } from "../repo/files.ts";
+import { RepoError, type RepoFiles, type Verifying } from "../repo/files.ts";
+import { loadOverlay, loadRepoFilesWith } from "../repo/overlay.ts";
 import type { Risk } from "../risk.ts";
 import { checkoutRoot } from "../service.ts";
 import { combine, type OwnerStep, type PlanStep, parseNoneLive, parseSteps } from "../steps.ts";
+import { keepTranscript } from "../ui/chat.ts";
 import { grantsFor, parseAccess, type TestAsk } from "./access.ts";
 import type { Mech } from "./mechanical.ts";
 import { foldMd, plainMd, splitTwoPart, twoPartMd } from "./prtext.ts";
@@ -316,6 +319,8 @@ export interface PipeData {
   /** Session cost already counted (MET-28). */
   sessionCost?: Record<string, number>;
   mergeTries?: number;
+  /** REPO-49: the checks the overlay gave at pick; kept when the repo later has its own. */
+  pinnedChecks?: Verifying;
   /** Someone else's commits are on the branch (takeRemote, CI's adopted head). */
   foreignHead?: boolean;
   /** Merge asked GitHub to update the branch: the next moved head is that, not someone else's. */
@@ -372,9 +377,21 @@ export function cloneOf(cx: Ctx, m: Mission): string {
 /** The repo files from the base branch of Towercab's clone (REPO-1). */
 export async function repoFiles(cx: Ctx, m: Mission): Promise<RepoFiles> {
   try {
-    const files = await loadRepoFiles(cx.tools, cloneOf(cx, m), cx.repo(m).base, cx.repo(m).github);
+    const repo = cx.repo(m);
+    const files = await loadRepoFilesWith(
+      cx.tools,
+      cloneOf(cx, m),
+      repo.base,
+      repo.github,
+      loadOverlay(cx.config.file, repo.name),
+    );
     // UI-257: the page shows a repo's cap beside the autonomy control.
     cx.db.setMeta(`a-cap:${m.repo}`, String(files.towercab.maxAutonomy));
+    // REPO-49: an intent that started on the overlay's checks keeps them when the repo gains its own.
+    const pinned = data(m).pinnedChecks;
+    if (pinned && files.replaced && files.sources) {
+      return { ...files, verifying: pinned, sources: { ...files.sources, checks: "overlay" } };
+    }
     return files;
   } catch (e) {
     if (e instanceof RepoError && e.kind === "git") throw new EnvError("github", e.message);
@@ -390,8 +407,13 @@ export function repoFilesWait(e: unknown): Outcome | null {
   return null;
 }
 
-export function effectiveOf(_m: Mission, intent: Intent, files: RepoFiles): number {
-  return effectiveA(intent.a, files.towercab.maxAutonomy, intent.source);
+/** AUT-23: with `[auth]`, the role of the intent's writer or confirmer at this moment, else undefined. */
+export function authorityFor(cx: Ctx | undefined, m: Mission, intent: Intent): number | undefined {
+  return cx?.config?.auth ? authorityOf(cx.db, intent.id, m.repo) : undefined;
+}
+
+export function effectiveOf(m: Mission, intent: Intent, files: RepoFiles, cx?: Ctx): number {
+  return effectiveA(intent.a, files.towercab.maxAutonomy, intent.source, authorityFor(cx, m, intent));
 }
 
 /**
@@ -400,10 +422,11 @@ export function effectiveOf(_m: Mission, intent: Intent, files: RepoFiles): numb
  */
 export function gateLevelOf(cx: Ctx, m: Mission, intent: Intent, files: RepoFiles): number {
   return gateLevel(
-    effectiveOf(m, intent, files),
+    effectiveOf(m, intent, files, cx),
     intent.fast === true && fastConfirmed(cx.db, intent.id),
     files.towercab.maxAutonomy,
     intent.source,
+    authorityFor(cx, m, intent),
   );
 }
 
@@ -411,7 +434,7 @@ export function gateLevelOf(cx: Ctx, m: Mission, intent: Intent, files: RepoFile
 export function grants(m: Mission, intent: Intent, files: RepoFiles, _cx?: Ctx) {
   const d = data(m);
   return grantsFor({
-    a: effectiveOf(m, intent, files),
+    a: effectiveOf(m, intent, files, _cx),
     source: intent.source,
     plan: d.granted ?? null,
     unlock: intent.unlock,
@@ -605,6 +628,8 @@ export function ended<T>(
 ): Ended<T> {
   const out = readText(end.stdout);
   const err = readText(end.stderr);
+  // CHAT-4: keep the run's transcript next to its result before Claude Code's cleanup can remove it.
+  keepTranscript(end.stdout);
   // The model that ran (the review's may differ from the mission's): a limit cools that one.
   const model = m.child_model ?? m.model;
   const e: RunEnd = parseRun(out, err, end.code, {

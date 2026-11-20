@@ -12,12 +12,14 @@ import { slotsText } from "../capacity.ts";
 import { agentCommentNotes, ignoredNotes, intentPaused } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db.ts";
+import { generalWarningText, warningText } from "../exit-warning.ts";
 import { fastConfirmed } from "../fast.ts";
 import { fastLine, laneOf } from "../fast-lane.ts";
 import { frozenBy } from "../freeze.ts";
 import type { ProposedState } from "../github/proposed.ts";
 import type { Clock } from "../handlers.ts";
 import type { Home } from "../home.ts";
+import { peopleOf } from "../intent-people.ts";
 import type { Intent, IntentStore, Listing } from "../intents/types.ts";
 import {
   isKind,
@@ -63,6 +65,7 @@ import { whoText } from "../teammates.ts";
 import { budgetsView, capCards, topBudget } from "./budget-view.ts";
 import { estimateFor, estimateLine, frozenEstimate } from "./estimate.ts";
 import { freezeHold, freezeLine, partViews, repoSummary } from "./parts-view.ts";
+import { byLabel, decidersOf, lastBy, nameOf } from "./people-view.ts";
 import { proposedSection } from "./proposed.ts";
 import { spendPeriods } from "./spend.ts";
 import type {
@@ -198,6 +201,8 @@ export interface UiSources {
   proposed?(): ProposedState;
   /** Recent loop log lines; without it, the first lines of `towercab.log`'s entries. */
   logs?(): LogLine[];
+  /** AUT-23: the open intents held until a maintainer confirms them. */
+  unconfirmed?(): string[];
 }
 
 export interface Transition {
@@ -208,6 +213,9 @@ export interface Transition {
   event: string;
   to_stage: Stage;
   why: string | null;
+  /** USR-8: who made the move and how; empty before people were recorded. */
+  actor?: string;
+  via?: string;
 }
 
 const DAY = 86_400;
@@ -548,6 +556,8 @@ type MissionData = {
   doneByYou?: DoneNote;
   /** LOOP-77: the wait came back with nothing new. */
   stuck?: boolean;
+  /** LOOP-76: written by the loop's PR read. */
+  openPr?: { number: number; commits: number | null } | null;
   /** PIP-143: the change waits for the owner to pass it on to the teammates. */
   teammate?: { passNeeded?: boolean };
   /** PIP-147: the host asks for approvals the reviewers can't give. */
@@ -589,6 +599,9 @@ export interface DoneNote {
   stage: string;
   pr: number;
   at: number;
+  /** USR-8: with `[auth]`, who did it and how. */
+  by?: string;
+  via?: string;
 }
 
 /** UI-108: after this long without a move, the card stops promising one. */
@@ -616,9 +629,11 @@ export function doneOf(src: UiSources, m: Mission, now: number): Card["done"] {
   if (!n) return null;
   const age = now - n.at;
   const stuck = age >= STUCK_AFTER_S;
+  // USR-8: with people set up the line names who did it.
+  const who = n.by ? (byLabel(src.db, n.by, n.via) ?? "you") : "you";
   const text = stuck
-    ? `${DONE_WORDS[n.action]} by you ${ago(n.at, now)}, but Towercab has not moved on yet`
-    : `${DONE_WORDS[n.action]} by you · Towercab moves on within a minute`;
+    ? `${DONE_WORDS[n.action]} by ${who} ${ago(n.at, now)}, but Towercab has not moved on yet`
+    : `${DONE_WORDS[n.action]} by ${who} · Towercab moves on within a minute`;
   return { action: n.action, text, stuck };
 }
 
@@ -943,6 +958,14 @@ export function releaseCard(h: Held, now: number): Card {
   };
 }
 
+/** LOOP-76: the loop's note of the open code PR, with the words of the confirm. */
+function openPrView(o: { number: number; commits: number | null }) {
+  return {
+    ...o,
+    text: o.commits === null ? generalWarningText() : warningText(o.number, o.commits),
+  };
+}
+
 /** A release card has no wait of its own: no ways out to offer and nothing stuck (the fields #173 added to `Card`). */
 const RELEASE_WAIT = { exits: [], stuck: false };
 
@@ -1039,6 +1062,7 @@ export function missionCard(
     ...(fast ? { fast } : {}),
     ...(points.length ? { openPoints: points } : {}),
     ...installHelpOf(src, m.why),
+    ...(src.config.auth ? peopleOnCard(src, m, done) : {}),
     // UI-245: the checklist of UI-160 rides on the card.
     ...(onSteps(m) && stepViewsOf(src, m, now).length ? { steps: stepViewsOf(src, m, now) } : {}),
     intent: m.intent,
@@ -1059,6 +1083,7 @@ export function missionCard(
     actions,
     exits,
     stuck,
+    ...(!done && dataOf<MissionData>(m).openPr ? { openPr: openPrView(dataOf<MissionData>(m).openPr!) } : {}),
     mergeLabel: approval && pr && !done && !passing ? MERGE_LABELS[kind]! : null,
     done,
     addRepo: null,
@@ -1069,6 +1094,33 @@ export function missionCard(
       : {}),
     ...(partsOf(m).length > 0 ? { parts: partViews(m, (r, n) => prUrlOf(src, r, n)) } : {}),
     ...(waitingPart ? { partRepo: waitingPart.repo } : {}),
+  };
+}
+
+/** UI-221: with `[auth]`, who made the last move, who may decide, and who already handled the wait. */
+function peopleOnCard(src: UiSources, m: Mission, done: Card["done"]): Partial<Card> {
+  const last = lastBy(src.db, m.id);
+  const note = done ? dataOf<MissionData>(m).doneByYou : undefined;
+  return {
+    ...(last ? { lastBy: last } : {}),
+    alsoCanDecide: decidersOf(src.db, m.repo),
+    ...(note?.by ? { handledBy: byLabel(src.db, note.by, note.via) ?? note.by } : {}),
+  };
+}
+
+/** AUT-23: an intent held until a maintainer confirms it, as a card for the Inbox. */
+export function confirmCard(src: UiSources, i: Intent): Card {
+  const writer = peopleOf(src.db, i.id)?.writer;
+  return {
+    ...intentCard(i, src.config),
+    kind: "blocked",
+    kindLabel: "Confirm",
+    ask: "Confirm that this intent may run",
+    why: writer
+      ? `${nameOf(src.db, writer)} wrote it and can't start work on their own. Confirm it to let it run.`
+      : "No known account wrote it, so it waits for you to confirm it.",
+    actions: ["confirm"],
+    alsoCanDecide: decidersOf(src.db, i.repo),
   };
 }
 
@@ -2661,6 +2713,7 @@ export async function intentPage(src: UiSources, id: string): Promise<IntentPage
         why: t.to_stage === "stopped" ? null : t.why,
         lasted: next ? duration(next.at - t.at) : null,
         tone: t.to_stage === "done" ? "done" : kind === "log" ? "move" : kind,
+        ...(byLabel(src.db, t.actor, t.via) ? { by: byLabel(src.db, t.actor, t.via)! } : {}),
       });
     });
   }

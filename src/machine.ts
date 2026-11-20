@@ -1,6 +1,7 @@
 // The one state machine (LOOP-3, **Transitions**, **Waits**). Only `apply` moves a mission.
 // A red line (REVIEW.md): a wrong move here merges, stops or loses work silently.
 
+import { actorColumns } from "./actor.ts";
 import type { Db, SqlValue } from "./db.ts";
 import { isKind, needsDesign } from "./kind.ts";
 import { COLUMNS, dataOf, getMission, insertMission, type Mission } from "./mission.ts";
@@ -456,7 +457,8 @@ export const EXITS: Record<string, ExitKind[]> = {
   "freeze lifted": ["continue", "drop"],
   "rolled back, revise": BASIC,
   "rollback failed": BASIC,
-  "your steps first": BASIC,
+  // LOOP-76: both steps waits offer `done`; the open code PR is closed behind a confirm.
+  "your steps first": ["continue", "done", "retry", "drop"],
   "your steps": ["tick", "done", "retry", "drop"],
 };
 
@@ -501,6 +503,12 @@ export function exitsOf(waiting: string, stuck = false, code = false): Exit[] {
             : (FREEZE_LABELS[waitKey(waiting)]?.[k] ?? EXIT_LABELS[k]),
       }))
   );
+}
+
+/** The exits in plain words for a sentence: `retry or drop`, `steps, done, retry or drop` (LOOP-77). */
+export function listExits(exits: Exit[]): string {
+  const words = exits.map((e) => e.do as string);
+  return words.length > 1 ? `${words.slice(0, -1).join(", ")} or ${words.at(-1)}` : (words[0] ?? "");
 }
 
 /** The event an exit sends to the machine at a wait's stage (LOOP-76's walk uses it). */
@@ -743,13 +751,14 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
       }
       write(cols);
       db.run(
-        "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why, actor, via) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         cur.id,
         now,
         cur.stage,
         o.event,
         to,
         why,
+        ...actorColumns(),
       );
       cx.log?.(`${cur.intent} ${cur.stage} → ${to} (${o.event}${why ? `: ${oneLine(why, 120)}` : ""})`);
     };
@@ -810,13 +819,14 @@ export function apply(cx: ApplyCtx, m: Mission, o: Outcome): Mission {
         write({ ...set, step: cur.step === "enter" ? "enter" : cur.step, busy: 0 });
         if (o.record) {
           db.run(
-            "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO transitions (mission, at, from_stage, event, to_stage, why, actor, via) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             cur.id,
             now,
             cur.stage,
             o.event,
             cur.stage,
             o.why ?? null,
+            ...actorColumns(),
           );
         }
         break;

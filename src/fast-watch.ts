@@ -1,17 +1,20 @@
 // FAST-9: a `fast:` mark pushed to the intents repo skips approvals only when the owner's GitHub account made it
 // (the same proof as a raise of `a`, AUT-35). Any other mark stays unconfirmed, noted once on the timeline.
 
-import { judgeProof } from "./autonomy-change.ts";
+import { judgeAccount, judgeProof } from "./autonomy-change.ts";
 import { noteIgnored } from "./commands.ts";
 import type { Db } from "./db.ts";
 import { clearFast, confirmFast, fastConfirmed, fastFromCli, seenFast, setSeenFast } from "./fast.ts";
 import type { Forge } from "./forge.ts";
 import type { IntentStore, Listing } from "./intents/types.ts";
+import type { Person } from "./users.ts";
 
 export interface FastWatchDeps {
   db: Db;
   store: IntentStore;
   forge: Pick<Forge, "commitProof" | "me">;
+  /** USR-5: with `[auth]`, the people; a mark counts when its account may `confirm` on the intent's repo. */
+  users?: (login: string) => Person | null;
   /** Unix seconds. */
   now: number;
   log(line: string): void;
@@ -47,7 +50,7 @@ export async function watchFast(d: FastWatchDeps, listing: Listing): Promise<voi
         continue;
       }
     }
-    const v = judgeProof(proof, d.forge.me);
+    const v = d.users ? judgeAccount(proof, d.users, "confirm", i.repo) : judgeProof(proof, d.forge.me);
     if (v.owner) {
       confirmFast(db, i.id);
       continue;

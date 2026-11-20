@@ -214,6 +214,13 @@ export class FakeForge implements Forge {
     const p = this.pr(repo, n);
     return { state: p.state, draft: p.draft, head: p.head, merged: p.state === "MERGED" };
   }
+  /** LOOP-76: commits per PR, as `<repo>#<n>`; a PR not listed has none. */
+  readonly commitCounts = new Map<string, number>();
+  async prCommits(repo: string, n: number): Promise<{ state: string; commits: number }> {
+    const p = this.pr(repo, n);
+    return { state: p.state, commits: this.commitCounts.get(`${repo}#${n}`) ?? 0 };
+  }
+
   async prFiles(): Promise<FileChange[]> {
     return [];
   }

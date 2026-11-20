@@ -22,6 +22,14 @@ export function ownSource(source: string | null): boolean {
   return source === null || source === "" || source === "me";
 }
 
+/**
+ * AUT-13, AUT-23: whether a5 is open to the intent. With `[auth]` (an `authority`, from `authorityOf`) the
+ * writer's or confirmer's role decides, never the file's `source`; without it the source does.
+ */
+export function fullAllowed(source: string | null, authority?: number): boolean {
+  return authority === undefined ? ownSource(source) : authority >= 2;
+}
+
 /** The `a` an intent without one counts as (AUT-9): full autonomy, under the caps below. */
 export const DEFAULT_A = 5;
 
@@ -29,9 +37,14 @@ export const DEFAULT_A = 5;
  * Effective `a` (AUT-8, AUT-9, AUT-13): the minimum of the intent's current `a` and the repo cap; no `a` →
  * a5 (`DEFAULT_A`). An intent whose `source` isn't `me` gets at most 4.
  */
-export function effectiveA(aNow: number | null, cap: number, source: string | null): number {
+export function effectiveA(
+  aNow: number | null,
+  cap: number,
+  source: string | null,
+  authority?: number,
+): number {
   const a = Math.min(aNow ?? DEFAULT_A, cap);
-  return ownSource(source) ? a : Math.min(a, 4);
+  return fullAllowed(source, authority) ? a : Math.min(a, 4);
 }
 
 /**
@@ -39,14 +52,20 @@ export function effectiveA(aNow: number | null, cap: number, source: string | nu
  * fast-lane mark the owner confirmed applies the a5 rows of AUT-18, still under the repo's cap and the
  * `source` rule; it never lowers a level and never touches an a0 intent. Access grants keep using `a`.
  */
-export function gateLevel(a: number, confirmedFast: boolean, cap: number, source: string | null): number {
+export function gateLevel(
+  a: number,
+  confirmedFast: boolean,
+  cap: number,
+  source: string | null,
+  authority?: number,
+): number {
   if (a === OWNER_ONLY || !confirmedFast) return a;
-  return Math.max(a, effectiveA(DEFAULT_A, cap, source));
+  return Math.max(a, effectiveA(DEFAULT_A, cap, source, authority));
 }
 
 /** AUT-9, AUT-13, AUT-35: the level an intent gets when its `a:` line is missing. */
-export function defaultLevel(source: string | null): number {
-  return ownSource(source) ? DEFAULT_A : 4;
+export function defaultLevel(source: string | null, authority?: number): number {
+  return fullAllowed(source, authority) ? DEFAULT_A : 4;
 }
 
 /** UI-257: what Towercab may do without asking at each level, for the confirm step of a raise. */

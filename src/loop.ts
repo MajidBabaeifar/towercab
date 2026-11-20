@@ -2,9 +2,10 @@
 // work, sends messages. Single-threaded: children run detached and are reaped on the next pass.
 
 import { readFileSync, rmSync, statSync } from "node:fs";
+import { type Actor, runAs } from "./actor.ts";
 import { type AfterHold, afterState, heldText, holdTrigger, nextHold } from "./after.ts";
 import { ownerOnly } from "./autonomy.ts";
-import { levelNow } from "./autonomy-change.ts";
+import { levelNow, verifiedLogin } from "./autonomy-change.ts";
 import { watchAutonomy } from "./autonomy-watch.ts";
 import { Inhibitor, woke } from "./awake.ts";
 import { type Cap, capKey, capReason, capsOf, needsRun, reloadBudgets, runDue } from "./budgets.ts";
@@ -13,6 +14,7 @@ import { removeCheckout } from "./checkout.ts";
 import { applyPending, intentPaused, noteIgnored, paused, recordAgentComment } from "./commands.ts";
 import { type Config, clonePath, type RepoConfig } from "./config.ts";
 import type { Db, SqlValue } from "./db.ts";
+import { exitWarning } from "./exit-warning.ts";
 import { isHolder, laneOf, stampsFor } from "./fast-lane.ts";
 import { watchFast } from "./fast-watch.ts";
 import { fixFor, Health } from "./faults.ts";
@@ -39,6 +41,9 @@ import {
   feedbackTargets,
   ignoredReplies,
   intentEvents,
+  isBot,
+  newer,
+  type Prs,
   prEvents,
   type ReleaseRepo,
   releaseRequested,
@@ -46,6 +51,7 @@ import {
   reversalRequested,
   staleApprovalNotices,
   type TeamReads,
+  voiceNotes,
 } from "./github/events.ts";
 import { pollIssues } from "./github/issues.ts";
 import { holdPushes, holdStore, holdWrites, PausedHold } from "./github/paused.ts";
@@ -57,9 +63,11 @@ import {
   type ProposedState,
 } from "./github/proposed.ts";
 import { closeIfOpen, type PrState } from "./github/prs.ts";
+import { type Voices, voicesFor } from "./github/voices.ts";
 import { type ChildEnd, type Clock, type Ctx, EnvError, type Handlers, type Host } from "./handlers.ts";
 import { readHead } from "./head.ts";
 import type { Home } from "./home.ts";
+import { authorityOf, mayStart, peopleOf, recordWriter } from "./intent-people.ts";
 import { removeFeature, setFeature } from "./intents/features.ts";
 import {
   type Intent,
@@ -109,7 +117,7 @@ import { evaluate } from "./pipeline/teammate.ts";
 import { isParked, priority } from "./priority.ts";
 import { conflictHeld, headOf, landingOf } from "./queue.ts";
 import { blockingRepos, startReadiness as startReadinessCheck } from "./readiness.ts";
-import { loadRepoFiles } from "./repo/files.ts";
+import { loadOverlay, loadRepoFilesWith } from "./repo/overlay.ts";
 import { pollRepoSettings } from "./repo/poll.ts";
 import { missingText } from "./repo/readiness.ts";
 import { recordParser } from "./repo/settings.ts";
@@ -146,6 +154,8 @@ import {
 } from "./tools.ts";
 import { freezeEstimate } from "./ui/estimate.ts";
 import { checkUpdate, RESTART_CODE } from "./update.ts";
+import { getUser } from "./users-store.ts";
+import { detectWsl } from "./wsl.ts";
 
 /** LOOP-115: the stages a change reaches when its CI is green; it holds no slot while it waits in them. */
 const LATER_THAN_CI: ReadonlySet<string> = new Set(["review", "gate", "merge"]);
@@ -476,6 +486,7 @@ export class Loop {
           home: this.d.home.root,
           now,
           repos: this.d.config.repos,
+          configFile: this.d.config.file,
           exclusive: <T>(fn: () => Promise<T>) => this.cloneLock.run(fn),
         },
         this.d.log,
@@ -587,6 +598,8 @@ export class Loop {
   /** The pass loop until stopped (LOOP-12). */
   async run(): Promise<number> {
     await this.open();
+    // LOOP-142: under WSL, keep Windows awake with a powershell.exe child.
+    this.inhibitor.setWsl((await detectWsl(this.d.tools)) !== null);
     let inFlight: Promise<PassReport> | undefined;
     while (!this.stopping) {
       const pass = this.pass();
@@ -1182,12 +1195,14 @@ export class Loop {
     }
     const listing = this.listing;
     const db = this.d.db;
+    await this.recordWriters(listing);
+    const users = this.d.config.auth ? (login: string) => getUser(db, login) : undefined;
     await watchAutonomy(
-      { db, store: this.d.store, forge: this.d.github, now: this.now, log: this.d.log },
+      { db, store: this.d.store, forge: this.d.github, now: this.now, log: this.d.log, users },
       listing,
     );
     await watchFast(
-      { db, store: this.d.store, forge: this.d.github, now: this.now, log: this.d.log },
+      { db, store: this.d.store, forge: this.d.github, now: this.now, log: this.d.log, users },
       listing,
     );
     for (const m of unfinished(db)) {
@@ -1590,7 +1605,50 @@ export class Loop {
     };
   }
 
+  /** USR-9: who may speak on this intent's PRs; none without `[auth]`, so the owner's login decides (PIP-44). */
+  private voicesFor(m: Mission, repoGithub: string): Voices | undefined {
+    if (!this.d.config.auth) return undefined;
+    const listed = this.listing?.open.find((i) => i.id === m.intent);
+    const adminOnly = ownerOnly(listed ? levelNow(this.d.db, listed) : null);
+    return voicesFor(this.d.db, m.repo, m.intent, undefined, m.repo || repoGithub, adminOnly);
+  }
+
+  /** USR-8: the person whose comment or review on GitHub is the newest that counts, as the actor of the move. */
+  private githubActor(prs: Prs, voices: Voices | undefined, bot: string): Actor | null {
+    if (!voices) return null;
+    let best: { author: string; at: string } | null = null;
+    const see = (author: string, at: string) => {
+      if (isBot(author, bot) || !(voices.decides(author) || voices.answers(author))) return;
+      if (!best || newer(at, best.at)) best = { author, at };
+    };
+    for (const kind of ["spec", "plan", "code"] as const) {
+      for (const c of prs[kind]?.comments ?? []) see(c.author, c.at);
+      for (const r of prs[kind]?.reviews ?? []) see(r.author, r.at);
+    }
+    const found = best as { author: string; at: string } | null;
+    if (!found) return null;
+    const u = getUser(this.d.db, found.author);
+    return {
+      login: found.author.toLowerCase(),
+      name: u?.name || found.author,
+      role: u?.role ?? null,
+      via: "github",
+    };
+  }
+
   /** PR reads (LOOP-18, PIP-21): every 60 s per mission with a PR. */
+  /**
+   * LOOP-76, UI-164: the open code PR that an exit of this wait would close, with its commit count, for the
+   * card's confirm. The exit itself checks again, so a stale note only costs the page a round trip.
+   */
+  private async noteOpenPr(m: Mission, github: string): Promise<void> {
+    if (m.stage !== "blocked" && m.stage !== "approval:merge" && m.stage !== "steps") return;
+    const w = await exitWarning(this.d.github, github, m.pr);
+    const note = w ? { number: w.pr, commits: w.commits } : null;
+    const had = (dataOf(m) as { openPr?: unknown }).openPr ?? null;
+    if (JSON.stringify(had) !== JSON.stringify(note)) patchData(this.d.db, m, { openPr: note }, this.now);
+  }
+
   private async pollPrs(): Promise<void> {
     const read = this.d.readPr ?? ((repo: string, n: number) => this.d.github.readPr(repo, n));
     for (const m of unfinished(this.d.db)) {
@@ -1617,8 +1675,11 @@ export class Loop {
         if (prs.plan && intentsRepo && isGitlab(intentsRepo) !== isGitlab(repo.github)) {
           prs.plan = await this.renamed(prs.plan, intentsRepo, { me, bot });
         }
+        if (prs.code && m.pr) await this.noteOpenPr(m, repo.github);
         const teamOn = repo.teammateReview === true;
-        const approve = approveRequested(m, prs, me, teamOn);
+        // USR-9: with `[auth]`, the people and their roles decide whose GitHub words count.
+        const voices = this.voicesFor(m, repo.github);
+        const approve = approveRequested(m, prs, me, teamOn, voices);
         if (approve !== null) {
           const target = approve === m.plan_pr ? intentsRepo! : repo.github;
           // GL-15: the merge carries the head the approval was judged on, so a push after the check is refused.
@@ -1633,22 +1694,23 @@ export class Loop {
           this.lastPrPoll.delete(m.id);
           continue;
         }
-        let asks = releaseRequested(m, prs, me, bot, []);
+        let asks = releaseRequested(m, prs, me, bot, [], voices);
         if (asks.length > 0) {
           // PIP-45: the lead repo's `live` block, read from the base branch of Towercab's clone.
           let entry: ReleaseRepo;
           try {
-            const files = await loadRepoFiles(
+            const files = await loadRepoFilesWith(
               this.d.tools,
               clonePath(repo, this.d.home.root),
               repo.base,
               repo.github,
+              loadOverlay(this.d.config.file, repo.name),
             );
             entry = { name: m.repo, live: files.towercab.live ? { url: files.towercab.live.url } : null };
           } catch (e) {
             entry = { name: m.repo, live: null, unreadable: (e as Error).message };
           }
-          asks = releaseRequested(m, prs, me, bot, [entry]);
+          asks = releaseRequested(m, prs, me, bot, [entry], voices);
         }
         for (const ask of asks) {
           const target = ask.kind === "plan" ? intentsRepo! : repo.github;
@@ -1659,7 +1721,7 @@ export class Loop {
         if (!this.children.has(m.id)) {
           const listedNow = this.listing?.open.find((i) => i.id === m.intent);
           const onlyYou = ownerOnly(listedNow ? levelNow(this.d.db, listedNow) : null);
-          for (const ask of reversalRequested(m, prs, me, bot, onlyYou)) {
+          for (const ask of reversalRequested(m, prs, me, bot, onlyYou, voices)) {
             let said: string;
             try {
               const r = reverseRefusals(dataOf(m) as PipeData, ask.paths);
@@ -1685,7 +1747,7 @@ export class Loop {
         let team: TeamReads | undefined;
         if (teamOn) {
           team = await this.teamReads(m, repo, prs, bot);
-          for (const ask of approveNotices(m, prs, me, bot)) {
+          for (const ask of approveNotices(m, prs, me, bot, voices)) {
             // PIP-144: the owner's Approve neither merges nor counts: say so once.
             const text = team?.approved
               ? APPROVE_NOTICE.after
@@ -1704,7 +1766,7 @@ export class Loop {
         const listed = this.listing?.open.find((i) => i.id === m.intent);
         const levelListed = listed ? levelNow(this.d.db, listed) : null;
         if (ownerOnly(levelListed)) {
-          for (const r of ignoredReplies(m, prs, me, bot)) {
+          for (const r of ignoredReplies(m, prs, me, bot, voices)) {
             noteIgnored(
               this.d.db,
               m.intent,
@@ -1714,9 +1776,14 @@ export class Loop {
             );
           }
         }
+        // USR-9: a known person's comment that moves nothing is shown with their name, once.
+        if (voices) {
+          for (const n of voiceNotes(m, prs, bot, voices))
+            noteIgnored(this.d.db, m.intent, n.key, n.text, this.now);
+        }
         // PIP-185: comments an agent marked under the owner's login are recorded once, at any level.
         const only = ownerOnly(levelListed);
-        for (const c of agentComments(m, prs, me, bot)) {
+        for (const c of agentComments(m, prs, me, bot, voices)) {
           const target = c.kind === "plan" ? intentsRepo : repo.github;
           recordAgentComment(this.d.db, m.intent, c.key, {
             agent: c.agent,
@@ -1736,7 +1803,7 @@ export class Loop {
           }
         }
         const held = conflictHeld(unfinished(this.d.db), m);
-        const o = prEvents(pastMerges(m, prs), prs, me, bot, team, only, held);
+        const o = prEvents(pastMerges(m, prs), prs, me, bot, team, only, held, voices);
         if (!o) continue;
         if (o.event === "feedback" || o.event === "answered") {
           // A later answer by the owner clears the agent's name.
@@ -1746,7 +1813,7 @@ export class Loop {
         // PIP-203: the owner's own comment starts a revision that answers it. Towercab's conflict revision
         // (PIP-81) and an answer to a question are not revisions of that kind, so they get no reply (LOOP-121).
         if (o.event === "feedback" && !(o.data as { mergeMain?: boolean } | undefined)?.mergeMain) {
-          const targets = feedbackTargets(m, prs, me, bot, team, only);
+          const targets = feedbackTargets(m, prs, me, bot, team, only, voices);
           o.data = { ...o.data, replyTo: targets.length ? targets : undefined, replyNote: undefined };
         }
         const running = this.children.has(m.id);
@@ -1767,7 +1834,10 @@ export class Loop {
           }
         }
         // PIP-112: the merged plan.md is the record of the delivery, edits in the plan PR included.
-        this.move(o.event === "plan_merged" ? await this.deliveryFromPlan(m) : m, o);
+        const from = o.event === "plan_merged" ? await this.deliveryFromPlan(m) : m;
+        const who = this.githubActor(prs, voices, bot);
+        if (who) runAs(who, () => this.move(from, o));
+        else this.move(from, o);
       } catch (e) {
         // LOOP-113: a reply or merge held by the pause is made after resume; the PR is read again then.
         if (e instanceof PausedHold) continue;
@@ -2281,8 +2351,53 @@ export class Loop {
       cooling,
       active: new Set(unfinished(db).map((m) => m.intent)),
       defaultModel: config.agent.model,
+      ...(config.auth ? { unconfirmed: this.unconfirmed() } : {}),
       lane,
     };
+  }
+
+  /** AUT-23: the open intents nobody who may run them wrote or confirmed. */
+  private unconfirmed(): Set<string> {
+    const out = new Set<string>();
+    for (const i of this.listing?.open ?? []) {
+      if (!mayStart(authorityOf(this.d.db, i.id, i.repo))) out.add(i.id);
+    }
+    return out;
+  }
+
+  /**
+   * AUT-23: the writer of each open intent that has none recorded yet, found from the channel and never from
+   * the file: intents that existed when `[auth]` was first seen are the owner's; later ones are the account
+   * that verifiably pushed the commit adding them; one the page, Telegram or the command line made was
+   * recorded when it was made.
+   */
+  private async recordWriters(listing: Listing): Promise<void> {
+    const auth = this.d.config.auth;
+    if (!auth) return;
+    const db = this.d.db;
+    const first = db.meta("auth:since") === null;
+    if (first) db.setMeta("auth:since", String(this.now));
+    const me = this.d.config.github?.me ?? "";
+    for (const i of listing.open) {
+      if (peopleOf(db, i.id)) continue;
+      if (first) {
+        recordWriter(db, i.id, me || null, this.now);
+        continue;
+      }
+      const repo = this.d.store.github();
+      const commit = (await this.d.store.addedCommit?.(i.id).catch(() => null)) ?? "";
+      if (!commit || !repo) {
+        recordWriter(db, i.id, null, this.now);
+        continue;
+      }
+      try {
+        const proof = await this.d.github.commitProof(repo, commit);
+        recordWriter(db, i.id, verifiedLogin(proof), this.now);
+      } catch (e) {
+        // GitHub can't say right now: look again on the next poll; the intent stays held meanwhile.
+        this.d.log(`writer ${i.id}: couldn't read the commit's account: ${(e as Error).message}`);
+      }
+    }
   }
 
   /** LOOP-5: insert a mission for the intent `decide` picks, when a slot is free. */

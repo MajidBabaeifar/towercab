@@ -99,8 +99,9 @@ function routedBy(
   by: "guess" | "owner",
   why: string,
   set: Record<string, string> = {},
+  extra: Record<string, unknown> = {},
 ): Progress {
-  const d = { kind, kindWhy: why, kindBy: by };
+  const d = { ...extra, kind, kindWhy: why, kindBy: by };
   const lighter = kind === "bugfix" || kind === "refactor" || kind === "infra";
   return { done: lighter ? { event: "kind_routed", set, data: d } : ok({ set, data: d }) };
 }
@@ -114,8 +115,9 @@ export const pickHandler: Handler = {
     } catch (e) {
       throw e instanceof EnvError ? e : asEnv(e);
     }
+    let files: Awaited<ReturnType<typeof repoFiles>>;
     try {
-      await repoFiles(cx, m);
+      files = await repoFiles(cx, m);
     } catch (e) {
       // REPO-5: a repo with no checks gets them set up, not a question.
       if (e instanceof RepoError && e.kind === "noVerifying") return settingUp(cx, m);
@@ -130,13 +132,15 @@ export const pickHandler: Handler = {
     const base = (await git(cx.tools, clone, ["rev-parse", `refs/remotes/origin/${repo.base}`])).trim();
     await freshCheckout(cx.tools, clone, cx.checkout(m), repo.base, m.branch);
     const set = { base_sha: base };
+    // REPO-49: checks that came from the overlay stay this intent's, even if the repo gets its own later.
+    const pinned = files.sources?.checks === "overlay" ? { pinnedChecks: files.verifying } : {};
     // INT-77: a kind the intent sets is the owner's and skips the agent; an earlier guess is kept.
     const intent = await intentOf(cx, m);
-    if (isKind(intent.kind)) return routedBy(intent.kind, "owner", "", set);
+    if (isKind(intent.kind)) return routedBy(intent.kind, "owner", "", set, pinned);
     const kept = data(m).kind;
-    if (isKind(kept)) return routedBy(kept, data(m).kindBy ?? "guess", data(m).kindWhy ?? "", set);
+    if (isKind(kept)) return routedBy(kept, data(m).kindBy ?? "guess", data(m).kindWhy ?? "", set, pinned);
     // No kind yet: the design stage's first step asks the agent (a feature goes there anyway).
-    return { done: ok({ set }) };
+    return { done: ok({ set, ...(Object.keys(pinned).length ? { data: pinned } : {}) }) };
   },
   async finish() {
     return { poll: 0 };

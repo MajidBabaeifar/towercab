@@ -120,7 +120,18 @@ function StepsBlock({ data, readOnly }: { data: Data; readOnly: boolean }) {
   );
 }
 
-export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }) {
+/** CHAT-1: `embedded` is the chat's Details panel: no page landmark, no back link, a second-level title. */
+export function IntentPage({
+  data,
+  readOnly,
+  embedded = false,
+}: {
+  data: Data;
+  readOnly: boolean;
+  embedded?: boolean;
+}) {
+  const Wrap = embedded ? "div" : "main";
+  const Title = embedded ? "h2" : "h1";
   const moves = (
     <details class="moves">
       <summary>
@@ -136,6 +147,7 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
               <span class="tl-dot" aria-hidden="true" />
               <div class="tl-body">
                 <p class={`tl-text${t.shadow || t.observer ? " tl-shadow" : ""}`}>{t.text}</p>
+                {t.by ? <p class="tl-by meta">{t.by}</p> : null}
                 {t.why ? <p class="tl-why">{t.why}</p> : null}
               </div>
               <span class="tl-lasted meta">
@@ -150,18 +162,20 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
     </details>
   );
   return (
-    <main class="page intent" id="main">
-      <Link class="back" href="/overview">
-        <ChevronLeft size={16} />
-        Overview
-      </Link>
+    <Wrap class="page intent" id={embedded ? undefined : "main"}>
+      {embedded ? null : (
+        <Link class="back" href="/overview">
+          <ChevronLeft size={16} />
+          Overview
+        </Link>
+      )}
       <header class="intent-head">
         <div class="intent-title">
-          <h1>
+          <Title>
             {data.title} {data.onlyYou ? <OnlyYou /> : null}
             {data.shadow ? <ShadowTag /> : null}
             {data.observer ? <ObserverTag /> : null}
-          </h1>
+          </Title>
           <p class="meta">
             {data.repo} · <Id id={data.id} />
             {data.scores ? ` · ${data.scores}` : ""}
@@ -329,6 +343,6 @@ export function IntentPage({ data, readOnly }: { data: Data; readOnly: boolean }
           ) : null}
         </aside>
       </div>
-    </main>
+    </Wrap>
   );
 }
